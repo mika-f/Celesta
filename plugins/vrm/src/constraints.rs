@@ -13,7 +13,12 @@
 //!   `extensions.VRMC_node_constraint`, `specVersion` 1.0, with exactly one
 //!   of `roll`, `aim`, and `rotation`. A source that is not a node of the
 //!   file or is the node itself, and a weight that is not finite, are
-//!   refused; the weight is clamped to 0..1 (UniVRM's `Range(0, 1)`).
+//!   refused. The weight is used as it is: the schema bounds it to 0..1,
+//!   but UniVRM's importer copies it unchecked (its `Range(0, 1)` binds
+//!   only the inspector) and `Process` calls `SlerpUnclamped`, so a weight
+//!   past 0..1 extrapolates there and here alike (glam's `slerp` does not
+//!   clamp either). The frame checks every matrix it sends, so no weight
+//!   can send one that is not finite.
 //! - **Order** (`Vrm10Runtime.Process`, whose `GetComponentsInChildren`
 //!   walks the hierarchy in pre-order): each constrained node (the
 //!   destination) once, in node pre-order, reading the pose as the
@@ -154,7 +159,7 @@ enum Kind {
 struct Constraint {
     destination: usize,
     source: usize,
-    /// In 0..1.
+    /// As the file gives it: the schema's 0..1, or past it (see the module).
     weight: f32,
     kind: Kind,
 }
@@ -235,7 +240,7 @@ impl Constraints {
             by_node[index] = Some(Constraint {
                 destination: index,
                 source,
-                weight: weight.clamp(0.0, 1.0),
+                weight,
                 kind,
             });
         }
@@ -451,8 +456,9 @@ mod tests {
     }
 
     #[test]
-    fn the_weight_defaults_to_one_and_is_clamped() {
-        for (weight, expected) in [(None, 20.0), (Some(2.0), 20.0), (Some(-1.0), 0.0)] {
+    fn the_weight_defaults_to_one_and_extrapolates() {
+        // UniVRM's `SlerpUnclamped`: past 0..1 the turn carries on.
+        for (weight, expected) in [(None, 20.0), (Some(2.0), 40.0), (Some(-1.0), -20.0)] {
             let mut rotation = json!({ "source": node::LEFT_UPPER_LEG });
             if let Some(weight) = weight {
                 rotation["weight"] = json!(weight);
