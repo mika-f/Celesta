@@ -36,6 +36,11 @@
 //!   `data.look_at` asks for, scaled by what other expressions leave of it.
 //! - **Node constraints** (see `constraints`) are read before the geometry.
 //!   Each frame they turn their nodes from the base pose, before the lookAt.
+//! - **Motions** (see `motion`): the layer's clips (`motion0`, …) are opened
+//!   before the model, so a model whose clips are refused writes no
+//!   texture. Each frame the motions' pose is retargeted onto the avatar as
+//!   the base pose (see `vrma`), and its clip expressions are the weights
+//!   `data.expressions` does not set.
 //! - **The camera** (see `camera`) frames the avatar at rest: what a
 //!   third-person camera sees, every vertex of every visible draw skinned
 //!   at rest without morphs, bounded once when the model opens (without a
@@ -52,8 +57,9 @@
 //!   most [`GEOMETRY_BUDGET`] bytes, and its accessors decode at most
 //!   `READ_BUDGET` (see `geometry`).
 //!
-//! Each frame runs UniVRM's order (`Vrm10Runtime.Process`): the base pose,
-//! constraints, the lookAt, expressions, spring bones, then world matrices.
+//! Each frame runs UniVRM's order (`Vrm10Runtime.Process`): the base pose
+//! (motions), constraints, the lookAt, expressions, spring bones, then world
+//! matrices.
 
 use crate::camera::{self, Framing, check_lights, frame_canvas};
 use crate::constraints::Constraints;
@@ -68,10 +74,12 @@ use crate::humanoid::Humanoid;
 use crate::look_at::LookAt;
 use crate::materials::{materials, texture_cache_dir};
 use crate::meta::usage_notices;
+use crate::motion::{ClipLimits, is_clip_name, motion_pose, open_clips};
 use crate::mtoon::{self, Mtoon, MtoonOverrides};
 use crate::nodes::{NodeTree, Pose};
 use crate::notices::Warnings;
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
+use crate::vrma::{Clip, Retarget};
 use celesta_plugin::{
     AlphaMode, Camera, DrawInfo, DrawState, Geometry, Material, MaterialKind, MaterialOverrides,
     Notice, NoticeLevel, SceneFrame, SceneModel, Skin, UnlitMaterial,
@@ -81,7 +89,10 @@ use gltf::mesh::Mode;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::size_of;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// The asset the `.vrm` is; the clips are `motion0`, `motion1`, ….
+const MODEL: &str = "model";
 
 /// The canvas a model opens with, in pixels, and a frame's when `data` has
 /// none.
@@ -144,6 +155,10 @@ pub struct VrmModel {
     expressions: Expressions,
     look_at: LookAt,
     constraints: Constraints,
+    /// The layer's clips by asset name.
+    clips: BTreeMap<String, Clip>,
+    /// The humanoid at rest, which clips are retargeted onto.
+    retarget: Retarget,
     /// By node: its world matrix at rest.
     rest: Vec<Mat4>,
     /// What the camera presets frame.
@@ -195,6 +210,36 @@ struct Draws {
 }
 
 impl VrmModel {
+    /// Opens a layer's assets: `model`, the `.vrm`, and its clips `motion0`,
+    /// `motion1`, … (see `motion`), writing the textures to the user's
+    /// cache. Any other asset is refused; an error names the file it is of.
+    pub fn open(assets: &BTreeMap<String, PathBuf>) -> Result<Self, LoadError> {
+        Self::open_with_cache(assets, &texture_cache_dir())
+    }
+
+    /// [`Self::open`], writing the textures to `cache` rather than the
+    /// user's cache: for tests, which never write there.
+    pub fn open_with_cache(
+        assets: &BTreeMap<String, PathBuf>,
+        cache: &Path,
+    ) -> Result<Self, LoadError> {
+        if let Some(name) = assets
+            .keys()
+            .find(|name| *name != MODEL && !is_clip_name(name))
+        {
+            return Err(LoadError::Invalid(format!("unknown asset {name:?}")));
+        }
+        let path = assets
+            .get(MODEL)
+            .ok_or_else(|| LoadError::Invalid(format!("asset {MODEL:?} (the .vrm) is missing")))?;
+        // The clips first, so a layer refused for them writes no texture.
+        let clips = open_clips(assets, ClipLimits::LAYER)?;
+        let mut model = Self::load_with_cache(path, cache)
+            .map_err(|error| LoadError::Invalid(format!("{}: {error}", path.display())))?;
+        model.clips = clips;
+        Ok(model)
+    }
+
     /// Opens the `.vrm` at `path`, writing its textures to the user's cache.
     pub fn load(path: &Path) -> Result<Self, LoadError> {
         Self::load_with_cache(path, &texture_cache_dir())
@@ -289,6 +334,7 @@ impl VrmModel {
             &read.base_transforms,
         );
         let rest = tree.world(&tree.rest_pose());
+        let retarget = Retarget::new(&tree, &humanoid);
         let (framing, framing_visits) = framing(&draws, &skins, &rest, &humanoid, framing_visits);
         let scene = SceneModel {
             canvas: CANVAS,
@@ -319,6 +365,8 @@ impl VrmModel {
             expressions,
             look_at,
             constraints,
+            clips: BTreeMap::new(),
+            retarget,
             rest,
             framing,
             framing_visits,
@@ -551,10 +599,10 @@ impl VrmModel {
         data: &PerformanceData,
         camera_eye: Vec3,
     ) -> Result<(Pose, Applied), FrameError> {
-        let mut pose = self.base_pose(time, data);
+        let (mut pose, clip_expressions) = self.base_pose(time, data)?;
         self.apply_constraints(&mut pose);
         let (yaw, pitch) = self.gaze(data, &pose, camera_eye)?;
-        let inputs = self.expression_inputs(time, data)?;
+        let inputs = self.expression_inputs(clip_expressions, data)?;
         let mut applied = self.expressions.validate(&inputs);
         // UniVRM's validator scales the gaze by what other expressions
         // leave of it.
@@ -606,10 +654,25 @@ impl VrmModel {
         &self.look_at
     }
 
-    /// The pose before constraints and springs. The rest pose; the motion
-    /// plan's motions and tracks replace it.
-    fn base_pose(&self, _time: f64, _data: &PerformanceData) -> Pose {
-        self.tree.rest_pose()
+    /// The pose before constraints and springs, and the expression weights
+    /// its clips set: `data.motions` at `time` retargeted onto the avatar,
+    /// else the rest pose exactly, with no weights.
+    pub(crate) fn base_pose(
+        &self,
+        time: f64,
+        data: &PerformanceData,
+    ) -> Result<(Pose, BTreeMap<ExpressionKey, f32>), FrameError> {
+        let mut pose = self.tree.rest_pose();
+        let Some((clip, source)) = motion_pose(&self.clips, &data.motions, time)? else {
+            return Ok((pose, BTreeMap::new()));
+        };
+        self.retarget.apply(&clip, source, &self.tree, &mut pose);
+        Ok((pose, clip.expressions))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clips(&self) -> &BTreeMap<String, Clip> {
+        &self.clips
     }
 
     /// The node constraints (see `constraints`), in node pre-order.
@@ -622,24 +685,24 @@ impl VrmModel {
         &self.constraints
     }
 
-    /// The expression weights asked for, by key: `data.expressions`; the
-    /// motion plan adds its clips'. A weight that is not finite is an
-    /// error naming the expression.
+    /// The expression weights asked for, by key: the clips' (`clip`), then
+    /// `data.expressions` replacing them key by key, since what the layer
+    /// says is the author's intent (UniVRM sets a clip's weights each frame).
+    /// A weight of `data` that is not finite is an error naming the
+    /// expression.
     fn expression_inputs(
         &self,
-        _time: f64,
+        clip: BTreeMap<ExpressionKey, f32>,
         data: &PerformanceData,
     ) -> Result<BTreeMap<ExpressionKey, f32>, FrameError> {
-        data.expressions
-            .iter()
-            .map(|(name, &weight)| {
-                if weight.is_finite() {
-                    Ok((ExpressionKey::parse(name), weight))
-                } else {
-                    Err(FrameError(format!("expression {name} is not finite")))
-                }
-            })
-            .collect()
+        let mut inputs = clip;
+        for (name, &weight) in &data.expressions {
+            if !weight.is_finite() {
+                return Err(FrameError(format!("expression {name} is not finite")));
+            }
+            inputs.insert(ExpressionKey::parse(name), weight);
+        }
+        Ok(inputs)
     }
 
     #[cfg(test)]

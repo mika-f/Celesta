@@ -82,6 +82,8 @@ pub struct Clip {
     hips_rest: Vec3,
     /// By key order.
     expressions: Vec<(ExpressionKey, Channel<f32>)>,
+    /// The bytes of keys its channels hold, as [`CLIP_BUDGET`] counts them.
+    key_bytes: u64,
 }
 
 /// What a clip says at one time.
@@ -292,11 +294,12 @@ impl Clip {
             hips: None,
             hips_rest,
             expressions: Vec::new(),
+            key_bytes: 0,
         };
         let mut expression_channels = BTreeMap::new();
+        let mut left = budget;
         if let Some(animation) = gltf.animations().next() {
             let accessors = Accessors::of_buffers(&buffers, budget);
-            let mut left = budget;
             let mut seen = BTreeSet::new();
             let mut kept = 0;
             for channel in animation.channels() {
@@ -384,6 +387,7 @@ impl Clip {
                     .map(|(_, weight)| weight.last_time()),
             )
             .fold(0.0, f64::max);
+        clip.key_bytes = budget - left;
         Ok(clip)
     }
 
@@ -413,6 +417,11 @@ impl Clip {
     /// The hips' rest position in the clip's root space (`H₀`).
     pub fn hips_rest(&self) -> Vec3 {
         self.hips_rest
+    }
+
+    /// The bytes of keys its channels hold, as [`CLIP_BUDGET`] counts them.
+    pub(crate) fn key_bytes(&self) -> u64 {
+        self.key_bytes
     }
 }
 
@@ -658,8 +667,6 @@ impl<'d> Reader<'_, 'd> {
 
 /// An avatar's humanoid at rest, which [`Clip`]s are retargeted onto
 /// (UniVRM's control rig).
-// Only tests use it until the model plays clips.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct Retarget {
     /// By bone order.
@@ -671,7 +678,6 @@ pub(crate) struct Retarget {
 
 /// An avatar bone's node and its rest rotations, local (`L₀'`) and world
 /// (`G₀'`).
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct RetargetBone {
     bone: HumanBone,
@@ -680,7 +686,6 @@ struct RetargetBone {
     rest_world: Quat,
 }
 
-#[allow(dead_code)]
 impl Retarget {
     pub(crate) fn new(tree: &NodeTree, humanoid: &Humanoid) -> Self {
         let rotations = rest_world_rotations(tree);
@@ -701,10 +706,22 @@ impl Retarget {
         }
     }
 
+    /// Where the hips go in model space for `raw`, a position in a rig whose
+    /// hips rest at `source_hips_rest`: the travel from there scaled by the
+    /// avatar's hips height over the rig's. A position in the avatar's own
+    /// space (`source_hips_rest` is [`Self::hips_rest`]) is kept as it is.
+    pub(crate) fn hips_world(&self, raw: Vec3, source_hips_rest: Vec3) -> Vec3 {
+        if source_hips_rest == self.hips_rest {
+            return raw;
+        }
+        self.hips_rest + (raw - source_hips_rest) * (self.hips_rest.y / source_hips_rest.y)
+    }
+
     /// Writes `pose` onto `out`: every humanoid bone's local rotation, and
     /// the hips' local translation for their travel from `source_hips_rest`
     /// (the clip's `H₀`). Other nodes keep `out`'s values, which place the
-    /// hips: their parent's current world is read from `out`.
+    /// hips: their parent's current world is read from `out`. A bone in
+    /// `pose` that the avatar lacks is skipped.
     pub(crate) fn apply(
         &self,
         pose: &ClipPose,
@@ -723,9 +740,7 @@ impl Retarget {
         }
 
         let world = match pose.hips {
-            Some(raw) => {
-                self.hips_rest + (raw - source_hips_rest) * (self.hips_rest.y / source_hips_rest.y)
-            }
+            Some(raw) => self.hips_world(raw, source_hips_rest),
             None => self.hips_rest,
         };
         // The hips' parent's current world, walked down from the root.

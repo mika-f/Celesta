@@ -7,14 +7,14 @@
 use crate::PLUGIN;
 use crate::camera::{CameraData, LightsData};
 use crate::model::VrmModel;
+use crate::motion::MotionData;
 use celesta_plugin::{ContentFrame, ContentProvider, ModelId, Opened, PluginError};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
-/// What a frame's `data` asks of the avatar; the motion plan adds its own
-/// fields.
+/// What a frame's `data` asks of the avatar.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PerformanceData {
@@ -35,6 +35,9 @@ pub struct PerformanceData {
     /// Lights in place of the reference light.
     #[serde(default)]
     pub lights: Option<LightsData>,
+    /// Clips on the layer's clock (see `motion`). Absent, the avatar rests.
+    #[serde(default)]
+    pub motions: Vec<MotionData>,
 }
 
 /// Where the eyes look: `"camera"`, a point `[x, y, z]` in model space, or
@@ -63,7 +66,8 @@ pub enum LookAtKeyword {
 /// The plugin's [`ContentProvider`]: what its process serves, and what
 /// tests call in-process.
 ///
-/// - `open` takes one asset, `model`, the `.vrm`, and answers its scene
+/// - `open` takes the asset `model`, the `.vrm`, and the clips `motion0`,
+///   `motion1`, … (see [`VrmModel::open`]), and answers the avatar's scene
 ///   and its notices (the usage terms first).
 /// - `frame` reads `data` as [`PerformanceData`] (`null` is the default)
 ///   and answers the scene at `time`.
@@ -90,9 +94,6 @@ impl VrmProvider {
     }
 }
 
-/// The asset the `.vrm` is.
-const MODEL: &str = "model";
-
 impl ContentProvider for VrmProvider {
     fn open(
         &mut self,
@@ -102,17 +103,11 @@ impl ContentProvider for VrmProvider {
         if plugin != PLUGIN {
             return Err(PluginError::UnknownPlugin(plugin.to_owned()));
         }
-        if let Some(name) = assets.keys().find(|name| *name != MODEL) {
-            return Err(failed(format!("unknown asset {name:?}")));
-        }
-        let path = assets
-            .get(MODEL)
-            .ok_or_else(|| failed(format!("asset {MODEL:?} (the .vrm) is missing")))?;
         let mut model = match &self.cache {
-            Some(cache) => VrmModel::load_with_cache(path, cache),
-            None => VrmModel::load(path),
+            Some(cache) => VrmModel::open_with_cache(assets, cache),
+            None => VrmModel::open(assets),
         }
-        .map_err(|error| failed(format!("{}: {error}", path.display())))?;
+        .map_err(|error| failed(error.to_string()))?;
         self.next += 1;
         let id = ModelId(self.next);
         let opened = Opened {
@@ -190,7 +185,7 @@ fn failed(message: impl Into<String>) -> PluginError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synthetic::SyntheticVrm;
+    use crate::synthetic::{SyntheticVrm, SyntheticVrma};
     use celesta_plugin::{ContentModel, TextureSource};
     use serde_json::json;
     use tempfile::TempDir;
@@ -344,6 +339,12 @@ mod tests {
                 .unwrap_err(),
         );
         assert!(found.contains("unknown asset \"motion\""), "{found}");
+        let found = message(
+            provider
+                .open(PLUGIN, &assets(&[("model", path), ("walk", path)]))
+                .unwrap_err(),
+        );
+        assert!(found.contains("unknown asset \"walk\""), "{found}");
         let found = message(provider.open(PLUGIN, &BTreeMap::new()).unwrap_err());
         assert!(
             found.contains("asset \"model\" (the .vrm) is missing"),
@@ -360,5 +361,52 @@ mod tests {
             .open("turntable", &assets(&[("model", path)]))
             .unwrap_err();
         assert!(matches!(error, PluginError::UnknownPlugin(_)), "{error}");
+        // A clip that is not a VRM animation names its file.
+        let found = message(
+            provider
+                .open(PLUGIN, &assets(&[("model", path), ("motion0", path)]))
+                .unwrap_err(),
+        );
+        assert!(found.contains("avatar.vrm: "), "{found}");
+        assert!(found.contains("not a VRM animation"), "{found}");
+    }
+
+    #[test]
+    fn clips_play_through_the_provider() {
+        let files = avatar_file();
+        let clip = files.path.with_file_name("clip.vrma");
+        std::fs::write(&clip, SyntheticVrma::clip().glb()).unwrap();
+        let mut provider = files.provider();
+        let id = provider
+            .open(
+                PLUGIN,
+                &assets(&[("model", &files.path), ("motion0", &clip)]),
+            )
+            .unwrap()
+            .model;
+        let data = json!({ "motions": [{ "clip": "motion0", "from": 0.5 }] });
+        let moved = provider.frame(id, 1.5, &data).unwrap();
+        assert_ne!(moved, provider.frame(id, 0.25, &data).unwrap());
+        // Before the motion starts, the frame is the rest frame.
+        assert_eq!(
+            provider.frame(id, 0.25, &data).unwrap(),
+            provider.frame(id, 0.25, &Value::Null).unwrap()
+        );
+        let found = message(
+            provider
+                .frame(id, 0.0, &json!({ "motions": [{ "clip": "motion1" }] }))
+                .unwrap_err(),
+        );
+        assert!(found.contains("names clip \"motion1\""), "{found}");
+        let found = message(
+            provider
+                .frame(
+                    id,
+                    0.0,
+                    &json!({ "motions": [{ "clip": "motion0", "fadeIn": null }] }),
+                )
+                .unwrap_err(),
+        );
+        assert!(found.contains("motions[0].fadeIn"), "{found}");
     }
 }
