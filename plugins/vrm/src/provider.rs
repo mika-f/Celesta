@@ -68,10 +68,26 @@ pub enum LookAtKeyword {
 /// - `frame` reads `data` as [`PerformanceData`] (`null` is the default)
 ///   and answers the scene at `time`.
 /// - `close` drops the model.
+///
+/// `open` moves the scene's geometries out of the model it keeps (see
+/// [`VrmModel::take_scene_model`]): nothing may read them afterwards.
 #[derive(Default)]
 pub struct VrmProvider {
     models: HashMap<ModelId, VrmModel>,
     next: u64,
+    /// Where textures are written in place of the user's texture cache.
+    cache: Option<PathBuf>,
+}
+
+impl VrmProvider {
+    /// A provider that writes textures to `cache` rather than the user's
+    /// texture cache: for tests, which never write there.
+    pub fn with_texture_cache(cache: impl Into<PathBuf>) -> Self {
+        Self {
+            cache: Some(cache.into()),
+            ..Self::default()
+        }
+    }
 }
 
 /// The asset the `.vrm` is.
@@ -92,8 +108,11 @@ impl ContentProvider for VrmProvider {
         let path = assets
             .get(MODEL)
             .ok_or_else(|| failed(format!("asset {MODEL:?} (the .vrm) is missing")))?;
-        let mut model =
-            VrmModel::load(path).map_err(|error| failed(format!("{}: {error}", path.display())))?;
+        let mut model = match &self.cache {
+            Some(cache) => VrmModel::load_with_cache(path, cache),
+            None => VrmModel::load(path),
+        }
+        .map_err(|error| failed(format!("{}: {error}", path.display())))?;
         self.next += 1;
         let id = ModelId(self.next);
         let opened = Opened {
@@ -172,16 +191,57 @@ fn failed(message: impl Into<String>) -> PluginError {
 mod tests {
     use super::*;
     use crate::synthetic::SyntheticVrm;
-    use celesta_plugin::ContentModel;
+    use celesta_plugin::{ContentModel, TextureSource};
     use serde_json::json;
     use tempfile::TempDir;
 
-    /// The synthetic avatar written to a file of a fresh directory.
-    fn avatar_file() -> (TempDir, PathBuf) {
+    /// The synthetic avatar written to a file of a fresh directory, and a
+    /// fresh texture cache, so no test writes to the user's.
+    struct Files {
+        _directory: TempDir,
+        cache: TempDir,
+        path: PathBuf,
+    }
+
+    impl Files {
+        fn provider(&self) -> VrmProvider {
+            VrmProvider::with_texture_cache(self.cache.path())
+        }
+
+        fn model(&self) -> VrmModel {
+            VrmModel::load_with_cache(&self.path, self.cache.path()).unwrap()
+        }
+    }
+
+    fn avatar_file() -> Files {
         let directory = TempDir::new().unwrap();
         let path = directory.path().join("avatar.vrm");
         std::fs::write(&path, SyntheticVrm::avatar().glb()).unwrap();
-        (directory, path)
+        Files {
+            _directory: directory,
+            cache: TempDir::new().unwrap(),
+            path,
+        }
+    }
+
+    #[test]
+    fn textures_go_to_the_cache_the_provider_is_given() {
+        let files = avatar_file();
+        let opened = files
+            .provider()
+            .open(PLUGIN, &assets(&[("model", &files.path)]))
+            .unwrap();
+        let ContentModel::Scene(scene) = &opened.content else {
+            panic!("a VRM avatar is a scene: {:?}", opened.content);
+        };
+        assert!(!scene.textures.is_empty());
+        for texture in &scene.textures {
+            let TextureSource::Path(path) = &texture.source else {
+                panic!("a VRM texture is a file: {:?}", texture.source);
+            };
+            assert!(path.starts_with(files.cache.path()), "{}", path.display());
+            assert!(path.is_file(), "{}", path.display());
+        }
     }
 
     fn assets(entries: &[(&str, &PathBuf)]) -> BTreeMap<String, PathBuf> {
@@ -203,10 +263,11 @@ mod tests {
 
     #[test]
     fn opens_the_model_and_answers_its_frames() {
-        let (_directory, path) = avatar_file();
-        let mut provider = VrmProvider::default();
-        let opened = provider.open(PLUGIN, &assets(&[("model", &path)])).unwrap();
-        let mut model = VrmModel::load(&path).unwrap();
+        let files = avatar_file();
+        let path = &files.path;
+        let mut provider = files.provider();
+        let opened = provider.open(PLUGIN, &assets(&[("model", path)])).unwrap();
+        let mut model = files.model();
         let ContentModel::Scene(scene) = &opened.content else {
             panic!("a VRM avatar is a scene: {:?}", opened.content);
         };
@@ -219,7 +280,7 @@ mod tests {
             .unwrap();
         assert_eq!(frame, ContentFrame::Scene(expected));
         // Two models of one file are two models.
-        let second = provider.open(PLUGIN, &assets(&[("model", &path)])).unwrap();
+        let second = provider.open(PLUGIN, &assets(&[("model", path)])).unwrap();
         assert_ne!(second.model, opened.model);
         provider.close(opened.model);
         assert!(message(provider.frame(opened.model, 0.0, &data).unwrap_err()).contains("model"));
@@ -228,10 +289,10 @@ mod tests {
 
     #[test]
     fn data_is_checked() {
-        let (_directory, path) = avatar_file();
-        let mut provider = VrmProvider::default();
+        let files = avatar_file();
+        let mut provider = files.provider();
         let id = provider
-            .open(PLUGIN, &assets(&[("model", &path)]))
+            .open(PLUGIN, &assets(&[("model", &files.path)]))
             .unwrap()
             .model;
         let refusal = |provider: &mut VrmProvider, data: Value| {
@@ -242,7 +303,7 @@ mod tests {
         // `null` is the default frame.
         let default = provider.frame(id, 0.0, &Value::Null).unwrap();
         assert_eq!(default, provider.frame(id, 0.0, &json!({})).unwrap());
-        let mut model = VrmModel::load(&path).unwrap();
+        let mut model = files.model();
         let expected = model.frame(0.0, &PerformanceData::default()).unwrap();
         assert_eq!(default, ContentFrame::Scene(expected));
         // A number JSON could not write (NaN, ∞) arrives as `null`, named.
@@ -274,11 +335,12 @@ mod tests {
 
     #[test]
     fn assets_are_checked() {
-        let (_directory, path) = avatar_file();
-        let mut provider = VrmProvider::default();
+        let files = avatar_file();
+        let path = &files.path;
+        let mut provider = files.provider();
         let found = message(
             provider
-                .open(PLUGIN, &assets(&[("model", &path), ("motion", &path)]))
+                .open(PLUGIN, &assets(&[("model", path), ("motion", path)]))
                 .unwrap_err(),
         );
         assert!(found.contains("unknown asset \"motion\""), "{found}");
@@ -295,7 +357,7 @@ mod tests {
         );
         assert!(found.contains("missing.vrm"), "{found}");
         let error = provider
-            .open("turntable", &assets(&[("model", &path)]))
+            .open("turntable", &assets(&[("model", path)]))
             .unwrap_err();
         assert!(matches!(error, PluginError::UnknownPlugin(_)), "{error}");
     }

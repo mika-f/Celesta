@@ -374,11 +374,14 @@ fn uv_scroll(mtoon: &Mtoon, textures: &[SceneTexture], time: f64) -> [f32; 2] {
                 .get(texture)
                 .is_some_and(|texture| wrap(&texture.sampler) != Wrap::ClampToEdge)
         });
-        (if still && repeats {
+        let offset = if still && repeats {
             offset.rem_euclid(2.0)
         } else {
             offset
-        }) as f32
+        };
+        // A still scroll at a negative time is −0.0; `+ 0.0` makes it +0.0,
+        // so the bytes match the material's own and are not sent.
+        (offset + 0.0) as f32
     };
     [
         scroll(mtoon.uv_animation_scroll_x_speed_factor, |sampler| {
@@ -526,8 +529,11 @@ mod tests {
             [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
         );
         assert_eq!(floats(&bytes, 48, 4), [1.0, 1.0, 1.0, -0.05]);
+        // No matcap colour, and no rim lift.
+        assert_eq!(floats(&bytes, 80, 3), [0.0; 3]);
         assert_eq!(float(&bytes, 92), 0.95);
         assert_eq!(float(&bytes, 112), 5.0);
+        assert_eq!(float(&bytes, 116), 0.0);
         assert_eq!(float(&bytes, 120), 0.9);
         // Rim and outline lighting mixes 1, no outline, no animation.
         assert_eq!(float(&bytes, 108), 1.0);
@@ -617,6 +623,16 @@ mod tests {
         // A mirrored repeat keeps two textures, its period.
         let mirrored = [wrapped(Wrap::MirroredRepeat)];
         assert_eq!(scroll(&scrolling(|_| {}), &mirrored, 3.0), [1.5, 0.0]);
+    }
+
+    #[test]
+    fn a_still_scroll_packs_the_same_bytes_at_any_time() {
+        // 0 × a negative time is −0.0, whose bytes are not +0.0's.
+        let still = params(&Mtoon::default(), &MtoonOverrides::default(), 0.0, &[]);
+        for time in [-1.0, -0.5, 3.0] {
+            let bytes = params(&Mtoon::default(), &MtoonOverrides::default(), time, &[]);
+            assert_eq!(bytes, still, "{time}");
+        }
     }
 
     #[test]

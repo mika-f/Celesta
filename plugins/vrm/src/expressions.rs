@@ -1570,6 +1570,39 @@ mod tests {
     }
 
     #[test]
+    fn sums_an_unlit_material_drops_do_not_refuse_a_frame() {
+        // The quad's material (2) is unlit: its emission is never sent, so
+        // its overflow cannot refuse the frame; its texture offset is sent.
+        let mut model = load(&with_expressions(|e| {
+            for name in ["sad", "angry"] {
+                e["preset"][name] = json!({
+                    "materialColorBinds": [
+                        { "material": 2, "type": "emissionColor", "targetValue": [3e38, 0.0, 0.0, 1.0] },
+                    ],
+                });
+            }
+            for name in ["relaxed", "surprised"] {
+                e["preset"][name] = json!({
+                    "textureTransformBinds": [{ "material": 2, "offset": [3e38, 0.0] }],
+                });
+            }
+        }));
+        let frame = model
+            .frame(0.0, &data(&[("sad", 1.0), ("angry", 1.0)]))
+            .unwrap();
+        assert_eq!(frame.draws[2].params, None);
+        assert_eq!(frame.draws[2].overrides, MaterialOverrides::default());
+        let message = match model.frame(0.0, &data(&[("relaxed", 1.0), ("surprised", 1.0)])) {
+            Ok(_) => panic!("the frame was made"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            message.contains("material 2's texture offset is not finite"),
+            "{message}"
+        );
+    }
+
+    #[test]
     fn expression_frames_repeat_exactly() {
         let mut model = avatar();
         let inputs = [("happy", 0.4), ("aa", 0.7), ("blink", 1.0), ("wink", 0.8)];

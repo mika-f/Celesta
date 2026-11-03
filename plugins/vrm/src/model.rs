@@ -132,6 +132,8 @@ pub struct VrmModel {
     rest: Vec<Mat4>,
     /// What the camera presets frame.
     framing: Framing,
+    /// `take_scene_model` has moved `scene.geometries` out.
+    geometries_taken: bool,
     /// The bytes of the geometry budget the model takes.
     #[cfg_attr(not(test), allow(dead_code))]
     bytes: u64,
@@ -173,8 +175,14 @@ struct Draws {
 impl VrmModel {
     /// Opens the `.vrm` at `path`, writing its textures to the user's cache.
     pub fn load(path: &Path) -> Result<Self, LoadError> {
+        Self::load_with_cache(path, &texture_cache_dir())
+    }
+
+    /// Opens the `.vrm` at `path`, writing its textures to `cache` rather
+    /// than the user's cache: for tests, which never write there.
+    pub fn load_with_cache(path: &Path, cache: &Path) -> Result<Self, LoadError> {
         let bytes = std::fs::read(path)?;
-        Self::load_slice(&bytes, &texture_cache_dir())
+        Self::load_slice(&bytes, cache)
     }
 
     /// Opens a `.vrm` held in memory, writing its textures to `cache`.
@@ -281,19 +289,28 @@ impl VrmModel {
             look_at,
             rest,
             framing,
+            geometries_taken: false,
             bytes: budget.total - budget.left,
         })
     }
 
+    /// The scene model. A debug build panics once [`Self::take_scene_model`]
+    /// has moved its geometries out.
     pub fn scene_model(&self) -> &SceneModel {
+        debug_assert!(
+            !self.geometries_taken,
+            "the scene model is read after its geometries were moved out"
+        );
         &self.scene
     }
 
     /// The scene model, for answering `open`, with the geometries moved
     /// out of the model rather than copied: no frame reads them, and they
-    /// can take most of the geometry budget.
+    /// can take most of the geometry budget. Nothing may read them from
+    /// the model afterwards.
     pub fn take_scene_model(&mut self) -> SceneModel {
         let geometries = std::mem::take(&mut self.scene.geometries);
+        self.geometries_taken = true;
         let mut scene = self.scene.clone();
         scene.geometries = geometries;
         scene
@@ -346,9 +363,12 @@ impl VrmModel {
         }
 
         // Bind weights and colours add up, so many large ones can overflow;
-        // Celesta sees only the packed bytes, so the plugin checks them.
+        // Celesta sees only the packed bytes, so the plugin checks them:
+        // what is sent, every bind for MToon and the base colour and
+        // texture transform for an unlit material, which drops the rest.
         for (material, binds) in binds.iter().enumerate() {
-            if let Some(bind) = bind_not_finite(binds) {
+            let mtoon = self.mtoon.get(material).is_some_and(Option::is_some);
+            if let Some(bind) = bind_not_finite(binds, mtoon) {
                 return Err(FrameError(format!(
                     "material {material}'s {bind} is not finite"
                 )));
@@ -600,8 +620,10 @@ impl VrmModel {
     }
 }
 
-/// The first bind of `binds` that is set and not finite, by its VRM name.
-fn bind_not_finite(binds: &MtoonOverrides) -> Option<&'static str> {
+/// The first bind of `binds` that is set and not finite, by its VRM name:
+/// of all of them for an MToon material (`mtoon`), else of the base colour
+/// and texture transform, the only ones an unlit material sends.
+fn bind_not_finite(binds: &MtoonOverrides, mtoon: bool) -> Option<&'static str> {
     let MtoonOverrides {
         base_color,
         texture_offset,
@@ -634,7 +656,8 @@ fn bind_not_finite(binds: &MtoonOverrides) -> Option<&'static str> {
             outline_color.as_ref().map(|value| &value[..]),
         ),
     ];
-    named.into_iter().find_map(|(name, values)| {
+    let sent = if mtoon { named.len() } else { 3 };
+    named.into_iter().take(sent).find_map(|(name, values)| {
         values
             .is_some_and(|values| values.iter().any(|value| !value.is_finite()))
             .then_some(name)
@@ -1131,11 +1154,15 @@ mod tests {
         assert_eq!(scroll, 0.5);
         assert_eq!(frame.draws[1].params, None);
         assert_eq!(frame.draws[2].params, None);
+        // Before 0 the hair still does not move, so sends nothing either.
+        let frame = at(&mut model, -1.0);
+        assert!(frame.draws[0].params.is_some());
+        assert_eq!(frame.draws[1].params, None);
     }
 
     #[test]
     fn binds_not_finite_are_named() {
-        assert_eq!(bind_not_finite(&MtoonOverrides::default()), None);
+        assert_eq!(bind_not_finite(&MtoonOverrides::default(), true), None);
         type Set = fn(&mut MtoonOverrides);
         let cases: [(&str, Set); 8] = [
             ("color", |o| o.base_color = Some([0.0, 0.0, 0.0, f32::NAN])),
@@ -1157,10 +1184,13 @@ mod tests {
                 o.outline_color = Some([f32::NAN, 1.0, 1.0]);
             }),
         ];
-        for (name, set) in cases {
+        for (index, (name, set)) in cases.into_iter().enumerate() {
             let mut binds = MtoonOverrides::default();
             set(&mut binds);
-            assert_eq!(bind_not_finite(&binds), Some(name));
+            assert_eq!(bind_not_finite(&binds, true), Some(name));
+            // An unlit material sends only the first three.
+            let unlit = (index < 3).then_some(name);
+            assert_eq!(bind_not_finite(&binds, false), unlit, "{name}");
         }
     }
 
@@ -1248,6 +1278,24 @@ mod tests {
             message.contains("node 23 has morph weights that are not finite"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn taking_the_scene_model_moves_its_geometries_out() {
+        let mut model = avatar();
+        let expected = model.scene_model().clone();
+        assert_eq!(model.take_scene_model(), expected);
+        // Frames do not read the geometries.
+        rest(&mut model);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "its geometries were moved out")]
+    fn the_scene_model_is_not_read_once_taken() {
+        let mut model = avatar();
+        model.take_scene_model();
+        let _ = model.scene_model();
     }
 
     #[test]
@@ -1666,8 +1714,12 @@ mod tests {
 
     #[test]
     fn a_missing_file_is_an_io_error() {
-        let missing = TempDir::new().unwrap().path().join("missing.vrm");
-        assert!(matches!(VrmModel::load(&missing), Err(LoadError::Io(_))));
+        let directory = TempDir::new().unwrap();
+        let missing = directory.path().join("missing.vrm");
+        assert!(matches!(
+            VrmModel::load_with_cache(&missing, directory.path()),
+            Err(LoadError::Io(_))
+        ));
     }
 
     #[test]
