@@ -235,8 +235,9 @@ fn twist_sample_constraints_follow_their_sources() {
             .collect::<BTreeMap<usize, f32>>()
     };
 
-    // A roll track tilts the T-posed left forearm down in the body's plane:
-    // a swing, with no twist about any roll's axis, so no roll turns.
+    // A roll track of +90 tilts the T-posed left forearm (along +X) up to
+    // +Y in the body's plane: a swing, with no twist about any roll's axis,
+    // so no roll turns.
     let swing = turned(
         &mut model,
         json!({ "leftLowerArm": { "roll": ramp(0.0, 90.0) } }),
@@ -246,10 +247,13 @@ fn twist_sample_constraints_follow_their_sources() {
         "a swing turned a roll: {swing:?}"
     );
 
-    // Pitch twists the left hand about the arm's length, which its twist
-    // bones follow (`J_Roll_L_Hand` by weight 1, `J_Roll_L_LowerArm` by
-    // 0.5); yaw bends the elbow about Y, which `J_Roll_L_Elbow` follows by
-    // 0.5. The right arm's rolls stay put.
+    // A pitch of +90 twists the left hand about the arm's length (Rx(−90°),
+    // its front, +Z, turning up), which its twist bones follow
+    // (`J_Roll_L_Hand` by weight 1, `J_Roll_L_LowerArm` by 0.5); a yaw of
+    // +90 bends the elbow about Y (Ry(−90°), the forearm from +X to +Z,
+    // forward), which `J_Roll_L_Elbow` follows by 0.5. The angles are
+    // unsigned, so the expected turns are 90° times each weight. The right
+    // arm's rolls stay put.
     let twist = turned(
         &mut model,
         json!({ "leftHand": { "pitch": ramp(0.0, 90.0) } }),
@@ -337,11 +341,11 @@ fn vrma_moves_seed_san() {
     // Out of order on a model another performance warmed, the frames equal
     // fresh frames played in order, spring bones included.
     let mut warmed = open();
-    let nodding = data(json!({
+    let looking_up = data(json!({
         "motions": [{ "clip": "motion0", "loop": true }],
         "tracks": { "head": { "pitch": ramp(0.0, 20.0) } },
     }));
-    warmed.frame(2.5, &nodding).unwrap();
+    warmed.frame(2.5, &looking_up).unwrap();
     let mut fresh = open();
     let in_order: BTreeMap<u64, SceneFrame> = [0.5, 2.0, 3.0]
         .into_iter()

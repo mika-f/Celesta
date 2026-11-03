@@ -25,12 +25,13 @@ function Avatar() {
       mouth={mouth}
       // Needs ./assets/test.vrma (see README.md); the demo does not run without it.
       motions={[{ src: './assets/test.vrma', loop: true }]}
-      // A nod from frame 60 to 90, on top of the animation.
+      // A nod from frame 60 to 90, on top of the animation: a negative
+      // pitch looks down.
       tracks={{
         head: {
           pitch: [
             { frame: 60, value: 0 },
-            { frame: 75, value: 15, easing: 'ease-in-out' },
+            { frame: 75, value: -15, easing: 'ease-in-out' },
             { frame: 90, value: 0, easing: 'ease-in-out' },
           ],
         },

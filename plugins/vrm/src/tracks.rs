@@ -6,10 +6,12 @@
 //!   clock read at the frame's time to the microsecond, as the Live2D
 //!   plugin reads its tracks. A bone the avatar lacks is skipped.
 //! - **Rotations** are in degrees, in the bone's normalized frame (its turn
-//!   from rest in the model's axes, as a clip's): `q ← q · Ry(yaw) ·
-//!   Rx(pitch) · Rz(roll)`, after the motion. With the avatar facing +Z,
-//!   yaw turns the face to the avatar's left, pitch tips it forward and
-//!   down, and roll tilts its top toward the avatar's right.
+//!   from rest in the model's axes, as a clip's): `q ← q · Ry(−yaw) ·
+//!   Rx(−pitch) · Rz(roll)`, after the motion, in glTF's axes (Unity's
+//!   `Euler(pitch, yaw, roll)` order). The angles turn as the lookAt's do
+//!   (UniVRM's): with the avatar facing +Z, its right toward −X, a positive
+//!   yaw turns the face to the avatar's right, a positive pitch lifts it to
+//!   look up, and a positive roll tilts its top toward the avatar's right.
 //! - **The hips** alone take `x`, `y`, and `z`: metres added to their
 //!   position in model space, which the caller has put in `pose.hips` (the
 //!   rest position when no motion moves them).
@@ -123,8 +125,10 @@ pub(crate) fn apply_checked_tracks(
         let [pitch, yaw, roll, x, y, z] = values;
         if pitch.is_some() || yaw.is_some() || roll.is_some() {
             let degrees = |value: Option<f32>| value.unwrap_or(0.0).to_radians();
-            let turn = Quat::from_rotation_y(degrees(yaw))
-                * Quat::from_rotation_x(degrees(pitch))
+            // glTF's +Y and +X turn the face to the avatar's left and down,
+            // so yaw and pitch turn the other way, as the lookAt's do.
+            let turn = Quat::from_rotation_y(-degrees(yaw))
+                * Quat::from_rotation_x(-degrees(pitch))
                 * Quat::from_rotation_z(degrees(roll));
             let rotation = pose.rotations.entry(bone).or_insert(Quat::IDENTITY);
             *rotation *= turn;
@@ -263,33 +267,72 @@ mod tests {
         let (model, _files) = open();
         let turn =
             data(json!({ "tracks": { "head": { "yaw": keys(&[(0.0, 0.0), (1.0, 90.0)]) } } }));
+        // Yaw to the avatar's right, which is −X: 45° at 0.5 s, 90° from 1 s.
         let face = head(&model, 0.5, &turn, Vec3::Z);
         let half = std::f32::consts::FRAC_1_SQRT_2;
-        assert!(near(face, Vec3::new(half, 0.0, half)), "{face}");
+        assert!(near(face, Vec3::new(-half, 0.0, half)), "{face}");
         let face = head(&model, 2.0, &turn, Vec3::Z);
-        assert!(near(face, Vec3::X), "{face}");
+        assert!(near(face, Vec3::NEG_X), "{face}");
     }
 
     #[test]
-    fn pitch_tips_forward_and_roll_tilts_right() {
+    fn pitch_looks_up_and_roll_tilts_right() {
         let (model, _files) = open();
         let pitch = data(json!({ "tracks": { "head": { "pitch": keys(&[(0.0, 90.0)]) } } }));
         let face = head(&model, 0.0, &pitch, Vec3::Z);
-        assert!(near(face, Vec3::NEG_Y), "{face}");
+        assert!(near(face, Vec3::Y), "{face}");
+        let top = head(&model, 0.0, &pitch, Vec3::Y);
+        assert!(near(top, Vec3::NEG_Z), "{top}");
         // The avatar's right is −X.
         let roll = data(json!({ "tracks": { "head": { "roll": keys(&[(0.0, 90.0)]) } } }));
         let top = head(&model, 0.0, &roll, Vec3::Y);
         assert!(near(top, Vec3::NEG_X), "{top}");
         // Yaw, then pitch, then roll, each in the frame the one before left:
-        // yaw 90° then pitch 90° tips the face (now +X) down.
+        // yaw 90° turns the face to −X and the avatar's left side (+X) to
+        // +Z, then pitch 90° lifts the face up about that side.
         let both = data(json!({ "tracks": { "head": {
             "yaw": keys(&[(0.0, 90.0)]),
             "pitch": keys(&[(0.0, 90.0)]),
         } } }));
         let face = head(&model, 0.0, &both, Vec3::Z);
-        assert!(near(face, Vec3::NEG_Y), "{face}");
+        assert!(near(face, Vec3::Y), "{face}");
         let side = head(&model, 0.0, &both, Vec3::X);
-        assert!(near(side, Vec3::NEG_Z), "{side}");
+        assert!(near(side, Vec3::Z), "{side}");
+        let top = head(&model, 0.0, &both, Vec3::Y);
+        assert!(near(top, Vec3::X), "{top}");
+    }
+
+    #[test]
+    fn tracks_turn_as_the_look_at_does() {
+        let (model, _files) = open();
+        // A head yaw of +30 turns the face toward −X, the avatar's right.
+        let turn = data(json!({ "tracks": { "head": { "yaw": keys(&[(0.0, 30.0)]) } } }));
+        let face = head(&model, 0.0, &turn, Vec3::Z);
+        assert!(face.x < 0.0, "{face}");
+        // A lookAt yaw of +30 turns both eyes the same way.
+        let gaze = data(json!({ "lookAt": { "yaw": 30, "pitch": 0 } }));
+        let (pose, _) = model
+            .pose_and_weights(0.0, &gaze, Vec3::new(0.0, 0.8, 3.3))
+            .unwrap();
+        let worlds = model.tree().world(&pose);
+        for eye in [node::LEFT_EYE, node::RIGHT_EYE] {
+            let forward = worlds[eye].transform_vector3(Vec3::Z);
+            assert!(forward.x < 0.0, "eye {eye}: {forward}");
+            assert_eq!(forward.x.signum(), face.x.signum());
+        }
+        // And a pitch of +20 lifts both up.
+        let nod = data(json!({ "tracks": { "head": { "pitch": keys(&[(0.0, 20.0)]) } } }));
+        let face = head(&model, 0.0, &nod, Vec3::Z);
+        assert!(face.y > 0.0, "{face}");
+        let gaze = data(json!({ "lookAt": { "yaw": 0, "pitch": 20 } }));
+        let (pose, _) = model
+            .pose_and_weights(0.0, &gaze, Vec3::new(0.0, 0.8, 3.3))
+            .unwrap();
+        let worlds = model.tree().world(&pose);
+        for eye in [node::LEFT_EYE, node::RIGHT_EYE] {
+            let forward = worlds[eye].transform_vector3(Vec3::Z);
+            assert!(forward.y > 0.0, "eye {eye}: {forward}");
+        }
     }
 
     #[test]
@@ -422,7 +465,8 @@ mod tests {
         let micro = data_at_micro();
         let mut pose = ClipPose::default();
         apply_tracks(&micro, 0.5005005, &mut pose).unwrap();
-        let expected = Quat::from_rotation_y(10_f32.to_radians());
+        // A yaw of 10° to the avatar's right: −10° about glTF's +Y.
+        let expected = Quat::from_rotation_y(-10_f32.to_radians());
         let turn = pose.rotations[&HumanBone::Head];
         assert!(turn.abs_diff_eq(expected, 1e-6), "{turn}");
     }

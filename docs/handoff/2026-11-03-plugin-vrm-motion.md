@@ -126,10 +126,11 @@ Ported from `VrmAnimationImporter.cs`, `InitialRotationPoseProvider.cs`,
   bone the avatar lacks is skipped.
 - **Rotations** are degrees, applied after the motion in the bone's
   normalized frame (its turn from rest in the model's axes, as a clip's):
-  `q ← q · Ry(yaw) · Rx(pitch) · Rz(roll)`. With the avatar facing +Z,
-  yaw turns the face to the avatar's left, pitch tips it forward and down,
-  and roll tilts its top toward the avatar's right. (The `lookAt` prop's
-  yaw is positive to the avatar's right, as UniVRM's lookAt is.)
+  `q ← q · Ry(−yaw) · Rx(−pitch) · Rz(roll)` in glTF's axes (Unity's
+  `Euler(pitch, yaw, roll)` order). The angles turn as the `lookAt`
+  prop's do (UniVRM's): with the avatar facing +Z, its right toward −X,
+  positive yaw turns the face to the avatar's right, positive pitch looks
+  up, and positive roll tilts its top toward the avatar's right.
 - **The hips alone** take `x`, `y`, and `z`: metres added to their
   position in model space after the retarget (the rest position when no
   motion moves them). Tracks apply without any motion too.
@@ -409,8 +410,8 @@ New props of `@celesta-plugin/vrm`'s `Vrm`:
     fades, hips of rigs of different sizes, equal `from`s, clip
     expressions yielding to the layer, unknown clips, bad times, clip
     names, and the count, bytes, and broken-file refusals.
-  - `tracks`: a head turn, pitch and roll directions, composition after
-    the motion, hips moves, bones the avatar lacks, bad tracks, the data
+  - `tracks`: a head turn, pitch and roll directions, the same turn as
+    `lookAt`'s for positive yaw and pitch, composition after the motion, hips moves, bones the avatar lacks, bad tracks, the data
     shape.
   - `constraints`: each kind, weights defaulting to 1 and extrapolating,
     twist through rest rotations, aims following a parent turned this

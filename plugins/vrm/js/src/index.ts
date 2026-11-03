@@ -74,10 +74,10 @@ export interface VrmKeyframe {
 }
 
 /**
- * Keyframed turns of a bone, in degrees, added after the motions: `yaw`
- * turns it to the avatar's left, `pitch` tips it forward and down, `roll`
- * tilts its top toward the avatar's right. `x`, `y`, and `z` (hips only)
- * move the avatar, in metres.
+ * Keyframed turns of a bone, in degrees, added after the motions, turning
+ * as `lookAt`'s angles do: `yaw` turns it to the avatar's right, `pitch`
+ * lifts it to look up, `roll` tilts its top toward the avatar's right.
+ * `x`, `y`, and `z` (hips only) move the avatar, in metres.
  */
 export interface VrmTrack {
   pitch?: VrmKeyframe[];
@@ -113,7 +113,11 @@ export interface VrmProps extends CommonProps {
   mouthSmoothing?: number;
   /** Blinks, seeded as `<CharacterView>` portraits do. `false` never blinks. Default `{}`. */
   blink?: BlinkTiming | false;
-  /** Where the eyes look: the camera, a point in the avatar's space, or angles in degrees. */
+  /**
+   * Where the eyes look: the camera, a point in the avatar's space, or
+   * angles in degrees (`yaw` positive to the avatar's right, `pitch`
+   * positive up).
+   */
   lookAt?: 'camera' | [number, number, number] | { yaw: number; pitch: number };
   /** A framing of the humanoid, or a camera of its own. Default `'full'`. */
   camera?: 'full' | 'bust' | 'face' | VrmCamera;

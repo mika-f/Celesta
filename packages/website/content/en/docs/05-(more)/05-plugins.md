@@ -174,7 +174,7 @@ In the desktop app's Add menu, **VRM avatar** asks for a `.vrm` file and draws i
 
 `motions` plays VRM animation clips (`.vrma`, `VRMC_vrm_animation` 1.0), retargeted onto the avatar as UniVRM retargets them: each bone turns from its rest as it does in the clip, and the hips travel as far as the clip's do, scaled by the avatar's hips height over the clip's. Motions run in `from` order, and each plays until the next one starts. Before the first, the avatar stands at rest. A motion with `loop` repeats; without it, its last pose holds. Expression weights in a clip apply too, but the ones you set in `expressions` win.
 
-`tracks` adds keyframed turns after the motions, in the bone's own frame from rest: `yaw` turns it to the avatar's left, `pitch` tips it forward and down, and `roll` tilts its top toward the avatar's right. (`lookAt`'s yaw is positive to the right, as in UniVRM, so the two turn opposite ways.) `x`, `y`, and `z` on `hips` move the whole avatar, in metres. A keyframe's `frame` is a frame of the enclosing sequence; a fractional one is rounded to the nearest frame. This plays a walk, fades into an idle clip over 15 frames from frame 90, then turns the head to look over the avatar's left shoulder and back:
+`tracks` adds keyframed turns after the motions, in the bone's own frame from rest: the angles turn as `lookAt`'s do (as in UniVRM): `yaw` turns it to the avatar's right, `pitch` lifts it to look up, and `roll` tilts its top toward the avatar's right. Negative values turn the other way: a negative `yaw` turns to the left, a negative `pitch` nods down. `x`, `y`, and `z` on `hips` move the whole avatar, in metres. A keyframe's `frame` is a frame of the enclosing sequence; a fractional one is rounded to the nearest frame. This plays a walk, fades into an idle clip over 15 frames from frame 90, then turns the head to look over the avatar's left shoulder and back:
 
 ```tsx
 <Vrm
@@ -187,8 +187,8 @@ In the desktop app's Add menu, **VRM avatar** asks for a `.vrm` file and draws i
     head: {
       yaw: [
         { frame: 120, value: 0 },
-        { frame: 135, value: 40, easing: 'ease-in-out' },
-        { frame: 165, value: 40 },
+        { frame: 135, value: -40, easing: 'ease-in-out' },
+        { frame: 165, value: -40 },
         { frame: 180, value: 0, easing: 'ease-in-out' },
       ],
     },

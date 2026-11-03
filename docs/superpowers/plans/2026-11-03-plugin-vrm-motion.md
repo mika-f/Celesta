@@ -120,12 +120,12 @@ pub(crate) fn apply_tracks(tracks: &BTreeMap<String, TrackData>, time: f64, pose
 **Decisions:**
 - Keys are VRM humanoid bone names (`head`, `leftUpperArm`, …); another name → `FrameError` `"tracks name \"{name}\", which is not a humanoid bone"`; a bone the avatar lacks is skipped. `x`, `y`, `z` only on `hips` (`"only hips takes x, y, z tracks"`).
 - Each value is `keyframe_segment` at the track time, `from + (to − from) × eased` (an empty track is refused when read).
-- **Rotation:** degrees, in the normalized (model-aligned) frame: `q ← q · Ry(yaw) · Rx(pitch) · Rz(roll)`, after the motion. With the avatar facing +Z: yaw turns the face to the avatar's left, pitch tips it forward and down, roll tilts its top toward the avatar's right.
+- **Rotation:** degrees, in the normalized (model-aligned) frame: `q ← q · Ry(−yaw) · Rx(−pitch) · Rz(roll)`, after the motion. The angles turn as `lookAt`'s do (UniVRM's): with the avatar facing +Z, its right toward −X, yaw turns the face to the avatar's right, pitch looks up, roll tilts its top toward the avatar's right.
 - **Hips:** `(x, y, z)` metres added to the hips' retargeted world position (from the rest position when no motion moves it).
 - Tracks are applied to the clip pose before `Retarget::apply`, so the rest of the pipeline sees one pose.
 
 - [ ] **Step 1:** Tests (`tracks.rs`):
-  - `head_tracks_turn_the_head`: `head: {yaw: [{0 s, 0}, {1 s, 90}]}` at 0.5 s: the head's world rotation × (0, 0, 1) is (0.7071068, 0, 0.7071068); at 2 s (1, 0, 0).
+  - `head_tracks_turn_the_head`: `head: {yaw: [{0 s, 0}, {1 s, 90}]}` at 0.5 s: the head's world rotation × (0, 0, 1) is (−0.7071068, 0, 0.7071068); at 2 s (−1, 0, 0).
   - `tracks_compose_after_the_motion`: the synthetic clip at 1 s plus `leftUpperArm: {roll: 90}` (one keyframe) brings the arm back up: `leftLowerArm` at (0.40, 1.25, 0.45).
   - `hips_tracks_move_the_avatar`: `hips: {y: 0.1}` → hips at (0, 1.0, 0) with no motion.
   - `bad_tracks_are_refused`: `{"tail": {...}}` → `"not a humanoid bone"`; `head: {x: …}` → `"only hips"`.

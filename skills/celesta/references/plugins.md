@@ -91,7 +91,8 @@ import { Vrm } from '@celesta-plugin/vrm';
   `lipSync` (a `LipSyncTrack`) with `mouthSmoothing` (frames, default 2)
   when `mouth` is absent. `blink`: blink timing, `false` for none.
 - `lookAt`: `'camera'`, `[x, y, z]` in the avatar's space (metres, +Y up,
-  facing +Z, its left at +X), or `{ yaw, pitch }` in degrees.
+  facing +Z, its left at +X), or `{ yaw, pitch }` in degrees (yaw
+  positive to the avatar's right, pitch positive up).
 - `camera`: `'full'` (default), `'bust'`, `'face'`, or
   `{ position, target, fov?, near?, far? }`. Presets frame the avatar at
   rest on the layer's shape; `full` also fits a prop held out sideways,
@@ -139,8 +140,8 @@ import { Vrm } from '@celesta-plugin/vrm';
     head: {
       yaw: [
         { frame: 120, value: 0 },
-        { frame: 135, value: 40, easing: 'ease-in-out' },
-        { frame: 165, value: 40 },
+        { frame: 135, value: -40, easing: 'ease-in-out' },
+        { frame: 165, value: -40 },
         { frame: 180, value: 0, easing: 'ease-in-out' },
       ],
     },
@@ -159,9 +160,9 @@ import { Vrm } from '@celesta-plugin/vrm';
 - `tracks`: `{ bone: { pitch?, yaw?, roll?, x?, y?, z? } }`, each a list
   of `{ frame, value, easing? }` (a fractional frame is rounded to the
   nearest), on top of the motions in the bone's frame from rest: degrees,
-  `yaw` to the avatar's **left** (opposite to `lookAt`'s yaw, which is
-  positive to the right), `pitch` forward and down, `roll` top to the
-  avatar's right. `x`, `y`, `z`: metres, `hips` only (moves the avatar).
+  turning as `lookAt`'s angles do: `yaw` to the avatar's right, `pitch`
+  up, `roll` top to the avatar's right (negative `yaw` turns left,
+  negative `pitch` nods down). `x`, `y`, `z`: metres, `hips` only (moves the avatar).
   An unknown bone or axis, `x`/`y`/`z` off the hips, an empty axis, or a
   non-finite frame or value throws.
 - Node constraints follow every frame, in UniVRM's order. Spring bones
