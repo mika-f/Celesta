@@ -8,6 +8,7 @@
 //! the avatar facing +Z with its left at +X, matrices column-major, and
 //! texture coordinates from the top-left.
 
+mod camera;
 mod document;
 mod expressions;
 mod first_person;
@@ -22,6 +23,10 @@ mod provider;
 #[cfg(any(test, feature = "synthetic"))]
 pub mod synthetic;
 
+pub use camera::{
+    CameraData, CameraPreset, ExplicitCamera, LightsData, REFERENCE_AMBIENT, REFERENCE_LIGHT,
+    reference_lights,
+};
 pub use document::LoadError;
 pub use expressions::{ExpressionKey, Preset as ExpressionPreset};
 pub use humanoid::{HumanBone, Humanoid};

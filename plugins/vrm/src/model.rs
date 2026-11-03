@@ -34,6 +34,11 @@
 //! - **The lookAt** (see `look_at`) is read before the geometry. Each frame
 //!   it turns the eye bones, or writes the look expressions, for the gaze
 //!   `data.look_at` asks for, scaled by what other expressions leave of it.
+//! - **The camera** (see `camera`) frames the avatar at rest: what a
+//!   third-person camera sees, every vertex of every visible draw skinned
+//!   at rest without morphs, bounded once when the model opens (without a
+//!   visible vertex, the humanoid's bones at rest). The frame answers
+//!   `data.canvas`, else [`CANVAS`], and the lights `data` asks for.
 //! - **Budgets:** the model's geometry, draws, and skins together take at
 //!   most [`GEOMETRY_BUDGET`] bytes, and its accessors decode at most
 //!   `READ_BUDGET` (see `geometry`).
@@ -41,6 +46,7 @@
 //! Each frame runs UniVRM's order (`Vrm10Runtime.Process`): the base pose,
 //! constraints, the lookAt, expressions, spring bones, then world matrices.
 
+use crate::camera::{self, Framing, check_lights, frame_canvas};
 use crate::document::{Document, LoadError};
 use crate::expressions::{Applied, ExpressionKey, Expressions, read_expressions};
 use crate::first_person::hidden_nodes;
@@ -54,9 +60,8 @@ use crate::mtoon::{self, Mtoon, MtoonOverrides};
 use crate::nodes::{NodeTree, Pose};
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
 use celesta_plugin::{
-    AlphaMode, Camera, DrawInfo, DrawState, Geometry, Lights, Material, MaterialKind,
-    MaterialOverrides, Notice, NoticeLevel, Projection, SceneFrame, SceneModel, Skin,
-    UnlitMaterial,
+    AlphaMode, Camera, DrawInfo, DrawState, Geometry, Material, MaterialKind, MaterialOverrides,
+    Notice, NoticeLevel, SceneFrame, SceneModel, Skin, UnlitMaterial,
 };
 use glam::{Mat4, Vec3};
 use std::collections::btree_map::Entry;
@@ -64,19 +69,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::mem::size_of;
 use std::path::Path;
 
-/// The canvas a model opens with, in pixels.
+/// The canvas a model opens with, in pixels, and a frame's when `data` has
+/// none.
 pub const CANVAS: [f32; 2] = [1920.0, 1080.0];
-
-/// Where the camera stands until it frames the avatar (Task 7): 3.3 m in
-/// front of it, 0.8 m up, looking down −Z.
-const REST_EYE: Vec3 = Vec3::new(0.0, 0.8, 3.3);
-
-/// The camera presets' lens: 30° vertically.
-const PROJECTION: Projection = Projection::Perspective {
-    yfov: std::f32::consts::FRAC_PI_6,
-    near: 0.01,
-    far: 100.0,
-};
 
 /// Why a frame could not be made.
 #[derive(Debug, thiserror::Error)]
@@ -126,6 +121,10 @@ pub struct VrmModel {
     centres: Vec<Vec3>,
     expressions: Expressions,
     look_at: LookAt,
+    /// By node: its world matrix at rest.
+    rest: Vec<Mat4>,
+    /// What the camera presets frame.
+    framing: Framing,
     /// The bytes of the geometry budget the model takes.
     #[cfg_attr(not(test), allow(dead_code))]
     bytes: u64,
@@ -238,6 +237,8 @@ impl VrmModel {
             &mtoon,
             &read.base_transforms,
         );
+        let rest = tree.world(&tree.rest_pose());
+        let framing = framing(&draws, &skins, &rest, &humanoid);
         let scene = SceneModel {
             canvas: CANVAS,
             textures: read.textures,
@@ -266,6 +267,8 @@ impl VrmModel {
             centres: draws.centres,
             expressions,
             look_at,
+            rest,
+            framing,
             bytes: budget.total - budget.left,
         })
     }
@@ -290,11 +293,12 @@ impl VrmModel {
     /// time, and data always give the same frame.
     pub fn frame(&mut self, time: f64, data: &PerformanceData) -> Result<SceneFrame, FrameError> {
         // The camera, and the eye a `"camera"` gaze looks at.
-        let camera = Camera {
-            view: Mat4::from_translation(-REST_EYE).to_cols_array(),
-            projection: PROJECTION,
-        };
-        let (mut pose, applied) = self.pose_and_weights(time, data, REST_EYE)?;
+        let (canvas, camera, eye) = self.camera(data)?;
+        if let Some(lights) = &data.lights {
+            check_lights(lights)?;
+        }
+        let lights = camera::lights(data.lights.as_ref());
+        let (mut pose, applied) = self.pose_and_weights(time, data, eye)?;
         let mut morph: Vec<Vec<f32>> = self
             .draws
             .iter()
@@ -369,12 +373,31 @@ impl VrmModel {
 
         Ok(SceneFrame {
             camera,
-            lights: Lights::default(),
+            lights,
             time,
             draws,
             skins,
-            canvas: None,
+            canvas: Some(canvas),
         })
+    }
+
+    /// The frame's canvas, its camera, and the camera's eye, as `data`
+    /// asks for them.
+    fn camera(&self, data: &PerformanceData) -> Result<([f32; 2], Camera, Vec3), FrameError> {
+        let canvas = frame_canvas(data.canvas)?;
+        let (camera, eye) = camera::camera(
+            data.camera.as_ref(),
+            &self.framing,
+            &self.humanoid,
+            &self.rest,
+            canvas[0] / canvas[1],
+        )?;
+        Ok((canvas, camera, eye))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn framing(&self) -> &Framing {
+        &self.framing
     }
 
     /// By material: what the expressions' `applied` weights bind, with the
@@ -433,7 +456,8 @@ impl VrmModel {
         time: f64,
         data: &PerformanceData,
     ) -> Result<Vec<MtoonOverrides>, FrameError> {
-        let (_, applied) = self.pose_and_weights(time, data, REST_EYE)?;
+        let (_, _, eye) = self.camera(data)?;
+        let (_, applied) = self.pose_and_weights(time, data, eye)?;
         let mut morph: Vec<Vec<f32>> = self
             .draws
             .iter()
@@ -633,6 +657,65 @@ fn read_skins(
             })
         })
         .collect()
+}
+
+/// What the camera presets frame: the bounds of every vertex of every
+/// visible draw at rest, skinned by the skins' joints at `rest` (world
+/// matrices by node) without morphs, else placed by its node. Without a
+/// visible vertex, the bounds of the humanoid's bones at rest.
+fn framing(draws: &Draws, skins: &[SkinSource], rest: &[Mat4], humanoid: &Humanoid) -> Framing {
+    let skinning: Vec<Vec<Mat4>> = skins
+        .iter()
+        .map(|skin| {
+            skin.joints
+                .iter()
+                .zip(&skin.inverse_binds)
+                .map(|(&node, bind)| rest[node] * *bind)
+                .collect()
+        })
+        .collect();
+    let mut bounds: Option<(Vec3, Vec3)> = None;
+    let include = |bounds: &mut Option<(Vec3, Vec3)>, point: Vec3| {
+        *bounds = Some(match *bounds {
+            Some((min, max)) => (min.min(point), max.max(point)),
+            None => (point, point),
+        });
+    };
+    for (source, info) in draws.sources.iter().zip(&draws.infos) {
+        if !source.visible {
+            continue;
+        }
+        let geometry = &draws.geometries[info.geometry];
+        let skinned = source
+            .skin
+            .zip(geometry.joints.as_ref().zip(geometry.weights.as_ref()));
+        for (vertex, &position) in geometry.positions.iter().enumerate() {
+            let position = Vec3::from(position);
+            let point = match skinned {
+                Some((skin, (joints, weights))) => joints[vertex]
+                    .iter()
+                    .zip(weights[vertex])
+                    .filter(|(_, weight)| *weight != 0.0)
+                    .filter_map(|(&joint, weight)| {
+                        let matrix = skinning[skin].get(usize::from(joint))?;
+                        Some(matrix.transform_point3(position) * weight)
+                    })
+                    .sum(),
+                None => rest[source.node].transform_point3(position),
+            };
+            include(&mut bounds, point);
+        }
+    }
+    if bounds.is_none() {
+        for &node in humanoid.bones.values() {
+            include(&mut bounds, rest[node].w_axis.truncate());
+        }
+    }
+    let (bounds_min, bounds_max) = bounds.unwrap_or((Vec3::ZERO, Vec3::ZERO));
+    Framing {
+        bounds_min,
+        bounds_max,
+    }
 }
 
 /// By node: whether it is in the default scene (else scene 0), which is
@@ -861,7 +944,7 @@ fn read_draws(
 mod tests {
     use super::*;
     use crate::synthetic::{SyntheticVrm, node};
-    use celesta_plugin::{AlphaMode, MaterialKind, NoticeLevel, UnlitMaterial};
+    use celesta_plugin::{AlphaMode, MaterialKind, NoticeLevel, Projection, UnlitMaterial};
     use serde_json::{Value, json};
     use tempfile::TempDir;
 
@@ -950,11 +1033,13 @@ mod tests {
         let indices: Vec<usize> = frame.draws.iter().map(|draw| draw.index).collect();
         assert_eq!(indices, [0, 1, 2]);
         assert_eq!(frame.time, 0.0);
-        assert_eq!(frame.lights, Lights::default());
-        assert!(
-            Mat4::from_cols_array(&frame.camera.view)
-                .abs_diff_eq(Mat4::from_translation(Vec3::new(0.0, -0.8, -3.3)), 1e-6)
-        );
+        assert_eq!(frame.lights, crate::reference_lights());
+        assert_eq!(frame.canvas, Some(CANVAS));
+        // The `full` preset (see `camera`).
+        assert!(Mat4::from_cols_array(&frame.camera.view).abs_diff_eq(
+            Mat4::from_translation(Vec3::new(0.0, -0.8, -3.2842047)),
+            1e-5
+        ));
         assert_eq!(
             frame.camera.projection,
             Projection::Perspective {

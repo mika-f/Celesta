@@ -310,6 +310,7 @@ fn rest_world_rotation(tree: &NodeTree, node: usize) -> Option<Quat> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::{CameraData, ExplicitCamera};
     use crate::model::VrmModel;
     use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
     use crate::synthetic::{SyntheticVrm, node};
@@ -344,6 +345,7 @@ mod tests {
                 .map(|&(name, weight)| (name.to_string(), weight))
                 .collect(),
             look_at,
+            ..PerformanceData::default()
         }
     }
 
@@ -351,7 +353,7 @@ mod tests {
         Some(LookAtData::Angles { yaw, pitch })
     }
 
-    /// The camera eye frames are seen from until Task 7 frames the avatar.
+    /// A camera eye in front of the avatar.
     const EYE: Vec3 = Vec3::new(0.0, 0.8, 3.3);
 
     /// The left and right eyes' forward, (0, 0, 1) turned by their worlds,
@@ -533,11 +535,20 @@ mod tests {
         let mut model = load(&with_look_at(|look_at| {
             look_at["type"] = json!("expression")
         }));
-        let point = Some(LookAtData::Point(EYE.to_array()));
-        assert_eq!(
-            model.frame(0.0, &data(camera, &[])).unwrap(),
-            model.frame(0.0, &data(point, &[])).unwrap()
-        );
+        let seen_from = |look_at: Option<LookAtData>| PerformanceData {
+            camera: Some(CameraData::Explicit(ExplicitCamera {
+                position: [2.0, 1.46, 2.0],
+                target: [0.0, 1.4, 0.0],
+                fov: None,
+                near: None,
+                far: None,
+            })),
+            ..data(look_at, &[])
+        };
+        let point = Some(LookAtData::Point([2.0, 1.46, 2.0]));
+        let at_camera = model.frame(0.0, &seen_from(camera)).unwrap();
+        assert_eq!(at_camera, model.frame(0.0, &seen_from(point)).unwrap());
+        assert_ne!(at_camera, model.frame(0.0, &seen_from(None)).unwrap());
     }
 
     #[test]
