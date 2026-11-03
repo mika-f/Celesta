@@ -82,8 +82,10 @@ Files ported from UniVRM carry its MIT notice and name their source.
     the VRM Add-on for Blender`;
   - no `VRMC_vrm`: `this glTF file has no VRMC_vrm extension: it is not a
     VRM 1.0 avatar`;
-  - `specVersion` not `1.0` nor starting `1.0-`: `VRMC_vrm specVersion {v}
-    is not 1.0`;
+  - no `specVersion` string, which the schema requires: `VRMC_vrm has no
+    specVersion`. Its value is not checked, as UniVRM's importer does not
+    check it (`Vrm10Data.Parse`): any version is read as 1.0, and only
+    the fields can refuse the file;
   - a bone VRM 1.0 requires missing (`hips spine head`, both arms' upper,
     lower, and hand, both legs' upper, lower, and foot): `the humanoid has
     no {bone} bone, which VRM 1.0 requires`; a bone past the nodes, or two

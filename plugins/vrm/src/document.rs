@@ -134,16 +134,13 @@ impl Document {
                     .into()
             }));
         };
-        match vrm["specVersion"].as_str() {
-            Some(version) if version == "1.0" || version.starts_with("1.0-") => {}
-            Some(version) => {
-                return Err(LoadError::Invalid(format!(
-                    "VRMC_vrm specVersion {version} is not 1.0"
-                )));
-            }
-            None => {
-                return Err(LoadError::Invalid("VRMC_vrm has no specVersion".into()));
-            }
+        // The schema requires a `specVersion`, which `vrm-spec` does not
+        // read, but its value is not checked: UniVRM's importer reads the
+        // extension whatever its version (`Vrm10Data.Parse`,
+        // `Vrm10Data.cs` lines 30-36 at `efd20f62`, a bare `TryGet`), so a
+        // file is read as UniVRM reads it and only its fields refuse it.
+        if !vrm["specVersion"].is_string() {
+            return Err(LoadError::Invalid("VRMC_vrm has no specVersion".into()));
         }
         let vrm = VRMCVrmSchema::deserialize(vrm)
             .map_err(|error| LoadError::Invalid(format!("VRMC_vrm is malformed: {error}")))?;
@@ -282,20 +279,28 @@ mod tests {
     }
 
     #[test]
-    fn spec_version_other_than_1_0_is_refused() {
-        let message = refusal(&SyntheticVrm {
-            spec_version: "0.9".into(),
-            ..SyntheticVrm::avatar()
+    fn any_spec_version_is_read_as_univrm_reads_it() {
+        for version in ["1.0-beta", "2.0", "0.9"] {
+            let document = Document::parse(
+                &SyntheticVrm {
+                    spec_version: version.into(),
+                    ..SyntheticVrm::avatar()
+                }
+                .glb(),
+            )
+            .unwrap_or_else(|error| panic!("{version}: {error}"));
+            assert_eq!(document.vrm.meta.name, "Synthetic");
+        }
+        // The schema still requires one.
+        let glb = SyntheticVrm::avatar().glb_with(|root| {
+            let vrm = root["extensions"]["VRMC_vrm"].as_object_mut().unwrap();
+            vrm.remove("specVersion");
         });
-        assert!(message.contains("specVersion 0.9"), "{message}");
-        Document::parse(
-            &SyntheticVrm {
-                spec_version: "1.0-beta".into(),
-                ..SyntheticVrm::avatar()
-            }
-            .glb(),
-        )
-        .unwrap();
+        let message = match Document::parse(&glb) {
+            Ok(_) => panic!("the file opened"),
+            Err(error) => error.to_string(),
+        };
+        assert!(message.contains("VRMC_vrm has no specVersion"), "{message}");
     }
 
     #[test]

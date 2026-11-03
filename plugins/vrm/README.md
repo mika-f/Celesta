@@ -17,8 +17,10 @@ it differs from UniVRM: `docs/handoff/2026-11-03-plugin-vrm.md`.
   buffers inside the file.
 - A VRM 0.x file (the `VRM` extension) is refused with a message saying so:
   convert it to VRM 1.0 with UniVRM or the VRM Add-on for Blender.
-- A file without `VRMC_vrm`, with a `specVersion` other than 1.0, or whose
-  humanoid lacks a bone VRM 1.0 requires is refused, naming what is wrong.
+- A file without `VRMC_vrm`, or whose humanoid lacks a bone VRM 1.0
+  requires, is refused, naming what is wrong. As in UniVRM, the
+  extensions' `specVersion` is not checked: a file is read as 1.0
+  whatever its version says.
 
 ## Building
 
