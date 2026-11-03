@@ -312,6 +312,7 @@ fn textured(mut material: Material, texture: usize) -> Material {
     let base_color_texture = match &mut material.kind {
         MaterialKind::Unlit(unlit) => &mut unlit.base_color_texture,
         MaterialKind::Mtoon(mtoon) => &mut mtoon.base_color_texture,
+        MaterialKind::Custom(_) => unreachable!("the turntable has no custom materials"),
     };
     *base_color_texture = Some(TextureRef {
         texture,
@@ -331,6 +332,7 @@ fn model() -> SceneModel {
         textures: vec![checker(), leaf()],
         geometries: vec![cube(), square()],
         skins: Vec::new(),
+        shaders: Vec::new(),
         materials: vec![
             toon(),
             // Linear blue at half alpha, blended over what is behind.
@@ -394,6 +396,7 @@ impl ContentProvider for TurntableProvider {
             morph_weights: Vec::new(),
             center: None,
             overrides: Default::default(),
+            params: None,
         };
         // The pane stands in front of the cube's left half; the leaf leans
         // out of the top of its right half, its stem inside the cube at

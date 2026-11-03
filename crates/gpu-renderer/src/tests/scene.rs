@@ -93,6 +93,7 @@ fn valid() -> Scenes {
         morph_weights: vec![0.0],
         center: None,
         overrides: Default::default(),
+        params: None,
     };
     let mut view = IDENTITY;
     view[14] = -2.0;
@@ -110,6 +111,7 @@ fn valid() -> Scenes {
             }],
             geometries: vec![square(false), square(true)],
             skins: vec![Skin { joints: 2 }],
+            shaders: vec![],
             materials: vec![Material {
                 alpha_mode: AlphaMode::Opaque,
                 double_sided: false,
@@ -227,6 +229,7 @@ fn one_square() -> Scenes {
             textures: vec![],
             geometries: vec![square(false)],
             skins: vec![],
+            shaders: vec![],
             materials: vec![plain([1.0; 4])],
             draws: vec![DrawInfo {
                 geometry: 0,
@@ -252,6 +255,7 @@ fn one_square() -> Scenes {
                 morph_weights: vec![0.0],
                 center: None,
                 overrides: Default::default(),
+                params: None,
             }],
             skins: vec![],
         },

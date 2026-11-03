@@ -12,8 +12,9 @@
 use crate::mesh::{MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState, TextureSource};
 use crate::provider::{ContentFrame, ContentModel, ContentProvider, ModelId, Notice, Opened};
 use crate::scene::{
-    Camera, ColorSpace, DrawInfo, DrawState, Geometry, Lights, Material, MaterialOverrides,
-    MorphTarget, Sampler, SceneFrame, SceneModel, SceneTexture, Skin,
+    Camera, ColorSpace, DrawInfo, DrawState, Geometry, Lights, Material, MaterialKind,
+    MaterialOverrides, MorphTarget, Sampler, SceneFrame, SceneModel, SceneShader, SceneTexture,
+    Skin,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -197,7 +198,13 @@ struct SceneOpenedHeader {
     textures: Vec<SceneTextureHeader>,
     geometries: Vec<GeometryHeader>,
     skins: Vec<Skin>,
+    #[serde(default)]
+    shaders: Vec<SceneShader>,
     materials: Vec<Material>,
+    /// How many bytes of parameters each material has in the payload, after
+    /// the inline pixels, or none when no material has any.
+    #[serde(default)]
+    material_params: Vec<u32>,
     draws: Vec<DrawInfo>,
 }
 
@@ -253,6 +260,10 @@ struct DrawStateHeader {
     /// How many morph weights this draw has in the payload.
     #[serde(default)]
     weights: u32,
+    /// How many bytes of parameters follow this draw's morph weights, when
+    /// it has any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    params: Option<u32>,
 }
 
 fn push_f32(payload: &mut Vec<u8>, values: impl IntoIterator<Item = f32>) {
@@ -518,7 +529,8 @@ pub fn decode_frame(message: &Message) -> Result<MeshFrame, ProtocolError> {
 
 /// `{"type":"opened"}` for a scene, without `kind` or `notices`: its
 /// header, then each geometry's vertex streams and morph targets, every
-/// geometry's indices, and inline textures' pixels.
+/// geometry's indices, inline textures' pixels, and each custom material's
+/// parameters.
 fn encode_scene_model(id: ModelId, model: &SceneModel) -> Message {
     let header = SceneOpenedHeader {
         model: id.0,
@@ -548,7 +560,21 @@ fn encode_scene_model(id: ModelId, model: &SceneModel) -> Message {
             })
             .collect(),
         skins: model.skins.clone(),
+        shaders: model.shaders.clone(),
         materials: model.materials.clone(),
+        material_params: if model
+            .materials
+            .iter()
+            .all(|material| material_params(material).is_empty())
+        {
+            Vec::new()
+        } else {
+            model
+                .materials
+                .iter()
+                .map(|material| material_params(material).len() as u32)
+                .collect()
+        },
         draws: model.draws.clone(),
     };
     let mut payload = Vec::new();
@@ -586,13 +612,41 @@ fn encode_scene_model(id: ModelId, model: &SceneModel) -> Message {
         &mut payload,
         model.textures.iter().map(|texture| &texture.source),
     );
+    for material in &model.materials {
+        payload.extend_from_slice(material_params(material));
+    }
     let mut header = serde_json::to_value(header).expect("serializable");
     header["type"] = json!("opened");
     Message { header, payload }
 }
 
+/// The parameter bytes `material` sends in the payload: a custom
+/// material's, and none for the others.
+fn material_params(material: &Material) -> &[u8] {
+    match &material.kind {
+        MaterialKind::Custom(custom) => &custom.params,
+        MaterialKind::Unlit(_) | MaterialKind::Mtoon(_) => &[],
+    }
+}
+
 fn decode_scene_model(message: &Message) -> Result<(ModelId, SceneModel), ProtocolError> {
     let header = SceneOpenedHeader::deserialize(&message.header).map_err(malformed)?;
+    let mut materials = header.materials;
+    let params = &header.material_params;
+    if !(params.is_empty() || params.len() == materials.len()) {
+        return Err(malformed(format!(
+            "{} materialParams for {} materials",
+            params.len(),
+            materials.len()
+        )));
+    }
+    for (index, (material, &bytes)) in materials.iter().zip(params).enumerate() {
+        if bytes > 0 && !matches!(material.kind, MaterialKind::Custom(_)) {
+            return Err(malformed(format!(
+                "material {index} is not custom but has {bytes} parameter bytes"
+            )));
+        }
+    }
     let mut cursor = Cursor {
         bytes: &message.payload,
     };
@@ -663,6 +717,11 @@ fn decode_scene_model(message: &Message) -> Result<(ModelId, SceneModel), Protoc
             })
         })
         .collect::<Result<_, ProtocolError>>()?;
+    for (material, &bytes) in materials.iter_mut().zip(params) {
+        if let MaterialKind::Custom(custom) = &mut material.kind {
+            custom.params = cursor.take(bytes as usize)?.to_vec();
+        }
+    }
     cursor.finish()?;
     Ok((
         ModelId(header.model),
@@ -671,7 +730,8 @@ fn decode_scene_model(message: &Message) -> Result<(ModelId, SceneModel), Protoc
             textures,
             geometries,
             skins: header.skins,
-            materials: header.materials,
+            shaders: header.shaders,
+            materials,
             draws: header.draws,
         },
     ))
@@ -679,7 +739,8 @@ fn decode_scene_model(message: &Message) -> Result<(ModelId, SceneModel), Protoc
 
 /// `{"type":"frame"}` for a scene: the camera, lights, and every draw's
 /// state, then every skin's skinning matrices and every draw's morph
-/// weights in order.
+/// weights, each followed by the draw's parameters when it has any, in
+/// order.
 fn encode_scene_frame(frame: &SceneFrame) -> Message {
     let header = SceneFrameHeader {
         camera: frame.camera,
@@ -695,6 +756,7 @@ fn encode_scene_frame(frame: &SceneFrame) -> Message {
                 center: draw.center,
                 overrides: draw.overrides,
                 weights: draw.morph_weights.len() as u32,
+                params: draw.params.as_ref().map(|params| params.len() as u32),
             })
             .collect(),
         skins: frame
@@ -711,6 +773,9 @@ fn encode_scene_frame(frame: &SceneFrame) -> Message {
     }
     for draw in &frame.draws {
         push_f32(&mut payload, draw.morph_weights.iter().copied());
+        if let Some(params) = &draw.params {
+            payload.extend_from_slice(params);
+        }
     }
     let mut header = serde_json::to_value(header).expect("serializable");
     header["type"] = json!("frame");
@@ -731,13 +796,19 @@ fn decode_scene_frame(message: &Message) -> Result<SceneFrame, ProtocolError> {
         .draws
         .into_iter()
         .map(|draw| {
+            let morph_weights = cursor.f32s(draw.weights)?;
+            let params = draw
+                .params
+                .map(|bytes| cursor.take(bytes as usize).map(<[u8]>::to_vec))
+                .transpose()?;
             Ok(DrawState {
                 index: draw.index,
                 visible: draw.visible,
                 world: draw.world,
-                morph_weights: cursor.f32s(draw.weights)?,
+                morph_weights,
                 center: draw.center,
                 overrides: draw.overrides,
+                params,
             })
         })
         .collect::<Result<_, ProtocolError>>()?;
@@ -911,9 +982,9 @@ mod tests {
     use super::*;
     use crate::provider::{NoticeLevel, PluginError};
     use crate::scene::{
-        AlphaMode, DirectionalLight, Filter, MaterialKind, MtoonMaterial, OutlineWidthMode,
-        Projection, ScaledTextureSlot, TextureRef, TextureSlot, TextureTransform, UnlitMaterial,
-        Wrap,
+        AlphaMode, CustomMaterial, DirectionalLight, EmptyTexel, Filter, MaterialKind,
+        MtoonMaterial, OutlinePass, OutlineWidthMode, Projection, ScaledTextureSlot, SceneShader,
+        ShaderTexture, TextureRef, TextureSlot, TextureTransform, UnlitMaterial, Wrap,
     };
 
     fn model() -> MeshModel {
@@ -1215,6 +1286,7 @@ mod tests {
                 },
             ],
             skins: vec![Skin { joints: 3 }],
+            shaders: Vec::new(),
             materials: vec![
                 unlit(
                     AlphaMode::Mask { cutoff: 0.5 },
@@ -1288,6 +1360,7 @@ mod tests {
                         texture_offset: Some([0.5, 0.0]),
                         ..MaterialOverrides::default()
                     },
+                    params: None,
                 },
                 DrawState {
                     index: 1,
@@ -1296,6 +1369,7 @@ mod tests {
                     morph_weights: vec![0.75, 0.5, 0.125],
                     center: Some([0.0, 1.5, -2.0]),
                     overrides: MaterialOverrides::default(),
+                    params: None,
                 },
             ],
             skins: vec![vec![world, [2.0; 16], [-0.5; 16]]],
@@ -1444,6 +1518,158 @@ mod tests {
             decode_content_frame(&message, ContentKind::Scene).unwrap(),
             frame
         );
+    }
+
+    fn custom(shader: usize, params: Vec<u8>) -> Material {
+        Material {
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
+            kind: MaterialKind::Custom(CustomMaterial {
+                shader,
+                params,
+                textures: vec![Some(0), None],
+                outline: Some(OutlinePass::default()),
+                requires_tangents: shader == 1,
+            }),
+        }
+    }
+
+    #[test]
+    fn custom_scene_model_round_trips() {
+        let mut model = scene_model();
+        model.shaders = vec![
+            SceneShader {
+                name: Some("toon".into()),
+                wgsl: "struct Params { color: vec4f }".into(),
+                textures: vec![
+                    ShaderTexture {
+                        name: Some("base".into()),
+                        empty: EmptyTexel::White,
+                    },
+                    ShaderTexture {
+                        name: None,
+                        empty: EmptyTexel::Black,
+                    },
+                ],
+            },
+            SceneShader {
+                name: None,
+                wgsl: "struct Params { a: vec4f, b: vec4f }".into(),
+                textures: Vec::new(),
+            },
+        ];
+        model.materials = vec![
+            custom(0, (0..16).collect()),
+            custom(1, (100..132).collect()),
+            unlit(AlphaMode::Opaque, None),
+        ];
+        let opened = Opened {
+            model: ModelId(9),
+            content: model.into(),
+            notices: vec![],
+        };
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &encode_opened(&opened)).unwrap();
+        let message = read_message(&mut &bytes[..]).unwrap().unwrap();
+        assert_eq!(message.header["materialParams"], json!([16, 32, 0]));
+        assert_eq!(
+            message.header["shaders"][0]["textures"][1]["empty"],
+            "black"
+        );
+        assert!(message.header["materials"][0].get("params").is_none());
+        // The inline pixels, then each material's parameters.
+        let params: Vec<u8> = (0..16).chain(100..132).collect();
+        assert!(message.payload.ends_with(&params));
+        let pixels = &message.payload[..message.payload.len() - params.len()];
+        assert!(pixels.ends_with(&[1, 2, 3, 4, 5, 6, 7, 8]));
+        assert_eq!(decode_opened(&message).unwrap(), opened);
+    }
+
+    #[test]
+    fn scene_model_without_parameters_sends_no_material_params() {
+        let message = encode_opened(&scene_opened());
+        assert_eq!(message.header["materialParams"], json!([]));
+        assert_eq!(message.header["shaders"], json!([]));
+    }
+
+    #[test]
+    fn draw_params_round_trip() {
+        let mut frame = scene_frame(0.5);
+        let params: Vec<u8> = (0..32).collect();
+        frame.draws[0].params = Some(params.clone());
+        let frame = ContentFrame::Scene(frame);
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &encode_content_frame(&frame)).unwrap();
+        let message = read_message(&mut &bytes[..]).unwrap().unwrap();
+        assert_eq!(message.header["draws"][0]["params"], 32);
+        assert!(message.header["draws"][1].get("params").is_none());
+        // The skins' matrices, then draw 0's weights and parameters, then
+        // draw 1's weights.
+        let mut draws = Vec::new();
+        push_f32(&mut draws, [0.25, 0.5]);
+        draws.extend_from_slice(&params);
+        push_f32(&mut draws, [0.75, 0.5, 0.125]);
+        assert_eq!(message.payload.len(), 3 * 64 + draws.len());
+        assert!(message.payload.ends_with(&draws));
+        assert_eq!(
+            decode_content_frame(&message, ContentKind::Scene).unwrap(),
+            frame
+        );
+    }
+
+    #[test]
+    fn material_params_that_do_not_fit_are_malformed() {
+        let refused = |message: &Message, expected: &str| match decode_opened(message) {
+            Err(ProtocolError::Malformed(error)) => {
+                assert!(error.contains(expected), "{expected} in {error}");
+            }
+            other => panic!("{other:?}"),
+        };
+
+        // Two materials, three entries.
+        let mut message = encode_opened(&scene_opened());
+        message.header["materialParams"] = json!([0, 0, 4]);
+        message.payload.extend_from_slice(&[0; 4]);
+        refused(&message, "3 materialParams for 2 materials");
+
+        // Bytes for an unlit material.
+        let mut model = scene_model();
+        model.materials.truncate(1);
+        let mut message = encode_opened(&Opened {
+            model: ModelId(1),
+            content: model.into(),
+            notices: vec![],
+        });
+        message.header["materialParams"] = json!([4]);
+        message.payload.extend_from_slice(&[0; 4]);
+        refused(
+            &message,
+            "material 0 is not custom but has 4 parameter bytes",
+        );
+    }
+
+    #[test]
+    fn parameter_bytes_past_the_payload_are_malformed() {
+        // A count far past the payload is refused, not allocated.
+        let mut model = scene_model();
+        model.materials = vec![custom(0, vec![0; 16])];
+        let mut message = encode_opened(&Opened {
+            model: ModelId(1),
+            content: model.into(),
+            notices: vec![],
+        });
+        message.header["materialParams"] = json!([u32::MAX]);
+        assert!(matches!(
+            decode_opened(&message),
+            Err(ProtocolError::Malformed(_))
+        ));
+
+        let mut frame = encode_content_frame(&scene_frame(0.0).into());
+        frame.header["draws"][1]["params"] = json!(u32::MAX);
+        assert!(matches!(
+            decode_content_frame(&frame, ContentKind::Scene),
+            Err(ProtocolError::Malformed(_))
+        ));
     }
 
     #[test]

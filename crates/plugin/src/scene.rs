@@ -9,6 +9,19 @@
 use crate::mesh::TextureSource;
 use serde::{Deserialize, Serialize};
 
+/// The most shaders one scene model has.
+pub const MAX_SCENE_SHADERS: usize = 32;
+
+/// The most bytes of WGSL one scene shader has.
+pub const MAX_SHADER_BYTES: usize = 262_144;
+
+/// The most texture slots one scene shader has: WebGPU's default 16
+/// sampled textures and 16 samplers a stage, 4 kept for Celesta.
+pub const MAX_MATERIAL_TEXTURES: usize = 12;
+
+/// The most bytes a scene shader's `Params` takes.
+pub const MAX_MATERIAL_PARAMS: usize = 512;
+
 /// A scene's fixed part, sent once when its assets are opened.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneModel {
@@ -17,6 +30,9 @@ pub struct SceneModel {
     pub textures: Vec<SceneTexture>,
     pub geometries: Vec<Geometry>,
     pub skins: Vec<Skin>,
+    /// The WGSL the model's custom materials are drawn with, each sent
+    /// once however many materials use it. At most `MAX_SCENE_SHADERS`.
+    pub shaders: Vec<SceneShader>,
     pub materials: Vec<Material>,
     /// What can be drawn, each a geometry with a material: the units frames
     /// place and Celesta sorts transparent draws by.
@@ -186,6 +202,144 @@ fn is_zero(value: &i32) -> bool {
 pub enum MaterialKind {
     Unlit(UnlitMaterial),
     Mtoon(MtoonMaterial),
+    Custom(CustomMaterial),
+}
+
+/// A material's WGSL, written against Celesta's scene material interface
+/// (`docs/handoff/2026-11-03-plugin-scene-materials.md`), which Celesta
+/// checks and compiles once however many materials use it.
+///
+/// The WGSL declares `struct Params`, the layout of its materials'
+/// parameters, at most `MAX_MATERIAL_PARAMS` bytes, and defines
+/// `fn material_fragment(fragment: Fragment) -> vec4f`. It may define
+/// `fn material_vertex(vertex: Vertex) -> VertexOffset`, and, for materials
+/// with an `outline`, `fn material_outline_fragment(fragment: Fragment) ->
+/// vec4f` and `fn material_outline_vertex(vertex: Vertex) -> VertexOffset`.
+/// Slot `k` of `textures` is its `texture_k` and `sampler_k`. It reads
+/// Celesta's `frame`, `draw`, and `params` and binds nothing of its own,
+/// and names starting with `celesta` are Celesta's. At most
+/// `MAX_SHADER_BYTES` of WGSL and `MAX_MATERIAL_TEXTURES` slots.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneShader {
+    /// What Celesta's messages call the shader.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub wgsl: String,
+    /// The shader's texture slots: slot `k` is `texture_k` and `sampler_k`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub textures: Vec<ShaderTexture>,
+}
+
+/// A shader's texture slot.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShaderTexture {
+    /// What Celesta's messages call the slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// What the slot samples when a material leaves it empty.
+    #[serde(default)]
+    pub empty: EmptyTexel,
+}
+
+/// The 1×1 texture an empty slot samples: opaque white `(1, 1, 1, 1)` or
+/// opaque black `(0, 0, 0, 1)`, with Celesta's default sampler.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EmptyTexel {
+    #[default]
+    White,
+    Black,
+}
+
+/// A material drawn with one of the model's shaders.
+///
+/// Celesta draws it with its alpha mode, render queue, and sidedness as
+/// any material, and binds `params` and `textures` to the shader's
+/// `params` and texture slots. Defaults leave out every optional field.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomMaterial {
+    /// Which `SceneModel::shaders` entry draws it.
+    pub shader: usize,
+    /// The shader's `Params`: exactly as many bytes as its `struct Params`
+    /// takes, in WGSL's uniform layout, little-endian. They travel in the
+    /// message payload, never in the JSON; a frame's `DrawState::params`
+    /// replaces them for one draw.
+    #[serde(skip)]
+    pub params: Vec<u8>,
+    /// The `SceneModel::textures` entry in slot `k` of the shader. Slots
+    /// past the end, or `None`, are empty and sample the slot's
+    /// `ShaderTexture::empty`. No more than the shader has slots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub textures: Vec<Option<usize>>,
+    /// An outline pass drawn behind the surface with the shader's
+    /// `material_outline_vertex` and `material_outline_fragment`, which the
+    /// shader must then define.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<OutlinePass>,
+    /// The shader reads `Vertex::tangent`: a draw of this material on a
+    /// geometry without tangents is refused. Without it, a geometry
+    /// without tangents gives the shader tangents of zero.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub requires_tangents: bool,
+}
+
+/// How an outline pass is rasterised: by default it culls front faces,
+/// whatever the material's sidedness, and is pushed away from the camera
+/// by Unity's `Offset 1, 1`, so the surface stays in front of it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutlinePass {
+    #[serde(default = "CullFace::front")]
+    pub cull: CullFace,
+    #[serde(default)]
+    pub depth_bias: DepthBias,
+}
+
+impl Default for OutlinePass {
+    fn default() -> Self {
+        Self {
+            cull: CullFace::Front,
+            depth_bias: DepthBias::default(),
+        }
+    }
+}
+
+/// Which faces a pass leaves out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CullFace {
+    None,
+    Front,
+    Back,
+}
+
+impl CullFace {
+    fn front() -> Self {
+        Self::Front
+    }
+}
+
+/// How far a pass's depth is pushed away from the camera, as Unity's
+/// `Offset slope_scale, constant` and WebGPU's depth bias: `constant`
+/// units of depth resolution plus `slope_scale` times the depth's slope.
+/// By default `Offset 1, 1`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DepthBias {
+    pub constant: i32,
+    pub slope_scale: f32,
+}
+
+impl Default for DepthBias {
+    fn default() -> Self {
+        Self {
+            constant: 1,
+            slope_scale: 1.0,
+        }
+    }
 }
 
 /// A color, multiplied by a texture when it has one, with no lighting.
@@ -464,6 +618,11 @@ pub struct DrawState {
     /// `world`.
     pub center: Option<[f32; 3]>,
     pub overrides: MaterialOverrides,
+    /// Replaces a custom material's `CustomMaterial::params` for this draw
+    /// in this frame, as material animation does: as many bytes as the
+    /// material's shader's `Params` takes. Only a custom material's draw
+    /// has them; a later frame without them draws the material's own.
+    pub params: Option<Vec<u8>>,
 }
 
 /// Values that replace the draw's material's for this frame, as material
@@ -629,5 +788,100 @@ mod tests {
             assert!(json.contains(expected), "{expected} in {json}");
         }
         assert_eq!(serde_json::from_str::<Material>(&json).unwrap(), material);
+    }
+
+    #[test]
+    fn custom_material_json_names() {
+        let custom = |params| Material {
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
+            kind: MaterialKind::Custom(CustomMaterial {
+                shader: 1,
+                params,
+                textures: vec![Some(0), None],
+                outline: Some(OutlinePass::default()),
+                requires_tangents: true,
+            }),
+        };
+        let material = custom(vec![1, 2, 3, 4]);
+        let json = serde_json::to_string(&material).unwrap();
+        for expected in [
+            r#""kind":"custom""#,
+            r#""shader":1"#,
+            r#""textures":[0,null]"#,
+            r#""outline":{"cull":"front","depthBias":{"constant":1,"slopeScale":1.0}}"#,
+            r#""requiresTangents":true"#,
+        ] {
+            assert!(json.contains(expected), "{expected} in {json}");
+        }
+        assert!(!json.contains("params"), "{json}");
+        // The parameters travel in the payload, not in the JSON.
+        assert_eq!(
+            serde_json::from_str::<Material>(&json).unwrap(),
+            custom(Vec::new())
+        );
+
+        let bare: Material = serde_json::from_str(
+            r#"{"alphaMode":"opaque","doubleSided":false,"kind":"custom","shader":0}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            bare.kind,
+            MaterialKind::Custom(CustomMaterial {
+                shader: 0,
+                params: Vec::new(),
+                textures: Vec::new(),
+                outline: None,
+                requires_tangents: false,
+            })
+        );
+
+        assert_eq!(
+            serde_json::from_str::<CustomMaterial>(r#"{"shader":0,"outline":{}}"#)
+                .unwrap()
+                .outline,
+            Some(OutlinePass::default())
+        );
+        assert_eq!(
+            OutlinePass::default(),
+            OutlinePass {
+                cull: CullFace::Front,
+                depth_bias: DepthBias {
+                    constant: 1,
+                    slope_scale: 1.0,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn scene_shader_json_names() {
+        let shader: SceneShader =
+            serde_json::from_str(r#"{"wgsl":"x","textures":[{"empty":"black"},{}]}"#).unwrap();
+        assert_eq!(
+            shader,
+            SceneShader {
+                name: None,
+                wgsl: "x".into(),
+                textures: vec![
+                    ShaderTexture {
+                        name: None,
+                        empty: EmptyTexel::Black,
+                    },
+                    ShaderTexture {
+                        name: None,
+                        empty: EmptyTexel::White,
+                    },
+                ],
+            }
+        );
+        let named = SceneShader {
+            name: Some("toon".into()),
+            wgsl: "x".into(),
+            textures: Vec::new(),
+        };
+        let json = serde_json::to_string(&named).unwrap();
+        assert_eq!(json, r#"{"name":"toon","wgsl":"x"}"#);
+        assert_eq!(serde_json::from_str::<SceneShader>(&json).unwrap(), named);
     }
 }

@@ -8,7 +8,7 @@
 mod mesh;
 pub mod protocol;
 mod provider;
-mod scene;
+pub mod scene;
 
 pub use mesh::{MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState, TextureSource};
 pub use protocol::{PROTOCOL_VERSION, serve};
@@ -16,8 +16,9 @@ pub use provider::{
     ContentFrame, ContentModel, ContentProvider, ModelId, Notice, NoticeLevel, Opened, PluginError,
 };
 pub use scene::{
-    AlphaMode, Camera, ColorSpace, DirectionalLight, DrawInfo, DrawState, Filter, Geometry, Lights,
-    Material, MaterialKind, MaterialOverrides, MorphTarget, MtoonMaterial, OutlineWidthMode,
-    Projection, Sampler, ScaledTextureSlot, SceneFrame, SceneModel, SceneTexture, Skin, TextureRef,
-    TextureSlot, TextureTransform, UnlitMaterial, Wrap,
+    AlphaMode, Camera, ColorSpace, CullFace, CustomMaterial, DepthBias, DirectionalLight, DrawInfo,
+    DrawState, EmptyTexel, Filter, Geometry, Lights, Material, MaterialKind, MaterialOverrides,
+    MorphTarget, MtoonMaterial, OutlinePass, OutlineWidthMode, Projection, Sampler,
+    ScaledTextureSlot, SceneFrame, SceneModel, SceneShader, SceneTexture, ShaderTexture, Skin,
+    TextureRef, TextureSlot, TextureTransform, UnlitMaterial, Wrap,
 };

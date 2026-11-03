@@ -8,17 +8,10 @@
 //! column, or name the interface when they lie in Celesta's declarations.
 
 use crate::wgsl;
+pub(crate) use celesta_plugin::scene::{
+    MAX_MATERIAL_PARAMS, MAX_MATERIAL_TEXTURES, MAX_SHADER_BYTES,
+};
 use std::fmt::Write as _;
-
-/// The most bytes of WGSL one material shader has.
-pub(crate) const MAX_SHADER_BYTES: usize = 262_144;
-
-/// The most texture slots one material shader has: WebGPU's default 16
-/// sampled textures and 16 samplers a stage, 4 kept for Celesta.
-pub(crate) const MAX_MATERIAL_TEXTURES: usize = 12;
-
-/// The most bytes a material's `Params` takes.
-pub(crate) const MAX_MATERIAL_PARAMS: u32 = 512;
 
 const PRELUDE: &str = include_str!("scene_material_prelude.wgsl");
 const ENTRY: &str = include_str!("scene_material_entry.wgsl");
@@ -203,7 +196,7 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
     })?;
 
     let params_size = params_size(&module)?;
-    if params_size > MAX_MATERIAL_PARAMS {
+    if params_size as usize > MAX_MATERIAL_PARAMS {
         return Err(format!(
             "Params is {params_size} bytes, more than {MAX_MATERIAL_PARAMS}"
         ));

@@ -439,6 +439,7 @@ impl PipelineKey {
                 })
             }
             MaterialKind::Mtoon(_) | MaterialKind::Unlit(_) => None,
+            MaterialKind::Custom(_) => unreachable!("invalid_scene refuses custom materials"),
         }
     }
 
@@ -927,7 +928,7 @@ impl ScenePipelines {
             entries: &[
                 dynamic_uniform_entry(0, both, std::mem::size_of::<DrawUniform>() as u64),
                 // Bound whole, whatever the size of the material's `Params`.
-                dynamic_uniform_entry(1, both, u64::from(MAX_MATERIAL_PARAMS)),
+                dynamic_uniform_entry(1, both, MAX_MATERIAL_PARAMS as u64),
             ],
         });
 
@@ -1062,6 +1063,7 @@ impl ScenePipelines {
         match material.kind {
             MaterialKind::Unlit(_) => &self.unlit,
             MaterialKind::Mtoon(_) => &self.mtoon,
+            MaterialKind::Custom(_) => unreachable!("invalid_scene refuses custom materials"),
         }
     }
 
@@ -1212,6 +1214,7 @@ impl ScenePipelines {
                 .zip(MTOON_SLOTS)
                 .map(|(texture, slot)| bound(texture, slot.default))
                 .collect(),
+            MaterialKind::Custom(_) => unreachable!("invalid_scene refuses custom materials"),
         };
         let shader = self.shader_of(material);
         debug_assert_eq!(slots.len(), shader.textures);
@@ -1361,6 +1364,11 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
                         "material {index}'s mtoon parameters are not finite"
                     ));
                 }
+            }
+            MaterialKind::Custom(_) => {
+                return Some(format!(
+                    "material {index} is custom, which is not drawn yet"
+                ));
             }
         }
     }
@@ -1623,6 +1631,11 @@ pub(crate) fn invalid_scene_frame(model: &SceneModel, frame: &SceneFrame) -> Opt
         };
         if std::mem::replace(&mut listed[index], true) {
             return Some(format!("the frame lists draw {index} twice"));
+        }
+        if state.params.is_some() {
+            return Some(format!(
+                "draw {index} has parameters, which are not drawn yet"
+            ));
         }
         let targets = model.geometries[info.geometry].targets.len();
         if state.morph_weights.len() != targets {
@@ -2312,10 +2325,7 @@ fn aligned(size: usize, alignment: u32) -> usize {
 /// bytes of parameters, each at an `alignment`-aligned offset.
 fn draw_slot(alignment: u32) -> (usize, usize) {
     let params = aligned(std::mem::size_of::<DrawUniform>(), alignment);
-    (
-        params,
-        params + aligned(MAX_MATERIAL_PARAMS as usize, alignment),
-    )
+    (params, params + aligned(MAX_MATERIAL_PARAMS, alignment))
 }
 
 /// `values` laid out `stride` bytes apart.
@@ -2351,8 +2361,8 @@ fn material_params(
     textures: &[celesta_plugin::SceneTexture],
     state: &DrawState,
     time: f64,
-) -> [u8; MAX_MATERIAL_PARAMS as usize] {
-    let mut slot = [0; MAX_MATERIAL_PARAMS as usize];
+) -> [u8; MAX_MATERIAL_PARAMS] {
+    let mut slot = [0; MAX_MATERIAL_PARAMS];
     match &material.kind {
         MaterialKind::Unlit(unlit) => {
             slot[..UNLIT_PARAMS].copy_from_slice(&unlit_params(unlit, &state.overrides));
@@ -2361,6 +2371,7 @@ fn material_params(
             let scroll = uv_scroll(mtoon, textures, time);
             slot[..MTOON_PARAMS].copy_from_slice(&mtoon_params(mtoon, &state.overrides, scroll));
         }
+        MaterialKind::Custom(_) => unreachable!("invalid_scene refuses custom materials"),
     }
     slot
 }
@@ -2700,10 +2711,7 @@ impl GpuRenderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
-                            resource: uniform_binding(
-                                draw_buffer.buffer(),
-                                MAX_MATERIAL_PARAMS as usize,
-                            ),
+                            resource: uniform_binding(draw_buffer.buffer(), MAX_MATERIAL_PARAMS),
                         },
                     ],
                 }),
@@ -3010,6 +3018,7 @@ mod tests {
                 indices: vec![],
             }],
             skins: vec![],
+            shaders: vec![],
             materials: vec![celesta_plugin::Material {
                 alpha_mode: AlphaMode::Opaque,
                 double_sided: false,
@@ -3178,7 +3187,9 @@ mod tests {
         fn mtoon(model: &mut SceneModel) -> &mut celesta_plugin::MtoonMaterial {
             match &mut model.materials[0].kind {
                 MaterialKind::Mtoon(mtoon) => mtoon,
-                MaterialKind::Unlit(_) => unreachable!("made MToon below"),
+                MaterialKind::Unlit(_) | MaterialKind::Custom(_) => {
+                    unreachable!("made MToon below")
+                }
             }
         }
         model.materials[0].kind = MaterialKind::Mtoon(celesta_plugin::MtoonMaterial::default());
