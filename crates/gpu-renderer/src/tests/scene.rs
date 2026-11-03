@@ -2031,16 +2031,9 @@ fn mask_mtoon_covers_by_cutoff() {
 /// corners wound the other way), every normal pointing out from the centre
 /// in the plane z = 0: a back face the outline grows on every side.
 fn shell() -> Geometry {
-    let mut geometry = square(false);
-    let out = std::f32::consts::FRAC_1_SQRT_2;
-    let normals = [
-        [-out, -out, 0.0],
-        [out, -out, 0.0],
-        [out, out, 0.0],
-        [-out, out, 0.0],
-    ];
+    let mut geometry = radial_square();
     geometry.positions = [geometry.positions.clone(), geometry.positions].concat();
-    geometry.normals = [normals, normals].concat();
+    geometry.normals = [geometry.normals.clone(), geometry.normals].concat();
     geometry.uvs = [geometry.uvs.clone(), geometry.uvs].concat();
     geometry.targets = vec![MorphTarget {
         positions: vec![[0.0; 3]; 8],
@@ -2048,6 +2041,21 @@ fn shell() -> Geometry {
     }];
     geometry.indices = vec![0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6];
     geometry
+}
+
+/// `square`'s 1 m square facing +Z alone, single-sided, every normal
+/// pointing out from the centre in the plane z = 0.
+fn radial_square() -> Geometry {
+    let out = std::f32::consts::FRAC_1_SQRT_2;
+    Geometry {
+        normals: vec![
+            [-out, -out, 0.0],
+            [out, -out, 0.0],
+            [out, out, 0.0],
+            [-out, out, 0.0],
+        ],
+        ..square(false)
+    }
 }
 
 /// Black, green by emission under no light, with a red outline unlit by
@@ -2098,14 +2106,45 @@ fn outline_world_width_is_in_metres() {
     };
     assert_pixel(&frame, 22, 32, RED);
     assert_pixel(&frame, 18, 32, CLEAR);
-    // Mirrored, the back faces are still the ones drawn.
-    let mut scenes = shell_scene(material(), vec![]);
+}
+
+#[test]
+fn outline_mirrored_worlds_still_cull_the_front_faces() {
+    // The square alone, without its twin, mirrored in x: its front face
+    // turns clockwise on screen, and the outline culls it. With the winding
+    // not taken from the world's determinant, the outline would take it for
+    // a back face and draw a red ring around it.
+    let mut scenes = shell_scene(
+        outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES),
+        vec![],
+    );
+    scenes.model.geometries = vec![radial_square()];
     scenes.frame.draws[0].world = scaling(-1.0, 1.0, 1.0);
     let Some(frame) = render_scenes(scenes) else {
         return;
     };
-    assert_pixel(&frame, 14, 32, RED);
+    assert_pixel(&frame, 14, 32, CLEAR);
+    assert_pixel(&frame, 50, 32, CLEAR);
     assert_pixel(&frame, 32, 32, GREEN);
+}
+
+#[test]
+fn outline_is_drawn_at_width_zero() {
+    // The square alone, seen from behind, from (0, 0, −2) looking +Z: the
+    // main pass culls its back face, and the outline, 0 wide, draws it.
+    let mut scenes = shell_scene(outlined(OutlineWidthMode::WorldCoordinates, 0.0), vec![]);
+    scenes.model.geometries = vec![radial_square()];
+    scenes.frame.camera.view = [
+        -1.0, 0.0, 0.0, 0.0, //
+        0.0, 1.0, 0.0, 0.0, //
+        0.0, 0.0, -1.0, 0.0, //
+        0.0, 0.0, -2.0, 1.0,
+    ];
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 32, 32, RED);
+    assert_pixel(&frame, 14, 32, CLEAR);
 }
 
 #[test]
@@ -2118,13 +2157,14 @@ fn outline_screen_width_is_a_share_of_the_height() {
     assert_pixel(&frame, 50, 32, RED);
     assert_pixel(&frame, 10, 32, CLEAR);
     assert_pixel(&frame, 32, 32, GREEN);
-    // Half the size, the ring keeps its 4 px.
+    // Half the size, the ring keeps its 4 px: 20..24.
     let mut scenes = shell_scene(material(), vec![]);
     scenes.frame.draws[0].world = scaling(0.5, 0.5, 0.5);
     let Some(frame) = render_scenes(scenes) else {
         return;
     };
     assert_pixel(&frame, 22, 32, RED);
+    assert_pixel(&frame, 18, 32, CLEAR);
     // A camera 4 m high: `P[1][1]` 0.5 caps `clip.w` 1, halving the ring
     // around the square at 24..40 to 2 px.
     let mut scenes = shell_scene(material(), vec![]);
@@ -2138,6 +2178,44 @@ fn outline_screen_width_is_a_share_of_the_height() {
     };
     assert_pixel(&frame, 23, 32, RED);
     assert_pixel(&frame, 21, 32, CLEAR);
+}
+
+#[test]
+fn outline_screen_width_stops_growing_past_p11() {
+    // A perspective camera of `P[1][1]` 2 (`tan(yfov / 2)` 0.5) on the
+    // square's axis: every vertex has `clip.w` = the distance d. The ring
+    // in NDC, per axis, is `0.707 × 2 × width × min(d, 2) / d`, 32 px a unit.
+    let at = |distance: f32| {
+        let mut scenes = shell_scene(
+            outlined(OutlineWidthMode::ScreenCoordinates, FOUR_PX_OF_SCREEN),
+            vec![],
+        );
+        scenes.frame.camera = Camera {
+            view: translation(0.0, 0.0, -distance),
+            projection: Projection::Perspective {
+                yfov: 2.0 * 0.5_f32.atan(),
+                near: 0.1,
+                far: 100.0,
+            },
+        };
+        render_scenes(scenes)
+    };
+    // d 4, past `P[1][1]`: the square's half-width is 0.5 × 2 / 4 NDC,
+    // 8 px (24..40), and the ring 0.0625 NDC, 2 px (22..24). Without the
+    // cap it would stay 4 px.
+    let Some(frame) = at(4.0) else {
+        return;
+    };
+    assert_pixel(&frame, 23, 32, RED);
+    assert_pixel(&frame, 21, 32, CLEAR);
+    // d 1.5, short of it: the half-width is 0.667 NDC, 21.3 px (10.7..53.3),
+    // and the ring 0.125 NDC, 4 px (6.7..10.7). Capped at `P[1][1]` alone
+    // it would be 5.3 px (5.3..10.7).
+    let Some(frame) = at(1.5) else {
+        return;
+    };
+    assert_pixel(&frame, 8, 32, RED);
+    assert_pixel(&frame, 5, 32, CLEAR);
 }
 
 #[test]
