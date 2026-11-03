@@ -2060,14 +2060,17 @@ fn material_tangents_need_tangent_geometry() {
 }
 
 #[test]
-fn material_pipelines_the_backend_refuses_are_refused_naming_the_material() {
+fn material_private_memory_past_the_stack_is_drawn_or_refused_naming_the_material() {
     let Some(mut renderer) = renderer(transparent()) else {
         return;
     };
-    // naga accepts 16 MB of private memory a fragment; Apple GPUs' Metal
-    // compiler refuses the pipeline (an internal error, not a validation
-    // one), though another Metal device may have the stack for it. On
-    // other backends the shader may well run, slowly, so it is not tried.
+    // naga accepts 16 MB of private memory a fragment. Apple GPUs' Metal
+    // compiler refuses the pipeline (the fragment function exceeds its
+    // stack), though another Metal device, as the macOS CI runner's, makes
+    // it. On other backends the shader may well run, slowly, so it is not
+    // tried. Which the device does is its own: only that it is one of the
+    // two is checked. `material_pipelines_the_device_refuses_are_not_made_again`
+    // follows a refusal on every backend.
     if renderer.adapter_info().backend != wgpu::Backend::Metal {
         return;
     }
@@ -2079,29 +2082,13 @@ fn material_fragment(fragment: Fragment) -> vec4f { return params.color + deep[u
         custom(0, bytes(&[1.0; 4])),
     ));
     // Drawn, or refused naming the material; never the device's panic.
-    // Refused, it is refused again without being compiled again.
-    for attempt in 0..2 {
-        match renderer.render(&scene()) {
-            // This device had the stack: there is no refusal to follow.
-            Ok(_) => return,
-            Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
-                assert!(message.contains("material 0's pipelines"), "{message}");
-                assert_eq!(
-                    pipelines(&mut renderer).pipelines_made,
-                    1,
-                    "attempt {attempt}"
-                );
-            }
-            Err(error) => panic!("expected invalid plugin content, got {error}"),
+    match renderer.render(&scene()) {
+        Ok(_) => {}
+        Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
+            assert!(message.contains("material 0's pipelines"), "{message}");
         }
+        Err(error) => panic!("expected invalid plugin content, got {error}"),
     }
-    // Nothing of a refusal is kept: the next model draws.
-    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
-        vec![shader(FLAT, &[])],
-        custom(0, bytes(&[0.0, 1.0, 0.0, 1.0])),
-    ));
-    let frame = renderer.render(&scene()).unwrap();
-    assert_pixel(&frame, 32, 32, GREEN);
 }
 
 #[test]
@@ -2225,6 +2212,16 @@ fn material_pipelines_the_device_refuses_are_not_made_again() {
     // The first pipeline was refused; the model sent again tries none.
     assert_eq!(pipelines(&mut renderer).pipelines_made, 1);
 
+    // The refusal stands for its own shader only: the next model, of
+    // another shader, draws.
+    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
+        vec![shader(&format!("{FLAT}\n// another"), &[])],
+        custom(0, bytes(&FLAT_GREEN)),
+    ));
+    let frame = renderer.render(&scene()).unwrap();
+    assert_pixel(&frame, 32, 32, GREEN);
+    assert_eq!(pipelines(&mut renderer).pipelines_made, 3);
+
     // Running out of memory is not kept. Masked, the same shader asks for
     // pipelines of another fragment entry point, which the refusal does
     // not stand for.
@@ -2245,7 +2242,7 @@ fn material_pipelines_the_device_refuses_are_not_made_again() {
     }
     let frame = renderer.render(&scene()).unwrap();
     assert_pixel(&frame, 32, 32, GREEN);
-    assert_eq!(pipelines(&mut renderer).pipelines_made, 4);
+    assert_eq!(pipelines(&mut renderer).pipelines_made, 6);
 }
 
 #[test]
