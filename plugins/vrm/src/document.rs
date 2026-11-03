@@ -102,7 +102,8 @@ pub(crate) struct Document {
 
 impl Document {
     /// Reads a `.vrm` (binary glTF) file, or a glTF JSON file whose buffers
-    /// are `data:` URIs. JSON past [`JSON_LIMIT`] is refused.
+    /// are `data:` URIs. JSON past [`JSON_LIMIT`] is refused: a `.vrm`'s JSON
+    /// chunk, or a glTF JSON file as a whole, its `data:` buffers included.
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, LoadError> {
         let (json, blob) = if bytes.starts_with(b"glTF") {
             let glb = gltf::binary::Glb::from_slice(bytes)?;
