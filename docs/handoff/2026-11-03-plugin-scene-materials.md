@@ -667,7 +667,9 @@ change once it shows:
     one size keeping their own pixels.
   - `a_new_content_provider_opens_its_own_models`: a red model drawn,
     then another provider's green one of the same plugin and assets drawn
-    in its place.
+    in its place; `a_new_content_provider_closes_the_models_the_previous_one_opened`:
+    the drawn model closed once, on its own provider, and a model whose
+    load failed not closed again.
   - The first phase's scene tests, unlit materials and overrides
     included, pass with their expected pixels unchanged.
 - `celesta-plugin-turntable`'s unit tests check that the cube is drawn by

@@ -105,8 +105,11 @@ for the meshes above, or `ContentModel::Scene(SceneModel)`), and its
 `(ModelId, MeshModel)` and `frame` a `MeshFrame`.)
 
 `GpuRenderer::with_content_provider` installs one, as
-`with_video_decoder` installs the decoder. The renderer caches a model's
-GPU textures by plugin and asset paths. The plugin host implements the
+`with_video_decoder` installs the decoder. The renderer keeps each opened
+model, with its GPU textures, by plugin and asset paths. Installing
+another provider closes those models on the provider that opened them and
+drops them, so the new provider opens its own
+(`2026-11-03-plugin-scene-materials.md`). The plugin host implements the
 trait by routing each plugin id to its process; tests may implement it
 directly.
 
