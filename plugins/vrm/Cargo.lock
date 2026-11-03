@@ -316,6 +316,7 @@ dependencies = [
 name = "celesta-plugin-vrm"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "celesta-composition",
  "celesta-gpu-renderer",
  "celesta-plugin",
@@ -327,6 +328,7 @@ dependencies = [
  "mikktspace",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.21",
  "vrm-spec",

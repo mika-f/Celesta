@@ -11,6 +11,7 @@
 mod document;
 mod geometry;
 mod humanoid;
+mod materials;
 mod nodes;
 mod provider;
 #[cfg(any(test, feature = "synthetic"))]

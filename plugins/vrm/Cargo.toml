@@ -21,9 +21,12 @@ path = "src/main.rs"
 synthetic = []
 
 [dependencies]
+base64 = "0.23.1"
 celesta-plugin = { path = "../../crates/plugin" }
 glam = "0.34.2"
 gltf = { version = "1.4.1", default-features = false, features = [
+  # A texture whose only image is EXT_texture_webp's has no `source`.
+  "allow_empty_texture",
   "import",
   "utils",
   "names",
@@ -33,10 +36,11 @@ gltf = { version = "1.4.1", default-features = false, features = [
   "KHR_materials_unlit",
   "KHR_materials_emissive_strength",
 ] }
-image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 mikktspace = { version = "0.3.0", default-features = false, features = ["glam"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10.9"
 thiserror = "2.0.21"
 # Early (0.1.x), so pinned exactly.
 vrm-spec = "=0.1.1"
