@@ -3,7 +3,7 @@
 //! process.
 
 use super::*;
-use crate::scene::{MAX_CACHED_SHADERS, ScenePipelines};
+use crate::scene::{MAX_CACHED_PIPELINES, MAX_CACHED_SHADERS, ScenePipelines};
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, CullFace, CustomMaterial,
     DepthBias, DirectionalLight, DrawInfo, DrawState, EmptyTexel, Filter, Geometry, Lights,
@@ -2175,6 +2175,46 @@ fn material_shader_cache_drops_unused_shaders_past_its_cap() {
         .prepare(device, &model(1, bytes(&FLAT_GREEN)))
         .unwrap();
     assert_eq!(pipelines.compiles, compiles + 1);
+    drop(held);
+}
+
+#[test]
+fn material_pipeline_cache_drops_unused_pipelines_past_its_cap() {
+    let Some(renderer) = renderer(transparent()) else {
+        return;
+    };
+    let device = &renderer.device;
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    // `RINGED` with its outline pushed back by `n`: one shader, the same
+    // surface pipelines, and two outline pipelines of its own each.
+    let model = |n: i32| {
+        let mut scenes = ringed(WORLD);
+        custom_of(&mut scenes.model.materials[0]).outline = Some(OutlinePass {
+            depth_bias: DepthBias {
+                constant: n,
+                slope_scale: 1.0,
+            },
+            ..OutlinePass::default()
+        });
+        scenes.model
+    };
+    // Model 0 is held, as a loaded model holds its pipelines; every other
+    // model is dropped once its pipelines are made. The shader stays held,
+    // so the shader cache never drops them.
+    let held = pipelines.prepare(device, &model(0)).unwrap();
+    assert_eq!(pipelines.kept(), (1, 4, 0));
+    for n in 1..=(MAX_CACHED_PIPELINES / 2) as i32 {
+        pipelines.prepare(device, &model(n)).unwrap();
+    }
+    let (shaders, kept, _) = pipelines.kept();
+    assert_eq!(shaders, 1);
+    assert!(kept < MAX_CACHED_PIPELINES, "{kept} pipelines kept");
+    // Model 0's are kept; a dropped model's are made again.
+    let made = pipelines.pipelines_made;
+    pipelines.prepare(device, &model(0)).unwrap();
+    assert_eq!(pipelines.pipelines_made, made);
+    pipelines.prepare(device, &model(1)).unwrap();
+    assert_eq!(pipelines.pipelines_made, made + 2);
     drop(held);
 }
 
