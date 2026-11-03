@@ -4,12 +4,15 @@
 //!
 //! Each frame, a compute pass morphs and skins every visible draw's
 //! vertices (`scene_skin.wgsl`). A render pass then draws them, in UniVRM's
-//! queue order (`draw_queue`) and by their material's alpha mode, through
-//! the camera onto a 4× multisampled canvas of linear, premultiplied
-//! `Rgba16Float` color with `Depth32Float` depth, both cleared (to
-//! transparent black and to 1). The resolved canvas is converted to the
-//! layer's encoding, premultiplied sRGB-encoded `Rgba8Unorm`
-//! (`scene.wgsl`).
+//! queue order (`draw_queue`) and by their material's shading and alpha
+//! mode, through the camera onto a 4× multisampled canvas of linear,
+//! premultiplied `Rgba16Float` color with `Depth32Float` depth, both
+//! cleared (to transparent black and to 1): unlit (`scene.wgsl`) or MToon
+//! under the frame's lights (`scene_mtoon.wgsl`, the same shader module).
+//! A draw binds the frame's uniform as group 0, its own as group 1 at its
+//! offset, and its material's textures, bound when the model loaded, as
+//! group 2. The resolved canvas is converted to the layer's encoding,
+//! premultiplied sRGB-encoded `Rgba8Unorm` (`scene.wgsl`).
 //!
 //! Besides the model's buffers and textures, `SceneFrameResources` keeps
 //! the canvases of each size the last frame drew, within
@@ -23,8 +26,8 @@ use crate::mesh::{OUTPUT_FORMAT, texture_image};
 use crate::renderer::GpuRenderer;
 use crate::texture::LayerTexture;
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, DrawState, Filter, MaterialKind, ModelId, Projection,
-    SceneFrame, SceneModel, Wrap,
+    AlphaMode, Camera, ColorSpace, DrawState, Filter, Material, MaterialKind, ModelId,
+    MtoonMaterial, OutlineWidthMode, Projection, SceneFrame, SceneModel, Wrap,
 };
 use std::collections::{HashMap, HashSet};
 use wgpu::util::DeviceExt;
@@ -83,9 +86,9 @@ pub(crate) struct LoadedScene {
     pub(crate) model: SceneModel,
     /// One per `model.geometries` entry.
     pub(crate) geometries: Vec<GeometryBuffers>,
-    /// One per `model.textures` entry: the texture and its sampler, bound
-    /// as group 2 of a draw.
-    pub(crate) textures: Vec<wgpu::BindGroup>,
+    /// One per `model.materials` entry: its textures and samplers, bound as
+    /// group 2 of its draws.
+    pub(crate) materials: Vec<wgpu::BindGroup>,
     /// One per `model.draws` entry.
     pub(crate) draws: Vec<DrawBuffers>,
 }
@@ -153,7 +156,7 @@ pub(crate) struct SceneFrameResources {
     skin_params: GrowingBuffer,
     /// `UNIFORM`: one `DrawUniform` per queued draw.
     draws: GrowingBuffer,
-    /// `UNIFORM`: the camera's view-projection.
+    /// `UNIFORM`: the `FrameUniform`: the camera, lights, and time.
     view: GrowingBuffer,
     /// What binds the buffers above, made again when one of them is.
     groups: Option<FrameGroups>,
@@ -242,7 +245,7 @@ struct FrameGroups {
     /// `frame_data` and `skin_params`, as `scene_skin.wgsl`'s group 1.
     frame: wgpu::BindGroup,
     /// `view`, as `scene.wgsl`'s group 0.
-    camera: wgpu::BindGroup,
+    view: wgpu::BindGroup,
     /// `draws`, as `scene.wgsl`'s group 1.
     draws: wgpu::BindGroup,
 }
@@ -290,13 +293,81 @@ impl GrowingBuffer {
     }
 }
 
-/// Which faces a draw keeps: back faces are culled unless its material is
-/// double-sided, and its front faces are clockwise on screen when its world
-/// matrix mirrors it.
+/// How a material shades its surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Shading {
+    /// Its base color, unlit (`scene.wgsl`).
+    Unlit,
+    /// UniVRM's MToon10 (`scene_mtoon.wgsl`).
+    Mtoon,
+}
+
+impl Shading {
+    fn of(kind: &MaterialKind) -> Self {
+        match kind {
+            MaterialKind::Unlit(_) => Self::Unlit,
+            MaterialKind::Mtoon(_) => Self::Mtoon,
+        }
+    }
+}
+
+/// Which of a draw's passes a pipeline draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Pass {
+    /// The surface.
+    Main,
+    /// An MToon material's outline, drawn after its main pass.
+    #[expect(dead_code, reason = "outlines are not drawn yet")]
+    Outline,
+}
+
+/// Which faces a pipeline culls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Cull {
+    /// A double-sided material keeps both.
+    None,
+    /// A single-sided material shows its front faces.
+    Back,
+    /// An outline shows the back faces it pushes out.
+    #[expect(dead_code, reason = "outlines are not drawn yet")]
+    Front,
+}
+
+/// Which faces a draw keeps, and which way its front faces turn on screen:
+/// clockwise when its world matrix mirrors it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Facing {
-    culled: bool,
+    cull: Cull,
     clockwise: bool,
+}
+
+/// What a scene draw pipeline is made for. `ScenePipelines::prepare`
+/// makes the ones a model's materials use when it loads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    shading: Shading,
+    pass: Pass,
+    facing: Facing,
+    alpha: Alpha,
+}
+
+impl PipelineKey {
+    /// The main pass of `material`, its front faces clockwise or not.
+    fn main(material: &Material, clockwise: bool) -> Self {
+        Self {
+            shading: Shading::of(&material.kind),
+            pass: Pass::Main,
+            facing: Facing {
+                cull: if material.double_sided {
+                    Cull::None
+                } else {
+                    Cull::Back
+                },
+                clockwise,
+            },
+            alpha: Alpha::of(material.alpha_mode),
+        }
+    }
 }
 
 /// How a draw's alpha is drawn, as UniVRM draws its material's alpha mode.
@@ -306,13 +377,15 @@ enum Alpha {
     Opaque,
     /// Coverage from the alpha against the cutoff, depth written.
     Mask,
+    /// Blended by alpha over what is drawn, depth written: an MToon
+    /// material's `transparentWithZWrite`.
+    #[expect(dead_code, reason = "render queues do not place it yet")]
+    BlendZWrite,
     /// Blended by alpha over what is drawn, depth tested but not written.
     Blend,
 }
 
 impl Alpha {
-    const ALL: [Self; 3] = [Self::Opaque, Self::Mask, Self::Blend];
-
     fn of(mode: AlphaMode) -> Self {
         match mode {
             AlphaMode::Opaque => Self::Opaque,
@@ -326,23 +399,31 @@ impl Alpha {
         match self {
             Self::Opaque => 2000,
             Self::Mask => 2450,
+            Self::BlendZWrite => 2501,
             Self::Blend => 3000,
         }
     }
 
-    /// `scene.wgsl`'s fragment entry point.
-    fn entry_point(self) -> &'static str {
-        match self {
-            Self::Opaque => "fs_opaque",
-            Self::Mask => "fs_mask",
-            Self::Blend => "fs_blend",
+    /// The fragment entry point of `shading`'s main pass.
+    fn entry_point(self, shading: Shading) -> &'static str {
+        match (shading, self) {
+            (Shading::Unlit, Self::Opaque) => "fs_opaque",
+            (Shading::Unlit, Self::Mask) => "fs_mask",
+            (Shading::Unlit, Self::BlendZWrite | Self::Blend) => "fs_blend",
+            (Shading::Mtoon, Self::Opaque) => "fs_mtoon_opaque",
+            (Shading::Mtoon, Self::Mask) => "fs_mtoon_mask",
+            (Shading::Mtoon, Self::BlendZWrite | Self::Blend) => "fs_mtoon_blend",
         }
+    }
+
+    fn writes_depth(self) -> bool {
+        self != Self::Blend
     }
 
     /// Straight color over the canvas's premultiplied color, as Unity
     /// blends it; alpha accumulates as coverage.
     fn blend(self) -> Option<wgpu::BlendState> {
-        (self == Self::Blend).then_some(wgpu::BlendState {
+        matches!(self, Self::Blend | Self::BlendZWrite).then_some(wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::SrcAlpha,
                 dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
@@ -365,16 +446,78 @@ struct SkinParams {
     flags: [u32; 4],
 }
 
-/// What `scene.wgsl` reads as `Draw`.
+/// The most directional lights a frame has: Unity's default pixel light
+/// count, which `Frame`'s `lights` holds.
+const MAX_DIRECTIONAL_LIGHTS: usize = 4;
+
+/// One of `FrameUniform::lights`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct LightUniform {
+    /// `L`: towards the light, length 1, `w` 0.
+    to_light: [f32; 4],
+    /// The light's color times its intensity, `w` 0.
+    color: [f32; 4],
+}
+
+/// What `scene.wgsl` reads as `Frame`, group 0: the camera, the lights, and
+/// the time.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct FrameUniform {
+    view_projection: [f32; 16],
+    view: [f32; 16],
+    projection: [f32; 16],
+    /// The camera's position in world space; `w` 1 for a perspective
+    /// camera, 0 for an orthographic one.
+    eye: [f32; 4],
+    /// The camera's +Z, towards the viewer, in world space.
+    forward: [f32; 4],
+    /// The frame's time in seconds, the canvas's height over its width, and
+    /// how many of `lights` there are.
+    params: [f32; 4],
+    /// The main light first; black when the frame has none.
+    lights: [LightUniform; MAX_DIRECTIONAL_LIGHTS],
+    /// `Lights::ambient`, `w` 0.
+    ambient: [[f32; 4]; 9],
+}
+
+/// What `scene.wgsl` reads as `Draw`, group 1 at each draw's offset. An
+/// unlit draw fills `world` to `uv_v`; the rest is MToon's.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct DrawUniform {
     world: [f32; 16],
+    /// `normal_matrix(world)`'s columns, `w` 0.
+    normal_matrix: [[f32; 4]; 3],
     base_color: [f32; 4],
     /// The texture transform's first row, then a mask material's cutoff.
     uv_u: [f32; 4],
     uv_v: [f32; 4],
+    /// The shade color, then the shading shift factor.
+    shade: [f32; 4],
+    /// The emissive factor, then the shading shift texture's scale.
+    emissive: [f32; 4],
+    /// The matcap factor, then the shading toony factor.
+    matcap: [f32; 4],
+    /// The parametric rim color, then the rim lighting mix.
+    rim: [f32; 4],
+    /// The rim's fresnel power and lift, the GI equalization factor, and
+    /// the normal texture's scale.
+    rim_shape: [f32; 4],
+    /// The outline color, then the outline lighting mix.
+    outline: [f32; 4],
+    /// The outline width factor, the outline width mode (0 none, 1 world
+    /// coordinates, 2 screen coordinates), 0, 0.
+    outline_width: [f32; 4],
+    /// The UV animation's scroll in x and y, its rotation in turns a second,
+    /// and 1 when the material has a normal texture, else 0.
+    uv_animation: [f32; 4],
 }
+
+// The sizes of `scene.wgsl`'s `Frame` and `Draw`.
+const _: () = assert!(std::mem::size_of::<FrameUniform>() == 512);
+const _: () = assert!(std::mem::size_of::<DrawUniform>() == 288);
 
 /// The pipelines that draw scenes and what they bind, shared by every
 /// scene.
@@ -382,16 +525,114 @@ pub(crate) struct ScenePipelines {
     geometry_layout: wgpu::BindGroupLayout,
     frame_layout: wgpu::BindGroupLayout,
     skin: wgpu::ComputePipeline,
-    camera_layout: wgpu::BindGroupLayout,
+    /// `scene.wgsl` with `scene_mtoon.wgsl`.
+    shader: wgpu::ShaderModule,
+    /// Group 0: the frame uniform.
+    view_layout: wgpu::BindGroupLayout,
+    /// Group 1: the draw uniform.
     draw_layout: wgpu::BindGroupLayout,
-    material_layout: wgpu::BindGroupLayout,
-    draw: HashMap<(Facing, Alpha), wgpu::RenderPipeline>,
+    /// Group 2 of an unlit material: its base color texture and sampler.
+    unlit_layout: wgpu::BindGroupLayout,
+    /// Group 2 of an MToon material: each of `MTOON_SLOTS`' texture and
+    /// sampler.
+    mtoon_layout: wgpu::BindGroupLayout,
+    unlit_pipeline_layout: wgpu::PipelineLayout,
+    mtoon_pipeline_layout: wgpu::PipelineLayout,
+    /// The pipelines the loaded models' materials use, made as each loads.
+    draw: HashMap<PipelineKey, wgpu::RenderPipeline>,
     convert_layout: wgpu::BindGroupLayout,
     convert: wgpu::RenderPipeline,
     /// Zeros, bound in place of a stream a geometry lacks.
     empty: wgpu::Buffer,
-    /// A white texel, bound for materials without a texture.
-    white: wgpu::BindGroup,
+    /// 1x1 `Rgba8Unorm` texels, bound in place of a texture a material
+    /// lacks.
+    white: wgpu::TextureView,
+    black: wgpu::TextureView,
+    /// What samples `white` and `black`.
+    default_sampler: wgpu::Sampler,
+}
+
+/// A texel a material samples in place of a texture it lacks: Unity's
+/// default for the property.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DefaultTexel {
+    White,
+    Black,
+}
+
+/// An MToon material's texture slots, in binding order: slot `k` binds its
+/// texture at `2k` and its sampler at `2k + 1` of group 2. Each has its
+/// JSON name and the texel bound when it is empty, which leaves its term
+/// as UniVRM's keyword gates do without the texture: no shift but the
+/// factor's, no matcap, the whole of the UV animation, the width factor
+/// alone. An empty normal slot is not read.
+const MTOON_SLOTS: [(&str, DefaultTexel); 9] = [
+    ("baseColorTexture", DefaultTexel::White),
+    ("shadeMultiplyTexture", DefaultTexel::White),
+    ("shadingShiftTexture", DefaultTexel::Black),
+    ("normalTexture", DefaultTexel::White),
+    ("emissiveTexture", DefaultTexel::White),
+    ("matcapTexture", DefaultTexel::Black),
+    ("rimMultiplyTexture", DefaultTexel::White),
+    ("outlineWidthMultiplyTexture", DefaultTexel::White),
+    ("uvAnimationMaskTexture", DefaultTexel::White),
+];
+
+/// The slot the vertex stage samples (the outline's width); the fragment
+/// stage samples the others.
+const MTOON_VERTEX_SLOT: usize = 7;
+
+/// The textures `mtoon`'s slots name, in `MTOON_SLOTS`' order.
+fn mtoon_textures(mtoon: &MtoonMaterial) -> [Option<usize>; 9] {
+    [
+        mtoon.base_color_texture.as_ref().map(|slot| slot.texture),
+        mtoon.shade_multiply_texture.map(|slot| slot.texture),
+        mtoon.shading_shift_texture.map(|slot| slot.texture),
+        mtoon.normal_texture.map(|slot| slot.texture),
+        mtoon.emissive_texture.map(|slot| slot.texture),
+        mtoon.matcap_texture.map(|slot| slot.texture),
+        mtoon.rim_multiply_texture.map(|slot| slot.texture),
+        mtoon
+            .outline_width_multiply_texture
+            .map(|slot| slot.texture),
+        mtoon.uv_animation_mask_texture.map(|slot| slot.texture),
+    ]
+}
+
+/// Every number of `mtoon`, its texture slots' scales and base color
+/// texture transform included.
+fn mtoon_numbers(mtoon: &MtoonMaterial) -> Vec<f32> {
+    let mut numbers = mtoon.base_color.to_vec();
+    numbers.extend(mtoon.emissive_factor);
+    numbers.extend(mtoon.shade_color_factor);
+    numbers.extend(mtoon.matcap_factor);
+    numbers.extend(mtoon.parametric_rim_color_factor);
+    numbers.extend(mtoon.outline_color_factor);
+    numbers.extend([
+        mtoon.shading_shift_factor,
+        mtoon.shading_toony_factor,
+        mtoon.gi_equalization_factor,
+        mtoon.rim_lighting_mix_factor,
+        mtoon.parametric_rim_fresnel_power_factor,
+        mtoon.parametric_rim_lift_factor,
+        mtoon.outline_width_factor,
+        mtoon.outline_lighting_mix_factor,
+        mtoon.uv_animation_scroll_x_speed_factor,
+        mtoon.uv_animation_scroll_y_speed_factor,
+        mtoon.uv_animation_rotation_speed_factor,
+    ]);
+    numbers.extend(mtoon.normal_texture.map(|slot| slot.scale));
+    numbers.extend(mtoon.shading_shift_texture.map(|slot| slot.scale));
+    if let Some(transform) = mtoon
+        .base_color_texture
+        .as_ref()
+        .and_then(|texture| texture.transform)
+    {
+        numbers.extend(transform.offset);
+        numbers.extend(transform.scale);
+        numbers.push(transform.rotation);
+    }
+    numbers
 }
 
 fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
@@ -432,7 +673,9 @@ impl ScenePipelines {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Celesta scene shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("scene.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(include_str!("scene.wgsl"), include_str!("scene_mtoon.wgsl")).into(),
+            ),
         });
 
         let geometry_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -469,15 +712,17 @@ impl ScenePipelines {
             cache: None,
         });
 
-        let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Celesta scene camera layout"),
+        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta scene frame layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<FrameUniform>() as u64
+                    ),
                 },
                 count: None,
             }],
@@ -489,102 +734,37 @@ impl ScenePipelines {
                 wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
             )],
         });
-        let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Celesta scene material layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+        let unlit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta scene unlit material layout"),
+            entries: &texture_entries(0, wgpu::ShaderStages::FRAGMENT),
         });
-        let draw_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Celesta scene draw pipeline layout"),
-            bind_group_layouts: &[
-                Some(&camera_layout),
-                Some(&draw_layout),
-                Some(&material_layout),
-            ],
-            immediate_size: 0,
+        let mtoon_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..MTOON_SLOTS.len())
+            .flat_map(|slot| {
+                let visibility = if slot == MTOON_VERTEX_SLOT {
+                    wgpu::ShaderStages::VERTEX
+                } else {
+                    wgpu::ShaderStages::FRAGMENT
+                };
+                texture_entries(2 * slot as u32, visibility)
+            })
+            .collect();
+        let mtoon_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta scene MToon material layout"),
+            entries: &mtoon_entries,
         });
-        let vertex_buffers = [
-            Some(wgpu::VertexBufferLayout {
-                array_stride: SKINNED_STRIDE,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x4],
-            }),
-            Some(wgpu::VertexBufferLayout {
-                array_stride: 8,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![1 => Float32x2],
-            }),
-        ];
-        let draw_pipeline = |facing: Facing, alpha: Alpha| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Celesta scene draw"),
-                layout: Some(&draw_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &vertex_buffers,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(alpha.entry_point()),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: COLOR_FORMAT,
-                        blend: alpha.blend(),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: if facing.clockwise {
-                        wgpu::FrontFace::Cw
-                    } else {
-                        wgpu::FrontFace::Ccw
-                    },
-                    cull_mode: facing.culled.then_some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(alpha != Alpha::Blend),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: SAMPLES,
-                    ..Default::default()
-                },
-                multiview_mask: None,
-                cache: None,
+        let pipeline_layout = |label, material_layout| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: &[
+                    Some(&view_layout),
+                    Some(&draw_layout),
+                    Some(material_layout),
+                ],
+                immediate_size: 0,
             })
         };
-        let mut draw = HashMap::new();
-        for culled in [false, true] {
-            for clockwise in [false, true] {
-                for alpha in Alpha::ALL {
-                    let facing = Facing { culled, clockwise };
-                    draw.insert((facing, alpha), draw_pipeline(facing, alpha));
-                }
-            }
-        }
+        let unlit_pipeline_layout = pipeline_layout("Celesta scene unlit layout", &unlit_layout);
+        let mtoon_pipeline_layout = pipeline_layout("Celesta scene MToon layout", &mtoon_layout);
 
         let convert_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Celesta scene convert layout"),
@@ -636,67 +816,235 @@ impl ScenePipelines {
             contents: &[0; SKIN_VERTEX_STRIDE as usize],
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let white = device.create_texture_with_data(
-            queue,
-            &wgpu::TextureDescriptor {
-                label: Some("Celesta scene white texture"),
-                size: wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &[255; 4],
-        );
-        let white = material_group(
-            device,
-            &material_layout,
-            &white.create_view(&Default::default()),
-            &device.create_sampler(&Default::default()),
-        );
+        let texel = |label, value: [u8; 4]| {
+            device
+                .create_texture_with_data(
+                    queue,
+                    &wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: wgpu::Extent3d {
+                            width: 1,
+                            height: 1,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    },
+                    wgpu::util::TextureDataOrder::LayerMajor,
+                    &value,
+                )
+                .create_view(&Default::default())
+        };
         Self {
             geometry_layout,
             frame_layout,
             skin,
-            camera_layout,
+            shader,
+            view_layout,
             draw_layout,
-            material_layout,
-            draw,
+            unlit_layout,
+            mtoon_layout,
+            unlit_pipeline_layout,
+            mtoon_pipeline_layout,
+            draw: HashMap::new(),
             convert_layout,
             convert,
             empty,
-            white,
+            white: texel("Celesta scene white texel", [255; 4]),
+            black: texel("Celesta scene black texel", [0, 0, 0, 255]),
+            default_sampler: device.create_sampler(&Default::default()),
         }
+    }
+
+    /// Makes the main-pass pipelines `model`'s materials draw with, for
+    /// either winding, unless they are made already.
+    pub(crate) fn prepare(&mut self, device: &wgpu::Device, model: &SceneModel) {
+        for material in &model.materials {
+            for clockwise in [false, true] {
+                let key = PipelineKey::main(material, clockwise);
+                if !self.draw.contains_key(&key) {
+                    let pipeline = self.draw_pipeline(device, key);
+                    self.draw.insert(key, pipeline);
+                }
+            }
+        }
+    }
+
+    fn draw_pipeline(&self, device: &wgpu::Device, key: PipelineKey) -> wgpu::RenderPipeline {
+        // The skinned vertices, then the geometry's texture coordinates.
+        let (layout, vertex_entry, skinned_attributes, uv_location) = match key.shading {
+            Shading::Unlit => (
+                &self.unlit_pipeline_layout,
+                "vs_main",
+                &wgpu::vertex_attr_array![0 => Float32x4][..],
+                1,
+            ),
+            Shading::Mtoon => (
+                &self.mtoon_pipeline_layout,
+                "vs_mtoon",
+                &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4][..],
+                3,
+            ),
+        };
+        let fragment_entry = match key.pass {
+            Pass::Main => key.alpha.entry_point(key.shading),
+            Pass::Outline => unreachable!("no key draws an outline yet"),
+        };
+        let uv_attributes = [wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: 0,
+            shader_location: uv_location,
+        }];
+        let vertex_buffers = [
+            Some(wgpu::VertexBufferLayout {
+                array_stride: SKINNED_STRIDE,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: skinned_attributes,
+            }),
+            Some(wgpu::VertexBufferLayout {
+                array_stride: 8,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &uv_attributes,
+            }),
+        ];
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Celesta scene draw"),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: &self.shader,
+                entry_point: Some(vertex_entry),
+                compilation_options: Default::default(),
+                buffers: &vertex_buffers,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &self.shader,
+                entry_point: Some(fragment_entry),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: COLOR_FORMAT,
+                    blend: key.alpha.blend(),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: if key.facing.clockwise {
+                    wgpu::FrontFace::Cw
+                } else {
+                    wgpu::FrontFace::Ccw
+                },
+                cull_mode: match key.facing.cull {
+                    Cull::None => None,
+                    Cull::Back => Some(wgpu::Face::Back),
+                    Cull::Front => Some(wgpu::Face::Front),
+                },
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(key.alpha.writes_depth()),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: SAMPLES,
+                ..Default::default()
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    }
+
+    /// `material`'s group 2: its textures, of `textures`, with their
+    /// samplers, and a default texel for each it lacks.
+    fn material_group(
+        &self,
+        device: &wgpu::Device,
+        textures: &[(wgpu::TextureView, wgpu::Sampler)],
+        material: &Material,
+    ) -> wgpu::BindGroup {
+        let bound = |texture: Option<usize>, default: DefaultTexel| match texture {
+            Some(texture) => (&textures[texture].0, &textures[texture].1),
+            None => (
+                match default {
+                    DefaultTexel::White => &self.white,
+                    DefaultTexel::Black => &self.black,
+                },
+                &self.default_sampler,
+            ),
+        };
+        let (layout, slots) = match &material.kind {
+            MaterialKind::Unlit(unlit) => (
+                &self.unlit_layout,
+                vec![bound(
+                    unlit
+                        .base_color_texture
+                        .as_ref()
+                        .map(|texture| texture.texture),
+                    DefaultTexel::White,
+                )],
+            ),
+            MaterialKind::Mtoon(mtoon) => (
+                &self.mtoon_layout,
+                mtoon_textures(mtoon)
+                    .into_iter()
+                    .zip(MTOON_SLOTS)
+                    .map(|(texture, (_, default))| bound(texture, default))
+                    .collect(),
+            ),
+        };
+        let entries: Vec<wgpu::BindGroupEntry> = slots
+            .into_iter()
+            .enumerate()
+            .flat_map(|(slot, (view, sampler))| {
+                [
+                    wgpu::BindGroupEntry {
+                        binding: 2 * slot as u32,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2 * slot as u32 + 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ]
+            })
+            .collect();
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Celesta scene material"),
+            layout,
+            entries: &entries,
+        })
     }
 }
 
-fn material_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    view: &wgpu::TextureView,
-    sampler: &wgpu::Sampler,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Celesta scene material"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(view),
+/// A filterable 2D texture at `binding` and its sampler at `binding + 1`.
+fn texture_entries(
+    binding: u32,
+    visibility: wgpu::ShaderStages,
+) -> [wgpu::BindGroupLayoutEntry; 2] {
+    [
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
             },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-        ],
-    })
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: binding + 1,
+            visibility,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        },
+    ]
 }
 
 fn finite(values: &[f32]) -> bool {
@@ -767,20 +1115,34 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
         {
             return Some(format!("material {index}'s alphaCutoff is {cutoff}"));
         }
-        let unlit = match &material.kind {
-            MaterialKind::Unlit(unlit) => unlit,
-            MaterialKind::Mtoon(_) => {
-                return Some(format!("material {index} is mtoon, which is not drawn yet"));
+        let textures = model.textures.len();
+        match &material.kind {
+            MaterialKind::Unlit(unlit) => {
+                if let Some(texture) = &unlit.base_color_texture
+                    && texture.texture >= textures
+                {
+                    return Some(format!(
+                        "material {index} uses texture {}, of {textures}",
+                        texture.texture
+                    ));
+                }
             }
-        };
-        if let Some(texture) = &unlit.base_color_texture
-            && texture.texture >= model.textures.len()
-        {
-            return Some(format!(
-                "material {index} uses texture {}, of {}",
-                texture.texture,
-                model.textures.len()
-            ));
+            MaterialKind::Mtoon(mtoon) => {
+                for (texture, (name, _)) in mtoon_textures(mtoon).into_iter().zip(MTOON_SLOTS) {
+                    if let Some(texture) = texture
+                        && texture >= textures
+                    {
+                        return Some(format!(
+                            "material {index}'s {name} uses texture {texture}, of {textures}"
+                        ));
+                    }
+                }
+                if !finite(&mtoon_numbers(mtoon)) {
+                    return Some(format!(
+                        "material {index}'s mtoon parameters are not finite"
+                    ));
+                }
+            }
         }
     }
     // The highest joint each geometry's vertices name.
@@ -975,9 +1337,20 @@ pub(crate) fn invalid_scene_frame(model: &SceneModel, frame: &SceneFrame) -> Opt
     if !finite(frame.lights.ambient.as_flattened()) {
         return Some("the ambient light is not finite".to_owned());
     }
+    let lights = frame.lights.directional.len();
+    if lights > MAX_DIRECTIONAL_LIGHTS {
+        return Some(format!(
+            "the frame has {lights} directional lights, more than {MAX_DIRECTIONAL_LIGHTS}"
+        ));
+    }
     for (index, light) in frame.lights.directional.iter().enumerate() {
-        if !(finite(&light.direction) && finite(&light.color) && light.intensity.is_finite()) {
+        // The color times the intensity too, which the shader reads.
+        let color = light.color.map(|value| value * light.intensity);
+        if !(finite(&light.direction) && finite(&color) && light.intensity.is_finite()) {
             return Some(format!("directional light {index} is not finite"));
+        }
+        if to_light(light.direction).is_none() {
+            return Some(format!("directional light {index} has no direction"));
         }
     }
     if frame.skins.len() != model.skins.len() {
@@ -1139,12 +1512,13 @@ fn filter_mode(filter: Filter) -> wgpu::FilterMode {
 }
 
 impl LoadedScene {
-    /// Checks `model`, uploads its geometries and textures, and makes what
-    /// each draw is skinned into.
+    /// Checks `model`, makes the pipelines its materials draw with, uploads
+    /// its geometries and textures, binds each material's textures, and
+    /// makes what each draw is skinned into.
     pub(crate) fn load(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        pipelines: &ScenePipelines,
+        pipelines: &mut ScenePipelines,
         max_texture_dimension: u32,
         id: ModelId,
         model: SceneModel,
@@ -1157,6 +1531,8 @@ impl LoadedScene {
         if let Some(message) = invalid_scene(&model) {
             return Err(invalid(message));
         }
+        pipelines.prepare(device, &model);
+        let pipelines = &*pipelines;
         let limits = device.limits();
         let largest_buffer = limits
             .max_buffer_size
@@ -1334,11 +1710,9 @@ impl LoadedScene {
                 wgpu::util::TextureDataOrder::LayerMajor,
                 &data,
             );
-            textures.push(material_group(
-                device,
-                &pipelines.material_layout,
-                &uploaded.create_view(&Default::default()),
-                &device.create_sampler(&wgpu::SamplerDescriptor {
+            textures.push((
+                uploaded.create_view(&Default::default()),
+                device.create_sampler(&wgpu::SamplerDescriptor {
                     label: Some("Celesta scene sampler"),
                     address_mode_u: address_mode(sampler.wrap_s),
                     address_mode_v: address_mode(sampler.wrap_t),
@@ -1353,6 +1727,11 @@ impl LoadedScene {
                 }),
             ));
         }
+        let materials = model
+            .materials
+            .iter()
+            .map(|material| pipelines.material_group(device, &textures, material))
+            .collect();
 
         let draws = model
             .draws
@@ -1406,7 +1785,7 @@ impl LoadedScene {
             id,
             model,
             geometries,
-            textures,
+            materials,
             draws,
         })
     }
@@ -1471,6 +1850,92 @@ fn projection_matrix(projection: &Projection, aspect: f32) -> [f32; 16] {
                 1.0,
             ]
         }
+    }
+}
+
+/// `L` for a light travelling along `direction`: `−normalize(direction)`,
+/// worked out in `f64`; `None` when `direction` has no length.
+fn to_light(direction: [f32; 3]) -> Option<[f32; 3]> {
+    let direction = direction.map(f64::from);
+    let length = direction
+        .iter()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt();
+    (length > 0.0 && length.is_finite()).then(|| direction.map(|value| (-value / length) as f32))
+}
+
+/// What takes `world`'s normals to world space: the cofactor matrix of its
+/// upper 3×3, times the sign of its determinant (+1 for a determinant of
+/// 0), as columns. That is the inverse transpose times the determinant's
+/// magnitude: the same directions, which the shader normalises, and finite
+/// even when `world` scales to nothing. Worked out in `f64` and divided by
+/// its largest entry's magnitude, so that it stays finite as `f32` however
+/// large `world` is.
+fn normal_matrix(world: &[f32; 16]) -> [[f32; 4]; 3] {
+    let column = |c: usize| [0, 1, 2].map(|r| f64::from(world[c * 4 + r]));
+    let cross = |a: [f64; 3], b: [f64; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let (a, b, c) = (column(0), column(1), column(2));
+    // The cofactor matrix's columns are the cross products of the others.
+    let cofactor = [cross(b, c), cross(c, a), cross(a, b)];
+    let determinant: f64 = (0..3).map(|row| a[row] * cofactor[0][row]).sum();
+    let sign = if determinant < 0.0 { -1.0 } else { 1.0 };
+    let largest = cofactor
+        .as_flattened()
+        .iter()
+        .fold(0.0, |largest: f64, value| largest.max(value.abs()));
+    let scale = if largest > 0.0 { sign / largest } else { sign };
+    cofactor.map(|column| {
+        let [x, y, z] = column.map(|value| (value * scale) as f32);
+        [x, y, z, 0.0]
+    })
+}
+
+/// What `frame` reads as `Frame` on a canvas `aspect` times as wide as it
+/// is high, its lights checked by `invalid_scene_frame`.
+fn frame_uniform(frame: &SceneFrame, aspect: f32) -> FrameUniform {
+    let camera = &frame.camera;
+    let projection = projection_matrix(&camera.projection, aspect);
+    // The view's rotation `R` and translation `t`: the camera sits at
+    // `−Rᵀt`, and its +Z is `R`'s third row.
+    let view = camera.view.map(f64::from);
+    let eye: [f64; 3] =
+        std::array::from_fn(|c| -(0..3).map(|r| view[c * 4 + r] * view[12 + r]).sum::<f64>());
+    let perspective = matches!(camera.projection, Projection::Perspective { .. });
+    let mut lights = [bytemuck::Zeroable::zeroed(); MAX_DIRECTIONAL_LIGHTS];
+    for (uniform, light) in lights.iter_mut().zip(&frame.lights.directional) {
+        let [x, y, z] = to_light(light.direction).expect("checked by invalid_scene_frame");
+        let [r, g, b] = light.color.map(|value| value * light.intensity);
+        *uniform = LightUniform {
+            to_light: [x, y, z, 0.0],
+            color: [r, g, b, 0.0],
+        };
+    }
+    FrameUniform {
+        view_projection: multiply(&projection, &camera.view),
+        view: camera.view,
+        projection,
+        eye: [
+            eye[0] as f32,
+            eye[1] as f32,
+            eye[2] as f32,
+            if perspective { 1.0 } else { 0.0 },
+        ],
+        forward: [camera.view[2], camera.view[6], camera.view[10], 0.0],
+        params: [
+            frame.time as f32,
+            1.0 / aspect,
+            frame.lights.directional.len() as f32,
+            0.0,
+        ],
+        lights,
+        ambient: frame.lights.ambient.map(|[r, g, b]| [r, g, b, 0.0]),
     }
 }
 
@@ -1545,9 +2010,9 @@ fn strided<T: bytemuck::Pod>(values: &[T], stride: usize) -> Vec<u8> {
     bytes
 }
 
-/// A material's base color and texture, the whole of what an unlit material
-/// draws. `invalid_scene` refuses MToon until it is drawn, so an MToon
-/// material reaches here only if that changes; it then draws as unlit.
+/// A material's base color and texture: the whole of what an unlit material
+/// draws, and MToon's lit color. Every MToon texture but the matcap and the
+/// outline width is sampled through this texture's transform.
 fn base_layer(kind: &MaterialKind) -> ([f32; 4], Option<&celesta_plugin::TextureRef>) {
     match kind {
         MaterialKind::Unlit(unlit) => (unlit.base_color, unlit.base_color_texture.as_ref()),
@@ -1555,12 +2020,13 @@ fn base_layer(kind: &MaterialKind) -> ([f32; 4], Option<&celesta_plugin::Texture
     }
 }
 
-/// What `state` draws its material with: the base color, and the rows of
-/// its texture transform, which scales, then rotates, then offsets
-/// coordinates as `KHR_texture_transform`'s sample code does. A rotation
-/// turns `(1, 0)` toward `(0, 1)`. The frame's overrides replace the
-/// material's values.
-fn draw_uniform(material: &celesta_plugin::Material, state: &DrawState) -> DrawUniform {
+/// What `state` draws its material with: its world matrix and normal
+/// matrix, the base color, and the rows of its texture transform, which
+/// scales, then rotates, then offsets coordinates as
+/// `KHR_texture_transform`'s sample code does. A rotation turns `(1, 0)`
+/// toward `(0, 1)`. The frame's overrides replace the material's values.
+/// An MToon material adds its factors.
+fn draw_uniform(material: &Material, state: &DrawState) -> DrawUniform {
     let (base_color, texture) = base_layer(&material.kind);
     let transform = texture.and_then(|texture| texture.transform);
     let (offset, rotation, scale) = transform.map_or(([0.0; 2], 0.0, [1.0; 2]), |transform| {
@@ -1573,11 +2039,65 @@ fn draw_uniform(material: &celesta_plugin::Material, state: &DrawState) -> DrawU
         AlphaMode::Mask { cutoff } => cutoff,
         AlphaMode::Opaque | AlphaMode::Blend => 0.0,
     };
-    DrawUniform {
+    let uniform = DrawUniform {
         world: state.world,
+        normal_matrix: normal_matrix(&state.world),
         base_color: state.overrides.base_color.unwrap_or(base_color),
         uv_u: [cos * scale[0], -sin * scale[1], offset[0], cutoff],
         uv_v: [sin * scale[0], cos * scale[1], offset[1], 0.0],
+        ..bytemuck::Zeroable::zeroed()
+    };
+    match &material.kind {
+        MaterialKind::Unlit(_) => uniform,
+        MaterialKind::Mtoon(mtoon) => mtoon_factors(mtoon, uniform),
+    }
+}
+
+/// `uniform` with `mtoon`'s factors.
+fn mtoon_factors(mtoon: &MtoonMaterial, uniform: DrawUniform) -> DrawUniform {
+    let with = |[r, g, b]: [f32; 3], w: f32| [r, g, b, w];
+    DrawUniform {
+        shade: with(mtoon.shade_color_factor, mtoon.shading_shift_factor),
+        emissive: with(
+            mtoon.emissive_factor,
+            mtoon.shading_shift_texture.map_or(0.0, |slot| slot.scale),
+        ),
+        matcap: with(mtoon.matcap_factor, mtoon.shading_toony_factor),
+        rim: with(
+            mtoon.parametric_rim_color_factor,
+            mtoon.rim_lighting_mix_factor,
+        ),
+        rim_shape: [
+            mtoon.parametric_rim_fresnel_power_factor,
+            mtoon.parametric_rim_lift_factor,
+            mtoon.gi_equalization_factor,
+            mtoon.normal_texture.map_or(0.0, |slot| slot.scale),
+        ],
+        outline: with(
+            mtoon.outline_color_factor,
+            mtoon.outline_lighting_mix_factor,
+        ),
+        outline_width: [
+            mtoon.outline_width_factor,
+            match mtoon.outline_width_mode {
+                OutlineWidthMode::None => 0.0,
+                OutlineWidthMode::WorldCoordinates => 1.0,
+                OutlineWidthMode::ScreenCoordinates => 2.0,
+            },
+            0.0,
+            0.0,
+        ],
+        uv_animation: [
+            mtoon.uv_animation_scroll_x_speed_factor,
+            mtoon.uv_animation_scroll_y_speed_factor,
+            mtoon.uv_animation_rotation_speed_factor / std::f32::consts::TAU,
+            if mtoon.normal_texture.is_some() {
+                1.0
+            } else {
+                0.0
+            },
+        ],
+        ..uniform
     }
 }
 
@@ -1670,11 +2190,7 @@ impl GpuRenderer {
 
         let params_stride = aligned(std::mem::size_of::<SkinParams>(), alignment);
         let draw_stride = aligned(std::mem::size_of::<DrawUniform>(), alignment);
-        let aspect = model.canvas[0] / model.canvas[1];
-        let view_projection = multiply(
-            &projection_matrix(&frame.camera.projection, aspect),
-            &frame.camera.view,
-        );
+        let frame_uniform = frame_uniform(frame, model.canvas[0] / model.canvas[1]);
         // Each queue write lands before this layer's commands, which are
         // submitted below, and after any earlier layer's.
         let SceneFrameResources {
@@ -1719,7 +2235,7 @@ impl GpuRenderer {
                 device,
                 gpu_queue,
                 uniform,
-                bytemuck::cast_slice(&view_projection),
+                bytemuck::bytes_of(&frame_uniform),
                 largest_buffer,
                 allocations,
             ),
@@ -1743,9 +2259,9 @@ impl GpuRenderer {
                         },
                     ],
                 }),
-                camera: device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Celesta scene camera"),
-                    layout: &pipelines.camera_layout,
+                view: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Celesta scene frame uniform"),
+                    layout: &pipelines.view_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: view_buffer.buffer().as_entire_binding(),
@@ -1766,7 +2282,7 @@ impl GpuRenderer {
         }
         let FrameGroups {
             frame: frame_group,
-            camera: camera_group,
+            view: view_group,
             draws: draw_group,
         } = groups.as_ref().expect("made above");
 
@@ -1880,22 +2396,19 @@ impl GpuRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_bind_group(0, camera_group, &[]);
+            pass.set_bind_group(0, view_group, &[]);
             for (slot, state) in queue.iter().enumerate() {
                 let info = &model.draws[state.index];
                 let geometry = &scene.geometries[info.geometry];
                 let material = &model.materials[info.material];
-                let facing = Facing {
-                    culled: !material.double_sided,
-                    clockwise: determinant(&state.world) < 0.0,
-                };
-                let alpha = Alpha::of(material.alpha_mode);
-                pass.set_pipeline(&pipelines.draw[&(facing, alpha)]);
+                let key = PipelineKey::main(material, determinant(&state.world) < 0.0);
+                let pipeline = pipelines
+                    .draw
+                    .get(&key)
+                    .expect("prepared when the model loaded");
+                pass.set_pipeline(pipeline);
                 pass.set_bind_group(1, draw_group, &[(slot * draw_stride) as u32]);
-                let texture = base_layer(&material.kind)
-                    .1
-                    .map_or(&pipelines.white, |texture| &scene.textures[texture.texture]);
-                pass.set_bind_group(2, texture, &[]);
+                pass.set_bind_group(2, &scene.materials[info.material], &[]);
                 pass.set_vertex_buffer(0, scene.draws[state.index].skinned.slice(..));
                 pass.set_vertex_buffer(1, geometry.uvs.slice(..));
                 pass.set_index_buffer(geometry.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -2075,13 +2588,146 @@ mod tests {
     }
 
     #[test]
-    fn mtoon_materials_are_refused_until_drawn() {
-        let mut model = bare_model(3, 1);
-        model.materials[0].kind = MaterialKind::Mtoon(celesta_plugin::MtoonMaterial::default());
+    fn lit_normal_matrix_is_the_signed_cofactor() {
+        let scaling = |x: f32, y: f32, z: f32| {
+            let mut m = [0.0_f32; 16];
+            for (i, scale) in [x, y, z, 1.0].into_iter().enumerate() {
+                m[i * 4 + i] = scale;
+            }
+            m
+        };
+        // The cofactor diag(1, 2, 2), over its largest entry: the inverse
+        // transpose diag(0.5, 1, 1).
         assert_eq!(
-            invalid_scene(&model).as_deref(),
-            Some("material 0 is mtoon, which is not drawn yet")
+            normal_matrix(&scaling(2.0, 1.0, 1.0)),
+            [
+                [0.5, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0]
+            ]
         );
+        // However large `world` is, it stays finite.
+        let huge = normal_matrix(&scaling(1e30, 1e30, 1e30));
+        assert_eq!(huge[0], [1.0, 0.0, 0.0, 0.0]);
+        // Mirrored: the inverse transpose itself, not its negation.
+        assert_eq!(
+            normal_matrix(&scaling(-1.0, 1.0, 1.0)),
+            [
+                [-1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0]
+            ]
+        );
+        let collapsed = normal_matrix(&scaling(0.0, 0.0, 0.0));
+        assert!(
+            collapsed
+                .as_flattened()
+                .iter()
+                .all(|value| value.is_finite())
+        );
+        // A rotation is its own inverse transpose, its largest entry 1.
+        let (sin, cos) = 0.5_f32.sin_cos();
+        let mut turned = scaling(1.0, 1.0, 1.0);
+        turned[0] = cos;
+        turned[1] = sin;
+        turned[4] = -sin;
+        turned[5] = cos;
+        let matrix = normal_matrix(&turned);
+        for (column, expected) in [[cos, sin, 0.0], [-sin, cos, 0.0], [0.0, 0.0, 1.0]]
+            .iter()
+            .enumerate()
+        {
+            for row in 0..3 {
+                assert!((matrix[column][row] - expected[row]).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn mtoon_slots_and_numbers_are_checked() {
+        let mut model = bare_model(3, 1);
+        fn mtoon(model: &mut SceneModel) -> &mut celesta_plugin::MtoonMaterial {
+            match &mut model.materials[0].kind {
+                MaterialKind::Mtoon(mtoon) => mtoon,
+                MaterialKind::Unlit(_) => unreachable!("made MToon below"),
+            }
+        }
+        model.materials[0].kind = MaterialKind::Mtoon(celesta_plugin::MtoonMaterial::default());
+        assert_eq!(invalid_scene(&model), None);
+
+        let slot = Some(celesta_plugin::TextureSlot { texture: 1 });
+        let scaled = Some(celesta_plugin::ScaledTextureSlot {
+            texture: 1,
+            scale: 1.0,
+        });
+        type Set = fn(
+            &mut celesta_plugin::MtoonMaterial,
+            Option<celesta_plugin::TextureSlot>,
+            Option<celesta_plugin::ScaledTextureSlot>,
+        );
+        let cases: [(&str, Set); 9] = [
+            ("baseColorTexture", |m, _, _| {
+                m.base_color_texture = Some(celesta_plugin::TextureRef {
+                    texture: 1,
+                    transform: None,
+                })
+            }),
+            ("shadeMultiplyTexture", |m, slot, _| {
+                m.shade_multiply_texture = slot
+            }),
+            ("shadingShiftTexture", |m, _, scaled| {
+                m.shading_shift_texture = scaled
+            }),
+            ("normalTexture", |m, _, scaled| m.normal_texture = scaled),
+            ("emissiveTexture", |m, slot, _| m.emissive_texture = slot),
+            ("matcapTexture", |m, slot, _| m.matcap_texture = slot),
+            ("rimMultiplyTexture", |m, slot, _| {
+                m.rim_multiply_texture = slot
+            }),
+            ("outlineWidthMultiplyTexture", |m, slot, _| {
+                m.outline_width_multiply_texture = slot
+            }),
+            ("uvAnimationMaskTexture", |m, slot, _| {
+                m.uv_animation_mask_texture = slot
+            }),
+        ];
+        for (name, set) in cases {
+            let mut model = model.clone();
+            set(mtoon(&mut model), slot, scaled);
+            assert_eq!(
+                invalid_scene(&model),
+                Some(format!("material 0's {name} uses texture 1, of 0"))
+            );
+        }
+
+        let not_finite: [fn(&mut celesta_plugin::MtoonMaterial); 4] = [
+            |m| m.shading_toony_factor = f32::NAN,
+            |m| m.base_color[3] = f32::INFINITY,
+            |m| m.uv_animation_rotation_speed_factor = f32::NEG_INFINITY,
+            |m| {
+                m.normal_texture = Some(celesta_plugin::ScaledTextureSlot {
+                    texture: 0,
+                    scale: f32::NAN,
+                })
+            },
+        ];
+        model.textures.push(celesta_plugin::SceneTexture {
+            source: celesta_plugin::TextureSource::Rgba {
+                width: 1,
+                height: 1,
+                pixels: std::sync::Arc::new(vec![255; 4]),
+            },
+            color_space: ColorSpace::Linear,
+            sampler: Default::default(),
+        });
+        for set in not_finite {
+            let mut model = model.clone();
+            set(mtoon(&mut model));
+            assert_eq!(
+                invalid_scene(&model).as_deref(),
+                Some("material 0's mtoon parameters are not finite")
+            );
+        }
     }
 
     #[test]
@@ -2110,10 +2756,16 @@ mod tests {
 
     #[test]
     fn uniforms_past_the_largest_buffer_are_refused() {
-        // 256-byte aligned, 1,000 draws take 256,000 bytes of each.
-        assert_eq!(oversized_uniforms(1000, 256, 256_000), None);
-        let message = oversized_uniforms(1001, 256, 256_000).expect("too large");
-        assert!(message.contains("256256 bytes"), "{message}");
+        // 256-byte aligned, 1,000 draws' skinning parameters take 256,000
+        // bytes, and their 288-byte draw uniforms twice that.
+        assert_eq!(oversized_uniforms(1000, 256, 512_000), None);
+        let message = oversized_uniforms(1000, 256, 511_999).expect("too large");
+        assert!(
+            message.contains("draw uniforms take 512000 bytes"),
+            "{message}"
+        );
+        let message = oversized_uniforms(1001, 256, 512_000).expect("too large");
+        assert!(message.contains("512512 bytes"), "{message}");
         assert!(oversized_uniforms(usize::MAX, 256, u64::MAX - 1).is_some());
     }
 

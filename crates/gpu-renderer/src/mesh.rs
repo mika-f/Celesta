@@ -557,6 +557,7 @@ impl GpuRenderer {
                 )
                 .map(LoadedModel::Meshes),
                 ContentModel::Scene(model) => {
+                    // Loading makes the pipelines the model's materials use.
                     let pipelines = self
                         .meshes
                         .scene_pipelines

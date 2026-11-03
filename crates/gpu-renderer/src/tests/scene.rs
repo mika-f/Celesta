@@ -4,9 +4,10 @@
 
 use super::*;
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DrawInfo, DrawState, Filter,
-    Geometry, Lights, Material, MaterialKind, ModelId, MorphTarget, Opened, PluginError,
-    Projection, Sampler, SceneFrame, SceneModel, SceneTexture, Skin, TextureSource, UnlitMaterial,
+    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DirectionalLight, DrawInfo,
+    DrawState, Filter, Geometry, Lights, Material, MaterialKind, ModelId, MorphTarget,
+    MtoonMaterial, Opened, PluginError, Projection, Sampler, ScaledTextureSlot, SceneFrame,
+    SceneModel, SceneTexture, Skin, TextureSlot, TextureSource, UnlitMaterial,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -1147,3 +1148,305 @@ fn overrides_replace_the_material_texture_transform_and_color() {
 }
 
 const BLACK: [u8; 4] = [0, 0, 0, 255];
+
+/// An opaque, single-sided MToon material.
+fn toon(mtoon: MtoonMaterial) -> Material {
+    Material {
+        alpha_mode: AlphaMode::Opaque,
+        double_sided: false,
+        kind: MaterialKind::Mtoon(mtoon),
+    }
+}
+
+/// MToon lit white and shaded black, a linear step across the whole of
+/// `dot(N, L)` from −1 to 1 (toony 0, no shift), and ambient light
+/// unflattened.
+fn flat_toon() -> MtoonMaterial {
+    MtoonMaterial {
+        base_color: [1.0; 4],
+        shade_color_factor: [0.0; 3],
+        shading_shift_factor: 0.0,
+        shading_toony_factor: 0.0,
+        gi_equalization_factor: 0.0,
+        ..MtoonMaterial::default()
+    }
+}
+
+fn light(direction: [f32; 3], color: [f32; 3], intensity: f32) -> DirectionalLight {
+    DirectionalLight {
+        direction,
+        color,
+        intensity,
+    }
+}
+
+/// A light travelling down and away from the camera: `dot(N, L)` is 0.5
+/// for a normal facing +Z.
+const HALF_LIT: [f32; 3] = [0.0, -0.866_025_4, -0.5];
+
+/// `one_square` drawn with `mtoon` under `lights`, without ambient light.
+/// The camera is orthographic and looks down −Z, so `V` is +Z.
+fn toon_square(mtoon: MtoonMaterial, lights: Vec<DirectionalLight>) -> Scenes {
+    let mut scenes = one_square();
+    scenes.model.materials = vec![toon(mtoon)];
+    scenes.frame.lights.directional = lights;
+    scenes
+}
+
+/// `scenes` with every vertex's normal `normal`.
+fn with_normals(mut scenes: Scenes, normal: [f32; 3]) -> Scenes {
+    for geometry in &mut scenes.model.geometries {
+        geometry.normals = vec![normal; geometry.positions.len()];
+    }
+    scenes
+}
+
+/// A 1x1 texture of `rgba`.
+fn texel(rgba: [u8; 4], color_space: ColorSpace) -> SceneTexture {
+    SceneTexture {
+        source: TextureSource::Rgba {
+            width: 1,
+            height: 1,
+            pixels: Arc::new(rgba.to_vec()),
+        },
+        color_space,
+        sampler: Sampler::default(),
+    }
+}
+
+fn grey(value: u8) -> [u8; 4] {
+    [value, value, value, 255]
+}
+
+/// The pixel at the centre of `scenes`, where the square is.
+fn centre(scenes: Scenes) -> Option<[u8; 4]> {
+    render_scenes(scenes).map(|frame| pixel(&frame, 32, 32))
+}
+
+#[track_caller]
+fn assert_centre(scenes: Scenes, expected: [u8; 4]) {
+    let Some(actual) = centre(scenes) else {
+        return;
+    };
+    assert!(near(actual, expected), "{actual:?}, not {expected:?}");
+}
+
+/// Red where lit, blue where shaded.
+fn red_and_blue(toony: f32, shift: f32) -> MtoonMaterial {
+    MtoonMaterial {
+        base_color: [1.0, 0.0, 0.0, 1.0],
+        shade_color_factor: [0.0, 0.0, 1.0],
+        shading_toony_factor: toony,
+        shading_shift_factor: shift,
+        ..flat_toon()
+    }
+}
+
+#[test]
+fn lit_main_light_steps_by_toony_and_shift() {
+    // `dot(N, L)` 0.5 shifted by −0.25 is three quarters of the way from
+    // −0.5 to 0.5: linear (0.75, 0, 0.25).
+    for (color, intensity) in [([1.0; 3], 1.0), ([0.5; 3], 2.0)] {
+        let scenes = toon_square(
+            red_and_blue(0.5, -0.25),
+            vec![light(HALF_LIT, color, intensity)],
+        );
+        assert_centre(scenes, [225, 0, 137, 255]);
+    }
+}
+
+#[test]
+fn lit_shading_shift_texture_adds_red_times_scale() {
+    // Red 1 × 0.25 takes the shift from −0.5 to −0.25; green and blue add
+    // nothing, leaving it at −0.5: halfway, linear (0.5, 0, 0.5).
+    for (rgba, expected) in [
+        ([255, 0, 0, 255], [225, 0, 137, 255]),
+        ([0, 255, 255, 255], [188, 0, 188, 255]),
+    ] {
+        let mut scenes = toon_square(
+            MtoonMaterial {
+                shading_shift_texture: Some(ScaledTextureSlot {
+                    texture: 0,
+                    scale: 0.25,
+                }),
+                ..red_and_blue(0.5, -0.5)
+            },
+            vec![light(HALF_LIT, [1.0; 3], 1.0)],
+        );
+        scenes.model.textures = vec![texel(rgba, ColorSpace::Linear)];
+        assert_centre(scenes, expected);
+    }
+}
+
+#[test]
+fn lit_shade_multiply_texture_tints_the_shade() {
+    // Lit from behind, `dot(N, L)` −1: all shade, white times the texel.
+    let mut scenes = toon_square(
+        MtoonMaterial {
+            shade_color_factor: [1.0; 3],
+            shade_multiply_texture: Some(TextureSlot { texture: 0 }),
+            shading_toony_factor: 0.5,
+            ..flat_toon()
+        },
+        vec![light([0.0, 0.0, 1.0], [1.0; 3], 1.0)],
+    );
+    scenes.model.textures = vec![texel([128, 64, 200, 255], ColorSpace::Srgb)];
+    assert_centre(scenes, [128, 64, 200, 255]);
+}
+
+#[test]
+fn lit_flat_ambient_is_the_constant_term() {
+    // No lights: the white surface shows the ambient alone, linear 0.2,
+    // whatever the equalization.
+    let mut scenes = toon_square(
+        MtoonMaterial {
+            gi_equalization_factor: 0.9,
+            ..flat_toon()
+        },
+        vec![],
+    );
+    scenes.frame.lights.ambient[3] = [0.2; 3];
+    assert_centre(scenes, grey(124));
+    // Nor any ambient: black, opaque.
+    assert_centre(toon_square(flat_toon(), vec![]), BLACK);
+}
+
+#[test]
+fn lit_ambient_terms_follow_shade_sh9() {
+    // Each coefficient alone at 0.5 for the normal (0.48, 0.6, 0.64):
+    // 0.5 × x, y, z, 1, xy, yz, z², zx, and −0.5 × (x² − y²).
+    let expected = [134, 149, 153, 188, 106, 121, 125, 109, 72];
+    for (k, expected) in expected.into_iter().enumerate() {
+        let mut scenes = with_normals(toon_square(flat_toon(), vec![]), [0.48, 0.6, 0.64]);
+        scenes.frame.lights.ambient[k] = if k == 8 { [-0.5; 3] } else { [0.5; 3] };
+        let Some(actual) = centre(scenes) else {
+            return;
+        };
+        assert!(near(actual, grey(expected)), "coefficient {k}: {actual:?}");
+    }
+}
+
+#[test]
+fn lit_gi_equalization_blends_toward_the_vertical_average() {
+    // Facing +Y: SH 0.5 + 0.25 = 0.75; the average of +Y and −Y, 0.25.
+    for (equalization, expected) in [(0.0, 225), (1.0, 137), (0.5, 188)] {
+        let mut scenes = with_normals(
+            toon_square(
+                MtoonMaterial {
+                    gi_equalization_factor: equalization,
+                    ..flat_toon()
+                },
+                vec![],
+            ),
+            [0.0, 1.0, 0.0],
+        );
+        scenes.frame.lights.ambient[1] = [0.5; 3];
+        scenes.frame.lights.ambient[3] = [0.25; 3];
+        let Some(actual) = centre(scenes) else {
+            return;
+        };
+        assert!(
+            near(actual, grey(expected)),
+            "equalization {equalization}: {actual:?}"
+        );
+    }
+}
+
+#[test]
+fn lit_normals_follow_the_inverse_transpose_of_world() {
+    // Stretched ×2 in x, the normal (0.6, 0.8, 0) leans towards +Y:
+    // (0.3, 0.8, 0) normalised, `dot(N, L)` 0.9363, linear 0.9682. Taken
+    // through `world` itself it would lean the other way, to 0.8 (228).
+    let mut scenes = with_normals(
+        toon_square(flat_toon(), vec![light([0.0, -1.0, 0.0], [1.0; 3], 1.0)]),
+        [0.6, 0.8, 0.0],
+    );
+    scenes.frame.draws[0].world = scaling(2.0, 1.0, 1.0);
+    assert_centre(scenes, grey(251));
+}
+
+#[test]
+fn lit_back_faces_of_double_sided_materials_flip_the_normal() {
+    // Turned half about Y, the square shows its back, whose normal faces
+    // the camera and the light behind it: lit, red.
+    let mut scenes = toon_square(
+        red_and_blue(0.5, 0.0),
+        vec![light([0.0, 0.0, -1.0], [1.0; 3], 1.0)],
+    );
+    scenes.model.materials[0].double_sided = true;
+    scenes.frame.draws[0].world = scaling(-1.0, 1.0, -1.0);
+    assert_centre(scenes, RED);
+}
+
+#[test]
+fn lit_toony_one_is_a_hard_step() {
+    // `linearstep(0, 0, t)`: shade at `dot(N, L)` 0, lit above.
+    let cases = [([0.0, -1.0, 0.0], BLUE), (HALF_LIT, RED)];
+    for (direction, expected) in cases {
+        let scenes = toon_square(
+            red_and_blue(1.0, 0.0),
+            vec![light(direction, [1.0; 3], 1.0)],
+        );
+        assert_centre(scenes, expected);
+    }
+}
+
+#[test]
+fn lit_degenerate_worlds_draw_without_nan() {
+    // Scaled to nothing, the square draws nothing, without an error.
+    let mut scenes = toon_square(red_and_blue(0.5, 0.0), vec![]);
+    scenes.frame.draws[0].world = scaling(0.0, 0.0, 0.0);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 32, 32, CLEAR);
+    // Mirrored, it lights as its mirror image: its normal still faces the
+    // camera and the light behind it.
+    let mut scenes = toon_square(
+        red_and_blue(0.5, 0.0),
+        vec![light([0.0, 0.0, -1.0], [1.0; 3], 1.0)],
+    );
+    scenes.frame.draws[0].world = scaling(-1.0, 1.0, 1.0);
+    assert_centre(scenes, RED);
+}
+
+#[test]
+fn lit_lights_the_shader_cannot_use_are_refused() {
+    let scenes = toon_square(flat_toon(), vec![light(HALF_LIT, [1.0; 3], 1.0); 5]);
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(message.contains("5 directional lights"), "{message}");
+
+    let scenes = toon_square(flat_toon(), vec![light([0.0; 3], [1.0; 3], 1.0)]);
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(message.contains("directional light 0"), "{message}");
+
+    // Four are fine, and so is none.
+    for lights in [vec![light(HALF_LIT, [0.25; 3], 1.0); 4], vec![]] {
+        let Some(frame) = render_scenes(toon_square(flat_toon(), lights)) else {
+            return;
+        };
+        assert_eq!(pixel(&frame, 32, 32)[3], 255);
+    }
+}
+
+#[test]
+fn lit_mtoon_texture_out_of_range_is_refused() {
+    let scenes = toon_square(
+        MtoonMaterial {
+            shade_multiply_texture: Some(TextureSlot { texture: 3 }),
+            ..flat_toon()
+        },
+        vec![],
+    );
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(
+        message.contains("shadeMultiplyTexture uses texture 3"),
+        "{message}"
+    );
+}
