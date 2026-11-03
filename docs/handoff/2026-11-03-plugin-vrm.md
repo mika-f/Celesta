@@ -738,9 +738,15 @@ Besides MToon's list above, to check against UniVRM:
   refuse the model even when nothing draws them, and so does a morph bind
   whose weight is not finite, even one ignored for its target or as a
   repeat.
-- **Material binds are keyed by material index,** where UniVRM's runtime
-  keys them by material name: the two differ only for materials sharing a
-  name.
+- **Material binds reach the material they index,** as VRM 1.0's schema
+  addresses them. UniVRM (checked at `efd20f62`) keys them by name:
+  `ExpressionExtensions.Build10` stores the bound material's glTF `name`,
+  else `material_{index:00}` (`GltfMaterialImportUtils.ImportMaterialName`),
+  and `MaterialValueBindingMerger` groups every renderer material by
+  `sharedMaterial.name`. So in UniVRM a colour or texture transform bind
+  reaches every material whose name is the bound material's, and here
+  only the bound one. The two agree whenever material names are unique.
+  The spec leaves no room here, so the plugin keeps index semantics.
 
 ## Checks
 
