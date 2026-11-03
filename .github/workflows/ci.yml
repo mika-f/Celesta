@@ -238,6 +238,26 @@ jobs:
       - name: Test
         run: env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/vrm/Cargo.toml --locked
 
+      # Node.js and pnpm as mise.lock pins them, for <Vrm> and the build.
+      - uses: jdx/mise-action@v5.2.5
+        with:
+          version: 2026.10.25
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install JS packages
+        run: pnpm install --frozen-lockfile
+
+      # <Vrm> imports @celesta/react and @celesta/character, and the build
+      # checks its declarations against the runtime's project types.
+      - name: Build Celesta packages
+        run: pnpm run build:runtime
+
+      - name: Test the component
+        run: pnpm --filter celesta-plugin-vrm-js test
+
+      - name: Build the plugin directory
+        run: node plugins/vrm/build.mjs
+
   # Packages for Windows and macOS without signing them, so packaging breaks
   # here rather than at release time, and saves the release-profile Rust cache
   # on main for the next release tag to restore.

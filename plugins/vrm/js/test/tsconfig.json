@@ -1,0 +1,5 @@
+{
+  // Type-checks the tests together with the src/ they import.
+  "extends": "../tsconfig.json",
+  "include": ["./**/*.mts", "../src"]
+}

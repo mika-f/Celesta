@@ -33,6 +33,34 @@ The tests draw through Celesta's GPU renderer, which links FFmpeg, so they
 need what the repository's own tests need. Without a GPU adapter the GPU
 tests return early; `CELESTA_REQUIRE_GPU=1` makes them fail instead.
 
+## The plugin directory and `<Vrm>`
+
+`build.mjs` builds what Celesta loads: the manifest, the program, and the
+module entries import as `@celesta-plugin/vrm` (`js/src/index.ts`, the
+`<Vrm>` component), with its declarations.
+
+```sh
+pnpm install && pnpm run build:runtime   # once, at the repository root
+node plugins/vrm/build.mjs               # writes plugins/vrm/dist/vrm
+pnpm --filter celesta-plugin-vrm-js test # the component's tests
+```
+
+`--out <dir>`, `--target <triple>`, and `--skip-js` work as for
+`examples/plugins/build.mjs`. Add `plugins/vrm/dist` to the app's plugin
+folders, or pass it as the exporter's `--plugin-dir`.
+
+## The demo
+
+[`demo.tsx`](demo.tsx) shows Seed-san from the bust up, mouthing the vowels.
+Download `Seed-san.vrm` (VRM Public License 1.0) from
+[vrm-c/vrm-specification](https://github.com/vrm-c/vrm-specification)'s
+`samples/Seed-san/vrm` into `plugins/vrm/assets/`, which Git ignores, then:
+
+```sh
+node plugins/vrm/build.mjs
+cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/vrm/dist
+```
+
 ## Tests and sample models
 
 Every test runs on a small VRM 1.0 avatar built in code
