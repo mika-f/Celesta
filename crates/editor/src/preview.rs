@@ -291,7 +291,9 @@ pub(crate) fn shift_runs<R: Clone>(
 pub(crate) struct PreviewResult {
     pub(crate) frame: Result<PreviewPresentation, String>,
     /// Recoverable diagnostics for this frame: unresolved `registerComponent`
-    /// names (hidden from the preview) and React runtime failures.
+    /// names (hidden from the preview), React runtime failures, font
+    /// fallbacks, missing glyphs, and plugin notices (an info notice keeps its
+    /// `note: ` prefix).
     pub(crate) warnings: Vec<String>,
     /// Where each leaf layer was drawn, for selecting layers by clicking the
     /// preview. Recorded in interactive `WholeScene` frames only; empty
