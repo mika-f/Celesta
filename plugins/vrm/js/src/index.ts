@@ -141,6 +141,10 @@ export function vrmElementProps(props: VrmProps, frame: number, fps: number): Re
 
 /** What the layer sends on `frame` at `fps`: a pure function of them. */
 export function vrmData(props: VrmProps, frame: number, fps: number): VrmData {
+  const { mouthSmoothing } = props;
+  if (mouthSmoothing !== undefined && !(Number.isFinite(mouthSmoothing) && mouthSmoothing >= 0)) {
+    throw new Error('Vrm mouthSmoothing is a number of frames, 0 or more');
+  }
   const expressions: Record<string, number> = {};
   if (props.blink !== false) {
     expressions.blink = BLINK[blinkPhase(frame, fps, props.blink ?? {})];
