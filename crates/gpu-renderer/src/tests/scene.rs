@@ -4,10 +4,11 @@
 
 use super::*;
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DirectionalLight, DrawInfo,
-    DrawState, Filter, Geometry, Lights, Material, MaterialKind, ModelId, MorphTarget,
-    MtoonMaterial, Opened, OutlineWidthMode, PluginError, Projection, Sampler, ScaledTextureSlot,
-    SceneFrame, SceneModel, SceneTexture, Skin, TextureSlot, TextureSource, UnlitMaterial,
+    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, CustomMaterial, DirectionalLight,
+    DrawInfo, DrawState, EmptyTexel, Filter, Geometry, Lights, Material, MaterialKind, ModelId,
+    MorphTarget, MtoonMaterial, Opened, OutlineWidthMode, PluginError, Projection, Sampler,
+    ScaledTextureSlot, SceneFrame, SceneModel, SceneShader, SceneTexture, ShaderTexture, Skin,
+    TextureSlot, TextureSource, UnlitMaterial,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -2850,4 +2851,471 @@ fn override_not_finite_is_refused() {
             "{name}: {message}"
         );
     }
+}
+
+/// A plugin's material shader of `wgsl` with a texture slot for each of
+/// `textures`, which an empty slot samples.
+fn shader(wgsl: &str, textures: &[EmptyTexel]) -> SceneShader {
+    SceneShader {
+        name: None,
+        wgsl: wgsl.to_owned(),
+        textures: textures
+            .iter()
+            .map(|&empty| ShaderTexture { name: None, empty })
+            .collect(),
+    }
+}
+
+/// An opaque, single-sided material of the model's shader `shader` and
+/// `params`, its texture slots empty.
+fn custom(shader: usize, params: Vec<u8>) -> Material {
+    Material {
+        alpha_mode: AlphaMode::Opaque,
+        double_sided: false,
+        kind: MaterialKind::Custom(CustomMaterial {
+            shader,
+            params,
+            textures: vec![],
+            outline: None,
+            requires_tangents: false,
+        }),
+    }
+}
+
+/// `values` as little-endian bytes.
+fn bytes(values: &[f32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+/// `one_square` with `shaders`, drawn with `material`.
+fn custom_square(shaders: Vec<SceneShader>, material: Material) -> Scenes {
+    let mut scenes = one_square();
+    scenes.model.shaders = shaders;
+    scenes.model.materials = vec![material];
+    scenes
+}
+
+/// `custom`'s `CustomMaterial`, to change.
+fn custom_of(material: &mut Material) -> &mut CustomMaterial {
+    match &mut material.kind {
+        MaterialKind::Custom(custom) => custom,
+        _ => panic!("not a custom material"),
+    }
+}
+
+/// Its parameters' color.
+const FLAT: &str = "struct Params { color: vec4f };
+fn material_fragment(fragment: Fragment) -> vec4f { return params.color; }";
+
+/// N·L under the main light, plus the ambient light.
+const LAMBERT: &str = "struct Params { albedo: vec4f };
+fn material_fragment(fragment: Fragment) -> vec4f {
+    let light = frame.lights[0];
+    let lit = light.color.rgb * max(dot(fragment.normal, light.to_light.xyz), 0.0) + ambient_light(fragment.normal);
+    return vec4f(params.albedo.rgb * lit, 1.0);
+}";
+
+/// Of three slots (white, black, white when empty), the one `slot` names.
+const SLOTS: &str = "struct Params { slot: u32 };
+fn material_fragment(fragment: Fragment) -> vec4f {
+    let a = textureSample(texture_0, sampler_0, fragment.uv);
+    let b = textureSample(texture_1, sampler_1, fragment.uv);
+    let c = textureSample(texture_2, sampler_2, fragment.uv);
+    return select(select(c, b, params.slot == 1u), a, params.slot == 0u);
+}";
+
+/// What the interface gives a material, by `mode`: 0 the tangent's `w` and
+/// the draw's handedness, each as 0.5 + 0.5 x; 1 red on a front face, blue
+/// on a back one; 2 `V`'s x as 0.5 + 0.5 x; 3 `linearstep(p.x, p.y, p.z)`
+/// and the length of `safe_normalize` of zero.
+const PROBE: &str = "struct Params { mode: u32, p: vec4f };
+fn material_fragment(fragment: Fragment) -> vec4f {
+    let handed = vec4f(0.5 + 0.5 * fragment.tangent.w, 0.5 + 0.5 * draw.handedness, 0.0, 1.0);
+    let facing = select(vec4f(0.0, 0.0, 1.0, 1.0), vec4f(1.0, 0.0, 0.0, 1.0), fragment.front_facing);
+    let view = vec4f(0.5 + 0.5 * fragment.view.x, 0.0, 0.0, 1.0);
+    let helpers = vec4f(
+        linearstep(params.p.x, params.p.y, params.p.z),
+        length(safe_normalize(vec3f(0.0))),
+        0.0,
+        1.0,
+    );
+    return select(select(select(helpers, view, params.mode == 2u), facing, params.mode == 1u), handed, params.mode == 0u);
+}";
+
+/// `PROBE`'s 32 parameter bytes: `mode` at 0, `p` at 16.
+fn probe(mode: u32, p: [f32; 4]) -> Vec<u8> {
+    let mut params = mode.to_le_bytes().to_vec();
+    params.resize(16, 0);
+    params.extend(bytes(&p));
+    params
+}
+
+/// `one_square` drawn with `PROBE` in `mode`.
+fn probe_square(mode: u32, p: [f32; 4]) -> Scenes {
+    custom_square(vec![shader(PROBE, &[])], custom(0, probe(mode, p)))
+}
+
+/// `one_square` drawn with `LAMBERT` in white under `lights`.
+fn lambert_square(lights: Vec<DirectionalLight>) -> Scenes {
+    let mut scenes = custom_square(vec![shader(LAMBERT, &[])], custom(0, bytes(&[1.0; 4])));
+    scenes.frame.lights.directional = lights;
+    scenes
+}
+
+#[test]
+fn material_params_colour_the_surface() {
+    let scenes = custom_square(
+        vec![shader(FLAT, &[])],
+        custom(0, bytes(&[0.5, 0.25, 1.0, 1.0])),
+    );
+    assert_centre(scenes, [188, 137, 255, 255]);
+}
+
+#[test]
+fn material_texture_slots_sample_their_texture_or_their_empty_texel() {
+    let slots = |slot: u32, filled: Vec<Option<usize>>| {
+        let mut material = custom(0, slot.to_le_bytes().to_vec());
+        custom_of(&mut material).textures = filled;
+        let mut scenes = custom_square(
+            vec![shader(
+                SLOTS,
+                &[EmptyTexel::White, EmptyTexel::Black, EmptyTexel::White],
+            )],
+            material,
+        );
+        scenes.model.textures = vec![texel([255, 0, 0, 255], ColorSpace::Srgb)];
+        scenes
+    };
+    assert_centre(slots(0, vec![Some(0)]), RED);
+    assert_centre(slots(1, vec![Some(0)]), BLACK);
+    assert_centre(slots(2, vec![Some(0)]), WHITE);
+    assert_centre(slots(1, vec![Some(0), Some(0)]), RED);
+}
+
+#[test]
+fn material_lights_and_ambient_reach_the_shader() {
+    // `dot(N, L)` 0.5 plus an ambient light of 0.25: linear 0.75.
+    let mut scenes = lambert_square(vec![light(HALF_LIT, [1.0; 3], 1.0)]);
+    scenes.frame.lights.ambient[3] = [0.25; 3];
+    assert_centre(scenes, grey(225));
+    let mut scenes = lambert_square(vec![]);
+    scenes.frame.lights.ambient[3] = [0.25; 3];
+    assert_centre(scenes, grey(137));
+}
+
+#[test]
+fn material_ambient_follows_the_sh_polynomial() {
+    // Each coefficient alone at 0.5 for the normal (0.48, 0.6, 0.64):
+    // 0.5 × x, y, z, 1, xy, yz, z², zx, and −0.5 × (x² − y²).
+    let expected = [134, 149, 153, 188, 106, 121, 125, 109, 72];
+    for (k, expected) in expected.into_iter().enumerate() {
+        let mut scenes = with_normals(lambert_square(vec![]), [0.48, 0.6, 0.64]);
+        scenes.frame.lights.ambient[k] = if k == 8 { [-0.5; 3] } else { [0.5; 3] };
+        let Some(actual) = centre(scenes) else {
+            return;
+        };
+        assert!(near(actual, grey(expected)), "coefficient {k}: {actual:?}");
+    }
+}
+
+#[test]
+fn material_normals_follow_the_inverse_transpose_of_world() {
+    // Stretched ×2 in x, the normal (0.6, 0.8, 0) leans towards +Y:
+    // (0.3, 0.8, 0) normalised, `dot(N, L)` 0.9363. Taken through `world`
+    // itself it would lean the other way, to 0.5547 (196).
+    let mut scenes = with_normals(
+        lambert_square(vec![light([0.0, -1.0, 0.0], [1.0; 3], 1.0)]),
+        [0.6, 0.8, 0.0],
+    );
+    scenes.frame.draws[0].world = scaling(2.0, 1.0, 1.0);
+    assert_centre(scenes, grey(248));
+}
+
+#[test]
+fn material_tangents_and_handedness_follow_world() {
+    let scenes = |world| {
+        let mut scenes = with_tangents(probe_square(0, [0.0; 4]));
+        scenes.frame.draws[0].world = world;
+        scenes
+    };
+    assert_centre(scenes(IDENTITY), [255, 255, 0, 255]);
+    assert_centre(scenes(scaling(-1.0, 1.0, 1.0)), [0, 0, 0, 255]);
+    // Without tangents, `w` is 0.
+    assert_centre(probe_square(0, [0.0; 4]), [188, 255, 0, 255]);
+}
+
+#[test]
+fn material_fragments_know_their_facing() {
+    let scenes = |world| {
+        let mut scenes = probe_square(1, [0.0; 4]);
+        scenes.model.materials[0].double_sided = true;
+        scenes.frame.draws[0].world = world;
+        scenes
+    };
+    assert_centre(scenes(IDENTITY), RED);
+    // Turned half about Y, the square shows its back.
+    assert_centre(scenes(scaling(-1.0, 1.0, -1.0)), BLUE);
+}
+
+#[test]
+fn material_view_points_to_the_viewer() {
+    // Orthographic, `V` is the camera's +Z everywhere.
+    let Some(frame) = render_scenes(probe_square(2, [0.0; 4])) else {
+        return;
+    };
+    for (x, y) in [(17, 17), (32, 32), (46, 46)] {
+        assert_pixel(&frame, x, y, [188, 0, 0, 255]);
+    }
+    // In perspective from 2 m, towards the eye: at pixel 45, x 0.461 m,
+    // `V`'s x is −0.2246, linear 0.3877. (Pixel 46, x 0.495 m, is 0.24 at
+    // its centre, but its farthest samples lie past the square's edge.)
+    let mut scenes = probe_square(2, [0.0; 4]);
+    scenes.frame.camera.projection = Projection::Perspective {
+        yfov: 1.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 45, 32, [167, 0, 0, 255]);
+}
+
+#[test]
+fn material_helpers_follow_their_formulas() {
+    for (p, red) in [
+        ([0.5, 0.5, 0.5], 0),
+        ([0.5, 0.5, 0.6], 255),
+        ([0.0, 1.0, 0.5], 188),
+        ([1.0, 0.0, 0.25], 225),
+    ] {
+        let [start, end, t] = p;
+        let Some(actual) = centre(probe_square(3, [start, end, t, 0.0])) else {
+            return;
+        };
+        assert!(near(actual, [red, 0, 0, 255]), "{p:?}: {actual:?}");
+    }
+}
+
+#[test]
+fn material_alpha_modes_wrap_the_returned_alpha() {
+    let half_red = |alpha_mode| {
+        let mut material = custom(0, bytes(&[1.0, 0.0, 0.0, 0.5]));
+        material.alpha_mode = alpha_mode;
+        custom_square(vec![shader(FLAT, &[])], material)
+    };
+    assert_centre(half_red(AlphaMode::Opaque), RED);
+    assert_centre(half_red(AlphaMode::BLEND), HALF_RED);
+    assert_centre(half_red(AlphaMode::Mask { cutoff: 0.4 }), RED);
+    assert_centre(half_red(AlphaMode::Mask { cutoff: 0.6 }), CLEAR);
+    // A nearly clear depth-writing blend writes no depth: blue shows
+    // through it.
+    let mut red = custom(0, bytes(&[1.0, 0.0, 0.0, 0.0005]));
+    red.alpha_mode = AlphaMode::Blend {
+        depth_write: true,
+        queue_offset: 0,
+    };
+    let mut scenes = front_and_back(red, see_through(SEE_BLUE, 0.5, false, 0));
+    scenes.model.shaders = vec![shader(FLAT, &[])];
+    assert_centre(scenes, HALF_BLUE);
+}
+
+#[test]
+fn material_degenerate_worlds_draw_without_nan() {
+    let mut scenes = lambert_square(vec![light(HALF_LIT, [1.0; 3], 1.0)]);
+    scenes.frame.draws[0].world = scaling(0.0, 0.0, 0.0);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 32, 32, CLEAR);
+}
+
+#[test]
+fn material_broken_wgsl_is_refused_naming_the_material() {
+    let broken = "struct Params { color: vec4f };
+fn material_fragment(fragment: Fragment) -> vec4f { return nope; }";
+    let Some(message) = invalid(custom_square(
+        vec![shader(broken, &[])],
+        custom(0, bytes(&[1.0; 4])),
+    )) else {
+        return;
+    };
+    assert!(message.contains("material 0's shader 0"), "{message}");
+    assert!(message.contains("2:"), "{message}");
+
+    let own = format!("@group(3) @binding(0) var<uniform> mine: vec4f;\n{FLAT}");
+    let Some(message) = invalid(custom_square(
+        vec![shader(&own, &[])],
+        custom(0, bytes(&[1.0; 4])),
+    )) else {
+        return;
+    };
+    assert!(message.contains("declares the resource"), "{message}");
+
+    // Listed but used by no material, it is refused all the same.
+    let Some(message) = invalid(custom_square(
+        vec![shader(FLAT, &[]), shader(broken, &[])],
+        custom(0, bytes(&[1.0; 4])),
+    )) else {
+        return;
+    };
+    assert!(message.contains("shader 1"), "{message}");
+    assert!(!message.contains("material"), "{message}");
+}
+
+#[test]
+fn material_params_must_match_the_shader() {
+    let Some(message) = invalid(custom_square(
+        vec![shader(FLAT, &[])],
+        custom(0, bytes(&[1.0; 3])),
+    )) else {
+        return;
+    };
+    assert!(
+        message.contains("material 0's parameters are 12 bytes, but shader 0's Params is 16"),
+        "{message}"
+    );
+    let Some(message) = invalid(custom_square(vec![shader(FLAT, &[])], custom(0, vec![]))) else {
+        return;
+    };
+    assert!(message.contains("are 0 bytes"), "{message}");
+}
+
+#[test]
+fn material_limits_are_refused() {
+    let flat = || custom(0, bytes(&[1.0; 4]));
+    let refused = |scenes: Scenes, expected: &str| {
+        let Some(message) = invalid(scenes) else {
+            return;
+        };
+        assert!(message.contains(expected), "{expected}: {message}");
+    };
+    refused(
+        custom_square(vec![shader(FLAT, &[]); 33], flat()),
+        "33 shaders, more than 32",
+    );
+
+    let mut material = flat();
+    custom_of(&mut material).textures = vec![None, None];
+    refused(
+        custom_square(vec![shader(FLAT, &[])], material),
+        "fills 2 texture slots, but shader 0 has 0",
+    );
+
+    let mut material = custom(0, 0_u32.to_le_bytes().to_vec());
+    custom_of(&mut material).textures = vec![Some(5)];
+    refused(
+        custom_square(vec![shader(SLOTS, &[EmptyTexel::White; 3])], material),
+        "texture slot 0 uses texture 5, of 0",
+    );
+
+    let mut material = flat();
+    custom_of(&mut material).shader = 3;
+    refused(
+        custom_square(vec![shader(FLAT, &[])], material),
+        "uses shader 3, of 1",
+    );
+
+    let mut long = FLAT.to_owned();
+    long.push_str(&" ".repeat(262_145 - long.len()));
+    refused(
+        custom_square(vec![shader(&long, &[])], flat()),
+        "more than 262144",
+    );
+}
+
+#[test]
+fn material_tangents_need_tangent_geometry() {
+    let mut material = custom(0, bytes(&[1.0; 4]));
+    custom_of(&mut material).requires_tangents = true;
+    let Some(message) = invalid(custom_square(vec![shader(FLAT, &[])], material)) else {
+        return;
+    };
+    assert!(
+        message.contains("draw 0")
+            && message.contains("material 0")
+            && message.contains("tangents"),
+        "{message}"
+    );
+}
+
+#[test]
+fn material_pipelines_the_backend_refuses_are_refused_naming_the_material() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    // naga accepts 16 MB of private memory a fragment; Metal's compiler
+    // refuses the pipeline (an internal error, not a validation one). On
+    // other backends the shader may well run, slowly, so it is not tried.
+    if renderer.adapter_info().backend != wgpu::Backend::Metal {
+        return;
+    }
+    let deep = "var<private> deep: array<vec4f, 1048576>;
+struct Params { color: vec4f };
+fn material_fragment(fragment: Fragment) -> vec4f { return params.color + deep[u32(fragment.pixel.x)]; }";
+    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
+        vec![shader(deep, &[])],
+        custom(0, bytes(&[1.0; 4])),
+    ));
+    match renderer.render(&scene()) {
+        Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
+            assert!(message.contains("material 0's pipelines"), "{message}");
+        }
+        other => panic!("expected invalid plugin content, got {:?}", other.err()),
+    }
+    // Nothing of it is kept: the next model draws.
+    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
+        vec![shader(FLAT, &[])],
+        custom(0, bytes(&[0.0, 1.0, 0.0, 1.0])),
+    ));
+    let frame = renderer.render(&scene()).unwrap();
+    assert_pixel(&frame, 32, 32, GREEN);
+}
+
+#[test]
+fn material_shaders_compile_once() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let mut scenes = one_square();
+    let mut renamed = shader(FLAT, &[]);
+    renamed.name = Some("flat again".to_owned());
+    scenes.model.shaders = vec![shader(FLAT, &[]), renamed, shader(LAMBERT, &[])];
+    scenes.model.materials = (0..3)
+        .map(|index| custom(index, bytes(&[1.0; 4])))
+        .collect();
+    renderer.renderer = renderer.renderer.with_content_provider(scenes);
+    renderer.render(&scene()).unwrap();
+    let compiles = |renderer: &TestRenderer| {
+        renderer
+            .meshes
+            .scene_pipelines
+            .as_ref()
+            .expect("a scene was drawn")
+            .compiles
+    };
+    assert_eq!(compiles(&renderer), 2);
+
+    // A broken shader is refused each time, but checked once.
+    let Some(mut renderer) = self::renderer(transparent()) else {
+        return;
+    };
+    let broken = "struct Params { color: vec4f };
+fn material_fragment(fragment: Fragment) -> vec4f { return nope; }";
+    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
+        vec![shader(broken, &[])],
+        custom(0, bytes(&[1.0; 4])),
+    ));
+    for _ in 0..2 {
+        match renderer.render(&scene()) {
+            Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
+                assert!(message.contains("material 0's shader 0"), "{message}");
+            }
+            other => panic!("expected invalid plugin content, got {:?}", other.err()),
+        }
+    }
+    assert_eq!(compiles(&renderer), 1);
 }

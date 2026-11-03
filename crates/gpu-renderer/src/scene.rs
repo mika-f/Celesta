@@ -9,8 +9,9 @@
 //! premultiplied `Rgba16Float` color with `Depth32Float` depth, both
 //! cleared (to transparent black and to 1). Every material's shader is
 //! written against Celesta's material interface and assembled with its
-//! entry points by `scene_material.rs`: unlit (`scene_unlit.wgsl`) or
-//! MToon under the frame's lights (`scene_mtoon.wgsl`). A draw binds the
+//! entry points by `scene_material.rs`: unlit (`scene_unlit.wgsl`), MToon
+//! under the frame's lights (`scene_mtoon.wgsl`), or one of the shaders the
+//! model lists, compiled once whichever models list it. A draw binds the
 //! frame's uniform as group 0; its own uniform and its material's
 //! parameters as group 1, each at its offset in the draw's slot; and its
 //! material's textures, bound when the model loaded, as group 2. The
@@ -27,12 +28,15 @@
 use crate::error::GpuRenderError;
 use crate::mesh::{OUTPUT_FORMAT, texture_image};
 use crate::renderer::GpuRenderer;
-use crate::scene_material::{MAX_MATERIAL_PARAMS, check_material};
+use crate::scene_material::{
+    MAX_MATERIAL_PARAMS, MAX_MATERIAL_TEXTURES, MAX_SHADER_BYTES, check_material,
+};
 use crate::texture::LayerTexture;
+use celesta_plugin::scene::MAX_SCENE_SHADERS;
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, DrawState, Filter, Material, MaterialKind, MaterialOverrides,
-    ModelId, MtoonMaterial, OutlineWidthMode, Projection, SceneFrame, SceneModel, TextureRef,
-    UnlitMaterial, Wrap,
+    AlphaMode, Camera, ColorSpace, DrawState, EmptyTexel, Filter, Material, MaterialKind,
+    MaterialOverrides, ModelId, MtoonMaterial, OutlineWidthMode, Projection, SceneFrame,
+    SceneModel, SceneShader, TextureRef, UnlitMaterial, Wrap,
 };
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -96,8 +100,8 @@ pub(crate) struct LoadedScene {
     /// One per `model.materials` entry: its textures and samplers, bound as
     /// group 2 of its draws.
     pub(crate) materials: Vec<wgpu::BindGroup>,
-    /// One per `model.materials` entry: the bytes of its shader's `Params`.
-    pub(crate) params_sizes: Vec<u32>,
+    /// One per `model.materials` entry: the shader it is drawn with.
+    pub(crate) shaders: Vec<Arc<CompiledShader>>,
     /// One per `model.draws` entry.
     pub(crate) draws: Vec<DrawBuffers>,
 }
@@ -342,10 +346,12 @@ impl CompiledShader {
         label: &str,
     ) -> Result<Self, String> {
         let checked = check_material(wgsl, textures)?;
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(label),
-            source: wgpu::ShaderSource::Naga(Cow::Owned(checked.module)),
-        });
+        let module = scoped(device, || {
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: wgpu::ShaderSource::Naga(Cow::Owned(checked.module)),
+            })
+        })?;
         Ok(Self {
             id,
             module,
@@ -353,6 +359,25 @@ impl CompiledShader {
             textures,
             outline: checked.outline,
         })
+    }
+}
+
+/// What `make` returns, or the first error the device reports while it
+/// runs: a validation error, an internal one (a backend's shader compiler
+/// refusing what naga accepted, such as a fragment function past Metal's
+/// stack), or running out of memory. What a material's WGSL decides runs in
+/// here, so that none of it reaches the device's uncaptured-error handler,
+/// which panics.
+fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> Result<T, String> {
+    let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let made = make();
+    // Popped innermost first.
+    let errors = [validation, internal, memory].map(|scope| pollster::block_on(scope.pop()));
+    match errors.into_iter().flatten().next() {
+        Some(error) => Err(error.to_string()),
+        None => Ok(made),
     }
 }
 
@@ -439,7 +464,11 @@ impl PipelineKey {
                 })
             }
             MaterialKind::Mtoon(_) | MaterialKind::Unlit(_) => None,
-            MaterialKind::Custom(_) => unreachable!("invalid_scene refuses custom materials"),
+            // `prepare` refuses a custom material with an outline pass.
+            MaterialKind::Custom(custom) => {
+                debug_assert!(custom.outline.is_none());
+                None
+            }
         }
     }
 
@@ -691,6 +720,16 @@ pub(crate) struct ScenePipelines {
     /// The built-in materials' shaders.
     unlit: Arc<CompiledShader>,
     mtoon: Arc<CompiledShader>,
+    /// Plugins' material shaders by their WGSL and texture slots (their
+    /// names and empty texels do not change the module), compiled or why
+    /// they cannot be: each is checked once, however many models list it.
+    /// Never evicted, as the pipelines are not.
+    shaders: HashMap<(String, usize), Result<Arc<CompiledShader>, String>>,
+    /// The `ShaderId` the next plugin shader that compiles gets.
+    next_shader: u32,
+    /// How many plugin shaders were checked: the cache's misses.
+    #[cfg(test)]
+    pub(crate) compiles: usize,
     /// Group 0: the frame uniform.
     view_layout: wgpu::BindGroupLayout,
     /// Group 1: the draw uniform and the material's parameters.
@@ -713,28 +752,20 @@ pub(crate) struct ScenePipelines {
     default_sampler: wgpu::Sampler,
 }
 
-/// A texel a material samples in place of a texture it lacks: Unity's
-/// default for the property.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DefaultTexel {
-    White,
-    Black,
-}
-
 /// One of an MToon material's texture slots.
 #[derive(Clone, Copy, Debug)]
 struct MtoonSlot {
     /// Its JSON name.
     name: &'static str,
-    /// The texel bound when it is empty.
-    default: DefaultTexel,
+    /// The texel bound when it is empty: Unity's default for the property.
+    default: EmptyTexel,
     /// Whether `scene_mtoon.wgsl` samples it at the UV-animated
     /// coordinates; the matcap, the outline width, and the mask itself have
     /// their own.
     animated: bool,
 }
 
-const fn slot(name: &'static str, default: DefaultTexel, animated: bool) -> MtoonSlot {
+const fn slot(name: &'static str, default: EmptyTexel, animated: bool) -> MtoonSlot {
     MtoonSlot {
         name,
         default,
@@ -750,15 +781,15 @@ const fn slot(name: &'static str, default: DefaultTexel, animated: bool) -> Mtoo
 /// animation, the width factor alone. An empty normal slot is sampled but
 /// has no effect: the shader keeps the geometric normal.
 const MTOON_SLOTS: [MtoonSlot; 9] = [
-    slot("baseColorTexture", DefaultTexel::White, true),
-    slot("shadeMultiplyTexture", DefaultTexel::White, true),
-    slot("shadingShiftTexture", DefaultTexel::Black, true),
-    slot("normalTexture", DefaultTexel::White, true),
-    slot("emissiveTexture", DefaultTexel::White, true),
-    slot("matcapTexture", DefaultTexel::Black, false),
-    slot("rimMultiplyTexture", DefaultTexel::White, true),
-    slot("outlineWidthMultiplyTexture", DefaultTexel::White, false),
-    slot("uvAnimationMaskTexture", DefaultTexel::White, false),
+    slot("baseColorTexture", EmptyTexel::White, true),
+    slot("shadeMultiplyTexture", EmptyTexel::White, true),
+    slot("shadingShiftTexture", EmptyTexel::Black, true),
+    slot("normalTexture", EmptyTexel::White, true),
+    slot("emissiveTexture", EmptyTexel::White, true),
+    slot("matcapTexture", EmptyTexel::Black, false),
+    slot("rimMultiplyTexture", EmptyTexel::White, true),
+    slot("outlineWidthMultiplyTexture", EmptyTexel::White, false),
+    slot("uvAnimationMaskTexture", EmptyTexel::White, false),
 ];
 
 /// The textures `mtoon`'s slots name, in `MTOON_SLOTS`' order.
@@ -1011,6 +1042,10 @@ impl ScenePipelines {
             skin,
             unlit,
             mtoon,
+            shaders: HashMap::new(),
+            next_shader: 2,
+            #[cfg(test)]
+            compiles: 0,
             view_layout,
             draw_layout,
             texture_layouts: HashMap::new(),
@@ -1058,29 +1093,92 @@ impl ScenePipelines {
         })
     }
 
-    /// The shader `material` is drawn with.
-    fn shader_of(&self, material: &Material) -> &Arc<CompiledShader> {
-        match material.kind {
-            MaterialKind::Unlit(_) => &self.unlit,
-            MaterialKind::Mtoon(_) => &self.mtoon,
-            MaterialKind::Custom(_) => unreachable!("invalid_scene refuses custom materials"),
+    /// The compiled module of `shader`, from the cache or checked and
+    /// compiled now, or why it cannot be compiled. A shader that fails
+    /// takes no `ShaderId`.
+    fn shader(
+        &mut self,
+        device: &wgpu::Device,
+        shader: &SceneShader,
+    ) -> Result<Arc<CompiledShader>, String> {
+        let key = (shader.wgsl.clone(), shader.textures.len());
+        if let Some(compiled) = self.shaders.get(&key) {
+            return compiled.clone();
         }
+        #[cfg(test)]
+        {
+            self.compiles += 1;
+        }
+        let compiled = CompiledShader::compile(
+            device,
+            ShaderId(self.next_shader),
+            &shader.wgsl,
+            shader.textures.len(),
+            shader
+                .name
+                .as_deref()
+                .unwrap_or("Celesta scene plugin material"),
+        )
+        .map(Arc::new);
+        if compiled.is_ok() {
+            self.next_shader += 1;
+        }
+        self.shaders.insert(key, compiled.clone());
+        compiled
     }
 
-    /// Makes the pipelines `model`'s materials draw with, surface passes and
-    /// outlines, for either winding, unless they are made already, and
-    /// gives the bytes of each material's `Params`. Each material's
-    /// pipelines are made in one error scope: when any fails, the message
-    /// names the material and none of its pipelines is kept.
+    /// Compiles every shader `model` lists, used or not; makes the
+    /// pipelines its materials draw with, surface passes and outlines, for
+    /// either winding, unless they are made already; and gives the shader
+    /// each material is drawn with. A custom material's parameters must be
+    /// as long as its shader's `Params`. Each material's pipelines are made
+    /// in one error scope: when any fails, the message names the material
+    /// and none of its pipelines is kept.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         model: &SceneModel,
-    ) -> Result<Vec<u32>, String> {
-        let mut params_sizes = Vec::with_capacity(model.materials.len());
+    ) -> Result<Vec<Arc<CompiledShader>>, String> {
+        let mut compiled = Vec::with_capacity(model.shaders.len());
+        for (index, shader) in model.shaders.iter().enumerate() {
+            match self.shader(device, shader) {
+                Ok(shader) => compiled.push(shader),
+                Err(error) => {
+                    let user = model.materials.iter().position(|material| {
+                        matches!(&material.kind, MaterialKind::Custom(custom) if custom.shader == index)
+                    });
+                    let named = shader_named(index, shader);
+                    return Err(match user {
+                        Some(material) => format!("material {material}'s {named}: {error}"),
+                        None => format!("{named}: {error}"),
+                    });
+                }
+            }
+        }
+        let mut shaders = Vec::with_capacity(model.materials.len());
         for (index, material) in model.materials.iter().enumerate() {
-            let shader = Arc::clone(self.shader_of(material));
-            params_sizes.push(shader.params_size);
+            let shader = match &material.kind {
+                MaterialKind::Unlit(_) => Arc::clone(&self.unlit),
+                MaterialKind::Mtoon(_) => Arc::clone(&self.mtoon),
+                MaterialKind::Custom(custom) => {
+                    let shader = Arc::clone(&compiled[custom.shader]);
+                    if custom.params.len() != shader.params_size as usize {
+                        return Err(format!(
+                            "material {index}'s parameters are {} bytes, but shader {}'s Params is {}",
+                            custom.params.len(),
+                            custom.shader,
+                            shader.params_size
+                        ));
+                    }
+                    if custom.outline.is_some() {
+                        return Err(format!("material {index}'s outline is not drawn yet"));
+                    }
+                    shader
+                }
+            };
+            shaders.push(Arc::clone(&shader));
+            // `material_group` binds through it, made pipelines or not.
+            let layout = self.texture_layout(device, shader.textures).1.clone();
             let keys: Vec<PipelineKey> = [false, true]
                 .into_iter()
                 .flat_map(|clockwise| {
@@ -1092,18 +1190,15 @@ impl ScenePipelines {
             if keys.is_empty() {
                 continue;
             }
-            let layout = self.texture_layout(device, shader.textures).1.clone();
-            let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let made: Vec<(PipelineKey, wgpu::RenderPipeline)> = keys
-                .into_iter()
-                .map(|key| (key, Self::draw_pipeline(device, &shader, &layout, key)))
-                .collect();
-            if let Some(error) = pollster::block_on(scope.pop()) {
-                return Err(format!("material {index}'s pipelines: {error}"));
-            }
+            let made: Vec<(PipelineKey, wgpu::RenderPipeline)> = scoped(device, || {
+                keys.into_iter()
+                    .map(|key| (key, Self::draw_pipeline(device, &shader, &layout, key)))
+                    .collect()
+            })
+            .map_err(|error| format!("material {index}'s pipelines: {error}"))?;
             self.draw.extend(made);
         }
-        Ok(params_sizes)
+        Ok(shaders)
     }
 
     /// The pipeline of `key`, drawn with `shader` through `layout`.
@@ -1183,20 +1278,25 @@ impl ScenePipelines {
         })
     }
 
-    /// `material`'s group 2: its textures, of `textures`, with their
-    /// samplers, and a default texel for each it lacks.
+    /// `material`'s group 2 for `shader`, which it is drawn with: its
+    /// textures, of `textures`, each with its own sampler, and an empty
+    /// texel with the default sampler for each slot it leaves empty. A
+    /// custom material's empty slots sample what `shaders`, the model's,
+    /// say.
     fn material_group(
         &self,
         device: &wgpu::Device,
         textures: &[(wgpu::TextureView, wgpu::Sampler)],
         material: &Material,
+        shader: &CompiledShader,
+        shaders: &[SceneShader],
     ) -> wgpu::BindGroup {
-        let bound = |texture: Option<usize>, default: DefaultTexel| match texture {
+        let bound = |texture: Option<usize>, empty: EmptyTexel| match texture {
             Some(texture) => (&textures[texture].0, &textures[texture].1),
             None => (
-                match default {
-                    DefaultTexel::White => &self.white,
-                    DefaultTexel::Black => &self.black,
+                match empty {
+                    EmptyTexel::White => &self.white,
+                    EmptyTexel::Black => &self.black,
                 },
                 &self.default_sampler,
             ),
@@ -1207,16 +1307,22 @@ impl ScenePipelines {
                     .base_color_texture
                     .as_ref()
                     .map(|texture| texture.texture),
-                DefaultTexel::White,
+                EmptyTexel::White,
             )],
             MaterialKind::Mtoon(mtoon) => mtoon_textures(mtoon)
                 .into_iter()
                 .zip(MTOON_SLOTS)
                 .map(|(texture, slot)| bound(texture, slot.default))
                 .collect(),
-            MaterialKind::Custom(_) => unreachable!("invalid_scene refuses custom materials"),
+            MaterialKind::Custom(custom) => shaders[custom.shader]
+                .textures
+                .iter()
+                .enumerate()
+                .map(|(slot, texture)| {
+                    bound(custom.textures.get(slot).copied().flatten(), texture.empty)
+                })
+                .collect(),
         };
-        let shader = self.shader_of(material);
         debug_assert_eq!(slots.len(), shader.textures);
         let (layout, _) = &self.texture_layouts[&shader.textures];
         let entries: Vec<wgpu::BindGroupEntry> = slots
@@ -1267,16 +1373,28 @@ fn texture_entries(binding: u32) -> [wgpu::BindGroupLayoutEntry; 2] {
     ]
 }
 
+/// The model's shader `index` in a message: its name follows when it has
+/// one.
+fn shader_named(index: usize, shader: &SceneShader) -> String {
+    match &shader.name {
+        Some(name) => format!("shader {index} ({name})"),
+        None => format!("shader {index}"),
+    }
+}
+
 fn finite(values: &[f32]) -> bool {
     values.iter().all(|value| value.is_finite())
 }
 
 /// Why `model` cannot be drawn: a canvas without area, vertex streams of
 /// different lengths, triangles outside their vertices, or a reference to
-/// something it lacks, or buffers past `SCENE_BUFFER_BUDGET`. A draw's skin
-/// must have every joint its geometry's vertices name, and a draw whose
-/// material has a normal texture a geometry with tangents; all of these are
-/// fixed, so they are checked here, once, rather than in every frame.
+/// something it lacks, buffers past `SCENE_BUFFER_BUDGET`, or shaders past
+/// the limits, more texture slots filled than a material's shader has, or
+/// an outline depth bias that is not finite. A draw's skin must have every
+/// joint its geometry's vertices name, and a draw whose material has a
+/// normal texture or requires tangents a geometry with tangents; all of
+/// these are fixed, so they are checked here, once, rather than in every
+/// frame, and before naga or the GPU reads any shader.
 pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
     if !model
         .canvas
@@ -1330,6 +1448,28 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
             }
         }
     }
+    // Within the limits before naga reads any of them, used or not.
+    let shaders = model.shaders.len();
+    if shaders > MAX_SCENE_SHADERS {
+        return Some(format!(
+            "the scene has {shaders} shaders, more than {MAX_SCENE_SHADERS}"
+        ));
+    }
+    for (index, shader) in model.shaders.iter().enumerate() {
+        let named = shader_named(index, shader);
+        if shader.wgsl.len() > MAX_SHADER_BYTES {
+            return Some(format!(
+                "{named} is {} bytes of WGSL, more than {MAX_SHADER_BYTES}",
+                shader.wgsl.len()
+            ));
+        }
+        if shader.textures.len() > MAX_MATERIAL_TEXTURES {
+            return Some(format!(
+                "{named} has {} texture slots, more than {MAX_MATERIAL_TEXTURES}",
+                shader.textures.len()
+            ));
+        }
+    }
     for (index, material) in model.materials.iter().enumerate() {
         if let AlphaMode::Mask { cutoff } = material.alpha_mode
             && !cutoff.is_finite()
@@ -1365,10 +1505,44 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
                     ));
                 }
             }
-            MaterialKind::Custom(_) => {
-                return Some(format!(
-                    "material {index} is custom, which is not drawn yet"
-                ));
+            MaterialKind::Custom(custom) => {
+                let shaders = model.shaders.len();
+                let Some(shader) = model.shaders.get(custom.shader) else {
+                    return Some(format!(
+                        "material {index} uses shader {}, of {shaders}",
+                        custom.shader
+                    ));
+                };
+                if custom.textures.len() > shader.textures.len() {
+                    return Some(format!(
+                        "material {index} fills {} texture slots, but shader {} has {}",
+                        custom.textures.len(),
+                        custom.shader,
+                        shader.textures.len()
+                    ));
+                }
+                for (slot, (texture, declared)) in
+                    custom.textures.iter().zip(&shader.textures).enumerate()
+                {
+                    if let Some(texture) = *texture
+                        && texture >= textures
+                    {
+                        let named = match &declared.name {
+                            Some(name) => format!("texture slot {slot} ({name})"),
+                            None => format!("texture slot {slot}"),
+                        };
+                        return Some(format!(
+                            "material {index}'s {named} uses texture {texture}, of {textures}"
+                        ));
+                    }
+                }
+                if let Some(outline) = &custom.outline
+                    && !outline.depth_bias.slope_scale.is_finite()
+                {
+                    return Some(format!(
+                        "material {index}'s outline depth bias is not finite"
+                    ));
+                }
             }
         }
     }
@@ -1398,15 +1572,26 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
                 model.materials.len()
             ));
         }
-        // A normal texture needs the geometry's tangents: none are made up.
-        if let MaterialKind::Mtoon(mtoon) = &model.materials[draw.material].kind
-            && mtoon.normal_texture.is_some()
-            && geometry.tangents.is_none()
-        {
-            return Some(format!(
-                "draw {index}'s material {} has a normalTexture, but geometry {} has no tangents",
-                draw.material, draw.geometry
-            ));
+        // A normal texture, or a custom material that requires them, needs
+        // the geometry's tangents: none are made up.
+        match &model.materials[draw.material].kind {
+            MaterialKind::Mtoon(mtoon)
+                if mtoon.normal_texture.is_some() && geometry.tangents.is_none() =>
+            {
+                return Some(format!(
+                    "draw {index}'s material {} has a normalTexture, but geometry {} has no tangents",
+                    draw.material, draw.geometry
+                ));
+            }
+            MaterialKind::Custom(custom)
+                if custom.requires_tangents && geometry.tangents.is_none() =>
+            {
+                return Some(format!(
+                    "draw {index}'s material {} requires tangents, but geometry {} has none",
+                    draw.material, draw.geometry
+                ));
+            }
+            _ => {}
         }
         match (draw.skin, geometry.joints.is_some()) {
             (None, false) => {}
@@ -1806,7 +1991,7 @@ impl LoadedScene {
         if let Some(message) = invalid_scene(&model) {
             return Err(invalid(message));
         }
-        let params_sizes = pipelines.prepare(device, &model).map_err(invalid)?;
+        let shaders = pipelines.prepare(device, &model).map_err(invalid)?;
         let pipelines = &*pipelines;
         let limits = device.limits();
         let largest_buffer = limits
@@ -2005,7 +2190,10 @@ impl LoadedScene {
         let materials = model
             .materials
             .iter()
-            .map(|material| pipelines.material_group(device, &textures, material))
+            .zip(&shaders)
+            .map(|(material, shader)| {
+                pipelines.material_group(device, &textures, material, shader, &model.shaders)
+            })
             .collect();
 
         let draws = model
@@ -2061,7 +2249,7 @@ impl LoadedScene {
             model,
             geometries,
             materials,
-            params_sizes,
+            shaders,
             draws,
         })
     }
@@ -2371,7 +2559,10 @@ fn material_params(
             let scroll = uv_scroll(mtoon, textures, time);
             slot[..MTOON_PARAMS].copy_from_slice(&mtoon_params(mtoon, &state.overrides, scroll));
         }
-        MaterialKind::Custom(_) => unreachable!("invalid_scene refuses custom materials"),
+        // As long as its shader's `Params`, which `prepare` checked.
+        MaterialKind::Custom(custom) => {
+            slot[..custom.params.len()].copy_from_slice(&custom.params);
+        }
     }
     slot
 }
@@ -2601,7 +2792,7 @@ impl GpuRenderer {
             let uniform = draw_uniform(material, state);
             let params = material_params(material, &model.textures, state, frame.time);
             debug_assert!(
-                params[scene.params_sizes[info.material] as usize..]
+                params[scene.shaders[info.material].params_size as usize..]
                     .iter()
                     .all(|&byte| byte == 0),
                 "material {}'s parameters outgrow its shader's",
@@ -2849,7 +3040,7 @@ impl GpuRenderer {
                         .get(&key)
                         .expect("prepared when the model loaded")
                 };
-                let shader = pipelines.shader_of(material).id;
+                let shader = scene.shaders[info.material].id;
                 pass.set_pipeline(pipeline(PipelineKey::surface(material, shader, clockwise)));
                 let at = slot * draw_stride;
                 pass.set_bind_group(1, draw_group, &[at as u32, (at + params_at) as u32]);
