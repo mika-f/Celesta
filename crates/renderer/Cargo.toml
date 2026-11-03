@@ -1,5 +1,6 @@
 [package]
 name = "celesta-renderer"
+description = "Celesta's deterministic CPU reference renderer."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,10 +11,10 @@ rust-version.workspace = true
 resvg = "0.49.0"
 cosmic-text = "0.18.2"
 image = { version = "0.25.8", default-features = false, features = ["gif", "jpeg", "png", "pnm", "webp"] }
-celesta-budoux = { path = "../budoux" }
-celesta-composition = { path = "../composition" }
-celesta-remote = { path = "../remote" }
-celesta-media = { path = "../media" }
+celesta-budoux.workspace = true
+celesta-composition.workspace = true
+celesta-remote.workspace = true
+celesta-media.workspace = true
 png = "0.18.1"
 rayon = "1.12.0"
 psd = "0.3.5"
@@ -27,8 +28,8 @@ thiserror.workspace = true
 dwrote = { version = "0.11.5", default-features = false }
 
 [dev-dependencies]
-celesta-evaluator = { path = "../evaluator" }
-celesta-project = { path = "../project" }
+celesta-evaluator.workspace = true
+celesta-project.workspace = true
 gif = "0.14"
 png = "0.18"
 tempfile = "3.23.0"

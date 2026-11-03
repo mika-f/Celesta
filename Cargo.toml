@@ -34,6 +34,25 @@ repository = "https://github.com/mika-f/celesta"
 rust-version = "1.89"
 
 [workspace.dependencies]
+# The workspace's own crates, for crates.io: a published crate names its
+# dependencies by version. The exact pins move with `workspace.package`'s
+# version, and Cargo refuses to resolve them if a release bump misses one.
+celesta-budoux = { path = "crates/budoux", version = "=0.9.0" }
+celesta-composition = { path = "crates/composition", version = "=0.9.0" }
+celesta-editor-core = { path = "crates/editor-core", version = "=0.9.0" }
+celesta-editor-theme = { path = "crates/editor-theme", version = "=0.9.0" }
+celesta-evaluator = { path = "crates/evaluator", version = "=0.9.0" }
+celesta-exporter = { path = "crates/exporter", version = "=0.9.0" }
+celesta-gpu-renderer = { path = "crates/gpu-renderer", version = "=0.9.0" }
+celesta-media = { path = "crates/media", version = "=0.9.0" }
+celesta-plugin = { path = "crates/plugin", version = "=0.9.0" }
+celesta-plugin-host = { path = "crates/plugin-host", version = "=0.9.0" }
+celesta-project = { path = "crates/project", version = "=0.9.0" }
+celesta-react-bridge = { path = "crates/react-bridge", version = "=0.9.0" }
+celesta-remote = { path = "crates/remote", version = "=0.9.0" }
+celesta-renderer = { path = "crates/renderer", version = "=0.9.0" }
+celesta-source-edit = { path = "crates/source-edit", version = "=0.9.0" }
+
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 ez-ffmpeg = { version = "0.19" }

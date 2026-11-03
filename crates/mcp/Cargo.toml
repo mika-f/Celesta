@@ -1,16 +1,20 @@
 [package]
 name = "celesta-mcp"
+description = "An MCP server on stdio that lets coding agents inspect, render, and export Celesta videos and read the Celesta docs."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# `bundled/` holds the repository files `build.rs` embeds when the crate is
+# built outside the repository (scripts/bundle-crate-files.mjs).
+include = ["/build.rs", "/bundled", "/src", "/tests"]
 
 [dependencies]
 base64 = "0.23"
-celesta-composition = { path = "../composition" }
-celesta-exporter = { path = "../exporter" }
-celesta-react-bridge = { path = "../react-bridge" }
+celesta-composition.workspace = true
+celesta-exporter.workspace = true
+celesta-react-bridge.workspace = true
 image = { version = "0.25.8", default-features = false, features = ["png", "jpeg", "webp"] }
 png = "0.18.1"
 rmcp = { version = "3.5", default-features = false, features = ["server", "macros", "transport-io"] }

@@ -1,4 +1,5 @@
 fn main() {
+    find_demo_project();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         println!("cargo:rustc-link-lib=strmiids");
         println!("cargo:rustc-link-lib=mfuuid");
@@ -8,6 +9,33 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         embed_info_plist();
     }
+}
+
+/// The window opens `examples/editor-demo.celesta.json` at the repository root
+/// when no project is named. A published crate cannot reach outside its own
+/// folder, so `scripts/bundle-crate-files.mjs` copies the project into
+/// `bundled/` before `cargo publish`.
+fn find_demo_project() {
+    const NAME: &str = "editor-demo.celesta.json";
+    let manifest = std::path::PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"),
+    );
+    let path = manifest
+        .ancestors()
+        .nth(2)
+        .map(|root| root.join("examples").join(NAME))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| manifest.join("bundled").join(NAME));
+    assert!(
+        path.is_file(),
+        "{} is missing: run `node scripts/bundle-crate-files.mjs` before packaging",
+        path.display()
+    );
+    println!("cargo::rerun-if-changed={}", path.display());
+    println!(
+        "cargo::rustc-env=CELESTA_EDITOR_DEMO_PROJECT={}",
+        path.display()
+    );
 }
 
 /// GPUI builds and lays out the whole element tree on the main thread. In a

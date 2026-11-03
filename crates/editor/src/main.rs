@@ -101,7 +101,7 @@ macro_rules! secondary {
     };
 }
 
-const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.celesta.json");
+const EDITOR_DEMO_PROJECT: &str = include_str!(env!("CELESTA_EDITOR_DEMO_PROJECT"));
 
 /// What the window does with the project named on the command line once it
 /// is up.

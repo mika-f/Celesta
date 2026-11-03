@@ -1,5 +1,6 @@
 [package]
 name = "celesta-editor-core"
+description = "Celesta editor state: the open project and the preview frames evaluated for the renderers."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,12 +8,12 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-celesta-composition = { path = "../composition" }
-celesta-evaluator = { path = "../evaluator" }
-celesta-project = { path = "../project" }
+celesta-composition.workspace = true
+celesta-evaluator.workspace = true
+celesta-project.workspace = true
 dunce = "1.0.5"
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-celesta-gpu-renderer = { path = "../gpu-renderer" }
+celesta-gpu-renderer.workspace = true
