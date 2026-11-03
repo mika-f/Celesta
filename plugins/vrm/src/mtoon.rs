@@ -155,8 +155,8 @@ pub enum OutlineWidthMode {
     ScreenCoordinates,
 }
 
-/// A scene texture an MToon material samples at its base color texture's
-/// coordinates.
+/// A scene texture in an MToon slot, sampled at the base color texture's
+/// coordinates, except the matcap and the outline width (see [`Mtoon`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureSlot {
     pub texture: usize,
