@@ -19,9 +19,10 @@
 //! quaternion inverse) are ported as they are, edge cases included, rather
 //! than taken from glam.
 //!
-//! A step reads the pose as UniVRM's job reads its `Transforms` array: every
-//! node's world matrix and world rotation are taken once from the step's
-//! pose, and only a joint's head is updated in place once it turns. A head's
+//! A step reads the pose as UniVRM's job reads its `Transforms` array: the
+//! world matrix and world rotation of every node it reads (and of their
+//! ancestors, to place them) are taken once from the step's pose, and only
+//! a joint's head is updated in place once it turns. A head's
 //! parent, a spring's centre, and a collider's node are read from there, so
 //! they are the turned ones only when they are themselves a head turned
 //! earlier in the step. UniVRM then writes each listed node's *world*
@@ -121,6 +122,13 @@ pub(crate) struct Springs {
     pub springs: Vec<Spring>,
     /// The joint–collider pairs a step checks.
     pub pairs: u64,
+    /// The nodes a step reads (each joint's head and its parent, each
+    /// spring's centre, each collider's node) and their ancestors, in node
+    /// pre-order: the nodes UniVRM's `Transforms` array holds, and those
+    /// it needs to be placed.
+    read: Vec<usize>,
+    /// By node: its index in `read`, if a step reads it.
+    slots: Vec<usize>,
 }
 
 /// `VRMC_springBone_extended_collider`, read here: `vrm-spec` has no types
@@ -337,9 +345,38 @@ impl Springs {
                 center,
             });
         }
+        // What a step reads, and the ancestors that place it.
+        let mut needed = vec![false; count];
+        let marked = springs.iter().flat_map(|spring: &Spring| {
+            let joints = spring
+                .joints
+                .iter()
+                .flat_map(|logic| [Some(logic.head), logic.parent]);
+            let colliders = spring.colliders.iter().map(|&(node, _)| Some(node));
+            joints.chain(colliders).chain([spring.center]).flatten()
+        });
+        for node in marked {
+            let mut at = Some(node);
+            while let Some(node) = at.filter(|&node| !needed[node]) {
+                needed[node] = true;
+                at = tree.parents[node];
+            }
+        }
+        let read: Vec<usize> = tree
+            .pre_order
+            .iter()
+            .copied()
+            .filter(|&node| needed[node])
+            .collect();
+        let mut slots = vec![usize::MAX; count];
+        for (slot, &node) in read.iter().enumerate() {
+            slots[node] = slot;
+        }
         Ok(Self {
             springs,
             pairs: work,
+            read,
+            slots,
         })
     }
 
@@ -382,13 +419,13 @@ impl Springs {
     ///
     /// When `state` is not this avatar's (from [`Self::initial_state`]).
     pub(crate) fn step(&self, tree: &NodeTree, pose: &mut Pose, state: &mut SpringState, dt: f32) {
-        let mut transforms = Transforms::new(tree, pose);
+        let mut transforms = Transforms::new(self, tree, pose);
         let mut next = Vec::with_capacity(state.current.len());
         let mut index = 0;
         for spring in &self.springs {
             for logic in &spring.joints {
                 let head = transforms.head(logic, pose);
-                let centre = spring.center.map(|center| transforms.world[center]);
+                let centre = spring.center.map(|center| transforms.world(center));
                 let to_world = |tail: Vec3| match centre {
                     Some(centre) => centre.transform_point3(tail),
                     None => tail,
@@ -434,14 +471,14 @@ impl Springs {
     ///
     /// When `state` is not this avatar's (from [`Self::initial_state`]).
     pub(crate) fn settle(&self, tree: &NodeTree, pose: &mut Pose, state: &SpringState) {
-        let mut transforms = Transforms::new(tree, pose);
+        let mut transforms = Transforms::new(self, tree, pose);
         let mut tails = state.current.iter();
         for spring in &self.springs {
             for logic in &spring.joints {
                 let head = transforms.head(logic, pose);
                 let tail = *tails.next().expect("a tail for every joint");
                 let tail = match spring.center {
-                    Some(center) => transforms.world[center].transform_point3(tail),
+                    Some(center) => transforms.world(center).transform_point3(tail),
                     None => tail,
                 };
                 transforms.turn(logic, head, tail, pose);
@@ -450,34 +487,69 @@ impl Springs {
     }
 }
 
-/// UniVRM's `Transforms` array for one step: every node's world matrix and
-/// world rotation in the step's pose, a head's updated once it turns.
-struct Transforms {
+/// UniVRM's `Transforms` array for one step: the world matrix and world
+/// rotation in the step's pose of every node the step reads (see
+/// [`Springs::read`]), a head's updated once it turns. Each is what
+/// [`NodeTree::world`] and [`world_rotations`] give for it, by the same
+/// operations, without the nodes no step reads.
+struct Transforms<'a> {
+    /// [`Springs::slots`].
+    slots: &'a [usize],
+    /// By slot.
     world: Vec<Mat4>,
+    /// By slot.
     rotation: Vec<Quat>,
 }
 
-impl Transforms {
-    fn new(tree: &NodeTree, pose: &Pose) -> Self {
-        Self {
-            world: tree.world(pose),
-            rotation: world_rotations(tree, pose),
+impl<'a> Transforms<'a> {
+    fn new(springs: &'a Springs, tree: &NodeTree, pose: &Pose) -> Self {
+        let mut world: Vec<Mat4> = Vec::with_capacity(springs.read.len());
+        let mut rotation: Vec<Quat> = Vec::with_capacity(springs.read.len());
+        for &node in &springs.read {
+            let local = &pose.local[node];
+            let (node_world, node_rotation) = match tree.parents[node] {
+                Some(parent) => {
+                    let parent = springs.slots[parent];
+                    (
+                        world[parent] * local.matrix(),
+                        rotation[parent] * local.rotation,
+                    )
+                }
+                None => (local.matrix(), local.rotation),
+            };
+            world.push(node_world);
+            rotation.push(node_rotation);
         }
+        Self {
+            slots: &springs.slots,
+            world,
+            rotation,
+        }
+    }
+
+    /// `node`'s world matrix, for a node a step reads.
+    fn world(&self, node: usize) -> Mat4 {
+        self.world[self.slots[node]]
+    }
+
+    /// `node`'s world rotation, for a node a step reads.
+    fn rotation(&self, node: usize) -> Quat {
+        self.rotation[self.slots[node]]
     }
 
     /// The head's position (`UpdateParentMatrix`): from its parent's entry
     /// and its local transform.
     fn head(&self, logic: &JointLogic, pose: &Pose) -> Vec3 {
         position(&match logic.parent {
-            Some(parent) => self.world[parent] * pose.local[logic.head].matrix(),
-            None => self.world[logic.head],
+            Some(parent) => self.world(parent) * pose.local[logic.head].matrix(),
+            None => self.world(logic.head),
         })
     }
 
     fn parent_rotation(&self, logic: &JointLogic) -> Quat {
         logic
             .parent
-            .map_or(Quat::IDENTITY, |parent| self.rotation[parent])
+            .map_or(Quat::IDENTITY, |parent| self.rotation(parent))
     }
 
     /// Turns the head at `head` so its bone points at `tail`
@@ -489,16 +561,17 @@ impl Transforms {
         let local = &mut pose.local[logic.head];
         let world = match logic.parent {
             Some(parent) => {
-                local.rotation = normalize_safe_rotation(inverse(self.rotation[parent]) * rotation);
-                self.world[parent] * local.matrix()
+                local.rotation = normalize_safe_rotation(inverse(self.rotation(parent)) * rotation);
+                self.world(parent) * local.matrix()
             }
             None => {
                 local.rotation = rotation;
                 Mat4::from_scale_rotation_translation(local.scale, rotation, head)
             }
         };
-        self.world[logic.head] = world;
-        self.rotation[logic.head] = rotation;
+        let slot = self.slots[logic.head];
+        self.world[slot] = world;
+        self.rotation[slot] = rotation;
     }
 }
 
@@ -513,8 +586,8 @@ fn collide(
     shape: ColliderShape,
     tail: Vec3,
 ) -> Option<Vec3> {
-    let world = &transforms.world[node];
-    let scale = lossy_scale(world, transforms.rotation[node]).abs();
+    let world = &transforms.world(node);
+    let scale = lossy_scale(world, transforms.rotation(node)).abs();
     let max_scale = scale.x.max(scale.y).max(scale.z);
     // Outside a sphere: pushed out along its radius, then back to the
     // bone's length.
@@ -784,6 +857,7 @@ mod tests {
     use super::*;
     use crate::synthetic::{SyntheticVrm, node};
     use serde_json::{Value, json};
+    use std::collections::BTreeSet;
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -973,6 +1047,103 @@ mod tests {
             tail_after(hair(still(), colliders), 1),
             Vec3::new(0.0, 1.4784458, -0.0857771),
         );
+    }
+
+    /// `springs` with every node of `tree` in its steps' transforms, as
+    /// UniVRM's whole-hierarchy reading would have them.
+    fn reading_every_node(springs: &Springs, tree: &NodeTree) -> Springs {
+        Springs {
+            read: tree.pre_order.clone(),
+            slots: {
+                let mut slots = vec![0; tree.parents.len()];
+                for (slot, &node) in tree.pre_order.iter().enumerate() {
+                    slots[node] = slot;
+                }
+                slots
+            },
+            ..springs.clone()
+        }
+    }
+
+    /// 240 steps of `springs` on a pose that sways, equal bit for bit
+    /// whether a step reads its nodes or every node, and reading every
+    /// node is the tree's own world matrices and rotations.
+    fn assert_reading_is_exact(tree: &NodeTree, springs: &Springs) {
+        let whole = reading_every_node(springs, tree);
+        let rest = tree.rest_pose();
+        let swaying: Vec<usize> = tree
+            .pre_order
+            .iter()
+            .copied()
+            .filter(|&node| tree.parents[node].is_some())
+            .take(4)
+            .collect();
+        let mut state = springs.initial_state(tree, &rest);
+        let mut whole_state = state.clone();
+        for step in 0..240 {
+            let mut pose = rest.clone();
+            for &node in &swaying {
+                let turn = Quat::from_rotation_y((step as f32 * 0.1).sin() * 0.5)
+                    * Quat::from_rotation_x((step as f32 * 0.07).cos() * 0.3);
+                pose.local[node].rotation = rest.local[node].rotation * turn;
+            }
+            // Reading every node gives what the tree's own walks give.
+            let every = Transforms::new(&whole, tree, &pose);
+            assert!(every.world == tree.world(&pose), "step {step}");
+            assert!(
+                every.rotation == world_rotations(tree, &pose),
+                "step {step}"
+            );
+            let mut whole_pose = pose.clone();
+            springs.step(tree, &mut pose, &mut state, DT);
+            whole.step(tree, &mut whole_pose, &mut whole_state, DT);
+            assert!(state == whole_state, "step {step}");
+            assert!(pose == whole_pose, "step {step}");
+            springs.settle(tree, &mut pose, &state);
+            whole.settle(tree, &mut whole_pose, &whole_state);
+            assert!(pose == whole_pose, "settled at step {step}");
+        }
+    }
+
+    #[test]
+    fn steps_read_their_nodes_alone_and_exactly() {
+        // A capsule on the chest, a centre on the hips: their ancestors
+        // are read, the arms and legs are not.
+        let mut spring_bone = hair(
+            json!({ "hitRadius": 0.02, "stiffness": 0.2, "gravityPower": 1.0 }),
+            json!([{ "node": node::CHEST, "shape": { "capsule": {
+                "offset": [0.0, 0.3, -0.05], "radius": 0.05, "tail": [0.0, 0.5, -0.1],
+            } } }]),
+        );
+        spring_bone["springs"][0]["center"] = json!(node::HIPS);
+        let (tree, springs) = read(spring_bone);
+        let read: BTreeSet<usize> = springs.read.iter().copied().collect();
+        let expected: BTreeSet<usize> = [
+            node::ROOT,
+            node::HIPS,
+            node::SPINE,
+            node::CHEST,
+            node::NECK,
+            node::HEAD,
+            node::HAIR0,
+        ]
+        .into();
+        assert_eq!(read, expected);
+        assert_reading_is_exact(&tree, &springs);
+
+        // The official samples, with every collider and centre they have.
+        for name in ["Seed-san.vrm", "VRM1_Constraint_Twist_Sample.vrm"] {
+            let Some(directory) = std::env::var_os("CELESTA_VRM_SAMPLES_DIR") else {
+                println!("skipped: CELESTA_VRM_SAMPLES_DIR is not set");
+                return;
+            };
+            let bytes = std::fs::read(std::path::Path::new(&directory).join(name)).unwrap();
+            let document = Document::parse(&bytes).unwrap();
+            let tree = NodeTree::new(&document).unwrap();
+            let springs = Springs::read(&document, &tree).unwrap();
+            assert!(springs.read.len() < tree.parents.len(), "{name}");
+            assert_reading_is_exact(&tree, &springs);
+        }
     }
 
     #[test]

@@ -464,10 +464,10 @@ impl Stepper {
 /// A spring step's work, in units of a few nanoseconds, for a model of
 /// `nodes` nodes whose springs move `joints` joints and check `pairs`
 /// joint–collider pairs, and whose aim constraints climb `climbed` nodes:
-/// `300 + nodes + joints + 3 × pairs + climbed`. A step clones and walks
-/// every node (the pose, the retarget, the springs' transforms), climbs
-/// for each aim, moves each joint, and checks each pair (about three
-/// units). Within a factor of two of what the steps take, which is all a
+/// `300 + nodes + joints + 3 × pairs + climbed`. A step clones every
+/// node's pose (the springs' transforms place only the nodes they read,
+/// but the pose is the whole tree's), climbs for each aim, moves each
+/// joint, and checks each pair (about three units). Within a factor of two of what the steps take, which is all a
 /// fence needs.
 pub(crate) fn step_cost(nodes: u64, joints: u64, pairs: u64, climbed: u64) -> u64 {
     STEP_BASE_COST
