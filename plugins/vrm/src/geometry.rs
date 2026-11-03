@@ -126,19 +126,25 @@ fn read_primitive(
         .iter()
         .map(|&index| remap[index as usize])
         .collect();
-    let compact = |stream: Vec<[f32; 3]>| -> Vec<[f32; 3]> {
-        kept.iter().map(|&vertex| stream[vertex]).collect()
+    // The kept vertices' values, each finite: a NaN or infinity the file
+    // holds would otherwise reach Celesta and draw as NaN.
+    let compact = |stream: Vec<[f32; 3]>, what: &str| -> Result<Vec<[f32; 3]>, LoadError> {
+        let kept: Vec<[f32; 3]> = kept.iter().map(|&vertex| stream[vertex]).collect();
+        finite(at, what, &kept)?;
+        Ok(kept)
     };
 
-    let positions = compact(positions);
+    let positions = compact(positions, "POSITION")?;
     let normals = match primitive.get(&Semantic::Normals) {
-        Some(normals) => compact(streams.floats3(&normals, "NORMAL", vertices)?),
+        Some(normals) => compact(streams.floats3(&normals, "NORMAL", vertices)?, "NORMAL")?,
         None => computed_normals(&positions, &indices),
     };
     let uvs: Vec<[f32; 2]> = match primitive.get(&Semantic::TexCoords(0)) {
         Some(uvs) => {
             let uvs = streams.uvs(&uvs, vertices)?;
-            kept.iter().map(|&vertex| uvs[vertex]).collect()
+            let uvs: Vec<[f32; 2]> = kept.iter().map(|&vertex| uvs[vertex]).collect();
+            finite(at, "TEXCOORD_0", &uvs)?;
+            uvs
         }
         None => vec![[0.0; 2]; kept.len()],
     };
@@ -172,11 +178,17 @@ fn read_primitive(
     let mut targets = Vec::new();
     for target in primitive.morph_targets() {
         let positions = match target.positions() {
-            Some(deltas) => compact(streams.floats3(&deltas, "morph target POSITION", vertices)?),
+            Some(deltas) => {
+                let what = "morph target POSITION";
+                compact(streams.floats3(&deltas, what, vertices)?, what)?
+            }
             None => vec![[0.0; 3]; kept.len()],
         };
         let normals = match target.normals() {
-            Some(deltas) => compact(streams.floats3(&deltas, "morph target NORMAL", vertices)?),
+            Some(deltas) => {
+                let what = "morph target NORMAL";
+                compact(streams.floats3(&deltas, what, vertices)?, what)?
+            }
             None => Vec::new(),
         };
         targets.push(MorphTarget { positions, normals });
@@ -362,9 +374,7 @@ impl<'d> Streams<'_, 'd> {
         let mut kept_weights = Vec::with_capacity(kept.len());
         for &vertex in kept {
             let weight = weights[vertex];
-            if let Some(bad) = weight.iter().find(|weight| !weight.is_finite()) {
-                return Err(self.at.invalid(format_args!("has a joint weight of {bad}")));
-            }
+            finite(&self.at, "WEIGHTS_0", &[weight])?;
             let (joint, weight) =
                 skin_slots(joints[vertex], weight, joint_count).map_err(|joint| {
                     self.at.invalid(format_args!(
@@ -524,6 +534,17 @@ impl<'d> Streams<'_, 'd> {
 fn past_budget(streams: u64, vertices: usize, budget: u64) -> Option<u64> {
     let bytes = streams.saturating_mul((vertices as u64).saturating_mul(12));
     (bytes > budget).then_some(bytes)
+}
+
+/// Refuses `values` of stream `what` when one is NaN or infinite.
+fn finite<const N: usize>(at: &At, what: &str, values: &[[f32; N]]) -> Result<(), LoadError> {
+    match values
+        .iter()
+        .find(|value| value.iter().any(|v| !v.is_finite()))
+    {
+        Some(value) => Err(at.invalid(format_args!("has {what} that is not finite: {value:?}"))),
+        None => Ok(()),
+    }
 }
 
 /// Normalised integers as floats in 0..1.
@@ -1152,6 +1173,43 @@ mod tests {
                 root["accessors"][accessor][field] = value;
             });
             assert!(message.contains(expected), "{semantic}: {message}");
+        }
+    }
+
+    #[test]
+    fn non_finite_streams_are_refused() {
+        // Six NaN floats in a second, `data:` buffer, swapped in for vertex
+        // 2 (the box's second index) by a sparse value.
+        const NANS: &str = "data:application/octet-stream;base64,\
+                            AADAfwAAwH8AAMB/AADAfwAAwH8AAMB/";
+        for semantic in ["POSITION", "NORMAL", "TEXCOORD_0", "WEIGHTS_0", "target0"] {
+            let message = refusal(|root| {
+                let indices = view(root, "indices");
+                root["buffers"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({ "byteLength": 24, "uri": NANS }));
+                let views = root["bufferViews"].as_array_mut().unwrap();
+                views.push(json!({ "buffer": 1, "byteLength": 24 }));
+                let nans = views.len() - 1;
+                let accessor = accessor(root, semantic);
+                root["accessors"][accessor]["sparse"] = json!({
+                    "count": 1,
+                    "indices": { "bufferView": indices, "byteOffset": 2, "componentType": 5123 },
+                    "values": { "bufferView": nans },
+                });
+            });
+            let name = if semantic == "target0" {
+                "morph target POSITION"
+            } else {
+                semantic
+            };
+            assert!(
+                message.contains(&format!(
+                    "mesh \"Body\" primitive 0 has {name} that is not finite"
+                )),
+                "{semantic}: {message}"
+            );
         }
     }
 
