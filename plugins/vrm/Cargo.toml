@@ -1,0 +1,47 @@
+[package]
+name = "celesta-plugin-vrm"
+description = "A Celesta content plugin that draws VRM 1.0 avatars as 3D scenes from a process of its own."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mika-f/celesta"
+rust-version = "1.89"
+publish = false
+
+# Built on its own: the root workspace excludes this directory, so
+# `cargo build --workspace` at the root never builds the plugin.
+[workspace]
+
+[[bin]]
+name = "celesta-plugin-vrm"
+path = "src/main.rs"
+
+[features]
+# The synthetic VRM builder (src/synthetic.rs) for tests outside the crate.
+synthetic = []
+
+[dependencies]
+celesta-plugin = { path = "../../crates/plugin" }
+gltf = { version = "1.4.1", default-features = false, features = [
+  "import",
+  "utils",
+  "names",
+  "extensions",
+  "extras",
+  "KHR_texture_transform",
+  "KHR_materials_unlit",
+  "KHR_materials_emissive_strength",
+] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0.21"
+# Early (0.1.x), so pinned exactly.
+vrm-spec = "=0.1.1"
+
+[dev-dependencies]
+celesta-composition = { path = "../../crates/composition" }
+celesta-gpu-renderer = { path = "../../crates/gpu-renderer" }
+celesta-plugin-host = { path = "../../crates/plugin-host" }
+celesta-plugin-vrm = { path = ".", features = ["synthetic"] }
+tempfile = "3.27.0"

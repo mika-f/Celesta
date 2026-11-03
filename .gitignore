@@ -2,6 +2,10 @@ node_modules/
 .turbo/
 /projects
 /target
+# The VRM plugin builds on its own (plugins/vrm/README.md).
+/plugins/vrm/target
+/plugins/vrm/dist
+/plugins/vrm/assets
 *.celesta.json~
 
 *.mp3
