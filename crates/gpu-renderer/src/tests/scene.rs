@@ -3247,8 +3247,9 @@ fn material_pipelines_the_backend_refuses_are_refused_naming_the_material() {
     let Some(mut renderer) = renderer(transparent()) else {
         return;
     };
-    // naga accepts 16 MB of private memory a fragment; Metal's compiler
-    // refuses the pipeline (an internal error, not a validation one). On
+    // naga accepts 16 MB of private memory a fragment; Apple GPUs' Metal
+    // compiler refuses the pipeline (an internal error, not a validation
+    // one), though another Metal device may have the stack for it. On
     // other backends the shader may well run, slowly, so it is not tried.
     if renderer.adapter_info().backend != wgpu::Backend::Metal {
         return;
@@ -3260,13 +3261,15 @@ fn material_fragment(fragment: Fragment) -> vec4f { return params.color + deep[u
         vec![shader(deep, &[])],
         custom(0, bytes(&[1.0; 4])),
     ));
+    // Drawn, or refused naming the material; never the device's panic.
     match renderer.render(&scene()) {
+        Ok(_) => {}
         Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
             assert!(message.contains("material 0's pipelines"), "{message}");
         }
-        other => panic!("expected invalid plugin content, got {:?}", other.err()),
+        Err(error) => panic!("expected invalid plugin content, got {error}"),
     }
-    // Nothing of it is kept: the next model draws.
+    // Nothing of a refusal is kept: the next model draws.
     renderer.renderer = renderer.renderer.with_content_provider(custom_square(
         vec![shader(FLAT, &[])],
         custom(0, bytes(&[0.0, 1.0, 0.0, 1.0])),
