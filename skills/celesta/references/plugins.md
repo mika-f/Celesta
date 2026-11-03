@@ -87,13 +87,14 @@ With `src` (`image` or `video`) it is added like an Image (`src`, `x`, `y`,
 
 A plugin's program answers each frame with either 2D meshes or a 3D scene
 (skinned, morphing geometry with materials and a camera; Celesta draws it
-with depth, each material Celesta's unlit one or the plugin's own in
-WGSL, shaded by the directional lights (at most 4) and
-spherical-harmonics ambient light and able to add an outline; a frame can
-replace a material's parameters), and may return notices when it opens a
-model. A material's WGSL may not bind resources or declare entry points,
-`var<workgroup>` variables, or names starting with `celesta` in any
-letter case.
+with depth; each material is Celesta's unlit one or the plugin's own in
+WGSL, which can shade with the directional lights (at most 4) and
+spherical-harmonics ambient light the program sends and add an outline; a
+frame can replace a material's parameters), and may return notices when it
+opens a model. A material's WGSL may not bind resources or declare entry
+points, `var<workgroup>` variables, `override` constants, names WGSL
+predeclares (such as `clamp` or `vec4f`), or names starting with `celesta`
+in any letter case.
 
 Start from the samples in the Celesta repository's `examples/plugins`
 (`flag`: a program that returns meshes; `turntable`: a program that returns
