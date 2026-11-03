@@ -247,7 +247,7 @@ impl Clip {
             )));
         };
         match extension["specVersion"].as_str() {
-            Some("1.0") => {}
+            Some(version) if version == "1.0" || version.starts_with("1.0-") => {}
             Some(version) => {
                 return Err(invalid(format_args!(
                     "{VRMC_VRM_ANIMATION} specVersion {version} is not 1.0"
@@ -988,6 +988,11 @@ mod tests {
             message.contains("VRMC_vrm_animation specVersion 1.1 is not 1.0"),
             "{message}"
         );
+        // A pre-release of 1.0 is 1.0, as for `VRMC_vrm`.
+        Clip::load(&SyntheticVrma::clip().glb_with(|root| {
+            root["extensions"]["VRMC_vrm_animation"]["specVersion"] = "1.0-draft".into();
+        }))
+        .unwrap();
     }
 
     #[test]

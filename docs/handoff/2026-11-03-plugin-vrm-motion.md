@@ -42,7 +42,8 @@ Ported from `VrmAnimationImporter.cs`, `InitialRotationPoseProvider.cs`,
 `Vrm10RuntimeControlRig.cs`.
 
 - **Reading.** A `.vrma` is binary glTF (or glTF JSON with `data:`
-  buffers) with `VRMC_vrm_animation` `specVersion` 1.0, read through the
+  buffers) with `VRMC_vrm_animation` `specVersion` 1.0 (or a `1.0-`
+  pre-release such as `1.0-draft`, as for `VRMC_vrm`), read through the
   model's file and JSON limits. Without the extension:
   `this glTF file has no VRMC_vrm_animation extension: it is not a VRM
   animation`; another version: `VRMC_vrm_animation specVersion {v} is not
@@ -215,6 +216,9 @@ Ported from UniVRM's FastSpringBone (`UpdateFastSpringBoneJob.cs`,
   not read: they swing past their angle limits`. UniVRM's runtime options
   (external force, scaling with the model, stopping the write-back) stay
   at their defaults.
+- **Versions:** as in UniVRM, neither `VRMC_springBone`'s nor
+  `VRMC_springBone_extended_collider`'s `specVersion` is checked (UniVRM's
+  importer checks only `VRMC_springBone_limit`'s, with a warning).
 
 ## The clock (`stepping.rs`)
 
