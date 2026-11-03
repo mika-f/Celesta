@@ -92,8 +92,20 @@ impl NodeTree {
             }
         }
         if let Some(missed) = visited.iter().position(|seen| !seen) {
+            // A missed node is on a cycle or under one: every missed node
+            // has a parent, so climbing from it comes back round, within
+            // `count` steps, to a node on the cycle.
+            let mut climbed = vec![false; count];
+            let mut node = missed;
+            while !climbed[node] {
+                climbed[node] = true;
+                match parents[node] {
+                    Some(parent) => node = parent,
+                    None => break,
+                }
+            }
             return Err(LoadError::Invalid(format!(
-                "node {missed} is its own ancestor: the node hierarchy has a cycle"
+                "node {node} is its own ancestor: the node hierarchy has a cycle"
             )));
         }
 
@@ -113,7 +125,17 @@ impl NodeTree {
 
     /// Each node's model-space matrix for `pose` (one local transform per
     /// node): its parent's world times its local, walked in pre-order.
+    ///
+    /// # Panics
+    ///
+    /// When `pose` does not have one local transform per node: poses come
+    /// from [`Self::rest_pose`] of the same tree.
     pub fn world(&self, pose: &Pose) -> Vec<Mat4> {
+        assert_eq!(
+            pose.local.len(),
+            self.parents.len(),
+            "a pose needs one local transform per node of its tree"
+        );
         let mut worlds = vec![Mat4::IDENTITY; self.parents.len()];
         for &node in &self.pre_order {
             let local = pose.local[node].matrix();
@@ -305,6 +327,27 @@ mod tests {
     fn a_cycle_is_refused() {
         let message = refusal(|root| root["nodes"][node::BODY]["children"] = json!([node::ROOT]));
         assert!(message.contains("cycle"), "{message}");
+    }
+
+    #[test]
+    fn a_cycle_is_named_by_a_node_on_it() {
+        // Body and FirstPersonOnly parent each other, and the hips (node 1,
+        // the first node the walk misses) hang under them.
+        let message = refusal(|root| {
+            root["nodes"][node::ROOT]["children"] = json!([]);
+            root["nodes"][node::BODY]["children"] = json!([node::FIRST_PERSON_ONLY]);
+            root["nodes"][node::FIRST_PERSON_ONLY]["children"] = json!([node::BODY, node::HIPS]);
+        });
+        assert!(message.contains("node 24 is its own ancestor"), "{message}");
+    }
+
+    #[test]
+    #[should_panic(expected = "a pose needs one local transform per node")]
+    fn a_pose_of_another_length_is_a_bug() {
+        let tree = tree(|_| {}).unwrap();
+        let mut pose = tree.rest_pose();
+        pose.local.pop();
+        tree.world(&pose);
     }
 
     #[test]
