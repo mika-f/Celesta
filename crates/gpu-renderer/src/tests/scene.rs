@@ -2061,7 +2061,8 @@ fn material_fragment(fragment: Fragment) -> vec4f { return params.color + deep[u
     // Refused, it is refused again without being compiled again.
     for attempt in 0..2 {
         match renderer.render(&scene()) {
-            Ok(_) => break,
+            // This device had the stack: there is no refusal to follow.
+            Ok(_) => return,
             Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
                 assert!(message.contains("material 0's pipelines"), "{message}");
                 assert_eq!(
