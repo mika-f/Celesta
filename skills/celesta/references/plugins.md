@@ -156,7 +156,8 @@ import { Vrm } from '@celesta-plugin/vrm';
   over the clip's. Motions run in `from` order, each until the next
   starts; before the first the avatar rests; `loop` repeats, otherwise the
   last pose holds; `fadeIn` blends from the motion before. A clip's
-  expression weights apply, but `expressions` wins key by key.
+  expression weights apply, but `expressions` wins key by key. A
+  non-finite `from`, or a negative or non-finite `fadeIn`, throws.
 - `tracks`: `{ bone: { pitch?, yaw?, roll?, x?, y?, z? } }`, each a list
   of `{ frame, value, easing? }` (a fractional frame is rounded to the
   nearest), on top of the motions in the bone's frame from rest: degrees,
@@ -184,8 +185,11 @@ import { Vrm } from '@celesta-plugin/vrm';
   UniVRM, a clip's rest hips offset or the avatar's leg proportions can
   leave the feet a few cm into or above the floor.
 - Clips: `test.vrma` from pixiv/three-vrm (MIT); VRoid Project's free VRMA
-  motion pack on BOOTH (pixiv; credit required where the video is
-  published). Relay each clip's terms to the user.
+  motion pack on BOOTH (pixiv): commercial use allowed, the files may not
+  be redistributed, and the credit
+  「キャラクターアニメーション: ピクシブ株式会社 VRoidプロジェクト」 (in
+  English, "Animation credits to pixiv Inc.'s VRoid Project") is required
+  where the video is published. Relay each clip's terms to the user.
 
 ## Errors
 
