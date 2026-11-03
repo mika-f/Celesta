@@ -139,10 +139,10 @@ pub struct Material {
 /// A blended draw is in Unity's render queue 3000 moved by `queue_offset`
 /// clamped to −9..0, after the opaque (2000) and masked (2450) ones, and
 /// writes no depth. With `depth_write` it is in queue 2501 moved by
-/// `queue_offset` clamped to 0..9, and writes depth. Draws in one queue go
-/// back to front. A blended pixel with alpha below 2⁻¹⁰ is not drawn. These
-/// are MToon's `transparentWithZWrite` and `renderQueueOffsetNumber`, for
-/// every material kind.
+/// `queue_offset` clamped to 0..9, and writes depth. Blended draws in one
+/// queue go back to front. A blended pixel with alpha below 2⁻¹⁰ is not
+/// drawn. These are MToon's `transparentWithZWrite` and
+/// `renderQueueOffsetNumber`, for every material kind.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "alphaMode", rename_all = "camelCase")]
 pub enum AlphaMode {
