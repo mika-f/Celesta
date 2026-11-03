@@ -743,10 +743,13 @@ pub(crate) const MAX_CACHED_SHADERS: usize = 8 * MAX_SCENE_SHADERS;
 /// are: the bound is on what the cache keeps for models that are gone.
 pub(crate) const MAX_CACHED_PIPELINES: usize = 256;
 
-/// The most draw pipelines one model's materials may need. Surface passes
-/// alone are at most 512 (32 shaders, 4 alpha modes, 2 cullings, and 2
-/// windings); the rest is room for outlines, which each depth bias makes
-/// more of.
+/// The most draw pipelines one model's materials may need. A shader has at
+/// most 16 surface pipelines (4 alpha modes, 2 cullings, and 2 windings),
+/// and at most 24 outline pipelines for each depth bias its materials'
+/// outlines use (4 alpha modes, 3 cullings, and 2 windings). The cap is
+/// not every combination: the surface pipelines of the built-in unlit
+/// shader and `MAX_SCENE_SHADERS` plugin shaders, with the outlines of
+/// one bias for each plugin shader, are more.
 pub(crate) const MAX_MODEL_PIPELINES: usize = 1024;
 
 /// What a model's materials draw with, which `ScenePipelines::prepare`

@@ -230,8 +230,12 @@ fails to load is closed again. The limits are `pub const`s in
 - **Pipelines on open:** a model whose materials need more than 1,024
   distinct draw pipelines (`MAX_MODEL_PIPELINES`, in the GPU renderer's
   `scene.rs`) is refused before any is made (`the model's materials need
-  {n} pipelines, more than 1024`). Surface passes alone are at most 512;
-  the rest is room for outlines, of which each depth bias makes two more.
+  {n} pipelines, more than 1024`). A shader has at most 16 surface
+  pipelines (4 alpha modes, 2 cullings, 2 windings) and, for each depth
+  bias its materials' outlines use, at most 24 outline pipelines (4 alpha
+  modes, 3 cullings, 2 windings). The cap does not hold every combination:
+  the surface pipelines of all 32 plugin shaders and the unlit one are
+  528, and one bias's outlines for all 32 are 768 more.
 - **Not bounded: a material's own memory and time.** Private and
   function-local memory (`var<private>`, a function's `var`) has no cap of
   Celesta's: naga accepts arrays of any size. A backend may refuse the
@@ -243,9 +247,9 @@ fails to load is closed again. The limits are `pub const`s in
   operating system resets it. GPU hangs and device loss a hostile plugin
   causes this way are out of scope: a plugin is a program the user
   installs and allows, which can already use the GPU as it likes. On the
-  CPU, naga 30.0.1's WGSL parser caps its recursion depth (nested
-  expressions and statements) at 200: deeper nesting is refused as a parse
-  error (`Parser recursion limit exceeded`), not a stack overflow.
+  CPU, naga's WGSL parser caps its recursion depth (nested expressions and
+  statements; 200 in naga 30): deeper nesting is refused as a parse error
+  (`Parser recursion limit exceeded`), not a stack overflow.
 - **Parameters on open:** a custom material's `params` must be as long as
   its shader's `Params` (`material {m}'s parameters are {a} bytes, but
   shader {s}'s Params is {b}`).
@@ -392,7 +396,7 @@ materials as `frame.lights` and `frame.ambient`.
 - **Both bounds are soft.** Shaders and pipelines that loaded models hold
   are never dropped, however many loaded models there are; the bounds are
   on what models that failed or are gone leave behind. Each model holds at
-  most 32 shaders and 1,024 pipelines.
+  most 32 plugin shaders and the unlit one, and 1,024 pipelines.
 - **The normal matrix** is the cofactor matrix of `world`'s upper 3×3
   times the sign of its determinant (+1 for 0), worked out in `f64` and
   divided by its largest entry: the inverse transpose up to a positive
