@@ -37,9 +37,9 @@
 //!   time, so a frame is refused, before any state is looked up, past
 //!   [`MAX_SPRING_STEPS`] or when its steps would take more than
 //!   [`MAX_STEP_WORK`]: `(n + 1) × cost`, the cost of a step being the
-//!   model's ([`step_cost`], fixed when it opens) plus its data's (each
-//!   motion's clip channels and each track keyframe, which every step
-//!   reads). Both depend on the model, the data, and the time alone, never
+//!   model's ([`step_cost`], fixed when it opens) plus its data's (its
+//!   motions' clip channels and its tracks' axes and keyframes, which
+//!   every step reads, charged as measured). Both depend on the model, the data, and the time alone, never
 //!   on what is kept, so a frame refused cold is refused warm. A model
 //!   that cannot step four hours this way says how far it can when it
 //!   opens ([`reach_notice`]).
@@ -47,7 +47,7 @@
 use crate::model::{FrameError, VrmModel};
 use crate::provider::PerformanceData;
 use crate::springs::SpringState;
-use crate::tracks::check_tracks;
+use crate::tracks::{TrackData, check_tracks};
 use celesta_plugin::{Notice, NoticeLevel};
 use glam::Vec3;
 use sha2::{Digest, Sha256};
@@ -66,17 +66,41 @@ pub const CHECKPOINT_STEPS: u64 = 30;
 /// whose performance was dropped) steps all the way from 0 s.
 pub const MAX_SPRING_STEPS: u64 = 4 * 3600 * 60;
 
-/// The most work a frame's steps may take, in [`step_cost`]'s units (a
-/// unit is a few nanoseconds of a laptop core, so the worst frame takes
-/// seconds). A fence against hostile files: Seed-san (610 units a step)
-/// and UniVRM's constraint twist sample (2,183) reach [`MAX_SPRING_STEPS`]
-/// within it, while a file of a million empty nodes steps about 35 s of a
-/// layer.
-pub const MAX_STEP_WORK: u64 = 1 << 31;
+/// The most work a frame's steps may take, in [`step_cost`]'s units: 2^33.
+///
+/// A unit measured 2.8 to 5.1 ns of a laptop core (Apple M5, release
+/// build) on Seed-san, UniVRM's constraint twist sample, and a VRoid
+/// avatar, with and without a clip, so the worst frame accepted from a cold
+/// start takes about 45 s, under a minute. It is set that high so real
+/// avatars keep [`MAX_SPRING_STEPS`] with room for motions and tracks:
+/// Seed-san (610 units a step) reaches 65 h alone and 27 h with a clip
+/// playing, the twist sample (2,183) 18 h and 13 h, while a file of a
+/// million empty nodes steps about 2.4 min of a layer.
+pub const MAX_STEP_WORK: u64 = 1 << 33;
 
 /// What any step takes beyond its nodes, joints, pairs, and climbs, in
 /// [`step_cost`]'s units.
 const STEP_BASE_COST: u64 = 300;
+
+/// What a step pays for each motion, per channel of its clip and one for
+/// the motion, in [`step_cost`]'s units. Measured (release build, 600
+/// steps, the best of five): a looped 53-channel clip added 2.5 to 3.4 µs
+/// a step to Seed-san, the twist sample, and a VRoid avatar, and a second
+/// one fading with it 3.3 to 3.6 µs (sampling, blending, retargeting).
+/// Divided by each model's own nanoseconds a unit without data, that is
+/// 640 to 1,320 units a motion, 12 to 25 a channel: 16 keeps it within
+/// 2×.
+const MOTION_CHANNEL_COST: u64 = 16;
+
+/// What a step pays for each track axis, beyond its keyframes. Measured as
+/// above: a one-keyframe track added 0.07 to 0.22 µs a step, 23 to 59
+/// units.
+const TRACK_AXIS_COST: u64 = 32;
+
+/// How many track keyframes a step pays one unit for. Measured as above:
+/// a thousand keyframes added 0.39 to 0.48 µs a step, 0.08 to 0.17 units a
+/// keyframe, since reading a track walks its keyframes.
+const KEYFRAMES_PER_UNIT: u64 = 8;
 
 /// The most bytes of spring states the plugin's process keeps, over every
 /// model and performance. A ceiling against hostile files, not a size for
@@ -467,8 +491,8 @@ impl Stepper {
 /// `300 + nodes + joints + 3 × pairs + climbed`. A step clones every
 /// node's pose (the springs' transforms place only the nodes they read,
 /// but the pose is the whole tree's), climbs for each aim, moves each
-/// joint, and checks each pair (about three units). Within a factor of two of what the steps take, which is all a
-/// fence needs.
+/// joint, and checks each pair (about three units). Within a factor of two
+/// of what the steps take, which is all a fence needs.
 pub(crate) fn step_cost(nodes: u64, joints: u64, pairs: u64, climbed: u64) -> u64 {
     STEP_BASE_COST
         .saturating_add(nodes)
@@ -477,16 +501,23 @@ pub(crate) fn step_cost(nodes: u64, joints: u64, pairs: u64, climbed: u64) -> u6
         .saturating_add(climbed)
 }
 
-/// What `data` adds to each step's work: each motion's clip channels (and
-/// one for the motion), since a step may sample every motion in a fade,
-/// and each track keyframe, since reading a track walks its keyframes.
+/// What `data` adds to each step's work, as measured (see
+/// [`MOTION_CHANNEL_COST`], [`TRACK_AXIS_COST`], [`KEYFRAMES_PER_UNIT`]):
+/// for each motion, [`MOTION_CHANNEL_COST`] × (1 + its clip's channels),
+/// since a step may sample every motion in a fade; for each track axis,
+/// [`TRACK_AXIS_COST`] plus a unit per [`KEYFRAMES_PER_UNIT`] keyframes
+/// (rounded up).
 fn data_cost(model: &VrmModel, data: &PerformanceData) -> u64 {
     let motions = data.motions.iter().fold(0u64, |sum, motion| {
-        sum.saturating_add(1 + model.clip_channels(&motion.clip))
+        let channels = 1 + model.clip_channels(&motion.clip);
+        sum.saturating_add(channels.saturating_mul(MOTION_CHANNEL_COST))
     });
     data.tracks
         .values()
-        .fold(motions, |sum, track| sum.saturating_add(track.keyframes()))
+        .flat_map(TrackData::keyframe_counts)
+        .fold(motions, |sum, keyframes| {
+            sum.saturating_add(TRACK_AXIS_COST + keyframes.div_ceil(KEYFRAMES_PER_UNIT))
+        })
 }
 
 /// The latest time, in seconds floored to the hundredth, a frame reaches
@@ -958,13 +989,27 @@ mod tests {
         // 25 nodes, two moving joints, no colliders or aims.
         assert_eq!(model.step_cost(), 300 + 25 + 2);
         assert!(reach_warnings(&model).is_empty());
-        // The clip's channels and one for the motion; a keyframe more.
+        // 16 units for each of the clip's channels and the motion; B's
+        // one-keyframe axis 32 and a unit for up to 8 keyframes.
         let cost_a = model.step_cost() + data_cost(&model, &a());
         assert_eq!(
             cost_a,
-            model.step_cost() + 1 + model.clip_channels("motion0")
+            model.step_cost() + 16 * (1 + model.clip_channels("motion0"))
         );
-        assert_eq!(data_cost(&model, &b()), cost_a - model.step_cost() + 1);
+        assert_eq!(data_cost(&model, &b()), cost_a - model.step_cost() + 32 + 1);
+        let keyframes = |count: u64| {
+            let keyframes: Vec<Value> = (0..count)
+                .map(|k| json!({ "time": { "value": k, "timescale": 30 }, "value": 1.0 }))
+                .collect();
+            data(json!({ "tracks": {
+                "head": { "yaw": { "type": "keyframes", "keyframes": keyframes } },
+                "neck": { "roll": { "type": "keyframes", "keyframes": [
+                    { "time": { "value": 0, "timescale": 30 }, "value": 1.0 },
+                ] } },
+            } }))
+        };
+        assert_eq!(data_cost(&model, &keyframes(8)), 2 * 32 + 1 + 1);
+        assert_eq!(data_cost(&model, &keyframes(9)), 2 * 32 + 2 + 1);
 
         // A frame may take steps 0..=120 of A.
         let limit = 121 * cost_a;
@@ -984,7 +1029,7 @@ mod tests {
             )),
             "{error}"
         );
-        // B's keyframe costs a unit a step: 2 s is past it.
+        // B's track costs more a step: 2 s is past it.
         assert!(model.render(2.0, &b()).is_err());
         // Refused before any step, warm or cold.
         let (mut cold, _cold) = open();
@@ -992,6 +1037,34 @@ mod tests {
         assert!(cold.render(2.0 + 1.0 / SPRING_HZ, &a()).is_err());
         assert_eq!(cold.stepper().steps(), 0);
         assert_eq!(cold.stepper().performances(), 0);
+    }
+
+    #[test]
+    fn the_reach_warning_starts_short_of_four_hours() {
+        // A step of 9,942 units reaches step 864,000 within 2^33 units; one
+        // of 9,943 does not.
+        assert_eq!(MAX_STEP_WORK / (MAX_SPRING_STEPS + 1), 9_942);
+        assert!(reach_notice(9_942).is_none());
+        let notice = reach_notice(9_943).unwrap();
+        assert_eq!(notice.level, NoticeLevel::Warning);
+        // Steps 0..=863,916: 14,398.6 s.
+        assert_eq!(MAX_STEP_WORK / 9_943 - 1, 863_916);
+        assert!(
+            notice
+                .message
+                .contains("stepped for frames up to 14398.6 s into a layer"),
+            "{}",
+            notice.message
+        );
+        assert!(reach_notice(610).is_none());
+        assert!(reach_notice(2_183).is_none());
+        // Not even step 0 fits.
+        let none = reach_notice(MAX_STEP_WORK + 1).unwrap();
+        assert!(
+            none.message.contains("stepped for no frame of a layer"),
+            "{}",
+            none.message
+        );
     }
 
     #[test]
@@ -1008,10 +1081,10 @@ mod tests {
         let mut model = VrmModel::load_slice(&glb, &directory.path().join("cache")).unwrap();
         let cost = 300 + 25 + EXTRA + 2;
         assert_eq!(model.step_cost(), cost);
-        // 2^31 units: steps 0..=n with (n + 1) × cost within them.
+        // 2^33 units: steps 0..=n with (n + 1) × cost within them.
         let last = MAX_STEP_WORK / cost - 1;
         let seconds = (last * 100 / 60) as f64 / 100.0;
-        assert!(seconds < 180.0, "{seconds}");
+        assert_eq!((last, seconds), (42_878, 714.63));
         let warnings = reach_warnings(&model);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(

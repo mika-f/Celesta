@@ -58,14 +58,12 @@ impl TrackData {
         ]
     }
 
-    /// Its keyframes over every axis, each of which a reading walks.
-    pub(crate) fn keyframes(&self) -> u64 {
+    /// For each axis it has, its keyframes, which a reading walks.
+    pub(crate) fn keyframe_counts(&self) -> impl Iterator<Item = u64> + '_ {
         self.axes()
             .into_iter()
             .filter_map(|(_, animation)| animation.as_ref())
-            .fold(0, |sum, animation| {
-                sum.saturating_add(animation.keyframes.len() as u64)
-            })
+            .map(|animation| animation.keyframes.len() as u64)
     }
 }
 
