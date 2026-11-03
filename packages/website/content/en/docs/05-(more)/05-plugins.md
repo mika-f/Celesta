@@ -116,7 +116,7 @@ cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx tur
 
 ## The VRM plugin
 
-The repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) in 3D, toon-shaded with MToon as UniVRM draws it, with expressions, blinking, lip sync, and eyes that follow a target. Build it, then install the folder it writes:
+The repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) in 3D, toon-shaded with MToon as UniVRM draws it, with expressions, blinking, lip sync, eyes that follow a target, motion clips (`.vrma`), and swinging hair and clothes. Build it, then install the folder it writes:
 
 ```sh
 pnpm install && pnpm run build:runtime   # once, at the repository root
@@ -149,6 +149,8 @@ export default function Root() {
 | `lookAt` | Where the eyes look: `'camera'`, a point `[x, y, z]` in the avatar's space, or `{ yaw, pitch }` in degrees (positive yaw to the avatar's right, positive pitch up). Without it, straight ahead. |
 | `camera` | `'full'` (the default: the whole avatar), `'bust'` (from the waist up, starting at the humanoid's spine bone), `'face'`, or `{ position, target, fov?, near?, far? }` in the avatar's space (`fov` in degrees, 30 by default). |
 | `lights` | `{ directional: [{ direction, color, intensity }], ambient }`, up to four lights (a fifth throws), colors as `#rgb` or `#rrggbb`. It replaces the reference light, so without `ambient` the ambient light is black. Without `lights`, the plugin's reference light: Unity's default directional light from the upper front and its default ambient color. A light's `intensity`, and its color times that intensity, must stay finite as 32-bit floats; otherwise the frame fails with an error naming `lights.directional[i].intensity`. |
+| `motions` | VRM animations (`.vrma`) on the timeline: `[{ src, from?, loop?, fadeIn? }]`. `from` is the frame of the enclosing sequence the motion starts on (0 by default), and `fadeIn` the frames over which it blends in from the motion before it (0 by default). |
+| `tracks` | Keyframed turns of humanoid bones on top of the motions: `{ head: { yaw: [{ frame, value, easing? }, …] }, … }`, with `pitch`, `yaw`, and `roll` in degrees, and `x`, `y`, and `z` in metres for `hips` only. |
 
 The avatar's space is the file's: metres, +Y up, the avatar facing +Z with its left at +X, its feet near 0. The presets frame the avatar as it stands at rest, on the layer's shape; `full` fits its whole width too, so a prop held far out to one side moves the avatar off center.
 
@@ -160,13 +162,50 @@ Other warnings point out parts of the file the plugin does not use as written: p
 
 A material's emission is brightened by `KHR_materials_emissive_strength` when the material has it, and otherwise by `VRMC_materials_hdr_emissiveMultiplier`, as UniVRM reads them. A multiplier that is not a finite number refuses the model, and the message names the field.
 
-Materials the file gives in plain glTF PBR (often metal or glass parts) are drawn as their flat base color for now, and a note names them. Not supported yet: VRM 0.x files, which the plugin refuses with a message saying how to convert them to VRM 1.0 (with UniVRM or the VRM Add-on for Blender); and motion (`.vrma`), constraints, and spring bones, so the avatar stands in its rest pose with its arms out, and parts driven by constraints stay where they rest.
+Materials the file gives in plain glTF PBR (often metal or glass parts) are drawn as their flat base color for now, and a note names them. Not supported yet: VRM 0.x files, which the plugin refuses with a message saying how to convert them to VRM 1.0 (with UniVRM or the VRM Add-on for Blender).
 
 The plugin refuses a file over 1 GiB, or one whose glTF JSON is over 64 MiB; a `.vrm`'s JSON is a few MB. `src` also opens a glTF JSON file (`.gltf`) whose buffers are embedded as `data:` URIs, but there the buffers are part of the JSON, so the whole file is capped at 64 MiB. A file whose buffers or images are in other files is refused.
 
 The plugin writes the model's textures as image files to a cache, and Celesta reads them from there. The cache is `celesta-plugin-vrm` in your user cache folder (`%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` elsewhere). To put it somewhere else, set `CELESTA_VRM_TEXTURE_CACHE` to an absolute path. The plugin refuses to open the model when the cache is a relative path, a symbolic link, not a folder, or (outside Windows) another user's or writable by others, and the message names the variable. The plugin never empties the cache.
 
 In the desktop app's Add menu, **VRM avatar** asks for a `.vrm` file and draws its box at 16:9.
+
+### Motion, constraints, and spring bones
+
+`motions` plays VRM animation clips (`.vrma`, `VRMC_vrm_animation` 1.0), retargeted onto the avatar as UniVRM retargets them: each bone turns from its rest as it does in the clip, and the hips travel as far as the clip's do, scaled by the avatar's hips height over the clip's. Motions run in `from` order, and each plays until the next one starts. Before the first, the avatar stands at rest. A motion with `loop` repeats; without it, its last pose holds. Expression weights in a clip apply too, but the ones you set in `expressions` win.
+
+`tracks` adds keyframed turns after the motions, in the bone's own frame from rest: `yaw` turns it to the avatar's left, `pitch` tips it forward and down, and `roll` tilts its top toward the avatar's right. (`lookAt`'s yaw is positive to the right, as in UniVRM, so the two turn opposite ways.) `x`, `y`, and `z` on `hips` move the whole avatar, in metres. A keyframe's `frame` is a frame of the enclosing sequence; a fractional one is rounded to the nearest frame. This plays a walk, fades into an idle clip over 15 frames from frame 90, then turns the head to look over the avatar's left shoulder and back:
+
+```tsx
+<Vrm
+  src="./avatar.vrm"
+  motions={[
+    { src: './walk.vrma', loop: true },
+    { src: './idle.vrma', from: 90, loop: true, fadeIn: 15 },
+  ]}
+  tracks={{
+    head: {
+      yaw: [
+        { frame: 120, value: 0 },
+        { frame: 135, value: 40, easing: 'ease-in-out' },
+        { frame: 165, value: 40 },
+        { frame: 180, value: 0, easing: 'ease-in-out' },
+      ],
+    },
+  }}
+/>
+```
+
+The avatar's node constraints (parts that follow other parts, such as a twisting sleeve) follow every frame, in UniVRM's order. Its spring bones (hair, skirts, and other swinging parts) are stepped on a fixed 60 Hz clock from the start of the layer, so any frame is the same however you reach it: scrubbed to, played in order, or exported at 30 or 60 fps. Keep `motions` and `tracks` the same across a layer's frames: the plugin keeps the springs' progress for each set of them, and data that changes every frame makes every frame step the springs again from the layer's start. Put values that change per frame in `expressions`, `mouth`, and `lookAt`, which the springs do not read.
+
+Clips to try: `test.vrma` from [pixiv/three-vrm](https://github.com/pixiv/three-vrm) (`packages/three-vrm-animation/examples/models`, MIT), and VRoid Project's free VRMA motion pack on BOOTH (pixiv; it asks for a credit where the video is published). Check each clip's terms before you publish a video with it.
+
+Limits you may meet:
+
+- A layer opens at most 256 different clips, whose files take at most 1 GiB together, and whose animation keys take at most 1 GiB once read.
+- The springs are stepped up to 4 hours into a layer; a later frame fails with an error saying so. An avatar whose springs are very expensive to step (hundreds of thousands of nodes, say) reaches less: the plugin warns of it when it opens the model, and a frame past its reach fails, naming the time it reaches.
+- Not read: the angle limits of `VRMC_springBone_limit` (the plugin warns when the model has them, and those joints swing past their limits), a clip's `lookAt` animation, and any glTF animation but a clip's first. The springs do not react to `lookAt` or expressions.
+- There is no foot IK: as in UniVRM, a clip whose rest pose stands a little higher or lower than its animation, or an avatar whose legs are long or short for its hips' height, can leave the feet a few centimetres into or above the floor.
 
 ## Write a plugin
 

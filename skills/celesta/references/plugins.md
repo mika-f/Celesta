@@ -123,9 +123,68 @@ import { Vrm } from '@celesta-plugin/vrm';
   the user's cache folder, or `CELESTA_VRM_TEXTURE_CACHE`, which must be
   an absolute path to a real folder of the user's own, not writable by
   others. Never emptied.
-- Not yet: VRM 0.x (refused, with how to convert it to 1.0), `.vrma`
-  motion, constraints, spring bones: the avatar stands in its T-shaped
-  rest pose.
+- Not yet: VRM 0.x (refused, with how to convert it to 1.0).
+
+### Motion, constraints, and spring bones
+
+```tsx
+<Vrm
+  src="./avatar.vrm"
+  motions={[
+    { src: './walk.vrma', loop: true },
+    { src: './idle.vrma', from: 90, loop: true, fadeIn: 15 },
+  ]}
+  // Look over the avatar's left shoulder and back.
+  tracks={{
+    head: {
+      yaw: [
+        { frame: 120, value: 0 },
+        { frame: 135, value: 40, easing: 'ease-in-out' },
+        { frame: 165, value: 40 },
+        { frame: 180, value: 0, easing: 'ease-in-out' },
+      ],
+    },
+  }}
+/>
+```
+
+- `motions`: `[{ src, from?, loop?, fadeIn? }]`, `src` a `.vrma`
+  (`VRMC_vrm_animation` 1.0); `from` and `fadeIn` in frames of the
+  enclosing sequence (default 0). Retargeted as UniVRM does: each bone's
+  turn from rest, and the hips' travel scaled by the avatar's hips height
+  over the clip's. Motions run in `from` order, each until the next
+  starts; before the first the avatar rests; `loop` repeats, otherwise the
+  last pose holds; `fadeIn` blends from the motion before. A clip's
+  expression weights apply, but `expressions` wins key by key.
+- `tracks`: `{ bone: { pitch?, yaw?, roll?, x?, y?, z? } }`, each a list
+  of `{ frame, value, easing? }` (a fractional frame is rounded to the
+  nearest), on top of the motions in the bone's frame from rest: degrees,
+  `yaw` to the avatar's **left** (opposite to `lookAt`'s yaw, which is
+  positive to the right), `pitch` forward and down, `roll` top to the
+  avatar's right. `x`, `y`, `z`: metres, `hips` only (moves the avatar).
+  An unknown bone or axis, `x`/`y`/`z` off the hips, an empty axis, or a
+  non-finite frame or value throws.
+- Node constraints follow every frame, in UniVRM's order. Spring bones
+  (hair, skirts) step on a fixed 60 Hz clock from the layer's start, so
+  any frame is the same however it is reached: scrubbed, played, or
+  exported at 30 or 60 fps.
+- Keep `motions` and `tracks` constant across a layer's frames. The
+  plugin keeps the springs' progress per set of them; data computed from
+  the frame makes every frame step the springs from 0 s again. Per-frame
+  values go in `expressions`, `mouth`, `lookAt` (the springs read none).
+- Limits: 256 distinct clips a layer, 1 GiB of clip files and 1 GiB of
+  their keys together; springs step up to 4 h into a layer (a later frame
+  fails); an avatar whose springs are very costly to step (hundreds of
+  thousands of nodes) reaches less, warns when it opens, and fails past
+  its reach, naming the time.
+- Not read: `VRMC_springBone_limit` (warned; those joints swing past their
+  limits), a clip's `lookAt` animation, glTF animations after a clip's
+  first. Springs ignore `lookAt` and expressions. No foot IK: as in
+  UniVRM, a clip's rest hips offset or the avatar's leg proportions can
+  leave the feet a few cm into or above the floor.
+- Clips: `test.vrma` from pixiv/three-vrm (MIT); VRoid Project's free VRMA
+  motion pack on BOOTH (pixiv; credit required where the video is
+  published). Relay each clip's terms to the user.
 
 ## Errors
 

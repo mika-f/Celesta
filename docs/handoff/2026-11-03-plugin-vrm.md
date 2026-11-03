@@ -13,8 +13,8 @@ first part: everything but motion. The scene protocol is
 `2026-11-03-plugin-scene-content.md`; materials in WGSL, lights, render
 queues, and outlines are `2026-11-03-plugin-scene-materials.md`; a frame's
 own canvas is `2026-11-03-plugin-frame-canvas-checks.md`. Humanoid motion
-(`.vrma`), constraints, and spring bones come next
-(`docs/superpowers/plans/2026-11-03-plugin-vrm-motion.md`).
+(`.vrma`), constraints, and spring bones are the second part:
+`2026-11-03-plugin-vrm-motion.md`.
 
 Wherever the VRM specification leaves room, UniVRM decides. UniVRM works
 in Unity's axes, glTF's with X negated; every rule below is written in
@@ -72,8 +72,7 @@ Files ported from UniVRM carry its MIT notice and name their source.
   root's `VRMC_vrm` and `VRM` are read first with the rest skipped, then
   gltf-json reads its typed root. Extensions `vrm-spec` has no types for
   stay in gltf-json's `extensions().others` of the object holding them
-  (each material's `VRMC_materials_mtoon`, and the nodes' constraints for
-  the motion plan).
+  (each material's `VRMC_materials_mtoon`, and the nodes' constraints).
 - Refusals, in this order, the first three before glTF's own validation
   (so a VRM 0.x file always gets the conversion hint) and the humanoid's
   after it:
@@ -94,8 +93,8 @@ Files ported from UniVRM carry its MIT notice and name their source.
   outside it stay in the tree but are not drawn. A node's `matrix` is
   decomposed into translation, rotation, and scale. Two parents, a cycle,
   or a transform past `f32` refuse the model.
-- `VRMC_node_constraint` and `VRMC_springBone` are read by no one yet and
-  refuse nothing.
+- `VRMC_node_constraint` and `VRMC_springBone` are read as
+  `2026-11-03-plugin-vrm-motion.md` says.
 
 ## Geometry
 
@@ -431,10 +430,10 @@ To check once UniVRM reference renders exist:
 ## Each frame
 
 `VrmModel::frame(time, data)` runs UniVRM's order
-(`Vrm10Runtime.Process`): the base pose (the rest pose here; motions and
-tracks in the motion plan), constraints (nothing yet), the lookAt,
-expressions, spring bones (nothing yet), then world matrices, skinning
-matrices, and draw states. A frame depends only on the model, `time`, and
+(`Vrm10Runtime.Process`): the base pose (motions and tracks, else the
+rest pose), constraints, the lookAt, expressions, spring bones, then
+world matrices, skinning matrices, and draw states. Motions, tracks,
+constraints, and spring bones are `2026-11-03-plugin-vrm-motion.md`'s. A frame depends only on the model, `time`, and
 `data`; nothing iterates a hash map into it, and frames asked for in any
 order are equal to frames played in order.
 
@@ -615,9 +614,10 @@ warnings are not counted.
 
 ## The provider and `data`
 
-- `open` takes one asset, `model`, the `.vrm` (`asset "model" (the .vrm)
-  is missing`); any other is refused (`unknown asset "{name}"`) until
-  motions arrive. A load error is `"{path}: {error}"`. Every error is
+- `open` takes the asset `model`, the `.vrm` (`asset "model" (the .vrm)
+  is missing`), and the clips `motion0`, `motion1`, … (see
+  `2026-11-03-plugin-vrm-motion.md`); any other is refused (`unknown
+  asset "{name}"`). A load error is `"{path}: {error}"`. Every error is
   `PluginError::Failed` for plugin `vrm`, except a request for another
   plugin id (`UnknownPlugin`).
 - `frame` reads `data` as `PerformanceData`: `canvas`, `expressions`,
@@ -706,9 +706,9 @@ Celesta's side knows no format.
   4.
 - **glTF PBR** is drawn as unlit base colour, its emission and
   metal-roughness dropped; a PBR material of the plugin's is phase 5.
-- **Humanoid motion (`.vrma`), constraints, and spring bones** are the
-  motion plan's. Until constraints run, a constrained part stays at its
-  rest pose. At rest that is also where its constraints would hold it:
+- **Humanoid motion (`.vrma`), constraints, and spring bones** landed
+  since; what they leave out is in `2026-11-03-plugin-vrm-motion.md`'s
+  Not done. At rest a constrained part is where its constraints hold it:
   Seed-san's robot arm follows her left arm by rotation constraints, so
   it is held out sideways by her T-pose, in UniVRM too.
 - **`full` centres on the framing bounds' x,** so a wide, one-sided prop
