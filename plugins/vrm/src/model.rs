@@ -42,6 +42,10 @@
 //!   on top, is retargeted onto the avatar as the base pose (see `vrma`),
 //!   and its clip expressions are the weights `data.expressions` does not
 //!   set.
+//! - **Spring bones** (see `springs`) are read before the geometry. Each
+//!   frame turns their heads to the tails of the last 60 Hz step at or
+//!   before its time, stepped from 0 s on the motions, tracks, and
+//!   constraints alone, from states the model keeps (see `stepping`).
 //! - **The camera** (see `camera`) frames the avatar at rest: what a
 //!   third-person camera sees, every vertex of every visible draw skinned
 //!   at rest without morphs, bounded once when the model opens (without a
@@ -80,6 +84,8 @@ use crate::mtoon::{self, Mtoon, MtoonOverrides};
 use crate::nodes::{NodeTree, Pose};
 use crate::notices::Warnings;
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
+use crate::springs::Springs;
+use crate::stepping::Stepper;
 use crate::tracks::apply_tracks;
 use crate::vrma::{Clip, ClipPose, Retarget};
 use celesta_plugin::{
@@ -157,6 +163,9 @@ pub struct VrmModel {
     expressions: Expressions,
     look_at: LookAt,
     constraints: Constraints,
+    springs: Springs,
+    /// The springs' states kept between frames (see `stepping`).
+    stepper: Stepper,
     /// The layer's clips by asset name.
     clips: BTreeMap<String, Clip>,
     /// The humanoid at rest, which clips are retargeted onto.
@@ -272,6 +281,7 @@ impl VrmModel {
         let humanoid = Humanoid::new(&document);
         let look_at = LookAt::new(&document, &tree, &humanoid)?;
         let constraints = Constraints::read(&document, &tree)?;
+        let springs = Springs::read(&document, &tree)?;
         let mut first_person_notices = Vec::new();
         let hidden = hidden_nodes(&document, &mut first_person_notices)?;
         let mut budget = Budget {
@@ -367,6 +377,8 @@ impl VrmModel {
             expressions,
             look_at,
             constraints,
+            springs,
+            stepper: Stepper::default(),
             clips: BTreeMap::new(),
             retarget,
             rest,
@@ -414,6 +426,15 @@ impl VrmModel {
     /// The scene at `time` seconds, as `data` asks for it. The same model,
     /// time, and data always give the same frame.
     pub fn frame(&mut self, time: f64, data: &PerformanceData) -> Result<SceneFrame, FrameError> {
+        self.render(time, data).map(|(frame, _)| frame)
+    }
+
+    /// [`Self::frame`], with every node's world matrix in it.
+    pub(crate) fn render(
+        &mut self,
+        time: f64,
+        data: &PerformanceData,
+    ) -> Result<(SceneFrame, Vec<Mat4>), FrameError> {
         // The camera, and the eye a `"camera"` gaze looks at.
         let (canvas, camera, eye) = self.camera(data)?;
         if let Some(lights) = &data.lights {
@@ -427,7 +448,7 @@ impl VrmModel {
             .map(|draw| draw.morph_weights.clone())
             .collect();
         let binds = self.binds_of(&applied, &mut morph);
-        self.apply_springs(time, data, &mut pose);
+        self.apply_springs(time, data, &mut pose)?;
         let worlds = self.tree.world(&pose);
 
         let mut skins = Vec::with_capacity(self.skins.len());
@@ -496,14 +517,15 @@ impl VrmModel {
             });
         }
 
-        Ok(SceneFrame {
+        let frame = SceneFrame {
             camera,
             lights,
             time,
             draws,
             skins,
             canvas: Some(canvas),
-        })
+        };
+        Ok((frame, worlds))
     }
 
     /// The frame's canvas, its camera, and the camera's eye, as `data`
@@ -693,6 +715,15 @@ impl VrmModel {
         self.constraints.apply(&self.tree, pose);
     }
 
+    /// The pose a spring step at `time` sees: the base pose with its
+    /// constraints, without the frame's own lookAt and expressions (see
+    /// `stepping`).
+    pub(crate) fn step_pose(&self, time: f64, data: &PerformanceData) -> Result<Pose, FrameError> {
+        let (mut pose, _) = self.base_pose(time, data)?;
+        self.apply_constraints(&mut pose);
+        Ok(pose)
+    }
+
     #[cfg(test)]
     pub(crate) fn constraints(&self) -> &Constraints {
         &self.constraints
@@ -723,8 +754,40 @@ impl VrmModel {
         &self.expressions
     }
 
-    /// The motion plan's spring bones; nothing yet.
-    fn apply_springs(&mut self, _time: f64, _data: &PerformanceData, _pose: &mut Pose) {}
+    /// The spring bones (see `springs`) at `time`: each head in `pose`
+    /// turned to its tail after the steps `stepping` runs to `time` for
+    /// `data`'s motions and tracks. An avatar without springs skips it.
+    fn apply_springs(
+        &mut self,
+        time: f64,
+        data: &PerformanceData,
+        pose: &mut Pose,
+    ) -> Result<(), FrameError> {
+        if self.springs.springs.is_empty() {
+            return Ok(());
+        }
+        // Taken out for the steps, which read the model; put back before
+        // an error returns, so a refused frame keeps the states.
+        let mut stepper = std::mem::take(&mut self.stepper);
+        let state = stepper.state_at(self, time, data);
+        self.stepper = stepper;
+        self.springs.settle(&self.tree, pose, &state?);
+        Ok(())
+    }
+
+    pub(crate) fn springs(&self) -> &Springs {
+        &self.springs
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stepper(&self) -> &Stepper {
+        &self.stepper
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stepper_mut(&mut self) -> &mut Stepper {
+        &mut self.stepper
+    }
 
     /// By draw: the world-space point it is sorted by, for nodes at
     /// `worlds`. Every draw of one node's mesh has the same.

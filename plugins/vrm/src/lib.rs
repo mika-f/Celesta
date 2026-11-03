@@ -25,6 +25,7 @@ mod nodes;
 mod notices;
 mod provider;
 mod springs;
+mod stepping;
 #[cfg(any(test, feature = "synthetic"))]
 pub mod synthetic;
 mod tracks;

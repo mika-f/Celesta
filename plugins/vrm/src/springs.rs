@@ -33,9 +33,6 @@
 //! runtime options (external force, scaling with the model, stopping the
 //! write-back), which stay at their defaults.
 
-// The frame's spring stage is not wired to these yet; the tests call them.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use crate::document::{Document, LoadError};
 use crate::nodes::{NodeTree, Pose};
 use glam::{Mat4, Quat, Vec3};
