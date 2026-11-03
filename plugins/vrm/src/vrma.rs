@@ -246,19 +246,9 @@ impl Clip {
                 "this glTF file has no {VRMC_VRM_ANIMATION} extension: it is not a VRM animation"
             )));
         };
-        match extension["specVersion"].as_str() {
-            Some(version) if version == "1.0" || version.starts_with("1.0-") => {}
-            Some(version) => {
-                return Err(invalid(format_args!(
-                    "{VRMC_VRM_ANIMATION} specVersion {version} is not 1.0"
-                )));
-            }
-            None => {
-                return Err(invalid(format_args!(
-                    "{VRMC_VRM_ANIMATION} has no specVersion"
-                )));
-            }
-        }
+        // Its `specVersion` is required (the schema's, so `vrm-spec`'s) but
+        // not checked: UniVRM's importer reads the extension whatever its
+        // version (`VrmAnimationImporter.cs`, lines 29-41 at `efd20f62`).
         let vrma = VRMCVrmAnimationSchema::deserialize(extension)
             .map_err(|error| invalid(format_args!("{VRMC_VRM_ANIMATION} is malformed: {error}")))?;
 
@@ -981,18 +971,33 @@ mod tests {
             message.contains("no VRMC_vrm_animation extension"),
             "{message}"
         );
-        let message = refusal(&SyntheticVrma::clip().glb_with(|root| {
-            root["extensions"]["VRMC_vrm_animation"]["specVersion"] = "1.1".into();
-        }));
+    }
+
+    #[test]
+    fn any_spec_version_is_read_as_univrm_reads_it() {
+        let versioned = |version: Option<&str>| {
+            SyntheticVrma::clip().glb_with(|root| {
+                let extension = &mut root["extensions"]["VRMC_vrm_animation"];
+                match version {
+                    Some(version) => extension["specVersion"] = version.into(),
+                    None => {
+                        extension.as_object_mut().unwrap().remove("specVersion");
+                    }
+                }
+            })
+        };
+        let one = Clip::load(&versioned(Some("1.0"))).unwrap();
+        for version in ["2.0", "1.0-draft"] {
+            let clip = Clip::load(&versioned(Some(version))).unwrap();
+            assert_eq!(clip.sample(0.5).rotations, one.sample(0.5).rotations);
+        }
+        // The schema still requires one.
+        let message = refusal(&versioned(None));
         assert!(
-            message.contains("VRMC_vrm_animation specVersion 1.1 is not 1.0"),
+            message.contains("VRMC_vrm_animation is malformed"),
             "{message}"
         );
-        // A pre-release of 1.0 is 1.0, as for `VRMC_vrm`.
-        Clip::load(&SyntheticVrma::clip().glb_with(|root| {
-            root["extensions"]["VRMC_vrm_animation"]["specVersion"] = "1.0-draft".into();
-        }))
-        .unwrap();
+        assert!(message.contains("specVersion"), "{message}");
     }
 
     #[test]

@@ -10,8 +10,11 @@
 //! Unity's; a roll about −X is the roll about +X).
 //!
 //! - **Reading** (`Vrm10Importer.LoadConstraintAsync`): each node's
-//!   `extensions.VRMC_node_constraint`, `specVersion` 1.0, with exactly one
-//!   of `roll`, `aim`, and `rotation`. A source that is not a node of the
+//!   `extensions.VRMC_node_constraint`, with exactly one of `roll`, `aim`,
+//!   and `rotation`. Its `specVersion`, which the schema requires, is not
+//!   checked: UniVRM's importer reads the extension whatever its version,
+//!   so a file is read as UniVRM reads it, and only its fields can refuse
+//!   it. A source that is not a node of the
 //!   file or is the node itself, and a weight that is not finite, are
 //!   refused. The weight is used as it is: the schema bounds it to 0..1,
 //!   but UniVRM's importer copies it unchecked (its `Range(0, 1)` binds
@@ -64,7 +67,11 @@ const AIM_CLIMB_LIMIT: u64 = 1 << 20;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NodeConstraintExtension {
-    spec_version: String,
+    /// Required by the schema, but not checked: UniVRM's importer reads
+    /// the extension whatever its version (`Vrm10Importer.cs`, line 788 at
+    /// `efd20f62`, a `TryGet` with no version check).
+    #[serde(rename = "specVersion")]
+    _spec_version: String,
     constraint: ConstraintJson,
 }
 
@@ -191,12 +198,6 @@ impl Constraints {
                     "node {index}'s {VRMC_NODE_CONSTRAINT} is malformed: {error}"
                 ))
             })?;
-            let version = &extension.spec_version;
-            if !(version == "1.0" || version.starts_with("1.0-")) {
-                return Err(LoadError::Invalid(format!(
-                    "node {index}'s {VRMC_NODE_CONSTRAINT} specVersion {version} is not 1.0"
-                )));
-            }
             let ConstraintJson {
                 roll,
                 aim,
@@ -373,7 +374,7 @@ mod tests {
     }
 
     /// The avatar with `constraints` (node, the `constraint` object), each
-    /// in a `VRMC_node_constraint` of `specVersion` 1.0.
+    /// in a `VRMC_node_constraint` whose `specVersion` is "1.0".
     fn constrained(constraints: &[(usize, Value)]) -> SyntheticVrm {
         let mut vrm = SyntheticVrm::avatar();
         vrm.node_extensions = constraints
@@ -766,17 +767,40 @@ mod tests {
             message.contains("node 6's VRMC_node_constraint"),
             "{message}"
         );
+    }
 
-        let mut vrm = SyntheticVrm::avatar();
-        vrm.node_extensions = vec![(
-            node::LEFT_EYE,
-            json!({ "VRMC_node_constraint": {
-                "specVersion": "2.0",
+    #[test]
+    fn any_spec_version_is_read_as_univrm_reads_it() {
+        let versioned = |version: Option<&str>| {
+            let mut extension = json!({
                 "constraint": { "rotation": { "source": node::HEAD } },
-            } }),
-        )];
-        let message = refusal_of(&vrm.glb());
-        assert!(message.contains("specVersion 2.0 is not 1.0"), "{message}");
+            });
+            if let Some(version) = version {
+                extension["specVersion"] = version.into();
+            }
+            let mut vrm = SyntheticVrm::avatar();
+            vrm.node_extensions =
+                vec![(node::LEFT_EYE, json!({ "VRMC_node_constraint": extension }))];
+            vrm
+        };
+        let eye = |vrm: &SyntheticVrm| {
+            let (tree, constraints) = read(vrm);
+            let mut pose = tree.rest_pose();
+            pose.local[node::HEAD].rotation = Quat::from_rotation_y(0.5);
+            constraints.apply(&tree, &mut pose);
+            pose.local[node::LEFT_EYE].rotation
+        };
+        // "2.0" is read as "1.0" is: the eye follows the head.
+        let one = eye(&versioned(Some("1.0")));
+        assert_ne!(one, Quat::IDENTITY);
+        assert_eq!(eye(&versioned(Some("2.0"))), one);
+        // The schema still requires one.
+        let message = refusal_of(&versioned(None).glb());
+        assert!(
+            message.contains("node 6's VRMC_node_constraint is malformed"),
+            "{message}"
+        );
+        assert!(message.contains("specVersion"), "{message}");
     }
 
     #[test]

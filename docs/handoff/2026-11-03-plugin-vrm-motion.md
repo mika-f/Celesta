@@ -42,12 +42,13 @@ Ported from `VrmAnimationImporter.cs`, `InitialRotationPoseProvider.cs`,
 `Vrm10RuntimeControlRig.cs`.
 
 - **Reading.** A `.vrma` is binary glTF (or glTF JSON with `data:`
-  buffers) with `VRMC_vrm_animation` `specVersion` 1.0 (or a `1.0-`
-  pre-release such as `1.0-draft`, as for `VRMC_vrm`), read through the
-  model's file and JSON limits. Without the extension:
+  buffers) with `VRMC_vrm_animation`, read through the model's file and
+  JSON limits. Without the extension:
   `this glTF file has no VRMC_vrm_animation extension: it is not a VRM
-  animation`; another version: `VRMC_vrm_animation specVersion {v} is not
-  1.0`. Only `animations[0]` is read: the `rotation` of each humanoid
+  animation`. Its `specVersion` must be there (the schema requires it)
+  but is not checked, as UniVRM's importer does not check it
+  (`VrmAnimationImporter.cs`): any version is read as 1.0, and only the
+  fields can refuse the file. Only `animations[0]` is read: the `rotation` of each humanoid
   bone's node, the `translation` of the hips' node, and for each
   expression the `translation` x of its node. Other channels, the eye
   bones (UniVRM's importer leaves them out), the look expressions (UniVRM's
@@ -148,8 +149,10 @@ Ported from `Vrm10RollConstraint.cs`, `Vrm10AimConstraint.cs`,
 `Vrm10RotationConstraint.cs`, `Vrm10Runtime.cs`, and `Vrm10Importer.cs`.
 
 - **Reading** (`LoadConstraintAsync`): each node's
-  `VRMC_node_constraint` 1.0 with exactly one of `roll`, `aim`, and
-  `rotation`. A source that is not a node of the file or is the node
+  `VRMC_node_constraint` with exactly one of `roll`, `aim`, and
+  `rotation`. Its `specVersion` must be there (the schema requires it)
+  but is not checked, as UniVRM's importer does not check it: any
+  version is read as 1.0, and only the fields can refuse it. A source that is not a node of the file or is the node
   itself, and a weight that is not finite, are refused. The weight
   defaults to 1 and is used as it is: the schema bounds it to 0..1, but
   UniVRM's importer copies it unchecked and `Process` calls
@@ -218,7 +221,8 @@ Ported from UniVRM's FastSpringBone (`UpdateFastSpringBoneJob.cs`,
   at their defaults.
 - **Versions:** as in UniVRM, neither `VRMC_springBone`'s nor
   `VRMC_springBone_extended_collider`'s `specVersion` is checked (UniVRM's
-  importer checks only `VRMC_springBone_limit`'s, with a warning).
+  importer checks only `VRMC_springBone_limit`'s, with a warning, and the
+  plugin does not read that extension).
 
 ## The clock (`stepping.rs`)
 
@@ -252,7 +256,8 @@ Ported from UniVRM's FastSpringBone (`UpdateFastSpringBoneJob.cs`,
   steps a frame at 30 fps), and a scrub back resumes at most 30 steps
   early (`30 × spacing` once the ceiling has thinned the checkpoints).
 - **One ceiling per process.** `SPRING_CACHE_BYTES` (256 MiB) over every
-  model and performance; nothing counts performances. It is a ceiling
+  model and performance, each performance charged its entry too, so no
+  other limit on their number is needed. It is a ceiling
   against hostile files (a ten-minute layer keeps about 1 MB) and costs
   latency only. Past it, in order: the performance with the most
   checkpoints doubles its spacing, repeatedly; then checkpoints go and
