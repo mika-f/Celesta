@@ -2129,6 +2129,24 @@ fn outline_mirrored_worlds_still_cull_the_front_faces() {
 }
 
 #[test]
+fn outline_mirrored_shells_keep_their_ring() {
+    // The whole shell mirrored in x: its twin, counter-clockwise on screen
+    // now, still faces away, and the outline still grows it into a ring.
+    // Dropping outlines from mirrored worlds would leave it clear.
+    let mut scenes = shell_scene(
+        outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES),
+        vec![],
+    );
+    scenes.frame.draws[0].world = scaling(-1.0, 1.0, 1.0);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, RED);
+    assert_pixel(&frame, 50, 32, RED);
+    assert_pixel(&frame, 32, 32, GREEN);
+}
+
+#[test]
 fn outline_is_drawn_at_width_zero() {
     // The square alone, seen from behind, from (0, 0, −2) looking +Z: the
     // main pass culls its back face, and the outline, 0 wide, draws it.
