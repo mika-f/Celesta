@@ -3575,6 +3575,54 @@ fn outline_mirrored_worlds_cull_the_front_faces() {
     assert_pixel(&frame, 32, 32, GREEN);
 }
 
+/// `ringed(WORLD)` on `radial_square` alone, one winding facing the
+/// camera, its outline culling `cull` (the default pass's when `None`),
+/// drawn in `world`: where the outline keeps the square's front face, a
+/// ring 12..16 and 48..52 in x.
+fn ringed_square(cull: Option<CullFace>, world: [f32; 16]) -> Scenes {
+    let mut scenes = ringed(WORLD);
+    scenes.model.geometries = vec![radial_square()];
+    if let Some(cull) = cull {
+        custom_of(&mut scenes.model.materials[0])
+            .outline
+            .as_mut()
+            .unwrap()
+            .cull = cull;
+    }
+    scenes.frame.draws[0].world = world;
+    scenes
+}
+
+#[test]
+fn outline_culls_the_faces_it_asks_to() {
+    // `shell`'s twin would keep a ring whatever is culled; the square
+    // alone has a ring only where its front face is kept.
+    for (cull, expected) in [
+        (None, CLEAR),
+        (Some(CullFace::Back), RED),
+        (Some(CullFace::None), RED),
+    ] {
+        let Some(frame) = render_scenes(ringed_square(cull, IDENTITY)) else {
+            return;
+        };
+        assert_pixel(&frame, 14, 32, expected);
+        assert_pixel(&frame, 32, 32, GREEN);
+    }
+}
+
+#[test]
+fn outline_mirrored_squares_still_cull_the_front_face() {
+    // Mirrored in x, the square's front face turns clockwise on screen,
+    // and the outline still culls it. With the winding not taken from the
+    // world's determinant, the outline would take it for a back face and
+    // draw a ring around it.
+    let Some(frame) = render_scenes(ringed_square(None, scaling(-1.0, 1.0, 1.0))) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, CLEAR);
+    assert_pixel(&frame, 32, 32, GREEN);
+}
+
 #[test]
 fn outline_draws_with_the_material_alpha() {
     let mut scenes = ringed([FOUR_PX_IN_METRES, 0.0, 0.0, 0.5]);
