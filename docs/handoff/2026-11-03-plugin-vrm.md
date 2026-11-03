@@ -706,7 +706,9 @@ Celesta's side knows no format.
   metal-roughness dropped; a PBR material of the plugin's is phase 5.
 - **Humanoid motion (`.vrma`), constraints, and spring bones** are the
   motion plan's. Until constraints run, a constrained part stays at its
-  rest pose: Seed-san's robot arm sticks out sideways.
+  rest pose. At rest that is also where its constraints would hold it:
+  Seed-san's robot arm follows her left arm by rotation constraints, so
+  it is held out sideways by her T-pose, in UniVRM too.
 - **`full` centres on the framing bounds' x,** so a wide, one-sided prop
   (Seed-san's robot arm) widens the bounds and shifts the avatar off
   centre.
