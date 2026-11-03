@@ -66,6 +66,7 @@ export type VrmHumanBone = (typeof HUMAN_BONES)[number];
 
 /** A value of a track at a frame of the enclosing sequence. */
 export interface VrmKeyframe {
+  /** The frame; a fractional one is the nearest frame. */
   frame: number;
   value: number;
   /** How the value eases in from the previous keyframe. Default linear. */
@@ -356,7 +357,11 @@ function trackData(tracks: NonNullable<VrmProps['tracks']>, fps: number): NonNul
   return data;
 }
 
-/** `keyframes` on the layer's clock: frames of the sequence, as `<Live2D>` times them. */
+/**
+ * `keyframes` on the layer's clock: frames of the sequence, as `<Live2D>`
+ * times them at whole frame rates. A fractional frame is the nearest
+ * frame at any rate, so 29.97 fps places it where 30 fps does.
+ */
 function keyframeAnimation(keyframes: VrmKeyframe[], fps: number): KeyframeAnimation<number> {
   // Whole frame rates time keyframes exactly; others to the microsecond.
   const timescale = Number.isInteger(fps) ? fps : 1_000_000;
@@ -366,7 +371,7 @@ function keyframeAnimation(keyframes: VrmKeyframe[], fps: number): KeyframeAnima
     keyframes: [...keyframes]
       .sort((a, b) => a.frame - b.frame)
       .map((keyframe) => ({
-        time: { value: Math.round(keyframe.frame * scale), timescale },
+        time: { value: Math.round(Math.round(keyframe.frame) * scale), timescale },
         value: keyframe.value,
         ...(keyframe.easing ? { easing: keyframe.easing } : {}),
       })),

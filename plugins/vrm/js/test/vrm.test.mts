@@ -292,6 +292,19 @@ test('tracks_are_keyframes_on_the_layer_clock', () => {
       { value: 1_001_001, timescale: 1_000_000 },
     ],
   );
+  // A fractional frame is the nearest frame at any rate, as a whole rate
+  // times it: at 30 fps and at 29.97 fps alike.
+  const fractional = { head: { yaw: [{ frame: 10.4, value: 0 }, { frame: 20.6, value: 1 }] } };
+  const times = (fps: number) =>
+    vrmData({ src, tracks: fractional }, 0, fps).tracks?.head?.yaw?.keyframes.map((keyframe) => keyframe.time);
+  assert.deepEqual(times(30), [
+    { value: 10, timescale: 30 },
+    { value: 21, timescale: 30 },
+  ]);
+  assert.deepEqual(times(29.97), [
+    { value: Math.round((10 * 1_000_000) / 29.97), timescale: 1_000_000 },
+    { value: Math.round((21 * 1_000_000) / 29.97), timescale: 1_000_000 },
+  ]);
   // The hips move too; no tracks, no key.
   const hips = vrmData({ src, tracks: { hips: { y: [{ frame: 0, value: 0.1 }] } } }, 0, 30).tracks;
   assert.deepEqual(hips, {
