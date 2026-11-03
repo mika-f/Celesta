@@ -219,14 +219,14 @@ fails to load is closed again. The limits are `pub const`s in
 - **Compiled** from naga's module through wgpu's safe
   `create_shader_module`, never `create_shader_module_trusted`. In wgpu 30
   the safe call always compiles with `ShaderRuntimeChecks::checked()`,
-  every runtime check wgpu has: naga's bounds-check policies on indexing,
-  buffer access, and texel loads, and loop bounding, so a backend compiler
-  cannot take a loop that never ends as unreachable code. Nothing in
-  Celesta sets these; they are what the safe call means. Modules and
-  pipelines are made inside validation, internal, and out-of-memory error
-  scopes together: a backend compiler refusing what naga accepted (Metal
-  past a fragment function's stack, for one) is the material's error,
-  never a panic.
+  every runtime check wgpu has: bounds checks on indexing, buffer access,
+  and texel loads (naga's, or the driver's robust access where the backend
+  has it), and loop bounding, so a backend compiler cannot take a loop
+  that never ends as unreachable code. Nothing in Celesta sets these; they
+  are what the safe call means. Modules and pipelines are made inside
+  validation, internal, and out-of-memory error scopes together: a backend
+  compiler refusing what naga accepted (Metal past a fragment function's
+  stack, for one) is the material's error, never a panic.
 - **Not bounded: a material's own memory and time.** Private and
   function-local memory (`var<private>`, a function's `var`) has no cap of
   Celesta's: naga accepts arrays of any size. A backend may refuse the
