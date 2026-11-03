@@ -1865,15 +1865,11 @@ fn to_light(direction: [f32; 3]) -> Option<[f32; 3]> {
     (length > 0.0 && length.is_finite()).then(|| direction.map(|value| (-value / length) as f32))
 }
 
-/// What takes `world`'s normals to world space: the cofactor matrix of its
-/// upper 3×3, times the sign of its determinant (+1 for a determinant of
-/// 0), as columns. That is the inverse transpose times the determinant's
-/// magnitude: the same directions, which the shader normalises, and finite
-/// even when `world` scales to nothing. Worked out in `f64` and divided by
-/// its largest entry's magnitude, so that it stays finite as `f32` however
-/// large `world` is.
-fn normal_matrix(world: &[f32; 16]) -> [[f32; 4]; 3] {
-    let column = |c: usize| [0, 1, 2].map(|r| f64::from(world[c * 4 + r]));
+/// The cofactor matrix of `matrix`'s upper 3×3 as columns, and its
+/// determinant, in `f64`. The inverse is the cofactor's transpose over the
+/// determinant.
+fn cofactor(matrix: &[f32; 16]) -> ([[f64; 3]; 3], f64) {
+    let column = |c: usize| [0, 1, 2].map(|r| f64::from(matrix[c * 4 + r]));
     let cross = |a: [f64; 3], b: [f64; 3]| {
         [
             a[1] * b[2] - a[2] * b[1],
@@ -1884,7 +1880,19 @@ fn normal_matrix(world: &[f32; 16]) -> [[f32; 4]; 3] {
     let (a, b, c) = (column(0), column(1), column(2));
     // The cofactor matrix's columns are the cross products of the others.
     let cofactor = [cross(b, c), cross(c, a), cross(a, b)];
-    let determinant: f64 = (0..3).map(|row| a[row] * cofactor[0][row]).sum();
+    let determinant = (0..3).map(|row| a[row] * cofactor[0][row]).sum();
+    (cofactor, determinant)
+}
+
+/// What takes `world`'s normals to world space: the cofactor matrix of its
+/// upper 3×3, times the sign of its determinant (+1 for a determinant of
+/// 0), as columns. That is the inverse transpose times the determinant's
+/// magnitude: the same directions, which the shader normalises, and finite
+/// even when `world` scales to nothing. Worked out in `f64` and divided by
+/// its largest entry's magnitude, so that it stays finite as `f32` however
+/// large `world` is.
+fn normal_matrix(world: &[f32; 16]) -> [[f32; 4]; 3] {
+    let (cofactor, determinant) = cofactor(world);
     let sign = if determinant < 0.0 { -1.0 } else { 1.0 };
     let largest = cofactor
         .as_flattened()
@@ -1902,11 +1910,21 @@ fn normal_matrix(world: &[f32; 16]) -> [[f32; 4]; 3] {
 fn frame_uniform(frame: &SceneFrame, aspect: f32) -> FrameUniform {
     let camera = &frame.camera;
     let projection = projection_matrix(&camera.projection, aspect);
-    // The view's rotation `R` and translation `t`: the camera sits at
-    // `−Rᵀt`, and its +Z is `R`'s third row.
+    // The view's upper 3×3 `M` and translation `t`: the camera sits at
+    // `−M⁻¹t`, which the view takes to the origin, whatever scale the view
+    // has. Its +Z is `M`'s third row, in direction (which the shader
+    // normalises) for a view of uniform scale.
     let view = camera.view.map(f64::from);
-    let eye: [f64; 3] =
-        std::array::from_fn(|c| -(0..3).map(|r| view[c * 4 + r] * view[12 + r]).sum::<f64>());
+    let t = [view[12], view[13], view[14]];
+    let (cofactor, determinant) = cofactor(&camera.view);
+    let eye: [f64; 3] = if determinant != 0.0 {
+        // `M⁻¹t`'s entry `k` is cofactor column `k` dotted with `t`.
+        cofactor.map(|column| -(0..3).map(|r| column[r] * t[r]).sum::<f64>() / determinant)
+    } else {
+        // Only a projective view, which `invalid_camera` lets through when
+        // its whole 4×4 is invertible, gets here: `−Mᵀt`, finite.
+        std::array::from_fn(|c| -(0..3).map(|r| view[c * 4 + r] * t[r]).sum::<f64>())
+    };
     let perspective = matches!(camera.projection, Projection::Perspective { .. });
     let mut lights = [bytemuck::Zeroable::zeroed(); MAX_DIRECTIONAL_LIGHTS];
     for (uniform, light) in lights.iter_mut().zip(&frame.lights.directional) {
@@ -2640,6 +2658,64 @@ mod tests {
             for row in 0..3 {
                 assert!((matrix[column][row] - expected[row]).abs() < 1e-6);
             }
+        }
+    }
+
+    #[test]
+    fn shading_eye_is_where_the_view_takes_the_origin_from() {
+        let frame = |view: [f32; 16]| SceneFrame {
+            camera: Camera {
+                view,
+                projection: Projection::Perspective {
+                    yfov: 1.0,
+                    near: 0.1,
+                    far: 100.0,
+                },
+            },
+            lights: Default::default(),
+            time: 0.0,
+            draws: vec![],
+            skins: vec![],
+        };
+        // Scaled ×2 and moved 4 back: the camera is 2 m from the origin
+        // (`−Rᵀt` would put it at 8).
+        let scaled = [
+            2.0, 0.0, 0.0, 0.0, //
+            0.0, 2.0, 0.0, 0.0, //
+            0.0, 0.0, 2.0, 0.0, //
+            0.0, 0.0, -4.0, 1.0,
+        ];
+        let uniform = frame_uniform(&frame(scaled), 1.0);
+        assert_eq!(uniform.eye, [0.0, 0.0, 2.0, 1.0]);
+        // Looking down −Y from (0, 2, 0), its +Z world +Y.
+        let down = [
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            0.0, -1.0, 0.0, 0.0, //
+            0.0, 0.0, -2.0, 1.0,
+        ];
+        let uniform = frame_uniform(&frame(down), 1.0);
+        assert_eq!(uniform.eye, [0.0, 2.0, 0.0, 1.0]);
+        assert_eq!(uniform.forward, [0.0, 1.0, 0.0, 0.0]);
+        // Turned about Y and scaled ×3, a view puts the camera where the
+        // same view divided by 3 (rigid) does.
+        let (sin, cos) = 0.7_f32.sin_cos();
+        let (s, c) = (3.0 * sin, 3.0 * cos);
+        let turned = [
+            c, 0.0, s, 0.0, //
+            0.0, 3.0, 0.0, 0.0, //
+            -s, 0.0, c, 0.0, //
+            1.0, -2.0, -5.0, 1.0,
+        ];
+        let mut rigid = turned.map(|value| value / 3.0);
+        rigid[15] = 1.0;
+        let scaled_eye = frame_uniform(&frame(turned), 1.0).eye;
+        let rigid_eye = frame_uniform(&frame(rigid), 1.0).eye;
+        for axis in 0..3 {
+            assert!(
+                (scaled_eye[axis] - rigid_eye[axis]).abs() < 1e-5,
+                "{scaled_eye:?} vs {rigid_eye:?}"
+            );
         }
     }
 

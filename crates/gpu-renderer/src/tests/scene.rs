@@ -1422,7 +1422,10 @@ fn lit_lights_the_shader_cannot_use_are_refused() {
     let Some(message) = invalid(scenes) else {
         return;
     };
-    assert!(message.contains("directional light 0"), "{message}");
+    assert!(
+        message.contains("directional light 0 has no direction"),
+        "{message}"
+    );
 
     // Four are fine, and so is none.
     for lights in [vec![light(HALF_LIT, [0.25; 3], 1.0); 4], vec![]] {
@@ -1449,4 +1452,189 @@ fn lit_mtoon_texture_out_of_range_is_refused() {
         message.contains("shadeMultiplyTexture uses texture 3"),
         "{message}"
     );
+}
+
+/// MToon black where lit and where shaded, so that only what this task
+/// adds shows.
+fn black_toon() -> MtoonMaterial {
+    MtoonMaterial {
+        base_color: [0.0, 0.0, 0.0, 1.0],
+        ..flat_toon()
+    }
+}
+
+#[test]
+fn shading_additional_lights_use_half_lambert_shadow() {
+    // The main light is black; the second, at `dot(N, L)` 0.5, steps fully
+    // to lit (−0.5 to 0.5 at toony 0.5) and is halved by its shadow
+    // `0.5 × (min(0, 0.5) + 1)`: linear 0.5 red.
+    let dark = light([0.0, -1.0, 0.0], [1.0; 3], 0.0);
+    let scenes = toon_square(
+        red_and_blue(0.5, 0.0),
+        vec![dark, light(HALF_LIT, [1.0; 3], 1.0)],
+    );
+    assert_centre(scenes, [188, 0, 0, 255]);
+    // From the other side, `dot(N, L)` −0.5: all shade, times
+    // `0.5 × (−0.5 + 1)`, linear 0.25 blue.
+    let scenes = toon_square(
+        red_and_blue(0.5, 0.0),
+        vec![dark, light([0.0, 0.866_025_4, 0.5], [1.0; 3], 1.0)],
+    );
+    assert_centre(scenes, [0, 0, 137, 255]);
+    // The same light as the main light has no such shadow.
+    let scenes = toon_square(red_and_blue(0.5, 0.0), vec![light(HALF_LIT, [1.0; 3], 1.0)]);
+    assert_centre(scenes, RED);
+}
+
+#[test]
+fn shading_emission_adds_factor_times_texture() {
+    // (0.5, 0.25, 0) × (1, 128 / 255, 1): linear (0.5, 0.1255, 0).
+    let mut scenes = toon_square(
+        MtoonMaterial {
+            emissive_factor: [0.5, 0.25, 0.0],
+            emissive_texture: Some(TextureSlot { texture: 0 }),
+            ..black_toon()
+        },
+        vec![],
+    );
+    scenes.model.textures = vec![texel([255, 128, 255, 255], ColorSpace::Linear)];
+    assert_centre(scenes, [188, 99, 0, 255]);
+}
+
+/// A white parametric rim lifted by 0.5 at fresnel power 1, lit by the
+/// scene as far as `mix`: facing the camera, `1 − dot(N, V) + 0.5` is 0.5.
+fn rim(mix: f32) -> MtoonMaterial {
+    MtoonMaterial {
+        parametric_rim_color_factor: [1.0; 3],
+        parametric_rim_lift_factor: 0.5,
+        parametric_rim_fresnel_power_factor: 1.0,
+        rim_lighting_mix_factor: mix,
+        ..black_toon()
+    }
+}
+
+#[test]
+fn shading_parametric_rim_follows_lift_power_and_mix() {
+    // Unlit by the scene: 0.5 itself.
+    assert_centre(toon_square(rim(0.0), vec![]), grey(188));
+    // Lit by the main light's 1 and the ambient 0.25: 0.5 × 1.25, or at
+    // half the mix 0.5 × 1.125.
+    for (mix, expected) in [(1.0, 207), (0.5, 198)] {
+        let mut scenes = toon_square(rim(mix), vec![light(HALF_LIT, [1.0; 3], 1.0)]);
+        scenes.frame.lights.ambient[3] = [0.25; 3];
+        let Some(actual) = centre(scenes) else {
+            return;
+        };
+        assert!(near(actual, grey(expected)), "mix {mix}: {actual:?}");
+    }
+    // A second light at `dot(N, L)` 0 adds its shadowed 0.5: 0.5 × 1.75.
+    let mut scenes = toon_square(
+        rim(1.0),
+        vec![
+            light(HALF_LIT, [1.0; 3], 1.0),
+            light([0.0, -1.0, 0.0], [1.0; 3], 1.0),
+        ],
+    );
+    scenes.frame.lights.ambient[3] = [0.25; 3];
+    assert_centre(scenes, grey(240));
+}
+
+#[test]
+fn shading_rim_multiply_texture_scales_rim_and_matcap() {
+    // 0.5 × sRGB 128 (linear 0.2158): 0.1079.
+    let mut scenes = toon_square(
+        MtoonMaterial {
+            rim_multiply_texture: Some(TextureSlot { texture: 0 }),
+            ..rim(0.0)
+        },
+        vec![],
+    );
+    scenes.model.textures = vec![texel([128, 128, 128, 255], ColorSpace::Srgb)];
+    assert_centre(scenes, grey(92));
+}
+
+/// A white matcap of `texture` (texture 0), unlit by the scene, on a black
+/// surface.
+fn matcap() -> MtoonMaterial {
+    MtoonMaterial {
+        matcap_factor: [1.0; 3],
+        matcap_texture: Some(TextureSlot { texture: 0 }),
+        rim_lighting_mix_factor: 0.0,
+        ..black_toon()
+    }
+}
+
+/// A `width` by `height` sRGB texture of `texels`, row by row from the
+/// top, sampled nearest and clamped.
+fn nearest(width: u32, height: u32, texels: &[[u8; 4]]) -> SceneTexture {
+    SceneTexture {
+        source: TextureSource::Rgba {
+            width,
+            height,
+            pixels: Arc::new(texels.concat()),
+        },
+        color_space: ColorSpace::Srgb,
+        sampler: Sampler {
+            wrap_s: celesta_plugin::Wrap::ClampToEdge,
+            wrap_t: celesta_plugin::Wrap::ClampToEdge,
+            mag_filter: Filter::Nearest,
+            min_filter: Filter::Nearest,
+            mipmaps: false,
+        },
+    }
+}
+
+#[test]
+fn shading_matcap_maps_screen_right_and_up_to_texture_right_and_top() {
+    const YELLOW: [u8; 4] = [255, 255, 0, 255];
+    let cases = [
+        // A normal leaning to screen right samples the texture's right.
+        (nearest(2, 1, &[RED, GREEN]), [0.6, 0.0, 0.8], GREEN),
+        (nearest(2, 1, &[RED, GREEN]), [-0.6, 0.0, 0.8], RED),
+        // One leaning up samples its top row.
+        (nearest(1, 2, &[BLUE, YELLOW]), [0.0, 0.6, 0.8], BLUE),
+        (nearest(1, 2, &[BLUE, YELLOW]), [0.0, -0.6, 0.8], YELLOW),
+    ];
+    for (texture, normal, expected) in cases {
+        let mut scenes = with_normals(toon_square(matcap(), vec![]), normal);
+        scenes.model.textures = vec![texture];
+        let Some(actual) = centre(scenes) else {
+            return;
+        };
+        assert!(near(actual, expected), "{normal:?}: {actual:?}");
+    }
+}
+
+#[test]
+fn shading_matcap_looking_straight_down_is_finite() {
+    // From (0, 2, 0) down −Y: `cross(+Y, V)` has no length, so screen right
+    // is the view's x axis. The square is turned to face +Y.
+    let down = |normal: [f32; 3], texture: SceneTexture| {
+        let mut scenes = with_normals(toon_square(matcap(), vec![]), normal);
+        scenes.frame.camera.view = [
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            0.0, -1.0, 0.0, 0.0, //
+            0.0, 0.0, -2.0, 1.0,
+        ];
+        scenes.frame.draws[0].world = [
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, -1.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        scenes.model.textures = vec![texture];
+        scenes
+    };
+    let facing = [0.0, 0.0, 1.0];
+    assert_centre(
+        down(facing, texel([128, 64, 200, 255], ColorSpace::Srgb)),
+        [128, 64, 200, 255],
+    );
+    // Screen right is world +X and screen up world −Z, the camera's: a
+    // normal leaning to (0.6, 0.8, 0) samples u 0.8, the right third; one
+    // leaning to (0, 0.8, −0.6) v 0.2, the top third.
+    let thirds = [RED, GREEN, BLUE];
+    assert_centre(down([0.6, 0.0, 0.8], nearest(3, 1, &thirds)), BLUE);
+    assert_centre(down([0.0, 0.6, 0.8], nearest(1, 3, &thirds)), RED);
 }

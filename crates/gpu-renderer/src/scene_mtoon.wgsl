@@ -6,8 +6,8 @@
 //
 // `vs_mtoon` and a fragment entry point for the material's alpha mode
 // (`fs_mtoon_opaque`, `fs_mtoon_mask`, `fs_mtoon_blend`) draw a draw's
-// skinned vertices. `mtoon_color` is the shaded color, which an outline
-// pass also uses.
+// skinned vertices. `mtoon_color` is the shaded color (lights, ambient,
+// emission, rim, and matcap), which an outline pass also uses.
 
 // Group 2: slot `k`'s texture at binding `2k`, its sampler at `2k + 1`, in
 // `scene.rs`'s `MTOON_SLOTS` order. An empty slot binds Unity's default
@@ -136,23 +136,76 @@ fn mtoon_surface(input: MtoonVarying, front_facing: bool) -> Surface {
     );
 }
 
-// MToon's color of `surface`: the main light's step from shade to lit and
-// the ambient light. `main_only` leaves out the additional lights, which
-// an outline does not see.
+// Where the matcap texture is sampled for the normal `n` seen along `v`:
+// UniVRM's view-space normal, its axes screen right and screen up. Unity's
+// `cross(V, +Y)` and `cross(right, V)` are in its left-handed space; in
+// this right-handed one the same axes are `cross(+Y, V)` and
+// `cross(V, right)`. Looking along ±Y, right is the view's x axis. glTF's
+// `v` counts down, so a normal leaning up samples the texture's top row.
+fn matcap_uv(n: vec3<f32>, v: vec3<f32>) -> vec2<f32> {
+    let across = cross(vec3<f32>(0.0, 1.0, 0.0), v);
+    let view_x = vec3<f32>(frame.view[0].x, frame.view[1].x, frame.view[2].x);
+    let right = unit(select(view_x, across, dot(across, across) >= 1e-12));
+    let up = unit(cross(v, right));
+    return vec2<f32>(dot(right, n) * 0.5 + 0.5, 0.5 - dot(up, n) * 0.5);
+}
+
+// How far `light` steps `shade` to `lit` at the normal `n`, `shift` and
+// `toony` placing the step.
+fn toon_step(n: vec3<f32>, light: Light, shift: f32, toony: f32) -> f32 {
+    return linearstep(-1.0 + toony, 1.0 - toony, dot(n, light.to_light.xyz) + shift);
+}
+
+// MToon's color of `surface`: the main light's step from shade to lit, the
+// ambient light, the emission, and the rim (the matcap and the parametric
+// rim); then each additional light's step and rim, as Unity's ForwardAdd
+// pass adds them. `main_only` leaves out the additional lights, which an
+// outline does not see.
 fn mtoon_color(surface: Surface, main_only: bool) -> vec3<f32> {
     let n = surface.normal;
+    let v = surface.view;
     let uv = surface.uv;
     let lit = surface.lit.rgb;
+    // Every texture is sampled here, in uniform control flow.
     let shift = draw.shade.w
         + textureSample(shading_shift_texture, shading_shift_sampler, uv).r * draw.emissive.w;
     let toony = draw.matcap.w;
     let shade = draw.shade.rgb * textureSample(shade_multiply_texture, shade_multiply_sampler, uv).rgb;
+    let emission = draw.emissive.rgb * textureSample(emissive_texture, emissive_sampler, uv).rgb;
+    // Black, so nothing, without a matcap texture.
+    let matcap = draw.matcap.rgb
+        * textureSample(matcap_texture, matcap_sampler, matcap_uv(n, v)).rgb;
+    let rim_multiply = textureSample(rim_multiply_texture, rim_multiply_sampler, uv).rgb;
+
+    // The parametric rim: `pow(x, power)`, 0 at `x` 0, where WGSL's `pow`
+    // is undefined.
+    let x = saturate(1.0 - dot(n, v) + draw.rim_shape.y);
+    let parametric = select(pow(x, max(draw.rim_shape.x, 1.0 / 1024.0)), 0.0, x <= 0.0)
+        * draw.rim.rgb;
+    let rim = (matcap + parametric) * rim_multiply;
+    let rim_mix = draw.rim.w;
+
     // Black when the frame has no lights.
     let main_light = frame.lights[0];
-    let step = linearstep(-1.0 + toony, 1.0 - toony, dot(n, main_light.to_light.xyz) + shift);
-    var color = mix(shade, lit, step) * main_light.color.rgb;
+    var color = mix(shade, lit, toon_step(n, main_light, shift, toony)) * main_light.color.rgb;
     let vertical = 0.5 * (sh(vec3<f32>(0.0, 1.0, 0.0)) + sh(vec3<f32>(0.0, -1.0, 0.0)));
     color += lit * mix(sh(n), vertical, draw.rim_shape.z);
+    color += emission;
+    color += rim * mix(vec3<f32>(1.0), main_light.color.rgb + sh(n), rim_mix);
+
+    if !main_only {
+        let count = min(u32(frame.params.z), 4u);
+        for (var i = 1u; i < count; i++) {
+            let light = frame.lights[i];
+            // MToon's additional-light shadow: 1 facing the light, down to
+            // 0 facing away; not applied inside the step.
+            let shadow = 0.5 * (min(0.0, dot(n, light.to_light.xyz)) + 1.0);
+            let radiance = light.color.rgb * shadow;
+            color += mix(shade, lit, toon_step(n, light, shift, toony)) * radiance;
+            // `lerp(0, radiance, rim_mix)`: no rim from it unmixed.
+            color += rim * radiance * rim_mix;
+        }
+    }
     return color;
 }
 
