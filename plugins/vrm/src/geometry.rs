@@ -22,6 +22,11 @@ const DEFAULT_TANGENT: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 /// model anyway.
 const TARGET_BUDGET: u64 = 1 << 30;
 
+/// The most morph targets one primitive may have: far past any avatar's
+/// (VRoid's faces have about 60), so a file of empty targets cannot make
+/// one primitive hold millions.
+const MAX_TARGETS: usize = 1 << 16;
+
 /// One glTF primitive's geometry.
 // Read by the model (Task 4).
 #[allow(dead_code)]
@@ -43,6 +48,25 @@ pub(crate) fn primitive_geometry(
     primitive: gltf::Primitive,
     skin: Option<gltf::Skin>,
     needs_tangents: bool,
+) -> Result<Option<PrimitiveGeometry>, LoadError> {
+    read_primitive(
+        document,
+        mesh,
+        primitive,
+        skin,
+        needs_tangents,
+        TARGET_BUDGET,
+    )
+}
+
+/// [`primitive_geometry`] with the morph targets' budget in bytes.
+fn read_primitive(
+    document: &Document,
+    mesh: gltf::Mesh,
+    primitive: gltf::Primitive,
+    skin: Option<gltf::Skin>,
+    needs_tangents: bool,
+    target_budget: u64,
 ) -> Result<Option<PrimitiveGeometry>, LoadError> {
     let mode = primitive.mode();
     if !matches!(
@@ -124,19 +148,25 @@ pub(crate) fn primitive_geometry(
         None => (None, None),
     };
 
-    // A sparse target with no bufferView costs the file a few bytes and a
-    // dense copy here, so the targets' total is capped before reading them.
+    // An empty target (`{}`), or a sparse one with no bufferView, costs the
+    // file a few bytes and a dense copy here, so the targets are counted and
+    // their total capped before any is read: every target's dense positions,
+    // and its normals where it has them.
+    let target_count = primitive.morph_targets().len();
+    if target_count > MAX_TARGETS {
+        return Err(at.invalid(format_args!(
+            "has {target_count} morph targets, more than {MAX_TARGETS}"
+        )));
+    }
     let streams_per_vertex: u64 = primitive
         .morph_targets()
-        .map(|target| {
-            u64::from(target.positions().is_some()) + u64::from(target.normals().is_some())
-        })
+        .map(|target| 1 + u64::from(target.normals().is_some()))
         .sum();
-    if let Some(bytes) = past_budget(streams_per_vertex, kept.len(), TARGET_BUDGET) {
+    if let Some(bytes) = past_budget(streams_per_vertex, kept.len(), target_budget) {
         return Err(at.invalid(format_args!(
             "has morph targets of {} MiB, more than {} MiB",
             bytes >> 20,
-            TARGET_BUDGET >> 20
+            target_budget >> 20
         )));
     }
     let mut targets = Vec::new();
@@ -821,6 +851,51 @@ mod tests {
             Some(u64::MAX)
         );
         assert_eq!(past_budget(0, usize::MAX, TARGET_BUDGET), None);
+    }
+
+    /// Body primitive 0 with `extra` empty targets (`{}`) after its three,
+    /// read with a morph target budget of `budget` bytes.
+    fn empty_targets(extra: usize, budget: u64) -> Result<Option<Geometry>, LoadError> {
+        let glb = SyntheticVrm::avatar().glb_with(|root| {
+            let targets = root["meshes"][0]["primitives"][0]["targets"]
+                .as_array_mut()
+                .unwrap();
+            targets.extend(std::iter::repeat_n(json!({}), extra));
+        });
+        let document = Document::parse(&glb)?;
+        let mesh = document.gltf.meshes().next().unwrap();
+        let primitive = mesh.primitives().next().unwrap();
+        let skin = document.gltf.skins().next();
+        let read = read_primitive(&document, mesh.clone(), primitive, skin, false, budget)?;
+        Ok(read.map(|read| read.geometry))
+    }
+
+    #[test]
+    fn empty_targets_count_toward_the_budget() {
+        // 13 targets, each with dense positions over 8 vertices: 1248 bytes.
+        let cube = empty_targets(10, 1248).unwrap().unwrap();
+        assert_eq!(cube.targets.len(), 13);
+        for target in &cube.targets[3..] {
+            assert_eq!(target.positions, vec![[0.0; 3]; 8]);
+            assert!(target.normals.is_empty());
+        }
+        let message = match empty_targets(10, 1247) {
+            Ok(_) => panic!("the targets were read"),
+            Err(error) => error.to_string(),
+        };
+        assert!(message.contains("morph targets of"), "{message}");
+    }
+
+    #[test]
+    fn too_many_targets_are_refused() {
+        let message = match empty_targets(MAX_TARGETS - 2, TARGET_BUDGET) {
+            Ok(_) => panic!("the targets were read"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            message.contains("has 65537 morph targets, more than 65536"),
+            "{message}"
+        );
     }
 
     #[test]
