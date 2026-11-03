@@ -1850,3 +1850,164 @@ fn surface_texture_transform_applies_before_uv_animation() {
         RED,
     );
 }
+
+/// An MToon material blended by `alpha`, black but for its `emissive`
+/// color: under no light, its color is its emission. `z_write` is its
+/// `transparentWithZWrite`, `offset` its render queue offset.
+fn glowing(emissive: [f32; 3], alpha: f32, z_write: bool, offset: i32) -> Material {
+    Material {
+        alpha_mode: AlphaMode::Blend,
+        ..toon(MtoonMaterial {
+            base_color: [0.0, 0.0, 0.0, alpha],
+            emissive_factor: emissive,
+            transparent_with_z_write: z_write,
+            render_queue_offset_number: offset,
+            ..black_toon()
+        })
+    }
+}
+
+const GLOW_RED: [f32; 3] = [1.0, 0.0, 0.0];
+const GLOW_BLUE: [f32; 3] = [0.0, 0.0, 1.0];
+
+/// `red_over_blue`'s squares drawn with `red` (draw 0, at z = 0) and `blue`
+/// (draw 1, 1 m behind it).
+fn front_and_back(red: Material, blue: Material) -> Scenes {
+    let mut scenes = red_over_blue();
+    scenes.model.materials = vec![red, blue];
+    scenes
+}
+
+/// Half red alone over nothing, premultiplied and sRGB-encoded.
+const HALF_RED: [u8; 4] = [128, 0, 0, 128];
+/// Half blue alone over nothing.
+const HALF_BLUE: [u8; 4] = [0, 0, 128, 128];
+
+#[test]
+fn queue_offsets_order_blend_draws_before_distance() {
+    let scenes = |red_offset| {
+        front_and_back(
+            glowing(GLOW_RED, 0.5, false, red_offset),
+            glowing(GLOW_BLUE, 0.5, false, 0),
+        )
+    };
+    // Both at 3000: blue, farther, first.
+    assert_centre(scenes(0), RED_OVER_BLUE);
+    // Red at 2999 draws first, though it is nearer; blue is blended over it.
+    assert_centre(scenes(-1), BLUE_OVER_RED);
+}
+
+#[test]
+fn queue_zwrite_blend_draws_first_and_hides_what_is_behind() {
+    // Red at 2501 writes its depth before blue at 3000 draws behind it.
+    assert_centre(
+        front_and_back(
+            glowing(GLOW_RED, 0.5, true, 0),
+            glowing(GLOW_BLUE, 0.5, false, 0),
+        ),
+        HALF_RED,
+    );
+    // Offsets out of range clamp, to 2510 and 2991: red still first.
+    assert_centre(
+        front_and_back(
+            glowing(GLOW_RED, 0.5, true, 20),
+            glowing(GLOW_BLUE, 0.5, false, -20),
+        ),
+        HALF_RED,
+    );
+}
+
+#[test]
+fn queue_discards_nearly_clear_blend_pixels() {
+    // A clear z-written square writes no depth: blue shows through it.
+    assert_centre(
+        front_and_back(
+            glowing(GLOW_RED, 0.0, true, 0),
+            glowing(GLOW_BLUE, 0.5, false, 0),
+        ),
+        HALF_BLUE,
+    );
+}
+
+/// From the origin looking down −Z through `projection`: a blended red 1 m
+/// square 4 m away (distance 4, view z −4) and a blended blue 10 m square
+/// centred at (3, 0, −3.5) (distance 4.61, view z −3.5), both covering
+/// the centre.
+fn near_and_far(projection: Projection) -> Scenes {
+    let mut scenes = front_and_back(
+        glowing(GLOW_RED, 0.5, false, 0),
+        glowing(GLOW_BLUE, 0.5, false, 0),
+    );
+    scenes.frame.camera = Camera {
+        view: IDENTITY,
+        projection,
+    };
+    scenes.frame.draws[0].world = translation(0.0, 0.0, -4.0);
+    // `translation(3, 0, −3.5) × scaling(10, 10, 1)`.
+    let mut blue = scaling(10.0, 10.0, 1.0);
+    blue[12] = 3.0;
+    blue[14] = -3.5;
+    scenes.frame.draws[1].world = blue;
+    scenes
+}
+
+#[test]
+fn queue_perspective_blend_sorts_by_distance() {
+    // Blue is farther from the eye, though nearer in view z: blue first.
+    assert_centre(
+        near_and_far(Projection::Perspective {
+            yfov: 1.0,
+            near: 0.1,
+            far: 100.0,
+        }),
+        RED_OVER_BLUE,
+    );
+}
+
+#[test]
+fn queue_orthographic_blend_sorts_by_view_depth() {
+    // Red is lower in view z: red first.
+    assert_centre(
+        near_and_far(Projection::Orthographic {
+            height: 2.0,
+            near: 0.1,
+            far: 100.0,
+        }),
+        BLUE_OVER_RED,
+    );
+}
+
+#[test]
+fn queue_coplanar_opaque_later_draw_wins() {
+    let mut scenes = one_square();
+    scenes.model.materials = vec![plain([1.0, 0.0, 0.0, 1.0]), plain([0.0, 1.0, 0.0, 1.0])];
+    scenes.model.draws.push(DrawInfo {
+        geometry: 0,
+        material: 1,
+        skin: None,
+    });
+    let green = DrawState {
+        index: 1,
+        ..scenes.frame.draws[0].clone()
+    };
+    scenes.frame.draws.push(green);
+    assert_centre(scenes, GREEN);
+}
+
+#[test]
+fn mask_mtoon_covers_by_cutoff() {
+    // White by emission where the alpha passes the cutoff, nothing where
+    // it does not.
+    for (alpha, expected) in [(0.8, WHITE), (0.3, CLEAR)] {
+        let mut scenes = one_square();
+        scenes.model.materials = vec![Material {
+            alpha_mode: AlphaMode::Mask { cutoff: 0.5 },
+            ..toon(MtoonMaterial {
+                base_color: [0.0, 0.0, 0.0, alpha],
+                emissive_factor: [1.0; 3],
+                ..black_toon()
+            })
+        }];
+        assert_centre(scenes, expected);
+    }
+}

@@ -277,6 +277,14 @@ fn fs_mtoon_blend(
     @builtin(front_facing) front_facing: bool,
 ) -> @location(0) vec4<f32> {
     let surface = mtoon_surface(input, front_facing);
+    // Shaded before the discard, so that its texture samples stay in
+    // uniform control flow.
     let color = mtoon_color(surface, false);
-    return vec4<f32>(color, clamp(surface.lit.a, 0.0, 1.0));
+    let alpha = clamp(surface.lit.a, 0.0, 1.0);
+    // UniVRM discards alpha below 2^−10 (vrm-c/UniVRM#2598), so that a
+    // clear pixel of a `transparentWithZWrite` material writes no depth.
+    if alpha < 0.0009765625 {
+        discard;
+    }
+    return vec4<f32>(color, alpha);
 }

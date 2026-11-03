@@ -365,7 +365,7 @@ impl PipelineKey {
                 },
                 clockwise,
             },
-            alpha: Alpha::of(material.alpha_mode),
+            alpha: Alpha::of(material),
         }
     }
 }
@@ -379,22 +379,27 @@ enum Alpha {
     Mask,
     /// Blended by alpha over what is drawn, depth written: an MToon
     /// material's `transparentWithZWrite`.
-    #[expect(dead_code, reason = "render queues do not place it yet")]
     BlendZWrite,
     /// Blended by alpha over what is drawn, depth tested but not written.
     Blend,
 }
 
 impl Alpha {
-    fn of(mode: AlphaMode) -> Self {
-        match mode {
-            AlphaMode::Opaque => Self::Opaque,
-            AlphaMode::Mask { .. } => Self::Mask,
-            AlphaMode::Blend => Self::Blend,
+    /// `material`'s alpha mode; a blended MToon material with
+    /// `transparentWithZWrite` writes depth.
+    fn of(material: &Material) -> Self {
+        match (material.alpha_mode, &material.kind) {
+            (AlphaMode::Opaque, _) => Self::Opaque,
+            (AlphaMode::Mask { .. }, _) => Self::Mask,
+            (AlphaMode::Blend, MaterialKind::Mtoon(mtoon)) if mtoon.transparent_with_z_write => {
+                Self::BlendZWrite
+            }
+            (AlphaMode::Blend, _) => Self::Blend,
         }
     }
 
-    /// Unity's render queue: lower queues draw first.
+    /// Unity's render queue before a material's offset: lower queues draw
+    /// first.
     fn queue(self) -> u32 {
         match self {
             Self::Opaque => 2000,
@@ -436,6 +441,23 @@ impl Alpha {
             },
         })
     }
+}
+
+/// `material`'s render queue, as UniVRM's `MToonValidator` sets it: 2000
+/// opaque, 2450 mask, 3000 blend. A blended MToon material moves by its
+/// `renderQueueOffsetNumber`, to 2501 to 2510 with `transparentWithZWrite`
+/// and 2991 to 3000 without; other materials have no offset.
+fn render_queue(material: &Material) -> u32 {
+    let alpha = Alpha::of(material);
+    let offset = match &material.kind {
+        MaterialKind::Mtoon(mtoon) => match alpha {
+            Alpha::BlendZWrite => mtoon.render_queue_offset_number.clamp(0, 9),
+            Alpha::Blend => mtoon.render_queue_offset_number.clamp(-9, 0),
+            Alpha::Opaque | Alpha::Mask => 0,
+        },
+        MaterialKind::Unlit(_) => 0,
+    };
+    alpha.queue().saturating_add_signed(offset)
 }
 
 /// What `scene_skin.wgsl` reads as `Params`.
@@ -947,7 +969,9 @@ impl ScenePipelines {
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(key.alpha.writes_depth()),
-                depth_compare: Some(wgpu::CompareFunction::Less),
+                // Unity's `ZTest LEqual`: of two coplanar draws, the later
+                // in the queue shows.
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -1923,26 +1947,31 @@ fn normal_matrix(world: &[f32; 16]) -> [[f32; 4]; 3] {
     })
 }
 
-/// What `frame` reads as `Frame` on a canvas `aspect` times as wide as it
-/// is high, its lights checked by `invalid_scene_frame`.
-fn frame_uniform(frame: &SceneFrame, aspect: f32) -> FrameUniform {
-    let camera = &frame.camera;
-    let projection = projection_matrix(&camera.projection, aspect);
-    // The view's upper 3×3 `M` and translation `t`: the camera sits at
-    // `−M⁻¹t`, which the view takes to the origin, whatever scale the view
-    // has. Its +Z is `M`'s third row, in direction (which the shader
-    // normalises) for a view of uniform scale.
-    let view = camera.view.map(f64::from);
+/// Where the camera of `view` sits in world space. With the view's upper
+/// 3×3 `M` and translation `t`, that is `−M⁻¹t`, which the view takes to
+/// the origin, whatever scale the view has.
+fn camera_position(view: &[f32; 16]) -> [f64; 3] {
+    let (cofactor, determinant) = cofactor(view);
+    let view = view.map(f64::from);
     let t = [view[12], view[13], view[14]];
-    let (cofactor, determinant) = cofactor(&camera.view);
-    let eye: [f64; 3] = if determinant != 0.0 {
+    if determinant != 0.0 {
         // `M⁻¹t`'s entry `k` is cofactor column `k` dotted with `t`.
         cofactor.map(|column| -(0..3).map(|r| column[r] * t[r]).sum::<f64>() / determinant)
     } else {
         // Only a projective view, which `invalid_camera` lets through when
         // its whole 4×4 is invertible, gets here: `−Mᵀt`, finite.
         std::array::from_fn(|c| -(0..3).map(|r| view[c * 4 + r] * t[r]).sum::<f64>())
-    };
+    }
+}
+
+/// What `frame` reads as `Frame` on a canvas `aspect` times as wide as it
+/// is high, its lights checked by `invalid_scene_frame`.
+fn frame_uniform(frame: &SceneFrame, aspect: f32) -> FrameUniform {
+    let camera = &frame.camera;
+    let projection = projection_matrix(&camera.projection, aspect);
+    // The camera's +Z is the view's third row, in direction (which the
+    // shader normalises) for a view of uniform scale.
+    let eye = camera_position(&camera.view);
     let perspective = matches!(camera.projection, Projection::Perspective { .. });
     let mut lights = [bytemuck::Zeroable::zeroed(); MAX_DIRECTIONAL_LIGHTS];
     for (uniform, light) in lights.iter_mut().zip(&frame.lights.directional) {
@@ -1985,13 +2014,20 @@ fn transform_point(matrix: &[f32; 16], point: [f32; 3]) -> [f32; 3] {
     })
 }
 
+/// The first queue Unity sorts back to front: both kinds of blend.
+const TRANSPARENT_QUEUES: u32 = 2501;
+
 /// The draws of `frame` to draw, in UniVRM's order: by their material's
-/// queue, opaque before mask before blend. Blended draws go farthest first
-/// by the view-space depth of their `center`, or else of their geometry's
-/// rest bounds centre moved by `world`. Ties go by draw index. Hidden
-/// draws, and draws without triangles, are left out.
+/// `render_queue`. Draws in the transparent queues go back to front, as
+/// Unity sorts them, by their `center`, or else their geometry's rest
+/// bounds centre moved by `world`: farthest from the camera first through
+/// a perspective camera, lowest view-space z first through an orthographic
+/// one. Ties go by draw index. Hidden draws, and draws without triangles,
+/// are left out.
 fn draw_queue<'a>(scene: &LoadedScene, frame: &'a SceneFrame) -> Vec<&'a DrawState> {
-    let mut queue: Vec<(u32, f32, &DrawState)> = frame
+    let perspective = matches!(frame.camera.projection, Projection::Perspective { .. });
+    let eye = camera_position(&frame.camera.view);
+    let mut queue: Vec<(u32, f64, &DrawState)> = frame
         .draws
         .iter()
         .filter_map(|state| {
@@ -2000,23 +2036,30 @@ fn draw_queue<'a>(scene: &LoadedScene, frame: &'a SceneFrame) -> Vec<&'a DrawSta
             if !state.visible || geometry.index_count == 0 {
                 return None;
             }
-            let alpha = Alpha::of(scene.model.materials[info.material].alpha_mode);
-            // The camera looks down −Z: the farther, the lower its z.
-            let depth = if alpha == Alpha::Blend {
+            let queue = render_queue(&scene.model.materials[info.material]);
+            // Lower draws first.
+            let order = if queue >= TRANSPARENT_QUEUES {
                 let center = state
                     .center
                     .unwrap_or_else(|| transform_point(&state.world, geometry.center));
-                transform_point(&frame.camera.view, center)[2]
+                if perspective {
+                    -(0..3)
+                        .map(|axis| (f64::from(center[axis]) - eye[axis]).powi(2))
+                        .sum::<f64>()
+                } else {
+                    // The camera looks down −Z: the farther, the lower its z.
+                    f64::from(transform_point(&frame.camera.view, center)[2])
+                }
             } else {
                 0.0
             };
-            Some((alpha.queue(), depth, state))
+            Some((queue, order, state))
         })
         .collect();
-    queue.sort_by(|(a_queue, a_depth, a), (b_queue, b_depth, b)| {
+    queue.sort_by(|(a_queue, a_order, a), (b_queue, b_order, b)| {
         a_queue
             .cmp(b_queue)
-            .then(a_depth.total_cmp(b_depth))
+            .then(a_order.total_cmp(b_order))
             .then(a.index.cmp(&b.index))
     });
     queue.into_iter().map(|(_, _, state)| state).collect()
