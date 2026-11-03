@@ -5,7 +5,7 @@
 use super::*;
 use crate::add_element::{
     AddComponent, AddedFate, Addition, PendingSelect, add_files, added_confirmed, added_fate,
-    parent_facts,
+    parent_facts, refused_model_file,
 };
 use crate::preview::AddedUnder;
 use celesta_source_edit::{EditValue, NewElement, NewKind, Timing};
@@ -103,6 +103,58 @@ fn a_plugin_component_is_drawn_as_its_kind_and_written_with_its_import() {
         ]
     );
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn model_components_draw_as_images_and_check_the_file() {
+    let vrm = AddComponent {
+        plugin: "vrm".into(),
+        info: serde_json::from_value(serde_json::json!({
+            "name": "Vrm", "label": "VRM avatar", "src": "model",
+            "extensions": ["vrm"], "aspect": 1.7777778,
+        }))
+        .unwrap(),
+    };
+    assert_eq!(vrm.kind(), NewKind::Image);
+    assert_eq!(
+        refused_model_file(&vrm.info, Path::new("a/avatar.VRM")),
+        None
+    );
+    assert_eq!(
+        refused_model_file(&vrm.info, Path::new("a/avatar.png")).as_deref(),
+        Some("Choose a .vrm file")
+    );
+    assert_eq!(
+        refused_model_file(&vrm.info, Path::new("a/avatar")).as_deref(),
+        Some("Choose a .vrm file")
+    );
+    let mut several = vrm.info.clone();
+    several.extensions = vec!["vrm".into(), "glb".into(), "gltf".into()];
+    assert_eq!(
+        refused_model_file(&several, Path::new("a/avatar.png")).as_deref(),
+        Some("Choose a .vrm, .glb, or .gltf file")
+    );
+    several.extensions.pop();
+    assert_eq!(
+        refused_model_file(&several, Path::new("a/avatar.png")).as_deref(),
+        Some("Choose a .vrm or .glb file")
+    );
+
+    let drawn = NewElement::Image {
+        src: "./assets/a.vrm".into(),
+        x: 10.0,
+        y: 20.0,
+        width: 960.0,
+    };
+    assert_eq!(
+        vrm.element(&drawn).attributes,
+        [
+            ("src".to_owned(), EditValue::String("./assets/a.vrm".into())),
+            ("x".to_owned(), EditValue::Number(10.0)),
+            ("y".to_owned(), EditValue::Number(20.0)),
+            ("width".to_owned(), EditValue::Number(960.0)),
+        ]
+    );
 }
 
 const TIMING: Timing = Timing {

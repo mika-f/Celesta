@@ -59,6 +59,12 @@ pub struct ComponentInfo {
     /// Props the component is added with: strings, numbers, and booleans.
     #[serde(default)]
     pub props: BTreeMap<String, serde_json::Value>,
+    /// The file types a model component takes: lowercase, without the dot.
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    /// A model component's layer width over its height, for drawing it.
+    #[serde(default)]
+    pub aspect: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -66,6 +72,8 @@ pub struct ComponentInfo {
 pub enum ComponentSource {
     Image,
     Video,
+    /// A file the plugin reads itself, of the types `extensions` lists.
+    Model,
 }
 
 impl ComponentInfo {
@@ -92,6 +100,40 @@ impl ComponentInfo {
         {
             return Some(format!(
                 "component {name:?} is not a component name (a capital letter, then letters, digits, or '_')"
+            ));
+        }
+        if self.src == Some(ComponentSource::Model) {
+            if self.extensions.is_empty() {
+                return Some(format!(
+                    "component {name:?} takes a model file but lists no extensions"
+                ));
+            }
+        } else if !self.extensions.is_empty() {
+            return Some(format!(
+                "component {name:?} lists extensions but does not take a model file"
+            ));
+        } else if self.aspect.is_some() {
+            return Some(format!(
+                "component {name:?} lists an aspect but does not take a model file"
+            ));
+        }
+        for extension in &self.extensions {
+            let plain = !extension.is_empty()
+                && extension
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+            if !plain {
+                return Some(format!(
+                    "component {name:?}'s extension {:?} is not lowercase letters and digits",
+                    format!(".{extension}")
+                ));
+            }
+        }
+        if let Some(aspect) = self.aspect
+            && !(aspect.is_finite() && aspect > 0.0)
+        {
+            return Some(format!(
+                "component {name:?}'s aspect {aspect} is not a positive number"
             ));
         }
         for (prop, value) in &self.props {
@@ -729,6 +771,73 @@ mod tests {
         assert_eq!(components[0].drawn_props(), ["src", "x", "y", "width"]);
         assert_eq!(components[1].label(), "Box_2");
         assert_eq!(components[1].drawn_props(), ["x", "y", "width", "height"]);
+    }
+
+    #[test]
+    fn model_components_need_extensions() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |id: &str, component: serde_json::Value| {
+            write_manifest(
+                &root.path().join(id),
+                serde_json::json!({
+                    "id": id, "version": "1", "protocol": 1,
+                    "module": "js/index.js", "components": [component],
+                }),
+            );
+        };
+        write(
+            "good",
+            serde_json::json!({ "name": "Vrm", "src": "model", "extensions": ["vrm"], "aspect": 1.7777778 }),
+        );
+        write("bare", serde_json::json!({ "name": "Vrm", "src": "model" }));
+        write(
+            "upper",
+            serde_json::json!({ "name": "Vrm", "src": "model", "extensions": ["VRM"] }),
+        );
+        write(
+            "image",
+            serde_json::json!({ "name": "Vrm", "src": "image", "extensions": ["vrm"] }),
+        );
+        write(
+            "flat",
+            serde_json::json!({ "name": "Vrm", "src": "model", "extensions": ["vrm"], "aspect": 0 }),
+        );
+
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        assert_eq!(found.len(), 1, "{errors:?}");
+        let component = &found[0].manifest.components[0];
+        assert_eq!(component.src, Some(ComponentSource::Model));
+        assert_eq!(component.extensions, ["vrm"]);
+        assert_eq!(component.aspect, Some(1.7777778));
+        assert_eq!(component.drawn_props(), ["src", "x", "y", "width"]);
+
+        let reason = |id: &str| {
+            errors
+                .iter()
+                .find_map(|error| match error {
+                    DiscoveryError::Invalid { path, reason }
+                        if path.starts_with(root.path().join(id)) =>
+                    {
+                        Some(reason.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{id} was not skipped: {errors:?}"))
+        };
+        assert_eq!(errors.len(), 4, "{errors:?}");
+        assert_eq!(
+            reason("bare"),
+            "component \"Vrm\" takes a model file but lists no extensions"
+        );
+        assert_eq!(
+            reason("upper"),
+            "component \"Vrm\"'s extension \".VRM\" is not lowercase letters and digits"
+        );
+        assert_eq!(
+            reason("image"),
+            "component \"Vrm\" lists extensions but does not take a model file"
+        );
+        assert!(reason("flat").contains("aspect"), "{}", reason("flat"));
     }
 
     #[test]
