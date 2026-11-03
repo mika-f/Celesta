@@ -20,7 +20,7 @@
 
 use crate::humanoid::{HumanBone, Humanoid};
 use crate::model::{CANVAS, FrameError};
-use celesta_plugin::scene::MAX_FRAME_CANVAS_SIDE;
+use celesta_plugin::scene::MAX_SCENE_CANVAS_SIDE;
 use celesta_plugin::{Camera, DirectionalLight, Lights, Projection};
 use glam::{Mat4, Vec3};
 use serde::Deserialize;
@@ -130,20 +130,20 @@ pub fn reference_lights() -> Lights {
     }
 }
 
-/// The frame's canvas: `canvas`, else [`CANVAS`]. Each side must be finite,
-/// positive, and at most Celesta's `MAX_FRAME_CANVAS_SIDE`.
+/// The frame's canvas: `canvas`, else [`CANVAS`]. Each side must be from 1
+/// to Celesta's `MAX_SCENE_CANVAS_SIDE`, as Celesta checks a scene's.
 pub(crate) fn frame_canvas(canvas: Option<[f32; 2]>) -> Result<[f32; 2], FrameError> {
     let Some(canvas) = canvas else {
         return Ok(CANVAS);
     };
     if canvas
         .iter()
-        .all(|side| side.is_finite() && *side > 0.0 && *side <= MAX_FRAME_CANVAS_SIDE)
+        .all(|side| (1.0..=MAX_SCENE_CANVAS_SIDE).contains(side))
     {
         Ok(canvas)
     } else {
         Err(FrameError(format!(
-            "data canvas is {canvas:?}: each side must be finite, positive, and at most {MAX_FRAME_CANVAS_SIDE}"
+            "data canvas is {canvas:?}: each side must be from 1 to {MAX_SCENE_CANVAS_SIDE}"
         )))
     }
 }
@@ -517,6 +517,7 @@ mod tests {
         let mut model = avatar();
         for canvas in [
             json!([0, 1080]),
+            json!([0.5, 1080]),
             json!([1920, -1]),
             json!([20000, 10]),
             json!([1e39, 1]),
