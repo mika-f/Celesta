@@ -1,5 +1,17 @@
 {
-  // Type-checks the tests together with the src/ they import.
+  // Type-checks the tests together with the src/ they import, and the
+  // plugin's demo with `@celesta-plugin/vrm` as that src/. The demo is
+  // outside this package, so its imports are mapped to this package's
+  // node_modules, as the project TypeScript support maps an entry's.
   "extends": "../tsconfig.json",
-  "include": ["./**/*.mts", "../src"]
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "paths": {
+      "@celesta-plugin/vrm": ["../src/index.ts"],
+      "@celesta/react": ["../node_modules/@celesta/react"],
+      "react": ["../node_modules/@types/react"],
+      "react/*": ["../node_modules/@types/react/*"]
+    }
+  },
+  "include": ["./**/*.mts", "../src", "../../demo.tsx"]
 }

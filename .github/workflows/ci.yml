@@ -222,21 +222,14 @@ jobs:
           toolchain: 1.99.1
           components: clippy, rustfmt
 
+      # The root workspace's target/ holds the codegen build:runtime runs.
       - uses: Swatinem/rust-cache@v2.9.3
         with:
-          workspaces: plugins/vrm -> target
+          workspaces: |
+            plugins/vrm -> target
+            . -> target
           env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Format
-        run: cargo fmt --manifest-path plugins/vrm/Cargo.toml --check
-
-      - name: Clippy
-        run: cargo clippy --manifest-path plugins/vrm/Cargo.toml --all-targets --locked -- -D warnings
-
-      # Linux has lavapipe; missing it must fail rather than skip GPU tests.
-      - name: Test
-        run: env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/vrm/Cargo.toml --locked
 
       # Node.js and pnpm as mise.lock pins them, for <Vrm> and the build.
       - uses: jdx/mise-action@v5.2.5
@@ -248,12 +241,27 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # <Vrm> imports @celesta/react and @celesta/character, and the build
-      # checks its declarations against the runtime's project types.
+      # checks its declarations against the runtime's project types. As in
+      # the test job, codegen runs first to add --locked.
       - name: Build Celesta packages
-        run: pnpm run build:runtime
+        run: |
+          pnpm --dir packages/react run codegen --locked
+          pnpm run build:runtime
 
+      # Before the Rust steps, which take longer. Its type check covers
+      # demo.tsx too.
       - name: Test the component
         run: pnpm --filter celesta-plugin-vrm-js test
+
+      - name: Format
+        run: cargo fmt --manifest-path plugins/vrm/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path plugins/vrm/Cargo.toml --all-targets --locked -- -D warnings
+
+      # Linux has lavapipe; missing it must fail rather than skip GPU tests.
+      - name: Test
+        run: env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/vrm/Cargo.toml --locked
 
       - name: Build the plugin directory
         run: node plugins/vrm/build.mjs
