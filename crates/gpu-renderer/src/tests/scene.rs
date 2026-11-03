@@ -3,7 +3,6 @@
 //! process.
 
 use super::*;
-use crate::bounds::PixelBounds;
 use crate::scene::{
     MAX_CACHED_PIPELINES, MAX_CACHED_SHADERS, MAX_MODEL_PIPELINES, ScenePipelines, SceneTarget,
 };
