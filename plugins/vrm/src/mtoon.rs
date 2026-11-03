@@ -469,7 +469,12 @@ pub fn params(
         ],
     ];
     let mut bytes = [0; MTOON_PARAMS];
-    for (chunk, value) in bytes.chunks_exact_mut(4).zip(rows.as_flattened()) {
+    for (chunk, value) in bytes
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(rows.as_flattened())
+    {
         chunk.copy_from_slice(&value.to_le_bytes());
     }
     bytes

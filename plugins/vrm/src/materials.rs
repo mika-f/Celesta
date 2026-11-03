@@ -93,7 +93,7 @@ const MTOON_SHADER: usize = 0;
 /// What a material is drawn with, before the scene textures are known.
 enum Kind {
     Unlit(UnlitMaterial),
-    Mtoon(Mtoon),
+    Mtoon(Box<Mtoon>),
 }
 
 /// The cache directory's own name.
@@ -301,7 +301,7 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
             Kind::Unlit(unlit) => (MaterialKind::Unlit(unlit), None),
             Kind::Mtoon(mtoon) => (
                 MaterialKind::Custom(mtoon::custom_material(&mtoon, MTOON_SHADER, &textures)),
-                Some(mtoon),
+                Some(*mtoon),
             ),
         };
         materials.push(Material {
@@ -463,7 +463,7 @@ impl<'d> Reader<'d> {
             .and_then(|texture| texture.transform);
 
         let kind = match mtoon {
-            Some(mtoon) => Kind::Mtoon(self.mtoon(
+            Some(mtoon) => Kind::Mtoon(Box::new(self.mtoon(
                 material,
                 mtoon,
                 at,
@@ -472,7 +472,7 @@ impl<'d> Reader<'d> {
                     base_color_texture,
                     ..Mtoon::default()
                 },
-            )?),
+            )?)),
             // KHR_materials_unlit, and glTF PBR drawn as its base color.
             None => Kind::Unlit(UnlitMaterial {
                 base_color,
