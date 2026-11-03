@@ -33,6 +33,7 @@ mod text;
 mod texture;
 mod transform;
 mod types;
+mod wgsl;
 mod yuv;
 
 /// A `PluginNotice`'s level.
