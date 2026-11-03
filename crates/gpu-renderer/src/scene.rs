@@ -1424,12 +1424,13 @@ fn finite(values: &[f32]) -> bool {
 /// Why `model` cannot be drawn: a canvas without area, vertex streams of
 /// different lengths, triangles outside their vertices, or a reference to
 /// something it lacks, buffers past `SCENE_BUFFER_BUDGET`, or shaders past
-/// the limits, more texture slots filled than a material's shader has, or
+/// the limits, more texture slots filled than a material's shader has, an
+/// unlit material's base color or texture transform that is not finite, or
 /// an outline depth bias that is not finite. A draw's skin must have every
-/// joint its geometry's vertices name, and a draw whose material has a
-/// normal texture or requires tangents a geometry with tangents; all of
-/// these are fixed, so they are checked here, once, rather than in every
-/// frame, and before naga or the GPU reads any shader.
+/// joint its geometry's vertices name, and a draw whose material requires
+/// tangents a geometry with tangents; all of these are fixed, so they are
+/// checked here, once, rather than in every frame, and before naga or the
+/// GPU reads any shader.
 pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
     if !model
         .canvas
@@ -1514,13 +1515,29 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
         let textures = model.textures.len();
         match &material.kind {
             MaterialKind::Unlit(unlit) => {
-                if let Some(texture) = &unlit.base_color_texture
-                    && texture.texture >= textures
-                {
-                    return Some(format!(
-                        "material {index} uses texture {}, of {textures}",
-                        texture.texture
-                    ));
+                if !finite(&unlit.base_color) {
+                    return Some(format!("material {index}'s base color is not finite"));
+                }
+                if let Some(texture) = &unlit.base_color_texture {
+                    if texture.texture >= textures {
+                        return Some(format!(
+                            "material {index} uses texture {}, of {textures}",
+                            texture.texture
+                        ));
+                    }
+                    if let Some(transform) = &texture.transform
+                        && !finite(&[
+                            transform.offset[0],
+                            transform.offset[1],
+                            transform.rotation,
+                            transform.scale[0],
+                            transform.scale[1],
+                        ])
+                    {
+                        return Some(format!(
+                            "material {index}'s texture transform is not finite"
+                        ));
+                    }
                 }
             }
             MaterialKind::Custom(custom) => {
@@ -3319,6 +3336,69 @@ mod tests {
         let unlit = check_material(UNLIT_SHADER, 1).unwrap();
         assert_eq!((unlit.params_size, unlit.outline), (48, false));
         assert_eq!(unlit.params_size as usize, UNLIT_PARAMS);
+    }
+
+    #[test]
+    fn unlit_numbers_must_be_finite() {
+        let mut model = bare_model(3, 1);
+        model.textures.push(celesta_plugin::SceneTexture {
+            source: celesta_plugin::TextureSource::Rgba {
+                width: 1,
+                height: 1,
+                pixels: std::sync::Arc::new(vec![255; 4]),
+            },
+            color_space: ColorSpace::Linear,
+            sampler: Default::default(),
+        });
+        fn unlit(model: &mut SceneModel) -> &mut celesta_plugin::UnlitMaterial {
+            match &mut model.materials[0].kind {
+                MaterialKind::Unlit(unlit) => unlit,
+                MaterialKind::Custom(_) => unreachable!("bare_model's material is unlit"),
+            }
+        }
+        let transformed = |offset: [f32; 2], rotation: f32, scale: [f32; 2]| {
+            Some(celesta_plugin::TextureRef {
+                texture: 0,
+                transform: Some(celesta_plugin::TextureTransform {
+                    offset,
+                    rotation,
+                    scale,
+                }),
+            })
+        };
+        unlit(&mut model).base_color_texture = transformed([0.5, 0.0], 0.25, [2.0, 2.0]);
+        assert_eq!(invalid_scene(&model), None);
+
+        type Set = Box<dyn Fn(&mut celesta_plugin::UnlitMaterial)>;
+        let cases: [(&str, Set); 4] = [
+            ("base color", Box::new(|m| m.base_color[3] = f32::NAN)),
+            (
+                "texture transform",
+                Box::new(move |m| {
+                    m.base_color_texture = transformed([f32::INFINITY, 0.0], 0.0, [1.0, 1.0])
+                }),
+            ),
+            (
+                "texture transform",
+                Box::new(move |m| {
+                    m.base_color_texture = transformed([0.0, 0.0], f32::NAN, [1.0, 1.0])
+                }),
+            ),
+            (
+                "texture transform",
+                Box::new(move |m| {
+                    m.base_color_texture = transformed([0.0, 0.0], 0.0, [1.0, f32::NEG_INFINITY])
+                }),
+            ),
+        ];
+        for (name, set) in cases {
+            let mut model = model.clone();
+            set(unlit(&mut model));
+            assert_eq!(
+                invalid_scene(&model),
+                Some(format!("material 0's {name} is not finite"))
+            );
+        }
     }
 
     #[test]
