@@ -27,6 +27,9 @@
 //!   before the materials, so a model refused for them writes no texture.
 //!   Each frame they set the morph targets they bind, on every draw of the
 //!   bound node, and override the bound materials of every draw using them.
+//! - **The lookAt** (see `look_at`) is read before the geometry. Each frame
+//!   it turns the eye bones, or writes the look expressions, for the gaze
+//!   `data.look_at` asks for, scaled by what other expressions leave of it.
 //! - **Budgets:** the model's geometry, draws, and skins together take at
 //!   most [`GEOMETRY_BUDGET`] bytes, and its accessors decode at most
 //!   `READ_BUDGET` (see `geometry`).
@@ -35,15 +38,16 @@
 //! constraints, the lookAt, expressions, spring bones, then world matrices.
 
 use crate::document::{Document, LoadError};
-use crate::expressions::{ExpressionKey, Expressions, read_expressions};
+use crate::expressions::{Applied, ExpressionKey, Expressions, read_expressions};
 use crate::first_person::hidden_nodes;
 use crate::geometry::{
     Accessors, GEOMETRY_BUDGET, draws_triangles, geometry_bytes, inverse_binds, primitive_geometry,
 };
 use crate::humanoid::Humanoid;
+use crate::look_at::LookAt;
 use crate::materials::{materials, texture_cache_dir};
 use crate::nodes::{NodeTree, Pose};
-use crate::provider::PerformanceData;
+use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
 use celesta_plugin::{
     AlphaMode, Camera, DrawInfo, DrawState, Geometry, Lights, Material, MaterialKind,
     MaterialOverrides, Notice, NoticeLevel, Projection, SceneFrame, SceneModel, Skin,
@@ -113,6 +117,7 @@ pub struct VrmModel {
     /// By mesh: the centre of its drawn primitives' bounds, in mesh space.
     centres: Vec<Vec3>,
     expressions: Expressions,
+    look_at: LookAt,
     /// The bytes of the geometry budget the model takes.
     #[cfg_attr(not(test), allow(dead_code))]
     bytes: u64,
@@ -166,6 +171,7 @@ impl VrmModel {
         let mut document = Document::parse(bytes)?;
         let tree = NodeTree::new(&document)?;
         let humanoid = Humanoid::new(&document);
+        let look_at = LookAt::new(&document, &tree, &humanoid)?;
         let hidden = hidden_nodes(&document)?;
         let mut budget = Budget {
             left: budget,
@@ -243,6 +249,7 @@ impl VrmModel {
             skins,
             centres: draws.centres,
             expressions,
+            look_at,
             bytes: budget.total - budget.left,
         })
     }
@@ -266,14 +273,12 @@ impl VrmModel {
     /// The scene at `time` seconds, as `data` asks for it. The same model,
     /// time, and data always give the same frame.
     pub fn frame(&mut self, time: f64, data: &PerformanceData) -> Result<SceneFrame, FrameError> {
-        let mut pose = self.base_pose(time, data);
-        self.apply_constraints(&mut pose);
-        // The lookAt's yaw and pitch (Task 6) go here.
-        let inputs = self.expression_inputs(time, data)?;
-        let applied = self.expressions.validate(&inputs);
-        // The lookAt (Task 6) turns the eyes here, scaled by
-        // `applied.look_at_rate`, or writes its look keys into
-        // `applied.weights`.
+        // The camera, and the eye a `"camera"` gaze looks at.
+        let camera = Camera {
+            view: Mat4::from_translation(-REST_EYE).to_cols_array(),
+            projection: PROJECTION,
+        };
+        let (mut pose, applied) = self.pose_and_weights(time, data, REST_EYE)?;
         let mut morph: Vec<Vec<f32>> = self
             .draws
             .iter()
@@ -345,15 +350,77 @@ impl VrmModel {
         }
 
         Ok(SceneFrame {
-            camera: Camera {
-                view: Mat4::from_translation(-REST_EYE).to_cols_array(),
-                projection: PROJECTION,
-            },
+            camera,
             lights: Lights::default(),
             time,
             draws,
             skins,
         })
+    }
+
+    /// The frame's stages before the expressions' binds and the springs:
+    /// the base pose, constraints, the gaze (at `camera_eye` for a
+    /// `"camera"` target), and the expressions' actual weights, with the
+    /// lookAt applied to the eyes or the look keys.
+    pub(crate) fn pose_and_weights(
+        &self,
+        time: f64,
+        data: &PerformanceData,
+        camera_eye: Vec3,
+    ) -> Result<(Pose, Applied), FrameError> {
+        let mut pose = self.base_pose(time, data);
+        self.apply_constraints(&mut pose);
+        let (yaw, pitch) = self.gaze(data, &pose, camera_eye)?;
+        let inputs = self.expression_inputs(time, data)?;
+        let mut applied = self.expressions.validate(&inputs);
+        // UniVRM's validator scales the gaze by what other expressions
+        // leave of it.
+        let scale = 1.0 - applied.look_at_rate;
+        self.look_at
+            .apply(yaw * scale, pitch * scale, &mut pose, &mut applied.weights);
+        Ok((pose, applied))
+    }
+
+    /// The gaze's yaw and pitch (degrees) that `data` asks for, with the
+    /// head at `pose` and the camera at `camera_eye`.
+    fn gaze(
+        &self,
+        data: &PerformanceData,
+        pose: &Pose,
+        camera_eye: Vec3,
+    ) -> Result<(f32, f32), FrameError> {
+        let target = match &data.look_at {
+            None => return Ok((0.0, 0.0)),
+            Some(LookAtData::Angles { yaw, pitch }) => {
+                for (name, value) in [("yaw", yaw), ("pitch", pitch)] {
+                    if !value.is_finite() {
+                        return Err(FrameError(format!("lookAt {name} is not finite: {value}")));
+                    }
+                }
+                return Ok((*yaw, *pitch));
+            }
+            Some(LookAtData::Point(point)) => {
+                let point = Vec3::from(*point);
+                if !point.is_finite() {
+                    return Err(FrameError(format!("lookAt point is not finite: {point}")));
+                }
+                point
+            }
+            Some(LookAtData::Keyword(LookAtKeyword::Camera)) => camera_eye,
+        };
+        let origin = self.look_at.origin(&self.tree.world(pose));
+        self.look_at.yaw_pitch(origin, target).ok_or_else(|| {
+            FrameError(
+                "the lookAt origin cannot be inverted (the head is scaled to nothing), \
+                 so the eyes cannot look at a point"
+                    .into(),
+            )
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn look_at(&self) -> &LookAt {
+        &self.look_at
     }
 
     /// The pose before constraints and springs. The rest pose; the motion

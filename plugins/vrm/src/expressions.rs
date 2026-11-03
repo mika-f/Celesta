@@ -391,9 +391,8 @@ pub(crate) struct ExpressionBinds {
 pub(crate) struct Applied {
     /// By key, every expression the avatar has: its actual weight.
     pub weights: BTreeMap<ExpressionKey, f32>,
-    /// How much the lookAt is overridden, 0..1.
-    // The lookAt (Task 6) scales the gaze by 1 − this.
-    #[allow(dead_code)]
+    /// How much the lookAt is overridden, 0..1: the gaze is scaled by
+    /// `1 − look_at_rate` (see `look_at`).
     pub look_at_rate: f32,
 }
 
@@ -896,6 +895,7 @@ mod tests {
                 .iter()
                 .map(|&(name, weight)| (name.to_string(), weight))
                 .collect(),
+            ..PerformanceData::default()
         }
     }
 
