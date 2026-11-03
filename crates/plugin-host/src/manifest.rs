@@ -67,6 +67,11 @@ pub struct ComponentInfo {
     pub aspect: Option<f64>,
 }
 
+/// The widest a model component's `aspect` may be, and one over it the
+/// narrowest: a layer side is at most 16384 pixels, so no wider layer could
+/// be drawn.
+const MAX_COMPONENT_ASPECT: f64 = 16384.0;
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ComponentSource {
@@ -117,7 +122,18 @@ impl ComponentInfo {
                 "component {name:?} lists an aspect but does not take a model file"
             ));
         }
-        for extension in &self.extensions {
+        for (index, extension) in self.extensions.iter().enumerate() {
+            if let Some(bare) = extension.strip_prefix('.') {
+                return Some(format!(
+                    "component {name:?}'s extension {extension:?} is written with its dot; list it as {bare:?}"
+                ));
+            }
+            if self.extensions[..index].contains(extension) {
+                return Some(format!(
+                    "component {name:?} lists the extension {:?} twice",
+                    format!(".{extension}")
+                ));
+            }
             let plain = !extension.is_empty()
                 && extension
                     .chars()
@@ -130,10 +146,10 @@ impl ComponentInfo {
             }
         }
         if let Some(aspect) = self.aspect
-            && !(aspect.is_finite() && aspect > 0.0)
+            && !(MAX_COMPONENT_ASPECT.recip()..=MAX_COMPONENT_ASPECT).contains(&aspect)
         {
             return Some(format!(
-                "component {name:?}'s aspect {aspect} is not a positive number"
+                "component {name:?}'s aspect {aspect} is not from 1/16384 to 16384"
             ));
         }
         for (prop, value) in &self.props {
@@ -805,9 +821,33 @@ mod tests {
             "flat",
             serde_json::json!({ "name": "Model", "src": "model", "extensions": ["glb"], "aspect": 0 }),
         );
+        let with_aspect = |aspect: f64| serde_json::json!({ "name": "Model", "src": "model", "extensions": ["glb"], "aspect": aspect });
+        write("negative", with_aspect(-1.0));
+        write("thin", with_aspect(1.0e-5));
+        write("long", with_aspect(16385.0));
+        write("widest", with_aspect(MAX_COMPONENT_ASPECT));
+        write(
+            "unmodelled",
+            serde_json::json!({ "name": "Model", "src": "image", "aspect": 1 }),
+        );
+        let with_extensions = |extensions: serde_json::Value| serde_json::json!({ "name": "Model", "src": "model", "extensions": extensions });
+        write("empty", with_extensions(serde_json::json!([""])));
+        write("dotted", with_extensions(serde_json::json!([".glb"])));
+        write(
+            "twice",
+            with_extensions(serde_json::json!(["glb", "gltf", "glb"])),
+        );
 
         let (found, errors) = discover(&[root.path().to_path_buf()]);
-        assert_eq!(found.len(), 1, "{errors:?}");
+        let ids: Vec<_> = found
+            .iter()
+            .map(|entry| entry.manifest.id.as_str())
+            .collect();
+        assert_eq!(ids, ["good", "widest"], "{errors:?}");
+        assert_eq!(
+            found[1].manifest.components[0].aspect,
+            Some(MAX_COMPONENT_ASPECT)
+        );
         let component = &found[0].manifest.components[0];
         assert_eq!(component.src, Some(ComponentSource::Model));
         assert_eq!(component.label(), "3D model");
@@ -828,7 +868,7 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("{id} was not skipped: {errors:?}"))
         };
-        assert_eq!(errors.len(), 4, "{errors:?}");
+        assert_eq!(errors.len(), 11, "{errors:?}");
         assert_eq!(
             reason("bare"),
             "component \"Model\" takes a model file but lists no extensions"
@@ -841,7 +881,33 @@ mod tests {
             reason("image"),
             "component \"Model\" lists extensions but does not take a model file"
         );
-        assert!(reason("flat").contains("aspect"), "{}", reason("flat"));
+        for (id, aspect) in [
+            ("flat", "0"),
+            ("negative", "-1"),
+            ("thin", "0.00001"),
+            ("long", "16385"),
+        ] {
+            assert_eq!(
+                reason(id),
+                format!("component \"Model\"'s aspect {aspect} is not from 1/16384 to 16384")
+            );
+        }
+        assert_eq!(
+            reason("unmodelled"),
+            "component \"Model\" lists an aspect but does not take a model file"
+        );
+        assert_eq!(
+            reason("empty"),
+            "component \"Model\"'s extension \".\" is not lowercase letters and digits"
+        );
+        assert_eq!(
+            reason("dotted"),
+            "component \"Model\"'s extension \".glb\" is written with its dot; list it as \"glb\""
+        );
+        assert_eq!(
+            reason("twice"),
+            "component \"Model\" lists the extension \".glb\" twice"
+        );
     }
 
     #[test]
