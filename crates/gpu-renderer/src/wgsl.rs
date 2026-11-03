@@ -65,9 +65,9 @@ pub(crate) struct Rules<'a> {
     pub(crate) reserved: &'a dyn Fn(&str) -> bool,
 }
 
-/// Rejects entry points and resources the author declared, and names
-/// `rules.reserved` keeps for Celesta: Celesta's declarations bind
-/// everything the author's code gets.
+/// Rejects entry points, resources, and workgroup variables the author
+/// declared, and names `rules.reserved` keeps for Celesta: Celesta's
+/// declarations bind everything the author's code gets.
 pub(crate) fn check_declarations(
     module: &naga::Module,
     code: &str,
@@ -104,6 +104,16 @@ pub(crate) fn check_declarations(
             return fail(
                 at,
                 format!("declares the resource `{name}`; {what} cannot bind resources of its own"),
+            );
+        }
+        // naga's validator lets every stage use one, so a backend's
+        // compiler or driver meets it in a vertex or fragment shader.
+        if global.space == naga::AddressSpace::WorkGroup {
+            return fail(
+                at,
+                format!(
+                    "declares the workgroup variable `{name}`; workgroup memory is for compute shaders, and {what} runs in the vertex and fragment stages"
+                ),
             );
         }
     }

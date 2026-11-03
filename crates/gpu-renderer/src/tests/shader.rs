@@ -766,6 +766,22 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
         "{entry}"
     );
 
+    // naga lets a fragment shader use workgroup memory, which WGSL allows
+    // compute shaders alone.
+    let workgroup = error(
+        &mut renderer,
+        "var<workgroup> w: array<f32, 4096>;\nfn effect(input: EffectInput) -> vec4f {\n    w[0] = 1.0;\n    return source_at(input.position) * w[0];\n}\n",
+    );
+    assert!(
+        workgroup.contains("declares the workgroup variable `w`"),
+        "{workgroup}"
+    );
+    assert!(workgroup.contains("compute shaders"), "{workgroup}");
+    assert!(
+        workgroup.starts_with("invalid custom shader broken: 1:"),
+        "{workgroup}"
+    );
+
     let reserved = error(
         &mut renderer,
         &format!("{IDENTITY}fn celesta_helper() -> f32 {{\n    return 1.0;\n}}\n"),

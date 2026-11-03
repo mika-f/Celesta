@@ -520,6 +520,30 @@ mod tests {
     }
 
     #[test]
+    fn workgroup_variables_are_refused() {
+        // naga's validator lets any stage use workgroup memory, which WGSL
+        // allows compute shaders alone; used or not, it is refused.
+        for body in [
+            "",
+            "fn material_vertex(vertex: Vertex) -> VertexOffset {\n    w[0] = 1.0;\n    return VertexOffset(vec3f(w[0]), vec2f(0.0));\n}\n",
+        ] {
+            let error = check_material(
+                &with_params(&format!(
+                    "{FRAGMENT}var<workgroup> w: array<f32, 4096>;\n{body}"
+                )),
+                0,
+            )
+            .unwrap_err();
+            assert!(error.starts_with("5:"), "{error}");
+            assert!(
+                error.contains("declares the workgroup variable `w`"),
+                "{error}"
+            );
+            assert!(error.contains("compute shaders"), "{error}");
+        }
+    }
+
+    #[test]
     fn celesta_names_are_refused_in_any_case() {
         for (declaration, name) in [
             ("struct CelestaVarying { a: f32 };\n", "CelestaVarying"),
