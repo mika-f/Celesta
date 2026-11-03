@@ -227,6 +227,11 @@ fails to load is closed again. The limits are `pub const`s in
   validation, internal, and out-of-memory error scopes together: a backend
   compiler refusing what naga accepted (Metal past a fragment function's
   stack, for one) is the material's error, never a panic.
+- **Pipelines on open:** a model whose materials need more than 1,024
+  distinct draw pipelines (`MAX_MODEL_PIPELINES`, in the GPU renderer's
+  `scene.rs`) is refused before any is made (`the model's materials need
+  {n} pipelines, more than 1024`). Surface passes alone are at most 512;
+  the rest is room for outlines, of which each depth bias makes two more.
 - **Not bounded: a material's own memory and time.** Private and
   function-local memory (`var<private>`, a function's `var`) has no cap of
   Celesta's: naga accepts arrays of any size. A backend may refuse the
@@ -369,17 +374,25 @@ materials as `frame.lights` and `frame.ambient`.
   names the material (`material {m}'s pipelines: …`) and none of that
   material's new pipelines is kept. A pipeline the device refused (a
   validation or internal error, such as a backend's compiler refusing
-  what naga accepted) is remembered under its key while its shader is
-  cached, so a model sent again is refused with the same message without
-  making it again; one that ran out of memory is not remembered and is
-  tried again. When the cache holds 256 pipelines
+  what naga accepted) is remembered by what the backend compiled, its
+  shader and its two entry points, while its shader is cached: culling,
+  winding, depth bias, depth writes, and blending are the pipeline's state
+  around the compiled stages. A model sent again, or with another depth
+  bias or culling, is refused with the same message without making it
+  again, and a shader has at most one refusal for each pair of entry
+  points. One that ran out of memory is not remembered and is tried
+  again. A model whose materials need more than 1,024 pipelines
+  (`MAX_MODEL_PIPELINES`) is refused before any is made, so distinct
+  depth biases cannot make pipelines without end in one load. When the
+  cache holds 256 pipelines
   (`MAX_CACHED_PIPELINES`), a model being opened first drops those no
   loaded model holds, before it makes any: the pipelines of models whose
   load failed after them (a later material's parameters, a texture, a
   buffer limit).
 - **Both bounds are soft.** Shaders and pipelines that loaded models hold
-  are never dropped, however many; the bounds are on what models that
-  failed or are gone leave behind.
+  are never dropped, however many loaded models there are; the bounds are
+  on what models that failed or are gone leave behind. Each model holds at
+  most 32 shaders and 1,024 pipelines.
 - **The normal matrix** is the cofactor matrix of `world`'s upper 3×3
   times the sign of its determinant (+1 for 0), worked out in `f64` and
   divided by its largest entry: the inverse transpose up to a positive
@@ -462,7 +475,7 @@ the corners; the README says so.
 | `crates/gpu-renderer/src/scene_material_prelude.wgsl`, `scene_material_entry.wgsl`, `scene_material_outline_entry.wgsl` | The interface: the prelude, and the surface and outline entry points for each alpha mode. |
 | `crates/gpu-renderer/src/scene_unlit.wgsl` | The built-in unlit material against the interface. |
 | `crates/gpu-renderer/src/scene.wgsl` | Only the conversion to the layer texture remains. |
-| `crates/gpu-renderer/src/scene.rs` | The frame uniform and draw slots, the bounded shader and pipeline caches with remembered refusals, material bind groups and pipelines made on open, outline passes, per-frame parameters, the normal matrix, render queues with offsets and distance sorting, `LessEqual`, and `SceneFrameResources`. |
+| `crates/gpu-renderer/src/scene.rs` | The frame uniform and draw slots, the bounded shader and pipeline caches with refusals remembered by stages, a cap on one model's pipelines, material bind groups and pipelines made on open, outline passes, per-frame parameters, the normal matrix, render queues with offsets and distance sorting, `LessEqual`, and `SceneFrameResources`. |
 | `crates/gpu-renderer/src/mesh.rs`, `prepare.rs` | A model's material and pipeline errors as `InvalidPluginContent`; the renderer keeps `SceneFrameResources`, and each frame begins it. |
 | `examples/plugins/turntable` | The cube's own toon material (`src/toon.wgsl`), its light, and tests. |
 
@@ -505,11 +518,15 @@ change once it shows:
   fragment what it needs from `Fragment`.
 - **`Frame.time` is `f32`.** A plugin sends values that need the time's
   full precision in its parameters.
-- **Remembered pipeline refusals grow with their shader.** A refusal is
-  kept while its shader is cached, and a shader a loaded model holds stays
-  cached: a plugin that keeps one shader loaded and keeps opening models
-  whose new pipeline keys (new depth biases, say) the device refuses adds
-  a short message each time.
+- **A refusal stands for its stages.** A pipeline the device refused is
+  remembered by its shader and entry points, so every culling, winding,
+  depth bias, and blend of those stages is refused with it. A backend that
+  refused a pipeline for its state rather than its shader code would have
+  the others refused too; none is known to.
+- **A new pipeline is a new compile.** A plugin that opens a model with a
+  new depth bias each time, and so new pipelines the device makes, costs
+  one backend compile for each: at most 1,024 for one model, and kept only
+  while a loaded model holds them or the cache has room.
 - **Shadows.** Nothing casts a shadow. A main-light shadow map is a later
   phase, to be offered to materials through the interface.
 - **Point and spot lights.** Only directional lights, at most 4; more is
@@ -562,7 +579,7 @@ change once it shows:
   the prelude's layout, that the built-in unlit material passes the
   material checks, that an unlit material's base color and texture
   transform must be finite, unlit's parameter packing, the render queue's
-  clamping and the offsets it ignores, the signed-cofactor normal matrix, the eye
+  clamping of blend offsets, the signed-cofactor normal matrix, the eye
   of a view, the draw slot's size and the per-draw uniform check, and that
   `make_room` drops only sizes not drawn, only past the budget.
 - The GPU renderer's scene tests (`crates/gpu-renderer/src/tests/scene.rs`)
@@ -572,10 +589,15 @@ change once it shows:
   - `material_`: parameters coloring the surface; texture slots sampling
     their texture or their empty texel; lights and ambient reaching the
     shader, and more lights than the frame holds or a light without a
-    direction refused; each SH coefficient; normals through the inverse
+    direction refused; each light its color times its intensity (0.5), in
+    order past the first, and a light the frame lacks black; the light
+    count, the time, and the height over the width of a 128x64 canvas;
+    the view and the projection apart, by the view's translation and the
+    projection's `[1][1]`; each SH coefficient; normals through the inverse
     transpose of `world`; tangents and handedness following `world`
     (drawn with `requiresTangents` set), and tangents of 0 without them;
-    `material_vertex` moving the surface in world and clip space; facing;
+    `material_vertex` moving the surface in world and clip space; facing,
+    and a back face's normal not turned to the viewer;
     the view direction, orthographic and perspective; `linearstep` and
     `safe_normalize`; the alpha modes around the returned alpha, with the
     near-clear discard of a depth-writing blend; degenerate worlds without
@@ -584,10 +606,15 @@ change once it shows:
     geometry without them; pipelines the backend refuses refused naming
     the material, and refused again without being made again; a pipeline
     the device refused not made again while one that ran out of memory is;
-    a shader compiled once for many materials and a broken one once for
-    many frames; a shader the device ran out of memory compiling tried
-    again; and the shader and pipeline caches dropping what no loaded
-    model holds once past their caps, keeping what a loaded model holds.
+    a refusal standing for every depth bias and culling of its stages,
+    none of them made and nothing more kept; a model needing 1,026
+    pipelines refused before any is made, and one needing 1,024 not;
+    a shader compiled once for many materials, the same WGSL with one
+    texture slot and with two compiled apart and both drawn, and a broken
+    one once for many frames; a shader the device ran out of memory
+    compiling tried again; and the shader and pipeline caches dropping
+    what no loaded model holds once past their caps, keeping what a loaded
+    model holds.
   - `frame_params_`: a frame's parameters replacing the material's for
     that frame only, per draw, and refused when they do not fit, on an
     unlit draw, or beside overrides on a custom draw.

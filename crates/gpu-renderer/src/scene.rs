@@ -3060,7 +3060,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn render_queue_clamps_and_ignores_offsets() {
+    fn render_queue_clamps_blend_offsets() {
         let blend = |depth_write, queue_offset| AlphaMode::Blend {
             depth_write,
             queue_offset,
