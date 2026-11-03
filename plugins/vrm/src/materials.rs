@@ -16,7 +16,8 @@
 //! Images are not decoded here. Each PNG, JPEG, or WebP image a slot uses
 //! is written once to a cache directory under its content's SHA-256 and
 //! sent as a path, which Celesta decodes; its header gives the size that
-//! counts toward [`TEXTURE_BUDGET`]. Images are read only from the file:
+//! counts toward [`TEXTURE_BUDGET`], once for each scene texture that
+//! samples it. Images are read only from the file:
 //! a buffer view or a `data:` URI, never another file or the network.
 
 use crate::document::{Document, LoadError};
@@ -41,8 +42,8 @@ use vrm_spec::vrmc_materials_mtoon_1_0::{
     OutlineWidthMode as MtoonOutlineWidthMode, VrmcMaterialsMtoonSchema,
 };
 
-/// The most the textures a model uses may take once decoded, 4 bytes a
-/// texel: Celesta decodes every image the plugin names.
+/// The most a model's scene textures may take once decoded, 4 bytes a
+/// texel: Celesta decodes each scene texture's image on its own.
 pub(crate) const TEXTURE_BUDGET: u64 = 1 << 30;
 const MIB: u64 = 1 << 20;
 
@@ -130,11 +131,13 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
         });
     }
 
-    // Every image is sized before anything is written.
+    // Every image is sized before anything is written. Celesta decodes each
+    // scene texture's file on its own, so an image two scene textures
+    // sample (another color space or sampler) counts twice.
     let decoded = reader
-        .used
+        .keys
         .iter()
-        .filter_map(|&image| match &reader.images[image] {
+        .filter_map(|&(image, _, _)| match &reader.images[image] {
             Some(Image::Readable(readable)) => Some(readable.decoded),
             _ => None,
         })
@@ -989,9 +992,42 @@ mod tests {
     fn texture_budget_is_refused() {
         let mut vrm = SyntheticVrm::avatar();
         vrm.images[0].1 = png_header(32768, 32768);
-        let message = refusal_of(&vrm, |_| {});
+        // Image 0 in one scene texture only (the shading shift samples it
+        // in linear, a second).
+        let message = refusal_of(&vrm, |root| {
+            mtoon_extension(root, 0)
+                .as_object_mut()
+                .unwrap()
+                .remove("shadingShiftTexture");
+        });
         assert!(
             message.contains("4096 MiB, more than 1024 MiB"),
+            "{message}"
+        );
+    }
+
+    /// Celesta decodes each scene texture's file on its own, so an image
+    /// sampled two ways counts twice.
+    #[test]
+    fn the_budget_counts_every_scene_texture() {
+        let mut vrm = SyntheticVrm::avatar();
+        // 1,024,000,000 bytes decoded: under the budget once, over it twice.
+        vrm.images[0].1 = png_header(16000, 16000);
+        let once = |root: &mut Value| {
+            mtoon_extension(root, 0)
+                .as_object_mut()
+                .unwrap()
+                .remove("shadingShiftTexture");
+        };
+        let (materials, _cache) = load_with(&vrm, once);
+        assert_eq!(materials.textures.len(), 2);
+        // The same image in sRGB through sampler 1: another scene texture.
+        let message = refusal_of(&vrm, |root| {
+            once(root);
+            mtoon_extension(root, 0)["matcapTexture"] = json!({ "index": 2 });
+        });
+        assert!(
+            message.contains("1953 MiB, more than 1024 MiB"),
             "{message}"
         );
     }
