@@ -82,8 +82,9 @@ import { Vrm } from '@celesta-plugin/vrm';
 ```
 
 - `width`, `height`, `aspect`: the layer's size in pixels (both, or one
-  and `aspect`, default 16:9; neither is 1920×1080). It is drawn at that
-  resolution, not scaled.
+  and `aspect`, default 16:9; `aspect` alone keeps 1920 wide; none is
+  1920×1080). Each side, given or computed, is 1 to 16384, or `<Vrm>`
+  throws. It is drawn at that resolution, not scaled.
 - `expressions`: weights 0..1 by VRM preset (`happy`, `aa`, `blink`, …) or
   the model's custom names; they win over `blink` and the mouth. `mouth`:
   `'a'`…`'o'`, `'closed'`, or vowel weights (`aa ih ou ee oh`).
@@ -96,8 +97,9 @@ import { Vrm } from '@celesta-plugin/vrm';
   rest on the layer's shape; `full` also fits a prop held out sideways,
   which moves the avatar off centre.
 - `lights`: `{ directional: [{ direction, color, intensity }], ambient }`,
-  at most 4, colours `#rgb`/`#rrggbb`; default, the plugin's reference
-  light (Unity's default light and ambient).
+  at most 4 (a fifth throws), colours `#rgb`/`#rrggbb`; without
+  `ambient`, the ambient is black. Default, the plugin's reference light
+  (Unity's default light and ambient).
 - On open it reports the model's terms of use as notices; a term that
   likely forbids the video (author only, separately licensed people only,
   no commercial use, credit required) is a `warning`, and a term the file

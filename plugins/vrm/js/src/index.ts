@@ -36,7 +36,7 @@ export interface VrmCamera {
 
 /** Lights in place of the plugin's reference light. */
 export interface VrmLights {
-  /** Up to four. `direction` is where the light travels. */
+  /** Up to four; a fifth throws. `direction` is where the light travels. */
   directional?: {
     direction: [number, number, number];
     /** `#rgb` or `#rrggbb` (sRGB). Default `#ffffff`. */
@@ -51,9 +51,9 @@ export interface VrmLights {
 export interface VrmProps extends CommonProps {
   /** The `.vrm` (VRM 1.0). */
   src: AssetInput;
-  /** The layer's width in pixels. Default 1920, or from `height` and `aspect`. */
+  /** The layer's width in pixels, from 1 to 16384. Default 1920, or from `height` and `aspect`. */
   width?: number;
-  /** The layer's height in pixels. Default 1080, or from `width` and `aspect`. */
+  /** The layer's height in pixels, from 1 to 16384. Default 1080, or from `width` and `aspect`. */
   height?: number;
   /** Width over height, filling whichever of `width` and `height` is missing. Default 16:9. */
   aspect?: number;
@@ -159,8 +159,32 @@ export function vrmData(props: VrmProps, frame: number, fps: number): VrmData {
   };
 }
 
-/** `[width, height]`: as given, the missing one from `aspect`, else 1920x1080. */
-function canvas({ width, height, aspect }: VrmProps): [number, number] {
+/**
+ * The longest side of a layer's canvas Celesta draws, in pixels
+ * (`celesta_plugin::scene::MAX_SCENE_CANVAS_SIDE`); the shortest is 1.
+ */
+const MAX_CANVAS_SIDE = 16384;
+
+/**
+ * The most directional lights a frame may have (Celesta's renderer refuses
+ * a fifth).
+ */
+const MAX_DIRECTIONAL_LIGHTS = 4;
+
+/**
+ * `[width, height]`: as given, the missing one from `aspect`, else
+ * 1920x1080. Each side, given or computed, must be one Celesta draws, so a
+ * mistake throws here rather than failing every frame.
+ */
+function canvas(props: VrmProps): [number, number] {
+  const size = canvasSize(props);
+  if (!size.every((side) => side >= 1 && side <= MAX_CANVAS_SIDE)) {
+    throw new Error(`Vrm width and height are from 1 to ${MAX_CANVAS_SIDE} pixels (got [${size.join(', ')}])`);
+  }
+  return size;
+}
+
+function canvasSize({ width, height, aspect }: VrmProps): [number, number] {
   for (const value of [width, height, aspect]) {
     if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
       throw new Error('Vrm width, height, and aspect are positive numbers');
@@ -198,8 +222,12 @@ function mouthExpressions(props: VrmProps, frame: number, fps: number): Partial<
 }
 
 function lights(given: VrmLights): NonNullable<VrmData['lights']> {
+  const directional = given.directional ?? [];
+  if (directional.length > MAX_DIRECTIONAL_LIGHTS) {
+    throw new Error(`Vrm lights take at most ${MAX_DIRECTIONAL_LIGHTS} directional lights (got ${directional.length})`);
+  }
   return {
-    directional: (given.directional ?? []).map((light) => ({
+    directional: directional.map((light) => ({
       direction: light.direction,
       color: linearColor(light.color ?? '#ffffff'),
       intensity: light.intensity ?? 1,

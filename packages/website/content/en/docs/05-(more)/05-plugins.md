@@ -141,14 +141,14 @@ export default function Root() {
 | Prop | What it does |
 | --- | --- |
 | `src` | The `.vrm` file (VRM 1.0). |
-| `width`, `height`, `aspect` | The layer's size in pixels. Give both, or one and `aspect` (width over height, 16:9 by default) for the other. Without them, 1920×1080. The avatar is drawn at that resolution: the layer is not scaled up from a smaller one. |
+| `width`, `height`, `aspect` | The layer's size in pixels. Give both, or one and `aspect` (width over height, 16:9 by default) for the other. `aspect` alone keeps the width at 1920; without any of them, 1920×1080. Each side, given or computed, must be from 1 to 16384 pixels, or `<Vrm>` throws. The avatar is drawn at that resolution: the layer is not scaled up from a smaller one. |
 | `expressions` | Expression weights from 0 to 1, by VRM preset (`happy`, `angry`, `sad`, `relaxed`, `surprised`, `aa`, `blink`, …) or by the model's own custom names. They win over `blink` and the mouth. |
 | `mouth` | A mouth shape (`'a'`, `'i'`, `'u'`, `'e'`, `'o'`, or `'closed'`), or vowel weights such as `{ aa: 0.5, oh: 0.3 }`. |
 | `lipSync`, `mouthSmoothing` | A lip-sync track (from `loadLipSync()`, or a spoken line's `lipSync`), used when `mouth` is not given, its shapes blended over `mouthSmoothing` frames (2 by default; 0 snaps). |
 | `blink` | Blink timing, seeded like a character portrait's; `false` never blinks. |
 | `lookAt` | Where the eyes look: `'camera'`, a point `[x, y, z]` in the avatar's space, or `{ yaw, pitch }` in degrees (positive yaw to the avatar's right, positive pitch up). Without it, straight ahead. |
 | `camera` | `'full'` (the default: the whole avatar), `'bust'` (from the chest up), `'face'`, or `{ position, target, fov?, near?, far? }` in the avatar's space (`fov` in degrees, 30 by default). |
-| `lights` | `{ directional: [{ direction, color, intensity }], ambient }`, up to four lights, colors as `#rgb` or `#rrggbb`. Without it, the plugin's reference light: Unity's default directional light from the upper front and its default ambient color. |
+| `lights` | `{ directional: [{ direction, color, intensity }], ambient }`, up to four lights (a fifth throws), colors as `#rgb` or `#rrggbb`. It replaces the reference light, so without `ambient` the ambient light is black. Without `lights`, the plugin's reference light: Unity's default directional light from the upper front and its default ambient color. |
 
 The avatar's space is the file's: metres, +Y up, the avatar facing +Z with its left at +X, its feet near 0. The presets frame the avatar as it stands at rest, on the layer's shape; `full` fits its whole width too, so a prop held far out to one side moves the avatar off center.
 

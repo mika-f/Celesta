@@ -625,7 +625,9 @@ warnings are not counted.
   frame's own checks, each naming its key (`expression happy is not
   finite`, `lookAt yaw is not finite`, `data canvas is …`, the camera's and
   lights' fields). Other malformed data is `invalid data: {serde's
-  message}`. `<Vrm>` checks its numbers too (below).
+  message}`. `<Vrm>` checks some of it before sending (below): the
+  canvas, `mouthSmoothing`, the number of directional lights, and the
+  light colours. The rest is left to the plugin.
 
 ## `<Vrm>`
 
@@ -638,14 +640,14 @@ props and `src`.
 | Prop | What it does |
 | --- | --- |
 | `src` | The `.vrm` (VRM 1.0), sent as asset `model`. |
-| `width`, `height`, `aspect` | The layer's size in pixels, sent as `canvas`: both given, as given; one given, the other from `aspect` (default 16:9); neither, 1920×1080, or 1920 wide by `aspect`. Not finite or not positive throws. The layer is that size; it is not scaled by them. |
+| `width`, `height`, `aspect` | The layer's size in pixels, sent as `canvas`: both given, as given; one given, the other from `aspect` (default 16:9); neither, 1920×1080, or 1920 wide by `aspect`. A prop not finite or not positive throws, and so does a side, given or computed, under 1 or over 16384 (`MAX_SCENE_CANVAS_SIDE`), at mount rather than on every frame. The layer is that size; it is not scaled by them. |
 | `expressions` | Weights by preset or custom name, 0..1. They win over `blink` and the mouth. |
 | `mouth` | A shape (`'a'` … `'o'` set `aa` … `oh` to 1; `'closed'` none) or vowel weights. |
 | `lipSync`, `mouthSmoothing` | A lip-sync track, used without `mouth`, mixed over this frame and the `mouthSmoothing` frames before it (default 2), nearest weighted most, as `<Live2D>` mixes them. `mouthSmoothing` not finite or negative throws. |
 | `blink` | `@celesta/character`'s `blinkPhase` (default `{}`): open 0, half 0.5, closed 1, as `blink`. `false` never blinks. |
 | `lookAt` | `'camera'`, a point in the avatar's space, or `{ yaw, pitch }` in degrees. |
 | `camera` | `'full'` (default), `'bust'`, `'face'`, or `{ position, target, fov?, near?, far? }`. |
-| `lights` | `{ directional?: [{ direction, color?, intensity? }], ambient? }`, colours `#rgb` or `#rrggbb` (sRGB, decoded to linear; `color` default white, `intensity` 1); anything else throws. Default: the reference light. |
+| `lights` | `{ directional?: [{ direction, color?, intensity? }], ambient? }`, at most 4 directional lights (a fifth throws), colours `#rgb` or `#rrggbb` (sRGB, decoded to linear; `color` default white, `intensity` 1); any other colour throws. Without `ambient` the ambient is black, since `lights` replaces the reference light. Default: the reference light. |
 
 Celesta draws the scene at the layer's density, so a smaller layer scaled
 up is not sharper than a larger one.

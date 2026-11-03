@@ -128,6 +128,38 @@ test('canvas_follows_width_height_and_aspect', () => {
   }
 });
 
+test('canvas_sides_are_from_1_to_16384', () => {
+  const canvas = (props: { width?: number; height?: number; aspect?: number }) =>
+    vrmData({ src, ...props }, 0, 30).canvas;
+  assert.deepEqual(canvas({ width: 1, height: 1 }), [1, 1]);
+  assert.deepEqual(canvas({ width: 16384, height: 16384 }), [16384, 16384]);
+  assert.deepEqual(canvas({ width: 16384, aspect: 16384 }), [16384, 1]);
+  // The computed side counts, not only the ones given.
+  const bad: [{ width?: number; height?: number; aspect?: number }, string][] = [
+    [{ width: 0.5, height: 1 }, '[0.5, 1]'],
+    [{ width: 16384.5, height: 1 }, '[16384.5, 1]'],
+    [{ width: 1, aspect: 2 }, '[1, 0.5]'],
+    [{ width: 2048, aspect: 1 / 16 }, '[2048, 32768]'],
+    [{ aspect: 1 / 16 }, '[1920, 30720]'],
+  ];
+  for (const [props, got] of bad) {
+    assert.throws(
+      () => canvas(props),
+      { message: `Vrm width and height are from 1 to 16384 pixels (got ${got})` },
+      JSON.stringify(props),
+    );
+  }
+});
+
+test('lights_are_at_most_four', () => {
+  const directional = (count: number) =>
+    Array.from({ length: count }, () => ({ direction: [0, -1, 0] as [number, number, number] }));
+  assert.equal(vrmData({ src, lights: { directional: directional(4) } }, 0, 30).lights?.directional.length, 4);
+  assert.throws(() => vrmData({ src, lights: { directional: directional(5) } }, 0, 30), {
+    message: 'Vrm lights take at most 4 directional lights (got 5)',
+  });
+});
+
 test('element_props_keep_only_the_common_ones', () => {
   const props: VrmProps = {
     src,
