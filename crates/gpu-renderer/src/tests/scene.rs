@@ -1537,6 +1537,58 @@ fn shading_parametric_rim_follows_lift_power_and_mix() {
     );
     scenes.frame.lights.ambient[3] = [0.25; 3];
     assert_centre(scenes, grey(240));
+    // At half the mix, with a black main light and no ambient, the main
+    // light's 0.5 × (1 − 0.5) and the second light's 0.5 × 0.5 × 0.5 make
+    // 0.375; without the mix on the second light, 0.5.
+    let scenes = toon_square(
+        rim(0.5),
+        vec![
+            light(HALF_LIT, [1.0; 3], 0.0),
+            light([0.0, -1.0, 0.0], [1.0; 3], 1.0),
+        ],
+    );
+    assert_centre(scenes, grey(165));
+}
+
+#[test]
+fn shading_parametric_rim_sees_the_eye_in_perspective() {
+    // From (0, 0, 2) through a perspective camera, `V` at the centre is
+    // towards the eye, +Z: `dot(N, V)` 1, the rim 0.5. Away from the eye,
+    // it would be −1 and the rim 1.
+    let mut scenes = toon_square(rim(0.0), vec![]);
+    scenes.frame.camera.projection = Projection::Perspective {
+        yfov: 1.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    assert_centre(scenes, grey(188));
+}
+
+#[test]
+fn shading_parametric_rim_raises_its_base_to_the_fresnel_power() {
+    // `dot(N, V)` 0.8 lifted by 0.3: 0.5, squared 0.25.
+    let scenes = with_normals(
+        toon_square(
+            MtoonMaterial {
+                parametric_rim_lift_factor: 0.3,
+                parametric_rim_fresnel_power_factor: 2.0,
+                ..rim(0.0)
+            },
+            vec![],
+        ),
+        [0.6, 0.0, 0.8],
+    );
+    assert_centre(scenes, grey(137));
+    // Facing the camera without a lift, the base is 0: no rim.
+    let scenes = toon_square(
+        MtoonMaterial {
+            parametric_rim_lift_factor: 0.0,
+            parametric_rim_fresnel_power_factor: 5.0,
+            ..rim(0.0)
+        },
+        vec![],
+    );
+    assert_centre(scenes, BLACK);
 }
 
 #[test]
