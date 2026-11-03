@@ -787,27 +787,31 @@ mod tests {
         };
         write(
             "good",
-            serde_json::json!({ "name": "Vrm", "src": "model", "extensions": ["vrm"], "aspect": 1.7777778 }),
+            serde_json::json!({ "name": "Model", "label": "3D model", "src": "model", "extensions": ["glb"], "aspect": 1.7777778 }),
         );
-        write("bare", serde_json::json!({ "name": "Vrm", "src": "model" }));
+        write(
+            "bare",
+            serde_json::json!({ "name": "Model", "src": "model" }),
+        );
         write(
             "upper",
-            serde_json::json!({ "name": "Vrm", "src": "model", "extensions": ["VRM"] }),
+            serde_json::json!({ "name": "Model", "src": "model", "extensions": ["GLB"] }),
         );
         write(
             "image",
-            serde_json::json!({ "name": "Vrm", "src": "image", "extensions": ["vrm"] }),
+            serde_json::json!({ "name": "Model", "src": "image", "extensions": ["glb"] }),
         );
         write(
             "flat",
-            serde_json::json!({ "name": "Vrm", "src": "model", "extensions": ["vrm"], "aspect": 0 }),
+            serde_json::json!({ "name": "Model", "src": "model", "extensions": ["glb"], "aspect": 0 }),
         );
 
         let (found, errors) = discover(&[root.path().to_path_buf()]);
         assert_eq!(found.len(), 1, "{errors:?}");
         let component = &found[0].manifest.components[0];
         assert_eq!(component.src, Some(ComponentSource::Model));
-        assert_eq!(component.extensions, ["vrm"]);
+        assert_eq!(component.label(), "3D model");
+        assert_eq!(component.extensions, ["glb"]);
         assert_eq!(component.aspect, Some(1.7777778));
         assert_eq!(component.drawn_props(), ["src", "x", "y", "width"]);
 
@@ -827,15 +831,15 @@ mod tests {
         assert_eq!(errors.len(), 4, "{errors:?}");
         assert_eq!(
             reason("bare"),
-            "component \"Vrm\" takes a model file but lists no extensions"
+            "component \"Model\" takes a model file but lists no extensions"
         );
         assert_eq!(
             reason("upper"),
-            "component \"Vrm\"'s extension \".VRM\" is not lowercase letters and digits"
+            "component \"Model\"'s extension \".GLB\" is not lowercase letters and digits"
         );
         assert_eq!(
             reason("image"),
-            "component \"Vrm\" lists extensions but does not take a model file"
+            "component \"Model\" lists extensions but does not take a model file"
         );
         assert!(reason("flat").contains("aspect"), "{}", reason("flat"));
     }

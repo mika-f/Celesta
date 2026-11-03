@@ -107,49 +107,49 @@ fn a_plugin_component_is_drawn_as_its_kind_and_written_with_its_import() {
 
 #[test]
 fn model_components_draw_as_images_and_check_the_file() {
-    let vrm = AddComponent {
-        plugin: "vrm".into(),
+    let model = AddComponent {
+        plugin: "scenes".into(),
         info: serde_json::from_value(serde_json::json!({
-            "name": "Vrm", "label": "VRM avatar", "src": "model",
-            "extensions": ["vrm"], "aspect": 1.7777778,
+            "name": "Model", "label": "3D model", "src": "model",
+            "extensions": ["glb"], "aspect": 1.7777778,
         }))
         .unwrap(),
     };
-    assert_eq!(vrm.kind(), NewKind::Image);
+    assert_eq!(model.kind(), NewKind::Image);
     assert_eq!(
-        refused_model_file(&vrm.info, Path::new("a/avatar.VRM")),
+        refused_model_file(&model.info, Path::new("a/scene.GLB")),
         None
     );
     assert_eq!(
-        refused_model_file(&vrm.info, Path::new("a/avatar.png")).as_deref(),
-        Some("Choose a .vrm file")
+        refused_model_file(&model.info, Path::new("a/scene.png")).as_deref(),
+        Some("Choose a .glb file")
     );
     assert_eq!(
-        refused_model_file(&vrm.info, Path::new("a/avatar")).as_deref(),
-        Some("Choose a .vrm file")
+        refused_model_file(&model.info, Path::new("a/scene")).as_deref(),
+        Some("Choose a .glb file")
     );
-    let mut several = vrm.info.clone();
-    several.extensions = vec!["vrm".into(), "glb".into(), "gltf".into()];
+    let mut several = model.info.clone();
+    several.extensions = vec!["glb".into(), "gltf".into(), "obj".into()];
     assert_eq!(
-        refused_model_file(&several, Path::new("a/avatar.png")).as_deref(),
-        Some("Choose a .vrm, .glb, or .gltf file")
+        refused_model_file(&several, Path::new("a/scene.png")).as_deref(),
+        Some("Choose a .glb, .gltf, or .obj file")
     );
     several.extensions.pop();
     assert_eq!(
-        refused_model_file(&several, Path::new("a/avatar.png")).as_deref(),
-        Some("Choose a .vrm or .glb file")
+        refused_model_file(&several, Path::new("a/scene.png")).as_deref(),
+        Some("Choose a .glb or .gltf file")
     );
 
     let drawn = NewElement::Image {
-        src: "./assets/a.vrm".into(),
+        src: "./assets/a.glb".into(),
         x: 10.0,
         y: 20.0,
         width: 960.0,
     };
     assert_eq!(
-        vrm.element(&drawn).attributes,
+        model.element(&drawn).attributes,
         [
-            ("src".to_owned(), EditValue::String("./assets/a.vrm".into())),
+            ("src".to_owned(), EditValue::String("./assets/a.glb".into())),
             ("x".to_owned(), EditValue::Number(10.0)),
             ("y".to_owned(), EditValue::Number(20.0)),
             ("width".to_owned(), EditValue::Number(960.0)),
