@@ -35,7 +35,7 @@
 //!   translation under their parent's current world.
 //! - **Hostile files.** A `.vrma` is read through the model's limits (the
 //!   file and its JSON); its key times must be finite and rise, its values
-//!   finite, its rotations of non-zero length; it keys at most
+//!   finite, its rotations of a non-zero, finite length; it keys at most
 //!   [`MAX_CHANNELS`] bones and expressions, and its channels hold at most
 //!   [`CLIP_BUDGET`] bytes of keys.
 
@@ -649,7 +649,9 @@ impl<'d> Reader<'_, 'd> {
 
     /// `channel`'s rotation keys made unit length (glTF asks for unit
     /// quaternions; files round them); `CUBICSPLINE`'s tangents are left as
-    /// they are. A key of length 0 is refused.
+    /// they are. A key of length 0 is refused, and so is one whose squared
+    /// length overflows `f32` (finite components past about 1e19), which
+    /// would normalize to 0.
     fn rotations(&self, mut channel: Channel<Quat>) -> Result<Channel<Quat>, LoadError> {
         let (start, step) = match channel.interpolation {
             Interpolation::CubicSpline => (1, 3),
@@ -657,9 +659,9 @@ impl<'d> Reader<'_, 'd> {
         };
         for rotation in channel.values.iter_mut().skip(start).step_by(step) {
             let length = rotation.length_squared();
-            if length == 0.0 {
+            if !(length > 0.0 && length.is_finite()) {
                 return Err(invalid(format_args!(
-                    "{} has a rotation of length 0",
+                    "{} has a rotation that cannot be made unit length",
                     self.at()
                 )));
             }
@@ -1037,17 +1039,29 @@ mod tests {
             message.contains("animation 0 sampler 2 has a translation that is not finite"),
             "{message}"
         );
-        let message = refusal(
-            &SyntheticVrma {
-                arm: vec![(0.0, Quat::from_xyzw(0.0, 0.0, 0.0, 0.0))],
-                ..SyntheticVrma::clip()
-            }
-            .glb(),
-        );
-        assert!(
-            message.contains("animation 0 sampler 0 has a rotation of length 0"),
-            "{message}"
-        );
+        let rotation = |key: Quat| {
+            refusal(
+                &SyntheticVrma {
+                    arm: vec![(0.0, key)],
+                    ..SyntheticVrma::clip()
+                }
+                .glb(),
+            )
+        };
+        // A key of length 0, and one whose components are finite but whose
+        // squared length overflows `f32`, which would normalize to 0.
+        for key in [
+            Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+            Quat::from_xyzw(1e20, 0.0, 0.0, 1e20),
+        ] {
+            let message = rotation(key);
+            assert!(
+                message.contains(
+                    "animation 0 sampler 0 has a rotation that cannot be made unit length"
+                ),
+                "{key}: {message}"
+            );
+        }
     }
 
     #[test]

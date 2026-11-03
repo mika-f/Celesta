@@ -54,8 +54,9 @@ Ported from `VrmAnimationImporter.cs`, `InitialRotationPoseProvider.cs`,
   with bones but no hips is refused. `duration` is the last key time over
   the channels read.
 - **Hostile clips.** Key times must be finite and rise, values finite,
-  rotations of non-zero length; two channels of one path on one node are
-  refused. A clip keys at most `MAX_CHANNELS` (1024) bones and expressions
+  rotations of a non-zero length whose square is finite (finite components
+  past about 1e19 overflow it and would normalize to 0); two channels of
+  one path on one node are refused. A clip keys at most `MAX_CHANNELS` (1024) bones and expressions
   and holds at most `CLIP_BUDGET` (256 MiB) of keys. A clip that moves the
   hips must rest them at least 1 mm up (its travel is divided by that
   height).
