@@ -16,6 +16,13 @@ publish = false
 name = "celesta-plugin-vrm"
 path = "src/main.rs"
 
+# Its own `main`: it sets an environment variable before any thread
+# exists (see the file).
+[[test]]
+name = "process"
+path = "tests/process.rs"
+harness = false
+
 [features]
 # The synthetic VRM builder (src/synthetic.rs) for tests outside the crate.
 synthetic = []

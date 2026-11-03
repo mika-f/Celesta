@@ -802,8 +802,10 @@ Besides MToon's list above, to check against UniVRM:
   plugin's custom material, with their expected pixels unchanged.
 - `tests/process.rs`: the built program and the provider in process answer
   the same contents, notices, and frames. It sets
-  `CELESTA_VRM_TEXTURE_CACHE` for the child with `set_var`, sound only
-  while it is that binary's one test.
+  `CELESTA_VRM_TEXTURE_CACHE` for the child with `set_var`, which is sound
+  only while no other thread reads the environment, so the file has no
+  test harness (`harness = false`): its `main` sets the variable before
+  any thread exists.
 - `tests/render.rs`: the synthetic avatar drawn at 480×270 (a 1920×1080
   layer at density 0.25): the box's middle opaque, a corner clear, frames
   repeating, and `happy` changing a pixel.

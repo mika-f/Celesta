@@ -1,6 +1,13 @@
 //! The VRM plugin as Celesta runs it: the plugin host finds it through a
 //! plugin directory, starts its process, and gets the same answers as the
 //! provider gives in-process.
+//!
+//! The child finds its texture cache by the variable it inherits, which
+//! only `set_var` can give it: the host passes a plugin no environment of
+//! its own. `set_var` is sound only while no other thread reads the
+//! environment, so this file has no test harness (`harness = false` in
+//! `Cargo.toml`): `main` sets the variable before any thread exists, then
+//! runs the check. A failed check panics, which fails the test.
 
 use celesta_plugin::{
     ContentFrame, ContentModel, ContentProvider, PROTOCOL_VERSION, TextureSource,
@@ -35,23 +42,27 @@ fn plugin_directory() -> tempfile::TempDir {
     directory
 }
 
-#[test]
-fn the_process_answers_as_the_provider_does() {
-    let files = tempfile::tempdir().unwrap();
-    let path = files.path().join("avatar.vrm");
-    std::fs::write(&path, SyntheticVrm::avatar().glb()).unwrap();
-    let assets: BTreeMap<String, PathBuf> = [("model".to_owned(), path)].into();
+fn main() {
     // Both write textures to one fresh cache, never the user's: the
     // process by the variable it inherits, the provider by being told.
     // The scenes name the files, so they must be in the same place.
     let cache = tempfile::tempdir().unwrap();
-    // SAFETY: this binary's only test sets it before starting the process,
-    // and no other thread reads the environment.
+    // SAFETY: without a test harness, `main` is the only thread, so
+    // nothing reads the environment while it is set.
     unsafe { std::env::set_var("CELESTA_VRM_TEXTURE_CACHE", cache.path()) };
+    the_process_answers_as_the_provider_does(cache.path());
+    println!("test the_process_answers_as_the_provider_does ... ok");
+}
+
+fn the_process_answers_as_the_provider_does(cache: &Path) {
+    let files = tempfile::tempdir().unwrap();
+    let path = files.path().join("avatar.vrm");
+    std::fs::write(&path, SyntheticVrm::avatar().glb()).unwrap();
+    let assets: BTreeMap<String, PathBuf> = [("model".to_owned(), path)].into();
 
     let directory = plugin_directory();
     let mut host = PluginHost::discover(&[directory.path().to_path_buf()]);
-    let mut provider = VrmProvider::with_texture_cache(cache.path());
+    let mut provider = VrmProvider::with_texture_cache(cache);
     let remote = host.open(PLUGIN, &assets).unwrap();
     let local = provider.open(PLUGIN, &assets).unwrap();
     assert!(
@@ -67,7 +78,7 @@ fn the_process_answers_as_the_provider_does() {
         let TextureSource::Path(path) = &texture.source else {
             panic!("a VRM texture is a file: {:?}", texture.source);
         };
-        assert!(path.starts_with(cache.path()), "{}", path.display());
+        assert!(path.starts_with(cache), "{}", path.display());
     }
     assert_eq!(remote.notices, local.notices);
     assert!(!remote.notices.is_empty());
