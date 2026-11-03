@@ -9,8 +9,9 @@ exporter and the editor show.
 
 This is the first phase of the design in
 `docs/superpowers/specs/2026-11-03-plugin-3d-content-vrm-design.md`: the
-protocol, the 3D pass with unlit materials, notices, and a sample. MToon
-and lit shading, outlines, and the VRM plugin come later. The plugin system
+protocol, the 3D pass with unlit materials, notices, and a sample. MToon,
+lights, and outlines landed next, in `2026-11-03-plugin-scene-mtoon.md`;
+the VRM plugin comes later. The plugin system
 itself (manifest, process, protocol framing, 2D meshes) is
 `2026-11-01-plugin-system.md`.
 
@@ -52,10 +53,10 @@ A model (`SceneModel`, sent once per opened asset set):
 - `skins`: each skin's joint count. The plugin keeps the inverse bind
   matrices and sends final skinning matrices each frame.
 - `materials`: `alphaMode` (`opaque`, `mask` with `alphaCutoff`, `blend`),
-  `doubleSided`, and a `kind` with its parameters. The only kind so far is
-  `unlit`: `baseColor` times the optional `baseColorTexture`
-  (`{ texture, transform? }`, the transform as `KHR_texture_transform`:
-  scaled, rotated, then offset).
+  `doubleSided`, and a `kind` with its parameters: `unlit`, `baseColor`
+  times the optional `baseColorTexture` (`{ texture, transform? }`, the
+  transform as `KHR_texture_transform`: scaled, rotated, then offset), or
+  `mtoon`, VRM's toon shading (`2026-11-03-plugin-scene-mtoon.md`).
 - `draws`: what can be drawn, each a `geometry` with a `material`, and a
   `skin` when the geometry is skinned. Draws are what frames place and what
   Celesta sorts.
@@ -68,15 +69,16 @@ A frame (`SceneFrame`, per request):
 - `lights`: `directional` lights (`direction` they travel, `color`,
   `intensity`; the first is the main light) and `ambient` as nine spherical
   harmonics coefficients per channel, in Unity's `ShadeSH9` order and scale.
-  Checked, but not used by any shading yet.
-- `time`: seconds, meant for materials that animate their texture
-  coordinates. Checked, but not used yet.
+  MToon materials shade with them; unlit ones ignore them. At most 4
+  directional lights (`2026-11-03-plugin-scene-mtoon.md`).
+- `time`: seconds, which MToon's UV animation follows.
 - `draws`: the draws to place, in any order. Each has its `index`,
   `visible`, `world`, one morph weight per target of its geometry, an
   optional `center` (the world-space point a blended draw is sorted by),
-  and `overrides` (`baseColor`, `textureOffset`, `textureScale`) replacing
-  its material's values for this frame. A draw the frame does not list is
-  not drawn.
+  and `overrides` (`baseColor`, `textureOffset`, `textureScale`, and
+  MToon's `shadeColor`, `emissionColor`, `matcapColor`, `rimColor`, and
+  `outlineColor`) replacing its material's values for this frame. A draw
+  the frame does not list is not drawn.
 - `skins`: each skin's skinning matrices, one per joint: the joint's world
   matrix times its inverse bind matrix.
 
@@ -103,8 +105,9 @@ the identity as `world` for a glTF skinned mesh.
   skinning matrices per skin as joints, finite numbers, and a camera that
   sees something (`0 < near < far`, a `yfov` between 0 and π or a positive
   `height`, an invertible `view`), and its buffers (skinning matrices and
-  morph weights, and the per-draw skinning and draw uniforms, 256 bytes a
-  draw each on most GPUs) must each fit the largest buffer the GPU allows.
+  morph weights, and the per-draw skinning and draw uniforms, each a
+  draw's aligned to the GPU's uniform offset alignment) must each fit the
+  largest buffer the GPU allows.
   Anything else is `InvalidPluginContent`. A model that fails to load is
   closed again.
 - **Uploaded once.** Geometries and textures go to the GPU when the model
@@ -115,13 +118,18 @@ the identity as `world` for a glTF skinned mesh.
   and tangents follow the matrices' upper 3×3 and are renormalised.
 - **Drawn in UniVRM's order.** Draws go by their material's render queue:
   opaque (2000), then mask (2450), then blend (3000). Blended draws go
-  farthest first, by the view-space depth of their `center`, or else of
-  their geometry's rest-bounds centre moved by `world`; ties go by draw
-  index. Hidden draws and draws without triangles are skipped.
+  farthest first, by their `center`, or else their geometry's rest-bounds
+  centre moved by `world`; ties go by draw index. Hidden draws and draws
+  without triangles are skipped. MToon's queue offsets and
+  `transparentWithZWrite`, and the farthest-first order (by distance from
+  the eye through a perspective camera, by view-space depth through an
+  orthographic one), are in `2026-11-03-plugin-scene-mtoon.md`.
 - **Depth and anti-aliasing.** The canvas is 4× multisampled linear,
   premultiplied `Rgba16Float` with `Depth32Float` depth, cleared to
   transparent black and to 1. Opaque and mask draws write depth; blend
-  draws test it but do not write it. Back faces are culled unless the
+  draws test it but do not write it, unless an MToon material sets
+  `transparentWithZWrite`. Depth is tested with `LessEqual`, so of two
+  exactly coplanar draws the later shows. Back faces are culled unless the
   material is double-sided, and a `world` that mirrors flips which winding
   is front.
 - **Alpha modes.** Opaque ignores alpha. Mask turns alpha into sample
@@ -211,7 +219,8 @@ member) is a program and a component, built by `build.mjs` like `flag`.
 +Y by `speed` turns a second (default 0.5), a half-transparent blue pane in
 front of it (`blend`), and a leaf cut out of a square (`mask`, its stem in
 the cube). It takes no assets; its geometry and textures are made in code
-(inline RGBA). It returns no notices.
+(inline RGBA). It returns no notices. The cube is now toon-shaded,
+outlined, and lit (`2026-11-03-plugin-scene-mtoon.md`).
 
 ## What landed
 
@@ -231,19 +240,20 @@ the cube). It takes no assets; its geometry and textures are made in code
 
 Not done:
 
-- **MToon and lit shading.** `MaterialKind` has only `unlit`; the MToon
-  and PBR kinds of the design come later.
-- **Lights are not used.** `SceneFrame::lights` is checked and sent, but no
-  shading reads it. `SceneFrame::time` is likewise unused.
-- **Outlines** (MToon's), which need their own pass.
-- **Normals are not transformed by `world`.** Skinning moves normals and
-  tangents, but the draw pass applies `world` to positions only; lighting
-  will need normals in world space.
-- **Per-frame GPU resources are not cached.** Each frame makes its own
-  canvases (multisampled color and depth, the resolved color, the layer
-  texture), its buffers of skinning matrices, morph weights, and uniforms,
-  and their bind groups. Only the model's buffers (its vertex streams and
-  what each draw is skinned into) and textures outlive a frame.
+- **MToon and lit shading.** Done for MToon in
+  `2026-11-03-plugin-scene-mtoon.md`; glTF PBR is still to come.
+- **Lights are not used.** Done: MToon shades with
+  `SceneFrame::lights`, and its UV animation follows `SceneFrame::time`
+  (`2026-11-03-plugin-scene-mtoon.md`).
+- **Outlines** (MToon's). Done in `2026-11-03-plugin-scene-mtoon.md`.
+- **Normals are not transformed by `world`.** Done: the draw pass takes
+  normals to world space by `world`'s signed cofactor matrix
+  (`2026-11-03-plugin-scene-mtoon.md`).
+- **Per-frame GPU resources are not cached.** Done for the canvases
+  (multisampled color and depth, the resolved color), the buffers of
+  skinning matrices, morph weights, and uniforms, and their bind groups,
+  which `SceneFrameResources` keeps (`2026-11-03-plugin-scene-mtoon.md`).
+  The layer texture is still made each frame.
 - **No Add-menu entry for `<Turntable>`.** Its `plugin.json` lists no
   `components`.
 - **The CPU renderer and `@celesta/web`** refuse plugin content, scenes
@@ -253,9 +263,9 @@ Not done:
   `content`, no notices) and `frame` returns `ContentFrame` (its
   `MeshFrame` with `.into()`). Its process's answers need no change.
 - **Blend draws sort by view-space z,** not by distance to the camera as
-  Unity does; the two differ for draws off the view axis. Parity is for
-  phase 2; the VRM plugin should send `center` for skinned draws, whose
-  rest bounds do not follow the pose.
+  Unity does. Done: through a perspective camera they now sort by distance
+  (`2026-11-03-plugin-scene-mtoon.md`). The VRM plugin should still send
+  `center` for skinned draws, whose rest bounds do not follow the pose.
 - **Joint indices in zero-weight slots count** toward the check that a
   skin has every joint its geometry names. The VRM plugin should zero
   them.

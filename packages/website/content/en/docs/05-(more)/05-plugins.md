@@ -105,7 +105,7 @@ The repository's `examples/plugins` has three plugins to start from:
 | Plugin | What it shows |
 | --- | --- |
 | `flag` | A layer drawn by a plugin program: an image waving like a flag, as textured meshes Celesta draws. |
-| `turntable` | A layer drawn in 3D by a plugin program: a checkered cube turning on a turntable, with a see-through pane and a cut-out leaf, as a scene Celesta draws with depth. |
+| `turntable` | A layer drawn in 3D by a plugin program: a checkered cube turning on a turntable, toon-shaded under a light and outlined, with a see-through pane and a cut-out leaf, as a scene Celesta draws with depth. |
 | `beep-voice` | A plugin with only components: a speech channel that voices `planDialogue()` lines in game-style beeps instead of a speech engine, with lip sync. |
 
 ```sh
@@ -119,7 +119,7 @@ cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx tur
 A plugin has up to two parts, in any language:
 
 - **Components** (`module` and `types` in the manifest): an ES module and its declarations. Celesta bundles the module into the entry, and its `react` and `@celesta/*` imports use the app's own. A speech channel needs nothing else: it runs in `prepare()` like `@celesta/voicevox` and returns lines with `audio` and `lipSync`.
-- **A program** (`executable`, one per platform): it reads requests on standard input and answers on standard output. For a layer it returns, for a given time, either 2D textured triangle meshes with their colors, masks, and blending, or a 3D scene: skinned, morphing triangle geometry with materials, seen through a camera it places. Celesta draws them; scenes get depth, anti-aliasing, and opaque, cut-out, and see-through materials, for now unlit. When it opens a model, the program can also return notices, such as the model's terms of use, which Celesta shows as above. Rust programs can use the `celesta-plugin` crate; the protocol itself is plain length-prefixed JSON.
+- **A program** (`executable`, one per platform): it reads requests on standard input and answers on standard output. For a layer it returns, for a given time, either 2D textured triangle meshes with their colors, masks, and blending, or a 3D scene: skinned, morphing triangle geometry with materials, seen through a camera it places. Celesta draws them; scenes get depth, anti-aliasing, and opaque, cut-out, and see-through materials, either unlit or in MToon, the toon shading VRM models use, which is shaded by the directional lights and ambient light the program sends and can have outlines. Each frame can also change a material's colors, as a model's material animation does. When it opens a model, the program can also return notices, such as the model's terms of use, which Celesta shows as above. Rust programs can use the `celesta-plugin` crate; the protocol itself is plain length-prefixed JSON.
 
 To offer components in the desktop app's Add menu, list them in the manifest's `components`:
 
@@ -133,4 +133,4 @@ To offer components in the desktop app's Add menu, list them in the manifest's `
 
 A plugin's id uses lowercase letters, digits, `-`, `_`, and `.`, and starts with a letter or digit. Every file its manifest names is a relative path inside the plugin's folder, without `..` and without a link that leads out of it. Celesta skips a plugin that breaks these rules, or has a component that breaks the rules above, and says why.
 
-The samples' READMEs walk through both parts. The repository's `docs/handoff/2026-11-01-plugin-system.md` describes the manifest and the protocol, the `docs/handoff/2026-11-02-plugin-*.md` notes describe what came later (such as `components`), and `docs/handoff/2026-11-03-plugin-scene-content.md` describes 3D scenes and notices.
+The samples' READMEs walk through both parts. The repository's `docs/handoff/2026-11-01-plugin-system.md` describes the manifest and the protocol, the `docs/handoff/2026-11-02-plugin-*.md` notes describe what came later (such as `components`), `docs/handoff/2026-11-03-plugin-scene-content.md` describes 3D scenes and notices, and `docs/handoff/2026-11-03-plugin-scene-mtoon.md` describes MToon materials, lights, and outlines.
