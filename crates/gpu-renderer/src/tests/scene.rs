@@ -2125,6 +2125,37 @@ fn material_fragment(fragment: Fragment) -> vec4f { return nope; }";
     assert_eq!(compiles(&renderer), 1);
 }
 
+#[test]
+fn material_shaders_of_other_slot_counts_compile_apart() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    // The same WGSL with one slot and with two: two shaders, each bound
+    // through its own layout. The first draws red on the left, the second
+    // green on the right.
+    let mut scenes = one_square();
+    scenes.model.shaders = vec![
+        shader(FLAT, &[EmptyTexel::White]),
+        shader(FLAT, &[EmptyTexel::White; 2]),
+    ];
+    scenes.model.materials = vec![custom(0, bytes(&FLAT_RED)), custom(1, bytes(&FLAT_GREEN))];
+    scenes.model.draws.push(DrawInfo {
+        geometry: 0,
+        material: 1,
+        skin: None,
+    });
+    let mut right = scenes.frame.draws[0].clone();
+    right.index = 1;
+    right.world = translation(0.5, 0.0, 0.0);
+    scenes.frame.draws[0].world = translation(-0.5, 0.0, 0.0);
+    scenes.frame.draws.push(right);
+    renderer.renderer = renderer.renderer.with_content_provider(scenes);
+    let frame = renderer.render(&scene()).unwrap();
+    assert_pixel(&frame, 16, 32, RED);
+    assert_pixel(&frame, 48, 32, GREEN);
+    assert_eq!(pipelines(&mut renderer).compiles, 2);
+}
+
 /// The renderer's scene pipelines, once a scene was opened.
 fn pipelines(renderer: &mut TestRenderer) -> &mut ScenePipelines {
     renderer
