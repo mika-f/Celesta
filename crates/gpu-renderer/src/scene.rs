@@ -374,7 +374,7 @@ impl PipelineKey {
                 },
                 clockwise,
             },
-            alpha: Alpha::of(material),
+            alpha: Alpha::of(&material.alpha_mode),
         }
     }
 
@@ -393,7 +393,7 @@ impl PipelineKey {
                         cull: Cull::Front,
                         clockwise,
                     },
-                    alpha: Alpha::of(material),
+                    alpha: Alpha::of(&material.alpha_mode),
                 })
             }
             MaterialKind::Mtoon(_) | MaterialKind::Unlit(_) => None,
@@ -411,7 +411,7 @@ impl PipelineKey {
                 match self.alpha {
                     Alpha::Opaque => "fs_outline_opaque",
                     Alpha::Mask => "fs_outline_mask",
-                    Alpha::BlendZWrite | Alpha::Blend => "fs_outline_blend",
+                    Alpha::BlendDepthWrite | Alpha::Blend => "fs_outline_blend",
                 },
             ),
         }
@@ -425,24 +425,25 @@ enum Alpha {
     Opaque,
     /// Coverage from the alpha against the cutoff, depth written.
     Mask,
-    /// Blended by alpha over what is drawn, depth written: an MToon
-    /// material's `transparentWithZWrite`.
-    BlendZWrite,
+    /// Blended by alpha over what is drawn, depth written: a blend with
+    /// `depth_write`.
+    BlendDepthWrite,
     /// Blended by alpha over what is drawn, depth tested but not written.
     Blend,
 }
 
 impl Alpha {
-    /// `material`'s alpha mode; a blended MToon material with
-    /// `transparentWithZWrite` writes depth.
-    fn of(material: &Material) -> Self {
-        match (material.alpha_mode, &material.kind) {
-            (AlphaMode::Opaque, _) => Self::Opaque,
-            (AlphaMode::Mask { .. }, _) => Self::Mask,
-            (AlphaMode::Blend, MaterialKind::Mtoon(mtoon)) if mtoon.transparent_with_z_write => {
-                Self::BlendZWrite
-            }
-            (AlphaMode::Blend, _) => Self::Blend,
+    /// How `alpha_mode` is drawn.
+    fn of(alpha_mode: &AlphaMode) -> Self {
+        match *alpha_mode {
+            AlphaMode::Opaque => Self::Opaque,
+            AlphaMode::Mask { .. } => Self::Mask,
+            AlphaMode::Blend {
+                depth_write: true, ..
+            } => Self::BlendDepthWrite,
+            AlphaMode::Blend {
+                depth_write: false, ..
+            } => Self::Blend,
         }
     }
 
@@ -452,7 +453,7 @@ impl Alpha {
         match self {
             Self::Opaque => 2000,
             Self::Mask => 2450,
-            Self::BlendZWrite => 2501,
+            Self::BlendDepthWrite => 2501,
             Self::Blend => 3000,
         }
     }
@@ -462,10 +463,10 @@ impl Alpha {
         match (shading, self) {
             (Shading::Unlit, Self::Opaque) => "fs_opaque",
             (Shading::Unlit, Self::Mask) => "fs_mask",
-            (Shading::Unlit, Self::BlendZWrite | Self::Blend) => "fs_blend",
+            (Shading::Unlit, Self::BlendDepthWrite | Self::Blend) => "fs_blend",
             (Shading::Mtoon, Self::Opaque) => "fs_mtoon_opaque",
             (Shading::Mtoon, Self::Mask) => "fs_mtoon_mask",
-            (Shading::Mtoon, Self::BlendZWrite | Self::Blend) => "fs_mtoon_blend",
+            (Shading::Mtoon, Self::BlendDepthWrite | Self::Blend) => "fs_mtoon_blend",
         }
     }
 
@@ -476,7 +477,7 @@ impl Alpha {
     /// Straight color over the canvas's premultiplied color, as Unity
     /// blends it; alpha accumulates as coverage.
     fn blend(self) -> Option<wgpu::BlendState> {
-        matches!(self, Self::Blend | Self::BlendZWrite).then_some(wgpu::BlendState {
+        matches!(self, Self::Blend | Self::BlendDepthWrite).then_some(wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::SrcAlpha,
                 dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
@@ -491,19 +492,21 @@ impl Alpha {
     }
 }
 
-/// `material`'s render queue, as UniVRM's `MToonValidator` sets it: 2000
-/// opaque, 2450 mask, 3000 blend. A blended MToon material moves by its
-/// `renderQueueOffsetNumber`, to 2501 to 2510 with `transparentWithZWrite`
-/// and 2991 to 3000 without; other materials have no offset.
-fn render_queue(material: &Material) -> u32 {
-    let alpha = Alpha::of(material);
-    let offset = match &material.kind {
-        MaterialKind::Mtoon(mtoon) => match alpha {
-            Alpha::BlendZWrite => mtoon.render_queue_offset_number.clamp(0, 9),
-            Alpha::Blend => mtoon.render_queue_offset_number.clamp(-9, 0),
-            Alpha::Opaque | Alpha::Mask => 0,
-        },
-        MaterialKind::Unlit(_) => 0,
+/// `alpha_mode`'s render queue, as UniVRM's `MToonValidator` sets it: 2000
+/// opaque, 2450 mask, 3000 blend. A blend moves by its `queue_offset`, to
+/// 2501 to 2510 with `depth_write` and 2991 to 3000 without.
+fn render_queue(alpha_mode: &AlphaMode) -> u32 {
+    let alpha = Alpha::of(alpha_mode);
+    let offset = match *alpha_mode {
+        AlphaMode::Blend {
+            depth_write: true,
+            queue_offset,
+        } => queue_offset.clamp(0, 9),
+        AlphaMode::Blend {
+            depth_write: false,
+            queue_offset,
+        } => queue_offset.clamp(-9, 0),
+        AlphaMode::Opaque | AlphaMode::Mask { .. } => 0,
     };
     alpha.queue().saturating_add_signed(offset)
 }
@@ -2145,7 +2148,7 @@ fn draw_queue<'a>(scene: &LoadedScene, frame: &'a SceneFrame) -> Vec<&'a DrawSta
             if !state.visible || geometry.index_count == 0 {
                 return None;
             }
-            let queue = render_queue(&scene.model.materials[info.material]);
+            let queue = render_queue(&scene.model.materials[info.material].alpha_mode);
             // Lower draws first.
             let order = if queue >= TRANSPARENT_QUEUES {
                 let center = state
@@ -2231,7 +2234,7 @@ fn draw_uniform(
     let (sin, cos) = rotation.sin_cos();
     let cutoff = match material.alpha_mode {
         AlphaMode::Mask { cutoff } => cutoff,
-        AlphaMode::Opaque | AlphaMode::Blend => 0.0,
+        AlphaMode::Opaque | AlphaMode::Blend { .. } => 0.0,
     };
     let uniform = DrawUniform {
         world: state.world,
@@ -2722,48 +2725,26 @@ mod tests {
 
     #[test]
     fn render_queue_clamps_and_ignores_offsets() {
-        let mtoon = |alpha_mode, z_write, offset| Material {
-            alpha_mode,
-            double_sided: false,
-            kind: MaterialKind::Mtoon(MtoonMaterial {
-                transparent_with_z_write: z_write,
-                render_queue_offset_number: offset,
-                ..MtoonMaterial::default()
-            }),
+        let blend = |depth_write, queue_offset| AlphaMode::Blend {
+            depth_write,
+            queue_offset,
         };
-        let unlit = |alpha_mode| Material {
-            alpha_mode,
-            double_sided: false,
-            kind: MaterialKind::Unlit(celesta_plugin::UnlitMaterial {
-                base_color: [1.0; 4],
-                base_color_texture: None,
-            }),
-        };
-        let (opaque, mask, blend) = (
-            AlphaMode::Opaque,
-            AlphaMode::Mask { cutoff: 0.5 },
-            AlphaMode::Blend,
-        );
         let cases = [
-            (mtoon(blend, false, 5), Alpha::Blend, 3000),
-            (mtoon(blend, false, -3), Alpha::Blend, 2997),
-            (mtoon(blend, false, -20), Alpha::Blend, 2991),
-            (mtoon(blend, false, i32::MIN), Alpha::Blend, 2991),
-            (mtoon(blend, true, -3), Alpha::BlendZWrite, 2501),
-            (mtoon(blend, true, 4), Alpha::BlendZWrite, 2505),
-            (mtoon(blend, true, 600), Alpha::BlendZWrite, 2510),
-            (mtoon(blend, true, i32::MAX), Alpha::BlendZWrite, 2510),
-            (mtoon(mask, false, -5), Alpha::Mask, 2450),
-            (mtoon(mask, true, 5), Alpha::Mask, 2450),
-            (mtoon(opaque, false, 7), Alpha::Opaque, 2000),
-            (mtoon(opaque, true, -7), Alpha::Opaque, 2000),
-            (unlit(blend), Alpha::Blend, 3000),
-            (unlit(mask), Alpha::Mask, 2450),
-            (unlit(opaque), Alpha::Opaque, 2000),
+            (blend(false, 5), Alpha::Blend, 3000),
+            (blend(false, -3), Alpha::Blend, 2997),
+            (blend(false, -20), Alpha::Blend, 2991),
+            (blend(false, i32::MIN), Alpha::Blend, 2991),
+            (blend(true, -3), Alpha::BlendDepthWrite, 2501),
+            (blend(true, 4), Alpha::BlendDepthWrite, 2505),
+            (blend(true, 600), Alpha::BlendDepthWrite, 2510),
+            (blend(true, i32::MAX), Alpha::BlendDepthWrite, 2510),
+            (AlphaMode::BLEND, Alpha::Blend, 3000),
+            (AlphaMode::Mask { cutoff: 0.5 }, Alpha::Mask, 2450),
+            (AlphaMode::Opaque, Alpha::Opaque, 2000),
         ];
-        for (case, (material, alpha, queue)) in cases.into_iter().enumerate() {
+        for (case, (alpha_mode, alpha, queue)) in cases.into_iter().enumerate() {
             assert_eq!(
-                (Alpha::of(&material), render_queue(&material)),
+                (Alpha::of(&alpha_mode), render_queue(&alpha_mode)),
                 (alpha, queue),
                 "case {case}"
             );

@@ -325,7 +325,7 @@ fn fs_mtoon_blend(
     let color = mtoon_color(surface, false);
     let alpha = clamp(surface.lit.a, 0.0, 1.0);
     // UniVRM discards alpha below 2^−10 (vrm-c/UniVRM#2598), so that a
-    // clear pixel of a `transparentWithZWrite` material writes no depth.
+    // clear pixel of a blend writing depth writes none.
     if alpha < 0.0009765625 {
         discard;
     }

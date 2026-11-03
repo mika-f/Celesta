@@ -733,7 +733,7 @@ fn mask_cuts_at_cutoff() {
 /// An unlit, single-sided material of `color` blended by its alpha.
 fn blended(color: [f32; 4]) -> Material {
     Material {
-        alpha_mode: AlphaMode::Blend,
+        alpha_mode: AlphaMode::BLEND,
         ..plain(color)
     }
 }
@@ -2044,24 +2044,21 @@ fn surface_uv_animation_scroll_wraps_only_where_whole_textures_vanish() {
     assert_top_left(scenes, GREEN);
 }
 
-/// An MToon material blended by `alpha`, black but for its `emissive`
-/// color: under no light, its color is its emission. `z_write` is its
-/// `transparentWithZWrite`, `offset` its render queue offset.
-fn glowing(emissive: [f32; 3], alpha: f32, z_write: bool, offset: i32) -> Material {
+/// An unlit, single-sided material of `color` blended by `alpha`, writing
+/// depth or not, moved by `queue_offset` within its render queue.
+fn see_through(color: [f32; 3], alpha: f32, depth_write: bool, queue_offset: i32) -> Material {
+    let [r, g, b] = color;
     Material {
-        alpha_mode: AlphaMode::Blend,
-        ..toon(MtoonMaterial {
-            base_color: [0.0, 0.0, 0.0, alpha],
-            emissive_factor: emissive,
-            transparent_with_z_write: z_write,
-            render_queue_offset_number: offset,
-            ..black_toon()
-        })
+        alpha_mode: AlphaMode::Blend {
+            depth_write,
+            queue_offset,
+        },
+        ..plain([r, g, b, alpha])
     }
 }
 
-const GLOW_RED: [f32; 3] = [1.0, 0.0, 0.0];
-const GLOW_BLUE: [f32; 3] = [0.0, 0.0, 1.0];
+const SEE_RED: [f32; 3] = [1.0, 0.0, 0.0];
+const SEE_BLUE: [f32; 3] = [0.0, 0.0, 1.0];
 
 /// `red_over_blue`'s squares drawn with `red` (draw 0, at z = 0) and `blue`
 /// (draw 1, 1 m behind it).
@@ -2080,8 +2077,8 @@ const HALF_BLUE: [u8; 4] = [0, 0, 128, 128];
 fn queue_offsets_order_blend_draws_before_distance() {
     let scenes = |red_offset| {
         front_and_back(
-            glowing(GLOW_RED, 0.5, false, red_offset),
-            glowing(GLOW_BLUE, 0.5, false, 0),
+            see_through(SEE_RED, 0.5, false, red_offset),
+            see_through(SEE_BLUE, 0.5, false, 0),
         )
     };
     // Both at 3000: blue, farther, first.
@@ -2091,20 +2088,20 @@ fn queue_offsets_order_blend_draws_before_distance() {
 }
 
 #[test]
-fn queue_zwrite_blend_draws_first_and_hides_what_is_behind() {
+fn queue_depth_write_blend_draws_first_and_hides_what_is_behind() {
     // Red at 2501 writes its depth before blue at 3000 draws behind it.
     assert_centre(
         front_and_back(
-            glowing(GLOW_RED, 0.5, true, 0),
-            glowing(GLOW_BLUE, 0.5, false, 0),
+            see_through(SEE_RED, 0.5, true, 0),
+            see_through(SEE_BLUE, 0.5, false, 0),
         ),
         HALF_RED,
     );
     // Offsets out of range clamp, to 2510 and 2991: red still first.
     assert_centre(
         front_and_back(
-            glowing(GLOW_RED, 0.5, true, 20),
-            glowing(GLOW_BLUE, 0.5, false, -20),
+            see_through(SEE_RED, 0.5, true, 20),
+            see_through(SEE_BLUE, 0.5, false, -20),
         ),
         HALF_RED,
     );
@@ -2112,11 +2109,11 @@ fn queue_zwrite_blend_draws_first_and_hides_what_is_behind() {
 
 #[test]
 fn queue_discards_nearly_clear_blend_pixels() {
-    // A clear z-written square writes no depth: blue shows through it.
+    // A clear depth-writing square writes no depth: blue shows through it.
     assert_centre(
         front_and_back(
-            glowing(GLOW_RED, 0.0, true, 0),
-            glowing(GLOW_BLUE, 0.5, false, 0),
+            see_through(SEE_RED, 0.0, true, 0),
+            see_through(SEE_BLUE, 0.5, false, 0),
         ),
         HALF_BLUE,
     );
@@ -2128,8 +2125,8 @@ fn queue_discards_nearly_clear_blend_pixels() {
 /// the centre.
 fn near_and_far(projection: Projection) -> Scenes {
     let mut scenes = front_and_back(
-        glowing(GLOW_RED, 0.5, false, 0),
-        glowing(GLOW_BLUE, 0.5, false, 0),
+        see_through(SEE_RED, 0.5, false, 0),
+        see_through(SEE_BLUE, 0.5, false, 0),
     );
     scenes.frame.camera = Camera {
         view: IDENTITY,
@@ -2609,15 +2606,18 @@ fn outline_none_draws_nothing() {
 #[test]
 fn outline_every_alpha_side_and_mode_draws() {
     // One MToon material for each alpha mode (opaque, mask, blend, and
-    // blend with `transparentWithZWrite`), side (single, double), and
-    // outline mode (none, world, screen), each drawing the shell, every
-    // other draw mirrored: opening the model makes every surface and
-    // outline pipeline in both windings, and the frame draws with both.
+    // blend writing depth), side (single, double), and outline mode (none,
+    // world, screen), each drawing the shell, every other draw mirrored:
+    // opening the model makes every surface and outline pipeline in both
+    // windings, and the frame draws with both.
     let alphas = [
-        (AlphaMode::Opaque, false),
-        (AlphaMode::Mask { cutoff: 0.5 }, false),
-        (AlphaMode::Blend, false),
-        (AlphaMode::Blend, true),
+        AlphaMode::Opaque,
+        AlphaMode::Mask { cutoff: 0.5 },
+        AlphaMode::BLEND,
+        AlphaMode::Blend {
+            depth_write: true,
+            queue_offset: 0,
+        },
     ];
     let outlines = [
         (OutlineWidthMode::None, 0.0),
@@ -2625,16 +2625,13 @@ fn outline_every_alpha_side_and_mode_draws() {
         (OutlineWidthMode::ScreenCoordinates, FOUR_PX_OF_SCREEN),
     ];
     let mut materials = Vec::new();
-    for (alpha_mode, z_write) in alphas {
+    for alpha_mode in alphas {
         for double_sided in [false, true] {
             for (mode, width) in outlines {
                 materials.push(Material {
                     alpha_mode,
                     double_sided,
-                    kind: MaterialKind::Mtoon(MtoonMaterial {
-                        transparent_with_z_write: z_write,
-                        ..outlined(mode, width)
-                    }),
+                    kind: MaterialKind::Mtoon(outlined(mode, width)),
                 });
             }
         }
@@ -2693,7 +2690,7 @@ fn outline_uses_the_material_blend() {
         base_color: [0.0, 0.0, 0.0, 0.5],
         ..outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES)
     });
-    material.alpha_mode = AlphaMode::Blend;
+    material.alpha_mode = AlphaMode::BLEND;
     let mut scenes = shell_scene(black_toon(), vec![]);
     scenes.model.materials = vec![material];
     let Some(frame) = render_scenes(scenes) else {

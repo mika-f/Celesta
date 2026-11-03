@@ -1228,7 +1228,7 @@ mod tests {
                     }),
                 ),
                 unlit(
-                    AlphaMode::Blend,
+                    AlphaMode::BLEND,
                     Some(TextureRef {
                         texture: 1,
                         transform: None,
@@ -1352,7 +1352,10 @@ mod tests {
     fn mtoon_material() -> Material {
         let slot = |texture| Some(TextureSlot { texture });
         Material {
-            alpha_mode: AlphaMode::Mask { cutoff: 0.25 },
+            alpha_mode: AlphaMode::Blend {
+                depth_write: true,
+                queue_offset: 7,
+            },
             double_sided: true,
             kind: MaterialKind::Mtoon(MtoonMaterial {
                 base_color: [0.9, 0.8, 0.7, 0.6],
@@ -1370,8 +1373,6 @@ mod tests {
                 }),
                 emissive_factor: [2.0, 1.5, 0.0],
                 emissive_texture: slot(0),
-                transparent_with_z_write: true,
-                render_queue_offset_number: 7,
                 shade_color_factor: [0.5, 0.4, 0.3],
                 shade_multiply_texture: slot(0),
                 shading_shift_factor: 0.1,

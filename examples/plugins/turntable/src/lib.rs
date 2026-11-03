@@ -334,7 +334,7 @@ fn model() -> SceneModel {
         materials: vec![
             toon(),
             // Linear blue at half alpha, blended over what is behind.
-            unlit(AlphaMode::Blend, false, [0.1, 0.3, 1.0, 0.5]),
+            unlit(AlphaMode::BLEND, false, [0.1, 0.3, 1.0, 0.5]),
             textured(unlit(AlphaMode::Mask { cutoff: 0.5 }, true, [1.0; 4]), 1),
         ],
         // CUBE, PANE, LEAF.

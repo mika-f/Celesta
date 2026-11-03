@@ -135,6 +135,14 @@ pub struct Material {
 
 /// How a material's alpha is used, as in glTF: ignored, cut off below
 /// `cutoff`, or blended over what is behind.
+///
+/// A blended draw is in Unity's render queue 3000 moved by `queue_offset`
+/// clamped to −9..0, after the opaque (2000) and masked (2450) ones, and
+/// writes no depth. With `depth_write` it is in queue 2501 moved by
+/// `queue_offset` clamped to 0..9, and writes depth. Draws in one queue go
+/// back to front. A blended pixel with alpha below 2⁻¹⁰ is not drawn. These
+/// are MToon's `transparentWithZWrite` and `renderQueueOffsetNumber`, for
+/// every material kind.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "alphaMode", rename_all = "camelCase")]
 pub enum AlphaMode {
@@ -143,7 +151,30 @@ pub enum AlphaMode {
         #[serde(rename = "alphaCutoff")]
         cutoff: f32,
     },
-    Blend,
+    Blend {
+        /// Default `false`.
+        #[serde(
+            default,
+            rename = "depthWrite",
+            skip_serializing_if = "std::ops::Not::not"
+        )]
+        depth_write: bool,
+        /// Default `0`.
+        #[serde(default, rename = "queueOffset", skip_serializing_if = "is_zero")]
+        queue_offset: i32,
+    },
+}
+
+impl AlphaMode {
+    /// Blended, writing no depth, in the render queue's own place.
+    pub const BLEND: Self = Self::Blend {
+        depth_write: false,
+        queue_offset: 0,
+    };
+}
+
+fn is_zero(value: &i32) -> bool {
+    *value == 0
 }
 
 /// Which shading a material uses, with that shading's parameters.
@@ -202,10 +233,6 @@ pub struct MtoonMaterial {
     pub emissive_factor: [f32; 3],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emissive_texture: Option<TextureSlot>,
-    /// A blended material also writes depth. Default `false`.
-    pub transparent_with_z_write: bool,
-    /// Moves the draw within its render queue. Default `0`.
-    pub render_queue_offset_number: i32,
     /// The color of the shaded side, linear RGB. Default `[1, 1, 1]`.
     pub shade_color_factor: [f32; 3],
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -265,8 +292,6 @@ impl Default for MtoonMaterial {
             normal_texture: None,
             emissive_factor: [0.0; 3],
             emissive_texture: None,
-            transparent_with_z_write: false,
-            render_queue_offset_number: 0,
             shade_color_factor: [1.0; 3],
             shade_multiply_texture: None,
             shading_shift_factor: -0.05,
@@ -520,6 +545,41 @@ mod tests {
     }
 
     #[test]
+    fn blend_json_carries_depth_write_and_queue_offset() {
+        let material: Material = serde_json::from_str(
+            r#"{"alphaMode":"blend","doubleSided":false,"kind":"unlit","baseColor":[1,1,1,1]}"#,
+        )
+        .unwrap();
+        assert_eq!(material.alpha_mode, AlphaMode::BLEND);
+
+        let blend = |alpha_mode| Material {
+            alpha_mode,
+            double_sided: false,
+            kind: MaterialKind::Unlit(UnlitMaterial {
+                base_color: [1.0; 4],
+                base_color_texture: None,
+            }),
+        };
+        let sorted = blend(AlphaMode::Blend {
+            depth_write: true,
+            queue_offset: -3,
+        });
+        let json = serde_json::to_string(&sorted).unwrap();
+        assert!(
+            json.contains(r#""alphaMode":"blend","depthWrite":true,"queueOffset":-3"#),
+            "{json}"
+        );
+        assert_eq!(serde_json::from_str::<Material>(&json).unwrap(), sorted);
+
+        let plain = blend(AlphaMode::BLEND);
+        let json = serde_json::to_string(&plain).unwrap();
+        assert!(json.contains(r#""alphaMode":"blend""#), "{json}");
+        assert!(!json.contains("depthWrite"), "{json}");
+        assert!(!json.contains("queueOffset"), "{json}");
+        assert_eq!(serde_json::from_str::<Material>(&json).unwrap(), plain);
+    }
+
+    #[test]
     fn mtoon_material_defaults_follow_univrm() {
         let material: Material =
             serde_json::from_str(r#"{"alphaMode":"opaque","doubleSided":false,"kind":"mtoon"}"#)
@@ -548,11 +608,12 @@ mod tests {
     #[test]
     fn mtoon_material_json_names() {
         let material = Material {
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Blend {
+                depth_write: true,
+                queue_offset: -3,
+            },
             double_sided: true,
             kind: MaterialKind::Mtoon(MtoonMaterial {
-                transparent_with_z_write: true,
-                render_queue_offset_number: -3,
                 outline_width_mode: OutlineWidthMode::WorldCoordinates,
                 ..MtoonMaterial::default()
             }),
@@ -560,8 +621,8 @@ mod tests {
         let json = serde_json::to_string(&material).unwrap();
         for expected in [
             r#""kind":"mtoon""#,
-            r#""transparentWithZWrite":true"#,
-            r#""renderQueueOffsetNumber":-3"#,
+            r#""depthWrite":true"#,
+            r#""queueOffset":-3"#,
             r#""outlineWidthMode":"worldCoordinates""#,
             r#""uvAnimationRotationSpeedFactor":0.0"#,
         ] {

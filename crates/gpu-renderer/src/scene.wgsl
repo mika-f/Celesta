@@ -147,7 +147,13 @@ fn coverage(alpha: f32) -> u32 {
 @fragment
 fn fs_blend(input: VertexOutput) -> @location(0) vec4<f32> {
     let color = unlit(input);
-    return vec4<f32>(color.rgb, clamp(color.a, 0.0, 1.0));
+    let alpha = clamp(color.a, 0.0, 1.0);
+    // Alpha below 2^−10 is discarded, as UniVRM does (vrm-c/UniVRM#2598),
+    // so that a clear pixel of a blend writing depth writes none.
+    if alpha < 0.0009765625 {
+        discard;
+    }
+    return vec4<f32>(color.rgb, alpha);
 }
 
 @group(0) @binding(0)
