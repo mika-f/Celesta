@@ -3036,8 +3036,10 @@ fn material_normals_follow_the_inverse_transpose_of_world() {
 
 #[test]
 fn material_tangents_and_handedness_follow_world() {
+    // A material that requires tangents draws on a geometry that has them.
     let scenes = |world| {
         let mut scenes = with_tangents(probe_square(0, [0.0; 4]));
+        custom_of(&mut scenes.model.materials[0]).requires_tangents = true;
         scenes.frame.draws[0].world = world;
         scenes
     };
@@ -3045,6 +3047,29 @@ fn material_tangents_and_handedness_follow_world() {
     assert_centre(scenes(scaling(-1.0, 1.0, 1.0)), [0, 0, 0, 255]);
     // Without tangents, `w` is 0.
     assert_centre(probe_square(0, [0.0; 4]), [188, 255, 0, 255]);
+}
+
+/// Green, its vertices moved right by `params.offset.x`: in metres when
+/// `y` is 0, of normalised device coordinates when it is 1.
+const MOVED: &str = "struct Params { offset: vec4f };
+fn material_fragment(fragment: Fragment) -> vec4f { return vec4f(0.0, 1.0, 0.0, 1.0); }
+fn material_vertex(vertex: Vertex) -> VertexOffset {
+    if params.offset.y == 0.0 { return VertexOffset(vec3f(params.offset.x, 0.0, 0.0), vec2f(0.0)); }
+    return VertexOffset(vec3f(0.0), vec2f(params.offset.x, 0.0) * vertex.clip.w);
+}";
+
+#[test]
+fn material_vertex_moves_the_surface_in_world_and_clip_space() {
+    // 0.125 m, or 0.125 of normalised device coordinates, is 4 px: the
+    // square moves from 16..48 to 20..52.
+    for offset in [[0.125, 0.0, 0.0, 0.0], [0.125, 1.0, 0.0, 0.0]] {
+        let scenes = custom_square(vec![shader(MOVED, &[])], custom(0, bytes(&offset)));
+        let Some(frame) = render_scenes(scenes) else {
+            return;
+        };
+        assert_pixel(&frame, 18, 32, CLEAR);
+        assert_pixel(&frame, 50, 32, GREEN);
+    }
 }
 
 #[test]
