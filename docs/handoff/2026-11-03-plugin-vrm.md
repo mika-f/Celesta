@@ -761,7 +761,10 @@ Besides MToon's list above, to check against UniVRM:
   `pnpm --filter celesta-plugin-vrm-js test` (after `pnpm run
   build:runtime`), which also type-checks `demo.tsx`; and
   `node plugins/vrm/build.mjs`. CI's `vrm-plugin` job runs them all on
-  lavapipe.
+  lavapipe, and also
+  `cargo check --target x86_64-pc-windows-msvc --lib --bins` for the
+  plugin, so its code for platforms other than Unix (the texture cache's)
+  compiles before a user builds it on Windows.
 - Unit tests, on the synthetic avatar:
   - `document`: VRM 0.x refused with the hint, plain glTF, other spec
     versions, a missing bone, external buffers, bones past the nodes or

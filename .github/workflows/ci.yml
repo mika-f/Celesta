@@ -217,10 +217,12 @@ jobs:
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
 
+      # With the Windows target, for "Check for Windows" below.
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: 1.99.1
           components: clippy, rustfmt
+          targets: x86_64-pc-windows-msvc
 
       # The root workspace's target/ holds the codegen build:runtime runs.
       - uses: Swatinem/rust-cache@v2.9.3
@@ -258,6 +260,13 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --manifest-path plugins/vrm/Cargo.toml --all-targets --locked -- -D warnings
+
+      # Users build the plugin on Windows themselves, and its code has
+      # branches for other platforms than Unix. Checking needs no linker, and
+      # the library and program use no C code, so the Windows target checks
+      # here; the tests' dev-dependencies (FFmpeg) are left out.
+      - name: Check for Windows
+        run: cargo check --manifest-path plugins/vrm/Cargo.toml --locked --target x86_64-pc-windows-msvc --lib --bins
 
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
       - name: Test
