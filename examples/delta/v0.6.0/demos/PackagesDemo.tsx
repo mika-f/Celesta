@@ -49,7 +49,7 @@ export function PackagesDemo({ frame }: DemoProps) {
       <Group x={20} y={430} opacity={enter(frame, 56)}>
         <Text anchorY={0.5} y={20} style={{ ...mono, fill: solid(C.dim) }}>$ node skills/celesta/scripts/migrate-packages.mjs .</Text>
         <Rect y={52} width={CORE_WIDTH} height={44} fill="#FF5F561A" />
-        <Text x={16} y={74} anchorY={0.5} style={{ ...mono, fill: solid(C.red) }}>{"- import { Circle } from '@celesta.studio/react';"}</Text>
+        <Text x={16} y={74} anchorY={0.5} style={{ ...mono, fill: solid(C.red) }}>{"- import { Circle } from '@celesta/react';"}</Text>
         <Rect y={100} width={CORE_WIDTH} height={44} fill="#3DDC841A" opacity={enter(frame, 64)} />
         <Text x={16} y={122} anchorY={0.5} opacity={enter(frame, 64)} style={{ ...mono, fill: solid(C.green) }}>{"+ import { Circle } from '@celesta.studio/shapes';"}</Text>
       </Group>
