@@ -157,8 +157,7 @@ pub struct Material {
 /// writes no depth. With `depth_write` it is in queue 2501 moved by
 /// `queue_offset` clamped to 0..9, and writes depth. Blended draws in one
 /// queue go back to front. A blended pixel with alpha below 2⁻¹⁰ is not
-/// drawn. These are MToon's `transparentWithZWrite` and
-/// `renderQueueOffsetNumber`, for every material kind.
+/// drawn. Every material kind takes them.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "alphaMode", rename_all = "camelCase")]
 pub enum AlphaMode {
@@ -196,12 +195,8 @@ fn is_zero(value: &i32) -> bool {
 /// Which shading a material uses, with that shading's parameters.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-// A scene has a handful of materials, read in place: boxing MToon's
-// parameters would only add an indirection.
-#[allow(clippy::large_enum_variant)]
 pub enum MaterialKind {
     Unlit(UnlitMaterial),
-    Mtoon(MtoonMaterial),
     Custom(CustomMaterial),
 }
 
@@ -351,159 +346,6 @@ pub struct UnlitMaterial {
     pub base_color_texture: Option<TextureRef>,
 }
 
-/// VRM 1.0's toon shading, `VRMC_materials_mtoon`, with the parameters of
-/// UniVRM's MToon10 shader. A field left out of the JSON takes UniVRM's
-/// default, given on each field.
-///
-/// Every texture but the matcap and the outline width is sampled at the
-/// base color texture's coordinates: `base_color_texture`'s `transform`,
-/// and a frame's `texture_offset` and `texture_scale` overrides, move them
-/// all, and then the UV animation does, as UniVRM's single `_MainTex_ST`
-/// does. That is why the other slots are `TextureSlot`s without a
-/// transform. The outline width texture is sampled at the raw texture
-/// coordinates, and the matcap at its own, from the view-space normal.
-///
-/// `shading_shift_texture` is read from its red channel,
-/// `outline_width_multiply_texture` from its green, and
-/// `uv_animation_mask_texture` from its blue; the others' RGB is used. The
-/// plugin sets each texture's `color_space`: sRGB for the base color, shade
-/// multiply, emissive, matcap, and rim multiply textures; linear for the
-/// normal, shading shift, outline width, and UV animation mask textures.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct MtoonMaterial {
-    /// Linear RGBA. Default `[1, 1, 1, 1]`.
-    pub base_color: [f32; 4],
-    /// Its `transform` moves every texture but the matcap and the outline
-    /// width.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_color_texture: Option<TextureRef>,
-    /// A tangent-space normal map; `scale` is glTF's `normalTexture.scale`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub normal_texture: Option<ScaledTextureSlot>,
-    /// Linear RGB, which may exceed 1: the file's
-    /// `KHR_materials_emissive_strength` is multiplied in. Default
-    /// `[0, 0, 0]`.
-    pub emissive_factor: [f32; 3],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub emissive_texture: Option<TextureSlot>,
-    /// The color of the shaded side, linear RGB. Default `[1, 1, 1]`.
-    pub shade_color_factor: [f32; 3],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub shade_multiply_texture: Option<TextureSlot>,
-    /// Shifts where light turns to shade. Default `-0.05`.
-    pub shading_shift_factor: f32,
-    /// Red channel, times `scale`, added to the shift.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub shading_shift_texture: Option<ScaledTextureSlot>,
-    /// How sharp the light-to-shade edge is, 0 smooth to 1 hard; above 1
-    /// the ramp turns around, as in UniVRM. Default `0.95`.
-    pub shading_toony_factor: f32,
-    /// How far ambient light is flattened to its average. Default `0.9`.
-    pub gi_equalization_factor: f32,
-    /// Linear RGB. Default `[0, 0, 0]`.
-    pub matcap_factor: [f32; 3],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub matcap_texture: Option<TextureSlot>,
-    /// Linear RGB. Default `[0, 0, 0]`.
-    pub parametric_rim_color_factor: [f32; 3],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rim_multiply_texture: Option<TextureSlot>,
-    /// How far the rim is lit by the scene's light. Default `1`.
-    pub rim_lighting_mix_factor: f32,
-    /// Default `5`.
-    pub parametric_rim_fresnel_power_factor: f32,
-    /// Default `0`.
-    pub parametric_rim_lift_factor: f32,
-    /// Default `OutlineWidthMode::None`.
-    pub outline_width_mode: OutlineWidthMode,
-    /// The outline's width, in `outline_width_mode`'s units (metres for
-    /// world coordinates). Default `0`.
-    pub outline_width_factor: f32,
-    /// Green channel, at the raw texture coordinates.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub outline_width_multiply_texture: Option<TextureSlot>,
-    /// Linear RGB. Default `[0, 0, 0]`.
-    pub outline_color_factor: [f32; 3],
-    /// How far the outline is lit by the scene's light. Default `1`.
-    pub outline_lighting_mix_factor: f32,
-    /// Blue channel: how much the UV animation moves each texel.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uv_animation_mask_texture: Option<TextureSlot>,
-    /// Texture coordinate units a second. Default `0`.
-    pub uv_animation_scroll_x_speed_factor: f32,
-    /// Texture coordinate units a second. Default `0`.
-    pub uv_animation_scroll_y_speed_factor: f32,
-    /// Radians a second. Default `0`.
-    pub uv_animation_rotation_speed_factor: f32,
-}
-
-impl Default for MtoonMaterial {
-    fn default() -> Self {
-        Self {
-            base_color: [1.0; 4],
-            base_color_texture: None,
-            normal_texture: None,
-            emissive_factor: [0.0; 3],
-            emissive_texture: None,
-            shade_color_factor: [1.0; 3],
-            shade_multiply_texture: None,
-            shading_shift_factor: -0.05,
-            shading_shift_texture: None,
-            shading_toony_factor: 0.95,
-            gi_equalization_factor: 0.9,
-            matcap_factor: [0.0; 3],
-            matcap_texture: None,
-            parametric_rim_color_factor: [0.0; 3],
-            rim_multiply_texture: None,
-            rim_lighting_mix_factor: 1.0,
-            parametric_rim_fresnel_power_factor: 5.0,
-            parametric_rim_lift_factor: 0.0,
-            outline_width_mode: OutlineWidthMode::None,
-            outline_width_factor: 0.0,
-            outline_width_multiply_texture: None,
-            outline_color_factor: [0.0; 3],
-            outline_lighting_mix_factor: 1.0,
-            uv_animation_mask_texture: None,
-            uv_animation_scroll_x_speed_factor: 0.0,
-            uv_animation_scroll_y_speed_factor: 0.0,
-            uv_animation_rotation_speed_factor: 0.0,
-        }
-    }
-}
-
-/// What an MToon outline's width is measured in, if it has one.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum OutlineWidthMode {
-    /// No outline is drawn.
-    #[default]
-    None,
-    WorldCoordinates,
-    ScreenCoordinates,
-}
-
-/// A `SceneModel::textures` entry an MToon material samples at its base
-/// color texture's coordinates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TextureSlot {
-    pub texture: usize,
-}
-
-/// A `TextureSlot` whose values are multiplied by `scale`, 1 by default.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ScaledTextureSlot {
-    pub texture: usize,
-    #[serde(default = "one")]
-    pub scale: f32,
-}
-
-fn one() -> f32 {
-    1.0
-}
-
 /// A `SceneModel::textures` entry, sampled at texture coordinates moved by
 /// `transform` when there is one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -581,10 +423,6 @@ pub struct Lights {
     /// order and scale: `unity_SHAr`/`Ag`/`Ab` xyzw, then
     /// `unity_SHBr`/`Bg`/`Bb` xyzw, then `unity_SHC` rgb. A flat ambient
     /// color is `c3` alone.
-    ///
-    /// UniVRM mirrors X between glTF and Unity, so coefficients read from a
-    /// Unity scene negate `c0`, `c4`, and `c7`, and its light directions
-    /// negate x.
     pub ambient: [[f32; 3]; 9],
 }
 
@@ -627,10 +465,7 @@ pub struct DrawState {
 }
 
 /// The unlit material's values for this frame, which replace the draw's
-/// material's as material animation sets them: VRM 1.0's
-/// `materialColorBind` and `textureTransformBind` targets. By default none
-/// do. The MToon-only ones, from `shade_color` on, apply to an MToon draw
-/// and are ignored on an unlit draw, but must still be finite there. A
+/// material's as material animation sets them. By default none do. A
 /// custom material's draw has none: its `DrawState::params` replace its
 /// parameters instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -645,21 +480,6 @@ pub struct MaterialOverrides {
     /// Replaces the base color texture's transform's scale.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub texture_scale: Option<[f32; 2]>,
-    /// Replaces `MtoonMaterial::shade_color_factor`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shade_color: Option<[f32; 3]>,
-    /// Replaces `MtoonMaterial::emissive_factor`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub emission_color: Option<[f32; 3]>,
-    /// Replaces `MtoonMaterial::matcap_factor`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub matcap_color: Option<[f32; 3]>,
-    /// Replaces `MtoonMaterial::parametric_rim_color_factor`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rim_color: Option<[f32; 3]>,
-    /// Replaces `MtoonMaterial::outline_color_factor`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outline_color: Option<[f32; 3]>,
 }
 
 #[cfg(test)]
@@ -739,58 +559,6 @@ mod tests {
         assert!(!json.contains("depthWrite"), "{json}");
         assert!(!json.contains("queueOffset"), "{json}");
         assert_eq!(serde_json::from_str::<Material>(&json).unwrap(), plain);
-    }
-
-    #[test]
-    fn mtoon_material_defaults_follow_univrm() {
-        let material: Material =
-            serde_json::from_str(r#"{"alphaMode":"opaque","doubleSided":false,"kind":"mtoon"}"#)
-                .unwrap();
-        assert_eq!(material.kind, MaterialKind::Mtoon(MtoonMaterial::default()));
-        let mtoon = MtoonMaterial::default();
-        assert_eq!(mtoon.shading_shift_factor, -0.05);
-        assert_eq!(mtoon.shading_toony_factor, 0.95);
-        assert_eq!(mtoon.shade_color_factor, [1.0; 3]);
-        assert_eq!(mtoon.matcap_factor, [0.0; 3]);
-        assert_eq!(mtoon.gi_equalization_factor, 0.9);
-        assert_eq!(mtoon.parametric_rim_fresnel_power_factor, 5.0);
-        assert_eq!(mtoon.rim_lighting_mix_factor, 1.0);
-        assert_eq!(mtoon.outline_lighting_mix_factor, 1.0);
-        assert_eq!(mtoon.outline_width_mode, OutlineWidthMode::None);
-        assert_eq!(mtoon.base_color, [1.0; 4]);
-        assert_eq!(
-            serde_json::from_str::<ScaledTextureSlot>(r#"{"texture":2}"#).unwrap(),
-            ScaledTextureSlot {
-                texture: 2,
-                scale: 1.0
-            }
-        );
-    }
-
-    #[test]
-    fn mtoon_material_json_names() {
-        let material = Material {
-            alpha_mode: AlphaMode::Blend {
-                depth_write: true,
-                queue_offset: -3,
-            },
-            double_sided: true,
-            kind: MaterialKind::Mtoon(MtoonMaterial {
-                outline_width_mode: OutlineWidthMode::WorldCoordinates,
-                ..MtoonMaterial::default()
-            }),
-        };
-        let json = serde_json::to_string(&material).unwrap();
-        for expected in [
-            r#""kind":"mtoon""#,
-            r#""depthWrite":true"#,
-            r#""queueOffset":-3"#,
-            r#""outlineWidthMode":"worldCoordinates""#,
-            r#""uvAnimationRotationSpeedFactor":0.0"#,
-        ] {
-            assert!(json.contains(expected), "{expected} in {json}");
-        }
-        assert_eq!(serde_json::from_str::<Material>(&json).unwrap(), material);
     }
 
     #[test]

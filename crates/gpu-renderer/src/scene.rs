@@ -3,20 +3,19 @@
 //! draws onto the same kind of canvas as 2D meshes (see `mesh.rs`).
 //!
 //! Each frame, a compute pass morphs and skins every visible draw's
-//! vertices (`scene_skin.wgsl`). A render pass then draws them, in UniVRM's
-//! queue order (`draw_queue`) and by their material's shader and alpha
-//! mode, through the camera onto a 4× multisampled canvas of linear,
-//! premultiplied `Rgba16Float` color with `Depth32Float` depth, both
-//! cleared (to transparent black and to 1). Every material's shader is
-//! written against Celesta's material interface and assembled with its
-//! entry points by `scene_material.rs`: unlit (`scene_unlit.wgsl`), MToon
-//! under the frame's lights (`scene_mtoon.wgsl`), or one of the shaders the
-//! model lists, compiled once whichever models list it. A draw binds the
-//! frame's uniform as group 0; its own uniform and its material's
-//! parameters as group 1, each at its offset in the draw's slot; and its
-//! material's textures, bound when the model loaded, as group 2. The
-//! resolved canvas is converted to the layer's encoding, premultiplied
-//! sRGB-encoded `Rgba8Unorm` (`scene.wgsl`).
+//! vertices (`scene_skin.wgsl`). A render pass then draws them, in the
+//! order of Unity's render queues (`draw_queue`) and by their material's
+//! shader and alpha mode, through the camera onto a 4× multisampled canvas
+//! of linear, premultiplied `Rgba16Float` color with `Depth32Float` depth,
+//! both cleared (to transparent black and to 1). Every material's shader
+//! is written against Celesta's material interface and assembled with its
+//! entry points by `scene_material.rs`: unlit (`scene_unlit.wgsl`), or one
+//! of the shaders the model lists, compiled once whichever models list it.
+//! A draw binds the frame's uniform as group 0; its own uniform and its
+//! material's parameters as group 1, each at its offset in the draw's
+//! slot; and its material's textures, bound when the model loaded, as
+//! group 2. The resolved canvas is converted to the layer's encoding,
+//! premultiplied sRGB-encoded `Rgba8Unorm` (`scene.wgsl`).
 //!
 //! Besides the model's buffers and textures, `SceneFrameResources` keeps
 //! the canvases of each size the last frame drew, within
@@ -35,8 +34,8 @@ use crate::texture::LayerTexture;
 use celesta_plugin::scene::MAX_SCENE_SHADERS;
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, CullFace, DrawState, EmptyTexel, Filter, Material, MaterialKind,
-    MaterialOverrides, ModelId, MtoonMaterial, OutlinePass, OutlineWidthMode, Projection,
-    SceneFrame, SceneModel, SceneShader, TextureRef, UnlitMaterial, Wrap,
+    MaterialOverrides, ModelId, Projection, SceneFrame, SceneModel, SceneShader, TextureRef,
+    UnlitMaterial, Wrap,
 };
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -319,7 +318,7 @@ impl GrowingBuffer {
 }
 
 /// A compiled material shader, by the order it was compiled in: 0 the
-/// built-in unlit, 1 the built-in MToon.
+/// built-in unlit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ShaderId(u32);
 
@@ -478,19 +477,12 @@ impl PipelineKey {
     /// The outline pass of `material`, drawn with `shader`, its front faces
     /// clockwise or not, when `shader` has the outline's entry points: a
     /// custom material's with an `outline`, culled and pushed away from
-    /// the camera as it asks; an MToon material's whose `outlineWidthMode`
-    /// is not `none`, whatever its width, as UniVRM draws it, culling the
-    /// front faces whether or not the material is double-sided (UniVRM's
-    /// `Cull Front`) and pushed away by Unity's `Offset 1, 1`, so that the
-    /// draw's own surface stays in front of it. Either draws the material's
-    /// alpha.
+    /// the camera as it asks, whether or not the material is double-sided.
+    /// It draws the material's alpha.
     fn outline(material: &Material, shader: &CompiledShader, clockwise: bool) -> Option<Self> {
         let pass = match &material.kind {
             MaterialKind::Custom(custom) => custom.outline?,
-            MaterialKind::Mtoon(mtoon) if mtoon.outline_width_mode != OutlineWidthMode::None => {
-                OutlinePass::default()
-            }
-            MaterialKind::Mtoon(_) | MaterialKind::Unlit(_) => return None,
+            MaterialKind::Unlit(_) => return None,
         };
         // `prepare` refuses a custom material asking for an outline its
         // shader does not define.
@@ -549,7 +541,7 @@ impl PipelineKey {
     }
 }
 
-/// How a draw's alpha is drawn, as UniVRM draws its material's alpha mode.
+/// How a draw's alpha is drawn, as its material's alpha mode says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Alpha {
     /// Alpha ignored, depth written.
@@ -611,8 +603,8 @@ impl Alpha {
     }
 }
 
-/// `alpha_mode`'s render queue, as UniVRM's `MToonValidator` sets it: 2000
-/// opaque, 2450 mask, 3000 blend. A blend moves by its `queue_offset`, to
+/// `alpha_mode`'s place in Unity's render queues: 2000 opaque, 2450 mask,
+/// 3000 blend. A blend moves by its `queue_offset`, to
 /// 2501 to 2510 with `depth_write` and 2991 to 3000 without.
 fn render_queue(alpha_mode: &AlphaMode) -> u32 {
     let alpha = Alpha::of(alpha_mode);
@@ -700,13 +692,9 @@ const _: () = assert!(std::mem::size_of::<DrawUniform>() == 128);
 /// The built-in unlit material's shader, of one slot: its base color
 /// texture.
 const UNLIT_SHADER: &str = include_str!("scene_unlit.wgsl");
-/// The built-in MToon material's shader, of `MTOON_SLOTS`.
-const MTOON_SHADER: &str = include_str!("scene_mtoon.wgsl");
 
 /// The bytes of `scene_unlit.wgsl`'s `Params`: `unlit_params`.
 const UNLIT_PARAMS: usize = 48;
-/// The bytes of `scene_mtoon.wgsl`'s `Params`: `mtoon_params`.
-const MTOON_PARAMS: usize = 176;
 
 /// What `scene_unlit.wgsl` reads as `Params`.
 #[repr(C)]
@@ -718,38 +706,7 @@ struct UnlitParams {
     uv_v: [f32; 4],
 }
 
-/// What `scene_mtoon.wgsl` reads as `Params`.
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct MtoonParams {
-    base_color: [f32; 4],
-    /// The base color texture transform's rows, `w` 0.
-    uv_u: [f32; 4],
-    uv_v: [f32; 4],
-    /// The shade color, then the shading shift factor.
-    shade: [f32; 4],
-    /// The emissive factor, then the shading shift texture's scale.
-    emissive: [f32; 4],
-    /// The matcap factor, then the shading toony factor.
-    matcap: [f32; 4],
-    /// The parametric rim color, then the rim lighting mix.
-    rim: [f32; 4],
-    /// The rim's fresnel power and lift, the GI equalization factor, and
-    /// the normal texture's scale.
-    rim_shape: [f32; 4],
-    /// The outline color, then the outline lighting mix.
-    outline: [f32; 4],
-    /// The outline width factor, the outline width mode (0 none, 1 world
-    /// coordinates, 2 screen coordinates), 0, 0.
-    outline_width: [f32; 4],
-    /// How far the UV animation has scrolled in x and y at the frame's
-    /// time (`uv_scroll`), its rotation in turns a second, and 1 when the
-    /// material has a normal texture, else 0.
-    uv_animation: [f32; 4],
-}
-
 const _: () = assert!(std::mem::size_of::<UnlitParams>() == UNLIT_PARAMS);
-const _: () = assert!(std::mem::size_of::<MtoonParams>() == MTOON_PARAMS);
 
 /// How many plugin shaders the shader cache holds before it drops those
 /// no loaded model uses: eight models listing the most shaders a model
@@ -762,9 +719,8 @@ pub(crate) struct ScenePipelines {
     geometry_layout: wgpu::BindGroupLayout,
     frame_layout: wgpu::BindGroupLayout,
     skin: wgpu::ComputePipeline,
-    /// The built-in materials' shaders.
+    /// The built-in unlit material's shader.
     unlit: Arc<CompiledShader>,
-    mtoon: Arc<CompiledShader>,
     /// Plugins' material shaders by their WGSL and texture slots (their
     /// names and empty texels do not change the module), compiled or why
     /// they cannot be: each is checked once, however many models list it,
@@ -813,99 +769,6 @@ pub(crate) struct ScenePipelines {
     default_sampler: wgpu::Sampler,
 }
 
-/// One of an MToon material's texture slots.
-#[derive(Clone, Copy, Debug)]
-struct MtoonSlot {
-    /// Its JSON name.
-    name: &'static str,
-    /// The texel bound when it is empty: Unity's default for the property.
-    default: EmptyTexel,
-    /// Whether `scene_mtoon.wgsl` samples it at the UV-animated
-    /// coordinates; the matcap, the outline width, and the mask itself have
-    /// their own.
-    animated: bool,
-}
-
-const fn slot(name: &'static str, default: EmptyTexel, animated: bool) -> MtoonSlot {
-    MtoonSlot {
-        name,
-        default,
-        animated,
-    }
-}
-
-/// An MToon material's texture slots, in `scene_mtoon.wgsl`'s order: slot
-/// `k` binds its texture at `2k` and its sampler at `2k + 1` of group 2,
-/// `texture_k` and `sampler_k` in the shader. An empty slot's
-/// default texel leaves its term as UniVRM's keyword gates do without the
-/// texture: no shift but the factor's, no matcap, the whole of the UV
-/// animation, the width factor alone. An empty normal slot is sampled but
-/// has no effect: the shader keeps the geometric normal.
-const MTOON_SLOTS: [MtoonSlot; 9] = [
-    slot("baseColorTexture", EmptyTexel::White, true),
-    slot("shadeMultiplyTexture", EmptyTexel::White, true),
-    slot("shadingShiftTexture", EmptyTexel::Black, true),
-    slot("normalTexture", EmptyTexel::White, true),
-    slot("emissiveTexture", EmptyTexel::White, true),
-    slot("matcapTexture", EmptyTexel::Black, false),
-    slot("rimMultiplyTexture", EmptyTexel::White, true),
-    slot("outlineWidthMultiplyTexture", EmptyTexel::White, false),
-    slot("uvAnimationMaskTexture", EmptyTexel::White, false),
-];
-
-/// The textures `mtoon`'s slots name, in `MTOON_SLOTS`' order.
-fn mtoon_textures(mtoon: &MtoonMaterial) -> [Option<usize>; 9] {
-    [
-        mtoon.base_color_texture.as_ref().map(|slot| slot.texture),
-        mtoon.shade_multiply_texture.map(|slot| slot.texture),
-        mtoon.shading_shift_texture.map(|slot| slot.texture),
-        mtoon.normal_texture.map(|slot| slot.texture),
-        mtoon.emissive_texture.map(|slot| slot.texture),
-        mtoon.matcap_texture.map(|slot| slot.texture),
-        mtoon.rim_multiply_texture.map(|slot| slot.texture),
-        mtoon
-            .outline_width_multiply_texture
-            .map(|slot| slot.texture),
-        mtoon.uv_animation_mask_texture.map(|slot| slot.texture),
-    ]
-}
-
-/// Every number of `mtoon`, its texture slots' scales and base color
-/// texture transform included.
-fn mtoon_numbers(mtoon: &MtoonMaterial) -> Vec<f32> {
-    let mut numbers = mtoon.base_color.to_vec();
-    numbers.extend(mtoon.emissive_factor);
-    numbers.extend(mtoon.shade_color_factor);
-    numbers.extend(mtoon.matcap_factor);
-    numbers.extend(mtoon.parametric_rim_color_factor);
-    numbers.extend(mtoon.outline_color_factor);
-    numbers.extend([
-        mtoon.shading_shift_factor,
-        mtoon.shading_toony_factor,
-        mtoon.gi_equalization_factor,
-        mtoon.rim_lighting_mix_factor,
-        mtoon.parametric_rim_fresnel_power_factor,
-        mtoon.parametric_rim_lift_factor,
-        mtoon.outline_width_factor,
-        mtoon.outline_lighting_mix_factor,
-        mtoon.uv_animation_scroll_x_speed_factor,
-        mtoon.uv_animation_scroll_y_speed_factor,
-        mtoon.uv_animation_rotation_speed_factor,
-    ]);
-    numbers.extend(mtoon.normal_texture.map(|slot| slot.scale));
-    numbers.extend(mtoon.shading_shift_texture.map(|slot| slot.scale));
-    if let Some(transform) = mtoon
-        .base_color_texture
-        .as_ref()
-        .and_then(|texture| texture.transform)
-    {
-        numbers.extend(transform.offset);
-        numbers.extend(transform.scale);
-        numbers.push(transform.rotation);
-    }
-    numbers
-}
-
 fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -947,18 +810,15 @@ impl ScenePipelines {
             label: Some("Celesta scene convert shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("scene.wgsl").into()),
         });
-        let built_in = |id, wgsl, textures, label| {
-            Arc::new(
-                CompiledShader::compile(device, ShaderId(id), wgsl, textures, label)
-                    .expect("the built-in materials pass the material checks"),
+        let unlit = Arc::new(
+            CompiledShader::compile(
+                device,
+                ShaderId(0),
+                UNLIT_SHADER,
+                1,
+                "Celesta scene unlit material",
             )
-        };
-        let unlit = built_in(0, UNLIT_SHADER, 1, "Celesta scene unlit material");
-        let mtoon = built_in(
-            1,
-            MTOON_SHADER,
-            MTOON_SLOTS.len(),
-            "Celesta scene MToon material",
+            .expect("the built-in material passes the material checks"),
         );
 
         let geometry_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1102,9 +962,8 @@ impl ScenePipelines {
             frame_layout,
             skin,
             unlit,
-            mtoon,
             shaders: HashMap::new(),
-            next_shader: 2,
+            next_shader: 1,
             #[cfg(test)]
             compiles: 0,
             #[cfg(test)]
@@ -1125,9 +984,7 @@ impl ScenePipelines {
             black: texel("Celesta scene black texel", [0, 0, 0, 255]),
             default_sampler: device.create_sampler(&Default::default()),
         };
-        for textures in [pipelines.unlit.textures, pipelines.mtoon.textures] {
-            pipelines.texture_layout(device, textures);
-        }
+        pipelines.texture_layout(device, pipelines.unlit.textures);
         pipelines
     }
 
@@ -1275,7 +1132,6 @@ impl ScenePipelines {
         for (index, material) in model.materials.iter().enumerate() {
             let shader = match &material.kind {
                 MaterialKind::Unlit(_) => Arc::clone(&self.unlit),
-                MaterialKind::Mtoon(_) => Arc::clone(&self.mtoon),
                 MaterialKind::Custom(custom) => {
                     let shader = Arc::clone(&compiled[custom.shader]);
                     if custom.params.len() != shader.params_size as usize {
@@ -1453,11 +1309,6 @@ impl ScenePipelines {
                     .map(|texture| texture.texture),
                 EmptyTexel::White,
             )],
-            MaterialKind::Mtoon(mtoon) => mtoon_textures(mtoon)
-                .into_iter()
-                .zip(MTOON_SLOTS)
-                .map(|(texture, slot)| bound(texture, slot.default))
-                .collect(),
             MaterialKind::Custom(custom) => shaders[custom.shader]
                 .textures
                 .iter()
@@ -1632,23 +1483,6 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
                     ));
                 }
             }
-            MaterialKind::Mtoon(mtoon) => {
-                for (texture, slot) in mtoon_textures(mtoon).into_iter().zip(MTOON_SLOTS) {
-                    if let Some(texture) = texture
-                        && texture >= textures
-                    {
-                        return Some(format!(
-                            "material {index}'s {} uses texture {texture}, of {textures}",
-                            slot.name
-                        ));
-                    }
-                }
-                if !finite(&mtoon_numbers(mtoon)) {
-                    return Some(format!(
-                        "material {index}'s mtoon parameters are not finite"
-                    ));
-                }
-            }
             MaterialKind::Custom(custom) => {
                 let shaders = model.shaders.len();
                 let Some(shader) = model.shaders.get(custom.shader) else {
@@ -1716,26 +1550,16 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
                 model.materials.len()
             ));
         }
-        // A normal texture, or a custom material that requires them, needs
-        // the geometry's tangents: none are made up.
-        match &model.materials[draw.material].kind {
-            MaterialKind::Mtoon(mtoon)
-                if mtoon.normal_texture.is_some() && geometry.tangents.is_none() =>
-            {
-                return Some(format!(
-                    "draw {index}'s material {} has a normalTexture, but geometry {} has no tangents",
-                    draw.material, draw.geometry
-                ));
-            }
-            MaterialKind::Custom(custom)
-                if custom.requires_tangents && geometry.tangents.is_none() =>
-            {
-                return Some(format!(
-                    "draw {index}'s material {} requires tangents, but geometry {} has none",
-                    draw.material, draw.geometry
-                ));
-            }
-            _ => {}
+        // A custom material that requires them needs the geometry's
+        // tangents: none are made up.
+        if let MaterialKind::Custom(custom) = &model.materials[draw.material].kind
+            && custom.requires_tangents
+            && geometry.tangents.is_none()
+        {
+            return Some(format!(
+                "draw {index}'s material {} requires tangents, but geometry {} has none",
+                draw.material, draw.geometry
+            ));
         }
         match (draw.skin, geometry.joints.is_some()) {
             (None, false) => {}
@@ -1987,16 +1811,12 @@ pub(crate) fn invalid_scene_frame(
                     ));
                 }
             }
-            builtin if state.params.is_some() => {
-                let kind = match builtin {
-                    MaterialKind::Mtoon(_) => "MToon",
-                    _ => "unlit",
-                };
+            MaterialKind::Unlit(_) if state.params.is_some() => {
                 return Some(format!(
-                    "draw {index}'s material {material} is {kind}, which takes no parameters"
+                    "draw {index}'s material {material} is unlit, which takes no parameters"
                 ));
             }
-            _ => {}
+            MaterialKind::Unlit(_) => {}
         }
         let targets = model.geometries[info.geometry].targets.len();
         if state.morph_weights.len() != targets {
@@ -2021,28 +1841,6 @@ pub(crate) fn invalid_scene_frame(
             (
                 "texture scale override",
                 overrides.texture_scale.as_ref().map(|scale| &scale[..]),
-            ),
-            // Refused on an unlit draw too, which ignores them: the
-            // plugin that sent them is broken all the same.
-            (
-                "shade color override",
-                overrides.shade_color.as_ref().map(|color| &color[..]),
-            ),
-            (
-                "emission color override",
-                overrides.emission_color.as_ref().map(|color| &color[..]),
-            ),
-            (
-                "matcap color override",
-                overrides.matcap_color.as_ref().map(|color| &color[..]),
-            ),
-            (
-                "rim color override",
-                overrides.rim_color.as_ref().map(|color| &color[..]),
-            ),
-            (
-                "outline color override",
-                overrides.outline_color.as_ref().map(|color| &color[..]),
             ),
         ];
         for (name, values) in numbers {
@@ -2526,9 +2324,9 @@ fn cofactor(matrix: &[f32; 16]) -> ([[f64; 3]; 3], f64) {
 
 /// −1 when `matrix` mirrors (its upper 3×3's determinant is negative), else
 /// 1, a determinant of 0 included. Of a world matrix, the sign
-/// `normal_matrix` takes, and that MToon's bitangents take (Unity's
-/// `unity_WorldTransformParams.w`); of a world matrix and the view, which
-/// way a draw's front faces turn on screen.
+/// `normal_matrix` takes, and the draw's handedness, which a material's
+/// bitangents take (Unity's `unity_WorldTransformParams.w`); of a world
+/// matrix and the view, which way a draw's front faces turn on screen.
 fn handedness(matrix: &[f32; 16]) -> f64 {
     if cofactor(matrix).1 < 0.0 { -1.0 } else { 1.0 }
 }
@@ -2622,7 +2420,7 @@ fn transform_point(matrix: &[f32; 16], point: [f32; 3]) -> [f32; 3] {
 /// The first queue Unity sorts back to front: both kinds of blend.
 const TRANSPARENT_QUEUES: u32 = 2501;
 
-/// The draws of `frame` to draw, in UniVRM's order: by their material's
+/// The draws of `frame` to draw, in Unity's order: by their material's
 /// `render_queue`. Draws in the transparent queues go back to front, as
 /// Unity sorts them, by their `center`, or else their geometry's rest
 /// bounds centre moved by `world`: farthest from the camera first through
@@ -2718,24 +2516,14 @@ fn draw_uniform(material: &Material, state: &DrawState) -> DrawUniform {
     }
 }
 
-/// The parameters `state` draws its `material` with at `time`, reading
-/// `textures`' samplers, padded with zeros to `MAX_MATERIAL_PARAMS`: a
-/// built-in material's with `state`'s overrides, a custom one's own or, for
-/// this frame only, `state`'s.
-fn material_params(
-    material: &Material,
-    textures: &[celesta_plugin::SceneTexture],
-    state: &DrawState,
-    time: f64,
-) -> [u8; MAX_MATERIAL_PARAMS] {
+/// The parameters `state` draws its `material` with, padded with zeros to
+/// `MAX_MATERIAL_PARAMS`: an unlit material's with `state`'s overrides, a
+/// custom one's own or, for this frame only, `state`'s.
+fn material_params(material: &Material, state: &DrawState) -> [u8; MAX_MATERIAL_PARAMS] {
     let mut slot = [0; MAX_MATERIAL_PARAMS];
     match &material.kind {
         MaterialKind::Unlit(unlit) => {
             slot[..UNLIT_PARAMS].copy_from_slice(&unlit_params(unlit, &state.overrides));
-        }
-        MaterialKind::Mtoon(mtoon) => {
-            let scroll = uv_scroll(mtoon, textures, time);
-            slot[..MTOON_PARAMS].copy_from_slice(&mtoon_params(mtoon, &state.overrides, scroll));
         }
         // As long as its shader's `Params`, which `prepare` checked for the
         // material's and `invalid_scene_frame` for the draw's.
@@ -2777,114 +2565,6 @@ fn unlit_params(unlit: &UnlitMaterial, overrides: &MaterialOverrides) -> [u8; UN
         base_color: overrides.base_color.unwrap_or(unlit.base_color),
         uv_u,
         uv_v,
-    })
-}
-
-/// How far `mtoon`'s UV animation has scrolled at `time`, before its mask
-/// scales it: the time times the scroll speed, formed in f64 so that a
-/// long video keeps the fraction of a texture f32 would round away. Whole
-/// textures are dropped, two at a time for a mirrored repeat's period,
-/// along an axis where they cannot show: where every texture the animated
-/// coordinates sample repeats, and only when the animation neither turns
-/// (a turn that is not a quarter one takes a whole-texture step off the
-/// texel grid) nor has a mask (the mask scales the dropped textures by a
-/// fraction).
-fn uv_scroll(
-    mtoon: &MtoonMaterial,
-    textures: &[celesta_plugin::SceneTexture],
-    time: f64,
-) -> [f32; 2] {
-    let animated = mtoon_textures(mtoon)
-        .into_iter()
-        .zip(MTOON_SLOTS)
-        .filter_map(|(texture, slot)| texture.filter(|_| slot.animated));
-    let still = mtoon.uv_animation_rotation_speed_factor == 0.0
-        && mtoon.uv_animation_mask_texture.is_none();
-    let scroll = |speed: f32, wrap: fn(&celesta_plugin::Sampler) -> Wrap| {
-        let offset = time * f64::from(speed);
-        let repeats = animated
-            .clone()
-            .all(|texture| wrap(&textures[texture].sampler) != Wrap::ClampToEdge);
-        (if still && repeats {
-            offset.rem_euclid(2.0)
-        } else {
-            offset
-        }) as f32
-    };
-    [
-        scroll(mtoon.uv_animation_scroll_x_speed_factor, |sampler| {
-            sampler.wrap_s
-        }),
-        scroll(mtoon.uv_animation_scroll_y_speed_factor, |sampler| {
-            sampler.wrap_t
-        }),
-    ]
-}
-
-/// `scene_mtoon.wgsl`'s `Params` for `mtoon`: its base color and texture
-/// transform, its factors, the values `overrides` names in place of the
-/// material's, and the UV animation's `scroll`.
-fn mtoon_params(
-    mtoon: &MtoonMaterial,
-    overrides: &MaterialOverrides,
-    scroll: [f32; 2],
-) -> [u8; MTOON_PARAMS] {
-    let with = |[r, g, b]: [f32; 3], w: f32| [r, g, b, w];
-    let (uv_u, uv_v) = texture_rows(mtoon.base_color_texture.as_ref(), overrides);
-    bytemuck::cast(MtoonParams {
-        base_color: overrides.base_color.unwrap_or(mtoon.base_color),
-        uv_u,
-        uv_v,
-        shade: with(
-            overrides.shade_color.unwrap_or(mtoon.shade_color_factor),
-            mtoon.shading_shift_factor,
-        ),
-        emissive: with(
-            overrides.emission_color.unwrap_or(mtoon.emissive_factor),
-            mtoon.shading_shift_texture.map_or(0.0, |slot| slot.scale),
-        ),
-        matcap: with(
-            overrides.matcap_color.unwrap_or(mtoon.matcap_factor),
-            mtoon.shading_toony_factor,
-        ),
-        rim: with(
-            overrides
-                .rim_color
-                .unwrap_or(mtoon.parametric_rim_color_factor),
-            mtoon.rim_lighting_mix_factor,
-        ),
-        rim_shape: [
-            mtoon.parametric_rim_fresnel_power_factor,
-            mtoon.parametric_rim_lift_factor,
-            mtoon.gi_equalization_factor,
-            mtoon.normal_texture.map_or(0.0, |slot| slot.scale),
-        ],
-        outline: with(
-            overrides
-                .outline_color
-                .unwrap_or(mtoon.outline_color_factor),
-            mtoon.outline_lighting_mix_factor,
-        ),
-        outline_width: [
-            mtoon.outline_width_factor,
-            match mtoon.outline_width_mode {
-                OutlineWidthMode::None => 0.0,
-                OutlineWidthMode::WorldCoordinates => 1.0,
-                OutlineWidthMode::ScreenCoordinates => 2.0,
-            },
-            0.0,
-            0.0,
-        ],
-        uv_animation: [
-            scroll[0],
-            scroll[1],
-            mtoon.uv_animation_rotation_speed_factor / std::f32::consts::TAU,
-            if mtoon.normal_texture.is_some() {
-                1.0
-            } else {
-                0.0
-            },
-        ],
     })
 }
 
@@ -2970,7 +2650,7 @@ impl GpuRenderer {
             });
             let material = &model.materials[info.material];
             let uniform = draw_uniform(material, state);
-            let params = material_params(material, &model.textures, state, frame.time);
+            let params = material_params(material, state);
             debug_assert!(
                 params[scene.shaders[info.material].params_size as usize..]
                     .iter()
@@ -3555,95 +3235,6 @@ mod tests {
     }
 
     #[test]
-    fn mtoon_slots_and_numbers_are_checked() {
-        let mut model = bare_model(3, 1);
-        fn mtoon(model: &mut SceneModel) -> &mut celesta_plugin::MtoonMaterial {
-            match &mut model.materials[0].kind {
-                MaterialKind::Mtoon(mtoon) => mtoon,
-                MaterialKind::Unlit(_) | MaterialKind::Custom(_) => {
-                    unreachable!("made MToon below")
-                }
-            }
-        }
-        model.materials[0].kind = MaterialKind::Mtoon(celesta_plugin::MtoonMaterial::default());
-        assert_eq!(invalid_scene(&model), None);
-
-        let slot = Some(celesta_plugin::TextureSlot { texture: 1 });
-        let scaled = Some(celesta_plugin::ScaledTextureSlot {
-            texture: 1,
-            scale: 1.0,
-        });
-        type Set = fn(
-            &mut celesta_plugin::MtoonMaterial,
-            Option<celesta_plugin::TextureSlot>,
-            Option<celesta_plugin::ScaledTextureSlot>,
-        );
-        let cases: [(&str, Set); 9] = [
-            ("baseColorTexture", |m, _, _| {
-                m.base_color_texture = Some(celesta_plugin::TextureRef {
-                    texture: 1,
-                    transform: None,
-                })
-            }),
-            ("shadeMultiplyTexture", |m, slot, _| {
-                m.shade_multiply_texture = slot
-            }),
-            ("shadingShiftTexture", |m, _, scaled| {
-                m.shading_shift_texture = scaled
-            }),
-            ("normalTexture", |m, _, scaled| m.normal_texture = scaled),
-            ("emissiveTexture", |m, slot, _| m.emissive_texture = slot),
-            ("matcapTexture", |m, slot, _| m.matcap_texture = slot),
-            ("rimMultiplyTexture", |m, slot, _| {
-                m.rim_multiply_texture = slot
-            }),
-            ("outlineWidthMultiplyTexture", |m, slot, _| {
-                m.outline_width_multiply_texture = slot
-            }),
-            ("uvAnimationMaskTexture", |m, slot, _| {
-                m.uv_animation_mask_texture = slot
-            }),
-        ];
-        for (name, set) in cases {
-            let mut model = model.clone();
-            set(mtoon(&mut model), slot, scaled);
-            assert_eq!(
-                invalid_scene(&model),
-                Some(format!("material 0's {name} uses texture 1, of 0"))
-            );
-        }
-
-        let not_finite: [fn(&mut celesta_plugin::MtoonMaterial); 4] = [
-            |m| m.shading_toony_factor = f32::NAN,
-            |m| m.base_color[3] = f32::INFINITY,
-            |m| m.uv_animation_rotation_speed_factor = f32::NEG_INFINITY,
-            |m| {
-                m.normal_texture = Some(celesta_plugin::ScaledTextureSlot {
-                    texture: 0,
-                    scale: f32::NAN,
-                })
-            },
-        ];
-        model.textures.push(celesta_plugin::SceneTexture {
-            source: celesta_plugin::TextureSource::Rgba {
-                width: 1,
-                height: 1,
-                pixels: std::sync::Arc::new(vec![255; 4]),
-            },
-            color_space: ColorSpace::Linear,
-            sampler: Default::default(),
-        });
-        for set in not_finite {
-            let mut model = model.clone();
-            set(mtoon(&mut model));
-            assert_eq!(
-                invalid_scene(&model).as_deref(),
-                Some("material 0's mtoon parameters are not finite")
-            );
-        }
-    }
-
-    #[test]
     fn frame_and_draw_uniforms_match_the_prelude() {
         let checked = check_material(UNLIT_SHADER, 1).unwrap();
         let module = &checked.module;
@@ -3687,9 +3278,6 @@ mod tests {
         let unlit = check_material(UNLIT_SHADER, 1).unwrap();
         assert_eq!((unlit.params_size, unlit.outline), (48, false));
         assert_eq!(unlit.params_size as usize, UNLIT_PARAMS);
-        let mtoon = check_material(MTOON_SHADER, MTOON_SLOTS.len()).unwrap();
-        assert_eq!((mtoon.params_size, mtoon.outline), (176, true));
-        assert_eq!(mtoon.params_size as usize, MTOON_PARAMS);
     }
 
     #[test]
