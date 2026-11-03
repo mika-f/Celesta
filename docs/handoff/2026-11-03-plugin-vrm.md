@@ -830,9 +830,15 @@ Besides MToon's list above, to check against UniVRM:
     texture.
   - `seed_san_draws` (GPU): the bust frame covers the canvas's middle.
 - `js/test/vrm.test.mts`: blinking, mouth shapes, lip-sync smoothing,
-  `mouthSmoothing` checked, light colours, the canvas rules, the element's
+  `mouthSmoothing` checked, light colours and count, the canvas rules
+  (each side, given or computed, from 1 to 16384), the element's
   props, lookAt and camera passed through, and the mounted layer's
   content.
 - `celesta-plugin-host`'s `model_components_need_extensions` and
   `celesta-editor`'s `model_components_draw_as_images_and_check_the_file`,
   with format-neutral fixtures.
+- `celesta-plugin-host`'s `the_repositorys_plugins_pass_the_manifest_checks`
+  writes every `plugin.json` under `plugins/` and `examples/plugins/` as
+  its build script would and runs it through `discover`, naming no plugin:
+  a component the checks refuse (`".vrm"` with its dot, say) fails the
+  root test job instead of skipping the plugin for every user.

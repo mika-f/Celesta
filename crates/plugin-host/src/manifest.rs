@@ -911,6 +911,64 @@ mod tests {
     }
 
     #[test]
+    fn the_repositorys_plugins_pass_the_manifest_checks() {
+        // Each `plugin.json` under `plugins/` and `examples/plugins/`, made
+        // into the manifest its build script writes (`id`, `version`,
+        // `components`, and the module it builds): a component the checks
+        // refuse would skip the whole plugin for every user, so it fails
+        // here instead.
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = tempfile::tempdir().unwrap();
+        let mut expected = Vec::new();
+        for folder in ["plugins", "examples/plugins"] {
+            let mut sources: Vec<_> = std::fs::read_dir(repository.join(folder))
+                .unwrap()
+                .map(|entry| entry.unwrap().path().join("plugin.json"))
+                .filter(|source| source.is_file())
+                .collect();
+            sources.sort();
+            assert!(!sources.is_empty(), "no plugin.json under {folder}");
+            for source in sources {
+                let plugin: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(&source).unwrap())
+                        .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+                let id = plugin["id"].as_str().unwrap().to_owned();
+                let written = plugin
+                    .get("components")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([]));
+                let components: Vec<ComponentInfo> = serde_json::from_value(written.clone())
+                    .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+                write_manifest(
+                    &root.path().join(&id),
+                    serde_json::json!({
+                        "id": id, "version": plugin["version"], "protocol": 1,
+                        "module": "js/index.js", "types": "js/index.d.ts",
+                        "components": written,
+                    }),
+                );
+                expected.push((id, source, components));
+            }
+        }
+
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        assert!(errors.is_empty(), "{errors:?}");
+        let mut found: Vec<_> = found
+            .iter()
+            .map(|entry| (entry.manifest.id.as_str(), &entry.manifest.components))
+            .collect();
+        found.sort_by_key(|(id, _)| *id);
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(found.len(), expected.len(), "{found:?}");
+        for ((id, components), (expected_id, source, expected_components)) in
+            found.into_iter().zip(&expected)
+        {
+            assert_eq!(id, expected_id, "{}", source.display());
+            assert_eq!(components, expected_components, "{}", source.display());
+        }
+    }
+
+    #[test]
     fn skips_manifests_that_reach_outside_their_directory() {
         let root = tempfile::tempdir().unwrap();
         let collection = root.path().join("collection");
