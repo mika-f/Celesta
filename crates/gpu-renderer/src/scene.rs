@@ -1789,7 +1789,7 @@ fn oversized_uniforms(draws: usize, alignment: u32, largest: u64) -> Option<Stri
 }
 
 /// Why `camera` cannot see anything: a lens without depth or angle, or a
-/// view that cannot be undone.
+/// view that is projective or cannot be undone.
 fn invalid_camera(camera: &Camera) -> Option<String> {
     if !finite(&camera.view) {
         return Some(format!("the camera's view {:?} is not finite", camera.view));
@@ -1813,9 +1813,18 @@ fn invalid_camera(camera: &Camera) -> Option<String> {
             "the camera's near is {near} and far {far}, not 0 < near < far"
         ));
     }
+    // A view is affine: a projective one has no single eye, and
+    // `camera_position` would put it in the wrong place.
+    let view = &camera.view;
+    if view[3] != 0.0 || view[7] != 0.0 || view[11] != 0.0 || view[15] != 1.0 {
+        return Some(format!(
+            "the camera's view has bottom row {:?}, not (0, 0, 0, 1)",
+            [view[3], view[7], view[11], view[15]]
+        ));
+    }
     // A view is normally rigid, its determinant ±1; one of about zero has
     // no inverse worth the name.
-    if determinant(&camera.view).abs() <= f64::EPSILON {
+    if determinant(view).abs() <= f64::EPSILON {
         return Some("the camera's view is not invertible".to_owned());
     }
     // The shader reads the eye as `f32`: a view that shrinks the world and
@@ -2472,19 +2481,13 @@ fn normal_matrix(world: &[f32; 16]) -> [[f32; 4]; 3] {
 
 /// Where the camera of `view` sits in world space. With the view's upper
 /// 3×3 `M` and translation `t`, that is `−M⁻¹t`, which the view takes to
-/// the origin, whatever scale the view has.
+/// the origin, whatever scale the view has. `view` is affine and
+/// invertible, as `invalid_camera` checks, so `M` has an inverse.
 fn camera_position(view: &[f32; 16]) -> [f64; 3] {
     let (cofactor, determinant) = cofactor(view);
-    let view = view.map(f64::from);
-    let t = [view[12], view[13], view[14]];
-    if determinant != 0.0 {
-        // `M⁻¹t`'s entry `k` is cofactor column `k` dotted with `t`.
-        cofactor.map(|column| -(0..3).map(|r| column[r] * t[r]).sum::<f64>() / determinant)
-    } else {
-        // Only a projective view, which `invalid_camera` lets through when
-        // its whole 4×4 is invertible, gets here: `−Mᵀt`, finite.
-        std::array::from_fn(|c| -(0..3).map(|r| view[c * 4 + r] * t[r]).sum::<f64>())
-    }
+    let t = [view[12], view[13], view[14]].map(f64::from);
+    // `M⁻¹t`'s entry `k` is cofactor column `k` dotted with `t`.
+    cofactor.map(|column| -(0..3).map(|r| column[r] * t[r]).sum::<f64>() / determinant)
 }
 
 /// What `frame` reads as `Frame` on a canvas `aspect` times as wide as it

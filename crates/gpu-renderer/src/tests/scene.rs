@@ -548,6 +548,20 @@ fn scene_with_eye_beyond_f32_is_invalid() {
 }
 
 #[test]
+fn scene_with_projective_view_is_invalid() {
+    // Each view is invertible as a 4×4, but its bottom row is not
+    // (0, 0, 0, 1), so `−M⁻¹t` is not where its camera sits.
+    for (index, value) in [(3, 0.1), (7, -0.1), (11, 0.1), (15, 2.0)] {
+        let mut scenes = valid();
+        scenes.frame.camera.view[index] = value;
+        let Some(message) = invalid(scenes) else {
+            return;
+        };
+        assert!(message.contains("bottom row"), "view[{index}]: {message}");
+    }
+}
+
+#[test]
 fn nearer_quad_covers_farther_in_either_order() {
     // Red 2 m and green 4 m in front of a camera at the origin.
     let mut scenes = one_square();

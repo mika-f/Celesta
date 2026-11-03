@@ -552,8 +552,9 @@ change once it shows:
 - **glTF PBR** is to be a plugin's material, in a later phase.
 - **A material's NaN is not caught.** A material that computes NaN draws
   whatever the GPU makes of it, in its own layer only.
-- **Views that are not rigid.** The eye is exact for any invertible view,
-  but `frame.forward`, the orthographic `V`, is the view's third row,
+- **Views that are not rigid.** The eye is exact for any invertible affine
+  view (a view whose bottom row is not `(0, 0, 0, 1)` is refused), but
+  `frame.forward`, the orthographic `V`, is the view's third row,
   which a view of non-uniform scale or shear tilts. Such views are not
   refused.
 - **The layer texture is still made each frame;** only the scene canvases
