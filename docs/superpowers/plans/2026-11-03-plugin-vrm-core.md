@@ -4,11 +4,11 @@
 
 **Goal:** A VRM plugin, built apart from Celesta's workspace, opens a VRM 1.0 avatar (`.vrm`) and answers each frame with a scene Celesta draws: the avatar in its humanoid rest pose with MToon and unlit materials, expressions with UniVRM's override rules, eyes following a gaze target, a camera framed from the humanoid, the plugin's reference light, and the model's usage terms as notices. `<Vrm>` puts it in a composition, and the editor's Add menu offers it with a `.vrm` file.
 
-**Architecture:** `plugins/vrm` is the crate `celesta-plugin-vrm` with a `[workspace]` of its own (excluded from the root one), depending on `crates/plugin` by path. `document.rs` reads the glb with `gltf` and the VRM extensions with `vrm-spec`; `nodes.rs` keeps the node tree, the rest pose, and world matrices; `geometry.rs` turns each glTF primitive into a compacted `Geometry` with MikkTSpace tangents; `materials.rs` maps materials and textures; `expressions.rs`, `look_at.rs`, `camera.rs`, `meta.rs` hold UniVRM's runtime rules; `model.rs` runs the per-frame pipeline (pose, constraints, lookAt, expressions, springs: constraints and springs are no-op stages the motion plan fills); `provider.rs` serves it as plugin `vrm`. `js/src/index.ts` is `<Vrm>`. The plugin host's manifest and the editor's Add menu gain a model-file component kind.
+**Architecture:** `plugins/vrm` is the crate `celesta-plugin-vrm` with a `[workspace]` of its own (excluded from the root one), depending on `crates/plugin` by path. `document.rs` reads the glb with `gltf` and the VRM extensions with `vrm-spec`; `nodes.rs` keeps the node tree, the rest pose, and world matrices; `geometry.rs` turns each glTF primitive into a compacted `Geometry` with MikkTSpace tangents; `materials.rs` maps materials and textures; `mtoon.rs` and `mtoon.wgsl` are the plugin's MToon material (UniVRM's MToon10 written against Celesta's material interface); `expressions.rs`, `look_at.rs`, `camera.rs`, `meta.rs` hold UniVRM's runtime rules; `model.rs` runs the per-frame pipeline (pose, constraints, lookAt, expressions, springs: constraints and springs are no-op stages the motion plan fills); `provider.rs` serves it as plugin `vrm`. `js/src/index.ts` is `<Vrm>`. The plugin host's manifest and the editor's Add menu gain a model-file component kind.
 
 **Tech Stack:** Rust 2024 (`gltf` 1.4.1, `vrm-spec` =0.1.1, `glam` 0.34.2, `mikktspace` 0.3.0, `image` 0.25.10, `sha2` 0.11.1, serde, thiserror), TypeScript (React, `@celesta/react`, `@celesta/character`, Vitest), Node build script.
 
-**Spec:** `docs/superpowers/specs/2026-11-03-plugin-3d-content-vrm-design.md` (Where the pieces live, Libraries for the VRM plugin, The VRM plugin → Loading, Per frame steps 3–4, `<Vrm>`, Usage terms; Checks → Plugin; Phases → 3). The protocol the plugin speaks: `docs/handoff/2026-11-03-plugin-scene-content.md` and `2026-11-03-plugin-scene-mtoon.md` (its "For the VRM plugin (phase 3)" list). Humanoid animation, constraints, and spring bones: `2026-11-03-plugin-vrm-motion.md`, which builds on this plan's types.
+**Spec:** `docs/superpowers/specs/2026-11-03-plugin-3d-content-vrm-design.md` (Where the pieces live, Libraries for the VRM plugin, The VRM plugin → Loading, Per frame steps 3–4, `<Vrm>`, Usage terms; Checks → Plugin; Phases → 3). The protocol the plugin speaks: `docs/handoff/2026-11-03-plugin-scene-content.md` and `2026-11-03-plugin-scene-materials.md` (its "For plugins" list). Humanoid animation, constraints, and spring bones: `2026-11-03-plugin-vrm-motion.md`, which builds on this plan's types.
 
 ## Global Constraints
 
@@ -21,6 +21,7 @@
 - Model space is the glTF default scene's root space (`document.default_scene()`, else scene 0).
 - A frame depends only on the model, `time`, and `data`; nothing iterates a `HashMap` into output (expressions in preset order then custom names in byte order, nodes in pre-order).
 - The plugin sends only the protocol's vertex streams: position, normal, `TEXCOORD_0`, tangents where a material has a `normalTexture`, `JOINTS_0`/`WEIGHTS_0` (the skinning pass is at its 8 storage bindings).
+- MToon is the plugin's: `src/mtoon.wgsl`, recovered from `crates/gpu-renderer/src/scene_mtoon.wgsl` at the parent of Celesta's commit `refactor(plugins): MToon leaves Celesta for the VRM plugin` (`git show <that commit>^:crates/gpu-renderer/src/scene_mtoon.wgsl`), and `src/mtoon.rs` (`Mtoon` with UniVRM's defaults from that parent's `crates/plugin/src/scene.rs`; `params` from its `scene.rs`'s `mtoon_params` and `uv_scroll`); both carry the UniVRM notice. Its GPU tests are `tests/mtoon.rs`.
 - Required humanoid bones (VRM 1.0): `hips spine head leftUpperArm leftLowerArm leftHand rightUpperArm rightLowerArm rightHand leftUpperLeg leftLowerLeg leftFoot rightUpperLeg rightLowerLeg rightFoot`.
 - Canvas: the layer's size in px is a resolution the composition sets — `<Vrm width height>` (`aspect` fills whichever one is missing), default 1920×1080 — and travels as `data.canvas`; the plugin answers it in the frame's `canvas` (Task 13), which overrides the model's `canvas` (`CANVAS` = `[1920.0, 1080.0]`, the default). Sharpness does not depend on it: Celesta draws scene canvases at the layer's density.
 - Decoded textures (width × height × 4 over distinct images) at most 1 GiB (`TEXTURE_BUDGET = 1 << 30`).
@@ -37,6 +38,7 @@
 - **A smile closing the eyes twice**: `happy` with `overrideBlink: block` turns the blink expression off; `blend` scales it by `1 − w`; a binary expression snaps at 0.5 as UniVRM's `Mathf.Round` does. Task 5.
 - **Transparent hair sorting against the face**: every primitive of one glTF mesh gets the same `center`, following the pose (the skin's skeleton node, or the mesh node), and draws keep primitive order. Task 4.
 - **Usage terms**: an avatar whose terms forbid commercial use or require credit opens with a `warning` notice, never a refusal; every other meta field is an `info` notice. Task 8.
+- **MToon parity survives the move:** every MToon test Celesta had passes in `tests/mtoon.rs` with the same expected pixels. Task 3b.
 
 ---
 
@@ -128,7 +130,9 @@ pub(crate) fn primitive_geometry(doc: &Document, mesh: gltf::Mesh, primitive: gl
 - [ ] **Step 3:** Implement. **Step 4:** Pass; then the task checks.
 - [ ] **Step 5:** Commit `feat(plugins): VRM node tree, humanoid, and compacted geometry`.
 
-### Task 3: Textures and materials
+### Task 3: Textures and materials (redone after MToon moved into the plugin)
+
+The first version of this task mapped MToon onto Celesta's built-in MToon material. Celesta no longer has one (its materials are the built-in `unlit` and a plugin's own WGSL), so the task is redone on top as a new commit: a VRM MToon material becomes a custom material on the plugin's MToon shader (Task 3b).
 
 **Files:**
 - Create: `plugins/vrm/src/materials.rs`
@@ -137,26 +141,30 @@ pub(crate) fn primitive_geometry(doc: &Document, mesh: gltf::Mesh, primitive: gl
 
 ```rust
 pub(crate) struct Materials { pub textures: Vec<SceneTexture>, pub materials: Vec<Material>, pub notices: Vec<Notice>,
-    pub base_transforms: Vec<Option<TextureTransform>> /* by material: the base colour texture's, for UV binds */ }
+    pub base_transforms: Vec<Option<TextureTransform>> /* by material: the base colour texture's, for UV binds */,
+    pub mtoon: Vec<Option<Mtoon>> /* by material: the typed parameters packed into params */,
+    pub shaders: Vec<SceneShader> }
 pub(crate) fn materials(doc: &Document, cache: &Path) -> Result<Materials, LoadError>
 pub(crate) fn texture_cache_dir() -> PathBuf   // $CELESTA_VRM_TEXTURE_CACHE, else temp_dir()/celesta-plugin-vrm
 ```
 
 **Decisions:**
-- **Kinds.** A material with `VRMC_materials_mtoon` is `MaterialKind::Mtoon`, every field the file has copied onto `MtoonMaterial::default()` (UniVRM's defaults already): base colour from `pbrMetallicRoughness.baseColorFactor`; `emissive_factor` = `emissiveFactor` × `KHR_materials_emissive_strength` (UniGLTF's `ImportLinearEmissiveFactor`); `normalTexture.scale` and `shadingShiftTexture.scale` into the scaled slots. `KHR_materials_unlit` is `Unlit` (base colour × texture). Any other material is `Unlit` with its base colour and base colour texture: **glTF PBR is drawn unlit for now** (spec phase 5), its emission and metal-roughness dropped, and one `info` notice says `"{n} glTF PBR material(s) are drawn as unlit base colour: {names}"`.
-- `alphaMode` and `alphaCutoff` (default 0.5) and `doubleSided` as the file says. Materials keep glTF's indices (unused ones too), so expression binds index them directly.
+- **Kinds.** A material with `VRMC_materials_mtoon` is an `Mtoon` (Task 3b), every field the file has copied onto `Mtoon::default()` (UniVRM's defaults already): base colour from `pbrMetallicRoughness.baseColorFactor`; `emissive_factor` = `emissiveFactor` × `KHR_materials_emissive_strength` (UniGLTF's `ImportLinearEmissiveFactor`); `normalTexture.scale` and `shadingShiftTexture.scale` into the scaled slots. It is sent as `MaterialKind::Custom(CustomMaterial { shader: 0, params: mtoon::params(&m, &MtoonOverrides::default(), 0.0, &textures).to_vec(), textures: mtoon::slots(&m).map(…).to_vec() /* 9 slots */, outline: (m.outline_width_mode != OutlineWidthMode::None).then(OutlinePass::default), requires_tangents: m.normal_texture.is_some() })`, and kept typed in `Materials::mtoon`. `shaders` is `vec![mtoon::shader()]` when any material is MToon, else empty. `KHR_materials_unlit` is `Unlit` (base colour × texture). Any other material is `Unlit` with its base colour and base colour texture: **glTF PBR is drawn unlit for now** (spec phase 5), its emission and metal-roughness dropped, and one `info` notice says `"{n} glTF PBR material(s) are drawn as unlit base colour: {names}"`.
+- The plugin checks what Celesta can no longer see inside the parameter bytes before packing: `mtoon::invalid(&m, textures.len()) -> Option<String>` (slot ranges by MToon name, every number finite) → `LoadError::Invalid("material \"{name}\": {reason}")`.
+- `alphaMode` and `alphaCutoff` (default 0.5) and `doubleSided` as the file says. Blend is `AlphaMode::Blend { depth_write: transparentWithZWrite, queue_offset: renderQueueOffsetNumber }`; opaque and mask drop both (UniVRM ignores them there). Materials keep glTF's indices (unused ones too), so expression binds index them directly.
 - **Texture transform:** the base colour texture's `KHR_texture_transform` (offset, rotation, scale; Celesta honours the rotation UniVRM drops) becomes `TextureRef::transform`; every other slot's transform is ignored (UniVRM has one `_MainTex_ST`). Every slot samples `TEXCOORD_0`, whatever its `texCoord`.
 - **Colour spaces:** sRGB for base colour, shade multiply, emissive, matcap, rim multiply; linear for normal, shading shift, outline width, UV animation mask.
-- **One `SceneTexture` per (image, colour space, sampler)**, in first-use order over materials then slots in `MtoonMaterial` field order.
+- **One `SceneTexture` per (image, colour space, sampler)**, in first-use order over materials then slots in `Mtoon` field order.
 - **Samplers:** wrap 33071 clamp, 33648 mirrored repeat, 10497 repeat; `magFilter` 9728 nearest, else linear; `minFilter` 9728/9984/9986 nearest, else linear; `mipmaps` false only for `minFilter` 9728 or 9729; no sampler → `Sampler::default()`.
 - **Images are files, not pixels.** Each `image/png`, `image/jpeg`, or (`EXT_texture_webp`) `image/webp` image's bytes are written once to `<cache>/<sha256 hex>.<png|jpg|webp>` (written to a temporary name and renamed, skipped when the file exists) and sent as `TextureSource::Path`; Celesta decodes them. This keeps the `open` answer to a few MB.
 - **Budget:** each distinct image's dimensions come from its header (`image::ImageReader::with_guessed_format().into_dimensions()`); over `TEXTURE_BUDGET` in total → `"the model's textures decode to {m} MiB, more than 1024 MiB"`.
 - Another image type (KTX2) leaves the slot empty with a `warning` notice `"texture {t} is {mime}, which the VRM plugin cannot read; material \"{name}\" draws without it"`.
 
 - [ ] **Step 1:** Tests (`materials.rs`, synthetic avatar, cache in a `tempfile::TempDir`):
-  - `mtoon_slots_dedupe_by_image_colour_space_and_sampler`: 3 textures: (image 0, sRGB, default sampler), (image 1, linear, default), (image 0, linear, sampler 1); material 0's `base_color_texture.texture == 0`, `shade_multiply_texture == Some(TextureSlot { texture: 0 })`, `normal_texture.texture == 1`, `shading_shift_texture.texture == 2`.
+  - `mtoon_slots_dedupe_by_image_colour_space_and_sampler`: 3 textures: (image 0, sRGB, default sampler), (image 1, linear, default), (image 0, linear, sampler 1); `materials.mtoon[0]`'s `base_color_texture.texture == 0`, `shade_multiply_texture == Some(TextureSlot { texture: 0 })`, `normal_texture.texture == 1`, `shading_shift_texture.texture == 2`; the custom material's `textures == [Some(0), Some(0), Some(2), Some(1), None, None, None, None, None]`.
   - `base_colour_transform_moves_the_material`: material 0's transform offset `[0.5, 0.0]`, scale `[1.0, 1.0]`, rotation 0; `base_transforms[0]` the same.
-  - `hair_keeps_blend_and_its_queue_offset`: material 1 `AlphaMode::Blend`, `render_queue_offset_number == -1`.
+  - `hair_keeps_blend_and_its_queue_offset`: material 1 `AlphaMode::Blend { depth_write: false, queue_offset: -1 }`.
+  - `mtoon_materials_share_one_shader`: materials 0 and 1 both `shader: 0`, one entry in `shaders`, `requires_tangents` only on material 0.
   - `pbr_is_drawn_unlit_with_a_notice`: material 2 is `Unlit` with base `[0.5, 0.5, 0.5, 1.0]`; one `info` notice containing `"drawn as unlit base colour"` and `"Pbr"`; material 3 (`KHR_materials_unlit`) is `Unlit` `[0, 1, 0, 1]` and not in the notice.
   - `sampler_follows_gltf`: texture 2's sampler is `{ClampToEdge, MirroredRepeat, Nearest, Nearest, mipmaps: false}`.
   - `images_are_written_once_by_content`: texture 0's source is a `Path` inside the cache named `<sha256>.png` holding the embedded bytes; loading twice writes no new file (the directory has 2 files).
@@ -164,7 +172,41 @@ pub(crate) fn texture_cache_dir() -> PathBuf   // $CELESTA_VRM_TEXTURE_CACHE, el
   - `unreadable_images_leave_the_slot_empty`: `images[1]` mime `image/ktx2` → material 0 has no `normal_texture`; one `warning` notice naming `"image/ktx2"` and `"Body"`.
 - [ ] **Step 2:** `cargo test --manifest-path plugins/vrm/Cargo.toml materials` → fails to compile.
 - [ ] **Step 3:** Implement. **Step 4:** Pass; then the task checks.
-- [ ] **Step 5:** Commit `feat(plugins): VRM materials and textures`.
+- [ ] **Step 5:** Commit `feat(plugins): VRM materials and textures` (the redone version is a new commit on top, after Task 3b; the earlier commits are not rewritten).
+
+### Task 3b: MToon as the plugin's material (after Task 3)
+
+**Files:**
+- Create: `plugins/vrm/src/mtoon.rs`, `plugins/vrm/src/mtoon.wgsl`, `plugins/vrm/tests/mtoon.rs`
+
+**Interfaces — Produces:**
+
+```rust
+pub struct Mtoon { /* the former MtoonMaterial's fields and UniVRM defaults, minus transparent_with_z_write and render_queue_offset_number */ }
+pub enum OutlineWidthMode { None, WorldCoordinates, ScreenCoordinates }
+pub struct TextureSlot { pub texture: usize }   pub struct ScaledTextureSlot { pub texture: usize, pub scale: f32 }
+#[derive(Clone, Copy, Debug, Default, PartialEq)] pub struct MtoonOverrides {   // one frame's binds
+    pub base_color: Option<[f32; 4]>, pub texture_offset: Option<[f32; 2]>, pub texture_scale: Option<[f32; 2]>,
+    pub shade_color: Option<[f32; 3]>, pub emission_color: Option<[f32; 3]>, pub matcap_color: Option<[f32; 3]>,
+    pub rim_color: Option<[f32; 3]>, pub outline_color: Option<[f32; 3]>,
+}
+pub const MTOON_PARAMS: usize = 176;            // the Params layout of Celesta's former MToon shader
+pub fn shader() -> SceneShader;                 // name "MToon", 9 slots: base colour, shade multiply, shading shift (black), normal, emissive, matcap (black), rim multiply, outline width, UV animation mask
+pub fn slots(m: &Mtoon) -> [Option<usize>; 9];
+pub fn params(m: &Mtoon, o: &MtoonOverrides, time: f64, textures: &[SceneTexture]) -> [u8; MTOON_PARAMS];   // little-endian; the scroll formed in f64 and wrapped as uv_scroll did
+pub(crate) fn invalid(m: &Mtoon, textures: usize) -> Option<String>;
+```
+
+**Decisions:**
+- `mtoon.wgsl` is Celesta's former `scene_mtoon.wgsl` (UniVRM's MToon10) written against Celesta's material interface: `material_fragment`, `material_outline_vertex`, and `material_outline_fragment`, with the `Params` block above and the nine slots in `shader()`'s order. Both files carry the UniVRM notice.
+- Every MToon test Celesta had moves here with the same expected pixels, drawn through Celesta's renderer as a plugin's custom material.
+
+- [ ] **Step 1:** Tests:
+  - `tests/mtoon.rs` ports the `lit_`, `shading_`, `surface_`, `outline_` (MToon ones), `override_` (the five colours and base colour), `queue_` MToon cases, and `mask_mtoon_covers_by_cutoff` tests with their expected pixels, drawing through `GpuRenderer::with_content_provider(FixedScene { model, frame })` (a test `ContentProvider` answering one fixed `SceneModel` and `SceneFrame`) and the turntable's adapter-skip pattern.
+  - `mtoon.rs` unit tests port `mtoon_slots_and_numbers_are_checked` (as `invalid`), the UV scroll precision and wrapping cases (as `params`), and `mtoon_params_pack_univrm_defaults` (default `Mtoon` → shade `(1, 1, 1, −0.05)` at byte 48, toony 0.95 at 92, GI equalization 0.9 at 120, fresnel power 5 at 112).
+- [ ] **Step 2:** `env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/vrm/Cargo.toml mtoon` → fails.
+- [ ] **Step 3:** Implement. **Step 4:** Pass; then the task checks.
+- [ ] **Step 5:** Commit `feat(plugins): MToon as the VRM plugin's own scene material`.
 
 ### Task 4: The model, skins, draws, and a rest frame
 
@@ -196,6 +238,8 @@ pub const CANVAS: [f32; 2] = [1920.0, 1080.0];
 ```
 
 `frame` runs: `base_pose` → `apply_constraints` → lookAt yaw/pitch (Task 6) → expressions (Task 5, which applies the eye rotations) → `apply_springs` → worlds → `SceneFrame`. Until Task 7 the camera is a fixed `view = translation(0, −0.8, −3.3)` with Task 7's projection, and the lights are `Lights::default()`.
+
+**Changed with MToon in the plugin:** `frame` packs each MToon draw's `params` with `mtoon::params(…, time, …)` and the frame's binds, and sends `DrawState.params` only when the bytes differ from the material's (UV animation or binds); unlit draws get `MaterialOverrides` (base colour, texture offset and scale) only. `overrides_are_finite` checks the plugin's `MtoonOverrides` before packing (`FrameError("material {m}'s {bind} is not finite")`), since Celesta cannot.
 
 **Decisions:**
 - **Draws** go node by node in pre-order over the default scene, then primitive by primitive; `DrawInfo { geometry, material, skin }` with one geometry per (mesh, primitive), shared by nodes instancing the mesh. A draw without a material uses a default unlit white material appended once.
@@ -230,7 +274,7 @@ pub(crate) struct Expressions { /* definitions in key order */ }
 pub(crate) struct Applied { pub weights: BTreeMap<ExpressionKey, f32> /* actual */, pub look_at_rate: f32 }
 impl Expressions {
     pub(crate) fn validate(&self, inputs: &BTreeMap<ExpressionKey, f32>) -> Applied;      // steps 1–3 below
-    pub(crate) fn apply(&self, actual: &BTreeMap<ExpressionKey, f32>, morph: &mut [Vec<f32>] /* by draw */, overrides: &mut [MaterialOverrides] /* by material */);
+    pub(crate) fn apply(&self, actual: &BTreeMap<ExpressionKey, f32>, morph: &mut [Vec<f32>] /* by draw */, binds: &mut [MtoonOverrides] /* by material */);
 }
 ```
 
@@ -239,10 +283,10 @@ impl Expressions {
 - **Inputs** are clamped to 0..1 (VRM 1.0's range; UniVRM does not clamp); unknown names are ignored (UniVRM's `SetWeight`); non-finite inputs are `FrameError` `"expression {name} is not finite"`.
 - **Validate** (`DefaultExpressionValidator`): (1) `w = isBinary ? round_ties_even(w) : w` (Unity's `Mathf.Round` rounds halves to even); each expression that is not itself a blink/lookAt/mouth key adds its override rate to that group: `none` 0, `block` `w > 0 ? 1 : 0`, `blend` `w`. (2) Each rate is clamped to 0..1, multiplier `m = 1 − rate`. (3) Each blink/lookAt/mouth key: binary → 0 when `m < 1`; else `w × m`. `look_at_rate` goes to Task 6's gaze.
 - **Apply** (`ExpressionMerger.AccumulateValue`): a binary expression contributes `actual > 0.5 ? 1 : 0`. **Morph:** every morph target any expression binds is `Σ bind.weight × w` from 0 each frame, on every draw of the bound node (`MorphTargetBindingMerger`); others keep Task 4's defaults. **Material colour** (`MaterialValueBindingMerger.Apply`): per bound (material, type), `value = base + Σ (target − base) × w`. UniVRM stores `color`, `shadeColor`, `matcapColor`, `rimColor`, and `outlineColor` as sRGB-encoded material properties (`BuiltInVrm10MToonMaterialImporter.TryGetAllColors`) and uses the file's `targetValue` as it is (`ExpressionExtensions.Build10`), so those blend in sRGB: `base = srgb(linear factor)`, the result decoded back to linear; alpha stays linear. `emissionColor` is stored linear and blends linearly. Override fields: `color` → `base_color` (RGBA), `emissionColor` → `emission_color`, `shadeColor` → `shade_color`, `matcapColor`, `rimColor`, `outlineColor` (RGB). **UV:** per bound material, `scale/offset = base + Σ (bind − base) × w`, `base` the material's base colour transform (scale (1, 1), offset (0, 0) without one), bind defaults scale (1, 1), offset (0, 0); written to `texture_offset` and `texture_scale`. UniVRM blends Unity's flipped `_MainTex_ST`; the flip is affine, so blending glTF's values gives the same.
-- Material overrides reach every draw using the material. Bind types on unlit materials other than `color` are sent and ignored by Celesta.
+- Material binds reach every draw using the material: `model.rs` turns an unlit material's binds into `MaterialOverrides` and an MToon material's into parameters (Task 4). Bind types on unlit materials other than `color` (and the UV binds) are dropped by the plugin: an unlit material has no such colour.
 - `VRMC_vrm_expressions_node_transform` binds are not read.
 
-- [ ] **Step 1:** Tests (`expressions.rs`, through `VrmModel::frame` on the synthetic avatar; morph target 0 of draw 0 unless said):
+- [ ] **Step 1:** Tests (`expressions.rs`, through `VrmModel::frame` on the synthetic avatar; morph target 0 of draw 0 unless said; material binds read through a helper `binds(model, inputs) -> MtoonOverrides` rather than `frame.draws[i].overrides`, their expected values unchanged):
   - `blink_alone_moves_its_target`: `{blink: 1}` → 0.5.
   - `block_override_turns_blink_off` (Review Focus): `{happy: 1, blink: 1}` → 1.0; `{happy: 0.3, blink: 1}` → 0.3.
   - `blend_override_scales_blink` (Review Focus): `happy.overrideBlink = "blend"`; `{happy: 0.3, blink: 1}` → 0.3 + 0.5 × 0.7 = 0.65.
@@ -483,7 +527,7 @@ export function vrmData(props: VrmProps, frame: number, fps: number): VrmData;  
   - `render.rs` `the_avatar_draws_and_repeats`: pixel (240, 135) (the box's middle) has alpha 255 and a corner pixel is clear; rendering frame 1.0 twice gives equal bytes; `{happy: 1}` changes some pixel (the base colour bind).
   - `samples.rs` `seed_san_opens`: `VrmModel::load` succeeds; draws > 0; the first notice is `info` and contains the file's `meta.licenseUrl`; one notice contains `"drawn as unlit base colour"`; frames at times `[3.0, 0.0, 1.5, 3.0]` with `{blink: 1, aa: 0.5}` equal those played in order on a fresh model, and every number in them is finite.
   - `samples.rs` `constraint_twist_sample_opens_with_bone_look_at`: loads; `{lookAt: {yaw: 20, pitch: 0}}` changes the eye nodes' worlds against the rest frame.
-  - `samples.rs` `uv_animation_sample_keeps_its_speeds`: some MToon material has a non-zero `uv_animation_scroll_x_speed_factor`, `_y_`, or rotation speed, and a `uv_animation_mask_texture`.
+  - `samples.rs` `uv_animation_sample_keeps_its_speeds`: some material in `materials.mtoon` has a non-zero `uv_animation_scroll_x_speed_factor`, `_y_`, or rotation speed, and a `uv_animation_mask_texture`.
   - `samples.rs` `seed_san_draws`: (GPU) the bust frame has opaque pixels in the canvas's middle third.
 - [ ] **Step 2:** `env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/vrm/Cargo.toml --test render --test samples` with `CELESTA_VRM_SAMPLES_DIR` set → fail (no files).
 - [ ] **Step 3:** Implement; fix what they find in the earlier tasks' modules, each fix with its own unit test. **Step 4:** Pass with and without the samples; then the task checks.
@@ -493,9 +537,11 @@ export function vrmData(props: VrmProps, frame: number, fps: number): VrmData;  
 
 **Files:**
 - Create: `docs/handoff/2026-11-03-plugin-vrm.md` (what the plugin is and how it builds and installs; loading rules; geometry, materials, textures; skins, draws, `center`; expressions, lookAt, first person; camera presets and the reference light (with its Unity values); usage terms; `<Vrm>`; the manifest's model kind and the Add menu; What landed; Not done; Where Celesta knowingly differs from UniVRM; Checks)
-- Modify: `packages/website/content/en/docs/05-(more)/05-plugins.md` and `packages/website/content/ja/docs/05-(more)/05-plugins.md` (a "The VRM plugin" section: building it with `node plugins/vrm/build.mjs`, installing `plugins/vrm/dist/vrm`, `<Vrm>`'s props with an example, the usage-term notices, PBR drawn unlit; "Use its components": components that take a model file), `skills/celesta/references/plugins.md` (the same, and the notes list), `docs/handoff/2026-11-03-plugin-scene-mtoon.md` (its phase-3 list: which items the plugin now handles, pointing to the new note)
+- Modify: `packages/website/content/en/docs/05-(more)/05-plugins.md` and `packages/website/content/ja/docs/05-(more)/05-plugins.md` (a "The VRM plugin" section: building it with `node plugins/vrm/build.mjs`, installing `plugins/vrm/dist/vrm`, `<Vrm>`'s props with an example, the usage-term notices, PBR drawn unlit; "Use its components": components that take a model file), `skills/celesta/references/plugins.md` (the same, and the notes list), `docs/handoff/2026-11-03-plugin-scene-materials.md` ("For plugins": which items the plugin handles, pointing to the new note)
 
-**Not done** lists at least: VRM 0.x (refused; phase 4); glTF PBR drawn unlit; humanoid motion, constraints, and spring bones (the motion plan); `VRMC_vrm_expressions_node_transform`; KTX2 textures; `TEXCOORD_1`, vertex colours, more than four joints a vertex; the texture cache is never cleaned; Celesta still compiles a model's pipelines when it opens (a stall on the first MToon avatar); parity renders against UniVRM not yet made. **Knowingly differs / to check against UniVRM:** colour binds blended in sRGB; the `center` offset from the skin's skeleton; expression inputs clamped to 0..1; texture rotation honoured.
+The VRM note gains an **MToon** section moved from the phase-2 mtoon note: its fields and defaults table, how it shades, outlines, binds packed into parameters, and "Where it knowingly differs from UniVRM": the mask edge, `V` per fragment, texture rotation honoured, emissive strength folded in, additional lights in one fragment, the glTF-axis translations, the screen-width formula and its `P[1][1]` cap, `linearstep` at toony 1, coplanar draws and the outline's depth bias.
+
+**Not done** lists at least: VRM 0.x (refused; phase 4); glTF PBR drawn unlit; humanoid motion, constraints, and spring bones (the motion plan); `VRMC_vrm_expressions_node_transform`; KTX2 textures; `TEXCOORD_1`, vertex colours, more than four joints a vertex; the texture cache is never cleaned; Celesta compiles the MToon shader once per renderer, when the first avatar opens (a stall on the first MToon avatar); parity renders against UniVRM not yet made. **Knowingly differs / to check against UniVRM:** colour binds blended in sRGB; the `center` offset from the skin's skeleton; expression inputs clamped to 0..1; texture rotation honoured.
 
 - [ ] **Step 1:** Write the docs. **Step 2:** `pnpm --dir packages/website run build` passes.
 - [ ] **Step 3:** Commit `docs: the VRM plugin`.
