@@ -311,8 +311,9 @@ normals, so its outline breaks at the corners; the README says so.
 - **The outline's depth-bias tests have run on Metal only.** WebGPU scales
   a float depth's constant bias by its exponent, so other backends should
   agree.
-- **Pipelines of a refused model** stay in the shared cache, where later
-  models reuse them.
+- **Pipelines of a model refused for its GPU limits** (a buffer or
+  texture too large, found after the checks above pass) stay in the
+  shared cache, where later models reuse them.
 - From the first phase, still open: straight-alpha mipmaps fringe cut-outs
   at distance; the default 128 MiB storage-binding limit may refuse
   morph-heavy geometry; the canvas (`SCENE_CANVAS_TEXELS`) and buffer
