@@ -58,7 +58,9 @@ Files ported from UniVRM carry its MIT notice and name their source.
 - A `.vrm` is binary glTF; a glTF JSON file whose buffers are `data:` URIs
   opens too. A buffer or an image that names another file is refused:
   `buffer {i} is an external file; a .vrm keeps everything in itself`.
-- Refusals, in this order, before glTF's own validation:
+- Refusals, in this order, the first three before glTF's own validation
+  (so a VRM 0.x file always gets the conversion hint) and the humanoid's
+  after it:
   - the root has `VRM` but no `VRMC_vrm`: `this is a VRM 0.x avatar, which
     the VRM plugin does not open yet; convert it to VRM 1.0 with UniVRM or
     the VRM Add-on for Blender`;
@@ -464,7 +466,8 @@ Ported from UniVRM's `Vrm10RuntimeLookAt` and its helpers.
   model's axes, and moves and turns with the head.
 - **A point's yaw and pitch:** with `p` the point in the origin's space,
   `yaw = atan2(−p.x, p.z)` (positive to the avatar's right, −X) and
-  `pitch = atan2(p.y, |p.xz|)` (positive up), then both times
+  `pitch = atan2(p.y, |p.xz|)` (positive up).
+- **The override:** whatever the input, yaw and pitch are multiplied by
   `1 − lookAt rate` from the expressions.
 - **Range maps:** `clamp01(d / max(0.001, inputMaxValue)) × outputScale`.
   A map the file lacks is (90, 10); a map missing one value takes that
