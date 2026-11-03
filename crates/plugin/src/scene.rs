@@ -392,8 +392,8 @@ pub enum Projection {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lights {
-    /// The first is the main light. Only the first 4 shade, Unity's default
-    /// pixel light count.
+    /// The first is the main light. At most 4, Unity's default pixel light
+    /// count: a frame with more is refused.
     pub directional: Vec<DirectionalLight>,
     /// Light from every direction: `ambient[k]` is the RGB of coefficient
     /// `k` of
@@ -444,7 +444,8 @@ pub struct DrawState {
 /// Values that replace the draw's material's for this frame, as material
 /// animation sets them: VRM 1.0's `materialColorBind` and
 /// `textureTransformBind` targets. By default none do. The MToon-only ones,
-/// from `shade_color` on, are ignored on an unlit draw.
+/// from `shade_color` on, are ignored on an unlit draw, but must still be
+/// finite there.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MaterialOverrides {

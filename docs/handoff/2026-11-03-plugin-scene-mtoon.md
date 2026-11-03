@@ -71,7 +71,8 @@ file has.
 - **Empty slots** bind Unity's default texel for the property, which leaves
   each term as UniVRM's keyword gates do without the texture: black for the
   shading shift and the matcap (no shift but the factor's, no matcap),
-  white for the rest. An empty normal slot is not read.
+  white for the rest. An empty normal slot is sampled but has no effect:
+  the geometric normal is kept.
 - **Checked on open.** Each slot's texture must exist
   (`material {i}'s shadeMultiplyTexture uses texture {t}, of {n}`), every
   MToon number must be finite, and a draw whose material has a
@@ -124,7 +125,7 @@ file has.
 - **Emission.** `color += emissiveFactor × emissiveTexture`.
 - **Rim.** `rim = (matcap + parametric) × rimMultiplyTexture`, with
   `parametric = pow(saturate(1 − N·V + lift), max(power, 2⁻¹⁰)) × rimColor`
-  (0 where the base is 0) and the matcap sampled at the view-space normal:
+  (0 where `1 − N·V + lift` ≤ 0) and the matcap sampled at the view-space normal:
   `right = normalize(cross(+Y, V))`, `up = normalize(cross(V, right))` (the
   view's x axis as `right` when looking along ±Y), at
   `(N·right × ½ + ½, ½ − N·up × ½)`, so a normal leaning right samples the
@@ -308,8 +309,10 @@ normals, so its outline breaks at the corners; the README says so.
   formed from the `f32` time, so either drifts at very large times.
 - **Views that are not rigid.** The eye is exact for any invertible view,
   but the orthographic `V` and the matcap's fallback axis come from the
-  view's rows, which a view of non-uniform scale or shear skews. Such views
-  are not refused.
+  view's rows, and `vs_outline` takes the normal to view space through
+  `frame.view`'s 3×3 itself (UniVRM uses its inverse transpose), all of
+  which a view of non-uniform scale or shear skews. Such views are not
+  refused.
 - **The layer texture is still made each frame;** only the scene canvases
   and buffers are kept. The buffers do not shrink until a frame draws no
   scene.
@@ -319,14 +322,39 @@ normals, so its outline breaks at the corners; the README says so.
 - **Pipelines of a model refused for its GPU limits** (a buffer or
   texture too large, found after the checks above pass) stay in the
   shared cache, where later models reuse them.
+- **For the VRM plugin (phase 3)** to handle, or for Celesta to change
+  once it shows:
+  - **Transparent sorting per renderer.** Unity sorts a renderer's
+    transparent submeshes as one, by one centre, and draws them in
+    submesh order. Celesta sorts each draw by its own: the plugin should
+    send one `center` for all of a glTF mesh's primitives and list them in
+    primitive order (ties go by draw index). A skinned draw's default
+    centre, its rest bounds moved by `world`, does not follow the avatar,
+    since `world` is the identity for a skinned mesh; the plugin should
+    send `center` for skinned draws.
+  - **Shared accessors are copied per primitive.** Primitives that share
+    a vertex accessor each upload all of it; the plugin should compact
+    each primitive's vertices to those its indices use.
+  - **Compute storage bindings are at the limit.** The skinning pass binds
+    8 storage buffers, WebGPU's default `maxStorageBuffersPerShaderStage`;
+    a new vertex stream would need a higher limit or packed streams.
+  - **No byte budget on `model.textures`.** Each texture's dimensions are
+    checked against the GPU's, but not their total bytes, which a model
+    with many large textures can run past.
+  - **A `normalTexture` without tangents is refused.** Celesta makes up no
+    tangents: the plugin generates MikkTSpace tangents for a primitive
+    that lacks them.
+  - **Pipelines compile when a model opens,** in both windings, for each
+    shading, pass, culling, and alpha mode its materials use that no model
+    has used before: a one-off stall on open, most of it at the first
+    MToon model.
 - From the first phase, still open: straight-alpha mipmaps fringe cut-outs
   at distance; the default 128 MiB storage-binding limit may refuse
   morph-heavy geometry; the canvas (`SCENE_CANVAS_TEXELS`) and buffer
   (`SCENE_BUFFER_BUDGET`) caps; no Add-menu entry for `<Turntable>`; the
   CPU renderer and `@celesta/web` refuse plugin content; the out-of-tree
   Live2D plugin's interface update; zero-weight joint slots counting toward
-  the skin check; shared glTF accessors copied per primitive; no test for a
-  reopen of the other kind.
+  the skin check; no test for a reopen of the other kind.
 
 Where Celesta knowingly differs from UniVRM, or matches it only by
 reading its source, to check once UniVRM reference renders exist:

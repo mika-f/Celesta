@@ -106,8 +106,8 @@ the identity as `world` for a glTF skinned mesh.
   sees something (`0 < near < far`, a `yfov` between 0 and π or a positive
   `height`, an invertible `view` that puts the eye within `f32`'s range),
   and its buffers (skinning matrices and
-  morph weights, and the per-draw skinning and draw uniforms, each a
-  draw's aligned to the GPU's uniform offset alignment) must each fit the
+  morph weights, and the per-draw skinning and draw uniforms, one per
+  draw, each aligned to the GPU's uniform offset alignment) must each fit the
   largest buffer the GPU allows.
   Anything else is `InvalidPluginContent`. A model that fails to load is
   closed again.
