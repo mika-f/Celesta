@@ -36,10 +36,12 @@ pub(crate) struct PrimitiveGeometry {
     pub primitive: usize,
 }
 
-/// `primitive` of `mesh` as a triangle list, or `None` for points and
-/// lines. `skin`, the skin of the node drawing the mesh, makes the
-/// geometry skinned when the primitive has `JOINTS_0` and `WEIGHTS_0`;
-/// `needs_tangents` (the material has a `normalTexture`) adds tangents.
+/// `primitive` of `mesh` as a triangle list, or `None` when it draws no
+/// triangles: points, lines, or a strip or fan of fewer than 3 vertices
+/// (skipped, like points and lines). `skin`, the skin of the node drawing
+/// the mesh, makes the geometry skinned when the primitive has `JOINTS_0`
+/// and `WEIGHTS_0`; `needs_tangents` (the material has a `normalTexture`)
+/// adds tangents.
 // Called by the model (Task 4).
 #[allow(dead_code)]
 pub(crate) fn primitive_geometry(
@@ -109,6 +111,11 @@ fn read_primitive(
         )));
     }
     let triangles = triangle_list(mode, drawn, at)?;
+    if triangles.is_empty() {
+        // A strip or fan of fewer than 3 vertices: nothing to draw. (A list
+        // cannot get here: its indices are at least one, in threes.)
+        return Ok(None);
+    }
 
     // The vertices the triangles use, in their order in the file.
     let mut remap = vec![u32::MAX; vertices];
@@ -579,9 +586,11 @@ fn triangle_list(mode: Mode, drawn: Vec<u32>, at: &At) -> Result<Vec<u32>, LoadE
 }
 
 /// One vertex's four joint slots for a skin of `joint_count` joints: a slot
-/// of weight 0 (or less) names joint 0 with weight 0, and the weights are
-/// scaled to sum to 1 where they sum to more than 0. `Err` is the joint a
-/// weighted slot names that the skin lacks.
+/// of weight 0 names joint 0 with weight 0, and the weights are scaled to
+/// sum to 1 where they sum to more than 0. A negative weight, which glTF
+/// forbids, is zeroed the same way rather than refused: Unity ignores it,
+/// so UniVRM draws such a file. `Err` is the joint a weighted slot names
+/// that the skin lacks.
 fn skin_slots(
     joints: [u16; 4],
     weights: [f32; 4],
@@ -1046,6 +1055,23 @@ mod tests {
     fn points_and_lines_are_not_read() {
         for mode in [0, 1, 2, 3] {
             assert_eq!(hair_mode(mode), None, "mode {mode}");
+        }
+    }
+
+    #[test]
+    fn strips_and_fans_without_a_triangle_are_skipped() {
+        for mode in [5, 6] {
+            for count in [1, 2] {
+                let read = body_with(|root| {
+                    root["meshes"][0]["primitives"][1]["mode"] = json!(mode);
+                    let indices = root["meshes"][0]["primitives"][1]["indices"]
+                        .as_u64()
+                        .unwrap() as usize;
+                    root["accessors"][indices]["count"] = json!(count);
+                })
+                .unwrap();
+                assert_eq!(read[1], None, "mode {mode}, {count} indices");
+            }
         }
     }
 
