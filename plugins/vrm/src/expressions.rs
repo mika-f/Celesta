@@ -35,10 +35,16 @@
 //!   - A material's colour or transform is overridden only while an
 //!     expression binding it has a weight; otherwise it is the material's
 //!     own, which is what `base + 0` gives.
-//! - **Indices:** a bind naming a node or material the file lacks refuses
-//!   the model, as UniVRM's importer fails on it. A morph target bind on a
-//!   node without a mesh, or past its mesh's targets, is ignored with a
-//!   warning, as UniVRM's merger skips it.
+//! - **Binds the file gets wrong** follow UniVRM:
+//!   - A morph target bind is ignored with a warning when its node is not
+//!     the file's (`ExpressionExtensions`), has no mesh, or has no such
+//!     target, and when the expression already binds that node's target
+//!     (`MorphTargetBindingMerger` keeps the first).
+//!   - A colour or texture transform bind naming a material the file lacks
+//!     refuses the model, as UniVRM's importer throws on it.
+//!   - A `targetValue` needs four numbers and reads the first four; a
+//!     texture transform's `scale` or `offset` reads its first two, and
+//!     takes the default with fewer.
 //!
 //! `VRMC_vrm_expressions_node_transform` binds are not read.
 
@@ -391,9 +397,11 @@ pub(crate) struct Applied {
     pub look_at_rate: f32,
 }
 
-/// `values` as f32, each finite, or `None`.
+/// The first `N` of `values` as f32, each finite, or `None` (fewer than
+/// `N`, or one not finite). Values past the `N`th are not read, as UniVRM
+/// does not read them.
 fn finite<const N: usize>(values: &[f64]) -> Option<[f32; N]> {
-    let values: [f64; N] = values.try_into().ok()?;
+    let values: [f64; N] = values.get(..N)?.try_into().ok()?;
     let values = values.map(|value| value as f32);
     values
         .iter()
@@ -401,9 +409,10 @@ fn finite<const N: usize>(values: &[f64]) -> Option<[f32; N]> {
         .then_some(values)
 }
 
-/// Reads and checks the file's expressions: every bind's node and
-/// material is the file's, and every number is finite. Run before the
-/// materials, so a refused model writes no texture.
+/// Reads and checks the file's expressions: every bind's material is the
+/// file's and every number is finite, and morph target binds UniVRM skips
+/// are left out with a warning. Run before the materials, so a refused
+/// model writes no texture.
 pub(crate) fn read_expressions(
     document: &Document,
     draws: &[DrawSource],
@@ -469,13 +478,27 @@ pub(crate) fn read_expressions(
             colours: Vec::new(),
             uvs: Vec::new(),
         };
+        let warn = |notices: &mut Vec<Notice>, message: String| {
+            notices.push(Notice {
+                level: NoticeLevel::Warning,
+                message,
+            });
+        };
+        // The (node, target)s this expression binds: UniVRM keeps the
+        // first bind of each.
+        let mut bound = BTreeSet::new();
         for bind in expression.morph_target_binds.iter().flatten() {
             let index = bind.node.value();
+            let target = bind.index;
             let Some(node) = nodes.get(index) else {
-                return Err(LoadError::Invalid(format!(
-                    "expression \"{key}\" binds node {index}, but the file has {} nodes",
-                    nodes.len()
-                )));
+                warn(
+                    notices,
+                    format!(
+                        "expression \"{key}\" binds morph target {target} of node {index}, but the file has {} nodes; the bind is ignored",
+                        nodes.len()
+                    ),
+                );
+                continue;
             };
             let weight = bind.weight as f32;
             if !weight.is_finite() {
@@ -484,7 +507,6 @@ pub(crate) fn read_expressions(
                     bind.weight
                 )));
             }
-            let target = bind.index;
             let ignored = match node.mesh() {
                 None => Some(format!(
                     "expression \"{key}\" binds morph target {target} of node {index}, which has no mesh; the bind is ignored"
@@ -496,21 +518,23 @@ pub(crate) fn read_expressions(
                     ))
                 }
             };
+            let ignored = ignored.or_else(|| {
+                (!bound.insert((index, target))).then(|| format!(
+                    "expression \"{key}\" binds morph target {target} of node {index} again; only its first bind counts"
+                ))
+            });
             match ignored {
-                Some(message) => notices.push(Notice {
-                    level: NoticeLevel::Warning,
-                    message,
-                }),
+                Some(message) => warn(notices, message),
                 None => binds.morphs.push((index, target, weight)),
             }
         }
         for bind in expression.material_color_binds.iter().flatten() {
             let index = material(bind.material.value())?;
             let Some(target) = finite::<4>(&bind.target_value) else {
-                let problem = if bind.target_value.len() == 4 {
-                    "is not finite"
+                let problem = if bind.target_value.len() < 4 {
+                    "has fewer than four numbers"
                 } else {
-                    "is not four numbers"
+                    "is not finite"
                 };
                 return Err(LoadError::Invalid(format!(
                     "expression \"{key}\" has a materialColorBind whose targetValue {problem}: {:?}",
@@ -523,18 +547,14 @@ pub(crate) fn read_expressions(
         }
         for bind in expression.texture_transform_binds.iter().flatten() {
             let index = material(bind.material.value())?;
+            // Fewer than two numbers take the default, as UniVRM does.
             let pair = |name: &str, values: &Option<Vec<f64>>, default: [f32; 2]| {
-                let Some(values) = values else {
+                let Some(values) = values.as_ref().filter(|values| values.len() >= 2) else {
                     return Ok(default);
                 };
                 finite::<2>(values).ok_or_else(|| {
-                    let problem = if values.len() == 2 {
-                        "is not finite"
-                    } else {
-                        "is not two numbers"
-                    };
                     LoadError::Invalid(format!(
-                        "expression \"{key}\" has a textureTransformBind whose {name} {problem}: {values:?}"
+                        "expression \"{key}\" has a textureTransformBind whose {name} is not finite: {values:?}"
                     ))
                 })
             };
@@ -1291,15 +1311,17 @@ mod tests {
         );
     }
 
+    fn warnings(model: &VrmModel) -> Vec<&str> {
+        model
+            .notices()
+            .iter()
+            .filter(|notice| notice.level == NoticeLevel::Warning)
+            .map(|notice| notice.message.as_str())
+            .collect()
+    }
+
     #[test]
-    fn bind_indices_are_checked() {
-        let message = refusal(&with_expressions(|e| {
-            e["preset"]["blink"]["morphTargetBinds"][0]["node"] = json!(99);
-        }));
-        assert!(
-            message.contains("expression \"blink\" binds node 99, but the file has 25 nodes"),
-            "{message}"
-        );
+    fn binds_to_materials_the_file_lacks_are_refused() {
         let message = refusal(&with_expressions(|e| {
             e["preset"]["happy"]["materialColorBinds"][1]["material"] = json!(4);
         }));
@@ -1318,29 +1340,79 @@ mod tests {
     }
 
     #[test]
-    fn binds_to_targets_a_mesh_lacks_are_ignored() {
+    fn morph_binds_to_targets_the_file_lacks_are_ignored() {
         let mut model = load(&with_expressions(|e| {
             e["preset"]["blink"]["morphTargetBinds"] = json!([
                 { "node": node::BODY, "index": 3, "weight": 1.0 },
                 { "node": node::HEAD, "index": 0, "weight": 1.0 },
+                { "node": 99, "index": 0, "weight": 1.0 },
                 { "node": node::BODY, "index": 1, "weight": 1.0 },
             ]);
         }));
         let frame = frame(&mut model, &[("blink", 1.0)]);
         assert_eq!(frame.draws[0].morph_weights, [0.0, 1.0, 0.0]);
-        let warnings: Vec<&str> = model
-            .notices()
-            .iter()
-            .filter(|notice| notice.level == NoticeLevel::Warning)
-            .map(|notice| notice.message.as_str())
-            .collect();
         assert_eq!(
-            warnings,
+            warnings(&model),
             [
                 "expression \"blink\" binds morph target 3 of node 23, whose mesh has 3; the bind is ignored",
                 "expression \"blink\" binds morph target 0 of node 5, which has no mesh; the bind is ignored",
+                "expression \"blink\" binds morph target 0 of node 99, but the file has 25 nodes; the bind is ignored",
             ]
         );
+    }
+
+    #[test]
+    fn a_target_bound_twice_by_one_expression_counts_once() {
+        // UniVRM keeps the first bind; across expressions binds still add.
+        let mut model = load(&with_expressions(|e| {
+            e["preset"]["blink"]["morphTargetBinds"] = json!([
+                { "node": node::BODY, "index": 0, "weight": 0.5 },
+                { "node": node::BODY, "index": 0, "weight": 0.25 },
+            ]);
+        }));
+        assert_eq!(target(&mut model, &[("blink", 1.0)], 0), 0.5);
+        assert_eq!(target(&mut model, &[("blink", 1.0), ("wink", 1.0)], 0), 1.5);
+        assert_eq!(
+            warnings(&model),
+            [
+                "expression \"blink\" binds morph target 0 of node 23 again; only its first bind counts"
+            ]
+        );
+    }
+
+    #[test]
+    fn extra_numbers_in_binds_are_not_read() {
+        // targetValue reads its first four, offset and scale their first two.
+        let mut model = load(&with_expressions(|e| {
+            e["preset"]["happy"]["materialColorBinds"][0]["targetValue"] =
+                json!([1.0, 0.0, 0.0, 1.0, 9.0]);
+            e["preset"]["aa"]["textureTransformBinds"][0]["offset"] = json!([0.25, 0.0, 9.0]);
+            e["preset"]["aa"]["textureTransformBinds"][0]["scale"] = json!([1.0, 1.0, 9.0]);
+        }));
+        let overrides = overrides(&mut model, &[("happy", 0.5), ("aa", 0.5)]);
+        assert!(close_all(
+            &overrides.base_color.unwrap(),
+            &[1.0, HALF_SRGB, HALF_SRGB, 1.0]
+        ));
+        // aa at 0.25 under happy's mouth blend: 0.5 + (0.25 − 0.5) × 0.25.
+        assert!(close_all(
+            &overrides.texture_offset.unwrap(),
+            &[0.4375, 0.0]
+        ));
+        assert!(close_all(&overrides.texture_scale.unwrap(), &[1.0, 1.0]));
+    }
+
+    #[test]
+    fn short_texture_transforms_take_the_defaults() {
+        // An offset of one number is (0, 0); a scale of one number (1, 1).
+        let mut model = load(&with_expressions(|e| {
+            e["preset"]["aa"]["textureTransformBinds"][0]["offset"] = json!([0.25]);
+            e["preset"]["aa"]["textureTransformBinds"][0]["scale"] = json!([3.0]);
+        }));
+        let overrides = overrides(&mut model, &[("aa", 0.5)]);
+        // 0.5 + (0 − 0.5) × 0.5.
+        assert!(close_all(&overrides.texture_offset.unwrap(), &[0.25, 0.0]));
+        assert!(close_all(&overrides.texture_scale.unwrap(), &[1.0, 1.0]));
     }
 
     #[test]
@@ -1363,7 +1435,7 @@ mod tests {
     #[test]
     fn bind_values_are_checked() {
         type Edit = fn(&mut Value);
-        let cases: [(Edit, &str); 5] = [
+        let cases: [(Edit, &str); 4] = [
             (
                 |e| e["preset"]["blink"]["morphTargetBinds"][0]["weight"] = json!(1e39),
                 "expression \"blink\" has a morph target bind whose weight is not finite",
@@ -1373,7 +1445,7 @@ mod tests {
                     e["preset"]["happy"]["materialColorBinds"][0]["targetValue"] =
                         json!([1.0, 0.0, 0.0])
                 },
-                "expression \"happy\" has a materialColorBind whose targetValue is not four numbers: [1.0, 0.0, 0.0]",
+                "expression \"happy\" has a materialColorBind whose targetValue has fewer than four numbers: [1.0, 0.0, 0.0]",
             ),
             (
                 |e| {
@@ -1381,10 +1453,6 @@ mod tests {
                         json!([1e39, 0.0, 0.0, 1.0])
                 },
                 "expression \"happy\" has a materialColorBind whose targetValue is not finite",
-            ),
-            (
-                |e| e["preset"]["aa"]["textureTransformBinds"][0]["offset"] = json!([0.25]),
-                "expression \"aa\" has a textureTransformBind whose offset is not two numbers: [0.25]",
             ),
             (
                 |e| e["preset"]["aa"]["textureTransformBinds"][0]["scale"] = json!([1e39, 1.0]),
@@ -1400,10 +1468,12 @@ mod tests {
     #[test]
     fn sums_past_f32_are_a_frame_error() {
         let mut model = load(&with_expressions(|e| {
-            e["preset"]["blink"]["morphTargetBinds"] = json!([
-                { "node": node::BODY, "index": 0, "weight": 3e38 },
-                { "node": node::BODY, "index": 0, "weight": 3e38 },
-            ]);
+            // Two expressions, since one counts a target's first bind only.
+            e["preset"]["blink"]["morphTargetBinds"] =
+                json!([{ "node": node::BODY, "index": 0, "weight": 3e38 }]);
+            e["preset"]["relaxed"] = json!({
+                "morphTargetBinds": [{ "node": node::BODY, "index": 0, "weight": 3e38 }],
+            });
             e["preset"]["sad"] = json!({
                 "textureTransformBinds": [{ "material": 0, "offset": [3e38, 0.0] }],
             });
@@ -1411,8 +1481,12 @@ mod tests {
                 "textureTransformBinds": [{ "material": 0, "offset": [3e38, 0.0] }],
             });
         }));
-        frame(&mut model, &[("blink", 0.5)]);
-        for inputs in [&[("blink", 1.0)][..], &[("sad", 1.0), ("angry", 1.0)]] {
+        frame(&mut model, &[("blink", 1.0), ("relaxed", 0.1)]);
+        frame(&mut model, &[("sad", 1.0)]);
+        for inputs in [
+            &[("blink", 1.0), ("relaxed", 1.0)][..],
+            &[("sad", 1.0), ("angry", 1.0)],
+        ] {
             let message = match model.frame(0.0, &data(inputs)) {
                 Ok(_) => panic!("the frame was made"),
                 Err(error) => error.to_string(),
