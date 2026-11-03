@@ -751,6 +751,11 @@ struct MtoonParams {
 const _: () = assert!(std::mem::size_of::<UnlitParams>() == UNLIT_PARAMS);
 const _: () = assert!(std::mem::size_of::<MtoonParams>() == MTOON_PARAMS);
 
+/// How many plugin shaders the shader cache holds before it drops those
+/// no loaded model uses: eight models listing the most shaders a model
+/// may.
+pub(crate) const MAX_CACHED_SHADERS: usize = 8 * MAX_SCENE_SHADERS;
+
 /// The pipelines that draw scenes and what they bind, shared by every
 /// scene.
 pub(crate) struct ScenePipelines {
@@ -763,8 +768,9 @@ pub(crate) struct ScenePipelines {
     /// Plugins' material shaders by their WGSL and texture slots (their
     /// names and empty texels do not change the module), compiled or why
     /// they cannot be: each is checked once, however many models list it,
-    /// unless the device ran out of memory compiling it. Never evicted, as
-    /// the pipelines are not.
+    /// unless the device ran out of memory compiling it. Past
+    /// `MAX_CACHED_SHADERS`, those no loaded model holds are dropped, with
+    /// their pipelines.
     shaders: HashMap<ShaderKey, Result<Arc<CompiledShader>, String>>,
     /// The `ShaderId` the next plugin shader that compiles gets.
     next_shader: u32,
@@ -774,6 +780,12 @@ pub(crate) struct ScenePipelines {
     /// The next plugin shader checked runs out of memory instead.
     #[cfg(test)]
     pub(crate) out_of_memory: bool,
+    /// How many draw pipelines were made or tried.
+    #[cfg(test)]
+    pub(crate) pipelines_made: usize,
+    /// The next draw pipeline made fails with this error instead.
+    #[cfg(test)]
+    pub(crate) refuse_pipeline: Option<wgpu::Error>,
     /// Group 0: the frame uniform.
     view_layout: wgpu::BindGroupLayout,
     /// Group 1: the draw uniform and the material's parameters.
@@ -784,6 +796,11 @@ pub(crate) struct ScenePipelines {
     texture_layouts: HashMap<usize, (wgpu::BindGroupLayout, wgpu::PipelineLayout)>,
     /// The pipelines the loaded models' materials use, made as each loads.
     draw: HashMap<PipelineKey, wgpu::RenderPipeline>,
+    /// Why the device refused the pipelines it refused (a backend's
+    /// compiler refusing what naga accepted), so that a model sent again
+    /// is refused without making them again. Running out of memory is not
+    /// kept: the device may not the next time.
+    refused: HashMap<PipelineKey, String>,
     convert_layout: wgpu::BindGroupLayout,
     convert: wgpu::RenderPipeline,
     /// Zeros, bound in place of a stream a geometry lacks.
@@ -1092,10 +1109,15 @@ impl ScenePipelines {
             compiles: 0,
             #[cfg(test)]
             out_of_memory: false,
+            #[cfg(test)]
+            pipelines_made: 0,
+            #[cfg(test)]
+            refuse_pipeline: None,
             view_layout,
             draw_layout,
             texture_layouts: HashMap::new(),
             draw: HashMap::new(),
+            refused: HashMap::new(),
             convert_layout,
             convert,
             empty,
@@ -1160,8 +1182,35 @@ impl ScenePipelines {
             Err(ShaderFailure::Refused(message)) => Err(message),
             Err(ShaderFailure::OutOfMemory(message)) => return Err(message),
         };
+        if self.shaders.len() >= MAX_CACHED_SHADERS {
+            self.drop_unused_shaders();
+        }
         self.shaders.insert(key, compiled.clone());
         compiled
+    }
+
+    /// Drops the cached shaders no loaded model holds (every refusal, and
+    /// every compiled shader the cache alone holds) and the pipelines made
+    /// or refused with them. `ShaderId`s are not given out again, so no
+    /// pipeline key of a dropped shader stands for another.
+    fn drop_unused_shaders(&mut self) {
+        let mut dropped = HashSet::new();
+        self.shaders.retain(|_, compiled| match compiled {
+            Ok(shader) if Arc::strong_count(shader) > 1 => true,
+            Ok(shader) => {
+                dropped.insert(shader.id);
+                false
+            }
+            Err(_) => false,
+        });
+        self.draw.retain(|key, _| !dropped.contains(&key.shader));
+        self.refused.retain(|key, _| !dropped.contains(&key.shader));
+    }
+
+    /// How many shaders, draw pipelines, and refused pipelines are kept.
+    #[cfg(test)]
+    pub(crate) fn kept(&self) -> (usize, usize, usize) {
+        (self.shaders.len(), self.draw.len(), self.refused.len())
     }
 
     /// `shader` checked and compiled as the next `ShaderId`.
@@ -1197,9 +1246,10 @@ impl ScenePipelines {
     /// either winding, unless they are made already; and gives the shader
     /// each material is drawn with. A custom material's parameters must be
     /// as long as its shader's `Params`, and its shader must define the
-    /// outline it asks for. Each material's pipelines are made
-    /// in one error scope: when any fails, the message names the material
-    /// and none of its pipelines is kept.
+    /// outline it asks for. Each pipeline is made in its own error scope:
+    /// when one fails, the message names the material and none of the
+    /// material's pipelines is kept, and one the device refused is refused
+    /// without being made again the next time a model asks for it.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -1256,18 +1306,44 @@ impl ScenePipelines {
                 })
                 .filter(|key| !self.draw.contains_key(key))
                 .collect();
-            if keys.is_empty() {
-                continue;
+            if let Some(message) = keys.iter().find_map(|key| self.refused.get(key)) {
+                return Err(format!("material {index}'s pipelines: {message}"));
             }
-            let made: Vec<(PipelineKey, wgpu::RenderPipeline)> = scoped(device, || {
-                keys.into_iter()
-                    .map(|key| (key, Self::draw_pipeline(device, &shader, &layout, key)))
-                    .collect()
-            })
-            .map_err(|error| format!("material {index}'s pipelines: {error}"))?;
+            let mut made = Vec::with_capacity(keys.len());
+            for key in keys {
+                match self.make_pipeline(device, &shader, &layout, key) {
+                    Ok(pipeline) => made.push((key, pipeline)),
+                    Err(error) => {
+                        let message = error.to_string();
+                        if !matches!(error, wgpu::Error::OutOfMemory { .. }) {
+                            self.refused.insert(key, message.clone());
+                        }
+                        return Err(format!("material {index}'s pipelines: {message}"));
+                    }
+                }
+            }
             self.draw.extend(made);
         }
         Ok(shaders)
+    }
+
+    /// The pipeline of `key`, drawn with `shader` through `layout`, or the
+    /// error the device reports making it.
+    fn make_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        shader: &CompiledShader,
+        layout: &wgpu::PipelineLayout,
+        key: PipelineKey,
+    ) -> Result<wgpu::RenderPipeline, wgpu::Error> {
+        #[cfg(test)]
+        {
+            self.pipelines_made += 1;
+            if let Some(error) = self.refuse_pipeline.take() {
+                return Err(error);
+            }
+        }
+        scoped(device, || Self::draw_pipeline(device, shader, layout, key))
     }
 
     /// The pipeline of `key`, drawn with `shader` through `layout`.

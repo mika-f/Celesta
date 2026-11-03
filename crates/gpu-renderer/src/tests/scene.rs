@@ -3,6 +3,7 @@
 //! process.
 
 use super::*;
+use crate::scene::{MAX_CACHED_SHADERS, ScenePipelines};
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, CullFace, CustomMaterial,
     DepthBias, DirectionalLight, DrawInfo, DrawState, EmptyTexel, Filter, Geometry, Lights,
@@ -3287,12 +3288,20 @@ fn material_fragment(fragment: Fragment) -> vec4f { return params.color + deep[u
         custom(0, bytes(&[1.0; 4])),
     ));
     // Drawn, or refused naming the material; never the device's panic.
-    match renderer.render(&scene()) {
-        Ok(_) => {}
-        Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
-            assert!(message.contains("material 0's pipelines"), "{message}");
+    // Refused, it is refused again without being compiled again.
+    for attempt in 0..2 {
+        match renderer.render(&scene()) {
+            Ok(_) => break,
+            Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
+                assert!(message.contains("material 0's pipelines"), "{message}");
+                assert_eq!(
+                    pipelines(&mut renderer).pipelines_made,
+                    1,
+                    "attempt {attempt}"
+                );
+            }
+            Err(error) => panic!("expected invalid plugin content, got {error}"),
         }
-        Err(error) => panic!("expected invalid plugin content, got {error}"),
     }
     // Nothing of a refusal is kept: the next model draws.
     renderer.renderer = renderer.renderer.with_content_provider(custom_square(
@@ -3348,6 +3357,126 @@ fn material_fragment(fragment: Fragment) -> vec4f { return nope; }";
     assert_eq!(compiles(&renderer), 1);
 }
 
+/// The renderer's scene pipelines, once a scene was opened.
+fn pipelines(renderer: &mut TestRenderer) -> &mut ScenePipelines {
+    renderer
+        .meshes
+        .scene_pipelines
+        .as_mut()
+        .expect("a scene was opened")
+}
+
+/// A renderer that opened a scene, which a model refused before its
+/// shaders are compiled; `None` without a GPU.
+fn opened_renderer() -> Option<TestRenderer> {
+    let mut renderer = renderer(transparent())?;
+    let mut refused = one_square();
+    refused.model.draws[0].material = 1;
+    renderer.renderer = renderer.renderer.with_content_provider(refused);
+    assert!(renderer.render(&scene()).is_err());
+    Some(renderer)
+}
+
+#[test]
+fn material_pipelines_the_device_refuses_are_not_made_again() {
+    let Some(mut renderer) = opened_renderer() else {
+        return;
+    };
+    pipelines(&mut renderer).refuse_pipeline = Some(wgpu::Error::Internal {
+        source: "the test's device".into(),
+        description: "the test refuses it".to_owned(),
+    });
+    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
+        vec![shader(FLAT, &[])],
+        custom(0, bytes(&FLAT_GREEN)),
+    ));
+    for _ in 0..2 {
+        match renderer.render(&scene()) {
+            Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
+                assert!(message.contains("material 0's pipelines"), "{message}");
+                assert!(message.contains("the test refuses it"), "{message}");
+            }
+            other => panic!("expected invalid plugin content, got {:?}", other.err()),
+        }
+    }
+    // The first pipeline was refused; the model sent again tries none.
+    assert_eq!(pipelines(&mut renderer).pipelines_made, 1);
+
+    // Running out of memory is not kept. Double-sided, the same shader
+    // asks for other pipelines, which the refusal does not stand for.
+    pipelines(&mut renderer).refuse_pipeline = Some(wgpu::Error::OutOfMemory {
+        source: "the test's device".into(),
+    });
+    let mut material = custom(0, bytes(&FLAT_GREEN));
+    material.double_sided = true;
+    renderer.renderer = renderer
+        .renderer
+        .with_content_provider(custom_square(vec![shader(FLAT, &[])], material));
+    match renderer.render(&scene()) {
+        Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
+            assert!(message.contains("material 0's pipelines"), "{message}");
+            assert!(message.contains("Out of Memory"), "{message}");
+        }
+        other => panic!("expected invalid plugin content, got {:?}", other.err()),
+    }
+    let frame = renderer.render(&scene()).unwrap();
+    assert_pixel(&frame, 32, 32, GREEN);
+    assert_eq!(pipelines(&mut renderer).pipelines_made, 4);
+}
+
+#[test]
+fn material_shader_cache_drops_unused_shaders_past_its_cap() {
+    let Some(renderer) = renderer(transparent()) else {
+        return;
+    };
+    let device = &renderer.device;
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    // `FLAT` as shader `n`: another digest each, the same module.
+    let model = |n: usize, params: Vec<u8>| {
+        let wgsl = format!("{FLAT}\n// {n}");
+        custom_square(vec![shader(&wgsl, &[])], custom(0, params)).model
+    };
+    // Shader 0 is held, as a loaded model holds its shaders. Shader 1's
+    // model is dropped once its pipelines are made, and shader 2's
+    // pipeline is refused.
+    let held = pipelines.prepare(device, &model(0, bytes(&FLAT_GREEN)));
+    assert!(held.is_ok());
+    pipelines
+        .prepare(device, &model(1, bytes(&FLAT_GREEN)))
+        .unwrap();
+    pipelines.refuse_pipeline = Some(wgpu::Error::Internal {
+        source: "the test's device".into(),
+        description: "the test refuses it".to_owned(),
+    });
+    assert!(
+        pipelines
+            .prepare(device, &model(2, bytes(&FLAT_GREEN)))
+            .is_err()
+    );
+    assert_eq!(pipelines.kept(), (3, 4, 1));
+    // The rest compile, and their models are refused for their parameters.
+    // The cache fills with shaders no model holds, and drops them.
+    for n in 3..=MAX_CACHED_SHADERS {
+        assert!(pipelines.prepare(device, &model(n, vec![])).is_err());
+    }
+    // Shader 0 and its two pipelines, and the last shader compiled.
+    assert_eq!(pipelines.kept(), (2, 2, 0));
+    let (compiles, made) = (pipelines.compiles, pipelines.pipelines_made);
+    pipelines
+        .prepare(device, &model(0, bytes(&FLAT_GREEN)))
+        .unwrap();
+    assert_eq!(
+        (pipelines.compiles, pipelines.pipelines_made),
+        (compiles, made)
+    );
+    // A dropped shader is checked and compiled again.
+    pipelines
+        .prepare(device, &model(1, bytes(&FLAT_GREEN)))
+        .unwrap();
+    assert_eq!(pipelines.compiles, compiles + 1);
+    drop(held);
+}
+
 #[test]
 fn material_shaders_out_of_memory_is_tried_again() {
     let Some(mut renderer) = renderer(transparent()) else {
@@ -3359,13 +3488,6 @@ fn material_shaders_out_of_memory_is_tried_again() {
     refused.model.draws[0].material = 1;
     renderer.renderer = renderer.renderer.with_content_provider(refused);
     assert!(renderer.render(&scene()).is_err());
-    fn pipelines(renderer: &mut TestRenderer) -> &mut crate::scene::ScenePipelines {
-        renderer
-            .meshes
-            .scene_pipelines
-            .as_mut()
-            .expect("a scene was opened")
-    }
     // The next shader compiled runs out of memory, which another load may
     // not.
     pipelines(&mut renderer).out_of_memory = true;
