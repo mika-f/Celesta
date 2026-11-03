@@ -34,6 +34,8 @@
 //! - **The lookAt** (see `look_at`) is read before the geometry. Each frame
 //!   it turns the eye bones, or writes the look expressions, for the gaze
 //!   `data.look_at` asks for, scaled by what other expressions leave of it.
+//! - **Node constraints** (see `constraints`) are read before the geometry.
+//!   Each frame they turn their nodes from the base pose, before the lookAt.
 //! - **The camera** (see `camera`) frames the avatar at rest: what a
 //!   third-person camera sees, every vertex of every visible draw skinned
 //!   at rest without morphs, bounded once when the model opens (without a
@@ -54,6 +56,7 @@
 //! constraints, the lookAt, expressions, spring bones, then world matrices.
 
 use crate::camera::{self, Framing, check_lights, frame_canvas};
+use crate::constraints::Constraints;
 use crate::document::{Document, LoadError, read_file};
 use crate::expressions::{Applied, ExpressionKey, Expressions, read_expressions};
 use crate::first_person::hidden_nodes;
@@ -140,6 +143,7 @@ pub struct VrmModel {
     centres: Vec<Vec3>,
     expressions: Expressions,
     look_at: LookAt,
+    constraints: Constraints,
     /// By node: its world matrix at rest.
     rest: Vec<Mat4>,
     /// What the camera presets frame.
@@ -220,6 +224,7 @@ impl VrmModel {
         let tree = NodeTree::new(&document)?;
         let humanoid = Humanoid::new(&document);
         let look_at = LookAt::new(&document, &tree, &humanoid)?;
+        let constraints = Constraints::read(&document, &tree)?;
         let mut first_person_notices = Vec::new();
         let hidden = hidden_nodes(&document, &mut first_person_notices)?;
         let mut budget = Budget {
@@ -313,6 +318,7 @@ impl VrmModel {
             centres: draws.centres,
             expressions,
             look_at,
+            constraints,
             rest,
             framing,
             framing_visits,
@@ -606,8 +612,15 @@ impl VrmModel {
         self.tree.rest_pose()
     }
 
-    /// The motion plan's node constraints; nothing yet.
-    fn apply_constraints(&self, _pose: &mut Pose) {}
+    /// The node constraints (see `constraints`), in node pre-order.
+    fn apply_constraints(&self, pose: &mut Pose) {
+        self.constraints.apply(&self.tree, pose);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn constraints(&self) -> &Constraints {
+        &self.constraints
+    }
 
     /// The expression weights asked for, by key: `data.expressions`; the
     /// motion plan adds its clips'. A weight that is not finite is an

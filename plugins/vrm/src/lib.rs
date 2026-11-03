@@ -9,6 +9,7 @@
 //! texture coordinates from the top-left.
 
 mod camera;
+mod constraints;
 mod document;
 mod expressions;
 mod first_person;
