@@ -1,7 +1,11 @@
 //! A VRM's materials and the textures they sample.
 //!
 //! - A material with `VRMC_materials_mtoon` is MToon: every field the file
-//!   has, on top of UniVRM's importer defaults (`MtoonMaterial::default()`).
+//!   has, on top of UniVRM's importer defaults (`Mtoon::default()`), drawn
+//!   as a custom material on the plugin's MToon shader (see `mtoon`), the
+//!   model's shader 0. A blended one keeps its `transparentWithZWrite` and
+//!   `renderQueueOffsetNumber` as the blend's depth write and queue offset;
+//!   opaque and masked ones drop them, as UniVRM does.
 //! - `KHR_materials_unlit` is unlit: the base color times its texture.
 //! - Any other material is glTF PBR, which Celesta does not shade yet: it is
 //!   drawn unlit with its base color and base color texture, and the model
@@ -21,11 +25,11 @@
 //! a buffer view or a `data:` URI, never another file or the network.
 
 use crate::document::{Document, LoadError};
+use crate::mtoon::{self, Mtoon, OutlineWidthMode, ScaledTextureSlot, TextureSlot};
 use base64::Engine as _;
 use celesta_plugin::{
-    AlphaMode, ColorSpace, Filter, Material, MaterialKind, MtoonMaterial, Notice, NoticeLevel,
-    OutlineWidthMode, Sampler, ScaledTextureSlot, SceneTexture, TextureRef, TextureSlot,
-    TextureSource, TextureTransform, UnlitMaterial, Wrap,
+    AlphaMode, ColorSpace, Filter, Material, MaterialKind, Notice, NoticeLevel, Sampler,
+    SceneShader, SceneTexture, TextureRef, TextureSource, TextureTransform, UnlitMaterial, Wrap,
 };
 use gltf::json;
 use gltf::json::validation::Checked::Valid;
@@ -76,6 +80,20 @@ pub(crate) struct Materials {
     /// transform binds start from. `None` without a base color texture,
     /// or when that texture's image cannot be read.
     pub base_transforms: Vec<Option<TextureTransform>>,
+    /// By material: an MToon material's parameters, which its custom
+    /// material carries packed.
+    pub mtoon: Vec<Option<Mtoon>>,
+    /// The MToon shader when a material is MToon, else nothing.
+    pub shaders: Vec<SceneShader>,
+}
+
+/// The model's shader that draws MToon materials.
+const MTOON_SHADER: usize = 0;
+
+/// What a material is drawn with, before the scene textures are known.
+enum Kind {
+    Unlit(UnlitMaterial),
+    Mtoon(Mtoon),
 }
 
 /// The cache directory's own name.
@@ -201,26 +219,33 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
         notices: Vec::new(),
         noticed: HashSet::new(),
     };
-    let mut materials = Vec::new();
+    let mut read = Vec::new();
     let mut base_transforms = Vec::new();
     let mut pbr = Vec::new();
     for material in document.gltf.materials() {
-        let index = material.index().unwrap_or(materials.len());
+        let index = material.index().unwrap_or(read.len());
         let at = At {
             index,
             name: material.name(),
         };
-        let (read, transform) = reader.material(&material, &at)?;
-        let is_mtoon = matches!(read.kind, MaterialKind::Mtoon(_));
-        if !is_mtoon && !material.unlit() {
-            pbr.push((
+        let (alpha_mode, kind, transform) = reader.material(&material, &at)?;
+        match &kind {
+            // Celesta sees only the packed parameters, so the plugin checks
+            // them.
+            Kind::Mtoon(mtoon) => {
+                if let Some(reason) = mtoon::invalid(mtoon, reader.keys.len()) {
+                    return Err(LoadError::Invalid(format!("{at}: {reason}")));
+                }
+            }
+            Kind::Unlit(_) if !material.unlit() => pbr.push((
                 index,
                 material
                     .name()
                     .map_or_else(|| format!("material {index}"), str::to_owned),
-            ));
+            )),
+            Kind::Unlit(_) => {}
         }
-        materials.push(read);
+        read.push((alpha_mode, material.double_sided(), kind));
         base_transforms.push(transform);
     }
     let notices = reader.notices;
@@ -258,7 +283,7 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
             paths.insert(image, write_cached(cache, &name, &readable.bytes)?);
         }
     }
-    let textures = reader
+    let textures: Vec<SceneTexture> = reader
         .keys
         .into_iter()
         .map(|(image, color_space, sampler)| SceneTexture {
@@ -267,12 +292,38 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
             sampler,
         })
         .collect();
+
+    // MToon's parameters read the scene textures' samplers.
+    let mut materials = Vec::with_capacity(read.len());
+    let mut mtoons = Vec::with_capacity(read.len());
+    for (alpha_mode, double_sided, kind) in read {
+        let (kind, mtoon) = match kind {
+            Kind::Unlit(unlit) => (MaterialKind::Unlit(unlit), None),
+            Kind::Mtoon(mtoon) => (
+                MaterialKind::Custom(mtoon::custom_material(&mtoon, MTOON_SHADER, &textures)),
+                Some(mtoon),
+            ),
+        };
+        materials.push(Material {
+            alpha_mode,
+            double_sided,
+            kind,
+        });
+        mtoons.push(mtoon);
+    }
+    let shaders = if mtoons.iter().any(Option::is_some) {
+        vec![mtoon::shader()]
+    } else {
+        Vec::new()
+    };
     Ok(Materials {
         textures,
         materials,
         notices,
         pbr,
         base_transforms,
+        mtoon: mtoons,
+        shaders,
     })
 }
 
@@ -357,18 +408,32 @@ struct Reader<'d> {
 }
 
 impl<'d> Reader<'d> {
-    /// One material and its base color texture's transform.
+    /// One material's alpha mode, what it is drawn with, and its base color
+    /// texture's transform.
     fn material(
         &mut self,
         material: &gltf::Material<'d>,
         at: &At,
-    ) -> Result<(Material, Option<TextureTransform>), LoadError> {
+    ) -> Result<(AlphaMode, Kind, Option<TextureTransform>), LoadError> {
+        let mtoon = self.document.mtoon.get(at.index).and_then(Option::as_ref);
         let alpha_mode = match material.alpha_mode() {
             gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
             gltf::material::AlphaMode::Mask => AlphaMode::Mask {
                 cutoff: at.finite("alphaCutoff", [material.alpha_cutoff().unwrap_or(0.5)])?[0],
             },
-            gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+            // MToon's own queue offset and depth write; UniVRM reads them
+            // for a blended material only.
+            gltf::material::AlphaMode::Blend => AlphaMode::Blend {
+                depth_write: mtoon
+                    .and_then(|mtoon| mtoon.transparent_with_z_write)
+                    .unwrap_or(false),
+                // Celesta clamps it to 9 either way.
+                queue_offset: mtoon
+                    .and_then(|mtoon| mtoon.render_queue_offset_number)
+                    .map_or(0, |value| {
+                        value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+                    }),
+            },
         };
         let pbr = material.pbr_metallic_roughness();
         let base_color = at.finite("baseColorFactor", pbr.base_color_factor())?;
@@ -397,44 +462,36 @@ impl<'d> Reader<'d> {
             .as_ref()
             .and_then(|texture| texture.transform);
 
-        let mtoon = self.document.mtoon.get(at.index).and_then(Option::as_ref);
         let kind = match mtoon {
-            Some(mtoon) => MaterialKind::Mtoon(self.mtoon(
+            Some(mtoon) => Kind::Mtoon(self.mtoon(
                 material,
                 mtoon,
                 at,
-                MtoonMaterial {
+                Mtoon {
                     base_color,
                     base_color_texture,
-                    ..MtoonMaterial::default()
+                    ..Mtoon::default()
                 },
             )?),
             // KHR_materials_unlit, and glTF PBR drawn as its base color.
-            None => MaterialKind::Unlit(UnlitMaterial {
+            None => Kind::Unlit(UnlitMaterial {
                 base_color,
                 base_color_texture,
             }),
         };
-        Ok((
-            Material {
-                alpha_mode,
-                double_sided: material.double_sided(),
-                kind,
-            },
-            transform,
-        ))
+        Ok((alpha_mode, kind, transform))
     }
 
     /// `VRMC_materials_mtoon` on top of `out`, which has the base color.
-    /// Slots are read in `MtoonMaterial`'s field order, which orders the
-    /// scene's textures.
+    /// Slots are read in `Mtoon`'s field order, which orders the scene's
+    /// textures.
     fn mtoon(
         &mut self,
         material: &gltf::Material<'d>,
         mtoon: &VrmcMaterialsMtoonSchema,
         at: &At,
-        mut out: MtoonMaterial,
-    ) -> Result<MtoonMaterial, LoadError> {
+        mut out: Mtoon,
+    ) -> Result<Mtoon, LoadError> {
         use ColorSpace::{Linear, Srgb};
 
         if let Some(normal) = material.normal_texture() {
@@ -451,14 +508,6 @@ impl<'d> Reader<'d> {
         )?;
         if let Some(info) = material.emissive_texture() {
             out.emissive_texture = self.texture_slot(at, info.texture().index(), Srgb)?;
-        }
-        if let Some(value) = mtoon.transparent_with_z_write {
-            out.transparent_with_z_write = value;
-        }
-        if let Some(value) = mtoon.render_queue_offset_number {
-            // Celesta clamps it to 9 either way.
-            out.render_queue_offset_number =
-                value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
         }
         if let Some(value) = mtoon.shade_color_factor {
             out.shade_color_factor = at.color("shadeColorFactor", value)?;
@@ -946,9 +995,16 @@ mod tests {
         refusal_of(&SyntheticVrm::avatar(), edit)
     }
 
-    fn mtoon(materials: &Materials, index: usize) -> &MtoonMaterial {
+    fn mtoon(materials: &Materials, index: usize) -> &Mtoon {
+        match &materials.mtoon[index] {
+            Some(mtoon) => mtoon,
+            None => panic!("material {index} is {:?}", materials.materials[index].kind),
+        }
+    }
+
+    fn custom(materials: &Materials, index: usize) -> &celesta_plugin::CustomMaterial {
         match &materials.materials[index].kind {
-            MaterialKind::Mtoon(mtoon) => mtoon,
+            MaterialKind::Custom(custom) => custom,
             other => panic!("material {index} is {other:?}"),
         }
     }
@@ -1005,6 +1061,55 @@ mod tests {
         );
         assert_eq!(body.normal_texture.unwrap().texture, 1);
         assert_eq!(body.shading_shift_texture.unwrap().texture, 2);
+        assert_eq!(
+            custom(&materials, 0).textures,
+            [
+                Some(0),
+                Some(0),
+                Some(2),
+                Some(1),
+                None,
+                None,
+                None,
+                None,
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn mtoon_materials_share_one_shader() {
+        let (materials, _cache) = load(&SyntheticVrm::avatar());
+        assert_eq!(materials.shaders, [mtoon::shader()]);
+        let (body, hair) = (custom(&materials, 0), custom(&materials, 1));
+        assert_eq!((body.shader, hair.shader), (0, 0));
+        // Only Body has a normal texture.
+        assert!(body.requires_tangents);
+        assert!(!hair.requires_tangents);
+        assert_eq!(
+            body.params,
+            mtoon::params(
+                mtoon(&materials, 0),
+                &mtoon::MtoonOverrides::default(),
+                0.0,
+                &materials.textures
+            )
+        );
+        assert_eq!(body.outline, None);
+        assert_eq!(materials.mtoon[2], None);
+        assert_eq!(materials.mtoon[3], None);
+
+        // A model without MToon brings no shader.
+        let (materials, _cache) = load_with(&SyntheticVrm::avatar(), |root| {
+            for material in 0..2 {
+                root["materials"][material]["extensions"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("VRMC_materials_mtoon");
+            }
+        });
+        assert_eq!(materials.shaders, []);
+        assert!(materials.mtoon.iter().all(Option::is_none));
     }
 
     #[test]
@@ -1031,10 +1136,33 @@ mod tests {
     #[test]
     fn hair_keeps_blend_and_its_queue_offset() {
         let (materials, _cache) = load(&SyntheticVrm::avatar());
-        assert_eq!(materials.materials[1].alpha_mode, AlphaMode::Blend);
-        assert_eq!(mtoon(&materials, 1).render_queue_offset_number, -1);
+        assert_eq!(
+            materials.materials[1].alpha_mode,
+            AlphaMode::Blend {
+                depth_write: false,
+                queue_offset: -1
+            }
+        );
         assert_eq!(materials.materials[0].alpha_mode, AlphaMode::Opaque);
         assert!(!materials.materials[0].double_sided);
+
+        // The depth write and an offset past i32, on the blended hair and
+        // the opaque body: only the blend keeps them, as UniVRM does.
+        let (materials, _cache) = load_with(&SyntheticVrm::avatar(), |root| {
+            for material in 0..2 {
+                let extension = mtoon_extension(root, material);
+                extension["transparentWithZWrite"] = json!(true);
+                extension["renderQueueOffsetNumber"] = json!(1_000_000_000_000_i64);
+            }
+        });
+        assert_eq!(
+            materials.materials[1].alpha_mode,
+            AlphaMode::Blend {
+                depth_write: true,
+                queue_offset: i32::MAX
+            }
+        );
+        assert_eq!(materials.materials[0].alpha_mode, AlphaMode::Opaque);
     }
 
     #[test]
@@ -1390,8 +1518,6 @@ mod tests {
             extension["giEqualizationFactor"] = json!(0.25);
             extension["shadeColorFactor"] = json!([0.5, 0.25, 0.125]);
             extension["uvAnimationRotationSpeedFactor"] = json!(2.0);
-            extension["transparentWithZWrite"] = json!(true);
-            extension["renderQueueOffsetNumber"] = json!(1_000_000_000_000_i64);
             root["materials"][0]["normalTexture"]["scale"] = json!(0.75);
             root["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] =
                 json!([1.0, 0.5, 0.25, 0.75]);
@@ -1433,13 +1559,29 @@ mod tests {
         assert_eq!(body.gi_equalization_factor, 0.25);
         assert_eq!(body.shade_color_factor, [0.5, 0.25, 0.125]);
         assert_eq!(body.uv_animation_rotation_speed_factor, 2.0);
-        assert!(body.transparent_with_z_write);
-        assert_eq!(body.render_queue_offset_number, i32::MAX);
         // What the file leaves out keeps UniVRM's default.
         assert_eq!(
             body.shading_toony_factor,
-            MtoonMaterial::default().shading_toony_factor
+            Mtoon::default().shading_toony_factor
         );
+        // The custom material names the same textures, outlines, and packs
+        // the same numbers.
+        let custom = custom(&materials, 0);
+        assert_eq!(
+            custom.textures,
+            [
+                Some(0),
+                Some(0),
+                Some(2),
+                Some(1),
+                None,
+                Some(3),
+                Some(3),
+                Some(4),
+                Some(1)
+            ]
+        );
+        assert_eq!(custom.outline, Some(celesta_plugin::OutlinePass::default()));
         assert_eq!(body.emissive_texture, None);
     }
 

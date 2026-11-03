@@ -26,7 +26,11 @@
 //! - **Expressions** (see `expressions`) are checked after the draws and
 //!   before the materials, so a model refused for them writes no texture.
 //!   Each frame they set the morph targets they bind, on every draw of the
-//!   bound node, and override the bound materials of every draw using them.
+//!   bound node, and the bound materials' colours and texture transforms
+//!   on every draw using them: an MToon draw's as parameters, packed with
+//!   the frame's UV animation (sent only when they differ from the
+//!   material's own); an unlit draw's base colour and texture transform as
+//!   overrides, its other colours dropped.
 //! - **The lookAt** (see `look_at`) is read before the geometry. Each frame
 //!   it turns the eye bones, or writes the look expressions, for the gaze
 //!   `data.look_at` asks for, scaled by what other expressions leave of it.
@@ -46,6 +50,7 @@ use crate::geometry::{
 use crate::humanoid::Humanoid;
 use crate::look_at::LookAt;
 use crate::materials::{materials, texture_cache_dir};
+use crate::mtoon::{self, Mtoon, MtoonOverrides};
 use crate::nodes::{NodeTree, Pose};
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
 use celesta_plugin::{
@@ -111,6 +116,9 @@ pub struct VrmModel {
     tree: NodeTree,
     humanoid: Humanoid,
     scene: SceneModel,
+    /// By material: an MToon material's parameters, which each frame packs
+    /// with its binds and UV animation.
+    mtoon: Vec<Option<Mtoon>>,
     notices: Vec<Notice>,
     draws: Vec<DrawSource>,
     skins: Vec<SkinSource>,
@@ -191,7 +199,9 @@ impl VrmModel {
             read_expressions(&document, &draws.sources, &mut expression_notices)?;
         let read = materials(&document, cache)?;
         let mut scene_materials = read.materials;
+        let mut mtoon = read.mtoon;
         if draws.default_material {
+            mtoon.push(None);
             scene_materials.push(Material {
                 alpha_mode: AlphaMode::Opaque,
                 double_sided: false,
@@ -222,8 +232,12 @@ impl VrmModel {
         }
         notices.extend(expression_notices);
 
-        let expressions =
-            Expressions::new(expression_binds, &scene_materials, &read.base_transforms);
+        let expressions = Expressions::new(
+            expression_binds,
+            &scene_materials,
+            &mtoon,
+            &read.base_transforms,
+        );
         let scene = SceneModel {
             canvas: CANVAS,
             textures: read.textures,
@@ -234,6 +248,7 @@ impl VrmModel {
                     joints: skin.joints.len() as u32,
                 })
                 .collect(),
+            shaders: read.shaders,
             materials: scene_materials,
             draws: draws.infos,
         };
@@ -244,6 +259,7 @@ impl VrmModel {
             tree,
             humanoid,
             scene,
+            mtoon,
             notices,
             draws: draws.sources,
             skins,
@@ -284,9 +300,7 @@ impl VrmModel {
             .iter()
             .map(|draw| draw.morph_weights.clone())
             .collect();
-        let mut overrides = vec![MaterialOverrides::default(); self.scene.materials.len()];
-        self.expressions
-            .apply(&applied.weights, &mut morph, &mut overrides);
+        let binds = self.binds_of(&applied, &mut morph);
         self.apply_springs(time, data, &mut pose);
         let worlds = self.tree.world(&pose);
 
@@ -305,14 +319,16 @@ impl VrmModel {
             skins.push(matrices);
         }
 
-        // Bind weights and colours add up, so many large ones can overflow.
-        for (material, overrides) in overrides.iter().enumerate() {
-            if !overrides_are_finite(overrides) {
+        // Bind weights and colours add up, so many large ones can overflow;
+        // Celesta sees only the packed bytes, so the plugin checks them.
+        for (material, binds) in binds.iter().enumerate() {
+            if let Some(bind) = bind_not_finite(binds) {
                 return Err(FrameError(format!(
-                    "expressions make material {material}'s colours or texture transform not finite"
+                    "material {material}'s {bind} is not finite"
                 )));
             }
         }
+        let materials = self.material_states(&binds, time);
 
         let centres = self.mesh_centers(&worlds);
         let mut draws = Vec::with_capacity(self.draws.len());
@@ -333,19 +349,21 @@ impl VrmModel {
                     draw.node, draw.mesh, draw.primitive
                 )));
             }
+            let (overrides, params) = self
+                .scene
+                .draws
+                .get(index)
+                .and_then(|info| materials.get(info.material))
+                .cloned()
+                .unwrap_or_default();
             draws.push(DrawState {
                 index,
                 visible: draw.visible,
                 world: world.to_cols_array(),
                 morph_weights,
                 center: Some(centre.to_array()),
-                overrides: self
-                    .scene
-                    .draws
-                    .get(index)
-                    .and_then(|info| overrides.get(info.material))
-                    .copied()
-                    .unwrap_or_default(),
+                overrides,
+                params,
             });
         }
 
@@ -356,6 +374,71 @@ impl VrmModel {
             draws,
             skins,
         })
+    }
+
+    /// By material: what the expressions' `applied` weights bind, with the
+    /// morph targets they bind written into `morph` (by draw).
+    fn binds_of(&self, applied: &Applied, morph: &mut [Vec<f32>]) -> Vec<MtoonOverrides> {
+        let mut binds = vec![MtoonOverrides::default(); self.scene.materials.len()];
+        self.expressions.apply(&applied.weights, morph, &mut binds);
+        binds
+    }
+
+    /// By material: what its draws send at `time` with `binds` (by
+    /// material). An MToon material sends its parameters packed with them
+    /// and the UV animation, when they differ from the material's own; an
+    /// unlit one its base colour and texture transform binds as overrides.
+    fn material_states(
+        &self,
+        binds: &[MtoonOverrides],
+        time: f64,
+    ) -> Vec<(MaterialOverrides, Option<Vec<u8>>)> {
+        self.scene
+            .materials
+            .iter()
+            .zip(binds)
+            .zip(&self.mtoon)
+            .map(|((material, binds), mtoon)| match (&material.kind, mtoon) {
+                (MaterialKind::Custom(custom), Some(mtoon)) => {
+                    let params = mtoon::params(mtoon, binds, time, &self.scene.textures);
+                    let changed = params[..] != custom.params[..];
+                    (
+                        MaterialOverrides::default(),
+                        changed.then(|| params.to_vec()),
+                    )
+                }
+                _ => (
+                    MaterialOverrides {
+                        base_color: binds.base_color,
+                        texture_offset: binds.texture_offset,
+                        texture_scale: binds.texture_scale,
+                    },
+                    None,
+                ),
+            })
+            .collect()
+    }
+
+    /// Material `material`'s MToon parameters, if it is MToon.
+    #[cfg(test)]
+    pub(crate) fn mtoon(&self, material: usize) -> Option<&Mtoon> {
+        self.mtoon.get(material).and_then(Option::as_ref)
+    }
+
+    /// By material: what `data`'s expressions bind at `time`.
+    #[cfg(test)]
+    pub(crate) fn binds(
+        &self,
+        time: f64,
+        data: &PerformanceData,
+    ) -> Result<Vec<MtoonOverrides>, FrameError> {
+        let (_, applied) = self.pose_and_weights(time, data, REST_EYE)?;
+        let mut morph: Vec<Vec<f32>> = self
+            .draws
+            .iter()
+            .map(|draw| draw.morph_weights.clone())
+            .collect();
+        Ok(self.binds_of(&applied, &mut morph))
     }
 
     /// The frame's stages before the expressions' binds and the springs:
@@ -470,9 +553,9 @@ impl VrmModel {
     }
 }
 
-/// Whether every override set is finite.
-fn overrides_are_finite(overrides: &MaterialOverrides) -> bool {
-    let MaterialOverrides {
+/// The first bind of `binds` that is set and not finite, by its VRM name.
+fn bind_not_finite(binds: &MtoonOverrides) -> Option<&'static str> {
+    let MtoonOverrides {
         base_color,
         texture_offset,
         texture_scale,
@@ -481,23 +564,34 @@ fn overrides_are_finite(overrides: &MaterialOverrides) -> bool {
         matcap_color,
         rim_color,
         outline_color,
-    } = overrides;
-    let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
-    base_color.iter().all(|value| finite(value))
-        && [texture_offset, texture_scale]
-            .into_iter()
-            .flatten()
-            .all(|value| finite(value))
-        && [
-            shade_color,
-            emission_color,
-            matcap_color,
-            rim_color,
-            outline_color,
-        ]
-        .into_iter()
-        .flatten()
-        .all(|value| finite(value))
+    } = binds;
+    let named: [(&str, Option<&[f32]>); 8] = [
+        ("color", base_color.as_ref().map(|value| &value[..])),
+        (
+            "texture offset",
+            texture_offset.as_ref().map(|value| &value[..]),
+        ),
+        (
+            "texture scale",
+            texture_scale.as_ref().map(|value| &value[..]),
+        ),
+        ("shadeColor", shade_color.as_ref().map(|value| &value[..])),
+        (
+            "emissionColor",
+            emission_color.as_ref().map(|value| &value[..]),
+        ),
+        ("matcapColor", matcap_color.as_ref().map(|value| &value[..])),
+        ("rimColor", rim_color.as_ref().map(|value| &value[..])),
+        (
+            "outlineColor",
+            outline_color.as_ref().map(|value| &value[..]),
+        ),
+    ];
+    named.into_iter().find_map(|(name, values)| {
+        values
+            .is_some_and(|values| values.iter().any(|value| !value.is_finite()))
+            .then_some(name)
+    })
 }
 
 /// Every glTF skin's joints and inverse bind matrices, by skin index.
@@ -870,6 +964,71 @@ mod tests {
         );
         for draw in &frame.draws {
             assert_eq!(draw.overrides, MaterialOverrides::default());
+            assert_eq!(draw.params, None);
+        }
+    }
+
+    #[test]
+    fn the_scene_brings_the_mtoon_shader() {
+        let model = avatar();
+        let scene = model.scene_model();
+        assert_eq!(scene.shaders, [mtoon::shader()]);
+        for material in [0, 1] {
+            assert!(matches!(
+                &scene.materials[material].kind,
+                MaterialKind::Custom(custom) if custom.shader == 0
+            ));
+        }
+    }
+
+    #[test]
+    fn uv_animation_sends_parameters_as_time_moves() {
+        // Body scrolls half a texture a second; the hair does not move.
+        let mut model = edited(|root| {
+            root["materials"][0]["extensions"]["VRMC_materials_mtoon"]["uvAnimationScrollXSpeedFactor"] =
+                json!(0.5);
+        });
+        let at = |model: &mut VrmModel, time: f64| {
+            model.frame(time, &PerformanceData::default()).unwrap()
+        };
+        // At 0 the material's own parameters are the frame's.
+        assert_eq!(at(&mut model, 0.0).draws[0].params, None);
+        let frame = at(&mut model, 1.0);
+        let params = frame.draws[0].params.as_deref().unwrap();
+        let scroll = f32::from_le_bytes(params[160..164].try_into().unwrap());
+        assert_eq!(scroll, 0.5);
+        assert_eq!(frame.draws[1].params, None);
+        assert_eq!(frame.draws[2].params, None);
+    }
+
+    #[test]
+    fn binds_not_finite_are_named() {
+        assert_eq!(bind_not_finite(&MtoonOverrides::default()), None);
+        type Set = fn(&mut MtoonOverrides);
+        let cases: [(&str, Set); 8] = [
+            ("color", |o| o.base_color = Some([0.0, 0.0, 0.0, f32::NAN])),
+            ("texture offset", |o| {
+                o.texture_offset = Some([f32::INFINITY, 0.0]);
+            }),
+            ("texture scale", |o| o.texture_scale = Some([0.0, f32::NAN])),
+            ("emissionColor", |o| {
+                o.emission_color = Some([f32::NAN, 0.0, 0.0]);
+            }),
+            ("shadeColor", |o| {
+                o.shade_color = Some([0.0, f32::INFINITY, 0.0]);
+            }),
+            ("matcapColor", |o| {
+                o.matcap_color = Some([0.0, 0.0, f32::NEG_INFINITY]);
+            }),
+            ("rimColor", |o| o.rim_color = Some([f32::NAN; 3])),
+            ("outlineColor", |o| {
+                o.outline_color = Some([f32::NAN, 1.0, 1.0]);
+            }),
+        ];
+        for (name, set) in cases {
+            let mut binds = MtoonOverrides::default();
+            set(&mut binds);
+            assert_eq!(bind_not_finite(&binds), Some(name));
         }
     }
 

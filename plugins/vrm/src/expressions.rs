@@ -50,9 +50,8 @@
 
 use crate::document::{Document, LoadError};
 use crate::model::DrawSource;
-use celesta_plugin::{
-    Material, MaterialKind, MaterialOverrides, MtoonMaterial, Notice, NoticeLevel, TextureTransform,
-};
+use crate::mtoon::{Mtoon, MtoonOverrides};
+use celesta_plugin::{Material, MaterialKind, Notice, NoticeLevel, TextureTransform};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Range;
@@ -265,14 +264,16 @@ impl Colour {
         self != Self::Emission
     }
 
-    /// The material's own value, linear RGBA (alpha 1 for RGB colours).
-    /// MToon-only colours on an unlit material are MToon's defaults; the
-    /// renderer ignores them there.
-    fn of(self, material: Option<&Material>) -> [f32; 4] {
-        let defaults = MtoonMaterial::default();
-        let mtoon = match material.map(|material| &material.kind) {
-            Some(MaterialKind::Mtoon(mtoon)) => mtoon,
-            Some(MaterialKind::Unlit(unlit)) if self == Self::Base => return unlit.base_color,
+    /// The material's own value, linear RGBA (alpha 1 for RGB colours):
+    /// `mtoon`'s for an MToon material. MToon-only colours on an unlit
+    /// material are MToon's defaults; the model drops them there.
+    fn of(self, material: Option<&Material>, mtoon: Option<&Mtoon>) -> [f32; 4] {
+        let defaults = Mtoon::default();
+        let mtoon = match (mtoon, material.map(|material| &material.kind)) {
+            (Some(mtoon), _) => mtoon,
+            (None, Some(MaterialKind::Unlit(unlit))) if self == Self::Base => {
+                return unlit.base_color;
+            }
             _ => &defaults,
         };
         let [r, g, b] = match self {
@@ -286,8 +287,8 @@ impl Colour {
         [r, g, b, 1.0]
     }
 
-    /// Writes `value` (linear RGBA) into its override field.
-    fn write(self, value: [f32; 4], overrides: &mut MaterialOverrides) {
+    /// Writes `value` (linear RGBA) into its bind field.
+    fn write(self, value: [f32; 4], overrides: &mut MtoonOverrides) {
         let rgb = Some([value[0], value[1], value[2]]);
         match self {
             Self::Base => overrides.base_color = Some(value),
@@ -579,10 +580,12 @@ pub(crate) fn read_expressions(
 
 impl Expressions {
     /// The expressions of `binds`, blending from `materials` (the scene's,
-    /// by index) and `base_transforms` (by glTF material).
+    /// by index), `mtoon` (the MToon materials' parameters, by index), and
+    /// `base_transforms` (by glTF material).
     pub(crate) fn new(
         binds: ExpressionBinds,
         materials: &[Material],
+        mtoon: &[Option<Mtoon>],
         base_transforms: &[Option<TextureTransform>],
     ) -> Self {
         // Slots in a fixed order: by node and target, by material and
@@ -633,7 +636,10 @@ impl Expressions {
             .enumerate()
             .map(|(slot, (material, colour))| {
                 colour_slots.insert((material, colour), slot);
-                let mut base = colour.of(materials.get(material));
+                let mut base = colour.of(
+                    materials.get(material),
+                    mtoon.get(material).and_then(Option::as_ref),
+                );
                 if colour.srgb() {
                     for channel in &mut base[..3] {
                         *channel = encode_srgb(*channel);
@@ -765,7 +771,7 @@ impl Expressions {
         &self,
         actual: &BTreeMap<ExpressionKey, f32>,
         morph: &mut [Vec<f32>],
-        overrides: &mut [MaterialOverrides],
+        overrides: &mut [MtoonOverrides],
     ) {
         let mut morphs = vec![0.0f32; self.morph_targets.len()];
         // Σ (target − base) × weight, once an expression with a weight
@@ -858,6 +864,7 @@ impl Expressions {
 mod tests {
     use super::*;
     use crate::model::VrmModel;
+    use crate::mtoon;
     use crate::provider::PerformanceData;
     use crate::synthetic::{SyntheticVrm, node};
     use celesta_plugin::{MaterialOverrides, NoticeLevel, SceneFrame};
@@ -921,9 +928,17 @@ mod tests {
         actual.len() == expected.len() && actual.iter().zip(expected).all(|(a, e)| close(*a, *e))
     }
 
-    /// Draw 0's overrides, which are material 0's.
-    fn overrides(model: &mut VrmModel, inputs: &[(&str, f32)]) -> MaterialOverrides {
-        frame(model, inputs).draws[0].overrides
+    /// By material: what `inputs` bind, which an MToon material's draws
+    /// send packed into their parameters.
+    fn binds_of(model: &mut VrmModel, inputs: &[(&str, f32)]) -> Vec<MtoonOverrides> {
+        // The frame is made too, so its checks run.
+        frame(model, inputs);
+        model.binds(0.0, &data(inputs)).unwrap()
+    }
+
+    /// Material 0's binds, which draw 0 sends.
+    fn binds(model: &mut VrmModel, inputs: &[(&str, f32)]) -> MtoonOverrides {
+        binds_of(model, inputs)[0]
     }
 
     #[test]
@@ -992,7 +1007,7 @@ mod tests {
     #[test]
     fn mouth_override_scales_vowels() {
         let mut model = avatar();
-        let overrides = overrides(&mut model, &[("aa", 1.0), ("happy", 0.4)]);
+        let overrides = binds(&mut model, &[("aa", 1.0), ("happy", 0.4)]);
         // aa at 0.6: 0.5 + (0.25 − 0.5) × 0.6.
         assert!(close_all(&overrides.texture_offset.unwrap(), &[0.35, 0.0]));
     }
@@ -1028,7 +1043,7 @@ mod tests {
     #[test]
     fn colour_binds_blend_in_srgb() {
         let mut model = avatar();
-        let overrides = overrides(&mut model, &[("happy", 0.5)]);
+        let overrides = binds(&mut model, &[("happy", 0.5)]);
         assert!(close_all(
             &overrides.base_color.unwrap(),
             &[1.0, HALF_SRGB, HALF_SRGB, 1.0]
@@ -1038,7 +1053,7 @@ mod tests {
     #[test]
     fn emission_binds_blend_linearly() {
         let mut model = avatar();
-        let overrides = overrides(&mut model, &[("happy", 0.5)]);
+        let overrides = binds(&mut model, &[("happy", 0.5)]);
         assert!(close_all(
             &overrides.emission_color.unwrap(),
             &[0.5, 0.5, 0.0]
@@ -1049,14 +1064,14 @@ mod tests {
     fn every_colour_type_reaches_its_field() {
         // MToon's defaults are the base: every factor's target is sRGB 0.5,
         // reached in full at weight 1.
-        let binds: Vec<Value> = ["shadeColor", "matcapColor", "rimColor", "outlineColor"]
+        let colour_binds: Vec<Value> = ["shadeColor", "matcapColor", "rimColor", "outlineColor"]
             .iter()
             .map(|kind| json!({ "material": 0, "type": kind, "targetValue": [0.5, 0.5, 0.5, 0.0] }))
             .collect();
         let mut model = load(&with_expressions(|e| {
-            e["preset"]["sad"] = json!({ "materialColorBinds": binds });
+            e["preset"]["sad"] = json!({ "materialColorBinds": colour_binds });
         }));
-        let overrides = overrides(&mut model, &[("sad", 1.0)]);
+        let overrides = binds(&mut model, &[("sad", 1.0)]);
         let half = [HALF_SRGB; 3];
         assert!(close_all(&overrides.shade_color.unwrap(), &half));
         assert!(close_all(&overrides.matcap_color.unwrap(), &half));
@@ -1077,7 +1092,7 @@ mod tests {
                 ],
             });
         }));
-        let colour = overrides(&mut model, &[("happy", 0.5), ("sad", 0.5)])
+        let colour = binds(&mut model, &[("happy", 0.5), ("sad", 0.5)])
             .base_color
             .unwrap();
         // sRGB: red 1 − 0.5, green and blue 1 − 0.5, alpha 1 − 0.5.
@@ -1087,19 +1102,28 @@ mod tests {
     #[test]
     fn uv_binds_blend_from_the_material_transform() {
         let mut model = avatar();
-        let overrides = overrides(&mut model, &[("aa", 0.5)]);
+        let overrides = binds(&mut model, &[("aa", 0.5)]);
         assert!(close_all(&overrides.texture_offset.unwrap(), &[0.375, 0.0]));
         assert!(close_all(&overrides.texture_scale.unwrap(), &[1.0, 1.0]));
         assert_eq!(overrides.base_color, None);
 
+        // Without expressions no draw sends a bind, nor parameters of its
+        // own.
+        assert!(
+            binds_of(&mut model, &[])
+                .iter()
+                .all(|binds| *binds == MtoonOverrides::default())
+        );
         let frame = frame(&mut model, &[]);
         for draw in &frame.draws {
             assert_eq!(draw.overrides, MaterialOverrides::default());
+            assert_eq!(draw.params, None);
         }
         // Expressions at 0 leave the materials alone too.
         let frame = frame_of(&mut model, &[("happy", 0.0), ("aa", 0.0)]);
         for draw in &frame.draws {
             assert_eq!(draw.overrides, MaterialOverrides::default());
+            assert_eq!(draw.params, None);
         }
     }
 
@@ -1116,20 +1140,25 @@ mod tests {
                 "textureTransformBinds": [{ "material": 1, "scale": [3.0, 1.0] }],
             });
         }));
-        let frame = frame(&mut model, &[("ih", 0.5), ("ou", 0.5)]);
-        let hair = frame.draws[1].overrides;
+        let binds = binds_of(&mut model, &[("ih", 0.5), ("ou", 0.5)]);
+        let hair = binds[1];
         assert!(close_all(&hair.texture_offset.unwrap(), &[0.25, 0.125]));
         assert!(close_all(&hair.texture_scale.unwrap(), &[2.0, 1.0]));
-        assert_eq!(frame.draws[0].overrides, MaterialOverrides::default());
+        assert_eq!(binds[0], MtoonOverrides::default());
     }
 
     #[test]
     fn overrides_reach_only_draws_of_the_material() {
+        // Body's base colour bind reaches its draw in its parameters; the
+        // hair (MToon) and the quad (unlit) send nothing of their own.
         let mut model = avatar();
         let frame = frame(&mut model, &[("happy", 0.5)]);
-        assert!(frame.draws[0].overrides.base_color.is_some());
-        assert_eq!(frame.draws[1].overrides, MaterialOverrides::default());
-        assert_eq!(frame.draws[2].overrides, MaterialOverrides::default());
+        assert!(frame.draws[0].params.is_some());
+        assert_eq!(frame.draws[1].params, None);
+        assert_eq!(frame.draws[2].params, None);
+        for draw in &frame.draws {
+            assert_eq!(draw.overrides, MaterialOverrides::default());
+        }
 
         // With the hair on material 0 too, both get them.
         let vrm = SyntheticVrm::avatar();
@@ -1137,8 +1166,53 @@ mod tests {
         let glb = vrm.glb_with(|root| root["meshes"][0]["primitives"][1]["material"] = json!(0));
         let mut model = VrmModel::load_slice(&glb, cache.path()).unwrap();
         let frame = frame_of(&mut model, &[("happy", 0.5)]);
-        assert_eq!(frame.draws[0].overrides, frame.draws[1].overrides);
-        assert!(frame.draws[1].overrides.base_color.is_some());
+        assert_eq!(frame.draws[0].params, frame.draws[1].params);
+        assert!(frame.draws[1].params.is_some());
+    }
+
+    #[test]
+    fn mtoon_binds_are_packed_into_the_draw_parameters() {
+        // The parameters are the material's packed with the frame's binds.
+        let mut model = avatar();
+        let inputs = [("happy", 0.5), ("aa", 0.5)];
+        let frame = frame(&mut model, &inputs);
+        let binds = binds_of(&mut model, &inputs);
+        let scene = model.scene_model();
+        let mtoon = model.mtoon(0).unwrap();
+        assert_eq!(
+            frame.draws[0].params.as_deref(),
+            Some(&mtoon::params(mtoon, &binds[0], 0.0, &scene.textures)[..])
+        );
+    }
+
+    #[test]
+    fn unlit_materials_take_colour_and_uv_binds_only() {
+        // An unlit material (the quad's, 2) takes its base colour and
+        // texture transform as overrides; its MToon colours are dropped.
+        let mut model = load(&with_expressions(|e| {
+            e["preset"]["sad"] = json!({
+                "materialColorBinds": [
+                    { "material": 2, "type": "color", "targetValue": [0.0, 1.0, 0.0, 1.0] },
+                    { "material": 2, "type": "rimColor", "targetValue": [1.0, 1.0, 1.0, 0.0] },
+                ],
+                "textureTransformBinds": [{ "material": 2, "offset": [0.5, 0.0] }],
+            });
+        }));
+        let frame = frame(&mut model, &[("sad", 1.0)]);
+        let quad = &frame.draws[2];
+        assert_eq!(quad.params, None);
+        assert!(close_all(
+            &quad.overrides.base_color.unwrap(),
+            &[0.0, 1.0, 0.0, 1.0]
+        ));
+        assert!(close_all(
+            &quad.overrides.texture_offset.unwrap(),
+            &[0.5, 0.0]
+        ));
+        assert!(close_all(
+            &quad.overrides.texture_scale.unwrap(),
+            &[1.0, 1.0]
+        ));
     }
 
     #[test]
@@ -1389,7 +1463,7 @@ mod tests {
             e["preset"]["aa"]["textureTransformBinds"][0]["offset"] = json!([0.25, 0.0, 9.0]);
             e["preset"]["aa"]["textureTransformBinds"][0]["scale"] = json!([1.0, 1.0, 9.0]);
         }));
-        let overrides = overrides(&mut model, &[("happy", 0.5), ("aa", 0.5)]);
+        let overrides = binds(&mut model, &[("happy", 0.5), ("aa", 0.5)]);
         assert!(close_all(
             &overrides.base_color.unwrap(),
             &[1.0, HALF_SRGB, HALF_SRGB, 1.0]
@@ -1409,7 +1483,7 @@ mod tests {
             e["preset"]["aa"]["textureTransformBinds"][0]["offset"] = json!([0.25]);
             e["preset"]["aa"]["textureTransformBinds"][0]["scale"] = json!([3.0]);
         }));
-        let overrides = overrides(&mut model, &[("aa", 0.5)]);
+        let overrides = binds(&mut model, &[("aa", 0.5)]);
         // 0.5 + (0 − 0.5) × 0.5.
         assert!(close_all(&overrides.texture_offset.unwrap(), &[0.25, 0.0]));
         assert!(close_all(&overrides.texture_scale.unwrap(), &[1.0, 1.0]));
