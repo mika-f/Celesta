@@ -279,8 +279,9 @@ pub(crate) fn lights(data: Option<&LightsData>) -> Lights {
     }
 }
 
-/// Why `data`'s lights cannot be drawn: a number that is not finite, or a
-/// light without a direction. Celesta checks how many there are.
+/// Why `data`'s lights cannot be drawn: a number that is not finite (a
+/// light's colour times its intensity too), or a light without a
+/// direction. Celesta checks how many there are.
 pub(crate) fn check_lights(data: &LightsData) -> Result<(), FrameError> {
     for (index, light) in data.directional.iter().enumerate() {
         let DirectionalLight {
@@ -299,6 +300,15 @@ pub(crate) fn check_lights(data: &LightsData) -> Result<(), FrameError> {
                     "lights.directional[{index}].{name} is not finite: {values:?}"
                 )));
             }
+        }
+        // Celesta's shader reads the colour times the intensity, and checks
+        // that product in f32 too.
+        let lit = color.map(|value| value * intensity);
+        if lit.iter().any(|value| !value.is_finite()) {
+            return Err(FrameError(format!(
+                "lights.directional[{index}].intensity times its color is not finite: \
+                 {intensity} × {color:?}"
+            )));
         }
         if *direction == [0.0; 3] {
             return Err(FrameError(format!(
@@ -542,6 +552,11 @@ mod tests {
             (
                 light(json!({ "direction": [0, -1, 0], "color": [1, 1, 1], "intensity": 1e39 })),
                 "lights.directional[0].intensity",
+            ),
+            // Each finite, but Celesta's shader reads their product.
+            (
+                light(json!({ "direction": [0, -1, 0], "color": [1e30, 1, 1], "intensity": 1e30 })),
+                "lights.directional[0].intensity times its color is not finite",
             ),
             (
                 json!({ "lights": { "ambient": [0, 1e39, 0] } }),

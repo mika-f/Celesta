@@ -559,8 +559,10 @@ fit its aspect.
 - **Given lights:** its directional lights (linear colours) and its
   `ambient` as `ambient[3]` alone. A light whose direction is zero, or a
   number that is not finite, is a frame error naming it
-  (`lights.directional[0].direction`); more than 4 lights is Celesta's
-  refusal.
+  (`lights.directional[0].direction`). So is a colour times its intensity
+  past `f32` (`lights.directional[0].intensity times its color is not
+  finite`), which Celesta's shader reads and Celesta refuses without
+  naming the key. More than 4 lights is Celesta's refusal.
 
 ## Usage terms
 
