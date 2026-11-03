@@ -8,9 +8,10 @@ use crate::document::{Document, LoadError};
 use vrm_spec::vrmc_vrm_1_0::FirstPersonType;
 
 /// By node: whether its mesh is hidden from a third-person camera. A node
-/// annotated more than once takes its last annotation, as UniVRM sets each
-/// annotated renderer's layer in turn. An annotation without a node is
-/// ignored; one naming a node the file lacks is refused.
+/// annotated more than once takes its last annotation: this plugin's
+/// choice, not checked against what UniVRM does with such a file. An
+/// annotation without a node is ignored; one naming a node the file lacks
+/// is refused.
 pub(crate) fn hidden_nodes(document: &Document) -> Result<Vec<bool>, LoadError> {
     let nodes = document.gltf.nodes().len();
     let mut hidden = vec![false; nodes];

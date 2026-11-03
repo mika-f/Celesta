@@ -33,7 +33,7 @@
 use crate::document::{Document, LoadError};
 use crate::first_person::hidden_nodes;
 use crate::geometry::{
-    Accessors, GEOMETRY_BUDGET, geometry_bytes, inverse_binds, primitive_geometry,
+    Accessors, GEOMETRY_BUDGET, draws_triangles, geometry_bytes, inverse_binds, primitive_geometry,
 };
 use crate::humanoid::Humanoid;
 use crate::materials::{materials, texture_cache_dir};
@@ -358,6 +358,14 @@ fn read_skins(
         .skins()
         .map(|skin| {
             let joints: Vec<usize> = skin.joints().map(|joint| joint.index()).collect();
+            // glTF asks for at least one; gltf-json does not check. A vertex
+            // whose zero weights name joint 0 would reach Celesta with none.
+            if joints.is_empty() {
+                return Err(LoadError::Invalid(format!(
+                    "skin {} has no joints",
+                    skin.index()
+                )));
+            }
             if u32::try_from(joints.len()).is_err() {
                 return Err(LoadError::Invalid(format!(
                     "skin {} has {} joints",
@@ -399,7 +407,58 @@ fn scene_nodes(document: &Document, tree: &NodeTree) -> Vec<bool> {
     in_scene
 }
 
+/// A mesh's primitive that draws triangles, with what reading it needs.
+struct DrawnPrimitive<'d> {
+    primitive: gltf::Primitive<'d>,
+    material: Option<usize>,
+    needs_tangents: bool,
+}
+
+/// What a mesh draws, decided once for every node drawing it: the
+/// primitives that draw triangles (whether one does depends neither on
+/// the node nor on its skin), and the mesh's morph weights.
+struct MeshDraws<'d> {
+    primitives: Vec<DrawnPrimitive<'d>>,
+    weights: Option<&'d [f32]>,
+}
+
+fn mesh_draws<'d>(document: &Document, mesh: &gltf::Mesh<'d>) -> Result<MeshDraws<'d>, LoadError> {
+    let weights = mesh.weights();
+    if let Some(weights) = weights
+        && weights.iter().any(|weight| !weight.is_finite())
+    {
+        return Err(LoadError::Invalid(format!(
+            "mesh {} has morph weights that are not finite: {weights:?}",
+            mesh.index()
+        )));
+    }
+    let primitives = mesh
+        .primitives()
+        .filter(draws_triangles)
+        .map(|primitive| {
+            let material = primitive.material();
+            let needs_tangents = material
+                .index()
+                .is_some_and(|m| document.mtoon.get(m).is_some_and(Option::is_some))
+                && material.normal_texture().is_some();
+            DrawnPrimitive {
+                material: material.index(),
+                needs_tangents,
+                primitive,
+            }
+        })
+        .collect();
+    Ok(MeshDraws {
+        primitives,
+        weights,
+    })
+}
+
 /// The scene's draws, their geometries, and each mesh's centre.
+///
+/// Every node costs its own draws, each counted toward the budget: which
+/// primitives draw is decided once per mesh, so a node never walks the
+/// primitives that do not.
 fn read_draws(
     document: &Document,
     accessors: &Accessors,
@@ -414,7 +473,9 @@ fn read_draws(
     let default_material = gltf.materials().len();
     // By mesh: the bounds of its drawn primitives.
     let mut bounds: Vec<Option<(Vec3, Vec3)>> = vec![None; gltf.meshes().len()];
-    // By (mesh, skin): each primitive's geometry, if it draws.
+    // By mesh, once a node draws it.
+    let mut meshes: Vec<Option<MeshDraws>> = (0..gltf.meshes().len()).map(|_| None).collect();
+    // By (mesh, skin): the geometry of each primitive its `MeshDraws` has.
     let mut read: BTreeMap<(usize, Option<usize>), Vec<Option<usize>>> = BTreeMap::new();
     let mut draws = Draws {
         sources: Vec::new(),
@@ -433,26 +494,31 @@ fn read_draws(
         let Some(mesh) = node.mesh().filter(|_| in_scene[index]) else {
             continue;
         };
+        if meshes[mesh.index()].is_none() {
+            meshes[mesh.index()] = Some(mesh_draws(document, &mesh)?);
+        }
+        let Some(drawn) = &meshes[mesh.index()] else {
+            continue;
+        };
+        if drawn.primitives.is_empty() {
+            continue;
+        }
         let skin = node.skin();
         let key = (mesh.index(), skin.as_ref().map(gltf::Skin::index));
         if let Entry::Vacant(entry) = read.entry(key) {
             let mut geometries = Vec::new();
-            for primitive in mesh.primitives() {
-                let material = primitive.material();
-                let needs_tangents = material
-                    .index()
-                    .is_some_and(|m| document.mtoon.get(m).is_some_and(Option::is_some))
-                    && material.normal_texture().is_some();
-                let index = primitive.index();
+            for drawn in &drawn.primitives {
+                let index = drawn.primitive.index();
                 let Some(geometry) = primitive_geometry(
                     accessors,
                     mesh.clone(),
-                    primitive,
+                    drawn.primitive.clone(),
                     skin.clone(),
-                    needs_tangents,
+                    drawn.needs_tangents,
                     budget.left,
                 )?
                 else {
+                    // Not reached: `draws_triangles` kept only those that do.
                     geometries.push(None);
                     continue;
                 };
@@ -473,35 +539,36 @@ fn read_draws(
             entry.insert(geometries);
         }
 
-        let defaults = match (node.weights(), mesh.weights()) {
-            (Some(weights), _) => Some((weights, format!("node {index}"))),
-            (None, Some(weights)) => Some((weights, format!("mesh {}", mesh.index()))),
-            (None, None) => None,
-        };
-        if let Some((weights, owner)) = &defaults
+        // The node's own weights (its own JSON, so checked per node), else
+        // the mesh's (checked once, in `mesh_draws`).
+        let node_weights = node.weights();
+        if let Some(weights) = node_weights
             && weights.iter().any(|weight| !weight.is_finite())
         {
             return Err(LoadError::Invalid(format!(
-                "{owner} has morph weights that are not finite: {weights:?}"
+                "node {index} has morph weights that are not finite: {weights:?}"
             )));
         }
+        let defaults = node_weights.or(drawn.weights);
         let anchor = skin
             .as_ref()
             .and_then(gltf::Skin::skeleton)
             .map_or(index, |skeleton| skeleton.index());
-        for (primitive, geometry) in mesh.primitives().zip(&read[&key]) {
+        for (primitive, geometry) in drawn.primitives.iter().zip(&read[&key]) {
             let Some(geometry) = *geometry else {
                 continue;
             };
             let targets = draws.geometries[geometry].targets.len();
             budget.take(per_draw + 2 * 4 * targets as u64, || {
-                format!("node {index}'s draw of primitive {}", primitive.index())
+                format!(
+                    "node {index}'s draw of primitive {}",
+                    primitive.primitive.index()
+                )
             })?;
             let morph_weights: Vec<f32> = (0..targets)
                 .map(|target| {
                     defaults
-                        .as_ref()
-                        .and_then(|(weights, _)| weights.get(target))
+                        .and_then(|weights| weights.get(target))
                         .copied()
                         .unwrap_or(0.0)
                 })
@@ -511,14 +578,14 @@ fn read_draws(
                 .filter(|_| draws.geometries[geometry].joints.is_some())
                 .map(gltf::Skin::index);
             debug_assert!(draw_skin.is_none_or(|skin| skin < skins.len()));
-            let material = primitive.material().index().unwrap_or_else(|| {
+            let material = primitive.material.unwrap_or_else(|| {
                 draws.default_material = true;
                 default_material
             });
             draws.sources.push(DrawSource {
                 node: index,
                 mesh: mesh.index(),
-                primitive: primitive.index(),
+                primitive: primitive.primitive.index(),
                 skin: draw_skin,
                 visible: !hidden[index],
                 anchor,
@@ -927,6 +994,94 @@ mod tests {
         };
         assert!(message.contains("bytes"), "{message}");
         assert!(message.contains("left"), "{message}");
+    }
+
+    #[test]
+    fn many_nodes_over_many_skipped_primitives_cost_nothing_per_pair() {
+        // Mesh 1 as 10,000 point primitives, drawn by 10,000 nodes with a
+        // skin each: decided once per mesh, not per node and primitive.
+        const COUNT: usize = 10_000;
+        let model = edited(|root| {
+            let point = json!({
+                "attributes": { "POSITION": root["meshes"][1]["primitives"][0]["attributes"]["POSITION"] },
+                "mode": 0,
+            });
+            root["meshes"][1]["primitives"] = json!(vec![point; COUNT]);
+            let first = root["nodes"].as_array().unwrap().len();
+            let skins = root["skins"].as_array_mut().unwrap();
+            let first_skin = skins.len();
+            skins.extend((0..COUNT).map(|_| json!({ "joints": [node::HIPS] })));
+            let nodes = root["nodes"].as_array_mut().unwrap();
+            nodes.extend((0..COUNT).map(|n| json!({ "mesh": 1, "skin": first_skin + n })));
+            let children = root["nodes"][node::ROOT]["children"]
+                .as_array_mut()
+                .unwrap();
+            children.extend((first..first + COUNT).map(|n| json!(n)));
+        });
+        assert_eq!(
+            sources(&model),
+            [(node::BODY, 0, Some(0)), (node::BODY, 1, Some(0))]
+        );
+        assert_eq!(model.scene_model().skins.len(), 1 + COUNT);
+    }
+
+    /// The avatar with node 25, drawing Body (mesh 0) with skin 1, whose
+    /// joints are `joints`.
+    fn second_skin(joints: Value) -> Vec<u8> {
+        SyntheticVrm::avatar().glb_with(|root| {
+            root["skins"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "joints": joints }));
+            root["nodes"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "name": "Other", "mesh": 0, "skin": 1 }));
+            root["nodes"][node::ROOT]["children"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(25));
+        })
+    }
+
+    #[test]
+    fn a_mesh_drawn_with_two_skins_gets_a_geometry_for_each() {
+        let model = load_glb(&second_skin(json!([node::HIPS, node::HEAD]))).unwrap();
+        assert_eq!(
+            sources(&model),
+            [
+                (node::BODY, 0, Some(0)),
+                (node::BODY, 1, Some(0)),
+                (node::FIRST_PERSON_ONLY, 0, None),
+                (25, 0, Some(1)),
+                (25, 1, Some(1)),
+            ]
+        );
+        let scene = model.scene_model();
+        let geometries: Vec<usize> = scene.draws.iter().map(|draw| draw.geometry).collect();
+        assert_eq!(geometries, [0, 1, 2, 3, 4]);
+        assert_eq!(scene.skins, [Skin { joints: 3 }, Skin { joints: 2 }]);
+        // Each skin's joints are checked on its own: the hair names joint
+        // 1, which a one-joint skin lacks.
+        let message = match load_glb(&second_skin(json!([node::HIPS]))) {
+            Ok(_) => panic!("the model opened"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            message.contains("mesh \"Body\" primitive 1 names joint 1 of skin 1, which has 1"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_skin_without_joints_is_refused() {
+        let message = refusal(|root| {
+            root["skins"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "joints": [] }));
+        });
+        assert!(message.contains("skin 1 has no joints"), "{message}");
     }
 
     #[test]
