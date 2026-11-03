@@ -6,8 +6,8 @@ use super::*;
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DirectionalLight, DrawInfo,
     DrawState, Filter, Geometry, Lights, Material, MaterialKind, ModelId, MorphTarget,
-    MtoonMaterial, Opened, PluginError, Projection, Sampler, ScaledTextureSlot, SceneFrame,
-    SceneModel, SceneTexture, Skin, TextureSlot, TextureSource, UnlitMaterial,
+    MtoonMaterial, Opened, OutlineWidthMode, PluginError, Projection, Sampler, ScaledTextureSlot,
+    SceneFrame, SceneModel, SceneTexture, Skin, TextureSlot, TextureSource, UnlitMaterial,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -158,7 +158,17 @@ fn scene() -> Scene {
 
 /// The scene layer at `time`, scaled by `scale` from the top-left corner.
 fn scene_at(time: f64, scale: f64) -> Scene {
-    let mut scene = empty_scene(64, 64);
+    layer_on(empty_scene(64, 64), time, scale)
+}
+
+/// The scene layer at time 0, unscaled, on a `width` by `height` scene.
+fn scene_of(width: u32, height: u32) -> Scene {
+    layer_on(empty_scene(width, height), 0.0, 1.0)
+}
+
+/// `scene` with the scene layer at `time`, scaled by `scale` from the
+/// top-left corner.
+fn layer_on(mut scene: Scene, time: f64, scale: f64) -> Scene {
     scene.layers.push(Layer {
         id: "scenes".into(),
         transform: EvaluatedTransform {
@@ -265,9 +275,14 @@ fn skinned_square() -> Scenes {
 
 /// `scenes` drawn at time 0, unscaled; `None` without a GPU.
 fn render_scenes(scenes: Scenes) -> Option<GpuFrame> {
+    render_scenes_in(scenes, &scene())
+}
+
+/// `scenes` drawn as `scene`'s layer; `None` without a GPU.
+fn render_scenes_in(scenes: Scenes, scene: &Scene) -> Option<GpuFrame> {
     let mut renderer = renderer(transparent())?;
     renderer.renderer = renderer.renderer.with_content_provider(scenes);
-    Some(renderer.render(&scene()).unwrap())
+    Some(renderer.render(scene).unwrap())
 }
 
 fn pixel(frame: &GpuFrame, x: u32, y: u32) -> [u8; 4] {
@@ -2010,4 +2025,341 @@ fn mask_mtoon_covers_by_cutoff() {
         }];
         assert_centre(scenes, expected);
     }
+}
+
+/// `square`'s 1 m square facing +Z and its twin facing −Z (the same
+/// corners wound the other way), every normal pointing out from the centre
+/// in the plane z = 0: a back face the outline grows on every side.
+fn shell() -> Geometry {
+    let mut geometry = square(false);
+    let out = std::f32::consts::FRAC_1_SQRT_2;
+    let normals = [
+        [-out, -out, 0.0],
+        [out, -out, 0.0],
+        [out, out, 0.0],
+        [-out, out, 0.0],
+    ];
+    geometry.positions = [geometry.positions.clone(), geometry.positions].concat();
+    geometry.normals = [normals, normals].concat();
+    geometry.uvs = [geometry.uvs.clone(), geometry.uvs].concat();
+    geometry.targets = vec![MorphTarget {
+        positions: vec![[0.0; 3]; 8],
+        normals: vec![],
+    }];
+    geometry.indices = vec![0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6];
+    geometry
+}
+
+/// Black, green by emission under no light, with a red outline unlit by
+/// the scene (lighting mix 0), `width` wide in `mode`.
+fn outlined(mode: OutlineWidthMode, width: f32) -> MtoonMaterial {
+    MtoonMaterial {
+        emissive_factor: [0.0, 1.0, 0.0],
+        outline_width_mode: mode,
+        outline_width_factor: width,
+        outline_color_factor: [1.0, 0.0, 0.0],
+        outline_lighting_mix_factor: 0.0,
+        ..black_toon()
+    }
+}
+
+/// `toon_square`'s orthographic view, 32 px a metre, of `shell` drawn with
+/// `mtoon` under `lights`: the square covers 16..48 in x and y.
+fn shell_scene(mtoon: MtoonMaterial, lights: Vec<DirectionalLight>) -> Scenes {
+    let mut scenes = toon_square(mtoon, lights);
+    scenes.model.geometries = vec![shell()];
+    scenes
+}
+
+/// A world width that grows the square by 0.125 m, 4 px, on every side:
+/// the corners' normals lean 45°.
+const FOUR_PX_IN_METRES: f32 = 0.176_776_7;
+/// A screen width that grows the square by 4 px on every side through an
+/// orthographic camera 2 m high on a square canvas.
+const FOUR_PX_OF_SCREEN: f32 = 0.088_388_35;
+
+#[test]
+fn outline_world_width_is_in_metres() {
+    let material = || outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES);
+    let Some(frame) = render_scenes(shell_scene(material(), vec![])) else {
+        return;
+    };
+    // The ring 12..16 and 48..52; the depth bias keeps the draw's own face
+    // in front of its outline.
+    assert_pixel(&frame, 14, 32, RED);
+    assert_pixel(&frame, 50, 32, RED);
+    assert_pixel(&frame, 10, 32, CLEAR);
+    assert_pixel(&frame, 32, 32, GREEN);
+    // Half the size, the square covers 24..40 and its ring is still 4 px.
+    let mut scenes = shell_scene(material(), vec![]);
+    scenes.frame.draws[0].world = scaling(0.5, 0.5, 0.5);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 22, 32, RED);
+    assert_pixel(&frame, 18, 32, CLEAR);
+    // Mirrored, the back faces are still the ones drawn.
+    let mut scenes = shell_scene(material(), vec![]);
+    scenes.frame.draws[0].world = scaling(-1.0, 1.0, 1.0);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, RED);
+    assert_pixel(&frame, 32, 32, GREEN);
+}
+
+#[test]
+fn outline_screen_width_is_a_share_of_the_height() {
+    let material = || outlined(OutlineWidthMode::ScreenCoordinates, FOUR_PX_OF_SCREEN);
+    let Some(frame) = render_scenes(shell_scene(material(), vec![])) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, RED);
+    assert_pixel(&frame, 50, 32, RED);
+    assert_pixel(&frame, 10, 32, CLEAR);
+    assert_pixel(&frame, 32, 32, GREEN);
+    // Half the size, the ring keeps its 4 px.
+    let mut scenes = shell_scene(material(), vec![]);
+    scenes.frame.draws[0].world = scaling(0.5, 0.5, 0.5);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 22, 32, RED);
+    // A camera 4 m high: `P[1][1]` 0.5 caps `clip.w` 1, halving the ring
+    // around the square at 24..40 to 2 px.
+    let mut scenes = shell_scene(material(), vec![]);
+    scenes.frame.camera.projection = Projection::Orthographic {
+        height: 4.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 23, 32, RED);
+    assert_pixel(&frame, 21, 32, CLEAR);
+}
+
+#[test]
+fn outline_screen_width_corrects_for_aspect() {
+    // On a 128x64 canvas the square covers 48..80 in x and 16..48 in y. The
+    // corners' normals lean (0.447, 0.894) in clip space: the ring is
+    // 2.53 px across and 5.06 px up.
+    let mut scenes = shell_scene(
+        outlined(OutlineWidthMode::ScreenCoordinates, FOUR_PX_OF_SCREEN),
+        vec![],
+    );
+    scenes.model.canvas = [128.0, 64.0];
+    let Some(frame) = render_scenes_in(scenes, &scene_of(128, 64)) else {
+        return;
+    };
+    assert_pixel(&frame, 46, 32, RED);
+    assert_pixel(&frame, 64, 12, RED);
+    assert_pixel(&frame, 44, 32, CLEAR);
+    assert_pixel(&frame, 64, 9, CLEAR);
+}
+
+#[test]
+fn outline_width_texture_uses_raw_uv0_green() {
+    // Green 1 at u 0, the left side, and 0 at u 1. Through the base color
+    // texture's offset the left side would sample u 0.5, width 0.
+    let mut scenes = shell_scene(
+        MtoonMaterial {
+            base_color_texture: Some(celesta_plugin::TextureRef {
+                texture: 0,
+                transform: Some(transform([0.5, 0.0], 0.0, [1.0; 2])),
+            }),
+            outline_width_multiply_texture: Some(TextureSlot { texture: 1 }),
+            ..outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES)
+        },
+        vec![],
+    );
+    let mut width = nearest(2, 1, &[[0, 255, 0, 255], [0, 0, 0, 255]]);
+    width.color_space = ColorSpace::Linear;
+    scenes.model.textures = vec![texel(WHITE, ColorSpace::Srgb), width];
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, RED);
+    assert_pixel(&frame, 50, 32, CLEAR);
+}
+
+#[test]
+fn outline_color_mixes_toward_the_shaded_color() {
+    // The shaded color is the emission, (0.5, 1, 0.5); the outline's
+    // (1, 0.5, 1) is multiplied by its mix with white.
+    for (mix, expected) in [
+        (0.0, [255, 188, 255, 255]),
+        (1.0, [188, 188, 188, 255]),
+        (0.5, [225, 188, 225, 255]),
+    ] {
+        let scenes = shell_scene(
+            MtoonMaterial {
+                emissive_factor: [0.5, 1.0, 0.5],
+                outline_color_factor: [1.0, 0.5, 1.0],
+                outline_lighting_mix_factor: mix,
+                ..outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES)
+            },
+            vec![],
+        );
+        let Some(frame) = render_scenes(scenes) else {
+            return;
+        };
+        let actual = pixel(&frame, 14, 32);
+        assert!(near(actual, expected), "mix {mix}: {actual:?}");
+    }
+}
+
+/// White, shaded black, with a white outline as lit as its surface (mix 1).
+fn lit_outline(mtoon: MtoonMaterial) -> MtoonMaterial {
+    MtoonMaterial {
+        outline_width_mode: OutlineWidthMode::WorldCoordinates,
+        outline_width_factor: FOUR_PX_IN_METRES,
+        outline_color_factor: [1.0; 3],
+        outline_lighting_mix_factor: 1.0,
+        ..mtoon
+    }
+}
+
+/// A light travelling −X, towards a normal facing +X.
+const FROM_PLUS_X: [f32; 3] = [-1.0, 0.0, 0.0];
+
+#[test]
+fn outline_shading_sees_the_main_light_only() {
+    // Lit white and shaded white: the main light is black, and the emission
+    // 0.25 is all. The second light would add its shadowed 0.5 (225).
+    let scenes = shell_scene(
+        lit_outline(MtoonMaterial {
+            shade_color_factor: [1.0; 3],
+            emissive_factor: [0.25; 3],
+            ..flat_toon()
+        }),
+        vec![
+            light([0.0, -1.0, 0.0], [1.0; 3], 0.0),
+            light(FROM_PLUS_X, [1.0; 3], 1.0),
+        ],
+    );
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 50, 32, grey(137));
+}
+
+#[test]
+fn outline_shades_with_the_outward_normal() {
+    // The right side's normal faces +X, towards the light: lit. The left
+    // side's faces away: shaded. Turned inwards, they would swap.
+    let scenes = shell_scene(
+        lit_outline(flat_toon()),
+        vec![light(FROM_PLUS_X, [1.0; 3], 1.0)],
+    );
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 50, 32, WHITE);
+    assert_pixel(&frame, 14, 32, BLACK);
+}
+
+#[test]
+fn outline_surface_follows_the_uv_animation() {
+    // The outline at x 12..52 spans u 0..1: (14, 32) is at u 0.06, red; a
+    // scroll of 0.5 a second takes it to green after 1 s. The ambient light
+    // 1 shows the base color.
+    for (time, expected) in [(0.0, RED), (1.0, GREEN)] {
+        let mut scenes = shell_scene(
+            lit_outline(MtoonMaterial {
+                base_color_texture: Some(celesta_plugin::TextureRef {
+                    texture: 0,
+                    transform: None,
+                }),
+                ..scroll_half_in_x(flat_toon())
+            }),
+            vec![],
+        );
+        scenes.model.textures = vec![nearest(2, 1, &[RED, GREEN])];
+        scenes.frame.lights.ambient[3] = [1.0; 3];
+        scenes.frame.time = time;
+        let Some(frame) = render_scenes(scenes) else {
+            return;
+        };
+        let actual = pixel(&frame, 14, 32);
+        assert!(near(actual, expected), "time {time}: {actual:?}");
+    }
+}
+
+#[test]
+fn outline_surface_follows_the_normal_texture() {
+    // At (32, 14), above the square, the outward normal is about
+    // (0.028, 1, 0): `dot(N, L)` 0.028, linear 0.51. The texel tilts it
+    // 0.6 towards the tangent, +X: `dot(N, L)` 0.61, linear 0.81.
+    for (normal_texture, expected) in [
+        (None, 190),
+        (
+            Some(ScaledTextureSlot {
+                texture: 0,
+                scale: 1.0,
+            }),
+            232,
+        ),
+    ] {
+        let mut scenes = with_tangents(shell_scene(
+            lit_outline(MtoonMaterial {
+                normal_texture,
+                ..flat_toon()
+            }),
+            vec![light(FROM_PLUS_X, [1.0; 3], 1.0)],
+        ));
+        scenes.model.textures = vec![texel([204, 128, 230, 255], ColorSpace::Linear)];
+        let Some(frame) = render_scenes(scenes) else {
+            return;
+        };
+        let actual = pixel(&frame, 32, 14);
+        assert!(
+            near(actual, grey(expected)),
+            "{normal_texture:?}: {actual:?}"
+        );
+    }
+}
+
+#[test]
+fn outline_none_draws_nothing() {
+    let Some(frame) = render_scenes(shell_scene(
+        outlined(OutlineWidthMode::None, FOUR_PX_IN_METRES),
+        vec![],
+    )) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, CLEAR);
+}
+
+#[test]
+fn outline_uses_the_material_blend() {
+    let mut material = toon(MtoonMaterial {
+        base_color: [0.0, 0.0, 0.0, 0.5],
+        ..outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES)
+    });
+    material.alpha_mode = AlphaMode::Blend;
+    let mut scenes = shell_scene(black_toon(), vec![]);
+    scenes.model.materials = vec![material];
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    let alpha = pixel(&frame, 14, 32)[3];
+    assert!(alpha.abs_diff(128) <= 2, "alpha {alpha}");
+}
+
+#[test]
+fn outline_screen_normals_facing_the_camera_stay_put() {
+    // Normals along ±Z have no direction on screen: no ring, and no NaN.
+    let mut scenes = shell_scene(
+        outlined(OutlineWidthMode::ScreenCoordinates, FOUR_PX_OF_SCREEN),
+        vec![],
+    );
+    let geometry = &mut scenes.model.geometries[0];
+    geometry.normals = [[[0.0, 0.0, 1.0]; 4], [[0.0, 0.0, -1.0]; 4]].concat();
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, CLEAR);
+    assert_pixel(&frame, 32, 32, GREEN);
 }

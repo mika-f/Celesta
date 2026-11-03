@@ -7,7 +7,9 @@
 // `vs_mtoon` and a fragment entry point for the material's alpha mode
 // (`fs_mtoon_opaque`, `fs_mtoon_mask`, `fs_mtoon_blend`) draw a draw's
 // skinned vertices. `mtoon_color` is the shaded color (lights, ambient,
-// emission, rim, and matcap), which an outline pass also uses.
+// emission, rim, and matcap). `vs_outline` and `fs_outline_opaque`,
+// `fs_outline_mask`, or `fs_outline_blend` then draw the draw's outline
+// when its material has one, mixing its color toward that shaded color.
 
 // Group 2: slot `k`'s texture at binding `2k`, its sampler at `2k + 1`, in
 // `scene.rs`'s `MTOON_SLOTS` order. An empty slot binds Unity's default
@@ -72,7 +74,7 @@ const TAU: f32 = 6.283185307179586;
 // What `mtoon_color` shades: a point of a surface, in world space.
 struct Surface {
     position: vec3<f32>,
-    // Length 1, facing the side drawn.
+    // Length 1, facing the side drawn; on an outline, outward.
     normal: vec3<f32>,
     // Towards the viewer, length 1.
     view: vec3<f32>,
@@ -95,6 +97,11 @@ fn unit(value: vec3<f32>) -> vec3<f32> {
 
 @vertex
 fn vs_mtoon(input: MtoonInput) -> MtoonVarying {
+    return mtoon_varying(input);
+}
+
+// What the main pass's fragments read of a vertex.
+fn mtoon_varying(input: MtoonInput) -> MtoonVarying {
     var output: MtoonVarying;
     let position = draw.world * input.position;
     output.clip = frame.view_projection * position;
@@ -107,6 +114,38 @@ fn vs_mtoon(input: MtoonInput) -> MtoonVarying {
     let world = mat3x3<f32>(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz);
     let sign = select(-1.0, 1.0, input.tangent.w > 0.0) * draw.outline_width.z;
     output.tangent = vec4<f32>(unit(world * input.tangent.xyz), sign);
+    return output;
+}
+
+// The outline pass's vertex: the main pass's, pushed out along its normal
+// by the outline width times the width texture's green, sampled at the
+// geometry's raw texture coordinates. In world mode the width is in
+// metres, whatever `world`'s scale. In screen mode it is a share of the
+// canvas's height, applied in clip space, up to the distance at which a
+// metre fills the height, and fading out as the normal turns to face the
+// camera.
+@vertex
+fn vs_outline(input: MtoonInput) -> MtoonVarying {
+    var output = mtoon_varying(input);
+    let width = draw.outline_width.x
+        * textureSampleLevel(outline_width_texture, outline_width_sampler, input.uv, 0.0).g;
+    let n = output.normal;
+    if draw.outline_width.y == 1.0 {
+        output.position += n * width;
+        output.clip = frame.view_projection * vec4<f32>(output.position, 1.0);
+    } else if draw.outline_width.y == 2.0 {
+        let n_view = unit((frame.view * vec4<f32>(n, 0.0)).xyz);
+        let n_clip = (frame.projection * vec4<f32>(n_view, 0.0)).xy;
+        // A normal facing the camera has no direction on screen.
+        if dot(n_clip, n_clip) > 0.0 {
+            var offset = normalize(n_clip) * 2.0 * width
+                * min(output.clip.w, frame.projection[1][1]);
+            // Clip space x spans the canvas's width, not its height.
+            offset.x *= frame.params.y;
+            let facing = saturate(1.0 - n_view.z * n_view.z);
+            output.clip = vec4<f32>(output.clip.xy + offset * facing, output.clip.zw);
+        }
+    }
     return output;
 }
 
@@ -283,6 +322,44 @@ fn fs_mtoon_blend(
     let alpha = clamp(surface.lit.a, 0.0, 1.0);
     // UniVRM discards alpha below 2^−10 (vrm-c/UniVRM#2598), so that a
     // clear pixel of a `transparentWithZWrite` material writes no depth.
+    if alpha < 0.0009765625 {
+        discard;
+    }
+    return vec4<f32>(color, alpha);
+}
+
+// The outline's surface. Its pipeline culls front faces, so every fragment
+// is on a back face, which `mtoon_surface` would turn to face the viewer.
+// UniVRM negates the outline's normal and that flip negates it again: it
+// shades with the outward normal, so this one is not flipped.
+fn outline_surface(input: MtoonVarying) -> Surface {
+    return mtoon_surface(input, true);
+}
+
+// The outline's color: its own, mixed toward the shaded color by the
+// outline lighting mix. Unity's built-in pipeline draws the outline in
+// ForwardBase only, so the additional lights do not reach it.
+fn outline_color(surface: Surface) -> vec3<f32> {
+    return draw.outline.rgb * mix(vec3<f32>(1.0), mtoon_color(surface, true), draw.outline.w);
+}
+
+@fragment
+fn fs_outline_opaque(input: MtoonVarying) -> @location(0) vec4<f32> {
+    return vec4<f32>(outline_color(outline_surface(input)), 1.0);
+}
+
+@fragment
+fn fs_outline_mask(input: MtoonVarying) -> Covered {
+    let surface = outline_surface(input);
+    return Covered(vec4<f32>(outline_color(surface), 1.0), coverage(surface.lit.a));
+}
+
+@fragment
+fn fs_outline_blend(input: MtoonVarying) -> @location(0) vec4<f32> {
+    let surface = outline_surface(input);
+    // As `fs_mtoon_blend`: shaded, then discarded when nearly clear.
+    let color = outline_color(surface);
+    let alpha = clamp(surface.lit.a, 0.0, 1.0);
     if alpha < 0.0009765625 {
         discard;
     }

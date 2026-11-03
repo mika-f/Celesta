@@ -317,7 +317,6 @@ enum Pass {
     /// The surface.
     Main,
     /// An MToon material's outline, drawn after its main pass.
-    #[expect(dead_code, reason = "outlines are not drawn yet")]
     Outline,
 }
 
@@ -329,7 +328,6 @@ enum Cull {
     /// A single-sided material shows its front faces.
     Back,
     /// An outline shows the back faces it pushes out.
-    #[expect(dead_code, reason = "outlines are not drawn yet")]
     Front,
 }
 
@@ -366,6 +364,45 @@ impl PipelineKey {
                 clockwise,
             },
             alpha: Alpha::of(material),
+        }
+    }
+
+    /// The outline pass of `material`, its front faces clockwise or not:
+    /// an MToon material's whose `outlineWidthMode` is not `none`, whatever
+    /// its width, as UniVRM draws it. It culls the front faces whether or
+    /// not the material is double-sided (UniVRM's `Cull Front`), and draws
+    /// the material's alpha.
+    fn outline(material: &Material, clockwise: bool) -> Option<Self> {
+        match &material.kind {
+            MaterialKind::Mtoon(mtoon) if mtoon.outline_width_mode != OutlineWidthMode::None => {
+                Some(Self {
+                    shading: Shading::Mtoon,
+                    pass: Pass::Outline,
+                    facing: Facing {
+                        cull: Cull::Front,
+                        clockwise,
+                    },
+                    alpha: Alpha::of(material),
+                })
+            }
+            MaterialKind::Mtoon(_) | MaterialKind::Unlit(_) => None,
+        }
+    }
+
+    /// Its vertex and fragment entry points.
+    fn entry_points(self) -> (&'static str, &'static str) {
+        match (self.shading, self.pass) {
+            // `outline` gives an unlit material no outline pass.
+            (Shading::Unlit, _) => ("vs_main", self.alpha.entry_point(self.shading)),
+            (Shading::Mtoon, Pass::Main) => ("vs_mtoon", self.alpha.entry_point(self.shading)),
+            (Shading::Mtoon, Pass::Outline) => (
+                "vs_outline",
+                match self.alpha {
+                    Alpha::Opaque => "fs_outline_opaque",
+                    Alpha::Mask => "fs_outline_mask",
+                    Alpha::BlendZWrite | Alpha::Blend => "fs_outline_blend",
+                },
+            ),
         }
     }
 }
@@ -882,15 +919,17 @@ impl ScenePipelines {
         }
     }
 
-    /// Makes the main-pass pipelines `model`'s materials draw with, for
-    /// either winding, unless they are made already.
+    /// Makes the pipelines `model`'s materials draw with, main passes and
+    /// outlines, for either winding, unless they are made already.
     pub(crate) fn prepare(&mut self, device: &wgpu::Device, model: &SceneModel) {
         for material in &model.materials {
             for clockwise in [false, true] {
-                let key = PipelineKey::main(material, clockwise);
-                if !self.draw.contains_key(&key) {
-                    let pipeline = self.draw_pipeline(device, key);
-                    self.draw.insert(key, pipeline);
+                let main = PipelineKey::main(material, clockwise);
+                for key in std::iter::once(main).chain(PipelineKey::outline(material, clockwise)) {
+                    if !self.draw.contains_key(&key) {
+                        let pipeline = self.draw_pipeline(device, key);
+                        self.draw.insert(key, pipeline);
+                    }
                 }
             }
         }
@@ -898,24 +937,19 @@ impl ScenePipelines {
 
     fn draw_pipeline(&self, device: &wgpu::Device, key: PipelineKey) -> wgpu::RenderPipeline {
         // The skinned vertices, then the geometry's texture coordinates.
-        let (layout, vertex_entry, skinned_attributes, uv_location) = match key.shading {
+        let (layout, skinned_attributes, uv_location) = match key.shading {
             Shading::Unlit => (
                 &self.unlit_pipeline_layout,
-                "vs_main",
                 &wgpu::vertex_attr_array![0 => Float32x4][..],
                 1,
             ),
             Shading::Mtoon => (
                 &self.mtoon_pipeline_layout,
-                "vs_mtoon",
                 &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4][..],
                 3,
             ),
         };
-        let fragment_entry = match key.pass {
-            Pass::Main => key.alpha.entry_point(key.shading),
-            Pass::Outline => unreachable!("no key draws an outline yet"),
-        };
+        let (vertex_entry, fragment_entry) = key.entry_points();
         let uv_attributes = [wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x2,
             offset: 0,
@@ -973,7 +1007,16 @@ impl ScenePipelines {
                 // in the queue shows.
                 depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
-                bias: Default::default(),
+                bias: match key.pass {
+                    Pass::Main => Default::default(),
+                    // Unity's `Offset 1, 1`: away from the camera, so that
+                    // the draw's own surface stays in front of its outline.
+                    Pass::Outline => wgpu::DepthBiasState {
+                        constant: 1,
+                        slope_scale: 1.0,
+                        clamp: 0.0,
+                    },
+                },
             }),
             multisample: wgpu::MultisampleState {
                 count: SAMPLES,
@@ -2480,18 +2523,26 @@ impl GpuRenderer {
                 let info = &model.draws[state.index];
                 let geometry = &scene.geometries[info.geometry];
                 let material = &model.materials[info.material];
-                let key = PipelineKey::main(material, determinant(&state.world) < 0.0);
-                let pipeline = pipelines
-                    .draw
-                    .get(&key)
-                    .expect("prepared when the model loaded");
-                pass.set_pipeline(pipeline);
+                let clockwise = determinant(&state.world) < 0.0;
+                let pipeline = |key| {
+                    pipelines
+                        .draw
+                        .get(&key)
+                        .expect("prepared when the model loaded")
+                };
+                pass.set_pipeline(pipeline(PipelineKey::main(material, clockwise)));
                 pass.set_bind_group(1, draw_group, &[(slot * draw_stride) as u32]);
                 pass.set_bind_group(2, &scene.materials[info.material], &[]);
                 pass.set_vertex_buffer(0, scene.draws[state.index].skinned.slice(..));
                 pass.set_vertex_buffer(1, geometry.uvs.slice(..));
                 pass.set_index_buffer(geometry.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..geometry.index_count, 0, 0..1);
+                // The outline follows in the same queue slot, from the same
+                // skinned vertices, uniforms, and textures.
+                if let Some(key) = PipelineKey::outline(material, clockwise) {
+                    pass.set_pipeline(pipeline(key));
+                    pass.draw_indexed(0..geometry.index_count, 0, 0..1);
+                }
             }
         }
         {
