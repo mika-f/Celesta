@@ -1,7 +1,8 @@
-//! A sample content plugin: a 3D scene of a checkered cube turning on a
-//! turntable, a half-transparent blue pane in front of it, and a leaf cut
-//! out of a square, half stuck in the cube. It needs no files: the scene's
-//! geometry and textures are made here.
+//! A sample content plugin: a 3D scene of a checkered cube, toon-shaded and
+//! outlined in MToon, turning on a turntable under one light, a
+//! half-transparent blue pane in front of it, and a leaf cut out of a
+//! square, half stuck in the cube. It needs no files: the scene's geometry
+//! and textures are made here.
 //!
 //! What the layer gives the plugin:
 //!
@@ -19,9 +20,10 @@
 //! side they face.
 
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DrawInfo, DrawState, Filter,
-    Geometry, Lights, Material, MaterialKind, ModelId, Opened, PluginError, Projection, Sampler,
-    SceneFrame, SceneModel, SceneTexture, TextureRef, TextureSource, UnlitMaterial,
+    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DirectionalLight, DrawInfo,
+    DrawState, Filter, Geometry, Lights, Material, MaterialKind, ModelId, MtoonMaterial, Opened,
+    OutlineWidthMode, PluginError, Projection, Sampler, SceneFrame, SceneModel, SceneTexture,
+    TextureRef, TextureSlot, TextureSource, UnlitMaterial,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
@@ -257,6 +259,47 @@ fn unlit(alpha_mode: AlphaMode, double_sided: bool, base_color: [f32; 4]) -> Mat
     }
 }
 
+/// The cube's look: the checker toon-shaded, each texel darkened toward a
+/// cool lilac on the side away from the light, a blue-grey rim at the
+/// silhouette, and a 1 cm dark outline half lit by the scene.
+fn toon() -> Material {
+    textured(
+        Material {
+            alpha_mode: AlphaMode::Opaque,
+            double_sided: false,
+            kind: MaterialKind::Mtoon(MtoonMaterial {
+                shade_color_factor: [0.6, 0.55, 0.7],
+                shade_multiply_texture: Some(TextureSlot { texture: 0 }),
+                parametric_rim_color_factor: [0.3, 0.3, 0.4],
+                parametric_rim_lift_factor: 0.1,
+                parametric_rim_fresnel_power_factor: 3.0,
+                rim_lighting_mix_factor: 1.0,
+                outline_width_mode: OutlineWidthMode::WorldCoordinates,
+                outline_width_factor: 0.01,
+                outline_color_factor: [0.15, 0.1, 0.1],
+                outline_lighting_mix_factor: 0.5,
+                ..MtoonMaterial::default()
+            }),
+        },
+        0,
+    )
+}
+
+/// The plugin's reference lighting: one white light from above, in front
+/// and to the right, and a flat ambient a little blue.
+fn lights() -> Lights {
+    let mut ambient = [[0.0; 3]; 9];
+    ambient[3] = [0.25, 0.25, 0.28];
+    Lights {
+        directional: vec![DirectionalLight {
+            direction: [-0.4, -1.0, -0.7],
+            color: [1.0; 3],
+            intensity: 1.0,
+        }],
+        ambient,
+    }
+}
+
 fn textured(mut material: Material, texture: usize) -> Material {
     let base_color_texture = match &mut material.kind {
         MaterialKind::Unlit(unlit) => &mut unlit.base_color_texture,
@@ -281,7 +324,7 @@ fn model() -> SceneModel {
         geometries: vec![cube(), square()],
         skins: Vec::new(),
         materials: vec![
-            textured(unlit(AlphaMode::Opaque, false, [1.0; 4]), 0),
+            toon(),
             // Linear blue at half alpha, blended over what is behind.
             unlit(AlphaMode::Blend, false, [0.1, 0.3, 1.0, 0.5]),
             textured(unlit(AlphaMode::Mask { cutoff: 0.5 }, true, [1.0; 4]), 1),
@@ -364,7 +407,7 @@ impl ContentProvider for TurntableProvider {
                     far: 100.0,
                 },
             },
-            lights: Lights::default(),
+            lights: lights(),
             time,
             draws: vec![
                 draw(CUBE, rotation_y(TAU * speed * time)),
@@ -516,6 +559,52 @@ mod tests {
         assert_eq!(alpha(0, 0), 0);
         assert_eq!(alpha(LEAF_SIZE - 1, 0), 0);
         assert_eq!(alpha(LEAF_SIZE / 4, LEAF_SIZE - 2), 0);
+    }
+
+    #[test]
+    fn the_cube_is_toon_shaded_and_outlined() {
+        let (_, model) = opened(&mut TurntableProvider::default());
+        let cube = &model.materials[0];
+        assert_eq!(cube.alpha_mode, AlphaMode::Opaque);
+        assert!(!cube.double_sided);
+        let MaterialKind::Mtoon(mtoon) = &cube.kind else {
+            panic!("the cube is MToon: {:?}", cube.kind);
+        };
+        assert_eq!(mtoon.outline_width_mode, OutlineWidthMode::WorldCoordinates);
+        assert_eq!(mtoon.outline_width_factor, 0.01);
+        // The checker is both the lit and the shaded color.
+        assert_eq!(
+            mtoon.base_color_texture,
+            Some(TextureRef {
+                texture: 0,
+                transform: None
+            })
+        );
+        assert_eq!(
+            mtoon.shade_multiply_texture,
+            Some(TextureSlot { texture: 0 })
+        );
+        // The pane and the leaf stay unlit.
+        for material in &model.materials[1..] {
+            assert!(
+                matches!(material.kind, MaterialKind::Unlit(_)),
+                "{material:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_scene_is_lit_by_one_light_and_ambient() {
+        let mut provider = TurntableProvider::default();
+        let (id, _) = opened(&mut provider);
+        for time in [0.0, 1.3] {
+            let lights = scene(provider.frame(id, time, &Value::Null).unwrap()).lights;
+            assert_eq!(lights.directional.len(), 1, "at {time} s");
+            // A flat ambient: the constant coefficient alone.
+            for (k, coefficient) in lights.ambient.iter().enumerate() {
+                assert_eq!(*coefficient == [0.0; 3], k != 3, "ambient[{k}] at {time} s");
+            }
+        }
     }
 
     #[test]
