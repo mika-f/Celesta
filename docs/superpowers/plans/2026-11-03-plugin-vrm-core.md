@@ -150,7 +150,7 @@ pub(crate) fn texture_cache_dir() -> PathBuf   // $CELESTA_VRM_TEXTURE_CACHE, el
 
 **Decisions:**
 - **Kinds.** A material with `VRMC_materials_mtoon` is an `Mtoon` (Task 3b), every field the file has copied onto `Mtoon::default()` (UniVRM's defaults already): base colour from `pbrMetallicRoughness.baseColorFactor`; `emissive_factor` = `emissiveFactor` × `KHR_materials_emissive_strength` (UniGLTF's `ImportLinearEmissiveFactor`); `normalTexture.scale` and `shadingShiftTexture.scale` into the scaled slots. It is sent as `MaterialKind::Custom(CustomMaterial { shader: 0, params: mtoon::params(&m, &MtoonOverrides::default(), 0.0, &textures).to_vec(), textures: mtoon::slots(&m).map(…).to_vec() /* 9 slots */, outline: (m.outline_width_mode != OutlineWidthMode::None).then(OutlinePass::default), requires_tangents: m.normal_texture.is_some() })`, and kept typed in `Materials::mtoon`. `shaders` is `vec![mtoon::shader()]` when any material is MToon, else empty. `KHR_materials_unlit` is `Unlit` (base colour × texture). Any other material is `Unlit` with its base colour and base colour texture: **glTF PBR is drawn unlit for now** (spec phase 5), its emission and metal-roughness dropped, and one `info` notice says `"{n} glTF PBR material(s) are drawn as unlit base colour: {names}"`.
-- The plugin checks what Celesta can no longer see inside the parameter bytes before packing: `mtoon::invalid(&m, textures.len()) -> Option<String>` (slot ranges by MToon name, every number finite) → `LoadError::Invalid("material \"{name}\": {reason}")`.
+- The plugin checks what Celesta can no longer see inside the parameter bytes before packing: `mtoon::invalid(&m, textures.len()) -> Option<String>` (slot ranges by MToon name, every number finite) → `LoadError::Invalid("{material} {reason}")`, the material written `material "{name}"` (the name quoted and escaped as Rust's `{:?}` does) or `material {index}` without a name.
 - `alphaMode` and `alphaCutoff` (default 0.5) and `doubleSided` as the file says. Blend is `AlphaMode::Blend { depth_write: transparentWithZWrite, queue_offset: renderQueueOffsetNumber }`; opaque and mask drop both (UniVRM ignores them there). Materials keep glTF's indices (unused ones too), so expression binds index them directly.
 - **Texture transform:** the base colour texture's `KHR_texture_transform` (offset, rotation, scale; Celesta honours the rotation UniVRM drops) becomes `TextureRef::transform`; every other slot's transform is ignored (UniVRM has one `_MainTex_ST`). Every slot samples `TEXCOORD_0`, whatever its `texCoord`.
 - **Colour spaces:** sRGB for base colour, shade multiply, emissive, matcap, rim multiply; linear for normal, shading shift, outline width, UV animation mask.
@@ -194,6 +194,7 @@ pub const MTOON_PARAMS: usize = 176;            // the Params layout of Celesta'
 pub fn shader() -> SceneShader;                 // name "MToon", 9 slots: base colour, shade multiply, shading shift (black), normal, emissive, matcap (black), rim multiply, outline width, UV animation mask
 pub fn slots(m: &Mtoon) -> [Option<usize>; 9];
 pub fn params(m: &Mtoon, o: &MtoonOverrides, time: f64, textures: &[SceneTexture]) -> [u8; MTOON_PARAMS];   // little-endian; the scroll formed in f64 and wrapped as uv_scroll did
+pub fn custom_material(m: &Mtoon, shader: usize, textures: &[SceneTexture]) -> CustomMaterial;   // params at time 0 without binds, the outline pass unless the width mode is none, tangents with a normal texture; shared with tests/mtoon.rs
 pub(crate) fn invalid(m: &Mtoon, textures: usize) -> Option<String>;
 ```
 
@@ -380,7 +381,7 @@ pub const REFERENCE_LIGHTS: … // the Global Constraints' values
 
 **Decisions:**
 - **Framing bounds:** every vertex of every visible draw at rest (skinned with the rest skinning matrices, no morphs), in model space, computed once at load.
-- **Presets** frame a vertical span `[y0, y1]` on the frame's canvas (its aspect from `data.canvas`, Task 13): `full` `[min.y, max.y]`, x centre of the bounds; `bust` `[spine.y, max.y]`, x of the head; `face` `[neck.y, max.y]` (without a neck `head.y − ½(max.y − head.y)`), x of the head; positions at rest. `h = 1.1 (y1 − y0)`, `d = (h / 2) / tan(15°)`; for `full` the bounds' width must also fit: `d = max(d, (1.1 (max.x − min.x) / 2) / (tan(15°) × aspect))`. Eye `(x, (y0 + y1) / 2, head.z + d)`, looking down −Z: `view = translation(−eye)`. Default `full`. The frame answers `canvas = data.canvas` (default `CANVAS`).
+- **Presets** frame a vertical span `[y0, y1]` on the frame's canvas (its aspect from `data.canvas`, Task 13): `full` `[min.y, max.y]`, x centre of the bounds; `bust` `[spine.y, max.y]`, x of the head; `face` `[neck.y, max.y]` (without a neck `head.y − ½(max.y − head.y)`), x of the head; positions at rest. `h = 1.1 (y1 − y0)`, `d_h = (h / 2) / tan(15°)`, measured from the head; for `full` the bounds' width must also fit, `d_w = (1.1 (max.x − min.x) / 2) / (tan(15°) × aspect)`, measured from the bounds' front (`max.z`), where the widest points nearest the camera are: `eye.z = max(head.z + d_h, max.z + d_w)` (`bust` and `face`: `head.z + d_h`). Eye `(x, (y0 + y1) / 2, eye.z)`, looking down −Z: `view = translation(−eye)`. Default `full`. The frame answers `canvas = data.canvas` (default `CANVAS`).
 - **Explicit:** `view = look_at_rh(position, target, up)` with up +Y, or −Z when the direction is within 1e-6 of ±Y; `fov` default 30 (degrees), `near` 0.01, `far` 100. `position == target`, `fov` outside (0, 180), or `0 < near < far` failing → `FrameError` naming the field.
 - **Lights:** absent → `REFERENCE_LIGHTS`; given → its directional lights (linear colours, at most 4, checked by Celesta) and `ambient` as `c3` alone.
 
@@ -405,6 +406,7 @@ pub const REFERENCE_LIGHTS: … // the Global Constraints' values
 ```rust
 #[derive(Debug, Default, Deserialize)] #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PerformanceData {
+    #[serde(default)] pub canvas: Option<[f32; 2]>,   // added with the camera (Task 7): `<Vrm>` always sends it
     #[serde(default)] pub expressions: BTreeMap<String, f32>,
     #[serde(default)] pub look_at: Option<LookAtData>,
     #[serde(default)] pub camera: Option<CameraData>,
