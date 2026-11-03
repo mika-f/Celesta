@@ -842,6 +842,9 @@ fn cache_error(path: &Path, error: io::Error) -> LoadError {
     ))
 }
 
+/// How many temporary names [`write_cached`] tries before it gives up.
+const TEMPORARY_ATTEMPTS: u64 = 8;
+
 /// `bytes` at `cache/name`, written unless a file there already holds
 /// them. The name is a content hash and an extension, so nothing in the
 /// model chooses where it goes. The bytes go to a new temporary file
@@ -849,6 +852,19 @@ fn cache_error(path: &Path, error: io::Error) -> LoadError {
 /// into place, so a reader never sees half a file.
 fn write_cached(cache: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, LoadError> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
+    write_cached_with(cache, name, bytes, &NEXT)
+}
+
+/// [`write_cached`], numbering its temporary files from `next`. A name
+/// already taken (a file left by a process that crashed with this one's
+/// id) is left alone and the next is tried. A temporary file this call
+/// made is removed when the write or the rename fails.
+fn write_cached_with(
+    cache: &Path,
+    name: &str,
+    bytes: &[u8],
+    next: &AtomicU64,
+) -> Result<PathBuf, LoadError> {
     let path = cache.join(name);
     let holds_bytes = |path: &Path| {
         fs::symlink_metadata(path)
@@ -858,29 +874,46 @@ fn write_cached(cache: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, LoadE
     if holds_bytes(&path) {
         return Ok(path);
     }
-    let temporary = cache.join(format!(
-        "{name}.{}-{}.tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let written = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .and_then(|mut file| file.write_all(bytes))
-        .and_then(|()| fs::rename(&temporary, &path));
-    match written {
-        Ok(()) => Ok(path),
-        Err(error) => {
-            let _ = fs::remove_file(&temporary);
-            // Another process may have put the same bytes there first.
-            if holds_bytes(&path) {
-                Ok(path)
-            } else {
-                Err(cache_error(&path, error))
+    let mut failure = None;
+    for _ in 0..TEMPORARY_ATTEMPTS {
+        let temporary = cache.join(format!(
+            "{name}.{}-{}.tmp",
+            std::process::id(),
+            next.fetch_add(1, Ordering::Relaxed)
+        ));
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary);
+        let mut file = match file {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                failure = Some(error);
+                continue;
+            }
+            Err(error) => {
+                failure = Some(error);
+                break;
+            }
+        };
+        // The file is closed before the rename, which Windows needs.
+        let written = file.write_all(bytes);
+        drop(file);
+        match written.and_then(|()| fs::rename(&temporary, &path)) {
+            Ok(()) => return Ok(path),
+            Err(error) => {
+                let _ = fs::remove_file(&temporary);
+                failure = Some(error);
+                break;
             }
         }
     }
+    // Another process may have put the same bytes there first.
+    if holds_bytes(&path) {
+        return Ok(path);
+    }
+    let error = failure.unwrap_or_else(|| io::Error::other("no temporary file could be made"));
+    Err(cache_error(&path, error))
 }
 
 #[cfg(test)]
@@ -1145,6 +1178,61 @@ mod tests {
         chunk(&mut png, b"IDAT", &[]);
         chunk(&mut png, b"IEND", &[]);
         png
+    }
+
+    /// The temporary name `write_cached_with` tries `attempt`th.
+    fn temporary(cache: &Path, name: &str, attempt: u64) -> PathBuf {
+        cache.join(format!("{name}.{}-{attempt}.tmp", std::process::id()))
+    }
+
+    /// A temporary file left by a process that died with this one's id is
+    /// not reused, nor removed: the next name is tried.
+    #[test]
+    fn taken_temporary_names_are_skipped() {
+        let cache = TempDir::new().unwrap();
+        for attempt in 0..2 {
+            std::fs::write(temporary(cache.path(), "a.png", attempt), b"left over").unwrap();
+        }
+        let next = AtomicU64::new(0);
+        let path = write_cached_with(cache.path(), "a.png", b"image", &next).unwrap();
+        assert_eq!(path, cache.path().join("a.png"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"image");
+        assert_eq!(next.load(Ordering::Relaxed), 3);
+        for attempt in 0..2 {
+            assert_eq!(
+                std::fs::read(temporary(cache.path(), "a.png", attempt)).unwrap(),
+                b"left over"
+            );
+        }
+        assert_eq!(files(cache.path()), 3);
+    }
+
+    #[test]
+    fn every_temporary_name_taken_is_an_error() {
+        let cache = TempDir::new().unwrap();
+        for attempt in 0..TEMPORARY_ATTEMPTS {
+            std::fs::write(temporary(cache.path(), "a.png", attempt), b"left over").unwrap();
+        }
+        let next = AtomicU64::new(0);
+        let message = match write_cached_with(cache.path(), "a.png", b"image", &next) {
+            Ok(path) => panic!("written to {path:?}"),
+            Err(error) => error.to_string(),
+        };
+        assert!(message.contains("writing the texture cache"), "{message}");
+        // The files there are left as they were, and nothing is added.
+        assert_eq!(files(cache.path()), TEMPORARY_ATTEMPTS as usize);
+        assert!(!cache.path().join("a.png").exists());
+    }
+
+    /// A temporary file the plugin made is removed when the rename fails.
+    #[test]
+    fn a_failed_write_leaves_no_temporary_file() {
+        let cache = TempDir::new().unwrap();
+        // A directory that is not empty cannot be renamed over.
+        std::fs::create_dir_all(cache.path().join("a.png").join("inside")).unwrap();
+        let next = AtomicU64::new(0);
+        assert!(write_cached_with(cache.path(), "a.png", b"image", &next).is_err());
+        assert_eq!(files(cache.path()), 1);
     }
 
     /// The model's warnings.
