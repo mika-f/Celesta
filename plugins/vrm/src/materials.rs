@@ -372,6 +372,25 @@ impl At<'_> {
     }
 }
 
+/// `material`'s `VRMC_materials_hdr_emissiveMultiplier.emissiveMultiplier`:
+/// 1 without the extension or the number (VRM's default), refused when it
+/// is not a finite number.
+fn emissive_multiplier(material: &gltf::Material, at: &At) -> Result<f32, LoadError> {
+    const FIELD: &str = "VRMC_materials_hdr_emissiveMultiplier.emissiveMultiplier";
+    let value = material
+        .extension_value("VRMC_materials_hdr_emissiveMultiplier")
+        .and_then(|extension| extension.get("emissiveMultiplier"));
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(1.0),
+        Some(value) => match value.as_f64() {
+            Some(number) => at.number(FIELD, number),
+            None => Err(LoadError::Invalid(format!(
+                "{at} has a {FIELD} that is not a number: {value}"
+            ))),
+        },
+    }
+}
+
 /// An image a slot uses: its encoded bytes, or why the slot draws without
 /// it (`is image/ktx2, which the VRM plugin cannot read`).
 enum Image<'d> {
@@ -502,8 +521,12 @@ impl<'d> Reader<'d> {
                 .slot(at, normal.texture().index(), Linear)?
                 .map(|texture| ScaledTextureSlot { texture, scale });
         }
-        // UniGLTF's ImportLinearEmissiveFactor.
-        let strength = material.emissive_strength().unwrap_or(1.0);
+        // UniGLTF's ImportLinearEmissiveFactor: KHR_materials_emissive_strength,
+        // else VRMC_materials_hdr_emissiveMultiplier.
+        let strength = match material.emissive_strength() {
+            Some(strength) => strength,
+            None => emissive_multiplier(material, at)?,
+        };
         out.emissive_factor = at.finite(
             "emissiveFactor",
             material.emissive_factor().map(|value| value * strength),
@@ -1630,6 +1653,41 @@ mod tests {
         assert_eq!(body.emissive_texture, Some(TextureSlot { texture: 0 }));
     }
 
+    /// Body's emissive factor with `extensions` on the material.
+    fn emissive_with(extensions: Value) -> [f32; 3] {
+        let (materials, _cache) = load_with(&SyntheticVrm::avatar(), |root| {
+            let body = &mut root["materials"][0];
+            body["emissiveFactor"] = json!([1.0, 0.5, 0.0]);
+            for (name, value) in extensions.as_object().unwrap() {
+                body["extensions"][name] = value.clone();
+            }
+        });
+        mtoon(&materials, 0).emissive_factor
+    }
+
+    #[test]
+    fn the_vrm_emissive_multiplier_is_multiplied_in_without_the_strength() {
+        // UniGLTF's ImportLinearEmissiveFactor: the strength, else VRM's
+        // multiplier.
+        let multiplier = json!({ "emissiveMultiplier": 4.0 });
+        assert_eq!(
+            emissive_with(json!({ "VRMC_materials_hdr_emissiveMultiplier": multiplier })),
+            [4.0, 2.0, 0.0]
+        );
+        assert_eq!(
+            emissive_with(json!({
+                "VRMC_materials_hdr_emissiveMultiplier": multiplier,
+                "KHR_materials_emissive_strength": { "emissiveStrength": 2.0 },
+            })),
+            [2.0, 1.0, 0.0]
+        );
+        // Without its number, the multiplier is VRM's default, 1.
+        assert_eq!(
+            emissive_with(json!({ "VRMC_materials_hdr_emissiveMultiplier": {} })),
+            [1.0, 0.5, 0.0]
+        );
+    }
+
     #[test]
     fn alpha_and_sides_follow_gltf() {
         let (materials, _cache) = load_with(&SyntheticVrm::avatar(), |root| {
@@ -1862,6 +1920,18 @@ mod tests {
             message.contains("has an emissiveFactor that is not finite"),
             "{message}"
         );
+        for multiplier in [json!(1e39), json!("bright")] {
+            let message = refusal(|root| {
+                root["materials"][0]["extensions"]["VRMC_materials_hdr_emissiveMultiplier"] =
+                    json!({ "emissiveMultiplier": multiplier });
+            });
+            assert!(
+                message.contains(
+                    "material \"Body\" has a VRMC_materials_hdr_emissiveMultiplier.emissiveMultiplier that is not"
+                ),
+                "{message}"
+            );
+        }
         let message = refusal(|root| {
             root["materials"][1]["alphaMode"] = json!("MASK");
             root["materials"][1]["alphaCutoff"] = json!(1e39);

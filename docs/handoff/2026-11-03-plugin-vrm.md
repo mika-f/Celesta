@@ -206,7 +206,7 @@ defaults (`Mtoon::default()`):
 | `baseColorFactor` (glTF) | `[1, 1, 1, 1]` | Linear RGBA, times `baseColorTexture`: the lit colour and the alpha. |
 | `baseColorTexture` (glTF) | none | Its `KHR_texture_transform` moves the other textures too. |
 | `normalTexture` (glTF) | none | A tangent-space normal map, times its `scale` (default 1). |
-| `emissiveFactor` (glTF) | `[0, 0, 0]` | Linear RGB, times `emissiveTexture`. `KHR_materials_emissive_strength` is multiplied in (UniGLTF's `ImportLinearEmissiveFactor`). |
+| `emissiveFactor` (glTF) | `[0, 0, 0]` | Linear RGB, times `emissiveTexture`. `KHR_materials_emissive_strength` is multiplied in, else `VRMC_materials_hdr_emissiveMultiplier`'s `emissiveMultiplier` (default 1; not a finite number refuses the model), as UniGLTF's `ImportLinearEmissiveFactor` does. |
 | `emissiveTexture` (glTF) | none | |
 | `shadeColorFactor` | `[1, 1, 1]` | The shaded side's colour, times `shadeMultiplyTexture`. |
 | `shadeMultiplyTexture` | none | |
@@ -381,7 +381,8 @@ To check once UniVRM reference renders exist:
   by.
 - **`KHR_texture_transform` rotation** is honoured, though UniVRM's
   `_MainTex_ST` cannot hold one.
-- **Emissive strength** is folded into `emissiveFactor` by the plugin.
+- **Emissive strength,** or VRM's emissive multiplier without it, is
+  folded into `emissiveFactor` by the plugin.
 - **Additional lights** are summed in one fragment rather than in
   ForwardAdd passes; the blend equation gives the same result.
 - **Translated into glTF's axes:** the matcap's axes (right-handed, `v`
@@ -758,6 +759,7 @@ Besides MToon's list above, to check against UniVRM:
     the budgets, and malformed accessors refused.
   - `materials`: scene textures by image, colour space, and sampler; the
     base colour transform; blend fields; PBR drawn unlit with its notice;
+    the emissive strength, else VRM's emissive multiplier;
     samplers; images written once by content; the cache's privacy checks;
     the texture budget; compressed and oversized images leaving the slot
     empty; WebP and `data:` images.
