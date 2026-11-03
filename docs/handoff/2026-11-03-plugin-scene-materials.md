@@ -451,7 +451,10 @@ materials as `frame.lights` and `frame.ambient`.
   its frame, so a frame that the plugin fails, that is refused, or that
   has nothing to draw keeps the canvas and buffers for the next; a frame
   that sets another canvas (`2026-11-03-plugin-scene-content.md`) marks
-  that size too once it arrives.
+  that size too once it arrives. So when a layer's canvas changes, the
+  old size is kept through the frame after the change and dropped as the
+  one after that begins: up to one capped canvas (about 500 MB) for one
+  frame more, which the two capped canvases of `SCENE_TARGET_TEXELS` hold.
 
 ## Protocol (still version 1)
 

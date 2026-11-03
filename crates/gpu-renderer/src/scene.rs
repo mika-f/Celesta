@@ -1949,6 +1949,8 @@ pub(crate) fn invalid_scene_frame(
     shaders: &[Arc<CompiledShader>],
     frame: &SceneFrame,
 ) -> Option<String> {
+    // `plugin_texture` checked this before sizing the canvas; checked again
+    // so that this stays the complete check of a frame.
     if let Some(message) = invalid_frame_canvas(frame) {
         return Some(message);
     }

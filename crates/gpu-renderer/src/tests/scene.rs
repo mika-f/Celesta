@@ -1097,6 +1097,67 @@ fn scene_resources_survive_a_frame_that_fails_or_draws_nothing() {
     }
 }
 
+/// `one_square` on the model's 64² canvas at time 0, and from time 1 on a
+/// 32x64 canvas of the frame's own.
+fn canvas_from_time_1() -> Scenes {
+    let mut scenes = one_square();
+    scenes.animate = Some(|frame, time| {
+        if time >= 1.0 {
+            frame.canvas = Some([32.0, 64.0]);
+        }
+    });
+    scenes
+}
+
+#[test]
+fn a_frame_canvas_survives_a_frame_that_fails() {
+    // As `canvas_from_time_1`, but at time 2 the frame is refused before
+    // its canvas is sized, so it marks no size of its own: time 1's canvas
+    // stays for the frame after it only by the mark made before asking.
+    let mut scenes = one_square();
+    scenes.animate = Some(|frame, time| {
+        if time >= 2.0 {
+            frame.canvas = Some([0.0, 64.0]);
+        } else if time >= 1.0 {
+            frame.canvas = Some([32.0, 64.0]);
+        }
+    });
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(scenes);
+    renderer.render(&scene_at(0.0, 1.0)).unwrap();
+    renderer.render(&scene_at(1.0, 1.0)).unwrap();
+    let allocations = renderer.meshes.scene_frames.allocations;
+    assert!(renderer.render(&scene_at(2.0, 1.0)).is_err());
+    // The failed frame marked the frame's canvas, not the model's.
+    renderer.render(&scene_at(1.0, 1.0)).unwrap();
+    assert_eq!(renderer.meshes.scene_frames.allocations, allocations);
+    assert_eq!(renderer.meshes.scene_frames.cached_sizes(), [(32, 64)]);
+}
+
+#[test]
+fn a_canvas_change_keeps_the_old_size_one_frame_more() {
+    // The frame that changes the canvas marks the old one before it asks
+    // for the frame, so the old size stays through the next frame too, and
+    // goes as the one after begins.
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer
+        .renderer
+        .with_content_provider(canvas_from_time_1());
+    let sizes = |renderer: &TestRenderer| renderer.meshes.scene_frames.cached_sizes();
+    renderer.render(&scene_at(0.0, 1.0)).unwrap();
+    assert_eq!(sizes(&renderer), [(64, 64)]);
+    renderer.render(&scene_at(1.0, 1.0)).unwrap();
+    assert_eq!(sizes(&renderer), [(32, 64), (64, 64)]);
+    renderer.render(&scene_at(1.0, 1.0)).unwrap();
+    assert_eq!(sizes(&renderer), [(32, 64), (64, 64)]);
+    renderer.render(&scene_at(1.0, 1.0)).unwrap();
+    assert_eq!(sizes(&renderer), [(32, 64)]);
+}
+
 /// `one_square` with two more draws of its square, small, red and blue, in
 /// front of it at the top corners; at time 0 the frame lists only draw 0.
 fn three_squares() -> Scenes {
