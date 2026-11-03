@@ -113,6 +113,13 @@ const DT: f32 = (1.0 / SPRING_HZ) as f32;
 /// What a kept performance takes beyond its states: its key and its entry.
 const PERFORMANCE_BYTES: u64 = 128;
 
+/// What a kept state takes beyond its tails, its vectors, and its step:
+/// the allocator's share of its two tail blocks (each rounded up to the
+/// allocator's smallest block) and its slot in a B-tree node that may be
+/// half empty. So the ceiling bounds the memory the states take even for
+/// springs of one joint, whose tails are smaller than this.
+const STATE_OVERHEAD_BYTES: u64 = 64;
+
 /// A performance's key: the SHA-256 of its motions and tracks as JSON.
 type PerformanceKey = [u8; 32];
 
@@ -562,10 +569,11 @@ fn performance_key(data: &PerformanceData) -> Result<PerformanceKey, FrameError>
     Ok(hasher.finalize().into())
 }
 
-/// What one kept state takes: its tails, its vectors, and its step.
+/// What one kept state takes: its tails, its vectors, its step, and the
+/// allocations and map slot holding them ([`STATE_OVERHEAD_BYTES`]).
 fn state_bytes(state: &SpringState) -> u64 {
     let tails = (state.prev.len() + state.current.len()) * size_of::<Vec3>();
-    (tails + size_of::<SpringState>() + size_of::<u64>()) as u64
+    (tails + size_of::<SpringState>() + size_of::<u64>()) as u64 + STATE_OVERHEAD_BYTES
 }
 
 /// The last step a frame at `time` seconds has run: `⌊max(time, 0) × 60⌋`,
@@ -843,7 +851,8 @@ mod tests {
         // A ceiling that holds the twelve cursors and little else, with one
         // performance's checkpoints already filling it: the checkpoints go,
         // the cursors stay, and no request grows.
-        let one = (4 * size_of::<Vec3>() + size_of::<SpringState>() + size_of::<u64>()) as u64;
+        let one = (4 * size_of::<Vec3>() + size_of::<SpringState>() + size_of::<u64>()) as u64
+            + STATE_OVERHEAD_BYTES;
         let ceiling = 12 * (PERFORMANCE_BYTES + one) + one;
         let cache = SharedSpringCache::with_ceiling(ceiling);
         let (mut tight, _tight) = open_sharing(&cache);
