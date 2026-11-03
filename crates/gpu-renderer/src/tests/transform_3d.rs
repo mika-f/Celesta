@@ -935,7 +935,12 @@ fn measures_a_projective_psd_without_compositing_it() {
 
 /// What `layer`, prepared alone at `scale`, covers: measured as a plane's
 /// content is when `measuring`, else drawn.
-fn covered(renderer: &mut GpuRenderer, layer: &Layer, scale: f32, measuring: bool) -> PixelBounds {
+pub(super) fn covered(
+    renderer: &mut GpuRenderer,
+    layer: &Layer,
+    scale: f32,
+    measuring: bool,
+) -> PixelBounds {
     let mut items = Vec::new();
     renderer.measuring_plane = measuring;
     let parent = LayerState {

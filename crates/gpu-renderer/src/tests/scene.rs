@@ -3,6 +3,7 @@
 //! process.
 
 use super::*;
+use crate::bounds::PixelBounds;
 use crate::scene::{
     MAX_CACHED_PIPELINES, MAX_CACHED_SHADERS, MAX_MODEL_PIPELINES, ScenePipelines, SceneTarget,
 };
@@ -1253,6 +1254,26 @@ fn bad_frame_canvas_is_refused() {
         };
         assert!(message.contains("canvas"), "{canvas:?}: {message}");
     }
+}
+
+#[test]
+fn measured_scene_layer_follows_the_frame_canvas() {
+    // A 3D plane measures its content before drawing it: the scene layer
+    // must measure as it draws, at the frame's 32x64, not the model's 64².
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let mut scenes = one_square();
+    scenes.frame.canvas = Some([32.0, 64.0]);
+    renderer.renderer = renderer.renderer.with_content_provider(scenes);
+    let scene = scene();
+    let layer = &scene.layers[0];
+    let measured = super::transform_3d::covered(&mut renderer, layer, 2.0, true);
+    let drawn = super::transform_3d::covered(&mut renderer, layer, 2.0, false);
+    assert_eq!(measured, drawn);
+    // At ×2, 64 units higher than wide, whatever the edge around it.
+    let [left, top, right, bottom] = measured.0;
+    assert_eq!((bottom - top) - (right - left), 64.0, "{measured:?}");
 }
 
 /// `scenes`, counting the frames it is asked for.
