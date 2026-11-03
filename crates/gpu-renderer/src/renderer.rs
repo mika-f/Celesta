@@ -573,11 +573,12 @@ impl GpuRenderer {
 
     /// Where `LayerContent::Plugin` layers get their meshes: the plugin
     /// host, or anything else answering as one. Without one they fail.
+    /// Replacing one closes the models it opened; the new one opens its own.
     pub fn with_content_provider(
         mut self,
         provider: impl celesta_plugin::ContentProvider + 'static,
     ) -> Self {
-        self.meshes.provider = Some(Box::new(provider));
+        self.meshes.replace_provider(Box::new(provider));
         self
     }
 

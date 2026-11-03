@@ -336,6 +336,27 @@ fn a_valid_scene_renders() {
 }
 
 #[test]
+fn a_new_content_provider_opens_its_own_models() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
+        vec![shader(FLAT, &[])],
+        custom(0, bytes(&FLAT_RED)),
+    ));
+    let frame = renderer.render(&scene()).unwrap();
+    assert_pixel(&frame, 32, 32, RED);
+    // The same plugin and assets: the model drawn is the new provider's,
+    // not the one the previous provider opened.
+    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
+        vec![shader(FLAT, &[])],
+        custom(0, bytes(&FLAT_GREEN)),
+    ));
+    let frame = renderer.render(&scene()).unwrap();
+    assert_pixel(&frame, 32, 32, GREEN);
+}
+
+#[test]
 fn scene_with_bad_index_is_invalid() {
     let mut scenes = valid();
     scenes.frame.draws[1].index = 3;

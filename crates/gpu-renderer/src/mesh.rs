@@ -70,6 +70,21 @@ pub(crate) struct MeshState {
     models: HashMap<(String, BTreeMap<String, PathBuf>), OpenModel>,
 }
 
+impl MeshState {
+    /// Installs `provider`. The models the previous provider opened are its
+    /// own, by ids `provider` never gave: they are closed and forgotten, so
+    /// `provider` opens its own.
+    pub(crate) fn replace_provider(&mut self, provider: Box<dyn ContentProvider>) {
+        if let Some(previous) = self.provider.as_mut() {
+            for (_, open) in self.models.drain() {
+                previous.close(open.loaded.id());
+            }
+        }
+        self.models.clear();
+        self.provider = Some(provider);
+    }
+}
+
 /// A model the provider opened, and what it said about the model then.
 struct OpenModel {
     loaded: LoadedModel,
