@@ -27,9 +27,9 @@ Files ported from UniVRM carry its MIT notice and name their source.
 - A Cargo workspace of its own (`plugins/vrm/Cargo.toml` has an empty
   `[workspace]` and its own `Cargo.lock`), which the root workspace
   excludes: `cargo build --workspace` at the root never builds it. It
-  depends on Celesta's `crates/plugin` by path and on nothing else of
-  Celesta's; the GPU renderer, the plugin host, and the composition crate
-  are dev-dependencies for its tests. Package and binary
+  depends on Celesta's `crates/plugin` and `crates/composition` (for
+  keyframed tracks) by path and on nothing else of Celesta's; the GPU
+  renderer and the plugin host are dev-dependencies for its tests. Package and binary
   `celesta-plugin-vrm`, library `celesta_plugin_vrm`, plugin id `vrm`.
 - The program serves `VrmProvider` over standard input and output
   (`celesta_plugin::serve`), as every plugin program does.

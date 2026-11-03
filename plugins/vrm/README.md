@@ -29,8 +29,8 @@ it works, what it leaves out, and where it differs from UniVRM:
 
 The plugin is a Cargo workspace of its own, which the repository's root
 workspace excludes: `cargo build --workspace` at the root does not build it.
-It depends on Celesta's `crates/plugin` by path, and on nothing else of
-Celesta's.
+It depends on Celesta's `crates/plugin` and `crates/composition` (for
+keyframed tracks) by path, and on nothing else of Celesta's.
 
 ```sh
 cargo build --manifest-path plugins/vrm/Cargo.toml --release

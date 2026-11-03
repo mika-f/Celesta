@@ -203,7 +203,7 @@ Clips to try: `test.vrma` from [pixiv/three-vrm](https://github.com/pixiv/three-
 Limits you may meet:
 
 - A layer opens at most 256 different clips, whose files take at most 1 GiB together, and whose animation keys take at most 1 GiB once read.
-- The springs are stepped up to 4 hours into a layer; a later frame fails with an error saying so. An avatar whose springs are very expensive to step (hundreds of thousands of nodes, say) reaches less: the plugin warns of it when it opens the model, and a frame past its reach fails, naming the time it reaches.
+- The springs are stepped up to 4 hours into a layer; a later frame fails with an error saying so. An avatar whose springs are expensive to step (about ten thousand nodes, or a few thousand spring–collider checks, say) reaches less: the plugin warns of it when it opens the model, and a frame past its reach fails, naming the time it reaches.
 - Not read: the angle limits of `VRMC_springBone_limit` (the plugin warns when the model has them, and those joints swing past their limits), a clip's `lookAt` animation, and any glTF animation but a clip's first. The springs do not react to `lookAt` or expressions.
 - There is no foot IK: as in UniVRM, a clip whose rest pose stands a little higher or lower than its animation, or an avatar whose legs are long or short for its hips' height, can leave the feet a few centimetres into or above the floor.
 

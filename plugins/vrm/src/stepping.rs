@@ -68,10 +68,9 @@ pub const MAX_SPRING_STEPS: u64 = 4 * 3600 * 60;
 
 /// The most work a frame's steps may take, in [`step_cost`]'s units: 2^33.
 ///
-/// A unit measured a few nanoseconds of a laptop core (Apple M5, release
-/// build) on Seed-san and UniVRM's constraint twist sample, with and
-/// without a clip, so the worst frame accepted from a cold start takes
-/// under a minute. It is set that high so real avatars keep
+/// A unit measured a few nanoseconds of one laptop core (release build) on
+/// Seed-san and UniVRM's constraint twist sample, with and without a clip,
+/// so the worst frame accepted from a cold start takes under a minute. It is set that high so real avatars keep
 /// [`MAX_SPRING_STEPS`] with room for motions and tracks:
 /// Seed-san (610 units a step) reaches 65 h alone and 27 h with a clip
 /// playing, the twist sample (2,183) 18 h and 13 h, while a file of a

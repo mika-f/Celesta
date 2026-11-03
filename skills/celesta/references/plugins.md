@@ -175,9 +175,9 @@ import { Vrm } from '@celesta-plugin/vrm';
   values go in `expressions`, `mouth`, `lookAt` (the springs read none).
 - Limits: 256 distinct clips a layer, 1 GiB of clip files and 1 GiB of
   their keys together; springs step up to 4 h into a layer (a later frame
-  fails); an avatar whose springs are very costly to step (hundreds of
-  thousands of nodes) reaches less, warns when it opens, and fails past
-  its reach, naming the time.
+  fails); an avatar whose springs are costly to step (about ten thousand
+  nodes, or a few thousand spring–collider checks) reaches less, warns
+  when it opens, and fails past its reach, naming the time.
 - Not read: `VRMC_springBone_limit` (warned; those joints swing past their
   limits), a clip's `lookAt` animation, glTF animations after a clip's
   first. Springs ignore `lookAt` and expressions. No foot IK: as in

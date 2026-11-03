@@ -245,7 +245,7 @@ Ported from UniVRM's FastSpringBone (`UpdateFastSpringBoneJob.cs`,
   (if at or before its step) and the latest checkpoint at or before its
   step, else from step 0. So an export steps each performance once (two
   steps a frame at 30 fps), and a scrub back resumes at most 30 steps
-  early.
+  early (`30 × spacing` once the ceiling has thinned the checkpoints).
 - **One ceiling per process.** `SPRING_CACHE_BYTES` (256 MiB) over every
   model and performance; nothing counts performances. It is a ceiling
   against hostile files (a ten-minute layer keeps about 1 MB) and costs
@@ -283,12 +283,14 @@ refused before any state is looked up:
     `32 + ⌈keyframes / 8⌉` for each track axis.
   The refusal names the latest time reachable with these motions and
   tracks, the steps, the cost per step, the work, and the budget.
-- A unit measured 2.8 to 5.1 ns of one laptop core (release build) across
-  the avatars measured, so the worst frame
-  accepted cold takes under a minute. Seed-san (610 units a step) reaches
-  65 h alone and 27 h with a clip; the twist sample (2,183) 18 h and 13 h:
-  both keep the 4 h ceiling. A file of a million empty nodes steps about
-  2.4 minutes of a layer.
+- A unit measured a few nanoseconds of one laptop core (release build) on
+  Seed-san and UniVRM's constraint twist sample, with and without a clip,
+  so the worst frame accepted from a cold start (2^33 units) takes under a
+  minute. Each data charge (16 a clip channel and one for the motion, 32 a
+  track axis, one per 8 keyframes) is within 2× of what those two samples
+  measured. Seed-san (610 units a step) reaches 65 h alone and 27 h with a
+  clip; the twist sample (2,183) 18 h and 13 h; a file of a million empty
+  nodes about 2.4 min.
 - **The reach warning.** A model with springs whose own cost per step
   reaches less than 4 h (from 9,943 units a step) says so when it opens:
   `this avatar's spring bones are stepped for frames up to {s} s into a
@@ -358,8 +360,9 @@ New props of `@celesta-plugin/vrm`'s `Vrm`:
   core's, tracked separately.
 - **Cold frames cost O(t).** Springs are defined as stepped from the
   layer's 0 s, so a cold frame far into a long layer steps everything
-  before it (about 1 to 14 s of CPU at the 4 h ceiling for the measured
-  avatars). An opt-in warm-up window, stepping from a fixed few seconds
+  before it: at the 4 h ceiling, about 6% of the fence's work for Seed-san
+  and about 22% for the twist sample (before any motion or track), a
+  fraction of the minute the fence allows. An opt-in warm-up window, stepping from a fixed few seconds
   before the requested time and from that time's pose, would make a cold
   frame's cost constant, since damped springs forget their history within
   a second or two; the price is exact continuity, as adjacent frames'
@@ -399,7 +402,7 @@ New props of `@celesta-plugin/vrm`'s `Vrm`:
   `CELESTA_REQUIRE_GPU=1`, with and without `CELESTA_VRM_SAMPLES_DIR`;
   the plugin's `cargo fmt --check` and `cargo clippy --all-targets
   --locked -- -D warnings`; `pnpm --filter celesta-plugin-vrm-js test`.
-  Lib 301, `mtoon` 55, `process` 2, `render` 2, `samples` 6, JS 16.
+  Lib 303, `mtoon` 55, `process` 2, `render` 2, `samples` 6, JS 16.
 - Unit tests, on the synthetic avatar and clip:
   - `vrma`: bones, hips, and expressions read; normalized rotations onto
     the avatar (copying local rotations would put the forearm elsewhere);
@@ -411,8 +414,9 @@ New props of `@celesta-plugin/vrm`'s `Vrm`:
     expressions yielding to the layer, unknown clips, bad times, clip
     names, and the count, bytes, and broken-file refusals.
   - `tracks`: a head turn, pitch and roll directions, the same turn as
-    `lookAt`'s for positive yaw and pitch, composition after the motion, hips moves, bones the avatar lacks, bad tracks, the data
-    shape.
+    `lookAt`'s for positive yaw and pitch, composition after the motion
+    (a roll on the clip's turn, and a yaw that does not commute with it),
+    hips moves, bones the avatar lacks, bad tracks, the data shape.
   - `constraints`: each kind, weights defaulting to 1 and extrapolating,
     twist through rest rotations, aims following a parent turned this
     frame, opposite and coincident aims, `from_to_rotation`, pre-order
@@ -427,9 +431,10 @@ New props of `@celesta-plugin/vrm`'s `Vrm`:
     springs alone; between steps the last step holds; sequential frames
     step only the delta (60 s at 30 fps: 3,599 steps); twelve interleaved
     performances keep each request at two steps; the ceiling costs
-    latency only; models share the ceiling and release it; a failing
-    performance leaves the cache alone; the 4 h and work-fence refusals;
-    the reach warning; many nodes shorten the reach.
+    latency only; models share the ceiling and release it; a performance
+    failing at step 0 leaves the cache alone, and one failing mid-run
+    keeps its cursor and fails warm as cold; the 4 h and work-fence
+    refusals; the reach warning; many nodes shorten the reach.
   - `model`: the spring-limit warning.
 - `tests/samples.rs` (with the samples folder): `test.vrma` moves
   Seed-san, and frames asked out of order on a model warmed by another

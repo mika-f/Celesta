@@ -408,7 +408,8 @@ service), which differs from the specification's recommendation:
   such performance keeps a cursor, the state its last request ended on,
   and checkpoints every 30 steps; a request resumes from the later of its
   cursor and the latest checkpoint before it, so an export steps each
-  performance once and a scrub back resumes at most 30 steps early.
+  performance once and a scrub back resumes at most 30 steps early (more
+  once the memory ceiling below has thinned the checkpoints).
 - The plugin's process keeps at most 256 MiB of states over every model
   and performance, a ceiling against hostile files that real compositions
   stay far below. Past it, latency gives way, never output: checkpoints
