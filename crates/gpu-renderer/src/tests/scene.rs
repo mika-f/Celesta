@@ -1407,6 +1407,26 @@ fn lit_toony_one_is_a_hard_step() {
 }
 
 #[test]
+fn lit_toony_above_one_inverts_the_ramp() {
+    // Toony 1.5: `linearstep(0.5, −0.5, t)`, UniVRM's
+    // `saturate((t − 0.5) / (−0.5 − 0.5))`. `dot(N, L)` 0.5 shifted by
+    // −0.25 is t = 0.25: (0.25 − 0.5) / −1 = 0.25, a quarter of the way
+    // from shade to lit, linear (0.25, 0, 0.75). Lit from behind, t = −1:
+    // 1.5, saturated to 1, all lit. A hard step would give blue for both.
+    let cases = [
+        (HALF_LIT, -0.25, [137, 0, 225, 255]),
+        ([0.0, 0.0, 1.0], 0.0, RED),
+    ];
+    for (direction, shift, expected) in cases {
+        let scenes = toon_square(
+            red_and_blue(1.5, shift),
+            vec![light(direction, [1.0; 3], 1.0)],
+        );
+        assert_centre(scenes, expected);
+    }
+}
+
+#[test]
 fn lit_degenerate_worlds_draw_without_nan() {
     // Scaled to nothing, the square draws nothing, without an error.
     let mut scenes = toon_square(red_and_blue(0.5, 0.0), vec![]);

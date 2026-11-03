@@ -215,8 +215,8 @@ pub struct MtoonMaterial {
     /// Red channel, times `scale`, added to the shift.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shading_shift_texture: Option<ScaledTextureSlot>,
-    /// How sharp the light-to-shade edge is, 0 smooth to 1 hard. Default
-    /// `0.95`.
+    /// How sharp the light-to-shade edge is, 0 smooth to 1 hard; above 1
+    /// the ramp turns around, as in UniVRM. Default `0.95`.
     pub shading_toony_factor: f32,
     /// How far ambient light is flattened to its average. Default `0.9`.
     pub gi_equalization_factor: f32,

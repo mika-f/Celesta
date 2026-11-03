@@ -234,6 +234,10 @@ rim    = (matcapFactor × matcapTex(uvMatcap)
 color  = direct + gi + emissiveTex × emissiveFactor + rim
 ```
 
+- `linearstep(a, b, t) = saturate((t − a) / (b − a))`, as UniVRM writes
+  it: above toony 1, `b < a` and the ramp turns around; at toony 1,
+  `a = b` and it is a hard step, 0 up to `a` and 1 above (Unity's division
+  by 0).
 - `uvMatcap`: UniVRM's basis (`right = cross(V, +Y)`, `up = cross(right, V)`
   in Unity's left-handed space) written in this right-handed space:
   `right = normalize(cross(+Y, V))`, `up = cross(V, right)`,

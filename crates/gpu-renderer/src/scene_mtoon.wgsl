@@ -149,14 +149,18 @@ fn vs_outline(input: MtoonInput) -> MtoonVarying {
     return output;
 }
 
-// 0 below `start`, 1 above `end`, linear between. When `end` is not above
-// `start` (toony 1 or more) it is a step, 0 up to `start`: Unity divides
-// by 0 there and `max(NaN, 0)` gives 0 at `t = start`.
+// UniVRM's `saturate((t − start) / (end − start))`: 0 at `start`, 1 at
+// `end`, linear between and clamped beyond. Above toony 1, `end` is below
+// `start` and the ramp runs the other way, 1 below `end` and 0 above
+// `start`. At toony 1 they meet and Unity divides by 0: a step, 0 up to
+// `start` (where `saturate(NaN)` gives 0) and 1 above, written out here
+// because WGSL does not promise what `saturate(NaN)` is.
 fn linearstep(start: f32, end: f32, t: f32) -> f32 {
-    if end <= start {
+    let span = end - start;
+    if span == 0.0 {
         return select(0.0, 1.0, t > start);
     }
-    return saturate((t - start) / (end - start));
+    return saturate((t - start) / span);
 }
 
 // The ambient light from the direction `n`: Unity's `ShadeSH9`.

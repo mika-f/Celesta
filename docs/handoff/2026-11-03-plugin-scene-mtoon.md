@@ -36,7 +36,7 @@ file has.
 | `shadeMultiplyTexture` | none | `{ texture }`. |
 | `shadingShiftFactor` | `-0.05` | Shifts where light turns to shade. |
 | `shadingShiftTexture` | none | `{ texture, scale = 1 }`: its red times `scale` is added to the shift. |
-| `shadingToonyFactor` | `0.95` | How hard the edge is, 0 smooth to 1 a step. |
+| `shadingToonyFactor` | `0.95` | How hard the edge is, 0 smooth to 1 a step; above 1 the ramp turns around. |
 | `giEqualizationFactor` | `0.9` | How far the ambient light is flattened. |
 | `matcapFactor` | `[0, 0, 0]` | Linear RGB, times `matcapTexture`. |
 | `matcapTexture` | none | `{ texture }`. |
@@ -116,8 +116,10 @@ file has.
   `shade = shadeColorFactor × shadeMultiplyTexture`,
   `shift = shadingShiftFactor + shadingShiftTexture.r × scale`, and
   `color = mix(shade, lit, linearstep(−1 + toony, 1 − toony, N·L + shift)) × C₀`.
-  At `toony` 1 or more the step is hard, 0 up to its start, as Unity's
-  division by 0 gives.
+  `linearstep(a, b, t)` is UniVRM's `saturate((t − a) / (b − a))`, so above
+  `toony` 1 the ramp turns around (lit below `b`, shade above `a`). At
+  `toony` 1, `a = b` and the step is hard, 0 up to `a` and 1 above, as
+  Unity's division by 0 gives.
 - **Ambient.** `color += lit × mix(SH(N), ½(SH(+Y) + SH(−Y)), giEqualization)`.
 - **Emission.** `color += emissiveFactor × emissiveTexture`.
 - **Rim.** `rim = (matcap + parametric) × rimMultiplyTexture`, with
@@ -342,8 +344,8 @@ reading its source, to check once UniVRM reference renders exist:
   down), the UV animation's direction (scroll y down the texture, the turn
   reversed), and the SH and light mirroring above.
 - **The screen-width outline's formula** and its cap at `P[1][1]`.
-- **`linearstep` at `toony` 1 or more**, a hard step following Unity's
-  division by 0.
+- **`linearstep` at `toony` 1**, a hard step following Unity's division
+  by 0, and the turned-around ramp above 1, following UniVRM's formula.
 - **Coplanar draws** under `LessEqual`, and the outline's depth bias.
 
 ## Checks
@@ -359,7 +361,7 @@ reading its source, to check once UniVRM reference renders exist:
     texture's red times its scale; the shade multiply texture; a flat
     ambient; each SH coefficient; GI equalization; normals through the
     inverse transpose of `world`; back faces of double-sided materials;
-    toony 1 as a hard step; degenerate and mirroring worlds without NaN;
+    toony 1 as a hard step and above 1 as the turned-around ramp; degenerate and mirroring worlds without NaN;
     more than 4 lights and a light without a direction refused; an MToon
     texture out of range refused.
   - `shading_`: additional lights with the half-Lambert shadow; emission;
