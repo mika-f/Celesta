@@ -369,7 +369,7 @@ pub(crate) fn inverse_binds<'d>(
 
 /// Where in the file a primitive or skin is, for messages:
 /// `mesh "Body" primitive 0`, `skin 0`.
-enum At<'a, 'd> {
+pub(crate) enum At<'a, 'd> {
     Primitive {
         mesh: &'a gltf::Mesh<'d>,
         primitive: usize,

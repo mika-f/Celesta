@@ -16,6 +16,7 @@ mod geometry;
 mod humanoid;
 mod look_at;
 mod materials;
+mod meta;
 mod model;
 pub mod mtoon;
 mod nodes;

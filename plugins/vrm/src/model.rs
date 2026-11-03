@@ -39,6 +39,10 @@
 //!   at rest without morphs, bounded once when the model opens (without a
 //!   visible vertex, the humanoid's bones at rest). The frame answers
 //!   `data.canvas`, else [`CANVAS`], and the lights `data` asks for.
+//! - **Notices:** the usage terms (see `meta`), then what loading left out
+//!   or changed: images, PBR materials drawn unlit, primitives that are
+//!   not triangles (a warning each, for meshes a node of the scene draws),
+//!   and expressions.
 //! - **Budgets:** the model's geometry, draws, and skins together take at
 //!   most [`GEOMETRY_BUDGET`] bytes, and its accessors decode at most
 //!   `READ_BUDGET` (see `geometry`).
@@ -51,11 +55,13 @@ use crate::document::{Document, LoadError};
 use crate::expressions::{Applied, ExpressionKey, Expressions, read_expressions};
 use crate::first_person::hidden_nodes;
 use crate::geometry::{
-    Accessors, GEOMETRY_BUDGET, draws_triangles, geometry_bytes, inverse_binds, primitive_geometry,
+    Accessors, At, GEOMETRY_BUDGET, draws_triangles, geometry_bytes, inverse_binds,
+    primitive_geometry,
 };
 use crate::humanoid::Humanoid;
 use crate::look_at::LookAt;
 use crate::materials::{materials, texture_cache_dir};
+use crate::meta::usage_notices;
 use crate::mtoon::{self, Mtoon, MtoonOverrides};
 use crate::nodes::{NodeTree, Pose};
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
@@ -64,6 +70,7 @@ use celesta_plugin::{
     Notice, NoticeLevel, SceneFrame, SceneModel, Skin, UnlitMaterial,
 };
 use glam::{Mat4, Vec3};
+use gltf::mesh::Mode;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::size_of;
@@ -159,6 +166,8 @@ struct Draws {
     centres: Vec<Vec3>,
     /// A primitive has no material, so glTF's default one is appended.
     default_material: bool,
+    /// A warning for each primitive of a drawn mesh that is not triangles.
+    notices: Vec<Notice>,
 }
 
 impl VrmModel {
@@ -186,7 +195,7 @@ impl VrmModel {
         };
 
         // The geometry first, so a model refused for it writes no texture.
-        let (skins, draws) = {
+        let (skins, mut draws) = {
             let accessors = Accessors::new(&document);
             let skins = read_skins(&document, &accessors, &mut budget)?;
             let draws = read_draws(&document, &accessors, &tree, &hidden, &skins, &mut budget)?;
@@ -211,7 +220,9 @@ impl VrmModel {
             });
         }
 
-        let mut notices = read.notices;
+        // The usage terms first, then what loading left out or changed.
+        let mut notices = usage_notices(&document.vrm.meta);
+        notices.extend(read.notices);
         let drawn: BTreeSet<usize> = draws.infos.iter().map(|info| info.material).collect();
         let pbr: Vec<&str> = read
             .pbr
@@ -229,6 +240,7 @@ impl VrmModel {
                 ),
             });
         }
+        notices.append(&mut draws.notices);
         notices.extend(expression_notices);
 
         let expressions = Expressions::new(
@@ -275,6 +287,16 @@ impl VrmModel {
 
     pub fn scene_model(&self) -> &SceneModel {
         &self.scene
+    }
+
+    /// The scene model, for answering `open`, with the geometries moved
+    /// out of the model rather than copied: no frame reads them, and they
+    /// can take most of the geometry budget.
+    pub fn take_scene_model(&mut self) -> SceneModel {
+        let geometries = std::mem::take(&mut self.scene.geometries);
+        let mut scene = self.scene.clone();
+        scene.geometries = geometries;
+        scene
     }
 
     pub fn notices(&self) -> &[Notice] {
@@ -756,7 +778,12 @@ struct MeshDraws<'d> {
     weights: Option<&'d [f32]>,
 }
 
-fn mesh_draws<'d>(document: &Document, mesh: &gltf::Mesh<'d>) -> Result<MeshDraws<'d>, LoadError> {
+/// A primitive that is not triangles adds a warning to `notices`.
+fn mesh_draws<'d>(
+    document: &Document,
+    mesh: &gltf::Mesh<'d>,
+    notices: &mut Vec<Notice>,
+) -> Result<MeshDraws<'d>, LoadError> {
     let weights = mesh.weights();
     if let Some(weights) = weights
         && weights.iter().any(|weight| !weight.is_finite())
@@ -765,6 +792,24 @@ fn mesh_draws<'d>(document: &Document, mesh: &gltf::Mesh<'d>) -> Result<MeshDraw
             "mesh {} has morph weights that are not finite: {weights:?}",
             mesh.index()
         )));
+    }
+    for primitive in mesh.primitives() {
+        let mode = match primitive.mode() {
+            Mode::Points => "POINTS",
+            Mode::Lines => "LINES",
+            Mode::LineLoop => "LINE_LOOP",
+            Mode::LineStrip => "LINE_STRIP",
+            // A strip or fan too short for a triangle draws nothing to miss.
+            Mode::Triangles | Mode::TriangleStrip | Mode::TriangleFan => continue,
+        };
+        let at = At::Primitive {
+            mesh,
+            primitive: primitive.index(),
+        };
+        notices.push(Notice {
+            level: NoticeLevel::Warning,
+            message: format!("{at} is {mode}, which is not drawn"),
+        });
     }
     let primitives = mesh
         .primitives()
@@ -817,6 +862,7 @@ fn read_draws(
         geometries: Vec::new(),
         centres: Vec::new(),
         default_material: false,
+        notices: Vec::new(),
     };
     // Each draw's entry, source, and frame state, with two copies of its
     // morph weights.
@@ -829,7 +875,7 @@ fn read_draws(
             continue;
         };
         if meshes[mesh.index()].is_none() {
-            meshes[mesh.index()] = Some(mesh_draws(document, &mesh)?);
+            meshes[mesh.index()] = Some(mesh_draws(document, &mesh, &mut draws.notices)?);
         }
         let Some(drawn) = &meshes[mesh.index()] else {
             continue;
@@ -1371,6 +1417,65 @@ mod tests {
             .map(|draw| draw.geometry)
             .collect();
         assert_eq!(geometries, [0, 1]);
+        assert_eq!(
+            skipped_notices(&model),
+            ["mesh \"Body\" primitive 1 is LINES, which is not drawn"]
+        );
+        // Once per mesh, however many nodes draw it.
+        let model = edited(|root| {
+            root["meshes"][1]["primitives"][0]["mode"] = json!(0);
+            root["nodes"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "name": "Twin", "mesh": 1 }));
+            root["nodes"][node::ROOT]["children"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(25));
+        });
+        assert_eq!(
+            skipped_notices(&model),
+            ["mesh \"FirstPersonOnly\" primitive 0 is POINTS, which is not drawn"]
+        );
+        assert!(skipped_notices(&avatar()).is_empty());
+    }
+
+    fn skipped_notices(model: &VrmModel) -> Vec<&str> {
+        model
+            .notices()
+            .iter()
+            .filter(|notice| notice.message.contains("not drawn"))
+            .map(|notice| {
+                assert_eq!(notice.level, NoticeLevel::Warning);
+                notice.message.as_str()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn notices_start_with_the_usage_terms() {
+        let model = edited(|root| {
+            root["meshes"][0]["primitives"][1]["mode"] = json!(1);
+        });
+        let messages: Vec<&str> = model
+            .notices()
+            .iter()
+            .map(|notice| notice.message.as_str())
+            .collect();
+        assert!(messages[0].starts_with("VRM \"Synthetic\""), "{messages:?}");
+        let terms = messages
+            .iter()
+            .position(|message| message.starts_with("Modification of the model"))
+            .unwrap();
+        let skipped = messages
+            .iter()
+            .position(|message| message.contains("not drawn"))
+            .unwrap();
+        let pbr = messages
+            .iter()
+            .position(|message| message.contains("PBR"))
+            .unwrap();
+        assert!(terms < pbr && pbr < skipped, "{messages:?}");
     }
 
     /// The avatar with `copies` copies of Body primitive 0 after its two.
