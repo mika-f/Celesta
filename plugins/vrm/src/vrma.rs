@@ -706,6 +706,11 @@ impl Retarget {
         }
     }
 
+    /// The avatar's hips' rest position in model space (`H₀'`).
+    pub(crate) fn hips_rest(&self) -> Vec3 {
+        self.hips_rest
+    }
+
     /// Where the hips go in model space for `raw`, a position in a rig whose
     /// hips rest at `source_hips_rest`: the travel from there scaled by the
     /// avatar's hips height over the rig's. A position in the avatar's own

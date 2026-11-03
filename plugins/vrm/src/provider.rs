@@ -8,6 +8,7 @@ use crate::PLUGIN;
 use crate::camera::{CameraData, LightsData};
 use crate::model::VrmModel;
 use crate::motion::MotionData;
+use crate::tracks::TrackData;
 use celesta_plugin::{ContentFrame, ContentProvider, ModelId, Opened, PluginError};
 use serde::Deserialize;
 use serde_json::Value;
@@ -38,6 +39,10 @@ pub struct PerformanceData {
     /// Clips on the layer's clock (see `motion`). Absent, the avatar rests.
     #[serde(default)]
     pub motions: Vec<MotionData>,
+    /// Keyframed turns of humanoid bones, and moves of the hips, by VRM
+    /// bone name, on top of the motions (see `tracks`).
+    #[serde(default)]
+    pub tracks: BTreeMap<String, TrackData>,
 }
 
 /// Where the eyes look: `"camera"`, a point `[x, y, z]` in model space, or
@@ -316,6 +321,12 @@ mod tests {
                 "lookAt.yaw",
             ),
             (json!({ "canvas": [null, 1080] }), "canvas[0]"),
+            (
+                json!({ "tracks": { "head": { "yaw": { "type": "keyframes", "keyframes": [
+                    { "time": { "value": 0, "timescale": 30 }, "value": null },
+                ] } } } }),
+                "tracks.head.yaw.keyframes[0].value",
+            ),
         ] {
             let found = refusal(&mut provider, data.clone());
             assert!(found.contains("invalid data"), "{data}: {found}");
@@ -326,6 +337,16 @@ mod tests {
         assert!(found.contains("expression happy is not finite"), "{found}");
         let found = refusal(&mut provider, json!({ "camera": "side" }));
         assert!(found.contains("camera is \"full\""), "{found}");
+        let found = refusal(
+            &mut provider,
+            json!({ "tracks": { "head": { "yaw": { "type": "keyframes", "keyframes": [
+                { "time": { "value": 0, "timescale": 30 }, "value": 1e39 },
+            ] } } } }),
+        );
+        assert!(
+            found.contains("tracks.head.yaw keyframe 0's value is not a finite number"),
+            "{found}"
+        );
     }
 
     #[test]

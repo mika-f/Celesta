@@ -94,6 +94,16 @@ human_bones!(
     UpperChest,
 );
 
+impl HumanBone {
+    /// The bone of a VRM name (`head`, `leftUpperArm`, …), if it is one.
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        use serde::de::IntoDeserializer;
+        use serde::de::value::{Error, StrDeserializer};
+        let name: StrDeserializer<Error> = name.into_deserializer();
+        Self::deserialize(name).ok()
+    }
+}
+
 /// Which node each of the avatar's bones is.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Humanoid {
@@ -160,5 +170,11 @@ mod tests {
         );
         let bone: HumanBone = serde_json::from_value("upperChest".into()).unwrap();
         assert_eq!(bone, HumanBone::UpperChest);
+        assert_eq!(
+            HumanBone::from_name("upperChest"),
+            Some(HumanBone::UpperChest)
+        );
+        assert_eq!(HumanBone::from_name("UpperChest"), None);
+        assert_eq!(HumanBone::from_name("tail"), None);
     }
 }

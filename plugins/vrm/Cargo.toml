@@ -29,6 +29,8 @@ synthetic = []
 
 [dependencies]
 base64 = "0.23.1"
+# `KeyframeAnimation` and its easings, for the humanoid tracks.
+celesta-composition = { path = "../../crates/composition" }
 celesta-plugin = { path = "../../crates/plugin" }
 glam = "0.34.2"
 gltf = { version = "1.4.1", default-features = false, features = [
@@ -57,7 +59,6 @@ vrm-spec = "=0.1.1"
 libc = "0.2.191"
 
 [dev-dependencies]
-celesta-composition = { path = "../../crates/composition" }
 celesta-gpu-renderer = { path = "../../crates/gpu-renderer" }
 celesta-plugin-host = { path = "../../crates/plugin-host" }
 celesta-plugin-vrm = { path = ".", features = ["synthetic"] }

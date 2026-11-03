@@ -38,9 +38,10 @@
 //!   Each frame they turn their nodes from the base pose, before the lookAt.
 //! - **Motions** (see `motion`): the layer's clips (`motion0`, …) are opened
 //!   before the model, so a model whose clips are refused writes no
-//!   texture. Each frame the motions' pose is retargeted onto the avatar as
-//!   the base pose (see `vrma`), and its clip expressions are the weights
-//!   `data.expressions` does not set.
+//!   texture. Each frame the motions' pose, with the tracks (see `tracks`)
+//!   on top, is retargeted onto the avatar as the base pose (see `vrma`),
+//!   and its clip expressions are the weights `data.expressions` does not
+//!   set.
 //! - **The camera** (see `camera`) frames the avatar at rest: what a
 //!   third-person camera sees, every vertex of every visible draw skinned
 //!   at rest without morphs, bounded once when the model opens (without a
@@ -58,7 +59,7 @@
 //!   `READ_BUDGET` (see `geometry`).
 //!
 //! Each frame runs UniVRM's order (`Vrm10Runtime.Process`): the base pose
-//! (motions), constraints, the lookAt, expressions, spring bones, then world
+//! (motions and tracks), constraints, the lookAt, expressions, spring bones, then world
 //! matrices.
 
 use crate::camera::{self, Framing, check_lights, frame_canvas};
@@ -79,7 +80,8 @@ use crate::mtoon::{self, Mtoon, MtoonOverrides};
 use crate::nodes::{NodeTree, Pose};
 use crate::notices::Warnings;
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
-use crate::vrma::{Clip, Retarget};
+use crate::tracks::apply_tracks;
+use crate::vrma::{Clip, ClipPose, Retarget};
 use celesta_plugin::{
     AlphaMode, Camera, DrawInfo, DrawState, Geometry, Material, MaterialKind, MaterialOverrides,
     Notice, NoticeLevel, SceneFrame, SceneModel, Skin, UnlitMaterial,
@@ -655,18 +657,29 @@ impl VrmModel {
     }
 
     /// The pose before constraints and springs, and the expression weights
-    /// its clips set: `data.motions` at `time` retargeted onto the avatar,
-    /// else the rest pose exactly, with no weights.
+    /// its clips set: `data.motions` at `time` with `data.tracks` on top,
+    /// retargeted onto the avatar as one pose; without either, the rest pose
+    /// exactly, with no weights.
     pub(crate) fn base_pose(
         &self,
         time: f64,
         data: &PerformanceData,
     ) -> Result<(Pose, BTreeMap<ExpressionKey, f32>), FrameError> {
         let mut pose = self.tree.rest_pose();
-        let Some((clip, source)) = motion_pose(&self.clips, &data.motions, time)? else {
+        let motion = motion_pose(&self.clips, &data.motions, time)?;
+        if motion.is_none() && data.tracks.is_empty() {
             return Ok((pose, BTreeMap::new()));
-        };
-        self.retarget.apply(&clip, source, &self.tree, &mut pose);
+        }
+        let rest = self.retarget.hips_rest();
+        let (mut clip, source) = motion.unwrap_or_else(|| (ClipPose::default(), rest));
+        // The hips in the avatar's space (at rest when no motion moves
+        // them), so the tracks move them in its metres.
+        clip.hips = Some(
+            clip.hips
+                .map_or(rest, |raw| self.retarget.hips_world(raw, source)),
+        );
+        apply_tracks(&data.tracks, time, &mut clip)?;
+        self.retarget.apply(&clip, rest, &self.tree, &mut pose);
         Ok((pose, clip.expressions))
     }
 

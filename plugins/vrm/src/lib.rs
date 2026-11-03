@@ -27,6 +27,7 @@ mod provider;
 mod springs;
 #[cfg(any(test, feature = "synthetic"))]
 pub mod synthetic;
+mod tracks;
 mod vrma;
 
 pub use camera::{
@@ -40,6 +41,7 @@ pub use model::{CANVAS, FrameError, VrmModel};
 pub use motion::MotionData;
 pub use nodes::{NodeTree, Pose, Trs};
 pub use provider::{LookAtData, LookAtKeyword, PerformanceData, VrmProvider};
+pub use tracks::TrackData;
 pub use vrma::{Clip, ClipPose};
 
 /// The plugin's id, as its manifest and its layers name it.
