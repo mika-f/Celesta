@@ -863,9 +863,13 @@ fn check_declarations(
         module,
         code,
         author,
-        &|name| matches!(name, "celesta_source" | "celesta" | "params"),
-        &["celesta_vertex", "celesta_fragment"],
-        "a custom shader",
+        &wgsl::Rules {
+            what: "a custom shader",
+            prelude_resource: &|name| matches!(name, "celesta_source" | "celesta" | "params"),
+            entry_points: &["celesta_vertex", "celesta_fragment"],
+            instead: "a custom shader defines `effect` instead",
+            reserved: &|name| name.starts_with("celesta"),
+        },
     )
 }
 

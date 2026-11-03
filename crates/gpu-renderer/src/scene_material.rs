@@ -87,6 +87,21 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
         wgsl::locate(&code, &author, at, message, PRELUDE_HINT, ENTRY_HINT)
     };
 
+    // naga resolves a name to the module's own declaration before a
+    // built-in, so a material redeclaring one would change what Celesta's
+    // code around it calls. Checked before parsing, since such a
+    // declaration can break the prelude's code first.
+    for (offset, name) in wgsl::module_declarations(wgsl) {
+        if wgsl::predeclared(name) {
+            return Err(locate(
+                Some(author.start + offset),
+                format!(
+                    "declares `{name}`, which WGSL predeclares; a material cannot redeclare WGSL's built-in functions and types"
+                ),
+            ));
+        }
+    }
+
     // The material's code with the prelude stands alone: the entry points
     // call into it, not the other way round.
     let parse = |code: &str| {
@@ -98,10 +113,33 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
         &alone,
         &code,
         &author,
-        &|name| prelude_resource(name, textures),
-        &[],
-        "a material",
+        &wgsl::Rules {
+            what: "a material",
+            prelude_resource: &|name| prelude_resource(name, textures),
+            entry_points: &[],
+            instead: "a material defines `material_fragment` and Celesta's entry points call it",
+            // Celesta's own entry code declares `Celesta…` types too.
+            reserved: &|name| {
+                name.get(..7)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("celesta"))
+            },
+        },
     )?;
+    // Every pipeline Celesta makes for a material sets no constants.
+    if let Some((handle, constant)) = alone.overrides.iter().next() {
+        let at = alone
+            .overrides
+            .get_span(handle)
+            .to_range()
+            .map(|range| range.start);
+        return Err(locate(
+            at,
+            format!(
+                "declares the override `{}`; a material cannot declare pipeline-overridable constants",
+                constant.name.as_deref().unwrap_or("")
+            ),
+        ));
+    }
     let defines = |name: &str| {
         alone
             .functions
@@ -138,10 +176,20 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
     )
     .validate(&module)
     .map_err(|error| {
-        locate(
-            wgsl::validation_error_at(&error),
-            wgsl::error_chain(error.as_inner()),
-        )
+        let mut message = wgsl::error_chain(error.as_inner());
+        // naga gives this error no span: it lies somewhere in the vertex
+        // hooks the entry point calls.
+        if let naga::valid::ValidationError::EntryPoint {
+            stage: naga::ShaderStage::Vertex,
+            source: naga::valid::EntryPointError::ForbiddenStageOperations,
+            ..
+        } = error.as_inner()
+        {
+            message.push_str(
+                " (vertex hooks sample with `textureSampleLevel`, and take no derivatives)",
+            );
+        }
+        locate(wgsl::validation_error_at(&error), message)
     })?;
 
     let params_size = params_size(&module)?;
@@ -336,12 +384,15 @@ mod tests {
                 "{FRAGMENT}fn material_outline_fragment(fragment: Fragment) -> vec4f {{\n    return params.color;\n}}\nfn material_outline_vertex(vertex: Vertex) -> VertexOffset {{\n    let width = {sample}.g;\n    return VertexOffset(vertex.normal * width, vec2f(0.0));\n}}\n"
             ))
         };
+        let error = check_material(
+            &material("textureSample(texture_0, sampler_0, vertex.uv)"),
+            1,
+        )
+        .unwrap_err();
+        assert!(error.contains("celesta_outline_vertex"), "{error}");
         assert!(
-            check_material(
-                &material("textureSample(texture_0, sampler_0, vertex.uv)"),
-                1
-            )
-            .is_err()
+            error.contains("vertex hooks sample with `textureSampleLevel`"),
+            "{error}"
         );
         let checked = check_material(
             &material("textureSampleLevel(texture_0, sampler_0, vertex.uv, 0.0)"),
@@ -355,12 +406,15 @@ mod tests {
                 "{FRAGMENT}fn material_vertex(vertex: Vertex) -> VertexOffset {{\n    let width = {sample}.g;\n    return VertexOffset(vertex.normal * width, vec2f(0.0));\n}}\n"
             ))
         };
+        let error = check_material(
+            &surface("textureSample(texture_0, sampler_0, vertex.uv)"),
+            1,
+        )
+        .unwrap_err();
+        assert!(error.contains("celesta_surface_vertex"), "{error}");
         assert!(
-            check_material(
-                &surface("textureSample(texture_0, sampler_0, vertex.uv)"),
-                1
-            )
-            .is_err()
+            error.contains("vertex hooks sample with `textureSampleLevel`"),
+            "{error}"
         );
         assert!(
             check_material(
@@ -369,6 +423,79 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn built_in_names_are_refused() {
+        for (declaration, name) in [
+            (
+                "fn clamp(e: f32, low: f32, high: f32) -> f32 {\n    return e;\n}\n",
+                "clamp",
+            ),
+            ("const select = 1.0;\n", "select"),
+            ("override fwidth: f32 = 1.0;\n", "fwidth"),
+            ("var<private> saturate: f32;\n", "saturate"),
+            ("struct dot { a: f32 };\n", "dot"),
+            ("alias inverseSqrt = f32;\n", "inverseSqrt"),
+            ("alias vec4f = vec3f;\n", "vec4f"),
+            ("struct mat3x3h { a: f32 };\n", "mat3x3h"),
+            ("alias texture_2d = f32;\n", "texture_2d"),
+            ("const f32 = 1;\n", "f32"),
+            ("fn textureSampleLevel() {}\n", "textureSampleLevel"),
+        ] {
+            let error =
+                check_material(&with_params(&format!("{FRAGMENT}{declaration}")), 0).unwrap_err();
+            assert!(error.starts_with("5:"), "{declaration}: {error}");
+            assert!(
+                error.contains(&format!("declares `{name}`, which WGSL predeclares")),
+                "{declaration}: {error}"
+            );
+        }
+
+        // Names that only start like a built-in's, comments, and a
+        // function's own locals are the material's.
+        let own = "// fn clamp\n/* alias dot = f32; /* nested */ fn max */\nfn clamped(value: f32) -> f32 {\n    let min = 0.0;\n    return clamp(value, min, 1.0);\n}\nconst texture_scale = 2.0;\nstruct vec4data { a: f32 };\n";
+        check_material(&with_params(&format!("{FRAGMENT}{own}")), 0).unwrap();
+    }
+
+    #[test]
+    fn overrides_are_refused() {
+        let error = check_material(
+            &with_params(&format!("{FRAGMENT}override k: f32 = 1.0;\n")),
+            0,
+        )
+        .unwrap_err();
+        assert!(error.starts_with("5:"), "{error}");
+        assert!(error.contains("declares the override `k`"), "{error}");
+
+        let error =
+            check_material(&with_params(&format!("{FRAGMENT}override k: f32;\n")), 0).unwrap_err();
+        assert!(error.contains("declares the override `k`"), "{error}");
+
+        let error = check_material(
+            &with_params(&format!("{FRAGMENT}override celesta_k: f32 = 1.0;\n")),
+            0,
+        )
+        .unwrap_err();
+        assert!(error.contains("`celesta_k`"), "{error}");
+        assert!(error.contains("belong to Celesta"), "{error}");
+    }
+
+    #[test]
+    fn celesta_names_are_refused_in_any_case() {
+        for (declaration, name) in [
+            ("struct CelestaVarying { a: f32 };\n", "CelestaVarying"),
+            ("alias CELESTA_X = f32;\n", "CELESTA_X"),
+            ("const Celesta = 1.0;\n", "Celesta"),
+        ] {
+            let error =
+                check_material(&with_params(&format!("{FRAGMENT}{declaration}")), 0).unwrap_err();
+            assert!(error.starts_with("5:"), "{declaration}: {error}");
+            assert!(
+                error.contains(&format!("declares `{name}`; names starting with `celesta`")),
+                "{declaration}: {error}"
+            );
+        }
     }
 
     #[test]

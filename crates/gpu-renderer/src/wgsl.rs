@@ -50,23 +50,35 @@ pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
     message
 }
 
+/// What `check_declarations` allows the author's code.
+pub(crate) struct Rules<'a> {
+    /// Names the author's code in messages: "a custom shader".
+    pub(crate) what: &'a str,
+    /// Whether Celesta's declarations bind a resource of this name.
+    pub(crate) prelude_resource: &'a dyn Fn(&str) -> bool,
+    /// The entry points that are Celesta's own.
+    pub(crate) entry_points: &'a [&'a str],
+    /// Follows the refusal of an entry point of the author's: what the
+    /// author defines instead.
+    pub(crate) instead: &'a str,
+    /// Whether a name belongs to Celesta, so the author cannot declare it.
+    pub(crate) reserved: &'a dyn Fn(&str) -> bool,
+}
+
 /// Rejects entry points and resources the author declared, and names
-/// starting with `celesta` there: Celesta's declarations bind everything
-/// the author's code gets. `prelude_resource` says which resource names
-/// Celesta declares, `entry_points` which entry points are its own, and
-/// `what` names the author's code in messages ("a custom shader").
+/// `rules.reserved` keeps for Celesta: Celesta's declarations bind
+/// everything the author's code gets.
 pub(crate) fn check_declarations(
     module: &naga::Module,
     code: &str,
     author: &Range<usize>,
-    prelude_resource: &dyn Fn(&str) -> bool,
-    entry_points: &[&str],
-    what: &str,
+    rules: &Rules,
 ) -> Result<(), String> {
     let start = |span: naga::Span| span.to_range().map(|range| range.start);
     let fail = |at: Option<usize>, message: String| Err(locate(code, author, at, message, "", ""));
+    let what = rules.what;
     for entry in &module.entry_points {
-        if !entry_points.contains(&entry.name.as_str()) {
+        if !rules.entry_points.contains(&entry.name.as_str()) {
             // naga keeps no span for an entry point; its `fn` is in the
             // author's code.
             let at = code[author.clone()]
@@ -75,8 +87,8 @@ pub(crate) fn check_declarations(
             return fail(
                 at,
                 format!(
-                    "declares the entry point `{}`; {what} cannot declare entry points of its own",
-                    entry.name
+                    "declares the entry point `{}`; {}",
+                    entry.name, rules.instead
                 ),
             );
         }
@@ -88,48 +100,179 @@ pub(crate) fn check_declarations(
         // could otherwise bind a resource of a prelude's name that this
         // module does not declare.
         let authored = at.is_none_or(|at| author.contains(&at));
-        if global.binding.is_some() && (authored || !prelude_resource(name)) {
+        if global.binding.is_some() && (authored || !(rules.prelude_resource)(name)) {
             return fail(
                 at,
                 format!("declares the resource `{name}`; {what} cannot bind resources of its own"),
             );
         }
     }
-    // Names starting with `celesta` belong to Celesta, whose own
-    // declarations lie outside the author's code.
-    let declared = module
-        .functions
-        .iter()
-        .map(|(handle, function)| (function.name.as_deref(), module.functions.get_span(handle)))
-        .chain(module.global_variables.iter().map(|(handle, global)| {
-            (
-                global.name.as_deref(),
-                module.global_variables.get_span(handle),
-            )
-        }))
-        .chain(module.constants.iter().map(|(handle, constant)| {
-            (constant.name.as_deref(), module.constants.get_span(handle))
-        }))
-        .chain(
-            module
-                .types
-                .iter()
-                .map(|(handle, ty)| (ty.name.as_deref(), module.types.get_span(handle))),
-        );
-    for (name, span) in declared {
-        let at = start(span);
-        if let Some(name) = name
-            && name.starts_with("celesta")
-            && at.is_some_and(|at| author.contains(&at))
-        {
+    // Celesta's own declarations lie outside the author's code.
+    for (offset, name) in module_declarations(&code[author.clone()]) {
+        if (rules.reserved)(name) {
             return fail(
-                at,
+                Some(author.start + offset),
                 format!("declares `{name}`; names starting with `celesta` belong to Celesta"),
             );
         }
     }
     Ok(())
 }
+
+/// The names `source`, valid WGSL, declares at module scope (functions,
+/// constants, overrides, variables, structs, and aliases), each with the
+/// byte where it starts. Read from the source rather than from naga's
+/// module, which keeps no alias names.
+pub(crate) fn module_declarations(source: &str) -> Vec<(usize, &str)> {
+    let identifier = |c: char| c == '_' || c.is_alphanumeric();
+    let mut declarations = Vec::new();
+    let mut depth = 0usize;
+    // After a declaring keyword: the name comes next, once a `var`'s
+    // template list (`<` … `>`) has closed.
+    let mut pending = false;
+    let mut angle = 0usize;
+    let mut chars = source.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        if c.is_whitespace() {
+            continue;
+        }
+        if c == '/' && chars.peek().is_some_and(|&(_, next)| next == '/') {
+            while chars.next_if(|&(_, next)| next != '\n').is_some() {}
+            continue;
+        }
+        if c == '/' && chars.peek().is_some_and(|&(_, next)| next == '*') {
+            chars.next();
+            // Block comments nest.
+            let mut nested = 1usize;
+            while nested > 0 {
+                match chars.next() {
+                    Some((_, '*')) if chars.next_if(|&(_, next)| next == '/').is_some() => {
+                        nested -= 1;
+                    }
+                    Some((_, '/')) if chars.next_if(|&(_, next)| next == '*').is_some() => {
+                        nested += 1;
+                    }
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            continue;
+        }
+        if identifier(c) {
+            let mut end = at + c.len_utf8();
+            while let Some((next_at, next)) = chars.next_if(|&(_, next)| identifier(next)) {
+                end = next_at + next.len_utf8();
+            }
+            let word = &source[at..end];
+            // A number starts with a digit; it declares nothing.
+            if c.is_ascii_digit() || depth > 0 {
+                continue;
+            }
+            if pending && angle == 0 {
+                declarations.push((at, word));
+                pending = false;
+            } else if !pending
+                && matches!(
+                    word,
+                    "fn" | "const" | "override" | "var" | "struct" | "alias"
+                )
+            {
+                pending = true;
+            }
+            continue;
+        }
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            '<' if pending => angle += 1,
+            '>' if pending => angle = angle.saturating_sub(1),
+            _ => {}
+        }
+    }
+    declarations
+}
+
+/// Whether WGSL (or naga) predeclares `name` as a built-in function or
+/// type. naga resolves a name to the module's own declaration before a
+/// built-in, so code that declares one of these changes what every call of
+/// it in the module means.
+pub(crate) fn predeclared(name: &str) -> bool {
+    let vector = |rest: &str| {
+        let mut rest = rest.chars();
+        rest.next().is_some_and(|size| matches!(size, '2'..='4'))
+            && matches!(rest.as_str(), "" | "i" | "u" | "f" | "h")
+    };
+    let matrix = |rest: &str| {
+        let bytes = rest.as_bytes();
+        bytes.len() >= 3
+            && matches!(bytes[0], b'2'..=b'4')
+            && bytes[1] == b'x'
+            && matches!(bytes[2], b'2'..=b'4')
+            && matches!(&rest[3..], "" | "f" | "h")
+    };
+    name.strip_prefix("vec").is_some_and(vector)
+        || name.strip_prefix("mat").is_some_and(matrix)
+        || PREDECLARED.contains(&name)
+}
+
+/// The built-in functions and the types other than vectors and matrices
+/// that WGSL predeclares, with naga's own extensions.
+#[rustfmt::skip]
+const PREDECLARED: &[&str] = &[
+    // Types.
+    "bool", "i32", "u32", "f32", "f16", "i64", "u64", "f64", "i16", "u16", "array", "atomic",
+    "ptr", "sampler", "sampler_comparison", "binding_array", "acceleration_structure",
+    "ray_query", "RayDesc", "RayIntersection", "coop_mat8x8", "coop_mat16x16", "texture_1d",
+    "texture_2d", "texture_2d_array", "texture_3d", "texture_cube", "texture_cube_array",
+    "texture_multisampled_2d", "texture_depth_multisampled_2d", "texture_external",
+    "texture_storage_1d", "texture_storage_2d", "texture_storage_2d_array",
+    "texture_storage_3d", "texture_depth_2d", "texture_depth_2d_array", "texture_depth_cube",
+    "texture_depth_cube_array",
+    // Bit reinterpretation, logical, and array functions.
+    "bitcast", "all", "any", "select", "arrayLength",
+    // Numeric functions.
+    "abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "atan2", "ceil", "clamp", "cos",
+    "cosh", "countLeadingZeros", "countOneBits", "countTrailingZeros", "cross", "degrees",
+    "determinant", "distance", "dot", "dot4U8Packed", "dot4I8Packed", "exp", "exp2",
+    "extractBits", "faceForward", "firstLeadingBit", "firstTrailingBit", "floor", "fma",
+    "fract", "frexp", "insertBits", "inverseSqrt", "ldexp", "length", "log", "log2", "max",
+    "min", "mix", "modf", "normalize", "pow", "quantizeToF16", "radians", "reflect", "refract",
+    "reverseBits", "round", "saturate", "sign", "sin", "sinh", "smoothstep", "sqrt", "step",
+    "tan", "tanh", "transpose", "trunc",
+    // Derivative functions.
+    "dpdx", "dpdxCoarse", "dpdxFine", "dpdy", "dpdyCoarse", "dpdyFine", "fwidth",
+    "fwidthCoarse", "fwidthFine",
+    // Texture functions.
+    "textureDimensions", "textureGather", "textureGatherCompare", "textureLoad",
+    "textureNumLayers", "textureNumLevels", "textureNumSamples", "textureSample",
+    "textureSampleBias", "textureSampleCompare", "textureSampleCompareLevel",
+    "textureSampleGrad", "textureSampleLevel", "textureSampleBaseClampToEdge", "textureStore",
+    "textureAtomicAdd", "textureAtomicAnd", "textureAtomicMax", "textureAtomicMin",
+    "textureAtomicOr", "textureAtomicXor",
+    // Atomic functions.
+    "atomicLoad", "atomicStore", "atomicAdd", "atomicSub", "atomicMax", "atomicMin",
+    "atomicAnd", "atomicOr", "atomicXor", "atomicExchange", "atomicCompareExchangeWeak",
+    // Packing functions.
+    "pack4x8snorm", "pack4x8unorm", "pack4xI8", "pack4xU8", "pack4xI8Clamp", "pack4xU8Clamp",
+    "pack2x16snorm", "pack2x16unorm", "pack2x16float", "unpack4x8snorm", "unpack4x8unorm",
+    "unpack4xI8", "unpack4xU8", "unpack2x16snorm", "unpack2x16unorm", "unpack2x16float",
+    // Synchronization functions.
+    "storageBarrier", "textureBarrier", "workgroupBarrier", "workgroupUniformLoad",
+    "subgroupBarrier",
+    // Subgroup and quad functions.
+    "subgroupAdd", "subgroupExclusiveAdd", "subgroupInclusiveAdd", "subgroupAll",
+    "subgroupAnd", "subgroupAny", "subgroupBallot", "subgroupBroadcast",
+    "subgroupBroadcastFirst", "subgroupElect", "subgroupMax", "subgroupMin", "subgroupMul",
+    "subgroupExclusiveMul", "subgroupInclusiveMul", "subgroupOr", "subgroupShuffle",
+    "subgroupShuffleDown", "subgroupShuffleUp", "subgroupShuffleXor", "subgroupXor",
+    "quadBroadcast", "quadSwapDiagonal", "quadSwapX", "quadSwapY",
+    // naga's ray query and cooperative matrix functions.
+    "rayQueryInitialize", "rayQueryProceed", "rayQueryTerminate",
+    "rayQueryConfirmIntersection", "rayQueryGenerateIntersection",
+    "rayQueryGetCandidateIntersection", "rayQueryGetCommittedIntersection",
+    "getCandidateHitVertexPositions", "getCommittedHitVertexPositions", "traceRay", "coopLoad",
+    "coopLoadT", "coopStore", "coopStoreT", "coopMultiplyAdd",
+];
 
 /// The byte where `error`, from `naga::front::wgsl::parse_str`, points.
 pub(crate) fn parse_error_at(error: &naga::front::wgsl::ParseError) -> Option<usize> {
@@ -153,7 +296,52 @@ pub(crate) fn validation_error_at(
 
 #[cfg(test)]
 mod tests {
-    use super::locate;
+    use super::{locate, module_declarations, predeclared};
+
+    #[test]
+    fn module_declarations_reads_every_kind_at_module_scope() {
+        let source = "// fn commented\n@group(0) @binding(0) var<uniform> a: vec4<f32>;\nvar<private> b: f32;\nconst c = 1e-5;\noverride d: f32 = 0x1p+3f;\n/* struct e /* nested */ */ struct f { g: f32 };\nalias h = array<f32, 2>;\nfn i(j: f32) -> f32 {\n    var k = 1.0;\n    const l = 2.0;\n    return j + k + l;\n}\nconst_assert c > 0.0;\n";
+        let names: Vec<_> = module_declarations(source)
+            .into_iter()
+            .map(|(at, name)| {
+                assert!(source[at..].starts_with(name));
+                name
+            })
+            .collect();
+        assert_eq!(names, ["a", "b", "c", "d", "f", "h", "i"]);
+    }
+
+    #[test]
+    fn predeclared_names_built_ins_and_types() {
+        for name in [
+            "clamp",
+            "fwidth",
+            "textureSample",
+            "vec4f",
+            "vec3",
+            "mat3x3f",
+            "mat2x4h",
+            "f32",
+            "texture_2d",
+            "sampler",
+            "array",
+            "select",
+        ] {
+            assert!(predeclared(name), "{name}");
+        }
+        for name in [
+            "texture_0",
+            "sampler_0",
+            "vec5",
+            "mat3x5",
+            "vec4data",
+            "clamped",
+            "params",
+            "linear",
+        ] {
+            assert!(!predeclared(name), "{name}");
+        }
+    }
 
     #[test]
     fn locate_places_errors_by_where_they_lie() {

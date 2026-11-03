@@ -760,6 +760,7 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
         &format!("@compute @workgroup_size(1) fn main() {{}}\n{IDENTITY}"),
     );
     assert!(entry.contains("entry point `main`"), "{entry}");
+    assert!(entry.contains("defines `effect` instead"), "{entry}");
     assert!(
         entry.starts_with("invalid custom shader broken: 1:"),
         "{entry}"
@@ -774,6 +775,20 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
         reserved.starts_with("invalid custom shader broken: 4:"),
         "{reserved}"
     );
+
+    // Overrides and aliases, which naga's module keeps no name of, too.
+    for (declaration, name) in [
+        ("override celesta_k: f32 = 1.0;\n", "celesta_k"),
+        ("alias celesta_t = f32;\n", "celesta_t"),
+    ] {
+        let reserved = error(&mut renderer, &format!("{IDENTITY}{declaration}"));
+        assert!(reserved.contains(&format!("`{name}`")), "{reserved}");
+        assert!(reserved.contains("belong to Celesta"), "{reserved}");
+        assert!(
+            reserved.starts_with("invalid custom shader broken: 4:"),
+            "{reserved}"
+        );
+    }
 
     let keyword = render_error(
         &mut renderer,
