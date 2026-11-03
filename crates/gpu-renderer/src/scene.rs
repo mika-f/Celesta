@@ -38,6 +38,7 @@ use celesta_plugin::{
     MaterialOverrides, ModelId, MtoonMaterial, OutlineWidthMode, Projection, SceneFrame,
     SceneModel, SceneShader, TextureRef, UnlitMaterial, Wrap,
 };
+use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -335,6 +336,36 @@ pub(crate) struct CompiledShader {
     outline: bool,
 }
 
+/// A plugin's material shader as the shader cache knows it: its WGSL's
+/// SHA-256 digest and length, which stand for the source without keeping
+/// it, and its texture slots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ShaderKey {
+    digest: [u8; 32],
+    len: usize,
+    textures: usize,
+}
+
+impl ShaderKey {
+    fn of(shader: &SceneShader) -> Self {
+        Self {
+            digest: Sha256::digest(shader.wgsl.as_bytes()).into(),
+            len: shader.wgsl.len(),
+            textures: shader.textures.len(),
+        }
+    }
+}
+
+/// Why a material shader was not compiled.
+#[derive(Debug)]
+enum ShaderFailure {
+    /// It breaks the interface, or the device refuses its module: it would
+    /// again.
+    Refused(String),
+    /// The device ran out of memory, which it may not the next time.
+    OutOfMemory(String),
+}
+
 impl CompiledShader {
     /// Checks the material shader `wgsl` of `textures` slots and compiles
     /// it, or says why it breaks the interface.
@@ -344,13 +375,17 @@ impl CompiledShader {
         wgsl: &str,
         textures: usize,
         label: &str,
-    ) -> Result<Self, String> {
-        let checked = check_material(wgsl, textures)?;
+    ) -> Result<Self, ShaderFailure> {
+        let checked = check_material(wgsl, textures).map_err(ShaderFailure::Refused)?;
         let module = scoped(device, || {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
                 source: wgpu::ShaderSource::Naga(Cow::Owned(checked.module)),
             })
+        })
+        .map_err(|error| match error {
+            wgpu::Error::OutOfMemory { .. } => ShaderFailure::OutOfMemory(error.to_string()),
+            _ => ShaderFailure::Refused(error.to_string()),
         })?;
         Ok(Self {
             id,
@@ -368,7 +403,7 @@ impl CompiledShader {
 /// stack), or running out of memory. What a material's WGSL decides runs in
 /// here, so that none of it reaches the device's uncaptured-error handler,
 /// which panics.
-fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> Result<T, String> {
+fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> Result<T, wgpu::Error> {
     let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -376,7 +411,7 @@ fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> Result<T, Strin
     // Popped innermost first.
     let errors = [validation, internal, memory].map(|scope| pollster::block_on(scope.pop()));
     match errors.into_iter().flatten().next() {
-        Some(error) => Err(error.to_string()),
+        Some(error) => Err(error),
         None => Ok(made),
     }
 }
@@ -722,14 +757,18 @@ pub(crate) struct ScenePipelines {
     mtoon: Arc<CompiledShader>,
     /// Plugins' material shaders by their WGSL and texture slots (their
     /// names and empty texels do not change the module), compiled or why
-    /// they cannot be: each is checked once, however many models list it.
-    /// Never evicted, as the pipelines are not.
-    shaders: HashMap<(String, usize), Result<Arc<CompiledShader>, String>>,
+    /// they cannot be: each is checked once, however many models list it,
+    /// unless the device ran out of memory compiling it. Never evicted, as
+    /// the pipelines are not.
+    shaders: HashMap<ShaderKey, Result<Arc<CompiledShader>, String>>,
     /// The `ShaderId` the next plugin shader that compiles gets.
     next_shader: u32,
     /// How many plugin shaders were checked: the cache's misses.
     #[cfg(test)]
     pub(crate) compiles: usize,
+    /// The next plugin shader checked runs out of memory instead.
+    #[cfg(test)]
+    pub(crate) out_of_memory: bool,
     /// Group 0: the frame uniform.
     view_layout: wgpu::BindGroupLayout,
     /// Group 1: the draw uniform and the material's parameters.
@@ -1046,6 +1085,8 @@ impl ScenePipelines {
             next_shader: 2,
             #[cfg(test)]
             compiles: 0,
+            #[cfg(test)]
+            out_of_memory: false,
             view_layout,
             draw_layout,
             texture_layouts: HashMap::new(),
@@ -1095,21 +1136,46 @@ impl ScenePipelines {
 
     /// The compiled module of `shader`, from the cache or checked and
     /// compiled now, or why it cannot be compiled. A shader that fails
-    /// takes no `ShaderId`.
+    /// takes no `ShaderId`; one the device ran out of memory compiling is
+    /// not kept, and is tried again the next time a model lists it.
     fn shader(
         &mut self,
         device: &wgpu::Device,
         shader: &SceneShader,
     ) -> Result<Arc<CompiledShader>, String> {
-        let key = (shader.wgsl.clone(), shader.textures.len());
+        let key = ShaderKey::of(shader);
         if let Some(compiled) = self.shaders.get(&key) {
             return compiled.clone();
         }
+        let compiled = match self.compile(device, shader) {
+            Ok(compiled) => {
+                self.next_shader += 1;
+                Ok(Arc::new(compiled))
+            }
+            Err(ShaderFailure::Refused(message)) => Err(message),
+            Err(ShaderFailure::OutOfMemory(message)) => return Err(message),
+        };
+        self.shaders.insert(key, compiled.clone());
+        compiled
+    }
+
+    /// `shader` checked and compiled as the next `ShaderId`.
+    fn compile(
+        &mut self,
+        device: &wgpu::Device,
+        shader: &SceneShader,
+    ) -> Result<CompiledShader, ShaderFailure> {
         #[cfg(test)]
         {
             self.compiles += 1;
+            if std::mem::take(&mut self.out_of_memory) {
+                let error = wgpu::Error::OutOfMemory {
+                    source: "the test's device".into(),
+                };
+                return Err(ShaderFailure::OutOfMemory(error.to_string()));
+            }
         }
-        let compiled = CompiledShader::compile(
+        CompiledShader::compile(
             device,
             ShaderId(self.next_shader),
             &shader.wgsl,
@@ -1119,12 +1185,6 @@ impl ScenePipelines {
                 .as_deref()
                 .unwrap_or("Celesta scene plugin material"),
         )
-        .map(Arc::new);
-        if compiled.is_ok() {
-            self.next_shader += 1;
-        }
-        self.shaders.insert(key, compiled.clone());
-        compiled
     }
 
     /// Compiles every shader `model` lists, used or not; makes the

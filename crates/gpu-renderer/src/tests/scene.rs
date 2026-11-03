@@ -3323,6 +3323,43 @@ fn material_fragment(fragment: Fragment) -> vec4f { return nope; }";
     assert_eq!(compiles(&renderer), 1);
 }
 
+#[test]
+fn material_shaders_out_of_memory_is_tried_again() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    // A model refused before its shaders are compiled makes the pipelines
+    // and keeps nothing.
+    let mut refused = one_square();
+    refused.model.draws[0].material = 1;
+    renderer.renderer = renderer.renderer.with_content_provider(refused);
+    assert!(renderer.render(&scene()).is_err());
+    fn pipelines(renderer: &mut TestRenderer) -> &mut crate::scene::ScenePipelines {
+        renderer
+            .meshes
+            .scene_pipelines
+            .as_mut()
+            .expect("a scene was opened")
+    }
+    // The next shader compiled runs out of memory, which another load may
+    // not.
+    pipelines(&mut renderer).out_of_memory = true;
+    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
+        vec![shader(FLAT, &[])],
+        custom(0, bytes(&FLAT_GREEN)),
+    ));
+    match renderer.render(&scene()) {
+        Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
+            assert!(message.contains("material 0's shader 0"), "{message}");
+            assert!(message.contains("Out of Memory"), "{message}");
+        }
+        other => panic!("expected invalid plugin content, got {:?}", other.err()),
+    }
+    let frame = renderer.render(&scene()).unwrap();
+    assert_pixel(&frame, 32, 32, GREEN);
+    assert_eq!(pipelines(&mut renderer).compiles, 2);
+}
+
 const FLAT_RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 const FLAT_GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 
