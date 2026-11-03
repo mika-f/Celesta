@@ -27,17 +27,32 @@ work as on any layer.
 - [`src/lib.rs`](src/lib.rs) is the plugin's `ContentProvider`. `open`
   answers with a scene model it makes itself: a cube of 24 vertices, four a
   face so each face has its own texture coordinates, and a square; a 2x2
-  checker and a leaf as inline textures; and three materials. The cube's is
-  MToon, opaque: the checker is its lit color and, multiplied by a bluish
-  lilac, its shaded one, with the default sharp edge between them, so a
-  face turned from the light goes cool rather than only darker. A faint
-  blue-grey rim (fresnel power 8, no lift) lifts only the faces seen at a
-  slant, such as the top. A near-black outline 2% of the canvas's height
-  wide, in screen coordinates, surrounds it: up to about 5 of the layer's
-  pixels where the face beyond the silhouette is seen edge-on, fewer where
-  that face turns toward the camera. The other two materials are unlit, one
-  blended and one cut out where the leaf's alpha is below 0.5, so the light
-  leaves them as they were.
+  checker and a leaf as inline textures; the cube's shader; and three
+  materials. The cube's material is the sample's own WGSL toon shader,
+  [`src/toon.wgsl`](src/toon.wgsl), sent with the model: Celesta compiles
+  it against its scene material interface and binds the material's
+  parameters and its one texture slot, the checker. The material is opaque,
+  and its 64 bytes of parameters set what the shader draws:
+  - `shade`: the shaded color, a bluish lilac times the checker, and the
+    shading shift, −0.05, added to N·L before the step. The checker is the
+    lit color, and the step between them is nearly hard (`shape`'s toony
+    0.95), so a face turned from the light goes cool rather than only
+    darker.
+  - `rim`: a faint blue-grey and a fresnel power of 8, so the rim lifts
+    only the faces seen at a slant, such as the top, lit by the light and
+    the ambient light.
+  - `outline`: a near-black color, mixed halfway towards the surface's.
+  - `shape`: the toony factor, and the outline's width, 2% of the
+    canvas's height where a metre fills it.
+
+  The outline is the material's outline pass, drawn behind the cube with
+  front faces culled. Its vertex hook moves each vertex in clip space,
+  along the normal as seen on screen, as MToon's screen-coordinates
+  outline does: up to about 5 of the layer's pixels where the face beyond
+  the silhouette is seen edge-on, fewer where that face turns toward the
+  camera. The other two materials are unlit, one blended and one cut out
+  where the leaf's alpha is below 0.5, so the light leaves them as they
+  were.
   `frame` answers with the camera, standing at (0, 1.2, 3) and looking at
   the cube; the lights, one white directional light of intensity 0.8
   travelling along (−0.65, −0.65, 0.3), so from above, behind, and to the
@@ -51,9 +66,9 @@ work as on any layer.
   leaf's stem, and then the pane over them.
 - The outline pushes each vertex out along its normal. The cube's faces
   keep their own normals, four vertices a face, so at a corner the outline
-  of each face moves its own way and leaves a notch: MToon's outline breaks
-  on hard edges, as it does in UniVRM. A model whose outline must close
-  shares its normals across the edge. For the same reason the rim, which
+  of each face moves its own way and leaves a notch: an outline drawn this
+  way breaks on hard edges, as MToon's does in UniVRM. A model whose
+  outline must close shares its normals across the edge. For the same reason the rim, which
   follows each face's normal, lifts a whole face evenly instead of glowing
   along its edge.
 - [`src/main.rs`](src/main.rs) serves that provider over standard input and

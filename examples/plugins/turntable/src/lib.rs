@@ -1,8 +1,8 @@
 //! A sample content plugin: a 3D scene of a checkered cube, toon-shaded and
-//! outlined in MToon, turning on a turntable under one light, a
-//! half-transparent blue pane in front of it, and a leaf cut out of a
-//! square, half stuck in the cube. It needs no files: the scene's geometry
-//! and textures are made here.
+//! outlined by a WGSL material of its own, turning on a turntable under one
+//! light, a half-transparent blue pane in front of it, and a leaf cut out of
+//! a square, half stuck in the cube. It needs no files: the scene's
+//! geometry, textures, and shader are made here.
 //!
 //! What the layer gives the plugin:
 //!
@@ -20,10 +20,10 @@
 //! side they face.
 
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DirectionalLight, DrawInfo,
-    DrawState, Filter, Geometry, Lights, Material, MaterialKind, ModelId, MtoonMaterial, Opened,
-    OutlineWidthMode, PluginError, Projection, Sampler, SceneFrame, SceneModel, SceneTexture,
-    TextureRef, TextureSlot, TextureSource, UnlitMaterial,
+    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, CustomMaterial, DirectionalLight,
+    DrawInfo, DrawState, EmptyTexel, Filter, Geometry, Lights, Material, MaterialKind, ModelId,
+    Opened, OutlinePass, PluginError, Projection, Sampler, SceneFrame, SceneModel, SceneShader,
+    SceneTexture, ShaderTexture, TextureRef, TextureSource, UnlitMaterial,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
@@ -259,37 +259,58 @@ fn unlit(alpha_mode: AlphaMode, double_sided: bool, base_color: [f32; 4]) -> Mat
     }
 }
 
+/// The cube's shader, `toon.wgsl`: the checker toon-shaded under the main
+/// light, with a rim and an outline pass. Its one slot is the checker.
+fn toon_shader() -> SceneShader {
+    SceneShader {
+        name: Some("turntable toon".into()),
+        wgsl: include_str!("toon.wgsl").into(),
+        textures: vec![ShaderTexture {
+            name: Some("checker".into()),
+            empty: EmptyTexel::White,
+        }],
+    }
+}
+
+/// `toon.wgsl`'s `Params`, four `vec4f`s, 64 bytes.
+fn toon_params() -> Vec<u8> {
+    [
+        // The shade color, a bluish lilac times the checker, and the
+        // shading shift.
+        [0.4, 0.42, 0.75, -0.05],
+        // A faint blue-grey rim; power 8: only faces seen at a slant glow,
+        // most where they slant most.
+        [0.25, 0.25, 0.32, 8.0],
+        // A near-black outline, half mixed towards the surface's color.
+        [0.01, 0.008, 0.012, 0.5],
+        // A nearly hard step from shade to lit; the outline 2% of the
+        // canvas's height where a metre fills it: at the camera's 3.2 m,
+        // about 5 of the layer's pixels where the face beyond the
+        // silhouette is seen edge-on, fewer as it turns toward the camera.
+        [0.95, 0.02, 0.0, 0.0],
+    ]
+    .as_flattened()
+    .iter()
+    .flat_map(|value: &f32| value.to_le_bytes())
+    .collect()
+}
+
 /// The cube's look: the checker toon-shaded, each texel multiplied by a
 /// bluish lilac on the side away from the light, a faint blue-grey rim
 /// where a face turns away from the camera, and a near-black outline a few
 /// pixels wide.
 fn toon() -> Material {
-    textured(
-        Material {
-            alpha_mode: AlphaMode::Opaque,
-            double_sided: false,
-            kind: MaterialKind::Mtoon(MtoonMaterial {
-                shade_color_factor: [0.4, 0.42, 0.75],
-                shade_multiply_texture: Some(TextureSlot { texture: 0 }),
-                // Power 8 and no lift: only faces seen at a slant glow,
-                // most where they slant most.
-                parametric_rim_color_factor: [0.25, 0.25, 0.32],
-                parametric_rim_lift_factor: 0.0,
-                parametric_rim_fresnel_power_factor: 8.0,
-                rim_lighting_mix_factor: 1.0,
-                // 2% of the canvas's height where a metre fills it; at the
-                // camera's 3.2 m, about 5 of the layer's pixels where the
-                // face beyond the silhouette is seen edge-on, fewer as it
-                // turns toward the camera.
-                outline_width_mode: OutlineWidthMode::ScreenCoordinates,
-                outline_width_factor: 0.02,
-                outline_color_factor: [0.01, 0.008, 0.012],
-                outline_lighting_mix_factor: 0.5,
-                ..MtoonMaterial::default()
-            }),
-        },
-        0,
-    )
+    Material {
+        alpha_mode: AlphaMode::Opaque,
+        double_sided: false,
+        kind: MaterialKind::Custom(CustomMaterial {
+            shader: 0,
+            params: toon_params(),
+            textures: vec![Some(0)],
+            outline: Some(OutlinePass::default()),
+            requires_tangents: false,
+        }),
+    }
 }
 
 /// The plugin's reference lighting: one white light from above, behind,
@@ -309,12 +330,10 @@ fn lights() -> Lights {
 }
 
 fn textured(mut material: Material, texture: usize) -> Material {
-    let base_color_texture = match &mut material.kind {
-        MaterialKind::Unlit(unlit) => &mut unlit.base_color_texture,
-        MaterialKind::Mtoon(mtoon) => &mut mtoon.base_color_texture,
-        MaterialKind::Custom(_) => unreachable!("the turntable has no custom materials"),
+    let MaterialKind::Unlit(unlit) = &mut material.kind else {
+        unreachable!("only the turntable's unlit materials take a base color texture");
     };
-    *base_color_texture = Some(TextureRef {
+    unlit.base_color_texture = Some(TextureRef {
         texture,
         transform: None,
     });
@@ -332,7 +351,7 @@ fn model() -> SceneModel {
         textures: vec![checker(), leaf()],
         geometries: vec![cube(), square()],
         skins: Vec::new(),
-        shaders: Vec::new(),
+        shaders: vec![toon_shader()],
         materials: vec![
             toon(),
             // Linear blue at half alpha, blended over what is behind.
@@ -573,32 +592,26 @@ mod tests {
     }
 
     #[test]
-    fn the_cube_is_toon_shaded_and_outlined() {
+    fn the_cube_is_toon_shaded_by_its_own_shader() {
         let (_, model) = opened(&mut TurntableProvider::default());
         let cube = &model.materials[0];
         assert_eq!(cube.alpha_mode, AlphaMode::Opaque);
         assert!(!cube.double_sided);
-        let MaterialKind::Mtoon(mtoon) = &cube.kind else {
-            panic!("the cube is MToon: {:?}", cube.kind);
+        let MaterialKind::Custom(toon) = &cube.kind else {
+            panic!("the cube is the sample's own shader: {:?}", cube.kind);
         };
-        // A share of the canvas's height, so it stays a few pixels wide.
-        assert_eq!(
-            mtoon.outline_width_mode,
-            OutlineWidthMode::ScreenCoordinates
-        );
-        assert_eq!(mtoon.outline_width_factor, 0.02);
+        assert_eq!(toon.shader, 0);
         // The checker is both the lit and the shaded color.
-        assert_eq!(
-            mtoon.base_color_texture,
-            Some(TextureRef {
-                texture: 0,
-                transform: None
-            })
-        );
-        assert_eq!(
-            mtoon.shade_multiply_texture,
-            Some(TextureSlot { texture: 0 })
-        );
+        assert_eq!(toon.textures, [Some(0)]);
+        assert_eq!(toon.outline, Some(OutlinePass::default()));
+        assert!(!toon.requires_tangents);
+        assert_eq!(toon.params.len(), 64);
+        // The outline's width, a share of the canvas's height, so it stays
+        // a few pixels wide.
+        let width = f32::from_le_bytes(toon.params[52..56].try_into().unwrap());
+        assert_eq!(width, 0.02);
+        assert_eq!(model.shaders.len(), 1);
+        assert_eq!(model.shaders[0].textures.len(), 1);
         // The pane and the leaf stay unlit.
         for material in &model.materials[1..] {
             assert!(

@@ -5,7 +5,7 @@ Three plugins to start a plugin of your own from:
 | Plugin | Kind | What it does |
 | --- | --- | --- |
 | [`flag`](flag/) | A program and components | `<Flag>` draws an image waving like a flag. The plugin's program (Rust) returns textured meshes for each time, and Celesta draws them. |
-| [`turntable`](turntable/) | A program and components | `<Turntable>` draws a checkered cube turning on a turntable. The plugin's program (Rust) returns a 3D scene, with a camera, a light, a toon-shaded and outlined MToon cube, and cut-out and see-through unlit materials, and Celesta draws it with depth. |
+| [`turntable`](turntable/) | A program and components | `<Turntable>` draws a checkered cube turning on a turntable. The plugin's program (Rust) returns a 3D scene, with a camera, a light, a cube toon-shaded and outlined by its own WGSL material, and cut-out and see-through unlit materials, and Celesta draws it with depth. |
 | [`beep-voice`](beep-voice/) | Components only | `prepareBeepNarration()` voices dialogue lines with game-style beeps, in place of a speech engine such as VOICEVOX, with lip sync. |
 
 The manifest, the protocol, and how Celesta draws meshes are described in
