@@ -33,6 +33,7 @@ use image::{ImageFormat, ImageReader};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::fmt::{self, Write as _};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Cursor, Write as _};
@@ -68,17 +69,114 @@ pub(crate) struct Materials {
     pub base_transforms: Vec<Option<TextureTransform>>,
 }
 
+/// The cache directory's own name.
+const CACHE_NAME: &str = "celesta-plugin-vrm";
+
 /// Where images are written: `$CELESTA_VRM_TEXTURE_CACHE`, else
-/// `celesta-plugin-vrm` in the temporary directory.
+/// `celesta-plugin-vrm` in the user's own cache directory
+/// (`%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS,
+/// `$XDG_CACHE_HOME` or `~/.cache` elsewhere). Without one, a directory
+/// named for the user in the temporary directory. [`materials`] refuses
+/// any of them that is not the user's own and private.
 // The provider (Task 4) calls this.
 #[allow(dead_code)]
 pub(crate) fn texture_cache_dir() -> PathBuf {
-    std::env::var_os(CACHE_VARIABLE)
-        .filter(|dir| !dir.is_empty())
-        .map_or_else(
-            || std::env::temp_dir().join("celesta-plugin-vrm"),
-            PathBuf::from,
-        )
+    cache_dir_from(|name| std::env::var_os(name))
+}
+
+/// [`texture_cache_dir`] with the environment variables `var` gives.
+fn cache_dir_from(var: impl Fn(&str) -> Option<OsString>) -> PathBuf {
+    if let Some(dir) = var(CACHE_VARIABLE).filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    let absolute = |name: &str| {
+        var(name)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    let base = if cfg!(windows) {
+        absolute("LOCALAPPDATA")
+    } else if cfg!(target_os = "macos") {
+        absolute("HOME").map(|home| home.join("Library").join("Caches"))
+    } else {
+        absolute("XDG_CACHE_HOME").or_else(|| absolute("HOME").map(|home| home.join(".cache")))
+    };
+    match base {
+        Some(base) => base.join(CACHE_NAME),
+        #[cfg(unix)]
+        None => std::env::temp_dir().join(format!("{CACHE_NAME}-{}", user())),
+        // Windows' temporary directory is the user's own.
+        #[cfg(not(unix))]
+        None => std::env::temp_dir().join(CACHE_NAME),
+    }
+}
+
+/// The user the plugin runs as.
+#[cfg(unix)]
+fn user() -> u32 {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
+}
+
+/// Makes the cache directory, private to the user where it is new, and
+/// refuses one that is not safe to write images to and read them back
+/// from.
+fn prepare_cache(cache: &Path) -> Result<(), LoadError> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    if let Err(error) = builder.create(cache)
+        // Something already there that is not a directory: the check says
+        // what.
+        && fs::symlink_metadata(cache).is_err()
+    {
+        return Err(cache_error(cache, error));
+    }
+    #[cfg(unix)]
+    return check_cache(cache, user());
+    #[cfg(not(unix))]
+    return check_cache(cache);
+}
+
+fn cache_refusal(cache: &Path, reason: &str) -> LoadError {
+    LoadError::Io(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "the texture cache {} {reason}; set CELESTA_VRM_TEXTURE_CACHE to a directory of your own",
+            cache.display()
+        ),
+    ))
+}
+
+/// The cache is a real directory (not a link to one), and on Unix it is
+/// `user`'s and no one else can write to it: otherwise another user could
+/// put their own image where Celesta reads the model's.
+fn check_cache(cache: &Path, #[cfg(unix)] user: u32) -> Result<(), LoadError> {
+    let metadata = fs::symlink_metadata(cache).map_err(|error| cache_error(cache, error))?;
+    if metadata.file_type().is_symlink() {
+        return Err(cache_refusal(cache, "is a symbolic link"));
+    }
+    if !metadata.is_dir() {
+        return Err(cache_refusal(cache, "is not a directory"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.uid() != user {
+            return Err(cache_refusal(cache, "belongs to another user"));
+        }
+        if metadata.mode() & 0o022 != 0 {
+            return Err(cache_refusal(
+                cache,
+                &format!(
+                    "can be written by other users (mode {:o})",
+                    metadata.mode() & 0o777
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Reads every material of `document`, and writes the images they use to
@@ -152,7 +250,7 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
 
     let mut paths: HashMap<usize, PathBuf> = HashMap::new();
     if !reader.used.is_empty() {
-        fs::create_dir_all(cache).map_err(|error| cache_error(cache, error))?;
+        prepare_cache(cache)?;
     }
     for &image in &reader.used {
         if let Some(Image::Readable(readable)) = &reader.images[image] {
@@ -1386,12 +1484,161 @@ mod tests {
         );
     }
 
+    /// The cache directory `cache_dir_from` picks from these variables.
+    fn cache_dir(vars: &[(&str, &str)]) -> PathBuf {
+        cache_dir_from(|name| {
+            vars.iter()
+                .find(|(set, _)| *set == name)
+                .map(|(_, value)| value.into())
+        })
+    }
+
     #[test]
-    fn the_cache_is_the_environment_s_or_the_temp_directory() {
-        let dir = texture_cache_dir();
-        match std::env::var_os("CELESTA_VRM_TEXTURE_CACHE") {
-            Some(set) if !set.is_empty() => assert_eq!(dir, Path::new(&set)),
-            _ => assert_eq!(dir, std::env::temp_dir().join("celesta-plugin-vrm")),
+    fn the_cache_is_per_user() {
+        let home = if cfg!(windows) {
+            "C:\\Users\\u"
+        } else {
+            "/home/u"
+        };
+        let set = if cfg!(windows) {
+            "D:\\cache"
+        } else {
+            "/srv/cache"
+        };
+        assert_eq!(
+            cache_dir(&[("CELESTA_VRM_TEXTURE_CACHE", set), ("HOME", home)]),
+            Path::new(set)
+        );
+        let expected = if cfg!(windows) {
+            PathBuf::from("C:\\Users\\u\\AppData\\Local\\celesta-plugin-vrm")
+        } else if cfg!(target_os = "macos") {
+            PathBuf::from("/home/u/Library/Caches/celesta-plugin-vrm")
+        } else {
+            PathBuf::from("/home/u/.cache/celesta-plugin-vrm")
+        };
+        let vars = [
+            ("CELESTA_VRM_TEXTURE_CACHE", ""),
+            ("HOME", home),
+            ("LOCALAPPDATA", "C:\\Users\\u\\AppData\\Local"),
+            // Relative, so ignored.
+            ("XDG_CACHE_HOME", "cache"),
+        ];
+        assert_eq!(cache_dir(&vars), expected);
+        if cfg!(all(unix, not(target_os = "macos"))) {
+            assert_eq!(
+                cache_dir(&[("XDG_CACHE_HOME", "/xdg"), ("HOME", home)]),
+                Path::new("/xdg/celesta-plugin-vrm")
+            );
         }
+        // Nowhere of the user's own: a directory in the temporary one
+        // named for the user, which the checks below keep private.
+        let fallback = cache_dir(&[("HOME", "relative")]);
+        assert_eq!(fallback.parent(), Some(std::env::temp_dir().as_path()));
+        assert!(
+            fallback
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("celesta-plugin-vrm"),
+            "{fallback:?}"
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            fallback.file_name().unwrap().to_str().unwrap(),
+            format!("celesta-plugin-vrm-{}", user())
+        );
+    }
+
+    #[cfg(unix)]
+    fn cache_refusal(cache: &Path) -> String {
+        let document = document(&SyntheticVrm::avatar(), |_| {});
+        match materials(&document, cache) {
+            Ok(_) => panic!("the cache was used"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_cache_is_made_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = TempDir::new().unwrap();
+        let cache = root.path().join("made").join("here");
+        let document = document(&SyntheticVrm::avatar(), |_| {});
+        materials(&document, &cache).unwrap();
+        let mode = std::fs::metadata(&cache).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{mode:o}");
+        assert_eq!(files(&cache), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cache_others_can_write_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = TempDir::new().unwrap();
+        for mode in [0o777, 0o720, 0o702] {
+            let cache = root.path().join(format!("{mode:o}"));
+            std::fs::create_dir(&cache).unwrap();
+            std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(mode)).unwrap();
+            let message = cache_refusal(&cache);
+            assert!(
+                message.contains("can be written by other users"),
+                "{mode:o}: {message}"
+            );
+            assert_eq!(files(&cache), 0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cache_of_another_user_is_refused() {
+        let cache = TempDir::new().unwrap();
+        let message = match check_cache(cache.path(), user().wrapping_add(1)) {
+            Ok(()) => panic!("the cache was accepted"),
+            Err(error) => error.to_string(),
+        };
+        assert!(message.contains("belongs to another user"), "{message}");
+        check_cache(cache.path(), user()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_cache_is_refused() {
+        let root = TempDir::new().unwrap();
+        let real = root.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let message = cache_refusal(&link);
+        assert!(message.contains("is a symbolic link"), "{message}");
+        assert_eq!(files(&real), 0);
+
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        let message = cache_refusal(&file);
+        assert!(message.contains("is not a directory"), "{message}");
+    }
+
+    /// A link planted under a cached name is replaced, not followed, even
+    /// when it leads to the right bytes.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_in_the_cache_is_replaced() {
+        let vrm = SyntheticVrm::avatar();
+        let root = TempDir::new().unwrap();
+        let elsewhere = root.path().join("elsewhere.png");
+        std::fs::write(&elsewhere, &vrm.images[0].1).unwrap();
+        let cache = root.path().join("cache");
+        std::fs::create_dir(&cache).unwrap();
+        let name = cache.join(format!("{}.png", sha256(&vrm.images[0].1)));
+        std::os::unix::fs::symlink(&elsewhere, &name).unwrap();
+        let document = document(&vrm, |_| {});
+        let materials = materials(&document, &cache).unwrap();
+        assert_eq!(path(&materials, 0), name);
+        let metadata = std::fs::symlink_metadata(&name).unwrap();
+        assert!(metadata.is_file(), "{metadata:?}");
+        assert_eq!(std::fs::read(&name).unwrap(), vrm.images[0].1);
+        assert_eq!(std::fs::read(&elsewhere).unwrap(), vrm.images[0].1);
     }
 }

@@ -45,6 +45,10 @@ thiserror = "2.0.21"
 # Early (0.1.x), so pinned exactly.
 vrm-spec = "=0.1.1"
 
+[target.'cfg(unix)'.dependencies]
+# geteuid, to check the texture cache is the user's own.
+libc = "0.2.191"
+
 [dev-dependencies]
 celesta-composition = { path = "../../crates/composition" }
 celesta-gpu-renderer = { path = "../../crates/gpu-renderer" }
