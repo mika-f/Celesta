@@ -23,7 +23,7 @@ type Compact = string | { icon: string; hidden: unknown } | { type: string; chil
 function paragraph(markdown: string): Compact[] {
   const tree = processor.runSync(processor.parse(markdown));
   const compact = (node: PhrasingContent): Compact => {
-    const data: HastData | undefined = node.data;
+    const data = node.data as HastData | undefined;
     if (data?.hName === 'span') {
       const className = data.hProperties?.className;
       assert.ok(Array.isArray(className), 'an icon has a class list');
