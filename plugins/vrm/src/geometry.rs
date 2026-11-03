@@ -102,9 +102,27 @@ pub(crate) fn geometry_bytes(geometry: &Geometry) -> u64 {
     total
 }
 
+/// Whether `primitive` draws triangles: it is a list, or a strip or fan of
+/// at least 3 vertices (indices, else positions). Points and lines do not.
+/// This needs no accessor read and does not depend on the skin, so a model
+/// decides it once per mesh.
+pub(crate) fn draws_triangles(primitive: &gltf::Primitive) -> bool {
+    let count = || {
+        primitive
+            .indices()
+            .or_else(|| primitive.get(&Semantic::Positions))
+            .map(|accessor| accessor.count())
+    };
+    match primitive.mode() {
+        Mode::Triangles => true,
+        Mode::TriangleStrip | Mode::TriangleFan => count().is_none_or(|count| count >= 3),
+        _ => false,
+    }
+}
+
 /// `primitive` of `mesh` as a triangle list, or `None` when it draws no
-/// triangles: points, lines, or a strip or fan of fewer than 3 vertices
-/// (skipped, like points and lines). `skin`, the skin of the node drawing
+/// triangles ([`draws_triangles`]): points, lines, or a strip or fan of
+/// fewer than 3 vertices (skipped, like points and lines). `skin`, the skin of the node drawing
 /// the mesh, makes the geometry skinned when the primitive has `JOINTS_0`
 /// and `WEIGHTS_0`; `needs_tangents` (the material has a `normalTexture`)
 /// adds tangents. The geometry takes at most `budget` bytes
@@ -119,10 +137,7 @@ pub(crate) fn primitive_geometry<'d>(
     budget: u64,
 ) -> Result<Option<Geometry>, LoadError> {
     let mode = primitive.mode();
-    if !matches!(
-        mode,
-        Mode::Triangles | Mode::TriangleStrip | Mode::TriangleFan
-    ) {
+    if !draws_triangles(&primitive) {
         return Ok(None);
     }
     let streams = Streams {
@@ -144,10 +159,29 @@ pub(crate) fn primitive_geometry<'d>(
     let vertices = position.count();
     let positions = streams.floats3(&position, "POSITION", vertices)?;
 
-    // Triangles, three indices each, over the file's vertices.
-    let triangles = match primitive.indices() {
-        Some(indices) => {
-            let drawn = streams.indices(&indices)?;
+    // Triangles, three indices each, over the file's vertices. The geometry
+    // keeps one index per triangle corner, so those are checked against the
+    // budget before the list (and the scratch made from it, a few times its
+    // size) is built.
+    let drawn = match primitive.indices() {
+        Some(indices) => Some(streams.indices(&indices)?),
+        None => None,
+    };
+    let count = drawn.as_ref().map_or(vertices, |drawn| drawn.len()) as u64;
+    let corners = if matches!(mode, Mode::Triangles) {
+        count
+    } else {
+        3 * count.saturating_sub(2)
+    };
+    let index_bytes = corners.saturating_mul(size_of::<u32>() as u64);
+    if index_bytes > budget {
+        return Err(at.invalid(format_args!(
+            "makes {index_bytes} bytes of indices, but the model has {budget} left of its {} MiB",
+            GEOMETRY_BUDGET >> 20
+        )));
+    }
+    let triangles = match drawn {
+        Some(drawn) => {
             check_drawn(&drawn, vertices, at)?;
             triangle_list(mode, &drawn, at)?
         }
@@ -158,8 +192,8 @@ pub(crate) fn primitive_geometry<'d>(
         }
     };
     if triangles.is_empty() {
-        // A strip or fan of fewer than 3 vertices: nothing to draw. (A list
-        // cannot get here: its indices are at least one, in threes.)
+        // Cannot happen: `draws_triangles` skipped strips and fans of fewer
+        // than 3 vertices, and a list has at least one index, in threes.
         return Ok(None);
     }
 
@@ -1255,6 +1289,55 @@ mod tests {
             Some(u64::MAX)
         );
         assert_eq!(past_budget(0, usize::MAX, GEOMETRY_BUDGET), None);
+    }
+
+    #[test]
+    fn a_strip_past_the_budget_is_refused_before_its_list_is_built() {
+        // The hair as a strip of 6 indices: 4 triangles, 12 corners, 48
+        // bytes of indices, checked before the list is made.
+        let document = parse(
+            &SyntheticVrm::avatar()
+                .glb_with(|root| root["meshes"][0]["primitives"][1]["mode"] = json!(5)),
+        );
+        let read = |budget| {
+            let accessors = Accessors::new(&document);
+            let mesh = document.gltf.meshes().next().unwrap();
+            let hair = mesh.primitives().nth(1).unwrap();
+            let skin = document.gltf.skins().next();
+            match primitive_geometry(&accessors, mesh.clone(), hair, skin, false, budget) {
+                Ok(_) => panic!("the strip was made"),
+                Err(error) => error.to_string(),
+            }
+        };
+        let message = read(47);
+        assert!(
+            message.contains("mesh \"Body\" primitive 1 makes 48 bytes of indices")
+                && message.contains("47 left"),
+            "{message}"
+        );
+        // With room for its indices, the rest of it (here its morph targets,
+        // checked next) is what is refused.
+        let message = read(48);
+        assert!(
+            !message.contains("indices") && message.contains("morph targets of"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn whether_a_primitive_draws_needs_no_read() {
+        let document = parse(&SyntheticVrm::avatar().glb_with(|root| {
+            let primitives = root["meshes"][0]["primitives"].as_array_mut().unwrap();
+            let hair = primitives[1].clone();
+            for mode in [0, 1, 4, 5, 6] {
+                let mut copy = hair.clone();
+                copy["mode"] = json!(mode);
+                primitives.push(copy);
+            }
+        }));
+        let mesh = document.gltf.meshes().next().unwrap();
+        let drawn: Vec<bool> = mesh.primitives().map(|p| draws_triangles(&p)).collect();
+        assert_eq!(drawn, [true, true, false, false, true, true, true]);
     }
 
     /// Body primitive 0 with `extra` empty targets (`{}`) after its three,
