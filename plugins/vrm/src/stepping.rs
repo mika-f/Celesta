@@ -722,6 +722,37 @@ mod tests {
     }
 
     #[test]
+    fn a_gaze_does_not_reach_the_steps() {
+        // The hair's tails are kept in the left eye's space, so a gaze the
+        // steps saw would move them.
+        let open_eyed = || {
+            let mut spring_bone = hair();
+            spring_bone["springs"][0]["center"] = json!(node::LEFT_EYE);
+            let mut vrm = SyntheticVrm::avatar();
+            vrm.extensions.insert(VRMC_SPRING_BONE.into(), spring_bone);
+            open_vrm(&vrm)
+        };
+        let mut gazing = a();
+        gazing.look_at = Some(crate::provider::LookAtData::Angles {
+            yaw: 30.0,
+            pitch: 20.0,
+        });
+        let (mut plain, _plain) = open_eyed();
+        let (mut looking, _looking) = open_eyed();
+        // The frame's eye does turn.
+        let eye = |model: &mut VrmModel, data: &PerformanceData| {
+            render(model, 2.0, data).1[node::LEFT_EYE]
+        };
+        assert_ne!(eye(&mut plain, &a()), eye(&mut looking, &gazing));
+        let (fresh_plain, _a) = open_eyed();
+        let (fresh_looking, _b) = open_eyed();
+        let state = |model: &VrmModel, data: &PerformanceData| {
+            model.stepper().state_at(model, 2.0, data).unwrap()
+        };
+        assert_eq!(state(&fresh_plain, &a()), state(&fresh_looking, &gazing));
+    }
+
+    #[test]
     fn between_steps_the_last_step_holds() {
         let (mut model, _files) = open();
         let still = PerformanceData::default();
