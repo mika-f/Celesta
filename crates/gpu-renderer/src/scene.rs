@@ -332,7 +332,8 @@ enum Cull {
 }
 
 /// Which faces a draw keeps, and which way its front faces turn on screen:
-/// clockwise when its world matrix mirrors it.
+/// clockwise when its world matrix or the camera's view mirrors (its upper
+/// 3×3's determinant is negative), but not both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Facing {
     cull: Cull,
@@ -1985,11 +1986,13 @@ fn cofactor(matrix: &[f32; 16]) -> ([[f64; 3]; 3], f64) {
     (cofactor, determinant)
 }
 
-/// −1 when `world` mirrors (its upper 3×3's determinant is negative), else
-/// 1, a determinant of 0 included: the sign `normal_matrix` takes, and that
-/// MToon's bitangents take (Unity's `unity_WorldTransformParams.w`).
-fn handedness(world: &[f32; 16]) -> f64 {
-    if cofactor(world).1 < 0.0 { -1.0 } else { 1.0 }
+/// −1 when `matrix` mirrors (its upper 3×3's determinant is negative), else
+/// 1, a determinant of 0 included. Of a world matrix, the sign
+/// `normal_matrix` takes, and that MToon's bitangents take (Unity's
+/// `unity_WorldTransformParams.w`); of a world matrix and the view, which
+/// way a draw's front faces turn on screen.
+fn handedness(matrix: &[f32; 16]) -> f64 {
+    if cofactor(matrix).1 < 0.0 { -1.0 } else { 1.0 }
 }
 
 /// What takes `world`'s normals to world space: the cofactor matrix of its
@@ -2621,11 +2624,15 @@ impl GpuRenderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, view_group, &[]);
+            // A mirroring view turns every front face clockwise on screen,
+            // as a mirroring world turns its draw's; both together turn
+            // them back.
+            let view_mirrors = handedness(&frame.camera.view) < 0.0;
             for (slot, state) in queue.iter().enumerate() {
                 let info = &model.draws[state.index];
                 let geometry = &scene.geometries[info.geometry];
                 let material = &model.materials[info.material];
-                let clockwise = determinant(&state.world) < 0.0;
+                let clockwise = (handedness(&state.world) < 0.0) != view_mirrors;
                 let pipeline = |key| {
                     pipelines
                         .draw

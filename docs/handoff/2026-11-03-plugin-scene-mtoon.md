@@ -224,8 +224,8 @@ draw: the plugin that sent it is broken all the same.
   stage's; the others the fragment stage's.
 - **Pipelines** are made when a model is opened, for what its materials
   use: keyed by shading (unlit, MToon), pass (surface, outline), culling
-  and winding (both windings, since a mirroring `world` turns its front
-  faces clockwise), and alpha (opaque, mask, blend writing depth, blend).
+  and winding (both windings, since a mirroring `world` or view turns its
+  front faces clockwise), and alpha (opaque, mask, blend writing depth, blend).
 - **The normal matrix** is the cofactor matrix of `world`'s upper 3×3
   times the sign of its determinant (+1 for 0), worked out in `f64` and
   divided by its largest entry: the inverse transpose up to a positive
@@ -387,6 +387,8 @@ reading its source, to check once UniVRM reference renders exist:
     outward normal; following the UV animation and the normal texture;
     `none` drawing nothing; the material's blend; normals facing the
     camera staying put.
+  - `mirrored_views_keep_front_faces`: a view mirrored in x shows the
+    square's front face and culls its back, also with a mirrored world.
   - `override_`: each MToon color replaced; MToon colors ignored on unlit
     draws; a color that is not finite refused.
   - `scene_resources_`, `scene_frame_buffers_`: canvases and buffers

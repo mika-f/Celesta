@@ -599,6 +599,38 @@ fn back_faces_are_culled_unless_double_sided() {
 }
 
 #[test]
+fn mirrored_views_keep_front_faces() {
+    // Seen through a view mirrored in x, the square turns clockwise on
+    // screen and still faces front; reversed, it faces back. Mirrored by
+    // its world matrix as well, the two mirrors cancel.
+    let reversed = vec![0, 2, 1, 0, 3, 2];
+    let cases = [
+        (false, false, WHITE),
+        (true, false, CLEAR),
+        (false, true, WHITE),
+        (true, true, CLEAR),
+    ];
+    for (reverse, mirrored_world, expected) in cases {
+        let mut scenes = one_square();
+        scenes.frame.camera.view[0] = -1.0;
+        if reverse {
+            scenes.model.geometries[0].indices = reversed.clone();
+        }
+        if mirrored_world {
+            scenes.frame.draws[0].world = scaling(-1.0, 1.0, 1.0);
+        }
+        let Some(frame) = render_scenes(scenes) else {
+            return;
+        };
+        let actual = pixel(&frame, 32, 32);
+        assert!(
+            near(actual, expected),
+            "reversed {reverse}, mirrored world {mirrored_world}: {actual:?}"
+        );
+    }
+}
+
+#[test]
 fn hidden_draws_are_not_drawn() {
     let mut scenes = one_square();
     scenes.frame.draws[0].visible = false;

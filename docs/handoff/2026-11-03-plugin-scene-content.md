@@ -130,8 +130,9 @@ the identity as `world` for a glTF skinned mesh.
   draws test it but do not write it, unless an MToon material sets
   `transparentWithZWrite`. Depth is tested with `LessEqual`, so of two
   exactly coplanar draws the later shows. Back faces are culled unless the
-  material is double-sided, and a `world` that mirrors flips which winding
-  is front.
+  material is double-sided, and a `world` or a camera `view` that mirrors
+  (its upper 3×3's determinant negative) flips which winding is front; both
+  mirroring flip it back.
 - **Alpha modes.** Opaque ignores alpha. Mask turns alpha into sample
   coverage around the cutoff, sharpened to about a pixel's width, each
   covered sample opaque. Blend blends straight color over the canvas as
