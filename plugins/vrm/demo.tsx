@@ -23,7 +23,7 @@ function Avatar() {
       lookAt="camera"
       expressions={{ relaxed: 0.3 }}
       mouth={mouth}
-      // Without ./assets/test.vrma the export fails: the layer cannot open the clip.
+      // Needs ./assets/test.vrma (see README.md); the demo does not run without it.
       motions={[{ src: './assets/test.vrma', loop: true }]}
       // A nod from frame 60 to 90, on top of the animation.
       tracks={{
