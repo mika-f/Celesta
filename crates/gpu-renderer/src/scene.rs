@@ -529,6 +529,16 @@ impl PipelineKey {
         }
     }
 
+    /// What the backend's shader compiler is given for it.
+    fn stages(self) -> Stages {
+        let (vertex, fragment) = self.entry_points();
+        Stages {
+            shader: self.shader,
+            vertex,
+            fragment,
+        }
+    }
+
     /// Its depth bias.
     fn depth_bias(self) -> wgpu::DepthBiasState {
         match self.pass {
@@ -543,6 +553,17 @@ impl PipelineKey {
             },
         }
     }
+}
+
+/// What a backend compiles for a pipeline: a shader's module and two of
+/// its entry points. Culling, winding, depth bias, depth writes, and
+/// blending are the pipeline's state around them, so pipelines that differ
+/// only in those compile the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct Stages {
+    shader: ShaderId,
+    vertex: &'static str,
+    fragment: &'static str,
 }
 
 /// How a draw's alpha is drawn, as its material's alpha mode says.
@@ -722,6 +743,12 @@ pub(crate) const MAX_CACHED_SHADERS: usize = 8 * MAX_SCENE_SHADERS;
 /// are: the bound is on what the cache keeps for models that are gone.
 pub(crate) const MAX_CACHED_PIPELINES: usize = 256;
 
+/// The most draw pipelines one model's materials may need. Surface passes
+/// alone are at most 512 (32 shaders, 4 alpha modes, 2 cullings, and 2
+/// windings); the rest is room for outlines, which each depth bias makes
+/// more of.
+pub(crate) const MAX_MODEL_PIPELINES: usize = 1024;
+
 /// What a model's materials draw with, which `ScenePipelines::prepare`
 /// gives the loaded model to hold.
 pub(crate) struct Prepared {
@@ -773,10 +800,12 @@ pub(crate) struct ScenePipelines {
     /// dropped.
     draw: HashMap<PipelineKey, Arc<wgpu::RenderPipeline>>,
     /// Why the device refused the pipelines it refused (a backend's
-    /// compiler refusing what naga accepted), so that a model sent again
-    /// is refused without making them again. Running out of memory is not
-    /// kept: the device may not the next time.
-    refused: HashMap<PipelineKey, String>,
+    /// compiler refusing what naga accepted), by what it compiled, so that
+    /// a model sent again, or with another culling or depth bias, is
+    /// refused without making them again. At most one for each pair of
+    /// entry points of a cached shader; dropped with the shader. Running
+    /// out of memory is not kept: the device may not the next time.
+    refused: HashMap<Stages, String>,
     convert_layout: wgpu::BindGroupLayout,
     convert: wgpu::RenderPipeline,
     /// Zeros, bound in place of a stream a geometry lacks.
@@ -1131,11 +1160,13 @@ impl ScenePipelines {
     /// either winding, unless they are made already; and gives the shader
     /// each material is drawn with and the pipelines they draw with. A
     /// custom material's parameters must be as long as its shader's
-    /// `Params`, and its shader must define the outline it asks for. Each
-    /// pipeline is made in its own error scope: when one fails, the message
-    /// names the material and none of the material's pipelines is kept, and
-    /// one the device refused is refused without being made again the next
-    /// time a model asks for it.
+    /// `Params`, and its shader must define the outline it asks for. A
+    /// model whose materials need more than `MAX_MODEL_PIPELINES` is
+    /// refused before any is made. Each pipeline is made in its own error
+    /// scope: when one fails, the message names the material and none of
+    /// the material's pipelines is kept, and one the device refused is
+    /// refused without being made again the next time a model asks for it
+    /// or for another of the same `Stages`.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -1157,13 +1188,10 @@ impl ScenePipelines {
                 }
             }
         }
-        // Before this model makes any: the pipelines of its earlier
-        // materials are not held until it is loaded.
-        if self.draw.len() >= MAX_CACHED_PIPELINES {
-            self.drop_unused_pipelines();
-        }
-        let mut shaders = Vec::with_capacity(model.materials.len());
-        let mut pipelines = Vec::new();
+        // Each material's shader and the pipelines it draws with, checked
+        // before any is made.
+        let mut drawn = Vec::with_capacity(model.materials.len());
+        let mut needed = HashSet::new();
         for (index, material) in model.materials.iter().enumerate() {
             let shader = match &material.kind {
                 MaterialKind::Unlit(_) => Arc::clone(&self.unlit),
@@ -1186,9 +1214,6 @@ impl ScenePipelines {
                     shader
                 }
             };
-            shaders.push(Arc::clone(&shader));
-            // `material_group` binds through it, made pipelines or not.
-            let layout = self.texture_layout(device, shader.textures).1.clone();
             let keys: Vec<PipelineKey> = [false, true]
                 .into_iter()
                 .flat_map(|clockwise| {
@@ -1196,12 +1221,37 @@ impl ScenePipelines {
                         .chain(PipelineKey::outline(material, &shader, clockwise))
                 })
                 .collect();
+            needed.extend(keys.iter().copied());
+            drawn.push((shader, keys));
+        }
+        // A model cannot make pipelines without end through distinct depth
+        // biases, say: each is a backend compile, and the loaded model
+        // holds them all.
+        if needed.len() > MAX_MODEL_PIPELINES {
+            return Err(format!(
+                "the model's materials need {} pipelines, more than {MAX_MODEL_PIPELINES}",
+                needed.len()
+            ));
+        }
+        // Before this model makes any: the pipelines of its earlier
+        // materials are not held until it is loaded.
+        if self.draw.len() >= MAX_CACHED_PIPELINES {
+            self.drop_unused_pipelines();
+        }
+        let mut shaders = Vec::with_capacity(drawn.len());
+        let mut pipelines = Vec::new();
+        for (index, (shader, keys)) in drawn.into_iter().enumerate() {
+            // `material_group` binds through it, made pipelines or not.
+            let layout = self.texture_layout(device, shader.textures).1.clone();
             let missing: Vec<PipelineKey> = keys
                 .iter()
                 .copied()
                 .filter(|key| !self.draw.contains_key(key))
                 .collect();
-            if let Some(message) = missing.iter().find_map(|key| self.refused.get(key)) {
+            if let Some(message) = missing
+                .iter()
+                .find_map(|key| self.refused.get(&key.stages()))
+            {
                 return Err(format!("material {index}'s pipelines: {message}"));
             }
             let mut made = Vec::with_capacity(missing.len());
@@ -1211,7 +1261,7 @@ impl ScenePipelines {
                     Err(error) => {
                         let message = error.to_string();
                         if !matches!(error, wgpu::Error::OutOfMemory { .. }) {
-                            self.refused.insert(key, message.clone());
+                            self.refused.insert(key.stages(), message.clone());
                         }
                         return Err(format!("material {index}'s pipelines: {message}"));
                     }
@@ -1219,6 +1269,7 @@ impl ScenePipelines {
             }
             self.draw.extend(made);
             pipelines.extend(keys.iter().map(|key| Arc::clone(&self.draw[key])));
+            shaders.push(shader);
         }
         Ok(Prepared { shaders, pipelines })
     }

@@ -3,7 +3,7 @@
 //! process.
 
 use super::*;
-use crate::scene::{MAX_CACHED_PIPELINES, MAX_CACHED_SHADERS, ScenePipelines};
+use crate::scene::{MAX_CACHED_PIPELINES, MAX_CACHED_SHADERS, MAX_MODEL_PIPELINES, ScenePipelines};
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, CullFace, CustomMaterial,
     DepthBias, DirectionalLight, DrawInfo, DrawState, EmptyTexel, Filter, Geometry, Lights,
@@ -2170,13 +2170,14 @@ fn material_pipelines_the_device_refuses_are_not_made_again() {
     // The first pipeline was refused; the model sent again tries none.
     assert_eq!(pipelines(&mut renderer).pipelines_made, 1);
 
-    // Running out of memory is not kept. Double-sided, the same shader
-    // asks for other pipelines, which the refusal does not stand for.
+    // Running out of memory is not kept. Masked, the same shader asks for
+    // pipelines of another fragment entry point, which the refusal does
+    // not stand for.
     pipelines(&mut renderer).refuse_pipeline = Some(wgpu::Error::OutOfMemory {
         source: "the test's device".into(),
     });
     let mut material = custom(0, bytes(&FLAT_GREEN));
-    material.double_sided = true;
+    material.alpha_mode = AlphaMode::Mask { cutoff: 0.5 };
     renderer.renderer = renderer
         .renderer
         .with_content_provider(custom_square(vec![shader(FLAT, &[])], material));
@@ -2245,6 +2246,97 @@ fn material_shader_cache_drops_unused_shaders_past_its_cap() {
     drop(held);
 }
 
+/// `ringed`'s model, its outline culling `cull` and pushed back by
+/// `constant`: whatever the two, one shader and the same surface
+/// pipelines, and two outline pipelines for each pair.
+fn outlined(constant: i32, cull: CullFace) -> SceneModel {
+    let mut scenes = ringed(WORLD);
+    custom_of(&mut scenes.model.materials[0]).outline = Some(OutlinePass {
+        cull,
+        depth_bias: DepthBias {
+            constant,
+            slope_scale: 1.0,
+        },
+    });
+    scenes.model
+}
+
+/// An error a backend's compiler might give.
+fn refusal() -> wgpu::Error {
+    wgpu::Error::Internal {
+        source: "the test's device".into(),
+        description: "the test refuses it".to_owned(),
+    }
+}
+
+#[test]
+fn material_pipeline_refusals_stand_for_any_culling_and_bias() {
+    let Some(renderer) = renderer(transparent()) else {
+        return;
+    };
+    let device = &renderer.device;
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    // Bias 0's pipelines are made. Bias 1's first outline pipeline, the
+    // first it lacks, is refused.
+    pipelines
+        .prepare(device, &outlined(0, CullFace::Front))
+        .unwrap();
+    pipelines.refuse_pipeline = Some(refusal());
+    assert!(
+        pipelines
+            .prepare(device, &outlined(1, CullFace::Front))
+            .is_err()
+    );
+    let (made, kept) = (pipelines.pipelines_made, pipelines.kept());
+    assert_eq!(kept, (1, 4, 1));
+    // Every other bias and culling compiles the same outline stages: each
+    // is refused without being made, and nothing more is kept.
+    let others = (2..10)
+        .map(|n| (n, CullFace::Front))
+        .chain([(1, CullFace::None), (1, CullFace::Back)]);
+    for (constant, cull) in others {
+        let error = pipelines
+            .prepare(device, &outlined(constant, cull))
+            .err()
+            .unwrap_or_else(|| panic!("bias {constant}, {cull:?}: made"));
+        assert!(error.contains("material 0's pipelines"), "{error}");
+        assert!(error.contains("the test refuses it"), "{error}");
+    }
+    assert_eq!((pipelines.pipelines_made, pipelines.kept()), (made, kept));
+}
+
+#[test]
+fn material_models_needing_too_many_pipelines_are_refused() {
+    let Some(renderer) = renderer(transparent()) else {
+        return;
+    };
+    let device = &renderer.device;
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    // `RINGED` once for each of `biases` depth biases: the two surface
+    // pipelines, and two outline pipelines for each bias.
+    let model = |biases: i32| {
+        let mut model = outlined(0, CullFace::Front);
+        model.materials = (0..biases)
+            .map(|constant| outlined(constant, CullFace::Front).materials[0].clone())
+            .collect();
+        model
+    };
+    // 512 biases need 1026 pipelines: refused before any is made.
+    let error = pipelines.prepare(device, &model(512)).err().expect("made");
+    assert!(
+        error.contains(&format!(
+            "the model's materials need 1026 pipelines, more than {MAX_MODEL_PIPELINES}"
+        )),
+        "{error}"
+    );
+    assert_eq!(pipelines.pipelines_made, 0);
+    // 511 need 1024, which a model may: its first is made, here refused.
+    pipelines.refuse_pipeline = Some(refusal());
+    let error = pipelines.prepare(device, &model(511)).err().expect("made");
+    assert!(error.contains("the test refuses it"), "{error}");
+    assert_eq!(pipelines.pipelines_made, 1);
+}
+
 #[test]
 fn material_pipeline_cache_drops_unused_pipelines_past_its_cap() {
     let Some(renderer) = renderer(transparent()) else {
@@ -2252,19 +2344,7 @@ fn material_pipeline_cache_drops_unused_pipelines_past_its_cap() {
     };
     let device = &renderer.device;
     let mut pipelines = ScenePipelines::new(device, &renderer.queue);
-    // `RINGED` with its outline pushed back by `n`: one shader, the same
-    // surface pipelines, and two outline pipelines of its own each.
-    let model = |n: i32| {
-        let mut scenes = ringed(WORLD);
-        custom_of(&mut scenes.model.materials[0]).outline = Some(OutlinePass {
-            depth_bias: DepthBias {
-                constant: n,
-                slope_scale: 1.0,
-            },
-            ..OutlinePass::default()
-        });
-        scenes.model
-    };
+    let model = |n: i32| outlined(n, CullFace::Front);
     // Model 0 is held, as a loaded model holds its pipelines; every other
     // model is dropped once its pipelines are made. The shader stays held,
     // so the shader cache never drops them.
