@@ -485,9 +485,9 @@ impl VrmModel {
             .collect()
     }
 
-    /// Material `material`'s MToon parameters, if it is MToon.
-    #[cfg(test)]
-    pub(crate) fn mtoon(&self, material: usize) -> Option<&Mtoon> {
+    /// Material `material`'s MToon parameters, as read from the file, if it
+    /// is MToon.
+    pub fn mtoon(&self, material: usize) -> Option<&Mtoon> {
         self.mtoon.get(material).and_then(Option::as_ref)
     }
 
