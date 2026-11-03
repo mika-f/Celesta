@@ -169,7 +169,11 @@ mod tests {
     use serde_json::{Value, json};
 
     fn tree(edit: impl FnOnce(&mut Value)) -> Result<NodeTree, LoadError> {
-        let document = Document::parse(&SyntheticVrm::avatar().glb_with(edit))?;
+        // The file must open: only `NodeTree::new` may refuse it here.
+        let document = match Document::parse(&SyntheticVrm::avatar().glb_with(edit)) {
+            Ok(document) => document,
+            Err(error) => panic!("the file did not parse: {error}"),
+        };
         NodeTree::new(&document)
     }
 

@@ -89,7 +89,7 @@ fn read_primitive(
     };
     if position.view().is_none() {
         // Its count is then bounded by nothing in the file.
-        return Err(at.invalid(format_args!("has a POSITION with no bufferView")));
+        return Err(at.invalid(format_args!("has POSITION with no bufferView")));
     }
     let vertices = position.count();
     let positions: Vec<[f32; 3]> = streams.floats3(&position, "POSITION", vertices)?;
@@ -239,7 +239,7 @@ impl<'d> Streams<'_, 'd> {
     fn read<T: Item>(&self, accessor: &Accessor<'d>, what: &str) -> Result<Vec<T>, LoadError> {
         Iter::<T>::new(accessor.clone(), |buffer| self.buffer(buffer))
             .map(Iterator::collect)
-            .ok_or_else(|| self.at.invalid(format_args!("has a {what} it cannot read")))
+            .ok_or_else(|| self.at.invalid(format_args!("has {what} it cannot read")))
     }
 
     /// `VEC3` floats: positions, normals, and their morph deltas.
@@ -390,7 +390,7 @@ impl<'d> Streams<'_, 'd> {
             return Ok(());
         }
         Err(self.at.invalid(format_args!(
-            "has a {what} of {:?} {:?}, not {dimensions:?} of {types:?}",
+            "has {what} of {:?} {:?}, not {dimensions:?} of {types:?}",
             accessor.dimensions(),
             accessor.data_type()
         )))
@@ -408,9 +408,7 @@ impl<'d> Streams<'_, 'd> {
     ) -> Result<(), LoadError> {
         let elements = accessor.count();
         if elements == 0 {
-            return Err(self
-                .at
-                .invalid(format_args!("has a {what} with no elements")));
+            return Err(self.at.invalid(format_args!("has {what} with no elements")));
         }
         if let Some(count) = count
             && elements != count
@@ -424,7 +422,7 @@ impl<'d> Streams<'_, 'd> {
             Some(view) => self.check_view(&view, accessor.offset(), size, elements, what)?,
             None if accessor.sparse().is_none() => {
                 return Err(self.at.invalid(format_args!(
-                    "has a {what} with neither a bufferView nor sparse values"
+                    "has {what} with neither a bufferView nor sparse values"
                 )));
             }
             None => {}
@@ -435,7 +433,7 @@ impl<'d> Streams<'_, 'd> {
         let values = sparse.count();
         if values == 0 || values > elements {
             return Err(self.at.invalid(format_args!(
-                "has a {what} with {values} sparse values for {elements} elements"
+                "has {what} with {values} sparse values for {elements} elements"
             )));
         }
         let indices = sparse.indices();
@@ -470,7 +468,7 @@ impl<'d> Streams<'_, 'd> {
                 }
                 _ => {
                     return Err(self.at.invalid(format_args!(
-                        "has a {what} whose sparse indices are not rising below {elements}"
+                        "has {what} whose sparse indices are not rising below {elements}"
                     )));
                 }
             }
@@ -491,7 +489,7 @@ impl<'d> Streams<'_, 'd> {
         let stride = view.stride().unwrap_or(size);
         if stride < size {
             return Err(self.at.invalid(format_args!(
-                "has a {what} in buffer view {} whose stride, {stride}, is less than its {size}-byte elements",
+                "has {what} in buffer view {} whose stride, {stride}, is less than its {size}-byte elements",
                 view.index()
             )));
         }
@@ -502,7 +500,7 @@ impl<'d> Streams<'_, 'd> {
             .is_none_or(|end| end > buffer)
         {
             return Err(self.at.invalid(format_args!(
-                "has a {what} in buffer view {}, which runs past its buffer's {buffer} bytes",
+                "has {what} in buffer view {}, which runs past its buffer's {buffer} bytes",
                 view.index()
             )));
         }
@@ -512,7 +510,7 @@ impl<'d> Streams<'_, 'd> {
             .and_then(|bytes| bytes.checked_add(offset));
         if end.is_none_or(|end| end > view.length()) {
             return Err(self.at.invalid(format_args!(
-                "has a {what} of {count} elements, which runs past buffer view {}'s {} bytes",
+                "has {what} of {count} elements, which runs past buffer view {}'s {} bytes",
                 view.index(),
                 view.length()
             )));
@@ -720,7 +718,11 @@ mod tests {
         tangents: bool,
         edit: impl FnOnce(&mut Value),
     ) -> Result<Vec<Option<Geometry>>, LoadError> {
-        let document = Document::parse(&vrm.glb_with(edit))?;
+        // The file must open: only `primitive_geometry` may refuse it here.
+        let document = match Document::parse(&vrm.glb_with(edit)) {
+            Ok(document) => document,
+            Err(error) => panic!("the file did not parse: {error}"),
+        };
         let mesh = document.gltf.meshes().nth(mesh).unwrap();
         let skin = (mesh.index() == 0).then(|| document.gltf.skins().next().unwrap());
         mesh.primitives()
@@ -1101,20 +1103,55 @@ mod tests {
 
     #[test]
     fn streams_of_the_wrong_type_are_refused() {
-        for (semantic, field, value) in [
-            ("POSITION", "type", json!("VEC2")),
-            ("JOINTS_0", "componentType", json!(5126)),
-            ("WEIGHTS_0", "componentType", json!(5125)),
-            ("TEXCOORD_0", "type", json!("SCALAR")),
-            ("indices", "type", json!("VEC3")),
-            ("indices", "componentType", json!(5126)),
-            ("target0", "componentType", json!(5123)),
+        for (semantic, field, value, expected) in [
+            (
+                "POSITION",
+                "type",
+                json!("VEC2"),
+                "has POSITION of Vec2 F32, not Vec3",
+            ),
+            (
+                "JOINTS_0",
+                "componentType",
+                json!(5126),
+                "has JOINTS_0 of Vec4 F32, not Vec4",
+            ),
+            (
+                "WEIGHTS_0",
+                "componentType",
+                json!(5125),
+                "has WEIGHTS_0 of Vec4 U32, not Vec4",
+            ),
+            (
+                "TEXCOORD_0",
+                "type",
+                json!("SCALAR"),
+                "has TEXCOORD_0 of Scalar F32, not Vec2",
+            ),
+            (
+                "indices",
+                "type",
+                json!("VEC3"),
+                "has indices of Vec3 U16, not Scalar",
+            ),
+            (
+                "indices",
+                "componentType",
+                json!(5126),
+                "has indices of Scalar F32, not Scalar",
+            ),
+            (
+                "target0",
+                "componentType",
+                json!(5123),
+                "has morph target POSITION of Vec3 U16, not Vec3",
+            ),
         ] {
             let message = refusal(|root| {
                 let accessor = accessor(root, semantic);
                 root["accessors"][accessor][field] = value;
             });
-            assert!(!message.is_empty(), "{semantic}");
+            assert!(message.contains(expected), "{semantic}: {message}");
         }
     }
 
@@ -1129,40 +1166,85 @@ mod tests {
 
     #[test]
     fn accessors_past_their_bytes_are_refused() {
-        for (semantic, field, value) in [
-            ("POSITION", "count", json!(0)),
-            ("POSITION", "count", json!(1u64 << 40)),
-            ("POSITION", "byteOffset", json!(1_000_000)),
-            ("indices", "count", json!(1u64 << 40)),
-            ("indices", "count", json!(0)),
-            ("target0", "count", json!(1u64 << 40)),
+        for (semantic, field, value, expected) in [
+            (
+                "POSITION",
+                "count",
+                json!(0),
+                "has POSITION with no elements",
+            ),
+            (
+                "POSITION",
+                "count",
+                json!(1u64 << 40),
+                "has POSITION of 1099511627776 elements, which runs past buffer view",
+            ),
+            (
+                "POSITION",
+                "byteOffset",
+                json!(1_000_000),
+                "has POSITION of 12 elements, which runs past buffer view",
+            ),
+            (
+                "indices",
+                "count",
+                json!(1u64 << 40),
+                "has indices of 1099511627776 elements, which runs past buffer view",
+            ),
+            ("indices", "count", json!(0), "has indices with no elements"),
+            (
+                "target0",
+                "count",
+                json!(1u64 << 40),
+                "has 1099511627776 morph target POSITION for 12 vertices",
+            ),
         ] {
             let message = refusal(|root| {
                 let accessor = accessor(root, semantic);
                 root["accessors"][accessor][field] = value;
             });
-            assert!(!message.is_empty(), "{semantic} {field}");
+            assert!(message.contains(expected), "{semantic} {field}: {message}");
         }
-        let message = refusal(|root| {
-            let positions = view(root, "POSITION");
-            root["bufferViews"][positions]["byteLength"] = json!(1u64 << 40);
-        });
-        assert!(message.contains("buffer"), "{message}");
-        let message = refusal(|root| {
-            let positions = view(root, "POSITION");
-            root["bufferViews"][positions]["byteOffset"] = json!(u64::MAX - 8);
-        });
-        assert!(!message.is_empty());
+        for (field, value) in [
+            ("byteLength", json!(1u64 << 40)),
+            ("byteOffset", json!(u64::MAX - 8)),
+        ] {
+            let message = refusal(|root| {
+                let positions = view(root, "POSITION");
+                root["bufferViews"][positions][field] = value;
+            });
+            assert!(
+                message.contains("has POSITION in buffer view")
+                    && message.contains("which runs past its buffer's"),
+                "{field}: {message}"
+            );
+        }
     }
 
     #[test]
     fn broken_sparse_accessors_are_refused() {
-        for sparse in [
-            json!({ "count": 0, "indices": { "bufferView": 0, "componentType": 5123 }, "values": { "bufferView": 0 } }),
-            json!({ "count": 13, "indices": { "bufferView": 0, "componentType": 5123 }, "values": { "bufferView": 0 } }),
-            json!({ "count": 1, "indices": { "bufferView": 0, "byteOffset": 1_000_000, "componentType": 5123 }, "values": { "bufferView": 0 } }),
-            json!({ "count": 1, "indices": { "bufferView": 0, "componentType": 5125 }, "values": { "bufferView": 0, "byteOffset": 1_000_000 } }),
-            json!({ "count": 12, "indices": { "bufferView": 0, "componentType": 5125 }, "values": { "bufferView": 0 } }),
+        // View 0 is the POSITION data: 144 bytes of floats.
+        for (sparse, expected) in [
+            (
+                json!({ "count": 0, "indices": { "bufferView": 0, "componentType": 5123 }, "values": { "bufferView": 0 } }),
+                "with 0 sparse values for 12 elements",
+            ),
+            (
+                json!({ "count": 13, "indices": { "bufferView": 0, "componentType": 5123 }, "values": { "bufferView": 0 } }),
+                "with 13 sparse values for 12 elements",
+            ),
+            (
+                json!({ "count": 1, "indices": { "bufferView": 0, "byteOffset": 1_000_000, "componentType": 5123 }, "values": { "bufferView": 0 } }),
+                "has morph target POSITION of 1 elements, which runs past buffer view 0",
+            ),
+            (
+                json!({ "count": 1, "indices": { "bufferView": 0, "componentType": 5125 }, "values": { "bufferView": 0, "byteOffset": 1_000_000 } }),
+                "has morph target POSITION of 1 elements, which runs past buffer view 0",
+            ),
+            (
+                json!({ "count": 12, "indices": { "bufferView": 0, "componentType": 5125 }, "values": { "bufferView": 0 } }),
+                "whose sparse indices are not rising below 12",
+            ),
         ] {
             let message = refusal(|root| {
                 let target = accessor(root, "target0");
@@ -1170,7 +1252,7 @@ mod tests {
                 accessor.remove("bufferView");
                 accessor.insert("sparse".into(), sparse);
             });
-            assert!(!message.is_empty());
+            assert!(message.contains(expected), "{message}");
         }
     }
 
