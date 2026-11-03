@@ -15,6 +15,7 @@ use celesta_plugin::{
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const IDENTITY: [f32; 16] = [
     1.0, 0.0, 0.0, 0.0, //
@@ -1252,6 +1253,61 @@ fn bad_frame_canvas_is_refused() {
         };
         assert!(message.contains("canvas"), "{canvas:?}: {message}");
     }
+}
+
+/// `scenes`, counting the frames it is asked for.
+struct Counting {
+    scenes: Scenes,
+    frames: Arc<AtomicUsize>,
+}
+
+impl ContentProvider for Counting {
+    fn open(
+        &mut self,
+        plugin: &str,
+        assets: &BTreeMap<String, PathBuf>,
+    ) -> Result<Opened, PluginError> {
+        self.scenes.open(plugin, assets)
+    }
+
+    fn frame(
+        &mut self,
+        model: ModelId,
+        time: f64,
+        data: &serde_json::Value,
+    ) -> Result<ContentFrame, PluginError> {
+        self.frames.fetch_add(1, Ordering::Relaxed);
+        self.scenes.frame(model, time, data)
+    }
+}
+
+#[test]
+fn a_render_asks_for_a_planes_scene_frame_once() {
+    // Measuring the plane and drawing it would each ask for the same
+    // frame; the render asks once and draws what it was told.
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let frames = Arc::new(AtomicUsize::new(0));
+    let mut scenes = one_square();
+    scenes.frame.canvas = Some([32.0, 64.0]);
+    renderer.renderer = renderer.renderer.with_content_provider(Counting {
+        scenes,
+        frames: Arc::clone(&frames),
+    });
+    let mut scene = scene();
+    let layer = scene.layers.remove(0);
+    let layer = super::transform_3d::in_perspective(layer, 0.0, 30.0, 600.0);
+    scene.layers.push(layer);
+    let frame = renderer.render(&scene).unwrap();
+    assert!(
+        frame.pixels.chunks(4).any(|pixel| pixel[3] > 0),
+        "drew nothing"
+    );
+    assert_eq!(frames.load(Ordering::Relaxed), 1);
+    // The next render asks again.
+    renderer.render(&scene).unwrap();
+    assert_eq!(frames.load(Ordering::Relaxed), 2);
 }
 
 #[test]

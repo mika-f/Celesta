@@ -70,7 +70,24 @@ pub(crate) struct MeshState {
     /// frames.
     pub(crate) scene_frames: SceneFrameResources,
     /// By plugin and asset paths.
-    models: HashMap<(String, BTreeMap<String, PathBuf>), OpenModel>,
+    models: HashMap<ModelKey, OpenModel>,
+    /// The frames the provider answered in this render, so that a render
+    /// asks for a model's frame at one time and data once: measuring a 3D
+    /// plane and drawing each of its bands draw the same answer. Cleared
+    /// as a render begins and ends.
+    pub(crate) asked: Vec<AskedFrame>,
+}
+
+/// A model's key: its plugin and asset paths.
+type ModelKey = (String, BTreeMap<String, PathBuf>);
+
+/// A frame the provider answered, and what it was asked for.
+pub(crate) struct AskedFrame {
+    model: ModelKey,
+    /// The time's bits, so that only the same time matches.
+    time: u64,
+    data: Value,
+    frame: ContentFrame,
 }
 
 impl MeshState {
@@ -666,15 +683,33 @@ impl GpuRenderer {
         }
 
         // A scene frame can set its own canvas, so it is asked for before
-        // the canvas is sized, when only measuring too.
-        let provider = self
-            .meshes
-            .provider
-            .as_mut()
-            .ok_or_else(|| GpuRenderError::MissingContentProvider(layer.to_owned()))?;
-        let frame = provider
-            .frame(id, content.time, content.data)
-            .map_err(plugin_error)?;
+        // the canvas is sized, when only measuring too. A frame this render
+        // already asked for is not asked for again.
+        let time = content.time.to_bits();
+        let asked =
+            self.meshes.asked.iter().find(|asked| {
+                asked.model == key && asked.time == time && asked.data == *content.data
+            });
+        let frame = match asked {
+            Some(asked) => asked.frame.clone(),
+            None => {
+                let provider = self
+                    .meshes
+                    .provider
+                    .as_mut()
+                    .ok_or_else(|| GpuRenderError::MissingContentProvider(layer.to_owned()))?;
+                let frame = provider
+                    .frame(id, content.time, content.data)
+                    .map_err(plugin_error)?;
+                self.meshes.asked.push(AskedFrame {
+                    model: key.clone(),
+                    time,
+                    data: content.data.clone(),
+                    frame: frame.clone(),
+                });
+                frame
+            }
+        };
         let invalid = |message: String| GpuRenderError::InvalidPluginContent {
             layer: layer.to_owned(),
             message,

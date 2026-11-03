@@ -103,7 +103,10 @@ pub trait ContentProvider: Send {
     ) -> Result<Opened, PluginError>;
 
     /// The model `time` seconds into its own clock, as `data` directs, in
-    /// the kind the model was opened as.
+    /// the kind the model was opened as. The answer must depend only on
+    /// `model`, `time`, and `data`, not on the requests before it: the same
+    /// frame can be asked for again, by a later render or an export, and
+    /// earlier times after later ones.
     fn frame(
         &mut self,
         model: ModelId,

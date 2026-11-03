@@ -96,6 +96,14 @@ A frame (`SceneFrame`, per request):
 - `skins`: each skin's skinning matrices, one per joint: the joint's world
   matrix times its inverse bind matrix.
 
+A frame must depend only on the model, `time`, and `data`, never on the
+requests before it: a stateful simulation stepped once per request would
+step whenever Celesta asks again. Celesta can ask for the same frame again
+(a re-render, an export, another process) and for times in any order.
+Within one render it asks for a model's frame at a given `time` and `data`
+once: measuring a 3D plane's content and drawing each of its bands share
+that answer.
+
 A vertex is morphed first (the weighted target offsets added to its rest
 position), then placed at `world × p` when the draw is unskinned, or at
 `world × Σ wᵢ·skinᵢ·p` over its joints when it is skinned; a plugin sends
@@ -182,7 +190,9 @@ the identity as `world` for a glTF skinned mesh.
   aspect kept, and so softer. 2D mesh canvases keep the per-side limit
   only. The canvas sized is the frame's own when it sets one, so the
   plugin is asked for the frame before the canvas is sized, also when a
-  3D plane only measures the layer's bounds.
+  3D plane only measures the layer's bounds. The render keeps that answer
+  (`MeshState::asked`, cleared as each render begins and ends), and the
+  plane's bands draw it without asking again.
 
 ## Notices
 

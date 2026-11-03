@@ -132,6 +132,10 @@ Celesta sends one request at a time and waits for its answer.
 | `{"type":"close","model":1}` | `{"type":"closed"}` |
 | any | `{"type":"error","message":"…"}` |
 
+A `frame` answer must depend only on the model, `time`, and `data`, never
+on the requests before it: the same frame can be asked for again (by a
+later render, an export, or another process) and times in any order.
+
 `kind` is `"meshes"` or `"scene"`; an `opened` without it is meshes. A
 frame's header does not say its kind: it is the kind its model was opened
 as. `notices` (`[{"level":"info"|"warning","message"}]`) is there only when
