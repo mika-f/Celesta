@@ -616,6 +616,11 @@ impl GpuRenderer {
         if self.measuring_plane {
             return Ok((self.stand_in_texture(width, height), canvas));
         }
+        if matches!(self.meshes.models[&key].loaded, LoadedModel::Scene(_)) {
+            // Before the plugin's frame and its checks, any of which can
+            // fail: one bad frame does not cost the next its canvas.
+            self.meshes.scene_frames.mark_used((width, height));
+        }
 
         let id = self.meshes.models[&key].loaded.id();
         let provider = self

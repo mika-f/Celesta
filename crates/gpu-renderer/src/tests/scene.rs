@@ -922,6 +922,44 @@ fn scene_frame_buffers_are_released_when_no_scene_is_drawn() {
     assert!(first.pixels == again.pixels, "the scene drew differently");
 }
 
+#[test]
+fn scene_resources_survive_a_frame_that_fails_or_draws_nothing() {
+    // At time 1 the frame is refused (a morph weight short), or its only
+    // draw is hidden. Either way the canvas and buffers stay for time 0.
+    let spoilers: [fn(&mut SceneFrame, f64); 2] = [
+        |frame, time| {
+            if time > 0.5 {
+                frame.draws[0].morph_weights.clear();
+            }
+        },
+        |frame, time| {
+            if time > 0.5 {
+                frame.draws[0].visible = false;
+            }
+        },
+    ];
+    for (refused, spoil) in [true, false].into_iter().zip(spoilers) {
+        let Some(mut renderer) = renderer(transparent()) else {
+            return;
+        };
+        let mut scenes = one_square();
+        scenes.animate = Some(spoil);
+        renderer.renderer = renderer.renderer.with_content_provider(scenes);
+        let first = renderer.render(&scene_at(0.0, 1.0)).unwrap();
+        let allocations = renderer.meshes.scene_frames.allocations;
+        let spoiled = renderer.render(&scene_at(1.0, 1.0));
+        assert_eq!(spoiled.is_err(), refused, "refused {refused}");
+        // Without the spoiled frame's mark, this frame would begin with
+        // nothing and allocate it all again.
+        let again = renderer.render(&scene_at(0.0, 1.0)).unwrap();
+        assert_eq!(
+            renderer.meshes.scene_frames.allocations, allocations,
+            "refused {refused}"
+        );
+        assert!(first.pixels == again.pixels, "refused {refused}");
+    }
+}
+
 /// `one_square` with two more draws of its square, small, red and blue, in
 /// front of it at the top corners; at time 0 the frame lists only draw 0.
 fn three_squares() -> Scenes {

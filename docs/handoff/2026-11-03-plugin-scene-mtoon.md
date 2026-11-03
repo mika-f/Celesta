@@ -246,8 +246,11 @@ draw: the plugin that sent it is broken all the same.
   per-draw skinning parameters and draw uniforms, and the frame uniform
   are buffers that grow to the next power of two (at least 256 bytes) when
   a frame does not fit, are rewritten each frame, and do not shrink; their
-  bind groups are made again only when a buffer is. After a frame that
-  draws no scene, all of it is let go.
+  bind groups are made again only when a buffer is. After a frame without
+  a scene layer, all of it is let go. A scene layer marks its size as
+  drawn before the plugin is asked for its frame, so a frame that the
+  plugin fails, that is refused, or that has nothing to draw keeps the
+  canvas and buffers for the next.
 
 ## Protocol (still version 1)
 
@@ -394,7 +397,8 @@ reading its source, to check once UniVRM reference renders exist:
   - `scene_resources_`, `scene_frame_buffers_`: canvases and buffers
     reused between frames, following the canvas size, kept for every size
     a frame draws, dropped over the budget when unused, released after a
-    frame without a scene, grown and rebound when a frame outgrows them;
+    frame without a scene, kept through a frame that is refused or draws
+    nothing, grown and rebound when a frame outgrows them;
     two layers of one size keeping their own pixels.
 - Unit tests in `scene.rs` check the render queue's clamping and the
   offsets it ignores, the signed-cofactor normal matrix, the eye of a

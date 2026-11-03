@@ -137,17 +137,19 @@ pub(crate) struct DrawBuffers {
 }
 
 /// What scene frames draw with, kept from frame to frame: the canvases of
-/// each size drawn since the last frame began, within `target_texels`, and
-/// the buffers of a frame's skinning and draws, which grow to the largest
-/// frame's and are rewritten by every frame. A frame that draws no scene
-/// lets all of it go.
+/// each size a scene layer has had since the last frame began, within
+/// `target_texels`, and the buffers of a frame's skinning and draws, which
+/// grow to the largest frame's and are rewritten by every frame. A frame
+/// without a scene layer lets all of it go; one whose scene layer fails or
+/// draws nothing keeps it.
 pub(crate) struct SceneFrameResources {
     /// By canvas size in texels.
     targets: HashMap<(u32, u32), SceneTargets>,
     /// The most texels `targets` keeps before it drops the sizes this frame
     /// has not drawn: `SCENE_TARGET_TEXELS`, lowered by tests.
     pub(crate) target_texels: u64,
-    /// The sizes drawn since the last `begin_frame`.
+    /// The sizes `mark_used` has had since the last `begin_frame`, drawn or
+    /// not.
     used: HashSet<(u32, u32)>,
     /// `STORAGE`: every skin's matrices, then each queued draw's morph
     /// pairs.
@@ -194,6 +196,14 @@ impl SceneFrameResources {
         }
         self.targets.retain(|size, _| self.used.contains(size));
         self.used.clear();
+    }
+
+    /// Keeps the canvas of `size`, and the buffers, past the next
+    /// `begin_frame`. A scene layer marks its size before anything can
+    /// fail, so that a frame that errors or has nothing to draw does not
+    /// let go of what the next frame draws with.
+    pub(crate) fn mark_used(&mut self, size: (u32, u32)) {
+        self.used.insert(size);
     }
 
     /// The canvas sizes kept, smallest first.
@@ -2325,7 +2335,8 @@ fn mtoon_factors(
 
 impl GpuRenderer {
     /// `frame` of `scene` on a `width` by `height` canvas, once the frame is
-    /// checked against the model, drawn with and into `resources`.
+    /// checked against the model, drawn with and into `resources`, where
+    /// the caller has marked that size used.
     pub(crate) fn scene_texture(
         &self,
         layer: &str,
@@ -2513,11 +2524,11 @@ impl GpuRenderer {
             draws: draw_group,
         } = groups.as_ref().expect("made above");
 
+        // The caller marked `size` used, so `make_room` keeps it.
         let size = (width, height);
         if !targets.contains_key(&size) {
             make_room(targets, used, size, *target_texels);
         }
-        used.insert(size);
         let SceneTargets {
             multisampled,
             depth,
