@@ -508,7 +508,7 @@ struct DrawUniform {
     /// The outline color, then the outline lighting mix.
     outline: [f32; 4],
     /// The outline width factor, the outline width mode (0 none, 1 world
-    /// coordinates, 2 screen coordinates), 0, 0.
+    /// coordinates, 2 screen coordinates), `handedness(world)`, 0.
     outline_width: [f32; 4],
     /// The UV animation's scroll in x and y, its rotation in turns a second,
     /// and 1 when the material has a normal texture, else 0.
@@ -1054,8 +1054,9 @@ fn finite(values: &[f32]) -> bool {
 /// Why `model` cannot be drawn: a canvas without area, vertex streams of
 /// different lengths, triangles outside their vertices, or a reference to
 /// something it lacks, or buffers past `SCENE_BUFFER_BUDGET`. A draw's skin
-/// must have every joint its geometry's vertices name; both are fixed, so
-/// that is checked here, once, rather than in every frame.
+/// must have every joint its geometry's vertices name, and a draw whose
+/// material has a normal texture a geometry with tangents; all of these are
+/// fixed, so they are checked here, once, rather than in every frame.
 pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
     if !model
         .canvas
@@ -1169,6 +1170,16 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
                 "draw {index} uses material {}, of {}",
                 draw.material,
                 model.materials.len()
+            ));
+        }
+        // A normal texture needs the geometry's tangents: none are made up.
+        if let MaterialKind::Mtoon(mtoon) = &model.materials[draw.material].kind
+            && mtoon.normal_texture.is_some()
+            && geometry.tangents.is_none()
+        {
+            return Some(format!(
+                "draw {index}'s material {} has a normalTexture, but geometry {} has no tangents",
+                draw.material, draw.geometry
             ));
         }
         match (draw.skin, geometry.joints.is_some()) {
@@ -1884,6 +1895,13 @@ fn cofactor(matrix: &[f32; 16]) -> ([[f64; 3]; 3], f64) {
     (cofactor, determinant)
 }
 
+/// −1 when `world` mirrors (its upper 3×3's determinant is negative), else
+/// 1, a determinant of 0 included: the sign `normal_matrix` takes, and that
+/// MToon's bitangents take (Unity's `unity_WorldTransformParams.w`).
+fn handedness(world: &[f32; 16]) -> f64 {
+    if cofactor(world).1 < 0.0 { -1.0 } else { 1.0 }
+}
+
 /// What takes `world`'s normals to world space: the cofactor matrix of its
 /// upper 3×3, times the sign of its determinant (+1 for a determinant of
 /// 0), as columns. That is the inverse transpose times the determinant's
@@ -1892,8 +1910,8 @@ fn cofactor(matrix: &[f32; 16]) -> ([[f64; 3]; 3], f64) {
 /// its largest entry's magnitude, so that it stays finite as `f32` however
 /// large `world` is.
 fn normal_matrix(world: &[f32; 16]) -> [[f32; 4]; 3] {
-    let (cofactor, determinant) = cofactor(world);
-    let sign = if determinant < 0.0 { -1.0 } else { 1.0 };
+    let (cofactor, _) = cofactor(world);
+    let sign = handedness(world);
     let largest = cofactor
         .as_flattened()
         .iter()
@@ -2102,7 +2120,7 @@ fn mtoon_factors(mtoon: &MtoonMaterial, uniform: DrawUniform) -> DrawUniform {
                 OutlineWidthMode::WorldCoordinates => 1.0,
                 OutlineWidthMode::ScreenCoordinates => 2.0,
             },
-            0.0,
+            handedness(&uniform.world) as f32,
             0.0,
         ],
         uv_animation: [

@@ -61,7 +61,9 @@ struct Draw {
     rim_shape: vec4<f32>,
     // The outline color and the outline lighting mix.
     outline: vec4<f32>,
-    // The outline width factor and mode (0 none, 1 world, 2 screen).
+    // The outline width factor and mode (0 none, 1 world, 2 screen), then
+    // `world`'s handedness: −1 when it mirrors, else 1, the sign the
+    // normal matrix and the bitangent take.
     outline_width: vec4<f32>,
     // The UV animation's scroll in x and y, its rotation in turns a second,
     // and 1 when the material has a normal texture.

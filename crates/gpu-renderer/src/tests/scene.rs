@@ -1690,3 +1690,163 @@ fn shading_matcap_looking_straight_down_is_finite() {
     assert_centre(down([0.6, 0.0, 0.8], nearest(3, 1, &thirds)), BLUE);
     assert_centre(down([0.0, 0.6, 0.8], nearest(1, 3, &thirds)), RED);
 }
+
+/// `scenes` with every vertex's tangent +X (towards +u), bitangent sign 1.
+fn with_tangents(mut scenes: Scenes) -> Scenes {
+    for geometry in &mut scenes.model.geometries {
+        geometry.tangents = Some(vec![[1.0, 0.0, 0.0, 1.0]; geometry.positions.len()]);
+    }
+    scenes
+}
+
+/// `flat_toon` with texture 0 as its normal texture at `scale`, lit by a
+/// white light along `direction`, on a square with tangents.
+fn normal_mapped(texel_rgb: [u8; 3], scale: f32, direction: [f32; 3]) -> Scenes {
+    let [r, g, b] = texel_rgb;
+    let mut scenes = with_tangents(toon_square(
+        MtoonMaterial {
+            normal_texture: Some(ScaledTextureSlot { texture: 0, scale }),
+            ..flat_toon()
+        },
+        vec![light(direction, [1.0; 3], 1.0)],
+    ));
+    scenes.model.textures = vec![texel([r, g, b, 255], ColorSpace::Linear)];
+    scenes
+}
+
+#[test]
+fn surface_normal_texture_tilts_the_normal() {
+    // Tangent-space x 0.6 (204), y about 0: at scale 1 the normal is
+    // (0.6, 0, 0.8), `dot(N, L)` 0.6 towards +X, linear 0.8. At scale 0.5,
+    // x 0.3 and z √0.91: 0.3, linear 0.65. At scale 0, flat: 0.5. Blue is
+    // not read.
+    for (scale, expected) in [(1.0, 231), (0.5, 211), (0.0, 188)] {
+        let scenes = normal_mapped([204, 128, 230], scale, [-1.0, 0.0, 0.0]);
+        let Some(actual) = centre(scenes) else {
+            return;
+        };
+        assert!(near(actual, grey(expected)), "scale {scale}: {actual:?}");
+    }
+}
+
+#[test]
+fn surface_mirrored_worlds_keep_normal_maps_upright() {
+    // A texel tilted up (+v's opposite, the bitangent) on a square mirrored
+    // in x: the tangent turns to −X, and the bitangent, signed by the
+    // world's determinant, still points up, `dot(N, L)` 0.6 under a light
+    // from above. Unsigned it would point down: 0.2 (124).
+    let mut scenes = normal_mapped([128, 204, 230], 1.0, [0.0, -1.0, 0.0]);
+    scenes.frame.draws[0].world = scaling(-1.0, 1.0, 1.0);
+    assert_centre(scenes, grey(231));
+}
+
+#[test]
+fn surface_normal_texture_without_tangents_is_refused() {
+    let mut scenes = normal_mapped([204, 128, 230], 1.0, [-1.0, 0.0, 0.0]);
+    scenes.model.geometries = vec![square(false)];
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(
+        message.contains("draw 0") && message.contains("tangents"),
+        "{message}"
+    );
+}
+
+/// `flat_toon` of texture 0, red, green, blue, and white quarters sampled
+/// nearest, through `transform`, then `uv_animation`, at `time`, under an
+/// ambient light of 1: a pixel shows its texel. Texture 1, if there is one,
+/// is the UV animation mask.
+fn animated(
+    transform: Option<celesta_plugin::TextureTransform>,
+    uv_animation: fn(MtoonMaterial) -> MtoonMaterial,
+    time: f64,
+) -> Scenes {
+    let mut scenes = toon_square(
+        uv_animation(MtoonMaterial {
+            base_color_texture: Some(celesta_plugin::TextureRef {
+                texture: 0,
+                transform,
+            }),
+            ..flat_toon()
+        }),
+        vec![],
+    );
+    scenes.model.textures = vec![nearest(2, 2, &[RED, GREEN, BLUE, WHITE])];
+    scenes.frame.lights.ambient[3] = [1.0; 3];
+    scenes.frame.time = time;
+    scenes
+}
+
+/// The pixel at (23, 23), where the square's texture coordinates are about
+/// (0.234, 0.234): the texture's top-left, red, unmoved.
+fn top_left(scenes: Scenes) -> Option<[u8; 4]> {
+    render_scenes(scenes).map(|frame| pixel(&frame, 23, 23))
+}
+
+#[track_caller]
+fn assert_top_left(scenes: Scenes, expected: [u8; 4]) {
+    let Some(actual) = top_left(scenes) else {
+        return;
+    };
+    assert!(near(actual, expected), "{actual:?}, not {expected:?}");
+}
+
+fn scroll_half_in_x(mtoon: MtoonMaterial) -> MtoonMaterial {
+    MtoonMaterial {
+        uv_animation_scroll_x_speed_factor: 0.5,
+        ..mtoon
+    }
+}
+
+fn quarter_turn_a_second(mtoon: MtoonMaterial) -> MtoonMaterial {
+    MtoonMaterial {
+        uv_animation_rotation_speed_factor: std::f32::consts::FRAC_PI_2,
+        ..mtoon
+    }
+}
+
+#[test]
+fn surface_uv_animation_scrolls_and_turns_with_time() {
+    // Scrolled 0.5 a second in u: unmoved at 0, the top-right after 1 s.
+    assert_top_left(animated(None, scroll_half_in_x, 0.0), RED);
+    assert_top_left(animated(None, scroll_half_in_x, 1.0), GREEN);
+    // A quarter turn about the centre after 1 s: (u, v) samples
+    // (v, 1 − u), the bottom-left.
+    assert_top_left(animated(None, quarter_turn_a_second, 1.0), BLUE);
+}
+
+#[test]
+fn surface_uv_animation_mask_scales_time_by_blue() {
+    // The mask's blue, not its red or green, scales the time.
+    for (mask, expected) in [([255, 255, 0, 255], RED), ([0, 0, 255, 255], GREEN)] {
+        let mut scenes = animated(
+            None,
+            |mtoon| MtoonMaterial {
+                uv_animation_mask_texture: Some(TextureSlot { texture: 1 }),
+                ..scroll_half_in_x(mtoon)
+            },
+            1.0,
+        );
+        scenes.model.textures.push(texel(mask, ColorSpace::Linear));
+        let Some(actual) = top_left(scenes) else {
+            return;
+        };
+        assert!(near(actual, expected), "mask {mask:?}: {actual:?}");
+    }
+}
+
+#[test]
+fn surface_texture_transform_applies_before_uv_animation() {
+    // Offset half a texture in u to (0.734, 0.234), then a quarter turn to
+    // (0.234, 0.266): red. Turned first and offset after, it would be
+    // (0.734, 0.766): white.
+    assert_top_left(
+        animated(
+            Some(transform([0.5, 0.0], 0.0, [1.0; 2])),
+            quarter_turn_a_second,
+            1.0,
+        ),
+        RED,
+    );
+}

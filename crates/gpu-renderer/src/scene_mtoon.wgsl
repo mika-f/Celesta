@@ -57,12 +57,17 @@ struct MtoonInput {
 
 struct MtoonVarying {
     @builtin(position) clip: vec4<f32>,
-    // Through the base color texture's transform.
+    // Through the base color texture's transform, before the UV animation.
     @location(0) uv: vec2<f32>,
     @location(1) position: vec3<f32>,
     // In world space, length 1 at the vertices.
     @location(2) normal: vec3<f32>,
+    // The tangent through `world`'s 3×3, length 1 at the vertices; `w` the
+    // bitangent's sign, ±1 at the vertices, flipped when `world` mirrors.
+    @location(3) tangent: vec4<f32>,
 };
+
+const TAU: f32 = 6.283185307179586;
 
 // What `mtoon_color` shades: a point of a surface, in world space.
 struct Surface {
@@ -71,8 +76,9 @@ struct Surface {
     normal: vec3<f32>,
     // Towards the viewer, length 1.
     view: vec3<f32>,
-    // The texture coordinates every slot but the matcap and the outline
-    // width samples at.
+    // The texture coordinates every slot but the matcap, the outline width,
+    // and the UV animation mask samples at: through the base color
+    // texture's transform, then the UV animation.
     uv: vec2<f32>,
     // The base color times its texture: the lit color and the alpha.
     lit: vec4<f32>,
@@ -95,6 +101,12 @@ fn vs_mtoon(input: MtoonInput) -> MtoonVarying {
     output.uv = transformed_uv(input.uv);
     output.position = position.xyz;
     output.normal = unit(draw.normal_matrix * input.normal.xyz);
+    // UniVRM's `MToon_GetTangentToWorld`: the tangent through the world
+    // matrix itself, not the normal matrix, and its sign times
+    // `unity_WorldTransformParams.w`.
+    let world = mat3x3<f32>(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz);
+    let sign = select(-1.0, 1.0, input.tangent.w > 0.0) * draw.outline_width.z;
+    output.tangent = vec4<f32>(unit(world * input.tangent.xyz), sign);
     return output;
 }
 
@@ -116,24 +128,55 @@ fn sh(n: vec3<f32>) -> vec3<f32> {
         + c[7].rgb * (n.z * n.x) + c[8].rgb * (n.x * n.x - n.y * n.y);
 }
 
+// `uv` moved by the UV animation, as UniVRM's `GetMToonGeometry_Uv` does
+// after the base color texture's transform, in glTF's `v`-down texture
+// space: scrolled by the time times the scroll speed, then turned about
+// the texture's centre by the time times the rotation speed. The mask's
+// blue, sampled at `uv`, scales the time.
+fn animated_uv(uv: vec2<f32>) -> vec2<f32> {
+    let mask = textureSample(uv_animation_mask_texture, uv_animation_mask_sampler, uv).b;
+    let t = frame.params.x * mask;
+    let angle = fract(t * draw.uv_animation.z) * TAU;
+    let d = uv + t * draw.uv_animation.xy - 0.5;
+    let c = cos(angle);
+    let s = sin(angle);
+    return vec2<f32>(c * d.x + s * d.y, -s * d.x + c * d.y) + 0.5;
+}
+
+// `n`, a geometric normal facing the side drawn, tilted by the normal
+// texture's `packed` texel in the tangent space of `tangent` (a varying's
+// interpolated value). Decoded as Unity's `UnpackNormalWithScale` reads its
+// desktop layout: red and green scaled by the normal texture's scale, blue
+// unread. `n` itself when the material has no normal texture.
+fn normal_mapped(n: vec3<f32>, tangent: vec4<f32>, packed: vec4<f32>) -> vec3<f32> {
+    let xy = (packed.rg * 2.0 - 1.0) * draw.rim_shape.w;
+    let z = sqrt(saturate(1.0 - dot(xy, xy)));
+    let t = unit(tangent.xyz);
+    let sign = select(-1.0, 1.0, tangent.w > 0.0);
+    let b = unit(sign * cross(n, t));
+    return select(n, unit(t * xy.x + b * xy.y + n * z), draw.uv_animation.w != 0.0);
+}
+
 // The surface a fragment shows. The normal turns to face the viewer's side
-// on a back face, which only a double-sided material draws.
+// on a back face, which only a double-sided material draws, and then
+// follows the normal texture.
 fn mtoon_surface(input: MtoonVarying, front_facing: bool) -> Surface {
-    let normal = unit(input.normal);
+    let geometric = unit(input.normal);
+    let uv = animated_uv(input.uv);
     // In perspective, towards the eye; orthographic, along the camera's +Z.
     let view = select(
         unit(frame.forward.xyz),
         unit(frame.eye.xyz - input.position),
         frame.eye.w == 1.0,
     );
-    let lit = draw.base_color * textureSample(base_texture, base_sampler, input.uv);
-    return Surface(
-        input.position,
-        select(-normal, normal, front_facing),
-        view,
-        input.uv,
-        lit,
+    let lit = draw.base_color * textureSample(base_texture, base_sampler, uv);
+    let packed = textureSample(normal_texture, normal_sampler, uv);
+    let normal = normal_mapped(
+        select(-geometric, geometric, front_facing),
+        input.tangent,
+        packed,
     );
+    return Surface(input.position, normal, view, uv, lit);
 }
 
 // Where the matcap texture is sampled for the normal `n` seen along `v`:
