@@ -939,6 +939,43 @@ mod tests {
     }
 
     #[test]
+    fn a_performance_failing_mid_run_keeps_its_cursor() {
+        // The head's yaw eases from 0 at 1 s to 3.2e38 at 2 s with
+        // `ease-out-back`, which overshoots `f32` between about 1.45 s and
+        // 1.75 s: step 87 (1.45 s) is the first to fail, while the frames
+        // before 1 s and after 2 s read finite values.
+        let failing = data(json!({
+            "tracks": { "head": { "yaw": { "type": "keyframes", "keyframes": [
+                { "time": { "value": 30, "timescale": 30 }, "value": 0.0 },
+                { "time": { "value": 60, "timescale": 30 }, "value": 3.2e38, "easing": "ease-out-back" },
+            ] } } },
+        }));
+        // The steps' own error, which a frame's pose at a time in the
+        // overshoot would hide.
+        let state = |model: &VrmModel, time: f64| model.stepper().state_at(model, time, &failing);
+        let cold = |time: f64| {
+            let (model, _files) = open();
+            state(&model, time).unwrap_err().0
+        };
+        let (model, _files) = open();
+        // Steps 0..=54: a checkpoint after step 29, the cursor on 54.
+        assert!(state(&model, 0.9).is_ok());
+        assert_eq!(model.stepper().kept(&failing), Some((1, Some(54))));
+        // From the cursor, steps 55..=86 run, then 87 fails as it does cold.
+        let error = state(&model, 1.5).unwrap_err().0;
+        assert!(error.contains("spring bones' step 87:"), "{error}");
+        assert_eq!(error, cold(1.5));
+        // The checkpoint after step 59 is kept; the cursor stays on 54.
+        assert_eq!(model.stepper().kept(&failing), Some((2, Some(54))));
+        // Frames past the overshoot step through it, warm or cold, so they
+        // fail as often as they are asked, at the same step.
+        for time in [2.0, 3.0, 3.0] {
+            assert_eq!(state(&model, time).unwrap_err().0, cold(time), "{time} s");
+        }
+        assert_eq!(model.stepper().kept(&failing), Some((2, Some(54))));
+    }
+
+    #[test]
     fn steps_until_counts_whole_steps() {
         assert_eq!(steps_until(0.0), 0);
         assert_eq!(steps_until(1.0), 60);
