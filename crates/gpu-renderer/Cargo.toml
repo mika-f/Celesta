@@ -1,5 +1,6 @@
 [package]
 name = "celesta-gpu-renderer"
+description = "Celesta's wgpu renderer: offscreen image, video, and text composition with deterministic readback."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,11 +10,11 @@ rust-version.workspace = true
 [dependencies]
 bytemuck = "1.25.2"
 image = { version = "0.25.8", default-features = false, features = ["gif", "jpeg", "png", "pnm", "webp"] }
-celesta-composition = { path = "../composition" }
-celesta-plugin = { path = "../plugin" }
-celesta-remote = { path = "../remote" }
-celesta-media = { path = "../media" }
-celesta-renderer = { path = "../renderer" }
+celesta-composition.workspace = true
+celesta-plugin.workspace = true
+celesta-remote.workspace = true
+celesta-media.workspace = true
+celesta-renderer.workspace = true
 naga = { version = "30.0.1", features = ["wgsl-in"] }
 pollster = "1.0.0"
 rayon = "1.12.0"

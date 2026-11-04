@@ -1,5 +1,6 @@
 [package]
 name = "celesta-source-edit"
+description = "Locates JSX elements in TSX source and applies byte-span edits that keep the rest of the file intact."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

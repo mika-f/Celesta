@@ -1,5 +1,6 @@
 [package]
 name = "celesta-react-bridge"
+description = "Runs the @celesta/cli Node.js runtime and evaluates a React composition into a Celesta scene."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,11 +8,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-celesta-composition = { path = "../composition" }
-celesta-media = { path = "../media" }
-celesta-plugin-host = { path = "../plugin-host" }
-celesta-remote = { path = "../remote" }
-celesta-renderer = { path = "../renderer" }
+celesta-composition.workspace = true
+celesta-media.workspace = true
+celesta-plugin-host.workspace = true
+celesta-remote.workspace = true
+celesta-renderer.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 strip-ansi-escapes = "0.2.1"

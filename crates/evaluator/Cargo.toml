@@ -1,5 +1,6 @@
 [package]
 name = "celesta-evaluator"
+description = "Evaluates Celesta project data into the compositions its renderers draw."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,6 +8,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-celesta-composition = { path = "../composition" }
-celesta-project = { path = "../project" }
+celesta-composition.workspace = true
+celesta-project.workspace = true
 thiserror.workspace = true

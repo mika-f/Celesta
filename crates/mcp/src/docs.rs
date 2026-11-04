@@ -14,12 +14,17 @@ macro_rules! reference {
         Topic {
             name: $name,
             description: $description,
-            markdown: include_str!(concat!("../../../skills/celesta/references/", $name, ".md")),
+            markdown: include_str!(concat!(
+                env!("CELESTA_SKILL_DIR"),
+                "/references/",
+                $name,
+                ".md"
+            )),
         }
     };
 }
 
-const SKILL: &str = include_str!("../../../skills/celesta/SKILL.md");
+const SKILL: &str = include_str!(concat!(env!("CELESTA_SKILL_DIR"), "/SKILL.md"));
 
 pub static TOPICS: &[Topic] = &[
     Topic {
@@ -127,10 +132,7 @@ mod tests {
 
     #[test]
     fn every_reference_is_a_topic() {
-        let dir = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../skills/celesta/references"
-        );
+        let dir = concat!(env!("CELESTA_SKILL_DIR"), "/references");
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             if path.extension().is_some_and(|extension| extension == "md") {

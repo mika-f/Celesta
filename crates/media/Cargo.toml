@@ -1,5 +1,6 @@
 [package]
 name = "celesta-media"
+description = "Media probing and frame decoding for Celesta through the linked FFmpeg libraries."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,8 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-celesta-composition = { path = "../composition" }
-celesta-remote = { path = "../remote" }
+celesta-composition.workspace = true
+celesta-remote.workspace = true
 ebur128 = "0.1.10"
 ez-ffmpeg.workspace = true
 # The same FFmpeg bindings ez-ffmpeg links, for reading decoded frames.

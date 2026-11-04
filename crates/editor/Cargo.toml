@@ -1,10 +1,14 @@
 [package]
 name = "celesta-editor"
+description = "The Celesta desktop app: preview, scrub, and edit code-first videos built with React."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# `bundled/` holds the repository files `build.rs` embeds when the crate is
+# built outside the repository (scripts/bundle-crate-files.mjs).
+include = ["/build.rs", "/bundled", "/src", "/tests"]
 
 [dependencies]
 # `gpui-kit` re-exports GPUI (as `gpui_kit::*`) from `gpui-pre` 0.3.x — a newer zed
@@ -14,18 +18,18 @@ rust-version.workspace = true
 # startup with STATUS_ENTRYPOINT_NOT_FOUND, 0xc0000139) stays embedded without re-listing.
 gpui-kit = "0.8"
 image = { version = "0.25.8", default-features = false }
-celesta-composition = { path = "../composition" }
-celesta-editor-core = { path = "../editor-core" }
-celesta-editor-theme = { path = "../editor-theme" }
-celesta-evaluator = { path = "../evaluator" }
-celesta-exporter = { path = "../exporter" }
-celesta-gpu-renderer = { path = "../gpu-renderer", features = ["clap"] }
-celesta-plugin-host = { path = "../plugin-host" }
-celesta-media = { path = "../media" }
-celesta-remote = { path = "../remote" }
-celesta-project = { path = "../project" }
-celesta-react-bridge = { path = "../react-bridge" }
-celesta-source-edit = { path = "../source-edit" }
+celesta-composition.workspace = true
+celesta-editor-core.workspace = true
+celesta-editor-theme.workspace = true
+celesta-evaluator.workspace = true
+celesta-exporter.workspace = true
+celesta-gpu-renderer = { workspace = true, features = ["clap"] }
+celesta-plugin-host.workspace = true
+celesta-media.workspace = true
+celesta-remote.workspace = true
+celesta-project.workspace = true
+celesta-react-bridge.workspace = true
+celesta-source-edit.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap.workspace = true
 fnv = "1.0.7"

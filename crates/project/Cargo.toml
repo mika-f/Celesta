@@ -1,5 +1,6 @@
 [package]
 name = "celesta-project"
+description = "The Celesta project format."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-celesta-composition = { path = "../composition" }
+celesta-composition.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ts-rs = { workspace = true, optional = true }

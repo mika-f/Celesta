@@ -1,5 +1,6 @@
 [package]
 name = "celesta-editor-theme"
+description = "The Celesta editor's gpui-kit theme setup and the colors of the data its timeline draws."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,4 +9,4 @@ rust-version.workspace = true
 
 [dependencies]
 gpui-kit = "0.8"
-celesta-project = { path = "../project" }
+celesta-project.workspace = true
