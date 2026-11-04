@@ -102,7 +102,7 @@ export default function Root() {
 
 Celesta は動画・音声ファイルの読み書きにコーデックライブラリを自分でリンクせず、コーデックプラグインを通して行います。macOS と Windows のパッケージには、Celesta に付属するプラグインフォルダーに `ffmpeg` プラグインが入っていて、FFmpeg でメディアの情報の取得、デコード、エンコード、多重化をします。この FFmpeg は GPL ライセンスの libx264 を含むため、GPL で配布されるのはこのコーデックプラグインだけです。アプリ、`celesta-exporter`、`Celesta-mcp` は MIT または Apache-2.0 です。
 
-コーデックプラグインのマニフェストには `"roles": ["codec"]` があります。Celesta は実行してよいプラグインのうち、上の順で最初に見つかったコーデックを使います。ひとつもないときは、ソースからのビルドで置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` を使います。`cargo install` で Celesta を入れる場合は、コーデックも入れて（`cargo install celesta-codec-ffmpeg`）アプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもコーデックは入りません。コーデックがないと動画と音声は表示も書き出しもできません。アプリは Problems にそう表示し、書き出しはエラーコード `no_codec` で失敗します。
+コーデックプラグインのマニフェストには `"roles": ["codec"]` があります。Celesta は実行してよいプラグインのうち、上の順で最初に見つかったコーデックを使います。ひとつもないときは、ソースからのビルドで置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` を使います。`cargo install` で Celesta を入れる場合は、コーデックも入れてアプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもコーデックは入りません。`celesta-codec-ffmpeg` が crates.io に公開されるまでは、`cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` でリポジトリから入れます（[ソースからのビルド](/ja/docs/build-from-source/)と同じく FFmpeg 8.1.x の開発ライブラリが必要です）。コーデックがないと動画と音声は表示も書き出しもできません。アプリは Problems にそう表示し、書き出しはエラーコード `no_codec` で失敗します。
 
 LGPL のみの FFmpeg など別の FFmpeg を使うには、それに対して `celesta-codec-ffmpeg` をビルドし、プラグインとしてユーザープラグインフォルダーに置きます。`node scripts/stage-codec-plugin.mjs <プログラム> <フォルダー>` でプラグインのフォルダーを作れます。そのフォルダーの他のプラグインと同じく、アプリは実行する前に確認します。
 

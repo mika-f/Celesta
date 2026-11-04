@@ -106,7 +106,7 @@ impl FoundPlugins {
             .chain(self.skipped.iter().cloned())
             .collect();
         let title = match (self.pending.len(), self.skipped.len()) {
-            (0, 0) if self.missing_codec => "No codec plugin is installed".to_owned(),
+            (0, 0) if self.missing_codec => "No codec plugin can run".to_owned(),
             (0, 0) => return None,
             (0, 1) => "A plugin was skipped".to_owned(),
             (0, skipped) => format!("{skipped} plugins were skipped"),
@@ -116,12 +116,28 @@ impl FoundPlugins {
         Some(Problem::new(title, detail.join("\n")))
     }
 
-    /// Why there is no codec to read and write media with: one waits for
-    /// approval, one is turned off, or none was found.
+    /// Why there is no codec to read and write media with: one has no
+    /// program for this computer, one waits for approval, one is turned off,
+    /// or none was found.
     fn missing_codec_detail(&self) -> String {
         let is_codec = |entry: &PluginEntry| entry.has_role(PluginRole::Codec);
         let consequence = "so video and audio files cannot be shown or exported";
-        if let Some(pending) = self.pending.iter().find(|pending| is_codec(&pending.entry)) {
+        let found = || {
+            self.installed
+                .plugins
+                .iter()
+                .chain(self.pending.iter().map(|pending| &pending.entry))
+                .chain(&self.disabled)
+                .filter(|entry| is_codec(entry))
+        };
+        if let Some(unbuilt) = found().find(|entry| entry.executable().is_none()) {
+            let (os, arch) = celesta_plugin_host::platform();
+            format!(
+                "The codec plugin {} has no program for this computer ({os}-{arch}), \
+                 {consequence}. Install a build of it for this computer.",
+                unbuilt.manifest.id
+            )
+        } else if let Some(pending) = self.pending.iter().find(|pending| is_codec(&pending.entry)) {
             format!(
                 "The codec plugin {} waits for your approval, {consequence} until you allow it.",
                 pending.entry.manifest.id
@@ -548,7 +564,7 @@ mod tests {
             ..FoundPlugins::default()
         };
         let problem = missing.problem().unwrap();
-        assert_eq!(problem.title, "No codec plugin is installed");
+        assert_eq!(problem.title, "No codec plugin can run");
         assert!(
             problem.detail.contains("celesta-codec-ffmpeg"),
             "{}",
@@ -567,12 +583,13 @@ mod tests {
         );
 
         // A codec that was found says why it does not run.
+        let (os, arch) = celesta_plugin_host::platform();
         let codec = PluginEntry {
             manifest: celesta_plugin_host::Manifest {
                 id: "ffmpeg".into(),
                 version: "1.0.0".into(),
                 protocol: 1,
-                executable: Default::default(),
+                executable: [(format!("{os}-{arch}"), "bin/p".to_owned())].into(),
                 module: None,
                 types: None,
                 components: Vec::new(),
@@ -585,12 +602,29 @@ mod tests {
             disabled: vec![codec.clone()],
             ..missing.clone()
         };
+        let problem = disabled.problem().unwrap();
+        assert_eq!(problem.title, "No codec plugin can run");
         assert!(
-            disabled
+            problem
+                .detail
+                .starts_with("The codec plugin ffmpeg is turned off"),
+            "{}",
+            problem.detail
+        );
+        // Allowing or turning on a codec built for another computer would
+        // not help.
+        let mut elsewhere = codec.clone();
+        elsewhere.manifest.executable = [("plan9-mips".to_owned(), "bin/p".to_owned())].into();
+        let unbuilt = FoundPlugins {
+            disabled: vec![elsewhere],
+            ..missing.clone()
+        };
+        assert!(
+            unbuilt
                 .problem()
                 .unwrap()
                 .detail
-                .starts_with("The codec plugin ffmpeg is turned off"),
+                .starts_with("The codec plugin ffmpeg has no program for this computer"),
         );
         let waiting = FoundPlugins {
             pending: vec![PendingPlugin {

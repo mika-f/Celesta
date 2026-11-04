@@ -82,8 +82,10 @@ program links FFmpeg, and with it the GPL libx264 of the official packages.
   `Exporter::new` does so when none was made yet; the exporter's `--inspect`
   and `Celesta-mcp` at start-up (`use_installed_codec`); the editor on every
   discovery (`FoundPlugins::find`: project open and File > Reload Plugins).
-- **Without a codec**, the editor shows **No codec plugin is installed** in
-  Problems (with the other plugin problems), and exports fail with
+- **Without a codec**, the editor shows **No codec plugin can run** in
+  Problems (with the other plugin problems), saying whether a codec plugin
+  has no program for this computer, waits for approval, is turned off, or
+  was not found; exports fail with
   `ExportError::Codec { source: NoCodec }`, reported as `no_codec` with a
   hint. Other codec failures are `codec` (was `ffmpeg`), and
   `encoder_unavailable` names the plugin's missing encoder as before.

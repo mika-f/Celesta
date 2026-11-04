@@ -175,6 +175,22 @@ fn settings_libx264_cannot_write_are_refused() {
         })
         .unwrap_err();
     assert!(error.to_string().contains("bit depth"), "{error}");
+    // The bit depth is H.264's alone: MOV ignores it.
+    let directory = tempfile::tempdir().unwrap();
+    let encoder = codec
+        .open_encoder(&EncoderSettings {
+            output: directory.path().join("alpha.mov"),
+            width: 2,
+            height: 2,
+            frame_rate: Rational::new(1, 1),
+            input: PixelFormat::Rgba16,
+            container: Container::Mov,
+            preset: "medium".into(),
+            crf: 18,
+            bit_depth: 12,
+        })
+        .unwrap();
+    codec.abort_encoder(encoder);
 }
 
 #[test]

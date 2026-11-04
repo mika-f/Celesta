@@ -50,9 +50,11 @@ pub(crate) fn open_video_writer(settings: &EncoderSettings) -> Result<VideoWrite
             settings.crf
         )));
     }
+    // H.264's pixel format; the other containers have fixed ones.
     let pixel_format = match settings.bit_depth {
         8 => "yuv420p",
         10 => "yuv420p10le",
+        _ if settings.container != Container::Mp4 => "yuv420p",
         depth => {
             return Err(MediaError::Codec(format!(
                 "H.264 is written at a bit depth of 8 or 10, not {depth}"
