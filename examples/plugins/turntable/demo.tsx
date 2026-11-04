@@ -5,7 +5,7 @@
 //   cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx out.mp4 --plugin-dir examples/plugins/dist
 import { Fragment } from 'react';
 
-import { Composition, Font, Rect, Text } from '@celesta/react';
+import { Composition, Font, Rect, Text } from '@celesta.studio/react';
 import { Turntable } from '@celesta-plugin/turntable';
 
 const LABEL = { fontFamily: 'Noto Sans JP', fontSize: 22, fill: { type: 'solid', color: '#e8eef5' } } as const;

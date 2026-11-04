@@ -1387,10 +1387,10 @@ importers:
 
   plugins/vrm/js:
     devDependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../../packages/character
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../../packages/react
       '@types/node':

@@ -8,10 +8,10 @@
 
 import * as React from 'react';
 
-import { useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { CommonProps, LayerContent } from '@celesta/react';
-import { registerHostElement } from '@celesta/react/internal';
-import type { HostNode } from '@celesta/react/internal';
+import { useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { CommonProps, LayerContent } from '@celesta.studio/react';
+import { registerHostElement } from '@celesta.studio/react/internal';
+import type { HostNode } from '@celesta.studio/react/internal';
 
 export interface TurntableProps extends CommonProps {
   /** Turns of the cube each second; negative turns it the other way. Default 0.5. */

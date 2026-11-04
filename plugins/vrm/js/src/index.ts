@@ -7,17 +7,17 @@
 //
 // Like everything in a composition, the layer depends only on the frame:
 // motions (`.vrma` clips) and tracks are placed on the sequence's timeline,
-// blinking and lip sync come from `@celesta/character`, and every value the
+// blinking and lip sync come from `@celesta.studio/character`, and every value the
 // plugin gets is in `vrmData`, a pure function of the frame.
 
 import * as React from 'react';
 
-import { blinkPhase } from '@celesta/character';
-import type { BlinkTiming, LipSyncTrack, MouthShape } from '@celesta/character';
-import { useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { AssetInput, CommonProps, Easing, JsonValue, KeyframeAnimation, LayerContent } from '@celesta/react';
-import { registerHostElement } from '@celesta/react/internal';
-import type { HostNode, HostWalk } from '@celesta/react/internal';
+import { blinkPhase } from '@celesta.studio/character';
+import type { BlinkTiming, LipSyncTrack, MouthShape } from '@celesta.studio/character';
+import { useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { AssetInput, CommonProps, Easing, JsonValue, KeyframeAnimation, LayerContent } from '@celesta.studio/react';
+import { registerHostElement } from '@celesta.studio/react/internal';
+import type { HostNode, HostWalk } from '@celesta.studio/react/internal';
 
 /** VRM 1.0's mouth expressions, from the vowels a, i, u, e, o. */
 export type Vowel = 'aa' | 'ih' | 'ou' | 'ee' | 'oh';
