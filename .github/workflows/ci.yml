@@ -234,7 +234,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Node.js and pnpm as mise.lock pins them, for <Vrm> and the build.
-      - uses: jdx/mise-action@v5.2.5
+      - uses: jdx/mise-action@v5.2.6
         with:
           version: 2026.10.25
           cache_save: ${{ github.ref == 'refs/heads/main' }}
