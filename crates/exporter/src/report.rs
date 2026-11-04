@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use celesta_composition::Rational;
-use celesta_media::MediaError;
+use celesta_gpu_renderer::GpuRenderError;
+use celesta_media::{AudioMixError, MediaError};
 use celesta_project::LoadError;
 use celesta_react_bridge::{PropsFileChoice, ReactBridgeError};
 use serde::Serialize;
@@ -499,6 +500,9 @@ fn error_report(error: &ExportError, hints: HintStyle) -> ErrorReport {
     }
 }
 
+const NO_CODEC_HINT: &str =
+    "install Celesta's codec plugin (celesta-codec-ffmpeg) beside Celesta or in a plugin folder";
+
 /// The code and hint of `error`, collecting its issues into `issues`. A
 /// frame's failure has the code of what failed.
 fn classify(
@@ -529,6 +533,11 @@ fn classify(
             ("project_validation", None)
         }
         ExportError::Evaluation(_) => ("evaluation", None),
+        // A video frame or audio file nothing could decode: say why.
+        ExportError::Render(GpuRenderError::Media(MediaError::NoCodec))
+        | ExportError::Audio(AudioMixError::Media(MediaError::NoCodec)) => {
+            ("no_codec", Some(NO_CODEC_HINT))
+        }
         ExportError::Render(_) => ("render", None),
         ExportError::Audio(_) => ("audio", None),
         ExportError::React(ReactBridgeError::InvalidProperties(invalid)) => {
@@ -551,12 +560,7 @@ fn classify(
         ExportError::Codec {
             source: MediaError::NoCodec,
             ..
-        } => (
-            "no_codec",
-            Some(
-                "install Celesta's codec plugin (celesta-codec-ffmpeg) beside Celesta or in a plugin folder",
-            ),
-        ),
+        } => ("no_codec", Some(NO_CODEC_HINT)),
         ExportError::Codec { .. } => ("codec", None),
         ExportError::OutputExists(_) => (
             "output_exists",
@@ -962,6 +966,35 @@ mod tests {
         assert_eq!(failed[1]["code"], "render");
         // The sheet was written all the same.
         assert_eq!(value["outputs"][0]["type"], "contactSheet");
+    }
+
+    #[test]
+    fn media_nothing_could_decode_is_reported_as_no_codec() {
+        let errors = [
+            ExportError::Codec {
+                stage: "encoder check",
+                source: MediaError::NoCodec,
+            },
+            ExportError::Render(GpuRenderError::Media(MediaError::NoCodec)),
+            ExportError::Audio(AudioMixError::Media(MediaError::NoCodec)),
+            ExportError::Render(GpuRenderError::Media(MediaError::NoCodec)).at_frame(3),
+        ];
+        for error in errors {
+            let value = serde_json::to_value(
+                build(Path::new("/tmp/film.tsx"), None, HintStyle::Cli, |_| {
+                    Err(error)
+                })
+                .0,
+            )
+            .unwrap();
+            assert_eq!(value["error"]["code"], "no_codec", "{value}");
+            assert!(
+                value["error"]["hint"]
+                    .as_str()
+                    .is_some_and(|hint| hint.contains("celesta-codec-ffmpeg")),
+                "{value}"
+            );
+        }
     }
 
     #[test]

@@ -187,7 +187,8 @@ impl AudioDecoder for MediaBackend {
         sample_rate: u32,
         channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
-        if sample_rate == 0 || channels == 0 {
+        // A codec mixes down to mono or stereo only.
+        if sample_rate == 0 || !(1..=2).contains(&channels) {
             return Err(MediaError::InvalidAudioFormat {
                 sample_rate,
                 channels,

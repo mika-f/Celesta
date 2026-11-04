@@ -53,7 +53,14 @@ Celesta.app/
       node
       esbuild
     Frameworks/
-      (FFmpeg and its non-system shared-library dependencies)
+      (non-system shared libraries Celesta's own executables need, if any)
+    PlugIns/
+      ffmpeg/
+        celesta-plugin.json
+        bin/celesta-codec-ffmpeg
+        Frameworks/
+          (FFmpeg and its non-system shared-library dependencies)
+        licenses/
     Resources/
       react/
       examples/
@@ -67,8 +74,9 @@ Node executable and license are extracted; npm is not included. JavaScript
 dependencies are copied from the locked installation without pnpm symlinks.
 Native esbuild lives in Helpers so all executable code can be signed explicitly.
 
-macOS uses dynamically linked FFmpeg libraries. `dylibbundler` copies their
-dependency closure into Frameworks and rewrites load paths. Packaging rejects
+macOS uses dynamically linked FFmpeg libraries, which only the codec plugin
+loads. `dylibbundler` copies their dependency closure into the plugin's own
+`PlugIns/ffmpeg/Frameworks` and rewrites its load paths. Packaging rejects
 remaining external or unresolved library dependencies. Existing static linking
 on Windows is preserved.
 

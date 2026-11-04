@@ -14,8 +14,8 @@ use crate::problems::{Problem, Source, error_chain};
 use crate::source::PropertyArgs;
 use crate::view::EditorView;
 use celesta_plugin_host::{
-    InstalledPlugins, PendingPlugin, PluginEntry, SettingsError, UserSettings, from_the_internet,
-    has_project_config, project_plugin_paths, project_root,
+    InstalledPlugins, PendingPlugin, PluginEntry, PluginRole, SettingsError, UserSettings,
+    from_the_internet, has_project_config, project_plugin_paths, project_root,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
@@ -99,13 +99,7 @@ impl FoundPlugins {
                 pending.entry.directory.display()
             )
         });
-        let codec = self.missing_codec.then(|| {
-            format!(
-                "No codec plugin was found, so video and audio files cannot be shown or exported. \
-                 Install Celesta's {} plugin, or reinstall Celesta.",
-                celesta_plugin_host::CODEC_PROGRAM
-            )
-        });
+        let codec = self.missing_codec.then(|| self.missing_codec_detail());
         let detail: Vec<String> = codec
             .into_iter()
             .chain(waiting)
@@ -120,6 +114,30 @@ impl FoundPlugins {
             (pending, _) => format!("{pending} plugins wait for your approval"),
         };
         Some(Problem::new(title, detail.join("\n")))
+    }
+
+    /// Why there is no codec to read and write media with: one waits for
+    /// approval, one is turned off, or none was found.
+    fn missing_codec_detail(&self) -> String {
+        let is_codec = |entry: &PluginEntry| entry.has_role(PluginRole::Codec);
+        let consequence = "so video and audio files cannot be shown or exported";
+        if let Some(pending) = self.pending.iter().find(|pending| is_codec(&pending.entry)) {
+            format!(
+                "The codec plugin {} waits for your approval, {consequence} until you allow it.",
+                pending.entry.manifest.id
+            )
+        } else if let Some(disabled) = self.disabled.iter().find(|entry| is_codec(entry)) {
+            format!(
+                "The codec plugin {} is turned off, {consequence}. Turn it on in the Plugins tab.",
+                disabled.manifest.id
+            )
+        } else {
+            format!(
+                "No codec plugin was found, {consequence}. Install Celesta's {} plugin, or \
+                 reinstall Celesta.",
+                celesta_plugin_host::CODEC_PROGRAM
+            )
+        }
     }
 
     /// Every plugin found whose declarations the project's TypeScript
@@ -538,12 +556,57 @@ mod tests {
         );
         let skipped = FoundPlugins {
             skipped: vec!["a was skipped".into()],
-            ..missing
+            ..missing.clone()
         };
         let problem = skipped.problem().unwrap();
         assert_eq!(problem.title, "A plugin was skipped");
         assert!(
             problem.detail.starts_with("No codec plugin"),
+            "{}",
+            problem.detail
+        );
+
+        // A codec that was found says why it does not run.
+        let codec = PluginEntry {
+            manifest: celesta_plugin_host::Manifest {
+                id: "ffmpeg".into(),
+                version: "1.0.0".into(),
+                protocol: 1,
+                executable: Default::default(),
+                module: None,
+                types: None,
+                components: Vec::new(),
+                roles: vec![PluginRole::Codec],
+            },
+            directory: PathBuf::from("plugins/ffmpeg"),
+            source: celesta_plugin_host::PluginSource::User,
+        };
+        let disabled = FoundPlugins {
+            disabled: vec![codec.clone()],
+            ..missing.clone()
+        };
+        assert!(
+            disabled
+                .problem()
+                .unwrap()
+                .detail
+                .starts_with("The codec plugin ffmpeg is turned off"),
+        );
+        let waiting = FoundPlugins {
+            pending: vec![PendingPlugin {
+                entry: codec,
+                fingerprint: String::new(),
+                changed: false,
+                from_the_internet: false,
+            }],
+            ..missing
+        };
+        let problem = waiting.problem().unwrap();
+        assert_eq!(problem.title, "A plugin waits for your approval");
+        assert!(
+            problem
+                .detail
+                .starts_with("The codec plugin ffmpeg waits for your approval"),
             "{}",
             problem.detail
         );

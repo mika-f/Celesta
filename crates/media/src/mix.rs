@@ -259,38 +259,14 @@ pub(crate) fn sample_ceil(time: Time, sample_rate: u32) -> Result<i64, TimeError
     i64::try_from(value).map_err(|_| TimeError::Overflow)
 }
 
-/// The bytes of a tightly packed RGBA8 frame of `width`x`height`.
+/// The bytes of a tightly packed RGBA8 frame of `width`x`height`: what a
+/// codec's decoded frame must hold.
 pub fn frame_byte_len(width: u32, height: u32) -> Result<usize, MediaError> {
     u64::from(width)
         .checked_mul(u64::from(height))
         .and_then(|pixels| pixels.checked_mul(4))
         .and_then(|bytes| usize::try_from(bytes).ok())
         .ok_or(MediaError::FrameTooLarge { width, height })
-}
-
-/// Clamps a requested source time to just inside the source's final frame.
-/// FFmpeg's input seek only outputs frames at or after the target
-/// timestamp, so landing anywhere past the last frame's presentation time
-/// (container duration minus one nominal frame period) yields zero output;
-/// clamping there instead makes a clip whose playback outruns its file
-/// render the source's last frame. Sources without a usable probed duration
-/// or frame rate pass through untouched and keep the old error behavior.
-pub fn clamp_to_source_end(
-    source_time_seconds: f64,
-    video: &VideoStream,
-    format_duration: Option<Time>,
-) -> f64 {
-    let Some(frame_rate) = video
-        .frame_rate
-        .filter(|rate| rate.is_valid() && rate.numerator > 0)
-    else {
-        return source_time_seconds;
-    };
-    let Some(seconds) = video_seconds(video, format_duration) else {
-        return source_time_seconds;
-    };
-    let frame_step = f64::from(frame_rate.denominator) / f64::from(frame_rate.numerator);
-    source_time_seconds.min((seconds - frame_step).max(0.0))
 }
 
 /// How long the video stream lasts: the shorter of the stream's and the

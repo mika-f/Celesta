@@ -575,8 +575,9 @@ pub(crate) fn report_render_warnings(
     }
 }
 
-/// Hands the frame's pixel buffer to the encoder as is, rather than
-/// copying it first.
+/// Writes the frame's pixel buffer to the codec plugin's process, which
+/// copies it across the process boundary once (the buffer itself is moved,
+/// not copied first).
 pub(crate) fn write_frame(
     writer: &mut VideoWriter,
     frame: celesta_gpu_renderer::GpuFrame,

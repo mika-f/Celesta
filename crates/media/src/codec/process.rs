@@ -87,7 +87,8 @@ impl CodecProcess {
 
 impl Drop for CodecProcess {
     fn drop(&mut self) {
-        // Closing stdin asks the plugin to exit; it is killed if it has not.
+        // The plugin keeps nothing that must outlive its last answer (an
+        // encoder is finished or aborted before), so it is killed outright.
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -112,7 +113,7 @@ fn named<T>(path: &Path, result: Result<T, MediaError>) -> Result<T, MediaError>
 
 impl CodecProvider for CodecProcess {
     fn probe(&mut self, path: &Path) -> Result<MediaProbe, MediaError> {
-        let request = protocol::probe_request(&absolute(path));
+        let request = protocol::probe_request(&absolute(path))?;
         named(
             path,
             self.request(&request)
@@ -125,7 +126,7 @@ impl CodecProvider for CodecProcess {
         let message = protocol::decode_video_request(&VideoRequest {
             path: &path,
             ..*request
-        });
+        })?;
         named(
             request.path,
             self.request(&message)
@@ -139,7 +140,7 @@ impl CodecProvider for CodecProcess {
         sample_rate: u32,
         channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
-        let request = protocol::decode_audio_request(&absolute(path), sample_rate, channels);
+        let request = protocol::decode_audio_request(&absolute(path), sample_rate, channels)?;
         named(
             path,
             self.request(&request)
@@ -157,7 +158,7 @@ impl CodecProvider for CodecProcess {
             output: absolute(&settings.output),
             ..settings.clone()
         };
-        protocol::decode_encoder(&self.request(&protocol::open_encoder_request(&settings))?)
+        protocol::decode_encoder(&self.request(&protocol::open_encoder_request(&settings)?)?)
     }
 
     fn encode_frame(&mut self, encoder: EncoderId, pixels: Vec<u8>) -> Result<(), MediaError> {
@@ -181,7 +182,7 @@ impl CodecProvider for CodecProcess {
             output: absolute(&request.output),
             ..request.clone()
         };
-        self.request(&protocol::mux_audio_request(&request))
+        self.request(&protocol::mux_audio_request(&request)?)
             .map(drop)
     }
 }

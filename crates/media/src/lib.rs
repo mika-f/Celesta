@@ -1,6 +1,7 @@
-//! Media for Celesta: probing, video frames, and audio decoding through a
-//! codec plugin (see [`set_codec`]), and the audio mix, ducking, time
-//! stretching, and loudness Celesta does itself. No codec library is linked.
+//! Media for Celesta: probing, video frames, audio decoding, and encoding
+//! and muxing exports through a codec plugin (see [`set_codec`]), and the
+//! audio mix, ducking, time stretching, and loudness Celesta does itself. No
+//! codec library is linked.
 
 mod backend;
 pub mod codec;
@@ -29,7 +30,7 @@ pub use loudness::{
     normalize_loudness,
 };
 pub use mix::{
-    clamp_to_source_end, frame_byte_len, mix_audio_graph, mix_audio_graph_cancellable,
+    frame_byte_len, mix_audio_graph, mix_audio_graph_cancellable,
     mix_audio_graph_unclipped_cancellable, mix_audio_graph_with_ducks_cancellable, video_seconds,
 };
 pub use types::{AudioBuffer, AudioStream, MediaProbe, VideoFrame, VideoStream};

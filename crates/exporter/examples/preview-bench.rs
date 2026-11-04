@@ -1,8 +1,11 @@
 //! Times the editor preview's per-frame cost for a standalone React entry,
 //! split into the Node round-trip and the GPU render, with and without the
-//! sequential video decoder. Run as:
+//! sequential video decoder. Frames are decoded by the codec plugin's
+//! process, as in the editor, so the times include sending them across it.
+//! Build the plugin first, then run:
 //!
 //! ```text
+//! cargo build --release -p celesta-codec-ffmpeg
 //! cargo run --release --example preview-bench -- <entry.tsx> [frames]
 //! ```
 
@@ -16,7 +19,7 @@ use celesta_media::MediaBackend;
 use celesta_react_bridge::ReactBridge;
 
 fn main() {
-    celesta_codec_ffmpeg::install();
+    celesta_exporter::use_installed_codec();
     let mut args = env::args().skip(1);
     let entry = PathBuf::from(args.next().expect("usage: preview-bench <entry> [frames]"));
     let frames: i64 = args

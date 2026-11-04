@@ -50,6 +50,15 @@ pub(crate) fn open_video_writer(settings: &EncoderSettings) -> Result<VideoWrite
             settings.crf
         )));
     }
+    let pixel_format = match settings.bit_depth {
+        8 => "yuv420p",
+        10 => "yuv420p10le",
+        depth => {
+            return Err(MediaError::Codec(format!(
+                "H.264 is written at a bit depth of 8 or 10, not {depth}"
+            )));
+        }
+    };
     let rate = settings.frame_rate;
     let (Ok(fps_num), Ok(fps_den)) = (
         i32::try_from(rate.numerator),
@@ -66,11 +75,7 @@ pub(crate) fn open_video_writer(settings: &EncoderSettings) -> Result<VideoWrite
             .set_video_codec("libx264")
             .set_video_codec_opt("preset", settings.preset.as_str())
             .set_video_codec_opt("crf", settings.crf.to_string())
-            .set_pix_fmt(if settings.bit_depth == 10 {
-                "yuv420p10le"
-            } else {
-                "yuv420p"
-            })
+            .set_pix_fmt(pixel_format)
             .set_format_opt("movflags", "+faststart"),
         // No faststart here: this is the video-only intermediate, and
         // `mux_audio` sets it on the final file.

@@ -116,21 +116,24 @@ workspace no longer pulls FFmpeg in.
 
 ## Not done
 
-- Frames cross a pipe: a 1080p RGBA frame is 8 MB each way. The exports
-  measured below took no longer than in-process decoding, but 4K playback
-  in the editor may; shared memory would remove the copy.
+- Frames cross a pipe: a 1080p RGBA frame is 8 MB each way. The one export
+  timed (below) took no longer than with FFmpeg in-process, but 4K playback
+  in the editor may; shared memory would remove the copy. Preview playback
+  was not timed (`crates/exporter/examples/preview-bench.rs` times it
+  through the plugin now).
 - No alternative codec plugin yet (an LGPL-only FFmpeg build, or one on the
   OS's codecs such as VideoToolbox or Media Foundation). With an LGPL-only
   FFmpeg, `celesta-codec-ffmpeg` builds and decodes, but MP4 export fails with
   `encoder_unavailable` (no libx264).
 - The editor was not run by hand; its tests (including the missing-codec
   problem) pass, and the preview shares `MediaBackend` with the exporter.
-- `celesta-codec-ffmpeg` is not on crates.io yet; `cargo install celesta-editor`
-  users need `cargo install celesta-codec-ffmpeg` beside it.
+- `celesta-codec-ffmpeg` is not on crates.io yet; once it is, `cargo install`
+  users need `cargo install celesta-codec-ffmpeg` beside the app, as the user
+  guide says.
 
 ## Checks
 
-- `cargo test --workspace` (2,216 passed, none skipped, macOS arm64, Metal),
+- `cargo test --workspace` (2,220 passed, none skipped, macOS arm64, Metal),
   `cargo clippy --workspace --all-targets --locked -- -D warnings`;
   `cargo fmt --all -- --check` reports only files `main` already leaves
   unformatted.
@@ -155,7 +158,8 @@ workspace no longer pulls FFmpeg in.
   scratch folder, with the codec plugin only in a `CELESTA_PLUGIN_PATH`
   folder staged by `stage-codec-plugin.mjs`, against the exporter built from
   the base commit (`0abc4ac9`, FFmpeg linked in): `examples/greenscreen`'s
-  composite as MP4, and a `<Video>` + `<Audio>` entry as MP4 with `--loop`
+  composite as MP4 (6.8 s through the plugin, 7.5 s with FFmpeg linked in;
+  debug builds, one run each), and a `<Video>` + `<Audio>` entry as MP4 with `--loop`
   and as MOV, came out byte-identical; WebM, whose muxer writes a random
   segment UID, decoded to identical frames and audio. Without a plugin the
   exporter's JSON report is `no_codec` with its hint.

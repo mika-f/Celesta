@@ -19,6 +19,9 @@ for (const name of Object.keys(env)) {
 delete env.NODE_PATH;
 delete env.NODE_OPTIONS;
 delete env.ESBUILD_BINARY_PATH;
+// Plugin folders searched before the bundled one would let another codec
+// write the MP4 below.
+delete env.CELESTA_PLUGIN_PATH;
 
 function run(executable, args, input) {
   const result = spawnSync(executable, args, {

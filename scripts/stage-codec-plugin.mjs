@@ -5,9 +5,10 @@
 //   node scripts/stage-codec-plugin.mjs <celesta-codec-ffmpeg program> <folder>
 //
 // <folder> gets `celesta-plugin.json`, the program under `bin/`, and the GPL
-// text and source offer under `licenses/`: an FFmpeg built with libx264 makes
-// the program, and only it, GPL licensed. Native libraries the program loads
-// are the packaging script's to place beside it.
+// text and source offer (with the MIT and Apache texts it links to) under
+// `licenses/`: an FFmpeg built with libx264 makes the program, and only it,
+// GPL licensed. Native libraries the program loads are the packaging
+// script's to place beside it.
 
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -43,12 +44,13 @@ mkdirSync(join(folder, 'licenses'));
 const executable = `bin/${basename(program)}`;
 copyFileSync(program, join(folder, executable));
 chmodSync(join(folder, executable), 0o755);
-for (const [source, name] of [
-  ['LICENSE-GPL-2.0', 'LICENSE-GPL-2.0'],
-  ['packaging/GPL-SOURCE-OFFER.md', 'GPL-SOURCE-OFFER.md'],
-]) {
-  copyFileSync(join(root, source), join(folder, 'licenses', name));
+// The offer links the licenses as `../LICENSE-*` from `packaging/`; here they
+// sit beside it.
+for (const license of ['LICENSE-GPL-2.0', 'LICENSE-MIT', 'LICENSE-APACHE']) {
+  copyFileSync(join(root, license), join(folder, 'licenses', license));
 }
+const offer = readFileSync(join(root, 'packaging/GPL-SOURCE-OFFER.md'), 'utf8');
+writeFileSync(join(folder, 'licenses', 'GPL-SOURCE-OFFER.md'), offer.replaceAll('](../LICENSE-', '](LICENSE-'));
 writeFileSync(
   join(folder, 'celesta-plugin.json'),
   `${JSON.stringify(

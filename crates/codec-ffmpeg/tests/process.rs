@@ -145,7 +145,7 @@ fn writes_an_export_through_the_program() {
 }
 
 #[test]
-fn an_out_of_range_crf_is_refused() {
+fn settings_libx264_cannot_write_are_refused() {
     let mut codec = program();
     let error = codec
         .open_encoder(&EncoderSettings {
@@ -161,6 +161,20 @@ fn an_out_of_range_crf_is_refused() {
         })
         .unwrap_err();
     assert!(error.to_string().contains("CRF"), "{error}");
+    let error = codec
+        .open_encoder(&EncoderSettings {
+            output: std::env::temp_dir().join("celesta-never-written.mp4"),
+            width: 2,
+            height: 2,
+            frame_rate: Rational::new(1, 1),
+            input: PixelFormat::Rgba8,
+            container: Container::Mp4,
+            preset: "medium".into(),
+            crf: 18,
+            bit_depth: 12,
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("bit depth"), "{error}");
 }
 
 #[test]

@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MediaError {
-    /// What the codec plugin said went wrong, such as an FFmpeg error.
+    /// What the codec plugin said went wrong (such as an FFmpeg error), or
+    /// what it answered that does not fit the request.
     #[error("{0}")]
     Codec(String),
     /// No codec plugin is installed (see [`crate::set_codec`]).

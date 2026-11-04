@@ -4,8 +4,8 @@
 //! go through a [`CodecProvider`]: a codec plugin's process
 //! ([`CodecProcess`], speaking [`protocol`]), or, in tests, a provider in
 //! the same process. The application chooses the codec once with
-//! [`set_codec`]; every [`MediaBackend`] made after that opens its own
-//! instance of it when it first needs one. See
+//! [`set_codec`]; each [`MediaBackend`](crate::MediaBackend) opens its own
+//! instance of the codec chosen when it first needs one. See
 //! `docs/handoff/2026-11-05-codec-plugin.md`.
 
 mod process;
@@ -146,14 +146,16 @@ pub struct MuxRequest {
     pub lead_in_frames: usize,
 }
 
-/// Makes a codec instance, each time a [`MediaBackend`] needs one.
+/// Makes a codec instance, each time a [`crate::MediaBackend`] needs one.
 pub type CodecFactory = Arc<dyn Fn() -> Result<Box<dyn CodecProvider>, MediaError> + Send + Sync>;
 
 static CODEC: RwLock<Option<CodecFactory>> = RwLock::new(None);
 
-/// Chooses the codec every [`MediaBackend`] made from now on uses; `None`
-/// leaves none, so reading or writing media fails with
-/// [`MediaError::NoCodec`]. Backends already made keep theirs.
+/// Chooses the codec [`crate::MediaBackend::new`]'s backends open: each opens the
+/// one chosen when it first needs one, so a backend made earlier that has
+/// not opened one yet gets this choice, and one already open keeps its own.
+/// `None` leaves none, so reading or writing media fails with
+/// [`MediaError::NoCodec`].
 pub fn set_codec(factory: Option<CodecFactory>) {
     *CODEC
         .write()
