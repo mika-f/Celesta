@@ -69,6 +69,12 @@ pub(crate) const CLIP_BUDGET: u64 = 256 << 20;
 /// scaled by the avatar's hips height over this one.
 const MIN_HIPS_HEIGHT: f32 = 1e-3;
 
+#[cfg(test)]
+thread_local! {
+    /// The expression channels [`Clip::sample`] has read on this thread.
+    pub(crate) static EXPRESSION_SAMPLES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// A VRM animation, read and ready to sample.
 #[derive(Clone, Debug)]
 pub struct Clip {
@@ -383,6 +389,20 @@ impl Clip {
 
     /// The clip at `seconds`, each channel clamped to its keys.
     pub fn sample(&self, seconds: f64) -> ClipPose {
+        let mut pose = self.sample_motion(seconds);
+        #[cfg(test)]
+        EXPRESSION_SAMPLES.set(EXPRESSION_SAMPLES.get() + self.expressions.len() as u64);
+        pose.expressions = self
+            .expressions
+            .iter()
+            .map(|(key, weight)| (key.clone(), weight.sample(seconds)))
+            .collect();
+        pose
+    }
+
+    /// [`Self::sample`] without the expressions: the bones and the hips
+    /// alone, all a spring step reads.
+    pub(crate) fn sample_motion(&self, seconds: f64) -> ClipPose {
         ClipPose {
             rotations: self
                 .bones
@@ -396,11 +416,7 @@ impl Clip {
                 hips.parent
                     .transform_point3(hips.translation.sample(seconds))
             }),
-            expressions: self
-                .expressions
-                .iter()
-                .map(|(key, weight)| (key.clone(), weight.sample(seconds)))
-                .collect(),
+            expressions: BTreeMap::new(),
         }
     }
 

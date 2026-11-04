@@ -16,6 +16,9 @@
 //!   is none) with `w = τ / fadeIn`: each bone `slerp(q_prev, q_cur, w)`
 //!   (identity where one lacks the bone), the hips `lerp` (rest where one
 //!   lacks them), expressions `lerp` (0 where one lacks them).
+//! - **Spring steps** (see `stepping`) read the bones and the hips alone:
+//!   their poses ([`Sampling::Motion`]) neither sample nor blend a clip's
+//!   expressions, which only the frame's own pose reads.
 //! - **Hips.** Each motion's hips are its clip's travel over its clip's
 //!   hips height, so clips recorded on rigs of different sizes blend: the
 //!   pose's hips are in a rig whose hips rest at (0, 1, 0), which the
@@ -139,14 +142,25 @@ pub(crate) fn open_clips(
 /// so a pose's hips are the clip's travel over its hips height.
 const UNIT_HIPS: Vec3 = Vec3::Y;
 
-/// The pose `motions` give at `time` seconds, and the rest position of the
-/// hips of the rig it is in (to retarget it from); `None` before the first
-/// motion (or with none), when the avatar rests. Every motion is checked,
-/// whatever `time` is.
+/// What a pose reads of its clips.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sampling {
+    /// The bones, the hips, and the expressions: a frame's own pose.
+    All,
+    /// The bones and the hips alone: a spring step's, which reads no
+    /// expression, so a clip's expressions cost its steps nothing.
+    Motion,
+}
+
+/// The pose `motions` give at `time` seconds, as `sampling` reads their
+/// clips, and the rest position of the hips of the rig it is in (to
+/// retarget it from); `None` before the first motion (or with none), when
+/// the avatar rests. Every motion is checked, whatever `time` is.
 pub(crate) fn motion_pose(
     clips: &BTreeMap<String, Clip>,
     motions: &[MotionData],
     time: f64,
+    sampling: Sampling,
 ) -> Result<Option<(ClipPose, Vec3)>, FrameError> {
     for (index, motion) in motions.iter().enumerate() {
         if !clips.contains_key(&motion.clip) {
@@ -184,7 +198,7 @@ pub(crate) fn motion_pose(
     }
     let mut pose: Option<ClipPose> = None;
     for motion in &order[bottom..=active] {
-        let current = local_pose(&clips[&motion.clip], motion, time);
+        let current = local_pose(&clips[&motion.clip], motion, time, sampling);
         let tau = time - motion.from;
         pose = Some(if tau < motion.fade_in {
             let previous = pose.unwrap_or_default();
@@ -201,8 +215,9 @@ fn fading(motion: &MotionData, time: f64) -> bool {
     time - motion.from < motion.fade_in
 }
 
-/// `motion`'s clip at `time`, its hips in the unit rig.
-fn local_pose(clip: &Clip, motion: &MotionData, time: f64) -> ClipPose {
+/// `motion`'s clip at `time`, as `sampling` reads it, its hips in the unit
+/// rig.
+fn local_pose(clip: &Clip, motion: &MotionData, time: f64, sampling: Sampling) -> ClipPose {
     let tau = time - motion.from;
     let at = if !motion.looped {
         tau.min(clip.duration)
@@ -211,7 +226,10 @@ fn local_pose(clip: &Clip, motion: &MotionData, time: f64) -> ClipPose {
     } else {
         0.0
     };
-    let mut pose = clip.sample(at);
+    let mut pose = match sampling {
+        Sampling::All => clip.sample(at),
+        Sampling::Motion => clip.sample_motion(at),
+    };
     // A clip that moves its hips rests them at least `MIN_HIPS_HEIGHT` up.
     let rest = clip.hips_rest();
     pose.hips = pose.hips.map(|raw| UNIT_HIPS + (raw - rest) / rest.y);
@@ -306,6 +324,15 @@ mod tests {
 
     fn clips(model: &VrmModel) -> &BTreeMap<String, Clip> {
         model.clips()
+    }
+
+    /// The pose a frame reads ([`Sampling::All`]).
+    fn motion_pose(
+        clips: &BTreeMap<String, Clip>,
+        motions: &[MotionData],
+        time: f64,
+    ) -> Result<Option<(ClipPose, Vec3)>, FrameError> {
+        super::motion_pose(clips, motions, time, Sampling::All)
     }
 
     fn arm(pose: &ClipPose) -> Quat {
@@ -429,6 +456,31 @@ mod tests {
         let (pose, _) = motion_pose(clips(&model), &motions, 1.0).unwrap().unwrap();
         let expected = Quat::from_rotation_z(-33.75_f32.to_radians());
         assert!(angle(arm(&pose), expected) < 1e-4, "{}", arm(&pose));
+    }
+
+    #[test]
+    fn a_steps_pose_is_the_frames_without_expressions() {
+        let (model, _files) = reference();
+        let motion = |from: f64, fade_in: f64| MotionData {
+            clip: "motion0".into(),
+            from,
+            looped: true,
+            fade_in,
+        };
+        let motions = [motion(0.0, 0.0), motion(0.3, 1.0), motion(0.6, 1.0)];
+        for time in [0.1, 0.45, 0.8, 1.2, 2.0] {
+            let (frame, hips) = motion_pose(clips(&model), &motions, time).unwrap().unwrap();
+            let (step, step_hips) =
+                super::motion_pose(clips(&model), &motions, time, Sampling::Motion)
+                    .unwrap()
+                    .unwrap();
+            assert!(!frame.expressions.is_empty());
+            assert!(step.expressions.is_empty(), "at {time} s");
+            // The bones and hips bit for bit.
+            assert_eq!(step.rotations, frame.rotations, "at {time} s");
+            assert_eq!(step.hips, frame.hips, "at {time} s");
+            assert_eq!(step_hips, hips);
+        }
     }
 
     #[test]

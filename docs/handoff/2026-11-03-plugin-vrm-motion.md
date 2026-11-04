@@ -237,7 +237,11 @@ Ported from UniVRM's FastSpringBone (`UpdateFastSpringBoneJob.cs`,
   constraints alone, never the step before's turned pose. The lookAt and
   expressions are a frame's own values, which earlier steps cannot be
   given; in a VRM 1.0 avatar they turn no bone but the eyes, so a spring
-  hanging from an eye bone swings as if the eye rested (tested).
+  hanging from an eye bone swings as if the eye rested (tested). A step
+  samples and blends only the clips' bones and hips (`Sampling::Motion`):
+  a clip's expressions, however many or long-named, cost a step nothing
+  (tested by counting the expression channels sampled), and the bones and
+  hips are bit for bit the frame's.
 - **The frame contract.** A frame depends on the model, `t`, and `data`
   alone. Kept states only save work; no frame depends on them, and a
   frame refused cold is refused warm.
@@ -289,7 +293,9 @@ refused before any state is looked up:
   - the model's, fixed at load: `300 + nodes + moving joints + 3 ×
     joint–collider pairs + aim climbs`;
   - plus its data's, charged as measured: `16 × (1 + the clip's channels)`
-    for each motion (a step in a fade may sample every motion), and
+    for each motion (a step in a fade may sample every motion; its
+    expression channels are charged though no step samples them, an
+    overcharge the fence can afford), and
     `32 + ⌈keyframes / 8⌉` for each track axis.
   The refusal names the latest time reachable with these motions and
   tracks, the steps, the cost per step, the work, and the budget.

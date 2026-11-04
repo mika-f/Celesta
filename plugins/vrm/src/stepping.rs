@@ -38,8 +38,9 @@
 //!   [`MAX_SPRING_STEPS`] or when its steps would take more than
 //!   [`MAX_STEP_WORK`]: `(n + 1) × cost`, the cost of a step being the
 //!   model's ([`step_cost`], fixed when it opens) plus its data's (its
-//!   motions' clip channels and its tracks' axes and keyframes, which
-//!   every step reads, charged as measured). Both depend on the model, the data, and the time alone, never
+//!   motions' clip channels and its tracks' axes and keyframes, charged as
+//!   measured; a step reads every track and every clip's bones and hips,
+//!   never a clip's expressions, which are charged all the same). Both depend on the model, the data, and the time alone, never
 //!   on what is kept, so a frame refused cold is refused warm. A model
 //!   that cannot step four hours this way says how far it can when it
 //!   opens ([`reach_notice`]).
@@ -509,7 +510,9 @@ pub(crate) fn step_cost(nodes: u64, joints: u64, pairs: u64, climbed: u64) -> u6
 /// What `data` adds to each step's work, as measured (see
 /// [`MOTION_CHANNEL_COST`], [`TRACK_AXIS_COST`], [`KEYFRAMES_PER_UNIT`]):
 /// for each motion, [`MOTION_CHANNEL_COST`] × (1 + its clip's channels),
-/// since a step may sample every motion in a fade; for each track axis,
+/// since a step may sample every motion in a fade (its expression channels
+/// included, though a step samples only the bones and hips: an overcharge
+/// the fence can afford); for each track axis,
 /// [`TRACK_AXIS_COST`] plus a unit per [`KEYFRAMES_PER_UNIT`] keyframes
 /// (rounded up).
 fn data_cost(model: &VrmModel, data: &PerformanceData) -> u64 {
@@ -606,13 +609,21 @@ mod tests {
     /// `vrm` written to a fresh directory with the reference clip as
     /// `motion0`, opened with a fresh texture cache.
     fn open_vrm(vrm: &SyntheticVrm) -> (VrmModel, TempDir) {
+        open_vrm_with(vrm, &SyntheticVrma::clip().glb())
+    }
+
+    /// [`open_vrm`] with `clip` (a `.vrma` file's bytes) as `motion0`.
+    fn open_vrm_with(vrm: &SyntheticVrm, clip: &[u8]) -> (VrmModel, TempDir) {
         let directory = TempDir::new().unwrap();
         let model = directory.path().join("avatar.vrm");
         std::fs::write(&model, vrm.glb()).unwrap();
-        let clip = directory.path().join("clip.vrma");
-        std::fs::write(&clip, SyntheticVrma::clip().glb()).unwrap();
-        let assets: BTreeMap<String, PathBuf> =
-            [("model".to_owned(), model), ("motion0".to_owned(), clip)].into();
+        let clip_file = directory.path().join("clip.vrma");
+        std::fs::write(&clip_file, clip).unwrap();
+        let assets: BTreeMap<String, PathBuf> = [
+            ("model".to_owned(), model),
+            ("motion0".to_owned(), clip_file),
+        ]
+        .into();
         let cache = directory.path().join("cache");
         (
             VrmModel::open_with_cache(&assets, &cache).unwrap(),
@@ -787,6 +798,53 @@ mod tests {
             model.stepper().state_at(model, 2.0, data).unwrap()
         };
         assert_eq!(state(&fresh_plain, &a()), state(&fresh_looking, &gazing));
+    }
+
+    #[test]
+    fn steps_read_no_clip_expressions() {
+        use crate::vrma::EXPRESSION_SAMPLES;
+        // The reference clip with 200 custom expressions more, each of a
+        // 4 KiB name on a node of its own keyed by happy's sampler.
+        let customs = 200;
+        let clip = SyntheticVrma::clip().glb_with(|root| {
+            let first = root["nodes"].as_array().unwrap().len();
+            let mut custom = serde_json::Map::new();
+            for index in 0..customs {
+                root["nodes"].as_array_mut().unwrap().push(json!({}));
+                custom.insert(
+                    format!("{index:04}{}", "x".repeat(4096)),
+                    json!({ "node": first + index }),
+                );
+                root["animations"][0]["channels"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({
+                        "sampler": 2,
+                        "target": { "node": first + index, "path": "translation" },
+                    }));
+            }
+            root["extensions"]["VRMC_vrm_animation"]["expressions"]["custom"] =
+                Value::Object(custom);
+        });
+        let mut vrm = SyntheticVrm::avatar();
+        vrm.extensions.insert(VRMC_SPRING_BONE.into(), hair());
+        let (model, _files) = open_vrm_with(&vrm, &clip);
+        // Five motions, each still fading in from the one before at 1 s.
+        let motions: Vec<Value> = (0..5)
+            .map(
+                |index| json!({ "clip": "motion0", "from": f64::from(index) * 0.2, "fadeIn": 1.0 }),
+            )
+            .collect();
+        let fading = data(json!({ "motions": motions }));
+
+        EXPRESSION_SAMPLES.set(0);
+        model.stepper().state_at(&model, 1.0, &fading).unwrap();
+        assert_eq!(model.stepper().steps(), 61);
+        assert_eq!(EXPRESSION_SAMPLES.get(), 0, "the steps sampled expressions");
+        // The frame's own pose still reads every clip's expressions.
+        let (_, weights) = model.base_pose(1.0, &fading).unwrap();
+        assert_eq!(weights.len(), customs + 1);
+        assert_eq!(EXPRESSION_SAMPLES.get(), 5 * (customs as u64 + 1));
     }
 
     #[test]

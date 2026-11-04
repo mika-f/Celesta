@@ -82,7 +82,7 @@ use crate::humanoid::Humanoid;
 use crate::look_at::LookAt;
 use crate::materials::{materials, texture_cache_dir};
 use crate::meta::usage_notices;
-use crate::motion::{ClipLimits, is_clip_name, motion_pose, open_clips};
+use crate::motion::{ClipLimits, Sampling, is_clip_name, motion_pose, open_clips};
 use crate::mtoon::{self, Mtoon, MtoonOverrides};
 use crate::nodes::{NodeTree, Pose};
 use crate::notices::Warnings;
@@ -718,18 +718,21 @@ impl VrmModel {
         time: f64,
         data: &PerformanceData,
     ) -> Result<(Pose, BTreeMap<ExpressionKey, f32>), FrameError> {
-        self.base_pose_with(time, data, apply_tracks)
+        self.base_pose_with(time, data, Sampling::All, apply_tracks)
     }
 
-    /// [`Self::base_pose`], with the tracks applied by `tracks`.
+    /// [`Self::base_pose`], its clips read as `sampling` asks (with
+    /// [`Sampling::Motion`], no expression weights), and the tracks applied
+    /// by `tracks`.
     fn base_pose_with(
         &self,
         time: f64,
         data: &PerformanceData,
+        sampling: Sampling,
         tracks: TrackStage,
     ) -> Result<(Pose, BTreeMap<ExpressionKey, f32>), FrameError> {
         let mut pose = self.tree.rest_pose();
-        let motion = motion_pose(&self.clips, &data.motions, time)?;
+        let motion = motion_pose(&self.clips, &data.motions, time, sampling)?;
         if motion.is_none() && data.tracks.is_empty() {
             return Ok((pose, BTreeMap::new()));
         }
@@ -758,9 +761,11 @@ impl VrmModel {
 
     /// The pose a spring step at `time` sees: the base pose with its
     /// constraints, without the frame's own lookAt and expressions (see
-    /// `stepping`). `data`'s tracks are checked (`tracks::check_tracks`).
+    /// `stepping`), its clips' expressions not even read. `data`'s tracks
+    /// are checked (`tracks::check_tracks`).
     pub(crate) fn step_pose(&self, time: f64, data: &PerformanceData) -> Result<Pose, FrameError> {
-        let (mut pose, _) = self.base_pose_with(time, data, apply_checked_tracks)?;
+        let (mut pose, _) =
+            self.base_pose_with(time, data, Sampling::Motion, apply_checked_tracks)?;
         self.apply_constraints(&mut pose);
         Ok(pose)
     }
@@ -822,8 +827,10 @@ impl VrmModel {
         self.step_cost
     }
 
-    /// The channels the layer's clip `name` samples (none for a clip the
-    /// layer did not open, which no frame plays).
+    /// The channels the layer's clip `name` samples for a frame (none for a
+    /// clip the layer did not open, which no frame plays). A spring step
+    /// reads its bones and hips alone, so charging the expressions too
+    /// overcounts a step's work, never undercounts it.
     pub(crate) fn clip_channels(&self, name: &str) -> u64 {
         self.clips.get(name).map_or(0, Clip::channels)
     }
