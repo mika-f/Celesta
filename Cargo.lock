@@ -950,6 +950,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-codec-ffmpeg"
+version = "0.9.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-media",
+ "ez-ffmpeg",
+ "ffmpeg-sys-next",
+ "rayon",
+ "tempfile",
+]
+
+[[package]]
 name = "celesta-composition"
 version = "0.9.0"
 dependencies = [
@@ -1023,6 +1035,7 @@ dependencies = [
 name = "celesta-exporter"
 version = "0.9.0"
 dependencies = [
+ "celesta-codec-ffmpeg",
  "celesta-composition",
  "celesta-evaluator",
  "celesta-gpu-renderer",
@@ -1102,12 +1115,13 @@ name = "celesta-media"
 version = "0.9.0"
 dependencies = [
  "celesta-composition",
+ "celesta-plugin",
  "celesta-remote",
  "clap",
  "ebur128",
- "ez-ffmpeg",
- "ffmpeg-sys-next",
  "rayon",
+ "serde",
+ "serde_json",
  "signalsmith-stretch",
  "strum",
  "thiserror 2.0.21",
@@ -1177,6 +1191,7 @@ dependencies = [
 name = "celesta-react-bridge"
 version = "0.9.0"
 dependencies = [
+ "celesta-codec-ffmpeg",
  "celesta-composition",
  "celesta-media",
  "celesta-plugin-host",

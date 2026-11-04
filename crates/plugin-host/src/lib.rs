@@ -1,10 +1,11 @@
-//! Celesta's side of content plugins: finds plugin directories
+//! Celesta's side of plugins: finds plugin directories
 //! (`celesta-plugin.json`) in the locations every part of Celesta shares
 //! ([`search_paths`], [`InstalledPlugins`]), decides which may run without
 //! asking ([`UserSettings`], [`InstalledPlugins::allowed_by`]), and runs
 //! each plugin a renderer needs in a process of its own, speaking
 //! `celesta_plugin::protocol` with it. Install a [`PluginHost`] with
-//! `GpuRenderer::with_content_provider`.
+//! `GpuRenderer::with_content_provider`. A codec plugin
+//! ([`InstalledPlugins::codec`]) is started by `celesta_media` instead.
 
 mod approval;
 mod host;
@@ -21,9 +22,10 @@ pub use locations::{
     PluginSource, SearchPath, bundled_plugin_dir, search_paths, unsafe_reason, user_plugin_dir,
 };
 pub use manifest::{
-    ComponentInfo, ComponentSource, DiscoveryError, InstalledPlugins, MANIFEST, Manifest,
-    PLUGIN_PATH_ENV, PluginEntry, RuntimePlugins, WAITING_PLUGIN_PATH_ENV, discover, discover_in,
-    is_contained_path, is_valid_id, platform, plugin_paths,
+    CODEC_PROGRAM, CodecPlugin, ComponentInfo, ComponentSource, DiscoveryError, InstalledPlugins,
+    MANIFEST, Manifest, PLUGIN_PATH_ENV, PluginEntry, PluginRole, RuntimePlugins,
+    WAITING_PLUGIN_PATH_ENV, discover, discover_in, is_contained_path, is_valid_id, platform,
+    plugin_paths,
 };
 pub use project::{
     PROJECT_CONFIG, ProjectConfigError, has_project_config, project_plugin_paths, project_root,

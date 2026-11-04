@@ -1,10 +1,11 @@
-use crate::decoder::{AudioDecoder, VideoFrameDecoder};
-use crate::error::MediaError;
-use crate::mix::{clamp_to_source_end, video_seconds};
+use crate::ffmpeg_error;
 use crate::probe::{ensure_exists, probe_path};
 use crate::sequential::{FrameRun, ffmpeg_path, timestamps_match};
-use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
+use celesta_media::{
+    AudioBuffer, AudioDecoder, MediaError, MediaProbe, VideoFrame, VideoFrameDecoder,
+    clamp_to_source_end, video_seconds,
+};
 use ez_ffmpeg::Input;
 use ez_ffmpeg::frame_export::{Channels, SampleExtractor};
 use std::collections::HashMap;
@@ -244,7 +245,7 @@ impl AudioDecoder for FfmpegBackend {
             .sample_rate(sample_rate)
             .channels(layout)
             .collect_samples()
-            .map_err(MediaError::Ffmpeg)?;
+            .map_err(ffmpeg_error)?;
         if samples.len() % usize::from(channels) != 0 {
             return Err(MediaError::InvalidAudioSampleCount {
                 samples: samples.len(),

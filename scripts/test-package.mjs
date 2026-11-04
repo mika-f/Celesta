@@ -56,6 +56,14 @@ export default function Root() {
   const messages = protocol.trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.ok(messages[0].config);
   assert.ok(messages[1].scene);
+  // Celesta links no FFmpeg: the MP4 below is written by the bundled codec
+  // plugin, which carries the GPL its libx264 needs.
+  const codec = join(packageDirectory, mac ? 'Contents/PlugIns/ffmpeg' : 'plugins/ffmpeg');
+  assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the codec plugin');
+  assert.ok(
+    existsSync(join(codec, 'licenses/LICENSE-GPL-2.0')),
+    'The codec plugin must carry the GPL text',
+  );
   const output = join(directory, 'test.mp4');
   run(exporter, ['--react', entry, output]);
   const mp4 = readFileSync(output);

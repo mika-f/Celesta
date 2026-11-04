@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use celesta_composition::Rational;
+use celesta_media::MediaError;
 use celesta_project::LoadError;
 use celesta_react_bridge::{PropsFileChoice, ReactBridgeError};
 use serde::Serialize;
@@ -547,7 +548,16 @@ fn classify(
         ExportError::Properties(_) => ("invalid_properties", None),
         ExportError::Time(_) => ("time", None),
         ExportError::Io { .. } => ("io", None),
-        ExportError::Ffmpeg { .. } => ("ffmpeg", None),
+        ExportError::Codec {
+            source: MediaError::NoCodec,
+            ..
+        } => (
+            "no_codec",
+            Some(
+                "install Celesta's codec plugin (celesta-codec-ffmpeg) beside Celesta or in a plugin folder",
+            ),
+        ),
+        ExportError::Codec { .. } => ("codec", None),
         ExportError::OutputExists(_) => (
             "output_exists",
             Some(if cli {
@@ -960,7 +970,7 @@ mod tests {
             build(Path::new("/tmp/film.tsx"), None, HintStyle::Cli, |_| {
                 Err(ExportError::EncoderUnavailable {
                     format: VideoFormat::Webm,
-                    encoder: "libvpx-vp9",
+                    encoder: "libvpx-vp9".into(),
                 })
             })
             .0,

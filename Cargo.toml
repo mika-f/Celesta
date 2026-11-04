@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/bench",
   "crates/budoux",
+  "crates/codec-ffmpeg",
   "crates/composition",
   "crates/editor",
   "crates/editor-core",
@@ -38,6 +39,7 @@ rust-version = "1.89"
 # dependencies by version. The exact pins move with `workspace.package`'s
 # version, and Cargo refuses to resolve them if a release bump misses one.
 celesta-budoux = { path = "crates/budoux", version = "=0.9.0" }
+celesta-codec-ffmpeg = { path = "crates/codec-ffmpeg", version = "=0.9.0" }
 celesta-composition = { path = "crates/composition", version = "=0.9.0" }
 celesta-editor-core = { path = "crates/editor-core", version = "=0.9.0" }
 celesta-editor-theme = { path = "crates/editor-theme", version = "=0.9.0" }

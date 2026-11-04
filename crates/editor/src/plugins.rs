@@ -41,14 +41,20 @@ pub(crate) struct FoundPlugins {
     pub(crate) folders: Vec<PathBuf>,
     /// Why each skipped plugin or folder was skipped.
     pub(crate) skipped: Vec<String>,
+    /// No codec plugin was found, so video and audio files cannot be read
+    /// or exported.
+    pub(crate) missing_codec: bool,
 }
 
 impl FoundPlugins {
     /// Reads every plugin location, with the trusted project at `project`'s
-    /// own folders; blocking, so off the UI thread.
+    /// own folders; blocking, so off the UI thread. Media is read and
+    /// written with the codec plugin among what may run from now on.
     pub(crate) fn find(project: Option<&Path>) -> Self {
         let (settings, settings_error) = UserSettings::current();
-        Self::find_with(project, &settings, settings_error)
+        let mut found = Self::find_with(project, &settings, settings_error);
+        found.missing_codec = celesta_exporter::use_codec(&found.installed).is_none();
+        found
     }
 
     /// [`Self::find`] with these settings, and why the user's could not be
@@ -80,6 +86,7 @@ impl FoundPlugins {
             disabled: allowed.disabled,
             folders: settings.plugin_folders.clone(),
             skipped,
+            missing_codec: false,
         }
     }
 
@@ -92,8 +99,20 @@ impl FoundPlugins {
                 pending.entry.directory.display()
             )
         });
-        let detail: Vec<String> = waiting.chain(self.skipped.iter().cloned()).collect();
+        let codec = self.missing_codec.then(|| {
+            format!(
+                "No codec plugin was found, so video and audio files cannot be shown or exported. \
+                 Install Celesta's {} plugin, or reinstall Celesta.",
+                celesta_plugin_host::CODEC_PROGRAM
+            )
+        });
+        let detail: Vec<String> = codec
+            .into_iter()
+            .chain(waiting)
+            .chain(self.skipped.iter().cloned())
+            .collect();
         let title = match (self.pending.len(), self.skipped.len()) {
+            (0, 0) if self.missing_codec => "No codec plugin is installed".to_owned(),
             (0, 0) => return None,
             (0, 1) => "A plugin was skipped".to_owned(),
             (0, skipped) => format!("{skipped} plugins were skipped"),
@@ -501,6 +520,32 @@ mod tests {
                 "2 plugins were skipped",
                 "a was skipped\nb was skipped"
             ))
+        );
+    }
+
+    #[test]
+    fn a_missing_codec_is_a_problem() {
+        let missing = FoundPlugins {
+            missing_codec: true,
+            ..FoundPlugins::default()
+        };
+        let problem = missing.problem().unwrap();
+        assert_eq!(problem.title, "No codec plugin is installed");
+        assert!(
+            problem.detail.contains("celesta-codec-ffmpeg"),
+            "{}",
+            problem.detail
+        );
+        let skipped = FoundPlugins {
+            skipped: vec!["a was skipped".into()],
+            ..missing
+        };
+        let problem = skipped.problem().unwrap();
+        assert_eq!(problem.title, "A plugin was skipped");
+        assert!(
+            problem.detail.starts_with("No codec plugin"),
+            "{}",
+            problem.detail
         );
     }
 

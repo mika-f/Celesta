@@ -66,7 +66,7 @@ try {
         Invoke-Checked pnpm @('install', '--frozen-lockfile')
         Invoke-Checked pnpm @('--dir', 'packages/react', 'run', 'codegen')
         Invoke-Checked pnpm @('run', 'build:runtime')
-        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter', '-p', 'celesta-mcp')
+        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter', '-p', 'celesta-mcp', '-p', 'celesta-codec-ffmpeg')
     }
     $binaries = Join-Path $root 'target/release'
     Copy-Item -LiteralPath "$binaries/celesta-editor.exe" -Destination "$package/Celesta.exe"
@@ -98,6 +98,12 @@ try {
         }
     } finally { $zip.Dispose() }
     Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/stage-react-runtime.mjs", "$runtime/react")
+    # FFmpeg, and the GPL libx264 with it, is linked into the codec plugin's
+    # program alone, in the bundled plugin folder beside Celesta.exe. Windows
+    # looks for its DLLs beside the program, so it gets its own CRT copies.
+    $codec = Join-Path $package 'plugins/ffmpeg'
+    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/stage-codec-plugin.mjs", "$binaries/celesta-codec-ffmpeg.exe", $codec)
+    Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination "$codec/bin"
 
     Copy-Item -LiteralPath "$root/README.md" -Destination $package
     New-Item -ItemType Directory "$package/examples" | Out-Null

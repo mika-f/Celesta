@@ -1,8 +1,8 @@
-use crate::color::VideoColor;
-use crate::error::MediaError;
+use crate::color::video_color;
+use crate::ffmpeg_error;
 use crate::sequential::ffmpeg_path;
-use crate::types::{AudioStream, MediaProbe, VideoStream};
 use celesta_composition::{Rational, Time};
+use celesta_media::{AudioStream, MediaError, MediaProbe, VideoStream};
 use ez_ffmpeg::stream_info::{StreamInfo, find_all_stream_infos};
 use ez_ffmpeg::{AVRational, container_info};
 use std::path::Path;
@@ -19,7 +19,7 @@ pub(crate) fn ensure_exists(path: &Path) -> Result<(), MediaError> {
 pub(crate) fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
     ensure_exists(path)?;
     let url = ffmpeg_path(path);
-    let streams = find_all_stream_infos(url.as_str()).map_err(MediaError::Ffmpeg)?;
+    let streams = find_all_stream_infos(url.as_str()).map_err(ffmpeg_error)?;
     let duration = container_info::get_duration_us(url.as_str())
         .ok()
         .filter(|micros| *micros > 0)
@@ -52,7 +52,7 @@ pub(crate) fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
                     height,
                     frame_rate: video_frame_rate(avg_frame_rate, r_frame_rate),
                     duration: stream_duration(duration, time_base),
-                    color: VideoColor::from_raw(color_primaries, color_transfer, color_space),
+                    color: video_color(color_primaries, color_transfer, color_space),
                 });
             }
             StreamInfo::Audio {

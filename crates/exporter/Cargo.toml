@@ -12,7 +12,6 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 png = "0.18.1"
 celesta-composition.workspace = true
 celesta-evaluator.workspace = true
-ez-ffmpeg.workspace = true
 celesta-gpu-renderer = { workspace = true, features = ["clap"] }
 celesta-plugin-host.workspace = true
 celesta-media = { workspace = true, features = ["clap"] }
@@ -28,5 +27,8 @@ image = { version = "0.25.8", default-features = false, features = ["jpeg"] }
 strum.workspace = true
 thiserror.workspace = true
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-ez-ffmpeg = { workspace = true, features = ["static"] }
+[dev-dependencies]
+# Tests read and write media through the FFmpeg codec in their own process,
+# and make their fixtures with FFmpeg; Celesta itself links neither.
+celesta-codec-ffmpeg.workspace = true
+ez-ffmpeg.workspace = true

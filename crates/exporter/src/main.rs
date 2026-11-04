@@ -570,6 +570,9 @@ fn cancel_on_stdin(cancellation: ExportCancellation) {
 }
 
 fn inspect(cli: &Cli) -> ExitCode {
+    let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir);
+    // The React runtime's media probes go through the codec.
+    celesta_exporter::use_codec(&plugins);
     let result = match ReactRuntimeOptions::for_entry(
         &cli.source,
         cli.props_file.as_deref(),
@@ -583,7 +586,7 @@ fn inspect(cli: &Cli) -> ExitCode {
                 properties: runtime.properties,
                 composition_id: cli.composition.clone(),
             },
-            &InstalledPlugins::find_reporting(&cli.plugin_dir),
+            &plugins,
         ),
         Err(error) => inspect::startup_failed(&error.to_string()),
     };

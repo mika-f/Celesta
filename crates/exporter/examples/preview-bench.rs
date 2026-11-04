@@ -12,10 +12,11 @@ use std::time::Instant;
 
 use celesta_composition::Time;
 use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
-use celesta_media::FfmpegBackend;
+use celesta_media::MediaBackend;
 use celesta_react_bridge::ReactBridge;
 
 fn main() {
+    celesta_codec_ffmpeg::install();
     let mut args = env::args().skip(1);
     let entry = PathBuf::from(args.next().expect("usage: preview-bench <entry> [frames]"));
     let frames: i64 = args
@@ -43,9 +44,9 @@ fn main() {
     );
 
     let decoder = if sequential {
-        FfmpegBackend::new().with_sequential_video(metadata.frame_rate)
+        MediaBackend::new().with_sequential_video(metadata.frame_rate)
     } else {
-        FfmpegBackend::new()
+        MediaBackend::new()
     };
     let mut renderer = GpuRenderer::new(GpuRenderOptions::default())
         .expect("gpu renderer")

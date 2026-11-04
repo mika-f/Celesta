@@ -1,5 +1,6 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
+mod codec;
 mod control;
 mod error;
 mod exporter;
@@ -19,6 +20,7 @@ mod tests;
 mod timecode;
 
 pub use celesta_media::{LoudnessTarget, PeakHandling};
+pub use codec::{use_codec, use_installed_codec};
 pub use control::{
     AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile,
 };

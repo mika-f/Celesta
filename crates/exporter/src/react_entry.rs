@@ -9,7 +9,7 @@ use crate::react::{CompanionProject, ReactRuntimeOptions, ReactVideoRequest};
 use crate::render::{ensure_encoders, ensure_not_cancelled, validate_dimensions, validate_output};
 use crate::subtitles;
 use celesta_composition::Time;
-use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_unclipped_cancellable};
+use celesta_media::{AudioMixError, MediaBackend, mix_audio_graph_unclipped_cancellable};
 use celesta_project::Project;
 use celesta_react_bridge::ReactCompositionMetadata;
 use std::fs;
@@ -223,7 +223,7 @@ impl Exporter {
         } else {
             progress(ExportProgress::MixingAudio);
             let graph = shifted_audio_graph(&graph, window_start).map_err(ExportError::Time)?;
-            let mut audio_decoder = FfmpegBackend::new();
+            let mut audio_decoder = MediaBackend::new();
             let audio_error = |error| match error {
                 AudioMixError::Cancelled => ExportError::Cancelled,
                 error => ExportError::Audio(error),

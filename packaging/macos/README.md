@@ -143,12 +143,19 @@ The bundle includes available Rust and Homebrew license notices and dependency
 inventories, plus the repository's root `LICENSE*` files (copied automatically)
 and `packaging/GPL-SOURCE-OFFER.md`.
 
+Celesta's own executables link no FFmpeg. The codec plugin goes in
+`Contents/PlugIns/ffmpeg`: its program in `bin/`, the Homebrew libraries it
+loads in `Frameworks/` (the packaging script bundles them there with
+dylibbundler, apart from the app's own `Contents/Frameworks`), and the GPL text
+and source offer in `licenses/`. The script fails if Celesta's own executables
+link FFmpeg.
+
 Homebrew's `ffmpeg@8` formula enables the `x264` encoder by default, which is
-GPL-2.0-or-later licensed and makes this binary package as a whole
-GPL-licensed in addition to Celesta's own MIT/Apache-2.0 source license; see
+GPL-2.0-or-later licensed and makes the codec plugin's program, as
+distributed, GPL-licensed; Celesta's executables stay under MIT/Apache-2.0 (see
 [`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md) and the root
-[`README.md`](../../README.md#license). That file's written offer, together
-with `LICENSE-GPL-2.0`, is how this package satisfies GPLv2 Section 3 without
+[`README.md`](../../README.md#license)). That file's written offer, together
+with `LICENSE-GPL-2.0`, is how the package satisfies GPLv2 Section 3 without
 bundling full FFmpeg/x264 source in every download. This is the same release
 concern described in the Windows packaging guide.
 

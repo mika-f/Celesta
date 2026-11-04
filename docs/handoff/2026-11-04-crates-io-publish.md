@@ -2,7 +2,8 @@
 
 The workspace's crates can be packaged for crates.io. `celesta-bench` and the
 sample plugins `celesta-plugin-flag` and `celesta-plugin-turntable` stay
-`publish = false`; the other 17 are publishable. `celesta-plugin-vrm`
+`publish = false`; the other 18 are publishable, `celesta-codec-ffmpeg`
+(`2026-11-05-codec-plugin.md`) among them. `celesta-plugin-vrm`
 (`plugins/vrm`) is a workspace of its own, also `publish = false`, and ships
 as a plugin package rather than a crate.
 
@@ -43,8 +44,9 @@ cargo publish -p celesta-editor -p celesta-mcp --allow-dirty
 `cargo publish --workspace` (Cargo 1.90+) publishes in dependency order and
 skips `publish = false` crates. The dry run takes `--allow-dirty` for the
 `bundled/` copies only. Its verification builds every crate, so
-FFmpeg 8 must be on `PKG_CONFIG_PATH`. crates.io rate-limits new crates, so a
-first publish of all 17 may stop partway; later, rerun the step that
+FFmpeg 8 must be on `PKG_CONFIG_PATH` (for `celesta-codec-ffmpeg`, the only
+crate that links it). crates.io rate-limits new crates, so a
+first publish of all 18 may stop partway; later, rerun the step that
 stopped with `--exclude` for each crate already on crates.io (or `-p` for
 each one left), keeping `--allow-dirty` whenever celesta-editor or
 celesta-mcp is among them.

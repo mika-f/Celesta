@@ -9,6 +9,11 @@ On macOS, copy the complete app into Applications before launching it. For a por
 Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set `PKG_CONFIG_PATH` in the same shell where you run Cargo. On Windows, check `VCPKG_ROOT` and the MSVC build tools. On Linux, point `PKG_CONFIG_PATH` at the FFmpeg you built, such as `/opt/ffmpeg8/lib/pkgconfig`. See [source-build setup](/en/docs/build-from-source/).
 
 :::
+:::toggle[Video and audio do not show, or an export fails with no_codec]
+
+Celesta reads and writes media through its codec plugin. In a package, check that the `ffmpeg` plugin is still in the plugin folder that comes with Celesta (`plugins\ffmpeg` beside `Celesta.exe`, or `Contents/PlugIns/ffmpeg` in the macOS app), or install the package again. In a source build, run `cargo build -p celesta-codec-ffmpeg --release` so the program is beside the app’s. See [The codec plugin](/en/docs/plugins/#the-codec-plugin).
+
+:::
 :::toggle[My media is missing]
 
 Check local paths relative to the composition entry and keep the referenced media when sharing the project. HTTP(S) media needs network access on first use; native rendering caches files by URL without checking for updates. For changed remote content, use a new URL or clear its cache. Browser media additionally requires CORS access.

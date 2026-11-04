@@ -259,7 +259,8 @@ pub(crate) fn sample_ceil(time: Time, sample_rate: u32) -> Result<i64, TimeError
     i64::try_from(value).map_err(|_| TimeError::Overflow)
 }
 
-pub(crate) fn frame_byte_len(width: u32, height: u32) -> Result<usize, MediaError> {
+/// The bytes of a tightly packed RGBA8 frame of `width`x`height`.
+pub fn frame_byte_len(width: u32, height: u32) -> Result<usize, MediaError> {
     u64::from(width)
         .checked_mul(u64::from(height))
         .and_then(|pixels| pixels.checked_mul(4))
@@ -274,7 +275,7 @@ pub(crate) fn frame_byte_len(width: u32, height: u32) -> Result<usize, MediaErro
 /// clamping there instead makes a clip whose playback outruns its file
 /// render the source's last frame. Sources without a usable probed duration
 /// or frame rate pass through untouched and keep the old error behavior.
-pub(crate) fn clamp_to_source_end(
+pub fn clamp_to_source_end(
     source_time_seconds: f64,
     video: &VideoStream,
     format_duration: Option<Time>,
@@ -294,7 +295,7 @@ pub(crate) fn clamp_to_source_end(
 
 /// How long the video stream lasts: the shorter of the stream's and the
 /// container's durations, whichever are known.
-pub(crate) fn video_seconds(video: &VideoStream, format_duration: Option<Time>) -> Option<f64> {
+pub fn video_seconds(video: &VideoStream, format_duration: Option<Time>) -> Option<f64> {
     match (format_duration, video.duration) {
         (Some(format), Some(stream)) => format
             .as_seconds()

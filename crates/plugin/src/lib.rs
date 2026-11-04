@@ -11,7 +11,7 @@ mod provider;
 pub mod scene;
 
 pub use mesh::{MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState, TextureSource};
-pub use protocol::{PROTOCOL_VERSION, serve};
+pub use protocol::{PROTOCOL_VERSION, serve, serve_requests};
 pub use provider::{
     ContentFrame, ContentModel, ContentProvider, ModelId, Notice, NoticeLevel, Opened, PluginError,
 };

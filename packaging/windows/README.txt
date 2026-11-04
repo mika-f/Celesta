@@ -21,9 +21,11 @@ step. Native library licenses are in licenses/native, Rust notices in
 licenses/rust, Node.js notices in runtime/LICENSE, and JavaScript notices in
 runtime/react/node_modules.
 
-The x264-enabled FFmpeg build includes GPL-2.0-or-later licensed software,
-which makes this package as a whole GPL-licensed in addition to Celesta's own
-MIT/Apache-2.0 source license. See licenses/LICENSE-GPL-2.0 for the license
-text and licenses/GPL-SOURCE-OFFER.md for the corresponding-source offer.
+Celesta.exe, Celesta-export.exe, and Celesta-mcp.exe link no FFmpeg and are
+MIT/Apache-2.0 licensed. Video and audio are read and written by the codec
+plugin in plugins\ffmpeg, a separate program built with an x264-enabled FFmpeg,
+which is GPL-2.0-or-later licensed. See plugins\ffmpeg\licenses (or
+licenses/LICENSE-GPL-2.0) for the license text and
+licenses/GPL-SOURCE-OFFER.md for the corresponding-source offer.
 The build also includes libvpx and libopus (BSD-3-Clause); their notices are in
 licenses/native.

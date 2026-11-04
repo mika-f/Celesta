@@ -33,7 +33,7 @@ use celesta_exporter::{ExportCancellation, ExportProgress};
 use celesta_gpu_renderer::{
     GpuDriver, GpuRenderOptions, GpuRenderer, HitRegion, LayerFrame, TextLayout,
 };
-use celesta_media::FfmpegBackend;
+use celesta_media::MediaBackend;
 use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
@@ -444,7 +444,7 @@ impl EditorView {
             ..GpuRenderOptions::default()
         })?
         .with_asset_root(document.asset_root())
-        .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate_value))
+        .with_video_decoder(MediaBackend::new().with_sequential_video(frame_rate_value))
         .with_content_provider(plugins.installed.host());
         let adapter = renderer.adapter_info();
         let gpu_name = format!("{} ({})", adapter.name, adapter.backend).into();

@@ -1,8 +1,8 @@
+use crate::color::conversion;
 use crate::converted::ConvertedFrames;
-use crate::error::MediaError;
-use crate::ffmpeg::SequentialVideoSession;
-use crate::mix::frame_byte_len;
-use crate::types::{VideoFrame, VideoStream};
+use crate::decoder::SequentialVideoSession;
+use crate::ffmpeg_error;
+use celesta_media::{MediaError, VideoFrame, VideoStream, frame_byte_len};
 use ez_ffmpeg::Input;
 use ez_ffmpeg::frame_export::{FrameExtractor, FrameIter, PixelLayout};
 use std::path::Path;
@@ -23,7 +23,7 @@ impl FrameRun {
         source_time_seconds: f64,
         max_frames: Option<u64>,
     ) -> Result<Self, MediaError> {
-        match video.color.conversion() {
+        match conversion(&video.color) {
             Some(conversion) => ConvertedFrames::spawn(
                 path,
                 video.index,
@@ -42,7 +42,7 @@ impl FrameRun {
                 extractor.frames().map(Self::Packed)
             }
         }
-        .map_err(MediaError::Ffmpeg)
+        .map_err(ffmpeg_error)
     }
 
     /// The next frame, checked against the probed size, with its
@@ -60,11 +60,11 @@ impl FrameRun {
                     frame.height(),
                     frame.into_vec(),
                 ),
-                Err(error) => return Some(Err(MediaError::Ffmpeg(error))),
+                Err(error) => return Some(Err(ffmpeg_error(error))),
             },
             Self::Converted(frames) => match frames.next()? {
                 Ok(frame) => (frame.pts_us, frame.width, frame.height, frame.pixels),
-                Err(error) => return Some(Err(MediaError::Ffmpeg(error))),
+                Err(error) => return Some(Err(ffmpeg_error(error))),
             },
         };
         Some(

@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// What a plugin answers `hello` with as its roles: it provides content.
+/// What a content plugin answers `hello` with as its roles.
 pub const ROLES: &[&str] = &["content"];
 
 /// Which kind of model an `opened` answer carries, as its `kind` says. A
@@ -891,8 +891,58 @@ pub fn serve_on(
     provider: &mut impl ContentProvider,
     plugin: &str,
     version: &str,
+    reader: impl Read,
+    writer: impl Write,
+) -> Result<(), ProtocolError> {
+    serve_requests_on(plugin, version, ROLES, reader, writer, |request| {
+        content_answer(provider, plugin, request)
+    })
+}
+
+/// What a content plugin answers a request other than `hello` with.
+fn content_answer(provider: &mut impl ContentProvider, plugin: &str, request: Message) -> Message {
+    match request.kind() {
+        "open" => match BTreeMap::<String, PathBuf>::deserialize(&request.header["assets"]) {
+            Ok(assets) => match provider.open(plugin, &assets) {
+                Ok(opened) => encode_opened(&opened),
+                Err(error) => error_message(error),
+            },
+            Err(error) => error_message(format!("invalid assets: {error}")),
+        },
+        "frame" => match (
+            request.header["model"].as_u64(),
+            request.header["time"].as_f64(),
+        ) {
+            (Some(model), Some(time)) => {
+                match provider.frame(ModelId(model), time, &request.header["data"]) {
+                    Ok(frame) => encode_content_frame(&frame),
+                    Err(error) => error_message(error),
+                }
+            }
+            _ => error_message("a frame request needs `model` and `time`"),
+        },
+        "close" => match request.header["model"].as_u64() {
+            Some(model) => {
+                provider.close(ModelId(model));
+                Message::new(json!({ "type": "closed" }))
+            }
+            None => error_message("a close request needs `model`"),
+        },
+        other => error_message(format!("unknown request \"{other}\"")),
+    }
+}
+
+/// Answers requests from `reader` on `writer` until the reader ends: the
+/// `hello` handshake here, naming `plugin`, `version`, and `roles`, and every
+/// other request with `answer`. A plugin of a role other than content (a
+/// codec, say) runs its loop through this.
+pub fn serve_requests_on(
+    plugin: &str,
+    version: &str,
+    roles: &[&str],
     mut reader: impl Read,
     mut writer: impl Write,
+    mut answer: impl FnMut(Message) -> Message,
 ) -> Result<(), ProtocolError> {
     while let Some(request) = read_message(&mut reader)? {
         let answer = match request.kind() {
@@ -903,7 +953,7 @@ pub fn serve_on(
                         "protocol": PROTOCOL_VERSION,
                         "plugin": plugin,
                         "version": version,
-                        "roles": ROLES,
+                        "roles": roles,
                     }))
                 } else {
                     error_message(format!(
@@ -912,56 +962,43 @@ pub fn serve_on(
                     ))
                 }
             }
-            "open" => match BTreeMap::<String, PathBuf>::deserialize(&request.header["assets"]) {
-                Ok(assets) => match provider.open(plugin, &assets) {
-                    Ok(opened) => encode_opened(&opened),
-                    Err(error) => error_message(error),
-                },
-                Err(error) => error_message(format!("invalid assets: {error}")),
-            },
-            "frame" => match (
-                request.header["model"].as_u64(),
-                request.header["time"].as_f64(),
-            ) {
-                (Some(model), Some(time)) => {
-                    match provider.frame(ModelId(model), time, &request.header["data"]) {
-                        Ok(frame) => encode_content_frame(&frame),
-                        Err(error) => error_message(error),
-                    }
-                }
-                _ => error_message("a frame request needs `model` and `time`"),
-            },
-            "close" => match request.header["model"].as_u64() {
-                Some(model) => {
-                    provider.close(ModelId(model));
-                    Message::new(json!({ "type": "closed" }))
-                }
-                None => error_message("a close request needs `model`"),
-            },
-            other => error_message(format!("unknown request \"{other}\"")),
+            _ => answer(request),
         };
         write_message(&mut writer, &answer)?;
     }
     Ok(())
 }
 
-/// [`serve_on`] this process's stdin and stdout. On Unix the answers go
-/// through a duplicate of stdout taken first, and stdout itself is pointed
-/// at stderr: whatever else the process prints, native libraries' banners
-/// and logs included, lands in Celesta's log instead of corrupting the
-/// protocol.
+/// [`serve_on`] this process's stdin and stdout (see [`serve_requests`]).
 pub fn serve(
     provider: &mut impl ContentProvider,
     plugin: &str,
     version: &str,
 ) -> Result<(), ProtocolError> {
+    serve_requests(plugin, version, ROLES, |request| {
+        content_answer(provider, plugin, request)
+    })
+}
+
+/// [`serve_requests_on`] this process's stdin and stdout. On Unix the
+/// answers go through a duplicate of stdout taken first, and stdout itself
+/// is pointed at stderr: whatever else the process prints, native
+/// libraries' banners and logs included, lands in Celesta's log instead of
+/// corrupting the protocol.
+pub fn serve_requests(
+    plugin: &str,
+    version: &str,
+    roles: &[&str],
+    answer: impl FnMut(Message) -> Message,
+) -> Result<(), ProtocolError> {
     let stdin = io::stdin().lock();
-    serve_on(
-        provider,
+    serve_requests_on(
         plugin,
         version,
+        roles,
         stdin,
         io::BufWriter::new(protocol_output()?),
+        answer,
     )
 }
 

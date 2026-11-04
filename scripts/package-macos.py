@@ -93,7 +93,14 @@ def validate_dependencies(binary, contents, listing):
         if dependency.startswith(("/usr/lib/", "/System/Library/")):
             continue
         if dependency.startswith("@executable_path/"):
-            executable_directory = contents / "MacOS" if binary.suffix == ".dylib" else binary.parent
+            if binary.suffix != ".dylib":
+                executable_directory = binary.parent
+            elif binary.parent.parent.parent.name == "PlugIns":
+                # A plugin's libraries, in <plugin>/Frameworks, load for its
+                # program in <plugin>/bin.
+                executable_directory = binary.parent.parent / "bin"
+            else:
+                executable_directory = contents / "MacOS"
             target = executable_directory / dependency.removeprefix("@executable_path/")
         elif dependency.startswith("@loader_path/"):
             target = binary.parent / dependency.removeprefix("@loader_path/")
@@ -207,7 +214,7 @@ def main():
         build_env["CARGO_BUILD_TARGET"] = target
         build_env["RUSTFLAGS"] = build_env.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-headerpad_max_install_names"
         run("cargo", "build", "--release", "--locked", "-p", "celesta-editor", "-p", "celesta-exporter",
-            "-p", "celesta-mcp", env=build_env)
+            "-p", "celesta-mcp", "-p", "celesta-codec-ffmpeg", env=build_env)
     binaries = ROOT / "target" / target / "release"
     for source, name in (("celesta-editor", "Celesta"), ("celesta-exporter", "Celesta-export"),
                          ("celesta-mcp", "Celesta-mcp")):
@@ -247,6 +254,16 @@ def main():
         shutil.copy2(source, examples / source.name)
     collect_licenses(resources, target)
 
+    # FFmpeg, and the GPL libx264 with it, is linked by the codec plugin
+    # alone: Celesta's own executables link no FFmpeg, so the plugin folder
+    # holds the program and every Homebrew library it loads.
+    codec = contents / "PlugIns" / "ffmpeg"
+    run(helpers / "node", ROOT / "scripts/stage-codec-plugin.mjs", binaries / "celesta-codec-ffmpeg", codec)
+    run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", codec / "bin" / "celesta-codec-ffmpeg",
+        "-d", codec / "Frameworks", "-p", "@executable_path/../Frameworks/")
+    for binary in (executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp"):
+        if re.search(r"\blibav|\blibx264|\bffmpeg", run("otool", "-L", binary, capture=True), re.I):
+            raise RuntimeError(f"{binary} links FFmpeg, which only the codec plugin may")
     frameworks = contents / "Frameworks"
     # Main executables and Node are both one directory below Contents.
     run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", executables / "Celesta",
@@ -254,9 +271,9 @@ def main():
         "-d", frameworks, "-p", "@executable_path/../Frameworks/")
     native = macho_files(app)
     required = {executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp",
-                helpers / "node", helpers / "esbuild"}
+                helpers / "node", helpers / "esbuild", codec / "bin" / "celesta-codec-ffmpeg"}
     if not required.issubset(native):
-        raise RuntimeError("The app, exporter, MCP server, Node.js, and esbuild must all be Mach-O executables")
+        raise RuntimeError("The app, exporter, MCP server, Node.js, esbuild, and the codec plugin must all be Mach-O executables")
     minimum = (0, 0)
     for binary in native:
         run("lipo", binary, "-verify_arch", platform.machine())

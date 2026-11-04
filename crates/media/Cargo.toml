@@ -1,6 +1,6 @@
 [package]
 name = "celesta-media"
-description = "Media probing and frame decoding for Celesta through the linked FFmpeg libraries."
+description = "Media probing, frame and audio decoding through a Celesta codec plugin, and the audio mix."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,19 +10,15 @@ rust-version.workspace = true
 [dependencies]
 celesta-composition.workspace = true
 celesta-remote.workspace = true
+celesta-plugin.workspace = true
 ebur128 = "0.1.10"
-ez-ffmpeg.workspace = true
-# The same FFmpeg bindings ez-ffmpeg links, for reading decoded frames.
-ffmpeg-sys-next = "8.1.0"
 rayon = "1.12.0"
+serde.workspace = true
+serde_json.workspace = true
 signalsmith-stretch.workspace = true
 clap = { workspace = true, optional = true }
 strum.workspace = true
 thiserror.workspace = true
-
-# macOS packages bundle Homebrew dylibs; retain static linking elsewhere.
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-ez-ffmpeg = { workspace = true, features = ["static"] }
 
 [features]
 # Lets the options a command line takes derive `clap::ValueEnum`.

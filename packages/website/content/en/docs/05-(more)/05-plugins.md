@@ -98,6 +98,14 @@ Project TypeScript support copies each plugin's declarations into `.celesta/plug
 
 In the desktop app, a plugin can also offer its components in the **Add** menu, after Celesta's own elements. Choosing one adds it like an Image or a Rect: a component that takes a file asks for it first, and you drag where it goes. A component that takes a model file, such as a VRM avatar, accepts only the file types it lists (`Choose a .vrm file`) and draws its box at its layer's shape. The app writes the element with the plugin's import, such as `import { Flag } from '@celesta-plugin/flag'`.
 
+## The codec plugin
+
+Celesta reads and writes video and audio files through a codec plugin rather than linking a codec library itself. The macOS and Windows packages come with one, `ffmpeg`, in the plugin folder that comes with Celesta: it probes, decodes, encodes, and muxes with FFmpeg. That FFmpeg build includes libx264, which is GPL licensed, so the codec plugin alone is distributed under the GPL; the app, `celesta-exporter`, and `Celesta-mcp` are MIT or Apache-2.0.
+
+A codec plugin's manifest has `"roles": ["codec"]`. Of the plugins Celesta may run, it uses the first codec in the order above; when there is none, it runs a `celesta-codec-ffmpeg` program beside its own executable, as a source build or `cargo install` leaves it. Without a codec, video and audio cannot be shown or exported: the app says so in Problems, and an export fails with the error code `no_codec`.
+
+To use another FFmpeg build, such as an LGPL-only one, build `celesta-codec-ffmpeg` against it and put it in your user plugin folder as a plugin; `node scripts/stage-codec-plugin.mjs <program> <folder>` lays one out. The app asks before it runs it, as for any plugin from that folder.
+
 ## Samples
 
 The repository's `examples/plugins` has three plugins to start from:

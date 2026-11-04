@@ -1,15 +1,18 @@
 use crate::color::VideoColor;
 use celesta_composition::{Rational, Time};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MediaProbe {
     pub duration: Option<Time>,
     pub video: Option<VideoStream>,
     pub audio: Vec<AudioStream>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VideoStream {
     pub index: u32,
     pub codec: Option<String>,
@@ -20,7 +23,8 @@ pub struct VideoStream {
     pub color: VideoColor,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioStream {
     pub index: u32,
     pub codec: Option<String>,

@@ -227,7 +227,7 @@ fn encoder_presets_and_color_conversions_round_trip_through_their_names() {
         assert_eq!(depth.as_str().parse::<BitDepth>(), Ok(depth));
     }
     assert_eq!(VideoEncoding::default().bit_depth, BitDepth::Eight);
-    assert_eq!(BitDepth::Ten.pixel_format(), "yuv420p10le");
+    assert_eq!(BitDepth::Ten.bits(), 10);
     assert_eq!(
         "12".parse::<BitDepth>(),
         Err(UnknownBitDepth("12".to_owned()))
@@ -555,7 +555,8 @@ fn video_format_names_round_trip() {
 }
 
 #[test]
-fn linked_ffmpeg_has_every_format_encoder() {
+fn the_ffmpeg_codec_has_every_format_encoder() {
+    celesta_codec_ffmpeg::install();
     for &format in VideoFormat::VARIANTS {
         ensure_encoders(format).unwrap_or_else(|error| panic!("{format}: {error}"));
     }

@@ -45,20 +45,25 @@ RUN npm install -g "$(node -p "require('./package.json').packageManager")"
 RUN pnpm install --frozen-lockfile \
   && pnpm --dir packages/react run codegen --locked \
   && pnpm run build:runtime
-RUN cargo build -p celesta-exporter -p celesta-mcp --release --locked
+# The bundled plugin folder is /opt/celesta/plugins, where the codec plugin goes.
+RUN CELESTA_SYSTEM_PLUGIN_DIR=/opt/celesta/plugins \
+  cargo build -p celesta-exporter -p celesta-mcp -p celesta-codec-ffmpeg --release --locked
 
 # Lay the exporter out like the Windows package: a `runtime` directory beside
 # the executable holds Node.js and the React runtime, so nothing depends on the
 # source tree at run time.
+# FFmpeg is linked into the codec plugin's program alone, which goes in the
+# bundled plugin folder.
 RUN mkdir -p /out/runtime \
   && cp target/release/celesta-exporter target/release/celesta-mcp /out/ \
   && cp /usr/local/bin/node /out/runtime/node \
-  && node scripts/stage-react-runtime.mjs /out/runtime/react
+  && node scripts/stage-react-runtime.mjs /out/runtime/react \
+  && node scripts/stage-codec-plugin.mjs target/release/celesta-codec-ffmpeg /out/plugins/ffmpeg
 
 # --- Runtime stage ----------------------------------------------------------
 FROM ubuntu:26.04
 
-# libx264, libvpx, and libopus are linked dynamically; FFmpeg itself is linked into the executable.
+# libx264, libvpx, and libopus are linked dynamically; FFmpeg itself is linked into the codec plugin.
 # mesa-vulkan-drivers provides lavapipe, a CPU implementation of Vulkan. Text
 # needs at least one installed font: DejaVu for Latin text and Noto CJK for
 # Japanese, Chinese, and Korean. Load other fonts with <Font>.

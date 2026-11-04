@@ -1,32 +1,35 @@
-//! Media probing and frame decoding through the linked FFmpeg libraries
-//! (`ez-ffmpeg`).
+//! Media for Celesta: probing, video frames, and audio decoding through a
+//! codec plugin (see [`set_codec`]), and the audio mix, ducking, time
+//! stretching, and loudness Celesta does itself. No codec library is linked.
 
+mod backend;
+pub mod codec;
 mod color;
-mod converted;
 mod decoder;
 mod duck;
 mod error;
-mod ffmpeg;
 mod loudness;
 mod mix;
-mod probe;
-mod sequential;
 mod stretch;
 #[cfg(test)]
 mod tests;
 mod types;
 
+pub use backend::MediaBackend;
+pub use codec::{
+    CodecFactory, CodecProcess, CodecProvider, Container, EncoderId, EncoderSettings, MuxRequest,
+    PixelFormat, Sequential, VideoRequest, set_codec,
+};
 pub use color::{DynamicRange, VideoColor};
 pub use decoder::{AudioDecoder, VideoFrameDecoder};
 pub use duck::{DuckCurves, audible_end};
 pub use error::{AudioMixError, MediaError};
-pub use ffmpeg::FfmpegBackend;
 pub use loudness::{
     Loudness, LoudnessTarget, PeakHandling, TARGET_TOLERANCE_LU, measure_loudness,
     normalize_loudness,
 };
 pub use mix::{
-    mix_audio_graph, mix_audio_graph_cancellable, mix_audio_graph_unclipped_cancellable,
-    mix_audio_graph_with_ducks_cancellable,
+    clamp_to_source_end, frame_byte_len, mix_audio_graph, mix_audio_graph_cancellable,
+    mix_audio_graph_unclipped_cancellable, mix_audio_graph_with_ducks_cancellable, video_seconds,
 };
 pub use types::{AudioBuffer, AudioStream, MediaProbe, VideoFrame, VideoStream};

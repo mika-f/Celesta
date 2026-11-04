@@ -8,10 +8,45 @@ use celesta_composition::{
 };
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentResolutionRequest, ComponentSchemaField, LegacyImport,
-    PrepareDependency,
-    ProjectFrame, PropertyInputs, ReactBridge, ReactBridgeError, ReactChapter, SpawnOptions,
-    chapter_at, react_audio_clips,
+    PrepareDependency, ProjectFrame, PropertyInputs, ReactBridge, ReactBridgeError, ReactChapter,
+    SpawnOptions, chapter_at, react_audio_clips,
 };
+
+/// [`ReactBridge`]'s constructors, reading media with the FFmpeg codec in
+/// this process, so the tests need no codec plugin installed.
+struct Bridge;
+
+impl Bridge {
+    fn spawn(
+        node: impl AsRef<Path>,
+        cli_script: impl AsRef<Path>,
+        entry: impl AsRef<Path>,
+    ) -> Result<ReactBridge, ReactBridgeError> {
+        celesta_codec_ffmpeg::install();
+        ReactBridge::spawn(node, cli_script, entry)
+    }
+
+    fn spawn_with_properties(
+        node: impl AsRef<Path>,
+        cli_script: impl AsRef<Path>,
+        entry: impl AsRef<Path>,
+        properties: &PropertyInputs,
+    ) -> Result<ReactBridge, ReactBridgeError> {
+        celesta_codec_ffmpeg::install();
+        ReactBridge::spawn_with_properties(node, cli_script, entry, properties)
+    }
+
+    fn spawn_with_options(
+        node: impl AsRef<Path>,
+        cli_script: impl AsRef<Path>,
+        entry: impl AsRef<Path>,
+        properties: &PropertyInputs,
+        options: SpawnOptions,
+    ) -> Result<ReactBridge, ReactBridgeError> {
+        celesta_codec_ffmpeg::install();
+        ReactBridge::spawn_with_options(node, cli_script, entry, properties, options)
+    }
+}
 
 fn no_tracks() -> BTreeMap<String, Vec<Layer>> {
     BTreeMap::new()
@@ -40,7 +75,7 @@ fn evaluates_the_example_composition_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/title.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     let metadata = bridge.metadata().clone();
     assert_eq!((metadata.width, metadata.height), (1920, 1080));
@@ -63,7 +98,7 @@ fn render_text_metrics_match_loaded_fonts_and_component_preview_when_node_is_ava
         return;
     };
     let entry = package_root.join("examples/with-text-metrics.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let mut measurer = celesta_renderer::TextRasterizer::new();
 
     for frame in [0, 9, 99, 0] {
@@ -203,13 +238,13 @@ fn pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile_when_no
     let entry = package_root.join("examples/with-text-metrics.tsx");
     let times: Vec<_> = (0..4).map(|frame| Time::new(frame, 30)).collect();
 
-    let mut serial = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut serial = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let expected: Vec<_> = times
         .iter()
         .map(|&time| serial.evaluate_at(time, None).unwrap())
         .collect();
 
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     bridge.submit_frame(times[0], None).unwrap();
     for (index, expected) in expected.iter().enumerate() {
         let frame = bridge.receive_frame().unwrap();
@@ -231,7 +266,7 @@ fn text_boxes_fit_their_captions_with_the_renderer_shaping_when_node_is_availabl
         return;
     };
     let entry = package_root.join("examples/with-text-box.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let mut measurer = celesta_renderer::TextRasterizer::new();
     let time = Time::new(0, 30);
     let scene = bridge.scene_at(time).unwrap();
@@ -346,7 +381,7 @@ fn instances_reach_rust_as_columns_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-instances.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let scene = bridge.scene_at(Time::new(5, 30)).unwrap();
     let [layer] = scene.layers.as_slice() else {
         panic!("one layer: {:?}", scene.layers);
@@ -374,7 +409,7 @@ fn prepare_can_preload_media_metadata_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-media-info.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     assert!(bridge.metadata().duration_in_frames > 30);
 
     let scene = bridge.scene_at(Time::ZERO).unwrap();
@@ -414,7 +449,7 @@ fn audio_spectrum_is_the_same_in_preview_and_export_when_node_is_available() {
     };
     let frames = [0, 6, 12, 18, 24, 36, 44];
     let read = |preview: bool, order: &[i64]| {
-        let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+        let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
         bridge.set_preview(preview);
         let mut values = BTreeMap::new();
         for &frame in order {
@@ -448,7 +483,7 @@ fn animated_images_report_their_length_and_play_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-animated-image.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     // `preloadMedia()` reads the GIF's 2 s.
     assert_eq!(bridge.metadata().duration_in_frames, 60);
 
@@ -479,7 +514,7 @@ fn debug_guides_render_in_component_preview_or_when_asked_when_node_is_available
     };
 
     let entry = package_root.join("examples/with-debug.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     assert!(bridge.scene_at(Time::new(5, 30)).unwrap().layers.is_empty());
 
     // PNG exports with --debug-guides ask for them in the whole composition.
@@ -532,7 +567,7 @@ fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_availabl
     };
 
     let entry = package_root.join("examples/with-psd-character.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let scene = bridge.scene_at(Time::ZERO).unwrap();
     let LayerContent::Psd {
         asset,
@@ -556,7 +591,7 @@ fn evaluates_a_react_dialogue_as_a_character_and_subtitle_when_node_is_available
     };
 
     let entry = package_root.join("examples/with-dialogue.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let evaluation = bridge.evaluate_at(Time::ZERO, None).unwrap();
     let layers = all_layers(&evaluation.scene.layers);
 
@@ -580,7 +615,7 @@ fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-psd-preset.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let scene = bridge.scene_at(Time::ZERO).unwrap();
     let LayerContent::Psd {
         visible_layers,
@@ -619,7 +654,7 @@ fn reports_imports_of_the_legacy_scope_when_node_is_available() {
          export default () => <Composition width={8} height={8} fps={1} durationInFrames={1}><Title /></Composition>;\n",
     )
     .unwrap();
-    let bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     assert_eq!(
         bridge.metadata().legacy_imports,
         [LegacyImport {
@@ -637,7 +672,7 @@ fn reports_the_voice_folder_prepare_read_as_dependencies_when_node_is_available(
     };
 
     let entry = package_root.join("examples/with-voice-folder.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let folder = package_root
         .join("../../examples/assets/voice-folder/shizuku")
         .canonicalize()
@@ -680,7 +715,7 @@ fn reports_composition_chapters_in_order_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-chapters.tsx");
-    let bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let chapter = |id: &str, name: &str, from, duration_in_frames| ReactChapter {
         id: id.to_owned(),
         name: name.to_owned(),
@@ -707,8 +742,7 @@ fn reports_composition_chapters_in_order_when_node_is_available() {
     assert_eq!(current(210), None);
 
     // An entry that declares none still previews, with no chapters.
-    let title =
-        ReactBridge::spawn(&node, &cli_script, package_root.join("examples/title.tsx")).unwrap();
+    let title = Bridge::spawn(&node, &cli_script, package_root.join("examples/title.tsx")).unwrap();
     assert!(title.metadata().chapters.is_empty());
 }
 
@@ -719,7 +753,7 @@ fn generates_a_lip_sync_mouth_track_from_a_wav_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-lip-sync.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     let mouth_at = |bridge: &mut ReactBridge, frame: i64| -> Vec<String> {
         let scene = bridge.scene_at(Time::new(frame, 30)).unwrap();
@@ -752,7 +786,7 @@ fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-video.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     // <Video src="./clip.mp4" startFrom={1} playbackRate={2} /> has no
     // timeline-item range the way a project clip does, so it plays synced
@@ -775,7 +809,7 @@ fn evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available() 
     };
 
     let entry = package_root.join("examples/with-rect.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
     assert_eq!(scene.layers.len(), 1);
@@ -817,7 +851,7 @@ fn interpolates_rect_text_and_gradient_stop_colors_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-color.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let solid = |color: &str| Paint::Solid {
         color: color.to_owned(),
     };
@@ -878,7 +912,7 @@ fn draws_circles_as_rects_and_ellipses_and_arrows_as_paths_when_node_is_availabl
     };
 
     let entry = package_root.join("examples/with-shapes.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     // At frame 0 nothing is rotated, which the CPU renderer needs, and the
     // growing circle has no radius yet, so it draws nothing.
     let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
@@ -928,7 +962,7 @@ fn a_motion_blur_reaches_rust_as_a_group_of_samples_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-motion-blur.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let scene = bridge.scene_at(Time::new(18, 30)).unwrap();
     let blurred = scene
         .layers
@@ -964,7 +998,7 @@ fn reports_audio_clips_per_frame_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-audio.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     // <Audio src="./voice.wav" startFrom={1} playbackRate={2} volume={0.5}
     // muted={false} /> is reported by every rendered frame's evaluation
@@ -1005,8 +1039,8 @@ fn batched_audio_graph_matches_full_frame_evaluation_when_node_is_available() {
     ] {
         let entry = package_root.join(fixture);
         let entry_dir = entry.parent().unwrap();
-        let mut reference = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
-        let mut batched = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+        let mut reference = Bridge::spawn(&node, &cli_script, &entry).unwrap();
+        let mut batched = Bridge::spawn(&node, &cli_script, &entry).unwrap();
         let metadata = reference.metadata().clone();
         // Repeat on the same roots to exercise retained hook state and seeking
         // back from the final frame to the start of the next sweep.
@@ -1047,7 +1081,7 @@ fn collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available(
 
     // Bare <Audio>: reported by all 30 frames, merged into a single clip.
     let entry = package_root.join("examples/with-audio.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let graph = bridge
         .collect_audio_graph(48_000, 1.0, entry.parent().unwrap())
         .unwrap();
@@ -1066,7 +1100,7 @@ fn collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available(
     // Conditionally rendered <Audio> (frame >= 15): still one merged clip,
     // because collect_audio_graph visits every frame and merges duplicates.
     let entry = package_root.join("examples/with-conditional-audio.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let graph = bridge
         .collect_audio_graph(48_000, 1.0, entry.parent().unwrap())
         .unwrap();
@@ -1081,7 +1115,7 @@ fn shifts_media_inside_sequences_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-sequence.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     // Frame 30 starts the first sequence; the video inside it plays synced
     // to the sequence's own clock (startFrom={1} playbackRate={2}), so at
@@ -1136,7 +1170,7 @@ fn collects_conditionally_rendered_audio_with_keyframed_volume_when_node_is_avai
     };
 
     let entry = package_root.join("examples/with-conditional-audio.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     // The <Audio> is behind `{frame >= 15 && ...}`, so frames before 15
     // report nothing while later frames report it with its keyframed volume
@@ -1166,7 +1200,7 @@ fn transition_series_overlaps_scenes_and_cross_fades_their_audio_when_node_is_av
 
     // Five 60-frame cards joined by a cut and three 20-frame transitions.
     let entry = package_root.join("examples/with-transition-series.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     assert_eq!(bridge.metadata().duration_in_frames, 240);
 
     // Frames 100-119 overlap the cut card with the cross-faded one; the cut
@@ -1214,7 +1248,7 @@ fn frame_keyframes_fade_audio_in_the_collected_graph_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-volume-fade.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let graph = bridge
         .collect_audio_graph(48_000, 1.0, entry.parent().unwrap())
         .unwrap();
@@ -1256,7 +1290,7 @@ fn audio_fades_follow_the_sequence_in_the_collected_graph_when_node_is_available
     };
 
     let entry = package_root.join("examples/with-audio-fade.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let graph = bridge
         .collect_audio_graph(48_000, 1.0, entry.parent().unwrap())
         .unwrap();
@@ -1283,7 +1317,7 @@ fn resolves_individual_components_through_the_bridge_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-registered-component.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     let mut props = BTreeMap::new();
     props.insert("bossName".to_owned(), serde_json::json!("Golem"));
@@ -1324,7 +1358,7 @@ fn reports_a_declared_project_property_schema_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-properties.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     let schema = bridge
         .metadata()
@@ -1375,7 +1409,7 @@ fn reports_a_declared_project_property_schema_when_node_is_available() {
     // An entry that never calls defineProjectProperties() leaves the
     // metadata field None — distinct from a declared-but-empty schema.
     let plain = package_root.join("examples/title.tsx");
-    let plain_bridge = ReactBridge::spawn(&node, &cli_script, &plain).unwrap();
+    let plain_bridge = Bridge::spawn(&node, &cli_script, &plain).unwrap();
     assert!(plain_bridge.metadata().project_property_schema.is_none());
 
     // The entry's own useProjectProperty() call reads its embedded project's
@@ -1413,18 +1447,17 @@ fn passes_project_property_inputs_over_the_provider_when_node_is_available() {
     ]);
     let from_project = PropertyInputs::default().with_project(&project, None, &package_root);
     let mut bridge =
-        ReactBridge::spawn_with_properties(&node, &cli_script, &entry, &from_project).unwrap();
+        Bridge::spawn_with_properties(&node, &cli_script, &entry, &from_project).unwrap();
     assert_eq!(text_of(&mut bridge), "From project");
 
     let inline = PropertyInputs::load(None, Some(r#"{"title":"From CLI"}"#))
         .unwrap()
         .with_project(&project, None, &package_root);
-    let mut bridge =
-        ReactBridge::spawn_with_properties(&node, &cli_script, &entry, &inline).unwrap();
+    let mut bridge = Bridge::spawn_with_properties(&node, &cli_script, &entry, &inline).unwrap();
     assert_eq!(text_of(&mut bridge), "From CLI");
 
     let invalid = PropertyInputs::load(None, Some(r#"{"fontSize":"big","titel":"x"}"#)).unwrap();
-    match ReactBridge::spawn_with_properties(&node, &cli_script, &entry, &invalid) {
+    match Bridge::spawn_with_properties(&node, &cli_script, &entry, &invalid) {
         Err(ReactBridgeError::InvalidProperties(issues)) => {
             let keys: Vec<_> = issues.iter().map(|issue| issue.key.as_str()).collect();
             assert_eq!(keys, ["fontSize", "titel"]);
@@ -1442,7 +1475,7 @@ fn resolves_components_against_the_requested_time_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-frame-component.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     // The entry's own <Composition> declares 640x360@30fps; a resolved
     // component's useVideoConfig() must see those same facts.
@@ -1485,7 +1518,7 @@ fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_availa
     };
 
     let entry = package_root.join("examples/with-project.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     let project_layer = Layer {
         id: "from-project".to_owned(),
@@ -1529,7 +1562,7 @@ fn resolves_a_registered_component_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-registered-component.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     let mut props = BTreeMap::new();
     props.insert("bossName".to_owned(), serde_json::json!("Golem"));
@@ -1607,7 +1640,7 @@ fn reports_a_registered_components_property_schema_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-registered-component.tsx");
-    let bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     let schemas = &bridge.metadata().component_schemas;
     let schema = schemas
@@ -1647,7 +1680,7 @@ fn embeds_per_track_layers_for_use_project_track_when_node_is_available() {
     };
 
     let entry = package_root.join("examples/with-project-track.tsx");
-    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
 
     let titles_layer = Layer {
         id: "title-1".to_owned(),
@@ -1736,7 +1769,7 @@ fn a_runtime_that_dies_before_the_handshake_shows_its_last_output() {
         "stderr-handshake",
         "console.error('Error: first line');\nconsole.error('second line');\nprocess.exitCode = 3;\n",
     );
-    let error = ReactBridge::spawn(&node, &runtime, dir.join("film.tsx"))
+    let error = Bridge::spawn(&node, &runtime, dir.join("film.tsx"))
         .err()
         .expect("the runtime exits before the handshake");
     assert_exit_shows(&error, &["Error: first line", "second line"]);
@@ -1763,7 +1796,7 @@ process.stdin.once('data', () => {{
 "
         ),
     );
-    let mut bridge = ReactBridge::spawn(&node, &runtime, dir.join("film.tsx")).unwrap();
+    let mut bridge = Bridge::spawn(&node, &runtime, dir.join("film.tsx")).unwrap();
     let error = bridge.scene_at(Time::new(0, 30)).unwrap_err();
     assert_exit_shows(&error, &["Error: request failed", "    at render"]);
     // The next request finds the pipe closed and still says why.
@@ -1794,7 +1827,7 @@ process.stdin.once('data', () => {{
 "
         ),
     );
-    let mut bridge = ReactBridge::spawn(&node, &runtime, dir.join("film.tsx")).unwrap();
+    let mut bridge = Bridge::spawn(&node, &runtime, dir.join("film.tsx")).unwrap();
     let error = bridge.scene_at(Time::new(0, 30)).unwrap_err();
     assert_exit_shows(&error, &["Error: measuring failed"]);
     drop(bridge);
@@ -1882,10 +1915,9 @@ fn static_subtrees_expand_to_the_inline_scene_when_node_is_available() {
         return;
     };
     let examples = package_root.join("examples");
-    let mut cached =
-        ReactBridge::spawn(&node, &cli_script, examples.join("with-static.tsx")).unwrap();
+    let mut cached = Bridge::spawn(&node, &cli_script, examples.join("with-static.tsx")).unwrap();
     let mut inline =
-        ReactBridge::spawn(&node, &cli_script, examples.join("with-static-inline.tsx")).unwrap();
+        Bridge::spawn(&node, &cli_script, examples.join("with-static-inline.tsx")).unwrap();
     // Into and out of the sequence's window, across the chapter that
     // changes `deps`, and back again.
     for frame in [0, 10, 25, 45, 25, 40, 10, 40] {
@@ -1906,8 +1938,8 @@ fn pipelined_static_frames_match_serial_ones_when_node_is_available() {
         return;
     };
     let entry = package_root.join("examples/with-static.tsx");
-    let mut serial = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
-    let mut pipelined = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut serial = Bridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut pipelined = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     pipelined.submit_frame(Time::new(0, 30), None).unwrap();
     for frame in 0..60 {
         let pending = pipelined.receive_frame().unwrap();
@@ -1952,7 +1984,7 @@ fn layer_source_names_the_jsx_of_a_layer_when_node_is_available() {
     )
     .unwrap();
 
-    let mut bridge = ReactBridge::spawn_with_options(
+    let mut bridge = Bridge::spawn_with_options(
         &node,
         &cli_script,
         &entry,
@@ -1986,7 +2018,7 @@ fn layer_source_names_the_jsx_of_a_layer_when_node_is_available() {
     assert_eq!(bridge.layer_source(Time::ZERO, "nope").unwrap(), None);
 
     // Without the option the runtime knows no positions.
-    let mut plain = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut plain = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     plain.set_preview(true);
     assert_eq!(
         plain

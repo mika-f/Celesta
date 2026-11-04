@@ -16,7 +16,7 @@ use crate::timing::{WindowRole, set_timing_span, window_role};
 use crate::view::EditorView;
 use celesta_composition::Point;
 use celesta_gpu_renderer::invert_affine;
-use celesta_media::FfmpegBackend;
+use celesta_media::MediaBackend;
 use celesta_plugin_host::{ComponentInfo, ComponentSource, InstalledPlugins};
 use celesta_react_bridge::{
     ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, import_path, scenes_of,
@@ -727,7 +727,7 @@ pub(crate) fn parent_facts(
 /// it can't be read (an SVG, say).
 fn media_aspect(kind: NewKind, path: &Path) -> Option<f64> {
     let (width, height) = if kind == NewKind::Video {
-        let mut backend = FfmpegBackend::new();
+        let mut backend = MediaBackend::new();
         let video = backend.probe(path).ok()?.video.as_ref()?;
         (video.width, video.height)
     } else {

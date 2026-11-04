@@ -2,7 +2,7 @@ use crate::problems::error_chain;
 use crate::worker::LatestWorker;
 use celesta_composition::{AssetLocation, AudioClip, AudioGraph};
 use celesta_editor_core::{ClipKind, ClipSummary, TrackSummary};
-use celesta_media::FfmpegBackend;
+use celesta_media::MediaBackend;
 use celesta_plugin_host::RuntimePlugins;
 use celesta_project::TrackKind;
 use celesta_react_bridge::{PropertyInputs, ReactBridge, SpawnOptions};
@@ -63,7 +63,7 @@ pub(crate) fn spawn_react_audio() -> anyhow::Result<ReactAudioWorker> {
                 .map_err(|error| error_chain(&error))
         })
         .map(|media| {
-            let mut backend = FfmpegBackend::new();
+            let mut backend = MediaBackend::new();
             let videos = media
                 .video_clip_ids
                 .into_iter()
@@ -88,7 +88,7 @@ pub(crate) fn spawn_react_audio() -> anyhow::Result<ReactAudioWorker> {
 /// Whether `clip`'s local file has an audio stream. A URL is not downloaded
 /// for this, and a file that cannot be probed is left to the mix to report:
 /// both count as having sound.
-fn has_audio(backend: &mut FfmpegBackend, entry_dir: &Path, clip: &AudioClip) -> bool {
+fn has_audio(backend: &mut MediaBackend, entry_dir: &Path, clip: &AudioClip) -> bool {
     let AssetLocation::File { path } = &clip.asset.location else {
         return true;
     };
