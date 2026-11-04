@@ -3,7 +3,9 @@
 //! process.
 
 use super::*;
-use crate::scene::{MAX_CACHED_PIPELINES, MAX_CACHED_SHADERS, MAX_MODEL_PIPELINES, ScenePipelines};
+use crate::scene::{
+    MAX_CACHED_PIPELINES, MAX_CACHED_SHADERS, MAX_MODEL_PIPELINES, ScenePipelines, SceneTarget,
+};
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, CullFace, CustomMaterial,
     DepthBias, DirectionalLight, DrawInfo, DrawState, EmptyTexel, Filter, Geometry, Lights,
@@ -769,17 +771,24 @@ fn hidden_draws_are_not_drawn() {
     assert_pixel(&frame, 8, 32, CLEAR);
 }
 
-#[test]
-fn edges_are_antialiased_at_density_two() {
-    // Scaled ×2, the layer draws 128 pixels for its 2 m: 64 a metre. The
-    // square's left edge sits at pixel 40.25 of the 64 that show.
+/// `one_square` moved so that, drawn scaled ×2, its left edge sits at pixel
+/// 40.25 of the 64 that show: the layer draws 128 pixels for its 2 m, 64 a
+/// metre.
+fn edge_at_a_quarter_pixel() -> Scenes {
     let mut scenes = one_square();
     let left = (40.25 - 64.0) / 64.0;
     scenes.frame.draws[0].world = translation(left + 0.5, 0.0, 0.0);
+    scenes
+}
+
+#[test]
+fn edges_are_antialiased_at_density_two() {
     let Some(mut renderer) = renderer(transparent()) else {
         return;
     };
-    renderer.renderer = renderer.renderer.with_content_provider(scenes);
+    renderer.renderer = renderer
+        .renderer
+        .with_content_provider(edge_at_a_quarter_pixel());
     let frame = renderer.render(&scene_at(0.0, 2.0)).unwrap();
     assert_pixel(&frame, 39, 48, CLEAR);
     assert_pixel(&frame, 41, 48, WHITE);
@@ -790,11 +799,10 @@ fn edges_are_antialiased_at_density_two() {
     );
 }
 
-#[test]
-fn mask_cuts_at_cutoff() {
-    // A texture whose left column has alpha 0.3 and right 0.8, sampled
-    // nearest, on a square four times the canvas: the left half of the
-    // canvas shows the left column and the right half the right one.
+/// `one_square` four times the canvas, masked at 0.5, with a texture whose
+/// left column has alpha 0.3 and right 0.8, sampled nearest: the left half
+/// of the canvas shows the left column and the right half the right one.
+fn masked_halves() -> Scenes {
     let mut scenes = one_square();
     scenes.model.textures = vec![SceneTexture {
         source: TextureSource::Rgba {
@@ -820,15 +828,25 @@ fn mask_cuts_at_cutoff() {
         transform: None,
     });
     scenes.frame.draws[0].world = scaling(4.0, 4.0, 1.0);
-    let Some(frame) = render_scenes(scenes) else {
-        return;
-    };
+    scenes
+}
+
+#[track_caller]
+fn assert_masked_halves(frame: &GpuFrame) {
     for (x, y) in [(0, 32), (24, 10), (30, 60)] {
-        assert_pixel(&frame, x, y, CLEAR);
+        assert_pixel(frame, x, y, CLEAR);
     }
     for (x, y) in [(34, 32), (40, 10), (63, 60)] {
-        assert_pixel(&frame, x, y, WHITE);
+        assert_pixel(frame, x, y, WHITE);
     }
+}
+
+#[test]
+fn mask_cuts_at_cutoff() {
+    let Some(frame) = render_scenes(masked_halves()) else {
+        return;
+    };
+    assert_masked_halves(&frame);
 }
 
 /// An unlit, single-sided material of `color` blended by its alpha.
@@ -2255,6 +2273,13 @@ fn pipelines(renderer: &mut TestRenderer) -> &mut ScenePipelines {
         .expect("a scene was opened")
 }
 
+/// What `renderer`'s GPU draws scenes on.
+fn gpu_target(renderer: &TestRenderer) -> SceneTarget {
+    renderer
+        .scene_target
+        .expect("the GPU tests run on a GPU that draws scenes")
+}
+
 /// A renderer that opened a scene, which a model refused before its
 /// shaders are compiled; `None` without a GPU.
 fn opened_renderer() -> Option<TestRenderer> {
@@ -2330,7 +2355,7 @@ fn material_shader_cache_drops_unused_shaders_past_its_cap() {
         return;
     };
     let device = &renderer.device;
-    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue, gpu_target(&renderer));
     // `FLAT` as shader `n`: another digest each, the same module.
     let model = |n: usize, params: Vec<u8>| {
         let wgsl = format!("{FLAT}\n// {n}");
@@ -2406,7 +2431,7 @@ fn material_pipeline_refusals_stand_for_any_culling_and_bias() {
         return;
     };
     let device = &renderer.device;
-    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue, gpu_target(&renderer));
     // Bias 0's pipelines are made. Bias 1's first outline pipeline, the
     // first it lacks, is refused.
     pipelines
@@ -2442,7 +2467,7 @@ fn material_pipeline_refusals_refuse_the_model_before_any_is_made() {
         return;
     };
     let device = &renderer.device;
-    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue, gpu_target(&renderer));
     // Bias 0's pipelines are made, and bias 1's outline stages refused.
     pipelines
         .prepare(device, &outlined(0, CullFace::Front))
@@ -2476,7 +2501,7 @@ fn material_models_needing_too_many_pipelines_are_refused() {
         return;
     };
     let device = &renderer.device;
-    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue, gpu_target(&renderer));
     // `RINGED` once for each of `biases` depth biases: the two surface
     // pipelines, and two outline pipelines for each bias.
     let model = |biases: i32| {
@@ -2508,7 +2533,7 @@ fn material_pipeline_cache_drops_unused_pipelines_past_its_cap() {
         return;
     };
     let device = &renderer.device;
-    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue, gpu_target(&renderer));
     let model = |n: i32| outlined(n, CullFace::Front);
     // Model 0 is held, as a loaded model holds its pipelines; every other
     // model is dropped once its pipelines are made. The shader stays held,
@@ -2898,4 +2923,118 @@ fn outline_needs_its_fragment_function() {
         message.contains("outline depth bias is not finite"),
         "{message}"
     );
+}
+
+/// White, its alpha its `u`: across `one_square`, 0 at pixel 16 to 1 at
+/// pixel 48, a 32nd a pixel.
+const RAMP: &str = "struct Params { unused: vec4f };
+fn material_fragment(fragment: Fragment) -> vec4f { return vec4f(1.0, 1.0, 1.0, fragment.uv.x); }";
+
+/// `one_square` drawn with `RAMP`, masked where pixel 32's alpha, 0.515625,
+/// is a quarter of a pixel's width above the cutoff, sharpened: a quarter
+/// of its samples are covered, which rounds to none at 1 sample.
+fn ramp_masked() -> Scenes {
+    let mut material = custom(0, bytes(&[0.0; 4]));
+    material.alpha_mode = AlphaMode::Mask {
+        cutoff: 0.515_625 + 0.25 / 32.0,
+    };
+    custom_square(vec![shader(RAMP, &[])], material)
+}
+
+/// `scenes` drawn at time 0 scaled by `scale`, on `target` in place of
+/// what the GPU would choose; `None` without a GPU.
+fn render_on(
+    target: Option<SceneTarget>,
+    scenes: Scenes,
+    scale: f64,
+) -> Option<Result<GpuFrame, GpuRenderError>> {
+    let mut renderer = renderer(transparent())?;
+    // Set before any scene is opened, and so before its pipelines are made.
+    renderer.scene_target = target;
+    renderer.renderer = renderer.renderer.with_content_provider(scenes);
+    Some(renderer.render(&scene_at(0.0, scale)))
+}
+
+#[test]
+fn every_target_draws_the_same_scenes() {
+    use wgpu::TextureFormat::{Rgba8Unorm, Rgba16Float};
+    // The GPU's usual target, then each it falls back to.
+    let targets = [
+        (Rgba16Float, 4),
+        (Rgba8Unorm, 4),
+        (Rgba8Unorm, 1),
+        (Rgba16Float, 1),
+    ];
+    for (format, samples) in targets {
+        let target = Some(SceneTarget { format, samples });
+        let on = |scenes, scale| {
+            render_on(target, scenes, scale).map(|frame| {
+                frame.unwrap_or_else(|error| panic!("{format:?} × {samples}: {error}"))
+            })
+        };
+        let Some(frame) = on(one_square(), 1.0) else {
+            return;
+        };
+        assert_pixel(&frame, 32, 32, WHITE);
+        assert_pixel(&frame, 8, 32, CLEAR);
+
+        // A plugin's material.
+        let flat = custom_square(
+            vec![shader(FLAT, &[])],
+            custom(0, bytes(&[0.5, 0.25, 1.0, 1.0])),
+        );
+        assert_pixel(&on(flat, 1.0).unwrap(), 32, 32, [188, 137, 255, 255]);
+
+        // Masks, unlit and custom, cut at their cutoff.
+        assert_masked_halves(&on(masked_halves(), 1.0).unwrap());
+        for (cutoff, expected) in [(0.4, RED), (0.6, CLEAR)] {
+            let mut material = custom(0, bytes(&[1.0, 0.0, 0.0, 0.5]));
+            material.alpha_mode = AlphaMode::Mask { cutoff };
+            let scenes = custom_square(vec![shader(FLAT, &[])], material);
+            assert_pixel(&on(scenes, 1.0).unwrap(), 32, 32, expected);
+        }
+
+        // Blend over blend, and over opaque.
+        assert_pixel(&on(red_over_blue(), 1.0).unwrap(), 32, 32, RED_OVER_BLUE);
+        let mut over_opaque = red_over_blue();
+        over_opaque.model.materials =
+            vec![blended([0.0, 0.0, 1.0, 0.5]), plain([1.0, 0.0, 0.0, 1.0])];
+        assert_pixel(&on(over_opaque, 1.0).unwrap(), 32, 32, [188, 0, 188, 255]);
+
+        // An outline around its surface.
+        let frame = on(ringed(WORLD), 1.0).unwrap();
+        assert_pixel(&frame, 14, 32, RED);
+        assert_pixel(&frame, 50, 32, RED);
+        assert_pixel(&frame, 10, 32, CLEAR);
+        assert_pixel(&frame, 32, 32, GREEN);
+
+        // An edge and a mask's edge cover part of a pixel's samples, or at
+        // 1 sample all of it or none.
+        let edge = pixel(&on(edge_at_a_quarter_pixel(), 2.0).unwrap(), 40, 48);
+        let mask = pixel(&on(ramp_masked(), 1.0).unwrap(), 32, 32);
+        if samples == 1 {
+            assert!(edge == CLEAR || edge == WHITE, "{format:?}: {edge:?}");
+            assert_eq!(mask, CLEAR, "{format:?}");
+        } else {
+            assert!((32..=224).contains(&edge[3]), "{format:?}: {edge:?}");
+            assert!(near(mask, [64; 4]), "{format:?}: {mask:?}");
+        }
+    }
+}
+
+#[test]
+fn scene_without_a_target_is_refused() {
+    let Some(result) = render_on(None, one_square(), 1.0) else {
+        return;
+    };
+    match result {
+        Err(GpuRenderError::InvalidPluginContent { message, .. }) => {
+            assert!(
+                message.contains("cannot render to, blend, and sample Rgba16Float or Rgba8Unorm"),
+                "{message}"
+            );
+        }
+        Err(error) => panic!("expected invalid plugin content, got {error}"),
+        Ok(_) => panic!("expected invalid plugin content, got a frame"),
+    }
 }

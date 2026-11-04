@@ -27,8 +27,10 @@ struct CelestaCovered {
     @builtin(sample_mask) mask: u32,
 };
 
-// Samples per pixel of the canvas: `scene.rs`'s `SAMPLES`.
-const CELESTA_SAMPLES: f32 = 4.0;
+// Samples per pixel of the canvas: `scene.rs`'s `SceneTarget::samples`,
+// which every draw pipeline sets. Only Celesta's entry code declares
+// overrides; a material cannot.
+override CELESTA_SAMPLES: f32 = 4.0;
 
 // `input` in world space, as the material's vertex hooks read it.
 fn celesta_vertex(input: CelestaVertexInput) -> Vertex {

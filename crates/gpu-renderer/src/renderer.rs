@@ -12,6 +12,7 @@ use crate::pipeline::{PipelineKind, create_pipeline};
 use crate::plane::PlaneEntry;
 use crate::quantize::{QuantizeOutput, Quantizer};
 use crate::readback::{ReadbackLayout, ReadbackSlot, ReadbackWorker, SlotReadback, rgba_texture};
+use crate::scene::{SceneTarget, scene_target};
 use crate::shader::ShaderProcessor;
 use crate::text::{PendingText, TextLayout, TextSize, find_layer};
 use crate::texture::{
@@ -50,6 +51,9 @@ pub struct GpuRenderer {
     pub(crate) render_quality: RenderQuality,
     /// The format every canvas below composites in (see `canvas_format`).
     pub(crate) canvas_format: wgpu::TextureFormat,
+    /// What scene content draws on before it is converted to a layer (see
+    /// `scene_target`); `None` when this GPU has nothing it can draw on.
+    pub(crate) scene_target: Option<SceneTarget>,
     /// Quantizes finished frames to 8-bit code values.
     pub(crate) quantizer: Quantizer,
     /// What `render` and `render_to_target` draw a frame onto before
@@ -312,6 +316,7 @@ impl GpuRenderer {
             });
         let shader = device.create_shader_module(wgpu::include_wgsl!("layer.wgsl"));
         let canvas_format = canvas_format(&adapter);
+        let scene_target = scene_target(|format| adapter.get_texture_format_features(format));
         let effects = EffectProcessor::new(&device, &texture_bind_group_layout, canvas_format);
         let shaders = ShaderProcessor::new(&device, &texture_bind_group_layout, canvas_format);
         let masks = MaskPipelines::new(&device, &texture_bind_group_layout, canvas_format);
@@ -356,6 +361,7 @@ impl GpuRenderer {
             backdrop_bind_group_layout,
             render_quality: RenderQuality::default(),
             canvas_format,
+            scene_target,
             quantizer,
             target_canvas: None,
             canvas: None,

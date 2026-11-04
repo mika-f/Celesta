@@ -113,7 +113,8 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
             reserved: &material_reserved,
         },
     )?;
-    // Every pipeline Celesta makes for a material sets no constants.
+    // The pipelines Celesta makes for a material set only the constants of
+    // Celesta's entry points, which `alone` does not hold.
     if let Some((handle, constant)) = alone.overrides.iter().next() {
         let at = alone
             .overrides
@@ -263,6 +264,15 @@ mod tests {
         let checked = check_material(&with_params(FRAGMENT), 0).unwrap();
         assert_eq!(checked.params_size, 16);
         assert!(!checked.outline);
+        // Celesta's entry points declare the one override the pipelines
+        // set, which a material cannot.
+        let overrides: Vec<_> = checked
+            .module
+            .overrides
+            .iter()
+            .map(|(_, constant)| constant.name.as_deref())
+            .collect();
+        assert_eq!(overrides, [Some("CELESTA_SAMPLES")]);
     }
 
     #[test]

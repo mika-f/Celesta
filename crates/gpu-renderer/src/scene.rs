@@ -5,9 +5,10 @@
 //! Each frame, a compute pass morphs and skins every visible draw's
 //! vertices (`scene_skin.wgsl`). A render pass then draws them, in the
 //! order of Unity's render queues (`draw_queue`) and by their material's
-//! shader and alpha mode, through the camera onto a 4× multisampled canvas
-//! of linear, premultiplied `Rgba16Float` color with `Depth32Float` depth,
-//! both cleared (to transparent black and to 1). Every material's shader
+//! shader and alpha mode, through the camera onto a canvas of linear,
+//! premultiplied color with `Depth32Float` depth, both cleared (to
+//! transparent black and to 1): 4× multisampled `Rgba16Float` where the GPU
+//! can draw it (`scene_target` says what else). Every material's shader
 //! is written against Celesta's material interface and assembled with its
 //! entry points by `scene_material.rs`: unlit (`scene_unlit.wgsl`), or one
 //! of the shaders the model lists, compiled once whichever models list it.
@@ -43,22 +44,59 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
-/// The canvas a scene is drawn on before it is converted to the layer's.
-const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-/// Samples per pixel of the color and depth canvases.
-const SAMPLES: u32 = 4;
 /// Vertices per compute workgroup, as `scene_skin.wgsl` declares.
 const WORKGROUP: u32 = 64;
 /// The bytes of one skinned vertex: `scene_skin.wgsl`'s `Skinned`.
 const SKINNED_STRIDE: u64 = 48;
 /// The bytes of one `SkinVertex`, the largest element a stream holds.
 const SKIN_VERTEX_STRIDE: u64 = 32;
-/// The most texels a scene's canvas has. A texel of it costs about 60 bytes
-/// (four samples of color and of depth, the resolved color, the layer's), so
-/// this is about 500 MB; a 4K frame (3840 × 2160) still fits at 1×, and a
-/// larger canvas is drawn at a lower density.
+/// The most texels a scene's canvas has. A texel of it costs at most about
+/// 60 bytes (four samples of color and of depth, the resolved color, the
+/// layer's), so this is about 500 MB; a 4K frame (3840 × 2160) still fits
+/// at 1×, and a larger canvas is drawn at a lower density.
 pub(crate) const SCENE_CANVAS_TEXELS: u64 = 8_388_608;
+
+/// The color format and sample count a scene is drawn with, before it is
+/// converted to the layer's encoding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SceneTarget {
+    pub(crate) format: wgpu::TextureFormat,
+    /// Samples per pixel of the color and depth canvases: 4, or 1.
+    pub(crate) samples: u32,
+}
+
+/// What a GPU whose formats have `features` draws scenes on: the first of
+/// `Rgba16Float` and `Rgba8Unorm` it can render to, blend, and sample, 4×
+/// multisampled when it can multisample and resolve that format and
+/// multisample `Depth32Float` 4×, else at 1 sample. 4 is the only count
+/// above 1 that every format WebGPU lets be multisampled supports. `None`
+/// when neither format can be drawn on.
+pub(crate) fn scene_target(
+    features: impl Fn(wgpu::TextureFormat) -> wgpu::TextureFormatFeatures,
+) -> Option<SceneTarget> {
+    use wgpu::{TextureFormatFeatureFlags as Flags, TextureUsages as Usages};
+    let format = [
+        wgpu::TextureFormat::Rgba16Float,
+        wgpu::TextureFormat::Rgba8Unorm,
+    ]
+    .into_iter()
+    .find(|format| {
+        let features = features(*format);
+        features
+            .allowed_usages
+            .contains(Usages::RENDER_ATTACHMENT | Usages::TEXTURE_BINDING)
+            && features.flags.contains(Flags::BLENDABLE)
+    })?;
+    let multisampled = features(format)
+        .flags
+        .contains(Flags::MULTISAMPLE_X4 | Flags::MULTISAMPLE_RESOLVE)
+        && features(DEPTH_FORMAT).flags.contains(Flags::MULTISAMPLE_X4);
+    Some(SceneTarget {
+        format,
+        samples: if multisampled { 4 } else { 1 },
+    })
+}
 /// The most texels of scene canvases kept from frame to frame: two capped
 /// canvases, about 1 GB. A frame that draws more still gets every canvas it
 /// draws, but the canvases it does not draw are dropped first.
@@ -260,9 +298,10 @@ fn make_room<T>(
 }
 
 /// A scene canvas of one size: its multisampled color and depth, the color
-/// they resolve to, and the bind group that converts it.
+/// they resolve to, and the bind group that converts it. At 1 sample there
+/// is no multisampled color: the draws go straight to `resolved`.
 struct SceneTargets {
-    multisampled: wgpu::TextureView,
+    multisampled: Option<wgpu::TextureView>,
     depth: wgpu::TextureView,
     resolved: wgpu::TextureView,
     convert_group: wgpu::BindGroup,
@@ -764,6 +803,11 @@ pub(crate) struct Prepared {
 /// The pipelines that draw scenes and what they bind, shared by every
 /// scene.
 pub(crate) struct ScenePipelines {
+    /// What every draw pipeline, and every canvas `SceneFrameResources`
+    /// keeps, is made for: the renderer's `scene_target`, chosen once when
+    /// it is made, so no cache here or there holds anything made for
+    /// another, and none is keyed by it.
+    target: SceneTarget,
     geometry_layout: wgpu::BindGroupLayout,
     frame_layout: wgpu::BindGroupLayout,
     skin: wgpu::ComputePipeline,
@@ -853,7 +897,7 @@ fn dynamic_uniform_entry(
 }
 
 impl ScenePipelines {
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, target: SceneTarget) -> Self {
         let skin_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Celesta scene skinning shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("scene_skin.wgsl").into()),
@@ -1010,6 +1054,7 @@ impl ScenePipelines {
                 .create_view(&Default::default())
         };
         let mut pipelines = Self {
+            target,
             geometry_layout,
             frame_layout,
             skin,
@@ -1299,15 +1344,20 @@ impl ScenePipelines {
                 return Err(error);
             }
         }
-        scoped(device, || Self::draw_pipeline(device, shader, layout, key))
+        let target = self.target;
+        scoped(device, || {
+            Self::draw_pipeline(device, shader, layout, key, target)
+        })
     }
 
-    /// The pipeline of `key`, drawn with `shader` through `layout`.
+    /// The pipeline of `key`, drawn with `shader` through `layout` onto
+    /// `target`.
     fn draw_pipeline(
         device: &wgpu::Device,
         shader: &CompiledShader,
         layout: &wgpu::PipelineLayout,
         key: PipelineKey,
+        target: SceneTarget,
     ) -> wgpu::RenderPipeline {
         debug_assert_eq!(key.shader, shader.id);
         // The skinned vertices, then the geometry's texture coordinates.
@@ -1327,6 +1377,9 @@ impl ScenePipelines {
             }),
         ];
         let (vertex_entry, fragment_entry) = key.entry_points();
+        // A mask covers as many samples as there are
+        // (`scene_material_entry.wgsl`).
+        let samples = [("CELESTA_SAMPLES", f64::from(target.samples))];
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Celesta scene draw"),
             layout: Some(layout),
@@ -1339,9 +1392,12 @@ impl ScenePipelines {
             fragment: Some(wgpu::FragmentState {
                 module: &shader.module,
                 entry_point: Some(fragment_entry),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &samples,
+                    ..Default::default()
+                },
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: COLOR_FORMAT,
+                    format: target.format,
                     blend: key.alpha.blend(),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -1370,7 +1426,7 @@ impl ScenePipelines {
                 bias: key.depth_bias(),
             }),
             multisample: wgpu::MultisampleState {
-                count: SAMPLES,
+                count: target.samples,
                 ..Default::default()
             },
             multiview_mask: None,
@@ -2925,22 +2981,26 @@ impl GpuRenderer {
                     })
                     .create_view(&Default::default())
             };
-            let multisampled = target(
-                "Celesta scene color",
-                COLOR_FORMAT,
-                SAMPLES,
-                wgpu::TextureUsages::RENDER_ATTACHMENT,
-            );
+            let SceneTarget { format, samples } = pipelines.target;
+            let multisampled = (samples > 1).then(|| {
+                target(
+                    "Celesta scene color",
+                    format,
+                    samples,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT,
+                )
+            });
+            // Drawn onto directly at 1 sample, else resolved into.
             let resolved = target(
                 "Celesta scene resolved color",
-                COLOR_FORMAT,
+                format,
                 1,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
             let depth = target(
                 "Celesta scene depth",
                 DEPTH_FORMAT,
-                SAMPLES,
+                samples,
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
             );
             let convert_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2984,13 +3044,24 @@ impl GpuRenderer {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Celesta scene draw"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: multisampled,
-                    depth_slice: None,
-                    resolve_target: Some(resolved),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Discard,
+                color_attachments: &[Some(match multisampled {
+                    Some(multisampled) => wgpu::RenderPassColorAttachment {
+                        view: multisampled,
+                        depth_slice: None,
+                        resolve_target: Some(resolved),
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Discard,
+                        },
+                    },
+                    None => wgpu::RenderPassColorAttachment {
+                        view: resolved,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -3173,6 +3244,91 @@ mod tests {
         assert!(width >= 3860, "{width}");
         // The longest side's limit still holds first.
         assert_eq!(scene_canvas_size([100_000.0, 1.0], 1.0, 8192), (8192, 1));
+    }
+
+    /// Format features where `Rgba16Float` is missing `half_float`'s
+    /// usages and flags, and every other format has everything.
+    fn features_without(
+        half_float: wgpu::TextureFormatFeatures,
+    ) -> impl Fn(wgpu::TextureFormat) -> wgpu::TextureFormatFeatures {
+        move |format| {
+            let all = wgpu::TextureFormatFeatures {
+                allowed_usages: wgpu::TextureUsages::all(),
+                flags: wgpu::TextureFormatFeatureFlags::all(),
+            };
+            if format == wgpu::TextureFormat::Rgba16Float {
+                wgpu::TextureFormatFeatures {
+                    allowed_usages: all.allowed_usages - half_float.allowed_usages,
+                    flags: all.flags - half_float.flags,
+                }
+            } else {
+                all
+            }
+        }
+    }
+
+    #[test]
+    fn scene_target_falls_back_from_what_the_gpu_lacks() {
+        use wgpu::{TextureFormat, TextureFormatFeatureFlags as Flags, TextureUsages as Usages};
+        let target = |format, samples| Some(SceneTarget { format, samples });
+        let lacking = |allowed_usages, flags| {
+            scene_target(features_without(wgpu::TextureFormatFeatures {
+                allowed_usages,
+                flags,
+            }))
+        };
+        assert_eq!(
+            lacking(Usages::empty(), Flags::empty()),
+            target(TextureFormat::Rgba16Float, 4)
+        );
+        // Without 4× multisampling or resolving, it is drawn at 1 sample.
+        for flags in [Flags::MULTISAMPLE_X4, Flags::MULTISAMPLE_RESOLVE] {
+            assert_eq!(
+                lacking(Usages::empty(), flags),
+                target(TextureFormat::Rgba16Float, 1)
+            );
+        }
+        // Not renderable, blendable, or sampleable, it gives way to
+        // `Rgba8Unorm`, still multisampled.
+        assert_eq!(
+            lacking(Usages::RENDER_ATTACHMENT, Flags::empty()),
+            target(TextureFormat::Rgba8Unorm, 4)
+        );
+        assert_eq!(
+            lacking(Usages::TEXTURE_BINDING, Flags::empty()),
+            target(TextureFormat::Rgba8Unorm, 4)
+        );
+        assert_eq!(
+            lacking(Usages::empty(), Flags::BLENDABLE),
+            target(TextureFormat::Rgba8Unorm, 4)
+        );
+        // Depth that cannot be multisampled leaves color at 1 sample too.
+        let no_depth_msaa = |format| {
+            let mut features = features_without(wgpu::TextureFormatFeatures {
+                allowed_usages: Usages::empty(),
+                flags: Flags::empty(),
+            })(format);
+            if format == DEPTH_FORMAT {
+                features.flags -= Flags::MULTISAMPLE_X4;
+            }
+            features
+        };
+        assert_eq!(
+            scene_target(no_depth_msaa),
+            target(TextureFormat::Rgba16Float, 1)
+        );
+        // Neither format renderable: nothing to draw on.
+        let nothing = |format| {
+            let mut features = features_without(wgpu::TextureFormatFeatures {
+                allowed_usages: Usages::empty(),
+                flags: Flags::empty(),
+            })(format);
+            if format != DEPTH_FORMAT {
+                features.allowed_usages -= Usages::RENDER_ATTACHMENT;
+            }
+            features
+        };
+        assert_eq!(scene_target(nothing), None);
     }
 
     /// A model of one unskinned geometry of `vertices` vertices without
