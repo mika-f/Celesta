@@ -102,9 +102,16 @@ export interface VrmProps extends CommonProps {
    * or custom name. They win over blinking and the mouth.
    */
   expressions?: Record<string, number>;
-  /** The mouth: a vowel shape ('a' sets `aa` to 1), or the vowel weights. */
+  /**
+   * The mouth: a vowel shape ('a' sets `aa` to 1), or the vowel weights.
+   * The vowels it leaves out are 0, a motion's included; without `mouth`
+   * and `lipSync`, a motion's vowels play.
+   */
   mouth?: MouthShape | Partial<Record<Vowel, number>>;
-  /** A lip-sync track from `loadLipSync()`, used when `mouth` is not given. */
+  /**
+   * A lip-sync track from `loadLipSync()`, used when `mouth` is not given.
+   * Like `mouth`, it sets every vowel, so a motion's do not show through.
+   */
   lipSync?: LipSyncTrack;
   /**
    * Frames over which a lip-sync track's shapes blend into each other: each
@@ -126,7 +133,7 @@ export interface VrmProps extends CommonProps {
   /**
    * Motions in the order they start. Before the first the avatar rests;
    * each plays until the next starts. Expressions given here win over a
-   * motion's.
+   * motion's, and `mouth` or `lipSync` sets every vowel over a motion's.
    */
   motions?: VrmMotion[];
   /** Keyframed turns of humanoid bones, and moves of the hips, on top of the motions. */
@@ -420,8 +427,18 @@ function canvasSize({ width, height, aspect }: VrmProps): [number, number] {
   return aspect !== undefined ? [1920, 1920 / aspect] : [1920, 1080];
 }
 
-/** The vowel weights of `mouth`, else of the lip-sync track. */
+/**
+ * With `mouth` or a lip-sync track, all five vowels: 0, then the chosen
+ * weights. The plugin takes a motion's vowels for the keys the layer leaves
+ * out, so a closed or silent mouth sends its zeros. Without either, none.
+ */
 function mouthExpressions(props: VrmProps, frame: number, fps: number): Partial<Record<Vowel, number>> {
+  if (props.mouth === undefined && !props.lipSync) return {};
+  return { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0, ...mouthWeights(props, frame, fps) };
+}
+
+/** The vowel weights of `mouth`, else of the lip-sync track. */
+function mouthWeights(props: VrmProps, frame: number, fps: number): Partial<Record<Vowel, number>> {
   const { mouth, lipSync } = props;
   if (typeof mouth === 'string') {
     const vowel = VOWELS[mouth];

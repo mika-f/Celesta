@@ -326,6 +326,14 @@ New props of `@celesta-plugin/vrm`'s `Vrm`:
 | `motions` | `[{ src, from?, loop?, fadeIn? }]`: `src` a `.vrma`; `from` (default 0) and `fadeIn` (default 0) in frames of the enclosing sequence, sent as seconds. Each distinct `src` (`===`) is sent once, as asset `motion<i>`, `i` the index of the first motion with that `src`. `from` not finite, or `fadeIn` not finite or negative, throws. |
 | `tracks` | `{ bone: { pitch?, yaw?, roll?, x?, y?, z? } }`, each axis a list of `{ frame, value, easing? }`. Degrees for the turns, metres for `x`/`y`/`z` (hips only). Sent as `KeyframeAnimation`s: at whole frame rates with the frame rate as the timescale, otherwise in microseconds. A fractional `frame` is rounded to the nearest frame at any rate. An unknown bone or axis, `x`/`y`/`z` off the hips, an empty axis, or a frame or value not finite throws. |
 
+Changed: with `mouth` or `lipSync`, `vrmData` sends all five vowels
+(`aa`, `ih`, `ou`, `ee`, `oh`) at 0, then the chosen weights, then
+`expressions`. The plugin fills the keys the layer leaves out from the
+clips, so without the zeros a clip's vowels would leak through
+`mouth="closed"`, a silent stretch of lip sync, or a single chosen vowel.
+With neither prop, no vowel is sent and a clip's play (tested with and
+without motions).
+
 `demo.tsx` plays `test.vrma` on a loop with a nod track on top.
 
 ## What landed

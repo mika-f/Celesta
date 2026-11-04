@@ -42,19 +42,23 @@ test('blinks_from_blinkPhase', () => {
   assert.equal(vrmData({ src, expressions: { blink: 0.3 } }, closed, 30).expressions?.blink, 0.3);
 });
 
+/** Every vowel at 0: a closed mouth, whatever a motion's clip says. */
+const closed = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+
 test('mouth_shapes_set_vowels', () => {
-  const vowels: [MouthShape, Record<string, number> | undefined][] = [
-    ['closed', undefined],
-    ['a', { aa: 1 }],
-    ['i', { ih: 1 }],
-    ['u', { ou: 1 }],
-    ['e', { ee: 1 }],
-    ['o', { oh: 1 }],
+  const vowels: [MouthShape, Record<string, number>][] = [
+    ['closed', closed],
+    ['a', { ...closed, aa: 1 }],
+    ['i', { ...closed, ih: 1 }],
+    ['u', { ...closed, ou: 1 }],
+    ['e', { ...closed, ee: 1 }],
+    ['o', { ...closed, oh: 1 }],
   ];
   for (const [mouth, expressions] of vowels) {
     assert.deepEqual(vrmData({ src, blink: false, mouth }, 0, 30).expressions, expressions, mouth);
   }
   assert.deepEqual(vrmData({ src, blink: false, mouth: { ih: 0.4, ou: 0.2 } }, 0, 30).expressions, {
+    ...closed,
     ih: 0.4,
     ou: 0.2,
   });
@@ -63,15 +67,38 @@ test('mouth_shapes_set_vowels', () => {
 
 test('lip_sync_smooths_like_live2d', () => {
   const expressions = vrmData({ src, blink: false, lipSync: track, mouthSmoothing: 2 }, 30, 30).expressions;
-  assert.deepEqual(expressions, { aa: 0.5 });
+  assert.deepEqual(expressions, { ...closed, aa: 0.5 });
   // The default smoothing is 2 frames.
-  assert.deepEqual(vrmData({ src, blink: false, lipSync: track }, 30, 30).expressions, { aa: 0.5 });
-  // Without smoothing it snaps; past the track's vowels nothing is sent.
-  assert.deepEqual(vrmData({ src, blink: false, lipSync: track, mouthSmoothing: 0 }, 29, 30).expressions, { aa: 1 });
-  assert.equal(vrmData({ src, blink: false, lipSync: track }, 40, 30).expressions, undefined);
+  assert.deepEqual(vrmData({ src, blink: false, lipSync: track }, 30, 30).expressions, { ...closed, aa: 0.5 });
+  // Without smoothing it snaps; past the track's vowels the mouth closes.
+  assert.deepEqual(vrmData({ src, blink: false, lipSync: track, mouthSmoothing: 0 }, 29, 30).expressions, {
+    ...closed,
+    aa: 1,
+  });
+  assert.deepEqual(vrmData({ src, blink: false, lipSync: track }, 40, 30).expressions, closed);
   // `mouth` wins over the track, a closed mouth included.
-  assert.deepEqual(vrmData({ src, blink: false, mouth: 'a', lipSync: track }, 40, 30).expressions, { aa: 1 });
-  assert.equal(vrmData({ src, blink: false, mouth: 'closed', lipSync: track }, 15, 30).expressions, undefined);
+  assert.deepEqual(vrmData({ src, blink: false, mouth: 'a', lipSync: track }, 40, 30).expressions, {
+    ...closed,
+    aa: 1,
+  });
+  assert.deepEqual(vrmData({ src, blink: false, mouth: 'closed', lipSync: track }, 15, 30).expressions, closed);
+});
+
+test('mouth_and_lip_sync_hold_every_vowel_over_a_motion', () => {
+  // The plugin takes a clip's weights for the keys the layer leaves out,
+  // so the mouth sends all five vowels: a clip's own cannot leak through.
+  const motions = [{ src: './talk.vrma', loop: true }];
+  assert.deepEqual(vrmData({ src, blink: false, motions, mouth: 'closed' }, 0, 30).expressions, closed);
+  assert.deepEqual(vrmData({ src, blink: false, motions, mouth: 'o' }, 0, 30).expressions, { ...closed, oh: 1 });
+  assert.deepEqual(vrmData({ src, blink: false, motions, lipSync: track }, 40, 30).expressions, closed);
+  // Explicit expressions still win over the mouth.
+  assert.deepEqual(
+    vrmData({ src, blink: false, motions, mouth: 'closed', expressions: { ou: 0.3 } }, 0, 30).expressions,
+    { ...closed, ou: 0.3 },
+  );
+  // Without `mouth` or `lipSync`, the vowels are the clip's: none is sent.
+  assert.equal(vrmData({ src, blink: false, motions }, 0, 30).expressions, undefined);
+  assert.deepEqual(vrmData({ src, blink: false, motions, expressions: { aa: 0.4 } }, 0, 30).expressions, { aa: 0.4 });
 });
 
 test('mouth_smoothing_is_a_number_of_frames', () => {

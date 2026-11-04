@@ -89,7 +89,9 @@ import { Vrm } from '@celesta-plugin/vrm';
   the model's custom names; they win over `blink` and the mouth. `mouth`:
   `'a'`…`'o'`, `'closed'`, or vowel weights (`aa ih ou ee oh`).
   `lipSync` (a `LipSyncTrack`) with `mouthSmoothing` (frames, default 2)
-  when `mouth` is absent. `blink`: blink timing, `false` for none.
+  when `mouth` is absent. Either sets all five vowels (the rest 0), so a
+  motion's vowels never leak through a closed or silent mouth; with
+  neither, a motion's vowels play. `blink`: blink timing, `false` for none.
 - `lookAt`: `'camera'`, `[x, y, z]` in the avatar's space (metres, +Y up,
   facing +Z, its left at +X), or `{ yaw, pitch }` in degrees (yaw
   positive to the avatar's right, pitch positive up).
@@ -156,7 +158,8 @@ import { Vrm } from '@celesta-plugin/vrm';
   over the clip's. Motions run in `from` order, each until the next
   starts; before the first the avatar rests; `loop` repeats, otherwise the
   last pose holds; `fadeIn` blends from the motion before. A clip's
-  expression weights apply, but `expressions` wins key by key. A
+  expression weights apply, but `expressions` wins key by key, and
+  `mouth` or `lipSync` sets every vowel over the clip's. A
   non-finite `from`, or a negative or non-finite `fadeIn`, throws.
 - `tracks`: `{ bone: { pitch?, yaw?, roll?, x?, y?, z? } }`, each a list
   of `{ frame, value, easing? }` (a fractional frame is rounded to the
