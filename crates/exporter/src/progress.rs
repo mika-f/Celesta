@@ -95,6 +95,8 @@ pub(crate) struct State {
     frame: u64,
     total: u64,
     warnings: Vec<String>,
+    /// Printed after the display closes; the panels list only warnings.
+    notes: Vec<String>,
     error: Option<String>,
 }
 
@@ -117,6 +119,7 @@ impl State {
             frame: 0,
             total: 0,
             warnings: Vec::new(),
+            notes: Vec::new(),
             error: None,
         }
     }
@@ -135,6 +138,7 @@ impl State {
             ExportProgress::MixingAudio => self.end_rendering(Stage::Mixing),
             ExportProgress::Muxing => self.end_rendering(Stage::Muxing),
             ExportProgress::Warning(warning) => self.warnings.push(warning),
+            ExportProgress::Note(note) => self.notes.push(note),
             ExportProgress::Composition(_)
             | ExportProgress::ReactCompositions { .. }
             | ExportProgress::Wrote(_) => {}
@@ -308,11 +312,13 @@ pub fn run(
         result
     });
     // Leave all diagnostics in scrollback, including ones displaced by newer warnings.
-    for warning in &state
+    let state = state
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .warnings
-    {
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for note in &state.notes {
+        eprintln!("{note}");
+    }
+    for warning in &state.warnings {
         eprintln!("warning: {warning}");
     }
     result
@@ -791,6 +797,13 @@ impl PlainProgress {
                     eprintln!("warning: {warning}");
                 }
             }
+            ExportProgress::Note(note) => {
+                if self.terminal {
+                    eprintln!("\r{note}");
+                } else {
+                    eprintln!("{note}");
+                }
+            }
         }
     }
 }
@@ -952,6 +965,16 @@ mod tests {
             text.contains("Mixing audio") && text.contains("Missing font"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn notes_are_kept_apart_from_warnings() {
+        let mut state = State::new();
+        state.update(ExportProgress::Note("note: terms of use".into()));
+        assert!(state.warnings.is_empty());
+        assert_eq!(state.notes, ["note: terms of use"]);
+        let text = screen(&state, 110, 26);
+        assert!(text.contains("No warnings reported"), "{text}");
     }
 
     #[test]

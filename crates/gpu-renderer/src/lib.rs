@@ -25,6 +25,8 @@ mod prepare;
 mod quantize;
 mod readback;
 mod renderer;
+mod scene;
+mod scene_material;
 mod shader;
 #[cfg(test)]
 mod tests;
@@ -32,12 +34,16 @@ mod text;
 mod texture;
 mod transform;
 mod types;
+mod wgsl;
 mod yuv;
 
+/// A `PluginNotice`'s level.
+pub use celesta_plugin::NoticeLevel;
 pub use celesta_renderer::{GlyphMetrics, TextMetrics};
 pub use error::GpuRenderError;
 pub use hit::{HitClip, HitRegion, hit_test};
 pub use layer_frame::{LayerFrame, invert_affine, layer_frame, parent_space};
+pub use mesh::PluginNotice;
 pub use renderer::GpuRenderer;
 pub use text::TextLayout;
 pub use transform::path_transform;

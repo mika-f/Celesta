@@ -59,13 +59,28 @@ pub struct ComponentInfo {
     /// Props the component is added with: strings, numbers, and booleans.
     #[serde(default)]
     pub props: BTreeMap<String, serde_json::Value>,
+    /// The file types a model component takes: lowercase, without the dot.
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    /// A model component's layer width over its height, for drawing it:
+    /// required of a model component, which is added with only a width,
+    /// and refused on any other.
+    #[serde(default)]
+    pub aspect: Option<f64>,
 }
+
+/// The widest a model component's `aspect` may be, and one over it the
+/// narrowest: a scene canvas side is at most `MAX_SCENE_CANVAS_SIDE`
+/// pixels and at least 1, so no wider layer could be drawn.
+const MAX_COMPONENT_ASPECT: f64 = celesta_plugin::scene::MAX_SCENE_CANVAS_SIDE as f64;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ComponentSource {
     Image,
     Video,
+    /// A file the plugin reads itself, of the types `extensions` lists.
+    Model,
 }
 
 impl ComponentInfo {
@@ -92,6 +107,58 @@ impl ComponentInfo {
         {
             return Some(format!(
                 "component {name:?} is not a component name (a capital letter, then letters, digits, or '_')"
+            ));
+        }
+        if self.src == Some(ComponentSource::Model) {
+            if self.extensions.is_empty() {
+                return Some(format!(
+                    "component {name:?} takes a model file but lists no extensions"
+                ));
+            }
+        } else if !self.extensions.is_empty() {
+            return Some(format!(
+                "component {name:?} lists extensions but does not take a model file"
+            ));
+        } else if self.aspect.is_some() {
+            return Some(format!(
+                "component {name:?} lists an aspect but does not take a model file"
+            ));
+        }
+        for (index, extension) in self.extensions.iter().enumerate() {
+            if let Some(bare) = extension.strip_prefix('.') {
+                return Some(format!(
+                    "component {name:?}'s extension {extension:?} is written with its dot; list it as {bare:?}"
+                ));
+            }
+            if self.extensions[..index].contains(extension) {
+                return Some(format!(
+                    "component {name:?} lists the extension {:?} twice",
+                    format!(".{extension}")
+                ));
+            }
+            let plain = !extension.is_empty()
+                && extension
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+            if !plain {
+                return Some(format!(
+                    "component {name:?}'s extension {:?} is not lowercase letters and digits",
+                    format!(".{extension}")
+                ));
+            }
+        }
+        // Added with only a width, a model component without an aspect
+        // would draw a box whose height the layer does not keep.
+        if self.src == Some(ComponentSource::Model) && self.aspect.is_none() {
+            return Some(format!(
+                "component {name:?} takes a model file but gives no aspect"
+            ));
+        }
+        if let Some(aspect) = self.aspect
+            && !(MAX_COMPONENT_ASPECT.recip()..=MAX_COMPONENT_ASPECT).contains(&aspect)
+        {
+            return Some(format!(
+                "component {name:?}'s aspect {aspect} is not from 1/{MAX_COMPONENT_ASPECT} to {MAX_COMPONENT_ASPECT}"
             ));
         }
         for (prop, value) in &self.props {
@@ -729,6 +796,193 @@ mod tests {
         assert_eq!(components[0].drawn_props(), ["src", "x", "y", "width"]);
         assert_eq!(components[1].label(), "Box_2");
         assert_eq!(components[1].drawn_props(), ["x", "y", "width", "height"]);
+    }
+
+    #[test]
+    fn model_components_need_extensions_and_an_aspect() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |id: &str, component: serde_json::Value| {
+            write_manifest(
+                &root.path().join(id),
+                serde_json::json!({
+                    "id": id, "version": "1", "protocol": 1,
+                    "module": "js/index.js", "components": [component],
+                }),
+            );
+        };
+        write(
+            "good",
+            serde_json::json!({ "name": "Model", "label": "3D model", "src": "model", "extensions": ["glb"], "aspect": 1.7777778 }),
+        );
+        write(
+            "bare",
+            serde_json::json!({ "name": "Model", "src": "model" }),
+        );
+        write(
+            "shapeless",
+            serde_json::json!({ "name": "Model", "src": "model", "extensions": ["glb"] }),
+        );
+        write(
+            "upper",
+            serde_json::json!({ "name": "Model", "src": "model", "extensions": ["GLB"] }),
+        );
+        write(
+            "image",
+            serde_json::json!({ "name": "Model", "src": "image", "extensions": ["glb"] }),
+        );
+        write(
+            "flat",
+            serde_json::json!({ "name": "Model", "src": "model", "extensions": ["glb"], "aspect": 0 }),
+        );
+        let with_aspect = |aspect: f64| serde_json::json!({ "name": "Model", "src": "model", "extensions": ["glb"], "aspect": aspect });
+        write("negative", with_aspect(-1.0));
+        write("thin", with_aspect(1.0e-5));
+        write("long", with_aspect(16385.0));
+        write("widest", with_aspect(MAX_COMPONENT_ASPECT));
+        write(
+            "unmodelled",
+            serde_json::json!({ "name": "Model", "src": "image", "aspect": 1 }),
+        );
+        let with_extensions = |extensions: serde_json::Value| serde_json::json!({ "name": "Model", "src": "model", "extensions": extensions });
+        write("empty", with_extensions(serde_json::json!([""])));
+        write("dotted", with_extensions(serde_json::json!([".glb"])));
+        write(
+            "twice",
+            with_extensions(serde_json::json!(["glb", "gltf", "glb"])),
+        );
+
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        let ids: Vec<_> = found
+            .iter()
+            .map(|entry| entry.manifest.id.as_str())
+            .collect();
+        assert_eq!(ids, ["good", "widest"], "{errors:?}");
+        assert_eq!(
+            found[1].manifest.components[0].aspect,
+            Some(MAX_COMPONENT_ASPECT)
+        );
+        let component = &found[0].manifest.components[0];
+        assert_eq!(component.src, Some(ComponentSource::Model));
+        assert_eq!(component.label(), "3D model");
+        assert_eq!(component.extensions, ["glb"]);
+        assert_eq!(component.aspect, Some(1.7777778));
+        assert_eq!(component.drawn_props(), ["src", "x", "y", "width"]);
+
+        let reason = |id: &str| {
+            errors
+                .iter()
+                .find_map(|error| match error {
+                    DiscoveryError::Invalid { path, reason }
+                        if path.starts_with(root.path().join(id)) =>
+                    {
+                        Some(reason.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{id} was not skipped: {errors:?}"))
+        };
+        assert_eq!(errors.len(), 12, "{errors:?}");
+        assert_eq!(
+            reason("bare"),
+            "component \"Model\" takes a model file but lists no extensions"
+        );
+        assert_eq!(
+            reason("shapeless"),
+            "component \"Model\" takes a model file but gives no aspect"
+        );
+        assert_eq!(
+            reason("upper"),
+            "component \"Model\"'s extension \".GLB\" is not lowercase letters and digits"
+        );
+        assert_eq!(
+            reason("image"),
+            "component \"Model\" lists extensions but does not take a model file"
+        );
+        for (id, aspect) in [
+            ("flat", "0"),
+            ("negative", "-1"),
+            ("thin", "0.00001"),
+            ("long", "16385"),
+        ] {
+            assert_eq!(
+                reason(id),
+                format!("component \"Model\"'s aspect {aspect} is not from 1/16384 to 16384")
+            );
+        }
+        assert_eq!(
+            reason("unmodelled"),
+            "component \"Model\" lists an aspect but does not take a model file"
+        );
+        assert_eq!(
+            reason("empty"),
+            "component \"Model\"'s extension \".\" is not lowercase letters and digits"
+        );
+        assert_eq!(
+            reason("dotted"),
+            "component \"Model\"'s extension \".glb\" is written with its dot; list it as \"glb\""
+        );
+        assert_eq!(
+            reason("twice"),
+            "component \"Model\" lists the extension \".glb\" twice"
+        );
+    }
+
+    #[test]
+    fn the_repositorys_plugins_pass_the_manifest_checks() {
+        // Each `plugin.json` under `plugins/` and `examples/plugins/`, made
+        // into the manifest its build script writes (`id`, `version`,
+        // `components`, and the module it builds): a component the checks
+        // refuse would skip the whole plugin for every user, so it fails
+        // here instead.
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = tempfile::tempdir().unwrap();
+        let mut expected = Vec::new();
+        for folder in ["plugins", "examples/plugins"] {
+            let mut sources: Vec<_> = std::fs::read_dir(repository.join(folder))
+                .unwrap()
+                .map(|entry| entry.unwrap().path().join("plugin.json"))
+                .filter(|source| source.is_file())
+                .collect();
+            sources.sort();
+            assert!(!sources.is_empty(), "no plugin.json under {folder}");
+            for source in sources {
+                let plugin: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(&source).unwrap())
+                        .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+                let id = plugin["id"].as_str().unwrap().to_owned();
+                let written = plugin
+                    .get("components")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([]));
+                let components: Vec<ComponentInfo> = serde_json::from_value(written.clone())
+                    .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+                write_manifest(
+                    &root.path().join(&id),
+                    serde_json::json!({
+                        "id": id, "version": plugin["version"], "protocol": 1,
+                        "module": "js/index.js", "types": "js/index.d.ts",
+                        "components": written,
+                    }),
+                );
+                expected.push((id, source, components));
+            }
+        }
+
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        assert!(errors.is_empty(), "{errors:?}");
+        let mut found: Vec<_> = found
+            .iter()
+            .map(|entry| (entry.manifest.id.as_str(), &entry.manifest.components))
+            .collect();
+        found.sort_by_key(|(id, _)| *id);
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(found.len(), expected.len(), "{found:?}");
+        for ((id, components), (expected_id, source, expected_components)) in
+            found.into_iter().zip(&expected)
+        {
+            assert_eq!(id, expected_id, "{}", source.display());
+            assert_eq!(components, expected_components, "{}", source.display());
+        }
     }
 
     #[test]

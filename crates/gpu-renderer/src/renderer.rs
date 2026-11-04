@@ -12,6 +12,7 @@ use crate::pipeline::{PipelineKind, create_pipeline};
 use crate::plane::PlaneEntry;
 use crate::quantize::{QuantizeOutput, Quantizer};
 use crate::readback::{ReadbackLayout, ReadbackSlot, ReadbackWorker, SlotReadback, rgba_texture};
+use crate::scene::{SceneTarget, scene_target};
 use crate::shader::ShaderProcessor;
 use crate::text::{PendingText, TextLayout, TextSize, find_layer};
 use crate::texture::{
@@ -50,6 +51,9 @@ pub struct GpuRenderer {
     pub(crate) render_quality: RenderQuality,
     /// The format every canvas below composites in (see `canvas_format`).
     pub(crate) canvas_format: wgpu::TextureFormat,
+    /// What scene content draws on before it is converted to a layer (see
+    /// `scene_target`); `None` when this GPU has nothing it can draw on.
+    pub(crate) scene_target: Option<SceneTarget>,
     /// Quantizes finished frames to 8-bit code values.
     pub(crate) quantizer: Quantizer,
     /// What `render` and `render_to_target` draw a frame onto before
@@ -156,6 +160,9 @@ pub struct GpuRenderer {
     /// The last prepared frame's text layers with characters their family
     /// has no glyph for, one per family, weight, and set of characters.
     pub(crate) missing_glyphs: Vec<MissingGlyphs>,
+    /// What the plugins of the last prepared frame's `Plugin` layers said
+    /// about their models, one per plugin and message.
+    pub(crate) plugin_notices: Vec<crate::mesh::PluginNotice>,
     /// Whether `prepare_draws` records `hit_regions`.
     pub(crate) record_hit_regions: bool,
     /// What `prepare_layer` carries down the layer tree besides the
@@ -309,6 +316,7 @@ impl GpuRenderer {
             });
         let shader = device.create_shader_module(wgpu::include_wgsl!("layer.wgsl"));
         let canvas_format = canvas_format(&adapter);
+        let scene_target = scene_target(|format| adapter.get_texture_format_features(format));
         let effects = EffectProcessor::new(&device, &texture_bind_group_layout, canvas_format);
         let shaders = ShaderProcessor::new(&device, &texture_bind_group_layout, canvas_format);
         let masks = MaskPipelines::new(&device, &texture_bind_group_layout, canvas_format);
@@ -353,6 +361,7 @@ impl GpuRenderer {
             backdrop_bind_group_layout,
             render_quality: RenderQuality::default(),
             canvas_format,
+            scene_target,
             quantizer,
             target_canvas: None,
             canvas: None,
@@ -396,6 +405,7 @@ impl GpuRenderer {
             text_fonts_revision: 0,
             font_fallbacks: Vec::new(),
             missing_glyphs: Vec::new(),
+            plugin_notices: Vec::new(),
             record_hit_regions: false,
             walk: Walk::default(),
             hit_leaves: Vec::new(),
@@ -421,6 +431,14 @@ impl GpuRenderer {
     /// family and weight are listed once, with the first of them.
     pub fn missing_glyphs(&self) -> &[MissingGlyphs] {
         &self.missing_glyphs
+    }
+
+    /// What the plugins of `Plugin` layers in the most recently rendered or
+    /// submitted frame said when they opened the layers' models, such as a
+    /// model's terms of use. Each plugin's message is listed once, with the
+    /// first layer it was said for.
+    pub fn plugin_notices(&self) -> &[crate::mesh::PluginNotice] {
+        &self.plugin_notices
     }
 
     /// Lays `text` out as the last rendered frame's fonts do (call after a
@@ -561,11 +579,12 @@ impl GpuRenderer {
 
     /// Where `LayerContent::Plugin` layers get their meshes: the plugin
     /// host, or anything else answering as one. Without one they fail.
+    /// Replacing one closes the models it opened; the new one opens its own.
     pub fn with_content_provider(
         mut self,
         provider: impl celesta_plugin::ContentProvider + 'static,
     ) -> Self {
-        self.meshes.provider = Some(Box::new(provider));
+        self.meshes.replace_provider(Box::new(provider));
         self
     }
 

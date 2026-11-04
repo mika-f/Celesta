@@ -1,6 +1,6 @@
 [package]
 name = "celesta-plugin"
-description = "What Celesta content plugins return (textured meshes) and how they talk to Celesta. Depends on nothing of Celesta's (only serde, and libc on Unix), so plugins can use it without linking Celesta."
+description = "What Celesta content plugins return (textured meshes or 3D scenes) and how they talk to Celesta. Depends on no Celesta crate, so plugins can use it without linking Celesta."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -760,9 +760,26 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
         &format!("@compute @workgroup_size(1) fn main() {{}}\n{IDENTITY}"),
     );
     assert!(entry.contains("entry point `main`"), "{entry}");
+    assert!(entry.contains("defines `effect` instead"), "{entry}");
     assert!(
         entry.starts_with("invalid custom shader broken: 1:"),
         "{entry}"
+    );
+
+    // naga lets a fragment shader use workgroup memory, which WGSL allows
+    // compute shaders alone.
+    let workgroup = error(
+        &mut renderer,
+        "var<workgroup> w: array<f32, 4096>;\nfn effect(input: EffectInput) -> vec4f {\n    w[0] = 1.0;\n    return source_at(input.position) * w[0];\n}\n",
+    );
+    assert!(
+        workgroup.contains("declares the workgroup variable `w`"),
+        "{workgroup}"
+    );
+    assert!(workgroup.contains("compute shaders"), "{workgroup}");
+    assert!(
+        workgroup.starts_with("invalid custom shader broken: 1:"),
+        "{workgroup}"
     );
 
     let reserved = error(
@@ -774,6 +791,29 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
         reserved.starts_with("invalid custom shader broken: 4:"),
         "{reserved}"
     );
+
+    // Overrides, aliases (which naga's module keeps no name of), and a
+    // declaration after a name joined by U+203F, which naga reads as one
+    // word, too.
+    for (declaration, name, line) in [
+        ("override celesta_k: f32 = 1.0;\n", "celesta_k", 4),
+        ("alias celesta_t = f32;\n", "celesta_t", 4),
+        (
+            "const a\u{203f}fn = 1.0;\nfn celesta_x() {}\n",
+            "celesta_x",
+            5,
+        ),
+        // A line comment ends at `\r` too.
+        ("// x\ralias celesta_t = f32;\n", "celesta_t", 4),
+    ] {
+        let reserved = error(&mut renderer, &format!("{IDENTITY}{declaration}"));
+        assert!(reserved.contains(&format!("`{name}`")), "{reserved}");
+        assert!(reserved.contains("belong to Celesta"), "{reserved}");
+        assert!(
+            reserved.starts_with(&format!("invalid custom shader broken: {line}:")),
+            "{reserved}"
+        );
+    }
 
     let keyword = render_error(
         &mut renderer,

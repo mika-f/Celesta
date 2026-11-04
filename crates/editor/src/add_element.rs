@@ -741,6 +741,32 @@ fn media_aspect(kind: NewKind, path: &Path) -> Option<f64> {
     (width > 0 && height > 0).then(|| f64::from(width) / f64::from(height))
 }
 
+/// Why `path` cannot be a model component's file, if it cannot: its
+/// extension, compared ASCII case-insensitively, is not one `info` lists.
+/// The file dialog has no type filter, so the choice is checked after it.
+pub(crate) fn refused_model_file(info: &ComponentInfo, path: &Path) -> Option<String> {
+    let extension = path.extension().and_then(|extension| extension.to_str());
+    if extension.is_some_and(|extension| {
+        info.extensions
+            .iter()
+            .any(|listed| listed.eq_ignore_ascii_case(extension))
+    }) {
+        return None;
+    }
+    let names: Vec<String> = info
+        .extensions
+        .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect();
+    let listed = match names.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} or {second}"),
+        [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
+    };
+    Some(format!("Choose a {listed} file"))
+}
+
 /// The Add menu as the view shows it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AddMenu {
@@ -778,13 +804,18 @@ impl AddComponent {
     }
 
     /// The kind whose drawing it takes: an Image or a Video when it takes a
-    /// file, else a Rect's box.
+    /// file (an Image for a model file), else a Rect's box.
     pub(crate) fn kind(&self) -> NewKind {
         match self.info.src {
-            Some(ComponentSource::Image) => NewKind::Image,
+            Some(ComponentSource::Image | ComponentSource::Model) => NewKind::Image,
             Some(ComponentSource::Video) => NewKind::Video,
             None => NewKind::Rect,
         }
+    }
+
+    /// The component's info when it takes a model file.
+    fn model(&self) -> Option<&ComponentInfo> {
+        (self.info.src == Some(ComponentSource::Model)).then_some(&self.info)
     }
 
     pub(crate) fn module(&self) -> String {
@@ -1170,9 +1201,17 @@ impl EditorView {
     }
 
     /// Asks for the file of an Image or a Video, imports it into the
-    /// project as `Choose…` does, then measures its aspect.
+    /// project as `Choose…` does, then measures its aspect. A model
+    /// component's file is checked against its extensions before it is
+    /// imported, and takes the manifest's aspect without being read.
     fn pick_add_file(&mut self, kind: NewKind, cx: &mut Context<Self>) {
         let entry_dir = self.entry_dir();
+        let model = self
+            .add
+            .component
+            .as_ref()
+            .and_then(AddComponent::model)
+            .cloned();
         let selection = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -1209,6 +1248,17 @@ impl EditorView {
                 .ok();
                 return;
             };
+            if let Some(refused) = model
+                .as_ref()
+                .and_then(|info| refused_model_file(info, &chosen))
+            {
+                view.update(cx, |this, cx| {
+                    cancel(this, Some(refused));
+                    cx.notify();
+                })
+                .ok();
+                return;
+            }
             let dir = entry_dir.clone();
             let imported = cx
                 .background_executor()
@@ -1234,11 +1284,15 @@ impl EditorView {
             let Some(src) = picked else {
                 return;
             };
-            let path = entry_dir.join(&src);
-            let aspect = cx
-                .background_executor()
-                .spawn(async move { media_aspect(kind, &path) })
-                .await;
+            let aspect = match model {
+                Some(info) => info.aspect,
+                None => {
+                    let path = entry_dir.join(&src);
+                    cx.background_executor()
+                        .spawn(async move { media_aspect(kind, &path) })
+                        .await
+                }
+            };
             view.update(cx, |this, cx| {
                 this.step_add(AddEvent::Measured { src, aspect });
                 cx.notify();

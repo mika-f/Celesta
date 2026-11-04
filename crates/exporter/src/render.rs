@@ -7,7 +7,7 @@ use crate::range::ExportWindow;
 use crate::react::ReactVideoRequest;
 use celesta_composition::{Rational, Time, TimeError};
 use celesta_evaluator::{EvaluationError, Evaluator};
-use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, ReadbackFormat};
+use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, NoticeLevel, ReadbackFormat};
 use celesta_media::FfmpegBackend;
 use celesta_project::Project;
 use celesta_react_bridge::{ProjectFrame, ReactBridge};
@@ -51,7 +51,7 @@ impl Exporter {
             output,
         )?;
 
-        let mut reported_fallbacks = ReportedFontWarnings::default();
+        let mut reported_warnings = ReportedWarnings::default();
         let result = (|| {
             let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
             for frame_index in 0..frame_count {
@@ -84,7 +84,7 @@ impl Exporter {
                 {
                     write_frame(&mut writer, frame)?;
                 }
-                report_font_fallbacks(&renderer, &mut reported_fallbacks, progress);
+                report_render_warnings(&renderer, &mut reported_warnings, progress);
             }
             for frame in renderer.drain().map_err(ExportError::Render)? {
                 write_frame(&mut writer, frame)?;
@@ -196,7 +196,7 @@ impl Exporter {
                 .map_err(at_frame)
         };
 
-        let mut reported_fallbacks = ReportedFontWarnings::default();
+        let mut reported_warnings = ReportedWarnings::default();
         let result = thread::scope(|scope| {
             // Node evaluates (and this side parses) the next frame on its own
             // thread while this one prepares and submits the current frame;
@@ -263,7 +263,7 @@ impl Exporter {
                 {
                     write_frame(&mut writer, frame)?;
                 }
-                report_font_fallbacks(&renderer, &mut reported_fallbacks, progress);
+                report_render_warnings(&renderer, &mut reported_warnings, progress);
             }
             for frame in renderer.drain().map_err(ExportError::Render)? {
                 write_frame(&mut writer, frame)?;
@@ -575,23 +575,26 @@ pub(crate) fn open_video_writer(
 const BT709_FILTER: &str =
     "scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709";
 
-/// The font warnings an export has already reported, so a warning that holds
-/// on every frame is reported once.
+/// The render warnings an export has already reported, so a warning that
+/// holds on every frame is reported once.
 #[derive(Default)]
-pub(crate) struct ReportedFontWarnings {
+pub(crate) struct ReportedWarnings {
     /// Families (or font stacks) and weights with no face.
     pub(crate) fallbacks: HashSet<(Vec<String>, u16)>,
     /// Characters that a family (or font stack) and weight has no glyph for.
     pub(crate) missing_glyphs: HashSet<(Vec<String>, u16, char)>,
+    /// Plugins and what they said about the models they opened.
+    pub(crate) plugin_notices: HashSet<(String, String)>,
 }
 
 /// Reports each font family and weight the frame `renderer` last submitted
-/// draws with a fallback font, and each character it draws with a fallback
-/// font because its family has no glyph for it, unless an earlier frame
-/// already did.
-pub(crate) fn report_font_fallbacks(
+/// draws with a fallback font, each character it draws with a fallback font
+/// because its family has no glyph for it, and each notice a plugin gave
+/// for a model the frame draws (a warning, or a note for an info notice),
+/// unless an earlier frame already did.
+pub(crate) fn report_render_warnings(
     renderer: &GpuRenderer,
-    reported: &mut ReportedFontWarnings,
+    reported: &mut ReportedWarnings,
     progress: &mut impl FnMut(ExportProgress),
 ) {
     for fallback in renderer.font_fallbacks() {
@@ -621,6 +624,18 @@ pub(crate) fn report_font_fallbacks(
             let mut missing = missing.clone();
             missing.characters = characters;
             progress(ExportProgress::Warning(missing.to_string()));
+        }
+    }
+    for notice in renderer.plugin_notices() {
+        if reported
+            .plugin_notices
+            .insert((notice.plugin.clone(), notice.message.clone()))
+        {
+            // An info notice's text is labelled `note: ` already.
+            progress(match notice.level {
+                NoticeLevel::Info => ExportProgress::Note(notice.to_string()),
+                NoticeLevel::Warning => ExportProgress::Warning(notice.to_string()),
+            });
         }
     }
 }

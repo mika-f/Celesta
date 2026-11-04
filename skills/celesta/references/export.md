@@ -336,7 +336,8 @@ mixing audio
 muxing
 ```
 
-Warnings (missing fonts, missing glyphs) are printed as `warning: …` lines.
+Warnings (missing fonts, missing glyphs) are printed as `warning: …` lines;
+a plugin's informational notice is printed as a `note: …` line.
 A failure prints `Celesta export: <message>` and
 exits non-zero; see [errors.md](errors.md). The rendering count can reach
 the total while audio mixing and muxing are still running; wait for the

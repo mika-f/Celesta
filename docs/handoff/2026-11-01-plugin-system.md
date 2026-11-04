@@ -3,8 +3,9 @@
 Later notes change parts of what this one describes: where plugins are
 found (`2026-11-02-plugin-search-paths.md`), project trust and plugin
 approval (`2026-11-02-plugin-trust.md`), the editor's Plugins tab
-(`2026-11-02-plugins-panel.md`), and the manifest's `components`
-(`2026-11-02-plugin-add-menu.md`).
+(`2026-11-02-plugins-panel.md`), the manifest's `components`
+(`2026-11-02-plugin-add-menu.md`), and 3D scene content, notices, and the
+current `ContentProvider` (`2026-11-03-plugin-scene-content.md`).
 
 The goal: content that needs code Celesta cannot ship (a proprietary
 runtime, or anything whose license must stay apart from the GPL build of
@@ -24,8 +25,9 @@ itself keeps only generic parts and a published protocol.
   of the layer's content alone (its assets, data, and time). Celesta may ask
   for frames in any order, more than once, and from several processes.
 - **Celesta draws.** A plugin returns geometry, not pixels: textured
-  triangle meshes with the per-mesh state Celesta's GPU renderer draws.
-  Rendering quality, platforms, and GPU backends stay Celesta's.
+  triangle meshes with the per-mesh state Celesta's GPU renderer draws (or,
+  since `2026-11-03-plugin-scene-content.md`, a 3D scene). Rendering
+  quality, platforms, and GPU backends stay Celesta's.
 
 ## Content model
 
@@ -88,14 +90,26 @@ premultiplied, which composites as the layer's texture:
 
 ```rust
 fn open(&mut self, plugin: &str, assets: &BTreeMap<String, PathBuf>)
-    -> Result<(ModelId, MeshModel), PluginError>;
+    -> Result<Opened, PluginError>;
 fn frame(&mut self, model: ModelId, time: f64, data: &serde_json::Value)
-    -> Result<MeshFrame, PluginError>;
+    -> Result<ContentFrame, PluginError>;
+fn close(&mut self, _model: ModelId) {}
 ```
 
+`Opened` is the model's id, its `content` (`ContentModel::Meshes(MeshModel)`
+for the meshes above, or `ContentModel::Scene(SceneModel)`), and its
+`notices`; a frame is `ContentFrame::Meshes(MeshFrame)` or
+`ContentFrame::Scene(SceneFrame)`, of the kind the model was opened as.
+`MeshModel` and `MeshFrame` convert with `.into()`. (Before
+`2026-11-03-plugin-scene-content.md`, `open` returned
+`(ModelId, MeshModel)` and `frame` a `MeshFrame`.)
+
 `GpuRenderer::with_content_provider` installs one, as
-`with_video_decoder` installs the decoder. The renderer caches a model's
-GPU textures by plugin and asset paths. The plugin host implements the
+`with_video_decoder` installs the decoder. The renderer keeps each opened
+model, with its GPU textures, by plugin and asset paths. Installing
+another provider closes those models on the provider that opened them and
+drops them, so the new provider opens its own
+(`2026-11-03-plugin-scene-materials.md`). The plugin host implements the
 trait by routing each plugin id to its process; tests may implement it
 directly.
 
@@ -112,11 +126,21 @@ Celesta sends one request at a time and waits for its answer.
 
 | Request | Answer |
 | --- | --- |
-| `{"type":"hello","protocol":1}` | `{"type":"hello","protocol":1,"plugin":"example","version":"0.1.0"}` |
-| `{"type":"open","assets":{"model":"C:/…/model.json"}}` | `{"type":"opened","model":1,"canvas":[w,h],"textures":[{"path":…}],"meshes":[{"texture","blend","doubleSided","mask","vertices","indices"}]}` + payload: every mesh's UVs (`f32` pairs) then every mesh's indices (`u32`) |
-| `{"type":"frame","model":1,"time":2.5,"data":{…}}` | `{"type":"frame","meshes":[{"index","visible","opacity","multiply","screen"}]}` + payload: the positions (`f32` pairs) of each listed mesh, in list order |
+| `{"type":"hello","protocol":1}` | `{"type":"hello","protocol":1,"plugin":"example","version":"0.1.0","roles":["content"]}` |
+| `{"type":"open","assets":{"model":"C:/…/model.json"}}` | `{"type":"opened","kind":"meshes","model":1,"canvas":[w,h],"textures":[{"path":…}],"meshes":[{"texture","blend","doubleSided","mask","vertices","indices"}],"notices":[…]}` + payload: every mesh's UVs (`f32` pairs), then every mesh's indices (`u32`), then inline textures' pixels |
+| `{"type":"frame","model":1,"time":2.5,"data":{…}}` | `{"type":"frame","meshes":[{"index","visible","opacity","multiply","screen","vertices"}]}` + payload: the positions (`f32` pairs) of each listed mesh, in list order |
 | `{"type":"close","model":1}` | `{"type":"closed"}` |
 | any | `{"type":"error","message":"…"}` |
+
+A `frame` answer must depend only on the model, `time`, and `data`, never
+on the requests before it: the same frame can be asked for again (by a
+later render, an export, or another process) and times in any order.
+
+`kind` is `"meshes"` or `"scene"`; an `opened` without it is meshes. A
+frame's header does not say its kind: it is the kind its model was opened
+as. `notices` (`[{"level":"info"|"warning","message"}]`) is there only when
+the plugin has any. The `scene` kind's `opened` and `frame` are in
+`2026-11-03-plugin-scene-content.md`.
 
 A plugin exits when its stdin closes. Its stderr goes to Celesta's log.
 `celesta_plugin::protocol::serve` runs this loop over a `ContentProvider`;
@@ -209,7 +233,7 @@ checkout to build:
 | `crates/exporter`, `crates/editor` | Install `PluginHost::discover(&[])`; the exporter's `--plugin-dir` (repeatable) goes before `CELESTA_PLUGIN_PATH` for both the host and the React runtime. |
 | `crates/react-bridge/src/project_types.rs` | Copies installed plugins' declarations to `.celesta/plugins/<id>/index.d.ts` on set-up and on every check; the staged tsconfig maps `@celesta-plugin/*` there. |
 | `packages/cli/src/plugins.ts` | Resolves `@celesta-plugin/<id>` to the plugin's `module` and bundles it into the entry. |
-| `examples/plugins` | Two sample plugins and `build.mjs`, which builds each into `examples/plugins/dist/<id>` (git-ignored). `flag` (a workspace member, `celesta-plugin-flag`) is a program and a component: an image waving as 48 single-sided strips, shaded with multiply and screen colors. `beep-voice` is a module only: a speech channel that voices `planDialogue()` lines with beeps in `prepare()`, as `@celesta/voicevox` does with an engine. |
+| `examples/plugins` | Three sample plugins and `build.mjs`, which builds each into `examples/plugins/dist/<id>` (git-ignored). `flag` (a workspace member, `celesta-plugin-flag`) is a program and a component: an image waving as 48 single-sided strips, shaded with multiply and screen colors. `beep-voice` is a module only: a speech channel that voices `planDialogue()` lines with beeps in `prepare()`, as `@celesta/voicevox` does with an engine. `turntable` (`celesta-plugin-turntable`, a workspace member) is a program and a component drawing 3D scene content (`2026-11-03-plugin-scene-content.md`). |
 | `packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md` | The user guide's Content plugins chapter. |
 | `skills/celesta/references/plugins.md` | The skill's page; `inspect.mjs` lists plugin layers with their assets and data. |
 
@@ -217,7 +241,7 @@ Not done: an editor UI to list, enable, and reload plugins (the editor reads
 `CELESTA_PLUGIN_PATH` from its environment); request timeouts (a plugin that
 hangs blocks the frame); plugin signing or an allowlist; `@celesta/web` and
 the CPU renderer; plugins that make sound at render time (the protocol has
-mesh frames only; speech channels synthesize in `prepare()` instead); a
+frames to draw only; speech channels synthesize in `prepare()` instead); a
 published SDK (below). The samples' demos are not type-checked in CI, as
 `typecheck:examples` covers `examples/<name>` projects only.
 

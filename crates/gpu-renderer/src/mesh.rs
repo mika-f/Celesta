@@ -3,19 +3,28 @@
 //! premultiplied, which then composites as the layer's texture. A mesh can
 //! be clipped by other meshes, tinted with multiply and screen colors,
 //! culled when it faces away, and blended normally, additively, or
-//! multiplicatively.
+//! multiplicatively. A provider can supply a 3D scene instead; `scene.rs`
+//! draws those onto the same kind of canvas.
 
 use crate::error::GpuRenderError;
 use crate::renderer::GpuRenderer;
+use crate::scene::{
+    LoadedScene, SceneFrameResources, ScenePipelines, frame_canvas, invalid_frame_canvas,
+    scene_canvas_size,
+};
 use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
-use celesta_plugin::{ContentProvider, MeshBlend, MeshModel, ModelId, TextureSource};
+use celesta_plugin::{
+    ContentFrame, ContentModel, ContentProvider, MeshBlend, MeshModel, ModelId, Notice,
+    NoticeLevel, TextureSource,
+};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::path::PathBuf;
 use wgpu::util::DeviceExt;
 
-const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+pub(crate) const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 /// What a `Plugin` layer is drawn from.
@@ -26,17 +35,121 @@ pub(crate) struct PluginContent<'a> {
     pub(crate) data: &'a Value,
 }
 
+/// Something the plugin of a `Plugin` layer wants the user to know about the
+/// model it opened for the layer, such as the model's terms of use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginNotice {
+    pub layer: String,
+    pub plugin: String,
+    pub level: NoticeLevel,
+    pub message: String,
+}
+
+impl fmt::Display for PluginNotice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.level == NoticeLevel::Info {
+            formatter.write_str("note: ")?;
+        }
+        write!(
+            formatter,
+            "{} (layer {}): {}",
+            self.plugin, self.layer, self.message
+        )
+    }
+}
+
 /// The provider plugin content comes from, the models it opened, and the
 /// pipelines that draw them (created by the first `Plugin` layer).
 #[derive(Default)]
 pub(crate) struct MeshState {
     pub(crate) provider: Option<Box<dyn ContentProvider>>,
     pipelines: Option<Pipelines>,
+    /// What draws scenes, created by the first scene opened.
+    pub(crate) scene_pipelines: Option<ScenePipelines>,
+    /// The canvases and buffers scene frames draw with, kept between
+    /// frames.
+    pub(crate) scene_frames: SceneFrameResources,
     /// By plugin and asset paths.
-    models: HashMap<(String, BTreeMap<String, PathBuf>), LoadedModel>,
+    models: HashMap<ModelKey, OpenModel>,
+    /// The frames the provider answered in this render, so that a render
+    /// asks for a model's frame at one time and data once: measuring a 3D
+    /// plane and drawing each of its bands draw the same answer. Cleared
+    /// as a render begins and ends.
+    pub(crate) asked: Vec<AskedFrame>,
 }
 
-struct LoadedModel {
+/// A model's key: its plugin and asset paths.
+type ModelKey = (String, BTreeMap<String, PathBuf>);
+
+/// A frame the provider answered, and what it was asked for.
+pub(crate) struct AskedFrame {
+    model: ModelKey,
+    /// The time's bits, so that only the same time matches.
+    time: u64,
+    data: Value,
+    frame: ContentFrame,
+}
+
+impl MeshState {
+    /// Installs `provider`. The models the previous provider opened are its
+    /// own, by ids `provider` never gave: they are closed and forgotten, so
+    /// `provider` opens its own.
+    pub(crate) fn replace_provider(&mut self, provider: Box<dyn ContentProvider>) {
+        if let Some(previous) = self.provider.as_mut() {
+            for (_, open) in self.models.drain() {
+                previous.close(open.loaded.id());
+            }
+        }
+        self.models.clear();
+        self.provider = Some(provider);
+    }
+}
+
+/// A model the provider opened, and what it said about the model then.
+struct OpenModel {
+    loaded: LoadedModel,
+    notices: Vec<Notice>,
+}
+
+/// A model opened as 2D meshes or as a 3D scene.
+enum LoadedModel {
+    Meshes(LoadedMeshes),
+    Scene(LoadedScene),
+}
+
+impl LoadedModel {
+    fn id(&self) -> ModelId {
+        match self {
+            Self::Meshes(meshes) => meshes.id,
+            Self::Scene(scene) => scene.id,
+        }
+    }
+
+    fn canvas(&self) -> [f32; 2] {
+        match self {
+            Self::Meshes(meshes) => meshes.model.canvas,
+            Self::Scene(scene) => scene.model.canvas,
+        }
+    }
+
+    /// The size in texels of `canvas` drawn at `density` texels a layer
+    /// unit, no side longer than `max_dimension`.
+    fn texels(&self, canvas: [f32; 2], density: f64, max_dimension: u32) -> (u32, u32) {
+        match self {
+            // A scene's canvas costs many times a mesh canvas's texels.
+            Self::Scene(_) => scene_canvas_size(canvas, density, max_dimension),
+            Self::Meshes(_) => {
+                let largest = canvas[0].max(canvas[1]).max(1.0);
+                let scale = density.min(f64::from(max_dimension) / f64::from(largest));
+                let width = ((f64::from(canvas[0]) * scale).ceil() as u32).max(1);
+                let height = ((f64::from(canvas[1]) * scale).ceil() as u32).max(1);
+                (width, height)
+            }
+        }
+    }
+}
+
+struct LoadedMeshes {
     id: ModelId,
     model: MeshModel,
     /// Each model texture, bound as group 0.
@@ -360,7 +473,32 @@ fn invalid_model(model: &MeshModel) -> Option<String> {
     None
 }
 
-impl LoadedModel {
+/// A model texture's pixels, read from its file or taken as sent.
+pub(crate) fn texture_image(
+    source: &TextureSource,
+    layer: &str,
+) -> Result<image::RgbaImage, GpuRenderError> {
+    Ok(match source {
+        TextureSource::Path(path) => image::open(path)
+            .map_err(|source| GpuRenderError::ImageDecode {
+                asset: path.display().to_string(),
+                source,
+            })?
+            .to_rgba8(),
+        TextureSource::Rgba {
+            width,
+            height,
+            pixels,
+        } => image::RgbaImage::from_raw(*width, *height, pixels.as_ref().clone()).ok_or_else(
+            || GpuRenderError::InvalidPluginContent {
+                layer: layer.to_owned(),
+                message: format!("a {width}x{height} texture of {} bytes", pixels.len()),
+            },
+        )?,
+    })
+}
+
+impl LoadedMeshes {
     fn load(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -377,23 +515,7 @@ impl LoadedModel {
         }
         let mut textures = Vec::new();
         for source in &model.textures {
-            let image = match source {
-                TextureSource::Path(path) => image::open(path)
-                    .map_err(|source| GpuRenderError::ImageDecode {
-                        asset: path.display().to_string(),
-                        source,
-                    })?
-                    .to_rgba8(),
-                TextureSource::Rgba {
-                    width,
-                    height,
-                    pixels,
-                } => image::RgbaImage::from_raw(*width, *height, pixels.as_ref().clone())
-                    .ok_or_else(|| GpuRenderError::InvalidPluginContent {
-                        layer: layer.to_owned(),
-                        message: format!("a {width}x{height} texture of {} bytes", pixels.len()),
-                    })?,
-            };
+            let image = texture_image(source, layer)?;
             let levels = premultiplied_mips(image.width(), image.height(), image.as_raw());
             let data: Vec<u8> = levels
                 .iter()
@@ -470,39 +592,168 @@ impl GpuRenderer {
                 .provider
                 .as_mut()
                 .ok_or_else(|| GpuRenderError::MissingContentProvider(layer.to_owned()))?;
-            let (id, model) = provider
+            let opened = provider
                 .open(content.plugin, &key.1)
                 .map_err(plugin_error)?;
-            let loaded = LoadedModel::load(
-                &self.device,
-                &self.queue,
-                pipelines_ref(&self.meshes),
-                id,
-                model,
-                layer,
-            )?;
-            self.meshes.models.insert(key.clone(), loaded);
+            let id = opened.model;
+            let notices = opened.notices;
+            let loaded = match opened.content {
+                ContentModel::Meshes(model) => LoadedMeshes::load(
+                    &self.device,
+                    &self.queue,
+                    pipelines_ref(&self.meshes),
+                    id,
+                    model,
+                    layer,
+                )
+                .map(LoadedModel::Meshes),
+                ContentModel::Scene(model) => match self.scene_target {
+                    Some(target) => {
+                        // Loading makes the pipelines the model's materials
+                        // use.
+                        let pipelines = self.meshes.scene_pipelines.get_or_insert_with(|| {
+                            ScenePipelines::new(&self.device, &self.queue, target)
+                        });
+                        LoadedScene::load(
+                            &self.device,
+                            &self.queue,
+                            pipelines,
+                            self.max_texture_dimension,
+                            id,
+                            model,
+                            layer,
+                        )
+                        .map(LoadedModel::Scene)
+                    }
+                    None => Err(GpuRenderError::InvalidPluginContent {
+                        layer: layer.to_owned(),
+                        message: "this GPU cannot render to, blend, and sample Rgba16Float or Rgba8Unorm, which a scene is drawn on".to_owned(),
+                    }),
+                },
+            };
+            let loaded = match loaded {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    // Nothing draws a model that failed to load.
+                    if let Some(provider) = self.meshes.provider.as_mut() {
+                        provider.close(id);
+                    }
+                    return Err(error);
+                }
+            };
+            self.meshes
+                .models
+                .insert(key.clone(), OpenModel { loaded, notices });
         }
-        let canvas = self.meshes.models[&key].model.canvas;
-        let largest = canvas[0].max(canvas[1]).max(1.0);
-        let scale = density.min(f64::from(self.max_texture_dimension) / f64::from(largest));
-        let width = ((f64::from(canvas[0]) * scale).ceil() as u32).max(1);
-        let height = ((f64::from(canvas[1]) * scale).ceil() as u32).max(1);
+        let open = &self.meshes.models[&key];
+        for notice in &open.notices {
+            if !self.plugin_notices.iter().any(|reported| {
+                reported.plugin == content.plugin && reported.message == notice.message
+            }) {
+                self.plugin_notices.push(PluginNotice {
+                    layer: layer.to_owned(),
+                    plugin: content.plugin.to_owned(),
+                    level: notice.level,
+                    message: notice.message.clone(),
+                });
+            }
+        }
+        let max_dimension = self.max_texture_dimension;
+        let id = open.loaded.id();
+        let last_canvas = match &open.loaded {
+            LoadedModel::Scene(scene) => Some(scene.last_canvas),
+            LoadedModel::Meshes(_) => None,
+        };
+        match last_canvas {
+            // A meshes frame keeps the model's canvas, so measuring one
+            // asks for no frame.
+            None if self.measuring_plane => {
+                let canvas = open.loaded.canvas();
+                let (width, height) = open.loaded.texels(canvas, density, max_dimension);
+                return Ok((self.stand_in_texture(width, height), canvas));
+            }
+            // Before the plugin's frame and its checks, any of which can
+            // fail: one bad frame does not cost the next its canvas. A
+            // frame that sets another canvas marks that one too.
+            Some(last) if !self.measuring_plane => {
+                let size = scene_canvas_size(last, density, max_dimension);
+                self.meshes.scene_frames.mark_used(size);
+            }
+            _ => {}
+        }
+
+        // A scene frame can set its own canvas, so it is asked for before
+        // the canvas is sized, when only measuring too. A frame this render
+        // already asked for is not asked for again.
+        let time = content.time.to_bits();
+        let asked =
+            self.meshes.asked.iter().find(|asked| {
+                asked.model == key && asked.time == time && asked.data == *content.data
+            });
+        let frame = match asked {
+            Some(asked) => asked.frame.clone(),
+            None => {
+                let provider = self
+                    .meshes
+                    .provider
+                    .as_mut()
+                    .ok_or_else(|| GpuRenderError::MissingContentProvider(layer.to_owned()))?;
+                let frame = provider
+                    .frame(id, content.time, content.data)
+                    .map_err(plugin_error)?;
+                self.meshes.asked.push(AskedFrame {
+                    model: key.clone(),
+                    time,
+                    data: content.data.clone(),
+                    frame: frame.clone(),
+                });
+                frame
+            }
+        };
+        let invalid = |message: String| GpuRenderError::InvalidPluginContent {
+            layer: layer.to_owned(),
+            message,
+        };
+        let mismatch = |message: &str| invalid(message.to_owned());
+        let open = self.meshes.models.get_mut(&key).expect("opened above");
+        let canvas = match (&frame, &mut open.loaded) {
+            (ContentFrame::Scene(frame), LoadedModel::Scene(scene)) => {
+                if let Some(message) = invalid_frame_canvas(frame) {
+                    return Err(invalid(message));
+                }
+                let canvas = frame_canvas(&scene.model, frame);
+                if !self.measuring_plane {
+                    scene.last_canvas = canvas;
+                }
+                canvas
+            }
+            (_, loaded) => loaded.canvas(),
+        };
+        let (width, height) = open.loaded.texels(canvas, density, max_dimension);
         if self.measuring_plane {
             return Ok((self.stand_in_texture(width, height), canvas));
         }
+        if matches!(open.loaded, LoadedModel::Scene(_)) {
+            self.meshes.scene_frames.mark_used((width, height));
+        }
 
-        let id = self.meshes.models[&key].id;
-        let provider = self
-            .meshes
-            .provider
-            .as_mut()
-            .ok_or_else(|| GpuRenderError::MissingContentProvider(layer.to_owned()))?;
-        let frame = provider
-            .frame(id, content.time, content.data)
-            .map_err(plugin_error)?;
+        let (frame, loaded) = match (frame, &self.meshes.models[&key].loaded) {
+            (ContentFrame::Meshes(frame), LoadedModel::Meshes(loaded)) => (frame, loaded),
+            (ContentFrame::Scene(frame), LoadedModel::Scene(scene)) => {
+                let mut resources = std::mem::take(&mut self.meshes.scene_frames);
+                let texture =
+                    self.scene_texture(layer, scene, &frame, width, height, &mut resources);
+                self.meshes.scene_frames = resources;
+                return Ok((texture?, canvas));
+            }
+            (ContentFrame::Scene(_), LoadedModel::Meshes(_)) => {
+                return Err(mismatch("the plugin sent a scene frame for meshes"));
+            }
+            (ContentFrame::Meshes(_), LoadedModel::Scene(_)) => {
+                return Err(mismatch("the plugin sent a meshes frame for a scene"));
+            }
+        };
         let pipelines = pipelines_ref(&self.meshes);
-        let loaded = &self.meshes.models[&key];
         let infos = &loaded.model.meshes;
         for state in &frame.meshes {
             let Some(info) = infos.get(state.index) else {
@@ -556,20 +807,7 @@ impl GpuRenderer {
                 opacity_mask: [mesh.opacity, mask, 0.0, 0.0],
             };
         }
-        let output = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Celesta mesh canvas"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: OUTPUT_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let output = self.plugin_canvas(width, height);
         let output_view = output.create_view(&Default::default());
         let drawn: Vec<_> = frame
             .meshes
@@ -723,15 +961,46 @@ impl GpuRenderer {
             }
             self.queue.submit([encoder.finish()]);
         }
+        Ok((self.plugin_layer_texture(output, width, height), canvas))
+    }
+
+    /// A `width` by `height` canvas plugin content is drawn onto: transparent
+    /// until something draws on it.
+    pub(crate) fn plugin_canvas(&self, width: u32, height: u32) -> wgpu::Texture {
+        self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Celesta mesh canvas"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: OUTPUT_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+    }
+
+    /// A drawn `plugin_canvas` as the layer's texture, premultiplied.
+    pub(crate) fn plugin_layer_texture(
+        &self,
+        output: wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> LayerTexture {
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Celesta mesh layer texture"),
             layout: &self.texture_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&output_view),
+                resource: wgpu::BindingResource::TextureView(
+                    &output.create_view(&Default::default()),
+                ),
             }],
         });
-        let texture = LayerTexture::from_data(TextureData {
+        LayerTexture::from_data(TextureData {
             _texture: output,
             bind_group,
             width,
@@ -742,8 +1011,7 @@ impl GpuRenderer {
             text_box: None,
             raster_scale: 1.0,
             premultiplied: true,
-        });
-        Ok((texture, canvas))
+        })
     }
 }
 

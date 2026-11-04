@@ -24,6 +24,11 @@ pub enum ExportProgress {
     /// A problem that does not stop the export, such as text drawn with a
     /// fallback font. Each is reported once per export.
     Warning(String),
+    /// Something to tell the user that is not a problem, such as a plugin's
+    /// note on a model's terms of use; it says what it is (`note: …`). Each
+    /// is reported once per export. The JSON report lists it among the
+    /// warnings.
+    Note(String),
     /// A finished output file, reported once it is in place.
     Wrote(ExportedFile),
 }

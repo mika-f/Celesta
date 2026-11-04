@@ -92,30 +92,127 @@ export default function Root() {
 
 An entry that imports a plugin no folder provides fails to load and names the plugin. A frame stays a function of its time: a plugin's layer depends only on its props and the frame, so preview, export, and scrubbing agree.
 
+A plugin can tell you something about what a layer draws, such as a model's terms of use. The desktop app lists it in the Problems tab, and `celesta-exporter` prints it once, as a `warning:` or, when it is only information, as a `note:`.
+
 Project TypeScript support copies each plugin's declarations into `.celesta/plugins/`, so your code editor completes its props. When the desktop app opens a project, that includes the project's own plugins and plugins still waiting for your approval: declarations run nothing.
 
-In the desktop app, a plugin can also offer its components in the **Add** menu, after Celesta's own elements. Choosing one adds it like an Image or a Rect: a component that takes a file asks for it first, and you drag where it goes. The app writes the element with the plugin's import, such as `import { Flag } from '@celesta-plugin/flag'`.
+In the desktop app, a plugin can also offer its components in the **Add** menu, after Celesta's own elements. Choosing one adds it like an Image or a Rect: a component that takes a file asks for it first, and you drag where it goes. A component that takes a model file, such as a VRM avatar, accepts only the file types it lists (`Choose a .vrm file`) and draws its box at its layer's shape. The app writes the element with the plugin's import, such as `import { Flag } from '@celesta-plugin/flag'`.
 
 ## Samples
 
-The repository's `examples/plugins` has two plugins to start from:
+The repository's `examples/plugins` has three plugins to start from:
 
 | Plugin | What it shows |
 | --- | --- |
 | `flag` | A layer drawn by a plugin program: an image waving like a flag, as textured meshes Celesta draws. |
+| `turntable` | A layer drawn in 3D by a plugin program: a checkered cube turning on a turntable, toon-shaded by the plugin's own WGSL material under a light and outlined, with a see-through pane and a cut-out leaf, as a scene Celesta draws with depth. |
 | `beep-voice` | A plugin with only components: a speech channel that voices `planDialogue()` lines in game-style beeps instead of a speech engine, with lip sync. |
 
 ```sh
 node examples/plugins/build.mjs
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist
+cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
 ```
+
+## The VRM plugin
+
+The repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) in 3D, toon-shaded with MToon as UniVRM draws it, with expressions, blinking, lip sync, eyes that follow a target, motion clips (`.vrma`), and swinging hair and clothes. Build it, then install the folder it writes:
+
+```sh
+pnpm install && pnpm run build:runtime   # once, at the repository root
+node plugins/vrm/build.mjs               # writes plugins/vrm/dist/vrm
+```
+
+Copy `plugins/vrm/dist/vrm` into your user plugin folder, or pass `plugins/vrm/dist` to the exporter with `--plugin-dir`. Building needs Rust and Node.js, as building Celesta does.
+
+```tsx
+import { Composition } from '@celesta/react';
+import { Vrm } from '@celesta-plugin/vrm';
+
+export default function Root() {
+  return (
+    <Composition width={1920} height={1080} fps={30} durationInFrames={180}>
+      <Vrm src="./avatar.vrm" camera="bust" lookAt="camera" expressions={{ happy: 0.4 }} mouth="a" />
+    </Composition>
+  );
+}
+```
+
+| Prop | What it does |
+| --- | --- |
+| `src` | The `.vrm` file (VRM 1.0). |
+| `width`, `height`, `aspect` | The layer's size in pixels. Give both, or one and `aspect` (width over height, 16:9 by default) for the other. `aspect` alone keeps the width at 1920; without any of them, 1920×1080. Each side, given or computed, must be from 1 to 16384 pixels, or `<Vrm>` throws. The avatar is drawn at that resolution: the layer is not scaled up from a smaller one. |
+| `expressions` | Expression weights from 0 to 1, by VRM preset (`happy`, `angry`, `sad`, `relaxed`, `surprised`, `aa`, `blink`, …) or by the model's own custom names. They win over `blink` and the mouth. |
+| `mouth` | A mouth shape (`'a'`, `'i'`, `'u'`, `'e'`, `'o'`, or `'closed'`), or vowel weights such as `{ aa: 0.5, oh: 0.3 }`. It sets all five vowels (`aa`, `ih`, `ou`, `ee`, `oh`): the ones it leaves out are 0, so a motion's mouth does not show through. |
+| `lipSync`, `mouthSmoothing` | A lip-sync track (from `loadLipSync()`, or a spoken line's `lipSync`), used when `mouth` is not given, its shapes blended over `mouthSmoothing` frames (2 by default; 0 snaps). Like `mouth`, it sets all five vowels, so the mouth closes when the voice is silent. |
+| `blink` | Blink timing, seeded like a character portrait's; `false` never blinks. |
+| `lookAt` | Where the eyes look: `'camera'`, a point `[x, y, z]` in the avatar's space, or `{ yaw, pitch }` in degrees (positive yaw to the avatar's right, positive pitch up). Without it, straight ahead. |
+| `camera` | `'full'` (the default: the whole avatar), `'bust'` (from the waist up, starting at the humanoid's spine bone), `'face'`, or `{ position, target, fov?, near?, far? }` in the avatar's space (`fov` in degrees, 30 by default). |
+| `lights` | `{ directional: [{ direction, color, intensity }], ambient }`, up to four lights (a fifth throws), colors as `#rgb` or `#rrggbb`. It replaces the reference light, so without `ambient` the ambient light is black. Without `lights`, the plugin's reference light: Unity's default directional light from the upper front and its default ambient color. A light's `intensity`, and its color times that intensity, must stay finite as 32-bit floats; otherwise the frame fails with an error naming `lights.directional[i].intensity`. |
+| `motions` | VRM animations (`.vrma`) on the timeline: `[{ src, from?, loop?, fadeIn? }]`. `from` is the frame of the enclosing sequence the motion starts on (0 by default), and `fadeIn` the frames over which it blends in from the motion before it (0 by default). A non-finite `from`, or a negative or non-finite `fadeIn`, throws. |
+| `tracks` | Keyframed turns of humanoid bones on top of the motions: `{ head: { yaw: [{ frame, value, easing? }, …] }, … }`, with `pitch`, `yaw`, and `roll` in degrees, and `x`, `y`, and `z` in metres for `hips` only. |
+
+The avatar's space is the file's: metres, +Y up, the avatar facing +Z with its left at +X, its feet near 0. The presets frame the avatar as it stands at rest, on the layer's shape; `full` fits its whole width too, so a prop held far out to one side moves the avatar off center.
+
+When it opens a model, the plugin reports the model's terms of use as notices, one line each: who made it, its licence, and each term. A term that likely forbids what you are making is a `warning`: the avatar only for its author or for people the author licenses separately, no commercial use, or a credit required (the line says whom to credit where the video is published). A term the file leaves out counts as VRM 1.0's default, which is the strictest. The plugin draws the avatar either way: whether your use is allowed is for you to decide.
+
+Meshes the file marks as first-person only (such as a body without a head, for the wearer's own view) are hidden, as UniVRM's third-person camera hides them. When the file marks one node more than once, its first mark counts, as in UniVRM, and each later one is a warning.
+
+Other warnings point out parts of the file the plugin does not use as written: primitives it does not draw, textures a material is drawn without, and morph target binds it ignores. Each of these kinds, and the repeated first-person marks, is listed up to 20 times, then one line counts the rest (`and 12 more primitives that are not drawn`).
+
+A material's emission is brightened by `KHR_materials_emissive_strength` when the material has it, and otherwise by `VRMC_materials_hdr_emissiveMultiplier`, as UniVRM reads them. A multiplier that is not a finite number refuses the model, and the message names the field.
+
+Materials the file gives in plain glTF PBR (often metal or glass parts) are drawn as their flat base color for now, and a note names them. Not supported yet: VRM 0.x files, which the plugin refuses with a message saying how to convert them to VRM 1.0 (with UniVRM or the VRM Add-on for Blender).
+
+The plugin refuses a file over 1 GiB, or one whose glTF JSON is over 64 MiB; a `.vrm`'s JSON is a few MB. `src` also opens a glTF JSON file (`.gltf`) whose buffers are embedded as `data:` URIs, but there the buffers are part of the JSON, so the whole file is capped at 64 MiB. A file whose buffers or images are in other files is refused.
+
+The plugin writes the model's textures as image files to a cache, and Celesta reads them from there. The cache is `celesta-plugin-vrm` in your user cache folder (`%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` elsewhere). To put it somewhere else, set `CELESTA_VRM_TEXTURE_CACHE` to an absolute path. The plugin refuses to open the model when the cache is a relative path, a symbolic link, not a folder, or (outside Windows) another user's or writable by others, and the message names the variable. The plugin never empties the cache.
+
+In the desktop app's Add menu, **VRM avatar** asks for a `.vrm` file and draws its box at 16:9.
+
+### Motion, constraints, and spring bones
+
+`motions` plays VRM animation clips (`.vrma`, `VRMC_vrm_animation` 1.0), retargeted onto the avatar as UniVRM retargets them: each bone turns from its rest as it does in the clip, and the hips travel as far as the clip's do, scaled by the avatar's hips height over the clip's. Motions run in `from` order, and each plays until the next one starts. Before the first, the avatar stands at rest. A motion with `loop` repeats; without it, its last pose holds. Expression weights in a clip apply too, but the ones you set in `expressions` win, and `mouth` or `lipSync` sets every vowel: with either, the clip's mouth never shows. Without them, the clip moves the mouth.
+
+`tracks` adds keyframed turns after the motions, in the bone's own frame from rest: the angles turn as `lookAt`'s do (as in UniVRM): `yaw` turns it to the avatar's right, `pitch` lifts it to look up, and `roll` tilts its top toward the avatar's right. Negative values turn the other way: a negative `yaw` turns to the left, a negative `pitch` nods down. `x`, `y`, and `z` on `hips` move the whole avatar, in metres. A keyframe's `frame` is a frame of the enclosing sequence; a fractional one is rounded to the nearest frame. This plays a walk, fades into an idle clip over 15 frames from frame 90, then turns the head to look over the avatar's left shoulder and back:
+
+```tsx
+<Vrm
+  src="./avatar.vrm"
+  motions={[
+    { src: './walk.vrma', loop: true },
+    { src: './idle.vrma', from: 90, loop: true, fadeIn: 15 },
+  ]}
+  tracks={{
+    head: {
+      yaw: [
+        { frame: 120, value: 0 },
+        { frame: 135, value: -40, easing: 'ease-in-out' },
+        { frame: 165, value: -40 },
+        { frame: 180, value: 0, easing: 'ease-in-out' },
+      ],
+    },
+  }}
+/>
+```
+
+The avatar's node constraints (parts that follow other parts, such as a twisting sleeve) follow every frame, in UniVRM's order. Its spring bones (hair, skirts, and other swinging parts) are stepped on a fixed 60 Hz clock from the start of the layer, so any frame is the same however you reach it: scrubbed to, played in order, or exported at 30 or 60 fps. Keep `motions` and `tracks` the same across a layer's frames: the plugin keeps the springs' progress for each set of them, and data that changes every frame makes every frame step the springs again from the layer's start. Put values that change per frame in `expressions`, `mouth`, and `lookAt`, which the springs do not read.
+
+Clips to try: `test.vrma` from [pixiv/three-vrm](https://github.com/pixiv/three-vrm) (`packages/three-vrm-animation/examples/models`, MIT), and VRoid Project's free VRMA motion pack on BOOTH (pixiv). The motion pack's terms allow commercial use but not redistributing the files, and ask for the credit "Animation credits to pixiv Inc.'s VRoid Project" (in Japanese, 「キャラクターアニメーション: ピクシブ株式会社 VRoidプロジェクト」) where the video is published. Check each clip's terms before you publish a video with it.
+
+Limits you may meet:
+
+- A layer opens at most 256 different clips, whose files take at most 1 GiB together, and whose animation keys take at most 1 GiB once read.
+- The springs are stepped up to 4 hours into a layer; a later frame fails with an error saying so. An avatar whose springs are expensive to step (about ten thousand nodes, or a few thousand spring–collider checks, say) reaches less: the plugin warns of it when it opens the model, and a frame past its reach fails, naming the time it reaches.
+- Not read: the angle limits of `VRMC_springBone_limit` (the plugin warns when the model has them, and those joints swing past their limits), a clip's `lookAt` animation, and any glTF animation but a clip's first. The springs do not react to `lookAt` or expressions.
+- There is no foot IK: as in UniVRM, a clip whose rest pose stands a little higher or lower than its animation, or an avatar whose legs are long or short for its hips' height, can leave the feet a few centimetres into or above the floor.
 
 ## Write a plugin
 
 A plugin has up to two parts, in any language:
 
 - **Components** (`module` and `types` in the manifest): an ES module and its declarations. Celesta bundles the module into the entry, and its `react` and `@celesta/*` imports use the app's own. A speech channel needs nothing else: it runs in `prepare()` like `@celesta/voicevox` and returns lines with `audio` and `lipSync`.
-- **A program** (`executable`, one per platform): it reads requests on standard input and answers on standard output. For a layer it returns textured triangle meshes and their colors, masks, and blending for a given time, and Celesta draws them. Rust programs can use the `celesta-plugin` crate; the protocol itself is plain length-prefixed JSON.
+- **A program** (`executable`, one per platform): it reads requests on standard input and answers on standard output. For a layer it returns, for a given time, either 2D textured triangle meshes with their colors, masks, and blending, or a 3D scene: skinned, morphing triangle geometry with materials, seen through a camera it places. Celesta draws them; scenes get depth, anti-aliasing, and opaque, cut-out, and see-through materials. A material is either Celesta's unlit material or one the program brings, written in WGSL against Celesta's material interface, which can shade with the directional lights and ambient light the program sends and add an outline. Celesta checks that WGSL before compiling it: it may not bind resources of its own or declare entry points, workgroup variables (`var<workgroup>`, which are for compute shaders), pipeline-overridable constants (`override`), names WGSL already predeclares (such as `clamp` or `vec4f`), or names starting with `celesta` in any letter case. Each frame can also change a material's parameters, as a model's material animation does, and can set the layer's canvas size for that frame in place of the model's (each side from 1 to 16384 pixels), so a component can pass the resolution it wants in the layer's data. A frame must depend only on the model, the time, and the layer's data: Celesta may ask for the same frame again, such as when it renders it again or exports it. When it opens a model, the program can also return notices, such as the model's terms of use, which Celesta shows as above. Rust programs can use the `celesta-plugin` crate; the protocol itself is plain length-prefixed JSON.
 
 To offer components in the desktop app's Add menu, list them in the manifest's `components`:
 
@@ -125,8 +222,8 @@ To offer components in the desktop app's Add menu, list them in the manifest's `
 ]
 ```
 
-`name` is the component the module exports: a capital letter, then letters, digits, or `_`. `label` is what the menu says (the name when absent). With `src` (`"image"` or `"video"`), the component is added like an Image: the app asks for a file and writes `src`, `x`, `y`, and `width`. Without it, the component is drawn as a box and gets `x`, `y`, `width`, and `height`. `props` are written after those: names made of letters, digits, and `_`, with strings, numbers, and booleans as values, and none of the props the drawing writes. A manifest with `components` needs a `module`.
+`name` is the component the module exports: a capital letter, then letters, digits, or `_`. `label` is what the menu says (the name when absent). With `src` (`"image"` or `"video"`), the component is added like an Image: the app asks for a file and writes `src`, `x`, `y`, and `width`. `"src": "model"` is for a file the plugin reads itself, such as a 3D model: list the file types it takes in `extensions` (lowercase letters and digits without the dot, each once, such as `["glb"]`), and give its layer's width over its height in `aspect` (from 1/16384 to 16384; required) so the app draws the box at that shape. The app then accepts only a file of those types and writes `src`, `x`, `y`, and `width` as for an Image. Since it writes no `height`, the component's own default aspect must equal `aspect`, or the layer will not match the box that was drawn. Without `src`, the component is drawn as a box and gets `x`, `y`, `width`, and `height`. `props` are written after those: names made of letters, digits, and `_`, with strings, numbers, and booleans as values, and none of the props the drawing writes. A manifest with `components` needs a `module`.
 
 A plugin's id uses lowercase letters, digits, `-`, `_`, and `.`, and starts with a letter or digit. Every file its manifest names is a relative path inside the plugin's folder, without `..` and without a link that leads out of it. Celesta skips a plugin that breaks these rules, or has a component that breaks the rules above, and says why.
 
-The samples' READMEs walk through both parts. The repository's `docs/handoff/2026-11-01-plugin-system.md` describes the manifest and the protocol, and the `docs/handoff/2026-11-02-plugin-*.md` notes describe what came later (such as `components`).
+The samples' READMEs walk through both parts. The repository's `docs/handoff/2026-11-01-plugin-system.md` describes the manifest and the protocol, the `docs/handoff/2026-11-02-plugin-*.md` notes describe what came later (such as `components`), `docs/handoff/2026-11-03-plugin-scene-content.md` describes 3D scenes and notices, `docs/handoff/2026-11-03-plugin-scene-materials.md` describes materials in WGSL, lights, render queues, and outlines, and `docs/handoff/2026-11-03-plugin-vrm.md` describes the VRM plugin and components that take a model file.

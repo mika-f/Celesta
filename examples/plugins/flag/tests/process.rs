@@ -7,7 +7,7 @@ use celesta_composition::{
     ResolvedAsset, Scene, Time,
 };
 use celesta_gpu_renderer::{Color, GpuFrame, GpuRenderError, GpuRenderOptions, GpuRenderer};
-use celesta_plugin::ContentProvider;
+use celesta_plugin::{ContentFrame, ContentModel, ContentProvider};
 use celesta_plugin_flag::{FlagProvider, PLUGIN};
 use celesta_plugin_host::PluginHost;
 use std::collections::BTreeMap;
@@ -54,9 +54,11 @@ fn the_process_answers_as_the_provider_does() {
     let assets = BTreeMap::from([("image".to_owned(), image)]);
     let mut host = PluginHost::discover(&[directory.path().to_path_buf()]);
     let mut provider = FlagProvider::default();
-    let (remote, remote_model) = host.open(PLUGIN, &assets).unwrap();
-    let (local, local_model) = provider.open(PLUGIN, &assets).unwrap();
-    assert_eq!(remote_model, local_model);
+    let remote = host.open(PLUGIN, &assets).unwrap();
+    let local = provider.open(PLUGIN, &assets).unwrap();
+    assert_eq!(remote.content, local.content);
+    assert_eq!(remote.notices, local.notices);
+    let (remote, local) = (remote.model, local.model);
     let data = serde_json::json!({ "amplitude": 0.1, "speed": 2 });
     // Out of order, as a renderer may ask.
     for time in [1.5, 0.0, 0.75, 1.5] {
@@ -67,6 +69,26 @@ fn the_process_answers_as_the_provider_does() {
     }
     let error = host.open(PLUGIN, &BTreeMap::new()).unwrap_err();
     assert!(error.to_string().contains("`image`"), "{error}");
+}
+
+#[test]
+fn flag_opens_as_meshes_without_notices() {
+    let (directory, image) = plugin_directory();
+    let assets = BTreeMap::from([("image".to_owned(), image)]);
+    let mut host = PluginHost::discover(&[directory.path().to_path_buf()]);
+    let opened = host.open(PLUGIN, &assets).unwrap();
+    assert!(
+        matches!(opened.content, ContentModel::Meshes(_)),
+        "{:?}",
+        opened.content
+    );
+    assert!(opened.notices.is_empty(), "{:?}", opened.notices);
+    // Its frames are mesh frames, before and after the process restarts.
+    let data = serde_json::json!({ "amplitude": 0.1 });
+    let before = host.frame(opened.model, 0.5, &data).unwrap();
+    assert!(matches!(before, ContentFrame::Meshes(_)), "{before:?}");
+    host.stop(PLUGIN);
+    assert_eq!(host.frame(opened.model, 0.5, &data).unwrap(), before);
 }
 
 fn scene(image: &Path, time: f64) -> Scene {

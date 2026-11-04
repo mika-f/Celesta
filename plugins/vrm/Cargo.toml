@@ -1,0 +1,65 @@
+[package]
+name = "celesta-plugin-vrm"
+description = "A Celesta content plugin that draws VRM 1.0 avatars as 3D scenes from a process of its own."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mika-f/celesta"
+rust-version = "1.89"
+publish = false
+
+# Built on its own: the root workspace excludes this directory, so
+# `cargo build --workspace` at the root never builds the plugin.
+[workspace]
+
+[[bin]]
+name = "celesta-plugin-vrm"
+path = "src/main.rs"
+
+# Its own `main`: it sets an environment variable before any thread
+# exists (see the file).
+[[test]]
+name = "process"
+path = "tests/process.rs"
+harness = false
+
+[features]
+# The synthetic VRM builder (src/synthetic.rs) for tests outside the crate.
+synthetic = []
+
+[dependencies]
+base64 = "0.23.1"
+# `KeyframeAnimation` and its easings, for the humanoid tracks.
+celesta-composition = { path = "../../crates/composition" }
+celesta-plugin = { path = "../../crates/plugin" }
+glam = "0.34.2"
+gltf = { version = "1.4.1", default-features = false, features = [
+  # A texture whose only image is EXT_texture_webp's has no `source`.
+  "allow_empty_texture",
+  "import",
+  "utils",
+  "names",
+  "extensions",
+  "extras",
+  "KHR_texture_transform",
+  "KHR_materials_unlit",
+  "KHR_materials_emissive_strength",
+] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+mikktspace = { version = "0.3.0", default-features = false, features = ["glam"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10.9"
+thiserror = "2.0.21"
+# Early (0.1.x), so pinned exactly.
+vrm-spec = "=0.1.1"
+
+[target.'cfg(unix)'.dependencies]
+# geteuid, to check the texture cache is the user's own.
+libc = "0.2.191"
+
+[dev-dependencies]
+celesta-gpu-renderer = { path = "../../crates/gpu-renderer" }
+celesta-plugin-host = { path = "../../crates/plugin-host" }
+celesta-plugin-vrm = { path = ".", features = ["synthetic"] }
+tempfile = "3.27.0"

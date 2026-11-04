@@ -191,6 +191,90 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # The VRM plugin is a Cargo workspace of its own (plugins/vrm), which the
+  # root workspace excludes, so the test job never builds it.
+  vrm-plugin:
+    name: VRM plugin
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Its tests draw through the GPU renderer: fonts, and Mesa's software
+      # Vulkan driver (lavapipe) so they run without a GPU.
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfontconfig-dev mesa-vulkan-drivers
+
+      # The renderer, a dev-dependency, links FFmpeg.
+      - uses: $/.github/actions/setup-ffmpeg
+
+      # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
+      - name: Isolate Rust toolchain
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
+
+      # With the Windows target, for "Check for Windows" below.
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.99.1
+          components: clippy, rustfmt
+          targets: x86_64-pc-windows-msvc
+
+      # The root workspace's target/ holds the codegen build:runtime runs.
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: |
+            plugins/vrm -> target
+            . -> target
+          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # Node.js and pnpm as mise.lock pins them, for <Vrm> and the build.
+      - uses: jdx/mise-action@v5.2.6
+        with:
+          version: 2026.10.25
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install JS packages
+        run: pnpm install --frozen-lockfile
+
+      # <Vrm> imports @celesta/react and @celesta/character, and the build
+      # checks its declarations against the runtime's project types. As in
+      # the test job, codegen runs first to add --locked.
+      - name: Build Celesta packages
+        run: |
+          pnpm --dir packages/react run codegen --locked
+          pnpm run build:runtime
+
+      # Before the Rust steps, which take longer. Its type check covers
+      # demo.tsx too.
+      - name: Test the component
+        run: pnpm --filter celesta-plugin-vrm-js test
+
+      - name: Format
+        run: cargo fmt --manifest-path plugins/vrm/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path plugins/vrm/Cargo.toml --all-targets --locked -- -D warnings
+
+      # Users build the plugin on Windows themselves, and its code has
+      # branches for other platforms than Unix. Checking needs no linker, and
+      # the library and program use no C code, so the Windows target checks
+      # here; the tests' dev-dependencies (FFmpeg) are left out.
+      - name: Check for Windows
+        run: cargo check --manifest-path plugins/vrm/Cargo.toml --locked --target x86_64-pc-windows-msvc --lib --bins
+
+      # Linux has lavapipe; missing it must fail rather than skip GPU tests.
+      - name: Test
+        run: env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/vrm/Cargo.toml --locked
+
+      - name: Build the plugin directory
+        run: node plugins/vrm/build.mjs
+
   # Packages for Windows and macOS without signing them, so packaging breaks
   # here rather than at release time, and saves the release-profile Rust cache
   # on main for the next release tag to restore.

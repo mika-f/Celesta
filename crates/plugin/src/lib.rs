@@ -1,6 +1,6 @@
-//! Celesta content plugins: the meshes a plugin returns, the provider
-//! interface the renderer asks through, and the protocol a plugin process
-//! speaks. See `docs/handoff/2026-11-01-plugin-system.md`.
+//! Celesta content plugins: the 2D meshes or 3D scenes a plugin returns,
+//! the provider interface the renderer asks through, and the protocol a
+//! plugin process speaks. See `docs/handoff/2026-11-01-plugin-system.md`.
 //!
 //! This crate depends on nothing of Celesta's (only serde, and libc on Unix),
 //! so a plugin can use it without linking any part of Celesta.
@@ -8,7 +8,16 @@
 mod mesh;
 pub mod protocol;
 mod provider;
+pub mod scene;
 
 pub use mesh::{MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState, TextureSource};
 pub use protocol::{PROTOCOL_VERSION, serve};
-pub use provider::{ContentProvider, ModelId, PluginError};
+pub use provider::{
+    ContentFrame, ContentModel, ContentProvider, ModelId, Notice, NoticeLevel, Opened, PluginError,
+};
+pub use scene::{
+    AlphaMode, Camera, ColorSpace, CullFace, CustomMaterial, DepthBias, DirectionalLight, DrawInfo,
+    DrawState, EmptyTexel, Filter, Geometry, Lights, Material, MaterialKind, MaterialOverrides,
+    MorphTarget, OutlinePass, Projection, Sampler, SceneFrame, SceneModel, SceneShader,
+    SceneTexture, ShaderTexture, Skin, TextureRef, TextureTransform, UnlitMaterial, Wrap,
+};

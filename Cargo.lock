@@ -1068,9 +1068,11 @@ dependencies = [
  "pollster 1.0.1",
  "rayon",
  "serde_json",
+ "sha2 0.10.9",
  "strum",
  "tempfile",
  "thiserror 2.0.21",
+ "unicode-ident",
  "wgpu",
  "wgpu-hal",
 ]
@@ -1145,6 +1147,18 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "celesta-plugin-turntable"
+version = "0.1.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-gpu-renderer",
+ "celesta-plugin",
+ "celesta-plugin-host",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

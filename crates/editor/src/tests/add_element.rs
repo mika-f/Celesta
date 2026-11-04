@@ -5,7 +5,7 @@
 use super::*;
 use crate::add_element::{
     AddComponent, AddedFate, Addition, PendingSelect, add_files, added_confirmed, added_fate,
-    parent_facts,
+    parent_facts, refused_model_file,
 };
 use crate::preview::AddedUnder;
 use celesta_source_edit::{EditValue, NewElement, NewKind, Timing};
@@ -103,6 +103,58 @@ fn a_plugin_component_is_drawn_as_its_kind_and_written_with_its_import() {
         ]
     );
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn model_components_draw_as_images_and_check_the_file() {
+    let model = AddComponent {
+        plugin: "scenes".into(),
+        info: serde_json::from_value(serde_json::json!({
+            "name": "Model", "label": "3D model", "src": "model",
+            "extensions": ["glb"], "aspect": 1.7777778,
+        }))
+        .unwrap(),
+    };
+    assert_eq!(model.kind(), NewKind::Image);
+    assert_eq!(
+        refused_model_file(&model.info, Path::new("a/scene.GLB")),
+        None
+    );
+    assert_eq!(
+        refused_model_file(&model.info, Path::new("a/scene.png")).as_deref(),
+        Some("Choose a .glb file")
+    );
+    assert_eq!(
+        refused_model_file(&model.info, Path::new("a/scene")).as_deref(),
+        Some("Choose a .glb file")
+    );
+    let mut several = model.info.clone();
+    several.extensions = vec!["glb".into(), "gltf".into(), "obj".into()];
+    assert_eq!(
+        refused_model_file(&several, Path::new("a/scene.png")).as_deref(),
+        Some("Choose a .glb, .gltf, or .obj file")
+    );
+    several.extensions.pop();
+    assert_eq!(
+        refused_model_file(&several, Path::new("a/scene.png")).as_deref(),
+        Some("Choose a .glb or .gltf file")
+    );
+
+    let drawn = NewElement::Image {
+        src: "./assets/a.glb".into(),
+        x: 10.0,
+        y: 20.0,
+        width: 960.0,
+    };
+    assert_eq!(
+        model.element(&drawn).attributes,
+        [
+            ("src".to_owned(), EditValue::String("./assets/a.glb".into())),
+            ("x".to_owned(), EditValue::Number(10.0)),
+            ("y".to_owned(), EditValue::Number(20.0)),
+            ("width".to_owned(), EditValue::Number(960.0)),
+        ]
+    );
 }
 
 const TIMING: Timing = Timing {

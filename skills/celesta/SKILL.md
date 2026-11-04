@@ -232,5 +232,5 @@ Load only the one you need; each is self-contained.
 | `inspect.mjs`, PNG frames, contact sheets, checking JSON and audio | [verify.md](references/verify.md) |
 | MP4 export options, loudness for streaming (`--loudness`, LUFS, true peak), `--json` results, progress output, exporting without a GPU | [export.md](references/export.md) |
 | What is slow to render and how to find it | [performance.md](references/performance.md) |
-| `@celesta-plugin/<id>` imports, `CELESTA_PLUGIN_PATH`/`--plugin-dir`, plugin errors | [plugins.md](references/plugins.md) |
+| `@celesta-plugin/<id>` imports, `CELESTA_PLUGIN_PATH`/`--plugin-dir`, plugin errors, VRM avatars (`<Vrm>`, `CELESTA_VRM_TEXTURE_CACHE`) | [plugins.md](references/plugins.md) |
 | An error message or warning | [errors.md](references/errors.md) |

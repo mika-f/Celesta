@@ -2,6 +2,7 @@ use crate::bounds::PixelBounds;
 use crate::compositor::begin_pass;
 use crate::error::GpuRenderError;
 use crate::texture::CanvasTexture;
+use crate::wgsl;
 use celesta_composition::{
     LayerFilter, LayerShader, Scene, ShaderParam, ShaderParamType, ShaderSource,
 };
@@ -33,8 +34,8 @@ const ENTRY: &str = include_str!("shader_entry.wgsl");
 const COLOR_FILTER: &str = include_str!("color_filter.wgsl");
 const BUILTIN_EFFECT: &str = include_str!("builtin_effect.wgsl");
 
-/// The signature `shader_entry.wgsl` calls, named in errors that arise there.
-const EFFECT_SIGNATURE: &str = "fn effect(input: EffectInput) -> vec4f";
+/// Names the signature `shader_entry.wgsl` calls, in errors that arise there.
+const ENTRY_HINT: &str = "(a custom shader defines `fn effect(input: EffectInput) -> vec4f`)";
 
 /// One layer's filters in the frame being prepared, run in order.
 #[derive(Clone, Copy)]
@@ -716,11 +717,7 @@ impl ShaderProcessor {
     ) -> Result<wgpu::RenderPipeline, String> {
         let (code, author) = assemble(source)?;
         let module = naga::front::wgsl::parse_str(&code).map_err(|error| {
-            let at = error
-                .labels()
-                .next()
-                .and_then(|(span, _)| span.to_range())
-                .map(|range| range.start);
+            let at = wgsl::parse_error_at(&error);
             locate(&code, &author, at, error.message().to_owned())
         })?;
         check_declarations(&module, &code, &author)?;
@@ -730,12 +727,8 @@ impl ShaderProcessor {
         )
         .validate(&module)
         .map_err(|error| {
-            let at = error
-                .spans()
-                .next()
-                .and_then(|(span, _)| span.to_range())
-                .map(|range| range.start);
-            locate(&code, &author, at, error_chain(error.as_inner()))
+            let at = wgsl::validation_error_at(&error);
+            locate(&code, &author, at, wgsl::error_chain(error.as_inner()))
         })?;
         let label = source.name.as_deref().unwrap_or(&source.id);
         // naga accepted the module, so wgpu should too; the scope keeps a
@@ -866,101 +859,23 @@ fn check_declarations(
     code: &str,
     author: &Range<usize>,
 ) -> Result<(), String> {
-    let start = |span: naga::Span| span.to_range().map(|range| range.start);
-    let fail = |at: Option<usize>, message: String| Err(locate(code, author, at, message));
-    for entry in &module.entry_points {
-        if !matches!(entry.name.as_str(), "celesta_vertex" | "celesta_fragment") {
-            // naga keeps no span for an entry point; its `fn` is in the
-            // author's code.
-            let at = code[author.clone()]
-                .find(&format!("fn {}", entry.name))
-                .map(|offset| author.start + offset);
-            return fail(
-                at,
-                format!(
-                    "declares the entry point `{}`; a custom shader defines `effect` instead",
-                    entry.name
-                ),
-            );
-        }
-    }
-    for (handle, global) in module.global_variables.iter() {
-        let name = global.name.as_deref().unwrap_or("");
-        let at = start(module.global_variables.get_span(handle));
-        // Told apart by where they are declared, not by name: a shader
-        // without parameters could otherwise bind its own `params`.
-        let authored = at.is_none_or(|at| author.contains(&at));
-        let prelude = matches!(name, "celesta_source" | "celesta" | "params");
-        if global.binding.is_some() && (authored || !prelude) {
-            return fail(
-                at,
-                format!(
-                    "declares the resource `{name}`; a custom shader cannot bind resources of its own"
-                ),
-            );
-        }
-    }
-    // Names starting with `celesta` belong to the prelude, whose own
-    // declarations lie outside the author's code.
-    let declared = module
-        .functions
-        .iter()
-        .map(|(handle, function)| (function.name.as_deref(), module.functions.get_span(handle)))
-        .chain(module.global_variables.iter().map(|(handle, global)| {
-            (
-                global.name.as_deref(),
-                module.global_variables.get_span(handle),
-            )
-        }))
-        .chain(module.constants.iter().map(|(handle, constant)| {
-            (constant.name.as_deref(), module.constants.get_span(handle))
-        }))
-        .chain(
-            module
-                .types
-                .iter()
-                .map(|(handle, ty)| (ty.name.as_deref(), module.types.get_span(handle))),
-        );
-    for (name, span) in declared {
-        let at = start(span);
-        if let Some(name) = name
-            && name.starts_with("celesta")
-            && at.is_some_and(|at| author.contains(&at))
-        {
-            return fail(
-                at,
-                format!("declares `{name}`; names starting with `celesta` belong to Celesta"),
-            );
-        }
-    }
-    Ok(())
+    wgsl::check_declarations(
+        module,
+        code,
+        author,
+        &wgsl::Rules {
+            what: "a custom shader",
+            prelude_resource: &|name| matches!(name, "celesta_source" | "celesta" | "params"),
+            entry_points: &["celesta_vertex", "celesta_fragment"],
+            instead: "a custom shader defines `effect` instead",
+            reserved: &|name| name.starts_with("celesta"),
+        },
+    )
 }
 
 /// `message`, located at byte `at` of `code`: as a line and column of the
 /// author's code when it lies there, or with the signature the entry points
 /// expect when it lies in them.
 fn locate(code: &str, author: &Range<usize>, at: Option<usize>, message: String) -> String {
-    match at {
-        Some(at) if author.contains(&at) || (at == author.end && !author.is_empty()) => {
-            let before = &code[author.start..at];
-            let line = before.matches('\n').count() + 1;
-            let column = before.len() - before.rfind('\n').map_or(0, |newline| newline + 1) + 1;
-            format!("{line}:{column}: {message}")
-        }
-        Some(at) if at > author.end => {
-            format!("{message} (a custom shader defines `{EFFECT_SIGNATURE}`)")
-        }
-        _ => message,
-    }
-}
-
-/// `error` and the errors that caused it, outermost first.
-fn error_chain(error: &dyn std::error::Error) -> String {
-    let mut message = error.to_string();
-    let mut cause = error.source();
-    while let Some(error) = cause {
-        write!(message, ": {error}").expect("writing to a String cannot fail");
-        cause = error.source();
-    }
-    message
+    wgsl::locate(code, author, at, message, "", ENTRY_HINT)
 }

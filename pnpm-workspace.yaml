@@ -2,6 +2,7 @@ packages:
   - "packages/*"
   - "examples/*"
   - "templates"
+  - "plugins/*/js"
 allowBuilds:
   esbuild: false
   workerd: true

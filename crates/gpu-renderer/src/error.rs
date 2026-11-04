@@ -82,7 +82,8 @@ pub enum GpuRenderError {
         #[source]
         source: celesta_plugin::PluginError,
     },
-    /// A plugin answered with meshes that cannot be drawn.
+    /// A plugin answered with meshes or a scene that cannot be drawn, or
+    /// that would take more of the GPU than Celesta allows.
     #[error("plugin layer {layer} cannot be drawn: {message}")]
     InvalidPluginContent { layer: String, message: String },
     #[error("GPU plugin layer {0} requires a content provider")]

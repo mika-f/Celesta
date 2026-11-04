@@ -213,10 +213,12 @@ impl EditorView {
 
     fn take_export_event(&mut self, event: ExportEvent) {
         match event {
-            // The preview already lists font fallbacks; `Finished` reports
-            // the output, and the label stays on the last stage until then.
+            // The preview already lists font fallbacks and plugin notices;
+            // `Finished` reports the output, and the label stays on the
+            // last stage until then.
             ExportEvent::Progress(
                 ExportProgress::Warning(_)
+                | ExportProgress::Note(_)
                 | ExportProgress::Composition(_)
                 | ExportProgress::ReactCompositions { .. }
                 | ExportProgress::Wrote(_),

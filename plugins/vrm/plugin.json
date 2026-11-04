@@ -1,0 +1,15 @@
+{
+  "id": "vrm",
+  "version": "0.1.0",
+  "module": "js/src/index.ts",
+  "cargoPackage": "celesta-plugin-vrm",
+  "components": [
+    {
+      "name": "Vrm",
+      "label": "VRM avatar",
+      "src": "model",
+      "extensions": ["vrm"],
+      "aspect": 1.7777778
+    }
+  ]
+}

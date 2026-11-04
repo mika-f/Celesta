@@ -1,10 +1,11 @@
 # Sample content plugins
 
-Two plugins to start a plugin of your own from. Each shows one kind:
+Three plugins to start a plugin of your own from:
 
 | Plugin | Kind | What it does |
 | --- | --- | --- |
 | [`flag`](flag/) | A program and components | `<Flag>` draws an image waving like a flag. The plugin's program (Rust) returns textured meshes for each time, and Celesta draws them. |
+| [`turntable`](turntable/) | A program and components | `<Turntable>` draws a checkered cube turning on a turntable. The plugin's program (Rust) returns a 3D scene, with a camera, a light, a cube toon-shaded and outlined by its own WGSL material, and cut-out and see-through unlit materials, and Celesta draws it with depth. |
 | [`beep-voice`](beep-voice/) | Components only | `prepareBeepNarration()` voices dialogue lines with game-style beeps, in place of a speech engine such as VOICEVOX, with lip sync. |
 
 The manifest, the protocol, and how Celesta draws meshes are described in
@@ -16,6 +17,7 @@ The manifest, the protocol, and how Celesta draws meshes are described in
 pnpm install && pnpm run build:runtime   # once, at the repository root
 node examples/plugins/build.mjs          # or: build.mjs flag
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist
+cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/beep-voice/demo.tsx beep.mp4 --plugin-dir examples/plugins/dist
 ```
 
@@ -37,9 +39,9 @@ plugin's folder into your plugin folder) and allow them when it asks, or
 with **Allow** in the Plugins tab.
 
 Each sample's `plugin.json` gives its id, version, and module source.
-flag's also names the Cargo package that builds its program and the
-`components` the app's Add menu offers, which the build copies into the
-manifest.
+flag's and turntable's also name the Cargo package that builds the
+program, and flag's the `components` the app's Add menu offers, which the
+build copies into the manifest.
 
 ## Moving a sample out of this repository
 
