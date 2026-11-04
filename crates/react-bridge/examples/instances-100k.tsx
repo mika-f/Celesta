@@ -2,7 +2,7 @@
 // side of the Instances benchmark (docs/performance/instances.md). Run with
 // `cargo run --release -p celesta-react-bridge --example protocol-bench --
 // crates/react-bridge/examples/instances-100k.tsx 120`.
-import { Composition, Instances, useCurrentFrame } from '@celesta/react';
+import { Composition, Instances, useCurrentFrame } from '@celesta.studio/react';
 
 const N = 100_000;
 const COLORS = [

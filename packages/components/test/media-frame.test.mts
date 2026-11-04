@@ -3,10 +3,10 @@ import { beforeEach, test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Sequence, Video } from '@celesta/react';
-import type { Layer, LayerContent } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
-import type { MountedComposition } from '@celesta/react/internal';
+import { Composition, Sequence, Video } from '@celesta.studio/react';
+import type { Layer, LayerContent } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
+import type { MountedComposition } from '@celesta.studio/react/internal';
 import { MediaFrame } from '../src/index.js';
 import type { MediaFrameProps, MediaFrameVideoProps } from '../src/index.js';
 import { installStubMeasurer } from './text-metrics-stub.mjs';

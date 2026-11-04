@@ -140,7 +140,7 @@ pub(crate) fn project_cues(project: &Project, window: Window) -> Result<Vec<Cue>
 
 /// The file's text. SRT cues are numbered from 1; blank lines inside a cue
 /// are dropped, since they would end it, and WebVTT escapes `&`, `<`, `>`.
-/// `parseSubtitles()` in `@celesta/react` reads it back.
+/// `parseSubtitles()` in `@celesta.studio/react` reads it back.
 pub(crate) fn format(cues: &[Cue], format: SubtitleFormat) -> String {
     let mut output = String::new();
     if format == SubtitleFormat::Vtt {

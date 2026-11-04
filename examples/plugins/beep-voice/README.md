@@ -2,11 +2,11 @@
 
 A sample content plugin with components only: a speech channel. It voices
 dialogue lines with game-style beeps, one per character, where
-`@celesta/voicevox` would ask a speech engine, and returns the lines ready
+`@celesta.studio/voicevox` would ask a speech engine, and returns the lines ready
 for `planDialogue()` with `audio` and `lipSync` set.
 
 ```tsx
-import { planDialogue } from '@celesta/character';
+import { planDialogue } from '@celesta.studio/character';
 import { prepareBeepNarration } from '@celesta-plugin/beep-voice';
 
 export async function prepare() {

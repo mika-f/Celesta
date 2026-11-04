@@ -1,4 +1,4 @@
-import { Rect, progress, useCurrentFrame } from '@celesta/react';
+import { Rect, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { Prism } from '../components/Prism';
 import { H, INK, PAPER, W } from '../constants';

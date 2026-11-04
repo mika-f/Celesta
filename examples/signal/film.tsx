@@ -1,4 +1,4 @@
-import { Assets, Audio, Composition, Font, Rect, useCurrentFrame } from '@celesta/react';
+import { Assets, Audio, Composition, Font, Rect, useCurrentFrame } from '@celesta.studio/react';
 import { BONE, END, FPS, H, W } from './constants';
 import { Counter } from './scenes/Counter';
 import { Kinetic } from './scenes/Kinetic';

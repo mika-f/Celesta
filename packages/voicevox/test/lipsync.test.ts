@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vitest';
 
-import type { LipSyncTrack, MouthShape } from '@celesta/character';
+import type { LipSyncTrack, MouthShape } from '@celesta.studio/character';
 import { lipSyncFromVoicevox, timingFromVoicevox, voicevoxVowelShape } from '../src/index.js';
 import type { VoicevoxAudioQuery, VoicevoxTimingOptions } from '../src/index.js';
 import type { EngineQuery, Synthesized } from './fixtures/engine.js';

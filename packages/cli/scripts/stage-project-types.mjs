@@ -15,7 +15,7 @@ const modules = join(destination, 'node_modules');
 rmSync(destination, { recursive: true, force: true });
 
 const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'));
-const celesta = Object.keys(manifest.dependencies).filter((name) => name.startsWith('@celesta/'));
+const celesta = Object.keys(manifest.dependencies).filter((name) => name.startsWith('@celesta.studio/'));
 
 // Declarations and license notices only; the runtime ships the JavaScript.
 function copyTypes(name, parent) {
@@ -66,8 +66,11 @@ writeJson(join(destination, 'tsconfig.json'), {
     types: ['node'],
     paths: {
       ...Object.fromEntries(celesta.map((name) => [name, [`./node_modules/${name}`]])),
+      // The names before the `@celesta.studio` scope, which the runtime
+      // still resolves (packages/cli/src/cli.ts).
+      ...Object.fromEntries(celesta.map((name) => [name.replace('@celesta.studio/', '@celesta/'), [`./node_modules/${name}`]])),
       // Other packages' declarations import the core runtime's internals.
-      '@celesta/react/internal': ['./node_modules/@celesta/react/dist/internal.d.ts'],
+      '@celesta.studio/react/internal': ['./node_modules/@celesta.studio/react/dist/internal.d.ts'],
       // Installed content plugins' modules; Celesta copies their declarations
       // into ./plugins/<id>/ (crates/react-bridge/src/project_types.rs).
       '@celesta-plugin/*': ['./plugins/*'],

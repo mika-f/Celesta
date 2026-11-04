@@ -1,4 +1,4 @@
-import { Easings, interpolate } from '@celesta/react';
+import { Easings, interpolate } from '@celesta.studio/react';
 import { CUT } from '../components/ChapterShell';
 import { CARD_LENGTH, CHAPTER_LENGTH, FEATURES, MORE_AT, MORE_CARDS, OPEN_LENGTH, OUTRO_AT, chapterAt } from './timeline';
 

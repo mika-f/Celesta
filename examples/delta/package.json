@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/example-delta",
+  "name": "@celesta.studio/example-delta",
   "private": true,
   "scripts": {
     "score": "python3 make-score-0.9.0.py",
@@ -17,19 +17,19 @@
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
-    "@celesta/character": "workspace:*",
-    "@celesta/code": "workspace:*",
-    "@celesta/components": "workspace:*",
-    "@celesta/debug": "workspace:*",
-    "@celesta/layout": "workspace:*",
-    "@celesta/lottie": "workspace:*",
-    "@celesta/math": "workspace:*",
-    "@celesta/media-utils": "workspace:*",
-    "@celesta/react": "workspace:*",
-    "@celesta/shader": "workspace:*",
-    "@celesta/shapes": "workspace:*",
-    "@celesta/text": "workspace:*",
-    "@celesta/transitions": "workspace:*",
+    "@celesta.studio/character": "workspace:*",
+    "@celesta.studio/code": "workspace:*",
+    "@celesta.studio/components": "workspace:*",
+    "@celesta.studio/debug": "workspace:*",
+    "@celesta.studio/layout": "workspace:*",
+    "@celesta.studio/lottie": "workspace:*",
+    "@celesta.studio/math": "workspace:*",
+    "@celesta.studio/media-utils": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/shader": "workspace:*",
+    "@celesta.studio/shapes": "workspace:*",
+    "@celesta.studio/text": "workspace:*",
+    "@celesta.studio/transitions": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

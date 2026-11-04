@@ -7,7 +7,7 @@
 //   node plugins/vrm/build.mjs [--out <dir>] [--target <triple>] [--skip-js]
 //
 // Run `pnpm install && pnpm run build:runtime` at the repository root first:
-// the runtime supplies the declarations of `react` and `@celesta/*`, `tsc`,
+// the runtime supplies the declarations of `react` and `@celesta.studio/*`, `tsc`,
 // and `esbuild`. The plugin directory goes to plugins/vrm/dist/vrm; put
 // plugins/vrm/dist on CELESTA_PLUGIN_PATH or pass it as the exporter's
 // --plugin-dir.
@@ -103,7 +103,7 @@ function buildExecutable(out, cargoPackage) {
 async function buildModule(out, module) {
   const entry = join(here, module);
   // Declarations, checked against the runtime's: a tsconfig extending the
-  // project TypeScript support, which maps `react` and `@celesta/*`.
+  // project TypeScript support, which maps `react` and `@celesta.studio/*`.
   const types = join(out, '.types');
   rmSync(types, { recursive: true, force: true });
   mkdirSync(types, { recursive: true });
@@ -126,7 +126,7 @@ async function buildModule(out, module) {
   copyFileSync(join(types, 'out', 'index.d.ts'), join(out, 'js', 'index.d.ts'));
   rmSync(types, { recursive: true, force: true });
 
-  // `react`, `@celesta/*`, and Node's modules stay imports: the CLI points
+  // `react`, `@celesta.studio/*`, and Node's modules stay imports: the CLI points
   // them at its own runtime when it bundles the module into an entry.
   await fromRuntime('esbuild').build({
     entryPoints: [entry],
@@ -134,7 +134,7 @@ async function buildModule(out, module) {
     bundle: true,
     format: 'esm',
     platform: 'node',
-    external: ['react', 'react/*', '@celesta/*'],
+    external: ['react', 'react/*', '@celesta.studio/*'],
     logLevel: 'warning',
   });
 }

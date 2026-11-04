@@ -1,5 +1,5 @@
-import { Group, Rect, Text } from '@celesta/react';
-import { Circle } from '@celesta/shapes';
+import { Group, Rect, Text } from '@celesta.studio/react';
+import { Circle } from '@celesta.studio/shapes';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { Delta } from '../../components/Delta';

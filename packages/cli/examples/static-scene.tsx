@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 
-import { Composition, Rect, Sequence, Text, useCurrentFrame } from '@celesta/react';
+import { Composition, Rect, Sequence, Text, useCurrentFrame } from '@celesta.studio/react';
 
 type Wrap = ComponentType<{ deps?: readonly unknown[]; children?: ReactNode }>;
 

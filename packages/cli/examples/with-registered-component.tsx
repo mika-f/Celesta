@@ -1,6 +1,6 @@
-import { Composition, registerComponent, Text } from '@celesta/react';
-import { ProjectTimeline } from '@celesta/project';
-import type { ComponentPropertySchema } from '@celesta/react';
+import { Composition, registerComponent, Text } from '@celesta.studio/react';
+import { ProjectTimeline } from '@celesta.studio/project';
+import type { ComponentPropertySchema } from '@celesta.studio/react';
 
 // A `type` alias, not an `interface`: registered props must be JSON
 // (`Record<string, JsonValue>`), which interfaces never satisfy.

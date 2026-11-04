@@ -1,9 +1,9 @@
 {
-  "name": "@celesta/example-reel",
+  "name": "@celesta.studio/example-reel",
   "private": true,
   "dependencies": {
-    "@celesta/components": "workspace:*",
-    "@celesta/react": "workspace:*",
+    "@celesta.studio/components": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

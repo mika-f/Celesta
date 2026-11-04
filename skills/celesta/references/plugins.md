@@ -59,7 +59,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   assets (checked like other media) and `data`; only a rendered frame shows
   what it draws.
 - Plugin layers draw in the app's preview and `Celesta-export` only, not in
-  `@celesta/web`.
+  `@celesta.studio/web`.
 - The usual rules hold: props must depend only on the frame, and async work
   (a speech channel's synthesis) goes in `prepare()`.
 - `.celesta/plugins/<id>/index.d.ts` holds each plugin's declarations for

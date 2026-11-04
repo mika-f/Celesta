@@ -7,7 +7,7 @@
 //
 //   node plugins/vrm/build.mjs
 //   cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/vrm/dist
-import { Composition, Rect, useCurrentFrame } from '@celesta/react';
+import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
 import { Vrm } from '@celesta-plugin/vrm';
 
 const VOWELS = ['a', 'i', 'u', 'e', 'o'] as const;

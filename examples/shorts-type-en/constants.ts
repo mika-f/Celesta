@@ -1,7 +1,7 @@
 // SHORTS TYPE (EN) — vertical canvas, timebase (120 BPM, one beat = 15
 // frames), safe area, palette and fonts.
 
-import { safeAreaInsets } from '@celesta/layout';
+import { safeAreaInsets } from '@celesta.studio/layout';
 
 export const W = 1080;
 export const H = 1920;

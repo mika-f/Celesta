@@ -4,11 +4,11 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import type { Insets } from '@celesta/layout';
-import { Group, Text, useTextMetrics, useTheme } from '@celesta/react';
-import type { GroupProps, TextStyle } from '@celesta/react';
-import { Arrow, Polyline } from '@celesta/shapes';
-import type { LineCap, PolylinePoint } from '@celesta/shapes';
+import type { Insets } from '@celesta.studio/layout';
+import { Group, Text, useTextMetrics, useTheme } from '@celesta.studio/react';
+import type { GroupProps, TextStyle } from '@celesta.studio/react';
+import { Arrow, Polyline } from '@celesta.studio/shapes';
+import type { LineCap, PolylinePoint } from '@celesta.studio/shapes';
 
 import { hexColor } from './color';
 import { Panel } from './panel';

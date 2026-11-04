@@ -445,7 +445,7 @@ impl EditorView {
         self.load_path(self.source_path.clone(), window, cx);
     }
 
-    /// File > Set Up TypeScript: copies this build's `@celesta/*`, React,
+    /// File > Set Up TypeScript: copies this build's `@celesta.studio/*`, React,
     /// and Node declarations into the React entry's project as `.celesta/`,
     /// so editors type-check against the runtime that actually runs the entry.
     pub(crate) fn set_up_typescript_action(

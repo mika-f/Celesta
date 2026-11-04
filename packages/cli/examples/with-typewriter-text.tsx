@@ -1,5 +1,5 @@
-import { TypewriterText } from '@celesta/components';
-import { Composition, Font, Rect, Span, Text, Theme } from '@celesta/react';
+import { TypewriterText } from '@celesta.studio/components';
+import { Composition, Font, Rect, Span, Text, Theme } from '@celesta.studio/react';
 
 // <TypewriterText> types its text out with a caret after it, timed as
 // `useTypewriter()` times it. The caret goes where the measured layout puts

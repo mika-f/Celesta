@@ -3,10 +3,10 @@
 Drawing text in a React composition: the `<Text>` layer, `TextStyle`,
 fonts and fallback, line breaking (including Japanese phrases), text
 animation helpers, measuring text, and fitting text into a box. `Text` and
-measuring come from `@celesta/react`; `TextReveal`, `useTypewriter`,
+measuring come from `@celesta.studio/react`; `TextReveal`, `useTypewriter`,
 `useCountUp`, `TextBox`, `useFitText`, `fitText`, the emphasis ranges, and
-the timed ranges from `@celesta/text`;
-`TitleCard`, `LowerThird`, and `TypewriterText` from `@celesta/components`.
+the timed ranges from `@celesta.studio/text`;
+`TitleCard`, `LowerThird`, and `TypewriterText` from `@celesta.studio/components`.
 Syntax-highlighted code is in [code.md](code.md).
 
 ## Contents
@@ -85,15 +85,15 @@ palette and type live in one place instead of a `Label` wrapper:
 - Font names work in:
   - `<Text>`'s `fontFamily` and `style.fontFamily`;
   - a `<Span>`'s `fontFamily` and `style.fontFamily`;
-  - the `fontFamily` of the components below and of `@celesta/components`.
+  - the `fontFamily` of the components below and of `@celesta.studio/components`.
 - Color names work in:
   - `<Text>`'s `color`, and `style.fill`, `style.stroke` paints and
     `style.colorRuns`;
   - a `<Span>`'s `color` and `style.fill`;
   - `<Rect>` and `<Path>` `fill` and `stroke`, and so `<Line>`,
     `<Polyline>`, `<Circle>`, `<Ellipse>`, `<Arrow>`, `<Triangle>`,
-    `<Polygon>`, `<Star>`, `<Pie>`, and `<Heart>` from `@celesta/shapes`;
-  - the color props of `@celesta/components` (`Panel`, `Badge`,
+    `<Polygon>`, `<Star>`, `<Pie>`, and `<Heart>` from `@celesta.studio/shapes`;
+  - the color props of `@celesta.studio/components` (`Panel`, `Badge`,
     `StatCard`, `PatternBackground`, …; each prop's doc says so).
 
   A paint's color and each gradient stop's color are looked up alike.
@@ -172,12 +172,12 @@ See [`examples/rich-text`](../../../examples/rich-text/film.tsx).
 
 ## Emphasis ranges
 
-For text that comes as data (captions, dialogue lines), `@celesta/text`
+For text that comes as data (captions, dialogue lines), `@celesta.studio/text`
 marks emphasis as ranges instead of `<Span>` elements, and turns them into
 spans. `<CaptionTrack>` and `<Dialogue>` subtitles take the same shape.
 
 ```tsx
-import { emphasisContent } from '@celesta/text';
+import { emphasisContent } from '@celesta.studio/text';
 
 const styles = { danger: { color: '#ff6060', fontWeight: 700 } };
 <Text style={captionStyle}>
@@ -213,7 +213,7 @@ const styles = { danger: { color: '#ff6060', fontWeight: 700 } };
 
 ## Japanese phrases
 
-`phrases(text)` from `@celesta/text` splits Japanese into the phrases
+`phrases(text)` from `@celesta.studio/text` splits Japanese into the phrases
 (文節) `lineBreak: 'phrase'` keeps on one line, with the same BudouX model
 the renderer wraps by; `phraseBoundaries(text)` gives where they start, as
 code-point offsets. Joined, the phrases are the text again. Text without
@@ -352,7 +352,7 @@ at explicit break characters (an ideographic space `　`, a dash), so
 inside itself as `'normal'` text would. It works the same for `<Text>`,
 character subtitles (`subtitle={{ maxWidth, style: { lineBreak: 'phrase' } }}`),
 `TextBox`, `<TextReveal maxWidth>`, `measureText()`/`useTextMetrics()`, and
-`.celesta.json` text styles. The browser canvas renderer (`@celesta/web`) ignores it and wraps
+`.celesta.json` text styles. The browser canvas renderer (`@celesta.studio/web`) ignores it and wraps
 only at whitespace.
 
 ## Fonts, fallback, and emoji
@@ -460,7 +460,7 @@ so Latin can come from one font and Japanese from the next:
 - Weights match within each family on its own: with `fontWeight: 400` and
   Noto Sans JP loaded only at 500, the Japanese is drawn at 500.
 - Measuring (`useTextMetrics`, `measureText()`, `useFitText`, `TextBox`),
-  wrapping, and drawing use the same choice, and so does `@celesta/code`:
+  wrapping, and drawing use the same choice, and so does `@celesta.studio/code`:
   `<Code style={{ fontFamily: ['JetBrains Mono', 'Noto Sans JP'] }}>` draws
   Japanese comments and strings in Noto Sans JP, and its line highlight
   covers them. Mixing a proportional font into code breaks column
@@ -476,7 +476,7 @@ so Latin can come from one font and Japanese from the next:
   characters no family has. A family missing from a stack whose other
   families have faces is no warning; check the exporter's warnings when
   the Japanese comes out in a system font.
-- The browser preview (`@celesta/web`) passes the stack to the browser as
+- The browser preview (`@celesta.studio/web`) passes the stack to the browser as
   a CSS `font-family` list. The browser picks families per character with
   its own matching and falls back to its own system fonts, so a character
   no family has can look different from export.
@@ -556,7 +556,7 @@ top-left of the first line box.
 
 ### `<TypewriterText>`
 
-Text that types itself out with a caret, from `@celesta/components`. It
+Text that types itself out with a caret, from `@celesta.studio/components`. It
 times the typing with `useTypewriter` (same `from`, `framesPerChar`, and
 `blinkFrames`, so it shows what the hook returns on every frame), draws the
 complete text once with `style.visibleCharacters`, and places the caret with
@@ -565,7 +565,7 @@ follows proportional fonts, Japanese, `\n`, `maxWidth` wrapping, and
 `style.align`.
 
 ```tsx
-import { TypewriterText } from '@celesta/components';
+import { TypewriterText } from '@celesta.studio/components';
 
 <TypewriterText x={160} y={300} from={12} framesPerChar={2}
   caretShape="block" fontFamily="mono" fontSize={40} color="paper">
@@ -628,7 +628,7 @@ return <Text style={{ ...style, visibleCharacters: length }}>{content}</Text>;
 
 A number that counts to `to` (default 30 frames, `easeOutExpo`), rounded to
 `decimals`. Format it yourself, e.g. `value.toLocaleString('en-US')`, or
-draw it with `<Counter>` from `@celesta/components`, which counts with the
+draw it with `<Counter>` from `@celesta.studio/components`, which counts with the
 same defaults and prints with a fixed locale, decimals, and a prefix or
 suffix; `<StatCard>` and `<BarChart>` print theirs the same way. See
 [react-core.md](react-core.md#counter-statcard-barchart-ranking-numbers-and-bar-charts).
@@ -698,7 +698,7 @@ const label = <>New <Span style={{ fontWeight: 700 }}>2.0</Span></>;
 const m = useTextMetrics(label, style);
 ```
 
-For a plain label like these, `<Badge>` from `@celesta/components` does the
+For a plain label like these, `<Badge>` from `@celesta.studio/components` does the
 measuring and the sizing, with a decoration before the text and wrapping at
 a `maxWidth`: `<Badge fill="#28A34A" cornerRadius="pill" padding={{ top: 12,
 right: 24, bottom: 12, left: 24 }} style={style} color="#ffffff">{label}</Badge>`.
@@ -807,7 +807,7 @@ The full example is `packages/cli/examples/with-text-box.tsx`.
 
 ## Title cards
 
-`<TitleCard title subtitle? kicker? chapter? …>` from `@celesta/components`
+`<TitleCard title subtitle? kicker? chapter? …>` from `@celesta.studio/components`
 is a whole title screen: a large chapter number, a small kicker, the title,
 and a subtitle, stacked top to bottom in one block (absent pieces take no
 space). It lays out in the current area (the canvas, a `<SafeArea>`, or a
@@ -815,7 +815,7 @@ space). It lays out in the current area (the canvas, a `<SafeArea>`, or a
 and shrinks the title with `useFitText` until the block fits.
 
 ```tsx
-import { TitleCard } from '@celesta/components';
+import { TitleCard } from '@celesta.studio/components';
 
 <TitleCard chapter="01" kicker="GETTING STARTED" kickerRule title={'Code is\nthe cut'}
   subtitle="Celesta 入門" background="ink" color="paper" subtitleColor="soft" accentColor="accent" />
@@ -849,7 +849,7 @@ Runnable: [`packages/cli/examples/with-title-card.tsx`](../../../packages/cli/ex
 
 ## Lower thirds
 
-`<LowerThird title subtitle? …>` from `@celesta/components` puts a name
+`<LowerThird title subtitle? …>` from `@celesta.studio/components` puts a name
 and a role on a band in a corner of the current area (the canvas, a
 `<SafeArea>`, or a `<Fit>`), inside `safeArea` and `margin`. The band is a
 [`<Panel>`](react-core.md#panel-cards-and-boxes-with-padding) as wide as the longer line, with an
@@ -858,7 +858,7 @@ band's widest, and shrinks with `useFitText` until it fits its line limit.
 It needs no character or dialogue: give it the text.
 
 ```tsx
-import { LowerThird } from '@celesta/components';
+import { LowerThird } from '@celesta.studio/components';
 
 <Sequence from={30} durationInFrames={120}>
   <LowerThird title="夏猫" subtitle="ソフトウェアエンジニア" accent="#60A0FF" />
@@ -893,7 +893,7 @@ vertical composition).
 
 `scripts/inspect.mjs` shows each text layer's string, position, font, and
 color. **An entry that uses `useTextMetrics`, `measureText`, `TextBox`,
-`useFitText`, `fitText`, or `@celesta/code` is inspected through the
+`useFitText`, `fitText`, or `@celesta.studio/code` is inspected through the
 exporter**, which shapes text like an export; `inspect.mjs` finds it or
 takes `--native <Celesta-export>`. Without one, those frames report
 `UNSUPPORTED inspection` (unless `prepare()` catches the error and falls

@@ -1,4 +1,4 @@
-import { clamp, clamp01, parseHexColor } from '@celesta/math';
+import { clamp, clamp01, parseHexColor } from '@celesta.studio/math';
 import type { BuiltinFilter, ColorFilter } from './types';
 
 // The built-in filters as the GPU renderer runs them: `color_filter.wgsl`

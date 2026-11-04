@@ -1,6 +1,6 @@
-import { Group, Rect, Text } from '@celesta/react';
-import type { BlendMode } from '@celesta/react';
-import { Circle } from '@celesta/shapes';
+import { Group, Rect, Text } from '@celesta.studio/react';
+import type { BlendMode } from '@celesta.studio/react';
+import { Circle } from '@celesta.studio/shapes';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, solid } from '../../components/theme';

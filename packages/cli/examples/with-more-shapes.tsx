@@ -1,6 +1,6 @@
-import { Composition, Rect, interpolate, useCurrentFrame } from '@celesta/react';
-import { Heart, Path, Pie, Polygon, Star, Triangle, piePath, starPath } from '@celesta/shapes';
-import type { PathCommand } from '@celesta/shapes';
+import { Composition, Rect, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { Heart, Path, Pie, Polygon, Star, Triangle, piePath, starPath } from '@celesta.studio/shapes';
+import type { PathCommand } from '@celesta.studio/shapes';
 
 // Triangles, polygons, stars, pie slices, and hearts, each one `<Path>`
 // layer. Like `<Rect>`, `x`/`y` place a shape's anchor point (its box's

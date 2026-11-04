@@ -1,5 +1,5 @@
 //! Timing wrappers (`Sequence`, `Series.Sequence`) told apart through the
-//! file's `@celesta/react` import, and the `Series` items after one.
+//! file's `@celesta.studio/react` import, and the `Series` items after one.
 
 use line_index::{LineIndex, WideEncoding};
 use oxc_allocator::Allocator;
@@ -19,7 +19,7 @@ pub enum TimingKind {
     SeriesSequence,
 }
 
-/// The timing wrapper `element` is, through the file's `@celesta/react`
+/// The timing wrapper `element` is, through the file's `@celesta.studio/react`
 /// import (aliases and `import * as C` included); `None` for anything
 /// else, or when the text does not parse.
 pub fn timing_kind(text: &str, element: &ElementRef) -> Option<TimingKind> {

@@ -1,4 +1,4 @@
-// `@celesta/react/internal`: the runtime hooks the other Celesta packages and
+// `@celesta.studio/react/internal`: the runtime hooks the other Celesta packages and
 // the Celesta CLI build on. Not for compositions; nothing here is stable.
 
 export { createResolver, mount } from './render';
@@ -95,7 +95,7 @@ export { sourceOfProps } from './jsx-dev-runtime';
 export type { PropOverride, SourcePosition } from './jsx-dev-runtime';
 
 // Rust types of the project document (`celesta-project`), which
-// `@celesta/project` and `@celesta/character` re-export; ts-rs generates them
+// `@celesta.studio/project` and `@celesta.studio/character` re-export; ts-rs generates them
 // into this package beside the scene types they reference.
 export type { Project } from './generated/Project';
 export type { Asset } from './generated/Asset';

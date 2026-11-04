@@ -1,6 +1,6 @@
-import { Group, Rect, Sequence, Span } from '@celesta/react';
-import { LayoutBounds } from '@celesta/layout';
-import { Motion, PatternBackground, TitleCard, TypewriterText } from '@celesta/components';
+import { Group, Rect, Sequence, Span } from '@celesta.studio/react';
+import { LayoutBounds } from '@celesta.studio/layout';
+import { Motion, PatternBackground, TitleCard, TypewriterText } from '@celesta.studio/components';
 import type { DemoProps } from '../../components/ChapterShell';
 import { CUT, STAGE } from '../../components/ChapterShell';
 import { C } from '../../components/theme';
@@ -33,7 +33,7 @@ export function TitlesDemo(_: DemoProps) {
         <Rect y={410} width={STAGE.width} height={82} cornerRadius={10} fill="#08090B" />
         <TypewriterText x={24} y={432} from={BEAT} framesPerChar={1.2} caretShape="block" caretColor="orange"
           fontFamily="mono" fontSize={30} color="paper">
-          <Span color="orange" fontWeight={700}>$</Span> pnpm add @celesta/components
+          <Span color="orange" fontWeight={700}>$</Span> pnpm add @celesta.studio/components
         </TypewriterText>
         {LINES.map((line, i) => (
           <Motion key={line.text} from={BAR + i * BEAT} durationInFrames={3 * BAR - i * BEAT - 6}

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
-import { Group, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { CommonProps } from '@celesta/react';
+import { Group, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { CommonProps } from '@celesta.studio/react';
 
 import { inspectLottie } from './inspect';
 import { compositionLayers } from './layers';

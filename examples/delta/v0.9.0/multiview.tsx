@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Group, Rect, Text } from '@celesta/react';
+import { Group, Rect, Text } from '@celesta.studio/react';
 import { C, FONT, solid } from '../components/theme';
 import { CHAPTERS } from './chapters';
 import { LANDSCAPE, PORTRAIT, useLayout } from './layout';

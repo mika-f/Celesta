@@ -79,7 +79,7 @@ Visual layers and groups also take color filters, which can change every frame: 
   contrast={1.1} vignette={0.6} />
 ```
 
-To apply them in another order, or between custom shaders, pass their functions from `@celesta/shader` to `shader` as an array: `shader={[ripple({ time }), grayscale(), vignette(0.6)]}`.
+To apply them in another order, or between custom shaders, pass their functions from `@celesta.studio/shader` to `shader` as an array: `shader={[ripple({ time }), grayscale(), vignette(0.6)]}`.
 
 ## Stylize effects
 
@@ -93,7 +93,7 @@ Visual layers and groups also take built-in stylize effects, whose values can ch
 - `scanlines` darkens horizontal bands, 0 to 1, or `{ amount, spacing, thickness, offset }`.
 - `zoomBlur` blurs toward a centre as a fast zoom would, 0 to 1, or `{ amount, centerX, centerY }`.
 
-The props apply in this order: `chromaKey`, `pixelate`, `wave`, `zoomBlur`, `chromaticAberration`, the color filters, `halftone`, `noise`, then `scanlines`; all after `shader` and before blur, shadow, and glow. `@celesta/shader` exports functions of the same names for the `shader` array, for another order. They run in preview, export, and the browser editor.
+The props apply in this order: `chromaKey`, `pixelate`, `wave`, `zoomBlur`, `chromaticAberration`, the color filters, `halftone`, `noise`, then `scanlines`; all after `shader` and before blur, shadow, and glow. `@celesta.studio/shader` exports functions of the same names for the `shader` array, for another order. They run in preview, export, and the browser editor.
 
 ```tsx title="A worn videotape"
 <Group chromaticAberration={3} noise={0.12} scanlines={{ amount: 0.4, offset: frame / 4 }}>
@@ -117,10 +117,10 @@ Neutral colors lie as far from the key as the key’s own chroma: 0.36 for `#00b
 
 ## Custom shaders
 
-`defineShader` from `@celesta/shader` defines a filter in WGSL. Write `fn effect(input: EffectInput) -> vec4f`, which returns each output pixel as premultiplied RGBA. Read the layer with `source_at(position)` (scene pixels, interpolated) or `source_load(pixel)`; past the layer's box, `source_at` reads transparent, while `source_at_mirrored(position)` folds the read back in and `source_at_clamped(position)` holds it at the edge, which avoids dark seams when a full-frame distortion reads past the frame; `input.uv` is the pixel’s place in the layer’s box, from 0,0 to 1,1, and `celesta` holds the scene size and that box. Declare parameters with `params` and pass their values with every use; time is a parameter too, so a shader follows sequences and freeze frames. Pass the result to any layer’s `shader` prop. Pass an array, such as `shader={[ripple({ time }), rgbSplit({ amount: 6 })]}`, to apply several shaders in order, each filtering the result of the one before; every shader sees the same layer box, and their paddings add up. The shader runs before the color filter props, blur, shadow, and glow, and writes only the layer’s box plus its `padding`. Import a `.wgsl` file as the source to edit it with highlighting; saving it reloads the preview. The WGSL may not bind resources of its own or declare entry points, workgroup variables (`var<workgroup>`, which are for compute shaders), or names starting with `celesta`, aliases and overrides included. Shaders run in preview and export, not in the browser editor.
+`defineShader` from `@celesta.studio/shader` defines a filter in WGSL. Write `fn effect(input: EffectInput) -> vec4f`, which returns each output pixel as premultiplied RGBA. Read the layer with `source_at(position)` (scene pixels, interpolated) or `source_load(pixel)`; past the layer's box, `source_at` reads transparent, while `source_at_mirrored(position)` folds the read back in and `source_at_clamped(position)` holds it at the edge, which avoids dark seams when a full-frame distortion reads past the frame; `input.uv` is the pixel’s place in the layer’s box, from 0,0 to 1,1, and `celesta` holds the scene size and that box. Declare parameters with `params` and pass their values with every use; time is a parameter too, so a shader follows sequences and freeze frames. Pass the result to any layer’s `shader` prop. Pass an array, such as `shader={[ripple({ time }), rgbSplit({ amount: 6 })]}`, to apply several shaders in order, each filtering the result of the one before; every shader sees the same layer box, and their paddings add up. The shader runs before the color filter props, blur, shadow, and glow, and writes only the layer’s box plus its `padding`. Import a `.wgsl` file as the source to edit it with highlighting; saving it reloads the preview. The WGSL may not bind resources of its own or declare entry points, workgroup variables (`var<workgroup>`, which are for compute shaders), or names starting with `celesta`, aliases and overrides included. Shaders run in preview and export, not in the browser editor.
 
 ```tsx title="A rippling title"
-import { defineShader } from '@celesta/shader';
+import { defineShader } from '@celesta.studio/shader';
 
 const ripple = defineShader({
   name: 'ripple',
@@ -186,7 +186,7 @@ Helpers position child origins; they do not measure what the children draw. Anch
 
 ## Panels
 
-`Panel` from `@celesta/components` draws a box of a given `width` and `height` with a `fill`, a border (`stroke`, `strokeWidth`, drawn inside the edge), a `cornerRadius`, and a `shadow` cast by the background. Its children start inside its `padding` (a number or `{ top, right, bottom, left }`), and `Center`, `Fit`, and `useLayoutBounds()` inside see the area within the padding. It draws the shadow, the background, the children, then the border, so content never covers the border; `clip` cuts the children to the rounded box. `anchorX` and `anchorY` pick the point placed at `x`/`y`, which `rotation` and `scale` turn about. Sizes, padding, the radius, and the border width must be finite and not negative.
+`Panel` from `@celesta.studio/components` draws a box of a given `width` and `height` with a `fill`, a border (`stroke`, `strokeWidth`, drawn inside the edge), a `cornerRadius`, and a `shadow` cast by the background. Its children start inside its `padding` (a number or `{ top, right, bottom, left }`), and `Center`, `Fit`, and `useLayoutBounds()` inside see the area within the padding. It draws the shadow, the background, the children, then the border, so content never covers the border; `clip` cuts the children to the rounded box. `anchorX` and `anchorY` pick the point placed at `x`/`y`, which `rotation` and `scale` turn about. Sizes, padding, the radius, and the border width must be finite and not negative.
 
 ```tsx title="A caption card"
 <Panel x={120} y={600} width={720} height={320} padding={32}
@@ -196,7 +196,7 @@ Helpers position child origins; they do not measure what the children draw. Anch
 </Panel>
 ```
 
-`Badge` from `@celesta/components` is a label on a `Panel` sized from its measured text, so the background fits Japanese, Latin, and proportional fonts and follows the text as it changes. It takes the text's `style` (or the `fontFamily`, `fontSize`, `fontWeight`, and `color` shorthand), the panel's `fill`, `stroke`, `shadow`, and anchors, a `padding` (8 above and below, 16 at the sides by default), and a `cornerRadius` (8 by default, or `"pill"` for round ends; there is no separate chip component). `leading` draws a decoration such as a dot before the text, in a box `leadingWidth` wide and one line tall, `gap` before the text. With `maxWidth`, long text wraps and the badge grows taller.
+`Badge` from `@celesta.studio/components` is a label on a `Panel` sized from its measured text, so the background fits Japanese, Latin, and proportional fonts and follows the text as it changes. It takes the text's `style` (or the `fontFamily`, `fontSize`, `fontWeight`, and `color` shorthand), the panel's `fill`, `stroke`, `shadow`, and anchors, a `padding` (8 above and below, 16 at the sides by default), and a `cornerRadius` (8 by default, or `"pill"` for round ends; there is no separate chip component). `leading` draws a decoration such as a dot before the text, in a box `leadingWidth` wide and one line tall, `gap` before the text. With `maxWidth`, long text wraps and the badge grows taller.
 
 ```tsx title="A chapter label and a chip with a dot"
 <Badge x={120} y={80} fill="#204060" fontSize={28} color="#FFFFFF">第1章</Badge>

@@ -1,7 +1,7 @@
 import { useContext } from 'react';
-import { Easings, FreezeFrame, Group, MotionBlur, Rect, Text, Trail, interpolate, progress, useCurrentFrame } from '@celesta/react';
-import { chromaticAberration, scanlines } from '@celesta/shader';
-import { Path, interpolatePath } from '@celesta/shapes';
+import { Easings, FreezeFrame, Group, MotionBlur, Rect, Text, Trail, interpolate, progress, useCurrentFrame } from '@celesta.studio/react';
+import { chromaticAberration, scanlines } from '@celesta.studio/shader';
+import { Path, interpolatePath } from '@celesta.studio/shapes';
 import { Backdrop } from '../components/Backdrop';
 import { PREVIEW } from '../components/ChapterShell';
 import { glitch } from '../components/shaders';

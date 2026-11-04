@@ -1,7 +1,7 @@
-import { Group, Rect, Text } from '@celesta/react';
-import { CaptionTrack, PatternBackground } from '@celesta/components';
-import { LayoutBounds } from '@celesta/layout';
-import { graphemes, phrases } from '@celesta/text';
+import { Group, Rect, Text } from '@celesta.studio/react';
+import { CaptionTrack, PatternBackground } from '@celesta.studio/components';
+import { LayoutBounds } from '@celesta.studio/layout';
+import { graphemes, phrases } from '@celesta.studio/text';
 import { C } from '../../components/theme';
 import type { DemoProps } from '../program';
 import { STAGE } from '../program';

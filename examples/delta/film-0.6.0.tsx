@@ -1,5 +1,5 @@
-import { Assets, Audio, Composition, Easings, Font, Group, progress, useCurrentFrame } from '@celesta/react';
-import { TransitionSeries, computeTransitionSeries } from '@celesta/transitions';
+import { Assets, Audio, Composition, Easings, Font, Group, progress, useCurrentFrame } from '@celesta.studio/react';
+import { TransitionSeries, computeTransitionSeries } from '@celesta.studio/transitions';
 import { CUT, ChapterShell } from './components/ChapterShell';
 import { Hud } from './components/Hud';
 import { FPS, H, LATIN_FONTS, W, japaneseText } from './components/theme';

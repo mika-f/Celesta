@@ -1,4 +1,4 @@
-import { computeSeries } from '@celesta/react';
+import { computeSeries } from '@celesta.studio/react';
 import { BAR } from './constants';
 import { Activity } from './scenes/Activity';
 import { Crates } from './scenes/Crates';

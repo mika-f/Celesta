@@ -1,5 +1,5 @@
-import { Group } from '@celesta/react';
-import { Circle, Ellipse, Path } from '@celesta/shapes';
+import { Group } from '@celesta.studio/react';
+import { Circle, Ellipse, Path } from '@celesta.studio/shapes';
 import { AMBER, CX, CY, CYAN, MAGENTA, RADIUS, VIOLET, WHITE } from '../constants';
 import { TAU, theta, wave } from '../loop';
 import { kaleido } from '../shaders';

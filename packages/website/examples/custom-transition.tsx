@@ -1,5 +1,5 @@
-import { Composition, Rect, useVideoConfig } from '@celesta/react';
-import { TransitionSeries, computeTransitionSeries, defineTransition, iris } from '@celesta/transitions';
+import { Composition, Rect, useVideoConfig } from '@celesta.studio/react';
+import { TransitionSeries, computeTransitionSeries, defineTransition, iris } from '@celesta.studio/transitions';
 
 // Slats that open over the next scene while the previous one darkens.
 const blinds = defineTransition({

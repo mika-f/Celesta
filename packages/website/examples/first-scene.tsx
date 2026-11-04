@@ -1,6 +1,6 @@
 import {
   Composition, Rect, Text, useCurrentFrame,
-} from '@celesta/react';
+} from '@celesta.studio/react';
 
 function Title() {
   const frame = useCurrentFrame();

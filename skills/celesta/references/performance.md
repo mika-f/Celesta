@@ -18,7 +18,7 @@ do. Thousands of flat `Rect`s are cheap; a few dozen effects are not.
 | `x`/`y`, `scale`, `rotation`, `opacity` | A `blendMode` other than `'normal'`: every blended layer reads what is beneath it, which takes a copy and a GPU pass of its own |
 | Text, images and SVGs whose content and drawn size stay the same: rasterized once and reused | `Path`, `Line`, `Polyline`, `Ellipse`, `Arrow`: each path's outline is rebuilt on the CPU every frame and shaded on the GPU, so cost grows with segment count and covered area. Still far cheaper than the same line art as hundreds of `Rect`s |
 | | Text whose string or style (including a gradient `fill`'s colors) changes every frame: rasterized again each frame. Text drawn at a changing scale is rasterized again in steps of about 9% |
-| | `@celesta/code` while typing: each new character rasterizes its whole line again (one `Text` per line, shaping cached) |
+| | `@celesta.studio/code` while typing: each new character rasterizes its whole line again (one `Text` per line, shaping cached) |
 
 ## Same picture, less work
 

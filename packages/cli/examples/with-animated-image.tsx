@@ -1,6 +1,6 @@
-import { Composition, Image, Sequence, Text } from '@celesta/react';
-import { mediaDurationInFrames, preloadMedia } from '@celesta/media-utils';
-import type { MediaInfo } from '@celesta/media-utils';
+import { Composition, Image, Sequence, Text } from '@celesta.studio/react';
+import { mediaDurationInFrames, preloadMedia } from '@celesta.studio/media-utils';
+import type { MediaInfo } from '@celesta.studio/media-utils';
 
 let counter: MediaInfo;
 

@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, Text, interpolate, useBeat, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, Text, interpolate, useBeat, useCurrentFrame } from '@celesta.studio/react';
 import { BPM, C, CODE, HOOK_BAND, SAFE, W } from '../constants';
 import { CodePanel } from '../components/CodePanel';
 import { SETTLED } from '../components/DemoClock';

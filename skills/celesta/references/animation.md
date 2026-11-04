@@ -2,16 +2,16 @@
 
 How a React composition moves: frame hooks, `interpolate`, easings,
 springs, `Sequence` scenes, transitions, and the motion helpers that save
-hand-written timing math. Imported from `@celesta/react`, except `Transition`,
+hand-written timing math. Imported from `@celesta.studio/react`, except `Transition`,
 `TransitionSeries`, `computeTransitionSeries`, `useTransitionSeriesScene`, and
-`useTransitionVolume` (`@celesta/transitions`), `Camera` (`@celesta/layout`),
-`FrameChrome` and `Motion` (`@celesta/components`), and `TextReveal`, `useTypewriter`, and
-`useCountUp` (`@celesta/text`).
+`useTransitionVolume` (`@celesta.studio/transitions`), `Camera` (`@celesta.studio/layout`),
+`FrameChrome` and `Motion` (`@celesta.studio/components`), and `TextReveal`, `useTypewriter`, and
+`useCountUp` (`@celesta.studio/text`).
 
 Every frame must be a pure function of the frame number: frames are rendered
 out of order when scrubbing and exporting. Never use `Math.random()`,
 `Date.now()`, timers, `useEffect`, or state that accumulates across renders.
-For randomness and noise, use [`@celesta/math`](math.md).
+For randomness and noise, use [`@celesta.studio/math`](math.md).
 
 ## Contents
 
@@ -65,8 +65,8 @@ For randomness and noise, use [`@celesta/math`](math.md).
 | A push-in, pan, or shake over a whole scene | `Camera` |
 | A line being drawn | `Polyline progress` ([react-core.md](react-core.md#path-line-polyline)) |
 | An arrow growing toward its target | `Arrow` with animated `x2`/`y2` ([react-core.md](react-core.md#circle-ellipse-arrow)) |
-| Text revealed line by line, typed, or a counting number | `TextReveal`, `useTypewriter`, `useCountUp` ([text.md](text.md#text-motion)); `Counter`, `StatCard`, and `BarChart` from `@celesta/components` ([react-core.md](react-core.md#counter-statcard-barchart-ranking-numbers-and-bar-charts)) |
-| Code being typed | `@celesta/code` with `useTypewriter` ([code.md](code.md)) |
+| Text revealed line by line, typed, or a counting number | `TextReveal`, `useTypewriter`, `useCountUp` ([text.md](text.md#text-motion)); `Counter`, `StatCard`, and `BarChart` from `@celesta.studio/components` ([react-core.md](react-core.md#counter-statcard-barchart-ranking-numbers-and-bar-charts)) |
+| Code being typed | `@celesta.studio/code` with `useTypewriter` ([code.md](code.md)) |
 
 ## Hooks
 
@@ -394,7 +394,7 @@ const chapters = [...listChapters(SCENES), ...listChapters(PARTS, { from: SCENES
 
 ## FrameChrome
 
-Imported from `@celesta/components`. The overlay a film keeps around the picture, laid out inside `margin` from
+Imported from `@celesta.studio/components`. The overlay a film keeps around the picture, laid out inside `margin` from
 the canvas size, so it holds its places on landscape, vertical, and square
 canvases. Only what is turned on is drawn:
 
@@ -422,7 +422,7 @@ scenes; `progressBlendMode="normal"` keeps a colored bar out of the blend.
 `useScene(SCENES)?.id === 'logo' ? null : <FrameChrome … />`.
 
 ```tsx
-import { FrameChrome } from '@celesta/components';
+import { FrameChrome } from '@celesta.studio/components';
 
 <Theme fonts={{ mono: 'JetBrains Mono' }} colors={{ paper: '#f4f1ea', accent: '#ff4d1f' }}>
   <Scenes scenes={SCENES} />
@@ -461,7 +461,7 @@ series' size), iris `direction: 'open'` and `feather: 0` px, clock-wipe
 `startAngle: 0` (12 o'clock, degrees clockwise) and `'clockwise'`, zoom
 `'in'` and `scale: 1.5`, dissolve `cellSize: 16` px and `seed: 0`, blur
 `amount: 32` px (0–64), flip and cube `shade: 0.4` (0–1). Call the function
-(imported from `@celesta/transitions`) for other values:
+(imported from `@celesta.studio/transitions`) for other values:
 `type={iris({ center: { x: 0.3, y: 0.5 }, feather: 40 })}`. Bad options
 throw when the function is called.
 
@@ -517,7 +517,7 @@ const blinds = defineTransition({
 A mask or a shader in a style comes and goes with the transition without
 changing the scene's layer ids. Custom WGSL shaders run in preview and
 export only; masks, clips, blur, and color filters also run in
-`@celesta/web`, so every built-in type does.
+`@celesta.studio/web`, so every built-in type does.
 
 Timing rules:
 
@@ -588,7 +588,7 @@ function Row({ y, label }: { y: number; label: string }) {
 
 ## Motion
 
-`<Motion enter? exit? from? durationInFrames?>` from `@celesta/components`
+`<Motion enter? exit? from? durationInFrames?>` from `@celesta.studio/components`
 eases one element in at the start of its window, holds it exactly as
 written, and eases it out at the end. It is a `Group`: its own `x`, `y`,
 `opacity`, `scale`, and the other layer props are what it holds, and the
@@ -596,7 +596,7 @@ effects multiply its opacity and scale and offset its position. The
 children's props, clock, and media are left alone.
 
 ```tsx
-import { Motion } from '@celesta/components';
+import { Motion } from '@celesta.studio/components';
 
 <Motion enter="fade-up" exit={{ type: 'fade-down', durationInFrames: 10 }}>
   <Text x={640} y={360} anchorX={0.5}>Enter, hold, exit</Text>
@@ -683,7 +683,7 @@ const x = stop ? from + (stop.cue.x - from) * progress(stop.frame, 0, 24, Easing
 world point (`x`, `y`) at the center of the current area (canvas,
 `SafeArea`, or `Fit`), magnified by `zoom` about that point. Defaults look at
 the center, so `<Camera zoom={1.05}>` is a slow push-in. `shake` is the
-largest drift in world pixels, smoothed by `@celesta/math`'s `noise()`.
+largest drift in world pixels, smoothed by `@celesta.studio/math`'s `noise()`.
 Animate the props from the frame for pans and zooms. To blur a fast pan,
 wrap the camera in a `<MotionBlur>` with a function child that computes the
 props from the frame it is given ([MotionBlur and Trail](#motionblur-and-trail)).

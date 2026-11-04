@@ -1,5 +1,5 @@
-import { Composition, Rect, Text, useVideoConfig } from '@celesta/react';
-import { TransitionSeries, computeTransitionSeries, cube, defineTransition, flip } from '@celesta/transitions';
+import { Composition, Rect, Text, useVideoConfig } from '@celesta.studio/react';
+import { TransitionSeries, computeTransitionSeries, cube, defineTransition, flip } from '@celesta.studio/transitions';
 
 // Transitions that turn the scenes in 3D about the middle of the screen. A
 // scene's group turns about `originX`/`originY`, which is also the vanishing

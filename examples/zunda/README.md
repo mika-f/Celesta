@@ -58,7 +58,7 @@ make-score.py         BGM を生成する（Python の標準ライブラリの�
 
 | 時間 | シーン | 内容 | 主な機能 |
 | --- | --- | --- | --- |
-| 0:00 | 真っ暗 | 空のコンポジションのコードが打ち込まれ、左上のコードパネルになる | `Sequence`、`interpolate`、`@celesta/code` の `Code` |
+| 0:00 | 真っ暗 | 空のコンポジションのコードが打ち込まれ、左上のコードパネルになる | `Sequence`、`interpolate`、`@celesta.studio/code` の `Code` |
 | 0:08 | レイヤーを重ねる | 台詞に合わせて背景が `Rect` → グラデーション → 写真と育つ | `Rect`、線形グラデーション、`Image fit="cover"`、`Motion` |
 | 0:30 | エフェクト | タイトルが光り、影が付き、背景がぼける。コードの数値も同時に動く | `glow`・`shadow`・`blur`、`spring` |
 | 0:41 | Path で描く | ずんだ餅とえだまめが一筆書きで描かれる | `Path`、`Polyline progress`、`pointOnPolyline` |

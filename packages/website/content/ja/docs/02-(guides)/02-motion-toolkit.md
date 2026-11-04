@@ -1,4 +1,4 @@
-シーンを並べる、リストを順に表示する、拍に合わせて切り替えるなど、よく使うパターンのヘルパーです。`Sequence`、`Group`、フレームに基づくので、スクラブでき、結果も一定です。テキスト効果・カメラ・線は[次のページ](/ja/docs/text-camera-lines/)、シード付き乱数とノイズは [`@celesta/math`](/ja/docs/math/) で説明します。
+シーンを並べる、リストを順に表示する、拍に合わせて切り替えるなど、よく使うパターンのヘルパーです。`Sequence`、`Group`、フレームに基づくので、スクラブでき、結果も一定です。テキスト効果・カメラ・線は[次のページ](/ja/docs/text-camera-lines/)、シード付き乱数とノイズは [`@celesta.studio/math`](/ja/docs/math/) で説明します。
 
 ## シーンを続けて並べる
 
@@ -94,7 +94,7 @@ const chapters = [
 
 各シーンは通常の Sequence で、入りのトランジションの最初のフレームがフレーム 0 です。後のシーンが手前に描かれます。前後どちらかのシーンより長いトランジションや、入りと出のトランジションを合わせた長さに満たないシーンはエラーになるので、空白や 3 つのシーンの同時表示は起こりません。重なったシーンの音声は同時に再生されます。`useTransitionVolume(volume)` はシーン内の Audio に映像と一緒にフェードする音量を返し、`useTransitionSeriesScene()` はほかのタイミング調整のためにシーン前後のトランジションを返します。
 
-`type` には次の名前を指定します。名前だけなら括弧内の既定値を使います。ほかの値にするときは、`@celesta/transitions` の同名の関数を `type={iris({ center: { x: 0.3, y: 0.5 }, feather: 40 })}` のように呼びます。`from`（既定は `'left'`）は `'slide'`・`'wipe'`・`'cube'` で次のシーンが来る辺、`'flip'` で回る軸です。`easing` はどの種類でも進み方を変えます。
+`type` には次の名前を指定します。名前だけなら括弧内の既定値を使います。ほかの値にするときは、`@celesta.studio/transitions` の同名の関数を `type={iris({ center: { x: 0.3, y: 0.5 }, feather: 40 })}` のように呼びます。`from`（既定は `'left'`）は `'slide'`・`'wipe'`・`'cube'` で次のシーンが来る辺、`'flip'` で回る軸です。`easing` はどの種類でも進み方を変えます。
 
 | `type` | 動き | オプション |
 | --- | --- | --- |
@@ -168,4 +168,4 @@ return <Text opacity={progress(active.frame, 0, 10)}>{active.cue.text}</Text>;
 
 ## タイムコード
 
-`@celesta/react` の `frameToTimecode(frame, fps)` は、`HH:MM:SS:FF` 形式の画面内時計を生成します。
+`@celesta.studio/react` の `frameToTimecode(frame, fps)` は、`HH:MM:SS:FF` 形式の画面内時計を生成します。

@@ -5,12 +5,12 @@ import { test } from 'vitest';
 import React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Span, Text, Theme } from '@celesta/react';
-import type { Layer, LayerContent, Scene, TextMetrics } from '@celesta/react';
+import { Composition, Span, Text, Theme } from '@celesta.studio/react';
+import type { Layer, LayerContent, Scene, TextMetrics } from '@celesta.studio/react';
 import { TextBox, TextReveal, fitText, useFitText, useTypewriter } from '../src/index.js';
 import type { FitTextResult, Typewriter } from '../src/index.js';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 
 type GroupContent = Extract<LayerContent, { type: 'group' }>;
 type TextContent = Extract<LayerContent, { type: 'text' }>;

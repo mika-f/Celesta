@@ -22,7 +22,7 @@
 // Frames are evaluated through Celesta-export --inspect when it is found (a
 // source checkout's build above the entry or the current directory, then the
 // default macOS and Windows install locations), with real text shaping
-// (measureText(), useTextMetrics(), <TextBox>, @celesta/code, …) and media
+// (measureText(), useTextMetrics(), <TextBox>, @celesta.studio/code, …) and media
 // probing, still without rendering pixels. --native <Celesta-export> picks the
 // exporter; --no-native evaluates in Node only, which cannot shape text.
 // Exit code 1 means the entry failed to load, a frame failed, or a
@@ -46,7 +46,7 @@ options: --native <Celesta-export>  --no-native  --runtime <cli.js>  --node <nod
 // inspector limitation, not a scene error.
 const TEXT_UNSUPPORTED =
   'inspect.mjs cannot shape text, so measureText(), useTextMetrics(), fitText(), useFitText(), <TextBox>, ' +
-  '@celesta/code, and subtitle.render metrics fail here; inspect with --native <Celesta-export>, ' +
+  '@celesta.studio/code, and subtitle.render metrics fail here; inspect with --native <Celesta-export>, ' +
   'or check this entry with a PNG export (Celesta-export --react <entry> --frame N out.png) instead';
 
 function parseArgs(argv) {

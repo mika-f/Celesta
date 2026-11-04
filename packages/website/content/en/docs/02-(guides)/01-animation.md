@@ -2,7 +2,7 @@ A composition’s duration in seconds is `durationInFrames / fps`. At 30 fps, 15
 
 ## Interpolate between values
 
-The title example uses `Math.min(frame / 30, 1)` for opacity. For easing and more control, import `interpolate` and `Easings` from `@celesta/react`, then replace the calculation with:
+The title example uses `Math.min(frame / 30, 1)` for opacity. For easing and more control, import `interpolate` and `Easings` from `@celesta.studio/react`, then replace the calculation with:
 
 ```tsx title="An eased fade (inside a component)"
 const opacity = interpolate(frame, [0, 30], [0, 1], {
@@ -18,7 +18,7 @@ Pass the result to `<Text opacity={opacity} … />`. Input ranges must be strict
 
 ## Interpolate between colors
 
-Import `interpolateColor` from `@celesta/react` too. It takes the same input range and `easing` as `interpolate`, but maps the frame onto `#RRGGBB` or `#RRGGBBAA` colors and returns `#RRGGBBAA`. Use it wherever a color goes: a `Rect` fill, a text style’s fill, a gradient stop, or a shadow.
+Import `interpolateColor` from `@celesta.studio/react` too. It takes the same input range and `easing` as `interpolate`, but maps the frame onto `#RRGGBB` or `#RRGGBBAA` colors and returns `#RRGGBBAA`. Use it wherever a color goes: a `Rect` fill, a text style’s fill, a gradient stop, or a shadow.
 
 ```tsx title="Night to day, and a title fading in"
 const sky = interpolateColor(frame, [0, 45, 90], ['#101820', '#EF7B45', '#7FC8F8']);
@@ -146,7 +146,7 @@ Slides travel `distance` pixels (64 by default); scales start from `scaleFrom` (
 
 > [!NOTE]
 > **Keep animation tied to the frame**
-> Compute visual changes from frame or time values so scrubbing and exporting can reproduce each moment. A browser timer or `Math.random()` is not the composition’s clock; derive “random” values from the frame or an index instead, with [`@celesta/math`](/en/docs/math/)’s seeded `random` and `noise`.
+> Compute visual changes from frame or time values so scrubbing and exporting can reproduce each moment. A browser timer or `Math.random()` is not the composition’s clock; derive “random” values from the frame or an index instead, with [`@celesta.studio/math`](/en/docs/math/)’s seeded `random` and `noise`.
 
 ## Hold a scene at one frame
 

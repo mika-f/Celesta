@@ -1,6 +1,6 @@
-import { Group, Rect, Text } from '@celesta/react';
-import type { GroupProps } from '@celesta/react';
-import { grayscale, tint, vignette } from '@celesta/shader';
+import { Group, Rect, Text } from '@celesta.studio/react';
+import type { GroupProps } from '@celesta.studio/react';
+import { grayscale, tint, vignette } from '@celesta.studio/shader';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { ripple } from '../../components/shaders';

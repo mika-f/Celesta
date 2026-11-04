@@ -13,13 +13,13 @@
 // speech engine runs.
 import * as React from 'react';
 
-import { Assets, Composition, Font, Group, Rect, Text, interpolate } from '@celesta/react';
+import { Assets, Composition, Font, Group, Rect, Text, interpolate } from '@celesta.studio/react';
 import {
   Character, CharacterView, DialogueSeries, loadDialogueLipSync, paginateSubtitles, planDialogue,
-} from '@celesta/character';
-import type { AssetReference, TextStyle } from '@celesta/react';
-import type { CharacterViewReference, DialogueLine, DialoguePlan, SubtitleRenderProps } from '@celesta/character';
-import type { EmphasisStyle } from '@celesta/text';
+} from '@celesta.studio/character';
+import type { AssetReference, TextStyle } from '@celesta.studio/react';
+import type { CharacterViewReference, DialogueLine, DialoguePlan, SubtitleRenderProps } from '@celesta.studio/character';
+import type { EmphasisStyle } from '@celesta.studio/text';
 
 const WIDTH = 1280;
 const HEIGHT = 720;

@@ -22,7 +22,7 @@ pub fn runtime_built() -> bool {
     built
 }
 
-/// An entry in a directory where `@celesta/react` resolves.
+/// An entry in a directory where `@celesta.studio/react` resolves.
 pub fn entry(source: &str) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
     let entry = dir.path().join("scene.tsx");

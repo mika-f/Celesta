@@ -1,4 +1,4 @@
-import { Rect } from '@celesta/react';
+import { Rect } from '@celesta.studio/react';
 import { TAU } from '../constants';
 
 // Equal-angle, unequal-length spokes make the form breathe rather than spin as a disc.

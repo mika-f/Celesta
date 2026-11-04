@@ -12,14 +12,14 @@ import {
   Text,
   useCurrentFrame,
   registerComponent,
-} from '@celesta/react';
-import type { AssetReference, Layer, LayerContent, Scene, TextMetrics } from '@celesta/react';
+} from '@celesta.studio/react';
+import type { AssetReference, Layer, LayerContent, Scene, TextMetrics } from '@celesta.studio/react';
 import { Character, CharacterView, Dialogue, DialogueSeries, planDialogue } from '../src/index.js';
 import type {
   CharacterPortrait, CharacterReference, CharacterSubtitle, CharacterViewReference, DialogueProps, SubtitleRenderProps,
 } from '../src/index.js';
-import { createResolver, mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+import { createResolver, mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 
 // Every character is `fontSize` wide and one line is `fontSize * 1.25` high.
 function measure({ text, style }: Pick<MeasureTextRequest, 'text' | 'style'>): TextMetrics {

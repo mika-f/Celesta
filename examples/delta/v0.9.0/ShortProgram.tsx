@@ -1,5 +1,5 @@
-import { Group, Sequence, Text, useCurrentFrame } from '@celesta/react';
-import { LowerThird } from '@celesta/components';
+import { Group, Sequence, Text, useCurrentFrame } from '@celesta.studio/react';
+import { LowerThird } from '@celesta.studio/components';
 import { Backdrop } from '../components/Backdrop';
 import { DiffPanel } from '../components/DiffPanel';
 import { C, FONT, ease, solid } from '../components/theme';

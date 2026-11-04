@@ -1,6 +1,6 @@
 // The built-in color filters (`LayerFilter`), assembled like a custom
 // shader (`shader.rs`) with two parameters: `op` is the filter's kind and
-// its amounts, `color` the tint's straight RGBA. `@celesta/web` repeats
+// its amounts, `color` the tint's straight RGBA. `@celesta.studio/web` repeats
 // this arithmetic in `packages/web/src/color-filters.ts`.
 
 const BRIGHTNESS: u32 = 0u;

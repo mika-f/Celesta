@@ -10,7 +10,7 @@
 
 import { createContext, useContext } from 'react';
 import type { ComponentType } from 'react';
-import { FreezeFrame } from '@celesta/react';
+import { FreezeFrame } from '@celesta.studio/react';
 
 /** 動画の画面（背景・シーン・立ち絵）を描くコンポーネント。 */
 export const WorldContext = createContext<ComponentType | null>(null);

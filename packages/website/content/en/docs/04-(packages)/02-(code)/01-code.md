@@ -1,14 +1,14 @@
-`@celesta/code` draws syntax-highlighted source code in a composition. It tokenizes with [twinkleplop](https://twinkleplop.pngwn.at) and draws each line as one of Celesta’s own `Text` layers with color runs, and line highlights as `Rect`s, so code scales, fades, blurs, and exports like any other layer. It is optional: `@celesta/react` does not depend on it.
+`@celesta.studio/code` draws syntax-highlighted source code in a composition. It tokenizes with [twinkleplop](https://twinkleplop.pngwn.at) and draws each line as one of Celesta’s own `Text` layers with color runs, and line highlights as `Rect`s, so code scales, fades, blurs, and exports like any other layer. It is optional: `@celesta.studio/react` does not depend on it.
 
 > [!NOTE]
 > **Availability**
-> The desktop app and CLI include `@celesta/code`, and **File → Set Up TypeScript** adds its declarations alongside `@celesta/react` and `@celesta/math`. You do not install anything from npm; the package is not published there. The [web editor](/en/#playground) does not support it yet, so use the desktop app or CLI for compositions that import it.
+> The desktop app and CLI include `@celesta.studio/code`, and **File → Set Up TypeScript** adds its declarations alongside `@celesta.studio/react` and `@celesta.studio/math`. You do not install anything from npm; the package is not published there. The [web editor](/en/#playground) does not support it yet, so use the desktop app or CLI for compositions that import it.
 
 ## Your first code block
 
 ```tsx title="code-block.tsx"
-import { Assets, Composition, Font, Rect } from '@celesta/react';
-import { Code, codeThemes } from '@celesta/code';
+import { Assets, Composition, Font, Rect } from '@celesta.studio/react';
+import { Code, codeThemes } from '@celesta.studio/code';
 
 const source = `const message: string = 'Hello, Celesta.';
 console.log(message);`;

@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Assets, Composition, Font, Rect, Sequence, Span, Text } from '@celesta/react';
-import { TextReveal, useTypewriter } from '@celesta/text';
-import { Character, CharacterView, Dialogue } from '@celesta/character';
-import type { AssetReference, TextStyle } from '@celesta/react';
-import type { CharacterViewReference } from '@celesta/character';
+import { Assets, Composition, Font, Rect, Sequence, Span, Text } from '@celesta.studio/react';
+import { TextReveal, useTypewriter } from '@celesta.studio/text';
+import { Character, CharacterView, Dialogue } from '@celesta.studio/character';
+import type { AssetReference, TextStyle } from '@celesta.studio/react';
+import type { CharacterViewReference } from '@celesta.studio/character';
 
 // Rich text: one Text, partly emphasized, still laid out as one paragraph.
 // Four sections of two seconds each: an explanatory paragraph, an emphasized

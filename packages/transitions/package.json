@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/transitions",
+  "name": "@celesta.studio/transitions",
   "version": "0.9.0",
   "private": true,
   "description": "Enter/exit transitions and TransitionSeries for Celesta compositions.",
@@ -23,17 +23,17 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@celesta/layout": "workspace:*",
-    "@celesta/math": "workspace:*",
-    "@celesta/shapes": "workspace:*"
+    "@celesta.studio/layout": "workspace:*",
+    "@celesta.studio/math": "workspace:*",
+    "@celesta.studio/shapes": "workspace:*"
   },
   "peerDependencies": {
-    "@celesta/react": "0.0.0",
+    "@celesta.studio/react": "0.0.0",
     "react": "^19.3.0"
   },
   "devDependencies": {
-    "@celesta/react": "workspace:*",
-    "@celesta/shader": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/shader": "workspace:*",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",

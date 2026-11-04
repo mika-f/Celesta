@@ -79,7 +79,7 @@ CPU リファレンスレンダラはスキュー、`rotationX`、`rotationY` �
   contrast={1.1} vignette={0.6} />
 ```
 
-別の順番で適用したいときや、カスタムシェーダーの間に挟みたいときは、`@celesta/shader` の同名の関数を `shader` の配列に入れます：`shader={[ripple({ time }), grayscale(), vignette(0.6)]}`。
+別の順番で適用したいときや、カスタムシェーダーの間に挟みたいときは、`@celesta.studio/shader` の同名の関数を `shader` の配列に入れます：`shader={[ripple({ time }), grayscale(), vignette(0.6)]}`。
 
 ## スタイライズ
 
@@ -93,7 +93,7 @@ CPU リファレンスレンダラはスキュー、`rotationX`、`rotationY` �
 - `scanlines`：横縞を暗くします。0 から 1、または `{ amount, spacing, thickness, offset }` で指定します。
 - `zoomBlur`：中心に向かってぼかし、高速なズームのように見せます。0 から 1、または `{ amount, centerX, centerY }` で指定します。
 
-props は `chromaKey`、`pixelate`、`wave`、`zoomBlur`、`chromaticAberration`、色補正、`halftone`、`noise`、`scanlines` の順に、どれも `shader` の後、blur、shadow、glow の前にかかります。別の順番で適用したいときは、`@celesta/shader` の同名の関数を `shader` の配列に入れます。プレビュー、書き出し、ブラウザ版エディタのどれでも動きます。
+props は `chromaKey`、`pixelate`、`wave`、`zoomBlur`、`chromaticAberration`、色補正、`halftone`、`noise`、`scanlines` の順に、どれも `shader` の後、blur、shadow、glow の前にかかります。別の順番で適用したいときは、`@celesta.studio/shader` の同名の関数を `shader` の配列に入れます。プレビュー、書き出し、ブラウザ版エディタのどれでも動きます。
 
 ```tsx title="すり切れたビデオテープ"
 <Group chromaticAberration={3} noise={0.12} scanlines={{ amount: 0.4, offset: frame / 4 }}>
@@ -117,10 +117,10 @@ props は `chromaKey`、`pixelate`、`wave`、`zoomBlur`、`chromaticAberration`
 
 ## カスタムシェーダー
 
-`@celesta/shader` の `defineShader` で、WGSL のフィルタを定義できます。`fn effect(input: EffectInput) -> vec4f` を書き、出力の各ピクセルを乗算済みアルファの RGBA で返します。レイヤーの画素は `source_at(position)`（シーンのピクセル座標、補間あり）か `source_load(pixel)` で読みます。レイヤーの矩形の外を `source_at` で読むと透明になります。画面全体を歪ませるシェーダーで端に暗い帯が出るときは、矩形の端で折り返して読む `source_at_mirrored(position)` か、端の画素で止める `source_at_clamped(position)` を使います。`input.uv` はレイヤーの矩形の中での位置（0,0 から 1,1）で、`celesta` にはシーンの大きさとその矩形が入っています。パラメータは `params` で宣言し、使うたびに値を渡します。時間もパラメータとして渡すので、シーケンスや FreezeFrame の中でも正しく動きます。結果はどのレイヤーの `shader` にも渡せます。`shader={[ripple({ time }), rgbSplit({ amount: 6 })]}` のように配列を渡すと、複数のシェーダーを順に適用し、それぞれが前のシェーダーの結果にかかります。どのシェーダーも同じレイヤーの矩形を見ており、パディングは足し合わされます。シェーダーは色補正の props、blur、shadow、glow より先に適用され、レイヤーの矩形と `padding` の範囲にだけ書き込みます。ソースは `.wgsl` ファイルとして import でき、エディタのハイライトが効くうえ、保存するとプレビューが再読み込みされます。WGSL では、独自のリソースをバインドすることや、エントリーポイント、ワークグループ変数（`var<workgroup>`。コンピュートシェーダー専用です）、`celesta` で始まる名前（alias や override も含みます）を宣言することはできません。シェーダーはプレビューと書き出しで動き、ブラウザ版エディタでは使えません。
+`@celesta.studio/shader` の `defineShader` で、WGSL のフィルタを定義できます。`fn effect(input: EffectInput) -> vec4f` を書き、出力の各ピクセルを乗算済みアルファの RGBA で返します。レイヤーの画素は `source_at(position)`（シーンのピクセル座標、補間あり）か `source_load(pixel)` で読みます。レイヤーの矩形の外を `source_at` で読むと透明になります。画面全体を歪ませるシェーダーで端に暗い帯が出るときは、矩形の端で折り返して読む `source_at_mirrored(position)` か、端の画素で止める `source_at_clamped(position)` を使います。`input.uv` はレイヤーの矩形の中での位置（0,0 から 1,1）で、`celesta` にはシーンの大きさとその矩形が入っています。パラメータは `params` で宣言し、使うたびに値を渡します。時間もパラメータとして渡すので、シーケンスや FreezeFrame の中でも正しく動きます。結果はどのレイヤーの `shader` にも渡せます。`shader={[ripple({ time }), rgbSplit({ amount: 6 })]}` のように配列を渡すと、複数のシェーダーを順に適用し、それぞれが前のシェーダーの結果にかかります。どのシェーダーも同じレイヤーの矩形を見ており、パディングは足し合わされます。シェーダーは色補正の props、blur、shadow、glow より先に適用され、レイヤーの矩形と `padding` の範囲にだけ書き込みます。ソースは `.wgsl` ファイルとして import でき、エディタのハイライトが効くうえ、保存するとプレビューが再読み込みされます。WGSL では、独自のリソースをバインドすることや、エントリーポイント、ワークグループ変数（`var<workgroup>`。コンピュートシェーダー専用です）、`celesta` で始まる名前（alias や override も含みます）を宣言することはできません。シェーダーはプレビューと書き出しで動き、ブラウザ版エディタでは使えません。
 
 ```tsx title="波打つタイトル"
-import { defineShader } from '@celesta/shader';
+import { defineShader } from '@celesta.studio/shader';
 
 const ripple = defineShader({
   name: 'ripple',
@@ -186,7 +186,7 @@ const ripple = defineShader({
 
 ## パネル
 
-`@celesta/components` の `Panel` は、`width` × `height` の枠に背景（`fill`）、枠線（`stroke`・`strokeWidth`。枠の内側に描きます）、角丸（`cornerRadius`）、背景が落とす影（`shadow`）をまとめて描きます。子は `padding`（数値または `{ top, right, bottom, left }`）の内側から配置され、内側の `Center`・`Fit`・`useLayoutBounds()` は余白を除いた領域を参照します。描く順序は影、背景、子、枠線で、内容が枠線を覆うことはありません。`clip` を付けると子を角丸の枠で切り取ります。`anchorX`・`anchorY` は `x`・`y` に置く点で、`rotation` と `scale` もこの点を中心にします。寸法・余白・角丸・枠線の太さは有限の 0 以上でなければなりません。
+`@celesta.studio/components` の `Panel` は、`width` × `height` の枠に背景（`fill`）、枠線（`stroke`・`strokeWidth`。枠の内側に描きます）、角丸（`cornerRadius`）、背景が落とす影（`shadow`）をまとめて描きます。子は `padding`（数値または `{ top, right, bottom, left }`）の内側から配置され、内側の `Center`・`Fit`・`useLayoutBounds()` は余白を除いた領域を参照します。描く順序は影、背景、子、枠線で、内容が枠線を覆うことはありません。`clip` を付けると子を角丸の枠で切り取ります。`anchorX`・`anchorY` は `x`・`y` に置く点で、`rotation` と `scale` もこの点を中心にします。寸法・余白・角丸・枠線の太さは有限の 0 以上でなければなりません。
 
 ```tsx title="説明カード"
 <Panel x={120} y={600} width={720} height={320} padding={32}
@@ -196,7 +196,7 @@ const ripple = defineShader({
 </Panel>
 ```
 
-`@celesta/components` の `Badge` は、文字を実際に計測した寸法の `Panel` に載せたラベルです。日本語・英数字・比例フォントのどれでも背景が文字に合い、文字が変わればその場で背景も変わります。文字の `style`（または `fontFamily`・`fontSize`・`fontWeight`・`color` の省略形）、`Panel` の `fill`・`stroke`・`shadow`・アンカー、`padding`（既定は上下 8・左右 16）、`cornerRadius`（既定は 8。`"pill"` で両端が半円になります。チップ用の別コンポーネントはありません）を受け取ります。`leading` は文字の前に描く装飾（ドットなど）で、幅 `leadingWidth`・1 行分の高さの領域に配置され、文字との間は `gap` です。`maxWidth` を指定すると長い文字は折り返し、バッジは縦に伸びます。
+`@celesta.studio/components` の `Badge` は、文字を実際に計測した寸法の `Panel` に載せたラベルです。日本語・英数字・比例フォントのどれでも背景が文字に合い、文字が変わればその場で背景も変わります。文字の `style`（または `fontFamily`・`fontSize`・`fontWeight`・`color` の省略形）、`Panel` の `fill`・`stroke`・`shadow`・アンカー、`padding`（既定は上下 8・左右 16）、`cornerRadius`（既定は 8。`"pill"` で両端が半円になります。チップ用の別コンポーネントはありません）を受け取ります。`leading` は文字の前に描く装飾（ドットなど）で、幅 `leadingWidth`・1 行分の高さの領域に配置され、文字との間は `gap` です。`maxWidth` を指定すると長い文字は折り返し、バッジは縦に伸びます。
 
 ```tsx title="章ラベルとドット付きのチップ"
 <Badge x={120} y={80} fill="#204060" fontSize={28} color="#FFFFFF">第1章</Badge>

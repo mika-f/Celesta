@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { LineDash } from '@celesta/react';
+import type { LineDash } from '@celesta.studio/react';
 import { contentOf, parseLine } from './helpers.mjs';
 import type { FrameResponse } from './helpers.mjs';
 
@@ -25,7 +25,7 @@ function render(body: string, { allowFailure = false, frames = 1 }: { allowFailu
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Rect, useCurrentFrame } from '@celesta/react'; import { Arrow, Circle, Ellipse, Line, Path, Polyline } from '@celesta/shapes';\n` +
+    `import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react'; import { Arrow, Circle, Ellipse, Line, Path, Polyline } from '@celesta.studio/shapes';\n` +
       `function Body() { const frame = useCurrentFrame(); return <>${body}</>; }\n` +
       `export default function Root() {\n` +
       `  return (\n` +

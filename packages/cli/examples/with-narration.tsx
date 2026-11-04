@@ -18,12 +18,12 @@
 // README.md). Voices: VOICEVOX:四国めたん, VOICEVOX:ずんだもん.
 import * as React from 'react';
 
-import { Assets, Composition, Group, Rect, Text } from '@celesta/react';
-import { Character, CharacterView, DialogueSeries, planDialogue } from '@celesta/character';
-import { prepareNarration } from '@celesta/voicevox';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterSubtitle, CharacterViewReference, DialoguePlan } from '@celesta/character';
-import type { NarratedLine, NarrationLine, VoicevoxVoice } from '@celesta/voicevox';
+import { Assets, Composition, Group, Rect, Text } from '@celesta.studio/react';
+import { Character, CharacterView, DialogueSeries, planDialogue } from '@celesta.studio/character';
+import { prepareNarration } from '@celesta.studio/voicevox';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterSubtitle, CharacterViewReference, DialoguePlan } from '@celesta.studio/character';
+import type { NarratedLine, NarrationLine, VoicevoxVoice } from '@celesta.studio/voicevox';
 
 const WIDTH = 1280;
 const HEIGHT = 720;

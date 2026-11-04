@@ -1,16 +1,16 @@
-`@celesta/math` は動きの数値を扱う小さな依存なしのツールキットです。シード付き乱数、滑らかなノイズ、数値の整形、波、角度、2D 座標を提供します。ランタイムに同梱され、直接インポートできます。
+`@celesta.studio/math` は動きの数値を扱う小さな依存なしのツールキットです。シード付き乱数、滑らかなノイズ、数値の整形、波、角度、2D 座標を提供します。ランタイムに同梱され、直接インポートできます。
 
 ```tsx title="インポート"
-import { random, randomRange, noise } from '@celesta/math';
+import { random, randomRange, noise } from '@celesta.studio/math';
 ```
 
-**File → Set Up TypeScript** でエディタの型を設定します（[最初の React コンポジション](/ja/docs/react-compositions/)参照）。[ウェブエディタ](/ja/#playground)でも `@celesta/react`、`@celesta/math`、`react` を使えます。このパッケージはまだ npm に公開されていません。
+**File → Set Up TypeScript** でエディタの型を設定します（[最初の React コンポジション](/ja/docs/react-compositions/)参照）。[ウェブエディタ](/ja/#playground)でも `@celesta.studio/react`、`@celesta.studio/math`、`react` を使えます。このパッケージはまだ npm に公開されていません。
 
 この章は乱数を扱います。[ノイズと fbm](/ja/docs/math-noise/)では滑らかな揺れ、[整形・波・幾何](/ja/docs/math-shaping/)では日常的なヘルパーを説明します。
 
 ## Math.random() を使わない理由
 
-コンポジションはフレームの関数です。プレビューは逆方向にも移動し、書き出しは順番に進みますが、同じフレームでは同じ絵が必要です。`Math.random()` は呼ぶたびに値が変わるので、スクラブごとに星が飛び回ります。`@celesta/math` の全関数は入力だけで決まる純粋関数で、同じシードならプレビュー・書き出し・各マシンで同じ値を返します。
+コンポジションはフレームの関数です。プレビューは逆方向にも移動し、書き出しは順番に進みますが、同じフレームでは同じ絵が必要です。`Math.random()` は呼ぶたびに値が変わるので、スクラブごとに星が飛び回ります。`@celesta.studio/math` の全関数は入力だけで決まる純粋関数で、同じシードならプレビュー・書き出し・各マシンで同じ値を返します。
 
 ## シード
 
@@ -48,7 +48,7 @@ const size = randomRange(`star-${i}-size`, 2, 6);
 シードが固定なので、星の配置は全フレームで同じです。[`noise`](/ja/docs/math-noise/) による移動だけが変わります。
 
 ```tsx title="ゆっくり動く星空"
-import { noise, randomRange } from '@celesta/math';
+import { noise, randomRange } from '@celesta.studio/math';
 
 function Stars() {
   const frame = useCurrentFrame();
@@ -81,7 +81,7 @@ const spin = 45 * randomSign(`bar-${i}-spin`);     // clockwise or counter-clock
 一様乱数は全値の確率が等しく、人工的に見えることがあります。`randomGaussian` は中心付近に値を集め、`randomInCircle` は円盤の中央に偏らず面積に均等に点を散らします。粒子の広がりが中心に密集した星型ではなく、丸くなります。
 
 ```tsx title="粒子の広がり"
-import { randomGaussian, randomInCircle } from '@celesta/math';
+import { randomGaussian, randomInCircle } from '@celesta.studio/math';
 
 const particles = Array.from({ length: 120 }, (_, i) => {
   const p = randomInCircle(`spark-${i}`, 260, { x: 960, y: 540 });

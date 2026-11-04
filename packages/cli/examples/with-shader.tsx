@@ -1,5 +1,5 @@
-import { Composition, Text, Video, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import { defineShader } from '@celesta/shader';
+import { Composition, Text, Video, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import { defineShader } from '@celesta.studio/shader';
 import rgbSplitSource from './rgb-split.wgsl';
 import rippleSource from './ripple.wgsl';
 

@@ -6,11 +6,11 @@
 // 計画（plan）は prepare() のあとにしかないので、台詞のフレームはモジュールの
 // 読み込み時ではなく、描画中に関数で引く（`line('t1').from` など）。
 
-import { useCurrentFrame } from '@celesta/react';
-import { planDialogue } from '@celesta/character';
-import type { DialoguePlan, PlannedDialogueLine } from '@celesta/character';
-import { prepareNarration } from '@celesta/voicevox';
-import type { NarratedLine, NarrationLine, VoicevoxVoice } from '@celesta/voicevox';
+import { useCurrentFrame } from '@celesta.studio/react';
+import { planDialogue } from '@celesta.studio/character';
+import type { DialoguePlan, PlannedDialogueLine } from '@celesta.studio/character';
+import { prepareNarration } from '@celesta.studio/voicevox';
+import type { NarratedLine, NarrationLine, VoicevoxVoice } from '@celesta.studio/voicevox';
 
 import { LINES } from '../script.ts';
 import type { Line, SceneId } from '../script.ts';

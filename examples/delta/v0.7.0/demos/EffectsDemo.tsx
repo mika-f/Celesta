@@ -1,6 +1,6 @@
-import { Group, Rect, Text, interpolate } from '@celesta/react';
-import type { GroupProps } from '@celesta/react';
-import { Circle } from '@celesta/shapes';
+import { Group, Rect, Text, interpolate } from '@celesta.studio/react';
+import type { GroupProps } from '@celesta.studio/react';
+import { Circle } from '@celesta.studio/shapes';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { Delta } from '../../components/Delta';

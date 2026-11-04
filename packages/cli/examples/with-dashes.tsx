@@ -1,5 +1,5 @@
-import { Composition, Rect, interpolate, useCurrentFrame } from '@celesta/react';
-import { Arrow, Circle, Ellipse, Line, Path, Polyline } from '@celesta/shapes';
+import { Composition, Rect, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { Arrow, Circle, Ellipse, Line, Path, Polyline } from '@celesta.studio/shapes';
 
 // Dashed and dotted strokes. `dash` lists the lengths of the dashes and the
 // gaps between them, in turn; `dashOffset` shifts them along the line, so

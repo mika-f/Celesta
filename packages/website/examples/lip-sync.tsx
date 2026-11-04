@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Assets, Composition } from '@celesta/react';
-import { Character, CharacterView, Dialogue, loadLipSync, loadPsdPreset } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference, LipSyncTrack } from '@celesta/character';
+import { Assets, Composition } from '@celesta.studio/react';
+import { Character, CharacterView, Dialogue, loadLipSync, loadPsdPreset } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference, LipSyncTrack } from '@celesta.studio/character';
 
 const FPS = 30;
 const VOICE = './voices/hello.wav';

@@ -1,4 +1,4 @@
-import { Circle } from '@celesta/shapes';
+import { Circle } from '@celesta.studio/shapes';
 
 // A soft light: a radial gradient from a white core through `color` to
 // nothing. Cheaper than `glow` on dozens of dots.

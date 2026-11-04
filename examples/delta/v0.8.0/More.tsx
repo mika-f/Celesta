@@ -1,8 +1,8 @@
 import { useContext } from 'react';
 import type { ReactNode } from 'react';
-import { Easings, FreezeFrame, Group, Loop, Rect, Text, interpolate, progress, useCurrentFrame, useScene, useTextMetrics } from '@celesta/react';
-import { chromaticAberration, pixelate } from '@celesta/shader';
-import { useFitText } from '@celesta/text';
+import { Easings, FreezeFrame, Group, Loop, Rect, Text, interpolate, progress, useCurrentFrame, useScene, useTextMetrics } from '@celesta.studio/react';
+import { chromaticAberration, pixelate } from '@celesta.studio/shader';
+import { useFitText } from '@celesta.studio/text';
 import { Backdrop } from '../components/Backdrop';
 import { Delta } from '../components/Delta';
 import { C, FONT, W, ease, solid } from '../components/theme';

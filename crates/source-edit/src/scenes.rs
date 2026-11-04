@@ -41,7 +41,7 @@ pub struct SceneItem {
     pub inputs: Vec<(String, EditTarget)>,
 }
 
-/// Every call of `@celesta/react`'s `defineScenes([...])` in `text` (parsed
+/// Every call of `@celesta.studio/react`'s `defineScenes([...])` in `text` (parsed
 /// as `path`'s type; a function of another module or of the file's own is
 /// not it) whose argument is an array literal of object literals with
 /// string-literal ids, in source order. A list holding anything else (a
@@ -94,7 +94,7 @@ pub enum CompositionLength {
 
 /// How `<Composition durationInFrames>` is written in `text` (parsed as
 /// `path`'s type); `None` without a `<Composition>` (from
-/// `@celesta/react`), or when the text does not parse. The first
+/// `@celesta.studio/react`), or when the text does not parse. The first
 /// `<Composition>` counts.
 pub fn composition_length(text: &str, path: &Path) -> Option<CompositionLength> {
     let alloc = Allocator::default();
@@ -190,7 +190,7 @@ fn item(
     }
 }
 
-/// The `defineScenes` calls (of `@celesta/react`'s, through the file's
+/// The `defineScenes` calls (of `@celesta.studio/react`'s, through the file's
 /// import), by the offset of the call, and the `const`s that hold a call,
 /// by the same offset.
 struct Calls<'m> {
@@ -200,7 +200,7 @@ struct Calls<'m> {
 }
 
 impl Calls<'_> {
-    /// Whether `callee` is `@celesta/react`'s `defineScenes`: imported by
+    /// Whether `callee` is `@celesta.studio/react`'s `defineScenes`: imported by
     /// name (under any name), or through `import * as C`.
     fn define_scenes(&self, callee: &Expression<'_>) -> bool {
         let import = match callee.without_parentheses() {

@@ -54,9 +54,9 @@ holdThroughGap は、台詞の後の間も字幕と表情を保持します。ho
   expression: [{ at: 0, expression: 'smile' }, { at: timing.pauses[0].start, expression: 'smug' }] }
 ```
 
-VOICEVOX や AivisSpeech で生成した音声には、WAV に文字起こしの母音を均等に割り振る代わりに、合成に使った AudioQuery と [@celesta/voicevox](/ja/docs/voicevox/) または [@celesta/aivis-speech](/ja/docs/aivis-speech/) を利用できます。
+VOICEVOX や AivisSpeech で生成した音声には、WAV に文字起こしの母音を均等に割り振る代わりに、合成に使った AudioQuery と [@celesta.studio/voicevox](/ja/docs/voicevox/) または [@celesta.studio/aivis-speech](/ja/docs/aivis-speech/) を利用できます。
 
-台本を VOICEVOX Engine に読み上げさせるには、planDialogue() の前に [@celesta/voicevox](/ja/docs/voicevox/) の `prepareNarration()` を呼びます。各台詞を合成して音声をキャッシュし、`audio` と `lipSync` を設定するので、読み上げる文や声を変えた台詞だけが合成し直されます。
+台本を VOICEVOX Engine に読み上げさせるには、planDialogue() の前に [@celesta.studio/voicevox](/ja/docs/voicevox/) の `prepareNarration()` を呼びます。各台詞を合成して音声をキャッシュし、`audio` と `lipSync` を設定するので、読み上げる文や声を変えた台詞だけが合成し直されます。
 
 ## 音声ソフトの書き出しフォルダーを読み込む
 

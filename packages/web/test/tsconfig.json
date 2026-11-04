@@ -1,7 +1,7 @@
 {
   // Type-checks the tests together with the src/ they import, with the
   // package's own settings (DOM and Node types, Bundler resolution). `tsc -b
-  // test` builds @celesta/media-utils first when its dist/ is missing or
+  // test` builds @celesta.studio/media-utils first when its dist/ is missing or
   // stale; this package itself needs no build.
   "extends": "../tsconfig.json",
   "compilerOptions": {

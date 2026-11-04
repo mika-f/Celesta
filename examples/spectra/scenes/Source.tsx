@@ -1,13 +1,13 @@
 // Chapter 4: a camera pushes in on an editor card typing highlighted code,
 // beside a contact sheet of portraits drawn with cover and contain.
-import { Code, codeThemes } from '@celesta/code';
-import { Easings, Group, Image, Rect, Text, interpolate, useCurrentFrame } from '@celesta/react';
-import { Camera } from '@celesta/layout';
-import { useTypewriter } from '@celesta/text';
+import { Code, codeThemes } from '@celesta.studio/code';
+import { Easings, Group, Image, Rect, Text, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { Camera } from '@celesta.studio/layout';
+import { useTypewriter } from '@celesta.studio/text';
 
 import { DIM, FPS, INK, MONO, PALETTE, style } from '../shared';
 
-const SOURCE = `import { Composition, Rect, useCurrentFrame } from '@celesta/react';
+const SOURCE = `import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
 
 export default function Film() {
   const frame = useCurrentFrame();

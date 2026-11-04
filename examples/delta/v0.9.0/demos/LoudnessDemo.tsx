@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Text, interpolate } from '@celesta/react';
-import { Panel } from '@celesta/components';
+import { Easings, Group, Rect, Text, interpolate } from '@celesta.studio/react';
+import { Panel } from '@celesta.studio/components';
 import { C, FONT, solid } from '../../components/theme';
 import { BEFORE_LUFS, MEASURED } from '../loudness';
 import type { DemoProps } from '../program';

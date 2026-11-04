@@ -1,4 +1,4 @@
-import { Composition, Video } from '@celesta/react';
+import { Composition, Video } from '@celesta.studio/react';
 
 export default function Root() {
   return (

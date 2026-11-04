@@ -149,7 +149,7 @@ FALLBACK からビブラフォンを足し、最後はテープが止まって�
 - **実際の機能**: 上に挙げたもののほか、3D のカードと床、LOTTIE の再生（速さ・向き・止める位置）、COMPONENTS・TITLES・THEME の部品と数値（PR の種類は PR のタイトルの接頭辞から数えたもの）、
   STROKES のフチ、METRICS の各値（カーニングは「A」単体と「AV」の中の送り幅の差）、PITCH の音、FALLBACK の書体の振り分けと文字数、EDGES のシェーダー、
   VOICES のファイル・長さ・表情のキュー・声量の測定値と補正量、MORE の SCENES の一覧（`useScene(SCENE_LIST, { clock: 'root' })` で読んだこの映像の章）、LOOP の針、SUBTITLES の字幕（この映像の字幕の 2 つ目）は実際の描画と計算です。
-- **説明のための描画**: EXPORTER の端末と進み具合は描いたもので、イベント名とフィールドは `@celesta/exporter` のもの、フレーム数はこの映像のものです。
+- **説明のための描画**: EXPORTER の端末と進み具合は描いたもので、イベント名とフィールドは `@celesta.studio/exporter` のもの、フレーム数はこの映像のものです。
   静止画のサムネイルはこの映像の Δ01 のフレームです。EDITOR のキャンバスのハンドルと書き戻しは似せて描いたものです。
   HDR VIDEO のトーンカーブは形を示した図で、「203 nits → sRGB 188」は #388 に書かれた値です。VOICES の声は鳴らしていません（BGM が鳴っているため）。
 - **数値**: FASTER は各 PR に書かれた計測値です（#394 は Chrome・Apple silicon の 1 フレームあたり、#390 は 100 万レイヤーあたり）。組ごとに別の尺度です。
@@ -246,7 +246,7 @@ SPECTRUM からはリードを足して 2 回目のドロップにしていま�
 | 34–38 秒 | Δ08 LOOP — `loopNoise` で動く 120 フレームのリングと `inspect.mjs --loop` の結果 |
 | 38–42 秒 | Δ09 10-BIT — 暗いグラデーションのバンディングとディザ、#252 の計測値、`--bit-depth 10` |
 | 42–46 秒 | Δ10 TEMPLATES — `--init --template`、Properties パネル、`--props` で同じテンプレートの値を差し替える |
-| 46–50 秒 | Δ11 PACKAGES — `@celesta/react` から 12 のパッケージが立ち上がり、codemod が import を移す |
+| 46–50 秒 | Δ11 PACKAGES — `@celesta.studio/react` から 12 のパッケージが立ち上がり、codemod が import を移す |
 | 50–54 秒 | Δ12 SPEED — 各 PR の before / after |
 | 54–62 秒 | Δ、タグライン、12 章のサムネイル。最後の和音が鳴り切って終わる |
 

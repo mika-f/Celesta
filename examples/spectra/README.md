@@ -15,7 +15,7 @@ vignette, sit over all of them.
 | IGNITION | 700 circles, six radial-gradient lights with `blur` and `screen` blending, 16 stroked ellipses in a squashed group, a `TextReveal` title with `glow` and `shadow` and animated letter spacing |
 | GEOMETRY | A `<Grid>` of six tiles, one per blend mode, each an isolated, rotated group with a rounded `clip` and ten rotating gradient rects; a 52-line grid; star and polygon `Path`s with gradient fills; a `Polyline` that draws itself on with `glow`; `Arrow`s |
 | TYPOGRAPHY | Twelve words scaling and spacing out every frame; a Japanese paragraph typed on with `useTypewriter` in a `TextBox` with phrase line breaking; a `useCountUp` counter with a stroke and a shadow; a ticker clipped to a band |
-| SOURCE | A `<Camera>` pushing in with shake over an editor card (`shadow` and `glow`) typing highlighted TSX with `@celesta/code`, beside portraits drawn with `fit="cover"` and `"contain"` in rounded clips |
+| SOURCE | A `<Camera>` pushing in with shake over an editor card (`shadow` and `glow`) typing highlighted TSX with `@celesta.studio/code`, beside portraits drawn with `fit="cover"` and `"contain"` in rounded clips |
 | SIGNAL | 900 rotating particles, 48 gradient bars, three line charts drawing on, a donut of path arcs with a shadow, count-up metric cards, and a logo that focuses out of a `blur` |
 
 Every value derives from the frame, so any frame renders on its own. Fonts

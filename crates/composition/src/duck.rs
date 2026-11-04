@@ -1,6 +1,6 @@
 //! Ducking: a clip turned down while clips of other groups play.
 //!
-//! `@celesta/media-utils`' `duckEnvelope` ports [`AudioDuck::resolve`] and
+//! `@celesta.studio/media-utils`' `duckEnvelope` ports [`AudioDuck::resolve`] and
 //! [`duck_curve`]; `tests/fixtures/duck-curves.json` pins the two.
 
 use serde::{Deserialize, Serialize};

@@ -32,11 +32,11 @@
 
 ## 本物と演出
 
-- **実際の機能**: `@celesta/voicevox` の `lipSyncFromVoicevox()` による口パク、`@celesta/character` の
+- **実際の機能**: `@celesta.studio/voicevox` の `lipSyncFromVoicevox()` による口パク、`@celesta.studio/character` の
   PSD 立ち絵（`Character` / `CharacterView`、表情ごとの眉・頬・口のレイヤー、目のレイヤーによる自動まばたき）、
   `planDialogue()` と `<DialogueSeries>` による台本のタイミングと字幕、Google Fonts の `<Font>` 読み込み
   （和文は `text=` で使う文字だけにサブセット）、`<Audio volume>` のキーフレームによる BGM のフェードアウト。
-  背景のドット（464 個）は `<Instances>` の 1 レイヤーで描いています。コード欄は `@celesta/code` の
+  背景のドット（464 個）は `<Instances>` の 1 レイヤーで描いています。コード欄は `@celesta.studio/code` の
   `highlightCode()` で字句解析し、作例の配色の `CodeTheme` で色分けした `colorRuns` と `visibleCharacters` で 1 行ずつ描いています。
 - **パネルの表示も実データ**: 03 のモーラと口の形は再生中の行の AudioQuery から、04 の目と口は立ち絵を動かしているのと
   同じスケジュールと口パクから、05 のバーは `planDialogue()` の結果から描いています。

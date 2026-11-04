@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Easings, Group, cueAt, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, cueAt, progress, useBeat, useCurrentFrame } from '@celesta.studio/react';
 import { BPM } from '../constants';
 import { fx } from '../fx';
 import { SCENE_CUES } from '../timeline';

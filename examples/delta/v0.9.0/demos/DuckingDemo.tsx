@@ -1,5 +1,5 @@
-import { Group, Rect, Text } from '@celesta/react';
-import { Polyline } from '@celesta/shapes';
+import { Group, Rect, Text } from '@celesta.studio/react';
+import { Polyline } from '@celesta.studio/shapes';
 import { C, FONT, solid } from '../../components/theme';
 import { BED, duckAt, toDb } from '../mix';
 import type { DemoProps } from '../program';

@@ -1,5 +1,5 @@
-import { lerp } from '@celesta/math';
-import { Easings, Group, Rect, progress } from '@celesta/react';
+import { lerp } from '@celesta.studio/math';
+import { Easings, Group, Rect, progress } from '@celesta.studio/react';
 import { Ribbon } from '../components/Ribbon';
 import { Type } from '../components/Type';
 import { FPS, H, INK, RED, W } from '../constants';

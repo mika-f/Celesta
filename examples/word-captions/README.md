@@ -3,7 +3,7 @@
 Captions lit word by word, the way vertical short videos set them: the word
 being spoken changes color, grows, or sits on a band, and a long line is
 shown a page at a time. Fifteen seconds at 30 fps, 1080 × 1920, in three
-five-second takes on `<CaptionTrack>` from `@celesta/components`.
+five-second takes on `<CaptionTrack>` from `@celesta.studio/components`.
 
 ![poster](poster.jpg)
 
@@ -20,7 +20,7 @@ after a word that ends a sentence.
 
 The band and the growth are placed from per-glyph metrics, so they show in
 the Celesta desktop app and the exporter; the browser renderer
-(`@celesta/web`) changes only the colors.
+(`@celesta.studio/web`) changes only the colors.
 
 - `film.tsx`: the composition. Open it with Celesta using **File → Open…**.
   The fonts come from Google Fonts, so the first export needs a network

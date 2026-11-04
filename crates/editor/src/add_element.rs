@@ -446,8 +446,8 @@ pub(crate) fn drawn_outline(
 /// Each Add menu item and why it is disabled, in menu order: `reason` (no
 /// parent, the scope, the timing, a group turned in 3D) for all, else
 /// `lock_of` (`add_lock`'s text). A kind whose module the file doesn't
-/// import yet is enabled: adding it imports it, `@celesta/shapes` being
-/// bundled with the runtime like `@celesta/react`.
+/// import yet is enabled: adding it imports it, `@celesta.studio/shapes` being
+/// bundled with the runtime like `@celesta.studio/react`.
 pub(crate) fn menu_items(
     reason: Option<&str>,
     lock_of: impl Fn(NewKind) -> Option<String>,
@@ -2745,7 +2745,7 @@ mod tests {
         ];
 
         // Ellipse and Circle are enabled whether or not the file imports
-        // `@celesta/shapes` yet: adding one imports it.
+        // `@celesta.studio/shapes` yet: adding one imports it.
         let open = menu_items(None, no_lock);
         assert_eq!(open, kinds.map(|kind| (kind, None)).to_vec());
 

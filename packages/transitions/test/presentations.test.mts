@@ -3,10 +3,10 @@ import { test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Audio, Composition, Group, Rect, Text, useCurrentFrame } from '@celesta/react';
-import type { Layer, LayerFilter, Paint, PathCommand } from '@celesta/react';
-import { Fit, SafeArea } from '@celesta/layout';
-import { defineShader } from '@celesta/shader';
+import { Audio, Composition, Group, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
+import type { Layer, LayerFilter, Paint, PathCommand } from '@celesta.studio/react';
+import { Fit, SafeArea } from '@celesta.studio/layout';
+import { defineShader } from '@celesta.studio/shader';
 import {
   TransitionSeries,
   blur,
@@ -33,8 +33,8 @@ import type {
   TransitionSeriesTransitionProps,
   TransitionSeriesType,
 } from '../src/index.js';
-import { mount } from '@celesta/react/internal';
-import type { MountedComposition } from '@celesta/react/internal';
+import { mount } from '@celesta.studio/react/internal';
+import type { MountedComposition } from '@celesta.studio/react/internal';
 import { childrenOf, contentOf } from './helpers.mjs';
 
 const h = React.createElement;

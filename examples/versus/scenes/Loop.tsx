@@ -1,5 +1,5 @@
-import { BarChart } from '@celesta/components';
-import { Easings, Group, Rect, progress, useCurrentFrame } from '@celesta/react';
+import { BarChart } from '@celesta.studio/components';
+import { Easings, Group, Rect, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Footnote, Header, ToolTag } from '../components/Chrome';
 import { Label } from '../components/Label';
 import { C, FONT, ORDER, TOOL, type ToolId } from '../constants';

@@ -6,7 +6,7 @@
 // come from `timingFromVoicevox`, so the mouth and any other use of the
 // timing (lit moras, a face change at a pause) agree.
 
-import { lipSyncFromSpeechTiming, speechVowelShape, type LipSyncTrack } from '@celesta/character';
+import { lipSyncFromSpeechTiming, speechVowelShape, type LipSyncTrack } from '@celesta.studio/character';
 
 import type { VoicevoxAudioQuery } from './query.js';
 import { timingFromVoicevox } from './timing.js';
@@ -17,7 +17,7 @@ export type VoicevoxLipSyncOptions = VoicevoxTimingOptions;
 
 /**
  * Mouth shape for a VOICEVOX vowel phoneme: `speechVowelShape` from
- * `@celesta/character`. Devoiced vowels (`A I U E O`) keep their vowel's
+ * `@celesta.studio/character`. Devoiced vowels (`A I U E O`) keep their vowel's
  * shape; `N` (ん), `cl` (っ), `pau`, `sil` and anything unknown are `closed`.
  */
 export const voicevoxVowelShape = speechVowelShape;

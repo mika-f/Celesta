@@ -1,4 +1,4 @@
-import { Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { BODY } from '../components/Panel';
 import { C, SAFE, SAFE_CX, SAFE_W } from '../constants';

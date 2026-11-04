@@ -1,7 +1,7 @@
 //! Built-in stylize effects and the chroma key (`builtin_effect.wgsl`). The
 //! CPU reference renderer refuses filters, so these check what each effect
 //! is defined to do; `write_web_effect_fixtures` records what this GPU draws
-//! for `@celesta/web`'s test of the same arithmetic.
+//! for `@celesta.studio/web`'s test of the same arithmetic.
 
 use super::*;
 use celesta_composition::{GradientStop, LayerFilter};
@@ -131,7 +131,7 @@ fn render(renderer: &mut GpuRenderer, size: u32, layer: Layer) -> GpuFrame {
 /// changing `builtin_effect.wgsl`:
 /// `cargo test -p celesta-gpu-renderer write_web_effect_fixtures -- --ignored`.
 #[test]
-#[ignore = "writes fixtures for @celesta/web's tests"]
+#[ignore = "writes fixtures for @celesta.studio/web's tests"]
 fn write_web_effect_fixtures() {
     let Some(mut renderer) = renderer(transparent()) else {
         return;

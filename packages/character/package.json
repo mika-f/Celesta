@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/character",
+  "name": "@celesta.studio/character",
   "version": "0.9.0",
   "private": true,
   "description": "Characters, portraits, dialogue with subtitles, lip sync, and blinking for Celesta compositions.",
@@ -22,16 +22,16 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@celesta/math": "workspace:*",
-    "@celesta/media-utils": "workspace:*",
-    "@celesta/text": "workspace:*"
+    "@celesta.studio/math": "workspace:*",
+    "@celesta.studio/media-utils": "workspace:*",
+    "@celesta.studio/text": "workspace:*"
   },
   "peerDependencies": {
-    "@celesta/react": "0.0.0",
+    "@celesta.studio/react": "0.0.0",
     "react": "^19.3.0"
   },
   "devDependencies": {
-    "@celesta/react": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",

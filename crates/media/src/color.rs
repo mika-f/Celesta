@@ -2,7 +2,7 @@
 //! 8-bit sRGB frames the renderers composite.
 //!
 //! The conversion reproduces what Chrome does when a page draws such a video
-//! onto an SDR canvas, so a composition looks the same in `@celesta/web`:
+//! onto an SDR canvas, so a composition looks the same in `@celesta.studio/web`:
 //! Skia's Reference White Tone Mapping Operator (RWTMO, SMPTE ST 2094-50
 //! Annex C) at a targeted HDR headroom of 0, applied to maxRGB in linear
 //! BT.2020 light relative to an HDR reference white of 203 nits, then a

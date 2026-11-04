@@ -1,4 +1,4 @@
-import { Group, Rect, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Group, Rect, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { BODY, Panel } from '../components/Panel';
 import { CAST } from '../character';

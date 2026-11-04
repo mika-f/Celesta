@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { Group, Rect } from '@celesta/react';
+import { Group, Rect } from '@celesta.studio/react';
 import {
   ThemeContext,
   color,
@@ -10,8 +10,8 @@ import {
   registerPrimitiveProperties,
   required,
   themedShapePaint,
-} from '@celesta/react/internal';
-import type { CommonProps, LineCap, LineJoin, Paint, PathCommand } from '@celesta/react';
+} from '@celesta.studio/react/internal';
+import type { CommonProps, LineCap, LineJoin, Paint, PathCommand } from '@celesta.studio/react';
 
 import { trimCommands, trimStartIntoSubpath } from './path-geometry';
 

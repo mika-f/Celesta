@@ -1,5 +1,5 @@
 // Unit tests for the engine-neutral speech timing. The adapters that produce
-// timings (@celesta/voicevox, @celesta/aivis-speech) test their own times.
+// timings (@celesta.studio/voicevox, @celesta.studio/aivis-speech) test their own times.
 
 import assert from 'node:assert/strict';
 import { test } from 'vitest';

@@ -165,7 +165,7 @@ Celesta-export --json --loudness -16 --true-peak -2 --react film.tsx film.mp4
   about 0.5 dB either way. Give `--true-peak -2` when the file itself must
   read under -1 dBTP.
 - The MCP `export_video` tool takes `loudness` (a number or `"streaming"` /
-  `"broadcast"`), `truePeak`, and `peakHandling`; `@celesta/exporter` takes
+  `"broadcast"`), `truePeak`, and `peakHandling`; `@celesta.studio/exporter` takes
   the same names.
 
 ## Still images
@@ -322,7 +322,7 @@ closing it, stops the export before its next frame: the result is a
 stay. Since a closed stdin also cancels, an exporter started this way stops
 when the process that started it exits.
 
-From Node.js, `@celesta/exporter` (`packages/exporter`) runs the exporter
+From Node.js, `@celesta.studio/exporter` (`packages/exporter`) runs the exporter
 this way and returns the result as typed objects; see its README.
 
 ## Progress output

@@ -2,8 +2,8 @@
 // 真っ黒 → Rect 一枚 → グラデーション → 写真 → 写真がぼける、の順に、台詞に
 // 合わせて重なっていく。2 つのシーンにまたがるので、シーンとは別に描く。
 
-import { Easings, Group, Image, Rect, interpolate, progress, useCurrentFrame } from '@celesta/react';
-import { Camera } from '@celesta/layout';
+import { Easings, Group, Image, Rect, interpolate, progress, useCurrentFrame } from '@celesta.studio/react';
+import { Camera } from '@celesta.studio/layout';
 
 import { line, partway, sceneStart } from '../timing.ts';
 import { ASSET, CANVAS, CLAMP, COLOR } from '../theme.ts';

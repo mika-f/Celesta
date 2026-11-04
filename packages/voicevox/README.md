@@ -1,14 +1,14 @@
-# @celesta/voicevox
+# @celesta.studio/voicevox
 
 VOICEVOX AudioQuery timing, lip sync, and cached script synthesis for Celesta
 React compositions, for VOICEVOX Engine. Engines that accept the same query
 but choose their own phoneme lengths are not timed exactly; for AivisSpeech,
-use `@celesta/aivis-speech`.
-Dialogue components, WAV lip sync, and `LipSyncTrack` are in `@celesta/character`.
+use `@celesta.studio/aivis-speech`.
+Dialogue components, WAV lip sync, and `LipSyncTrack` are in `@celesta.studio/character`.
 
 ```tsx
-import { Dialogue } from '@celesta/character';
-import { lipSyncFromVoicevox } from '@celesta/voicevox';
+import { Dialogue } from '@celesta.studio/character';
+import { lipSyncFromVoicevox } from '@celesta.studio/voicevox';
 import helloQuery from './voices/hello.json';
 
 const hello = lipSyncFromVoicevox(helloQuery);
@@ -28,7 +28,7 @@ Pass `{ frameRate: null }` to use unrounded lengths, or
 `prepareNarration(lines, options)` synthesizes a script with a running local
 VOICEVOX Engine during `prepare()` and returns the lines with `audio`,
 `lipSync`, and `narration` (the WAV's measured `duration` and the full final
-`query`) set, ready for `planDialogue()` from `@celesta/character`.
+`query`) set, ready for `planDialogue()` from `@celesta.studio/character`.
 
 ```ts
 const lines = await prepareNarration([
@@ -62,7 +62,7 @@ timing the lip-sync track uses, so lit moras or a face change at a pause stay
 in step with the mouth.
 
 ```ts
-import { lipSyncFromVoicevox, timingFromVoicevox } from '@celesta/voicevox';
+import { lipSyncFromVoicevox, timingFromVoicevox } from '@celesta.studio/voicevox';
 
 const timing = timingFromVoicevox(helloQuery);
 const hello = lipSyncFromVoicevox(timing);
@@ -80,8 +80,8 @@ zero frames stay in the lists with `start === end`. Pass options to
 `timingFromVoicevox`, not to `lipSyncFromVoicevox(timing)`, which throws when
 given both.
 
-The timing is a `SpeechTiming` from `@celesta/character` with `exact: true`,
-the shape `@celesta/aivis-speech` returns too (with `exact: false`), so code
+The timing is a `SpeechTiming` from `@celesta.studio/character` with `exact: true`,
+the shape `@celesta.studio/aivis-speech` returns too (with `exact: false`), so code
 that reads timings takes either engine's. Its mouth rules are
 `lipSyncFromSpeechTiming`'s, and `voicevoxVowelShape` is `speechVowelShape`.
 
@@ -94,7 +94,7 @@ Exports: `prepareNarration`, `NarrationError`, `timingFromVoicevox`,
 `VoicevoxTimedPause`, `VoicevoxTimedPhoneme`, `VoicevoxSpan`,
 `VoicevoxTimingOptions`, and `VoicevoxLipSyncOptions` (the same options).
 
-Building `@celesta/cli` also builds this package and stages its TypeScript
+Building `@celesta.studio/cli` also builds this package and stages its TypeScript
 support. Celesta's desktop runtime ships it separately and the CLI resolves it
 when a composition imports it. **File > Set Up TypeScript** includes its types
 and import mapping, without requiring an install in the composition's project.
@@ -103,8 +103,8 @@ The package is private and has not been published to npm.
 ```sh
 pnpm install
 pnpm --dir packages/react run codegen
-pnpm --filter "@celesta/cli..." run build
+pnpm --filter "@celesta.studio/cli..." run build
 pnpm --dir packages/voicevox run test
 ```
 
-`@celesta/character` does not depend on or re-export the adapter.
+`@celesta.studio/character` does not depend on or re-export the adapter.

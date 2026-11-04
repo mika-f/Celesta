@@ -1,13 +1,13 @@
 {
-  "name": "@celesta/example-shorts-explainer",
+  "name": "@celesta.studio/example-shorts-explainer",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@celesta/character": "workspace:*",
-    "@celesta/code": "workspace:*",
-    "@celesta/react": "workspace:*",
-    "@celesta/shapes": "workspace:*",
-    "@celesta/voicevox": "workspace:*",
+    "@celesta.studio/character": "workspace:*",
+    "@celesta.studio/code": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/shapes": "workspace:*",
+    "@celesta.studio/voicevox": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

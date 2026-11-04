@@ -1,4 +1,4 @@
-import { Composition, Group, Rect, Scenes, Sequence, Text, defineScenes, interpolate, useCurrentFrame } from '@celesta/react';
+import { Composition, Group, Rect, Scenes, Sequence, Text, defineScenes, interpolate, useCurrentFrame } from '@celesta.studio/react';
 
 // Three scenes in a scene list written out as numbers, for trying timing on
 // the editor's timeline: drag a scene's end on the Chapters row, drag the

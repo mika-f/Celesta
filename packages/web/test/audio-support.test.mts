@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import { duckEnvelope } from '@celesta/media-utils/duck';
+import { duckEnvelope } from '@celesta.studio/media-utils/duck';
 import { assertBrowserMixable, audibleEnd, decodeSources, duckCurves, fadeGains, scheduleClip } from '../src/audio-support.js';
 import { automationEvents } from '../src/keyframes.js';
 import type { AutomationEvent } from '../src/keyframes.js';

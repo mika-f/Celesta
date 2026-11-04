@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Layer } from '@celesta/react';
+import type { Layer } from '@celesta.studio/react';
 import type { FrameMessage, FrameRequest } from '../src/cli.js';
 import { contentOf } from './layer-content.mjs';
 
@@ -19,7 +19,7 @@ function render(request: FrameRequest): Layer[] {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-compact-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, `
-    import { Composition, Group, Rect } from '@celesta/react';
+    import { Composition, Group, Rect } from '@celesta.studio/react';
     export default function Film() {
       return <Composition width={64} height={64} fps={30} durationInFrames={1}>
         <Rect id="plain" width={4} height={4} fill="#ffffff" />

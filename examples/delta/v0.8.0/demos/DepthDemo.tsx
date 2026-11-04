@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, Text, interpolate } from '@celesta/react';
+import { Easings, Group, Rect, Text, interpolate } from '@celesta.studio/react';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { Delta } from '../../components/Delta';

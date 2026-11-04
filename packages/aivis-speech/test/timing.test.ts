@@ -1,14 +1,14 @@
 // Unit tests for timingFromAivisSpeech: pnpm --dir packages/aivis-speech test
 //
 // The WAVs are synthesized by fixtures/voice.ts from known phoneme lengths
-// (the zundamon line VOICEVOX Engine reads in @celesta/voicevox's tests), so
+// (the zundamon line VOICEVOX Engine reads in @celesta.studio/voicevox's tests), so
 // the estimated times can be compared with the truth.
 
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
-import { decodeWav } from '@celesta/character';
-import type { SpeechTiming } from '@celesta/character';
+import { decodeWav } from '@celesta.studio/character';
+import type { SpeechTiming } from '@celesta.studio/character';
 import { timingFromAivisSpeech } from '../src/index.js';
 import { KONNICHIWA, encodeWav, queryOf, synthesize } from './fixtures/voice.js';
 

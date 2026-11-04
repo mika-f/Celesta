@@ -1,6 +1,6 @@
-import { Easings, progress } from '@celesta/react';
-import { random } from '@celesta/math';
-import { Path } from '@celesta/shapes';
+import { Easings, progress } from '@celesta.studio/react';
+import { random } from '@celesta.studio/math';
+import { Path } from '@celesta.studio/shapes';
 
 // Speed lines flying out from a point over one beat: thin wedges, one path.
 // `seed` picks a new set of lengths and angles for every beat.

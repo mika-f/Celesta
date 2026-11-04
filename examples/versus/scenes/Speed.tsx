@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, progress, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Easings, Group, Rect, progress, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { Footnote, Header, ToolTag } from '../components/Chrome';
 import { Label } from '../components/Label';
 import { C, ORDER, TOOL } from '../constants';

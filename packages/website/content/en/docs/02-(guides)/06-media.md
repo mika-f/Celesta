@@ -16,7 +16,7 @@ frameKeyframes(keys, { fps, origin? }) builds volume, playbackRate, or pitch key
 
 ## Show media in a frame
 
-`MediaFrame` from `@celesta/components` fits an image or a video into a frame of a given `width` and `height`, drawn by `Panel` (background, border over the media, rounded corners, shadow, and a `padding` mat), with an optional `caption` under it. `kind` (`"image"` or `"video"`) says which the media is; it is never guessed from the file name. `fit="contain"` (the default) shows all of it, centred; `"cover"` fills the frame, cropped. A `Video` has no `fit`, so `MediaFrame` scales a video to fit itself and needs its size as `sourceWidth` and `sourceHeight`: read them once with `preloadMedia()` in `prepare()`. `startFrom`, `playbackRate`, `volume`, `muted`, and `loop` reach the `Video` unchanged, so it starts with its `Sequence` and sounds as a bare `Video` would. Only the plain frame exists for now.
+`MediaFrame` from `@celesta.studio/components` fits an image or a video into a frame of a given `width` and `height`, drawn by `Panel` (background, border over the media, rounded corners, shadow, and a `padding` mat), with an optional `caption` under it. `kind` (`"image"` or `"video"`) says which the media is; it is never guessed from the file name. `fit="contain"` (the default) shows all of it, centred; `"cover"` fills the frame, cropped. A `Video` has no `fit`, so `MediaFrame` scales a video to fit itself and needs its size as `sourceWidth` and `sourceHeight`: read them once with `preloadMedia()` in `prepare()`. `startFrom`, `playbackRate`, `volume`, `muted`, and `loop` reach the `Video` unchanged, so it starts with its `Sequence` and sounds as a bare `Video` would. Only the plain frame exists for now.
 
 ```tsx title="A clip in a rounded frame"
 let clip: MediaInfo;
@@ -69,7 +69,7 @@ By default an `Audio`'s pitch follows its speed, like tape: `playbackRate={1.25}
 - `pitch` transposes the clip in semitones. It defaults to 0 and ranges from −24 to 24; a fraction is cents, so `0.5` is 50 cents. It can be a number or keyframes, built with `frameKeyframes` like `volume`. Outside the range, the React path clamps to ±24 and a project JSON file fails validation.
 - `preservePitch` defaults to `false`: `playbackRate` changes speed and pitch together, as before. When `true`, `playbackRate` changes only how long the clip takes, and `pitch` alone sets the pitch.
 - The pitch you hear is multiplied by `2^(pitch / 12)`, times `playbackRate` unless `preservePitch` is set. `pitch={12}` is one octave up.
-- Only `Audio` takes these props. The soundtrack of a `Video` and the voices of a `Dialogue` do not. The preview and the export sound the same, but the browser exporter in `@celesta/web` rejects a clip that uses them, with the error "Audio pitch and preservePitch are not supported by browser export yet."
+- Only `Audio` takes these props. The soundtrack of a `Video` and the voices of a `Dialogue` do not. The preview and the export sound the same, but the browser exporter in `@celesta.studio/web` rejects a clip that uses them, with the error "Audio pitch and preservePitch are not supported by browser export yet."
 
 ## Size a scene to its media
 

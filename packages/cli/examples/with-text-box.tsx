@@ -1,6 +1,6 @@
-import { Composition, Font, Group, Rect, registerComponent } from '@celesta/react';
-import { TextBox } from '@celesta/text';
-import type { ComponentPropertySchema } from '@celesta/react';
+import { Composition, Font, Group, Rect, registerComponent } from '@celesta.studio/react';
+import { TextBox } from '@celesta.studio/text';
+import type { ComponentPropertySchema } from '@celesta.studio/react';
 
 // A lower-third caption: change only `text`, and the font size follows from
 // the box. Short text uses 64px; longer text shrinks to fit two lines, down

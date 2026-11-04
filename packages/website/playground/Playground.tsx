@@ -1,7 +1,7 @@
 import { Download, Pause, Play } from 'lucide-react';
 import { cloneElement, lazy, Suspense, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import initialSource from './demo/title-scene.tsx?raw';
-import { Engine, SceneCanvas, exportMp4, type CompositionConfig } from '@celesta/web';
+import { Engine, SceneCanvas, exportMp4, type CompositionConfig } from '@celesta.studio/web';
 import type { PlaygroundCopy, Slot } from './copy.ts';
 const SourceEditor = lazy(() => import('./SourceEditor.tsx'));
 

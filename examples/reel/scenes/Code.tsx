@@ -1,6 +1,6 @@
 import type { Run } from '../components/Mono';
-import { clamp, clamp01 } from '@celesta/math';
-import { Easings, Group, Rect, Text, progress, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { clamp, clamp01 } from '@celesta.studio/math';
+import { Easings, Group, Rect, Text, progress, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { Mono, runLength } from '../components/Mono';
 import { Swap } from '../components/Swap';
 import { Tag } from '../components/Tag';
@@ -26,7 +26,7 @@ const K = {
 function codeLines(size: string, label: string): Run[][] {
   const { kw, id, fn, p, num, str } = K;
   return [
-    [kw('import'), p(' { '), id('Text'), p(', '), id('spring'), p(', '), id('useCurrentFrame'), p(' } '), kw('from'), p(' '), str("'@celesta/react'"), p(';')],
+    [kw('import'), p(' { '), id('Text'), p(', '), id('spring'), p(', '), id('useCurrentFrame'), p(' } '), kw('from'), p(' '), str("'@celesta.studio/react'"), p(';')],
     [],
     [kw('export default function'), p(' '), fn('Title'), p('() {')],
     [p('  '), kw('const'), p(' '), id('frame'), p(' = '), fn('useCurrentFrame'), p('();')],

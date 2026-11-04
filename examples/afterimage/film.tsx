@@ -1,4 +1,4 @@
-import { Assets, Audio, Composition, Font, Rect, useCurrentFrame } from '@celesta/react';
+import { Assets, Audio, Composition, Font, Rect, useCurrentFrame } from '@celesta.studio/react';
 import { DURATION, FPS, H, INK, PAPER, RED, W } from './constants';
 import { Echo } from './scenes/Echo';
 import { Impact } from './scenes/Impact';

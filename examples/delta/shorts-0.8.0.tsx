@@ -1,5 +1,5 @@
-import { Audio, Composition } from '@celesta/react';
-import { DebugOverlay } from '@celesta/debug';
+import { Audio, Composition } from '@celesta.studio/react';
+import { DebugOverlay } from '@celesta.studio/debug';
 import { FPS } from './components/theme';
 import { PitchRiff } from './v0.8.0/demos/PitchDemo';
 import { FilmContext } from './v0.8.0/film-context';

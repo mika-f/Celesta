@@ -5,12 +5,12 @@ import { test } from 'vitest';
 import React from 'react';
 import type { ReactNode } from 'react';
 
-import { Assets, Composition, Span, Text, Theme } from '@celesta/react';
-import type { AssetReference, Layer, LayerContent, Paint, TextMetrics, TextStyle } from '@celesta/react';
+import { Assets, Composition, Span, Text, Theme } from '@celesta.studio/react';
+import type { AssetReference, Layer, LayerContent, Paint, TextMetrics, TextStyle } from '@celesta.studio/react';
 import { Character, CharacterView, Dialogue } from '../src/index.js';
 import type { CharacterSubtitle, CharacterViewReference, DialogueProps, SubtitleRenderProps } from '../src/index.js';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 
 const h = React.createElement;
 const fonts = { serif: 'Noto Serif JP', bold: 'Inter' };

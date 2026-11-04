@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { clamp01, random } from '@celesta/math';
-import { Easings, Group, Rect, progress, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { clamp01, random } from '@celesta.studio/math';
+import { Easings, Group, Rect, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { CHAPTERS } from '../chapters';
 import { Label } from '../components/Label';
 import { BEAT, C, H, W } from '../constants';

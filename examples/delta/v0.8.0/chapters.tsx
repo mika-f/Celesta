@@ -1,4 +1,4 @@
-import { Span } from '@celesta/react';
+import { Span } from '@celesta.studio/react';
 import type { Chapter } from '../components/ChapterShell';
 import { C } from '../components/theme';
 import { ComponentsDemo } from './demos/ComponentsDemo';
@@ -37,7 +37,7 @@ export const CHAPTERS: readonly Chapter[] = [
     body: 'Lottie draws a Bodymovin file at every frame as paths, groups and masks, so scrubbing equals playing, at any speed, in any direction.',
     file: 'film.tsx',
     code: "import cat from './loader-cat.json';\n<Lottie data={cat} playbackRate={2} />",
-    merged: [[409, '@celesta/lottie']],
+    merged: [[409, '@celesta.studio/lottie']],
     meta: 'Loader cat · Lottie Simple License',
     Demo: LottieDemo,
   },
@@ -45,7 +45,7 @@ export const CHAPTERS: readonly Chapter[] = [
     key: 'components',
     title: 'COMPONENTS',
     headline: <>The parts you kept <Span style={accent}>rewriting</Span>.</>,
-    body: '@celesta/components: counters, stat cards, bar charts, badges, panels, patterns, frame chrome and media frames, each measured, timed and themed.',
+    body: '@celesta.studio/components: counters, stat cards, bar charts, badges, panels, patterns, frame chrome and media frames, each measured, timed and themed.',
     file: 'film.tsx',
     code: '<StatCard label="PULL REQUESTS" value={49}\n  delay={4} fill="orange" />',
     merged: [[432, 'Counter, StatCard, BarChart'], [431, 'Badge'], [426, 'Panel'], [424, 'PatternBackground'], [423, 'FrameChrome'], [436, 'MediaFrame']],
@@ -127,11 +127,11 @@ export const CHAPTERS: readonly Chapter[] = [
     key: 'node api',
     title: 'EXPORTER',
     headline: <>Export <Span style={accent}>from Node.js</Span>.</>,
-    body: '@celesta/exporter runs the exporter for you: videos, stills and composition info, with progress events and an AbortSignal. Stills can be JPEG or WebP.',
+    body: '@celesta.studio/exporter runs the exporter for you: videos, stills and composition info, with progress events and an AbortSignal. Stills can be JPEG or WebP.',
     file: 'export.mjs',
     language: 'ts',
     code: "await exportVideo({ source: 'film-0.8.0.tsx',\n  output: 'delta.mp4', onProgress, signal });",
-    merged: [[400, '@celesta/exporter'], [381, 'JPEG, WebP'], [382, 'MCP stills'], [398, '--loop']],
+    merged: [[400, '@celesta.studio/exporter'], [381, 'JPEG, WebP'], [382, 'MCP stills'], [398, '--loop']],
     Demo: ExporterDemo,
   },
   {

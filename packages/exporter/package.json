@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/exporter",
+  "name": "@celesta.studio/exporter",
   "version": "0.9.0",
   "private": true,
   "description": "Typed Node.js API for exporting Celesta compositions to video and stills through celesta-exporter.",

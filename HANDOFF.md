@@ -44,9 +44,9 @@ pnpm run build:runtime
 ```
 
 `celesta-react-bridge` spawns the compiled `packages/cli/dist/cli.js`.
-`pnpm run build:runtime` runs Turborepo's `build` for `@celesta/cli` and every
+`pnpm run build:runtime` runs Turborepo's `build` for `@celesta.studio/cli` and every
 package it depends on, in dependency order; `pnpm run test:runtime` runs their
-tests. `@celesta/react`'s build first runs its `codegen` script, which generates
+tests. `@celesta.studio/react`'s build first runs its `codegen` script, which generates
 `packages/react/src/generated/*.ts` from Rust composition/project types through
 the `codegen` feature and ts-rs. Both `src/generated/` and `dist/` are
 gitignored build output. Turborepo caches `codegen` by the Cargo manifests,
@@ -57,28 +57,33 @@ directory and maps large integers to TypeScript `number` for the bridge's JSON
 protocol.
 
 The Celesta packages are not published to npm: user entries resolve `react`
-and every `@celesta/*` package to the bundled runtime, which is `@celesta/cli`
+and every `@celesta.studio/*` package to the bundled runtime, which is `@celesta.studio/cli`
 and its dependency closure. The CLI build stages their declarations,
 `@types/react`, `@types/node`, and a base tsconfig in `dist/project-types/`.
 File > Set Up TypeScript copies these into a project's `.celesta/`; the folder
 variant works before an entry exists. Opening a project refreshes the types
 when the staged content hash changes.
+The packages were named `@celesta/*` before they took the `@celesta.studio`
+npm scope; the CLI, `@celesta.studio/web`, the staged tsconfig, and
+`celesta-source-edit` still accept the old names, and the editor and the
+exporter warn about each file that uses them. See
+[`docs/handoff/2026-11-04-celesta-studio-scope.md`](docs/handoff/2026-11-04-celesta-studio-scope.md).
 
-`@celesta/react` is the core: the reconciler, the scene walker, primitives,
+`@celesta.studio/react` is the core: the reconciler, the scene walker, primitives,
 hooks, and animation helpers. The other packages build on its public API and
-on `@celesta/react/internal` (render, contexts, text measurement, media probe,
+on `@celesta.studio/react/internal` (render, contexts, text measurement, media probe,
 host element registration), which is not for compositions. A package that
 renders host elements of its own registers them with `registerHostElement()`
-when its module loads, as `@celesta/character` does for `<CharacterView>` and
+when its module loads, as `@celesta.studio/character` does for `<CharacterView>` and
 `<Dialogue>`; the walker rejects unregistered element types. State that the
 CLI installs (the text measurer and media probe) lives in the core.
 Ready-made, high-level components that compose the primitives (such as
-`<FrameChrome>`) go in `@celesta/components` rather than the core, and use
-only the public APIs of the core and the other `@celesta/*` packages, never
-`@celesta/react/internal`.
-`@celesta/code`, `@celesta/voicevox`, and `@celesta/aivis-speech` stay optional imports for
+`<FrameChrome>`) go in `@celesta.studio/components` rather than the core, and use
+only the public APIs of the core and the other `@celesta.studio/*` packages, never
+`@celesta.studio/react/internal`.
+`@celesta.studio/code`, `@celesta.studio/voicevox`, and `@celesta.studio/aivis-speech` stay optional imports for
 compositions: no package a composition imports depends on them, though
-`@celesta/cli` includes them in the runtime.
+`@celesta.studio/cli` includes them in the runtime.
 
 ## Workspace map
 
@@ -104,26 +109,26 @@ compositions: no package a composition imports depends on them, though
 | `celesta-plugin-host` | Finds plugin directories, decides which may run (the user's settings: trusted projects, allowed plugins), and runs each plugin in its own process for the renderer. |
 | `celesta-plugin-flag` | `examples/plugins/flag`, a sample plugin program; with `beep-voice` beside it, built by `examples/plugins/build.mjs`. |
 | `celesta-plugin-turntable` | `examples/plugins/turntable`, a sample plugin program that returns a 3D scene; built by `examples/plugins/build.mjs`. |
-| `packages/math` (`@celesta/math`) | Pure, React-free math utilities for compositions. |
-| `packages/react` (`@celesta/react`) | Core components, hooks, animation helpers, reconciler, and scene walker. |
-| `packages/shapes` (`@celesta/shapes`) | Lines, polylines, paths, circles, ellipses, arrows, triangles, polygons, stars, pies, and hearts, plus generators for their path commands. |
-| `packages/lottie` (`@celesta/lottie`) | `<Lottie>`: Lottie JSON animations drawn as paths, groups, and masks; see [`docs/handoff/2026-10-19-lottie.md`](docs/handoff/2026-10-19-lottie.md). |
-| `packages/shader` (`@celesta/shader`) | `defineShader`: custom WGSL filters for a layer's `shader` prop. |
-| `packages/layout` (`@celesta/layout`) | Layout containers and `Camera`. |
-| `packages/components` (`@celesta/components`) | High-level components built on the core's public API, such as `FrameChrome`, `PatternBackground`, `Panel`, `Badge`, `Counter`, `StatCard`, `BarChart`, `Callout`, `MediaFrame`, and `CaptionTrack`. |
-| `packages/transitions` (`@celesta/transitions`) | `Transition` and `TransitionSeries`. |
-| `packages/text` (`@celesta/text`) | Text motion, box-fitted text, emphasis by grapheme range, and timed frame ranges shared by captions and dialogue subtitles. |
-| `packages/character` (`@celesta/character`) | Characters, dialogue, subtitles, lip sync, blinking, and PSD presets. |
-| `packages/media-utils` (`@celesta/media-utils`) | Media metadata helpers. |
-| `packages/project` (`@celesta/project`) | Companion project data, properties, and timeline layers. |
-| `packages/debug` (`@celesta/debug`) | Debug overlays. |
-| `packages/code` (`@celesta/code`) | Syntax-highlighted code components. |
-| `packages/voicevox` (`@celesta/voicevox`) | VOICEVOX AudioQuery lip sync. |
-| `packages/aivis-speech` (`@celesta/aivis-speech`) | AivisSpeech AudioQuery and WAV lip sync. |
-| `packages/cli` (`@celesta/cli`) | Entry CLI the bridge spawns; depends on every package it serves. |
-| `packages/exporter` (`@celesta/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts; not part of the runtime. |
-| `packages/web` (`@celesta/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
-| `packages/website` (`@celesta/website`) | Official website, English and Japanese user guide, and playground. |
+| `packages/math` (`@celesta.studio/math`) | Pure, React-free math utilities for compositions. |
+| `packages/react` (`@celesta.studio/react`) | Core components, hooks, animation helpers, reconciler, and scene walker. |
+| `packages/shapes` (`@celesta.studio/shapes`) | Lines, polylines, paths, circles, ellipses, arrows, triangles, polygons, stars, pies, and hearts, plus generators for their path commands. |
+| `packages/lottie` (`@celesta.studio/lottie`) | `<Lottie>`: Lottie JSON animations drawn as paths, groups, and masks; see [`docs/handoff/2026-10-19-lottie.md`](docs/handoff/2026-10-19-lottie.md). |
+| `packages/shader` (`@celesta.studio/shader`) | `defineShader`: custom WGSL filters for a layer's `shader` prop. |
+| `packages/layout` (`@celesta.studio/layout`) | Layout containers and `Camera`. |
+| `packages/components` (`@celesta.studio/components`) | High-level components built on the core's public API, such as `FrameChrome`, `PatternBackground`, `Panel`, `Badge`, `Counter`, `StatCard`, `BarChart`, `Callout`, `MediaFrame`, and `CaptionTrack`. |
+| `packages/transitions` (`@celesta.studio/transitions`) | `Transition` and `TransitionSeries`. |
+| `packages/text` (`@celesta.studio/text`) | Text motion, box-fitted text, emphasis by grapheme range, and timed frame ranges shared by captions and dialogue subtitles. |
+| `packages/character` (`@celesta.studio/character`) | Characters, dialogue, subtitles, lip sync, blinking, and PSD presets. |
+| `packages/media-utils` (`@celesta.studio/media-utils`) | Media metadata helpers. |
+| `packages/project` (`@celesta.studio/project`) | Companion project data, properties, and timeline layers. |
+| `packages/debug` (`@celesta.studio/debug`) | Debug overlays. |
+| `packages/code` (`@celesta.studio/code`) | Syntax-highlighted code components. |
+| `packages/voicevox` (`@celesta.studio/voicevox`) | VOICEVOX AudioQuery lip sync. |
+| `packages/aivis-speech` (`@celesta.studio/aivis-speech`) | AivisSpeech AudioQuery and WAV lip sync. |
+| `packages/cli` (`@celesta.studio/cli`) | Entry CLI the bridge spawns; depends on every package it serves. |
+| `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts; not part of the runtime. |
+| `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
+| `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
 
 Useful entry points:
 
@@ -172,7 +177,7 @@ JSX dev runtime so a `layerSource` request can answer where a layer was
 written; see [Open a layer's source](docs/handoff/2026-10-14-open-layer-source.md).
 
 The CLI bundles entries with esbuild without type-checking user source. It
-keeps `react`, its JSX runtimes, and every `@celesta/*` package external,
+keeps `react`, its JSX runtimes, and every `@celesta.studio/*` package external,
 resolved from the CLI itself, so hooks, contexts, and registries use the same
 module instances as the host. Keep React and
 `react-reconciler` versions compatible; do not bump either independently.
@@ -228,7 +233,7 @@ covered by the dated handoff notes.
   non-normal blend mode or an opacity below 1 are isolated, and their opacity
   applies to the composited group, as CSS `opacity` does; a group whose only
   child is one non-group, non-instances shape blended normally passes its
-  opacity down instead (`Layer::isolates_group`, mirrored in `@celesta/web`).
+  opacity down instead (`Layer::isolates_group`, mirrored in `@celesta.studio/web`).
   GPU isolation uses pooled canvases bounded to the affected
   region, with a scene-sized root canvas for blending/effects.
 - Consecutive layers sharing a texture can batch into an instanced draw.
@@ -240,12 +245,12 @@ covered by the dated handoff notes.
   exact for uniform scales and approximate for non-uniform scales.
 - `<Group mask>` / `<Mask>` show a group's children where another subtree
   draws, by alpha or luminance, optionally inverted. Masked groups are
-  always isolated, in the GPU and CPU renderers and in `@celesta/web`.
+  always isolated, in the GPU and CPU renderers and in `@celesta.studio/web`.
 - Layers and groups take `skewX`/`skewY`, `rotationX`/`rotationY`,
   `perspective`, and `backfaceVisibility`. Skew and orthographic 3D rotation
   are affine; a layer with both a perspective and a 3D rotation draws through
   a plane canvas and is projected onto its parent, in the GPU renderer and in
-  `@celesta/web`. The CPU reference renderer refuses skew and 3D rotation. See
+  `@celesta.studio/web`. The CPU reference renderer refuses skew and 3D rotation. See
   [`docs/handoff/2026-10-16-skew-3d-transform.md`](docs/handoff/2026-10-16-skew-3d-transform.md).
   A plane too large for one canvas at the scale its nearest part needs is
   drawn in bands of equal depth, and a GPU text layer too large for one

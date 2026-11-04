@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vitest';
 
-import type { AnimatedNumber, AudioDuck } from '@celesta/react';
+import type { AnimatedNumber, AudioDuck } from '@celesta.studio/react';
 import { checkDuckGroup, duckEnvelope, duckGroups } from '../src/duck.js';
 
 interface Fixture {

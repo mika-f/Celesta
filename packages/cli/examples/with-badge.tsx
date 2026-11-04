@@ -1,6 +1,6 @@
-import { Badge, PatternBackground } from '@celesta/components';
-import { Center } from '@celesta/layout';
-import { Composition, Easings, Font, Rect, Span, Text, Theme, progress, useCurrentFrame } from '@celesta/react';
+import { Badge, PatternBackground } from '@celesta.studio/components';
+import { Center } from '@celesta.studio/layout';
+import { Composition, Easings, Font, Rect, Span, Text, Theme, progress, useCurrentFrame } from '@celesta.studio/react';
 
 // <Badge> is a label on a <Panel> sized from its measured text: the same
 // text and style go to useTextMetrics() and <Text>, so the background fits

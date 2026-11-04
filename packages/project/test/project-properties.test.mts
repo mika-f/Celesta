@@ -2,7 +2,7 @@
 // companion project) reach the CLI on the first stdin line when it runs with
 // --properties-stdin. They are checked against defineProjectProperties() before
 // prepare() and are readable from prepare() and from rendering. Integration
-// tests of the build: they run the CLI, which loads @celesta/project from its
+// tests of the build: they run the CLI, which loads @celesta.studio/project from its
 // dist/. Run after `pnpm run build:runtime` (repository root).
 
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, test } from 'vitest';
 
-import type { CompositionConfig, JsonValue, LayerContent, Scene } from '@celesta/react';
+import type { CompositionConfig, JsonValue, LayerContent, Scene } from '@celesta.studio/react';
 
 const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
 const FRAME = '{"time":{"value":0,"timescale":1}}';
@@ -55,7 +55,7 @@ afterEach(() => {
 
 const SCHEMA_ENTRY =
   `import * as fs from 'node:fs';\n` +
-  `import { Composition, Text, defineProjectProperties, getProjectProperty } from '@celesta/react'; import { ProjectProvider, loadProjectFromString, useProjectProperty } from '@celesta/project';\n` +
+  `import { Composition, Text, defineProjectProperties, getProjectProperty } from '@celesta.studio/react'; import { ProjectProvider, loadProjectFromString, useProjectProperty } from '@celesta.studio/project';\n` +
   `defineProjectProperties({\n` +
   `  title: { type: 'string', defaultValue: 'Default' },\n` +
   `  accent: { type: 'color', defaultValue: '#ff8800' },\n` +
@@ -176,7 +176,7 @@ test('every invalid value is reported before prepare() runs', () => {
 
 test('outside values need a schema, but a companion project without one stays compatible', () => {
   const entry =
-    `import { Composition, Text } from '@celesta/react';\n` +
+    `import { Composition, Text } from '@celesta.studio/react';\n` +
     `export default function Root() {\n` +
     `  return <Composition width={64} height={64} fps={30} durationInFrames={1}><Text x={0} y={0}>ok</Text></Composition>;\n` +
     `}\n`;
@@ -192,7 +192,7 @@ test('outside values need a schema, but a companion project without one stays co
 
 test('reading a property at module scope is an error', () => {
   const entry =
-    `import { Composition, defineProjectProperties, getProjectProperty } from '@celesta/react';\n` +
+    `import { Composition, defineProjectProperties, getProjectProperty } from '@celesta.studio/react';\n` +
     `defineProjectProperties({ title: { type: 'string', defaultValue: 'x' } });\n` +
     `const title = getProjectProperty('title');\n` +
     `export default function Root() {\n` +
@@ -205,7 +205,7 @@ test('reading a property at module scope is an error', () => {
 
 test('an empty path turns a file off, and __proto__ is an ordinary key', () => {
   const entry =
-    `import { Composition, Text, defineProjectProperties, getProjectProperty } from '@celesta/react';\n` +
+    `import { Composition, Text, defineProjectProperties, getProjectProperty } from '@celesta.studio/react';\n` +
     `defineProjectProperties({ data: { type: 'path', defaultValue: './default.txt' }, ['__proto__']: { type: 'string', defaultValue: 'd' } });\n` +
     `export default function Root() {\n` +
     `  return <Composition width={64} height={64} fps={30} durationInFrames={1}><Text x={0} y={0}>{JSON.stringify([getProjectProperty('data'), getProjectProperty('__proto__')])}</Text></Composition>;\n` +
@@ -240,7 +240,7 @@ test('entry props.json is strict when the entry declares properties', () => {
 
 test('entry props.json is ignored with a warning when the entry declares nothing', () => {
   const entry =
-    `import { Composition, Text } from '@celesta/react';\n` +
+    `import { Composition, Text } from '@celesta.studio/react';\n` +
     `export default function Root() {\n` +
     `  return <Composition width={64} height={64} fps={30} durationInFrames={1}><Text x={0} y={0}>ok</Text></Composition>;\n` +
     `}\n`;

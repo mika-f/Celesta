@@ -20,8 +20,8 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { readWavHeader } from '@celesta/character';
-import type { DialogueLine } from '@celesta/character';
+import { readWavHeader } from '@celesta.studio/character';
+import type { DialogueLine } from '@celesta.studio/character';
 
 import { lipSyncFromVoicevox } from './lipsync.js';
 import type { VoicevoxAudioQuery } from './query.js';
@@ -596,7 +596,7 @@ function semaphore(size: number): <T>(task: () => Promise<T>) => Promise<T> {
   };
 }
 
-// `@celesta/react/internal`'s `entryRelativePath`: the CLI sets
+// `@celesta.studio/react/internal`'s `entryRelativePath`: the CLI sets
 // CELESTA_REACT_ENTRY_DIR before `prepare()`, so a relative `cacheDir` sits
 // beside the composition like a relative `<Audio src>`.
 function entryRelativePath(src: string): string {

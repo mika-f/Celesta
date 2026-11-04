@@ -515,6 +515,16 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
                 }
             }
         };
+        // Imports by the names before `@celesta.studio`, which still resolve.
+        if let Some(bridge) = react_bridge.as_ref().and_then(|react| react.bridge.as_ref()) {
+            warnings.extend(
+                bridge
+                    .metadata()
+                    .legacy_imports
+                    .iter()
+                    .map(ToString::to_string),
+            );
+        }
         // The edited text is drawn on a copy: the held scene
         // stays as the runtime evaluated it.
         let edited = match (&evaluated, &request.text_override) {

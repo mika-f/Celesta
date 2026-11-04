@@ -24,7 +24,7 @@
 // and the portraits from examples/assets/dialogue-demo.
 import * as React from 'react';
 
-import { Assets, Audio, Composition, Group, Rect, Text, useCurrentFrame } from '@celesta/react';
+import { Assets, Audio, Composition, Group, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
 import {
   Character,
   CharacterView,
@@ -34,8 +34,8 @@ import {
   matchVoiceLevels,
   planDialogue,
   speechIntervals,
-} from '@celesta/character';
-import type { AnimatedNumber, AssetReference, TextStyle } from '@celesta/react';
+} from '@celesta.studio/character';
+import type { AnimatedNumber, AssetReference, TextStyle } from '@celesta.studio/react';
 import type {
   CharacterSubtitle,
   CharacterViewReference,
@@ -43,7 +43,7 @@ import type {
   DialoguePlan,
   VoiceLevelOptions,
   VoiceLevelReport,
-} from '@celesta/character';
+} from '@celesta.studio/character';
 
 import script from '../../../examples/assets/voice-level-demo/script.json';
 

@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Text, progress, useCue, useCurrentFrame } from '@celesta/react';
-import { TextReveal } from '@celesta/text';
+import { Easings, Group, Rect, Text, progress, useCue, useCurrentFrame } from '@celesta.studio/react';
+import { TextReveal } from '@celesta.studio/text';
 import { Copy, Tag, textStyle } from '../components/Copy';
 import { Stage } from '../components/Stage';
 import { TAPES } from '../tapes';

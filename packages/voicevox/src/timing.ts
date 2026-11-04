@@ -12,7 +12,7 @@
 // sample; without it the error accumulates (about 50 ms over a 1.7 s line at
 // `speedScale: 1.5`).
 
-import type { SpeechAccentPhrase, SpeechMora, SpeechPause, SpeechPhoneme, SpeechSpan, SpeechTiming } from '@celesta/character';
+import type { SpeechAccentPhrase, SpeechMora, SpeechPause, SpeechPhoneme, SpeechSpan, SpeechTiming } from '@celesta.studio/character';
 
 import type { VoicevoxAudioQuery, VoicevoxMora } from './query.js';
 

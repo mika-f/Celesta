@@ -1,4 +1,4 @@
-import { Easings, Rect, progress } from '@celesta/react';
+import { Easings, Rect, progress } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { ACID, BONE, GREY, H, INK, W } from '../constants';
 

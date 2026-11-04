@@ -1,4 +1,4 @@
-import { Group, useCurrentFrame } from '@celesta/react';
+import { Group, useCurrentFrame } from '@celesta.studio/react';
 import { Bloom } from '../components/Bloom';
 import { Copy } from '../components/Copy';
 import { Field } from '../components/Field';

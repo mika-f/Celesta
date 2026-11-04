@@ -1,4 +1,4 @@
-import { Audio, Composition, FreezeFrame } from '@celesta/react';
+import { Audio, Composition, FreezeFrame } from '@celesta.studio/react';
 import { FPS, H, W } from './components/theme';
 import { FilmContext } from './v0.7.0/film-context';
 import { LANDSCAPE } from './v0.7.0/layout';

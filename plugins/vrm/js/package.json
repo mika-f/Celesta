@@ -9,8 +9,8 @@
     "test": "tsc -p test && vitest run"
   },
   "devDependencies": {
-    "@celesta/character": "workspace:*",
-    "@celesta/react": "workspace:*",
+    "@celesta.studio/character": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",

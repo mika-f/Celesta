@@ -1,4 +1,4 @@
-import { Composition, Easings, Rect, Text, interpolateColor, useCurrentFrame } from '@celesta/react';
+import { Composition, Easings, Rect, Text, interpolateColor, useCurrentFrame } from '@celesta.studio/react';
 
 // interpolateColor() blends #RRGGBB / #RRGGBBAA colors over the frame like
 // interpolate() blends numbers. Frames outside the range hold the end color.

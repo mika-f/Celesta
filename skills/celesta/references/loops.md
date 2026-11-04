@@ -63,9 +63,9 @@ motion with one of these:
 looks the same as 0°, but the loop check compares numbers and reports it.
 
 ```tsx
-import { useCurrentFrame } from '@celesta/react';
-import { Circle } from '@celesta/shapes';
-import { TAU } from '@celesta/math';
+import { useCurrentFrame } from '@celesta.studio/react';
+import { Circle } from '@celesta.studio/shapes';
+import { TAU } from '@celesta.studio/math';
 import { BEAT, LOOP } from './loop';
 
 function Orbit() {
@@ -114,11 +114,11 @@ equal if the motion crosses one.
 ## Noise that loops
 
 `noise(seed, frame / 20)` and `fbm` never repeat, so a wobble driven by them
-jumps at the seam. Use `loopNoise` and `loopFbm` from `@celesta/math`, which
+jumps at the seam. Use `loopNoise` and `loopFbm` from `@celesta.studio/math`, which
 take the loop length in the same units as `t`:
 
 ```tsx
-import { loopNoise } from '@celesta/math';
+import { loopNoise } from '@celesta.studio/math';
 // Was: noise('sway', frame / 20) * 12
 const sway = loopNoise('sway', frame / 20, LOOP / 20) * 12;
 ```
@@ -196,7 +196,7 @@ The radius (`0.8`) sets how much the field changes over one loop. See
    anything differs. `--json` lists every difference.
 
    It compares the picture only, not sound. An entry that measures text
-   (`useTextMetrics`, `TextBox`, `@celesta/code`, …) is checked through the
+   (`useTextMetrics`, `TextBox`, `@celesta.studio/code`, …) is checked through the
    exporter, as in [verify.md](verify.md#measured-text---native); `--loop`
    only uses an exporter recent enough to evaluate past the end. Without one
    such an entry stops with exit code 2: pass a newer build with

@@ -1,4 +1,4 @@
-import { Group, Rect, Text, useVideoConfig } from '@celesta/react';
+import { Group, Rect, Text, useVideoConfig } from '@celesta.studio/react';
 import { W } from '../constants';
 import { tapeAdvance } from '../measure';
 import type { TapeKind } from '../tapes';

@@ -1,6 +1,6 @@
 # Path motion
 
-Moving along a path and morphing between paths with `@celesta/shapes`.
+Moving along a path and morphing between paths with `@celesta.studio/shapes`.
 Six seconds at 30 fps, 1920 × 1080, in two halves:
 
 1. **Along a path.** A route written as SVG path data, with cubic, smooth

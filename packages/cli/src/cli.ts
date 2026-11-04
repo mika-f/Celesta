@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { listProjectProperties } from '@celesta/react';
+import { listProjectProperties } from '@celesta.studio/react';
 import type {
   ComponentPropertySchema,
   CompositionConfig,
@@ -14,7 +14,7 @@ import type {
   Scene,
   TextMetrics,
   Time,
-} from '@celesta/react';
+} from '@celesta.studio/react';
 import {
   createResolver,
   holdProjectPropertyValues,
@@ -26,7 +26,7 @@ import {
   setMediaProbe,
   setProjectPropertyValues,
   setTextMeasurer,
-} from '@celesta/react/internal';
+} from '@celesta.studio/react/internal';
 import type {
   AudioClipDescriptor,
   ComponentResolutionRequest,
@@ -45,7 +45,7 @@ import type {
   Resolver,
   SubtitleDescriptor,
   WirePropertyTable,
-} from '@celesta/react/internal';
+} from '@celesta.studio/react/internal';
 
 import { PLUGIN_SPECIFIER, WAITING_PLUGIN_PATH_ENV, findPlugins, resolvePluginImport, standInSource } from './plugins';
 import type { Plugins, StandIn } from './plugins';
@@ -143,6 +143,18 @@ export interface ReadyMessage {
   primitiveProperties: Record<string, WirePropertyTable>;
   propertySchema: Record<string, ProjectPropertyField> | null;
   dependencies: PrepareDependency[];
+  /** Imports of the scope before `@celesta.studio`, which still resolve; absent when there are none. */
+  legacyImports?: LegacyImport[];
+}
+
+/** An import of a package by its name before the `@celesta.studio` scope. */
+export interface LegacyImport {
+  /** The importing file, relative to the entry's directory, with `/` separators. */
+  file: string;
+  /** What it imports: `@celesta/react`. */
+  specifier: string;
+  /** The current name: `@celesta.studio/react`. */
+  current: string;
 }
 
 /** The answer to a `FrameRequest`. */
@@ -260,9 +272,10 @@ async function main(): Promise<void> {
 
   let defaultExport: EntryComponent;
   let prepare: (() => Promise<void>) | undefined;
+  let legacyImports: LegacyImport[];
   holdProjectPropertyValues();
   try {
-    ({ defaultExport, prepare } = await loadEntry(entryPath, options.includes(SOURCE_LOCATIONS)));
+    ({ defaultExport, prepare, legacyImports } = await loadEntry(entryPath, options.includes(SOURCE_LOCATIONS)));
   } catch (error) {
     writeLine({ error: describeError(error) });
     process.exitCode = 1;
@@ -318,11 +331,12 @@ async function main(): Promise<void> {
     compositions: mounted.compositions,
     componentSchemas: listComponentSchemas(),
     // Listed after the entry ran, so the tables of the packages it imports
-    // (`@celesta/shapes`) are in.
+    // (`@celesta.studio/shapes`) are in.
     primitiveProperties: listPrimitiveProperties(),
     propertySchema: listProjectProperties() ?? null,
     // Files `prepare()` read outside the sources the editor already watches.
     dependencies: prepareDependencies(),
+    ...(legacyImports.length > 0 ? { legacyImports } : {}),
   });
 
   let resolver: Resolver | null = null;
@@ -567,7 +581,7 @@ function describeError(error: unknown): string {
 
 /**
  * For an entry importing a name from a Celesta package that does not export
- * it, such as `Circle` from `@celesta/react`, an error naming the package
+ * it, such as `Circle` from `@celesta.studio/react`, an error naming the package
  * that does; undefined for any other error.
  */
 function misplacedImportError(error: unknown): Error | undefined {
@@ -579,7 +593,7 @@ function misplacedImportError(error: unknown): Error | undefined {
   const { dependencies } = require('../package.json') as { dependencies: Record<string, string> };
   let from: string | undefined;
   let provider: string | undefined;
-  for (const pkg of Object.keys(dependencies).filter((dependency) => dependency.startsWith('@celesta/'))) {
+  for (const pkg of Object.keys(dependencies).filter((dependency) => dependency.startsWith('@celesta.studio/'))) {
     try {
       if (pathToFileURL(require.resolve(pkg)).href === requested) from = pkg;
       else if (name in (require(pkg) as object)) provider ??= pkg;
@@ -596,10 +610,23 @@ interface LoadedEntry {
   defaultExport: EntryComponent;
   /** The entry's named `prepare` export, if it has one — see `main()`. */
   prepare: (() => Promise<void>) | undefined;
+  /** Each file's imports of the legacy scope, once each, in the order they resolved. */
+  legacyImports: LegacyImport[];
 }
 
 /** The esbuild namespace of the modules standing in for waiting plugins. */
 const STAND_IN_NAMESPACE = 'celesta-waiting-plugin';
+
+/** The scope the Celesta packages had before `@celesta.studio`. */
+const LEGACY_SCOPE = '@celesta/';
+
+/**
+ * `specifier` with the legacy `@celesta/` scope renamed: entries written
+ * before the packages moved to `@celesta.studio/` still import the runtime's.
+ */
+function currentPackageName(specifier: string): string {
+  return specifier.startsWith(LEGACY_SCOPE) ? `@celesta.studio/${specifier.slice(LEGACY_SCOPE.length)}` : specifier;
+}
 
 async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<LoadedEntry> {
   const contents = path.resolve(__dirname, '../../..');
@@ -609,7 +636,10 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
   }
   // eslint-disable-next-line global-require -- optional, only needed by this CLI
   const esbuild = require('esbuild') as typeof import('esbuild');
-  // `@celesta/shader` sources and subtitle files, imported as their text.
+  const legacyImports: LegacyImport[] = [];
+  // esbuild names importers by their real paths.
+  const entryDirectory = fs.realpathSync(path.dirname(entryPath));
+  // `@celesta.studio/shader` sources and subtitle files, imported as their text.
   const loader: Record<string, import('esbuild').Loader> = { '.wgsl': 'text', '.srt': 'text', '.vtt': 'text' };
   const result = await esbuild.build({
     entryPoints: [entryPath],
@@ -635,29 +665,35 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
     // objects (CompositionRuntimeContext, ProjectLayersContext, ProjectContext,
     // ...) and registries (registerComponent(), the character host elements)
     // need the same treatment: they must be the exact objects this CLI's own
-    // renderer reads. So every `@celesta/*` import stays external and resolves
+    // renderer reads. So every `@celesta.studio/*` import stays external and resolves
     // from this CLI, which depends on all of them, through Node's own module
     // cache instead of being duplicated into the bundle or needing a project
     // install.
     plugins: [{
       name: 'shared-runtime',
       setup(build) {
-        build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@celesta\/[^/]+(?:\/internal)?)$/ }, (args) => {
+        build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@celesta(?:\.studio)?\/[^/]+(?:\/internal)?)$/ }, (args) => {
           let resolved: string;
           try {
             // React's dev runtime would need development React; Celesta's
             // records the positions on top of the production runtime.
             resolved = require.resolve(
-              sourceLocations && args.path === 'react/jsx-dev-runtime' ? '@celesta/react/jsx-dev-runtime' : args.path,
+              sourceLocations && args.path === 'react/jsx-dev-runtime' ? '@celesta.studio/react/jsx-dev-runtime' : currentPackageName(args.path),
             );
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') throw error;
             return { errors: [{ text: `${args.path} is not a Celesta package` }] };
           }
+          if (args.path.startsWith(LEGACY_SCOPE)) {
+            const file = path.relative(entryDirectory, args.importer).split(path.sep).join('/');
+            if (!legacyImports.some((known) => known.file === file && known.specifier === args.path)) {
+              legacyImports.push({ file, specifier: args.path, current: currentPackageName(args.path) });
+            }
+          }
           return { path: pathToFileURL(resolved).href, external: true };
         });
         // A plugin's module is bundled into the entry, so its own `react`
-        // and `@celesta/*` imports come back here and share the runtime's.
+        // and `@celesta.studio/*` imports come back here and share the runtime's.
         // The plugin directories are read once per bundle, so a reload sees
         // plugins installed since.
         let plugins: Promise<Plugins> | undefined;
@@ -723,6 +759,7 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
   return {
     defaultExport: defaultExport as EntryComponent,
     prepare: prepareExport as (() => Promise<void>) | undefined,
+    legacyImports,
   };
 }
 

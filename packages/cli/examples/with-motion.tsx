@@ -1,5 +1,5 @@
-import { Motion } from '@celesta/components';
-import { Composition, Font, Rect, Sequence, Text, Theme } from '@celesta/react';
+import { Motion } from '@celesta.studio/components';
+import { Composition, Font, Rect, Sequence, Text, Theme } from '@celesta.studio/react';
 
 // <Motion> eases an element in at the start of its window, holds it exactly
 // as written, and eases it out at the end. The title uses the enclosing
@@ -31,7 +31,7 @@ export default function WithMotion() {
             enter={{ type: 'scale', scaleFrom: 0.6 }} exit={{ type: 'scale', durationInFrames: 8 }}>
             <Rect x={-150} y={-24} width={300} height={48} cornerRadius={24} fill={colors.accent} />
             <Text anchorX={0.5} anchorY={0.5} fontFamily="display" fontSize={20} fontWeight={700} color="paper">
-              @celesta/components
+              @celesta.studio/components
             </Text>
           </Motion>
         </Sequence>

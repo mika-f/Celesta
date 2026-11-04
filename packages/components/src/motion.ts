@@ -6,11 +6,11 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { clamp01 } from '@celesta/math';
-import { Easings, Group, Sequence, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { GroupProps } from '@celesta/react';
-import { applyTransition } from '@celesta/transitions';
-import type { SlideFrom, TransitionEffect } from '@celesta/transitions';
+import { clamp01 } from '@celesta.studio/math';
+import { Easings, Group, Sequence, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { GroupProps } from '@celesta.studio/react';
+import { applyTransition } from '@celesta.studio/transitions';
+import type { SlideFrom, TransitionEffect } from '@celesta.studio/transitions';
 
 /**
  * A `<Motion>` effect. `fade-up` and the other directions name the way the

@@ -17,7 +17,7 @@ function render(body: string) {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Group, Rect, Text } from '@celesta/react';\n` +
+    `import { Composition, Group, Rect, Text } from '@celesta.studio/react';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={100} height={100} fps={30} durationInFrames={1}>\n` +

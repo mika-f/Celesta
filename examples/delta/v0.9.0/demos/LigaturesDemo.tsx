@@ -1,4 +1,4 @@
-import { Group, Rect, Span, Text } from '@celesta/react';
+import { Group, Rect, Span, Text } from '@celesta.studio/react';
 import { C, FONT, solid } from '../../components/theme';
 import type { DemoProps } from '../program';
 import { STAGE } from '../program';

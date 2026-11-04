@@ -1,7 +1,7 @@
-import { importVoiceFolder, loadDialogueLipSync, matchVoiceLevels, planDialogue } from '@celesta/character';
-import type { DialogueLine, DialoguePlan, VoiceLine } from '@celesta/character';
-import { loadAudioSpectrum } from '@celesta/media-utils';
-import type { AudioSpectrum } from '@celesta/media-utils';
+import { importVoiceFolder, loadDialogueLipSync, matchVoiceLevels, planDialogue } from '@celesta.studio/character';
+import type { DialogueLine, DialoguePlan, VoiceLine } from '@celesta.studio/character';
+import { loadAudioSpectrum } from '@celesta.studio/media-utils';
+import type { AudioSpectrum } from '@celesta.studio/media-utils';
 import { FPS } from '../components/theme';
 import { VOICE_CHAPTERS, VOICE_DELAY, chapterAt } from './timeline';
 

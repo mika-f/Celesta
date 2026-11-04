@@ -17,8 +17,8 @@ import {
   progress,
   useCurrentFrame,
   useTextMetrics,
-} from '@celesta/react';
-import type { AssetReference, TextStyle } from '@celesta/react';
+} from '@celesta.studio/react';
+import type { AssetReference, TextStyle } from '@celesta.studio/react';
 import {
   Character,
   CharacterView,
@@ -27,7 +27,7 @@ import {
   loadLipSync,
   planDialogue,
   vowelShapes,
-} from '@celesta/character';
+} from '@celesta.studio/character';
 import type {
   CharacterSubtitle,
   CharacterViewReference,
@@ -35,9 +35,9 @@ import type {
   DialoguePlan,
   ImageCharacterPortrait,
   SubtitleRenderProps,
-} from '@celesta/character';
-import { useProjectProperty } from '@celesta/project';
-import { TextBox } from '@celesta/text';
+} from '@celesta.studio/character';
+import { useProjectProperty } from '@celesta.studio/project';
+import { TextBox } from '@celesta.studio/text';
 
 // Two characters talk, line by line, with a subtitle band and lip sync.
 // A line with a recorded voice lasts as long as the recording and plays it;

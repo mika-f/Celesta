@@ -1,17 +1,17 @@
 // What `<Vrm>` sends: the layer's data as a pure function of the frame
 // (`vrmData`), the host element's props (`vrmElementProps`), and the layer a
 // mounted composition renders. Run after `pnpm run build:runtime`
-// (repository root), which builds the `@celesta/react` and
-// `@celesta/character` the module imports.
+// (repository root), which builds the `@celesta.studio/react` and
+// `@celesta.studio/character` the module imports.
 
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import * as React from 'react';
 
-import { blinkPhase } from '@celesta/character';
-import type { LipSyncTrack, MouthShape } from '@celesta/character';
-import { Composition } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
+import { blinkPhase } from '@celesta.studio/character';
+import type { LipSyncTrack, MouthShape } from '@celesta.studio/character';
+import { Composition } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
 import { Vrm, vrmData, vrmElementProps } from '../src/index.ts';
 import type { VrmProps } from '../src/index.ts';
 

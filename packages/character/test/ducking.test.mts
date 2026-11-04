@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
-import { duckEnvelope } from '@celesta/media-utils';
+import { duckEnvelope } from '@celesta.studio/media-utils';
 import { duckingVolume, planDialogue, speechIntervals } from '../src/index.js';
 import type { DialogueLine, VoiceLevelAnalysis, VoiceLevelLineReport, VoiceLevelReport } from '../src/index.js';
 

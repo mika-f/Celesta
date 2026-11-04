@@ -1,5 +1,5 @@
-import { random } from '@celesta/math';
-import { Easings, Group, Rect, frameToTimecode, interpolate, progress, useCurrentFrame } from '@celesta/react';
+import { random } from '@celesta.studio/math';
+import { Easings, Group, Rect, frameToTimecode, interpolate, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { C, DW, DX, FPS, S } from '../constants';
 import { pad } from '../helpers';

@@ -23,7 +23,7 @@ export function inverseLerp(a: number, b: number, value: number): number {
 /**
  * `value` moved from the range `[inMin, inMax]` to `[outMin, outMax]`,
  * without clamping. For eased or clamped mappings over frames, use
- * `@celesta/react`'s `interpolate`.
+ * `@celesta.studio/react`'s `interpolate`.
  */
 export function remap(value: number, inMin: number, inMax: number, outMin: number, outMax: number): number {
   return lerp(outMin, outMax, inverseLerp(inMin, inMax, value));

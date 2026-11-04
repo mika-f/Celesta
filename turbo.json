@@ -23,7 +23,7 @@
         "RUSTDOCFLAGS"
       ]
     },
-    "@celesta/react#build": {
+    "@celesta.studio/react#build": {
       "dependsOn": ["codegen", "^build"],
       "inputs": [
         "$TURBO_DEFAULT$",

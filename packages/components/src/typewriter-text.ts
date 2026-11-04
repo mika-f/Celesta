@@ -6,9 +6,9 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, Rect, Text, textCaret, useTextMetrics, useTheme } from '@celesta/react';
-import type { CommonProps, ResolvedTheme, TextMetrics, TextShorthand, TextStyle } from '@celesta/react';
-import { useTypewriter } from '@celesta/text';
+import { Group, Rect, Text, textCaret, useTextMetrics, useTheme } from '@celesta.studio/react';
+import type { CommonProps, ResolvedTheme, TextMetrics, TextShorthand, TextStyle } from '@celesta.studio/react';
+import { useTypewriter } from '@celesta.studio/text';
 
 import { hexColor } from './color';
 

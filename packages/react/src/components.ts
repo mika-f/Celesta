@@ -144,7 +144,7 @@ export interface CommonProps {
   /** A centered colored halo behind the composited layer. */
   glow?: LayerGlow;
   /**
-   * Filters from `@celesta/shader` (custom WGSL shaders from
+   * Filters from `@celesta.studio/shader` (custom WGSL shaders from
    * `defineShader()`, or built-in filters such as `brightness(1.2)` and
    * `pixelate(8)`), applied to the composited layer before the built-in
    * filter props, `blur`, `shadow`, and `glow`. An array runs them in
@@ -155,7 +155,7 @@ export interface CommonProps {
    * The built-in filters below apply after `shader` and before `blur`,
    * `shadow`, and `glow`, in the order listed here: the chroma key, the
    * distortions, the color filters, then the overlays. For another order,
-   * pass the `@celesta/shader` functions of the same names to `shader` as
+   * pass the `@celesta.studio/shader` functions of the same names to `shader` as
    * an array instead. Spatial values are output pixels; grids and `uv`-like
    * positions follow the layer's content box.
    */

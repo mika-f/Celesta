@@ -1,14 +1,14 @@
 {
-  "name": "@celesta/example-versus",
+  "name": "@celesta.studio/example-versus",
   "private": true,
   "scripts": {
     "test": "tsc -p bench && vitest run"
   },
   "dependencies": {
-    "@celesta/code": "workspace:*",
-    "@celesta/components": "workspace:*",
-    "@celesta/react": "workspace:*",
-    "@celesta/shapes": "workspace:*",
+    "@celesta.studio/code": "workspace:*",
+    "@celesta.studio/components": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/shapes": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

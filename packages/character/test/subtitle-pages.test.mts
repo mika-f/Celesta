@@ -6,10 +6,10 @@ import assert from 'node:assert/strict';
 import { beforeEach, test } from 'vitest';
 import React from 'react';
 
-import { Assets, Composition, Rect, Span, Text } from '@celesta/react';
-import type { AssetReference, Layer, LayerContent, Scene, TextMetrics } from '@celesta/react';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { AudioClipDescriptor, MeasureTextRequest } from '@celesta/react/internal';
+import { Assets, Composition, Rect, Span, Text } from '@celesta.studio/react';
+import type { AssetReference, Layer, LayerContent, Scene, TextMetrics } from '@celesta.studio/react';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { AudioClipDescriptor, MeasureTextRequest } from '@celesta.studio/react/internal';
 import { Character, CharacterView, Dialogue, DialogueSeries, lipSyncFromKeyframes, planDialogue } from '../src/index.js';
 import type {
   CharacterSubtitle, CharacterViewReference, DialogueLine, DialogueSeriesProps, SubtitleRenderProps,

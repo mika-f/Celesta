@@ -8,7 +8,7 @@ export default defineConfig({
     server: {
       deps: {
         // The workspace packages' dist/ is CommonJS; let Node load it so the
-        // module and the tests share one `@celesta/react`.
+        // module and the tests share one `@celesta.studio/react`.
         external: [/\/dist\//],
       },
     },

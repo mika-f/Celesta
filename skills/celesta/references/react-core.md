@@ -1,16 +1,16 @@
 # React compositions: entry, layers, and layout
 
-The building blocks of a `@celesta/react` composition: the entry file, the
+The building blocks of a `@celesta.studio/react` composition: the entry file, the
 props every layer takes, each layer type, layout helpers, media loading, and
 preview-only debug guides. For motion see [animation.md](animation.md); for
 text see [text.md](text.md).
 
-Everything here is imported from `@celesta/react` unless its section names
-another package: shapes from `@celesta/shapes`, layout helpers from
-`@celesta/layout`, media info from `@celesta/media-utils`, and debug guides
-from `@celesta/debug`. Components only mentioned here come from their own
-packages too: `CharacterView` and `Dialogue` from `@celesta/character`,
-`Transition` from `@celesta/transitions`, and `Code` from `@celesta/code`
+Everything here is imported from `@celesta.studio/react` unless its section names
+another package: shapes from `@celesta.studio/shapes`, layout helpers from
+`@celesta.studio/layout`, media info from `@celesta.studio/media-utils`, and debug guides
+from `@celesta.studio/debug`. Components only mentioned here come from their own
+packages too: `CharacterView` and `Dialogue` from `@celesta.studio/character`,
+`Transition` from `@celesta.studio/transitions`, and `Code` from `@celesta.studio/code`
 (see [SKILL.md](../SKILL.md#packages)). The runtime bundled with Celesta
 provides `react` (18.x) and those packages; never install them from npm.
 
@@ -183,7 +183,7 @@ alpha, so a gradient can fade to transparent. At least 2 stops.
 
 ## Path, Line, Polyline
 
-Imported from `@celesta/shapes`.
+Imported from `@celesta.studio/shapes`.
 
 `<Path>` is a vector shape (lines and Bézier curves) as **one layer**,
 however many segments it has: a translucent stroke that crosses itself is
@@ -260,7 +260,7 @@ const tip = pointOnPath(ROUTE, t);
 
 ## Circle, Ellipse, Arrow
 
-Imported from `@celesta/shapes`.
+Imported from `@celesta.studio/shapes`.
 
 Diagram shapes, each drawn as one layer, so they take every common layer
 prop (transforms, `opacity`, `blendMode`, effects) and stay sharp under
@@ -306,7 +306,7 @@ See `packages/cli/examples/with-shapes.tsx` in the Celesta repository for all th
 
 ## Triangle, Polygon, Star, Pie, Heart
 
-Imported from `@celesta/shapes`.
+Imported from `@celesta.studio/shapes`.
 
 Closed shapes, each one `<Path>` layer, so they take every common layer
 prop. `x`/`y` place the box's `anchorX`/`anchorY` point (top-left by
@@ -426,7 +426,7 @@ the prop's value or as a direct child of the `<Group>`:
 - `<Mask>` only works directly in a `<Group>` (not in `<Sequence>` or
   `<FreezeFrame>`), and a group takes one mask.
 - Audio inside a mask plays normally.
-- Masks draw the same in preview, export, and `@celesta/web`.
+- Masks draw the same in preview, export, and `@celesta.studio/web`.
 
 ## Image
 
@@ -468,11 +468,11 @@ to pick up a new file.
 
 ## Lottie animations
 
-`<Lottie>` from `@celesta/lottie` plays a Lottie (Bodymovin) JSON export in
+`<Lottie>` from `@celesta.studio/lottie` plays a Lottie (Bodymovin) JSON export in
 step with the composition. Import the file and pass its contents as `data`:
 
 ```tsx
-import { Lottie } from '@celesta/lottie';
+import { Lottie } from '@celesta.studio/lottie';
 import confetti from './confetti.json';
 
 <Lottie data={confetti} x={960} y={540} anchorX={0.5} anchorY={0.5} width={800} />
@@ -512,7 +512,7 @@ elements; 100,000 animated particles cost about as much per frame as a few
 hundred `Rect` layers. Particles draw in array order, later ones on top.
 
 ```tsx
-import { Composition, Instances, useCurrentFrame } from '@celesta/react';
+import { Composition, Instances, useCurrentFrame } from '@celesta.studio/react';
 
 const N = 20_000;
 const xs = new Float32Array(N);
@@ -559,7 +559,7 @@ function Snow() {
 
 ## PatternBackground (dots, grid, stripes)
 
-Imported from `@celesta/components`. A repeating background filling an
+Imported from `@celesta.studio/components`. A repeating background filling an
 area (the canvas by default; `x`, `y`, `width`, `height`, `cornerRadius`
 pick another) and clipped to it, without building arrays of `<Rect>`s.
 Every mark is a particle of one `<Instances>` layer, so the dots of a
@@ -584,7 +584,7 @@ fraction, the same on every frame for the same `seed`, and a mark keeps its
 value as the pattern moves. More than `maxMarks` (100,000) marks throw.
 
 ```tsx
-import { PatternBackground } from '@celesta/components';
+import { PatternBackground } from '@celesta.studio/components';
 
 <PatternBackground pattern="dots" spacing={80} size={3}
   background="#101820" color="#FFFFFF" opacity={0.12} />
@@ -612,7 +612,7 @@ Runnable: [`packages/cli/examples/with-pattern-background.tsx`](../../../package
 
 ## Panel (cards and boxes with padding)
 
-Imported from `@celesta/components`. A box of a given size with a
+Imported from `@celesta.studio/components`. A box of a given size with a
 background, a border, rounded corners, and a shadow, whose children lay out
 inside its padding. Use it for caption cards, callouts, and code or stat
 panels instead of a `<Group>` with a `<Rect>`, a hand-set `x={PAD}`, and a
@@ -645,8 +645,8 @@ to the whole panel.
   without a `fill` throws.
 
 ```tsx
-import { Panel } from '@celesta/components';
-import { Center } from '@celesta/layout';
+import { Panel } from '@celesta.studio/components';
+import { Center } from '@celesta.studio/layout';
 
 <Panel x={120} y={600} width={720} height={320} padding={32}
   fill="#182030" stroke="#2C3A50" cornerRadius={20} clip
@@ -665,7 +665,7 @@ Runnable: [`packages/cli/examples/with-panel.tsx`](../../../packages/cli/example
 
 ## Badge (labels sized to their text)
 
-Imported from `@celesta/components`. A label on a [`Panel`](#panel-cards-and-boxes-with-padding)
+Imported from `@celesta.studio/components`. A label on a [`Panel`](#panel-cards-and-boxes-with-padding)
 whose size comes from the measured text: tags, chapter labels, chips, and
 pills. It passes the same text and style to `useTextMetrics()` and `<Text>`,
 so the background fits Japanese, Latin, and proportional fonts without
@@ -701,8 +701,8 @@ it or the font changes. There is no separate `Chip`: a chip is a badge with
   finite and not negative, or it throws.
 
 ```tsx
-import { Badge } from '@celesta/components';
-import { Center } from '@celesta/layout';
+import { Badge } from '@celesta.studio/components';
+import { Center } from '@celesta.studio/layout';
 
 <Badge x={120} y={80} fill="#204060" fontFamily="ja" fontSize={28} color="#FFFFFF">第1章</Badge>
 
@@ -721,7 +721,7 @@ Runnable: [`packages/cli/examples/with-badge.tsx`](../../../packages/cli/example
 
 ## Counter, StatCard, BarChart, Ranking (numbers and bar charts)
 
-Imported from `@celesta/components`. Components that count numbers and
+Imported from `@celesta.studio/components`. Components that count numbers and
 print them one way, with `formatNumber(value, format)`, also exported:
 
 | Format prop | Default | Notes |
@@ -785,7 +785,7 @@ same defaults as `useCountUp`.
   `rankWidth` (default the widest rank) before `rankGap` (24).
 
 ```tsx
-import { BarChart, Counter, Ranking, StatCard } from '@celesta/components';
+import { BarChart, Counter, Ranking, StatCard } from '@celesta.studio/components';
 
 <Counter x={1800} y={120} anchorX={1} value={1280} suffix=" 件" fontSize={96} fontWeight={700} />
 <StatCard x={120} y={600} width={420} height={240} fill="#182030" color="#F4F1EA"
@@ -804,7 +804,7 @@ Runnable: [`packages/cli/examples/with-counter.tsx`](../../../packages/cli/examp
 
 ## Callout (a note with a line to its target)
 
-Imported from `@celesta/components`. A box with a title and text, sized
+Imported from `@celesta.studio/components`. A box with a title and text, sized
 from the measured text like [`Badge`](#badge-labels-sized-to-their-text),
 and a line from the box to a `target` point ending in an arrowhead. Use it
 instead of a `<Rect>`, a `<Text>`, and a `<Line>` or `<Arrow>` placed by
@@ -841,7 +841,7 @@ hand.
   position, and keeping several callouts from overlapping are not provided.
 
 ```tsx
-import { Callout } from '@celesta/components';
+import { Callout } from '@celesta.studio/components';
 
 <Callout target={{ x: 960, y: 540 }} x={1200} y={240} width={480}
   title="ここに注目" text="対象の特徴を説明します"
@@ -863,7 +863,7 @@ renderer, and parsed once and then reused. 100,000 still rects inside one
 component and more without one.
 
 ```tsx
-import { Static } from '@celesta/react';
+import { Static } from '@celesta.studio/react';
 
 <Static deps={[theme, rows]}>
   <Background />
@@ -917,7 +917,7 @@ corners and a caption, use [`MediaFrame`](#mediaframe-images-and-videos-in-a-fra
 
 HDR video (PQ or HLG, such as iPhone footage) and BT.2020 SDR video are
 converted to SDR the way Chrome draws them onto a canvas, so the native
-preview, the export, and `@celesta/web` agree. The HDR reference white
+preview, the export, and `@celesta.studio/web` agree. The HDR reference white
 (203 nits, HLG's 75% signal) lands at half of SDR white's light, so HDR
 footage looks darker than a white `<Rect>` beside it; highlights roll off up
 to the file's MaxCLL (1000 nits without one). Export is SDR.
@@ -925,7 +925,7 @@ to the file's MaxCLL (1000 nits without one). Export is SDR.
 
 ## MediaFrame (images and videos in a frame)
 
-Imported from `@celesta/components`. An image or a video fitted into a
+Imported from `@celesta.studio/components`. An image or a video fitted into a
 `width`×`height` frame drawn by [`Panel`](#panel-cards-and-boxes-with-padding),
 with an optional caption under it. Use it instead of a `<Rect>` behind a
 `<Group clip>` around a scaled `<Video>` with a `<Text>` placed under it.
@@ -956,9 +956,9 @@ with an optional caption under it. Use it instead of a `<Rect>` behind a
   size, and negative or non-finite sizes throw.
 
 ```tsx
-import { MediaFrame } from '@celesta/components';
-import { preloadMedia } from '@celesta/media-utils';
-import type { MediaInfo } from '@celesta/media-utils';
+import { MediaFrame } from '@celesta.studio/components';
+import { preloadMedia } from '@celesta.studio/media-utils';
+import type { MediaInfo } from '@celesta.studio/media-utils';
 
 let clip: MediaInfo;
 export async function prepare() { clip = await preloadMedia('./demo.mp4'); }
@@ -991,7 +991,7 @@ Runnable: [`packages/cli/examples/with-media-frame.tsx`](../../../packages/cli/e
 
 `pitch` and `preservePitch` apply to `<Audio>` only, not to a `<Video>`'s
 soundtrack or `<Dialogue>` voices. Preview and export sound the same;
-`@celesta/web`'s `exportMp4` rejects a clip that uses them ("Audio pitch and
+`@celesta.studio/web`'s `exportMp4` rejects a clip that uses them ("Audio pitch and
 preservePitch are not supported by browser export yet.").
 
 `fadeIn` / `fadeOut` are `<Audio>` only too, and `exportMp4` applies them.
@@ -1054,9 +1054,9 @@ plays. Dialogue voices are in `"voice"` already
 - Out-of-range values (`to: 1.5`, a negative `attack`) fail the export and
   preview with the clip's `src` and the field; a non-finite number throws in
   React already.
-- Preview, export, and `@celesta/web`'s `exportMp4` play the same curve. To
+- Preview, export, and `@celesta.studio/web`'s `exportMp4` play the same curve. To
   build it yourself, `duckEnvelope(intervals, duck, { origin })` from
-  `@celesta/media-utils` returns it as keyframes (intervals and `origin`
+  `@celesta.studio/media-utils` returns it as keyframes (intervals and `origin`
   in seconds); from a dialogue plan, where `origin` is in frames,
   use `duckingVolume()` ([dialogue.md](dialogue.md#ducking-bgm-and-game-audio-under-speech)).
 
@@ -1123,7 +1123,7 @@ conditional plays only on frames where it is rendered.
 
 ## Layout helpers
 
-Imported from `@celesta/layout`.
+Imported from `@celesta.studio/layout`.
 
 Helpers position child **origins**; they do not measure what children draw.
 Anchor children at `0.5` to center them on those points.
@@ -1203,7 +1203,7 @@ into PNG frames (`--debug-guides`, see
 
 ## Media info
 
-Imported from `@celesta/media-utils`.
+Imported from `@celesta.studio/media-utils`.
 
 Call `preloadMedia()` in `prepare()` to learn a file's length and size:
 
@@ -1227,7 +1227,7 @@ whole voiced script this way, use `planDialogue()` (see
 
 ## Audio spectrum and loudness
 
-Also from `@celesta/media-utils`. `loadAudioSpectrum(src, options?)`
+Also from `@celesta.studio/media-utils`. `loadAudioSpectrum(src, options?)`
 decodes an audio file (or a video's soundtrack) in `prepare()` and analyzes
 all of it; `useAudioSpectrum(spectrum, { startFrom? })` returns
 `{ bands: number[], rms: number }` for the current frame:
@@ -1328,7 +1328,7 @@ See `packages/cli/examples/with-volume-fade.tsx`.
 
 ## Debug guides
 
-Imported from `@celesta/debug`.
+Imported from `@celesta.studio/debug`.
 
 `<DebugOverlay safeArea? shade? color? showCenter? showFrame? />` outlines
 the safe area, shades the canvas outside it, and draws a center cross and

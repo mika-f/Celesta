@@ -1,12 +1,12 @@
 // 画面の隅に出す「いま足したコード」のパネル。段階（step）ごとに行が増え、
 // いちばん新しい段階は 1 文字ずつ打ち込まれて、しばらく緑に光る。
 //
-// 色分けは @celesta/code の <Code>。打ち込みの途中でも、完成したコードを一度だけ
+// 色分けは @celesta.studio/code の <Code>。打ち込みの途中でも、完成したコードを一度だけ
 // 字句分割した色のまま、先頭から `visibleCharacters` 文字だけを見せる。
 
-import { Easings, Group, Rect, Text, progress } from '@celesta/react';
-import { Code, codeCharacterCount, codeThemes } from '@celesta/code';
-import type { CodeLanguage, CodeTheme } from '@celesta/code';
+import { Easings, Group, Rect, Text, progress } from '@celesta.studio/react';
+import { Code, codeCharacterCount, codeThemes } from '@celesta.studio/code';
+import type { CodeLanguage, CodeTheme } from '@celesta.studio/code';
 
 import { COLOR, FONT, solid } from '../theme.ts';
 
@@ -21,7 +21,7 @@ const TYPING_SPEED = 1.8;
 /** 足した行を光らせておくフレーム数 */
 const HIGHLIGHT_FRAMES = 50;
 
-/** 動画全体の色に合わせたテーマ。トークンの名前は @celesta/code（twinkleplop）のもの。 */
+/** 動画全体の色に合わせたテーマ。トークンの名前は @celesta.studio/code（twinkleplop）のもの。 */
 const THEME: CodeTheme = {
   foreground: COLOR.code,
   highlightLine: '#7CC24230',

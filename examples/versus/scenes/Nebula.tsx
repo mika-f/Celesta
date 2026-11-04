@@ -1,5 +1,5 @@
-import { MediaFrame } from '@celesta/components';
-import { Easings, Group, Rect, progress, useCurrentFrame } from '@celesta/react';
+import { MediaFrame } from '@celesta.studio/components';
+import { Easings, Group, Rect, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { C, FONT, TOOL } from '../constants';
 

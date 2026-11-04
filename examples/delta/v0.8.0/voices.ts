@@ -1,5 +1,5 @@
-import { importVoiceFolder, matchVoiceLevels } from '@celesta/character';
-import type { VoiceLevelReport, VoiceLine } from '@celesta/character';
+import { importVoiceFolder, matchVoiceLevels } from '@celesta.studio/character';
+import type { VoiceLevelReport, VoiceLine } from '@celesta.studio/character';
 
 // The VOICES chapter's data, read in prepare() from the repository's voice
 // folder fixture (examples/assets/voice-folder): the lines importVoiceFolder()

@@ -1,7 +1,7 @@
 // Colors as the components take them: a hex color or a `<Theme>` color name.
 
-import { isHexColor, parseHexColor } from '@celesta/math';
-import type { ResolvedTheme } from '@celesta/react';
+import { isHexColor, parseHexColor } from '@celesta.studio/math';
+import type { ResolvedTheme } from '@celesta.studio/react';
 
 /** `color` resolved through the theme's colors and checked to be `#RRGGBB` or `#RRGGBBAA`. */
 export function hexColor(color: string, theme: ResolvedTheme, component: string, prop: string): string {

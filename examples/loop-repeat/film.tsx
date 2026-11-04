@@ -1,4 +1,4 @@
-import { Audio, Composition, Group, Loop, Rect, Text, interpolate, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Audio, Composition, Group, Loop, Rect, Text, interpolate, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 
 const WIDTH = 1280;
 const HEIGHT = 720;

@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Text, interpolate, progress, spring } from '@celesta/react';
-import { Circle, Polyline } from '@celesta/shapes';
+import { Easings, Group, Rect, Text, interpolate, progress, spring } from '@celesta.studio/react';
+import { Circle, Polyline } from '@celesta.studio/shapes';
 import { useAccent, useBarLoop, useStage } from '../components/DemoClock';
 import { BAR, C, DEMO, FONT, FPS, W } from '../constants';
 

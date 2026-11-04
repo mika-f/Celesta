@@ -28,7 +28,7 @@ impl PendingPath {
     /// vignette span: the box of the points its commands name (control
     /// points included, and 0,0 when the first command draws from there),
     /// grown by half the stroke's width, with its corners placed by the
-    /// layer's transform as a rect's are. `@celesta/web` computes the same
+    /// layer's transform as a rect's are. `@celesta.studio/web` computes the same
     /// box (`SceneCanvas.shapeBox`), so it does not follow the stroked
     /// outline, which only tiny-skia's stroker gives exactly.
     pub(crate) fn shape_box(&self) -> Option<PixelBounds> {

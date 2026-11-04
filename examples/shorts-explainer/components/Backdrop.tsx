@@ -1,4 +1,4 @@
-import { Instances, Rect, useCurrentFrame } from '@celesta/react';
+import { Instances, Rect, useCurrentFrame } from '@celesta.studio/react';
 import { C, H, STAGE_Y, W } from '../constants';
 
 // The dot grid: rows offset by half a step, one row above the top so the

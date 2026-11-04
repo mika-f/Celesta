@@ -1,12 +1,12 @@
 // Where the moras and phonemes of a synthesized voice fall in its WAV, shared
-// by the speech-engine adapters (`@celesta/voicevox`, `@celesta/aivis-speech`)
+// by the speech-engine adapters (`@celesta.studio/voicevox`, `@celesta.studio/aivis-speech`)
 // so code that lights moras, changes a face at a pause, or builds the mouth
 // accepts any of them. Phonemes use VOICEVOX's names, which engines that
 // serve its API share: consonants ('k', 'sh', 'ch'), vowels 'a i u e o'
 // (devoiced 'A I U E O'), 'N' (ん), 'cl' (っ), 'pau' for a pause and 'sil'
 // for the silence before and after the voice.
 
-import type { MouthShape } from '@celesta/react/internal';
+import type { MouthShape } from '@celesta.studio/react/internal';
 
 import { lipSyncFromKeyframes } from './lipsync';
 import type { LipSyncTrack, MouthKeyframe } from './lipsync';

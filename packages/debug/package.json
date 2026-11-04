@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/debug",
+  "name": "@celesta.studio/debug",
   "version": "0.9.0",
   "private": true,
   "description": "Debug overlays and bounds for previewing Celesta compositions.",
@@ -23,14 +23,14 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@celesta/layout": "workspace:*"
+    "@celesta.studio/layout": "workspace:*"
   },
   "peerDependencies": {
-    "@celesta/react": "0.0.0",
+    "@celesta.studio/react": "0.0.0",
     "react": "^19.3.0"
   },
   "devDependencies": {
-    "@celesta/react": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",

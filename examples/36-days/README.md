@@ -3,7 +3,7 @@
 このリポジトリ自身の Git 履歴から作った、44 秒のデータ映像です。
 最初のコミットから 36 日間のコミット数、コードの量、マイルストーンを、120 BPM のオリジナルスコアに合わせて見せます。
 
-`@celesta/react` のモーション用ヘルパー（`Series`・`Stagger`・`useBeat`・`useCue`・`TextReveal`・
+`@celesta.studio/react` のモーション用ヘルパー（`Series`・`Stagger`・`useBeat`・`useCue`・`TextReveal`・
 `useTypewriter`・`useCountUp`・`Camera`・`Polyline` など）は、この映像を一度素の API だけで作り、
 何度も手書きしたものを切り出して作られました。各シーンがそのまま使用例になっています。
 

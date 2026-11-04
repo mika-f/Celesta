@@ -160,7 +160,7 @@ pub(crate) fn set_timing_offer(
 
 /// The element `report` describes, found again in `texts` where `expected`
 /// was, wrapped in `<Sequence from={from} durationInFrames={duration}>` with
-/// `Sequence` imported from `@celesta/react` (written as the file imports
+/// `Sequence` imported from `@celesta.studio/react` (written as the file imports
 /// it: an alias, or `C.Sequence` under `import * as C`), as one checked
 /// text of the element's file.
 pub(crate) fn set_timing_files(

@@ -1,12 +1,12 @@
 import * as fs from 'node:fs';
 import * as React from 'react';
 
-import { Sequence } from '@celesta/react';
-import type { AnimatedNumber } from '@celesta/react';
-import { entryRelativePath, isRemoteUrl } from '@celesta/react/internal';
-import { mediaDurationInFrames, preloadMedia } from '@celesta/media-utils';
+import { Sequence } from '@celesta.studio/react';
+import type { AnimatedNumber } from '@celesta.studio/react';
+import { entryRelativePath, isRemoteUrl } from '@celesta.studio/react/internal';
+import { mediaDurationInFrames, preloadMedia } from '@celesta.studio/media-utils';
 
-import type { TextEmphasis } from '@celesta/text';
+import type { TextEmphasis } from '@celesta.studio/text';
 
 import { Dialogue, DialogueLineContext, SubtitleRunContext } from './components';
 import type { CharacterViewProps, CharacterViewReference, DialogueExpression, DialogueProps } from './components';

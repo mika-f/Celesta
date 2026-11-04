@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 fn scene(frames: u32, width: u32, height: u32) -> String {
     format!(
         r##"
-import {{ Composition, Rect, useCurrentFrame }} from '@celesta/react';
+import {{ Composition, Rect, useCurrentFrame }} from '@celesta.studio/react';
 function Box() {{
   return <Rect x={{useCurrentFrame() % 100}} width={{32}} height={{32}} fill="#ff3366" />;
 }}

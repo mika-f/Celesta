@@ -26,4 +26,4 @@ export type {
   TimelineItem,
   Track,
   TrackKind,
-} from '@celesta/react/internal';
+} from '@celesta.studio/react/internal';

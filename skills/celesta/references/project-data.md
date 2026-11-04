@@ -5,9 +5,9 @@ title, colors, or a data file) and receive their values from the command
 line, read values from a `.celesta.json` project, draw the project's
 timeline, and render registered components that JSON timeline items name.
 `defineProjectProperties`, `getProjectProperty`, and `registerComponent` are
-imported from `@celesta/react`; `useProjectProperty`, `ProjectProvider`,
+imported from `@celesta.studio/react`; `useProjectProperty`, `ProjectProvider`,
 `loadProject`, `loadProjectFromString`, `useProject`, `useProjectTrack`,
-`<ProjectTimeline />`, and `<ProjectTrack />` from `@celesta/project`.
+`<ProjectTimeline />`, and `<ProjectTrack />` from `@celesta.studio/project`.
 
 ## Contents
 
@@ -128,7 +128,7 @@ values.
 ## Read values from a project
 
 ```tsx
-import type { Project } from '@celesta/project';
+import type { Project } from '@celesta.studio/project';
 import projectFile from './project.celesta.json';
 const project = projectFile as Project;
 
@@ -169,7 +169,7 @@ Props must be plain JSON values; declare them with a `type` alias, not an
 `range`, `transform`, and `opacity` still come from the JSON.
 
 ```tsx
-import { LowerThird } from '@celesta/components';
+import { LowerThird } from '@celesta.studio/components';
 
 type LowerThirdProps = { name: string; role: string };
 function NameCaption({ name, role }: LowerThirdProps) {

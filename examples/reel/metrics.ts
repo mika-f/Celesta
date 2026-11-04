@@ -1,4 +1,4 @@
-import { measureText } from '@celesta/react';
+import { measureText } from '@celesta.studio/react';
 import { FONT, FONT_SRC } from './constants';
 
 // Measured in prepare(): JetBrains Mono's per-glyph advance in em (0.6), and

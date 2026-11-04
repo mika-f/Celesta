@@ -1,4 +1,4 @@
-import type { TextStyle } from '@celesta/react';
+import type { TextStyle } from '@celesta.studio/react';
 import { FONT, HEADER, SAFE_W } from './constants';
 
 // The three places that set a variant's own words: how each is set, how wide

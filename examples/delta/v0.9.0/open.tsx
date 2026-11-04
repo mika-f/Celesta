@@ -1,5 +1,5 @@
-import { Easings, FreezeFrame, Group, Rect, Sequence, Span, Text, interpolate, progress, useCurrentFrame } from '@celesta/react';
-import { Pie } from '@celesta/shapes';
+import { Easings, FreezeFrame, Group, Rect, Sequence, Span, Text, interpolate, progress, useCurrentFrame } from '@celesta.studio/react';
+import { Pie } from '@celesta.studio/shapes';
 import { Backdrop } from '../components/Backdrop';
 import { Delta } from '../components/Delta';
 import { C, FONT, solid } from '../components/theme';

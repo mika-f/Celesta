@@ -485,10 +485,10 @@ mod tests {
         }
     }
 
-    /// `defineScenes` counts only as `@celesta/react`'s.
-    const IMPORT: &str = "import { defineScenes } from '@celesta/react';\n";
+    /// `defineScenes` counts only as `@celesta.studio/react`'s.
+    const IMPORT: &str = "import { defineScenes } from '@celesta.studio/react';\n";
 
-    const TIMELINE: &str = "import { defineScenes } from '@celesta/react';\n\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: 90 },\n  { id: 'main', durationInFrames: 120 },\n  { id: 'outro', durationInFrames: 90 },\n]);\n";
+    const TIMELINE: &str = "import { defineScenes } from '@celesta.studio/react';\n\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: 90 },\n  { id: 'main', durationInFrames: 120 },\n  { id: 'outro', durationInFrames: 90 },\n]);\n";
 
     fn sources(lists: &[(&str, &str)], film: &str) -> SceneSources {
         let entry = PathBuf::from("/p/film.tsx");
@@ -510,7 +510,7 @@ mod tests {
 
     fn film(import: &str, duration: &str) -> String {
         format!(
-            "import {{ Composition }} from '@celesta/react';\n{import}\nexport const Film = () => (\n  <Composition width={{1920}} height={{1080}} fps={{30}} durationInFrames={duration}>\n  </Composition>\n);\n"
+            "import {{ Composition }} from '@celesta.studio/react';\n{import}\nexport const Film = () => (\n  <Composition width={{1920}} height={{1080}} fps={{30}} durationInFrames={duration}>\n  </Composition>\n);\n"
         )
     }
 

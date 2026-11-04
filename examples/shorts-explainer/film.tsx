@@ -1,7 +1,7 @@
-import { Assets, Audio, Composition, Font, Sequence } from '@celesta/react';
+import { Assets, Audio, Composition, Font, Sequence } from '@celesta.studio/react';
 import type { ReactElement } from 'react';
-import { Character, DialogueSeries } from '@celesta/character';
-import type { CharacterSubtitle } from '@celesta/character';
+import { Character, DialogueSeries } from '@celesta.studio/character';
+import type { CharacterSubtitle } from '@celesta.studio/character';
 import { CAST } from './character';
 import { Backdrop } from './components/Backdrop';
 import { PanelSurface } from './components/Panel';

@@ -1,6 +1,6 @@
-import { Easings, Group, Rect, Sequence, Text } from '@celesta/react';
-import { TransitionSeries, computeTransitionSeries } from '@celesta/transitions';
-import type { TransitionSeriesTransitionProps, TransitionSeriesType } from '@celesta/transitions';
+import { Easings, Group, Rect, Sequence, Text } from '@celesta.studio/react';
+import { TransitionSeries, computeTransitionSeries } from '@celesta.studio/transitions';
+import type { TransitionSeriesTransitionProps, TransitionSeriesType } from '@celesta.studio/transitions';
 import { CUT, STAGE, enter } from '../../components/ChapterShell';
 import type { DemoProps } from '../../components/ChapterShell';
 import { C, FONT, H, W, solid } from '../../components/theme';

@@ -23,7 +23,7 @@ Celesta の **File → Open…** で `first-scene.tsx` を選び、`Space` で�
 各ルートに空でない一意の `id` を付け、フラグメントで返します。サイズ・fps・尺はそれぞれ設定できます。既存の単一コンポジションは `id` を省略したまま使え、その ID は `default` です。選択しない場合は宣言順の先頭を使い、存在しない ID を指定した場合はエラーになります。
 
 ```tsx
-import { Composition, Text } from '@celesta/react';
+import { Composition, Text } from '@celesta.studio/react';
 
 export default () => <>
   <Composition id="landscape" width={1920} height={1080} fps={30} durationInFrames={150}>
@@ -46,7 +46,7 @@ node skills/celesta/scripts/inspect.mjs film.tsx --composition portrait --json
 
 ## エディタの TypeScript 設定
 
-React コンポジションを開き、**File → Set Up TypeScript** を選びます。Celesta がすべての `@celesta/*` パッケージ、React、Node.js の対応する型宣言をローカルの `.celesta/` ディレクトリにコピーします。
+React コンポジションを開き、**File → Set Up TypeScript** を選びます。Celesta がすべての `@celesta.studio/*` パッケージ、React、Node.js の対応する型宣言をローカルの `.celesta/` ディレクトリにコピーします。
 
 まだコンポジションがない新規プロジェクトでは、**File → Set Up TypeScript in Folder…** でフォルダを選ぶと、最初から型を使って書けます。
 
@@ -59,3 +59,14 @@ React コンポジションを開き、**File → Set Up TypeScript** を選び�
 ```
 
 この設定に必要な型宣言を npm から入れる必要はありません。新しいアプリでプロジェクトを開くと `.celesta/` が更新されます。このディレクトリは Git から自身を除外します。
+
+## `@celesta/*` を読み込むプロジェクト
+
+Celesta のパッケージ名は `@celesta/*` から `@celesta.studio/*`（`@celesta.studio/react` など）に変わりました。旧名を読み込むコンポジションもそのまま動きます。アプリ、CLI、ウェブエディタは `@celesta/react` を `@celesta.studio/react` として解決し、`.celesta/tsconfig.json` は両方の名前を同じ型宣言に対応づけます。旧名を読み込むファイルごとに `scenes/Intro.tsx imports @celesta/react, an old name; import @celesta.studio/react instead` のような警告が出ます。表示先は、アプリの **Problems** タブ、`Celesta-export` の出力（`--json` レポートの `warnings` を含む）、ウェブエディタのブラウザコンソールです。新しいコード、テンプレート、アプリによる編集は `@celesta.studio/*` を使います。
+
+プロジェクト内のインポートをまとめて書き換えるには、Celesta スキルの移行スクリプトを実行します。書き換えたファイルと同じ場所にある `package.json` の `@celesta/*` 依存関係も改名します。
+
+```sh
+node skills/celesta/scripts/migrate-packages.mjs path/to/project --dry-run
+node skills/celesta/scripts/migrate-packages.mjs path/to/project
+```

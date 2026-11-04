@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Layer } from '@celesta/react';
+import type { Layer } from '@celesta.studio/react';
 import type { FrameMessage, Request } from '../src/cli.js';
 
 const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
@@ -20,14 +20,14 @@ const time = { value: 0, timescale: 30 };
 /** `<Label>` on line 6, column 9 of entry.tsx, drawing `box` and `shadow`. */
 const LABEL_SOURCES: Record<string, string[]> = {
   'label.tsx': [
-    "import { Rect } from '@celesta/react';",
+    "import { Rect } from '@celesta.studio/react';",
     'export function Label({ x }: { x: number }) {',
     '  return <><Rect id="box" x={x} width={4} height={4} /><Rect id="shadow" x={x} width={4} height={4} /></>;',
     '}',
     '',
   ],
   'entry.tsx': [
-    "import { Composition } from '@celesta/react';",
+    "import { Composition } from '@celesta.studio/react';",
     "import { Label } from './label';",
     'export default function Film() {',
     '  return (',
@@ -77,14 +77,14 @@ test('an override within a call draws the copies under that call only', () => {
   // column 9, of entry.tsx.
   const sources = {
     'tag.tsx': [
-      "import { Rect } from '@celesta/react';",
+      "import { Rect } from '@celesta.studio/react';",
       'export function PriceTag({ label }: { label: string }) {',
       '  return <Rect id={label} x={10} width={4} height={4} />;',
       '}',
       '',
     ],
     'entry.tsx': [
-      "import { Composition } from '@celesta/react';",
+      "import { Composition } from '@celesta.studio/react';",
       "import { PriceTag } from './tag';",
       'export default function Film() {',
       '  return (',

@@ -1,4 +1,4 @@
-// `@celesta/react/jsx-dev-runtime`: the editor preview routes esbuild's
+// `@celesta.studio/react/jsx-dev-runtime`: the editor preview routes esbuild's
 // `jsxDEV` calls here. Elements are the ones `react/jsx-runtime` builds; the
 // position each was written at is kept on the side, keyed by the element's
 // props, so a component never sees an extra prop. Fibers carry those props, so

@@ -8,7 +8,7 @@
     "jsx": "react-jsx",
     "paths": {
       "@celesta-plugin/vrm": ["../src/index.ts"],
-      "@celesta/react": ["../node_modules/@celesta/react"],
+      "@celesta.studio/react": ["../node_modules/@celesta.studio/react"],
       "react": ["../node_modules/@types/react"],
       "react/*": ["../node_modules/@types/react/*"]
     }

@@ -4,9 +4,9 @@
 // one hop to the next and still every frame gets the same value whichever
 // order frames are rendered in.
 
-import { useCurrentTime } from '@celesta/react';
-import { decodeAudio } from '@celesta/react/internal';
-import type { DecodedAudio } from '@celesta/react/internal';
+import { useCurrentTime } from '@celesta.studio/react';
+import { decodeAudio } from '@celesta.studio/react/internal';
+import type { DecodedAudio } from '@celesta.studio/react/internal';
 
 /** How the frequency range is divided into bands: equal steps on this scale. */
 export type FrequencyScale = 'log' | 'linear' | 'mel';

@@ -1,5 +1,5 @@
-import { clamp01, lerp } from '@celesta/math';
-import { Group, Rect } from '@celesta/react';
+import { clamp01, lerp } from '@celesta.studio/math';
+import { Group, Rect } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { ACID, BLUE, BONE, GREY, H, INK, W } from '../constants';
 

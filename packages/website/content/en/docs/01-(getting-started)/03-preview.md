@@ -381,7 +381,7 @@ While you drag, the edge you hold snaps to the playhead, to chapter edges, and t
 
 ### Drag an element's band
 
-When the selected element sits in a `<Sequence>` or a `<Series.Sequence>` of its own, the filled band at the playhead takes grips at that window's edges: the nearest one around the element counts, imported from `@celesta/react` under any name, such as `Seq` or `C.Sequence`. The pointer turns into a resize arrow over an edge; drag an edge to move it, or the middle to move the whole window:
+When the selected element sits in a `<Sequence>` or a `<Series.Sequence>` of its own, the filled band at the playhead takes grips at that window's edges: the nearest one around the element counts, imported from `@celesta.studio/react` under any name, such as `Seq` or `C.Sequence`. The pointer turns into a resize arrow over an edge; drag an edge to move it, or the middle to move the whole window:
 
 | Grip | `<Sequence>` writes | `<Series.Sequence>` writes |
 | --- | --- | --- |
@@ -404,7 +404,7 @@ A grip that can't drag shows a not-allowed pointer, and hovering over it shows w
 | Reason | Meaning |
 | --- | --- |
 | Timing inside a loop or freeze frame can't be dragged | The window nearest the element is inside a `<Loop>` or a `<FreezeFrame>` |
-| Not a `<Sequence>` or `<Series.Sequence>` of @celesta/react | The window comes from another wrapper, or from a `Sequence` your file doesn't import from `@celesta/react` |
+| Not a `<Sequence>` or `<Series.Sequence>` of @celesta.studio/react | The window comes from another wrapper, or from a `Sequence` your file doesn't import from `@celesta.studio/react` |
 | Couldn't find this element in the source | The file no longer has the window where the preview found it, such as while a save is still reloading |
 | The source is still being read | Celesta is reading the element's source, such as right after you select it |
 | Select the layer again | What Celesta read for the layer is no longer current, such as right after one of its own writes |
@@ -425,7 +425,7 @@ const SCENES = defineScenes([
 ]);
 ```
 
-After every reload, Celesta reads the `.ts` and `.tsx` files in the entry file's folder and below (skipping `node_modules`, `dist`, `.tmp`, and `.git`) for calls of `defineScenes([...])` imported from `@celesta/react` (also under another name, or as `C.defineScenes` with `import * as C`) whose list is written out: an array of `{ … }` entries whose `id` is a string. A list with anything else in it, such as `...CHAPTERS.map(…)`, is skipped. The chapter's id must belong to one entry only, and that entry's `durationInFrames` must be a number, or a `const` of the same file that nothing else reads and the file doesn't export.
+After every reload, Celesta reads the `.ts` and `.tsx` files in the entry file's folder and below (skipping `node_modules`, `dist`, `.tmp`, and `.git`) for calls of `defineScenes([...])` imported from `@celesta.studio/react` (also under another name, or as `C.defineScenes` with `import * as C`) whose list is written out: an array of `{ … }` entries whose `id` is a string. A list with anything else in it, such as `...CHAPTERS.map(…)`, is skipped. The chapter's id must belong to one entry only, and that entry's `durationInFrames` must be a number, or a `const` of the same file that nothing else reads and the file doesn't export.
 
 The composition's length follows the drag when the entry file writes it as the list's length, such as `<Composition durationInFrames={SCENES.durationInFrames}>`, where `SCENES` is the list's `const` in the same file, or is imported by name (also under another name) from a path without an extension, such as `import { SCENES } from './timeline'` for `timeline.ts`, `timeline.tsx`, or a `timeline` folder's `index.ts`. Then lengthening a scene lengthens the composition. Otherwise, such as with `durationInFrames={300}`, the composition keeps its length: the drag stops before a scene after the dragged one would start at or after the composition's end, and before the dragged end passes it, and **The composition is 300 frames long** shows beside the end.
 
@@ -465,7 +465,7 @@ An element without a window of its own, such as a background drawn for its whole
 
 - `from` counts from the start of the scene the element is drawn in. An element placed on the composition's own timeline, outside any `<Scenes>` or `<Sequence>`, gets the playhead's frame as `from` and runs to the end of the scene at the playhead, or to the composition's end outside every chapter.
 - The `<Sequence>` is indented like the element and the element one level deeper, with the tabs or spaces your file uses; nothing else is reformatted. An element that shares its line with other code, such as `<Group><Rect /></Group>`, is wrapped on that line.
-- `Sequence` is added to the file's import from `@celesta/react`, in order when its names are sorted, or on a new import line after the last import. A file that imports it under another name gets that name, such as `<Seq>` or `<C.Sequence>`.
+- `Sequence` is added to the file's import from `@celesta.studio/react`, in order when its names are sorted, or on a new import line after the last import. A file that imports it under another name gets that name, such as `<Seq>` or `<C.Sequence>`.
 - It is one change: one undo removes the `<Sequence>` and the import together.
 
 The button's tooltip says **Animations inside start at the new start**. Inside a `<Sequence>`, `useCurrentFrame()` counts from the `<Sequence>`'s start, so a component inside the new `<Sequence>` that reads the frame, such as a title fading in with `interpolate(frame, [0, 20], [0, 1])`, now plays its animation from the playhead instead of the scene's start. That is what `<Sequence>` does, and Celesta leaves it so. A value computed outside the new `<Sequence>`, such as an `opacity` the scene's component computes from its own `frame`, keeps its timing; the element is just drawn on fewer frames.
@@ -485,7 +485,7 @@ While Celesta reads the element's source, such as right after you select it or m
 
 ## Add elements on the canvas
 
-In interactive mode, the **Add** menu at the start of the tool row adds a **Rect**, **Ellipse**, **Circle**, **Text**, **Image**, or **Video** to your source: choose one, then draw it on the canvas. **Ellipse** and **Circle** are always offered, even when your file doesn't import `@celesta/shapes` yet: the package comes with Celesta, and adding one adds its import. The new element is written into a `<Group>`, its parent, as that group's last child, so it is drawn in front of the group's other children.
+In interactive mode, the **Add** menu at the start of the tool row adds a **Rect**, **Ellipse**, **Circle**, **Text**, **Image**, or **Video** to your source: choose one, then draw it on the canvas. **Ellipse** and **Circle** are always offered, even when your file doesn't import `@celesta.studio/shapes` yet: the package comes with Celesta, and adding one adds its import. The new element is written into a `<Group>`, its parent, as that group's last child, so it is drawn in front of the group's other children.
 
 ### Where the element goes
 
@@ -543,7 +543,7 @@ The element starts at the playhead and runs to the end of the nearest timing win
 
 No `<Sequence>` is written when the element would run that span without one: on the first frame of a `<Sequence>` or scene around the group, or from frame 0 to the composition's end. With less than a frame of the window left, the element gets a one-frame `<Sequence>`, also on the window's first frame.
 
-The inserted lines are indented one level deeper than the group's opening tag, with your file's tabs or spaces. `Rect`, `Text`, `Image`, `Video`, and `Sequence` come from `@celesta/react`, and `Ellipse` and `Circle` from `@celesta/shapes`. A name the file doesn't import yet is added to its `import { … }` from that package (a sorted list stays sorted); without one, a new import line goes after the last import, in its quotes and semicolon style, or, in a file without imports, `import { Rect } from "@celesta/react";` at the top. Adding the first **Ellipse** to a file that imports only `@celesta/react`, for instance, writes `import { Ellipse } from "@celesta/shapes";` under that import, in its style. A name imported under another name is written with that name, and under `import * as C from "@celesta/react"` (or `import * as S from "@celesta/shapes"`), the element is written as `<C.Rect>` (or `<S.Ellipse>`).
+The inserted lines are indented one level deeper than the group's opening tag, with your file's tabs or spaces. `Rect`, `Text`, `Image`, `Video`, and `Sequence` come from `@celesta.studio/react`, and `Ellipse` and `Circle` from `@celesta.studio/shapes`. A name the file doesn't import yet is added to its `import { … }` from that package (a sorted list stays sorted); without one, a new import line goes after the last import, in its quotes and semicolon style, or, in a file without imports, `import { Rect } from "@celesta.studio/react";` at the top. Adding the first **Ellipse** to a file that imports only `@celesta.studio/react`, for instance, writes `import { Ellipse } from "@celesta.studio/shapes";` under that import, in its style. A name imported under another name is written with that name, and under `import * as C from "@celesta.studio/react"` (or `import * as S from "@celesta.studio/shapes"`), the element is written as `<C.Rect>` (or `<S.Ellipse>`).
 
 The addition is one change, and one undo removes the element and its import. After the reload, the new element is selected once the preview draws it; if the reloaded frame doesn't draw it, the previous selection stays, and if the layer selected turns out to be written elsewhere, the selection is cleared.
 

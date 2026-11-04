@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import * as React from 'react';
 
-import { Composition, Theme, defineScenes } from '@celesta/react';
-import type { Layer, LayerContent, Paint, Point, SceneEntry, ThemeValues } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
+import { Composition, Theme, defineScenes } from '@celesta.studio/react';
+import type { Layer, LayerContent, Paint, Point, SceneEntry, ThemeValues } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
 import { FrameChrome } from '../src/index.js';
 import type { FrameChromeProps } from '../src/index.js';
 

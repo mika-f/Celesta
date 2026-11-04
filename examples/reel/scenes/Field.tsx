@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Easings, Group, Rect, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Easings, Group, Rect, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { Tag } from '../components/Tag';
 import { BAR, C, FPS, H, W } from '../constants';
 

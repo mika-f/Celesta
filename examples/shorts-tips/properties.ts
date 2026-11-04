@@ -1,5 +1,5 @@
-import { defineProjectProperties } from '@celesta/react';
-import { useProjectProperty } from '@celesta/project';
+import { defineProjectProperties } from '@celesta.studio/react';
+import { useProjectProperty } from '@celesta.studio/project';
 import { DEMOS, type TipId } from './demos';
 
 // The template's inputs. Each file in variants/ sets them for one Tip; the

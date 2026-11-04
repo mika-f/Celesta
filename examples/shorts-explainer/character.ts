@@ -1,6 +1,6 @@
 import { createRef } from 'react';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference, PsdCharacterPortrait, PsdExpression } from '@celesta/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference, PsdCharacterPortrait, PsdExpression } from '@celesta.studio/character';
 import type { Face, SpeakerId } from './script';
 
 // The two portraits: official 東北ずん子・ずんだもんプロジェクト PSDs, shrunk

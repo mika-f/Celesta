@@ -1,10 +1,10 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { safeAreaInsets } from '@celesta/layout';
-import type { SafeAreaValue } from '@celesta/layout';
-import { Group, Rect, Text, useCurrentFrame, useDebugGuides, useVideoConfig } from '@celesta/react';
-import type { GroupProps } from '@celesta/react';
+import { safeAreaInsets } from '@celesta.studio/layout';
+import type { SafeAreaValue } from '@celesta.studio/layout';
+import { Group, Rect, Text, useCurrentFrame, useDebugGuides, useVideoConfig } from '@celesta.studio/react';
+import type { GroupProps } from '@celesta.studio/react';
 
 const DEFAULT_COLOR = '#00e5ffff';
 const DEFAULT_SHADE = '#00e5ff26';

@@ -23,7 +23,7 @@ Change the text or colors and save. The native preview reloads the composition. 
 Give each root a unique, non-empty `id` and return them in a fragment. Each can have its own dimensions, fps, and duration. A single existing composition can still omit `id` (its ID is `default`). Without a selection, Celesta uses the first root in declaration order; an unknown ID is an error.
 
 ```tsx
-import { Composition, Text } from '@celesta/react';
+import { Composition, Text } from '@celesta.studio/react';
 
 export default () => <>
   <Composition id="landscape" width={1920} height={1080} fps={30} durationInFrames={150}>
@@ -46,7 +46,7 @@ Both JSON outputs include `compositionId` and `compositions` (the inspector plac
 
 ## Set up TypeScript in your editor
 
-With a React composition open, choose **File → Set Up TypeScript**. Celesta copies matching declarations for every `@celesta/*` package, React, and Node.js into a local `.celesta/` directory.
+With a React composition open, choose **File → Set Up TypeScript**. Celesta copies matching declarations for every `@celesta.studio/*` package, React, and Node.js into a local `.celesta/` directory.
 
 Starting a new project with no composition yet? Choose **File → Set Up TypeScript in Folder…** and pick the project folder, so your first component is written with types in place.
 
@@ -59,3 +59,14 @@ If there is no `tsconfig.json`, Celesta creates one. If you already have a confi
 ```
 
 You do not need to install those declaration packages from npm for this editor setup. Celesta refreshes `.celesta/` when you open the project in a newer app version; that directory ignores itself in Git.
+
+## Projects that import `@celesta/*`
+
+The Celesta packages used to be named `@celesta/*` and are now `@celesta.studio/*`, such as `@celesta.studio/react`. Compositions that still import the old names keep working: the app, the CLI, and the web editor resolve `@celesta/react` to `@celesta.studio/react`, and `.celesta/tsconfig.json` maps both names to the same declarations. Each file that imports an old name gets a warning, such as `scenes/Intro.tsx imports @celesta/react, an old name; import @celesta.studio/react instead`: in the app's **Problems** tab, in `Celesta-export` output (and its `--json` report's `warnings`), and in the web editor's browser console. New code, the templates, and the app's own edits use `@celesta.studio/*`.
+
+To rename the imports in a project at once, run the migration script from the Celesta skill. It also renames `@celesta/*` dependencies in a `package.json` next to the files it changes.
+
+```sh
+node skills/celesta/scripts/migrate-packages.mjs path/to/project --dry-run
+node skills/celesta/scripts/migrate-packages.mjs path/to/project
+```

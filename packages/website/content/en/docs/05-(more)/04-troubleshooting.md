@@ -29,7 +29,7 @@ React compositions reload automatically. Use **File → Reload** to retry, and c
 Lip sync needs an uncompressed WAV voice and a transcript with readable vowels (kana or romaji). Check that `loadLipSync()` runs in `prepare()`, that the track is passed as `lipSync`, and that each mouth path matches a layer in the PSD exactly. For a PSD that shows nothing, set `layers` from a PSDTool preset.
 
 :::
-:::toggle[My editor cannot resolve @celesta/react or another Celesta package]
+:::toggle[My editor cannot resolve @celesta.studio/react or another Celesta package]
 
 Open the composition in Celesta and choose **File → Set Up TypeScript**. Check that your `tsconfig.json` extends `./.celesta/tsconfig.json`. When building from source, also complete the runtime’s install, codegen, and build steps.
 

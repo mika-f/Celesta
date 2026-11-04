@@ -183,7 +183,7 @@ are cents) and `preservePitch` (boolean, default false: `playbackRate` moves
 speed and pitch together; true: it changes only the duration and `pitch` alone
 sets the pitch). Heard transposition is
 `2^(pitch/12) × (preservePitch ? 1 : playbackRate)`. `video` items do not take
-them, and `@celesta/web`'s `exportMp4` rejects them.
+them, and `@celesta.studio/web`'s `exportMp4` rejects them.
 
 `fadeIn` / `fadeOut` (times, `{ "value": 3, "timescale": 2 }`, ≥ 0, default
 0) ramp the item linearly from silence at its start and to silence at its

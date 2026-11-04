@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Span, Text, interpolate } from '@celesta/react';
-import type { SpanStyle } from '@celesta/react';
+import { Easings, Group, Rect, Span, Text, interpolate } from '@celesta.studio/react';
+import type { SpanStyle } from '@celesta.studio/react';
 import { STAGE, enter } from '../../components/ChapterShell';
 import type { DemoProps } from '../../components/ChapterShell';
 import { BEAT, C, FONT, solid } from '../../components/theme';

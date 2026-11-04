@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { clamp01, random } from '@celesta/math';
-import { Easings, Group, Rect, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { clamp01, random } from '@celesta.studio/math';
+import { Easings, Group, Rect, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { C, H, W } from '../constants';
 import { LOGO_SIZE, logo } from '../metrics';
 

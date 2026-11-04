@@ -1,5 +1,5 @@
-import { Group, Rect, Text, progress } from '@celesta/react';
-import { Circle } from '@celesta/shapes';
+import { Group, Rect, Text, progress } from '@celesta.studio/react';
+import { Circle } from '@celesta.studio/shapes';
 import { withAlpha } from '../color';
 import { BAR, BEAT, C, CODE, CODE_FONTS, FONT, SAFE, TYPE_FRAMES, W } from '../constants';
 import { THEME, getPlan } from '../plan';
@@ -9,7 +9,7 @@ import { THEME, getPlan } from '../plan';
 // reveal time, with a band on the newest line; without it the whole snippet
 // is shown.
 //
-// It is drawn here rather than with @celesta/code's <Code>, to control the
+// It is drawn here rather than with @celesta.studio/code's <Code>, to control the
 // look: a band on the newest line, a caret that blinks on the beat, and a
 // band that runs to the frame's edges. The lines and colour runs come from
 // highlightCode() (plan.ts), so they split and colour exactly like <Code>. Positions come from JetBrains Mono's fixed advance instead of

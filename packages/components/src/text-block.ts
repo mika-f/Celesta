@@ -5,8 +5,8 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group } from '@celesta/react';
-import type { GroupProps, TextStyle } from '@celesta/react';
+import { Group } from '@celesta.studio/react';
+import type { GroupProps, TextStyle } from '@celesta.studio/react';
 
 import { Motion } from './motion';
 import type { MotionEffect } from './motion';

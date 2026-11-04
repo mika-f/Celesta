@@ -1,4 +1,4 @@
-import { Rect } from '@celesta/react';
+import { Rect } from '@celesta.studio/react';
 import { DURATION, FPS, INK } from '../constants';
 import { Type } from './Type';
 

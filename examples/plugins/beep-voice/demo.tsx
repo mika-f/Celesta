@@ -7,10 +7,10 @@
 //   cargo run -p celesta-exporter -- --react examples/plugins/beep-voice/demo.tsx out.mp4 --plugin-dir examples/plugins/dist
 import * as React from 'react';
 
-import { Assets, Composition, Font, Rect, Text } from '@celesta/react';
-import { Character, CharacterView, DialogueSeries, planDialogue } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference, DialoguePlan } from '@celesta/character';
+import { Assets, Composition, Font, Rect, Text } from '@celesta.studio/react';
+import { Character, CharacterView, DialogueSeries, planDialogue } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference, DialoguePlan } from '@celesta.studio/character';
 import { prepareBeepNarration } from '@celesta-plugin/beep-voice';
 import type { BeepLine } from '@celesta-plugin/beep-voice';
 

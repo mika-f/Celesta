@@ -1,5 +1,5 @@
-import { codeThemes } from '@celesta/code';
-import type { CodeTheme } from '@celesta/code';
+import { codeThemes } from '@celesta.studio/code';
+import type { CodeTheme } from '@celesta.studio/code';
 import { C } from './theme';
 
 // codeThemes.dark keeps every token close to grey; on a video frame, seen

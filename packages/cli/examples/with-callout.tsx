@@ -1,5 +1,5 @@
-import { Callout, Motion, PatternBackground } from '@celesta/components';
-import { Composition, Easings, Font, Group, Rect, Text, Theme, progress, useCurrentFrame } from '@celesta/react';
+import { Callout, Motion, PatternBackground } from '@celesta.studio/components';
+import { Composition, Easings, Font, Group, Rect, Text, Theme, progress, useCurrentFrame } from '@celesta.studio/react';
 
 // <Callout> points at something: a box with a title and text, as tall as
 // the text measures, and a line from the middle of the edge facing the

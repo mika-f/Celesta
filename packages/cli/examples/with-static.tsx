@@ -1,4 +1,4 @@
-import { Static } from '@celesta/react';
+import { Static } from '@celesta.studio/react';
 
 import { StaticScene } from './static-scene';
 

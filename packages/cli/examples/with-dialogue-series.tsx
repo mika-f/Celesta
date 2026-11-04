@@ -23,15 +23,15 @@ import {
   interpolate,
   useCurrentFrame,
   useTextMetrics,
-} from '@celesta/react';
+} from '@celesta.studio/react';
 import {
   Character,
   CharacterView,
   DialogueSeries,
   loadDialogueLipSync,
   planDialogue,
-} from '@celesta/character';
-import type { AssetReference, TextStyle } from '@celesta/react';
+} from '@celesta.studio/character';
+import type { AssetReference, TextStyle } from '@celesta.studio/react';
 import type {
   CharacterSubtitle,
   CharacterViewReference,
@@ -39,7 +39,7 @@ import type {
   DialoguePlan,
   PlannedDialogueLine,
   SubtitleRenderProps,
-} from '@celesta/character';
+} from '@celesta.studio/character';
 
 import script from '../../../examples/assets/dialogue-demo/script.json';
 

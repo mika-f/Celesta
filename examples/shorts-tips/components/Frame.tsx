@@ -1,4 +1,4 @@
-import { Group, Rect } from '@celesta/react';
+import { Group, Rect } from '@celesta.studio/react';
 import { withAlpha } from '../color';
 import { C, DEMO, H, SAFE, W } from '../constants';
 import { DEMOS, type TipId } from '../demos';

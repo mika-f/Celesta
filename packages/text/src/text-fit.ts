@@ -1,8 +1,8 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, Text } from '@celesta/react';
-import type { CommonProps, ResolvedTheme, TextMetrics, TextStyle, ThemeValues } from '@celesta/react';
+import { Group, Text } from '@celesta.studio/react';
+import type { CommonProps, ResolvedTheme, TextMetrics, TextStyle, ThemeValues } from '@celesta.studio/react';
 import {
   CompositionRuntimeContext,
   ThemeContext,
@@ -17,8 +17,8 @@ import {
   useMeasurementFonts,
   withInheritedText,
   withTextRuns,
-} from '@celesta/react/internal';
-import type { FlatText, MeasureTextRequest } from '@celesta/react/internal';
+} from '@celesta.studio/react/internal';
+import type { FlatText, MeasureTextRequest } from '@celesta.studio/react/internal';
 
 /** The text style a fitted box draws with; the box chooses `fontSize` and `lineHeight`. */
 export type FitTextStyle = Omit<TextStyle, 'fontSize' | 'lineHeight'>;

@@ -13,12 +13,12 @@ import {
   getProjectProperty,
   progress,
   useCurrentFrame,
-} from '@celesta/react';
-import type { Paint } from '@celesta/react';
-import { useProjectProperty } from '@celesta/project';
-import { TextBox } from '@celesta/text';
-import { TransitionSeries, computeTransitionSeries } from '@celesta/transitions';
-import type { TransitionSeriesItem, TransitionSeriesType } from '@celesta/transitions';
+} from '@celesta.studio/react';
+import type { Paint } from '@celesta.studio/react';
+import { useProjectProperty } from '@celesta.studio/project';
+import { TextBox } from '@celesta.studio/text';
+import { TransitionSeries, computeTransitionSeries } from '@celesta.studio/transitions';
+import type { TransitionSeriesItem, TransitionSeriesType } from '@celesta.studio/transitions';
 
 // A photo slideshow: a title card, then one photo per slide with a slow zoom
 // and its caption along the bottom, joined by transitions, over music.

@@ -1,7 +1,7 @@
 // 動画全体で共有する定数：画面、色、書体、素材の場所。
 // 見た目を変えたいときは、まずここを触る。
 
-import type { Paint } from '@celesta/react';
+import type { Paint } from '@celesta.studio/react';
 
 export const CANVAS = { width: 1920, height: 1080 } as const;
 export const FPS = 30;

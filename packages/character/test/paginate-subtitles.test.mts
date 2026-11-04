@@ -6,9 +6,9 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'vitest';
 
-import type { GlyphMetrics, TextMetrics } from '@celesta/react';
-import { setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+import type { GlyphMetrics, TextMetrics } from '@celesta.studio/react';
+import { setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 import { paginateSubtitles, planDialogue } from '../src/index.js';
 import type { DialogueLine, PaginateSubtitlesOptions, SpeechTiming } from '../src/index.js';
 

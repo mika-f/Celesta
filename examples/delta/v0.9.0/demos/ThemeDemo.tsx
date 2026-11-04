@@ -1,6 +1,6 @@
-import { Group, Rect, Text, Theme } from '@celesta/react';
-import { Heart, Star } from '@celesta/shapes';
-import { Path } from '@celesta/shapes';
+import { Group, Rect, Text, Theme } from '@celesta.studio/react';
+import { Heart, Star } from '@celesta.studio/shapes';
+import { Path } from '@celesta.studio/shapes';
 import { C, FONT } from '../../components/theme';
 import type { DemoProps } from '../program';
 import { STAGE } from '../program';

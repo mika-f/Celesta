@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, Text, interpolate } from '@celesta/react';
+import { Easings, Group, Rect, Text, interpolate } from '@celesta.studio/react';
 import { C, solid } from '../../components/theme';
 import type { DemoProps } from '../program';
 import { STAGE } from '../program';

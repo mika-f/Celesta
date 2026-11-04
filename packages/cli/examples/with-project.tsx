@@ -1,5 +1,5 @@
-import { Composition, Text } from '@celesta/react';
-import { ProjectTimeline } from '@celesta/project';
+import { Composition, Text } from '@celesta.studio/react';
+import { ProjectTimeline } from '@celesta.studio/project';
 
 export default function Root() {
   return (

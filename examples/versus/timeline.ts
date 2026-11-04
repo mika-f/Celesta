@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { computeSeries } from '@celesta/react';
+import { computeSeries } from '@celesta.studio/react';
 import { Balance } from './scenes/Balance';
 import { Files } from './scenes/Files';
 import { Intro } from './scenes/Intro';

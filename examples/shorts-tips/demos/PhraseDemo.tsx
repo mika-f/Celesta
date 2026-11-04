@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Text, progress } from '@celesta/react';
-import { Circle, Polyline } from '@celesta/shapes';
+import { Easings, Group, Rect, Text, progress } from '@celesta.studio/react';
+import { Circle, Polyline } from '@celesta.studio/shapes';
 import { withAlpha } from '../color';
 import { useAccent, useStage } from '../components/DemoClock';
 import { C, DEMO, FONT } from '../constants';

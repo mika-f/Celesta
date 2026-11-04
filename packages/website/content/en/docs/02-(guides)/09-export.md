@@ -55,7 +55,7 @@ Add `--overwrite` to replace an existing output file. Use `--from` and `--to` to
 Import an SRT or WebVTT file and read it with `parseSubtitles()`. It returns `{ from, durationInFrames, text }` cues, the shape `Sequence` takes. A byte order mark, CRLF line ends, cues of several lines, and milliseconds after `,` or `.` all work, and tags such as `<i>` are removed.
 
 ```tsx title="Draw the cues of an SRT file"
-import { Sequence, Subtitles, Text, parseSubtitles } from '@celesta/react';
+import { Sequence, Subtitles, Text, parseSubtitles } from '@celesta.studio/react';
 import captions from './captions.srt';
 
 const cues = parseSubtitles(captions, { fps: 30 });
@@ -155,7 +155,7 @@ Add `--loudness` to bring the soundtrack to a target: a number of LUFS from -70 
 :::
 ::::
 
-The loudness is measured and set on the soundtrack before it is encoded. A `.mov`'s PCM keeps it exactly. AAC (`.mp4`) and Opus (`.webm`) move the loudness by about a tenth of an LU and the true peak by up to about half a dB either way, so the -1 dBTP default can read about -0.5 dBTP in the file; give `--true-peak -2` for more headroom. In the app, **Loudness** next to **Export…** sets the streaming or broadcast target with the -1 dBTP limiter. For another target, ceiling, or `--peak-handling lower`, use the command line, the MCP `export_video` tool, or `@celesta/exporter`.
+The loudness is measured and set on the soundtrack before it is encoded. A `.mov`'s PCM keeps it exactly. AAC (`.mp4`) and Opus (`.webm`) move the loudness by about a tenth of an LU and the true peak by up to about half a dB either way, so the -1 dBTP default can read about -0.5 dBTP in the file; give `--true-peak -2` for more headroom. In the app, **Loudness** next to **Export…** sets the streaming or broadcast target with the -1 dBTP limiter. For another target, ceiling, or `--peak-handling lower`, use the command line, the MCP `export_video` tool, or `@celesta.studio/exporter`.
 
 ## Transparent video
 

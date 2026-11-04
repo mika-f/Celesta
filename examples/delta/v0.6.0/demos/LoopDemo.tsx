@@ -1,7 +1,7 @@
-import { Group, Rect, Text } from '@celesta/react';
-import { loopNoise } from '@celesta/math';
-import { Path } from '@celesta/shapes';
-import type { PathCommand } from '@celesta/react';
+import { Group, Rect, Text } from '@celesta.studio/react';
+import { loopNoise } from '@celesta.studio/math';
+import { Path } from '@celesta.studio/shapes';
+import type { PathCommand } from '@celesta.studio/react';
 import { STAGE, enter } from '../../components/ChapterShell';
 import type { DemoProps } from '../../components/ChapterShell';
 import { C, FONT, solid } from '../../components/theme';

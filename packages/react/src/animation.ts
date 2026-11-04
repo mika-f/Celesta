@@ -3,7 +3,7 @@
 // over whatever frame/time value the caller passes in, so they work the same
 // whether called from a component body or anywhere else.
 
-import { parseHexColor } from '@celesta/math';
+import { parseHexColor } from '@celesta.studio/math';
 
 export type Extrapolate = 'extend' | 'clamp' | 'identity';
 

@@ -3,7 +3,7 @@
 //
 // ショットを時刻順に並べ、ショットの間を easeInOutCubic でなめらかにつなぐ。
 
-import { Easings, cueAt, interpolate } from '@celesta/react';
+import { Easings, cueAt, interpolate } from '@celesta.studio/react';
 
 import { PLACEMENT } from './cast/Cast.tsx';
 import { voiceCues } from './scenes/voice.tsx';

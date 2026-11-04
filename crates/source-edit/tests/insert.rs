@@ -33,7 +33,7 @@ fn wrap(text: &str, needle: &str) -> String {
     wrap_as(text, needle, "Sequence")
 }
 
-const IMPORT: &str = "import { G, Rect, Sequence } from '@celesta/react';\n\n";
+const IMPORT: &str = "import { G, Rect, Sequence } from '@celesta.studio/react';\n\n";
 
 #[test]
 fn wraps_a_child_element_with_spaces() {

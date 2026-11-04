@@ -11,7 +11,7 @@ use crate::protocol::{
 };
 use crate::types::{
     ComponentPropertyField, ComponentSchemaField, ElementKind, FrameSpan, LayerSource,
-    LayerSourceReport, PrimitivePropertyField, PrimitiveSize, PropOverride,
+    LayerSourceReport, LegacyImport, PrimitivePropertyField, PrimitiveSize, PropOverride,
     ReactAudioClipDescriptor, ReactChapter, ReceivedProps, ReceivedValue, SourcePos, TimingWindow,
     chapter_at,
 };
@@ -44,12 +44,12 @@ fn an_unexpected_exit_shows_the_runtime_s_last_output() {
         "the Node.js React runtime exited unexpectedly"
     );
     let with_output = ReactBridgeError::UnexpectedExit {
-        stderr: "Error: Cannot find module '@celesta/react'\n\nNode.js v24.0.0".to_owned(),
+        stderr: "Error: Cannot find module '@celesta.studio/react'\n\nNode.js v24.0.0".to_owned(),
     };
     assert_eq!(
         with_output.to_string(),
         "the Node.js React runtime exited unexpectedly\nIts last output:\n  \
-         Error: Cannot find module '@celesta/react'\n\n  Node.js v24.0.0"
+         Error: Cannot find module '@celesta.studio/react'\n\n  Node.js v24.0.0"
     );
 }
 
@@ -280,6 +280,45 @@ fn ready_message_without_tables_has_none() {
         panic!("expected a Ready message");
     };
     assert!(primitive_properties.is_empty());
+}
+
+#[test]
+fn ready_message_carries_legacy_imports() {
+    let config = serde_json::json!({
+        "width": 640,
+        "height": 360,
+        "frameRate": {"numerator": 30, "denominator": 1},
+        "durationInFrames": 30
+    });
+    let json = serde_json::json!({
+        "config": config,
+        "legacyImports": [
+            {"file": "scenes/Intro.tsx", "specifier": "@celesta/react", "current": "@celesta.studio/react"}
+        ]
+    })
+    .to_string();
+    let ReadyMessage::Ready { legacy_imports, .. } = serde_json::from_str(&json).unwrap() else {
+        panic!("expected a Ready message");
+    };
+    assert_eq!(
+        legacy_imports,
+        [LegacyImport {
+            file: "scenes/Intro.tsx".to_owned(),
+            specifier: "@celesta/react".to_owned(),
+            current: "@celesta.studio/react".to_owned(),
+        }]
+    );
+    assert_eq!(
+        legacy_imports[0].to_string(),
+        "scenes/Intro.tsx imports @celesta/react, an old name; import @celesta.studio/react instead"
+    );
+
+    // An entry with only the current names sends none.
+    let json = serde_json::json!({ "config": config }).to_string();
+    let ReadyMessage::Ready { legacy_imports, .. } = serde_json::from_str(&json).unwrap() else {
+        panic!("expected a Ready message");
+    };
+    assert!(legacy_imports.is_empty());
 }
 
 #[test]

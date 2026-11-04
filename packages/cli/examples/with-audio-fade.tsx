@@ -1,4 +1,4 @@
-import { Audio, Composition, Sequence, Text } from '@celesta/react';
+import { Audio, Composition, Sequence, Text } from '@celesta.studio/react';
 
 const FPS = 30;
 // How long the music plays. Its fade-out follows the end of this sequence,

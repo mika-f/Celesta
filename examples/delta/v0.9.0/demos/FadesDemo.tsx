@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Text, interpolate } from '@celesta/react';
-import { Polyline } from '@celesta/shapes';
+import { Easings, Group, Rect, Text, interpolate } from '@celesta.studio/react';
+import { Polyline } from '@celesta.studio/shapes';
 import { C } from '../../components/theme';
 import { BED, bedGain, fadeAt } from '../mix';
 import type { DemoProps } from '../program';

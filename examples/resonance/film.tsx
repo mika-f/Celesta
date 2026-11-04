@@ -1,6 +1,6 @@
-import { Assets, Audio, Composition, Font, Group, Rect, Text, interpolateColor } from '@celesta/react';
-import { loadAudioSpectrum, useAudioSpectrum } from '@celesta/media-utils';
-import type { AudioSpectrum } from '@celesta/media-utils';
+import { Assets, Audio, Composition, Font, Group, Rect, Text, interpolateColor } from '@celesta.studio/react';
+import { loadAudioSpectrum, useAudioSpectrum } from '@celesta.studio/media-utils';
+import type { AudioSpectrum } from '@celesta.studio/media-utils';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;

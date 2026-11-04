@@ -1,6 +1,6 @@
 import { type ComponentType, type ReactNode, memo } from 'react';
 
-import { Composition, Rect, useCurrentFrame } from '@celesta/react';
+import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
 
 // Shared by static-100k.tsx and static-100k-memo.tsx: 100,000 still rects
 // and 100 moving ones (docs/performance/static-subtrees.md).

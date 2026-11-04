@@ -7,10 +7,10 @@ import { fileURLToPath } from 'node:url';
 import React from 'react';
 import type { ReactNode } from 'react';
 import { test } from 'vitest';
-import { Audio, Composition, Text, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { CompositionProps } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
-import type { EntryComponent } from '@celesta/react/internal';
+import { Audio, Composition, Text, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { CompositionProps } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
+import type { EntryComponent } from '@celesta.studio/react/internal';
 import type { FrameMessage, ReadyMessage } from '../src/cli.js';
 import { contentOf } from './layer-content.mjs';
 
@@ -77,7 +77,7 @@ test('inspect.mjs exposes the list and selects frames with shared entry properti
   const inspector = fileURLToPath(new URL('../../../skills/celesta/scripts/inspect.mjs', import.meta.url));
   const runtime = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
   writeFileSync(entry, `
-    import { Composition, Text, defineProjectProperties, getProjectProperty } from '@celesta/react';
+    import { Composition, Text, defineProjectProperties, getProjectProperty } from '@celesta.studio/react';
     defineProjectProperties({ title: { type: 'string', defaultValue: 'shared' } });
     export default () => <>
       <Composition id="wide" width={400} height={200} fps={30} durationInFrames={3}><Text>{getProjectProperty('title')}</Text></Composition>

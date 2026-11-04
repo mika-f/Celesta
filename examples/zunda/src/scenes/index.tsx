@@ -2,8 +2,8 @@
 // シーンを足すときは、script.ts に台詞と SceneId を、timing.ts の LEAD に前置きを
 // 足し、シーンのファイルをここに台本の順で登録する。
 
-import { Sequence } from '@celesta/react';
-import type { ChapterInput } from '@celesta/react';
+import { Sequence } from '@celesta.studio/react';
+import type { ChapterInput } from '@celesta.studio/react';
 import type { ReactNode } from 'react';
 
 import type { SceneId } from '../../script.ts';

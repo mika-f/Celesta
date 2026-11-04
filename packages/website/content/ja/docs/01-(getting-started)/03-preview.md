@@ -381,7 +381,7 @@ function PriceTag({ label, rectWidth = 200 }: Props) {
 
 ### 要素の帯をドラッグする
 
-選択した要素が自分の `<Sequence>` か `<Series.Sequence>` の中にあるときは、再生ヘッドの位置の塗りつぶしの帯の上、そのウィンドウの両端にグリップが付きます。対象になるのは要素を囲むいちばん内側のもので、`@celesta/react` からインポートしていれば、`Seq` や `C.Sequence` のような別の名前でもかまいません。端の上ではポインタがリサイズの矢印になります。端をドラッグするとその端が動き、中ほどをドラッグするとウィンドウ全体が動きます。
+選択した要素が自分の `<Sequence>` か `<Series.Sequence>` の中にあるときは、再生ヘッドの位置の塗りつぶしの帯の上、そのウィンドウの両端にグリップが付きます。対象になるのは要素を囲むいちばん内側のもので、`@celesta.studio/react` からインポートしていれば、`Seq` や `C.Sequence` のような別の名前でもかまいません。端の上ではポインタがリサイズの矢印になります。端をドラッグするとその端が動き、中ほどをドラッグするとウィンドウ全体が動きます。
 
 | グリップ | `<Sequence>` で書き込むもの | `<Series.Sequence>` で書き込むもの |
 | --- | --- | --- |
@@ -404,7 +404,7 @@ function PriceTag({ label, rectWidth = 200 }: Props) {
 | 理由 | 意味 |
 | --- | --- |
 | Timing inside a loop or freeze frame can't be dragged | 要素にいちばん近いウィンドウが `<Loop>` か `<FreezeFrame>` の中にある |
-| Not a `<Sequence>` or `<Series.Sequence>` of @celesta/react | ウィンドウがほかのラッパーのもの、またはファイルが `@celesta/react` からインポートしていない `Sequence` のもの |
+| Not a `<Sequence>` or `<Series.Sequence>` of @celesta.studio/react | ウィンドウがほかのラッパーのもの、またはファイルが `@celesta.studio/react` からインポートしていない `Sequence` のもの |
 | Couldn't find this element in the source | プレビューが見つけた場所に、ファイルのウィンドウがもうない（保存後の再読み込みの途中など） |
 | The source is still being read | 要素を選択した直後などで、Celesta が要素のソースを読んでいる |
 | Select the layer again | Celesta 自身が書き込んだ直後などで、レイヤーについて読んだ内容が古くなっている |
@@ -425,7 +425,7 @@ const SCENES = defineScenes([
 ]);
 ```
 
-Celesta は再読み込みのたびに、エントリファイルのフォルダとその下にある `.ts` と `.tsx` のファイルを読み（`node_modules`、`dist`、`.tmp`、`.git` は除きます）、`@celesta/react` からインポートした `defineScenes([...])`（別名でのインポートや、`import * as C` での `C.defineScenes` も含みます）の呼び出しのうち、リストを書き下したものを探します。書き下したリストとは、`id` が文字列の `{ … }` のエントリを並べた配列です。`...CHAPTERS.map(…)` のようにほかのものを含むリストは対象外です。チャプターの id を持つエントリは 1 つだけでなければならず、そのエントリの `durationInFrames` は、数値か、同じファイルの `const` でなければなりません。`const` は、ほかのどこからも読まれず、ファイルがエクスポートしていないものに限ります。
+Celesta は再読み込みのたびに、エントリファイルのフォルダとその下にある `.ts` と `.tsx` のファイルを読み（`node_modules`、`dist`、`.tmp`、`.git` は除きます）、`@celesta.studio/react` からインポートした `defineScenes([...])`（別名でのインポートや、`import * as C` での `C.defineScenes` も含みます）の呼び出しのうち、リストを書き下したものを探します。書き下したリストとは、`id` が文字列の `{ … }` のエントリを並べた配列です。`...CHAPTERS.map(…)` のようにほかのものを含むリストは対象外です。チャプターの id を持つエントリは 1 つだけでなければならず、そのエントリの `durationInFrames` は、数値か、同じファイルの `const` でなければなりません。`const` は、ほかのどこからも読まれず、ファイルがエクスポートしていないものに限ります。
 
 エントリファイルがコンポジションの長さをリストの長さとして書いているとき、つまり `<Composition durationInFrames={SCENES.durationInFrames}>` の `SCENES` が、同じファイルにあるリストの `const` か、拡張子を付けないパスから名前を指定してインポートしたもの（別名でもかまいません）のときは、コンポジションの長さもドラッグに付いて変わります。たとえば `import { SCENES } from './timeline'` は、`timeline.ts`、`timeline.tsx`、`timeline` フォルダの `index.ts` を指します。このときシーンを長くすると、コンポジションも長くなります。それ以外のとき（`durationInFrames={300}` など）は、コンポジションの長さは変わりません。ドラッグしたシーンより後のシーンがコンポジションの終わり以降に始まる手前、またドラッグした終わりがコンポジションの終わりを越える手前で、ドラッグは止まり、終わりの横に **The composition is 300 frames long** と表示されます。
 
@@ -465,7 +465,7 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 
 - `from` は、要素が描かれるシーンの始まりから数えます。`<Scenes>` や `<Sequence>` の外で、コンポジション自身のタイムラインに置いた要素では、再生ヘッドのフレームが `from` になり、長さは再生ヘッドの位置のシーンの終わりまで、どのチャプターにも入っていなければコンポジションの終わりまでです。
 - `<Sequence>` は要素と同じ深さに、要素は 1 段深くインデントします。ファイルが使っているタブかスペースに合わせ、ほかの部分の書式は変えません。`<Group><Rect /></Group>` のようにほかのコードと同じ行にある要素は、その行の中で囲みます。
-- `Sequence` は、ファイルの `@celesta/react` からのインポートに追加します。名前がソートされていれば、その順の位置に入れます。そのインポートがなければ、最後のインポートの次の行に新しいインポートを書きます。ファイルが別の名前でインポートしているときは、`<Seq>` や `<C.Sequence>` のようにその名前を使います。
+- `Sequence` は、ファイルの `@celesta.studio/react` からのインポートに追加します。名前がソートされていれば、その順の位置に入れます。そのインポートがなければ、最後のインポートの次の行に新しいインポートを書きます。ファイルが別の名前でインポートしているときは、`<Seq>` や `<C.Sequence>` のようにその名前を使います。
 - これで 1 回の変更です。1 回元に戻すと、`<Sequence>` とインポートの両方が戻ります。
 
 ボタンのツールチップには **Animations inside start at the new start** と表示されます。`<Sequence>` の中では `useCurrentFrame()` が `<Sequence>` の始まりから数えるので、新しい `<Sequence>` の中にあって自分でフレームを読むコンポーネント（`interpolate(frame, [0, 20], [0, 1])` でフェードインするタイトルなど）は、シーンの始まりではなく再生ヘッドの位置からアニメーションを再生するようになります。これは `<Sequence>` の意味そのものなので、Celesta はそのままにします。新しい `<Sequence>` の外で計算した値（シーンのコンポーネントが自分の `frame` から計算する `opacity` など）のタイミングは変わらず、要素が描かれるフレームが少なくなるだけです。
@@ -485,7 +485,7 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 
 ## キャンバスに要素を追加する
 
-インタラクティブモードでは、ツールの行の先頭にある **Add** メニューから、**Rect**、**Ellipse**、**Circle**、**Text**、**Image**、**Video** をソースに追加できます。項目を選び、キャンバスの上に描きます。**Ellipse** と **Circle** は、ファイルがまだ `@celesta/shapes` を import していなくても常に選べます。このパッケージは Celesta に含まれていて、追加するとその import も書き込まれます。新しい要素は親になる `<Group>` の最後の子として書き込まれるので、そのグループのほかの子より手前に描かれます。
+インタラクティブモードでは、ツールの行の先頭にある **Add** メニューから、**Rect**、**Ellipse**、**Circle**、**Text**、**Image**、**Video** をソースに追加できます。項目を選び、キャンバスの上に描きます。**Ellipse** と **Circle** は、ファイルがまだ `@celesta.studio/shapes` を import していなくても常に選べます。このパッケージは Celesta に含まれていて、追加するとその import も書き込まれます。新しい要素は親になる `<Group>` の最後の子として書き込まれるので、そのグループのほかの子より手前に描かれます。
 
 ### 追加する先
 
@@ -543,7 +543,7 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 
 `<Sequence>` がなくても同じ範囲に表示されるとき、つまりグループを囲む `<Sequence>` やシーンの最初のフレームで追加したときと、フレーム 0 からコンポジションの終わりまで表示されるときは、`<Sequence>` を書き込みません。範囲の残りが 1 フレームに満たないときは、範囲の最初のフレームであっても、1 フレームの `<Sequence>` で囲みます。
 
-追加する行は、グループの開始タグより 1 段深く、ファイルで使われているタブかスペースでインデントします。`Rect`、`Text`、`Image`、`Video`、`Sequence` は `@celesta/react` から、`Ellipse` と `Circle` は `@celesta/shapes` から import します。ファイルがまだ import していない名前は、そのパッケージからの `import { … }` に書き足します（並べ替えてあるリストは並びを保ちます）。そうした import がなければ、最後の import の後ろに、その import と同じ引用符とセミコロンの書き方で新しい import の行を加えます。import が 1 つもないファイルでは、先頭に `import { Rect } from "@celesta/react";` を加えます。たとえば `@celesta/react` だけを import しているファイルに最初の **Ellipse** を追加すると、その import の下に、同じ書き方で `import { Ellipse } from "@celesta/shapes";` を書き込みます。別名で import している名前はその別名で書き、`import * as C from "@celesta/react"`（または `import * as S from "@celesta/shapes"`）のときは `<C.Rect>`（または `<S.Ellipse>`）と書きます。
+追加する行は、グループの開始タグより 1 段深く、ファイルで使われているタブかスペースでインデントします。`Rect`、`Text`、`Image`、`Video`、`Sequence` は `@celesta.studio/react` から、`Ellipse` と `Circle` は `@celesta.studio/shapes` から import します。ファイルがまだ import していない名前は、そのパッケージからの `import { … }` に書き足します（並べ替えてあるリストは並びを保ちます）。そうした import がなければ、最後の import の後ろに、その import と同じ引用符とセミコロンの書き方で新しい import の行を加えます。import が 1 つもないファイルでは、先頭に `import { Rect } from "@celesta.studio/react";` を加えます。たとえば `@celesta.studio/react` だけを import しているファイルに最初の **Ellipse** を追加すると、その import の下に、同じ書き方で `import { Ellipse } from "@celesta.studio/shapes";` を書き込みます。別名で import している名前はその別名で書き、`import * as C from "@celesta.studio/react"`（または `import * as S from "@celesta.studio/shapes"`）のときは `<C.Rect>`（または `<S.Ellipse>`）と書きます。
 
 1 回の追加は 1 回の変更で、1 回元に戻すと、要素とその import がまとめて取り除かれます。再読み込みのあと、プレビューが新しい要素を描いたところでその要素が選択されます。再読み込み後のフレームに要素が描かれなければ、元の選択がそのまま残ります。選択したレイヤーが別の場所に書かれた要素だったときは、選択を解除します。
 

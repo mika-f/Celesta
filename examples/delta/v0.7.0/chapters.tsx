@@ -1,4 +1,4 @@
-import { Span } from '@celesta/react';
+import { Span } from '@celesta.studio/react';
 import type { Chapter } from '../components/ChapterShell';
 import { C } from '../components/theme';
 import { BlendDemo } from './demos/BlendDemo';

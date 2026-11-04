@@ -1,5 +1,5 @@
-import { Group, Rect, Text, useTextMetrics } from '@celesta/react';
-import { highlightCode } from '@celesta/code';
+import { Group, Rect, Text, useTextMetrics } from '@celesta.studio/react';
+import { highlightCode } from '@celesta.studio/code';
 import { codeTheme } from '../../components/codeTheme';
 import { STAGE, enter } from '../../components/ChapterShell';
 import type { DemoProps } from '../../components/ChapterShell';
@@ -9,7 +9,7 @@ import { C, FONT, solid } from '../../components/theme';
 // ours: each line slides in on its own, the newest one gets an accent bar,
 // and its runs are listed underneath. Every diff panel in this film is
 // drawn the same way.
-const SOURCE = `import { highlightCode } from '@celesta/code';
+const SOURCE = `import { highlightCode } from '@celesta.studio/code';
 
 const lines = highlightCode(source, {
   language: 'tsx',

@@ -1,4 +1,4 @@
-import { Text } from '@celesta/react';
+import { Text } from '@celesta.studio/react';
 import { PAPER } from '../constants';
 
 export function Label({ children, x = 80, y = 80, size = 100, color = PAPER,

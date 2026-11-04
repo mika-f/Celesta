@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import type { JsonValue, Layer } from '@celesta/react';
+import type { JsonValue, Layer } from '@celesta.studio/react';
 import {
   FreezeFrameContext,
   ProjectLayersContext,
@@ -9,8 +9,8 @@ import {
   declaredDefault,
   inputProjectProperty,
   resolveComponent,
-} from '@celesta/react/internal';
-import type { Project } from '@celesta/react/internal';
+} from '@celesta.studio/react/internal';
+import type { Project } from '@celesta.studio/react/internal';
 
 // `Project` here is GUI-editor-owned data the entry chooses to load and wrap
 // its tree with (see project.ts's loadProject); `useProject()` gives plain

@@ -1,4 +1,4 @@
-import { Span } from '@celesta/react';
+import { Span } from '@celesta.studio/react';
 import type { Chapter } from '../components/ChapterShell';
 import { C } from '../components/theme';
 import { CodeDemo } from './demos/CodeDemo';
@@ -26,7 +26,7 @@ export const CHAPTERS: readonly Chapter[] = [
     body: 'Custom filters run on the GPU in preview and export, on any layer or group, and in components on project timelines.',
     file: 'film.tsx',
     code: "const ripple = defineShader({ wgsl, params });\n<Text shader={ripple({ time })}>WGSL</Text>",
-    merged: [[217, 'WGSL filters'], [218, '@celesta/shader'], [248, 'on timelines']],
+    merged: [[217, 'WGSL filters'], [218, '@celesta.studio/shader'], [248, 'on timelines']],
     Demo: ShaderDemo,
   },
   {
@@ -124,10 +124,10 @@ export const CHAPTERS: readonly Chapter[] = [
     key: 'packages',
     title: 'PACKAGES',
     headline: <>Import <Span style={accent}>what you use</Span>.</>,
-    body: '@celesta/react is split into focused packages, and a codemod moves your imports to them.',
+    body: '@celesta.studio/react is split into focused packages, and a codemod moves your imports to them.',
     file: 'film.tsx',
-    code: "import { Circle } from '@celesta/shapes';\nimport { Center } from '@celesta/layout';",
-    merged: [[212, 'package split, codemod'], [182, '@celesta/voicevox']],
+    code: "import { Circle } from '@celesta.studio/shapes';\nimport { Center } from '@celesta.studio/layout';",
+    merged: [[212, 'package split, codemod'], [182, '@celesta.studio/voicevox']],
     Demo: PackagesDemo,
   },
   {

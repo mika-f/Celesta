@@ -1,16 +1,16 @@
-`@celesta/math` is a small, dependency-free toolkit for the numbers behind motion: seeded randomness, smooth noise, number shaping, waves, angles, and 2D points. It is bundled with the runtime, so a composition imports it directly:
+`@celesta.studio/math` is a small, dependency-free toolkit for the numbers behind motion: seeded randomness, smooth noise, number shaping, waves, angles, and 2D points. It is bundled with the runtime, so a composition imports it directly:
 
 ```tsx title="Import"
-import { random, randomRange, noise } from '@celesta/math';
+import { random, randomRange, noise } from '@celesta.studio/math';
 ```
 
-Choose **File → Set Up TypeScript** for editor types (see [Your first React composition](/en/docs/react-compositions/)), or use it in the [web editor](/en/#playground), which accepts `@celesta/react`, `@celesta/math`, and `react`. The package is not published to npm yet.
+Choose **File → Set Up TypeScript** for editor types (see [Your first React composition](/en/docs/react-compositions/)), or use it in the [web editor](/en/#playground), which accepts `@celesta.studio/react`, `@celesta.studio/math`, and `react`. The package is not published to npm yet.
 
 This chapter covers randomness. [Noise & fbm](/en/docs/math-noise/) covers smooth drift, and [shaping, waves & geometry](/en/docs/math-shaping/) covers the everyday helpers.
 
 ## Why not Math.random()?
 
-A composition is a function of the frame. The preview scrubs backward, the exporter renders frames in order, and both must draw the same picture for the same frame. `Math.random()` gives a different answer every call, so stars would jump around each time you scrub. Every function in `@celesta/math` is a pure function of its inputs: the same seed returns the same value in preview, in export, and on every machine.
+A composition is a function of the frame. The preview scrubs backward, the exporter renders frames in order, and both must draw the same picture for the same frame. `Math.random()` gives a different answer every call, so stars would jump around each time you scrub. Every function in `@celesta.studio/math` is a pure function of its inputs: the same seed returns the same value in preview, in export, and on every machine.
 
 ## Seeds
 
@@ -48,7 +48,7 @@ const size = randomRange(`star-${i}-size`, 2, 6);
 Because the seeds are fixed, the field below is identical on every frame; only the drift, from [`noise`](/en/docs/math-noise/), moves:
 
 ```tsx title="A starfield that drifts"
-import { noise, randomRange } from '@celesta/math';
+import { noise, randomRange } from '@celesta.studio/math';
 
 function Stars() {
   const frame = useCurrentFrame();
@@ -81,7 +81,7 @@ const spin = 45 * randomSign(`bar-${i}-spin`);     // clockwise or counter-clock
 Uniform randomness looks artificial: every value is as likely as any other. `randomGaussian` clusters values around a center, and `randomInCircle` spreads points evenly by area instead of crowding the middle of a disc, so a burst of particles looks round rather than starry-centered:
 
 ```tsx title="A burst of particles"
-import { randomGaussian, randomInCircle } from '@celesta/math';
+import { randomGaussian, randomInCircle } from '@celesta.studio/math';
 
 const particles = Array.from({ length: 120 }, (_, i) => {
   const p = randomInCircle(`spark-${i}`, 260, { x: 960, y: 540 });

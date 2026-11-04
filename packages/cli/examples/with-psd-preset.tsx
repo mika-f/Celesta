@@ -1,8 +1,8 @@
 import * as React from 'react';
 
-import { Assets, Composition } from '@celesta/react';
-import { Character, CharacterView } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
+import { Assets, Composition } from '@celesta.studio/react';
+import { Character, CharacterView } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
 
 const chara = React.createRef<AssetReference>();
 

@@ -1,5 +1,5 @@
-import { getProjectProperty, measureText } from '@celesta/react';
-import { highlightCode, type CodeTheme, type HighlightedCodeLine } from '@celesta/code';
+import { getProjectProperty, measureText } from '@celesta.studio/react';
+import { highlightCode, type CodeTheme, type HighlightedCodeLine } from '@celesta.studio/code';
 import {
   BEAT, CODE, CODE_MAX_LINES, CODE_SIZE, FONT_URLS, MONO_ADVANCE, REVEAL_AT, REVEAL_BEATS, SAFE, TYPE_FRAMES,
 } from './constants';

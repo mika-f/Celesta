@@ -11,10 +11,10 @@ use crate::preview::AddedUnder;
 use celesta_source_edit::{EditValue, NewElement, NewKind, Timing};
 
 /// A scene whose `<Group>` at 4:3 holds a `<Text>`.
-const SCENE: &str = "import { Group, Text } from '@celesta/react';\n\nexport const Intro = () => (\n  <Group>\n    <Text>Hi</Text>\n  </Group>\n);\n";
+const SCENE: &str = "import { Group, Text } from '@celesta.studio/react';\n\nexport const Intro = () => (\n  <Group>\n    <Text>Hi</Text>\n  </Group>\n);\n";
 
 /// [`SCENE`] after adding [`rect`] timed from 45 for 75 frames.
-const ADDED: &str = "import { Group, Rect, Sequence, Text } from '@celesta/react';\n\nexport const Intro = () => (\n  <Group>\n    <Text>Hi</Text>\n    <Sequence from={45} durationInFrames={75}>\n      <Rect x={120} y={80} width={320} height={180} fill=\"#4F7CFF\" />\n    </Sequence>\n  </Group>\n);\n";
+const ADDED: &str = "import { Group, Rect, Sequence, Text } from '@celesta.studio/react';\n\nexport const Intro = () => (\n  <Group>\n    <Text>Hi</Text>\n    <Sequence from={45} durationInFrames={75}>\n      <Rect x={120} y={80} width={320} height={180} fill=\"#4F7CFF\" />\n    </Sequence>\n  </Group>\n);\n";
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -84,7 +84,7 @@ fn a_plugin_component_is_drawn_as_its_kind_and_written_with_its_import() {
     .unwrap();
     assert_eq!(
         files[0].1,
-        "import { Group, Text } from '@celesta/react';\nimport { Flag } from '@celesta-plugin/flag';\n\nexport const Intro = () => (\n  <Group>\n    <Text>Hi</Text>\n    <Flag src=\"./portrait.png\" x={40} y={60} width={320} amplitude={0.06} />\n  </Group>\n);\n"
+        "import { Group, Text } from '@celesta.studio/react';\nimport { Flag } from '@celesta-plugin/flag';\n\nexport const Intro = () => (\n  <Group>\n    <Text>Hi</Text>\n    <Flag src=\"./portrait.png\" x={40} y={60} width={320} amplitude={0.06} />\n  </Group>\n);\n"
     );
 
     // Without a file, a component is drawn as a box.
@@ -234,7 +234,7 @@ fn add_files_refuses_a_moved_parent() {
 }
 
 /// [`SCENE`] with `Group` imported as `G`.
-const ALIASED: &str = "import { Group as G, Text } from '@celesta/react';\n\nexport const Intro = () => (\n  <G>\n    <Text>Hi</Text>\n  </G>\n);\n";
+const ALIASED: &str = "import { Group as G, Text } from '@celesta.studio/react';\n\nexport const Intro = () => (\n  <G>\n    <Text>Hi</Text>\n  </G>\n);\n";
 
 #[test]
 fn an_aliased_group_is_added_to() {
@@ -300,7 +300,7 @@ fn add_files_reports_the_position_after_the_import() {
         panic!("one file: {files:?}");
     };
     assert_eq!(written_file, &file);
-    assert!(written.starts_with("import { Text } from \"@celesta/react\";\n"));
+    assert!(written.starts_with("import { Text } from \"@celesta.studio/react\";\n"));
 
     // Where the new `<Text` is in the written text, as the runtime counts.
     let start = written.find("<Text x=").unwrap();

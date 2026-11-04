@@ -7,7 +7,8 @@ use celesta_composition::{
     TextStyle, Time,
 };
 use celesta_react_bridge::{
-    ComponentPropertyField, ComponentResolutionRequest, ComponentSchemaField, PrepareDependency,
+    ComponentPropertyField, ComponentResolutionRequest, ComponentSchemaField, LegacyImport,
+    PrepareDependency,
     ProjectFrame, PropertyInputs, ReactBridge, ReactBridgeError, ReactChapter, SpawnOptions,
     chapter_at, react_audio_clips,
 };
@@ -435,7 +436,7 @@ fn audio_spectrum_is_the_same_in_preview_and_export_when_node_is_available() {
             .any(|(decoded, _)| decoded.iter().all(|value| *value > 0.0))
     );
     for (decoded, parsed) in export.values() {
-        // FFmpeg's samples are the WAV parser's, which @celesta/web matches.
+        // FFmpeg's samples are the WAV parser's, which @celesta.studio/web matches.
         assert_eq!(decoded, parsed);
     }
 }
@@ -596,6 +597,37 @@ fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
     assert!(visible_layers.contains(&"face/eyes/open".to_owned()));
     assert_eq!(enabled_layers, &["face/mouth/a"]);
     assert_eq!(disabled_layers.len(), 5);
+}
+
+#[test]
+fn reports_imports_of_the_legacy_scope_when_node_is_available() {
+    let Some((node, cli_script, _)) = live_react_runtime() else {
+        return;
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("scenes")).unwrap();
+    std::fs::write(
+        dir.path().join("scenes/Title.tsx"),
+        "import { Text } from '@celesta/react';\nexport const Title = () => <Text>Hi</Text>;\n",
+    )
+    .unwrap();
+    let entry = dir.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        "import { Composition } from '@celesta.studio/react';\nimport { Title } from './scenes/Title';\n\
+         export default () => <Composition width={8} height={8} fps={1} durationInFrames={1}><Title /></Composition>;\n",
+    )
+    .unwrap();
+    let bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    assert_eq!(
+        bridge.metadata().legacy_imports,
+        [LegacyImport {
+            file: "scenes/Title.tsx".to_owned(),
+            specifier: "@celesta/react".to_owned(),
+            current: "@celesta.studio/react".to_owned(),
+        }]
+    );
 }
 
 #[test]
@@ -1802,7 +1834,7 @@ fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
 
 fn cli_package_root() -> PathBuf {
     // Not `canonicalize()`: on Windows it returns a `\\?\` verbatim path, and
-    // the CLI then imports `@celesta/react` as a second module instance whose
+    // the CLI then imports `@celesta.studio/react` as a second module instance whose
     // React contexts the entry's hooks cannot see.
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -1903,7 +1935,7 @@ fn layer_source_names_the_jsx_of_a_layer_when_node_is_available() {
     // The Rect is on line 3, column 10 of title.tsx.
     std::fs::write(
         dir.join("title.tsx"),
-        "import { Rect } from '@celesta/react';\n\
+        "import { Rect } from '@celesta.studio/react';\n\
          export function Title() {\n\
          \x20 return <Rect id=\"title-rect\" width={4} height={4} fill=\"#ffffff\" />;\n\
          }\n",
@@ -1912,7 +1944,7 @@ fn layer_source_names_the_jsx_of_a_layer_when_node_is_available() {
     let entry = dir.join("entry.tsx");
     std::fs::write(
         &entry,
-        "import { Composition } from '@celesta/react';\n\
+        "import { Composition } from '@celesta.studio/react';\n\
          import { Title } from './title';\n\
          export default function Film() {\n\
          \x20 return <Composition width={64} height={64} fps={30} durationInFrames={3}><Title /></Composition>;\n\

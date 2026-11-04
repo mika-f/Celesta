@@ -1,8 +1,8 @@
 {
-  "name": "@celesta/example-afterimage",
+  "name": "@celesta.studio/example-afterimage",
   "private": true,
   "dependencies": {
-    "@celesta/react": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

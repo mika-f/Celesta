@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, Span, Text, interpolate, progress, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, Span, Text, interpolate, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Backdrop } from '../components/Backdrop';
 import { Delta } from '../components/Delta';
 import { C, FONT, solid } from '../components/theme';

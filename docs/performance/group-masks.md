@@ -1,7 +1,7 @@
 # Group masks: the `masks` workload
 
 Group masks (#146) were added to the GPU renderer by PR #205. React and
-`@celesta/web` drawing came later, with no change to the GPU renderer, so
+`@celesta.studio/web` drawing came later, with no change to the GPU renderer, so
 scenes without masks take the same code paths as before. The `masks`
 workload adds a mask to the benchmark, so later changes to the masking path
 are measured. The perf workflow's instruction counts on each pull request

@@ -4,7 +4,7 @@
 //   node skills/celesta/scripts/inspect.mjs --psd-layers examples/zunda/assets/zundamon.psd
 // で確かめられる。
 
-import type { PsdCharacterLipSync, PsdCharacterPortrait, PsdExpression } from '@celesta/character';
+import type { PsdCharacterLipSync, PsdCharacterPortrait, PsdExpression } from '@celesta.studio/character';
 
 import type { MetanFace, ZundaFace } from '../../script.ts';
 import { ASSET } from '../theme.ts';

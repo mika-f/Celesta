@@ -1,5 +1,5 @@
-import { Group, Rect, Text } from '@celesta/react';
-import { Circle, Path } from '@celesta/shapes';
+import { Group, Rect, Text } from '@celesta.studio/react';
+import { Circle, Path } from '@celesta.studio/shapes';
 import { Delta } from '../../components/Delta';
 import { C, FONT, solid } from '../../components/theme';
 

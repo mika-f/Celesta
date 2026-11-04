@@ -12,10 +12,10 @@ import { test } from 'vitest';
 
 const projectTypes = fileURLToPath(new URL('../dist/project-types/tsconfig.json', import.meta.url));
 
-const ENTRY = `import { Composition, Span, Text, useTextMetrics } from '@celesta/react';
-import type { FontFamily, TextStyle } from '@celesta/react';
-import { Code } from '@celesta/code';
-import { TextBox } from '@celesta/text';
+const ENTRY = `import { Composition, Span, Text, useTextMetrics } from '@celesta.studio/react';
+import type { FontFamily, TextStyle } from '@celesta.studio/react';
+import { Code } from '@celesta.studio/code';
+import { TextBox } from '@celesta.studio/text';
 
 const SANS = ['Inter', 'Noto Sans JP'] as const;
 const MONO: FontFamily = ['JetBrains Mono', 'Noto Sans JP'];

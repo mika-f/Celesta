@@ -1,4 +1,4 @@
-import { defineShader } from '@celesta/shader';
+import { defineShader } from '@celesta.studio/shader';
 
 // The finishing pass over the whole frame: an RGB split that grows towards
 // the edges, horizontal glitch slices, and a flash towards white. The film

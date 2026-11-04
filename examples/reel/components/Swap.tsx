@@ -1,4 +1,4 @@
-import { Easings, Text, cueAt, progress } from '@celesta/react';
+import { Easings, Text, cueAt, progress } from '@celesta.studio/react';
 import { C } from '../constants';
 
 // A headline that swaps on the given frames, each new line sliding up.

@@ -1,6 +1,6 @@
-import { Group, Rect, Text, useTheme } from '@celesta/react';
-import { emphasisContent, graphemes, resolveTimedRanges, timedRangeAt } from '@celesta/text';
-import type { TextEmphasis } from '@celesta/text';
+import { Group, Rect, Text, useTheme } from '@celesta.studio/react';
+import { emphasisContent, graphemes, resolveTimedRanges, timedRangeAt } from '@celesta.studio/text';
+import type { TextEmphasis } from '@celesta.studio/text';
 import { C, FONT, solid } from '../../components/theme';
 import type { DemoProps } from '../program';
 import { STAGE } from '../program';

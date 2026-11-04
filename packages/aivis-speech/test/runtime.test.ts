@@ -1,5 +1,5 @@
 // Integration test of the build: spawns packages/cli/dist/cli.js (and the
-// staged runtime), which load @celesta/aivis-speech's dist/, so it needs
+// staged runtime), which load @celesta.studio/aivis-speech's dist/, so it needs
 // `pnpm run build:runtime` first.
 
 import assert from 'node:assert/strict';
@@ -30,10 +30,10 @@ for (const packaged of [false, true]) {
         assert.equal(result.status, 0, result.stdout + result.stderr);
         cli = join(runtime, 'dist/cli.js');
         const types = join(runtime, 'dist/project-types');
-        assert.match(readFileSync(join(types, 'node_modules/@celesta/aivis-speech/dist/index.d.ts'), 'utf8'), /AivisSpeechAudioQuery/);
-        assert.equal(JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'))['@celesta/aivis-speech'],
+        assert.match(readFileSync(join(types, 'node_modules/@celesta.studio/aivis-speech/dist/index.d.ts'), 'utf8'), /AivisSpeechAudioQuery/);
+        assert.equal(JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'))['@celesta.studio/aivis-speech'],
           JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
-        const adapter = join(runtime, 'node_modules/@celesta/aivis-speech');
+        const adapter = join(runtime, 'node_modules/@celesta.studio/aivis-speech');
         for (const name of ['src', 'test', 'tsconfig.json']) {
           assert.ok(!existsSync(join(adapter, name)), `Runtime must not ship ${name}`);
         }
@@ -46,9 +46,9 @@ for (const packaged of [false, true]) {
       }
       const entry = join(root, 'film.tsx');
       writeFileSync(entry, `
-        import { Composition, Rect } from '@celesta/react';
-        import { lipSyncFromSpeechTiming, useLipSync, type LipSyncTrack, type SpeechTiming } from '@celesta/character';
-        import { lipSyncFromAivisSpeech, timingFromAivisSpeech, type AivisSpeechAudioQuery, type AivisSpeechTiming } from '@celesta/aivis-speech';
+        import { Composition, Rect } from '@celesta.studio/react';
+        import { lipSyncFromSpeechTiming, useLipSync, type LipSyncTrack, type SpeechTiming } from '@celesta.studio/character';
+        import { lipSyncFromAivisSpeech, timingFromAivisSpeech, type AivisSpeechAudioQuery, type AivisSpeechTiming } from '@celesta.studio/aivis-speech';
         const query: AivisSpeechAudioQuery = {
           accent_phrases: [{ moras: [
             { text: 'ア', vowel: 'a' },

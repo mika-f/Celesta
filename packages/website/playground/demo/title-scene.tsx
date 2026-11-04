@@ -1,7 +1,7 @@
 import {
   Composition, Easings, Group, Rect, Text,
   interpolate, useCurrentFrame,
-} from '@celesta/react';
+} from '@celesta.studio/react';
 
 // Try changing TITLE or COLORS. The preview updates as you type.
 const TITLE = 'Written in React.';

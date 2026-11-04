@@ -1,6 +1,6 @@
 // Timed captions from data alone: each cue is shown on its frames
 // `[from, from + durationInFrames)` on a Panel band, wrapped and limited to a
-// number of lines by @celesta/text, with emphasis by grapheme range, and
+// number of lines by @celesta.studio/text, with emphasis by grapheme range, and
 // entering and leaving through Motion. A render callback can replace the
 // band and text without changing the cue's clock. With `highlight` or
 // `paging`, a cue is split into words, shown a page at a time, and the word
@@ -9,14 +9,14 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, Rect, Sequence, Span, Subtitles, Text, useCurrentFrame, useTheme, useVideoConfig } from '@celesta/react';
-import type { FontFamily, GlyphMetrics, Paint, TextMetrics, TextStyle } from '@celesta/react';
-import { safeAreaInsets, useLayoutBounds } from '@celesta/layout';
-import type { Insets, SafeAreaValue } from '@celesta/layout';
+import { Group, Rect, Sequence, Span, Subtitles, Text, useCurrentFrame, useTheme, useVideoConfig } from '@celesta.studio/react';
+import type { FontFamily, GlyphMetrics, Paint, TextMetrics, TextStyle } from '@celesta.studio/react';
+import { safeAreaInsets, useLayoutBounds } from '@celesta.studio/layout';
+import type { Insets, SafeAreaValue } from '@celesta.studio/layout';
 import {
   emphasisContent, graphemes, resolveEmphasis, resolveTimedRanges, sliceEmphasis, timedRangeAt, useFitText, useTextMeasurer,
-} from '@celesta/text';
-import type { EmphasisStyle, FitTextStyle, ResolvedEmphasis, TextEmphasis, TimedRange } from '@celesta/text';
+} from '@celesta.studio/text';
+import type { EmphasisStyle, FitTextStyle, ResolvedEmphasis, TextEmphasis, TimedRange } from '@celesta.studio/text';
 
 import { paginate, timedWords } from './caption-words';
 import type { CaptionPage, CaptionPaging, CaptionWord, CaptionWordUnit, TimedWord } from './caption-words';

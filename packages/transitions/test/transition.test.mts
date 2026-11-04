@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Layer, LayerContent, Scene } from '@celesta/react';
+import type { Layer, LayerContent, Scene } from '@celesta.studio/react';
 import { applyTransition } from '../src/index.js';
 import type { TransitionType } from '../src/index.js';
 
@@ -30,7 +30,7 @@ test('Transition evaluates fade, slide, and scale from the local sequence frame'
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Sequence, Text } from '@celesta/react'; import { Transition } from '@celesta/transitions';\n` +
+    `import { Composition, Sequence, Text } from '@celesta.studio/react'; import { Transition } from '@celesta.studio/transitions';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={320} height={240} fps={30} durationInFrames={20}>\n` +

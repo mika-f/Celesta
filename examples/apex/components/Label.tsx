@@ -1,4 +1,4 @@
-import { Text } from '@celesta/react';
+import { Text } from '@celesta.studio/react';
 import { BONE } from '../constants';
 
 export type LabelProps = {

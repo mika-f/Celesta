@@ -64,7 +64,7 @@ pub(crate) fn rescan_state(previous: Option<OccurrenceState>, keep: bool) -> Occ
     }
 }
 
-/// Spawns a transient `@celesta/cli` process with source locations and
+/// Spawns a transient `@celesta.studio/cli` process with source locations and
 /// sweeps the whole composition for where each element renders. Runs on its
 /// own thread because `ReactBridge::spawn` and the sweep both block; a newer
 /// request abandons the running sweep between chunks. Results carry the

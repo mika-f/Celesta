@@ -1,10 +1,10 @@
-import { Composition, Font, Rect, Span, Text, Theme, useTextMetrics } from '@celesta/react';
-import { TextBox } from '@celesta/text';
+import { Composition, Font, Rect, Span, Text, Theme, useTextMetrics } from '@celesta.studio/react';
+import { TextBox } from '@celesta.studio/text';
 
 // <Theme> names fonts and colors once; <Text>, <Span>, <Rect>, and <Path>
 // refer to them by name, and the shorthand props stand in for the usual
 // `style` entries.
-// <TextBox> and the other @celesta/text components take the same names, and
+// <TextBox> and the other @celesta.studio/text components take the same names, and
 // fit the text with the fonts they stand for.
 
 const fonts = { display: 'Inter', mono: 'JetBrains Mono' };

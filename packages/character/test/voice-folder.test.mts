@@ -2,7 +2,7 @@
 // writes, and the preparation dependencies the editor watches. Every fixture
 // is generated: PCM WAVs of a tone, transcripts in temporary folders. The
 // last test is an integration test of the build: it runs the CLI, which
-// loads @celesta/character from dist/.
+// loads @celesta.studio/character from dist/.
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -15,7 +15,7 @@ import { afterAll, beforeAll, test } from 'vitest';
 
 import { decodeWav, importVoiceFolder, naturalCompare, planDialogue } from '../src/index.js';
 import type { VoiceTextEncoding } from '../src/index.js';
-import { prepareDependencies, setMediaProbe } from '@celesta/react/internal';
+import { prepareDependencies, setMediaProbe } from '@celesta.studio/react/internal';
 import { errorOf, parseMessage } from './render-cli.mjs';
 import type { CliMessage } from './render-cli.mjs';
 
@@ -313,8 +313,8 @@ test('the CLI reports the files prepare() read in its ready message', async (t) 
     const entry = join(dir, 'entry.tsx');
     writeFileSync(
       entry,
-      `import { Composition } from '@celesta/react';
-import { importVoiceFolder } from '@celesta/character';
+      `import { Composition } from '@celesta.studio/react';
+import { importVoiceFolder } from '@celesta.studio/character';
 let count = 0;
 export async function prepare() { count = (await importVoiceFolder({ directory: './voices' })).length; }
 export default function Entry() { return <Composition width={16} height={16} fps={30} durationInFrames={count} />; }

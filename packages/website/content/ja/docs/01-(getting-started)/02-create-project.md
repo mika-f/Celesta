@@ -71,7 +71,7 @@ pnpm typecheck
 pnpm add ag-psd
 ```
 
-プレビューと書き出しでは、読み込み元のプロジェクトの `node_modules` から外部パッケージを解決します。すべての `@celesta/*` パッケージと React はランタイムに含まれているため、外部プロジェクトに追加する必要はありません。
+プレビューと書き出しでは、読み込み元のプロジェクトの `node_modules` から外部パッケージを解決します。すべての `@celesta.studio/*` パッケージと React はランタイムに含まれているため、外部プロジェクトに追加する必要はありません。
 
 Node の素材準備スクリプトも同じ依存関係を使います。`package.json` の隣に `prepare-assets.mjs` として保存し、同じフォルダに `portrait.psd` を置きます。
 

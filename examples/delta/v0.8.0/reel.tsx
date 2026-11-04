@@ -1,5 +1,5 @@
-import { Group, Rect, Subtitles, progress, useCurrentFrame } from '@celesta/react';
-import { FrameChrome } from '@celesta/components';
+import { Group, Rect, Subtitles, progress, useCurrentFrame } from '@celesta.studio/react';
+import { FrameChrome } from '@celesta.studio/components';
 import { C } from '../components/theme';
 import { CAPTIONS, CAPTION_LANGUAGES } from './captions';
 import { CHAPTERS } from './chapters';

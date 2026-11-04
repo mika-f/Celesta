@@ -7,7 +7,7 @@ use crate::props_edit::OrderedObject;
 use crate::statics::StaticDefinition;
 use crate::types::{
     ComponentPropertyField, ComponentPropertySchema, FrameSpan, LayerSource, LayerSourceReport,
-    PrepareDependency, PrimitivePropertyTable, PropOverride, ReactAudioClipDescriptor,
+    LegacyImport, PrepareDependency, PrimitivePropertyTable, PropOverride, ReactAudioClipDescriptor,
     ReactCompositionConfig, ReactCompositionInfo, ReactSubtitleDescriptor, ReceivedProps,
     TimingWindow,
 };
@@ -305,6 +305,8 @@ pub(crate) enum ReadyMessage {
         project_property_schema: Option<BTreeMap<String, ComponentPropertyField>>,
         #[serde(default)]
         dependencies: Vec<PrepareDependency>,
+        #[serde(default, rename = "legacyImports")]
+        legacy_imports: Vec<LegacyImport>,
     },
     ProbeMedia {
         #[serde(rename = "probeMedia")]

@@ -41,7 +41,7 @@ test('an exporter too old for the flags says so', { skip }, async () => {
   await assert.rejects(getComposition({ source: 'film.tsx', ...run('old') }), (error) => {
     assert.ok(error instanceof CelestaExportError);
     assert.equal(error.code, 'usage');
-    assert.match(error.hint!, /older than @celesta\/exporter/);
+    assert.match(error.hint!, /older than @celesta\.studio\/exporter/);
     return true;
   });
 });

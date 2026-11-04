@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Assets, Composition, Font, Rect, Sequence, Span, Text } from '@celesta/react';
-import { Code } from '@celesta/code';
-import { useTypewriter } from '@celesta/text';
-import type { TextStyle } from '@celesta/react';
+import { Assets, Composition, Font, Rect, Sequence, Span, Text } from '@celesta.studio/react';
+import { Code } from '@celesta.studio/code';
+import { useTypewriter } from '@celesta.studio/text';
+import type { TextStyle } from '@celesta.studio/react';
 
 // Font stacks (和欧混植): `fontFamily` lists families, and each character is
 // drawn with the first one that has it. Latin comes from Inter or JetBrains

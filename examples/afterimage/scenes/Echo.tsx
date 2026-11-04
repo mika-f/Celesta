@@ -1,4 +1,4 @@
-import { Easings, Rect, progress } from '@celesta/react';
+import { Easings, Rect, progress } from '@celesta.studio/react';
 import { Ribbon } from '../components/Ribbon';
 import { Type } from '../components/Type';
 import { Margin } from '../components/Margin';

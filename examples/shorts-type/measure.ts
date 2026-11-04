@@ -1,7 +1,7 @@
-import type { TextMetrics, TextStyle } from '@celesta/react';
-import { measureText } from '@celesta/react';
-import type { FitTextStyle } from '@celesta/text';
-import { fitText } from '@celesta/text';
+import type { TextMetrics, TextStyle } from '@celesta.studio/react';
+import { measureText } from '@celesta.studio/react';
+import type { FitTextStyle } from '@celesta.studio/text';
+import { fitText } from '@celesta.studio/text';
 import { C, COL, FONT, FONT_SRC } from './constants';
 import { textStyle } from './components/Copy';
 import type { TapeKind } from './tapes';

@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { Easings, Group, Rect, Sequence, Text, Video, interpolate, progress, useCurrentFrame, useScene } from '@celesta/react';
-import { Badge } from '@celesta/components';
-import { Polyline } from '@celesta/shapes';
-import { useFitText } from '@celesta/text';
+import { Easings, Group, Rect, Sequence, Text, Video, interpolate, progress, useCurrentFrame, useScene } from '@celesta.studio/react';
+import { Badge } from '@celesta.studio/components';
+import { Polyline } from '@celesta.studio/shapes';
+import { useFitText } from '@celesta.studio/text';
 import { Delta } from '../components/Delta';
 import { Backdrop } from '../components/Backdrop';
 import { C, FONT, solid } from '../components/theme';

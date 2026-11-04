@@ -6,12 +6,12 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, Rect, Text, useTextMetrics, useTheme, useVideoConfig } from '@celesta/react';
-import type { FontFamily, TextStyle } from '@celesta/react';
-import { safeAreaInsets, useLayoutBounds } from '@celesta/layout';
-import type { Insets, SafeAreaValue } from '@celesta/layout';
-import { useFitText } from '@celesta/text';
-import type { FitTextStyle } from '@celesta/text';
+import { Group, Rect, Text, useTextMetrics, useTheme, useVideoConfig } from '@celesta.studio/react';
+import type { FontFamily, TextStyle } from '@celesta.studio/react';
+import { safeAreaInsets, useLayoutBounds } from '@celesta.studio/layout';
+import type { Insets, SafeAreaValue } from '@celesta.studio/layout';
+import { useFitText } from '@celesta.studio/text';
+import type { FitTextStyle } from '@celesta.studio/text';
 
 import { hexColor } from './color';
 import type { MotionEffect } from './motion';

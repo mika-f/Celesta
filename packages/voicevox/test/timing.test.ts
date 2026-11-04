@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vitest';
 
-import type { SpeechTiming } from '@celesta/character';
+import type { SpeechTiming } from '@celesta.studio/character';
 import { lipSyncFromVoicevox, timingFromVoicevox } from '../src/index.js';
 import type { VoicevoxTimingOptions } from '../src/index.js';
 import type { EditableQuery, EngineMora, EngineQuery, Synthesized } from './fixtures/engine.js';

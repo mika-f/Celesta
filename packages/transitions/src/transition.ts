@@ -1,9 +1,9 @@
 import { createElement } from 'react';
 import type { ReactNode } from 'react';
 
-import { clamp01 } from '@celesta/math';
-import { Group, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { CommonProps } from '@celesta/react';
+import { clamp01 } from '@celesta.studio/math';
+import { Group, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { CommonProps } from '@celesta.studio/react';
 
 export type TransitionType = 'fade' | 'slide' | 'scale';
 export type TransitionDirection = 'in' | 'out';

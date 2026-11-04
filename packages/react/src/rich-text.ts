@@ -4,7 +4,7 @@
 
 import * as React from 'react';
 import type { ReactNode } from 'react';
-import { isHexColor } from '@celesta/math';
+import { isHexColor } from '@celesta.studio/math';
 
 import { checkFontFeatures } from './font-features';
 import type { FontFamily, FontFeatures, Paint, TextColorRun, TextFontRun, TextStyle } from './scene';

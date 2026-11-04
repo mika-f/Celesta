@@ -7,13 +7,13 @@ import { test } from 'vitest';
 import * as React from 'react';
 import type { ComponentType, ReactNode } from 'react';
 
-import { Assets, Composition, Group, MotionBlur, Sequence, Trail } from '@celesta/react';
-import type { AssetReference, Layer } from '@celesta/react';
-import { Character, CharacterView, Dialogue, blinkPhase } from '@celesta/character';
-import type { CharacterViewReference, ImageCharacterPortrait, LipSyncTrack } from '@celesta/character';
-import { ProjectTimeline, ProjectTrack } from '@celesta/project';
-import { mount } from '@celesta/react/internal';
-import type { MountedComposition } from '@celesta/react/internal';
+import { Assets, Composition, Group, MotionBlur, Sequence, Trail } from '@celesta.studio/react';
+import type { AssetReference, Layer } from '@celesta.studio/react';
+import { Character, CharacterView, Dialogue, blinkPhase } from '@celesta.studio/character';
+import type { CharacterViewReference, ImageCharacterPortrait, LipSyncTrack } from '@celesta.studio/character';
+import { ProjectTimeline, ProjectTrack } from '@celesta.studio/project';
+import { mount } from '@celesta.studio/react/internal';
+import type { MountedComposition } from '@celesta.studio/react/internal';
 import { contentOf } from './layer-content.mjs';
 
 const h = React.createElement;

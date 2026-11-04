@@ -2,8 +2,8 @@
 // どれもフレーム番号だけから決まる（Celesta のフレームは前後どちらからでも
 // 描かれるので、前のフレームの状態を持ち越さない）。
 
-import { cueAt } from '@celesta/react';
-import { noise } from '@celesta/math';
+import { cueAt } from '@celesta.studio/react';
+import { noise } from '@celesta.studio/math';
 
 import type { Speaker, ZundaFace } from '../../script.ts';
 import { dialoguePlan, line } from '../timing.ts';

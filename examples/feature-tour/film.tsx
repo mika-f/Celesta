@@ -1,5 +1,5 @@
-import { Assets, Audio, Composition, Font, Scenes, Sequence } from '@celesta/react';
-import { Character } from '@celesta/character';
+import { Assets, Audio, Composition, Font, Scenes, Sequence } from '@celesta.studio/react';
+import { Character } from '@celesta.studio/character';
 import { CHAPTERS } from './chapters';
 import { Hud } from './components/Hud';
 import { Shutter } from './components/Shutter';

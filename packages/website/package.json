@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/website",
+  "name": "@celesta.studio/website",
   "version": "0.9.0",
   "private": true,
   "type": "module",
@@ -7,10 +7,10 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "pnpm --filter @celesta/web build && pnpm playground:build && pnpm run \"/^dev:/\"",
+    "dev": "pnpm --filter @celesta.studio/web build && pnpm playground:build && pnpm run \"/^dev:/\"",
     "dev:playground": "vite build -c playground/vite.config.ts --watch",
     "dev:site": "makit dev",
-    "build": "pnpm --filter @celesta/web build && wrangler types && tsc --noEmit && tsc --noEmit -p tsconfig.worker.json && pnpm playground:build && makit build --clean && node --experimental-strip-types scripts/postbuild.mjs",
+    "build": "pnpm --filter @celesta.studio/web build && wrangler types && tsc --noEmit && tsc --noEmit -p tsconfig.worker.json && pnpm playground:build && makit build --clean && node --experimental-strip-types scripts/postbuild.mjs",
     "check": "makit check",
     "check:examples": "tsc -p tsconfig.examples.json",
     "playground:build": "vite build -c playground/vite.config.ts",
@@ -21,7 +21,7 @@
     "test": "wrangler types && tsc -p tests && tsc -p tests/tsconfig.worker.json && vitest run"
   },
   "dependencies": {
-    "@celesta/web": "workspace:*",
+    "@celesta.studio/web": "workspace:*",
     "@monaco-editor/react": "^4.7.0",
     "lucide-react": "1.64.0",
     "monaco-editor": "^0.57.0",

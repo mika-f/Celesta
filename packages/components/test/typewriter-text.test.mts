@@ -3,12 +3,12 @@ import { test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement, ReactNode } from 'react';
 
-import { Composition, Sequence, Span, Theme } from '@celesta/react';
-import type { GlyphMetrics, Layer, LayerContent, Paint, TextMetrics } from '@celesta/react';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
-import { useTypewriter } from '@celesta/text';
-import type { Typewriter } from '@celesta/text';
+import { Composition, Sequence, Span, Theme } from '@celesta.studio/react';
+import type { GlyphMetrics, Layer, LayerContent, Paint, TextMetrics } from '@celesta.studio/react';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
+import { useTypewriter } from '@celesta.studio/text';
+import type { Typewriter } from '@celesta.studio/text';
 import { TypewriterText } from '../src/index.js';
 import type { TypewriterCaretShape, TypewriterTextProps } from '../src/index.js';
 

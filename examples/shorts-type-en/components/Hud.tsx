@@ -1,4 +1,4 @@
-import { Group, Rect, cueAt, useBeat, useCurrentFrame } from '@celesta/react';
+import { Group, Rect, cueAt, useBeat, useCurrentFrame } from '@celesta.studio/react';
 import { Copy } from './Copy';
 import { BPM, C, COL, SAFE } from '../constants';
 import { SCENE_CUES, SCENES } from '../timeline';

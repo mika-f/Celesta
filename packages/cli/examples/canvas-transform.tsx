@@ -1,5 +1,5 @@
-import { Composition, Group, Rect, Text, interpolate, useCurrentFrame } from '@celesta/react';
-import { Stack } from '@celesta/layout';
+import { Composition, Group, Rect, Text, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { Stack } from '@celesta.studio/layout';
 
 // A scene for dragging layers on the canvas in the editor's Select layers
 // mode. Each element shows a different way a transform can be written, so

@@ -2,7 +2,7 @@
 // 何もない画面に、空の <Composition> のコードが打ち込まれる。シーンの終わりに
 // コードパネルが左上へ移り、次のシーンからはそこに 1 枚ずつ足されていく。
 
-import { Easings, Group, Rect, Text, interpolate, progress } from '@celesta/react';
+import { Easings, Group, Rect, Text, interpolate, progress } from '@celesta.studio/react';
 
 import { filmDuration, sceneEnd, useFilmFrame } from '../timing.ts';
 import { COLOR, FONT, FPS, alpha, solid } from '../theme.ts';

@@ -1,7 +1,7 @@
-import { Group, Rect, Text, useTextMetrics } from '@celesta/react';
-import { highlightCode } from '@celesta/code';
-import { Panel } from '@celesta/components';
-import type { CodeLanguage } from '@celesta/code';
+import { Group, Rect, Text, useTextMetrics } from '@celesta.studio/react';
+import { highlightCode } from '@celesta.studio/code';
+import { Panel } from '@celesta.studio/components';
+import type { CodeLanguage } from '@celesta.studio/code';
 import { codeTheme } from './codeTheme';
 import { C, FONT, solid } from './theme';
 

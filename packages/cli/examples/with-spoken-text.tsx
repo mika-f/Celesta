@@ -10,10 +10,10 @@
 // examples/assets/voice-folder/shizuku/voice-1.wav (see its README.md).
 import * as React from 'react';
 
-import { Assets, Composition, Font, Rect, Text } from '@celesta/react';
-import { Character, CharacterView, DialogueSeries, loadDialogueLipSync, planDialogue } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference, DialogueLine, DialoguePlan } from '@celesta/character';
+import { Assets, Composition, Font, Rect, Text } from '@celesta.studio/react';
+import { Character, CharacterView, DialogueSeries, loadDialogueLipSync, planDialogue } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference, DialogueLine, DialoguePlan } from '@celesta.studio/character';
 
 const WIDTH = 1280;
 const HEIGHT = 720;

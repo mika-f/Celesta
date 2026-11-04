@@ -3,8 +3,8 @@
 Reading subtitles from an SRT or WebVTT file, drawing them, and writing a
 video's subtitles out as files beside it, one per language and format if
 needed, or without the video. `parseSubtitles`,
-`formatSubtitles`, and `<Subtitles>` come from `@celesta/react`;
-`<CaptionTrack>` from `@celesta/components`.
+`formatSubtitles`, and `<Subtitles>` come from `@celesta.studio/react`;
+`<CaptionTrack>` from `@celesta.studio/components`.
 `<Dialogue>` lines ([dialogue.md](dialogue.md)) go into the same file.
 
 ## Contents
@@ -23,7 +23,7 @@ the web editor bundle `.srt` and `.vtt` files as their text, and the
 editor reloads when one changes.
 
 ```tsx
-import { parseSubtitles } from '@celesta/react';
+import { parseSubtitles } from '@celesta.studio/react';
 import captions from './captions.srt';
 
 const cues = parseSubtitles(captions, { fps: 30 });
@@ -59,12 +59,12 @@ The cues come out in file order; sort them by `from` before using
 
 ## Draw the cues
 
-`<CaptionTrack cues>` from `@celesta/components` draws the cue on each
+`<CaptionTrack cues>` from `@celesta.studio/components` draws the cue on each
 frame on a band and declares the cues for the export's subtitle file. It
 needs no `<Character>`, voice, or audio:
 
 ```tsx
-import { CaptionTrack } from '@celesta/components';
+import { CaptionTrack } from '@celesta.studio/components';
 
 <CaptionTrack cues={cues} />
 <CaptionTrack cues={[

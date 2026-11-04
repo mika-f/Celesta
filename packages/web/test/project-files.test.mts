@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { build } from 'esbuild-wasm';
 import type { BuildOptions } from 'esbuild-wasm';
-import { projectFiles } from '../src/project-files';
+import { currentModuleName, projectFiles } from '../src/project-files';
 
 /** What a bundle's `module.exports` holds, read back as the test expects it. */
 type Exports<T> = { exports: { default?: T } };
@@ -12,7 +12,7 @@ const React = { createElement: (type: unknown, props: Record<string, unknown>): 
 test('bundle a nested TSX project, resolve JSON and keep runtime imports external', async () => {
   const files = {
     'film.tsx': "import { Scene } from './scenes'; export default Scene;",
-    'scenes/index.tsx': "import { Composition } from '@celesta/react'; import data from '../data.json'; export function Scene() { return <Composition width={data.width} />; }",
+    'scenes/index.tsx': "import { Composition } from '@celesta.studio/react'; import data from '../data.json'; export function Scene() { return <Composition width={data.width} />; }",
     'data.json': '{"width":320}',
   };
   const options = { entryPoints: ['film.tsx'], bundle: true, write: false, format: 'cjs', jsxFactory: 'React.createElement' } satisfies BuildOptions;
@@ -21,12 +21,27 @@ test('bundle a nested TSX project, resolve JSON and keep runtime imports externa
   const Component = Symbol('Composition');
   new Function('module', 'exports', 'require', 'React', result.outputFiles[0].text)(
     module, module.exports,
-    (name: string) => { assert.equal(name, '@celesta/react'); return { Composition: Component }; },
+    (name: string) => { assert.equal(name, '@celesta.studio/react'); return { Composition: Component }; },
     React,
   );
   assert.deepEqual(module.exports.default!(), { type: Component, props: { width: 320 } });
   await assert.rejects(build({ ...options, logLevel: 'silent', plugins: [projectFiles({ 'film.tsx': "import fs from 'node:fs'; export default fs;" }, 'film.tsx')] }), /unavailable in the web editor/);
   await assert.rejects(build({ ...options, logLevel: 'silent', plugins: [projectFiles({ 'film.tsx': "import Scene from './missing'; export default Scene;" }, 'film.tsx')] }), /Missing project source/);
+});
+
+test('the scope before @celesta.studio stays a runtime import', async () => {
+  assert.equal(currentModuleName('@celesta/react'), '@celesta.studio/react');
+  assert.equal(currentModuleName('@celesta.studio/react'), '@celesta.studio/react');
+  assert.equal(currentModuleName('react'), 'react');
+  const files = { 'film.tsx': "import { Composition } from '@celesta/react'; export default Composition;" };
+  const result = await build({ entryPoints: ['film.tsx'], bundle: true, write: false, format: 'cjs', plugins: [projectFiles(files, 'film.tsx')] });
+  const module: Exports<unknown> = { exports: {} };
+  const Component = Symbol('Composition');
+  new Function('module', 'exports', 'require', result.outputFiles[0].text)(
+    module, module.exports,
+    (name: string) => { assert.equal(currentModuleName(name), '@celesta.studio/react'); return { Composition: Component }; },
+  );
+  assert.equal(module.exports.default, Component);
 });
 
 test('directory imports resolve JSX, JavaScript and JSON index files', async () => {

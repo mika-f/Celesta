@@ -1,4 +1,4 @@
-import { Easings, Rect, interpolate, useCurrentFrame } from '@celesta/react';
+import { Easings, Rect, interpolate, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { Line } from '../components/Line';
 import { Prism } from '../components/Prism';

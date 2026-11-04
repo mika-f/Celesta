@@ -5,12 +5,12 @@ import { test } from 'vitest';
 import React from 'react';
 import type { ReactElement, ReactNode } from 'react';
 
-import { Assets, Composition, FreezeFrame, Sequence, Span } from '@celesta/react';
-import type { AssetReference } from '@celesta/react';
+import { Assets, Composition, FreezeFrame, Sequence, Span } from '@celesta.studio/react';
+import type { AssetReference } from '@celesta.studio/react';
 import { Character, CharacterView, Dialogue, DialogueSeries, planDialogue } from '../src/index.js';
 import type { CharacterPortrait, CharacterViewReference, DialogueProps } from '../src/index.js';
-import { mount } from '@celesta/react/internal';
-import type { SubtitleDescriptor } from '@celesta/react/internal';
+import { mount } from '@celesta.studio/react/internal';
+import type { SubtitleDescriptor } from '@celesta.studio/react/internal';
 
 const h = React.createElement;
 

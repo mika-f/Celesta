@@ -1,6 +1,6 @@
-import { Easings, Group, Rect, Text, progress } from '@celesta/react';
-import { Callout, Motion, PatternBackground } from '@celesta/components';
-import { Circle } from '@celesta/shapes';
+import { Easings, Group, Rect, Text, progress } from '@celesta.studio/react';
+import { Callout, Motion, PatternBackground } from '@celesta.studio/components';
+import { Circle } from '@celesta.studio/shapes';
 import { Delta, trianglePoints } from '../../components/Delta';
 import { C } from '../../components/theme';
 import type { DemoProps } from '../program';

@@ -2,8 +2,8 @@
 // 方眼紙の上に、ずんだ餅とえだまめが一筆書きで描かれていく。線を引き終えた
 // 部分から色が塗られ、ペン先の丸が線の先端を追いかける。
 
-import { Easings, Group, Rect, progress, spring } from '@celesta/react';
-import { Line, Path, Polyline, pointOnPolyline } from '@celesta/shapes';
+import { Easings, Group, Rect, progress, spring } from '@celesta.studio/react';
+import { Line, Path, Polyline, pointOnPolyline } from '@celesta.studio/shapes';
 
 import { ellipse, blob, pod } from '../lib/shapes.ts';
 import type { Point } from '../lib/shapes.ts';

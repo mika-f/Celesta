@@ -1,5 +1,5 @@
-import { Assets, Audio, Composition, Font, Series } from '@celesta/react';
-import { DebugOverlay } from '@celesta/debug';
+import { Assets, Audio, Composition, Font, Series } from '@celesta.studio/react';
+import { DebugOverlay } from '@celesta.studio/debug';
 import { Fx } from './components/Fx';
 import { Hud } from './components/Hud';
 import { FONT_SRC, FPS, H, SAFE, W } from './constants';

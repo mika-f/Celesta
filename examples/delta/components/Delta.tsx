@@ -1,5 +1,5 @@
-import type { CommonProps } from '@celesta/react';
-import { Path } from '@celesta/shapes';
+import type { CommonProps } from '@celesta.studio/react';
+import { Path } from '@celesta.studio/shapes';
 import { C } from './theme';
 
 // The Δ mark: an equilateral triangle whose bounding box is centered on x/y.

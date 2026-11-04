@@ -15,7 +15,7 @@
 
 import type { ReactNode } from 'react';
 
-import { Audio, Composition, Group, Rect, Text, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Audio, Composition, Group, Rect, Text, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 
 const WIDTH = 640;
 const HEIGHT = 360;

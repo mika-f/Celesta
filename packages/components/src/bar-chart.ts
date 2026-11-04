@@ -4,8 +4,8 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Easings, Group, Rect, Text, useCurrentFrame, useTextMetrics, useTheme } from '@celesta/react';
-import type { GroupProps, TextStyle } from '@celesta/react';
+import { Easings, Group, Rect, Text, useCurrentFrame, useTextMetrics, useTheme } from '@celesta.studio/react';
+import type { GroupProps, TextStyle } from '@celesta.studio/react';
 
 import { hexColor } from './color';
 import { countProgress, formatNumber } from './count';

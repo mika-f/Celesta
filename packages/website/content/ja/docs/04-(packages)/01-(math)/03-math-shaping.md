@@ -1,4 +1,4 @@
-[`@celesta/math`](/ja/docs/math/) の残りのヘルパーは、数値を整形し、繰り返す動きを作り、配置や軌道に必要な角度・点の計算をします。通常の関数なので、コンポーネント、`prepare()`、データファイルなど、どこでも使えます。
+[`@celesta.studio/math`](/ja/docs/math/) の残りのヘルパーは、数値を整形し、繰り返す動きを作り、配置や軌道に必要な角度・点の計算をします。通常の関数なので、コンポーネント、`prepare()`、データファイルなど、どこでも使えます。
 
 ## 数値の整形
 
@@ -22,10 +22,10 @@
 
 > [!NOTE]
 > **remap と interpolate の使い分け**
-> `remap` はイージングなしの線形変換で、`remapClamped` を使わなければ制限もありません。フレームに沿う動きやイージング、`extrapolateLeft` / `extrapolateRight` には `@celesta/react` の [`interpolate`](/ja/docs/animation/) を使います。`remap` はノイズを透明度に変えるなど、別の種類の値の変換に向きます。
+> `remap` はイージングなしの線形変換で、`remapClamped` を使わなければ制限もありません。フレームに沿う動きやイージング、`extrapolateLeft` / `extrapolateRight` には `@celesta.studio/react` の [`interpolate`](/ja/docs/animation/) を使います。`remap` はノイズを透明度に変えるなど、別の種類の値の変換に向きます。
 
 ```tsx title="ループと往復"
-import { pingPong, snap, wrap } from '@celesta/math';
+import { pingPong, snap, wrap } from '@celesta.studio/math';
 
 const frame = useCurrentFrame();
 const ticker = wrap(frame * 4, -200, 1920);   // scrolls right, re-enters at the left
@@ -47,7 +47,7 @@ const stepped = snap(sweep, 100);             // the same sweep, in 100 px jumps
 | `sawtoothWave(t)` | 0 から 1 へ上昇し、中間で -1 に落ち、0 に戻ります。繰り返す走査に。 |
 
 ```tsx title="2 秒周期で呼吸する円"
-import { sineWave } from '@celesta/math';
+import { sineWave } from '@celesta.studio/math';
 
 const { fps } = useVideoConfig();
 const frame = useCurrentFrame();
@@ -87,7 +87,7 @@ const breath = sineWave(frame / (fps * 2)); // one full cycle every two seconds
 | `quadraticBezierPoint(p0, p1, p2, t)`, `cubicBezierPoint(p0, p1, p2, p3, t)` | パスの `quadTo` / `cubicTo` と同じベジェ曲線上の `t`（0〜1）の点。描いた曲線に沿って対象を動かせます。 |
 
 ```tsx title="回転する輪の上の点"
-import { TAU, polarToCartesian } from '@celesta/math';
+import { TAU, polarToCartesian } from '@celesta.studio/math';
 
 const frame = useCurrentFrame();
 const dots = Array.from({ length: 12 }, (_, i) => {
@@ -99,7 +99,7 @@ const dots = Array.from({ length: 12 }, (_, i) => {
 ```
 
 ```tsx title="曲線に沿って動くマーカー"
-import { cubicBezierPoint } from '@celesta/math';
+import { cubicBezierPoint } from '@celesta.studio/math';
 
 const p0 = { x: 200, y: 800 }, p1 = { x: 500, y: 200 };
 const p2 = { x: 1400, y: 200 }, p3 = { x: 1700, y: 800 };
@@ -128,7 +128,7 @@ const marker = cubicBezierPoint(p0, p1, p2, p3, t);
 | `parseHexColor(color)` | 色を `[r, g, b, a]`（それぞれ 0–255。`#RRGGBB` のアルファは 255）で返します。どちらの形式でもなければ `undefined` です。 |
 
 ```tsx title="フォールバック付きのデータの色を、アルファ半分で"
-import { isHexColor, parseHexColor } from '@celesta/math';
+import { isHexColor, parseHexColor } from '@celesta.studio/math';
 
 const fill = isHexColor(row.color) ? row.color : '#a68bbf';
 const [r, g, b, a] = parseHexColor(fill)!;

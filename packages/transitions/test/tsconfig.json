@@ -12,7 +12,7 @@
     "types": ["node"]
   },
   "include": ["./**/*.mts"],
-  // The package's own references, plus @celesta/shader, which only the tests use.
+  // The package's own references, plus @celesta.studio/shader, which only the tests use.
   "references": [
     { "path": "../../react" },
     { "path": "../../layout" },

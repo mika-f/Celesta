@@ -1,4 +1,4 @@
-import type { GroupProps } from '@celesta/react';
+import type { GroupProps } from '@celesta.studio/react';
 
 /** The edge the entering scene comes from, for the transitions that move or turn one way. */
 export type TransitionSeriesEdge = 'left' | 'right' | 'top' | 'bottom';

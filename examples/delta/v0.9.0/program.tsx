@@ -1,8 +1,8 @@
 import type { ComponentType, ReactNode } from 'react';
-import { Group, Rect, Sequence, Span, Text, useCurrentFrame, useScene } from '@celesta/react';
-import type { CodeLanguage } from '@celesta/code';
-import { CaptionTrack, LowerThird } from '@celesta/components';
-import { LayoutBounds } from '@celesta/layout';
+import { Group, Rect, Sequence, Span, Text, useCurrentFrame, useScene } from '@celesta.studio/react';
+import type { CodeLanguage } from '@celesta.studio/code';
+import { CaptionTrack, LowerThird } from '@celesta.studio/components';
+import { LayoutBounds } from '@celesta.studio/layout';
 import { Backdrop } from '../components/Backdrop';
 import { Delta } from '../components/Delta';
 import { DiffPanel } from '../components/DiffPanel';

@@ -1,7 +1,7 @@
 import { createRef } from 'react';
-import { loadLipSync, loadPsdPreset } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference, LipSyncTrack } from '@celesta/character';
+import { loadLipSync, loadPsdPreset } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference, LipSyncTrack } from '@celesta.studio/character';
 
 // The talking portrait: asset paths, shared refs, and the data loaded in prepare().
 

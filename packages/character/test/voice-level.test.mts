@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import React from 'react';
 import { test } from 'vitest';
 
-import { Assets, Composition } from '@celesta/react';
-import type { AssetReference, KeyframeAnimation } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
-import type { AudioClipDescriptor } from '@celesta/react/internal';
+import { Assets, Composition } from '@celesta.studio/react';
+import type { AssetReference, KeyframeAnimation } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
+import type { AudioClipDescriptor } from '@celesta.studio/react/internal';
 
 import {
   Character,

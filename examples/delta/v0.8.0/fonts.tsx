@@ -1,4 +1,4 @@
-import { Assets, Font } from '@celesta/react';
+import { Assets, Font } from '@celesta.studio/react';
 import { japaneseText } from '../components/theme';
 import { MORE_STRINGS } from './More';
 import { PRS } from './prs';

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { Group, Rect, Sequence, Span, Text, Theme, useTheme } from '@celesta/react';
-import { Badge, Counter } from '@celesta/components';
+import { Group, Rect, Sequence, Span, Text, Theme, useTheme } from '@celesta.studio/react';
+import { Badge, Counter } from '@celesta.studio/components';
 import type { DemoProps } from '../../components/ChapterShell';
 import { CUT, STAGE, enter } from '../../components/ChapterShell';
 import { BAR, BEAT } from '../timeline';

@@ -28,9 +28,9 @@ fn lists(text: &str) -> Vec<SceneList> {
     scene_lists(text, Path::new("timeline.ts"))
 }
 
-/// `body` after an import of `defineScenes` from `@celesta/react`.
+/// `body` after an import of `defineScenes` from `@celesta.studio/react`.
 fn imported(body: &str) -> String {
-    format!("import {{ defineScenes }} from '@celesta/react';\n{body}")
+    format!("import {{ defineScenes }} from '@celesta.studio/react';\n{body}")
 }
 
 #[test]
@@ -38,9 +38,11 @@ fn only_the_celesta_define_scenes_makes_a_list() {
     let list = "([{ id: 'a', durationInFrames: 1 }]);\n";
     for text in [
         format!(
-            "import {{ defineScenes as scenes }} from '@celesta/react';\nexport const S = scenes{list}"
+            "import {{ defineScenes as scenes }} from '@celesta.studio/react';\nexport const S = scenes{list}"
         ),
-        format!("import * as C from '@celesta/react';\nexport const S = C.defineScenes{list}"),
+        format!("import * as C from '@celesta.studio/react';\nexport const S = C.defineScenes{list}"),
+        // The scope before `@celesta.studio`.
+        format!("import {{ defineScenes }} from '@celesta/react';\nexport const S = defineScenes{list}"),
     ] {
         assert_eq!(lists(&text).len(), 1, "{text}");
     }
@@ -52,7 +54,7 @@ fn only_the_celesta_define_scenes_makes_a_list() {
         format!("const defineScenes = (s) => s;\nexport const S = defineScenes{list}"),
         // Shadowed where it is called.
         format!(
-            "import {{ defineScenes }} from '@celesta/react';\nfunction f(defineScenes) {{\n  return defineScenes{list}}}\n"
+            "import {{ defineScenes }} from '@celesta.studio/react';\nfunction f(defineScenes) {{\n  return defineScenes{list}}}\n"
         ),
         format!("import * as C from './celesta';\nexport const S = C.defineScenes{list}"),
     ] {
@@ -63,7 +65,7 @@ fn only_the_celesta_define_scenes_makes_a_list() {
 #[test]
 fn finds_scene_lists_with_ids_in_order() {
     // `.ts`, not TSX: `<T>(x: T) => x` and `<number>v` parse only as TS.
-    let text = "import { defineScenes } from '@celesta/react';\n\nconst id = <T>(x: T) => x;\nconst v: unknown = 1;\nconst n = <number>v;\n\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: 90 },\n  { id: \"main\", name: 'MAIN', durationInFrames: 120 },\n  { id: 'outro', durationInFrames: 60 },\n]);\n";
+    let text = "import { defineScenes } from '@celesta.studio/react';\n\nconst id = <T>(x: T) => x;\nconst v: unknown = 1;\nconst n = <number>v;\n\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: 90 },\n  { id: \"main\", name: 'MAIN', durationInFrames: 120 },\n  { id: 'outro', durationInFrames: 60 },\n]);\n";
     let found = lists(text);
     assert_eq!(found.len(), 1);
     let list = &found[0];
@@ -80,7 +82,7 @@ fn finds_scene_lists_with_ids_in_order() {
     assert!(list.entries[0].inputs.is_empty());
 
     // Type arguments on the call, and a list no binding names.
-    let text = "import { defineScenes, type SceneEntry } from '@celesta/react';\nexport default defineScenes<SceneEntry & { chapter?: number }>([\n  { id: 'open', durationInFrames: 30 },\n]);\n";
+    let text = "import { defineScenes, type SceneEntry } from '@celesta.studio/react';\nexport default defineScenes<SceneEntry & { chapter?: number }>([\n  { id: 'open', durationInFrames: 30 },\n]);\n";
     let found = scene_lists(text, Path::new("timeline.tsx"));
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].binding, None);
@@ -272,7 +274,7 @@ fn length(text: &str) -> Option<CompositionLength> {
 
 fn film(import: &str, before: &str, duration: &str) -> String {
     format!(
-        "import {{ Composition }} from '@celesta/react';\n{import}\n{before}\nexport const Film = () => (\n  <Composition width={{1920}} height={{1080}} fps={{30}} durationInFrames={duration}>\n  </Composition>\n);\n"
+        "import {{ Composition }} from '@celesta.studio/react';\n{import}\n{before}\nexport const Film = () => (\n  <Composition width={{1920}} height={{1080}} fps={{30}} durationInFrames={duration}>\n  </Composition>\n);\n"
     )
 }
 

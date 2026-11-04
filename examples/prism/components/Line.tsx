@@ -1,4 +1,4 @@
-import { Rect } from '@celesta/react';
+import { Rect } from '@celesta.studio/react';
 import { PAPER } from '../constants';
 
 export function Line({ a, b, color = PAPER, width = 2, opacity = 1 }: {

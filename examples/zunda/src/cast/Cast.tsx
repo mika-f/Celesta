@@ -10,10 +10,10 @@
 
 import { createRef } from 'react';
 import type { RefObject } from 'react';
-import { Easings, progress, useCurrentFrame } from '@celesta/react';
-import { Character, CharacterView, DialogueSeries } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference } from '@celesta/character';
+import { Easings, progress, useCurrentFrame } from '@celesta.studio/react';
+import { Character, CharacterView, DialogueSeries } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference } from '@celesta.studio/character';
 
 import type { MetanFace, Speaker, ZundaFace } from '../../script.ts';
 import { dialoguePlan, line } from '../timing.ts';

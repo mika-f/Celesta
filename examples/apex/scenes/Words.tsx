@@ -1,4 +1,4 @@
-import { Easings, Rect, progress, useCue } from '@celesta/react';
+import { Easings, Rect, progress, useCue } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { Ring } from '../components/Ring';
 import { ACID, BONE, CYAN, H, INK, MAG, W } from '../constants';

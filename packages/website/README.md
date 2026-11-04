@@ -8,7 +8,7 @@ and `packages/react`, deployed to Cloudflare Workers.
 ## Develop
 
 Use Node.js 22.12+ (Node.js 24 LTS recommended) and the pnpm version declared in the root `package.json`.
-`@celesta/web` imports generated types from `@celesta/react`, so run
+`@celesta.studio/web` imports generated types from `@celesta.studio/react`, so run
 `pnpm run build:runtime` from the repository root in a fresh checkout and after
 the Rust types change.
 
@@ -18,7 +18,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-`pnpm dev` builds `@celesta/web` and the playground island, then runs the island's Vite watch
+`pnpm dev` builds `@celesta.studio/web` and the playground island, then runs the island's Vite watch
 build next to `makit dev`, which prints the local URL. The pages load the island from
 `public/_playground/`, so it must be built before `makit dev` starts; if you run `makit dev`
 by itself, run `pnpm playground:build` first.
@@ -80,8 +80,8 @@ packages/website/
   `public/showcase/` and the showcase's fonts, licenses, and portraits to `public/showcase-assets/`.
 - **`examples/`**: complete documentation examples, including the VOICEVOX and AivisSpeech
   entries. They are excluded from the site's type-check and checked by `pnpm check:examples`
-  against the real `@celesta/react` and the separately staged `@celesta/voicevox` and
-  `@celesta/aivis-speech` instead.
+  against the real `@celesta.studio/react` and the separately staged `@celesta.studio/voicevox` and
+  `@celesta.studio/aivis-speech` instead.
 
 ## Adding a chapter
 
@@ -201,7 +201,7 @@ and Windows (x64) `-setup.exe` assets and runs `pnpm run deploy`. It needs the
 
 ## Build
 
-`pnpm build` runs, in order: the `@celesta/web` build, `wrangler types`, `tsc` for the site
+`pnpm build` runs, in order: the `@celesta.studio/web` build, `wrangler types`, `tsc` for the site
 (`tsconfig.json`) and for the Worker (`tsconfig.worker.json`, kept apart because workerd's
 runtime types redefine DOM globals), the island build, `makit build --clean`, and
 `scripts/postbuild.mjs`.
@@ -277,8 +277,8 @@ For a CI runner outside Cloudflare, authenticate Wrangler with the `CLOUDFLARE_A
 
 The landing page's editor accepts one self-contained TSX file; showcase entries load their full
 source projects from the repository's `examples/`. Runtime imports are limited to
-`@celesta/react`, `@celesta/math`, `@celesta/code`, and `react`. esbuild WASM compiles the
-visitor's code in a Worker, Celesta's React reconciler produces each `Scene`, and `@celesta/web`
+`@celesta.studio/react`, `@celesta.studio/math`, `@celesta.studio/code`, and `react`. esbuild WASM compiles the
+visitor's code in a Worker, Celesta's React reconciler produces each `Scene`, and `@celesta.studio/web`
 draws it on a canvas for preview and MP4 export (WebCodecs H.264/AAC via Mediabunny). The
 preview is silent; constant-rate, constant-volume audio clips are mixed into the export. Media
 added with **Add media** is referred to by file name. Browser text, video seeking, and fonts can
@@ -314,5 +314,5 @@ languages, and the language switch on documentation and static pages.
 The user guide follows the React workflow in the root README. Keep CLI flags aligned with
 `crates/exporter/src/main.rs` and `crates/editor/src/cli.rs`, package import examples aligned
 with each package's public `src/index.ts`, and run `pnpm check:examples` after changing any
-example. In particular, VOICEVOX and AivisSpeech adapters are imported from `@celesta/voicevox`
-and `@celesta/aivis-speech`, not `@celesta/react`.
+example. In particular, VOICEVOX and AivisSpeech adapters are imported from `@celesta.studio/voicevox`
+and `@celesta.studio/aivis-speech`, not `@celesta.studio/react`.

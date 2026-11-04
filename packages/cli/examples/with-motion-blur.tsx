@@ -9,10 +9,10 @@ import {
   defineProjectProperties,
   interpolate,
   useCurrentFrame,
-} from '@celesta/react';
-import type { ProjectPropertySchema } from '@celesta/react';
-import { useProjectProperty } from '@celesta/project';
-import { Circle } from '@celesta/shapes';
+} from '@celesta.studio/react';
+import type { ProjectPropertySchema } from '@celesta.studio/react';
+import { useProjectProperty } from '@celesta.studio/project';
+import { Circle } from '@celesta.studio/shapes';
 
 // Motion blur and a trail on fast movement. `samples` and `copies` come in
 // as project properties, so the same scene renders without either:

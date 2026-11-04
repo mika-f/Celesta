@@ -2,8 +2,8 @@
 
 import * as React from 'react';
 
-import { Easings, Text, useCurrentFrame } from '@celesta/react';
-import type { TextProps } from '@celesta/react';
+import { Easings, Text, useCurrentFrame } from '@celesta.studio/react';
+import type { TextProps } from '@celesta.studio/react';
 
 import { countProgress, finiteValue, formatNumber } from './count';
 import type { CountTiming, NumberFormat } from './count';

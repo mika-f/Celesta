@@ -1,7 +1,7 @@
-import { Composition, Rect, useCurrentFrame } from '@celesta/react';
-import type { Paint } from '@celesta/react';
-import { Circle, Path } from '@celesta/shapes';
-import type { PolylinePoint } from '@celesta/shapes';
+import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
+import type { Paint } from '@celesta.studio/react';
+import { Circle, Path } from '@celesta.studio/shapes';
+import type { PolylinePoint } from '@celesta.studio/shapes';
 
 // The five sample photos in ../assets/, one per frame: stylized landscapes
 // drawn from gradients and silhouettes, so the template ships without

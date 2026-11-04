@@ -1,7 +1,7 @@
 {
   // Type-checks the component module with the options of the project
   // TypeScript support (packages/cli's project-types), which ../build.mjs
-  // checks its declarations against; `react` and `@celesta/*` come from the
+  // checks its declarations against; `react` and `@celesta.studio/*` come from the
   // workspace. build.mjs emits the module and its declarations itself.
   "compilerOptions": {
     "target": "ES2022",

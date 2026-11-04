@@ -1229,7 +1229,7 @@ fn exports_a_silent_react_entry_to_webm() {
     std::fs::write(
         &entry,
         r##"
-import { Composition, Rect } from '@celesta/react';
+import { Composition, Rect } from '@celesta.studio/react';
 export default function Root() {
   return <Composition width={64} height={64} fps={2} durationInFrames={2}>
     <Rect width={32} height={32} fill="#ff0000" />
@@ -1305,7 +1305,7 @@ fn writes_a_react_entrys_subtitles_shifted_to_the_exported_range() {
     std::fs::write(
         &entry,
         r##"
-import { Composition, Rect, Sequence, Subtitles, parseSubtitles } from '@celesta/react';
+import { Composition, Rect, Sequence, Subtitles, parseSubtitles } from '@celesta.studio/react';
 import captions from './captions.srt';
 const cues = parseSubtitles(captions, { fps: 10 });
 export default function Root() {
@@ -1377,7 +1377,7 @@ fn writes_only_a_react_entrys_subtitles_per_language_and_format() {
     std::fs::write(
         &entry,
         r##"
-import { Composition, Sequence, Subtitles } from '@celesta/react';
+import { Composition, Sequence, Subtitles } from '@celesta.studio/react';
 const ja = [{ from: 0, durationInFrames: 10, text: 'こんにちは' }, { from: 20, durationInFrames: 10, text: '世界' }];
 const en = [{ from: 0, durationInFrames: 10, text: 'Hello' }, { from: 20, durationInFrames: 10, text: 'World' }];
 export default function Root() {

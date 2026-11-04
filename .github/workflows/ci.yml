@@ -242,7 +242,7 @@ jobs:
       - name: Install JS packages
         run: pnpm install --frozen-lockfile
 
-      # <Vrm> imports @celesta/react and @celesta/character, and the build
+      # <Vrm> imports @celesta.studio/react and @celesta.studio/character, and the build
       # checks its declarations against the runtime's project types. As in
       # the test job, codegen runs first to add --locked.
       - name: Build Celesta packages

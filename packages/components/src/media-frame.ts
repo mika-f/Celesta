@@ -4,9 +4,9 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import type { Insets } from '@celesta/layout';
-import { Group, Image, Text, Video, useTextMetrics } from '@celesta/react';
-import type { AnimatedNumber, AssetInput, TextStyle } from '@celesta/react';
+import type { Insets } from '@celesta.studio/layout';
+import { Group, Image, Text, Video, useTextMetrics } from '@celesta.studio/react';
+import type { AnimatedNumber, AssetInput, TextStyle } from '@celesta.studio/react';
 
 import { Panel } from './panel';
 import type { PanelProps } from './panel';

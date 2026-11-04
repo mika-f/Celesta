@@ -1,8 +1,8 @@
 // Two uses of a group mask: video seen only through letters, then a
 // soft-edged circular wipe from one scene to the next. Put a clip.mp4 next
 // to this file, as for with-video.tsx.
-import { Composition, Group, Mask, Rect, Sequence, Text, Video, interpolate, useCurrentFrame } from '@celesta/react';
-import { Circle } from '@celesta/shapes';
+import { Composition, Group, Mask, Rect, Sequence, Text, Video, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { Circle } from '@celesta.studio/shapes';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;

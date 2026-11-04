@@ -1,4 +1,4 @@
-import { Easings, Rect, progress, useCurrentFrame } from '@celesta/react';
+import { Easings, Rect, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { Prism } from '../components/Prism';
 import { Rails } from '../components/Rails';

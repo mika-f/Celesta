@@ -1,8 +1,8 @@
 import { createRef } from 'react';
-import { Group, Image, Rect, Sequence, Text } from '@celesta/react';
-import { Character, CharacterView, DialogueSeries } from '@celesta/character';
-import type { CharacterViewReference } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
+import { Group, Image, Rect, Sequence, Text } from '@celesta.studio/react';
+import { Character, CharacterView, DialogueSeries } from '@celesta.studio/character';
+import type { CharacterViewReference } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
 import { C, FONT, solid } from '../../components/theme';
 import type { DemoProps } from '../program';
 import { STAGE } from '../program';

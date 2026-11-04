@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Text, interpolate, progress } from '@celesta/react';
-import { Arrow, Circle, Heart, Pie, Polygon, Star, Triangle } from '@celesta/shapes';
+import { Easings, Group, Rect, Text, interpolate, progress } from '@celesta.studio/react';
+import { Arrow, Circle, Heart, Pie, Polygon, Star, Triangle } from '@celesta.studio/shapes';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, solid } from '../../components/theme';

@@ -3,10 +3,10 @@ import { beforeEach, test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Rect, Sequence, Text, Theme, useCurrentFrame } from '@celesta/react';
-import type { Clip, Layer, LayerContent, Scene, TextMetrics } from '@celesta/react';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest, MountedComposition } from '@celesta/react/internal';
+import { Composition, Rect, Sequence, Text, Theme, useCurrentFrame } from '@celesta.studio/react';
+import type { Clip, Layer, LayerContent, Scene, TextMetrics } from '@celesta.studio/react';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest, MountedComposition } from '@celesta.studio/react/internal';
 import { CaptionTrack } from '../src/index.js';
 import type { CaptionCue, CaptionRenderProps, CaptionTrackProps } from '../src/index.js';
 

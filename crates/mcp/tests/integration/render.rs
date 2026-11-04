@@ -8,7 +8,7 @@ const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 fn scene(frames: u32) -> String {
     format!(
         r##"
-import {{ Composition, Rect, useCurrentFrame }} from '@celesta/react';
+import {{ Composition, Rect, useCurrentFrame }} from '@celesta.studio/react';
 function Box() {{
   return <Rect x={{useCurrentFrame() * 4}} width={{32}} height={{32}} fill="#ff3366" />;
 }}
@@ -228,7 +228,7 @@ async fn render_frames_reports_invalid_properties() {
     }
     let (_dir, entry) = entry(
         r#"
-import { Composition, defineProjectProperties } from '@celesta/react';
+import { Composition, defineProjectProperties } from '@celesta.studio/react';
 defineProjectProperties({ n: { type: 'number', defaultValue: 1 } });
 export default function Root() {
   return <Composition width={160} height={90} fps={30} durationInFrames={10} />;

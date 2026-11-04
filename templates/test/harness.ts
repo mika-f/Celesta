@@ -7,8 +7,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import type { CompositionConfig, TextMetrics } from '@celesta/react';
-import type { MeasureTextRequest, ProbedMediaInfo } from '@celesta/react/internal';
+import type { CompositionConfig, TextMetrics } from '@celesta.studio/react';
+import type { MeasureTextRequest, ProbedMediaInfo } from '@celesta.studio/react/internal';
 
 /** A property-input layer, as the editor sends it (`PropertyInputLayer` in packages/cli/src/property-inputs.ts). */
 export interface PropertyInputLayer {

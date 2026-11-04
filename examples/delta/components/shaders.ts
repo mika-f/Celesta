@@ -1,6 +1,6 @@
-import { defineShader } from '@celesta/shader';
+import { defineShader } from '@celesta.studio/shader';
 
-// Custom WGSL filters (@celesta/shader). Each one is a single `shader` prop;
+// Custom WGSL filters (@celesta.studio/shader). Each one is a single `shader` prop;
 // to stack two, nest groups.
 
 // Rings spreading from the layer's centre push the pixels outward.

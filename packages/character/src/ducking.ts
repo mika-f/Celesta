@@ -2,9 +2,9 @@
 // bed that dips under them, as keyframes built in `prepare()`. The curve is
 // `duckEnvelope`'s, the same one `<Audio duck>` plays.
 
-import type { AnimatedNumber } from '@celesta/react';
-import { duckEnvelope } from '@celesta/media-utils';
-import type { DuckShape } from '@celesta/media-utils';
+import type { AnimatedNumber } from '@celesta.studio/react';
+import { duckEnvelope } from '@celesta.studio/media-utils';
+import type { DuckShape } from '@celesta.studio/media-utils';
 
 import type { DialogueLine, DialoguePlan } from './dialogue-series';
 import type { VoiceLevelReport } from './voice-level';

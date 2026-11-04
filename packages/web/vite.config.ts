@@ -10,10 +10,10 @@ export default defineConfig({
   // one copy of the core runtime and its contexts.
   resolve: { alias: [
     { find: /^\.\/entry-dir$/, replacement: `${packages}/react/src/entry-dir.browser.ts` },
-    { find: /^@celesta\/react$/, replacement: `${packages}/react/src/browser.ts` },
-    { find: /^@celesta\/react\/internal$/, replacement: `${packages}/react/src/internal.ts` },
-    { find: /^@celesta\/media-utils\/duck$/, replacement: `${packages}/media-utils/src/duck.ts` },
-    { find: /^@celesta\/([a-z-]+)$/, replacement: `${packages}/$1/src/index.ts` },
+    { find: /^@celesta\.studio\/react$/, replacement: `${packages}/react/src/browser.ts` },
+    { find: /^@celesta\.studio\/react\/internal$/, replacement: `${packages}/react/src/internal.ts` },
+    { find: /^@celesta\.studio\/media-utils\/duck$/, replacement: `${packages}/media-utils/src/duck.ts` },
+    { find: /^@celesta\.studio\/([a-z-]+)$/, replacement: `${packages}/$1/src/index.ts` },
   ] },
   build: {
     lib: { entry: 'src/index.ts', formats: ['es'], fileName: 'index' },

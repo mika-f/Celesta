@@ -1,4 +1,4 @@
-import { defineShader } from '@celesta/shader';
+import { defineShader } from '@celesta.studio/shader';
 import kaleidoSource from './kaleido.wgsl';
 import lensSource from './lens.wgsl';
 import sheenSource from './sheen.wgsl';

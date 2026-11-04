@@ -16,10 +16,10 @@
 // dialogue-demo portraits.
 import * as React from 'react';
 
-import { Assets, Composition, Rect } from '@celesta/react';
-import { Character, CharacterView, DialogueSeries, importVoiceFolder, planDialogue } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference, DialoguePlan, VoiceLine } from '@celesta/character';
+import { Assets, Composition, Rect } from '@celesta.studio/react';
+import { Character, CharacterView, DialogueSeries, importVoiceFolder, planDialogue } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference, DialoguePlan, VoiceLine } from '@celesta.studio/character';
 
 const WIDTH = 1280;
 const HEIGHT = 720;

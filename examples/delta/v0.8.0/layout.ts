@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { safeAreaInsets } from '@celesta/layout';
+import { safeAreaInsets } from '@celesta.studio/layout';
 import { H, W } from '../components/theme';
 
 // The canvas a scene is laid out for: the 16:9 film, or the 9:16 short.

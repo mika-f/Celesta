@@ -41,7 +41,7 @@ test('a project outside the workspace resolves its own dependency in Node and th
     const entry = join(root, 'film.tsx');
     writeFileSync(entry, `
       import { byteArrayToBase64 } from 'ag-psd';
-      import { Composition, Rect, useCurrentFrame } from '@celesta/react';
+      import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
       import prepared from './prepared.json';
       if (byteArrayToBase64(new Uint8Array([1, 2, 3])) !== 'AQID') throw new Error('dependency failed');
       export default function Film() {

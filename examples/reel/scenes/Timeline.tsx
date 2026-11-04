@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { clamp01, random } from '@celesta/math';
-import { Easings, Group, Rect, Text, frameToTimecode, progress, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { clamp01, random } from '@celesta.studio/math';
+import { Easings, Group, Rect, Text, frameToTimecode, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { Swap } from '../components/Swap';
 import { Tag } from '../components/Tag';
 import { BAR, C, FPS, H, W } from '../constants';

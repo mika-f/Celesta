@@ -1,5 +1,5 @@
 // Integration test of the build: spawns packages/cli/dist/cli.js (and the
-// staged runtime), which load @celesta/voicevox's dist/, so it needs
+// staged runtime), which load @celesta.studio/voicevox's dist/, so it needs
 // `pnpm run build:runtime` first.
 
 import assert from 'node:assert/strict';
@@ -30,10 +30,10 @@ for (const packaged of [false, true]) {
         assert.equal(result.status, 0, result.stdout + result.stderr);
         cli = join(runtime, 'dist/cli.js');
         const types = join(runtime, 'dist/project-types');
-        assert.match(readFileSync(join(types, 'node_modules/@celesta/voicevox/dist/index.d.ts'), 'utf8'), /VoicevoxAudioQuery/);
-        assert.equal(JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'))['@celesta/voicevox'],
+        assert.match(readFileSync(join(types, 'node_modules/@celesta.studio/voicevox/dist/index.d.ts'), 'utf8'), /VoicevoxAudioQuery/);
+        assert.equal(JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'))['@celesta.studio/voicevox'],
           JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
-        const adapter = join(runtime, 'node_modules/@celesta/voicevox');
+        const adapter = join(runtime, 'node_modules/@celesta.studio/voicevox');
         for (const name of ['src', 'test', 'tsconfig.json']) {
           assert.ok(!existsSync(join(adapter, name)), `Runtime must not ship ${name}`);
         }
@@ -46,9 +46,9 @@ for (const packaged of [false, true]) {
       }
       const entry = join(root, 'film.tsx');
       writeFileSync(entry, `
-        import { Composition, Rect } from '@celesta/react';
-        import { useLipSync, type LipSyncTrack, type SpeechTiming } from '@celesta/character';
-        import { lipSyncFromVoicevox, timingFromVoicevox, type VoicevoxAudioQuery, type VoicevoxTiming } from '@celesta/voicevox';
+        import { Composition, Rect } from '@celesta.studio/react';
+        import { useLipSync, type LipSyncTrack, type SpeechTiming } from '@celesta.studio/character';
+        import { lipSyncFromVoicevox, timingFromVoicevox, type VoicevoxAudioQuery, type VoicevoxTiming } from '@celesta.studio/voicevox';
         const query: VoicevoxAudioQuery = {
           accent_phrases: [{ moras: [
             { vowel: 'a', vowel_length: 0.2 },

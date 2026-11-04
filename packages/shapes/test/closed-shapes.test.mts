@@ -26,8 +26,8 @@ function render(body: string, { frames = 1 } = {}): FrameResponse[] {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Sequence, useCurrentFrame } from '@celesta/react';\n` +
-      `import { Heart, Path, Pie, Polygon, Star, Triangle, piePath, starPath } from '@celesta/shapes';\n` +
+    `import { Composition, Sequence, useCurrentFrame } from '@celesta.studio/react';\n` +
+      `import { Heart, Path, Pie, Polygon, Star, Triangle, piePath, starPath } from '@celesta.studio/shapes';\n` +
       `export default function Root() {\n` +
       `  const frame = useCurrentFrame();\n` +
       `  return (\n` +

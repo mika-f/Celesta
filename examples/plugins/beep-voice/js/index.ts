@@ -1,7 +1,7 @@
 // The beep-voice plugin, imported by entries as `@celesta-plugin/beep-voice`:
 // a speech channel that voices dialogue lines with game-style beeps, one per
 // character, instead of a speech engine. It has no process of its own; its
-// module runs in the entry's `prepare()`, as `@celesta/voicevox` does, and
+// module runs in the entry's `prepare()`, as `@celesta.studio/voicevox` does, and
 // hands `planDialogue()` lines with `audio` and `lipSync` set, so
 // `<DialogueSeries>` and `<CharacterView>` treat them like any other voice.
 //
@@ -14,9 +14,9 @@ import { createHash } from 'node:crypto';
 import { mkdir, rename, stat, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { lipSyncFromKeyframes, vowelShapes } from '@celesta/character';
-import type { DialogueLine, MouthKeyframe } from '@celesta/character';
-import { entryRelativePath } from '@celesta/react/internal';
+import { lipSyncFromKeyframes, vowelShapes } from '@celesta.studio/character';
+import type { DialogueLine, MouthKeyframe } from '@celesta.studio/character';
+import { entryRelativePath } from '@celesta.studio/react/internal';
 
 /** How a speaker beeps. Every field is part of the cache key. */
 export interface BeepVoice {

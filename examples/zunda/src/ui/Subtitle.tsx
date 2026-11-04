@@ -4,9 +4,9 @@
 // holdSubtitle> が台詞の合間も帯を出し続け、シーンの前置きの間だけ引っ込める。
 // 改行は `lineBreak: 'phrase'`（文節の途中で折り返さない）に任せる。
 
-import { Group, Rect, Text, interpolate, useTextMetrics } from '@celesta/react';
-import type { TextStyle } from '@celesta/react';
-import type { CharacterSubtitle, SubtitleRenderProps } from '@celesta/character';
+import { Group, Rect, Text, interpolate, useTextMetrics } from '@celesta.studio/react';
+import type { TextStyle } from '@celesta.studio/react';
+import type { CharacterSubtitle, SubtitleRenderProps } from '@celesta.studio/character';
 
 import type { Speaker } from '../../script.ts';
 import { SPEAKERS } from '../cast/speakers.ts';

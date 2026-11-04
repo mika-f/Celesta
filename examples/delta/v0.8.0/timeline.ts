@@ -1,4 +1,4 @@
-import { defineScenes } from '@celesta/react';
+import { defineScenes } from '@celesta.studio/react';
 
 // Where things land, in composition frames. 0.8.0 is cut to a 90 BPM score:
 // one beat = 20 frames, one bar = 80 frames.

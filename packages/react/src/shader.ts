@@ -1,10 +1,10 @@
 // Filters as the scene walker accepts them: custom shaders, which
-// `@celesta/shader` builds through `@celesta/react/internal`, and the
+// `@celesta.studio/shader` builds through `@celesta.studio/react/internal`, and the
 // built-in filters (color filters, stylize effects, and the chroma key).
 // The walker serializes them into `effects.filters` and lists the custom
 // shaders' sources in the scene's `shaders`.
 
-import { isHexColor, parseHexColor } from '@celesta/math';
+import { isHexColor, parseHexColor } from '@celesta.studio/math';
 import type { LayerFilter } from './generated/LayerFilter';
 import type { ShaderSource } from './generated/ShaderSource';
 import type { ShaderParamType } from './generated/ShaderParamType';
@@ -40,7 +40,7 @@ type PendingFilter =
   | (Omit<Extract<BuiltinFilter, { type: 'noise' }>, 'seed'> & { seed: number | null });
 
 /**
- * A filter with concrete values: a custom shader from `@celesta/shader`'s
+ * A filter with concrete values: a custom shader from `@celesta.studio/shader`'s
  * `defineShader()`, or a built-in filter such as `brightness(1.2)` or
  * `pixelate(8)`.
  */

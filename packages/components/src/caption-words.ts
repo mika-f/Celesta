@@ -3,7 +3,7 @@
 // it is spoken on, and those words grouped into pages that fit the band.
 // Everything counts grapheme clusters of the cue's text, as emphasis does.
 
-import { graphemes, phraseBoundaries } from '@celesta/text';
+import { graphemes, phraseBoundaries } from '@celesta.studio/text';
 
 /** When one word of a cue is spoken. */
 export interface CaptionWord {

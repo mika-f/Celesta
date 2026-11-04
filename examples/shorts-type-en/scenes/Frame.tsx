@@ -1,4 +1,4 @@
-import { Easings, Rect, progress, useCurrentFrame } from '@celesta/react';
+import { Easings, Rect, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Copy, Tag } from '../components/Copy';
 import { FitStack, stackHeight } from '../components/FitStack';
 import { Stage } from '../components/Stage';

@@ -172,25 +172,25 @@ importers:
 
   examples/36-days:
     dependencies:
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../../packages/math
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../../packages/transitions
       react:
@@ -203,7 +203,7 @@ importers:
 
   examples/afterimage:
     dependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
       react:
@@ -216,22 +216,22 @@ importers:
 
   examples/apex:
     dependencies:
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../../packages/math
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
       react:
@@ -244,10 +244,10 @@ importers:
 
   examples/assets:
     dependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
       react:
@@ -260,13 +260,13 @@ importers:
 
   examples/captions:
     dependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
       react:
@@ -279,43 +279,43 @@ importers:
 
   examples/delta:
     dependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta/code':
+      '@celesta.studio/code':
         specifier: workspace:*
         version: link:../../packages/code
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
-      '@celesta/debug':
+      '@celesta.studio/debug':
         specifier: workspace:*
         version: link:../../packages/debug
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta/lottie':
+      '@celesta.studio/lottie':
         specifier: workspace:*
         version: link:../../packages/lottie
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../../packages/math
-      '@celesta/media-utils':
+      '@celesta.studio/media-utils':
         specifier: workspace:*
         version: link:../../packages/media-utils
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shader':
+      '@celesta.studio/shader':
         specifier: workspace:*
         version: link:../../packages/shader
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../../packages/transitions
       react:
@@ -331,16 +331,16 @@ importers:
 
   examples/feature-tour:
     dependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
       react:
@@ -353,13 +353,13 @@ importers:
 
   examples/font-stack:
     dependencies:
-      '@celesta/code':
+      '@celesta.studio/code':
         specifier: workspace:*
         version: link:../../packages/code
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
       react:
@@ -372,7 +372,7 @@ importers:
 
   examples/greenscreen:
     dependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
       react:
@@ -391,10 +391,10 @@ importers:
 
   examples/path-motion:
     dependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
       react:
@@ -413,16 +413,16 @@ importers:
 
   examples/prism:
     dependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../../packages/transitions
       react:
@@ -435,10 +435,10 @@ importers:
 
   examples/reel:
     dependencies:
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
       react:
@@ -457,13 +457,13 @@ importers:
 
   examples/rich-text:
     dependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
       react:
@@ -482,19 +482,19 @@ importers:
 
   examples/shorts-explainer:
     dependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta/code':
+      '@celesta.studio/code':
         specifier: workspace:*
         version: link:../../packages/code
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta/voicevox':
+      '@celesta.studio/voicevox':
         specifier: workspace:*
         version: link:../../packages/voicevox
       react:
@@ -510,13 +510,13 @@ importers:
 
   examples/shorts-loop:
     dependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shader':
+      '@celesta.studio/shader':
         specifier: workspace:*
         version: link:../../packages/shader
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
       react:
@@ -529,19 +529,19 @@ importers:
 
   examples/shorts-tips:
     dependencies:
-      '@celesta/code':
+      '@celesta.studio/code':
         specifier: workspace:*
         version: link:../../packages/code
-      '@celesta/project':
+      '@celesta.studio/project':
         specifier: workspace:*
         version: link:../../packages/project
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../../packages/transitions
       react:
@@ -554,28 +554,28 @@ importers:
 
   examples/shorts-type:
     dependencies:
-      '@celesta/debug':
+      '@celesta.studio/debug':
         specifier: workspace:*
         version: link:../../packages/debug
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../../packages/math
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shader':
+      '@celesta.studio/shader':
         specifier: workspace:*
         version: link:../../packages/shader
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../../packages/transitions
       react:
@@ -588,28 +588,28 @@ importers:
 
   examples/shorts-type-en:
     dependencies:
-      '@celesta/debug':
+      '@celesta.studio/debug':
         specifier: workspace:*
         version: link:../../packages/debug
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../../packages/math
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shader':
+      '@celesta.studio/shader':
         specifier: workspace:*
         version: link:../../packages/shader
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../../packages/transitions
       react:
@@ -622,7 +622,7 @@ importers:
 
   examples/signal:
     dependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
       react:
@@ -635,25 +635,25 @@ importers:
 
   examples/spectra:
     dependencies:
-      '@celesta/code':
+      '@celesta.studio/code':
         specifier: workspace:*
         version: link:../../packages/code
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../../packages/math
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
       react:
@@ -666,16 +666,16 @@ importers:
 
   examples/versus:
     dependencies:
-      '@celesta/code':
+      '@celesta.studio/code':
         specifier: workspace:*
         version: link:../../packages/code
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
       react:
@@ -703,31 +703,31 @@ importers:
 
   examples/zunda:
     dependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta/code':
+      '@celesta.studio/code':
         specifier: workspace:*
         version: link:../../packages/code
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../../packages/math
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
-      '@celesta/voicevox':
+      '@celesta.studio/voicevox':
         specifier: workspace:*
         version: link:../../packages/voicevox
       react:
@@ -743,7 +743,7 @@ importers:
 
   packages/aivis-speech:
     devDependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../character
       '@types/node':
@@ -758,17 +758,17 @@ importers:
 
   packages/character:
     dependencies:
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../math
-      '@celesta/media-utils':
+      '@celesta.studio/media-utils':
         specifier: workspace:*
         version: link:../media-utils
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../text
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -789,52 +789,52 @@ importers:
 
   packages/cli:
     dependencies:
-      '@celesta/aivis-speech':
+      '@celesta.studio/aivis-speech':
         specifier: workspace:*
         version: link:../aivis-speech
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../character
-      '@celesta/code':
+      '@celesta.studio/code':
         specifier: workspace:*
         version: link:../code
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../components
-      '@celesta/debug':
+      '@celesta.studio/debug':
         specifier: workspace:*
         version: link:../debug
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../layout
-      '@celesta/lottie':
+      '@celesta.studio/lottie':
         specifier: workspace:*
         version: link:../lottie
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../math
-      '@celesta/media-utils':
+      '@celesta.studio/media-utils':
         specifier: workspace:*
         version: link:../media-utils
-      '@celesta/project':
+      '@celesta.studio/project':
         specifier: workspace:*
         version: link:../project
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
-      '@celesta/shader':
+      '@celesta.studio/shader':
         specifier: workspace:*
         version: link:../shader
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../text
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../transitions
-      '@celesta/voicevox':
+      '@celesta.studio/voicevox':
         specifier: workspace:*
         version: link:../voicevox
       esbuild:
@@ -878,10 +878,10 @@ importers:
         specifier: ^0.1.7
         version: 0.1.7
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../text
       '@types/node':
@@ -902,23 +902,23 @@ importers:
 
   packages/components:
     dependencies:
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../layout
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../math
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../text
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../transitions
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -939,11 +939,11 @@ importers:
 
   packages/debug:
     dependencies:
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../layout
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -976,11 +976,11 @@ importers:
 
   packages/layout:
     dependencies:
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../math
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -1032,11 +1032,11 @@ importers:
 
   packages/lottie:
     dependencies:
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../shapes
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -1069,7 +1069,7 @@ importers:
 
   packages/media-utils:
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -1090,7 +1090,7 @@ importers:
 
   packages/project:
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -1111,7 +1111,7 @@ importers:
 
   packages/react:
     dependencies:
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../math
       react-reconciler:
@@ -1139,11 +1139,11 @@ importers:
 
   packages/shader:
     dependencies:
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../math
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -1158,7 +1158,7 @@ importers:
 
   packages/shapes:
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -1179,11 +1179,11 @@ importers:
 
   packages/text:
     dependencies:
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../math
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
       '@types/node':
@@ -1204,20 +1204,20 @@ importers:
 
   packages/transitions:
     dependencies:
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../layout
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../math
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../shapes
     devDependencies:
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
-      '@celesta/shader':
+      '@celesta.studio/shader':
         specifier: workspace:*
         version: link:../shader
       '@types/node':
@@ -1238,7 +1238,7 @@ importers:
 
   packages/voicevox:
     devDependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../character
       '@types/node':
@@ -1260,40 +1260,40 @@ importers:
         specifier: ^1.60.0
         version: 1.65.0
     devDependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../character
-      '@celesta/code':
+      '@celesta.studio/code':
         specifier: workspace:*
         version: link:../code
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../components
-      '@celesta/debug':
+      '@celesta.studio/debug':
         specifier: workspace:*
         version: link:../debug
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../layout
-      '@celesta/lottie':
+      '@celesta.studio/lottie':
         specifier: workspace:*
         version: link:../lottie
-      '@celesta/math':
+      '@celesta.studio/math':
         specifier: workspace:*
         version: link:../math
-      '@celesta/media-utils':
+      '@celesta.studio/media-utils':
         specifier: workspace:*
         version: link:../media-utils
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../react
-      '@celesta/shapes':
+      '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../shapes
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../text
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../transitions
       '@types/node':
@@ -1311,7 +1311,7 @@ importers:
 
   packages/website:
     dependencies:
-      '@celesta/web':
+      '@celesta.studio/web':
         specifier: workspace:*
         version: link:../web
       '@monaco-editor/react':
@@ -1387,10 +1387,10 @@ importers:
 
   plugins/vrm/js:
     devDependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../../packages/character
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../../packages/react
       '@types/node':
@@ -1411,28 +1411,28 @@ importers:
 
   templates:
     dependencies:
-      '@celesta/character':
+      '@celesta.studio/character':
         specifier: workspace:*
         version: link:../packages/character
-      '@celesta/components':
+      '@celesta.studio/components':
         specifier: workspace:*
         version: link:../packages/components
-      '@celesta/layout':
+      '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../packages/layout
-      '@celesta/media-utils':
+      '@celesta.studio/media-utils':
         specifier: workspace:*
         version: link:../packages/media-utils
-      '@celesta/project':
+      '@celesta.studio/project':
         specifier: workspace:*
         version: link:../packages/project
-      '@celesta/react':
+      '@celesta.studio/react':
         specifier: workspace:*
         version: link:../packages/react
-      '@celesta/text':
+      '@celesta.studio/text':
         specifier: workspace:*
         version: link:../packages/text
-      '@celesta/transitions':
+      '@celesta.studio/transitions':
         specifier: workspace:*
         version: link:../packages/transitions
       react:

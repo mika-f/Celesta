@@ -1,7 +1,7 @@
 # Character dialogue, portraits, and lip sync
 
-The components and helpers here are imported from `@celesta/character`; the
-core layers (`Composition`, `Assets`, `Sequence`, …) from `@celesta/react`.
+The components and helpers here are imported from `@celesta.studio/character`; the
+core layers (`Composition`, `Assets`, `Sequence`, …) from `@celesta.studio/react`.
 Voice, portrait, and
 PSD paths are relative to the entry file (JSON: asset ids declared in
 `assets`).
@@ -37,10 +37,10 @@ Dialogue scenes combine three pieces:
 
 ```tsx
 import * as React from 'react';
-import { Assets, Composition, Rect, Sequence } from '@celesta/react';
-import { Character, CharacterView, Dialogue } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference } from '@celesta/character';
+import { Assets, Composition, Rect, Sequence } from '@celesta.studio/react';
+import { Character, CharacterView, Dialogue } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference } from '@celesta.studio/character';
 
 const mira = React.createRef<AssetReference>();          // the character
 const miraView = React.createRef<CharacterViewReference>(); // where it is drawn
@@ -124,10 +124,10 @@ pairs, and the plan tells the rest of the video when each line starts.
 
 ```tsx
 import * as React from 'react';
-import { Composition, Rect, Sequence } from '@celesta/react';
-import { CharacterView, DialogueSeries, planDialogue } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference, DialoguePlan } from '@celesta/character';
+import { Composition, Rect, Sequence } from '@celesta.studio/react';
+import { CharacterView, DialogueSeries, planDialogue } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference, DialoguePlan } from '@celesta.studio/character';
 
 const zunda = React.createRef<AssetReference>();
 const metan = React.createRef<AssetReference>();
@@ -250,8 +250,8 @@ turns such a folder into `planDialogue()` lines, so the script lives in the
 folder rather than in code:
 
 ```tsx
-import { importVoiceFolder, planDialogue } from '@celesta/character';
-import type { DialoguePlan, VoiceLine } from '@celesta/character';
+import { importVoiceFolder, planDialogue } from '@celesta.studio/character';
+import type { DialoguePlan, VoiceLine } from '@celesta.studio/character';
 
 let plan: DialoguePlan<VoiceLine>;
 export async function prepare() {
@@ -327,8 +327,8 @@ target. It is opt-in: nothing changes unless you call it. Call it before
 `planDialogue()` and pass its `lines` on.
 
 ```tsx
-import { matchVoiceLevels, planDialogue } from '@celesta/character';
-import type { VoiceLevelReport } from '@celesta/character';
+import { matchVoiceLevels, planDialogue } from '@celesta.studio/character';
+import type { VoiceLevelReport } from '@celesta.studio/character';
 
 let plan: DialoguePlan<Line>;
 let levels: VoiceLevelReport;
@@ -433,7 +433,7 @@ bgmVolume = duckingVolume(plan, { volume: 0.8, to: 0.3 }, { levels: matched.repo
   for other lines throws.
 - `duckingVolume(plan, duck, { levels?, origin? })`: the volume over those
   intervals, with the same curve `duck` plays (`duckEnvelope` from
-  `@celesta/media-utils`). `duck` takes `volume` (the level with nobody
+  `@celesta.studio/media-utils`). `duck` takes `volume` (the level with nobody
   speaking, default 1; `to` is relative to it) plus `to`, `attack`,
   `release`, `holdGap`. `origin` is the frame on the plan's clock that the
   `<Audio>`'s sequence starts on, as for `frameKeyframes`.
@@ -448,7 +448,7 @@ audio, and rewriting WAV files.
 
 ## Synthesizing a script with VOICEVOX
 
-`prepareNarration(lines, options)` from `@celesta/voicevox` makes the voices
+`prepareNarration(lines, options)` from `@celesta.studio/voicevox` makes the voices
 for a script with a local VOICEVOX Engine in `prepare()`, so no WAV paths or
 query files are written by hand. It returns the lines with `audio`,
 `lipSync`, and `narration` set, in order, ready for `planDialogue()`. The
@@ -456,10 +456,10 @@ engine is never installed or started for you; start it first, e.g.
 `docker run --rm -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-ubuntu24.04-latest`.
 
 ```tsx
-import { planDialogue } from '@celesta/character';
-import type { DialoguePlan } from '@celesta/character';
-import { prepareNarration } from '@celesta/voicevox';
-import type { NarratedLine, NarrationLine } from '@celesta/voicevox';
+import { planDialogue } from '@celesta.studio/character';
+import type { DialoguePlan } from '@celesta.studio/character';
+import { prepareNarration } from '@celesta.studio/voicevox';
+import type { NarratedLine, NarrationLine } from '@celesta.studio/voicevox';
 
 const SCRIPT: NarrationLine[] = [
   { id: 'intro', speaker: 'zunda', text: 'HPが1です。', spokenText: 'エイチピーがいちです。' },
@@ -597,9 +597,9 @@ children of a `<Group>` with the subtitle's other layer props, so draw
 around the origin and set `x`/`y` on the subtitle:
 
 ```tsx
-import { Group, Rect, Text, interpolate, useTextMetrics } from '@celesta/react';
-import type { TextStyle } from '@celesta/react';
-import type { CharacterSubtitle, SubtitleRenderProps } from '@celesta/character';
+import { Group, Rect, Text, interpolate, useTextMetrics } from '@celesta.studio/react';
+import type { TextStyle } from '@celesta.studio/react';
+import type { CharacterSubtitle, SubtitleRenderProps } from '@celesta.studio/character';
 
 const PLATE: TextStyle = { fontSize: 24, fontWeight: 800, fill: { type: 'solid', color: '#ffffff' } };
 
@@ -726,7 +726,7 @@ line is drawn, naming the line. A line with `emphasis` or pages needs its
 ### Splitting long lines with `paginateSubtitles()`
 
 ```tsx
-import { loadDialogueLipSync, paginateSubtitles, planDialogue } from '@celesta/character';
+import { loadDialogueLipSync, paginateSubtitles, planDialogue } from '@celesta.studio/character';
 
 export async function prepare() {
   const voiced = await loadDialogueLipSync(script);
@@ -854,9 +854,9 @@ export async function prepare() {
 
 ### Lip sync from VOICEVOX timing
 
-VOICEVOX-specific helpers and types live in `@celesta/voicevox`. The desktop
+VOICEVOX-specific helpers and types live in `@celesta.studio/voicevox`. The desktop
 runtime includes the package; **File > Set Up TypeScript** installs its
-declarations. Shared WAV lip sync and dialogue components stay in `@celesta/character`.
+declarations. Shared WAV lip sync and dialogue components stay in `@celesta.studio/character`.
 
 When the voice comes from VOICEVOX Engine, build the track from the
 `audio_query` JSON instead (engines that take the same query but choose their
@@ -875,7 +875,7 @@ curl -s -X POST "http://127.0.0.1:50021/synthesis?speaker=3" \
 ```
 
 ```tsx
-import { lipSyncFromVoicevox } from '@celesta/voicevox';
+import { lipSyncFromVoicevox } from '@celesta.studio/voicevox';
 import helloQuery from './voices/hello.json';
 
 const hello = lipSyncFromVoicevox(helloQuery);
@@ -916,7 +916,7 @@ moras as they are spoken, time an effect to a mora, or change a face at a
 pause, and build the mouth from the same timing so they agree:
 
 ```ts
-import { lipSyncFromVoicevox, timingFromVoicevox } from '@celesta/voicevox';
+import { lipSyncFromVoicevox, timingFromVoicevox } from '@celesta.studio/voicevox';
 
 const timing = timingFromVoicevox(query);
 const line = {
@@ -949,7 +949,7 @@ in-line face changes ([expression cues](#changing-the-face-within-a-line)).
 
 AivisSpeech Engine serves VOICEVOX's API (default port 10101), but its model
 chooses every phoneme length itself: the `audio_query` lengths are dummy
-zeros, so `@celesta/voicevox` cannot time it. Use `@celesta/aivis-speech`,
+zeros, so `@celesta.studio/voicevox` cannot time it. Use `@celesta.studio/aivis-speech`,
 which reads the query **and the WAV synthesized from it**: the query gives
 the moras in order (punctuation included), the WAV where they fall. The
 voice's start and end are exact; times inside it are estimated from the
@@ -961,8 +961,8 @@ the package; **File > Set Up TypeScript** installs its declarations.
 ```tsx
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { LipSyncTrack } from '@celesta/character';
-import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '@celesta/aivis-speech';
+import type { LipSyncTrack } from '@celesta.studio/character';
+import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '@celesta.studio/aivis-speech';
 import helloQuery from './voices/hello.json';
 
 let hello: LipSyncTrack;
@@ -977,7 +977,7 @@ export async function prepare() {
   `prePhonemeLength` and `postPhonemeLength` locate the voice in the WAV.
   Pass the WAV's bytes (or `decodeWav`'s result); it is synchronous and
   takes under 10 ms per second of voice, so call it in `prepare()`.
-- Both engines' timings are a `SpeechTiming` from `@celesta/character`
+- Both engines' timings are a `SpeechTiming` from `@celesta.studio/character`
   (`moras`, `pauses`, `phonemes`, `accentPhrases`, `speech`,
   `durationInSeconds`): `exact: true` from `timingFromVoicevox`,
   `exact: false` from `timingFromAivisSpeech`. Type shared code (lit moras,

@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Time } from '@celesta/react';
+import type { Time } from '@celesta.studio/react';
 import type { FrameMessage, FrameRequest } from '../src/cli.js';
 import { contentOf } from './layer-content.mjs';
 
@@ -21,7 +21,7 @@ function frames(requests: FrameRequest[]): FrameMessage[] {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-preview-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, `
-    import { Composition, Rect, Static, Text, useDebugGuides, useIsPreview } from '@celesta/react';
+    import { Composition, Rect, Static, Text, useDebugGuides, useIsPreview } from '@celesta.studio/react';
     function Mode() {
       return <Text>{(useIsPreview() ? 'preview' : 'export') + (useDebugGuides() ? ' guides' : '')}</Text>;
     }

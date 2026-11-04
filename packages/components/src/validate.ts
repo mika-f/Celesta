@@ -3,7 +3,7 @@
 // `validators('Panel').nonNegative('width', -1)` throws
 // `<Panel> width must be a finite number of 0 or more, not -1`.
 
-import type { Insets } from '@celesta/layout';
+import type { Insets } from '@celesta.studio/layout';
 
 /** The checks for one component's props, each naming `component` in its error. */
 export interface Validators {

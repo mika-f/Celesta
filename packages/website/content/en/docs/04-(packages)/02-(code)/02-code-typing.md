@@ -5,8 +5,8 @@ Code looks best when it arrives a character at a time. This chapter reveals [`Co
 Pass `useTypewriter()`’s `length` to `visibleCharacters`:
 
 ```tsx title="Type the source out"
-import { useTypewriter } from '@celesta/text';
-import { Code } from '@celesta/code';
+import { useTypewriter } from '@celesta.studio/text';
+import { Code } from '@celesta.studio/code';
 
 function Typed() {
   const { length } = useTypewriter(source, { from: 15, framesPerChar: 0.5 });
@@ -27,8 +27,8 @@ The whole source is tokenized once, when the source or language changes, and typ
 `useCodePoint(source, { line, column }, style?, tabSize?)` measures a position in the source with the same font and tab expansion as `Code`, so you can place a caret, underline, or callout there. Lines and columns are **one-based**, and columns count original characters (a tab or a single-code-point emoji is one column). The column may be one past the last character, to sit at a line’s end. An invalid position throws.
 
 ```tsx title="A blinking caret at the end of the typed text"
-import { Group, Rect } from '@celesta/react'; import { useTypewriter } from '@celesta/text';
-import { Code, useCodePoint } from '@celesta/code';
+import { Group, Rect } from '@celesta.studio/react'; import { useTypewriter } from '@celesta.studio/text';
+import { Code, useCodePoint } from '@celesta.studio/code';
 
 function TypedWithCaret() {
   const { length, caretVisible } = useTypewriter(source, { from: 15, framesPerChar: 0.5 });
@@ -54,7 +54,7 @@ Wrapping both in one `Group` keeps the caret aligned with the code however the g
 `codeCharacterCount(source, { line, column })` turns a source position into the number of characters before it, which is exactly what `visibleCharacters` wants. It is a plain function, so it also works outside React. To show the first three lines of a four-line snippet:
 
 ```tsx title="Show the first three lines"
-import { Code, codeCharacterCount } from '@celesta/code';
+import { Code, codeCharacterCount } from '@celesta.studio/code';
 
 function FirstThreeLines({ source }: { source: string }) {
   const count = codeCharacterCount(source, { line: 4, column: 1 });
@@ -69,7 +69,7 @@ A position at the end of a line leaves out that line’s newline; use column 1 o
 `tokenizeCode(source, language?)` returns the tokens behind `Code`: each one has the original `text`, a `type` (twinkleplop’s name, or `plain`), and its `start` and `end` offsets in UTF-16 units, end exclusive. Tokens preserve all of the source, whitespace included, and need neither HTML nor a DOM. Use them for your own rendering or to analyze the code:
 
 ```tsx title="Count the comments"
-import { tokenizeCode } from '@celesta/code';
+import { tokenizeCode } from '@celesta.studio/code';
 
 const comments = tokenizeCode(source, 'ts').filter((token) => token.type === 'comment');
 ```

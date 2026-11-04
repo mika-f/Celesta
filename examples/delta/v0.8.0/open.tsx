@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Text, interpolate, progress, useCurrentFrame } from '@celesta/react';
-import { PatternBackground } from '@celesta/components';
+import { Easings, Group, Rect, Text, interpolate, progress, useCurrentFrame } from '@celesta.studio/react';
+import { PatternBackground } from '@celesta.studio/components';
 import { C, FONT, solid } from '../components/theme';
 import { PRS } from './prs';
 import { scoreAt } from './score';
