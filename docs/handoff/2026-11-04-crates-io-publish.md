@@ -1,7 +1,10 @@
 # Publishing the crates to crates.io
 
-The workspace's crates can be packaged for crates.io. `celesta-bench` and
-`celesta-plugin-flag` stay `publish = false`; the other 17 are publishable.
+The workspace's crates can be packaged for crates.io. `celesta-bench` and the
+sample plugins `celesta-plugin-flag` and `celesta-plugin-turntable` stay
+`publish = false`; the other 17 are publishable. `celesta-plugin-vrm`
+(`plugins/vrm`) is a workspace of its own, also `publish = false`, and ships
+as a plugin package rather than a crate.
 
 ## Specification
 
@@ -45,6 +48,19 @@ first publish of all 17 may stop partway; later, rerun the step that
 stopped with `--exclude` for each crate already on crates.io (or `-p` for
 each one left), keeping `--allow-dirty` whenever celesta-editor or
 celesta-mcp is among them.
+
+A dry run verifies each crate against the others as if they came from a
+registry, and Cargo never rebuilds a registry crate of the same version: a
+later dry run of the same version reuses the first one's builds and fails on
+code that has since changed. Before running it again, remove
+`target/package/`, the folder of `~/.cargo/registry/src/` whose name starts
+with `-` (the unpacked copies), and the workspace crates' builds:
+
+```bash
+rm -rf target/package ~/.cargo/registry/src/-*
+find target/debug/.fingerprint target/debug/build -maxdepth 1 -name 'celesta-*' -exec rm -rf {} +
+find target/debug/deps -maxdepth 1 -name '*celesta_*' -delete
+```
 
 Trusted Publishing (GitHub Actions OIDC) can be set up per crate on
 crates.io only after the crate's first version exists.

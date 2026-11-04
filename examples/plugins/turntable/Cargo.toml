@@ -13,11 +13,11 @@ name = "celesta-plugin-turntable"
 path = "src/main.rs"
 
 [dependencies]
-celesta-plugin = { path = "../../../crates/plugin" }
+celesta-plugin.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-celesta-composition = { path = "../../../crates/composition" }
-celesta-gpu-renderer = { path = "../../../crates/gpu-renderer" }
-celesta-plugin-host = { path = "../../../crates/plugin-host" }
+celesta-composition.workspace = true
+celesta-gpu-renderer.workspace = true
+celesta-plugin-host.workspace = true
 tempfile = "3.23.0"
