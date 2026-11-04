@@ -138,7 +138,9 @@ Celesta's entry points call these and apply the alpha mode, so a material
 returns its color and alpha whatever its mode: opaque writes alpha 1;
 mask writes alpha 1 and turns the returned alpha into sample coverage
 around `draw.alpha_cutoff`, `(a − cutoff) / max(fwidth(a), 1e-5) + 0.5`
-over 4 samples; blend clamps alpha to 0..1 and discards a fragment whose
+over the canvas's samples, 4 where the GPU multisamples the scene and 1
+where it cannot (each pixel then covered from the cutoff up); blend
+clamps alpha to 0..1 and discards a fragment whose
 alpha is below 2⁻¹⁰ (`0.0009765625`), after the material has run, so a
 clear pixel of a depth-writing blend writes no depth. The outline's entry
 points do the same around the outline functions.
@@ -199,8 +201,9 @@ fails to load is closed again. The limits are `pub const`s in
   the CPU: the WGSL must parse and validate (`ValidationFlags::all()`,
   default capabilities) once assembled; declare no resource of its own
   (only `frame`, `draw`, `params`, and its own slots' `texture_k` and
-  `sampler_k`), no entry point, no pipeline-overridable constant (no
-  material pipeline sets one), and no workgroup variable
+  `sampler_k`), no entry point, no pipeline-overridable constant (a
+  material pipeline sets only Celesta's entry points' `CELESTA_SAMPLES`),
+  and no workgroup variable
   (`var<workgroup>`: WGSL allows workgroup memory only in compute shaders,
   but naga's validator lets any stage use it, so a backend's compiler or
   driver would meet it in a vertex or fragment shader); redeclare no name
@@ -354,6 +357,17 @@ materials as `frame.lights` and `frame.ambient`.
   material's texture slots, made once when the model is opened: slot `k`'s
   texture at binding `2k` with its own sampler at `2k + 1`, or the slot's
   empty texel with the default sampler.
+- **The target.** Every material draws on the canvas `scene_target`
+  chose when the renderer was made (`2026-11-03-plugin-scene-content.md`):
+  `Rgba16Float`, else `Rgba8Unorm`, at 4 samples where the GPU can
+  multisample it, else at 1. Every draw pipeline, surface and outline, of every alpha mode
+  and winding, unlit's too, takes its color format and sample count, and
+  sets `scene_material_entry.wgsl`'s `override CELESTA_SAMPLES` (4.0 by
+  default) to that count, which a mask's coverage is counted over. At 1
+  sample the draws go straight to the resolved canvas, with no
+  multisampled color and no resolve. The target is fixed for the
+  renderer's life, and so for its `ScenePipelines` and
+  `SceneFrameResources`: neither cache is keyed by it.
 - **Vertex buffers,** for every material: the skinned vertex (stride 48:
   position, normal, and tangent, each `Float32x4`, at locations 0 to 2)
   and the geometry's `uv0` (location 3, `Float32x2`).
@@ -420,8 +434,8 @@ materials as `frame.lights` and `frame.ambient`.
   matrices' 3×3, as Unity's does; a skin matrix that mirrors does not flip
   the bitangent's sign, as in Unity.
 - **The frame resource cache** (`SceneFrameResources`). The multisampled
-  color and depth and the resolved color, with the bind group that
-  converts them, are kept by canvas size. A frame keeps every size it
+  color (none at 1 sample) and depth and the resolved color, with the bind
+  group that converts them, are kept by canvas size. A frame keeps every size it
   draws; a size the last frame did not draw is dropped when the next one
   begins. Past 16,777,216 texels of kept canvases (`SCENE_TARGET_TEXELS`,
   two capped canvases, about 1 GB), a new size first drops the sizes the
@@ -565,6 +579,15 @@ change once it shows:
 - **The outline's depth-bias tests have run on Metal only.** WebGPU scales
   a float depth's constant bias by its exponent, so other backends should
   agree.
+- **Masks on old GL.** The fallback targets have been drawn on Metal by
+  forcing them, not on a GL adapter. A mask's entry points write
+  `@builtin(sample_mask)`, which naga's GLSL backend writes as
+  `gl_SampleMask`: desktop GL 4.0, or on GLES `GL_OES_sample_variables`,
+  which it requires. A GL driver without it should refuse mask pipelines,
+  at 1 sample too, and so the model, with `InvalidPluginContent` naming
+  the material (pipelines are made in an error scope); opaque and blend
+  materials draw. Mask entry points that
+  discard instead at 1 sample would draw there.
 - From the first phase, still open: straight-alpha mipmaps fringe cut-outs
   at distance; the default 128 MiB storage-binding limit may refuse
   morph-heavy geometry; the canvas (`SCENE_CANVAS_TEXELS`) and buffer
@@ -585,7 +608,8 @@ change once it shows:
   (`materialParams` `[]`), and a frame whose draws have parameters or not;
   and refuse a `materialParams` of the wrong length, bytes for an unlit
   material, and parameter bytes past the payload.
-- `scene_material.rs`'s unit tests check a minimal material, `Params`'
+- `scene_material.rs`'s unit tests check a minimal material (its
+  assembled module's one override `CELESTA_SAMPLES`), `Params`'
   size by WGSL's layout, the outline functions, errors located in the
   material's WGSL, wrong signatures naming the interface, missing parts,
   the material's own resources, entry points, overrides, workgroup
@@ -601,8 +625,9 @@ change once it shows:
   material checks, that an unlit material's base color and texture
   transform must be finite, unlit's parameter packing, the render queue's
   clamping of blend offsets, the signed-cofactor normal matrix, the eye
-  of a view, the draw slot's size and the per-draw uniform check, and that
-  `make_room` drops only sizes not drawn, only past the budget.
+  of a view, the draw slot's size and the per-draw uniform check, that
+  `make_room` drops only sizes not drawn, only past the budget, and which
+  target `scene_target` picks for what a GPU's formats lack.
 - The GPU renderer's scene tests (`crates/gpu-renderer/src/tests/scene.rs`)
   draw made-up scenes, mostly a square seen from +Z with small test
   materials written against the interface, and compare pixels with values
@@ -660,6 +685,14 @@ change once it shows:
   - `override_not_finite_is_refused`: each of an unlit draw's overrides
     (base color, texture offset, texture scale) refused when not finite,
     naming the draw.
+  - `every_target_draws_the_same_scenes`: on `Rgba16Float` × 4 and each
+    fallback forced in its place (`Rgba8Unorm` × 4 and × 1, `Rgba16Float`
+    × 1), a white square, a custom material's parameters, unlit and
+    custom masks at their cutoff, blend over blend and over opaque, and an
+    outline come out as on the usual target; an edge and a mask's edge
+    (`RAMP`, a quarter of its samples covered) are partly covered at 4
+    samples and covered or not at 1. `scene_without_a_target_is_refused`:
+    a GPU with neither format refuses scene content.
   - `mirrored_views_keep_front_faces`: a view mirrored in x shows the
     square's front face and culls its back, also with a mirrored world.
   - `scene_resources_`, `scene_frame_buffers_`: canvases and buffers

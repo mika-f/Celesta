@@ -130,9 +130,19 @@ the identity as `world` for a glTF skinned mesh.
   distance from the eye through a perspective camera, by view-space depth
   through an orthographic one), are in
   `2026-11-03-plugin-scene-materials.md`.
-- **Depth and anti-aliasing.** The canvas is 4× multisampled linear,
-  premultiplied `Rgba16Float` with `Depth32Float` depth, cleared to
-  transparent black and to 1. Opaque and mask draws write depth; blend
+- **Depth and anti-aliasing.** The canvas is linear, premultiplied color
+  with `Depth32Float` depth, cleared to transparent black and to 1. Its
+  color is `Rgba16Float` where the adapter can render to, blend, and sample
+  it, else `Rgba8Unorm`; both color and depth are 4× multisampled where the
+  adapter can multisample and resolve that format and multisample
+  `Depth32Float` 4×, else drawn at 1 sample straight onto the resolved
+  canvas (`scene_target`, chosen once when the renderer is made, as
+  `canvas_format` is). No other count is tried: on a WebGPU-conformant
+  backend the device checks formats against WebGPU's guaranteed features,
+  which promise 4× but no other count, even where the adapter reports
+  more. A GL adapter without half-float color buffers takes `Rgba8Unorm`;
+  one with neither format refuses scene content with
+  `InvalidPluginContent`. Opaque and mask draws write depth; blend
   draws test it but do not write it, unless the material sets
   `depthWrite`. Depth is tested with `LessEqual`, so of two
   exactly coplanar draws the later shows. Back faces are culled unless the
@@ -141,7 +151,8 @@ the identity as `world` for a glTF skinned mesh.
   mirroring flip it back.
 - **Alpha modes.** Opaque ignores alpha. Mask turns alpha into sample
   coverage around the cutoff, sharpened to about a pixel's width, each
-  covered sample opaque. Blend blends straight color over the canvas as
+  covered sample opaque (at 1 sample, the pixel is covered from the
+  cutoff up). Blend blends straight color over the canvas as
   Unity does (`src·a + dst·(1 − a)`), alpha accumulating as coverage.
 - **Unlit.** A material's color is its base color times its texture, at
   coordinates moved by the texture transform and the frame's overrides.
@@ -150,9 +161,9 @@ the identity as `world` for a glTF skinned mesh.
   mapping), encoded to sRGB, premultiplied again as `Rgba8Unorm`.
 - **Canvas size.** The canvas follows the render density as 2D meshes'
   does, no side longer than the GPU's largest texture, but a scene canvas
-  also has at most 8,388,608 texels (`SCENE_CANVAS_TEXELS`): each costs
-  about 60 bytes (four color and four depth samples, the resolved color,
-  the layer texture), so the cap is about 500 MB. A 4K frame
+  also has at most 8,388,608 texels (`SCENE_CANVAS_TEXELS`): each costs at
+  most about 60 bytes (four color and four depth samples, the resolved
+  color, the layer texture), so the cap is about 500 MB. A 4K frame
   (3840 × 2160, 8,294,400 texels) fits at 1×; a canvas that would be
   larger, such as a zoomed layer's, is drawn at the density that fits, its
   aspect kept, and so softer. 2D mesh canvases keep the per-side limit
@@ -238,7 +249,7 @@ sample's own WGSL material, outlined, and lit
 | `crates/plugin/src/provider.rs` | `ContentModel`, `ContentFrame`, `Opened`, `Notice`, `NoticeLevel`; `ContentProvider::open` returns `Opened` and `frame` returns `ContentFrame`. |
 | `crates/plugin/src/protocol.rs` | `ContentKind`, `ROLES`, `encode_opened`/`decode_opened`, `encode_content_frame`/`decode_content_frame`, the scene encoding; `serve_on` answers `hello` with `roles`. A geometry's morph target count is bounded by the payload. |
 | `crates/plugin-host/src/host.rs` | `PluginHost` returns `Opened`, remembers each model's kind, decodes its frames as that kind, and refuses (and closes) a reopen of the other kind. |
-| `crates/gpu-renderer/src/scene.rs`, `scene.wgsl`, `scene_skin.wgsl` | Loading and checking scenes, the compute skinning and morphing, the queue-ordered, depth-tested, multisampled unlit draw, and the conversion to the layer texture. |
+| `crates/gpu-renderer/src/scene.rs`, `scene.wgsl`, `scene_skin.wgsl` | Loading and checking scenes, the compute skinning and morphing, the queue-ordered, depth-tested, multisampled unlit draw (on the target `scene_target` picks), and the conversion to the layer texture. |
 | `crates/gpu-renderer/src/mesh.rs`, `renderer.rs` | Models of either kind; `PluginNotice` and `GpuRenderer::plugin_notices()`. |
 | `crates/exporter/src/render.rs`, `stills.rs` | `report_render_warnings` reports plugin notices with the font warnings: warnings as `ExportProgress::Warning`, info notices as `ExportProgress::Note`. |
 | `crates/exporter/src/control.rs`, `progress.rs`, `report.rs` | `ExportProgress::Note`, printed without the `warning:` label and listed among the JSON warnings. |
@@ -260,7 +271,8 @@ Not done:
   normals to world space by `world`'s signed cofactor matrix
   (`2026-11-03-plugin-scene-materials.md`).
 - **Per-frame GPU resources are not cached.** Done for the canvases
-  (multisampled color and depth, the resolved color), the buffers of
+  (multisampled color and depth, or 1-sample depth, the resolved color),
+  the buffers of
   skinning matrices, morph weights, and uniforms, and their bind groups,
   which `SceneFrameResources` keeps
   (`2026-11-03-plugin-scene-materials.md`). The layer texture is still
@@ -317,7 +329,17 @@ Not done:
   the texture transform offsets, scales, and rotates (a quarter turn
   taking `(u, v)` to `(−v, u)`, as `KHR_texture_transform`'s column-major
   `mat3`), scaled before it is rotated; and the frame's overrides replace
-  the material's offset, scale, and base color. Unit tests check that
+  the material's offset, scale, and base color. Drawn on the usual target
+  and on each fallback in place of the one the GPU chooses (`Rgba8Unorm`
+  at 4 and at 1 sample, `Rgba16Float` at 1), a square, a plugin's
+  material, unlit and custom masks at their cutoff, half red over half
+  blue, blend over opaque, and an outline come out the same; an edge pixel
+  and a mask's edge pixel are partly covered at 4 samples and covered or
+  not at 1; with no target, scene content is refused. Unit tests check
+  which target `scene_target` picks when `Rgba16Float` cannot be
+  multisampled or resolved, rendered to, blended, or sampled, when depth
+  cannot be multisampled, and that neither format renderable gives none;
+  and that
   projections put `near` at depth 0 and `far` at 1, the determinant, that
   sRGB mipmaps average in linear light, the capped canvas size (4K at 1×
   untouched, aspect kept), the buffer byte count, and the per-draw uniform
