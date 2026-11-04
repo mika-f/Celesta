@@ -539,6 +539,40 @@ mod tests {
     }
 
     #[test]
+    fn hips_past_f32_are_refused() {
+        // The clip's hips 3e38 m out, and a hips track 3e38 m further: each
+        // finite, their sum not.
+        let far = SyntheticVrma {
+            hips: vec![(0.0, Vec3::new(3e38, 1.0, 0.0))],
+            ..SyntheticVrma::clip()
+        };
+        let (model, _files) = open(&[("motion0", &far)]);
+        let x = json!({
+            "type": "keyframes",
+            "keyframes": [{ "time": { "value": 0, "timescale": 30 }, "value": 3e38 }],
+        });
+        let motions = json!([{ "clip": "motion0" }]);
+        // Each alone places the hips.
+        model
+            .base_pose(0.5, &data(json!({ "motions": motions })))
+            .unwrap();
+        let track = json!({ "hips": { "x": x } });
+        model
+            .base_pose(0.5, &data(json!({ "tracks": track })))
+            .unwrap();
+        let both = data(json!({ "motions": motions, "tracks": track }));
+        let message = match model.base_pose(0.5, &both) {
+            Ok(_) => panic!("the hips were placed"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            message
+                .contains("the hips' position (the motions' with the hips tracks) is not finite"),
+            "{message}"
+        );
+    }
+
+    #[test]
     fn clip_expressions_yield_to_the_layer() {
         let (mut model, _files) = reference();
         let from_clip = data(json!({ "motions": [{ "clip": "motion0" }] }));

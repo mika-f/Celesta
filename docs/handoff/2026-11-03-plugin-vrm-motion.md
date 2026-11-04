@@ -136,7 +136,10 @@ Ported from `VrmAnimationImporter.cs`, `InitialRotationPoseProvider.cs`,
   up, and positive roll tilts its top toward the avatar's right.
 - **The hips alone** take `x`, `y`, and `z`: metres added to their
   position in model space after the retarget (the rest position when no
-  motion moves them). Tracks apply without any motion too.
+  motion moves them). Tracks apply without any motion too. A sum that is
+  not finite (each part finite, as 3e38 and 3e38) fails the frame with
+  `the hips' position (the motions' with the hips tracks) is not finite`,
+  rather than leaving the hips at rest (tested).
 - **Checks**, every frame whatever its time, each naming its key
   (`tracks.{bone}.{axis}`): the bone name, `x`/`y`/`z` on the hips only,
   at least one keyframe, a non-zero timescale, keyframes in time order,

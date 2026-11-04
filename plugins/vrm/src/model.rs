@@ -745,6 +745,12 @@ impl VrmModel {
                 .map_or(rest, |raw| self.retarget.hips_world(raw, source)),
         );
         tracks(&data.tracks, time, &mut clip)?;
+        // Each is finite, but their sum can overflow.
+        if let Some(hips) = clip.hips.filter(|hips| !hips.is_finite()) {
+            return Err(FrameError(format!(
+                "the hips' position (the motions' with the hips tracks) is not finite: {hips}"
+            )));
+        }
         self.retarget.apply(&clip, rest, &self.tree, &mut pose);
         Ok((pose, clip.expressions))
     }
