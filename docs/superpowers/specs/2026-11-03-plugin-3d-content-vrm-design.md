@@ -172,6 +172,10 @@ it unchanged.
 ### Targets
 
 - Color `Rgba16Float`, linear, 4× MSAA. Depth `Depth32Float`, 4× MSAA.
+  Where the GPU cannot render, sample and blend `Rgba16Float`, the color
+  target is `Rgba8Unorm`; where the chosen format or `Depth32Float` cannot
+  be multisampled 4×, both are drawn with 1 sample. A GPU with no usable
+  color format refuses scene content with an error rather than panicking.
 - Cleared to transparent black.
 - Resolved, then converted to the layer texture's encoding: premultiplied,
   sRGB-encoded values, as the compositor holds every layer (it blends like a
