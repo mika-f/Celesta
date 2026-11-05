@@ -5,9 +5,10 @@
 // plugin's plugin.json says what it has, its version and roles included. A
 // plugin with a process gives the same version in its Cargo package, and one
 // whose versions differ is refused before that plugin is built. Every
-// plugin.json is checked first, so a plugin with nothing to build, components
-// but no module, no version, or a license file that is not there fails the
-// run before anything is built.
+// plugin.json is checked first, so a plugin with a key plugin.json may not
+// have, nothing to build, components but no module, no version, a license
+// file that is not there, or, with --skip-js, a module no earlier run built,
+// fails the run before anything is built.
 //
 //   node scripts/plugins/build.mjs <plugin directory>...
 //                                  [--out <dir>] [--target <triple>] [--skip-js]
@@ -23,9 +24,10 @@
 // the exporter's --plugin-dir.
 //
 // Each run adds this platform's (or --target's) executable and keeps the
-// others', so builds on several platforms can fill one directory; the
-// JavaScript is the same everywhere, so later builds may pass --skip-js. Each
-// run replaces licenses/ with the files plugin.json lists.
+// others' whose files are still there, so builds on several platforms can
+// fill one directory; the JavaScript is the same everywhere, so later builds
+// may pass --skip-js. Each run replaces licenses/ with the files plugin.json
+// lists.
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -71,9 +73,13 @@ function fail(message) {
  * @param {import('node:child_process').SpawnSyncOptions} [options]
  */
 function run(command, args, options = {}) {
-  console.log(`> ${command} ${args.join(' ')}`);
+  const line = `${command} ${args.join(' ')}`;
+  console.log(`> ${line}`);
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
-  if (result.status !== 0) fail(`${command} failed`);
+  if (result.error) fail(`${line} failed: ${result.error.message}`);
+  if (result.status !== 0) {
+    fail(`${line} failed (${result.status === null ? `signal ${result.signal}` : `exit code ${result.status}`})`);
+  }
 }
 
 /**
@@ -89,16 +95,38 @@ function orFail(step) {
   }
 }
 
-// Every plugin.json, checked before anything is built.
+/**
+ * @param {string} path
+ * @returns {any} The JSON in the file at `path`; a failure names the file.
+ */
+function readJson(path) {
+  return orFail(() => {
+    try {
+      return JSON.parse(readFileSync(path, 'utf8'));
+    } catch (error) {
+      throw new Error(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+}
+
+// Every plugin.json, checked before anything is built, and with --skip-js the
+// module an earlier run built.
 const plugins = positionals.map((directory) => {
   const source = resolve(directory);
   const sourcePath = join(source, 'plugin.json');
   /** @type {import('./manifest.mjs').PluginSource} */
-  const plugin = orFail(() => JSON.parse(readFileSync(sourcePath, 'utf8')));
+  const plugin = readJson(sourcePath);
   orFail(() => checkPluginSource(plugin, sourcePath));
   orFail(() => pluginVersion({ version: plugin.version }, undefined, sourcePath));
   const licenses = orFail(() => licenseFiles(source, plugin, sourcePath));
-  return { source, sourcePath, plugin, licenses };
+  const out = join(values.out === undefined ? join(dirname(source), 'dist') : resolve(values.out), plugin.id);
+  if (values['skip-js'] && plugin.module !== undefined) {
+    for (const file of ['index.js', 'index.d.ts']) {
+      const built = join(out, 'js', file);
+      if (!existsSync(built)) fail(`${built} is missing; build ${source} once without --skip-js`);
+    }
+  }
+  return { source, sourcePath, plugin, licenses, out };
 });
 
 const runtime = join(root, 'packages', 'cli');
@@ -182,11 +210,15 @@ async function buildModule(source, out, module) {
   });
 }
 
-for (const { source, sourcePath, plugin, licenses } of plugins) {
-  const out = join(values.out === undefined ? join(dirname(source), 'dist') : resolve(values.out), plugin.id);
+for (const { source, sourcePath, plugin, licenses, out } of plugins) {
   mkdirSync(out, { recursive: true });
   const manifestPath = join(out, 'celesta-plugin.json');
-  const previous = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : {};
+  /** @type {Partial<import('./manifest.mjs').PluginManifest>} */
+  const previous = existsSync(manifestPath) ? readJson(manifestPath) : {};
+  // The other platforms' executables an earlier run copied here, while they are.
+  const kept = Object.fromEntries(
+    Object.entries(previous.executable ?? {}).filter(([, path]) => existsSync(join(out, path))),
+  );
 
   /** @type {import('./manifest.mjs').Built} */
   let built = {};
@@ -198,7 +230,7 @@ for (const { source, sourcePath, plugin, licenses } of plugins) {
     if (cargoVersion === undefined) fail(`${cargoToml} is in no workspace with the package ${cargoPackage}`);
     orFail(() => pluginVersion(plugin, cargoVersion, sourcePath));
     const executable = buildExecutable(source, out, cargoPackage, targetDirectory);
-    built = { cargoVersion, executable: { ...previous.executable, ...executable } };
+    built = { cargoVersion, executable: { ...kept, ...executable } };
   }
   if (!values['skip-js'] && plugin.module !== undefined) await buildModule(source, out, plugin.module);
 
