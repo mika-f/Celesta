@@ -2,7 +2,7 @@ To build Celesta, install **Rust 1.89 or later**, your platform’s native build
 
 > [!NOTE]
 > **The libraries matter**
-> The FFmpeg command-line executable alone is not enough. Celesta links against the development libraries. FFmpeg 9 and later are not supported yet.
+> The FFmpeg command-line executable alone is not enough. Celesta's codec plugin, `celesta-codec-ffmpeg`, links against the development libraries; the app and the exporter link no FFmpeg. FFmpeg 9 and later are not supported yet.
 
 ## 1. Prepare your platform
 
@@ -40,7 +40,7 @@ sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
 export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
 ```
 
-Set `PKG_CONFIG_PATH` in every shell where you run Cargo. FFmpeg is linked into Celesta’s executables, so `LD_LIBRARY_PATH` is not needed. If your distribution does provide FFmpeg 8.1.x, install `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`, `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development packages instead of running the script. To export without a GPU, see [Export a video](/en/docs/export/).
+Set `PKG_CONFIG_PATH` in every shell where you run Cargo. FFmpeg is linked into the codec plugin’s program, so `LD_LIBRARY_PATH` is not needed. If your distribution does provide FFmpeg 8.1.x, install `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`, `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development packages instead of running the script. To export without a GPU, see [Export a video](/en/docs/export/).
 
 :::
 ::::
@@ -62,6 +62,12 @@ pnpm run build:runtime
 ```
 
 ## 4. Open a React composition
+
+Build the codec plugin once, and again after updating the source. Celesta reads and writes video and audio through it, and finds it beside its own executables in `target/release`:
+
+```sh title="Build the codec plugin"
+cargo build -p celesta-codec-ffmpeg --release
+```
 
 ```sh title="Launch the native app"
 cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx

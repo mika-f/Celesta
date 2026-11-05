@@ -13,9 +13,18 @@ const mcp = join(packageDirectory, mac ? 'Contents/MacOS/Celesta-mcp' : 'Celesta
 const directory = mkdtempSync(join(tmpdir(), 'Celesta package 日本語 '));
 const entry = join(directory, 'test.tsx');
 const env = { ...process.env, PATH: mac ? '/usr/bin:/bin' : join(process.env.SystemRoot, 'System32') };
+// Plugin folders searched before the bundled one would let another codec
+// write the MP4 below: CELESTA_PLUGIN_PATH, and the user's plugin folder and
+// settings (which can add folders), found from these. Windows names
+// variables in any case.
+const userFolders = ['APPDATA', 'HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME'];
 for (const name of Object.keys(env)) {
-  if (name.startsWith('DYLD_')) delete env[name];
+  const upper = name.toUpperCase();
+  if (name.startsWith('DYLD_') || upper === 'CELESTA_PLUGIN_PATH' || userFolders.includes(upper)) {
+    delete env[name];
+  }
 }
+for (const name of userFolders) env[name] = directory;
 delete env.NODE_PATH;
 delete env.NODE_OPTIONS;
 delete env.ESBUILD_BINARY_PATH;
@@ -56,6 +65,14 @@ export default function Root() {
   const messages = protocol.trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.ok(messages[0].config);
   assert.ok(messages[1].scene);
+  // Celesta links no FFmpeg: the MP4 below is written by the bundled codec
+  // plugin, which carries the GPL its libx264 needs.
+  const codec = join(packageDirectory, mac ? 'Contents/PlugIns/ffmpeg' : 'plugins/ffmpeg');
+  assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the codec plugin');
+  assert.ok(
+    existsSync(join(codec, 'licenses/LICENSE-GPL-2.0')),
+    'The codec plugin must carry the GPL text',
+  );
   const output = join(directory, 'test.mp4');
   run(exporter, ['--react', entry, output]);
   const mp4 = readFileSync(output);

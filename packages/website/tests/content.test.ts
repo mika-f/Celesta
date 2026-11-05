@@ -106,14 +106,14 @@ const containers = (markdown: string) => Object.fromEntries(['tabs', 'tab', 'acc
 test('both locales have the same tabs and toggles in every chapter', () => {
   const [en, ja] = locales.map(locale => new Map(chapters(docsDir(locale)).map(chapter => [chapter.slug, containers(readFileSync(chapter.path, 'utf8'))])));
   for (const slug of slugs) assert.deepEqual(ja.get(slug), en.get(slug), `${slug}: ja matches en`);
-  // The old site's OS pickers and details blocks (Task 14), plus the debug-guides contact sheet, subtitle file, looping video, and loudness main added to Export.
+  // The old site's OS pickers and details blocks (Task 14), plus the debug-guides contact sheet, subtitle file, looping video, and loudness main added to Export, and the missing codec plugin toggle added to Troubleshooting.
   const expected: Record<string, ReturnType<typeof containers>> = {
     'installation': { tabs: 1, tab: 3, accordion: 0, toggle: 0 },
     'build-from-source': { tabs: 1, tab: 3, accordion: 0, toggle: 0 },
     'create-project': { tabs: 1, tab: 2, accordion: 0, toggle: 0 },
     'export': { tabs: 9, tab: 18, accordion: 0, toggle: 0 },
     'timelines': { tabs: 0, tab: 0, accordion: 0, toggle: 3 },
-    'troubleshooting': { tabs: 0, tab: 0, accordion: 1, toggle: 9 },
+    'troubleshooting': { tabs: 0, tab: 0, accordion: 1, toggle: 10 },
   };
   for (const slug of slugs) assert.deepEqual(en.get(slug), expected[slug] ?? { tabs: 0, tab: 0, accordion: 0, toggle: 0 }, slug);
 });

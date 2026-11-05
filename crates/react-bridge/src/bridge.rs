@@ -18,7 +18,7 @@ use crate::types::{
     ReactSubtitleDescriptor, SpawnOptions,
 };
 use celesta_composition::{AudioGraph, Scene, Time};
-use celesta_media::FfmpegBackend;
+use celesta_media::MediaBackend;
 use celesta_remote::{RemoteAssetCache, is_remote_url};
 use celesta_renderer::TextRasterizer;
 use celesta_renderer::image_source::probe_animation;
@@ -160,7 +160,7 @@ impl ReactBridge {
             let _ = writeln!(stdin, "{payload}").and_then(|()| stdin.flush());
         }
 
-        let mut media = FfmpegBackend::new();
+        let mut media = MediaBackend::new();
         // Created on the first `measureText`: it scans the system fonts.
         let mut text_measurer: Option<TextRasterizer> = None;
         let mut decoded_audio = DecodedAudioFiles::default();

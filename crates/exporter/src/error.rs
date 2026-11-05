@@ -2,7 +2,7 @@ use crate::options::{VideoEncoding, VideoFormat};
 use celesta_composition::TimeError;
 use celesta_evaluator::EvaluationError;
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::AudioMixError;
+use celesta_media::{AudioMixError, MediaError};
 use celesta_project::LoadError;
 use celesta_react_bridge::{PropertyInputError, ReactBridgeError};
 use std::io;
@@ -30,10 +30,12 @@ pub enum ExportError {
         operation: &'static str,
         source: io::Error,
     },
-    #[error("FFmpeg {stage} failed: {source}")]
-    Ffmpeg {
+    /// The codec plugin could not check, encode, or mux: there is none, it
+    /// stopped answering, or it failed.
+    #[error("{stage} failed: {source}")]
+    Codec {
         stage: &'static str,
-        source: ez_ffmpeg::error::Error,
+        source: MediaError,
     },
     #[error("output already exists: {0}")]
     OutputExists(PathBuf),
@@ -61,11 +63,12 @@ pub enum ExportError {
     /// An export with neither a video nor a subtitle file to write.
     #[error("an export needs a video output or a subtitle file to write")]
     NoOutput,
-    /// The linked FFmpeg build lacks an encoder `format` needs.
-    #[error("this FFmpeg build has no {encoder} encoder, which {format} export needs")]
+    /// The codec plugin lacks an encoder `format` needs, as an FFmpeg build
+    /// without it does.
+    #[error("the codec plugin has no {encoder} encoder, which {format} export needs")]
     EncoderUnavailable {
         format: VideoFormat,
-        encoder: &'static str,
+        encoder: String,
     },
     #[error("video export requires non-zero even dimensions, got {width}x{height}")]
     UnsupportedDimensions { width: u32, height: u32 },

@@ -66,6 +66,16 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   type-checking, refreshed with the rest of `.celesta/` (in the app, a
   trusted project's own plugins and plugins waiting for approval too).
 
+## The codec plugin
+
+- Celesta links no codec: video and audio files are probed, decoded,
+  encoded, and muxed by a codec plugin (`"roles": ["codec"]` in its
+  manifest). The app's packages bundle `ffmpeg`; a source build or
+  `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables.
+- It is not imported and has no components. Without one, video and audio
+  layers fail to decode and exports fail with `no_codec` (see
+  [export.md](export.md)).
+
 ## The VRM plugin
 
 The Celesta repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) as a

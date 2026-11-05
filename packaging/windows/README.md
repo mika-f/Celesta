@@ -76,9 +76,14 @@ The package collects Node.js and JavaScript license texts, native vcpkg notices,
 and available Rust license texts plus a dependency inventory, and includes the
 repository's root `LICENSE*` files plus `packaging/GPL-SOURCE-OFFER.md`.
 
+Celesta's own executables link no FFmpeg. FFmpeg is linked statically into the
+codec plugin's program, `plugins\ffmpeg\bin\celesta-codec-ffmpeg.exe`, which
+gets its own copies of the MSVC runtime DLLs and carries the GPL text and source
+offer in `plugins\ffmpeg\licenses`.
+
 The x264-enabled FFmpeg configuration is GPL-2.0-or-later licensed, which makes
-this binary package as a whole GPL-licensed in addition to Celesta's own
-MIT/Apache-2.0 source license; see [`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md)
+the codec plugin's program, as distributed, GPL-licensed; Celesta's executables
+stay under MIT/Apache-2.0. See [`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md)
 and the root [`README.md`](../../README.md#license) for details. That file's
 written offer, together with `LICENSE-GPL-2.0`, is how this package satisfies
 GPLv2 Section 3 without bundling full FFmpeg/x264 source in every download.

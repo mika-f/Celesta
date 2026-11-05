@@ -10,7 +10,7 @@ use crate::render::{
 use crate::subtitles;
 use celesta_composition::Time;
 use celesta_evaluator::Evaluator;
-use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_unclipped_cancellable};
+use celesta_media::{AudioMixError, MediaBackend, mix_audio_graph_unclipped_cancellable};
 use celesta_plugin_host::InstalledPlugins;
 use celesta_project::Project;
 use std::path::Path;
@@ -23,11 +23,13 @@ pub struct Exporter {
 
 impl Exporter {
     /// An exporter with `options`. Without `options.plugins`, the plugins
-    /// are discovered here, once, in every location Celesta searches.
+    /// are discovered here, once, in every location Celesta searches. When
+    /// no codec has been chosen yet ([`crate::use_codec`]), theirs is.
     pub fn new(mut options: ExportOptions) -> Self {
-        options
+        let plugins = options
             .plugins
             .get_or_insert_with(|| InstalledPlugins::find_reporting(&[]));
+        crate::codec::ensure_codec(plugins);
         Self { options }
     }
 
@@ -156,7 +158,7 @@ impl Exporter {
             let audio = scope.spawn(|| {
                 let abandoned =
                     || cancellation.is_cancelled() || abandon_audio.load(Ordering::Acquire);
-                let mut audio_decoder = FfmpegBackend::new();
+                let mut audio_decoder = MediaBackend::new();
                 let mut mix = mix_audio_graph_unclipped_cancellable(
                     &graph,
                     asset_root,

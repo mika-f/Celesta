@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use celesta_composition::{Rational, Time, TimeRange};
-use celesta_exporter::{ExportOptions, ExportProgress, Exporter, ReactRuntimeOptions};
+use celesta_exporter::{ExportOptions, ExportProgress, ReactRuntimeOptions};
 use celesta_project::{
     Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
 };
@@ -169,7 +169,7 @@ export default function Root() {
     )
     .unwrap();
     let mut progress = Vec::new();
-    Exporter::new(ExportOptions::default())
+    crate::exporter(ExportOptions::default())
         .export_react_stills(
             &entry,
             &ReactRuntimeOptions::new("node", runtime_path),
@@ -231,7 +231,7 @@ export default function Root() {
 "##,
     )
     .unwrap();
-    Exporter::new(ExportOptions::default())
+    crate::exporter(ExportOptions::default())
         .export_react_stills(
             &entry,
             &ReactRuntimeOptions::new("node", runtime_path),
@@ -270,7 +270,7 @@ export default function Root() {
 "##,
     )
     .unwrap();
-    Exporter::new(ExportOptions::default())
+    crate::exporter(ExportOptions::default())
         .export_react_stills(
             &entry,
             &ReactRuntimeOptions::new("node", runtime_path),

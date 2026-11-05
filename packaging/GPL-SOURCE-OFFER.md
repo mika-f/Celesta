@@ -4,14 +4,18 @@ Celesta's own source code is licensed under MIT OR Apache-2.0 (see
 [`LICENSE-MIT`](../LICENSE-MIT) and [`LICENSE-APACHE`](../LICENSE-APACHE)) and
 is always available at <https://github.com/mika-f/celesta>.
 
-The official Windows and macOS binary packages additionally bundle an FFmpeg
-build compiled with the `x264` encoder enabled. `x264` is licensed under the
-GNU General Public License version 2 or later (GPL-2.0-or-later), and FFmpeg
-itself is dual-licensed LGPL/GPL, becoming GPL-licensed as a whole once a
-GPL-only component such as `x264` is enabled. Under GPLv2 Section 3, a work
-that links this build therefore may only be distributed as object/executable
-code together with either the complete corresponding source or a written
-offer for it. This file is that offer.
+Celesta's own executables link no FFmpeg. The official Windows and macOS
+binary packages, and the Linux container image, additionally bundle Celesta's
+codec plugin, `celesta-codec-ffmpeg`: a separate program, in its own plugin
+folder (`plugins/ffmpeg`, or `Contents/PlugIns/ffmpeg` in the macOS app), that
+links an FFmpeg build compiled with the `x264` encoder enabled. `x264` is
+licensed under the GNU General Public License version 2 or later
+(GPL-2.0-or-later), and FFmpeg itself is dual-licensed LGPL/GPL, becoming
+GPL-licensed as a whole once a GPL-only component such as `x264` is enabled.
+Under GPLv2 Section 3, the codec plugin's program, which links this build,
+therefore may only be distributed as object/executable code together with
+either the complete corresponding source or a written offer for it. This file
+is that offer; a copy of it ships in the codec plugin's `licenses` folder.
 
 The build also links `libvpx` and `libopus` (BSD-3-Clause), the encoders behind
 WebM export.
@@ -23,8 +27,10 @@ form, we will provide, for a charge no more than our cost of physically
 performing source distribution, a complete machine-readable copy of the
 corresponding source code for the GPL-licensed components in that specific
 build (FFmpeg and `x264`, built with the same version and configuration used
-for that release), and for the BSD-licensed `libvpx` and `libopus` linked into
-it, on a medium customarily used for software interchange.
+for that release, and the codec plugin's own source, which is in this
+repository under `crates/codec-ffmpeg`), and for the BSD-licensed `libvpx` and
+`libopus` linked into it, on a medium customarily used for software
+interchange.
 
 This offer is valid for at least three years from the date you received the
 release, for anyone who possesses that release in object/executable form.
@@ -56,4 +62,4 @@ from the vcpkg `ffmpeg[x264,vpx,opus]:x64-windows-static-md` port) or
 
 The complete GPL-2.0 text is included as [`LICENSE-GPL-2.0`](../LICENSE-GPL-2.0)
 at the repository root, and is copied into every release package alongside
-this offer.
+this offer, and into the codec plugin's `licenses` folder.

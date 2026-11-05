@@ -14,8 +14,8 @@ use crate::problems::{Problem, Source, error_chain};
 use crate::source::PropertyArgs;
 use crate::view::EditorView;
 use celesta_plugin_host::{
-    InstalledPlugins, PendingPlugin, PluginEntry, SettingsError, UserSettings, from_the_internet,
-    has_project_config, project_plugin_paths, project_root,
+    InstalledPlugins, PendingPlugin, PluginEntry, PluginRole, SettingsError, UserSettings,
+    from_the_internet, has_project_config, project_plugin_paths, project_root,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
@@ -41,14 +41,20 @@ pub(crate) struct FoundPlugins {
     pub(crate) folders: Vec<PathBuf>,
     /// Why each skipped plugin or folder was skipped.
     pub(crate) skipped: Vec<String>,
+    /// No codec plugin was found, so video and audio files cannot be read
+    /// or exported.
+    pub(crate) missing_codec: bool,
 }
 
 impl FoundPlugins {
     /// Reads every plugin location, with the trusted project at `project`'s
-    /// own folders; blocking, so off the UI thread.
+    /// own folders; blocking, so off the UI thread. Media is read and
+    /// written with the codec plugin among what may run from now on.
     pub(crate) fn find(project: Option<&Path>) -> Self {
         let (settings, settings_error) = UserSettings::current();
-        Self::find_with(project, &settings, settings_error)
+        let mut found = Self::find_with(project, &settings, settings_error);
+        found.missing_codec = celesta_exporter::use_codec(&found.installed).is_none();
+        found
     }
 
     /// [`Self::find`] with these settings, and why the user's could not be
@@ -80,6 +86,7 @@ impl FoundPlugins {
             disabled: allowed.disabled,
             folders: settings.plugin_folders.clone(),
             skipped,
+            missing_codec: false,
         }
     }
 
@@ -92,8 +99,14 @@ impl FoundPlugins {
                 pending.entry.directory.display()
             )
         });
-        let detail: Vec<String> = waiting.chain(self.skipped.iter().cloned()).collect();
+        let codec = self.missing_codec.then(|| self.missing_codec_detail());
+        let detail: Vec<String> = codec
+            .into_iter()
+            .chain(waiting)
+            .chain(self.skipped.iter().cloned())
+            .collect();
         let title = match (self.pending.len(), self.skipped.len()) {
+            (0, 0) if self.missing_codec => "No codec plugin can run".to_owned(),
             (0, 0) => return None,
             (0, 1) => "A plugin was skipped".to_owned(),
             (0, skipped) => format!("{skipped} plugins were skipped"),
@@ -101,6 +114,46 @@ impl FoundPlugins {
             (pending, _) => format!("{pending} plugins wait for your approval"),
         };
         Some(Problem::new(title, detail.join("\n")))
+    }
+
+    /// Why there is no codec to read and write media with: one has no
+    /// program for this computer, one waits for approval, one is turned off,
+    /// or none was found.
+    fn missing_codec_detail(&self) -> String {
+        let is_codec = |entry: &PluginEntry| entry.has_role(PluginRole::Codec);
+        let consequence = "so video and audio files cannot be shown or exported";
+        let found = || {
+            self.installed
+                .plugins
+                .iter()
+                .chain(self.pending.iter().map(|pending| &pending.entry))
+                .chain(&self.disabled)
+                .filter(|entry| is_codec(entry))
+        };
+        if let Some(unbuilt) = found().find(|entry| entry.executable().is_none()) {
+            let (os, arch) = celesta_plugin_host::platform();
+            format!(
+                "The codec plugin {} has no program for this computer ({os}-{arch}), \
+                 {consequence}. Install a build of it for this computer.",
+                unbuilt.manifest.id
+            )
+        } else if let Some(pending) = self.pending.iter().find(|pending| is_codec(&pending.entry)) {
+            format!(
+                "The codec plugin {} waits for your approval, {consequence} until you allow it.",
+                pending.entry.manifest.id
+            )
+        } else if let Some(disabled) = self.disabled.iter().find(|entry| is_codec(entry)) {
+            format!(
+                "The codec plugin {} is turned off, {consequence}. Turn it on in the Plugins tab.",
+                disabled.manifest.id
+            )
+        } else {
+            format!(
+                "No codec plugin was found, {consequence}. Install Celesta's {} plugin, or \
+                 reinstall Celesta.",
+                celesta_plugin_host::CODEC_PROGRAM
+            )
+        }
     }
 
     /// Every plugin found whose declarations the project's TypeScript
@@ -501,6 +554,95 @@ mod tests {
                 "2 plugins were skipped",
                 "a was skipped\nb was skipped"
             ))
+        );
+    }
+
+    #[test]
+    fn a_missing_codec_is_a_problem() {
+        let missing = FoundPlugins {
+            missing_codec: true,
+            ..FoundPlugins::default()
+        };
+        let problem = missing.problem().unwrap();
+        assert_eq!(problem.title, "No codec plugin can run");
+        assert!(
+            problem.detail.contains("celesta-codec-ffmpeg"),
+            "{}",
+            problem.detail
+        );
+        let skipped = FoundPlugins {
+            skipped: vec!["a was skipped".into()],
+            ..missing.clone()
+        };
+        let problem = skipped.problem().unwrap();
+        assert_eq!(problem.title, "A plugin was skipped");
+        assert!(
+            problem.detail.starts_with("No codec plugin"),
+            "{}",
+            problem.detail
+        );
+
+        // A codec that was found says why it does not run.
+        let (os, arch) = celesta_plugin_host::platform();
+        let codec = PluginEntry {
+            manifest: celesta_plugin_host::Manifest {
+                id: "ffmpeg".into(),
+                version: "1.0.0".into(),
+                protocol: 1,
+                executable: [(format!("{os}-{arch}"), "bin/p".to_owned())].into(),
+                module: None,
+                types: None,
+                components: Vec::new(),
+                roles: vec![PluginRole::Codec],
+            },
+            directory: PathBuf::from("plugins/ffmpeg"),
+            source: celesta_plugin_host::PluginSource::User,
+        };
+        let disabled = FoundPlugins {
+            disabled: vec![codec.clone()],
+            ..missing.clone()
+        };
+        let problem = disabled.problem().unwrap();
+        assert_eq!(problem.title, "No codec plugin can run");
+        assert!(
+            problem
+                .detail
+                .starts_with("The codec plugin ffmpeg is turned off"),
+            "{}",
+            problem.detail
+        );
+        // Allowing or turning on a codec built for another computer would
+        // not help.
+        let mut elsewhere = codec.clone();
+        elsewhere.manifest.executable = [("plan9-mips".to_owned(), "bin/p".to_owned())].into();
+        let unbuilt = FoundPlugins {
+            disabled: vec![elsewhere],
+            ..missing.clone()
+        };
+        assert!(
+            unbuilt
+                .problem()
+                .unwrap()
+                .detail
+                .starts_with("The codec plugin ffmpeg has no program for this computer"),
+        );
+        let waiting = FoundPlugins {
+            pending: vec![PendingPlugin {
+                entry: codec,
+                fingerprint: String::new(),
+                changed: false,
+                from_the_internet: false,
+            }],
+            ..missing
+        };
+        let problem = waiting.problem().unwrap();
+        assert_eq!(problem.title, "A plugin waits for your approval");
+        assert!(
+            problem
+                .detail
+                .starts_with("The codec plugin ffmpeg waits for your approval"),
+            "{}",
+            problem.detail
         );
     }
 

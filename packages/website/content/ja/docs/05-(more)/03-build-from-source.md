@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **開発ライブラリが必要です**
-> FFmpeg のコマンドライン実行ファイルだけでは足りません。Celesta は開発ライブラリにリンクします。FFmpeg 9 以降にはまだ対応していません。
+> FFmpeg のコマンドライン実行ファイルだけでは足りません。Celesta のコーデックプラグイン `celesta-codec-ffmpeg` が開発ライブラリにリンクします（アプリと書き出しツールは FFmpeg をリンクしません）。FFmpeg 9 以降にはまだ対応していません。
 
 ## 1. OS の準備
 
@@ -40,7 +40,7 @@ sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
 export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
 ```
 
-Cargo を実行する各シェルで `PKG_CONFIG_PATH` を設定します。FFmpeg は Celesta の実行ファイルにリンクされるので `LD_LIBRARY_PATH` は不要です。ディストリビューションが FFmpeg 8.1.x を提供する場合は、スクリプトの代わりに `pkg-config` と `libavcodec`、`libavformat`、`libavfilter`、`libavdevice`、`libavutil`、`libswscale`、`libswresample` の開発パッケージをインストールしてください。GPU なしでの書き出しは、[動画の書き出し](/ja/docs/export/)をご覧ください。
+Cargo を実行する各シェルで `PKG_CONFIG_PATH` を設定します。FFmpeg はコーデックプラグインのプログラムにリンクされるので `LD_LIBRARY_PATH` は不要です。ディストリビューションが FFmpeg 8.1.x を提供する場合は、スクリプトの代わりに `pkg-config` と `libavcodec`、`libavformat`、`libavfilter`、`libavdevice`、`libavutil`、`libswscale`、`libswresample` の開発パッケージをインストールしてください。GPU なしでの書き出しは、[動画の書き出し](/ja/docs/export/)をご覧ください。
 
 :::
 ::::
@@ -62,6 +62,12 @@ pnpm run build:runtime
 ```
 
 ## 4. React コンポジションを開く
+
+コーデックプラグインを一度ビルドします（ソースを更新したらもう一度）。Celesta は動画と音声をこれで読み書きし、`target/release` の自分の実行ファイルと同じフォルダーから見つけます。
+
+```sh title="コーデックプラグインをビルド"
+cargo build -p celesta-codec-ffmpeg --release
+```
 
 ```sh title="ネイティブアプリを起動"
 cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx

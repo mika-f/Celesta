@@ -9,6 +9,11 @@ macOS ではアプリ全体を Applications にコピーしてから起動しま
 実行ファイルだけでなく、8.1.x の開発ライブラリが入っているか確認します。macOS では Cargo を実行するシェルで `PKG_CONFIG_PATH` を設定します。Windows は `VCPKG_ROOT` と MSVC ビルドツールを確認し、Linux は `PKG_CONFIG_PATH` に `/opt/ffmpeg8/lib/pkgconfig` などのビルド済み FFmpeg を指定します。[ソースビルドの準備](/ja/docs/build-from-source/)をご覧ください。
 
 :::
+:::toggle[動画や音声が表示されない、書き出しが no_codec で失敗する]
+
+Celesta はメディアをコーデックプラグインで読み書きします。パッケージでは、Celesta に付属するプラグインフォルダー（`Celesta.exe` の隣の `plugins\ffmpeg`、macOS アプリでは `Contents/PlugIns/ffmpeg`）に `ffmpeg` プラグインが残っているか確認するか、パッケージを入れ直してください。ソースビルドでは `cargo build -p celesta-codec-ffmpeg --release` を実行し、アプリと同じフォルダーにプログラムを置きます。[コーデックプラグイン](/ja/docs/plugins/#コーデックプラグイン)をご覧ください。
+
+:::
 :::toggle[メディアが見つからない]
 
 ローカルファイルのパスはコンポジションのファイルを基準に確認し、プロジェクトを共有するときは素材も一緒に渡してください。HTTP(S) の素材は初回に通信が必要です。ネイティブの描画では URL ごとにキャッシュし、更新確認は行わないため、素材を更新したら URL を変えるかキャッシュを削除します。ブラウザでは CORS によるアクセス許可も必要です。

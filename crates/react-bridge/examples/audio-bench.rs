@@ -5,10 +5,11 @@
 use std::{env, error::Error, path::PathBuf, time::Instant};
 
 use celesta_composition::{AudioGraph, Time};
-use celesta_media::{FfmpegBackend, mix_audio_graph};
+use celesta_media::{MediaBackend, mix_audio_graph};
 use celesta_react_bridge::{ReactBridge, react_audio_clips};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    celesta_codec_ffmpeg::install();
     let mut args = env::args().skip(1);
     let entry =
         PathBuf::from(args.next().ok_or("usage: audio-bench <entry> [runs]")?).canonicalize()?;
@@ -54,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             let mixing = Instant::now();
             let duration = Time::frames(metadata.duration_in_frames as i64, metadata.frame_rate)?;
-            let _buffer = mix_audio_graph(&graph, entry_dir, duration, &mut FfmpegBackend::new())?;
+            let _buffer = mix_audio_graph(&graph, entry_dir, duration, &mut MediaBackend::new())?;
             let mix = mixing.elapsed();
             println!(
                 "{},{run},{},{},{:.3},{:.3},{:.3},{:.3}",

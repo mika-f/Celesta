@@ -1,7 +1,7 @@
 //! `decodeAudio`: the PCM an entry's `prepare()` analyzes, decoded by the
 //! same FFmpeg backend that mixes preview and export audio.
 
-use celesta_media::{AudioDecoder, FfmpegBackend};
+use celesta_media::{AudioDecoder, MediaBackend};
 use celesta_remote::{RemoteAssetCache, is_remote_url};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -52,7 +52,7 @@ impl Drop for DecodedAudioFiles {
 }
 
 pub(crate) fn decode_audio_response(
-    media: &mut FfmpegBackend,
+    media: &mut MediaBackend,
     files: &mut DecodedAudioFiles,
     path: &str,
 ) -> DecodeAudioResponse {
@@ -69,7 +69,7 @@ pub(crate) fn decode_audio_response(
 }
 
 fn decode_to_file(
-    media: &mut FfmpegBackend,
+    media: &mut MediaBackend,
     files: &mut DecodedAudioFiles,
     path: &str,
 ) -> Result<DecodedAudioPayload, String> {
@@ -153,7 +153,7 @@ mod tests {
     fn writes_mono_samples_and_removes_them_once_read() {
         let wav =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets/voices/001.wav");
-        let mut media = FfmpegBackend::new();
+        let mut media = MediaBackend::with_codec(celesta_codec_ffmpeg::FfmpegCodec::factory());
         let mut files = DecodedAudioFiles::default();
         let response = decode_audio_response(&mut media, &mut files, wav.to_str().unwrap());
         let audio = response.audio.expect("decodes the WAV");
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn reports_a_file_it_cannot_decode() {
-        let mut media = FfmpegBackend::new();
+        let mut media = MediaBackend::with_codec(celesta_codec_ffmpeg::FfmpegCodec::factory());
         let mut files = DecodedAudioFiles::default();
         let response = decode_audio_response(&mut media, &mut files, "missing.wav");
         assert!(response.audio.is_none());

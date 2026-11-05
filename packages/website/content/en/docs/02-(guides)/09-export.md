@@ -163,7 +163,7 @@ The file extension picks the video format. A `.mp4` file is H.264 with AAC audio
 
 Only areas nothing draws on are transparent, so a layer that fills the whole frame, such as a full-frame background, makes the output opaque. The alpha is straight (unassociated), and colors are converted and tagged as BT.709 (limited range). `--preset`, `--crf`, `--bit-depth`, `--color-conversion`, and `--loop` apply to MP4 only and are usage errors with `.mov` or `.webm`.
 
-If your FFmpeg build lacks the encoder for the chosen format, the export fails with the error code `encoder_unavailable`.
+Celesta encodes through its [codec plugin](/en/docs/plugins/#the-codec-plugin). If the plugin's FFmpeg build lacks the encoder for the chosen format, the export fails with the error code `encoder_unavailable`; without a codec plugin, it fails with `no_codec`.
 
 ## Still frames and contact sheets
 

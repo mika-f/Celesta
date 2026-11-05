@@ -444,6 +444,7 @@ mod tests {
                 module: Some("js/index.js".into()),
                 types: None,
                 components: Vec::new(),
+                roles: vec![celesta_plugin_host::PluginRole::Content],
             },
             directory: PathBuf::from("plugins").join(id),
             source,

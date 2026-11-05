@@ -2,7 +2,7 @@ use crate::problems::error_chain;
 use crate::waveform::media_asset_info;
 use crate::worker::LatestWorker;
 use celesta_composition::Time;
-use celesta_media::{DynamicRange, FfmpegBackend};
+use celesta_media::{DynamicRange, MediaBackend};
 use std::path::PathBuf;
 
 pub(crate) struct MediaProbeRequest {
@@ -28,7 +28,7 @@ pub(crate) struct MediaAssetInfo {
 pub(crate) type MediaProbeWorker = LatestWorker<MediaProbeRequest, MediaProbeResult>;
 
 pub(crate) fn spawn_media_probe() -> anyhow::Result<MediaProbeWorker> {
-    let mut backend = FfmpegBackend::new();
+    let mut backend = MediaBackend::new();
     LatestWorker::spawn("media probe", move |request: MediaProbeRequest, _| {
         request
             .assets

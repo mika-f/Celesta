@@ -7,7 +7,7 @@ Looking for another version or architecture? [Browse all releases](celesta:downl
 
 > [!NOTE]
 > **Everything you need to run Celesta**
-> The macOS and Windows packages include the React runtime, Node.js, and the media dependencies. You do not need to install Rust, Node.js, pnpm, or FFmpeg separately to create and export videos.
+> The macOS and Windows packages include the React runtime, Node.js, and the FFmpeg codec plugin that reads and writes video and audio. You do not need to install Rust, Node.js, pnpm, or FFmpeg separately to create and export videos.
 
 ## 1. Install the app
 

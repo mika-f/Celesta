@@ -7,7 +7,7 @@ use crate::worker::LatestWorker;
 use anyhow::Context as _;
 use celesta_composition::{AudioClip, AudioGraph, Time};
 use celesta_media::{
-    AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, mix_audio_graph_with_ducks_cancellable,
+    AudioBuffer, AudioDecoder, MediaBackend, MediaError, mix_audio_graph_with_ducks_cancellable,
 };
 use celesta_remote::resolve_asset_path;
 use gpui_kit::Pixels;
@@ -46,7 +46,7 @@ pub(crate) struct AudioCacheKey {
 }
 
 pub(crate) struct CachedAudioDecoder {
-    pub(crate) backend: FfmpegBackend,
+    pub(crate) backend: MediaBackend,
     pub(crate) buffers: HashMap<AudioCacheKey, AudioBuffer>,
     pub(crate) waveforms: HashMap<AudioCacheKey, Vec<f32>>,
     pub(crate) disk_cache: DiskAudioCache,
@@ -59,7 +59,7 @@ impl CachedAudioDecoder {
 
     pub(crate) fn with_disk_cache(disk_cache: DiskAudioCache) -> Self {
         Self {
-            backend: FfmpegBackend::new(),
+            backend: MediaBackend::new(),
             buffers: HashMap::new(),
             waveforms: HashMap::new(),
             disk_cache,

@@ -1,6 +1,6 @@
 use crate::range::ExportRange;
 use crate::{GpuDriver, RenderQuality};
-use celesta_media::LoudnessTarget;
+use celesta_media::{Container, LoudnessTarget};
 use celesta_plugin_host::InstalledPlugins;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -99,13 +99,12 @@ impl VideoFormat {
         !matches!(self, Self::Mp4)
     }
 
-    /// The video and audio encoders this format needs, which a stripped
-    /// FFmpeg build may lack.
-    pub(crate) const fn encoders(self) -> [&'static str; 2] {
+    /// The container the codec writes this format as.
+    pub(crate) const fn container(self) -> Container {
         match self {
-            Self::Mp4 => ["libx264", "aac"],
-            Self::Mov => ["prores_ks", "pcm_s24le"],
-            Self::Webm => ["libvpx-vp9", "libopus"],
+            Self::Mp4 => Container::Mp4,
+            Self::Mov => Container::Mov,
+            Self::Webm => Container::Webm,
         }
     }
 }
@@ -193,11 +192,11 @@ impl BitDepth {
         self.into()
     }
 
-    /// The pixel format libx264 encodes.
-    pub(crate) const fn pixel_format(self) -> &'static str {
+    /// Bits per sample.
+    pub(crate) const fn bits(self) -> u8 {
         match self {
-            Self::Eight => "yuv420p",
-            Self::Ten => "yuv420p10le",
+            Self::Eight => 8,
+            Self::Ten => 10,
         }
     }
 }

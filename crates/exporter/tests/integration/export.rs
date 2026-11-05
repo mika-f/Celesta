@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use celesta_codec_ffmpeg::FfmpegBackend;
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{
     AudioLoudness, BitDepth, ColorConversion, EncoderPreset, ExportCancellation, ExportError,
@@ -7,7 +8,7 @@ use celesta_exporter::{
     ReactRuntimeOptions, VideoEncoding, VideoFormat,
 };
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{AudioDecoder, FfmpegBackend, VideoFrameDecoder, measure_loudness};
+use celesta_media::{AudioDecoder, VideoFrameDecoder, measure_loudness};
 use celesta_project::{
     Animatable, Asset, AssetSource, DuckGroups, Project, ProjectDuck, TimelineContent,
     TimelineItem, Track, TrackKind,
@@ -100,7 +101,7 @@ fn exports_frame_exact_mp4_with_silent_audio() {
         }],
     });
 
-    let exporter = Exporter::new(ExportOptions {
+    let exporter = crate::exporter(ExportOptions {
         overwrite: false,
         range: None,
         ..ExportOptions::default()
@@ -232,7 +233,7 @@ fn exports_only_the_selected_range_shifted_to_zero() {
     });
 
     let full_output = directory.path().join("full.mp4");
-    let full = Exporter::new(ExportOptions {
+    let full = crate::exporter(ExportOptions {
         overwrite: false,
         range: None,
         ..ExportOptions::default()
@@ -248,7 +249,7 @@ fn exports_only_the_selected_range_shifted_to_zero() {
 
     // Export only the second half; the window's start becomes the file's 00:00.
     let windowed_output = directory.path().join("windowed.mp4");
-    Exporter::new(ExportOptions {
+    crate::exporter(ExportOptions {
         overwrite: false,
         range: Some(ExportRange::new(Time::new(1, 1), Time::new(2, 1))),
         ..ExportOptions::default()
@@ -291,7 +292,7 @@ fn rejects_an_empty_export_range() {
         Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.duration = Some(Time::new(1, 1));
 
-    let result = Exporter::new(ExportOptions {
+    let result = crate::exporter(ExportOptions {
         overwrite: false,
         range: Some(ExportRange::new(Time::new(2, 1), Time::new(3, 1))),
         ..ExportOptions::default()
@@ -390,7 +391,7 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
     // Lossless encodes, so any difference comes from the conversion itself.
     let export = |color_conversion, bit_depth, name: &str| {
         let output = directory.path().join(name);
-        let result = Exporter::new(ExportOptions {
+        let result = crate::exporter(ExportOptions {
             video: VideoEncoding {
                 preset: EncoderPreset::Ultrafast,
                 crf: 0,
@@ -528,7 +529,7 @@ fn transparent_project(dir: &Path) -> Project {
 /// Exports `project` as `format` to `name` in `dir`, or `None` without a GPU.
 fn export_as(project: &Project, dir: &Path, format: VideoFormat, name: &str) -> Option<PathBuf> {
     let output = dir.join(name);
-    match Exporter::new(ExportOptions {
+    match crate::exporter(ExportOptions {
         video_format: format,
         ..ExportOptions::default()
     })
@@ -1009,7 +1010,7 @@ fn a_looping_mp4_starts_its_sound_from_its_end() {
     );
     let export = |looping, name: &str| {
         let output = directory.path().join(name);
-        match Exporter::new(ExportOptions {
+        match crate::exporter(ExportOptions {
             looping,
             ..ExportOptions::default()
         })
@@ -1089,7 +1090,7 @@ fn export_reporting(
     let output = dir.join(name);
     let (mut loudness, mut warnings) = (None, Vec::new());
     let result =
-        Exporter::new(options).export_project_with_progress(project, dir, &output, |event| {
+        crate::exporter(options).export_project_with_progress(project, dir, &output, |event| {
             match event {
                 ExportProgress::Wrote(ExportedFile::Video {
                     loudness: measured, ..
@@ -1241,7 +1242,7 @@ export default function Root() {
     let output = directory.path().join("film.webm");
     let (mut written, mut warnings) = (Vec::new(), Vec::new());
     // Without sound, a loudness target has nothing to adjust.
-    match Exporter::new(ExportOptions {
+    match crate::exporter(ExportOptions {
         video_format: VideoFormat::Webm,
         loudness: Some(LoudnessTarget::STREAMING),
         ..ExportOptions::default()
@@ -1320,7 +1321,7 @@ export default function Root() {
     let output = directory.path().join("film.mp4");
     let subtitles = directory.path().join("film.vtt");
     let mut written = Vec::new();
-    match Exporter::new(ExportOptions {
+    match crate::exporter(ExportOptions {
         range: Some(ExportRange::new(Time::new(2, 1), Time::new(7, 2))),
         subtitles: vec![subtitles.clone()],
         ..ExportOptions::default()
@@ -1408,7 +1409,7 @@ export default function Root() {
         },
     };
     let runtime = ReactRuntimeOptions::new("node", &runtime_path);
-    Exporter::new(job.options.clone())
+    crate::exporter(job.options.clone())
         .export_react_subtitles(
             &entry,
             &runtime,
@@ -1463,7 +1464,7 @@ export default function Root() {
 
     // A path without {lang} cannot take both languages, and writes nothing.
     let mixed = directory.path().join("mixed.srt");
-    let error = Exporter::new(ExportOptions {
+    let error = crate::exporter(ExportOptions {
         subtitles: vec![directory.path().join("other.{lang}.srt"), mixed.clone()],
         ..ExportOptions::default()
     })

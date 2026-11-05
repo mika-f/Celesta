@@ -5,8 +5,21 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MediaError {
-    #[error("FFmpeg operation failed: {0}")]
-    Ffmpeg(#[source] ez_ffmpeg::error::Error),
+    /// What the codec plugin said went wrong (such as an FFmpeg error), or
+    /// what it answered that does not fit the request.
+    #[error("{0}")]
+    Codec(String),
+    /// No codec plugin is installed (see [`crate::set_codec`]).
+    #[error("no codec plugin is installed, so video and audio files cannot be read or written")]
+    NoCodec,
+    /// The codec plugin's process could not be started or stopped
+    /// answering.
+    #[error("the codec plugin is unavailable: {0}")]
+    CodecUnavailable(String),
+    /// The codec plugin cannot write a format, as an FFmpeg build without
+    /// one of its encoders cannot.
+    #[error("the codec plugin has no {encoder} encoder")]
+    EncoderUnavailable { encoder: String },
     #[error("media file {0} was not found")]
     NotFound(PathBuf),
     #[error("{0} has no video stream")]

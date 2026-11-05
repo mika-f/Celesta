@@ -93,16 +93,21 @@ To run from source, use Rust 1.89 or later, Node.js 26, the pnpm version in
 [`mise.toml`](mise.toml) pins the Node.js and pnpm versions CI uses.
 Prepare the **FFmpeg 8.1.x development libraries** using the
 [source-build guide](https://celesta.natsuneko.cat/en/docs/build-from-source/)
-before running Cargo. The FFmpeg executable alone is insufficient; FFmpeg 9
-and later are not supported yet.
+before running Cargo; the codec plugin (`crates/codec-ffmpeg`) and the tests
+link them. The FFmpeg executable alone is insufficient; FFmpeg 9 and later are
+not supported yet.
 
 ```sh
 git clone https://github.com/mika-f/Celesta.git celesta
 cd celesta
 pnpm install
 pnpm run build:runtime
+cargo build -p celesta-codec-ffmpeg --release
 cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx
 ```
+
+Celesta reads and writes video and audio through the codec plugin, which it
+finds beside its own executables in `target/release`.
 
 `pnpm run build:runtime` also generates the TypeScript bindings from the Rust
 types. It regenerates them only when those Rust sources change, so run it again
@@ -160,13 +165,20 @@ to share.
 
 Celesta's own source code is declared under MIT OR Apache-2.0.
 
-The official Windows and macOS binary packages additionally bundle an FFmpeg
-build with the `x264` encoder enabled, which is GPL-2.0-or-later licensed.
-Distributing that FFmpeg build makes the binary package as a whole subject to
-GPL-2.0-or-later, in addition to Celesta's own MIT/Apache-2.0 source license.
-See [`LICENSE-GPL-2.0`](LICENSE-GPL-2.0) for the license text and
-[`packaging/GPL-SOURCE-OFFER.md`](packaging/GPL-SOURCE-OFFER.md) for the
-corresponding-source offer that accompanies each release. The same FFmpeg
-build also links `libvpx` and `libopus` (BSD-3-Clause), the WebM encoders.
-Building Celesta yourself from source, or building it with an LGPL-only FFmpeg
-configuration, is not affected.
+Celesta's executables (the app, `celesta-exporter`, and `Celesta-mcp`) link
+no FFmpeg. Video and audio files are read and written by a separate program,
+the codec plugin `celesta-codec-ffmpeg`, which Celesta starts and talks to only
+over its documented plugin protocol on standard input and output. The
+executables are distributed under MIT OR Apache-2.0 alone.
+
+The official Windows and macOS packages, and the Linux container image, ship
+the codec plugin built against an FFmpeg with the `x264` encoder enabled, which
+is GPL-2.0-or-later licensed. That makes the codec plugin's program, as
+distributed, subject to GPL-2.0-or-later; it sits in its own plugin folder
+(`plugins/ffmpeg`, or `Contents/PlugIns/ffmpeg` in the macOS app) with
+[`LICENSE-GPL-2.0`](LICENSE-GPL-2.0) and the corresponding-source offer in
+[`packaging/GPL-SOURCE-OFFER.md`](packaging/GPL-SOURCE-OFFER.md). Its own
+source code is MIT OR Apache-2.0 like the rest of the repository. The same
+FFmpeg build also links `libvpx` and `libopus` (BSD-3-Clause), the WebM
+encoders. Building the codec plugin against an LGPL-only FFmpeg configuration
+avoids the GPL, at the cost of MP4 (H.264) export.

@@ -1,10 +1,12 @@
-use crate::decoder::{AudioDecoder, VideoFrameDecoder};
-use crate::error::MediaError;
-use crate::mix::{clamp_to_source_end, video_seconds};
+use crate::ffmpeg_error;
 use crate::probe::{ensure_exists, probe_path};
 use crate::sequential::{FrameRun, ffmpeg_path, timestamps_match};
-use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
+use celesta_composition::Time;
+use celesta_media::{
+    AudioBuffer, AudioDecoder, MediaError, MediaProbe, VideoFrame, VideoFrameDecoder, VideoStream,
+    video_seconds,
+};
 use ez_ffmpeg::Input;
 use ez_ffmpeg::frame_export::{Channels, SampleExtractor};
 use std::collections::HashMap;
@@ -244,7 +246,7 @@ impl AudioDecoder for FfmpegBackend {
             .sample_rate(sample_rate)
             .channels(layout)
             .collect_samples()
-            .map_err(MediaError::Ffmpeg)?;
+            .map_err(ffmpeg_error)?;
         if samples.len() % usize::from(channels) != 0 {
             return Err(MediaError::InvalidAudioSampleCount {
                 samples: samples.len(),
@@ -271,4 +273,29 @@ impl AudioDecoder for FfmpegBackend {
             samples,
         })
     }
+}
+
+/// Clamps a requested source time to just inside the source's final frame.
+/// FFmpeg's input seek only outputs frames at or after the target
+/// timestamp, so landing anywhere past the last frame's presentation time
+/// (container duration minus one nominal frame period) yields zero output;
+/// clamping there instead makes a clip whose playback outruns its file
+/// render the source's last frame. Sources without a usable probed duration
+/// or frame rate pass through untouched and keep the old error behavior.
+pub(crate) fn clamp_to_source_end(
+    source_time_seconds: f64,
+    video: &VideoStream,
+    format_duration: Option<Time>,
+) -> f64 {
+    let Some(frame_rate) = video
+        .frame_rate
+        .filter(|rate| rate.is_valid() && rate.numerator > 0)
+    else {
+        return source_time_seconds;
+    };
+    let Some(seconds) = video_seconds(video, format_duration) else {
+        return source_time_seconds;
+    };
+    let frame_step = f64::from(frame_rate.denominator) / f64::from(frame_rate.numerator);
+    source_time_seconds.min((seconds - frame_step).max(0.0))
 }

@@ -1,8 +1,12 @@
 //! Times the editor preview's per-frame cost for a standalone React entry,
 //! split into the Node round-trip and the GPU render, with and without the
-//! sequential video decoder. Run as:
+//! sequential video decoder. Frames are decoded by the codec plugin's
+//! process, as in the editor, so the times include sending them across it:
+//! the `celesta-codec-ffmpeg` built beside this example's folder. Build it
+//! first, then run:
 //!
 //! ```text
+//! cargo build --release -p celesta-codec-ffmpeg
 //! cargo run --release --example preview-bench -- <entry.tsx> [frames]
 //! ```
 
@@ -12,10 +16,26 @@ use std::time::Instant;
 
 use celesta_composition::Time;
 use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
-use celesta_media::FfmpegBackend;
+use celesta_media::{CodecProcess, MediaBackend};
 use celesta_react_bridge::ReactBridge;
 
 fn main() {
+    // Cargo puts examples in `target/<profile>/examples`, a folder below the
+    // plugin's program.
+    let profile = env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.parent()?.to_path_buf()))
+        .expect("the example's folder");
+    let codec = profile.join(format!(
+        "{}{}",
+        celesta_plugin_host::CODEC_PROGRAM,
+        env::consts::EXE_SUFFIX
+    ));
+    assert!(
+        codec.is_file(),
+        "build the codec plugin first: cargo build --release -p celesta-codec-ffmpeg"
+    );
+    celesta_media::set_codec(Some(CodecProcess::factory(codec, profile)));
     let mut args = env::args().skip(1);
     let entry = PathBuf::from(args.next().expect("usage: preview-bench <entry> [frames]"));
     let frames: i64 = args
@@ -43,9 +63,9 @@ fn main() {
     );
 
     let decoder = if sequential {
-        FfmpegBackend::new().with_sequential_video(metadata.frame_rate)
+        MediaBackend::new().with_sequential_video(metadata.frame_rate)
     } else {
-        FfmpegBackend::new()
+        MediaBackend::new()
     };
     let mut renderer = GpuRenderer::new(GpuRenderOptions::default())
         .expect("gpu renderer")

@@ -38,6 +38,26 @@ pub struct Manifest {
     /// Components of `module` the editor's Add menu offers.
     #[serde(default)]
     pub components: Vec<ComponentInfo>,
+    /// What the plugin's process does; content alone when absent.
+    #[serde(default = "content_roles")]
+    pub roles: Vec<PluginRole>,
+}
+
+/// What a plugin's process does, as its manifest and its `hello` say.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginRole {
+    /// Draws plugin layers (`celesta_plugin::ContentProvider`).
+    Content,
+    /// Reads and writes media files (`celesta_media::CodecProvider`).
+    Codec,
+    /// A role this Celesta does not know, which it leaves alone.
+    #[serde(other)]
+    Unknown,
+}
+
+fn content_roles() -> Vec<PluginRole> {
+    vec![PluginRole::Content]
 }
 
 /// A component a plugin's module exports, as the editor's Add menu offers
@@ -220,6 +240,37 @@ impl PluginEntry {
             .as_ref()
             .map(|types| self.directory.join(types))
     }
+
+    pub fn has_role(&self, role: PluginRole) -> bool {
+        self.manifest.roles.contains(&role)
+    }
+}
+
+/// The codec plugin's process to start for reading and writing media.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodecPlugin {
+    /// The plugin's id, or the program's name when it was found beside
+    /// Celesta's own.
+    pub id: String,
+    pub executable: PathBuf,
+    /// Where it runs.
+    pub directory: PathBuf,
+}
+
+/// The name of the FFmpeg codec plugin's program, which
+/// [`InstalledPlugins::codec`] also looks for beside Celesta's own.
+pub const CODEC_PROGRAM: &str = "celesta-codec-ffmpeg";
+
+/// The codec plugin's program beside `executable` (Celesta's own, links
+/// resolved), as `cargo build` and `cargo install` leave it.
+fn sibling_codec(executable: &Path) -> Option<CodecPlugin> {
+    let directory = executable.parent()?;
+    let program = directory.join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX));
+    program.is_file().then(|| CodecPlugin {
+        id: CODEC_PROGRAM.to_owned(),
+        executable: program,
+        directory: directory.to_path_buf(),
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -626,9 +677,35 @@ impl InstalledPlugins {
         }
     }
 
-    /// A host that runs these plugins for a renderer.
+    /// A host that runs these plugins' content for a renderer.
     pub fn host(&self) -> crate::PluginHost {
-        crate::PluginHost::new(self.plugins.iter().cloned())
+        crate::PluginHost::new(
+            self.plugins
+                .iter()
+                .filter(|entry| entry.has_role(PluginRole::Content))
+                .cloned(),
+        )
+    }
+
+    /// The codec to read and write media with: the first of these plugins
+    /// that is a codec with a program for this platform, else the FFmpeg
+    /// codec plugin's program beside the running one ([`CODEC_PROGRAM`]),
+    /// else none.
+    pub fn codec(&self) -> Option<CodecPlugin> {
+        self.plugins
+            .iter()
+            .filter(|entry| entry.has_role(PluginRole::Codec))
+            .find_map(|entry| {
+                Some(CodecPlugin {
+                    id: entry.manifest.id.clone(),
+                    executable: entry.executable()?,
+                    directory: entry.directory.clone(),
+                })
+            })
+            .or_else(|| {
+                let executable = std::env::current_exe().ok()?;
+                sibling_codec(&std::fs::canonicalize(&executable).unwrap_or(executable))
+            })
     }
 }
 
@@ -667,6 +744,7 @@ mod tests {
                 module: None,
                 types: None,
                 components: Vec::new(),
+                roles: content_roles(),
             },
             directory: PathBuf::from("plugin"),
             source: PluginSource::Explicit,
@@ -1232,5 +1310,82 @@ mod tests {
     fn makes_extra_paths_absolute() {
         let paths = plugin_paths(&[PathBuf::from("plugins")]);
         assert_eq!(paths[0], std::env::current_dir().unwrap().join("plugins"));
+    }
+
+    #[test]
+    fn reads_roles_and_picks_the_first_codec() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |name: &str, roles: serde_json::Value| {
+            let directory = root.path().join(name);
+            std::fs::create_dir_all(&directory).unwrap();
+            let mut manifest = serde_json::json!({
+                "id": name,
+                "version": "1.0.0",
+                "protocol": 1,
+                "executable": { std::env::consts::OS: "bin/p" },
+            });
+            if !roles.is_null() {
+                manifest["roles"] = roles;
+            }
+            std::fs::write(directory.join(MANIFEST), manifest.to_string()).unwrap();
+            directory
+        };
+        write("a-content", serde_json::Value::Null);
+        let codec = write("b-codec", serde_json::json!(["codec"]));
+        write("c-codec", serde_json::json!(["codec"]));
+        write("d-future", serde_json::json!(["content", "sound"]));
+
+        let (plugins, errors) = discover(&[root.path().to_path_buf()]);
+        assert!(errors.is_empty(), "{errors:?}");
+        let roles: Vec<_> = plugins
+            .iter()
+            .map(|entry| entry.manifest.roles.clone())
+            .collect();
+        assert_eq!(
+            roles,
+            [
+                vec![PluginRole::Content],
+                vec![PluginRole::Codec],
+                vec![PluginRole::Codec],
+                vec![PluginRole::Content, PluginRole::Unknown],
+            ]
+        );
+        let installed = InstalledPlugins {
+            plugins,
+            waiting: Vec::new(),
+        };
+        assert_eq!(
+            installed.codec(),
+            Some(CodecPlugin {
+                id: "b-codec".into(),
+                executable: codec.join("bin/p"),
+                directory: codec,
+            })
+        );
+        let content: Vec<_> = installed
+            .host()
+            .plugins()
+            .map(|entry| entry.manifest.id.clone())
+            .collect();
+        assert_eq!(content, ["a-content", "d-future"]);
+    }
+
+    #[test]
+    fn finds_the_codec_program_beside_celestas_own() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("celesta-exporter");
+        assert_eq!(sibling_codec(&executable), None);
+        let program = root
+            .path()
+            .join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&program, "").unwrap();
+        assert_eq!(
+            sibling_codec(&executable),
+            Some(CodecPlugin {
+                id: CODEC_PROGRAM.into(),
+                executable: program,
+                directory: root.path().to_path_buf(),
+            })
+        );
     }
 }

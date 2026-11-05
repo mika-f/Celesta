@@ -8,10 +8,11 @@ use crate::react::ReactVideoRequest;
 use celesta_composition::{Rational, Time, TimeError};
 use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, NoticeLevel, ReadbackFormat};
-use celesta_media::FfmpegBackend;
+use celesta_media::{
+    EncoderId, EncoderSettings, MediaBackend, MediaError, MuxRequest, PixelFormat,
+};
 use celesta_project::Project;
 use celesta_react_bridge::{ProjectFrame, ReactBridge};
-use ez_ffmpeg::{FfmpegContext, Input, Output, VideoWriter, capabilities};
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
 use std::path::Path;
@@ -274,11 +275,10 @@ impl Exporter {
     }
 
     /// Muxes the encoded, audio-less `video` with the mixed `audio` (staged as
-    /// a raw `f32le` PCM sidecar file) into `output`, stream-copying the video
-    /// and encoding the format's audio codec — the library-linked equivalent
-    /// of a second `ffmpeg -i video -f f32le -i pcm -c:v copy -c:a <codec>`
-    /// pass: AAC 192k for MP4, 24-bit PCM for MOV, and Opus 192k at 48 kHz
-    /// for WebM. A looping MP4 encodes [`loop_lead_in`] ahead of the mix.
+    /// a raw `f32le` PCM sidecar file) into `output` through the codec,
+    /// which copies the video and encodes the format's audio codec: AAC 192k
+    /// for MP4, 24-bit PCM for MOV, and Opus 192k at 48 kHz for WebM. A
+    /// looping MP4 encodes [`loop_lead_in`] ahead of the mix.
     pub(crate) fn mux_audio(
         &self,
         video: &Path,
@@ -321,53 +321,17 @@ impl Exporter {
             })?;
         ensure_not_cancelled(cancellation)?;
 
-        // No `-shortest`: the mix already spans the video. With a copied WebM
-        // video it cut the audio a frame short, and it lets the muxer finish
-        // while the audio encoder still sends, which ez-ffmpeg can report as
-        // "Muxer already finished".
-        let muxed = Output::from(ffmpeg_path(output))
-            .add_stream_map_with_copy("0:v:0")
-            .add_stream_map("1:a:0");
-        // The lead-in's timestamps go before 0, which the MP4 muxer turns
-        // into the edit list.
-        let muxed = if lead_in.is_empty() {
-            muxed
-        } else {
-            let frames = lead_in.len() / usize::from(audio.channels);
-            muxed.set_audio_filter(format!("asetpts=PTS-{frames}/SR/TB"))
-        };
-        let context = FfmpegContext::builder()
-            .input(Input::from(ffmpeg_path(video)))
-            .input(
-                Input::from(ffmpeg_path(&pcm_path))
-                    .set_format("f32le")
-                    .set_format_opt("sample_rate", audio.sample_rate.to_string())
-                    .set_format_opt("ch_layout", format!("{}c", audio.channels)),
-            )
-            .output(match self.options.video_format {
-                VideoFormat::Mp4 => muxed
-                    .set_audio_codec("aac")
-                    .set_audio_codec_opt("b", "192k")
-                    .set_format_opt("movflags", "+faststart"),
-                VideoFormat::Mov => muxed
-                    .set_audio_codec("pcm_s24le")
-                    .set_format_opt("movflags", "+faststart"),
-                // libopus takes 48, 24, 16, 12 or 8 kHz only, so a 44.1 kHz
-                // mix is resampled.
-                VideoFormat::Webm => muxed
-                    .set_audio_codec("libopus")
-                    .set_audio_codec_opt("b", "192k")
-                    .set_audio_sample_rate(48_000),
+        let result = MediaBackend::new()
+            .mux_audio(&MuxRequest {
+                video: video.to_owned(),
+                audio: pcm_path.clone(),
+                sample_rate: audio.sample_rate,
+                channels: audio.channels,
+                output: output.to_owned(),
+                container: self.options.video_format.container(),
+                lead_in_frames: lead_in.len() / usize::from(audio.channels),
             })
-            .build()
-            .map_err(|source| ExportError::Ffmpeg {
-                stage: "audio muxing",
-                source,
-            })?;
-        let result = context
-            .start()
-            .and_then(|running| running.wait())
-            .map_err(|source| ExportError::Ffmpeg {
+            .map_err(|source| ExportError::Codec {
                 stage: "audio muxing",
                 source,
             });
@@ -416,21 +380,20 @@ pub(crate) fn validate_output(
     Ok(())
 }
 
-/// Fails when the linked FFmpeg lacks an encoder `format` needs, before any
-/// frame is rendered.
+/// Fails when the codec cannot write `format` (an FFmpeg build without one
+/// of its encoders), or there is no codec, before any frame is rendered.
 pub(crate) fn ensure_encoders(format: VideoFormat) -> Result<(), ExportError> {
-    match format
-        .encoders()
-        .into_iter()
-        .find(|encoder| !capabilities::is_encoder_available(encoder))
-    {
-        Some(encoder) => Err(ExportError::EncoderUnavailable { format, encoder }),
-        None => Ok(()),
-    }
-}
-
-pub(crate) fn ffmpeg_path(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+    MediaBackend::new()
+        .check_encoder(format.container())
+        .map_err(|source| match source {
+            MediaError::EncoderUnavailable { encoder } => {
+                ExportError::EncoderUnavailable { format, encoder }
+            }
+            source => ExportError::Codec {
+                stage: "encoder check",
+                source,
+            },
+        })
 }
 
 impl Exporter {
@@ -459,7 +422,7 @@ impl Exporter {
             .map_err(ExportError::Render)?
             .with_render_quality(self.options.render_quality)
             .with_asset_root(asset_root)
-            .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate))
+            .with_video_decoder(MediaBackend::new().with_sequential_video(frame_rate))
             // Plugin content comes from the plugins' own processes.
             .with_content_provider(self.plugins().host());
         with_readback(renderer, format, color_conversion, bit_depth)
@@ -497,19 +460,18 @@ fn with_readback(
     Ok(renderer)
 }
 
-/// Opens a constant-frame-rate `VideoWriter` for pushed frames in `input`
-/// layout — the library-linked equivalent of piping `rawvideo` into
-///
-/// - `Mp4`: `ffmpeg -c:v libx264 -preset <preset> -crf <crf> -pix_fmt yuv420p -movflags +faststart`
-///   (`-preset medium -crf 18` by default), with `-pix_fmt yuv420p10le`
-///   (High 10) for 10-bit output. Input already in the output's pixel format
-///   reaches the encoder without a conversion.
-/// - `Mov`: `ffmpeg -vf <BT709_FILTER> -c:v prores_ks -profile:v 4444 -alpha_bits 16 -vendor apl0 -pix_fmt yuva444p10le`
-/// - `Webm`: `ffmpeg -vf <BT709_FILTER> -c:v libvpx-vp9 -crf 20 -b:v 0 -row-mt 1 -pix_fmt yuva420p`
-///
-/// The alpha formats take straight-alpha `rgba64le`, which libswscale
-/// converts with the BT.709 matrix in limited range (see [`BT709_FILTER`]);
-/// `encoding` applies to `Mp4` only.
+/// An encoder the codec runs for an export, fed frames as they are read
+/// back.
+pub(crate) struct VideoWriter {
+    codec: MediaBackend,
+    encoder: EncoderId,
+}
+
+/// Opens a constant-frame-rate encoder for pushed frames in `input` layout:
+/// H.264 (`encoding`'s preset, CRF, and bit depth) for `Mp4`, ProRes 4444
+/// for `Mov`, VP9 with alpha for `Webm`, each converted from RGB with the
+/// BT.709 matrix in limited range where the input is not YUV already. The
+/// alpha formats take straight-alpha 16-bit RGBA.
 pub(crate) fn open_video_writer(
     width: u32,
     height: u32,
@@ -522,58 +484,31 @@ pub(crate) fn open_video_writer(
     if format == VideoFormat::Mp4 && encoding.crf > VideoEncoding::MAX_CRF {
         return Err(ExportError::InvalidCrf(encoding.crf));
     }
-    let fps_num = i32::try_from(frame_rate.numerator).map_err(|_| ExportError::TimelineTooLong)?;
-    let fps_den =
-        i32::try_from(frame_rate.denominator).map_err(|_| ExportError::TimelineTooLong)?;
-    let output = Output::from(ffmpeg_path(output));
-    let output = match format {
-        VideoFormat::Mp4 => output
-            .set_video_codec("libx264")
-            .set_video_codec_opt("preset", encoding.preset.as_str())
-            .set_video_codec_opt("crf", encoding.crf.to_string())
-            .set_pix_fmt(encoding.bit_depth.pixel_format())
-            .set_format_opt("movflags", "+faststart"),
-        // No faststart here: this is the video-only intermediate, and `mux_audio`
-        // sets it on the final file.
-        VideoFormat::Mov => output
-            .set_video_codec("prores_ks")
-            .set_video_codec_opt("profile", "4444")
-            .set_video_codec_opt("alpha_bits", "16")
-            .set_video_codec_opt("vendor", "apl0")
-            .set_pix_fmt("yuva444p10le")
-            .set_video_filter(BT709_FILTER),
-        VideoFormat::Webm => output
-            .set_video_codec("libvpx-vp9")
-            .set_video_codec_opt("crf", "20")
-            .set_video_codec_opt("b", "0")
-            .set_video_codec_opt("row-mt", "1")
-            .set_pix_fmt("yuva420p")
-            .set_video_filter(BT709_FILTER),
+    let settings = EncoderSettings {
+        output: output.to_owned(),
+        width,
+        height,
+        frame_rate,
+        input: match input {
+            ReadbackFormat::Rgba8 => PixelFormat::Rgba8,
+            ReadbackFormat::Rgba16 | ReadbackFormat::Rgba16Straight => PixelFormat::Rgba16,
+            ReadbackFormat::Yuv420p => PixelFormat::Yuv420p,
+            ReadbackFormat::Yuv420p10 => PixelFormat::Yuv420p10,
+        },
+        container: format.container(),
+        preset: encoding.preset.as_str().to_owned(),
+        crf: encoding.crf,
+        bit_depth: encoding.bit_depth.bits(),
     };
-    VideoWriter::builder(width, height)
-        .pixel_format(match input {
-            ReadbackFormat::Rgba8 => "rgba",
-            ReadbackFormat::Rgba16 => "rgba64le",
-            ReadbackFormat::Rgba16Straight => "rgba64le",
-            ReadbackFormat::Yuv420p => "yuv420p",
-            ReadbackFormat::Yuv420p10 => "yuv420p10le",
-        })
-        .fps(fps_num, fps_den)
-        .open(output)
-        .map_err(|source| ExportError::Ffmpeg {
+    let mut codec = MediaBackend::new();
+    let encoder = codec
+        .open_encoder(&settings)
+        .map_err(|source| ExportError::Codec {
             stage: "video encoding",
             source,
-        })
+        })?;
+    Ok(VideoWriter { codec, encoder })
 }
-
-/// Converts RGB to YUV with the BT.709 matrix in limited range and tags the
-/// frames BT.709 (matrix, range, primaries and transfer), since editing
-/// software assumes BT.709 for untagged HD material. The tags go on the
-/// frames because the encoder copies its color properties from the first
-/// frame after applying its options, so `colorspace`, `color_primaries` and
-/// `color_trc` encoder options would not take effect.
-const BT709_FILTER: &str =
-    "scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709";
 
 /// The render warnings an export has already reported, so a warning that
 /// holds on every frame is reported once.
@@ -640,34 +575,38 @@ pub(crate) fn report_render_warnings(
     }
 }
 
-/// Hands the frame's pixel buffer to the encoder as is (`write_owned`), rather
-/// than having `write` copy all of it first.
+/// Writes the frame's pixel buffer to the codec plugin's process, which
+/// copies it across the process boundary once (the buffer itself is moved,
+/// not copied first).
 pub(crate) fn write_frame(
     writer: &mut VideoWriter,
     frame: celesta_gpu_renderer::GpuFrame,
 ) -> Result<(), ExportError> {
     writer
-        .write_owned(frame.into_pixels())
-        .map_err(|error| ExportError::Ffmpeg {
+        .codec
+        .encode_frame(writer.encoder, frame.into_pixels())
+        .map_err(|source| ExportError::Codec {
             stage: "video encoding",
-            source: error.into_parts().1.into(),
+            source,
         })
 }
 
-/// Finalizes an encode: `finish()` on success (writes the container trailer),
-/// `abort()` on any earlier failure (dropping the writer would also abort, but
-/// this is explicit and drains the worker).
+/// Finalizes an encode: finishes the file on success (its container
+/// trailer), aborts the encoder on any earlier failure.
 pub(crate) fn finish_encode(
-    writer: VideoWriter,
+    mut writer: VideoWriter,
     result: Result<(), ExportError>,
 ) -> Result<(), ExportError> {
     match result {
-        Ok(()) => writer.finish().map_err(|source| ExportError::Ffmpeg {
-            stage: "video encoding",
-            source,
-        }),
+        Ok(()) => writer
+            .codec
+            .finish_encoder(writer.encoder)
+            .map_err(|source| ExportError::Codec {
+                stage: "video encoding",
+                source,
+            }),
         Err(error) => {
-            writer.abort();
+            writer.codec.abort_encoder(writer.encoder);
             Err(error)
         }
     }

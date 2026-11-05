@@ -1,0 +1,23 @@
+[package]
+name = "celesta-codec-ffmpeg"
+description = "Celesta's FFmpeg codec plugin: probes, decodes, encodes, and muxes media for Celesta in a process of its own."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+celesta-composition.workspace = true
+celesta-media.workspace = true
+ez-ffmpeg.workspace = true
+# The same FFmpeg bindings ez-ffmpeg links, for reading decoded frames.
+ffmpeg-sys-next = "8.1.0"
+rayon = "1.12.0"
+
+# macOS packages bundle Homebrew dylibs; retain static linking elsewhere.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+ez-ffmpeg = { workspace = true, features = ["static"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"

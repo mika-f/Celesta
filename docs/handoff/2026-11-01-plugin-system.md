@@ -4,8 +4,9 @@ Later notes change parts of what this one describes: where plugins are
 found (`2026-11-02-plugin-search-paths.md`), project trust and plugin
 approval (`2026-11-02-plugin-trust.md`), the editor's Plugins tab
 (`2026-11-02-plugins-panel.md`), the manifest's `components`
-(`2026-11-02-plugin-add-menu.md`), and 3D scene content, notices, and the
-current `ContentProvider` (`2026-11-03-plugin-scene-content.md`).
+(`2026-11-02-plugin-add-menu.md`), 3D scene content, notices, and the
+current `ContentProvider` (`2026-11-03-plugin-scene-content.md`), and the
+manifest's `roles` with codec plugins (`2026-11-05-codec-plugin.md`).
 
 The goal: content that needs code Celesta cannot ship (a proprietary
 runtime, or anything whose license must stay apart from the GPL build of
@@ -238,12 +239,13 @@ checkout to build:
 | `skills/celesta/references/plugins.md` | The skill's page; `inspect.mjs` lists plugin layers with their assets and data. |
 
 Not done: an editor UI to list, enable, and reload plugins (the editor reads
-`CELESTA_PLUGIN_PATH` from its environment); request timeouts (a plugin that
-hangs blocks the frame); plugin signing or an allowlist; `@celesta/web` and
+`CELESTA_PLUGIN_PATH` from its environment); plugin signing or an allowlist; `@celesta/web` and
 the CPU renderer; plugins that make sound at render time (the protocol has
 frames to draw only; speech channels synthesize in `prepare()` instead); a
 published SDK (below). The samples' demos are not type-checked in CI, as
 `typecheck:examples` covers `examples/<name>` projects only.
+Request timeouts, once also not done here, came with
+`2026-11-05-codec-plugin.md` (`celesta_plugin_host::PluginChild`).
 
 ## Publishing an SDK (not done)
 
