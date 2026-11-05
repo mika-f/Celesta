@@ -128,10 +128,33 @@ try {
     $metadata = $metadataText | ConvertFrom-Json
     # The codec plugin and its crates are in the plugins workspace. Packaging
     # builds only the codec there, so that workspace's other crates may not be
-    # downloaded yet: no --offline for it.
+    # downloaded yet: no --offline for it. That workspace also holds plugins
+    # the package does not bundle (VRM), so only the codec and what its normal
+    # and build dependencies reach in the resolve graph are listed; a
+    # dependency it has only for its tests is not shipped. package-macos.py's
+    # codec_packages does the same.
     $pluginsText = & cargo metadata --manifest-path "$root/plugins/Cargo.toml" --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed for the plugins workspace' }
-    $metadata.packages = @(@($metadata.packages) + @(($pluginsText | ConvertFrom-Json).packages) | Sort-Object id -Unique)
+    $plugins = $pluginsText | ConvertFrom-Json
+    # Package ids are case-sensitive; a default hashtable's keys are not.
+    $pluginPackages = [hashtable]::new([StringComparer]::Ordinal)
+    foreach ($crate in $plugins.packages) { $pluginPackages[$crate.id] = $crate }
+    $nodes = [hashtable]::new([StringComparer]::Ordinal)
+    foreach ($node in $plugins.resolve.nodes) { $nodes[$node.id] = $node }
+    $codecIds = @($plugins.workspace_members | Where-Object { $pluginPackages[$_].name -eq 'celesta-codec-ffmpeg' })
+    if ($codecIds.Count -ne 1) { throw "The plugins workspace must have one celesta-codec-ffmpeg member, not $($codecIds.Count)" }
+    $reached = [hashtable]::new([StringComparer]::Ordinal)
+    $pending = [System.Collections.Generic.Stack[string]]::new()
+    $pending.Push($codecIds[0])
+    while ($pending.Count) {
+        $id = $pending.Pop()
+        if ($reached.ContainsKey($id)) { continue }
+        $reached[$id] = $pluginPackages[$id]
+        foreach ($dependency in $nodes[$id].deps) {
+            if (@($dependency.dep_kinds | Where-Object { $_.kind -ne 'dev' }).Count) { $pending.Push($dependency.pkg) }
+        }
+    }
+    $metadata.packages = @(@($metadata.packages) + @($reached.Values) | Sort-Object id -Unique)
     $metadata.packages | Select-Object name, version, license, repository | ConvertTo-Json -Depth 5 |
         Set-Content "$licenses/rust-packages.json"
     foreach ($crate in $metadata.packages) {

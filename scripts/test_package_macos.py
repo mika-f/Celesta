@@ -71,6 +71,40 @@ class MacPackageValidationTests(unittest.TestCase):
                 packaging.validate_dependencies(library, contents, "libavcodec.62.dylib:\n"
                     "\t@executable_path/../Frameworks/libx264.dylib (compatibility version 1.0.0, current version 1.0.0)\n")
 
+    def test_the_plugins_workspace_contributes_only_what_the_codec_ships(self):
+        def package(name):
+            return {"id": f"registry+{name}#1.0.0", "name": name, "version": "1.0.0"}
+
+        def node(name, *deps):
+            return {"id": f"registry+{name}#1.0.0", "deps": [
+                {"pkg": f"registry+{dependency}#1.0.0", "dep_kinds": [{"kind": kind, "target": None}
+                                                                        for kind in kinds]}
+                for dependency, *kinds in deps]}
+
+        names = ["celesta-codec-ffmpeg", "ez-ffmpeg", "ffmpeg-sys-next", "bindgen", "tempfile",
+                 "celesta-plugin-vrm", "gltf", "rayon"]
+        metadata = {
+            "packages": [package(name) for name in names],
+            "workspace_members": [package("celesta-codec-ffmpeg")["id"], package("celesta-plugin-vrm")["id"]],
+            "resolve": {"nodes": [
+                node("celesta-codec-ffmpeg", ("ez-ffmpeg", None), ("ffmpeg-sys-next", None),
+                     ("tempfile", "dev"), ("rayon", None, "dev")),
+                node("ez-ffmpeg", ("ffmpeg-sys-next", None)),
+                node("ffmpeg-sys-next", ("bindgen", "build")),
+                node("bindgen"), node("tempfile"), node("rayon"),
+                node("celesta-plugin-vrm", ("gltf", None), ("rayon", None)),
+                node("gltf"),
+            ]},
+        }
+        # Build dependencies stay listed; a dependency the codec has only for
+        # its tests is not shipped, and neither is another plugin's.
+        self.assertEqual(sorted(crate["name"] for crate in packaging.codec_packages(metadata)),
+                         ["bindgen", "celesta-codec-ffmpeg", "ez-ffmpeg", "ffmpeg-sys-next", "rayon"])
+
+    def test_a_plugins_workspace_without_the_codec_fails(self):
+        with self.assertRaises(RuntimeError):
+            packaging.codec_packages({"packages": [], "workspace_members": [], "resolve": {"nodes": []}})
+
     def test_a_plugin_program_is_the_one_executable_its_manifest_names(self):
         with tempfile.TemporaryDirectory() as directory:
             plugin = Path(directory)

@@ -20,6 +20,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 # Homebrew's unversioned ffmpeg formula is FFmpeg 9, which Celesta does not support yet.
 FFMPEG_FORMULA = "ffmpeg@8"
+# The plugins workspace's Cargo package of the bundled codec plugin.
+CODEC_PACKAGE = "celesta-codec-ffmpeg"
 MACHO_MAGIC = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
     b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -118,6 +120,29 @@ def validate_dependencies(binary, contents, listing):
             raise RuntimeError(f"Missing or external dependency in {binary}: {dependency}")
 
 
+def codec_packages(metadata):
+    """The plugins workspace's packages the bundled codec plugin ships.
+
+    That workspace also holds plugins the package does not bundle (VRM), so
+    only the codec and what its normal and build dependencies reach in
+    `cargo metadata`'s resolve graph are listed; a dependency it has only
+    for its tests is not shipped.
+    """
+    packages = {package["id"]: package for package in metadata["packages"]}
+    roots = [member for member in metadata["workspace_members"] if packages[member]["name"] == CODEC_PACKAGE]
+    if len(roots) != 1:
+        raise RuntimeError(f"The plugins workspace must have one {CODEC_PACKAGE} member, not {len(roots)}")
+    nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
+    reached, pending = set(), roots
+    while pending:
+        package = pending.pop()
+        if package not in reached:
+            reached.add(package)
+            pending.extend(dependency["pkg"] for dependency in nodes[package]["deps"]
+                           if any(kind["kind"] != "dev" for kind in dependency["dep_kinds"]))
+    return [packages[package] for package in sorted(reached)]
+
+
 def collect_licenses(resources, target):
     licenses = resources / "licenses"
     licenses.mkdir()
@@ -127,12 +152,12 @@ def collect_licenses(resources, target):
     flags = ("--locked", "--format-version", "1", "--filter-platform", target)
     # The codec plugin and its crates are in the plugins workspace. Packaging
     # builds only the codec there, so that workspace's other crates may not be
-    # downloaded yet: no --offline for it.
+    # downloaded yet: no --offline for it, and only the codec's are listed.
+    root = json.loads(run("cargo", "metadata", "--offline", *flags, capture=True))
+    plugins = json.loads(run("cargo", "metadata", "--manifest-path", ROOT / "plugins/Cargo.toml", *flags, capture=True))
     packages = {}
-    for metadata in (run("cargo", "metadata", "--offline", *flags, capture=True),
-                     run("cargo", "metadata", "--manifest-path", ROOT / "plugins/Cargo.toml", *flags, capture=True)):
-        for package in json.loads(metadata)["packages"]:
-            packages.setdefault(package["id"], package)
+    for package in (*root["packages"], *codec_packages(plugins)):
+        packages.setdefault(package["id"], package)
     inventory = []
     for package in packages.values():
         inventory.append({key: package.get(key) for key in ("name", "version", "license", "repository")})
