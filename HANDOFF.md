@@ -113,6 +113,7 @@ compositions: no package a composition imports depends on them, though
 | `celesta-plugin-host` | Finds plugin directories, decides which may run (the user's settings: trusted projects, allowed plugins), runs each content plugin in its own process for the renderer, and chooses the codec plugin (`InstalledPlugins::codec`). |
 | `celesta-plugin-flag` | `examples/plugins/flag`, a sample plugin program; with `beep-voice` beside it, built by `scripts/plugins/build.mjs`. |
 | `celesta-plugin-turntable` | `examples/plugins/turntable`, a sample plugin program that returns a 3D scene; built by `scripts/plugins/build.mjs`. |
+| `celesta-plugin-vrm` | `plugins/vrm`, the VRM avatar plugin's program, with `<Vrm>` in `plugins/vrm/js` (`celesta-plugin-vrm-js`). A member of the first-party plugins' workspace, `plugins/Cargo.toml`, which the root workspace excludes; built into a plugin directory by `scripts/plugins/build.mjs`. See [`docs/handoff/2026-11-03-plugin-vrm.md`](docs/handoff/2026-11-03-plugin-vrm.md). |
 | `packages/math` (`@celesta.studio/math`) | Pure, React-free math utilities for compositions. |
 | `packages/react` (`@celesta.studio/react`) | Core components, hooks, animation helpers, reconciler, and scene walker. |
 | `packages/shapes` (`@celesta.studio/shapes`) | Lines, polylines, paths, circles, ellipses, arrows, triangles, polygons, stars, pies, and hearts, plus generators for their path commands. |
@@ -133,6 +134,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts; not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
+| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mjs`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mjs` and `manifest.mjs`; not published. |
 
 Useful entry points:
 
@@ -357,6 +359,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 git diff --check
 ```
+
+The root `cargo test --workspace` leaves out the first-party plugins'
+workspace; after changing it, a plugin, or the plugin build script, run
+`cargo test --manifest-path plugins/Cargo.toml --workspace --locked`,
+`cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings`,
+`cargo fmt --check` in `plugins/`, and `pnpm --dir scripts/plugins test`.
 
 When composition/project types change, also run:
 
