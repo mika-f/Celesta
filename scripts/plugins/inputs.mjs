@@ -2,9 +2,9 @@
 // from, and which plugins a change affects. A plugin's inputs come from the
 // dependency graphs, never from a hand-kept list: its folder, the local Cargo
 // packages its lockfile reaches from its Cargo package, the workspace packages
-// pnpm lists for its js/ package, and the license files its plugin.json lists.
-// Anything the graphs cannot place is an error, so CI fails rather than
-// skipping a plugin.
+// pnpm lists for its js/ package with the repository paths turbo.json gives
+// their tasks, and the license files its plugin.json lists. Anything the
+// graphs cannot place is an error, so CI fails rather than skipping a plugin.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -94,11 +94,17 @@ export function repositoryPlugins(root) {
   // Cargo and pnpm give real paths.
   const real = realpathSync(root);
   const workspaces = cargoWorkspaces(real);
+  /** @type {TurboConfig | null | undefined} */
+  let turbo;
+  const turboConfig = () => {
+    if (turbo === undefined) turbo = readTurboConfig(real);
+    return turbo;
+  };
   const pluginsFolder = join(real, 'plugins');
   return readdirSync(pluginsFolder)
     .map((name) => join(pluginsFolder, name))
     .filter((source) => existsSync(join(source, 'plugin.json')))
-    .map((source) => pluginInputs(real, source, workspaces))
+    .map((source) => pluginInputs(real, source, workspaces, turboConfig))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
@@ -106,9 +112,10 @@ export function repositoryPlugins(root) {
  * @param {string} root The repository's real folder.
  * @param {string} source The plugin's folder.
  * @param {ReturnType<typeof cargoWorkspaces>} workspaces
+ * @param {() => TurboConfig | null} turboConfig The root turbo.json, read once.
  * @returns {PluginInputs}
  */
-function pluginInputs(root, source, workspaces) {
+function pluginInputs(root, source, workspaces, turboConfig) {
   const sourcePath = join(source, 'plugin.json');
   const sourceName = repositoryPath(root, sourcePath);
   /** @type {import('./manifest.mjs').PluginSource} */
@@ -132,7 +139,9 @@ function pluginInputs(root, source, workspaces) {
     /** @type {{ name: string }} */
     const { name } = JSON.parse(readFileSync(packageJson, 'utf8'));
     jsPackage = name;
-    inputs.push(...workspacePackages(root, name, repositoryPath(root, packageJson)));
+    const packages = workspacePackages(root, name, repositoryPath(root, packageJson));
+    inputs.push(...packages.map(({ folder }) => folder));
+    inputs.push(...turboInputs(turboConfig(), packages.map((entry) => packageTasks(root, entry)), 'turbo.json'));
   }
   for (const { from } of licenseFiles(source, plugin, sourceName)) inputs.push(repositoryPath(root, from));
 
@@ -205,14 +214,14 @@ function cargoWorkspaces(root) {
 }
 
 /**
- * The folders of the workspace package `name` and of the workspace packages
- * it depends on, devDependencies included, as pnpm lists them (which works
- * before `pnpm install`).
+ * The workspace package `name` and the workspace packages it depends on,
+ * devDependencies included, with their folders, as pnpm lists them (which
+ * works before `pnpm install`).
  *
  * @param {string} root The repository's real folder.
  * @param {string} name
  * @param {string} packageJson The package's package.json, for error messages.
- * @returns {string[]}
+ * @returns {{ name: string, folder: string }[]}
  */
 function workspacePackages(root, name, packageJson) {
   const args = ['--filter', `${name}...`, 'ls', '--depth', '-1', '--json'];
@@ -228,10 +237,131 @@ function workspacePackages(root, name, packageJson) {
   if (!Array.isArray(listed) || !listed.some((entry) => entry.name === name)) {
     throw new Error(`${packageJson}: pnpm lists no workspace package ${name}`);
   }
-  return listed.map(({ path }) => {
-    if (typeof path !== 'string') throw new Error(`pnpm ls gave a package without a path for ${name}`);
-    return repositoryPath(root, path);
+  return listed.map((entry) => {
+    if (typeof entry.path !== 'string') throw new Error(`pnpm ls gave a package without a path for ${name}`);
+    if (typeof entry.name !== 'string') throw new Error(`pnpm ls gave a package without a name for ${name}`);
+    return { name: entry.name, folder: repositoryPath(root, entry.path) };
   });
+}
+
+/**
+ * The root turbo.json's task settings that inputs.mjs reads.
+ *
+ * @typedef {object} TurboConfig
+ * @property {unknown[]} [globalDependencies]
+ * @property {Record<string, { inputs?: unknown[], [setting: string]: unknown }>} [tasks]
+ */
+
+/**
+ * The root turbo.json, or `null` without one. A turbo.jsonc is refused rather
+ * than skipped, since JSON.parse cannot read it.
+ *
+ * @param {string} root The repository's real folder.
+ * @returns {TurboConfig | null}
+ */
+function readTurboConfig(root) {
+  if (existsSync(join(root, 'turbo.jsonc'))) throw new Error('turbo.jsonc: not read; use turbo.json');
+  const path = join(root, 'turbo.json');
+  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
+}
+
+/**
+ * A workspace package's name and script names, which are the tasks turbo
+ * runs in it. A package's own turbo.json is refused: its inputs are not read.
+ *
+ * @param {string} root The repository's real folder.
+ * @param {{ name: string, folder: string }} entry
+ * @returns {{ name: string, scripts: string[] }}
+ */
+function packageTasks(root, { name, folder }) {
+  for (const config of ['turbo.json', 'turbo.jsonc']) {
+    if (existsSync(join(root, folder, config))) {
+      throw new Error(`${folder}/${config}: a package configuration, whose task inputs are not read`);
+    }
+  }
+  /** @type {{ scripts?: Record<string, string> }} */
+  const manifest = JSON.parse(readFileSync(join(root, folder, 'package.json'), 'utf8'));
+  return { name, scripts: Object.keys(manifest.scripts ?? {}) };
+}
+
+/**
+ * The repository paths turbo.json makes inputs of the tasks `packages` run:
+ * its `globalDependencies`, and the `$TURBO_ROOT$/` entries of the `inputs`
+ * of each package's scripts, under the `<script>` and `<package>#<script>`
+ * keys. A task that `dependsOn` another task of the same package runs one of
+ * its scripts, and `^` dependencies are packages in `packages` too, so
+ * `dependsOn` adds nothing. Package-relative entries stay in the package's
+ * folder, which is already an input; `$TURBO_DEFAULT$` and `!` exclusions are
+ * skipped, which can only add paths. A pattern that names no folder or file
+ * (a glob before its last part, or a path outside the repository) is an error.
+ *
+ * @param {TurboConfig | null} turbo
+ * @param {{ name: string, scripts: string[] }[]} packages
+ * @param {string} turboName turbo.json's path, for error messages.
+ * @returns {string[]} Sorted, without duplicates.
+ */
+export function turboInputs(turbo, packages, turboName) {
+  if (turbo === null) return [];
+  /** @type {Set<string>} */
+  const inputs = new Set();
+  for (const pattern of turbo.globalDependencies ?? []) {
+    if (typeof pattern === 'string' && pattern.startsWith('!')) continue;
+    inputs.add(repositoryPattern(pattern, `${turboName}: globalDependencies`));
+  }
+  const tasks = turbo.tasks ?? {};
+  for (const { name, scripts } of packages) {
+    for (const script of scripts) {
+      for (const key of [script, `${name}#${script}`]) {
+        if (!Object.hasOwn(tasks, key)) continue;
+        const where = `${turboName}: tasks[${JSON.stringify(key)}].inputs`;
+        for (const entry of tasks[key].inputs ?? []) {
+          for (const pattern of taskGlobs(entry, where)) {
+            if (pattern === '$TURBO_DEFAULT$' || pattern.startsWith('!')) continue;
+            if (pattern.startsWith('$TURBO_ROOT$/')) {
+              inputs.add(repositoryPattern(pattern.slice('$TURBO_ROOT$/'.length), where, pattern));
+            } else if (pattern.includes('$TURBO_ROOT$') || pattern.split('/').includes('..')) {
+              throw new Error(`${where} has ${pattern}, which names no repository folder or file`);
+            }
+          }
+        }
+      }
+    }
+  }
+  return [...inputs].sort();
+}
+
+/**
+ * The globs of one `inputs` entry: a string, or a deferred-hashing object
+ * with `globs`.
+ *
+ * @param {unknown} entry
+ * @param {string} where
+ * @returns {string[]}
+ */
+function taskGlobs(entry, where) {
+  if (typeof entry === 'string') return [entry];
+  if (typeof entry === 'object' && entry !== null && 'globs' in entry && Array.isArray(entry.globs)) {
+    if (entry.globs.every((glob) => typeof glob === 'string')) return entry.globs;
+  }
+  throw new Error(`${where} has ${JSON.stringify(entry)}, which is neither a glob nor an entry with globs`);
+}
+
+/**
+ * A repository-relative glob as an input: a file, or a folder written
+ * `<folder>/**`.
+ *
+ * @param {unknown} glob
+ * @param {string} where
+ * @param {unknown} [pattern] The glob as written, for error messages.
+ * @returns {string}
+ */
+function repositoryPattern(glob, where, pattern = glob) {
+  const path = typeof glob === 'string' && glob.endsWith('/**') ? glob.slice(0, -'/**'.length) : glob;
+  const parts = typeof path === 'string' ? path.split('/') : [''];
+  if (parts.some((part) => part === '' || part === '.' || part === '..' || /[*?[\]{}!]/.test(part))) {
+    throw new Error(`${where} has ${String(pattern)}, which names no repository folder or file`);
+  }
+  return parts.join('/');
 }
 
 /**

@@ -2,7 +2,7 @@
   "name": "celesta-plugin-scripts",
   "version": "0.1.0",
   "private": true,
-  "description": "The shared plugin build script (scripts/plugins/build.mjs) and its helpers: a plugin's platform from rustc, its Cargo workspace from cargo metadata, its celesta-plugin.json, and its license files; the version bump script (bump-version.mjs) with its helper version.mjs; and the list of the plugins a change affects (affected.mjs), from each plugin's inputs in the Cargo and pnpm dependency graphs (inputs.mjs, lockfile.mjs).",
+  "description": "The shared plugin build script (scripts/plugins/build.mjs) and its helpers: a plugin's platform from rustc, its Cargo workspace from cargo metadata, its celesta-plugin.json, and its license files; the version bump script (bump-version.mjs) with its helper version.mjs; the list of the plugins a change affects (affected.mjs), from each plugin's inputs in the Cargo and pnpm dependency graphs and turbo.json (inputs.mjs, lockfile.mjs); and the skipped tests in a cargo test log (libtest.mjs), for scripts/report-skipped-tests.mjs.",
   "license": "MIT OR Apache-2.0",
   "type": "module",
   "scripts": {

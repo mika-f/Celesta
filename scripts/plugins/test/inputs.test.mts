@@ -15,6 +15,7 @@ import {
   repositoryPath,
   repositoryPlugins,
   SHARED_INPUTS,
+  turboInputs,
 } from '../inputs.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -165,6 +166,64 @@ describe('githubOutputs', () => {
   });
 });
 
+describe('turboInputs', () => {
+  const lib = { name: 'lib', scripts: ['codegen', 'build'] };
+
+  it("gives the repository paths of the tasks a package's scripts run", () => {
+    const turbo = {
+      tasks: {
+        build: { dependsOn: ['^build'], outputs: ['dist/**'] },
+        codegen: {
+          inputs: ['$TURBO_ROOT$/Cargo.lock', '$TURBO_ROOT$/crates/project/**', 'src/**', '!src/generated/**'],
+        },
+        'lib#build': {
+          inputs: ['$TURBO_DEFAULT$', '!$TURBO_ROOT$/crates/project/README.md', '$TURBO_ROOT$/gen/**'],
+        },
+        'other#build': { inputs: ['$TURBO_ROOT$/other/**'] },
+        lint: { inputs: ['$TURBO_ROOT$/lint/**'] },
+      },
+    };
+    expect(turboInputs(turbo, [lib], 'turbo.json')).toEqual(['Cargo.lock', 'crates/project', 'gen']);
+  });
+
+  it('reads the globs of a deferred-hashing entry', () => {
+    const turbo = { tasks: { codegen: { inputs: [{ mode: 'jit', globs: ['$TURBO_ROOT$/schema/**'] }] } } };
+    expect(turboInputs(turbo, [lib], 'turbo.json')).toEqual(['schema']);
+  });
+
+  it('gives the global dependencies, which every task hashes', () => {
+    const turbo = { globalDependencies: ['tsconfig.base.json', 'config/**'], tasks: {} };
+    expect(turboInputs(turbo, [{ name: 'bare', scripts: [] }], 'turbo.json')).toEqual(['config', 'tsconfig.base.json']);
+  });
+
+  it('gives nothing without a turbo.json', () => {
+    expect(turboInputs(null, [lib], 'turbo.json')).toEqual([]);
+  });
+
+  it.each([
+    ['$TURBO_ROOT$/crates/*/src/**', 'a glob before its last part'],
+    ['$TURBO_ROOT$/crates/x/**/*.rs', 'a glob after **'],
+    ['$TURBO_ROOT$/**', 'the whole repository'],
+    ['$TURBO_ROOT$/*.toml', 'a glob at the root'],
+    ['$TURBO_ROOT$/../outside/**', 'a path outside the repository'],
+    ['$TURBO_ROOT$/crates/x/', 'a trailing /'],
+    ['src/$TURBO_ROOT$/x', '$TURBO_ROOT$ not at the start'],
+    ['../../crates/x/**', 'a package path outside the package'],
+  ])('refuses %s (%s)', (pattern) => {
+    const turbo = { tasks: { codegen: { inputs: [pattern] } } };
+    expect(() => turboInputs(turbo, [lib], 'turbo.json')).toThrow(
+      `turbo.json: tasks["codegen"].inputs has ${pattern}, which names no repository folder or file`,
+    );
+  });
+
+  it('refuses an input it cannot read', () => {
+    const turbo = { tasks: { codegen: { inputs: [{ mode: 'jit' }] } } };
+    expect(() => turboInputs(turbo, [lib], 'turbo.json')).toThrow(
+      'turbo.json: tasks["codegen"].inputs has {"mode":"jit"}, which is neither a glob nor an entry with globs',
+    );
+  });
+});
+
 describe('repositoryPlugins in a scratch tree', () => {
   let tree: string;
 
@@ -254,6 +313,67 @@ describe('repositoryPlugins in a scratch tree', () => {
   }, 60_000);
 });
 
+describe('repositoryPlugins in a scratch pnpm workspace', () => {
+  let tree: string;
+
+  function file(path: string, text: string) {
+    mkdirSync(dirname(join(tree, path)), { recursive: true });
+    writeFileSync(join(tree, path), text);
+  }
+
+  beforeEach(() => {
+    // Inside the repository, where mise finds the pnpm that mise.toml pins.
+    const scratch = join(root, 'scripts', 'plugins', 'node_modules', '.cache');
+    mkdirSync(scratch, { recursive: true });
+    tree = realpathSync(mkdtempSync(join(scratch, 'celesta-inputs-')));
+    file('pnpm-workspace.yaml', 'packages:\n  - packages/*\n  - plugins/*/js\n');
+    file('package.json', JSON.stringify({ name: 'root', private: true }));
+    file('plugins/a/plugin.json', JSON.stringify({ id: 'a', version: '0.1.0', module: 'js/index.ts' }));
+    file('plugins/a/js/package.json', JSON.stringify({ name: 'a-js', devDependencies: { lib: 'workspace:*' } }));
+    file('packages/lib/package.json', JSON.stringify({ name: 'lib', scripts: { codegen: 'x', build: 'y' } }));
+    file('packages/other/package.json', JSON.stringify({ name: 'other', scripts: { build: 'y' } }));
+    file(
+      'turbo.json',
+      JSON.stringify({
+        tasks: {
+          codegen: { inputs: ['$TURBO_ROOT$/Cargo.lock', '$TURBO_ROOT$/crates/project/**'] },
+          'lib#build': { dependsOn: ['codegen'], inputs: ['$TURBO_DEFAULT$', '$TURBO_ROOT$/gen/**'] },
+          'other#build': { inputs: ['$TURBO_ROOT$/other/**'] },
+        },
+      }),
+    );
+  });
+
+  afterEach(() => {
+    rmSync(tree, { recursive: true, force: true });
+  });
+
+  it("adds the turbo.json root inputs of the tasks the plugin's packages run", () => {
+    expect(repositoryPlugins(tree)).toEqual([
+      {
+        id: 'a',
+        directory: 'plugins/a',
+        workspace: null,
+        cargoPackage: null,
+        jsPackage: 'a-js',
+        inputs: ['Cargo.lock', 'crates/project', 'gen', 'packages/lib', 'plugins/a', 'plugins/a/js'],
+      },
+    ]);
+  }, 60_000);
+
+  it("refuses a package's own turbo.json, whose inputs it does not read", () => {
+    file('packages/lib/turbo.json', JSON.stringify({ extends: ['//'], tasks: {} }));
+    expect(() => repositoryPlugins(tree)).toThrow(
+      'packages/lib/turbo.json: a package configuration, whose task inputs are not read',
+    );
+  }, 60_000);
+
+  it('refuses a turbo.jsonc, which it does not read', () => {
+    file('turbo.jsonc', '{}');
+    expect(() => repositoryPlugins(tree)).toThrow('turbo.jsonc: not read; use turbo.json');
+  }, 60_000);
+});
+
 describe("the repository's plugins", () => {
   it('are found with their inputs', () => {
     const plugins = repositoryPlugins(root);
@@ -273,6 +393,8 @@ describe("the repository's plugins", () => {
         'crates/composition',
         'crates/gpu-renderer',
         'crates/plugin-host',
+        // From turbo.json: the codegen that @celesta.studio/react runs.
+        'crates/project',
         'packages/cli',
         'packages/react',
         'packages/character',
