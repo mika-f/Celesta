@@ -112,6 +112,12 @@ jobs:
           # request on every system.
           pnpm --dir scripts/plugins test
 
+      # The macOS packaging script's own checks, beside the scripts' tests.
+      # They mock no Apple tool, so they run anywhere; Linux runs them once.
+      - name: Test the macOS packaging checks
+        if: runner.os == 'Linux'
+        run: python3 scripts/test_package_macos.py
+
       # Type checks have no timeouts, so they run beside the Rust build and
       # use the cores it leaves idle while it links.
       - id: typecheck
@@ -278,15 +284,17 @@ jobs:
       # nothing affected, has none to wait for, and `wait` does not take `if`.
       - wait-all:
 
-      # The root workspace's target/ holds the codegen build:runtime runs.
+      # The plugins workspace's target/ only. The root workspace's codegen,
+      # which build:runtime runs for a plugin with a JS package, compiles
+      # cold here: caching the root target/ again beside the Test job's
+      # copy, on three systems, crowds the repository's cache quota, and the
+      # Test job keeps the root cache.
       # No key: the three jobs share the job id, and rust-cache's key hashes
       # rustc -vV, whose host triple differs per system.
       - uses: Swatinem/rust-cache@v2.9.3
         if: steps.affected.outputs.any == 'true'
         with:
-          workspaces: |
-            plugins -> target
-            . -> target
+          workspaces: plugins -> target
           env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
