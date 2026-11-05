@@ -104,6 +104,84 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
 - `plugins/vrm/README.md`, `HANDOFF.md`, and
   `docs/handoff/2026-11-03-plugin-vrm.md` say where the plugin is built from.
 
+## Layer 1: what was done
+
+- **Workspace.** `plugins/Cargo.toml` is a virtual workspace
+  (`resolver = "3"`, `members = ["vrm"]`); `plugins/vrm/Cargo.lock` moved to
+  `plugins/Cargo.lock`, and the build goes to `plugins/target`. The root
+  `Cargo.toml` excludes `plugins`, and `.gitignore` ignores `/plugins/target`
+  and `/plugins/dist` (`/plugins/vrm/assets` stays).
+- **Build script.** `scripts/plugins/` is a private pnpm package
+  (`celesta-plugin-scripts`) with `platform.mjs` (a platform's
+  `<os>-<arch>` from `rustc --print cfg`'s `target_os` and `target_arch`,
+  for the host or a `--target`, which closes mika-f/celesta#692),
+  `manifest.mjs` (the manifest from `plugin.json` and what the build made),
+  and `build.mjs`. Vitest tests cover both helpers; one runs the real
+  `rustc`.
+  `node scripts/plugins/build.mjs <plugin directory>... [--out <dir>]
+  [--target <triple>] [--skip-js]` replaces `plugins/vrm/build.mjs` and
+  `examples/plugins/build.mjs`, which are deleted. Each directory resolves
+  against the current directory, and its output goes by default to the
+  `dist/` folder beside it: `plugins/vrm` to `plugins/dist/vrm`,
+  `examples/plugins/flag` to `examples/plugins/dist/flag`. There is no
+  default list of plugins; the samples are built by naming all three.
+- **Versions.** A plugin with a `cargoPackage` takes its manifest version
+  from that Cargo package, and its `plugin.json` must not have one (vrm,
+  flag, and turntable lost theirs). beep-voice, with no program, keeps its
+  `version`.
+- **CI.** The `vrm-plugin` job (still `VRM plugin`) no longer sets up
+  FFmpeg: neither `plugins/Cargo.lock` nor the codegen `build:runtime` runs
+  has it. Its rust-cache workspaces are `plugins -> target` and
+  `. -> target`, without the FFmpeg cache key. It runs
+  `pnpm --dir scripts/plugins test` after the component test, then
+  `cargo fmt --manifest-path plugins/Cargo.toml --check`,
+  `cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings`,
+  `cargo check --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --locked --target x86_64-pc-windows-msvc --lib --bins`,
+  `env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/Cargo.toml --workspace --locked`,
+  and `node scripts/plugins/build.mjs plugins/vrm`. The design's
+  `-p celesta-plugin-vrm` became `--workspace` for clippy and the tests,
+  so a new member is checked without editing the job.
+- **Formatting without `--all`.** The plan's
+  `cargo fmt --manifest-path plugins/Cargo.toml --all --check` also checks
+  the root crates the plugins depend on by path (the renderer, the plugin
+  host, and what they pull in), which root CI does not format-check, and
+  it fails on their existing formatting (`crates/editor`, `crates/mcp`,
+  `crates/react-bridge`, `crates/source-edit`). On the virtual manifest,
+  `cargo fmt --check` without `--all` checks every workspace member and
+  nothing else; `cargo fmt -v` lists only `plugins/vrm`'s files today. With
+  one member, the all-members behaviour is not seen directly yet; the
+  layer that adds the codec should see its files in `cargo fmt -v`.
+- **Docs.** `plugins/vrm/README.md`, `examples/plugins/README.md`, the flag
+  and turntable READMEs, the four demos' usage comments, the user guide's
+  plugins page (en and ja), the Celesta skill's `plugins.md`, `HANDOFF.md`'s
+  flag and turntable rows, and `2026-11-03-plugin-vrm.md`'s build, file
+  table, and checks give the new commands and paths. `plugins/vrm/js`'s
+  `package.json` description and `tsconfig.json` comment name the new
+  script.
+- **Stale references left.** `git grep -n -E "plugins/vrm/build\.mjs|examples/plugins/build\.mjs|plugins/vrm/dist|plugins/vrm/Cargo\.lock|manifest-path plugins/vrm"`
+  still matches dated plans under `docs/superpowers/plans/` (45 lines in
+  six plans), earlier handoff notes (`2026-11-01-plugin-system.md`,
+  `2026-11-02-plugin-add-menu.md`, `2026-11-03-plugin-vrm-motion.md`,
+  `2026-11-05-codec-plugin.md`, one line each), this note's Layer 1
+  section, and the dated design
+  `docs/superpowers/specs/2026-11-03-plugin-3d-content-vrm-design.md`
+  (one line). They record what was true when they were written.
+
+### Checks (macOS, Apple Silicon, Metal)
+
+- `cargo fmt --manifest-path plugins/Cargo.toml --check`: clean.
+- `cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings`:
+  no warnings.
+- `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`:
+  374 passed, 0 failed (309 unit, 55 `mtoon`, 2 `process`, 2 `render`, 6
+  `samples`). `CELESTA_VRM_SAMPLES_DIR` was unset, so the 6 `samples` tests
+  passed as skipped. The GPU tests ran on Metal: `mtoon`, `render`, and
+  `samples` also pass with `CELESTA_REQUIRE_GPU=1`.
+- `pnpm --filter celesta-plugin-vrm-js test`: 17 passed (1 file).
+- `pnpm --dir scripts/plugins test`: 17 passed (2 files).
+- `cargo metadata --format-version 1 --locked --no-deps` at the root:
+  succeeds.
+
 ## Layer 2: a lossless test codec in the core
 
 - A test codec implements `celesta_media::CodecProvider` in pure Rust and
