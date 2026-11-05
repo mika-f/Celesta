@@ -38,7 +38,8 @@ Files ported from UniVRM carry its MIT notice and name their source.
   pnpm workspace package (`celesta-plugin-vrm-js`, private) for its tests.
 - `node scripts/plugins/build.mjs plugins/vrm`, the repository's plugin
   build script, builds what Celesta loads into `plugins/dist/vrm`:
-  `celesta-plugin.json` (its version the Cargo package's), the release
+  `celesta-plugin.json` (its version `plugin.json`'s, which must equal the
+  Cargo package's), the release
   program in `bin/<os>-<arch>/`, and `js/index.js` with `js/index.d.ts`
   (the module bundled with `react` and `@celesta/*` external, its
   declarations checked against the runtime's project types). It runs Cargo

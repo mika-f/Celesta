@@ -134,7 +134,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts; not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
-| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mjs`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mjs` and `manifest.mjs`; not published. |
+| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mjs`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mjs`, `cargo.mjs`, and `manifest.mjs`; not published. |
 
 Useful entry points:
 

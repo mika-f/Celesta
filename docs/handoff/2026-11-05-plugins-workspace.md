@@ -119,8 +119,11 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   `<os>-<arch>` from `rustc --print cfg`'s `target_os` and `target_arch`,
   for the host or a `--target`, which closes mika-f/celesta#692),
   `manifest.mjs` (the manifest from `plugin.json` and what the build made),
-  and `build.mjs`. Vitest tests cover both helpers; one runs the real
-  `rustc`.
+  `cargo.mjs` (`cargo metadata --no-deps`: the target directory and the
+  members' versions), and `build.mjs`. Vitest tests cover `platform.mjs`
+  and `manifest.mjs`, one of them running the real `rustc`, and
+  `repository.test.mts` checks the repository's plugins' versions through
+  `cargo.mjs` (below).
   `node scripts/plugins/build.mjs <plugin directory>... [--out <dir>]
   [--target <triple>] [--skip-js]` replaces `plugins/vrm/build.mjs` and
   `examples/plugins/build.mjs`, which are deleted. Each directory resolves
@@ -128,14 +131,20 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   `dist/` folder beside it: `plugins/vrm` to `plugins/dist/vrm`,
   `examples/plugins/flag` to `examples/plugins/dist/flag`. There is no
   default list of plugins; the samples are built by naming all three.
-- **Versions.** A plugin with a `cargoPackage` takes its manifest version
-  from that Cargo package, and its `plugin.json` must not have one (vrm,
-  flag, and turntable lost theirs). beep-voice, with no program, keeps its
-  `version`. The root workspace's plugin-host test
-  `the_repositorys_plugins_pass_the_manifest_checks`, which makes each
-  repository `plugin.json` into a manifest, follows the same rule: with a
-  `cargoPackage` it asserts there is no `version` and reads the
-  `[package]` `version` of the `Cargo.toml` beside the `plugin.json`.
+- **Versions.** Every `plugin.json` gives its `version`, which the
+  manifest takes. A plugin with a `cargoPackage` gives the same version in
+  that Cargo package; the two are bumped together (by tooling that updates
+  both), and the check catches a miss. The build script reads the
+  package's version with `cargo metadata` and refuses a plugin whose
+  versions differ (`<plugin.json>: version A differs from the Cargo package
+  P's B`) before the release build, and a `plugin.json` without a
+  `version` before anything is built. `scripts/plugins/test/repository.test.mts`
+  checks every `plugins/*/plugin.json` and `examples/plugins/*/plugin.json`
+  with a `cargoPackage` the same way, so a miss fails the tests before a
+  build. The root plugin-host test
+  `the_repositorys_plugins_pass_the_manifest_checks` writes each
+  `plugin.json`'s version into a manifest, so it relies on every
+  `plugin.json` keeping one.
 - **CI.** The `vrm-plugin` job (still `VRM plugin`) no longer sets up
   FFmpeg: neither `plugins/Cargo.lock` nor the codegen `build:runtime` runs
   has it. Its rust-cache workspaces are `plugins -> target` and
@@ -201,14 +210,19 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   passed as skipped. The GPU tests ran on Metal: `mtoon`, `render`, and
   `samples` also pass with `CELESTA_REQUIRE_GPU=1`.
 - `pnpm --filter celesta-plugin-vrm-js test`: 17 passed (1 file).
-- `pnpm --dir scripts/plugins test`: 17 passed (2 files).
+- `pnpm --dir scripts/plugins test`: 23 passed (3 files). With flag's
+  `plugin.json` version changed to 0.1.1 by hand, `repository.test.mts`
+  failed for flag (expected 0.1.0, received 0.1.1), and
+  `node scripts/plugins/build.mjs examples/plugins/flag` stopped with
+  "version 0.1.1 differs from the Cargo package celesta-plugin-flag's
+  0.1.0" before building; the version was then put back.
 - `cargo metadata --format-version 1 --locked --no-deps` at the root:
   succeeds.
 - At the root, `cargo test -p celesta-plugin-host --lib --locked
-  the_repositorys_plugins_pass_the_manifest_checks`: failed before the test
-  took versions from the Cargo packages (`discover` refused vrm, flag, and
-  turntable: "invalid type: null, expected a string"), 1 passed after.
-  `cargo test -p celesta-plugin-host --locked`: 53 passed, 0 failed.
+  the_repositorys_plugins_pass_the_manifest_checks`: 1 passed (it fails,
+  "invalid type: null, expected a string", if a `plugin.json` has no
+  `version`). `cargo test -p celesta-plugin-host --locked`: 53 passed,
+  0 failed.
 - `node scripts/plugins/build.mjs plugins/vrm`: writes `plugins/dist/vrm`
   whose manifest has version 0.1.0 and an `executable` for this machine
   only (`macos-aarch64`), with `js/index.js` and `js/index.d.ts`.
@@ -289,8 +303,10 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   makes its plugin directory.
 - **One source of the plugin folder.** *(Builder-check call.)* The shared
   build script makes the folder that ships, for every plugin:
-  - It takes the manifest's `version` from the plugin's Cargo package
-    (`cargoPackage`) instead of `plugin.json`, so the two cannot drift.
+  - `plugin.json` and the plugin's Cargo package (`cargoPackage`) carry
+    the same version, bumped together, and the script refuses a plugin
+    whose versions differ (layer 1 does this). The codec's `plugin.json`
+    gives Celesta's version, as its Cargo package does.
   - It copies a plugin's `licenses/` folder when there is one. The codec
     keeps its GPL text and source offer there.
   - `scripts/stage-codec-plugin.mjs` is retired, and packaging calls the

@@ -40,10 +40,10 @@ desktop app, add `dist/` with **Add Folder…** in its Plugins tab (or copy a
 plugin's folder into your plugin folder) and allow them when it asks, or
 with **Allow** in the Plugins tab.
 
-Each sample's `plugin.json` gives its id and module source. flag's and
-turntable's also name the Cargo package that builds the program, whose
-version becomes the plugin's; beep-voice, which has no program, gives its
-version itself. flag's also lists the `components` the app's Add menu
+Each sample's `plugin.json` gives its id, version, and module source.
+flag's and turntable's also name the Cargo package that builds the program,
+whose version must be the same: bump both together, since the build refuses
+a plugin whose versions differ. flag's also lists the `components` the app's Add menu
 offers, which the build copies into the manifest.
 
 ## Moving a sample out of this repository

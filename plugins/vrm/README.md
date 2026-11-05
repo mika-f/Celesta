@@ -49,7 +49,9 @@ GPU tests return early; `CELESTA_REQUIRE_GPU=1` makes them fail instead.
 The repository's plugin build script, `scripts/plugins/build.mjs`, builds
 what Celesta loads: the manifest, the program, and the module entries
 import as `@celesta-plugin/vrm` (`js/src/index.ts`, the `<Vrm>` component),
-with its declarations. The manifest's version is the Cargo package's.
+with its declarations. The manifest's version is `plugin.json`'s, which
+must be the Cargo package's: bump both together, or the build refuses
+the plugin.
 
 ```sh
 pnpm install && pnpm run build:runtime          # once, at the repository root
