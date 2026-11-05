@@ -99,8 +99,9 @@ impl VideoFormat {
         !matches!(self, Self::Mp4)
     }
 
-    /// The container the codec writes this format as.
-    pub(crate) const fn container(self) -> Container {
+    /// The container the codec writes this format as, whose encoders a codec
+    /// must have for this format to export.
+    pub const fn container(self) -> Container {
         match self {
             Self::Mp4 => Container::Mp4,
             Self::Mov => Container::Mov,

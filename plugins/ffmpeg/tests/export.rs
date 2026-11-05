@@ -13,7 +13,7 @@ use celesta_exporter::{
     VideoFormat,
 };
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{AudioDecoder, CodecProvider, Container, VideoFrameDecoder, measure_loudness};
+use celesta_media::{AudioDecoder, CodecProvider, VideoFrameDecoder, measure_loudness};
 use celesta_project::{
     Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
 };
@@ -68,10 +68,10 @@ fn minimal_project() -> Project {
 #[test]
 fn the_ffmpeg_codec_has_every_format_encoder() {
     let mut codec = FfmpegCodec::new();
-    for container in [Container::Mp4, Container::Mov, Container::Webm] {
+    for &format in VideoFormat::VARIANTS {
         codec
-            .check_encoder(container)
-            .unwrap_or_else(|error| panic!("{container:?}: {error}"));
+            .check_encoder(format.container())
+            .unwrap_or_else(|error| panic!("{format}: {error}"));
     }
 }
 
