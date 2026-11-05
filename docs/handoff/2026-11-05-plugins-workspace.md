@@ -561,7 +561,8 @@ its Decisions give the reasons for the three deviations below.
     `@executable_path/../../Frameworks/` from the program, and
     `package-macos.py` reads the program's folder from the manifest; on
     Windows the MSVC runtime DLLs go beside the program.
-  - (c) `packaging/GPL-SOURCE-OFFER.md` names `LICENSE-GPL-2.0`,
+  - (c) The spec says the plugin folder's "source offer [is] unchanged".
+    Instead, `packaging/GPL-SOURCE-OFFER.md` names `LICENSE-GPL-2.0`,
     `LICENSE-MIT`, and `LICENSE-APACHE` as code spans instead of
     `../LICENSE-*` links, so the same bytes read right in `packaging/`,
     the app's `licenses/`, and the plugin's `licenses/`; the build script
@@ -632,8 +633,10 @@ its Decisions give the reasons for the three deviations below.
   `export.md`, `plugins.md`, `verify.md`, and `setup.md`, the packaging
   READMEs, `2026-11-04-crates-io-publish.md` (the codec is published from
   the plugins workspace after the core crates; 17 root crates are
-  publishable), the `docs/performance/` reproductions (the audio and export
-  benches build the codec plugin; the others drop the FFmpeg setup), and
+  publishable), the `docs/performance/` reproductions (every one that decodes
+  media or writes video builds the codec plugin and sets
+  `CELESTA_PLUGIN_PATH`; the benches that link no codec drop the FFmpeg
+  setup), and
   the `.cargo/config.toml` comment.
 - **The branch.** The plan names the branch `claude/codec-in-plugins`; it
   is `claude/codec-plugin-move`.
@@ -701,10 +704,11 @@ built.
   where VRM's tests and dev-dependencies run for the first time and
   rust-cache starts empty. `cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg`,
   which the user guide keeps, now finds the crate in a workspace the root
-  excludes; it was not run. The root `cargo fmt --check` reports existing
-  formatting in `crates/editor`, `crates/mcp`, `crates/react-bridge`, and
-  `crates/source-edit`, which root CI does not check. The full suites are
-  left to CI.
+  excludes; it was not run. At the root, `cargo fmt --all --check -- -l`
+  lists seven files with existing formatting, none of them changed by this
+  layer (in `crates/editor`, `crates/mcp`, `crates/react-bridge`, and
+  `crates/source-edit`); root CI runs no format check. The full suites
+  are left to CI.
 
 ## Layer 4: plugin CI for affected plugins
 
