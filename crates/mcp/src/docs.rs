@@ -52,7 +52,10 @@ pub static TOPICS: &[Topic] = &[
         "subtitles",
         "SRT/WebVTT subtitle files: reading them into cues, Subtitles, writing them on export"
     ),
-    reference!("code", "Syntax-highlighted and typed code (@celesta.studio/code)"),
+    reference!(
+        "code",
+        "Syntax-highlighted and typed code (@celesta.studio/code)"
+    ),
     reference!(
         "helpers",
         "The API to use before writing a helper: clamp, eased progress, random, timecodes, text widths, cues"
