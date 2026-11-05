@@ -1,14 +1,14 @@
 // A plugin directory's manifest (celesta-plugin.json), from the plugin's
-// plugin.json and what the build made. A plugin with a process is versioned by
-// its Cargo package, so plugin.json does not repeat (and drift from) that
-// version; a plugin without one says its version in plugin.json.
+// plugin.json and what the build made. plugin.json gives the version. A
+// plugin with a process gives the same version in its Cargo package; the two
+// are bumped together, and a plugin whose versions differ is refused.
 
 /**
  * plugin.json: what a plugin's source has.
  *
  * @typedef {object} PluginSource
  * @property {string} id
- * @property {string} [version] Only for a plugin without `cargoPackage`.
+ * @property {string} [version] Required; with `cargoPackage`, that package's version.
  * @property {string} [cargoPackage] The Cargo package, and binary, of the plugin's process.
  * @property {string} module The component module's entry, relative to the plugin's folder.
  * @property {object[]} [components]
@@ -57,23 +57,25 @@ export function pluginManifest(source, { cargoVersion, executable }, sourcePath)
 }
 
 /**
- * @param {PluginSource} source
+ * plugin.json's version, once it is checked: it must be there, and with a
+ * `cargoPackage` it must be `cargoVersion`, that package's version.
+ *
+ * @param {Pick<PluginSource, 'version' | 'cargoPackage'>} source
  * @param {string | undefined} cargoVersion
  * @param {string} sourcePath
  * @returns {string}
  */
-function pluginVersion({ version, cargoPackage }, cargoVersion, sourcePath) {
+export function pluginVersion({ version, cargoPackage }, cargoVersion, sourcePath) {
+  if (version === undefined) {
+    throw new Error(`${sourcePath}: version is required`);
+  }
   if (cargoPackage !== undefined) {
-    if (version !== undefined) {
-      throw new Error(`${sourcePath}: version comes from the Cargo package ${cargoPackage}; remove it`);
-    }
     if (cargoVersion === undefined) {
       throw new Error(`${sourcePath}: Cargo gave no version for the package ${cargoPackage}`);
     }
-    return cargoVersion;
-  }
-  if (version === undefined) {
-    throw new Error(`${sourcePath}: version is required for a plugin without a cargoPackage`);
+    if (cargoVersion !== version) {
+      throw new Error(`${sourcePath}: version ${version} differs from the Cargo package ${cargoPackage}'s ${cargoVersion}`);
+    }
   }
   return version;
 }

@@ -251,7 +251,8 @@ jobs:
       - name: Test the component
         run: pnpm --filter celesta-plugin-vrm-js test
 
-      # The build script's own tests; one runs rustc, installed above.
+      # The build script's own tests; they run rustc and cargo metadata,
+      # installed above, the latter to check plugin.json versions.
       - name: Test the build script
         run: pnpm --dir scripts/plugins test
 

@@ -1,7 +1,9 @@
 // Builds plugins into plugin directories Celesta loads: for each, its manifest
 // (celesta-plugin.json), its process when it has one, the component module
 // entries import as `@celesta-plugin/<id>`, and that module's declarations.
-// Each plugin's plugin.json says what it has.
+// Each plugin's plugin.json says what it has, its version included. A plugin
+// with a process gives the same version in its Cargo package, and one whose
+// versions differ is refused before anything is built.
 //
 //   node scripts/plugins/build.mjs <plugin directory>...
 //                                  [--out <dir>] [--target <triple>] [--skip-js]
@@ -25,7 +27,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { pluginManifest } from './manifest.mjs';
+import { cargoMetadata } from './cargo.mjs';
+import { pluginManifest, pluginVersion } from './manifest.mjs';
 import { rustPlatform } from './platform.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -74,46 +77,43 @@ if (!values['skip-js'] && !existsSync(join(projectTypes, 'tsconfig.json'))) {
 const fromRuntime = createRequire(join(runtime, 'package.json'));
 
 /**
+ * @template T
+ * @param {() => T} step
+ * @returns {T}
+ */
+function orFail(step) {
+  try {
+    return step();
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
  * The plugin's process: built with Cargo in the workspace the plugin's
- * Cargo.toml belongs to and copied under bin/<os>-<arch>/, with the version of
- * its package. Cargo runs in the plugin's folder, so it reads the same
- * configuration (`.cargo/config.toml`) wherever the script is started, and
- * says itself where it builds (`CARGO_TARGET_DIR` or `build.target-dir`
- * included).
+ * Cargo.toml belongs to and copied under bin/<os>-<arch>/. Cargo runs in the
+ * plugin's folder, so it reads the same configuration (`.cargo/config.toml`)
+ * wherever the script is started.
  *
  * @param {string} source The plugin's folder.
  * @param {string} out The plugin directory.
  * @param {string} cargoPackage
- * @returns {{ cargoVersion: string, executable: Record<string, string> }}
+ * @param {string} targetDirectory Where that workspace builds, as Cargo says.
+ * @returns {Record<string, string>}
  */
-function buildExecutable(source, out, cargoPackage) {
-  let os, arch;
-  try {
-    ({ os, arch } = rustPlatform({ target: values.target, cwd: source }));
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
-  }
+function buildExecutable(source, out, cargoPackage, targetDirectory) {
+  const { os, arch } = orFail(() => rustPlatform({ target: values.target, cwd: source }));
   const binary = os === 'windows' ? `${cargoPackage}.exe` : cargoPackage;
   const cargo = process.env.CARGO ?? 'cargo';
   const manifest = join(source, 'Cargo.toml');
   const args = ['build', '--release', '--locked', '--manifest-path', manifest, '--bin', cargoPackage];
   if (values.target) args.push('--target', values.target);
   run(cargo, args, { cwd: source });
-  const metadata = spawnSync(
-    cargo,
-    ['metadata', '--format-version', '1', '--no-deps', '--locked', '--manifest-path', manifest],
-    { cwd: source, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 64 * 1024 * 1024 },
-  );
-  if (metadata.status !== 0) fail(`${cargo} metadata failed`);
-  /** @type {{ target_directory: string, packages: { name: string, version: string }[] }} */
-  const { target_directory: targetDirectory, packages } = JSON.parse(metadata.stdout);
-  const cargoVersion = packages.find(({ name }) => name === cargoPackage)?.version;
-  if (cargoVersion === undefined) fail(`${manifest} is in no workspace with the package ${cargoPackage}`);
   const built = join(targetDirectory, ...(values.target ? [values.target] : []), 'release', binary);
   if (!existsSync(built)) fail(`${built} was not built`);
   mkdirSync(join(out, 'bin', `${os}-${arch}`), { recursive: true });
   copyFileSync(built, join(out, 'bin', `${os}-${arch}`, binary));
-  return { cargoVersion, executable: { [`${os}-${arch}`]: `bin/${os}-${arch}/${binary}` } };
+  return { [`${os}-${arch}`]: `bin/${os}-${arch}/${binary}` };
 }
 
 /**
@@ -175,17 +175,20 @@ for (const directory of positionals) {
   /** @type {import('./manifest.mjs').Built} */
   let built = {};
   if (plugin.cargoPackage !== undefined) {
-    const { cargoVersion, executable } = buildExecutable(source, out, plugin.cargoPackage);
+    const { cargoPackage } = plugin;
+    const cargoToml = join(source, 'Cargo.toml');
+    const { targetDirectory, versions } = orFail(() => cargoMetadata(cargoToml, { cwd: source }));
+    const cargoVersion = versions.get(cargoPackage);
+    if (cargoVersion === undefined) fail(`${cargoToml} is in no workspace with the package ${cargoPackage}`);
+    orFail(() => pluginVersion(plugin, cargoVersion, sourcePath));
+    const executable = buildExecutable(source, out, cargoPackage, targetDirectory);
     built = { cargoVersion, executable: { ...previous.executable, ...executable } };
+  } else {
+    orFail(() => pluginVersion(plugin, undefined, sourcePath));
   }
   if (!values['skip-js']) await buildModule(source, out, plugin.module);
 
-  let manifest;
-  try {
-    manifest = pluginManifest(plugin, built, sourcePath);
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
-  }
+  const manifest = orFail(() => pluginManifest(plugin, built, sourcePath));
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   const executables = manifest.executable ? ` (executables: ${Object.keys(manifest.executable).join(', ')})` : '';
   console.log(`${plugin.id}: ${out}${executables}`);
