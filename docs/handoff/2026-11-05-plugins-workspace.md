@@ -509,6 +509,203 @@ run first. No test printed a "skipping" line.
 - **Release check**: the codec's own `version` matches the root
   `workspace.package.version`.
 
+## Layer 3: what was done
+
+The plan is `docs/superpowers/plans/2026-11-05-plugins-workspace-layer3.md`;
+its Decisions give the reasons for the three deviations below.
+
+- **The move.** `git mv crates/codec-ffmpeg plugins/ffmpeg`;
+  `plugins/Cargo.toml` has `members = ["ffmpeg", "vrm"]`. The package and
+  program stay `celesta-codec-ffmpeg`. Its `Cargo.toml` writes out the
+  package fields (version 0.9.0, edition 2024, `MIT OR Apache-2.0`,
+  `rust-version = "1.89"`) and pins `celesta-composition`,
+  `celesta-media`, and the dev-dependencies `celesta-exporter`,
+  `celesta-gpu-renderer`, and `celesta-project` as
+  `{ path = "../../crates/<dir>", version = "=0.9.0" }`; it stays
+  publishable. The root `Cargo.toml` lost the member and the
+  `celesta-codec-ffmpeg` and `ez-ffmpeg` entries, and the root
+  `Cargo.lock` lost `ez-ffmpeg`, `ffmpeg-next`, `ffmpeg-sys-next`,
+  `bindgen`, and `vcpkg`. `plugins/Cargo.lock` only gained entries, at the
+  versions the root lock had. `tests/export.rs`'s `workspace_root()`
+  still lands on the repository root. The plugins workspace has no
+  `[profile.dev.package.signalsmith-stretch] opt-level = 3`, which the
+  root has; the codec's export tests showed no slowdown without it.
+- **The codec's manifest.** `plugins/ffmpeg/plugin.json` is
+  `{"id": "ffmpeg", "version": "0.9.0", "cargoPackage": "celesta-codec-ffmpeg", "roles": ["codec"], "licenses": [...]}`,
+  and the build script writes
+  `{"id": "ffmpeg", "version": "0.9.0", "protocol": 1, "roles": ["codec"], "executable": {"<os>-<arch>": "bin/<os>-<arch>/celesta-codec-ffmpeg[.exe]"}}`.
+  `the_repositorys_plugins_pass_the_manifest_checks` writes each manifest
+  as the build script does and asserts that `ffmpeg` has the codec role and
+  no module.
+- **The build script** (`scripts/plugins/build.mjs`) reads and checks every
+  `plugin.json` before it creates a folder or runs Cargo. A plugin without
+  a `module` gets no `module`/`types` and no module build, and the
+  `project-types` prerequisite applies only when some plugin in the run has
+  a module. A plugin with neither `module` nor `cargoPackage`, or with
+  `components` but no `module`, is refused. `roles` passes through to the
+  manifest. `licenses.mjs` resolves the optional `licenses` list; each run
+  replaces `<plugin directory>/licenses/` with those files, copied by name,
+  and refuses a missing file or two files with one name.
+- **Deviations from the spec text.**
+  - (a) The spec says the script "copies a plugin's `licenses/` folder".
+    Instead, `plugin.json` has a `licenses` list naming repository files
+    (`../../LICENSE-GPL-2.0`, `../../LICENSE-MIT`, `../../LICENSE-APACHE`,
+    `../../packaging/GPL-SOURCE-OFFER.md`), which the build script copies.
+    No copy is checked in under `plugins/ffmpeg/`, and the shared script
+    knows nothing about the GPL.
+  - (b) The spec says the plugin folder is unchanged. The packaged program
+    moves from `bin/` to `bin/<os>-<arch>/`, the layout the build script
+    gives every plugin. The host reads the program's path from the
+    manifest's `executable`, so it did not change. On macOS the codec's
+    dylibs stay in the plugin's `Frameworks/`, at
+    `@executable_path/../../Frameworks/` from the program, and
+    `package-macos.py` reads the program's folder from the manifest; on
+    Windows the MSVC runtime DLLs go beside the program.
+  - (c) `packaging/GPL-SOURCE-OFFER.md` names `LICENSE-GPL-2.0`,
+    `LICENSE-MIT`, and `LICENSE-APACHE` as code spans instead of
+    `../LICENSE-*` links, so the same bytes read right in `packaging/`,
+    the app's `licenses/`, and the plugin's `licenses/`; the build script
+    never rewrites a file. It names `plugins/ffmpeg` for the source.
+- **Versions.** `node scripts/plugins/bump-version.mjs X.Y.Z` (helper
+  `version.mjs`) bumps the root `workspace.package.version`, every pin on
+  one of Celesta's crates (a one-line inline table with `path` and
+  `version = "=X"`; comments, third-party pins, and pins without a `path`
+  stay), and, for each folder in `FOLLOWS_CELESTA` (`plugins/ffmpeg`), its
+  Cargo package's `version` and `plugin.json`'s. A file whose version is
+  not Celesta's stops it before anything is written. It then runs
+  `cargo update --workspace` for both workspaces; when one fails, it
+  writes every manifest and lockfile back. Each `packages/*/package.json`
+  stays a hand step, which `HANDOFF.md` names. `repository.test.mts`
+  checks that each `FOLLOWS_CELESTA` plugin gives the root's version, and
+  `package.yml`'s release check refuses a tag whose version differs from
+  `plugins/ffmpeg/plugin.json`'s.
+- **CI.** The `vrm-plugin` job ("VRM plugin") became `plugins`
+  ("Plugins (<OS>)"), a matrix over the `Test` job's three runners with
+  `fail-fast: false`. It is not a required check (the "CI Green" ruleset
+  does not name either job). It sets up FFmpeg as the `Test` job did
+  (in the background with `wait-all` off Windows, in the foreground on
+  Windows), keys its rust-cache on `FFMPEG_VERSION FFMPEG_FEATURES`, and
+  runs Format and Clippy on Linux only. The Linux
+  `cargo check --target x86_64-pc-windows-msvc` step is dropped: Windows
+  builds and tests natively. Tests stay `cargo test`, because vrm's
+  `process` target is `harness = false` and nextest cannot list it, so a
+  GPU test skipped on macOS or Windows shows only as a "skipping" line in
+  the log until layer 4. The `Test` job dropped setup-ffmpeg, its wait,
+  and the FFmpeg cache key. `perf.yml` dropped them too, and
+  `.github/actions/setup-ffmpeg/**` from its paths: `celesta-bench` links
+  no codec.
+- **Packaging.** `scripts/package-macos.py`, `scripts/package-windows.ps1`,
+  and `packaging/linux/Dockerfile` build the root crates without the codec
+  and the codec with `scripts/plugins/build.mjs plugins/ffmpeg --out <the
+  package's plugin folder>`, into `plugins/target`. macOS passes its
+  `build_env` without `CARGO_TARGET_DIR`, with `--target <triple>` and the
+  headerpad `RUSTFLAGS`; `--skip-build` and `-SkipBuild` still build the
+  codec, which costs nothing when `plugins/target` is current.
+  `package-build.yml`'s rust-cache lists `. -> target` and
+  `plugins -> target`, and `.dockerignore` has `plugins/target`. Both
+  packagers merge `cargo metadata --manifest-path plugins/Cargo.toml` into
+  the root's, deduplicated by package `id`, so the license inventory keeps
+  `ez-ffmpeg`, `ffmpeg-sys-next`, and the codec. That call runs without
+  `--offline`: the packages never build VRM, so its crates are not
+  downloaded and an offline call would fail. `scripts/stage-codec-plugin.mjs`
+  is deleted. `scripts/test-package.mjs` checks the codec's manifest (the
+  codec role, one `executable` that exists), its `licenses/`, and that
+  `rust-packages.json` names `ez-ffmpeg` and `celesta-codec-ffmpeg`.
+  `test_package_macos.py` tests reading the program from the manifest and
+  resolving the plugin's dylibs from its folder; its existing fixture now
+  creates `Contents/MacOS`, without which POSIX cannot resolve
+  `MacOS/../Frameworks` (that test failed on macOS before this layer).
+- **Finding the codec.** `InstalledPlugins::codec()` is unchanged; its
+  sibling fallback now serves only `cargo install`. The exporter's
+  `no_codec` hint and the editor's missing-codec problem tell a source
+  checkout to run `node scripts/plugins/build.mjs plugins/ffmpeg` and add
+  the absolute path of `plugins/dist` to `CELESTA_PLUGIN_PATH` (the editor
+  also offers to reinstall Celesta), and their tests assert that. Both
+  bench examples find the codec through `find_reporting(&[]).codec()`
+  alone, read their arguments first, and without a codec exit 1 with the
+  same instruction; their profile-folder fallbacks are gone.
+- **Docs.** `HANDOFF.md` (setup with `ffmpeg@8`, the workspace map, the
+  run commands, deleting a pre-move `celesta-codec-ffmpeg` from
+  `target/<profile>`, the plugins workspace's checks needing FFmpeg, the
+  release step), `README.md`, the user guide's build-from-source,
+  troubleshooting, and plugins pages (en and ja), the Celesta skill's
+  `export.md`, `plugins.md`, `verify.md`, and `setup.md`, the packaging
+  READMEs, `2026-11-04-crates-io-publish.md` (the codec is published from
+  the plugins workspace after the core crates; 17 root crates are
+  publishable), the `docs/performance/` reproductions (the audio and export
+  benches build the codec plugin; the others drop the FFmpeg setup), and
+  the `.cargo/config.toml` comment.
+- **The branch.** The plan names the branch `claude/codec-in-plugins`; it
+  is `claude/codec-plugin-move`.
+- **Stale references left.** `git grep -n -E "crates/codec-ffmpeg|stage-codec-plugin|-p celesta-codec-ffmpeg"`
+  matches `2026-11-05-codec-plugin.md` (8 lines), the layer 2 and 3 plans
+  (14 and 25), and this note's Layer 2 and Layer 3 sections and this
+  record; they record what was true when they were written or name the
+  old paths on purpose. The other matches, in
+  `2026-11-04-crates-io-publish.md`, are the current
+  `cargo publish --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg`.
+
+### Checks (macOS 26.7.1, Apple M5, Metal)
+
+Rust 1.99.1, rustfmt 1.10.0, Node.js 26.13.0, Homebrew `ffmpeg@8` 8.1.3 on
+`PKG_CONFIG_PATH` for the plugins workspace only, and `packages/cli/dist`
+built.
+
+- `cargo build --workspace --all-targets --locked` at the root, with no
+  FFmpeg on `PKG_CONFIG_PATH`: succeeds (only the existing `block v0.1.6`
+  and `__eh_frame` notes).
+- `cargo metadata --format-version 1 --locked --no-deps` at the root and
+  with `--manifest-path plugins/Cargo.toml`: succeed.
+  `git grep -n -i ffmpeg -- Cargo.lock`: nothing.
+- `cargo clippy -p celesta-exporter -p celesta-editor -p celesta-react-bridge -p celesta-plugin-host --all-targets --locked -- -D warnings`:
+  no warnings. `rustfmt --edition 2024 --check` on the five root `.rs`
+  files the layer changed: clean.
+- `cargo test --manifest-path plugins/Cargo.toml --workspace --locked --no-run`:
+  builds every test target of both plugins.
+  `cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings`:
+  no warnings. `cargo fmt --check` in `plugins/`: clean.
+- `cargo test --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg --locked --test export`
+  with `CELESTA_REQUIRE_GPU=1`: 8 passed. `--test process`: 4 passed.
+- `pnpm --dir scripts/plugins test`: `tsc -p test`, then 45 passed
+  (6 files). Task 3 also ran the bump on the tree (`0.9.1`: exactly the
+  root and codec manifests, `plugin.json`, and both lockfiles, only
+  Celesta's packages moved) and a hand-made miss (the repository test and
+  the bump both refuse it), then restored the files.
+- `python3 scripts/test_package_macos.py`: 6 passed.
+- `cargo test -p celesta-plugin-host --lib --locked the_repositorys_plugins_pass_the_manifest_checks`:
+  1 passed.
+- With no codec anywhere (no `celesta-codec-ffmpeg` under `target/`,
+  `CELESTA_PLUGIN_PATH` and `CELESTA_SYSTEM_PLUGIN_DIR` unset, no user
+  plugin folder, none in `~/.cargo/bin`):
+  `cargo test -p celesta-exporter --locked --test integration inspect::`:
+  7 passed (and `cli_formats::`, 3, in Task 2); neither needed a test
+  codec folder. `cargo run -p celesta-exporter -- --react packages/cli/examples/title.tsx <out>.mp4 --json`
+  exits 1 with `no_codec` and the new hint. Both bench examples print the
+  "no codec plugin found" instruction and exit 1 (Task 6; not rerun).
+- `node scripts/plugins/build.mjs plugins/vrm plugins/ffmpeg`: writes
+  `plugins/dist/vrm` and `plugins/dist/ffmpeg`; the codec folder holds the
+  manifest above (`macos-aarch64`), the program, and the four license
+  files, each equal to its source. With
+  `CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`, the same export succeeds:
+  150 frames, 21,082 bytes, `ftyp` at byte 4.
+- `cargo test -p celesta-exporter --lib report::tests::media_nothing_could_decode_is_reported_as_no_codec`
+  and `cargo test -p celesta-editor --bin celesta-editor plugins::tests::a_missing_codec_is_a_problem`
+  (the editor has no lib target): 1 passed each.
+- `ruby -ryaml -e 'ARGV.each { |f| YAML.load_file(f) }' .github/workflows/*.yml`:
+  all parse. `git diff --check claude/core-test-codec`: clean.
+- Not run here: the Windows, macOS, and Linux packages
+  (`dylibbundler` and `pwsh` are not installed; no workflow builds the
+  Docker image, so `docker build -f packaging/linux/Dockerfile .` needs a
+  manual run), the plugins workspace's metadata call without `--offline`
+  on a cold runner, and the first `plugins` job runs on Windows and macOS,
+  where VRM's tests and dev-dependencies run for the first time and
+  rust-cache starts empty. `cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg`,
+  which the user guide keeps, now finds the crate in a workspace the root
+  excludes; it was not run. The root `cargo fmt --check` reports existing
+  formatting in `crates/editor`, `crates/mcp`, `crates/react-bridge`, and
+  `crates/source-edit`, which root CI does not check. The full suites are
+  left to CI.
+
 ## Layer 4: plugin CI for affected plugins
 
 - A script lists the plugins a change affects, as JSON, from a base
