@@ -16,8 +16,7 @@
 // --out. When a plugin has a module, run `pnpm install && pnpm run
 // build:runtime` at the repository root first: the runtime supplies the
 // declarations of `react` and `@celesta.studio/*`, `tsc`, and `esbuild`. A
-// plugin with only a process needs Cargo alone. A plugin
-// directory goes to
+// plugin with only a process needs Cargo alone. A plugin directory goes to
 // <out>/<id>, where <out> is by default the dist/ folder beside the plugin's
 // folder (plugins/vrm goes to plugins/dist/vrm, examples/plugins/flag to
 // examples/plugins/dist/flag); put <out> on CELESTA_PLUGIN_PATH or pass it as
