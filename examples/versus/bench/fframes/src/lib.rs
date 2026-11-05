@@ -11,7 +11,9 @@ pub const HEIGHT: usize = 1080;
 const FPS: usize = 60;
 const FRAMES: usize = 600;
 
-const BLOBS: [&str; 6] = ["#FF3D7F", "#3DA5FF", "#7B5CFF", "#00E0B8", "#FFB13D", "#FF6B3D"];
+const BLOBS: [&str; 6] = [
+    "#FF3D7F", "#3DA5FF", "#7B5CFF", "#00E0B8", "#FFB13D", "#FF6B3D",
+];
 const STARS: [&str; 4] = ["#FFFFFF", "#9EC9FF", "#FFC2E0", "#B8FFF0"];
 
 fn rand(i: usize, k: usize) -> f64 {
@@ -95,8 +97,10 @@ fn hud<'a>(t: f64, frame: usize) -> Vec<Svgr<'a>> {
                 font-family="IBM Plex Mono" font-size="18" fill="#9EC9FF">{label}</text>)
         })
         .collect();
-    lines.push(fframes::svgr!(<text x="1880" y="1060" text-anchor="end" font-family="IBM Plex Mono"
-        font-size="18" fill="#9EC9FF">{format!("FRAME {frame:04} / {FRAMES}")}</text>));
+    lines.push(
+        fframes::svgr!(<text x="1880" y="1060" text-anchor="end" font-family="IBM Plex Mono"
+        font-size="18" fill="#9EC9FF">{format!("FRAME {frame:04} / {FRAMES}")}</text>),
+    );
     lines
 }
 

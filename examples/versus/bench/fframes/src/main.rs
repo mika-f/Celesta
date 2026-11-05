@@ -1,7 +1,6 @@
 use fframes::{EncoderOptions, RenderOptions, StaticMediaProvider, cli};
 use fframes_skia_renderer::{
-    SkiaFFramesRenderer, SkiaPipelineConcurrencyPolicy, SkiaPipelineConfig,
-    vulkan::SkiaVulkanCtx,
+    SkiaFFramesRenderer, SkiaPipelineConcurrencyPolicy, SkiaPipelineConfig, vulkan::SkiaVulkanCtx,
 };
 use nebula_fframes::{HEIGHT, NebulaFframesMedia, NebulaFframesVideo, WIDTH};
 use std::process::ExitCode;
