@@ -35,8 +35,12 @@ Both stopped the editor's preview worker or the exporter. `<Flag>` with a
 - `check_texture_size` (`crates/gpu-renderer/src/mesh.rs`) is the rule.
 - `texture_image` takes the texture's index and `max_texture_dimension`
   and applies the rule before it returns pixels. For a path, it opens the
-  file with `image::ImageReader` and `with_guessed_format`, reads
-  `into_dimensions`, checks them, then opens the file again to decode it.
+  file once, reads `into_dimensions` through `image::ImageReader` and
+  `with_guessed_format`, and checks them. It then rewinds the same handle
+  and decodes it with `image::Limits` capped at the limit, and checks the
+  decoded size again. A file replaced at the path between the two reads
+  is not read, and contents rewritten in place are still held to the
+  limit.
 - `LoadedMeshes::load` now takes `max_texture_dimension`, as
   `LoadedScene::load` does; `plugin_texture` passes the renderer's.
 - `LoadedScene::load` drops its own check after decoding; `texture_image`

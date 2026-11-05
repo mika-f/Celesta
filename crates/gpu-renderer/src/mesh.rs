@@ -21,6 +21,7 @@ use celesta_plugin::{
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::io::Seek;
 use std::path::PathBuf;
 use wgpu::util::DeviceExt;
 
@@ -506,14 +507,30 @@ pub(crate) fn texture_image(
                 asset: path.display().to_string(),
                 source,
             };
-            let reader = || {
-                image::ImageReader::open(path)
-                    .and_then(image::ImageReader::with_guessed_format)
-                    .map_err(|error| decode_error(image::ImageError::IoError(error)))
+            let io_error = |error| decode_error(image::ImageError::IoError(error));
+            // One handle for the header and the pixels, so both read the same
+            // file even if another replaces it at `path` in between.
+            let file = std::fs::File::open(path).map_err(io_error)?;
+            let reader = |file| {
+                image::ImageReader::new(std::io::BufReader::new(file))
+                    .with_guessed_format()
+                    .map_err(io_error)
             };
-            let (width, height) = reader()?.into_dimensions().map_err(decode_error)?;
+            let (width, height) = reader(&file)?.into_dimensions().map_err(decode_error)?;
             check(width, height)?;
-            Ok(reader()?.decode().map_err(decode_error)?.to_rgba8())
+            (&file)
+                .seek(std::io::SeekFrom::Start(0))
+                .map_err(io_error)?;
+            // Contents rewritten in place since the header was read are
+            // still held to the size, while decoding and after.
+            let mut limits = image::Limits::default();
+            limits.max_image_width = Some(max_texture_dimension);
+            limits.max_image_height = Some(max_texture_dimension);
+            let mut reader = reader(&file)?;
+            reader.limits(limits);
+            let image = reader.decode().map_err(decode_error)?.to_rgba8();
+            check(image.width(), image.height())?;
+            Ok(image)
         }
         TextureSource::Rgba {
             width,
