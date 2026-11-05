@@ -252,8 +252,9 @@ jobs:
       # Only the codec links FFmpeg, but it is set up whenever any plugin is
       # affected: rust-cache keys on FFMPEG_VERSION and FFMPEG_FEATURES, and
       # only main saves, where every plugin runs with FFmpeg; a job without
-      # it would hash empty values, miss main's cache, and build cold. Installing it takes about two
-      # minutes on macOS (Homebrew), so the JS packages install meanwhile.
+      # it would hash empty values, miss main's cache, and build cold.
+      # Installing it takes about two minutes on macOS (Homebrew), so the JS
+      # packages install meanwhile.
       # rust-cache waits for it: a background step's environment reaches
       # later steps only after a wait. It starts after the Linux packages, as
       # both use apt.

@@ -1,10 +1,11 @@
 // Lists the first-party plugins (plugins/*/plugin.json) a change affects, for
 // CI to test those alone. A plugin is affected when a changed path is one of
 // its inputs (its folder, the local Cargo packages its lockfile reaches, the
-// workspace packages its js/ package uses, its license files) or a path every
-// plugin shares (inputs.mjs's SHARED_INPUTS). Without --base every plugin is
-// affected, as on pushes to main. Anything the dependency graphs cannot place
-// fails the run rather than shrinking the list.
+// workspace packages its js/ package uses and the root paths turbo.json gives
+// their tasks, its license files) or a path every plugin shares (inputs.mjs's
+// SHARED_INPUTS). Without --base every plugin is affected, as on pushes to
+// main. Anything the dependency graphs cannot place fails the run rather than
+// shrinking the list.
 //
 //   node scripts/plugins/affected.mjs [--base <rev>] [--head <rev>] [--github-output]
 //
