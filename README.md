@@ -108,7 +108,7 @@ cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx
 ```
 
 Celesta reads and writes video and audio through the codec plugin, which it
-finds through `CELESTA_PLUGIN_PATH`. Give it the absolute path of
+finds through `CELESTA_PLUGIN_PATH`. Set it to the absolute path of
 `plugins/dist`, in each shell where you run Celesta.
 
 `pnpm run build:runtime` also generates the TypeScript bindings from the Rust

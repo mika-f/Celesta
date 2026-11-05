@@ -104,7 +104,7 @@ Celesta は動画・音声ファイルの読み書きにコーデックライブ
 
 コーデックプラグインのマニフェストには `"roles": ["codec"]` があります。Celesta は実行してよいプラグインのうち、上の順で最初に見つかったコーデックを使います。ひとつもないときは、`cargo install` で置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` を使います。`cargo install` で Celesta を入れる場合は、コーデックも入れてアプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもコーデックは入りません。`celesta-codec-ffmpeg` が crates.io に公開されるまでは、`cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` でリポジトリから入れます（[ソースからのビルド](/ja/docs/build-from-source/)と同じく FFmpeg 8.1.x の開発ライブラリが必要です）。コーデックがないと動画と音声は表示も書き出しもできません。アプリは Problems にそう表示し、書き出しはエラーコード `no_codec` で失敗します。
 
-LGPL のみの FFmpeg など別の FFmpeg を使うには、`PKG_CONFIG_PATH` でその FFmpeg を指定し、リポジトリのルートで `node scripts/plugins/build.mjs plugins/ffmpeg --out <ユーザープラグインフォルダー>` を実行します。その FFmpeg に対してコーデックをビルドし、そのフォルダーに `ffmpeg` プラグインとして置きます。このフォルダーは、Celesta に付属のプラグインフォルダーより先に探されます。そのフォルダーの他のプラグインと同じく、アプリは実行する前に確認します。
+LGPL のみの FFmpeg など別の FFmpeg を使うには、`PKG_CONFIG_PATH`（Windows では `VCPKG_ROOT`）でその FFmpeg を指定し、リポジトリのルートで `node scripts/plugins/build.mjs plugins/ffmpeg --out <ユーザープラグインフォルダー>` を実行します。このコマンドは、その FFmpeg に対してコーデックをビルドし、指定したフォルダーに `ffmpeg` プラグインとして置きます。このフォルダーは、Celesta に同梱のプラグインフォルダーより先に探されます。そのフォルダーの他のプラグインと同じく、アプリは実行する前に確認します。
 
 ## サンプル
 

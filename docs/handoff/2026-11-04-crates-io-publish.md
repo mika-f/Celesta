@@ -45,7 +45,7 @@ cargo publish -p celesta-editor -p celesta-mcp --allow-dirty
 `cargo publish --workspace` (Cargo 1.90+) publishes in dependency order and
 skips `publish = false` crates. The dry run takes `--allow-dirty` for the
 `bundled/` copies only. Its verification builds every crate; none of the
-root workspace's links FFmpeg. crates.io rate-limits new crates, so a
+root workspace's crates links FFmpeg. crates.io rate-limits new crates, so a
 first publish of all 17 may stop partway; later, rerun the step that
 stopped with `--exclude` for each crate already on crates.io (or `-p` for
 each one left), keeping `--allow-dirty` whenever celesta-editor or

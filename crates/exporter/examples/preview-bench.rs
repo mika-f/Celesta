@@ -4,9 +4,11 @@
 //! process, as in the editor, so the times include sending them across it:
 //! the first codec plugin found, as Celesta finds it. Without one it exits
 //! with "no codec plugin found". In a source checkout, build the codec into
-//! `plugins/dist` and pass that folder's absolute path:
+//! `plugins/dist` and pass that folder's absolute path. The entry runs on
+//! `packages/cli/dist/cli.js`, so build the runtime first:
 //!
 //! ```text
+//! pnpm install && pnpm run build:runtime
 //! node scripts/plugins/build.mjs plugins/ffmpeg
 //! CELESTA_PLUGIN_PATH="$PWD/plugins/dist" cargo run --release -p celesta-exporter --example preview-bench -- <entry.tsx> [frames]
 //! ```

@@ -27,8 +27,9 @@ Per-task specifications, implementation details, and validation results live in
   The `ffmpeg`/`ffprobe` binaries are not used at runtime.
 - Windows: `vcpkg install ffmpeg[x264,vpx,opus]:x64-windows-static-md`, with
   `VCPKG_ROOT` set. Non-macOS builds enable `ez-ffmpeg`'s `static` feature.
-- macOS: `brew install ffmpeg pkg-config`; desktop packaging bundles the
-  required dylibs.
+- macOS: `brew install ffmpeg@8 pkg-config`, then
+  `export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"` (the
+  formula is keg-only); desktop packaging bundles the required dylibs.
 - Linux: `scripts/build-ffmpeg-linux.sh` builds static FFmpeg 8.1.x libraries
   with libx264, libvpx, and libopus. Point `PKG_CONFIG_PATH` at
   `<prefix>/lib/pkgconfig`; bindgen
@@ -137,7 +138,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts; not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
-| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mjs`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mjs`, `cargo.mjs`, `manifest.mjs`, `licenses.mjs`, and `version.mjs`; and `bump-version.mjs`, which bumps Celesta's version and the plugins that follow it; not published. |
+| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mjs`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mjs`, `cargo.mjs`, `manifest.mjs`, and `licenses.mjs`; and `bump-version.mjs`, with its helper `version.mjs`, which bumps Celesta's version and the plugins that follow it; not published. |
 
 Useful entry points:
 
@@ -353,7 +354,9 @@ The editor and exporter find the codec plugin through `CELESTA_PLUGIN_PATH`,
 which must be an absolute path and is set by hand in each shell; rebuild the
 plugin after changing `plugins/ffmpeg` or `celesta-media`'s codec protocol.
 A `celesta-codec-ffmpeg` program beside Celesta's executables serves only
-`cargo install`. Tests whose `celesta-exporter` or
+`cargo install`. Delete any `celesta-codec-ffmpeg` left in
+`target/<profile>` from when the codec was a root crate: Celesta would use
+it and hide a missing `CELESTA_PLUGIN_PATH`. Tests whose `celesta-exporter` or
 `celesta-mcp` child exports video give it the test codec's program instead, so
 they need
 `celesta-codec-test` built, which `cargo test --workspace` does; otherwise run

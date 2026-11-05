@@ -56,7 +56,7 @@ measurements retained in their respective records.
 
 ## Reproduce
 
-From the repository root, using Celesta's normal FFmpeg development setup:
+From the repository root:
 
 ```sh
 cargo run --release --locked -p celesta-gpu-renderer --example path-bench -- 120
