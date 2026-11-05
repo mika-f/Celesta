@@ -997,6 +997,7 @@ mod tests {
                 "celesta-codec-ffmpeg",
                 "node scripts/plugins/build.mjs plugins/ffmpeg",
                 "absolute path of plugins/dist",
+                "CELESTA_PLUGIN_PATH",
             ] {
                 assert!(hint.contains(expected), "{expected}: {value}");
             }

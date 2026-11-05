@@ -571,6 +571,8 @@ mod tests {
             "celesta-codec-ffmpeg",
             "node scripts/plugins/build.mjs plugins/ffmpeg",
             "absolute path of plugins/dist",
+            "CELESTA_PLUGIN_PATH",
+            "reinstall Celesta",
         ] {
             assert!(
                 problem.detail.contains(expected),
