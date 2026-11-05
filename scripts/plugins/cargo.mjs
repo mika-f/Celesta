@@ -41,11 +41,18 @@ export function cargoMetadata(manifest, { cwd } = {}) {
   const { workspace_root: workspaceRoot, target_directory: targetDirectory, packages } = JSON.parse(result.stdout);
   /** @type {Map<string, string>} */
   const directories = new Map();
+  /** @param {string} name @param {string} directory */
+  const add = (name, directory) => {
+    const known = directories.get(name);
+    if (known !== undefined && known !== directory) {
+      throw new Error(`${manifest}: package ${name} is in both ${known} and ${directory}`);
+    }
+    directories.set(name, directory);
+  };
+  for (const { name, manifest_path: manifestPath } of packages) add(name, dirname(manifestPath));
   for (const { dependencies } of packages) {
-    for (const { name, path } of dependencies) if (path !== undefined) directories.set(name, path);
+    for (const { name, path } of dependencies) if (path !== undefined) add(name, path);
   }
-  // A member's own folder wins over a path dependency's spelling of it.
-  for (const { name, manifest_path: manifestPath } of packages) directories.set(name, dirname(manifestPath));
   return {
     workspaceRoot,
     targetDirectory,

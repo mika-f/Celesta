@@ -83,9 +83,14 @@ describe('parseCargoLock', () => {
     );
   });
 
-  it('rejects a [[package]] without a version', () => {
+  it('reads an inline dependencies array', () => {
+    const lock = '[[package]]\nname = "p"\nversion = "0.1.0"\ndependencies = ["a", "b 1.0.0"]\n';
+    expect(parseCargoLock(lock, 'Cargo.lock')[0].dependencies).toEqual(['a', 'b 1.0.0']);
+  });
+
+  it('rejects a [[package]] without a version, naming the package', () => {
     expect(() => parseCargoLock('version = 4\n\n[[package]]\nname = "p"\n', 'Cargo.lock')).toThrow(
-      'Cargo.lock: a [[package]] has no name or version',
+      'Cargo.lock: a [[package]] has no name or version (name p)',
     );
   });
 });
@@ -107,23 +112,67 @@ describe('localPackages', () => {
     expect(() => localPackages(broken, 'p', 'Cargo.lock')).toThrow('Cargo.lock: nope names no package');
   });
 
-  it('matches a dependency on its version and source', () => {
+  // As Cargo writes it when `a` has `z = { path = "../z" }` and `b` has
+  // `z = { git = "…" }`, both z 0.1.0: the local z's entry carries no source,
+  // and the git z's entry carries its source without the `#<revision>`.
+  describe('with a local and a git package of one name and version', () => {
+    const git = 'git+file:///tmp/gz';
+    const lock = `version = 4
+
+[[package]]
+name = "a"
+version = "0.1.0"
+dependencies = [
+ "z 0.1.0",
+]
+
+[[package]]
+name = "b"
+version = "0.1.0"
+dependencies = [
+ "z 0.1.0 (${git})",
+]
+
+[[package]]
+name = "z"
+version = "0.1.0"
+
+[[package]]
+name = "z"
+version = "0.1.0"
+source = "${git}#cbd4db852baf77b41633b2bc5246dd19e72278b0"
+`;
+    const both = parseCargoLock(lock, 'Cargo.lock');
+
+    it('takes the local package for an entry without a source', () => {
+      expect(localPackages(both, 'a', 'Cargo.lock')).toEqual(['a', 'z']);
+    });
+
+    it('takes the git package for an entry with its source', () => {
+      expect(localPackages(both, 'b', 'Cargo.lock')).toEqual(['b']);
+    });
+  });
+
+  it('rejects an entry without a source that matches no local package among several', () => {
     const lock = `[[package]]
 name = "p"
 version = "0.1.0"
 dependencies = [
- "y 1.0.0 (${registry})",
+ "y 1.0.0",
 ]
 
 [[package]]
 name = "y"
 version = "1.0.0"
+source = "${registry}"
 
 [[package]]
 name = "y"
 version = "1.0.0"
-source = "${registry}"
+source = "git+https://example.com/y.git#0123456789abcdef"
 `;
-    expect(localPackages(parseCargoLock(lock, 'Cargo.lock'), 'p', 'Cargo.lock')).toEqual(['p']);
+    expect(() => localPackages(parseCargoLock(lock, 'Cargo.lock'), 'p', 'Cargo.lock')).toThrow(
+      'Cargo.lock: y 1.0.0 names more than one package',
+    );
   });
 });

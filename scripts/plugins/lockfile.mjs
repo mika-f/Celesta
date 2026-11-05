@@ -27,7 +27,10 @@ export function parseCargoLock(text, path) {
   const finish = () => {
     if (current === undefined) return;
     const { name, version, source, dependencies } = current;
-    if (name === undefined || version === undefined) throw new Error(`${path}: a [[package]] has no name or version`);
+    if (name === undefined || version === undefined) {
+      const known = name !== undefined ? ` (name ${name})` : version !== undefined ? ` (version ${version})` : '';
+      throw new Error(`${path}: a [[package]] has no name or version${known}`);
+    }
     packages.push({ name, version, source, dependencies });
     current = undefined;
   };
@@ -70,9 +73,9 @@ export function parseCargoLock(text, path) {
 
 /**
  * The sorted names of the local packages (`source === null`) reachable from
- * the package `name`, itself included, following every dependency, registry
- * and git packages' too (a registry package can depend on a `[patch]` path
- * package).
+ * every package named `name`, those included, following every dependency,
+ * registry and git packages' too (a registry package can depend on a `[patch]`
+ * path package).
  *
  * @param {LockPackage[]} packages A lockfile's packages, from {@link parseCargoLock}.
  * @param {string} name The package to start from.
@@ -101,6 +104,10 @@ export function localPackages(packages, name, path) {
 /**
  * The package a dependency entry names: `"name"`, `"name version"`, or
  * `"name version (source)"`, matched on name, then version, then source.
+ * An entry's source leaves out the `#<revision>` a git package's `source`
+ * ends with. Cargo writes no source for a local package even when a registry
+ * or git package has the same name and version, so an entry without a source
+ * that matches several packages names the one local package among them.
  *
  * @param {LockPackage[]} packages
  * @param {string} entry
@@ -109,14 +116,18 @@ export function localPackages(packages, name, path) {
  */
 function resolve(packages, entry, path) {
   const match = /^(\S+)(?: (\S+)(?: \((.*)\))?)?$/.exec(entry);
-  const candidates = match
+  let candidates = match
     ? packages.filter(
         ({ name, version, source }) =>
           name === match[1] &&
           (match[2] === undefined || version === match[2]) &&
-          (match[3] === undefined || source === match[3]),
+          (match[3] === undefined || source?.split('#')[0] === match[3]),
       )
     : [];
+  if (candidates.length > 1 && match?.[3] === undefined) {
+    const local = candidates.filter(({ source }) => source === null);
+    if (local.length === 1) candidates = local;
+  }
   if (candidates.length === 0) throw new Error(`${path}: ${entry} names no package`);
   if (candidates.length > 1) throw new Error(`${path}: ${entry} names more than one package`);
   return candidates[0];
