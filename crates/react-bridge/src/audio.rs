@@ -18,8 +18,10 @@ pub(crate) fn react_seconds_to_time(seconds: f64) -> Time {
 }
 
 /// Collapses per-frame `<Audio>` reports into one entry per distinct clip,
-/// keeping first-seen order and how many frames reported it (its
-/// multiplicity — two identical clips playing at once must stay two clips).
+/// keeping first-seen order and how many reports it collapsed. Identical
+/// declarations collapse too, so two identical `<Audio>` siblings play once,
+/// as in the browser export; the count is reports across frames and copies,
+/// not the number of copies.
 pub fn merge_react_audio_clips(
     clips: &[ReactAudioClipDescriptor],
 ) -> Vec<(ReactAudioClipDescriptor, usize)> {
