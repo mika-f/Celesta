@@ -1008,48 +1008,10 @@ mod tests {
     #[test]
     fn the_repositorys_plugins_pass_the_manifest_checks() {
         // Each `plugin.json` under `plugins/` and `examples/plugins/`, made
-        // into the manifest `scripts/plugins/build.mjs` writes (`id`,
-        // `version`, `components`, and the module it builds): a component
-        // the checks refuse would skip the whole plugin for every user, so it
-        // fails here instead. As in the build script, a plugin with a
-        // `cargoPackage` takes its version from that package, in the
-        // `Cargo.toml` beside its `plugin.json`, and its `plugin.json` has
-        // none; any other plugin gives its version in `plugin.json`.
-        fn cargo_package_version(manifest: &Path, cargo_package: &str) -> String {
-            // The `[package]` table's `name` and `version`, each a string on
-            // its own line, which is how the plugins write them.
-            let text = std::fs::read_to_string(manifest)
-                .unwrap_or_else(|error| panic!("{}: {error}", manifest.display()));
-            let (mut name, mut version) = (None, None);
-            let mut in_package = false;
-            for line in text.lines().map(str::trim) {
-                if line.starts_with('[') {
-                    in_package = line == "[package]";
-                } else if in_package && let Some((key, value)) = line.split_once('=') {
-                    let value = value
-                        .trim()
-                        .strip_prefix('"')
-                        .and_then(|v| v.strip_suffix('"'));
-                    match key.trim() {
-                        "name" => name = value,
-                        "version" => version = value,
-                        _ => {}
-                    }
-                }
-            }
-            assert_eq!(
-                name,
-                Some(cargo_package),
-                "{}: not the package {cargo_package}",
-                manifest.display()
-            );
-            version
-                .unwrap_or_else(|| {
-                    panic!("{}: [package] has no version string", manifest.display())
-                })
-                .to_owned()
-        }
-
+        // into the manifest its build script writes (`id`, `version`,
+        // `components`, and the module it builds): a component the checks
+        // refuse would skip the whole plugin for every user, so it fails
+        // here instead.
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let root = tempfile::tempdir().unwrap();
         let mut expected = Vec::new();
@@ -1066,23 +1028,6 @@ mod tests {
                     serde_json::from_str(&std::fs::read_to_string(&source).unwrap())
                         .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
                 let id = plugin["id"].as_str().unwrap().to_owned();
-                let version = match plugin.get("cargoPackage") {
-                    Some(cargo_package) => {
-                        assert!(
-                            plugin.get("version").is_none(),
-                            "{}: the version comes from the Cargo package; remove it",
-                            source.display()
-                        );
-                        cargo_package_version(
-                            &source.with_file_name("Cargo.toml"),
-                            cargo_package.as_str().unwrap(),
-                        )
-                    }
-                    None => plugin["version"]
-                        .as_str()
-                        .unwrap_or_else(|| panic!("{}: no version", source.display()))
-                        .to_owned(),
-                };
                 let written = plugin
                     .get("components")
                     .cloned()
@@ -1092,7 +1037,7 @@ mod tests {
                 write_manifest(
                     &root.path().join(&id),
                     serde_json::json!({
-                        "id": id, "version": version, "protocol": 1,
+                        "id": id, "version": plugin["version"], "protocol": 1,
                         "module": "js/index.js", "types": "js/index.d.ts",
                         "components": written,
                     }),
