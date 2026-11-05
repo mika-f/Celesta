@@ -6,20 +6,20 @@
 // nextest keeps a passing test's output only in the report
 // (`store-success-output` in .config/nextest.toml); `cargo test` prints it
 // with `--show-output` (the plugin job, whose `harness = false` targets
-// nextest cannot run), and scripts/plugins/libtest.mjs reads that log.
+// nextest cannot run), and scripts/plugins/libtest.mts reads that log.
 //
 // In GitHub Actions each distinct reason becomes one warning annotation with
 // its test count, and the job summary lists every skipped test.
 //
-//   node scripts/report-skipped-tests.mjs target/nextest/ci/junit.xml
-//   node scripts/report-skipped-tests.mjs "$RUNNER_TEMP/cargo-test.log"
+//   node scripts/report-skipped-tests.mts target/nextest/ci/junit.xml
+//   node scripts/report-skipped-tests.mts "$RUNNER_TEMP/cargo-test.log"
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 
-import { SKIP_LINE, skippedTests } from './plugins/libtest.mjs';
+import { SKIP_LINE, skippedTests } from './plugins/libtest.mts';
 
 const [report] = process.argv.slice(2);
 if (!report) {
-  console.error('Usage: node scripts/report-skipped-tests.mjs <junit.xml | cargo-test.log>');
+  console.error('Usage: node scripts/report-skipped-tests.mts <junit.xml | cargo-test.log>');
   process.exit(2);
 }
 if (!existsSync(report)) {
@@ -28,8 +28,8 @@ if (!existsSync(report)) {
   process.exit(0);
 }
 
-const unescape = (text) =>
-  text.replace(/&(lt|gt|quot|apos|amp|#x?[0-9a-fA-F]+);/g, (entity, name) => {
+const unescape = (text: string) =>
+  text.replace(/&(lt|gt|quot|apos|amp|#x?[0-9a-fA-F]+);/g, (entity, name: string) => {
     switch (name) {
       case 'lt':
         return '<';
@@ -48,17 +48,12 @@ const unescape = (text) =>
     }
   });
 
-/**
- * Skipped tests by reason in a nextest JUnit report.
- *
- * @param {string} xml
- * @returns {Map<string, string[]>}
- */
-function junitSkippedTests(xml) {
-  const reasons = new Map();
+/** Skipped tests by reason in a nextest JUnit report. */
+function junitSkippedTests(xml: string): Map<string, string[]> {
+  const reasons = new Map<string, string[]>();
   for (const [, attributes, body] of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
     if (!body) continue;
-    const attribute = (key) => unescape(attributes.match(new RegExp(`\\b${key}="([^"]*)"`))?.[1] ?? '');
+    const attribute = (key: string) => unescape(attributes.match(new RegExp(`\\b${key}="([^"]*)"`))?.[1] ?? '');
     const test = `${attribute('classname')} ${attribute('name')}`;
     for (const [, output] of body.matchAll(/<system-(?:out|err)>([\s\S]*?)<\/system-(?:out|err)>/g)) {
       for (const line of unescape(output).split(/\r?\n/)) {
@@ -80,8 +75,8 @@ if (reasons.size === 0) {
   process.exit(0);
 }
 
-const escapeData = (text) => text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
-const plural = (count) => `${count} test${count === 1 ? '' : 's'}`;
+const escapeData = (text: string) => text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+const plural = (count: number) => `${count} test${count === 1 ? '' : 's'}`;
 const sorted = [...reasons].sort(([, a], [, b]) => b.length - a.length);
 for (const [reason, tests] of sorted) {
   if (process.env.GITHUB_ACTIONS === 'true') {
@@ -93,7 +88,7 @@ for (const [reason, tests] of sorted) {
 
 if (process.env.GITHUB_STEP_SUMMARY) {
   const total = new Set(sorted.flatMap(([, tests]) => tests)).size;
-  const html = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const html = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const lines = [`### Skipped tests (${total})`, ''];
   for (const [reason, tests] of sorted) {
     lines.push(`<details><summary>${plural(tests.length)}: <code>${html(reason)}</code></summary>`, '');

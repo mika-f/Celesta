@@ -16,7 +16,7 @@ import {
   repositoryPlugins,
   SHARED_INPUTS,
   turboInputs,
-} from '../inputs.mjs';
+} from '../inputs.mts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -82,9 +82,9 @@ describe('affectedPlugins', () => {
   });
 
   it('affects every plugin through a shared input', () => {
-    expect(ids(affectedPlugins(plugins, ['docs/a.md', 'scripts/plugins/build.mjs'], shared))).toEqual([
-      ['a', 'scripts/plugins/build.mjs'],
-      ['b', 'scripts/plugins/build.mjs'],
+    expect(ids(affectedPlugins(plugins, ['docs/a.md', 'scripts/plugins/build.mts'], shared))).toEqual([
+      ['a', 'scripts/plugins/build.mts'],
+      ['b', 'scripts/plugins/build.mts'],
     ]);
   });
 

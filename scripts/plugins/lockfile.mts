@@ -2,10 +2,13 @@
 // already merges normal, build, and dev dependencies and holds `[patch]` path
 // packages too, so following it finds every local package a build reads.
 
-/**
- * @typedef {{ name: string, version: string, source: string | null, dependencies: string[] }} LockPackage
- * `source` is `null` for a local package (a workspace member or a path dependency).
- */
+export interface LockPackage {
+  name: string;
+  version: string;
+  /** `null` for a local package (a workspace member or a path dependency). */
+  source: string | null;
+  dependencies: string[];
+}
 
 const QUOTED = /^"((?:[^"\\]|\\.)*)"/;
 
@@ -13,15 +16,12 @@ const QUOTED = /^"((?:[^"\\]|\\.)*)"/;
  * The `[[package]]` tables of a Cargo.lock, read line by line (Cargo writes
  * each key on its own line and each dependency on its own line).
  *
- * @param {string} text The lockfile's contents, with `\n` or `\r\n` line endings.
- * @param {string} path The lockfile's path, for error messages.
- * @returns {LockPackage[]}
+ * @param text The lockfile's contents, with `\n` or `\r\n` line endings.
+ * @param path The lockfile's path, for error messages.
  */
-export function parseCargoLock(text, path) {
-  /** @type {LockPackage[]} */
-  const packages = [];
-  /** @type {{ name?: string, version?: string, source: string | null, dependencies: string[] } | undefined} */
-  let current;
+export function parseCargoLock(text: string, path: string): LockPackage[] {
+  const packages: LockPackage[] = [];
+  let current: { name?: string; version?: string; source: string | null; dependencies: string[] } | undefined;
   let inDependencies = false;
 
   const finish = () => {
@@ -77,17 +77,15 @@ export function parseCargoLock(text, path) {
  * registry and git packages' too (a registry package can depend on a `[patch]`
  * path package).
  *
- * @param {LockPackage[]} packages A lockfile's packages, from {@link parseCargoLock}.
- * @param {string} name The package to start from.
- * @param {string} path The lockfile's path, for error messages.
- * @returns {string[]}
+ * @param packages A lockfile's packages, from {@link parseCargoLock}.
+ * @param name The package to start from.
+ * @param path The lockfile's path, for error messages.
  */
-export function localPackages(packages, name, path) {
+export function localPackages(packages: LockPackage[], name: string, path: string): string[] {
   const start = packages.filter((pkg) => pkg.name === name);
   if (start.length === 0) throw new Error(`${path}: no package ${name}`);
 
-  /** @type {Set<LockPackage>} */
-  const seen = new Set(start);
+  const seen = new Set<LockPackage>(start);
   const queue = [...start];
   for (let pkg = queue.shift(); pkg !== undefined; pkg = queue.shift()) {
     for (const entry of pkg.dependencies) {
@@ -108,13 +106,8 @@ export function localPackages(packages, name, path) {
  * ends with. Cargo writes no source for a local package even when a registry
  * or git package has the same name and version, so an entry without a source
  * that matches several packages names the one local package among them.
- *
- * @param {LockPackage[]} packages
- * @param {string} entry
- * @param {string} path
- * @returns {LockPackage}
  */
-function resolve(packages, entry, path) {
+function resolve(packages: LockPackage[], entry: string, path: string): LockPackage {
   const match = /^(\S+)(?: (\S+)(?: \((.*)\))?)?$/.exec(entry);
   let candidates = match
     ? packages.filter(

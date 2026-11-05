@@ -6,7 +6,7 @@
 //! `pnpm run build:runtime` and generating any media:
 //!
 //! ```text
-//! node scripts/plugins/build.mjs plugins/ffmpeg
+//! node scripts/plugins/build.mts plugins/ffmpeg
 //! CELESTA_PLUGIN_PATH="$PWD/plugins/dist" cargo run --release -p celesta-react-bridge --example audio-bench -- <entry> [runs]
 //! ```
 
@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let runs: usize = args.next().map_or(Ok(5), |value| value.parse())?;
     let Some(codec) = InstalledPlugins::find_reporting(&[]).codec() else {
         eprintln!(
-            "no codec plugin found: build one with node scripts/plugins/build.mjs plugins/ffmpeg \
+            "no codec plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
              and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH"
         );
         process::exit(1);

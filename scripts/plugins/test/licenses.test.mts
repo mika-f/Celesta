@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { licenseFiles } from '../licenses.mjs';
-import type { PluginSource } from '../manifest.mjs';
+import { licenseFiles } from '../licenses.mts';
+import type { PluginSource } from '../manifest.mts';
 
 let scratch: string;
 let repo: string;

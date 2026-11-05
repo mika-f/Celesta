@@ -46,7 +46,7 @@ jobs:
           fi
           codec_version="$(node -p "require('./plugins/ffmpeg/plugin.json').version")"
           if [[ "$codec_version" != "$version" ]]; then
-            echo "plugins/ffmpeg/plugin.json gives $codec_version, not the workspace version $version; run node scripts/plugins/bump-version.mjs" >&2
+            echo "plugins/ffmpeg/plugin.json gives $codec_version, not the workspace version $version; run node scripts/plugins/bump-version.mts" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"

@@ -167,7 +167,7 @@ jobs:
       # rather than leave them hidden among the passes.
       - name: Report skipped tests
         if: ${{ !cancelled() }}
-        run: node scripts/report-skipped-tests.mjs target/nextest/ci/junit.xml
+        run: node scripts/report-skipped-tests.mts target/nextest/ci/junit.xml
 
       - name: Upload Cargo build timings
         if: always()
@@ -242,9 +242,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ -n "$BASE_SHA" ]; then
-            node scripts/plugins/affected.mjs --base "$BASE_SHA" --github-output
+            node scripts/plugins/affected.mts --base "$BASE_SHA" --github-output
           else
-            node scripts/plugins/affected.mjs --github-output
+            node scripts/plugins/affected.mts --github-output
           fi
 
       # The tests draw through the GPU renderer: fonts, and Mesa's software
@@ -368,14 +368,14 @@ jobs:
       # rather than leave them hidden among the passes.
       - name: Report skipped tests
         if: ${{ !cancelled() && steps.affected.outputs.cargo != '' }}
-        run: node scripts/report-skipped-tests.mjs "$RUNNER_TEMP/cargo-test.log"
+        run: node scripts/report-skipped-tests.mts "$RUNNER_TEMP/cargo-test.log"
 
       # DIRECTORIES holds one folder per plugin, so it stays unquoted.
       - name: Build the plugin directories
         if: steps.affected.outputs.any == 'true'
         env:
           DIRECTORIES: ${{ steps.affected.outputs.directories }}
-        run: node scripts/plugins/build.mjs $DIRECTORIES
+        run: node scripts/plugins/build.mts $DIRECTORIES
 
   # Packages for Windows and macOS without signing them, so packaging breaks
   # here rather than at release time, and saves the release-profile Rust cache

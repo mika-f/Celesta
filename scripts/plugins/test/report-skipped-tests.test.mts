@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-const script = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'report-skipped-tests.mjs');
+const script = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'report-skipped-tests.mts');
 
-describe('report-skipped-tests.mjs on a nextest JUnit report', () => {
+describe('report-skipped-tests.mts on a nextest JUnit report', () => {
   let folder: string;
 
   beforeEach(() => {

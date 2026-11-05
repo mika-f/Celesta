@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { githubOutputs } from '../inputs.mjs';
+import { githubOutputs } from '../inputs.mts';
 
-// affected.mjs in the real checkout. Only HEAD is compared, which a depth-1
+// affected.mts in the real checkout. Only HEAD is compared, which a depth-1
 // checkout (the root Test job's) has.
-const script = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'affected.mjs');
+const script = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'affected.mts');
 const root = resolve(dirname(script), '..', '..');
 
 /** The environment without the step output file a CI job sets. */
@@ -24,7 +24,7 @@ function affected(args: string[], env = environment()) {
   return spawnSync(process.execPath, [script, ...args], { cwd: root, encoding: 'utf8', env });
 }
 
-describe('affected.mjs', () => {
+describe('affected.mts', () => {
   let folder: string;
 
   beforeEach(() => {
@@ -55,12 +55,12 @@ describe('affected.mjs', () => {
   it('refuses --head without --base, with a usage error', () => {
     const result = affected(['--head', 'HEAD']);
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain('affected.mjs: --head needs --base');
+    expect(result.stderr).toContain('affected.mts: --head needs --base');
   });
 
   it('fails --github-output without GITHUB_OUTPUT', () => {
     const result = affected(['--base', 'HEAD', '--github-output']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('affected.mjs: GITHUB_OUTPUT is not set');
+    expect(result.stderr).toContain('affected.mts: GITHUB_OUTPUT is not set');
   });
 });

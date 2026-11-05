@@ -59,7 +59,7 @@ RUN mkdir -p /out/runtime \
   && cp target/release/celesta-exporter target/release/celesta-mcp /out/ \
   && cp /usr/local/bin/node /out/runtime/node \
   && node scripts/stage-react-runtime.mjs /out/runtime/react \
-  && node scripts/plugins/build.mjs plugins/ffmpeg --out /out/plugins
+  && node scripts/plugins/build.mts plugins/ffmpeg --out /out/plugins
 
 # --- Runtime stage ----------------------------------------------------------
 FROM ubuntu:26.04

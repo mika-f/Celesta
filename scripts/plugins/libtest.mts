@@ -6,7 +6,7 @@
 
 /**
  * A line a test prints when it skips itself: `skipping ...` or `skipped: ...`.
- * scripts/report-skipped-tests.mjs reads a JUnit report's output with it too.
+ * scripts/report-skipped-tests.mts reads a JUnit report's output with it too.
  */
 export const SKIP_LINE = /^skipp(ing|ed)\b/;
 
@@ -17,17 +17,11 @@ export const SKIP_LINE = /^skipp(ing|ed)\b/;
  * Cargo's `Running` line names (`unittests src/lib.rs`, `tests/gpu.rs`), with
  * Windows' `\` as `/`, or `doctests <crate>` for `Doc-tests <crate>`. Lines
  * before the first binary are Cargo's own and are not read.
- *
- * @param {string} log
- * @returns {Map<string, string[]>}
  */
-export function skippedTests(log) {
-  /** @type {Map<string, string[]>} */
-  const reasons = new Map();
-  /** @type {string | undefined} */
-  let label;
-  /** @type {string | undefined} */
-  let test;
+export function skippedTests(log: string): Map<string, string[]> {
+  const reasons = new Map<string, string[]>();
+  let label: string | undefined;
+  let test: string | undefined;
   for (const line of log.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/)) {
     const binary = /^\s*Running (.+) \(.+\)$/.exec(line);
     const doctests = /^\s*Doc-tests (\S+)$/.exec(line);

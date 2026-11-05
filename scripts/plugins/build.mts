@@ -10,7 +10,7 @@
 // file that is not there, or, with --skip-js, a module no earlier run built,
 // fails the run before anything is built.
 //
-//   node scripts/plugins/build.mjs <plugin directory>...
+//   node scripts/plugins/build.mts <plugin directory>...
 //                                  [--out <dir>] [--target <triple>] [--skip-js]
 //
 // Each plugin directory resolves against the current directory, as does
@@ -29,16 +29,18 @@
 // may pass --skip-js. Each run replaces licenses/ with the files plugin.json
 // lists.
 import { spawnSync } from 'node:child_process';
+import type { SpawnSyncOptions } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { cargoMetadata } from './cargo.mjs';
-import { licenseFiles } from './licenses.mjs';
-import { checkPluginSource, pluginManifest, pluginVersion } from './manifest.mjs';
-import { rustPlatform } from './platform.mjs';
+import { cargoMetadata } from './cargo.mts';
+import { licenseFiles } from './licenses.mts';
+import { checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
+import type { Built, PluginManifest, PluginSource } from './manifest.mts';
+import { rustPlatform } from './platform.mts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..', '..');
@@ -53,26 +55,17 @@ const { values, positionals } = parseArgs({
 
 if (positionals.length === 0) {
   console.error(
-    'usage: node scripts/plugins/build.mjs <plugin directory>... [--out <dir>] [--target <triple>] [--skip-js]',
+    'usage: node scripts/plugins/build.mts <plugin directory>... [--out <dir>] [--target <triple>] [--skip-js]',
   );
   process.exit(2);
 }
 
-/**
- * @param {string} message
- * @returns {never}
- */
-function fail(message) {
-  console.error(`build.mjs: ${message}`);
+function fail(message: string): never {
+  console.error(`build.mts: ${message}`);
   process.exit(1);
 }
 
-/**
- * @param {string} command
- * @param {string[]} args
- * @param {import('node:child_process').SpawnSyncOptions} [options]
- */
-function run(command, args, options = {}) {
+function run(command: string, args: string[], options: SpawnSyncOptions = {}): void {
   const line = `${command} ${args.join(' ')}`;
   console.log(`> ${line}`);
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
@@ -82,12 +75,7 @@ function run(command, args, options = {}) {
   }
 }
 
-/**
- * @template T
- * @param {() => T} step
- * @returns {T}
- */
-function orFail(step) {
+function orFail<T>(step: () => T): T {
   try {
     return step();
   } catch (error) {
@@ -95,11 +83,8 @@ function orFail(step) {
   }
 }
 
-/**
- * @param {string} path
- * @returns {any} The JSON in the file at `path`; a failure names the file.
- */
-function readJson(path) {
+/** The JSON in the file at `path`; a failure names the file. */
+function readJson(path: string): any {
   return orFail(() => {
     try {
       return JSON.parse(readFileSync(path, 'utf8'));
@@ -114,8 +99,7 @@ function readJson(path) {
 const plugins = positionals.map((directory) => {
   const source = resolve(directory);
   const sourcePath = join(source, 'plugin.json');
-  /** @type {import('./manifest.mjs').PluginSource} */
-  const plugin = readJson(sourcePath);
+  const plugin: PluginSource = readJson(sourcePath);
   orFail(() => checkPluginSource(plugin, sourcePath));
   orFail(() => pluginVersion({ version: plugin.version }, undefined, sourcePath));
   const licenses = orFail(() => licenseFiles(source, plugin, sourcePath));
@@ -143,13 +127,11 @@ const fromRuntime = createRequire(join(runtime, 'package.json'));
  * plugin's folder, so it reads the same configuration (`.cargo/config.toml`)
  * wherever the script is started.
  *
- * @param {string} source The plugin's folder.
- * @param {string} out The plugin directory.
- * @param {string} cargoPackage
- * @param {string} targetDirectory Where that workspace builds, as Cargo says.
- * @returns {Record<string, string>}
+ * @param source The plugin's folder.
+ * @param out The plugin directory.
+ * @param targetDirectory Where that workspace builds, as Cargo says.
  */
-function buildExecutable(source, out, cargoPackage, targetDirectory) {
+function buildExecutable(source: string, out: string, cargoPackage: string, targetDirectory: string): Record<string, string> {
   const { os, arch } = orFail(() => rustPlatform({ target: values.target, cwd: source }));
   const binary = os === 'windows' ? `${cargoPackage}.exe` : cargoPackage;
   const cargo = process.env.CARGO ?? 'cargo';
@@ -167,11 +149,11 @@ function buildExecutable(source, out, cargoPackage, targetDirectory) {
 /**
  * The module as one ES module, and its declarations, under js/.
  *
- * @param {string} source The plugin's folder.
- * @param {string} out The plugin directory.
- * @param {string} module The module's entry, relative to `source`.
+ * @param source The plugin's folder.
+ * @param out The plugin directory.
+ * @param module The module's entry, relative to `source`.
  */
-async function buildModule(source, out, module) {
+async function buildModule(source: string, out: string, module: string): Promise<void> {
   const entry = join(source, module);
   // Declarations, checked against the runtime's: a tsconfig extending the
   // project TypeScript support, which maps `react` and `@celesta.studio/*`.
@@ -213,15 +195,13 @@ async function buildModule(source, out, module) {
 for (const { source, sourcePath, plugin, licenses, out } of plugins) {
   mkdirSync(out, { recursive: true });
   const manifestPath = join(out, 'celesta-plugin.json');
-  /** @type {Partial<import('./manifest.mjs').PluginManifest>} */
-  const previous = existsSync(manifestPath) ? readJson(manifestPath) : {};
+  const previous: Partial<PluginManifest> = existsSync(manifestPath) ? readJson(manifestPath) : {};
   // The other platforms' executables an earlier run copied here, while they are.
   const kept = Object.fromEntries(
     Object.entries(previous.executable ?? {}).filter(([, path]) => existsSync(join(out, path))),
   );
 
-  /** @type {import('./manifest.mjs').Built} */
-  let built = {};
+  let built: Built = {};
   if (plugin.cargoPackage !== undefined) {
     const { cargoPackage } = plugin;
     const cargoToml = join(source, 'Cargo.toml');

@@ -104,7 +104,7 @@ try {
     # The shared build script builds it in the plugins workspace (Cargo finds
     # it current when it is) and lays the folder out.
     $codec = Join-Path $package 'plugins/ffmpeg'
-    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/plugins/build.mjs", "$root/plugins/ffmpeg", '--out', "$package/plugins")
+    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/plugins/build.mts", "$root/plugins/ffmpeg", '--out', "$package/plugins")
     $codecManifest = Get-Content -Raw -LiteralPath "$codec/celesta-plugin.json" | ConvertFrom-Json
     $codecProgram = Join-Path $codec $codecManifest.executable.'windows-x86_64'
     Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination (Split-Path $codecProgram -Parent)

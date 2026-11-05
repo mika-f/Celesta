@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { cargoMetadata } from '../cargo.mjs';
-import { checkPluginSource, type PluginSource } from '../manifest.mjs';
-import { FOLLOWS_CELESTA, workspaceVersion } from '../version.mjs';
+import { cargoMetadata } from '../cargo.mts';
+import { checkPluginSource, type PluginSource } from '../manifest.mts';
+import { FOLLOWS_CELESTA, workspaceVersion } from '../version.mts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 

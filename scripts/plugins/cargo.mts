@@ -4,23 +4,22 @@
 import { spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
 
-/**
- * @typedef {object} CargoMetadata
- * @property {string} workspaceRoot The workspace root's folder, absolute, as Cargo gives it.
- * @property {string} targetDirectory Where the workspace builds (`CARGO_TARGET_DIR` or `build.target-dir` included).
- * @property {Map<string, string>} versions Each workspace member's version, by package name.
- * @property {Map<string, string>} directories Each member's folder and each path dependency's folder, by package name; absolute, as Cargo gives them.
- */
+export interface CargoMetadata {
+  /** The workspace root's folder, absolute, as Cargo gives it. */
+  workspaceRoot: string;
+  /** Where the workspace builds (`CARGO_TARGET_DIR` or `build.target-dir` included). */
+  targetDirectory: string;
+  /** Each workspace member's version, by package name. */
+  versions: Map<string, string>;
+  /** Each member's folder and each path dependency's folder, by package name; absolute, as Cargo gives them. */
+  directories: Map<string, string>;
+}
 
 /**
- * `cargo metadata --no-deps` for `manifest`, run with `$CARGO` (or `cargo`)
- * in `cwd`, so a `.cargo/config.toml` there applies.
- *
- * @param {string} manifest The path of a Cargo.toml.
- * @param {{ cwd?: string }} [options]
- * @returns {CargoMetadata}
+ * `cargo metadata --no-deps` for `manifest` (the path of a Cargo.toml), run
+ * with `$CARGO` (or `cargo`) in `cwd`, so a `.cargo/config.toml` there applies.
  */
-export function cargoMetadata(manifest, { cwd } = {}) {
+export function cargoMetadata(manifest: string, { cwd }: { cwd?: string } = {}): CargoMetadata {
   const cargo = process.env.CARGO ?? 'cargo';
   const args = ['metadata', '--format-version', '1', '--no-deps', '--locked', '--manifest-path', manifest];
   const result = spawnSync(cargo, args, {
@@ -31,18 +30,17 @@ export function cargoMetadata(manifest, { cwd } = {}) {
   });
   if (result.error) throw new Error(`${cargo} metadata failed: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`${cargo} metadata failed for ${manifest}`);
-  /**
-   * @type {{
-   *   workspace_root: string,
-   *   target_directory: string,
-   *   packages: { name: string, version: string, manifest_path: string, dependencies: { name: string, path?: string }[] }[],
-   * }}
-   */
-  const { workspace_root: workspaceRoot, target_directory: targetDirectory, packages } = JSON.parse(result.stdout);
-  /** @type {Map<string, string>} */
-  const directories = new Map();
-  /** @param {string} name @param {string} directory */
-  const add = (name, directory) => {
+  const {
+    workspace_root: workspaceRoot,
+    target_directory: targetDirectory,
+    packages,
+  }: {
+    workspace_root: string;
+    target_directory: string;
+    packages: { name: string; version: string; manifest_path: string; dependencies: { name: string; path?: string }[] }[];
+  } = JSON.parse(result.stdout);
+  const directories = new Map<string, string>();
+  const add = (name: string, directory: string) => {
     const known = directories.get(name);
     if (known !== undefined && known !== directory) {
       throw new Error(`${manifest}: package ${name} is in both ${known} and ${directory}`);

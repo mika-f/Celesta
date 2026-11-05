@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { localPackages, parseCargoLock } from '../lockfile.mjs';
+import { localPackages, parseCargoLock } from '../lockfile.mts';
 
 const registry = 'registry+https://github.com/rust-lang/crates.io-index';
 

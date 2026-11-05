@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { skippedTests } from '../libtest.mjs';
+import { skippedTests } from '../libtest.mts';
 
 // Cargo's status words, colored as it prints them to a terminal or to CI.
 const running = '\x1b[1m\x1b[92m     Running\x1b[0m';

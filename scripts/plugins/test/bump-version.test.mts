@@ -34,7 +34,7 @@ let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'bump-version-'));
   mkdirSync(join(root, 'scripts', 'plugins'), { recursive: true });
-  for (const script of ['bump-version.mjs', 'version.mjs']) {
+  for (const script of ['bump-version.mts', 'version.mts']) {
     copyFileSync(join(scripts, script), join(root, 'scripts', 'plugins', script));
   }
   writeFileSync(join(root, 'package.json'), '{ "type": "commonjs" }\n');
@@ -51,7 +51,7 @@ afterEach(() => {
 
 function bump(cargo: string, CARGO = process.execPath) {
   writeFileSync(join(root, 'update'), cargo);
-  return spawnSync(process.execPath, [join(root, 'scripts', 'plugins', 'bump-version.mjs'), '0.9.1'], {
+  return spawnSync(process.execPath, [join(root, 'scripts', 'plugins', 'bump-version.mts'), '0.9.1'], {
     cwd: root,
     encoding: 'utf8',
     env: { ...process.env, CARGO },
@@ -66,7 +66,7 @@ const expectUnchanged = () => {
 // A read-only file cannot be written, except by root.
 const writesAnyFile = process.getuid?.() === 0;
 
-describe('bump-version.mjs', () => {
+describe('bump-version.mts', () => {
   it('bumps every file, then lets Cargo refresh the lockfiles', () => {
     const result = bump('');
     expect(result.status, result.stderr).toBe(0);

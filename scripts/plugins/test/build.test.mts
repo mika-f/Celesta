@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-const script = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'build.mjs');
+const script = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'build.mts');
 
 // A plugin with a process, a module and a license file, in a temporary
 // folder. `CARGO` is Node, run in the plugin's folder, so `cargo metadata ...`
@@ -93,7 +93,7 @@ function build(target: string) {
 
 const manifest = () => JSON.parse(readFileSync(join(out, 'celesta-plugin.json'), 'utf8'));
 
-describe('build.mjs', () => {
+describe('build.mts', () => {
   it('writes the manifest, the executable and the license files', () => {
     const result = build(LINUX);
     expect(result.status, result.stderr).toBe(0);
@@ -177,13 +177,13 @@ describe('build.mjs', () => {
     cargoBuild('process.exit(3);\n');
     const result = build(LINUX);
     expect(result.status).toBe(1);
-    expect(result.stderr).toMatch(/build\.mjs: .* build --release .* failed \(exit code 3\)/);
+    expect(result.stderr).toMatch(/build\.mts: .* build --release .* failed \(exit code 3\)/);
   });
 
   it.skipIf(process.platform === 'win32')('names the signal Cargo died by', () => {
     cargoBuild("process.kill(process.pid, 'SIGKILL');\n");
     const result = build(LINUX);
     expect(result.status).toBe(1);
-    expect(result.stderr).toMatch(/build\.mjs: .* build --release .* failed \(signal SIGKILL\)/);
+    expect(result.stderr).toMatch(/build\.mts: .* build --release .* failed \(signal SIGKILL\)/);
   });
 });

@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! pnpm install && pnpm run build:runtime
-//! node scripts/plugins/build.mjs plugins/ffmpeg
+//! node scripts/plugins/build.mts plugins/ffmpeg
 //! CELESTA_PLUGIN_PATH="$PWD/plugins/dist" cargo run --release -p celesta-exporter --example preview-bench -- <entry.tsx> [frames]
 //! ```
 
@@ -32,7 +32,7 @@ fn main() {
         .map_or(30, |value| value.parse().expect("frames must be a number"));
     let Some(codec) = InstalledPlugins::find_reporting(&[]).codec() else {
         eprintln!(
-            "no codec plugin found: build one with node scripts/plugins/build.mjs plugins/ffmpeg \
+            "no codec plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
              and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH"
         );
         process::exit(1);

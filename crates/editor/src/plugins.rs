@@ -151,7 +151,7 @@ impl FoundPlugins {
             format!(
                 "No codec plugin was found, {consequence}. Install Celesta's {} plugin, or \
                  reinstall Celesta. In a source checkout, build it with node \
-                 scripts/plugins/build.mjs plugins/ffmpeg and add the absolute path of \
+                 scripts/plugins/build.mts plugins/ffmpeg and add the absolute path of \
                  plugins/dist to CELESTA_PLUGIN_PATH before starting Celesta.",
                 celesta_plugin_host::CODEC_PROGRAM
             )
@@ -569,7 +569,7 @@ mod tests {
         assert_eq!(problem.title, "No codec plugin can run");
         for expected in [
             "celesta-codec-ffmpeg",
-            "node scripts/plugins/build.mjs plugins/ffmpeg",
+            "node scripts/plugins/build.mts plugins/ffmpeg",
             "absolute path of plugins/dist",
             "CELESTA_PLUGIN_PATH",
             "reinstall Celesta",

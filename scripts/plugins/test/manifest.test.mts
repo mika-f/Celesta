@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mjs';
+import { checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mts';
 
 const sourcePath = '/repo/plugins/vrm/plugin.json';
 const component = { name: 'Vrm', label: 'VRM avatar', src: 'model', extensions: ['vrm'], aspect: 1.7777778 };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { bumpCargoToml, bumpPluginJson, workspaceVersion } from '../version.mjs';
+import { bumpCargoToml, bumpPluginJson, workspaceVersion } from '../version.mts';
 
 const rootToml = `[workspace]
 resolver = "3"

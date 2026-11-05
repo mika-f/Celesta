@@ -5,21 +5,16 @@
 // table of triples is kept here.
 import { spawnSync } from 'node:child_process';
 
-/**
- * @typedef {object} Platform
- * @property {string} os `std::env::consts::OS` of the target, such as `macos`.
- * @property {string} arch `std::env::consts::ARCH` of the target, such as `aarch64`.
- */
+export interface Platform {
+  /** `std::env::consts::OS` of the target, such as `macos`. */
+  os: string;
+  /** `std::env::consts::ARCH` of the target, such as `aarch64`. */
+  arch: string;
+}
 
-/**
- * The OS and the architecture in the output of `rustc --print cfg`.
- *
- * @param {string} output
- * @returns {Platform}
- */
-export function parseRustcCfg(output) {
-  /** @type {Record<string, string>} */
-  const values = {};
+/** The OS and the architecture in the output of `rustc --print cfg`. */
+export function parseRustcCfg(output: string): Platform {
+  const values: Record<string, string> = {};
   for (const line of output.split(/\r?\n/)) {
     const match = /^target_(os|arch)="(.*)"$/.exec(line);
     if (match) values[match[1]] = match[2];
@@ -34,11 +29,8 @@ export function parseRustcCfg(output) {
  * The platform rustc builds for: the host's, or `target`'s. It runs
  * `$RUSTC` (or `rustc`) in `cwd`, so a `rust-toolchain.toml` there picks the
  * toolchain.
- *
- * @param {{ target?: string, cwd?: string }} [options]
- * @returns {Platform}
  */
-export function rustPlatform({ target, cwd } = {}) {
+export function rustPlatform({ target, cwd }: { target?: string; cwd?: string } = {}): Platform {
   const rustc = process.env.RUSTC ?? 'rustc';
   const args = ['--print', 'cfg', ...(target === undefined ? [] : ['--target', target])];
   const command = `${rustc} ${args.join(' ')}`;

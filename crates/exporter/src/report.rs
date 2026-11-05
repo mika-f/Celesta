@@ -501,7 +501,7 @@ fn error_report(error: &ExportError, hints: HintStyle) -> ErrorReport {
 }
 
 const NO_CODEC_HINT: &str = "install Celesta's codec plugin (celesta-codec-ffmpeg) beside an \
-     installed Celesta or in a plugin folder; in a source checkout, build it with node scripts/plugins/build.mjs \
+     installed Celesta or in a plugin folder; in a source checkout, build it with node scripts/plugins/build.mts \
      plugins/ffmpeg and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH";
 
 /// The code and hint of `error`, collecting its issues into `issues`. A
@@ -995,7 +995,7 @@ mod tests {
             // absolute path.
             for expected in [
                 "celesta-codec-ffmpeg",
-                "node scripts/plugins/build.mjs plugins/ffmpeg",
+                "node scripts/plugins/build.mts plugins/ffmpeg",
                 "absolute path of plugins/dist",
                 "CELESTA_PLUGIN_PATH",
             ] {

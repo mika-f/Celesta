@@ -302,7 +302,7 @@ def main():
     # folder out; --target matches CARGO_BUILD_TARGET, where the script looks.
     codec = contents / "PlugIns" / "ffmpeg"
     codec_env = {name: value for name, value in build_env.items() if name != "CARGO_TARGET_DIR"}
-    run(helpers / "node", ROOT / "scripts/plugins/build.mjs", ROOT / "plugins/ffmpeg",
+    run(helpers / "node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins/ffmpeg",
         "--out", contents / "PlugIns", "--target", target, env=codec_env)
     program = plugin_program(codec)
     frameworks_from_program = os.path.relpath(codec / "Frameworks", program.parent)

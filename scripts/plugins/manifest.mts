@@ -3,40 +3,41 @@
 // plugin with a process gives the same version in its Cargo package; the two
 // are bumped together, and a plugin whose versions differ is refused.
 
-/**
- * plugin.json: what a plugin's source has.
- *
- * @typedef {object} PluginSource
- * @property {string} id
- * @property {string} [version] Required; with `cargoPackage`, that package's version.
- * @property {string} [cargoPackage] The Cargo package, and binary, of the plugin's process.
- * @property {string} [module] The component module's entry, relative to the plugin's folder.
- * @property {string[]} [roles] What the plugin is to Celesta (`content` when absent, `codec`).
- * @property {string[]} [licenses] Files, relative to the plugin's folder, copied by name into licenses/.
- * @property {object[]} [components]
- */
+/** plugin.json: what a plugin's source has. */
+export interface PluginSource {
+  id: string;
+  /** Required; with `cargoPackage`, that package's version. */
+  version?: string;
+  /** The Cargo package, and binary, of the plugin's process. */
+  cargoPackage?: string;
+  /** The component module's entry, relative to the plugin's folder. */
+  module?: string;
+  /** What the plugin is to Celesta (`content` when absent, `codec`). */
+  roles?: string[];
+  /** Files, relative to the plugin's folder, copied by name into licenses/. */
+  licenses?: string[];
+  components?: object[];
+}
 
-/**
- * What the build made.
- *
- * @typedef {object} Built
- * @property {string} [cargoVersion] The version of `cargoPackage`, from Cargo.
- * @property {Record<string, string>} [executable] Each platform's process, as `<os>-<arch>` to a path.
- */
+/** What the build made. */
+export interface Built {
+  /** The version of `cargoPackage`, from Cargo. */
+  cargoVersion?: string;
+  /** Each platform's process, as `<os>-<arch>` to a path. */
+  executable?: Record<string, string>;
+}
 
-/**
- * celesta-plugin.json.
- *
- * @typedef {object} PluginManifest
- * @property {string} id
- * @property {string} version
- * @property {1} protocol
- * @property {string[]} [roles]
- * @property {Record<string, string>} [executable]
- * @property {'js/index.js'} [module]
- * @property {'js/index.d.ts'} [types]
- * @property {object[]} [components]
- */
+/** celesta-plugin.json. */
+export interface PluginManifest {
+  id: string;
+  version: string;
+  protocol: 1;
+  roles?: string[];
+  executable?: Record<string, string>;
+  module?: 'js/index.js';
+  types?: 'js/index.d.ts';
+  components?: object[];
+}
 
 /** The keys plugin.json may have, as PluginSource lists them. */
 const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components'];
@@ -47,11 +48,8 @@ const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 
  * without a word, and has something to build: a module, a Cargo package, or
  * both, and a module for any components, since Celesta skips a plugin listing
  * components it cannot import.
- *
- * @param {PluginSource} source
- * @param {string} sourcePath
  */
-export function checkPluginSource(source, sourcePath) {
+export function checkPluginSource(source: PluginSource, sourcePath: string): void {
   const unknown = Object.keys(source).filter((key) => !PLUGIN_SOURCE_KEYS.includes(key));
   if (unknown.length > 0) {
     throw new Error(
@@ -69,13 +67,8 @@ export function checkPluginSource(source, sourcePath) {
 /**
  * The manifest of the plugin `source` (read from `sourcePath`, which errors
  * name) once `built`.
- *
- * @param {PluginSource} source
- * @param {Built} built
- * @param {string} sourcePath
- * @returns {PluginManifest}
  */
-export function pluginManifest(source, { cargoVersion, executable }, sourcePath) {
+export function pluginManifest(source: PluginSource, { cargoVersion, executable }: Built, sourcePath: string): PluginManifest {
   checkPluginSource(source, sourcePath);
   return {
     id: source.id,
@@ -91,13 +84,12 @@ export function pluginManifest(source, { cargoVersion, executable }, sourcePath)
 /**
  * plugin.json's version, once it is checked: it must be there, and with a
  * `cargoPackage` it must be `cargoVersion`, that package's version.
- *
- * @param {Pick<PluginSource, 'version' | 'cargoPackage'>} source
- * @param {string | undefined} cargoVersion
- * @param {string} sourcePath
- * @returns {string}
  */
-export function pluginVersion({ version, cargoPackage }, cargoVersion, sourcePath) {
+export function pluginVersion(
+  { version, cargoPackage }: Pick<PluginSource, 'version' | 'cargoPackage'>,
+  cargoVersion: string | undefined,
+  sourcePath: string,
+): string {
   if (version === undefined) {
     throw new Error(`${sourcePath}: version is required`);
   }

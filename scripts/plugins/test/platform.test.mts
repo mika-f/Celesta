@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseRustcCfg, rustPlatform } from '../platform.mjs';
+import { parseRustcCfg, rustPlatform } from '../platform.mts';
 
 // Excerpts of `rustc --print cfg --target <triple>`, with lines that are not
 // the OS or the architecture around them.
