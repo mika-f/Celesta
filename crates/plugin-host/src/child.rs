@@ -170,7 +170,8 @@ impl PluginChild {
 
     /// Sends `request` and waits up to `timeout` for its answer, which must
     /// be of the kind `expected` or an `error`. A plugin that misses the
-    /// deadline is killed.
+    /// deadline, answers with another kind, or whose stream fails is killed;
+    /// an `error` answer leaves it running.
     pub fn request(
         &mut self,
         request: Message,
@@ -190,10 +191,10 @@ impl PluginChild {
             Ok(Err(reason)) => return Err(self.gone(&reason)),
             Err(RecvTimeoutError::Disconnected) => return Err(self.gone("its process exited")),
             Err(RecvTimeoutError::Timeout) => {
+                // Killed at once: it had its whole deadline.
                 self.stop();
-                return Err(RequestError::Unavailable(format!(
-                    "{} did not answer `{kind}` within {} s, so it was stopped",
-                    self.name,
+                return Err(self.unavailable(&format!(
+                    "it did not answer `{kind}` within {} s, so it was stopped",
                     timeout.as_secs_f64()
                 )));
             }
@@ -203,24 +204,29 @@ impl PluginChild {
             found if found == expected => Ok(answer),
             found => {
                 self.stop();
-                Err(RequestError::Unavailable(format!(
-                    "{} answered `{kind}` with `{found}`, not `{expected}`, so it was stopped",
-                    self.name
+                Err(self.unavailable(&format!(
+                    "it answered `{kind}` with `{found}`, not `{expected}`, so it was stopped"
                 )))
             }
         }
     }
 
-    /// Why the process cannot be talked to: `reason`, and the last lines it
-    /// printed on stderr once it has finished printing them.
+    /// The process's stream failed for `reason`: it is given a moment to exit
+    /// on its own (so its stderr is complete), then stopped, since a process
+    /// whose stream failed cannot be talked to again.
     fn gone(&mut self, reason: &str) -> RequestError {
         let deadline = Instant::now() + EXIT_WAIT;
         while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
-        let _ = self
-            .stderr_closed
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()));
+        self.stop();
+        self.unavailable(reason)
+    }
+
+    /// Why the stopped process cannot be talked to: `reason`, and the last
+    /// lines it printed on stderr, once they have all been read.
+    fn unavailable(&mut self, reason: &str) -> RequestError {
+        let _ = self.stderr_closed.recv_timeout(EXIT_WAIT);
         let tail = self
             .stderr
             .lock()
@@ -271,6 +277,16 @@ mod tests {
         path
     }
 
+    /// Waits until the script has run as far as touching `marker`, as
+    /// starting a process can take a while on a loaded machine.
+    fn wait_for(marker: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !marker.exists() {
+            assert!(Instant::now() < deadline, "the script did not start");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn hello() -> Message {
         Message::new(json!({ "type": "hello", "protocol": PROTOCOL_VERSION }))
     }
@@ -278,8 +294,16 @@ mod tests {
     #[test]
     fn a_plugin_that_does_not_answer_in_time_is_stopped() {
         let directory = tempfile::tempdir().unwrap();
-        let program = script(directory.path(), "exec sleep 30");
+        let started = directory.path().join("started");
+        let program = script(
+            directory.path(),
+            &format!(
+                "echo 'loading the model' >&2\ntouch '{}'\nexec sleep 30",
+                started.display()
+            ),
+        );
         let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        wait_for(&started);
         let started = Instant::now();
         let error = child
             .request(hello(), "hello", Duration::from_millis(200))
@@ -289,6 +313,7 @@ mod tests {
             panic!("{error:?}");
         };
         assert!(message.contains("did not answer `hello`"), "{message}");
+        assert!(message.contains("loading the model"), "{message}");
         assert!(child.child.try_wait().unwrap().is_some(), "it was killed");
         // Later requests fail at once rather than wait again.
         assert!(matches!(
@@ -329,17 +354,41 @@ exec cat >/dev/null"#,
             panic!("{error:?}");
         };
         assert!(message.contains("with `x`, not `hello`"), "{message}");
+        assert!(child.child.try_wait().unwrap().is_some(), "it was killed");
+    }
+
+    #[test]
+    fn a_plugin_whose_stream_breaks_is_stopped() {
+        let directory = tempfile::tempdir().unwrap();
+        // A 4-byte header that is not JSON, then the process lingers.
+        let program = script(
+            directory.path(),
+            "printf '\\004\\000\\000\\000nope'\nexec sleep 30",
+        );
+        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let error = child
+            .request(hello(), "hello", Duration::from_secs(5))
+            .unwrap_err();
+        assert!(matches!(error, RequestError::Unavailable(_)), "{error:?}");
+        assert!(child.child.try_wait().unwrap().is_some(), "it was killed");
     }
 
     #[test]
     fn dropping_it_closes_stdin_before_killing() {
         let directory = tempfile::tempdir().unwrap();
+        let started = directory.path().join("started");
         let marker = directory.path().join("finished");
         let program = script(
             directory.path(),
-            &format!("cat >/dev/null\ntouch '{}'", marker.display()),
+            &format!(
+                "touch '{}'\ncat >/dev/null\ntouch '{}'",
+                started.display(),
+                marker.display()
+            ),
         );
-        drop(PluginChild::start(&program, directory.path()).unwrap());
+        let child = PluginChild::start(&program, directory.path()).unwrap();
+        wait_for(&started);
+        drop(child);
         assert!(
             marker.exists(),
             "the plugin saw its stdin close and finished"

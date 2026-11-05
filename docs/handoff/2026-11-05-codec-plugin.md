@@ -51,9 +51,13 @@ program links FFmpeg, and with it the GPL libx264 of the official packages.
   - stderr is piped, passed through to Celesta's, and its last lines
     (`celesta_plugin_host::stderr`, moved from the React bridge) end the
     error of a process that went away (#689).
-  - An answer must be of the kind its request expects, else the plugin is
-    killed, so a plugin that answers twice is restarted instead of every
-    later answer being off by one; `hello` must name protocol 1.
+  - An answer must be an `error` (which leaves the plugin running) or of
+    the kind its request expects; any other kind gets the plugin killed, so
+    a plugin that answers twice is restarted instead of every later answer
+    being off by one. A stream that breaks (bad framing, or stdout closed)
+    gets it killed too. `hello` must name protocol 1.
+  - Every unavailable error ends with the last lines the plugin printed on
+    stderr, a missed deadline's included.
   - Dropping it closes the plugin's stdin and kills it only if it has not
     exited within 500 ms.
   - Not done here: killing a plugin from another thread (Cancel during an

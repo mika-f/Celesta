@@ -55,15 +55,24 @@ impl StderrTail {
     }
 
     /// The kept lines, and the unfinished one, joined with `\n`, without
-    /// trailing blank lines.
+    /// trailing blank lines: within [`MAX_LINES`] and [`MAX_BYTES`] with the
+    /// unfinished line counted, the oldest going first.
     pub fn text(&self) -> String {
         let pending = (!self.pending.is_empty()).then(|| clean(&line_text(&self.pending)));
-        let lines: Vec<&str> = self
+        let mut lines: Vec<&str> = self
             .lines
             .iter()
             .map(String::as_str)
             .chain(pending.as_deref())
             .collect();
+        let mut bytes: usize = lines.iter().map(|line| line.len()).sum();
+        let mut first = 0;
+        // The newest line is at most `MAX_BYTES` itself, so it always stays.
+        while lines.len() - first > 1 && (lines.len() - first > MAX_LINES || bytes > MAX_BYTES) {
+            bytes -= lines[first].len();
+            first += 1;
+        }
+        lines.drain(..first);
         let kept = lines
             .iter()
             .rposition(|line| !line.trim().is_empty())
@@ -161,6 +170,24 @@ mod tests {
         tail.push(&format!("{}é{}", "a".repeat(MAX_BYTES - 1), "b".repeat(10)));
         let text = tail.text();
         assert_eq!(text, "a".repeat(MAX_BYTES - 1));
+    }
+
+    #[test]
+    fn counts_the_unfinished_line_within_the_limits() {
+        let mut tail = StderrTail::default();
+        for line in 0..MAX_LINES {
+            tail.push(&format!("line {line}"));
+        }
+        tail.write(b"unfinished");
+        let text = tail.text();
+        assert_eq!(text.lines().count(), MAX_LINES);
+        assert_eq!(text.lines().next(), Some("line 1"));
+        assert_eq!(text.lines().last(), Some("unfinished"));
+
+        let mut tail = StderrTail::default();
+        tail.push(&"x".repeat(MAX_BYTES - 10));
+        tail.write("y".repeat(20).as_bytes());
+        assert_eq!(tail.text(), "y".repeat(20));
     }
 
     #[test]
