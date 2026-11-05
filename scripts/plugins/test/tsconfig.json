@@ -1,0 +1,17 @@
+{
+  // Type-checks the tests together with the .mjs helpers they import, which
+  // carry their types in JSDoc.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["./*.test.mts", "../*.mjs"]
+}
