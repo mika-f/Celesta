@@ -47,8 +47,3 @@ pub use stills::{ContactSheet, FrameSelection, MAX_STILL_FILES, StillExport, Sti
 /// default of its own; every checked-in example project's `sampleRate` is
 /// 48000, so this matches that convention).
 const DEFAULT_REACT_AUDIO_SAMPLE_RATE: u32 = 48_000;
-
-/// Timescale `<Audio>`'s `startFrom` (seconds) is converted at when built
-/// into a `Time`, matching `packages/react/src/render.ts`'s
-/// `SECONDS_TIMESCALE` for `<Video>`'s `startFrom`/`sourceTimeSeconds`.
-const AUDIO_SECONDS_TIMESCALE: u32 = 1_000_000;

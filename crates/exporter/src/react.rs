@@ -106,7 +106,7 @@ pub(crate) struct ReactVideoRequest<'a> {
     pub(crate) project: Option<(&'a Project, &'a Path)>,
     /// Every frame's reported `<Audio>` clips accumulate here (one entry per
     /// clip per frame; duplicates are merged afterwards — see
-    /// `merge_react_audio_clips`).
+    /// `celesta_react_bridge::merge_react_audio_clips`).
     pub(crate) audio: &'a mut Vec<ReactAudioClipDescriptor>,
     /// Every frame's reported subtitles accumulate here, repeated per frame
     /// like `audio`; `subtitles::react_cues` merges them.

@@ -5,7 +5,7 @@ use crate::options::{
     VideoFormat,
 };
 use crate::project::absolutize_layers;
-use crate::project::{build_audio_graph, merge_react_audio_clips};
+use crate::project::build_audio_graph;
 use crate::range::{ExportRange, resolve_window, shifted_audio_graph};
 use crate::render::{
     LOOP_LEAD_IN_FRAMES, ensure_encoders, frame_count, loop_lead_in, open_video_writer,
@@ -20,7 +20,7 @@ use celesta_composition::{AudioDuck, DuckGroups, DuckLevel};
 use celesta_evaluator::Evaluator;
 use celesta_gpu_renderer::ReadbackFormat;
 use celesta_project::Project;
-use celesta_react_bridge::{ReactAudioClipDescriptor, ReactDuck};
+use celesta_react_bridge::{ReactAudioClipDescriptor, ReactDuck, merge_react_audio_clips};
 use std::fs;
 use std::path::Path;
 
@@ -48,7 +48,7 @@ fn static_clip(src: &str, start: f64, duration: f64, volume: f64) -> ReactAudioC
 }
 
 #[test]
-fn merges_identical_frame_reports_while_preserving_multiplicity() {
+fn merges_identical_frame_reports() {
     let clips = vec![
         static_clip("./a.wav", 0.0, 5.0, 1.0),
         static_clip("./b.wav", 1.0, 2.0, 0.5),
@@ -135,6 +135,23 @@ fn builds_a_react_audio_graph_with_ranges_and_keyframed_volume() {
         (["voice".to_owned()].as_slice(), 0.5)
     );
     assert_eq!(duck.attack, AudioDuck::DEFAULT_ATTACK);
+}
+
+#[test]
+fn keeps_a_remote_react_audio_source_as_a_url() {
+    let graph = build_audio_graph(
+        &[static_clip("https://example.com/a.mp3", 0.0, 1.0, 1.0)],
+        Path::new("/entry"),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        graph.clips[0].asset.location,
+        AssetLocation::Url {
+            url: "https://example.com/a.mp3".to_owned()
+        },
+        "an http(s) src stays a URL instead of joining the entry directory"
+    );
 }
 
 #[test]
