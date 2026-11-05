@@ -29,6 +29,10 @@ pub struct TestCodecPlugin {
     folder: TempDir,
 }
 
+#[expect(
+    clippy::new_without_default,
+    reason = "new() panics when the program is not built"
+)]
 impl TestCodecPlugin {
     /// The folder for the program built beside the running test.
     ///
@@ -84,11 +88,5 @@ impl TestCodecPlugin {
     /// The plugin folder.
     pub fn folder(&self) -> &Path {
         self.folder.path()
-    }
-}
-
-impl Default for TestCodecPlugin {
-    fn default() -> Self {
-        Self::new()
     }
 }
