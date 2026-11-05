@@ -20,4 +20,9 @@ rayon = "1.12.0"
 ez-ffmpeg = { workspace = true, features = ["static"] }
 
 [dev-dependencies]
+celesta-exporter.workspace = true
+celesta-gpu-renderer.workspace = true
+celesta-project.workspace = true
+png = "0.18.1"
+strum.workspace = true
 tempfile = "3.23.0"

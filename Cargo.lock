@@ -954,10 +954,15 @@ name = "celesta-codec-ffmpeg"
 version = "0.9.0"
 dependencies = [
  "celesta-composition",
+ "celesta-exporter",
+ "celesta-gpu-renderer",
  "celesta-media",
+ "celesta-project",
  "ez-ffmpeg",
  "ffmpeg-sys-next",
+ "png 0.18.1",
  "rayon",
+ "strum",
  "tempfile",
 ]
 
@@ -967,6 +972,7 @@ version = "0.9.0"
 dependencies = [
  "celesta-composition",
  "celesta-media",
+ "celesta-plugin-host",
  "lz4_flex",
  "serde",
  "serde_json",
@@ -1048,6 +1054,7 @@ name = "celesta-exporter"
 version = "0.9.0"
 dependencies = [
  "celesta-codec-ffmpeg",
+ "celesta-codec-test",
  "celesta-composition",
  "celesta-evaluator",
  "celesta-gpu-renderer",
@@ -1108,6 +1115,7 @@ version = "0.9.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "celesta-codec-test",
  "celesta-composition",
  "celesta-exporter",
  "celesta-react-bridge",
@@ -1206,6 +1214,7 @@ name = "celesta-react-bridge"
 version = "0.9.0"
 dependencies = [
  "celesta-codec-ffmpeg",
+ "celesta-codec-test",
  "celesta-composition",
  "celesta-media",
  "celesta-plugin-host",

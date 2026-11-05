@@ -6,14 +6,17 @@
 //! `check_encoder`, the lead-in, and errors for what it does not support.
 //!
 //! Tests use it in their own process ([`install`]), or, for a child process
-//! such as `celesta-exporter`, as the `celesta-codec-test` program. See
-//! `format` for the file it writes; [`read`] gives a file's contents to
-//! compare byte for byte.
+//! such as `celesta-exporter`, as the [`PROGRAM`] in a temporary plugin
+//! folder ([`TestCodecPlugin`]). `src/format.rs` describes the file it
+//! writes; [`read`] gives a file's contents to compare byte for byte.
 
 mod format;
+mod plugin;
 mod wav;
 
+pub use celesta_plugin_host::PLUGIN_PATH_ENV;
 pub use format::{StoredAudio, StoredVideo, TestMedia, read, write_audio, write_rgba_video};
+pub use plugin::{TestCodecPlugin, profile_dir};
 
 use celesta_composition::Time;
 use celesta_media::{

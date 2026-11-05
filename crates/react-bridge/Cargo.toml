@@ -21,3 +21,4 @@ thiserror.workspace = true
 [dev-dependencies]
 # Tests read media with the FFmpeg codec in their own process.
 celesta-codec-ffmpeg.workspace = true
+celesta-codec-test.workspace = true
