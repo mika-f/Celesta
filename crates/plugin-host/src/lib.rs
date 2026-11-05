@@ -9,6 +9,7 @@
 
 mod approval;
 mod child;
+mod console;
 mod host;
 mod locations;
 mod manifest;
@@ -20,6 +21,7 @@ pub use approval::{
     Allowed, PendingPlugin, fingerprint, from_the_internet, zone_is_internet, zone_text,
 };
 pub use child::{HELLO_TIMEOUT, PluginChild, RequestError};
+pub use console::without_console_window;
 pub use host::PluginHost;
 pub use locations::{
     PluginSource, SearchPath, bundled_plugin_dir, search_paths, unsafe_reason, user_plugin_dir,

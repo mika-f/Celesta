@@ -232,11 +232,7 @@ fn spawn_detached(invocation: &Invocation, cwd: &Path) -> Result<(), LaunchError
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    celesta_plugin_host::without_console_window(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| LaunchError::Spawn(error.to_string()))?;
