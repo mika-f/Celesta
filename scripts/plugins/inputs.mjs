@@ -84,8 +84,16 @@ export function covers(input, path) {
 }
 
 /**
+ * The folders under plugins/ that hold no plugin: the built plugin
+ * directories and the plugins workspace's build output.
+ */
+const NOT_PLUGINS = new Set(['dist', 'target']);
+
+/**
  * Every plugins/<folder>/plugin.json under `root`, sorted by `id`, with its
- * inputs. `cargo metadata` runs once per Cargo workspace.
+ * inputs. Every folder under plugins/ but dist and target must have one, so
+ * a plugin whose plugin.json is missing fails rather than goes untested.
+ * `cargo metadata` runs once per Cargo workspace.
  *
  * @param {string} root The repository's folder.
  * @returns {PluginInputs[]}
@@ -101,11 +109,34 @@ export function repositoryPlugins(root) {
     return turbo;
   };
   const pluginsFolder = join(real, 'plugins');
-  return readdirSync(pluginsFolder)
-    .map((name) => join(pluginsFolder, name))
-    .filter((source) => existsSync(join(source, 'plugin.json')))
-    .map((source) => pluginInputs(real, source, workspaces, turboConfig))
+  return readdirSync(pluginsFolder, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !NOT_PLUGINS.has(entry.name))
+    .map(({ name }) => {
+      const source = join(pluginsFolder, name);
+      if (!existsSync(join(source, 'plugin.json'))) {
+        throw new Error(
+          `${repositoryPath(real, source)}: no plugin.json; every folder under plugins/ but dist and target is a plugin`,
+        );
+      }
+      return pluginInputs(real, source, workspaces, turboConfig);
+    })
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/**
+ * A JSON file's value; a parse error names the file.
+ *
+ * @param {string} path
+ * @param {string} name The file's repository path, for error messages.
+ * @returns {any}
+ */
+function readJson(path, name) {
+  const text = readFileSync(path, 'utf8');
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**
@@ -119,7 +150,7 @@ function pluginInputs(root, source, workspaces, turboConfig) {
   const sourcePath = join(source, 'plugin.json');
   const sourceName = repositoryPath(root, sourcePath);
   /** @type {import('./manifest.mjs').PluginSource} */
-  const plugin = JSON.parse(readFileSync(sourcePath, 'utf8'));
+  const plugin = readJson(sourcePath, sourceName);
   const directory = repositoryPath(root, source);
   const packageJson = join(source, 'js', 'package.json');
   const hasJs = existsSync(packageJson);
@@ -136,10 +167,15 @@ function pluginInputs(root, source, workspaces, turboConfig) {
   }
   let jsPackage = null;
   if (hasJs) {
-    /** @type {{ name: string }} */
-    const { name } = JSON.parse(readFileSync(packageJson, 'utf8'));
+    const packageName = repositoryPath(root, packageJson);
+    /** @type {{ name: string, scripts?: Record<string, string> }} */
+    const { name, scripts } = readJson(packageJson, packageName);
+    // CI runs `pnpm --filter <name> test`, which passes over a package without the script.
+    if (typeof scripts?.test !== 'string') {
+      throw new Error(`${packageName}: no "test" script, so \`pnpm --filter ${name} test\` would test nothing`);
+    }
     jsPackage = name;
-    const packages = workspacePackages(root, name, repositoryPath(root, packageJson));
+    const packages = workspacePackages(root, name, packageName);
     inputs.push(...packages.map(({ folder }) => folder));
     inputs.push(...turboInputs(turboConfig(), packages.map((entry) => packageTasks(root, entry)), 'turbo.json'));
   }
@@ -262,7 +298,7 @@ function workspacePackages(root, name, packageJson) {
 function readTurboConfig(root) {
   if (existsSync(join(root, 'turbo.jsonc'))) throw new Error('turbo.jsonc: not read; use turbo.json');
   const path = join(root, 'turbo.json');
-  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
+  return existsSync(path) ? readJson(path, 'turbo.json') : null;
 }
 
 /**
@@ -280,7 +316,7 @@ function packageTasks(root, { name, folder }) {
     }
   }
   /** @type {{ scripts?: Record<string, string> }} */
-  const manifest = JSON.parse(readFileSync(join(root, folder, 'package.json'), 'utf8'));
+  const manifest = readJson(join(root, folder, 'package.json'), `${folder}/package.json`);
   return { name, scripts: Object.keys(manifest.scripts ?? {}) };
 }
 

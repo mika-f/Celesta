@@ -334,6 +334,58 @@ describe('repositoryPlugins in a scratch tree', () => {
   }, 60_000);
 });
 
+// Before any plugin's Cargo package or pnpm workspace is read.
+describe('repositoryPlugins in a tree without workspaces', () => {
+  let tree: string;
+
+  function file(path: string, text: string) {
+    mkdirSync(dirname(join(tree, path)), { recursive: true });
+    writeFileSync(join(tree, path), text);
+  }
+
+  beforeEach(() => {
+    tree = realpathSync(mkdtempSync(join(tmpdir(), 'celesta-inputs-')));
+  });
+
+  afterEach(() => {
+    rmSync(tree, { recursive: true, force: true });
+  });
+
+  it('passes over dist, target, and files', () => {
+    mkdirSync(join(tree, 'plugins', 'dist', 'vrm'), { recursive: true });
+    mkdirSync(join(tree, 'plugins', 'target', 'debug'), { recursive: true });
+    file('plugins/Cargo.toml', '[workspace]\n');
+    file('plugins/README.md', 'plugins\n');
+    expect(repositoryPlugins(tree)).toEqual([]);
+  });
+
+  it('refuses a folder without a plugin.json', () => {
+    file('plugins/stray/Cargo.toml', '');
+    expect(() => repositoryPlugins(tree)).toThrow(
+      'plugins/stray: no plugin.json; every folder under plugins/ but dist and target is a plugin',
+    );
+  });
+
+  it('names a plugin.json it cannot parse', () => {
+    file('plugins/a/plugin.json', '{');
+    expect(() => repositoryPlugins(tree)).toThrow(/^plugins\/a\/plugin\.json: /);
+  });
+
+  it('names a js/package.json it cannot parse', () => {
+    file('plugins/a/plugin.json', JSON.stringify({ id: 'a', version: '0.1.0', module: 'js/index.ts' }));
+    file('plugins/a/js/package.json', '{');
+    expect(() => repositoryPlugins(tree)).toThrow(/^plugins\/a\/js\/package\.json: /);
+  });
+
+  it('refuses a js/package.json without a test script, which pnpm --filter would pass over', () => {
+    file('plugins/a/plugin.json', JSON.stringify({ id: 'a', version: '0.1.0', module: 'js/index.ts' }));
+    file('plugins/a/js/package.json', JSON.stringify({ name: 'a-js', scripts: { build: 'x' } }));
+    expect(() => repositoryPlugins(tree)).toThrow(
+      'plugins/a/js/package.json: no "test" script, so `pnpm --filter a-js test` would test nothing',
+    );
+  });
+});
+
 describe('repositoryPlugins in a scratch pnpm workspace', () => {
   let tree: string;
 
@@ -350,7 +402,10 @@ describe('repositoryPlugins in a scratch pnpm workspace', () => {
     file('pnpm-workspace.yaml', 'packages:\n  - packages/*\n  - plugins/*/js\n');
     file('package.json', JSON.stringify({ name: 'root', private: true }));
     file('plugins/a/plugin.json', JSON.stringify({ id: 'a', version: '0.1.0', module: 'js/index.ts' }));
-    file('plugins/a/js/package.json', JSON.stringify({ name: 'a-js', devDependencies: { lib: 'workspace:*' } }));
+    file(
+      'plugins/a/js/package.json',
+      JSON.stringify({ name: 'a-js', scripts: { test: 'x' }, devDependencies: { lib: 'workspace:*' } }),
+    );
     file('packages/lib/package.json', JSON.stringify({ name: 'lib', scripts: { codegen: 'x', build: 'y' } }));
     file('packages/other/package.json', JSON.stringify({ name: 'other', scripts: { build: 'y' } }));
     file(
