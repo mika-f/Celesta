@@ -7,17 +7,19 @@
 // whose versions differ is refused before that plugin is built. Every
 // plugin.json is checked first, so a plugin with a key plugin.json may not
 // have, nothing to build, components but no module, no version, a license
-// file that is not there, or, with --skip-js, a module no earlier run built,
-// fails the run before anything is built.
+// file that is not there, two license files sharing a name, or, with
+// --skip-js, a module no earlier run built, fails the run before anything is
+// built.
 //
 //   node scripts/plugins/build.mts <plugin directory>...
 //                                  [--out <dir>] [--target <triple>] [--skip-js]
 //
 // Each plugin directory resolves against the current directory, as does
-// --out. When a plugin has a module, run `pnpm install && pnpm run
-// build:runtime` at the repository root first: the runtime supplies the
-// declarations of `react` and `@celesta.studio/*`, `tsc`, and `esbuild`. A
-// plugin with only a process needs Cargo alone. A plugin directory goes to
+// --out. When a plugin has a module and --skip-js is not given, run
+// `pnpm install && pnpm run build:runtime` at the repository root first: the
+// runtime supplies the declarations of `react` and `@celesta.studio/*`,
+// `tsc`, and `esbuild`. A plugin with only a process, or a run with
+// --skip-js, needs Cargo alone. A plugin directory goes to
 // <out>/<id>, where <out> is by default the dist/ folder beside the plugin's
 // folder (plugins/vrm goes to plugins/dist/vrm, examples/plugins/flag to
 // examples/plugins/dist/flag); put <out> on CELESTA_PLUGIN_PATH or pass it as

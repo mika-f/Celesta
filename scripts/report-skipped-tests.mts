@@ -6,7 +6,7 @@
 // nextest keeps a passing test's output only in the report
 // (`store-success-output` in .config/nextest.toml); `cargo test` prints it
 // with `--show-output` (the plugin job, whose `harness = false` targets
-// nextest cannot run), and scripts/plugins/libtest.mts reads that log.
+// nextest cannot list), and scripts/plugins/libtest.mts reads that log.
 //
 // In GitHub Actions each distinct reason becomes one warning annotation with
 // its test count, and the job summary lists every skipped test.

@@ -297,7 +297,9 @@ function packageTasks(root: string, { name, folder }: { name: string; folder: st
  * Package-relative entries stay in the package's folder, which is already an
  * input; `$TURBO_DEFAULT$` and `!` exclusions are skipped, which can only add
  * paths. A pattern that names no folder or file (any glob other than a
- * trailing `/**`, or a path outside the repository) is an error.
+ * trailing `/**`, or a path outside the repository) is an error, and so is a
+ * package-relative entry that leaves its package (`..`) or holds
+ * `$TURBO_ROOT$` anywhere but at its start.
  *
  * @param turboName turbo.json's path, for error messages.
  * @returns Sorted, without duplicates.
