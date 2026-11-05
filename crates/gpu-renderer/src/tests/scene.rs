@@ -1313,6 +1313,28 @@ fn frame_canvas_overrides_the_model_canvas() {
 }
 
 #[test]
+fn scene_texture_past_the_gpu_limit_is_refused() {
+    // The renderer asks for wgpu's default limits: 8192 texels a side.
+    let mut scenes = one_square();
+    scenes.model.textures = vec![SceneTexture {
+        source: TextureSource::Rgba {
+            width: 8193,
+            height: 1,
+            pixels: Arc::new(vec![255; 8193 * 4]),
+        },
+        color_space: ColorSpace::Srgb,
+        sampler: Sampler::default(),
+    }];
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert_eq!(
+        message,
+        "texture 0 is 8193x1, outside 1 to 8192 texels a side"
+    );
+}
+
+#[test]
 fn bad_frame_canvas_is_refused() {
     for canvas in BAD_CANVASES {
         let mut scenes = one_square();
