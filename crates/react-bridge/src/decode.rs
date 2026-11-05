@@ -162,9 +162,8 @@ mod tests {
         assert_eq!(audio.frames, 84_022);
         let bytes = fs::read(&audio.path).unwrap();
         assert_eq!(bytes.len(), audio.frames * 4);
-        let sample = |index: usize| {
-            f32::from_le_bytes(bytes[index * 4..index * 4 + 4].try_into().unwrap())
-        };
+        let sample =
+            |index: usize| f32::from_le_bytes(bytes[index * 4..index * 4 + 4].try_into().unwrap());
         assert_eq!(sample(0), -11.0 / 32768.0);
         assert_eq!(sample(1), -15.0 / 32768.0);
         files.remove();
