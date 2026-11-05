@@ -686,7 +686,7 @@ Celesta's side knows no format.
 
 | Where | What |
 | --- | --- |
-| `plugins/vrm/Cargo.toml`, `Cargo.lock`, `src/lib.rs`, `src/main.rs` | The crate, its own workspace, and the program. |
+| `plugins/vrm/Cargo.toml`, `src/lib.rs`, `src/main.rs`; `plugins/Cargo.toml`, `plugins/Cargo.lock` | The crate and the program, a member of the first-party plugins' workspace. |
 | `plugins/vrm/src/document.rs`, `nodes.rs`, `humanoid.rs` | Opening the file and its refusals; the node tree, rest pose, and world matrices; the humanoid. |
 | `plugins/vrm/src/geometry.rs` | Compacted primitives, computed normals, MikkTSpace tangents, and the read and geometry budgets. |
 | `plugins/vrm/src/materials.rs` | Materials, scene textures, the texture cache, and the texture budget. |
@@ -770,8 +770,8 @@ Besides MToon's list above, to check against UniVRM:
   `cargo clippy --workspace --all-targets --locked -- -D warnings`;
   `pnpm --filter celesta-plugin-vrm-js test` (after `pnpm run
   build:runtime`), which also type-checks `demo.tsx`; and
-  `node scripts/plugins/build.mjs plugins/vrm`. CI's `vrm-plugin` job runs them all on
-  lavapipe, and also
+  `node scripts/plugins/build.mjs plugins/vrm`. CI's `vrm-plugin` job
+  runs them all on lavapipe, and also
   `cargo check --target x86_64-pc-windows-msvc --lib --bins` for the
   plugin, so its code for platforms other than Unix (the texture cache's)
   compiles before a user builds it on Windows.
