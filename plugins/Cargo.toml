@@ -7,4 +7,4 @@
 # binding) is left out of `members` and becomes a workspace of its own.
 [workspace]
 resolver = "3"
-members = ["vrm"]
+members = ["ffmpeg", "vrm"]

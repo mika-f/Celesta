@@ -1,0 +1,7 @@
+{
+  "id": "ffmpeg",
+  "version": "0.9.0",
+  "cargoPackage": "celesta-codec-ffmpeg",
+  "roles": ["codec"],
+  "licenses": ["../../LICENSE-GPL-2.0", "../../LICENSE-MIT", "../../LICENSE-APACHE", "../../packaging/GPL-SOURCE-OFFER.md"]
+}
