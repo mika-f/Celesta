@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::common::{
     call, client, client_with_test_codec, entry, is_error, params, runtime_built, structured, text,
 };
+use celesta_codec_test::TestCodecPlugin;
 use rmcp::model::{ClientRequest, Request, ServerResult};
 use rmcp::service::PeerRequestOptions;
 use serde_json::{Value, json};
@@ -33,7 +34,9 @@ async fn export_video_writes_an_mp4_with_progress() {
     }
     let (dir, entry) = entry(&scene(60, 320, 180));
     let output = dir.path().join("out.mp4");
-    let (client, mut progress, _plugin) = client_with_test_codec().await;
+    // Bound before the client, so it drops after it.
+    let plugin = TestCodecPlugin::new();
+    let (client, mut progress) = client_with_test_codec(&plugin).await;
     let handle = client
         .send_cancellable_request(
             ClientRequest::CallToolRequest(Request::new(params(
@@ -75,7 +78,7 @@ async fn export_video_writes_an_mp4_with_progress() {
             .all(|message| !message.contains("MP4")),
         "{notifications:?}"
     );
-    // Stop the server before `_plugin` removes the codec program it may run.
+    // Stop the server before `plugin` removes the codec program it may run.
     client.cancel().await.unwrap();
 }
 
@@ -86,7 +89,9 @@ async fn export_video_cancel_stops_and_frees_the_gpu() {
     }
     let (dir, long) = entry(&scene(600, 640, 360));
     let output = dir.path().join("long.mp4");
-    let (client, mut progress, _plugin) = client_with_test_codec().await;
+    // Bound before the client, so it drops after it.
+    let plugin = TestCodecPlugin::new();
+    let (client, mut progress) = client_with_test_codec(&plugin).await;
     let handle = client
         .send_cancellable_request(
             ClientRequest::CallToolRequest(Request::new(params(
@@ -116,7 +121,7 @@ async fn export_video_cancel_stops_and_frees_the_gpu() {
     .expect("the cancelled export released the GPU");
     assert!(!is_error(&next), "{}", text(&next));
     assert!(!output.exists());
-    // Stop the server before `_plugin` removes the codec program it may run.
+    // Stop the server before `plugin` removes the codec program it may run.
     client.cancel().await.unwrap();
 }
 

@@ -65,20 +65,17 @@ pub async fn client() -> (Client, mpsc::UnboundedReceiver<ProgressNotificationPa
     serve(server()).await
 }
 
-/// A client whose server reads and writes media with the test codec,
-/// whatever codec the developer's `CELESTA_PLUGIN_PATH` names. Keep the
-/// plugin until the server exits.
-pub async fn client_with_test_codec() -> (
-    Client,
-    mpsc::UnboundedReceiver<ProgressNotificationParam>,
-    TestCodecPlugin,
-) {
-    let plugin = TestCodecPlugin::new();
+/// A client whose server reads and writes media with the test codec
+/// `plugin`, whatever codec the developer's `CELESTA_PLUGIN_PATH` names.
+/// Bind `plugin` before the client, so that it drops after the client on
+/// every path, a panic included, and outlives the server.
+pub async fn client_with_test_codec(
+    plugin: &TestCodecPlugin,
+) -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
     let mut command = server();
     // Replaces the developer's value rather than adding to it.
     command.env(PLUGIN_PATH_ENV, plugin.folder());
-    let (client, progress) = serve(command).await;
-    (client, progress, plugin)
+    serve(command).await
 }
 
 pub fn params(name: &'static str, args: Value) -> CallToolRequestParams {
