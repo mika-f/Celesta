@@ -174,3 +174,29 @@ fn decodes_generated_audio_to_project_pcm() {
     assert!(audio.samples.iter().any(|sample| sample.abs() > 0.01));
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// FFmpeg reads the checked-in voice to the same samples as the test codec
+/// (`crates/codec-test/tests/codec.rs`), which the core's preview-versus-
+/// export spectrum test (`crates/react-bridge/tests/node_integration.rs`)
+/// compares with the web preview's reading; this ties that comparison to
+/// the codec an export really uses. The fixture is a copy of
+/// `examples/assets/voices/001.wav`, kept beside these tests so a change to
+/// it is a change to this plugin.
+#[test]
+fn reads_the_checked_in_voice_as_the_other_readers_do() {
+    let voice = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/001.wav");
+    let mut backend = FfmpegBackend::new();
+
+    let probe = backend.probe(&voice).unwrap();
+    assert_eq!(probe.video, None);
+    assert_eq!(probe.audio.len(), 1);
+    let stream = &probe.audio[0];
+    assert_eq!(stream.codec.as_deref(), Some("pcm_s16le"));
+    assert_eq!(stream.sample_rate, Some(44_100));
+    assert_eq!(stream.channels, Some(1));
+
+    let audio = backend.decode_audio(&voice, 44_100, 1).unwrap();
+    assert_eq!((audio.sample_rate, audio.channels), (44_100, 1));
+    assert_eq!(audio.frame_count(), 84_022);
+    assert_eq!(audio.samples[..2], [-11.0 / 32768.0, -15.0 / 32768.0]);
+}
