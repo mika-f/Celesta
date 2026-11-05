@@ -1,6 +1,8 @@
 [package]
 name = "celesta-codec-ffmpeg"
 description = "Celesta's FFmpeg codec plugin: probes, decodes, encodes, and muxes media for Celesta in a process of its own."
+# Celesta's version, which plugin.json gives too; both are bumped with the
+# root's by `node scripts/plugins/bump-version.mjs`.
 version = "0.9.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -8,6 +10,8 @@ repository = "https://github.com/mika-f/celesta"
 rust-version = "1.89"
 
 [dependencies]
+# Celesta's crates, pinned to Celesta's version for crates.io; the pins are
+# bumped by `node scripts/plugins/bump-version.mjs`, here and below.
 celesta-composition = { path = "../../crates/composition", version = "=0.9.0" }
 celesta-media = { path = "../../crates/media", version = "=0.9.0" }
 ez-ffmpeg = "0.19"

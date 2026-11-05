@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { cargoMetadata } from '../cargo.mjs';
 import type { PluginSource } from '../manifest.mjs';
+import { FOLLOWS_CELESTA, workspaceVersion } from '../version.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -36,4 +37,9 @@ describe("the repository's plugins", () => {
     },
     60_000,
   );
+
+  it.each(FOLLOWS_CELESTA)("%s gives Celesta's version", (folder) => {
+    const plugin: PluginSource = JSON.parse(readFileSync(join(root, folder, 'plugin.json'), 'utf8'));
+    expect(plugin.version).toBe(workspaceVersion(readFileSync(join(root, 'Cargo.toml'), 'utf8')));
+  });
 });
