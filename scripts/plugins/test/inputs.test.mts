@@ -225,6 +225,18 @@ describe('turboInputs', () => {
     },
   );
 
+  it("refuses a dependency on another package's task outside the packages", () => {
+    const turbo = { tasks: { codegen: { dependsOn: ['^build', 'codegen', 'lib#build', 'schema#generate'] } } };
+    expect(() => turboInputs(turbo, [lib], 'turbo.json')).toThrow(
+      'turbo.json: tasks["codegen"].dependsOn has schema#generate, whose package is not among the plugin\'s packages',
+    );
+  });
+
+  it("accepts a dependency on a task of one of the packages", () => {
+    const turbo = { tasks: { codegen: { dependsOn: ['lib#build'] }, 'lib#build': { inputs: ['$TURBO_ROOT$/gen/**'] } } };
+    expect(turboInputs(turbo, [lib], 'turbo.json')).toEqual(['gen']);
+  });
+
   it('refuses an input it cannot read', () => {
     const turbo = { tasks: { codegen: { inputs: [{ mode: 'jit' }] } } };
     expect(() => turboInputs(turbo, [lib], 'turbo.json')).toThrow(

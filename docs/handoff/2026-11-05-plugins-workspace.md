@@ -824,10 +824,12 @@ its Decisions give the reasons for the choices below.
   package-relative entries (inside the package's folder), and `!`
   exclusions are skipped, which can only add paths; a deferred-hashing
   entry's `globs` are read the same way. A pattern that maps to no folder
-  or file (a glob before its last part, `**` alone, a path outside the
-  repository, `$TURBO_ROOT$` elsewhere than the start or in
-  `globalDependencies`), a package's own
-  `turbo.json`, or a root `turbo.jsonc` is an error. Before the fix, a
+  or file (any glob other than a trailing `/**`, `**` alone, a path
+  outside the repository, `$TURBO_ROOT$` elsewhere than the start or in
+  `globalDependencies`), a `dependsOn` on `<package>#<task>` whose
+  package is outside the closure (its inputs would be left out), a
+  package's own `turbo.json`, or a root `turbo.jsonc` is an error.
+  Before the fix, a
   change to `crates/project/src/lib.rs` affected only the codec; now it
   affects both.
 - **Shared inputs** (`SHARED_INPUTS`; a test checks each exists):
@@ -890,8 +892,8 @@ its Decisions give the reasons for the choices below.
 
 Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
 
-- `pnpm --dir scripts/plugins test`: `tsc -p test`, then 113 passed
-  (10 files; `inputs.test.mts` 53).
+- `pnpm --dir scripts/plugins test`: `tsc -p test`, then 115 passed
+  (10 files; `inputs.test.mts` 55).
 - `pnpm install --frozen-lockfile`: up to date.
 - `node scripts/plugins/affected.mjs`: ffmpeg and vrm, both
   `"no base revision"`. `--base HEAD`: `{"plugins":[]}`, and with
@@ -923,8 +925,10 @@ Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
   a minute) is checked only by the gate check; Windows path behaviour
   (`cargo metadata` and `pnpm ls` giving `C:\` paths, the `pnpm` `.cmd`
   shim, a CRLF lockfile outside the unit test), which the `Test` job's
-  Windows run of the scripts' tests covers; the plugins' whole suites,
-  Clippy, and the JavaScript tests, which CI runs.
+  Windows run of the scripts' tests covers; the scratch pnpm workspace
+  test in `inputs.test.mts`, which has not yet run on CI's Linux, macOS,
+  or Windows runners; the plugins' whole suites, Clippy, and the
+  JavaScript tests, which CI runs.
 
 ## Left to the builder
 

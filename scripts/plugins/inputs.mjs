@@ -289,11 +289,13 @@ function packageTasks(root, { name, folder }) {
  * its `globalDependencies`, and the `$TURBO_ROOT$/` entries of the `inputs`
  * of each package's scripts, under the `<script>` and `<package>#<script>`
  * keys. A task that `dependsOn` another task of the same package runs one of
- * its scripts, and `^` dependencies are packages in `packages` too, so
- * `dependsOn` adds nothing. Package-relative entries stay in the package's
- * folder, which is already an input; `$TURBO_DEFAULT$` and `!` exclusions are
- * skipped, which can only add paths. A pattern that names no folder or file
- * (a glob before its last part, or a path outside the repository) is an error.
+ * its scripts, and `^` dependencies are packages in `packages` too, so those
+ * add nothing; a `<package>#<task>` dependency on a package outside
+ * `packages` is an error, since that task's inputs would be left out.
+ * Package-relative entries stay in the package's folder, which is already an
+ * input; `$TURBO_DEFAULT$` and `!` exclusions are skipped, which can only add
+ * paths. A pattern that names no folder or file (any glob other than a
+ * trailing `/**`, or a path outside the repository) is an error.
  *
  * @param {TurboConfig | null} turbo
  * @param {{ name: string, scripts: string[] }[]} packages
@@ -309,10 +311,21 @@ export function turboInputs(turbo, packages, turboName) {
     inputs.add(repositoryPattern(pattern, `${turboName}: globalDependencies`));
   }
   const tasks = turbo.tasks ?? {};
+  const names = new Set(packages.map(({ name }) => name));
   for (const { name, scripts } of packages) {
     for (const script of scripts) {
       for (const key of [script, `${name}#${script}`]) {
         if (!Object.hasOwn(tasks, key)) continue;
+        const { dependsOn } = tasks[key];
+        for (const dependency of Array.isArray(dependsOn) ? dependsOn : []) {
+          if (typeof dependency !== 'string' || dependency.startsWith('^') || !dependency.includes('#')) continue;
+          if (!names.has(dependency.slice(0, dependency.lastIndexOf('#')))) {
+            throw new Error(
+              `${turboName}: tasks[${JSON.stringify(key)}].dependsOn has ${dependency}, ` +
+                "whose package is not among the plugin's packages",
+            );
+          }
+        }
         const where = `${turboName}: tasks[${JSON.stringify(key)}].inputs`;
         for (const entry of tasks[key].inputs ?? []) {
           for (const pattern of taskGlobs(entry, where)) {
