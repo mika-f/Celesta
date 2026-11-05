@@ -1059,4 +1059,13 @@ fn separate_stills_and_videos_name_the_frame_that_failed() {
         text.contains("frame 6: could not ") && text.contains("ink"),
         "{text}"
     );
+
+    // Up to (excluding) 1 s, before frame 6, the video is written, and by the
+    // test codec: only its files read back with `celesta_codec_test::read`.
+    let film = dir.path().join("short.mp4");
+    let result = react_export(&entry, &["--to", "1"], &film);
+    assert!(result.status.success(), "{}", stderr(&result));
+    let media = celesta_codec_test::read(&film).unwrap();
+    assert_eq!(media.container, Some(celesta_media::Container::Mp4));
+    assert_eq!(media.video.unwrap().frames.len(), 4);
 }

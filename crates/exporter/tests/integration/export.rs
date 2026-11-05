@@ -250,6 +250,16 @@ fn exports_only_the_selected_range_shifted_to_zero() {
     assert_eq!(full_video.frames.len(), 4);
     assert_eq!(windowed_video.frames.len(), 2);
     assert!(windowed.audio.is_some());
+    // Every full-export frame differs from the others, so matching frames 2
+    // and 3 below cannot pass with frames from anywhere else.
+    for (index, frame) in full_video.frames.iter().enumerate() {
+        for (other, other_frame) in full_video.frames.iter().enumerate().skip(index + 1) {
+            assert!(
+                frame != other_frame,
+                "the full export's frames {index} and {other} are the same"
+            );
+        }
+    }
 
     // The window is shifted to start at the file's 00:00, so its frames are
     // the full export's frames at 1.0s and 1.5s.
@@ -617,6 +627,7 @@ fn every_format_stores_the_mix_as_long_as_the_video() {
         // One second at 8 kHz, with nothing before the video's start.
         let media = read(&output);
         let audio = stored_audio(&media);
+        assert_eq!((audio.sample_rate, audio.channels), (8_000, 2), "{format}");
         assert_eq!(audio.lead_in_frames, 0, "{format}");
         assert_eq!(
             audio.samples.len(),

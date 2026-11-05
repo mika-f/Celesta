@@ -75,6 +75,8 @@ async fn export_video_writes_an_mp4_with_progress() {
             .all(|message| !message.contains("MP4")),
         "{notifications:?}"
     );
+    // Stop the server before `_plugin` removes the codec program it may run.
+    client.cancel().await.unwrap();
 }
 
 #[tokio::test]
@@ -114,6 +116,8 @@ async fn export_video_cancel_stops_and_frees_the_gpu() {
     .expect("the cancelled export released the GPU");
     assert!(!is_error(&next), "{}", text(&next));
     assert!(!output.exists());
+    // Stop the server before `_plugin` removes the codec program it may run.
+    client.cancel().await.unwrap();
 }
 
 #[tokio::test]
