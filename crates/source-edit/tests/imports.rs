@@ -46,7 +46,9 @@ fn adds_to_an_existing_named_import_keeping_it_sorted() {
     let text = format!("import {{\n  Rect,\n  Text,\n}} from '@celesta.studio/react';\n{BODY}");
     assert_eq!(
         ensure(&text, &["Sequence"]).0,
-        format!("import {{\n  Rect,\n  Sequence,\n  Text,\n}} from '@celesta.studio/react';\n{BODY}")
+        format!(
+            "import {{\n  Rect,\n  Sequence,\n  Text,\n}} from '@celesta.studio/react';\n{BODY}"
+        )
     );
 
     // Beside a default import.
@@ -120,7 +122,9 @@ fn adds_a_new_import_after_the_last() {
     let text = format!("import '@celesta.studio/react';\n{BODY}");
     assert_eq!(
         ensure(&text, &["Sequence"]).0,
-        format!("import '@celesta.studio/react';\nimport {{ Sequence }} from '@celesta.studio/react';\n{BODY}")
+        format!(
+            "import '@celesta.studio/react';\nimport {{ Sequence }} from '@celesta.studio/react';\n{BODY}"
+        )
     );
 }
 
@@ -228,7 +232,8 @@ fn a_clashing_local_binding_locks() {
     }
 
     // One clashing name of two: no edit at all.
-    let text = format!("import {{ Rect }} from '@celesta.studio/react';\nconst Sequence = 1;\n{BODY}");
+    let text =
+        format!("import {{ Rect }} from '@celesta.studio/react';\nconst Sequence = 1;\n{BODY}");
     assert_eq!(
         ensure_imports(&text, MODULE, &["Circle", "Sequence"]),
         Err(clash("Sequence"))

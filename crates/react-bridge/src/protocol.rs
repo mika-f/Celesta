@@ -7,9 +7,9 @@ use crate::props_edit::OrderedObject;
 use crate::statics::StaticDefinition;
 use crate::types::{
     ComponentPropertyField, ComponentPropertySchema, FrameSpan, LayerSource, LayerSourceReport,
-    LegacyImport, PrepareDependency, PrimitivePropertyTable, PropOverride, ReactAudioClipDescriptor,
-    ReactCompositionConfig, ReactCompositionInfo, ReactSubtitleDescriptor, ReceivedProps,
-    TimingWindow,
+    LegacyImport, PrepareDependency, PrimitivePropertyTable, PropOverride,
+    ReactAudioClipDescriptor, ReactCompositionConfig, ReactCompositionInfo,
+    ReactSubtitleDescriptor, ReceivedProps, TimingWindow,
 };
 use celesta_composition::{Layer, Scene, ShaderSource, Time};
 use serde::{Deserialize, Serialize};

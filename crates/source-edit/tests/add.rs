@@ -342,8 +342,7 @@ fn a_shapes_alias_or_namespace_is_written() {
     };
 
     // `import * as S`: `<S.Ellipse />`, the imports untouched.
-    let imports =
-        "import { Group } from '@celesta.studio/react';\nimport * as S from '@celesta.studio/shapes';\n";
+    let imports = "import { Group } from '@celesta.studio/react';\nimport * as S from '@celesta.studio/shapes';\n";
     let text = format!("{imports}{body}");
     let added = add_child(&text, &element(&text, "<Group"), &ellipse, None).unwrap();
     assert_eq!(added.edits.len(), 1);
@@ -377,7 +376,9 @@ fn rect_and_sequence_both_new_land_in_one_import() {
     let after = apply(&text, &added.edits).unwrap();
     assert!(parses(&after), "{after}");
     assert!(
-        after.starts_with("import { Group, Rect, Sequence, Text } from '@celesta.studio/react';\n\n"),
+        after.starts_with(
+            "import { Group, Rect, Sequence, Text } from '@celesta.studio/react';\n\n"
+        ),
         "{after}"
     );
 

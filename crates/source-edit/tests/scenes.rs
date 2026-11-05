@@ -40,9 +40,13 @@ fn only_the_celesta_define_scenes_makes_a_list() {
         format!(
             "import {{ defineScenes as scenes }} from '@celesta.studio/react';\nexport const S = scenes{list}"
         ),
-        format!("import * as C from '@celesta.studio/react';\nexport const S = C.defineScenes{list}"),
+        format!(
+            "import * as C from '@celesta.studio/react';\nexport const S = C.defineScenes{list}"
+        ),
         // The scope before `@celesta.studio`.
-        format!("import {{ defineScenes }} from '@celesta/react';\nexport const S = defineScenes{list}"),
+        format!(
+            "import {{ defineScenes }} from '@celesta/react';\nexport const S = defineScenes{list}"
+        ),
     ] {
         assert_eq!(lists(&text).len(), 1, "{text}");
     }

@@ -26,6 +26,30 @@ env:
   MISE_DISABLE_TOOLS: rust,mr-boxington
 
 jobs:
+  # HANDOFF.md's `cargo fmt --all -- --check`. A job of its own: rustfmt
+  # needs no build, so it reports within a minute instead of after the test
+  # job's build, and the test job installs no rustfmt, which would change
+  # the toolchain rust-cache keys on. `--all` covers the root workspace
+  # only: the fframes benchmark, a workspace of its own, is checked here by
+  # its manifest (rustfmt reads no dependencies, so nothing is fetched), and
+  # the VRM plugin in its own job.
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.99.1
+          components: rustfmt
+
+      - name: Check formatting
+        run: |
+          cargo fmt --all --check
+          cargo fmt --manifest-path examples/versus/bench/fframes/Cargo.toml --check
+
   test:
     name: Test (${{ matrix.name }})
     strategy:

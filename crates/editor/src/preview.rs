@@ -516,7 +516,10 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
             }
         };
         // Imports by the names before `@celesta.studio`, which still resolve.
-        if let Some(bridge) = react_bridge.as_ref().and_then(|react| react.bridge.as_ref()) {
+        if let Some(bridge) = react_bridge
+            .as_ref()
+            .and_then(|react| react.bridge.as_ref())
+        {
             warnings.extend(
                 bridge
                     .metadata()
