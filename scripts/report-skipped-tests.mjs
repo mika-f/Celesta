@@ -1,22 +1,28 @@
-// Report the tests that skipped themselves in a nextest JUnit report. The
-// standard test runner cannot mark a test skipped, so a test that cannot run
-// here (no GPU adapter, no Node.js, no color emoji font, ...) prints a line
-// starting with "skipping" and passes. nextest keeps a passing test's output
-// only in the report (`store-success-output` in .config/nextest.toml).
+// Report the tests that skipped themselves in a nextest JUnit report or in a
+// `cargo test -- --show-output` log. The standard test runner cannot mark a
+// test skipped, so a test that cannot run here (no GPU adapter, no Node.js, no
+// color emoji font, ...) prints a line starting with "skipping" and passes.
+// nextest keeps a passing test's output only in the report
+// (`store-success-output` in .config/nextest.toml); `cargo test` prints it
+// with `--show-output` (the plugin job, whose `harness = false` targets
+// nextest cannot run), and scripts/plugins/libtest.mjs reads that log.
 //
 // In GitHub Actions each distinct reason becomes one warning annotation with
 // its test count, and the job summary lists every skipped test.
 //
 //   node scripts/report-skipped-tests.mjs target/nextest/ci/junit.xml
+//   node scripts/report-skipped-tests.mjs "$RUNNER_TEMP/cargo-test.log"
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+
+import { skippedTests } from './plugins/libtest.mjs';
 
 const [report] = process.argv.slice(2);
 if (!report) {
-  console.error('Usage: node scripts/report-skipped-tests.mjs <junit.xml>');
+  console.error('Usage: node scripts/report-skipped-tests.mjs <junit.xml | cargo-test.log>');
   process.exit(2);
 }
 if (!existsSync(report)) {
-  // The test run stopped before nextest wrote it; its own error says why.
+  // The test run stopped before writing it; its own error says why.
   console.log(`No report at ${report}.`);
   process.exit(0);
 }
@@ -41,22 +47,32 @@ const unescape = (text) =>
     }
   });
 
-/** @type {Map<string, string[]>} Skipped tests by reason. */
-const reasons = new Map();
-const xml = readFileSync(report, 'utf8');
-for (const [, attributes, body] of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
-  if (!body) continue;
-  const attribute = (key) => unescape(attributes.match(new RegExp(`\\b${key}="([^"]*)"`))?.[1] ?? '');
-  const test = `${attribute('classname')} ${attribute('name')}`;
-  for (const [, output] of body.matchAll(/<system-(?:out|err)>([\s\S]*?)<\/system-(?:out|err)>/g)) {
-    for (const line of unescape(output).split(/\r?\n/)) {
-      if (!line.startsWith('skipping')) continue;
-      const tests = reasons.get(line) ?? [];
-      if (!tests.includes(test)) tests.push(test);
-      reasons.set(line, tests);
+/**
+ * Skipped tests by reason in a nextest JUnit report.
+ *
+ * @param {string} xml
+ * @returns {Map<string, string[]>}
+ */
+function junitSkippedTests(xml) {
+  const reasons = new Map();
+  for (const [, attributes, body] of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
+    if (!body) continue;
+    const attribute = (key) => unescape(attributes.match(new RegExp(`\\b${key}="([^"]*)"`))?.[1] ?? '');
+    const test = `${attribute('classname')} ${attribute('name')}`;
+    for (const [, output] of body.matchAll(/<system-(?:out|err)>([\s\S]*?)<\/system-(?:out|err)>/g)) {
+      for (const line of unescape(output).split(/\r?\n/)) {
+        if (!line.startsWith('skipping')) continue;
+        const tests = reasons.get(line) ?? [];
+        if (!tests.includes(test)) tests.push(test);
+        reasons.set(line, tests);
+      }
     }
   }
+  return reasons;
 }
+
+const text = readFileSync(report, 'utf8');
+const reasons = report.endsWith('.xml') ? junitSkippedTests(text) : skippedTests(text);
 
 if (reasons.size === 0) {
   console.log('No tests skipped themselves.');
