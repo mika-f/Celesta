@@ -18,6 +18,9 @@ foo = { path = "x", version = "=0.9.0" }
 baz = { path = "y", version = "=0.9.0" }
 serde = { version = "1.0" }
 bar = { version = "0.9.0" }
+third-party = "=0.9.0"
+pinned = { version = "=0.9.0", features = ["x"] }
+# keep foo at version = "=0.9.0"
 
 [profile.dev.package.signalsmith-stretch]
 opt-level = 3
@@ -51,7 +54,7 @@ describe('workspaceVersion', () => {
 });
 
 describe('bumpCargoToml', () => {
-  it("bumps the workspace's version and its exact pins, and nothing else", () => {
+  it("bumps the workspace's version and its crates' pins, not third-party pins or comments", () => {
     expect(bumpCargoToml(rootToml, '0.9.0', '0.10.0', 'Cargo.toml')).toBe(
       rootToml
         .replace('version = "0.9.0"\nedition', 'version = "0.10.0"\nedition')
@@ -76,9 +79,20 @@ describe('bumpCargoToml', () => {
     );
   });
 
-  it('refuses a manifest with nothing to bump', () => {
+  it('refuses a manifest without a package version', () => {
     expect(() => bumpCargoToml('[dependencies]\nserde = "1.0"\n', '0.9.0', '0.10.0', 'x/Cargo.toml')).toThrow(
-      'x/Cargo.toml: nothing to bump',
+      'x/Cargo.toml: no [package] version',
+    );
+  });
+
+  it('refuses a version it cannot read rather than moving only the pins', () => {
+    const singleQuoted = codecToml.replace('version = "0.9.0"', "version = '0.9.0'");
+    expect(() => bumpCargoToml(singleQuoted, '0.9.0', '0.10.0', 'plugins/ffmpeg/Cargo.toml')).toThrow(
+      'plugins/ffmpeg/Cargo.toml: no [package] version',
+    );
+    const workspace = rootToml.replace('version = "0.9.0"', "version = '0.9.0'");
+    expect(() => bumpCargoToml(workspace, '0.9.0', '0.10.0', 'Cargo.toml')).toThrow(
+      'Cargo.toml: no [workspace.package] version',
     );
   });
 });

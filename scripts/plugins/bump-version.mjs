@@ -1,10 +1,11 @@
 // Bumps Celesta's version: the root Cargo.toml's [workspace.package] version
-// and its exact pins (`version = "=X.Y.Z"`), and for each plugin that follows
+// and its crates' pins (`path` plus `version = "=X.Y.Z"`), and for each plugin that follows
 // Celesta's version (FOLLOWS_CELESTA in version.mjs) its Cargo package's
 // version, its pins, and its plugin.json's version. Every file is checked
 // before any is written, so a file that gives another version than Celesta's
 // fails the run with nothing changed. Then both lockfiles are refreshed with
-// `cargo update --workspace`.
+// `cargo update --workspace` (`$CARGO` when set); when that fails, every file
+// is put back as it was.
 //
 //   node scripts/plugins/bump-version.mjs <X.Y.Z>
 //
@@ -30,11 +31,11 @@ function fail(message) {
 /**
  * @param {string} command
  * @param {string[]} args
+ * @returns {boolean} Whether it succeeded.
  */
 function run(command, args) {
   console.log(`> ${command} ${args.join(' ')}`);
-  const result = spawnSync(command, args, { cwd: root, stdio: 'inherit' });
-  if (result.status !== 0) fail(`${command} ${args.join(' ')} failed`);
+  return spawnSync(command, args, { cwd: root, stdio: 'inherit' }).status === 0;
 }
 
 const [to, ...rest] = process.argv.slice(2);
@@ -87,15 +88,26 @@ function orFail(step) {
   }
 }
 
+const LOCKFILES = ['Cargo.lock', 'plugins/Cargo.lock'];
+
 const from = orFail(() => workspaceVersion(read('Cargo.toml')));
 if (to === from) fail(`Celesta's version is already ${from}`);
 const changes = orFail(() => bumped(from, to));
+// What the bump writes or Cargo rewrites, as it was, to put back when Cargo fails.
+const originals = orFail(() => [...changes.map(([path]) => path), ...LOCKFILES].map((path) => [path, read(path)]));
 
 for (const [path, text] of changes) writeFileSync(join(root, path), text);
 const cargo = process.env.CARGO ?? 'cargo';
-run(cargo, ['update', '--workspace']);
-run(cargo, ['update', '--manifest-path', 'plugins/Cargo.toml', '--workspace']);
+for (const args of [
+  ['update', '--workspace'],
+  ['update', '--manifest-path', 'plugins/Cargo.toml', '--workspace'],
+]) {
+  if (!run(cargo, args)) {
+    for (const [path, text] of originals) writeFileSync(join(root, path), text);
+    fail(`${cargo} ${args.join(' ')} failed; the bump was undone, every file is as it was`);
+  }
+}
 
 console.log(`\nBumped Celesta from ${from} to ${to}:`);
-for (const path of [...changes.map(([path]) => path), 'Cargo.lock', 'plugins/Cargo.lock']) console.log(`  ${path}`);
+for (const path of [...changes.map(([path]) => path), ...LOCKFILES]) console.log(`  ${path}`);
 console.log('Bump packages/*/package.json by hand.');

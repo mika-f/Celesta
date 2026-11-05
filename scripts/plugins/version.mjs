@@ -11,10 +11,10 @@ const VERSION = /^(\s*version\s*=\s*")([^"]*)(".*)$/s;
 
 /**
  * @param {string} text
- * @returns {RegExp}
+ * @returns {string} `text` as a regular expression matching it literally.
  */
-function literal(text) {
-  return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -60,8 +60,9 @@ export function workspaceVersion(cargoToml) {
 
 /**
  * `cargoToml` (read from `path`, which errors name) with its
- * `[workspace.package]` or `[package]` version and every exact pin
- * (`version = "=<from>"`) moved from `from` to `to`.
+ * `[workspace.package]` or `[package]` version and every pin on one of
+ * Celesta's crates (`{ path = "...", version = "=<from>" }`) moved from `from`
+ * to `to`. Comments and crates without a `path` are left as they are.
  *
  * @param {string} cargoToml
  * @param {string} from
@@ -70,21 +71,23 @@ export function workspaceVersion(cargoToml) {
  * @returns {string}
  */
 export function bumpCargoToml(cargoToml, from, to, path) {
-  const pin = literal(`"=${from}"`);
-  let bumped = 0;
+  const pin = new RegExp(`(\\bversion\\s*=\\s*")=${escapeRegExp(from)}(")`, 'g');
+  /** @type {string | undefined} */
+  let versionTable;
+  let versions = 0;
   const text = eachLine(cargoToml, (line, table) => {
-    const match = table === 'workspace.package' || table === 'package' ? VERSION.exec(line) : null;
-    if (match) {
-      if (match[2] !== from) throw new Error(`${path}: version ${match[2]} is not Celesta's ${from}`);
-      bumped += 1;
-      return `${match[1]}${to}${match[3]}`;
+    if (table !== 'workspace.package' && table !== 'package') {
+      if (/^\s*#/.test(line) || !/\bpath\s*=/.test(line)) return line;
+      return line.replace(pin, (_, before, after) => `${before}=${to}${after}`);
     }
-    return line.replace(pin, () => {
-      bumped += 1;
-      return `"=${to}"`;
-    });
+    versionTable ??= table;
+    const match = VERSION.exec(line);
+    if (!match) return line;
+    if (match[2] !== from) throw new Error(`${path}: version ${match[2]} is not Celesta's ${from}`);
+    versions += 1;
+    return `${match[1]}${to}${match[3]}`;
   });
-  if (bumped === 0) throw new Error(`${path}: nothing to bump`);
+  if (versions === 0) throw new Error(`${path}: no [${versionTable ?? 'package'}] version`);
   return text;
 }
 
