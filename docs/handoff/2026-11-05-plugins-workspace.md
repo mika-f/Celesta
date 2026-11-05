@@ -134,7 +134,7 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   has it. Its rust-cache workspaces are `plugins -> target` and
   `. -> target`, without the FFmpeg cache key. It runs
   `pnpm --dir scripts/plugins test` after the component test, then
-  `cargo fmt --manifest-path plugins/Cargo.toml --check`,
+  `cargo fmt --check` with `working-directory: plugins`,
   `cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings`,
   `cargo check --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --locked --target x86_64-pc-windows-msvc --lib --bins`,
   `env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/Cargo.toml --workspace --locked`,
@@ -146,11 +146,23 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   the root crates the plugins depend on by path (the renderer, the plugin
   host, and what they pull in), which root CI does not format-check, and
   it fails on their existing formatting (`crates/editor`, `crates/mcp`,
-  `crates/react-bridge`, `crates/source-edit`). On the virtual manifest,
-  `cargo fmt --check` without `--all` checks every workspace member and
-  nothing else; `cargo fmt -v` lists only `plugins/vrm`'s files today. With
-  one member, the all-members behaviour is not seen directly yet; the
-  layer that adds the codec should see its files in `cargo fmt -v`.
+  `crates/react-bridge`, `crates/source-edit`). Without `--all`, how the
+  workspace is named matters. Run in `plugins/`, `cargo fmt --check`
+  checks every member and not their path dependencies, so CI's Format step
+  runs it there (`working-directory: plugins`). From the repository root,
+  `cargo fmt --manifest-path plugins/Cargo.toml --check` works today only
+  because the workspace has one member: on a virtual manifest with two, it
+  exits 1 with "Failed to find targets". `-p <package>` with the manifest
+  path checks that one member, which is how `plugins/vrm/README.md` gives
+  it. Reproduced with rustfmt 1.10.0 (Rust 1.99.1) on a scratch virtual
+  workspace with members `a` (with a path dependency `dep` outside the
+  workspace) and `b`, each with one unformatted file:
+  - `cargo fmt --manifest-path ws/Cargo.toml --check`: "Failed to find
+    targets", exit 1.
+  - `cargo fmt --manifest-path ws/Cargo.toml -p a --check -- -l`: lists
+    `a` only.
+  - `cd ws && cargo fmt --check -- -l`: lists `a` and `b`, not `dep`.
+  - `cd ws && cargo fmt --all --check -- -l`: lists `a`, `b`, and `dep`.
 - **Docs.** `plugins/vrm/README.md`, `examples/plugins/README.md`, the flag
   and turntable READMEs, the four demos' usage comments, the user guide's
   plugins page (en and ja), the Celesta skill's `plugins.md`, `HANDOFF.md`'s

@@ -255,10 +255,13 @@ jobs:
       - name: Test the build script
         run: pnpm --dir scripts/plugins test
 
-      # Every member of the workspace. --all would also check the root crates
-      # the plugins depend on by path.
+      # Run in the workspace's directory, cargo fmt checks every member and
+      # not the root crates they depend on by path (--all would). With
+      # --manifest-path on the virtual manifest instead, it finds no targets
+      # once the workspace has two members.
       - name: Format
-        run: cargo fmt --manifest-path plugins/Cargo.toml --check
+        working-directory: plugins
+        run: cargo fmt --check
 
       - name: Clippy
         run: cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings
