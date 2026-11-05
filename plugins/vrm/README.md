@@ -27,37 +27,39 @@ it works, what it leaves out, and where it differs from UniVRM:
 
 ## Building
 
-The plugin is a Cargo workspace of its own, which the repository's root
-workspace excludes: `cargo build --workspace` at the root does not build it.
-It depends on Celesta's `crates/plugin` and `crates/composition` (for
-keyframed tracks) by path, and on nothing else of Celesta's.
+The plugin is a member of the first-party plugins' Cargo workspace,
+`plugins/Cargo.toml`, with one `Cargo.lock` and one `target/`. The
+repository's root workspace excludes `plugins`: `cargo build --workspace`
+at the root does not build it. It depends on Celesta's `crates/plugin` and
+`crates/composition` (for keyframed tracks) by path, and on nothing else of
+Celesta's.
 
 ```sh
-cargo build --manifest-path plugins/vrm/Cargo.toml --release
-cargo test --manifest-path plugins/vrm/Cargo.toml
-cargo clippy --manifest-path plugins/vrm/Cargo.toml --all-targets -- -D warnings
-cargo fmt --manifest-path plugins/vrm/Cargo.toml --check
+cargo build --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --release
+cargo test --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm
+cargo clippy --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --all-targets -- -D warnings
+cargo fmt --manifest-path plugins/Cargo.toml --all --check
 ```
 
-The tests draw through Celesta's GPU renderer, which links FFmpeg, so they
-need what the repository's own tests need. Without a GPU adapter the GPU
-tests return early; `CELESTA_REQUIRE_GPU=1` makes them fail instead.
+The tests draw through Celesta's GPU renderer. Without a GPU adapter the
+GPU tests return early; `CELESTA_REQUIRE_GPU=1` makes them fail instead.
 
 ## The plugin directory and `<Vrm>`
 
-`build.mjs` builds what Celesta loads: the manifest, the program, and the
-module entries import as `@celesta-plugin/vrm` (`js/src/index.ts`, the
-`<Vrm>` component), with its declarations.
+The repository's plugin build script, `scripts/plugins/build.mjs`, builds
+what Celesta loads: the manifest, the program, and the module entries
+import as `@celesta-plugin/vrm` (`js/src/index.ts`, the `<Vrm>` component),
+with its declarations. The manifest's version is the Cargo package's.
 
 ```sh
-pnpm install && pnpm run build:runtime   # once, at the repository root
-node plugins/vrm/build.mjs               # writes plugins/vrm/dist/vrm
-pnpm --filter celesta-plugin-vrm-js test # the component's tests
+pnpm install && pnpm run build:runtime          # once, at the repository root
+node scripts/plugins/build.mjs plugins/vrm      # writes plugins/dist/vrm
+pnpm --filter celesta-plugin-vrm-js test        # the component's tests
 ```
 
-`--out <dir>`, `--target <triple>`, and `--skip-js` work as for
-`examples/plugins/build.mjs`. Add `plugins/vrm/dist` to the app's plugin
-folders, or pass it as the exporter's `--plugin-dir`.
+The script also takes `--out <dir>`, `--target <triple>`, and `--skip-js`
+(see its header). Add `plugins/dist` to the app's plugin folders, or pass it
+as the exporter's `--plugin-dir`.
 
 ## VRM animation clips
 
@@ -92,8 +94,8 @@ files in `plugins/vrm/assets/`, which Git ignores:
 Then:
 
 ```sh
-node plugins/vrm/build.mjs
-cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/vrm/dist
+node scripts/plugins/build.mjs plugins/vrm
+cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/dist
 ```
 
 ## Tests and sample models

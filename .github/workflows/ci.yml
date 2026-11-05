@@ -191,8 +191,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # The VRM plugin is a Cargo workspace of its own (plugins/vrm), which the
-  # root workspace excludes, so the test job never builds it.
+  # The VRM plugin is a member of the plugins workspace (plugins/Cargo.toml),
+  # which the root workspace excludes, so the test job never builds it.
   vrm-plugin:
     name: VRM plugin
     runs-on: ubuntu-latest
@@ -210,9 +210,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libfontconfig-dev mesa-vulkan-drivers
 
-      # The renderer, a dev-dependency, links FFmpeg.
-      - uses: $/.github/actions/setup-ffmpeg
-
       # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
@@ -228,9 +225,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: |
-            plugins/vrm -> target
+            plugins -> target
             . -> target
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Node.js and pnpm as mise.lock pins them, for <Vrm> and the build.
@@ -255,25 +251,29 @@ jobs:
       - name: Test the component
         run: pnpm --filter celesta-plugin-vrm-js test
 
+      # The build script's own tests; one runs rustc, installed above.
+      - name: Test the build script
+        run: pnpm --dir scripts/plugins test
+
       - name: Format
-        run: cargo fmt --manifest-path plugins/vrm/Cargo.toml --check
+        run: cargo fmt --manifest-path plugins/Cargo.toml --all --check
 
       - name: Clippy
-        run: cargo clippy --manifest-path plugins/vrm/Cargo.toml --all-targets --locked -- -D warnings
+        run: cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings
 
       # Users build the plugin on Windows themselves, and its code has
       # branches for other platforms than Unix. Checking needs no linker, and
       # the library and program use no C code, so the Windows target checks
-      # here; the tests' dev-dependencies (FFmpeg) are left out.
+      # here; the tests and their dev-dependencies are left out.
       - name: Check for Windows
-        run: cargo check --manifest-path plugins/vrm/Cargo.toml --locked --target x86_64-pc-windows-msvc --lib --bins
+        run: cargo check --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --locked --target x86_64-pc-windows-msvc --lib --bins
 
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
       - name: Test
-        run: env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/vrm/Cargo.toml --locked
+        run: env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/Cargo.toml --workspace --locked
 
       - name: Build the plugin directory
-        run: node plugins/vrm/build.mjs
+        run: node scripts/plugins/build.mjs plugins/vrm
 
   # Packages for Windows and macOS without signing them, so packaging breaks
   # here rather than at release time, and saves the release-profile Rust cache

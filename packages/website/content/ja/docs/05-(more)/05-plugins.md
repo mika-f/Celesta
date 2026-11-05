@@ -117,7 +117,7 @@ LGPL のみの FFmpeg など別の FFmpeg を使うには、それに対して `
 | `beep-voice` | コンポーネントだけのプラグイン。音声合成エンジンの代わりにゲーム風のビープ音で `planDialogue()` のセリフを読み上げ、口パクも付ける音声チャンネルです。 |
 
 ```sh
-node examples/plugins/build.mjs
+node scripts/plugins/build.mjs examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
 ```
@@ -127,11 +127,11 @@ cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx tur
 リポジトリの `plugins/vrm` は、VRM 1.0 のアバター（`.vrm`）を 3D で描くプラグインです。UniVRM と同じ MToon のトゥーン調の陰影で描き、表情・まばたき・口パク・目線に加えて、モーション（`.vrma`）を再生し、髪や服を揺らせます。ビルドしてから、書き出されたフォルダーをインストールします。
 
 ```sh
-pnpm install && pnpm run build:runtime   # 最初に一度、リポジトリのルートで
-node plugins/vrm/build.mjs               # plugins/vrm/dist/vrm に書き出します
+pnpm install && pnpm run build:runtime       # 最初に一度、リポジトリのルートで
+node scripts/plugins/build.mjs plugins/vrm   # plugins/dist/vrm に書き出します
 ```
 
-`plugins/vrm/dist/vrm` をユーザーのプラグインフォルダーにコピーするか、書き出しのときに `--plugin-dir` で `plugins/vrm/dist` を指定します。ビルドには、Celesta 本体のビルドと同じく Rust と Node.js が必要です。
+`plugins/dist/vrm` をユーザーのプラグインフォルダーにコピーするか、書き出しのときに `--plugin-dir` で `plugins/dist` を指定します。ビルドには、Celesta 本体のビルドと同じく Rust と Node.js が必要です。
 
 ```tsx
 import { Composition } from '@celesta.studio/react';

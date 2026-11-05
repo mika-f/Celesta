@@ -3,7 +3,7 @@
 // engine; planDialogue(), <DialogueSeries>, and the portraits' lip sync are
 // Celesta's own. Build the plugin first, then export with its directory:
 //
-//   node examples/plugins/build.mjs beep-voice
+//   node scripts/plugins/build.mjs examples/plugins/beep-voice
 //   cargo run -p celesta-exporter -- --react examples/plugins/beep-voice/demo.tsx out.mp4 --plugin-dir examples/plugins/dist
 import * as React from 'react';
 

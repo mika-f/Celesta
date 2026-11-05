@@ -45,5 +45,6 @@ where you drag, as **Add > Image** does: its manifest lists the component
   host starts the built program from a plugin directory, its answers match
   the provider's, and the GPU renderer draws them.
 
-Run `node ../build.mjs flag` to make its plugin directory, then
-`demo.tsx` exports as the parent README shows.
+Run `node scripts/plugins/build.mjs examples/plugins/flag` at the
+repository root to make its plugin directory, then `demo.tsx` exports as
+the parent README shows.

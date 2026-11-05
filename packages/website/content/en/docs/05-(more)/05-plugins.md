@@ -117,7 +117,7 @@ The repository's `examples/plugins` has three plugins to start from:
 | `beep-voice` | A plugin with only components: a speech channel that voices `planDialogue()` lines in game-style beeps instead of a speech engine, with lip sync. |
 
 ```sh
-node examples/plugins/build.mjs
+node scripts/plugins/build.mjs examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
 ```
@@ -127,11 +127,11 @@ cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx tur
 The repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) in 3D, toon-shaded with MToon as UniVRM draws it, with expressions, blinking, lip sync, eyes that follow a target, motion clips (`.vrma`), and swinging hair and clothes. Build it, then install the folder it writes:
 
 ```sh
-pnpm install && pnpm run build:runtime   # once, at the repository root
-node plugins/vrm/build.mjs               # writes plugins/vrm/dist/vrm
+pnpm install && pnpm run build:runtime       # once, at the repository root
+node scripts/plugins/build.mjs plugins/vrm   # writes plugins/dist/vrm
 ```
 
-Copy `plugins/vrm/dist/vrm` into your user plugin folder, or pass `plugins/vrm/dist` to the exporter with `--plugin-dir`. Building needs Rust and Node.js, as building Celesta does.
+Copy `plugins/dist/vrm` into your user plugin folder, or pass `plugins/dist` to the exporter with `--plugin-dir`. Building needs Rust and Node.js, as building Celesta does.
 
 ```tsx
 import { Composition } from '@celesta.studio/react';

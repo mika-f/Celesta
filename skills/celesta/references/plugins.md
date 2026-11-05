@@ -80,10 +80,10 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 The Celesta repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) as a
 3D layer, MToon-shaded as UniVRM draws them. Build it with
-`node plugins/vrm/build.mjs` (after `pnpm install && pnpm run
-build:runtime` at the repository root); it writes `plugins/vrm/dist/vrm`,
-which the user copies into a plugin folder, or name `plugins/vrm/dist`
-with `--plugin-dir`.
+`node scripts/plugins/build.mjs plugins/vrm` (after `pnpm install && pnpm
+run build:runtime` at the repository root); it writes `plugins/dist/vrm`,
+which the user copies into a plugin folder, or name `plugins/dist` with
+`--plugin-dir`.
 
 ```tsx
 import { Vrm } from '@celesta-plugin/vrm';

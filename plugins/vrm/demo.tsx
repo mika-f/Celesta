@@ -5,8 +5,8 @@
 // `test.vrma` into plugins/vrm/assets/. Build the plugin first, then export
 // with its directory:
 //
-//   node plugins/vrm/build.mjs
-//   cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/vrm/dist
+//   node scripts/plugins/build.mjs plugins/vrm
+//   cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/dist
 import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
 import { Vrm } from '@celesta-plugin/vrm';
 

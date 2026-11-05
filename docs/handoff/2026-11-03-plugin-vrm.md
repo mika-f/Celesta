@@ -24,8 +24,8 @@ Files ported from UniVRM carry its MIT notice and name their source.
 
 ## The plugin, its build, and installing it
 
-- A Cargo workspace of its own (`plugins/vrm/Cargo.toml` has an empty
-  `[workspace]` and its own `Cargo.lock`), which the root workspace
+- A member of the first-party plugins' Cargo workspace (`plugins/Cargo.toml`,
+  with `plugins/Cargo.lock` and `plugins/target`), which the root workspace
   excludes: `cargo build --workspace` at the root never builds it. It
   depends on Celesta's `crates/plugin` and `crates/composition` (for
   keyframed tracks) by path and on nothing else of Celesta's; the GPU
@@ -36,17 +36,19 @@ Files ported from UniVRM carry its MIT notice and name their source.
 - `plugin.json` is the manifest's source: one component, `Vrm` ("VRM
   avatar"), taking a model file (below). `js/src/index.ts` is `<Vrm>`, a
   pnpm workspace package (`celesta-plugin-vrm-js`, private) for its tests.
-- `node plugins/vrm/build.mjs` builds what Celesta loads into
-  `plugins/vrm/dist/vrm`: `celesta-plugin.json`, the release program in
-  `bin/<os>-<arch>/`, and `js/index.js` with `js/index.d.ts` (the module
-  bundled with `react` and `@celesta/*` external, its declarations checked
-  against the runtime's project types). It runs Cargo `--locked` from the
-  plugin's folder and finds the executable through `cargo metadata`'s
-  target directory. `--out`, `--target`, and `--skip-js` work as for
-  `examples/plugins/build.mjs`; a `--target` triple's architecture is named
-  as the host names it (`i686` is `x86`, `armv7` is `arm`).
-- To install it, copy `plugins/vrm/dist/vrm` into a plugin folder, or name
-  `plugins/vrm/dist` with `--plugin-dir` or `CELESTA_PLUGIN_PATH`.
+- `node scripts/plugins/build.mjs plugins/vrm`, the repository's plugin
+  build script, builds what Celesta loads into `plugins/dist/vrm`:
+  `celesta-plugin.json` (its version the Cargo package's), the release
+  program in `bin/<os>-<arch>/`, and `js/index.js` with `js/index.d.ts`
+  (the module bundled with `react` and `@celesta/*` external, its
+  declarations checked against the runtime's project types). It runs Cargo
+  `--locked` from the plugin's folder and finds the executable through
+  `cargo metadata`'s target directory. It also takes `--out`, `--target`,
+  and `--skip-js`; the `<os>-<arch>` of the host or of a `--target` triple
+  comes from `rustc --print cfg` (`target_os` and `target_arch`, so `i686`
+  is `x86` and `armv7` is `arm`).
+- To install it, copy `plugins/dist/vrm` into a plugin folder, or name
+  `plugins/dist` with `--plugin-dir` or `CELESTA_PLUGIN_PATH`.
 - `plugins/vrm/demo.tsx` shows Seed-san (VRM Public License 1.0, from
   vrm-c/vrm-specification's `samples/Seed-san/vrm`, downloaded into the
   git-ignored `plugins/vrm/assets/`) from the bust up, mouthing the vowels.
@@ -695,7 +697,7 @@ Celesta's side knows no format.
 | `plugins/vrm/src/meta.rs`, `provider.rs` | Usage-term notices; the provider and `data`. |
 | `plugins/vrm/src/notices.rs` | Warnings of one kind listed up to a limit, the rest counted. |
 | `plugins/vrm/src/synthetic.rs` | A small VRM 1.0 avatar built in code (feature `synthetic`), which every test opens. |
-| `plugins/vrm/js`, `plugin.json`, `build.mjs`, `demo.tsx`, `README.md` | `<Vrm>` and its tests, the manifest, the build, and the demo. |
+| `plugins/vrm/js`, `plugin.json`, `demo.tsx`, `README.md` | `<Vrm>` and its tests, the manifest's source, and the demo; `scripts/plugins/build.mjs` builds the plugin directory. |
 | `crates/plugin-host/src/manifest.rs` | `ComponentSource::Model`, `extensions`, `aspect`, and their checks. |
 | `crates/editor/src/add_element.rs` | Model components drawn as images, the file check, and the manifest's aspect. |
 | `Cargo.toml`, `.gitignore`, `pnpm-workspace.yaml`, `.github/workflows/ci.yml` | The root workspace excludes the plugin; its `target`, `dist`, and `assets` are ignored; `plugins/*/js` is a workspace package; CI job `vrm-plugin`. |
@@ -761,13 +763,14 @@ Besides MToon's list above, to check against UniVRM:
 
 ## Checks
 
-- `cargo test --manifest-path plugins/vrm/Cargo.toml --locked`, with
-  `CELESTA_REQUIRE_GPU=1` so the GPU tests fail without an adapter instead
-  of returning early; plugin `cargo fmt --check` and
-  `cargo clippy --all-targets --locked -- -D warnings`;
+- `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`,
+  with `CELESTA_REQUIRE_GPU=1` so the GPU tests fail without an adapter
+  instead of returning early; the plugins workspace's
+  `cargo fmt --all --check` and
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`;
   `pnpm --filter celesta-plugin-vrm-js test` (after `pnpm run
   build:runtime`), which also type-checks `demo.tsx`; and
-  `node plugins/vrm/build.mjs`. CI's `vrm-plugin` job runs them all on
+  `node scripts/plugins/build.mjs plugins/vrm`. CI's `vrm-plugin` job runs them all on
   lavapipe, and also
   `cargo check --target x86_64-pc-windows-msvc --lib --bins` for the
   plugin, so its code for platforms other than Unix (the texture cache's)

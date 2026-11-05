@@ -15,13 +15,15 @@ The manifest, the protocol, and how Celesta draws meshes are described in
 
 ```sh
 pnpm install && pnpm run build:runtime   # once, at the repository root
-node examples/plugins/build.mjs          # or: build.mjs flag
+node scripts/plugins/build.mjs examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/beep-voice/demo.tsx beep.mp4 --plugin-dir examples/plugins/dist
 ```
 
-`build.mjs` writes one plugin directory per sample under `dist/`:
+The repository's plugin build script, `scripts/plugins/build.mjs`, takes
+the plugin directories to build (one, or several) and writes one plugin
+directory for each under `dist/` beside them:
 
 ```text
 dist/flag/
@@ -38,10 +40,11 @@ desktop app, add `dist/` with **Add Folder…** in its Plugins tab (or copy a
 plugin's folder into your plugin folder) and allow them when it asks, or
 with **Allow** in the Plugins tab.
 
-Each sample's `plugin.json` gives its id, version, and module source.
-flag's and turntable's also name the Cargo package that builds the
-program, and flag's the `components` the app's Add menu offers, which the
-build copies into the manifest.
+Each sample's `plugin.json` gives its id and module source. flag's and
+turntable's also name the Cargo package that builds the program, whose
+version becomes the plugin's; beep-voice, which has no program, gives its
+version itself. flag's also lists the `components` the app's Add menu
+offers, which the build copies into the manifest.
 
 ## Moving a sample out of this repository
 
@@ -57,4 +60,4 @@ celesta-plugin = { path = "/path/to/celesta/crates/plugin" }
 
 Its build script then runs `cargo build` in its own directory and takes the
 runtime's declarations, `tsc`, and `esbuild` from the checkout's
-`packages/cli`, as `build.mjs` does.
+`packages/cli`, as `scripts/plugins/build.mjs` does.
