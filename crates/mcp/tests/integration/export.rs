@@ -3,7 +3,9 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crate::common::{call, client, entry, is_error, params, runtime_built, structured, text};
+use crate::common::{
+    call, client, client_with_test_codec, entry, is_error, params, runtime_built, structured, text,
+};
 use rmcp::model::{ClientRequest, Request, ServerResult};
 use rmcp::service::PeerRequestOptions;
 use serde_json::{Value, json};
@@ -31,7 +33,7 @@ async fn export_video_writes_an_mp4_with_progress() {
     }
     let (dir, entry) = entry(&scene(60, 320, 180));
     let output = dir.path().join("out.mp4");
-    let (client, mut progress) = client().await;
+    let (client, mut progress, _plugin) = client_with_test_codec().await;
     let handle = client
         .send_cancellable_request(
             ClientRequest::CallToolRequest(Request::new(params(
@@ -46,8 +48,12 @@ async fn export_video_writes_an_mp4_with_progress() {
         panic!("not a tool result")
     };
     assert!(!is_error(&result), "{}", text(&result));
-    assert!(output.exists());
     assert_eq!(structured(&result)["outputs"][0]["type"], "video");
+    // Only the test codec's own files read back: the server used it.
+    let media = celesta_codec_test::read(&output).unwrap();
+    assert_eq!(media.video.unwrap().frames.len(), 60);
+    // `Container` is `celesta-media`'s, which this crate does not depend on.
+    assert_eq!(serde_json::to_value(media.container).unwrap(), "mp4");
 
     let mut notifications = Vec::new();
     while let Ok(notification) = progress.try_recv() {
@@ -78,7 +84,7 @@ async fn export_video_cancel_stops_and_frees_the_gpu() {
     }
     let (dir, long) = entry(&scene(600, 640, 360));
     let output = dir.path().join("long.mp4");
-    let (client, mut progress) = client().await;
+    let (client, mut progress, _plugin) = client_with_test_codec().await;
     let handle = client
         .send_cancellable_request(
             ClientRequest::CallToolRequest(Request::new(params(

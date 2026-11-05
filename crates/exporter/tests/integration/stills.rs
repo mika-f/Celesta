@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{ExportOptions, ExportProgress, ReactRuntimeOptions};
 use celesta_project::{
@@ -926,8 +927,15 @@ export default function Root() {
     entry
 }
 
+/// Runs the exporter CLI on the test codec, whatever codec the developer's
+/// `CELESTA_PLUGIN_PATH` names.
 fn react_export(entry: &Path, args: &[&str], output: &Path) -> std::process::Output {
+    // Kept until the child exits: `output` waits for it.
+    let plugin = TestCodecPlugin::new();
     Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
+        .env_remove(PLUGIN_PATH_ENV)
+        .arg("--plugin-dir")
+        .arg(plugin.folder())
         .arg("--react")
         .args(args)
         .arg(entry)

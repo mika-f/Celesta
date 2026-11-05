@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ProgressNotificationParam};
 use rmcp::service::{NotificationContext, RunningService};
 use rmcp::transport::TokioChildProcess;
@@ -47,12 +48,37 @@ impl ClientHandler for TestClient {
 
 pub type Client = RunningService<RoleClient, TestClient>;
 
-pub async fn client() -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
+fn server() -> tokio::process::Command {
+    tokio::process::Command::new(env!("CARGO_BIN_EXE_celesta-mcp"))
+}
+
+async fn serve(
+    command: tokio::process::Command,
+) -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
     let (progress, received) = mpsc::unbounded_channel();
-    let command = tokio::process::Command::new(env!("CARGO_BIN_EXE_celesta-mcp"));
     let transport = TokioChildProcess::new(command).unwrap();
     let client = TestClient { progress }.serve(transport).await.unwrap();
     (client, received)
+}
+
+pub async fn client() -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
+    serve(server()).await
+}
+
+/// A client whose server reads and writes media with the test codec,
+/// whatever codec the developer's `CELESTA_PLUGIN_PATH` names. Keep the
+/// plugin until the server exits.
+pub async fn client_with_test_codec() -> (
+    Client,
+    mpsc::UnboundedReceiver<ProgressNotificationParam>,
+    TestCodecPlugin,
+) {
+    let plugin = TestCodecPlugin::new();
+    let mut command = server();
+    // Replaces the developer's value rather than adding to it.
+    command.env(PLUGIN_PATH_ENV, plugin.folder());
+    let (client, progress) = serve(command).await;
+    (client, progress, plugin)
 }
 
 pub fn params(name: &'static str, args: Value) -> CallToolRequestParams {
