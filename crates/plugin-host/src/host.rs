@@ -1,31 +1,23 @@
 //! Plugin processes, one per plugin a renderer uses, behind the renderer's
 //! `ContentProvider` interface.
 
+use crate::child::{PluginChild, RequestError};
 use crate::manifest::{InstalledPlugins, PluginEntry};
-use celesta_plugin::protocol::{
-    ContentKind, Message, PROTOCOL_VERSION, ProtocolError, decode_content_frame, decode_opened,
-    read_message, write_message,
-};
+use celesta_plugin::protocol::{ContentKind, Message, decode_content_frame, decode_opened};
 use celesta_plugin::{ContentFrame, ContentProvider, ModelId, Opened, PluginError};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
-use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::Duration;
 
-/// A running plugin process.
-struct PluginProcess {
-    child: Child,
-    input: BufWriter<ChildStdin>,
-    output: BufReader<ChildStdout>,
-}
+/// How long a content plugin may take to open a model (loading a file it
+/// reads itself, such as an avatar), draw a frame, and close a model.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(120);
+const FRAME_TIMEOUT: Duration = Duration::from_secs(30);
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How a request went wrong: the process cannot be talked to, or it
-/// refused.
-enum RequestError {
-    Unavailable(String),
-    Refused(String),
-}
+/// A running content plugin, checked to be the plugin its entry names.
+struct PluginProcess(PluginChild);
 
 impl PluginProcess {
     fn start(entry: &PluginEntry) -> Result<Self, String> {
@@ -35,28 +27,8 @@ impl PluginProcess {
                 entry.directory.display()
             )
         })?;
-        let mut child = Command::new(&executable)
-            .current_dir(&entry.directory)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            // The plugin's own log goes where Celesta's does.
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|error| format!("could not start {}: {error}", executable.display()))?;
-        let input = BufWriter::new(child.stdin.take().expect("piped"));
-        let output = BufReader::new(child.stdout.take().expect("piped"));
-        let mut process = Self {
-            child,
-            input,
-            output,
-        };
-        let hello = process
-            .request(&Message::new(
-                json!({ "type": "hello", "protocol": PROTOCOL_VERSION }),
-            ))
-            .map_err(|error| match error {
-                RequestError::Unavailable(message) | RequestError::Refused(message) => message,
-            })?;
+        let mut child = PluginChild::start(&executable, &entry.directory)?;
+        let hello = child.hello().map_err(|error| error.message())?;
         if hello.header["plugin"] != entry.manifest.id.as_str() {
             return Err(format!(
                 "{} says it is plugin {}, not {}",
@@ -65,39 +37,16 @@ impl PluginProcess {
                 entry.manifest.id
             ));
         }
-        Ok(process)
+        Ok(Self(child))
     }
 
-    fn request(&mut self, request: &Message) -> Result<Message, RequestError> {
-        let io = |error: std::io::Error| RequestError::Unavailable(error.to_string());
-        write_message(&mut self.input, request).map_err(io)?;
-        let answer = match read_message(&mut self.output) {
-            Ok(Some(answer)) => answer,
-            Ok(None) => {
-                return Err(RequestError::Unavailable(
-                    "the plugin process exited".into(),
-                ));
-            }
-            Err(ProtocolError::Io(error)) => return Err(io(error)),
-            Err(error) => return Err(RequestError::Unavailable(error.to_string())),
-        };
-        if answer.kind() == "error" {
-            return Err(RequestError::Refused(
-                answer.header["message"]
-                    .as_str()
-                    .unwrap_or("unknown error")
-                    .to_owned(),
-            ));
-        }
-        Ok(answer)
-    }
-}
-
-impl Drop for PluginProcess {
-    fn drop(&mut self) {
-        // Closing stdin asks the plugin to exit; it is killed if it has not.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+    fn request(
+        &mut self,
+        request: Message,
+        expected: &str,
+        timeout: Duration,
+    ) -> Result<Message, RequestError> {
+        self.0.request(request, expected, timeout)
     }
 }
 
@@ -193,17 +142,23 @@ impl PluginHost {
         }
     }
 
-    fn send(&mut self, plugin: &str, message: &Message) -> Result<Message, PluginError> {
+    fn send(
+        &mut self,
+        plugin: &str,
+        message: Message,
+        expected: &str,
+        timeout: Duration,
+    ) -> Result<Message, PluginError> {
         self.process(plugin)?
-            .request(message)
+            .request(message, expected, timeout)
             .map_err(|error| match error {
                 RequestError::Unavailable(message) => PluginError::Unavailable {
                     plugin: plugin.to_owned(),
                     message,
                 },
-                RequestError::Refused(message) => PluginError::Failed {
+                refused @ RequestError::Refused(_) => PluginError::Failed {
                     plugin: plugin.to_owned(),
-                    message,
+                    message: refused.message(),
                 },
             })
     }
@@ -213,8 +168,13 @@ impl PluginHost {
         plugin: &str,
         assets: &BTreeMap<String, PathBuf>,
     ) -> Result<Opened, PluginError> {
+        // A path that is not UTF-8 cannot be sent as JSON.
+        let assets = serde_json::to_value(assets).map_err(|error| PluginError::Failed {
+            plugin: plugin.to_owned(),
+            message: format!("cannot send these assets to the plugin: {error}"),
+        })?;
         let request = Message::new(json!({ "type": "open", "assets": assets }));
-        let answer = self.send(plugin, &request)?;
+        let answer = self.send(plugin, request, "opened", OPEN_TIMEOUT)?;
         decode_opened(&answer).map_err(|error| PluginError::Failed {
             plugin: plugin.to_owned(),
             message: error.to_string(),
@@ -275,7 +235,7 @@ impl ContentProvider for PluginHost {
                         // As `close`, without starting a process for it.
                         if let Some(process) = host.processes.get_mut(&plugin) {
                             let close = json!({ "type": "close", "model": reopened.model.0 });
-                            let _ = process.request(&Message::new(close));
+                            let _ = process.request(Message::new(close), "closed", CLOSE_TIMEOUT);
                         }
                         return Err(PluginError::Failed {
                             plugin: plugin.clone(),
@@ -292,9 +252,11 @@ impl ContentProvider for PluginHost {
             };
             host.send(
                 &plugin,
-                &Message::new(
+                Message::new(
                     json!({ "type": "frame", "model": remote.0, "time": time, "data": data }),
                 ),
+                "frame",
+                FRAME_TIMEOUT,
             )
         })?;
         decode_content_frame(&answer, kind).map_err(|error| PluginError::Failed {
@@ -308,7 +270,8 @@ impl ContentProvider for PluginHost {
             return;
         };
         if let (Some(remote), Some(process)) = (open.remote, self.processes.get_mut(&open.plugin)) {
-            let _ = process.request(&Message::new(json!({ "type": "close", "model": remote.0 })));
+            let close = json!({ "type": "close", "model": remote.0 });
+            let _ = process.request(Message::new(close), "closed", CLOSE_TIMEOUT);
         }
     }
 }

@@ -8,15 +8,18 @@
 //! ([`InstalledPlugins::codec`]) is started by `celesta_media` instead.
 
 mod approval;
+mod child;
 mod host;
 mod locations;
 mod manifest;
 mod project;
 mod settings;
+pub mod stderr;
 
 pub use approval::{
     Allowed, PendingPlugin, fingerprint, from_the_internet, zone_is_internet, zone_text,
 };
+pub use child::{HELLO_TIMEOUT, PluginChild, RequestError};
 pub use host::PluginHost;
 pub use locations::{
     PluginSource, SearchPath, bundled_plugin_dir, search_paths, unsafe_reason, user_plugin_dir,

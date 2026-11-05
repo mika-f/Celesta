@@ -1,0 +1,348 @@
+//! A plugin's process, as Celesta runs every plugin: content plugins for the
+//! renderer ([`crate::PluginHost`]) and the codec plugin for media
+//! (`celesta_media::CodecProcess`).
+//!
+//! - On Windows it starts without a console window of its own, which a
+//!   console program started by the GUI editor would otherwise get.
+//! - Requests are written and answers read on threads of their own, so every
+//!   request has a deadline, even one whose payload a hung plugin would never
+//!   read. A plugin that misses it is killed.
+//! - Its stderr is passed through to Celesta's and its last lines kept, so an
+//!   error for a process that went away says what it last printed.
+//! - An answer must be of the kind its request expects: a plugin that falls
+//!   out of step (answering one request twice) is treated as gone, so the
+//!   caller starts it again rather than reading each answer as the next
+//!   request's.
+
+use crate::stderr::{StderrTail, pump};
+use celesta_plugin::protocol::{
+    Message, PROTOCOL_VERSION, error_message, read_message, write_message,
+};
+use serde_json::json;
+use std::io::{self, BufReader, BufWriter};
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
+use std::time::{Duration, Instant};
+
+/// How long `hello` may take: the process starting and loading its
+/// libraries.
+pub const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a stopping plugin has to exit once its stdin closes, and an
+/// error waits for a plugin that went away to finish its stderr.
+const EXIT_WAIT: Duration = Duration::from_millis(500);
+
+/// How a request went wrong: the process cannot be talked to (it exited,
+/// missed its deadline, or fell out of step), or it refused with an `error`
+/// answer, kept whole for callers whose errors carry more than a message.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RequestError {
+    Unavailable(String),
+    Refused(Message),
+}
+
+impl RequestError {
+    /// What went wrong, as text: an `error` answer's `message`.
+    pub fn message(&self) -> String {
+        match self {
+            Self::Unavailable(message) => message.clone(),
+            Self::Refused(answer) => answer.header["message"]
+                .as_str()
+                .unwrap_or("unknown error")
+                .to_owned(),
+        }
+    }
+}
+
+/// A running plugin process, one request at a time. Dropping it closes the
+/// plugin's stdin, which asks it to exit, and kills it if it has not within
+/// half a second.
+pub struct PluginChild {
+    child: Child,
+    /// What [`Self::request`] writes; dropping it ends the writer thread,
+    /// which closes the plugin's stdin.
+    requests: Option<Sender<Message>>,
+    /// The reader thread's answers; an `Err` once the stream ends.
+    answers: Receiver<Result<Message, String>>,
+    stderr: Arc<Mutex<StderrTail>>,
+    /// Disconnects once the plugin's stderr has been read to its end.
+    stderr_closed: Receiver<()>,
+    name: String,
+}
+
+impl PluginChild {
+    /// Starts `executable` in `directory`, the plugin's own folder.
+    pub fn start(executable: &Path, directory: &Path) -> Result<Self, String> {
+        let name = executable.display().to_string();
+        let mut command = Command::new(executable);
+        command
+            .current_dir(directory)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("could not start {name}: {error}"))?;
+        let started = (|| -> io::Result<_> {
+            let mut input = BufWriter::new(child.stdin.take().expect("piped"));
+            let mut output = BufReader::new(child.stdout.take().expect("piped"));
+            let stderr_pipe = child.stderr.take().expect("piped");
+
+            let (requests, outgoing) = mpsc::channel::<Message>();
+            thread::Builder::new()
+                .name("celesta-plugin-requests".into())
+                .spawn(move || {
+                    for message in outgoing {
+                        if write_message(&mut input, &message).is_err() {
+                            break;
+                        }
+                    }
+                })?;
+            let (answer, answers) = mpsc::channel();
+            thread::Builder::new()
+                .name("celesta-plugin-answers".into())
+                .spawn(move || {
+                    loop {
+                        let read = match read_message(&mut output) {
+                            Ok(Some(message)) => Ok(message),
+                            Ok(None) => Err("its process exited".to_owned()),
+                            Err(error) => Err(error.to_string()),
+                        };
+                        let ended = read.is_err();
+                        if answer.send(read).is_err() || ended {
+                            break;
+                        }
+                    }
+                })?;
+            let stderr = Arc::new(Mutex::new(StderrTail::default()));
+            let (closed, stderr_closed) = mpsc::channel::<()>();
+            let tail = Arc::clone(&stderr);
+            thread::Builder::new()
+                .name("celesta-plugin-stderr".into())
+                .spawn(move || {
+                    let _closed = closed;
+                    pump(stderr_pipe, io::stderr(), &tail);
+                })?;
+            Ok((requests, answers, stderr, stderr_closed))
+        })();
+        let (requests, answers, stderr, stderr_closed) = match started {
+            Ok(started) => started,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("could not start {name}: {error}"));
+            }
+        };
+        Ok(Self {
+            child,
+            requests: Some(requests),
+            answers,
+            stderr,
+            stderr_closed,
+            name,
+        })
+    }
+
+    /// Says `hello` and checks the answer speaks this protocol; the caller
+    /// checks the plugin and roles it names.
+    pub fn hello(&mut self) -> Result<Message, RequestError> {
+        let hello = self.request(
+            Message::new(json!({ "type": "hello", "protocol": PROTOCOL_VERSION })),
+            "hello",
+            HELLO_TIMEOUT,
+        )?;
+        if hello.header["protocol"].as_u64() != Some(u64::from(PROTOCOL_VERSION)) {
+            return Err(RequestError::Refused(error_message(format!(
+                "{} speaks protocol {}, not {PROTOCOL_VERSION}",
+                self.name, hello.header["protocol"]
+            ))));
+        }
+        Ok(hello)
+    }
+
+    /// Sends `request` and waits up to `timeout` for its answer, which must
+    /// be of the kind `expected` or an `error`. A plugin that misses the
+    /// deadline is killed.
+    pub fn request(
+        &mut self,
+        request: Message,
+        expected: &str,
+        timeout: Duration,
+    ) -> Result<Message, RequestError> {
+        let kind = request.kind().to_owned();
+        let sent = self
+            .requests
+            .as_ref()
+            .is_some_and(|requests| requests.send(request).is_ok());
+        if !sent {
+            return Err(self.gone("it stopped reading requests"));
+        }
+        let answer = match self.answers.recv_timeout(timeout) {
+            Ok(Ok(answer)) => answer,
+            Ok(Err(reason)) => return Err(self.gone(&reason)),
+            Err(RecvTimeoutError::Disconnected) => return Err(self.gone("its process exited")),
+            Err(RecvTimeoutError::Timeout) => {
+                self.stop();
+                return Err(RequestError::Unavailable(format!(
+                    "{} did not answer `{kind}` within {} s, so it was stopped",
+                    self.name,
+                    timeout.as_secs_f64()
+                )));
+            }
+        };
+        match answer.kind() {
+            "error" => Err(RequestError::Refused(answer)),
+            found if found == expected => Ok(answer),
+            found => {
+                self.stop();
+                Err(RequestError::Unavailable(format!(
+                    "{} answered `{kind}` with `{found}`, not `{expected}`, so it was stopped",
+                    self.name
+                )))
+            }
+        }
+    }
+
+    /// Why the process cannot be talked to: `reason`, and the last lines it
+    /// printed on stderr once it has finished printing them.
+    fn gone(&mut self, reason: &str) -> RequestError {
+        let deadline = Instant::now() + EXIT_WAIT;
+        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let _ = self
+            .stderr_closed
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()));
+        let tail = self
+            .stderr
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .text();
+        RequestError::Unavailable(if tail.is_empty() {
+            format!("{} is unavailable: {reason}", self.name)
+        } else {
+            format!(
+                "{} is unavailable: {reason}; it last printed:\n{tail}",
+                self.name
+            )
+        })
+    }
+
+    /// Kills the process, so the threads that wait on its pipes end.
+    fn stop(&mut self) {
+        self.requests = None;
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for PluginChild {
+    fn drop(&mut self) {
+        // The writer thread ends and closes the plugin's stdin, which asks it
+        // to exit; it is killed if it has not in time.
+        self.requests = None;
+        let deadline = Instant::now() + EXIT_WAIT;
+        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A plugin made of a shell script.
+    fn script(directory: &Path, body: &str) -> std::path::PathBuf {
+        let path = directory.join("plugin.sh");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn hello() -> Message {
+        Message::new(json!({ "type": "hello", "protocol": PROTOCOL_VERSION }))
+    }
+
+    #[test]
+    fn a_plugin_that_does_not_answer_in_time_is_stopped() {
+        let directory = tempfile::tempdir().unwrap();
+        let program = script(directory.path(), "exec sleep 30");
+        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let started = Instant::now();
+        let error = child
+            .request(hello(), "hello", Duration::from_millis(200))
+            .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let RequestError::Unavailable(message) = error else {
+            panic!("{error:?}");
+        };
+        assert!(message.contains("did not answer `hello`"), "{message}");
+        assert!(child.child.try_wait().unwrap().is_some(), "it was killed");
+        // Later requests fail at once rather than wait again.
+        assert!(matches!(
+            child.request(hello(), "hello", Duration::from_secs(30)),
+            Err(RequestError::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn a_plugin_that_exits_says_what_it_printed() {
+        let directory = tempfile::tempdir().unwrap();
+        let program = script(directory.path(), "echo 'boom: no libavcodec' >&2\nexit 3");
+        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let error = child
+            .request(hello(), "hello", Duration::from_secs(5))
+            .unwrap_err();
+        let RequestError::Unavailable(message) = error else {
+            panic!("{error:?}");
+        };
+        assert!(message.contains("its process exited"), "{message}");
+        assert!(message.contains("boom: no libavcodec"), "{message}");
+    }
+
+    #[test]
+    fn an_answer_of_another_kind_stops_the_plugin() {
+        let directory = tempfile::tempdir().unwrap();
+        // `{"type":"x"}` (12 bytes) with an empty payload, then nothing.
+        let program = script(
+            directory.path(),
+            r#"printf '\014\000\000\000{"type":"x"}\000\000\000\000'
+exec cat >/dev/null"#,
+        );
+        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let error = child
+            .request(hello(), "hello", Duration::from_secs(5))
+            .unwrap_err();
+        let RequestError::Unavailable(message) = error else {
+            panic!("{error:?}");
+        };
+        assert!(message.contains("with `x`, not `hello`"), "{message}");
+    }
+
+    #[test]
+    fn dropping_it_closes_stdin_before_killing() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("finished");
+        let program = script(
+            directory.path(),
+            &format!("cat >/dev/null\ntouch '{}'", marker.display()),
+        );
+        drop(PluginChild::start(&program, directory.path()).unwrap());
+        assert!(
+            marker.exists(),
+            "the plugin saw its stdin close and finished"
+        );
+    }
+}

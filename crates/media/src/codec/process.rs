@@ -6,50 +6,33 @@ use crate::codec::{
 };
 use crate::error::MediaError;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
-use celesta_plugin::protocol::{
-    Message, PROTOCOL_VERSION, ProtocolError, read_message, write_message,
-};
-use serde_json::json;
-use std::io::{BufReader, BufWriter};
+use celesta_plugin::protocol::Message;
+use celesta_plugin_host::{PluginChild, RequestError};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 
-/// A running codec plugin, one request at a time. Dropping it stops the
-/// process.
-pub struct CodecProcess {
-    child: Child,
-    input: BufWriter<ChildStdin>,
-    output: BufReader<ChildStdout>,
-}
+/// How long each request may take before the plugin is stopped as hung.
+/// Generous, as a long file's audio, an encoder's flush, or muxing a long
+/// export's audio takes a while, but bounded, so a hang ends.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+const DECODE_VIDEO_TIMEOUT: Duration = Duration::from_secs(60);
+const DECODE_AUDIO_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const ENCODER_TIMEOUT: Duration = Duration::from_secs(60);
+const FINISH_ENCODER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const MUX_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+/// A running codec plugin, one request at a time (see [`PluginChild`] for
+/// its window, deadlines, and stderr). Dropping it stops the process.
+pub struct CodecProcess(PluginChild);
 
 impl CodecProcess {
     /// Starts `executable` in `directory` (the plugin's own) and checks that
     /// it speaks this protocol as a codec.
     pub fn start(executable: &Path, directory: &Path) -> Result<Self, MediaError> {
-        let mut child = Command::new(executable)
-            .current_dir(directory)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            // The plugin's own log goes where Celesta's does.
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|error| {
-                MediaError::CodecUnavailable(format!(
-                    "could not start {}: {error}",
-                    executable.display()
-                ))
-            })?;
-        let input = BufWriter::new(child.stdin.take().expect("piped"));
-        let output = BufReader::new(child.stdout.take().expect("piped"));
-        let mut process = Self {
-            child,
-            input,
-            output,
-        };
-        let hello = process.request(&Message::new(
-            json!({ "type": "hello", "protocol": PROTOCOL_VERSION }),
-        ))?;
+        let mut child =
+            PluginChild::start(executable, directory).map_err(MediaError::CodecUnavailable)?;
+        let hello = child.hello().map_err(media_error)?;
         let roles = hello.header["roles"].as_array();
         if !roles.is_some_and(|roles| roles.iter().any(|role| role == ROLES[0])) {
             return Err(MediaError::CodecUnavailable(format!(
@@ -58,7 +41,7 @@ impl CodecProcess {
                 hello.header["roles"]
             )));
         }
-        Ok(process)
+        Ok(Self(child))
     }
 
     /// Makes a [`CodecFactory`] that starts `executable` for each backend.
@@ -68,29 +51,24 @@ impl CodecProcess {
         })
     }
 
-    fn request(&mut self, request: &Message) -> Result<Message, MediaError> {
-        let unavailable =
-            |error: &dyn std::fmt::Display| MediaError::CodecUnavailable(error.to_string());
-        write_message(&mut self.input, request).map_err(|error| unavailable(&error))?;
-        let answer = match read_message(&mut self.output) {
-            Ok(Some(answer)) => answer,
-            Ok(None) => return Err(unavailable(&"the codec plugin's process exited")),
-            Err(ProtocolError::Io(error)) => return Err(unavailable(&error)),
-            Err(error) => return Err(unavailable(&error)),
-        };
-        if answer.kind() == "error" {
-            return Err(decode_error(&answer));
-        }
-        Ok(answer)
+    fn request(
+        &mut self,
+        request: Message,
+        expected: &str,
+        timeout: Duration,
+    ) -> Result<Message, MediaError> {
+        self.0
+            .request(request, expected, timeout)
+            .map_err(media_error)
     }
 }
 
-impl Drop for CodecProcess {
-    fn drop(&mut self) {
-        // The plugin keeps nothing that must outlive its last answer (an
-        // encoder is finished or aborted before), so it is killed outright.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+/// A codec that could not be talked to is unavailable, so a backend starts
+/// another; one that refused says why, in the protocol's own error.
+fn media_error(error: RequestError) -> MediaError {
+    match error {
+        RequestError::Unavailable(message) => MediaError::CodecUnavailable(message),
+        RequestError::Refused(answer) => decode_error(&answer),
     }
 }
 
@@ -116,7 +94,7 @@ impl CodecProvider for CodecProcess {
         let request = protocol::probe_request(&absolute(path))?;
         named(
             path,
-            self.request(&request)
+            self.request(request, "probed", PROBE_TIMEOUT)
                 .and_then(|answer| protocol::decode_probe(&answer)),
         )
     }
@@ -129,7 +107,7 @@ impl CodecProvider for CodecProcess {
         })?;
         named(
             request.path,
-            self.request(&message)
+            self.request(message, "videoFrame", DECODE_VIDEO_TIMEOUT)
                 .and_then(protocol::decode_video_frame),
         )
     }
@@ -143,13 +121,14 @@ impl CodecProvider for CodecProcess {
         let request = protocol::decode_audio_request(&absolute(path), sample_rate, channels)?;
         named(
             path,
-            self.request(&request)
+            self.request(request, "audio", DECODE_AUDIO_TIMEOUT)
                 .and_then(|answer| protocol::decode_audio_buffer(&answer)),
         )
     }
 
     fn check_encoder(&mut self, container: Container) -> Result<(), MediaError> {
-        self.request(&protocol::check_encoder_request(container))
+        let request = protocol::check_encoder_request(container);
+        self.request(request, "encoderReady", ENCODER_TIMEOUT)
             .map(drop)
     }
 
@@ -158,21 +137,25 @@ impl CodecProvider for CodecProcess {
             output: absolute(&settings.output),
             ..settings.clone()
         };
-        protocol::decode_encoder(&self.request(&protocol::open_encoder_request(&settings)?)?)
+        let request = protocol::open_encoder_request(&settings)?;
+        protocol::decode_encoder(&self.request(request, "encoderOpened", ENCODER_TIMEOUT)?)
     }
 
     fn encode_frame(&mut self, encoder: EncoderId, pixels: Vec<u8>) -> Result<(), MediaError> {
-        self.request(&protocol::encode_frame_request(encoder, pixels))
+        let request = protocol::encode_frame_request(encoder, pixels);
+        self.request(request, "frameEncoded", ENCODER_TIMEOUT)
             .map(drop)
     }
 
     fn finish_encoder(&mut self, encoder: EncoderId) -> Result<(), MediaError> {
-        self.request(&protocol::finish_encoder_request(encoder))
+        let request = protocol::finish_encoder_request(encoder);
+        self.request(request, "encoderFinished", FINISH_ENCODER_TIMEOUT)
             .map(drop)
     }
 
     fn abort_encoder(&mut self, encoder: EncoderId) {
-        let _ = self.request(&protocol::abort_encoder_request(encoder));
+        let request = protocol::abort_encoder_request(encoder);
+        let _ = self.request(request, "encoderAborted", ENCODER_TIMEOUT);
     }
 
     fn mux_audio(&mut self, request: &MuxRequest) -> Result<(), MediaError> {
@@ -182,7 +165,7 @@ impl CodecProvider for CodecProcess {
             output: absolute(&request.output),
             ..request.clone()
         };
-        self.request(&protocol::mux_audio_request(&request)?)
+        self.request(protocol::mux_audio_request(&request)?, "muxed", MUX_TIMEOUT)
             .map(drop)
     }
 }

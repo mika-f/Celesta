@@ -1116,6 +1116,7 @@ version = "0.9.0"
 dependencies = [
  "celesta-composition",
  "celesta-plugin",
+ "celesta-plugin-host",
  "celesta-remote",
  "clap",
  "ebur128",
@@ -1159,6 +1160,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "strip-ansi-escapes",
  "tempfile",
  "thiserror 2.0.21",
 ]
@@ -1199,7 +1201,6 @@ dependencies = [
  "celesta-renderer",
  "serde",
  "serde_json",
- "strip-ansi-escapes",
  "tempfile",
  "thiserror 2.0.21",
 ]

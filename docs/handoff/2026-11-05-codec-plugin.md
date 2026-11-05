@@ -38,6 +38,27 @@ program links FFmpeg, and with it the GPL libx264 of the official packages.
   preview's renderer, the editor's audio mix, each React runtime's probes, and
   each export's encoder each have their own, as each had its own decoder
   state before. Dropping the backend stops its process.
+- **Running plugin processes** (`celesta_plugin_host::PluginChild`, which the
+  content plugins' `PluginHost` uses too):
+  - On Windows the process starts with `CREATE_NO_WINDOW`, so the GUI editor
+    does not open a console window for it (#688).
+  - Requests are written and answers read on threads of their own, and each
+    request has a deadline; a plugin that misses it is killed and the
+    request fails as unavailable (#686). Content plugins: `hello` and
+    `frame` 30 s, `open` 120 s, `close` 5 s. The codec: `hello` 30 s,
+    `probe`, `decodeVideo`, and the encoder requests 60 s, `decodeAudio` and
+    `finishEncoder` 10 min, `muxAudio` 1 h.
+  - stderr is piped, passed through to Celesta's, and its last lines
+    (`celesta_plugin_host::stderr`, moved from the React bridge) end the
+    error of a process that went away (#689).
+  - An answer must be of the kind its request expects, else the plugin is
+    killed, so a plugin that answers twice is restarted instead of every
+    later answer being off by one; `hello` must name protocol 1.
+  - Dropping it closes the plugin's stdin and kills it only if it has not
+    exited within 500 ms.
+  - Not done here: killing a plugin from another thread (Cancel during an
+    export's frame, or the old preview worker on Reload Plugins); a hung
+    request now ends at its deadline instead.
 - **Protocol** (version 1, the framing of `celesta_plugin::protocol`; a
   codec plugin's main loop is `celesta_media::codec::protocol::serve`):
 
@@ -135,7 +156,7 @@ workspace no longer pulls FFmpeg in.
 
 ## Checks
 
-- `cargo test --workspace` (2,220 passed, none skipped, macOS arm64, Metal),
+- `cargo test --workspace` (2,224 passed, none skipped, macOS arm64, Metal),
   `cargo clippy --workspace --all-targets --locked -- -D warnings`;
   `cargo fmt --all -- --check` reports only files `main` already leaves
   unformatted.

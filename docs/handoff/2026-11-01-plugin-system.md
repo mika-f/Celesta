@@ -239,8 +239,9 @@ checkout to build:
 | `skills/celesta/references/plugins.md` | The skill's page; `inspect.mjs` lists plugin layers with their assets and data. |
 
 Not done: an editor UI to list, enable, and reload plugins (the editor reads
-`CELESTA_PLUGIN_PATH` from its environment); request timeouts (a plugin that
-hangs blocks the frame); plugin signing or an allowlist; `@celesta/web` and
+`CELESTA_PLUGIN_PATH` from its environment); request timeouts (since
+`2026-11-05-codec-plugin.md`, every request has one; see
+`celesta_plugin_host::PluginChild`); plugin signing or an allowlist; `@celesta/web` and
 the CPU renderer; plugins that make sound at render time (the protocol has
 frames to draw only; speech channels synthesize in `prepare()` instead); a
 published SDK (below). The samples' demos are not type-checked in CI, as

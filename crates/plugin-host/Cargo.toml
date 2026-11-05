@@ -11,6 +11,7 @@ rust-version.workspace = true
 celesta-plugin.workspace = true
 serde.workspace = true
 sha2 = "0.10"
+strip-ansi-escapes = "0.2.1"
 serde_json.workspace = true
 thiserror.workspace = true
 
