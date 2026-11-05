@@ -70,7 +70,10 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 - Celesta links no codec: video and audio files are probed, decoded,
   encoded, and muxed by a codec plugin (`"roles": ["codec"]` in its
-  manifest). The app's packages bundle `ffmpeg`; a source build or
+  manifest). The app's packages bundle `ffmpeg`. A source build makes it
+  with `node scripts/plugins/build.mjs plugins/ffmpeg` and points
+  `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
+  (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root).
   `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables.
 - It is not imported and has no components. Without one, video and audio
   layers fail to decode and exports fail with `no_codec` (see

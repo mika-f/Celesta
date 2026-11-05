@@ -11,7 +11,7 @@ macOS ではアプリ全体を Applications にコピーしてから起動しま
 :::
 :::toggle[動画や音声が表示されない、書き出しが no_codec で失敗する]
 
-Celesta はメディアをコーデックプラグインで読み書きします。パッケージでは、Celesta に付属するプラグインフォルダー（`Celesta.exe` の隣の `plugins\ffmpeg`、macOS アプリでは `Contents/PlugIns/ffmpeg`）に `ffmpeg` プラグインが残っているか確認するか、パッケージを入れ直してください。ソースビルドでは `cargo build -p celesta-codec-ffmpeg --release` を実行し、アプリと同じフォルダーにプログラムを置きます。[コーデックプラグイン](/ja/docs/plugins/#コーデックプラグイン)をご覧ください。
+Celesta はメディアをコーデックプラグインで読み書きします。パッケージでは、Celesta に付属するプラグインフォルダー（`Celesta.exe` の隣の `plugins\ffmpeg`、macOS アプリでは `Contents/PlugIns/ffmpeg`）に `ffmpeg` プラグインが残っているか確認するか、パッケージを入れ直してください。ソースビルドでは、リポジトリのルートで `node scripts/plugins/build.mjs plugins/ffmpeg` を実行し、Celesta を実行するシェルで `CELESTA_PLUGIN_PATH` に `plugins/dist` の絶対パスを設定します（`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`）。[コーデックプラグイン](/ja/docs/plugins/#コーデックプラグイン)をご覧ください。
 
 :::
 :::toggle[メディアが見つからない]

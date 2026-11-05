@@ -2,7 +2,7 @@ To build Celesta, install **Rust 1.89 or later**, your platform’s native build
 
 > [!NOTE]
 > **The libraries matter**
-> The FFmpeg command-line executable alone is not enough. Celesta's codec plugin, `celesta-codec-ffmpeg`, links against the development libraries; the app and the exporter link no FFmpeg. FFmpeg 9 and later are not supported yet.
+> The FFmpeg command-line executable alone is not enough. Celesta's codec plugin, `plugins/ffmpeg` in the repository, links against the development libraries; the app and the exporter link no FFmpeg. FFmpeg 9 and later are not supported yet.
 
 ## 1. Prepare your platform
 
@@ -63,10 +63,11 @@ pnpm run build:runtime
 
 ## 4. Open a React composition
 
-Build the codec plugin once, and again after updating the source. Celesta reads and writes video and audio through it, and finds it beside its own executables in `target/release`:
+Build the codec plugin once, and again after updating the source. Celesta reads and writes video and audio through it, and finds it through `CELESTA_PLUGIN_PATH`, which must be an absolute path. Set the variable in every shell where you run Celesta:
 
 ```sh title="Build the codec plugin"
-cargo build -p celesta-codec-ffmpeg --release
+node scripts/plugins/build.mjs plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 
 ```sh title="Launch the native app"

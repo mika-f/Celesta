@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **開発ライブラリが必要です**
-> FFmpeg のコマンドライン実行ファイルだけでは足りません。Celesta のコーデックプラグイン `celesta-codec-ffmpeg` が開発ライブラリにリンクします（アプリと書き出しツールは FFmpeg をリンクしません）。FFmpeg 9 以降にはまだ対応していません。
+> FFmpeg のコマンドライン実行ファイルだけでは足りません。Celesta のコーデックプラグイン（リポジトリの `plugins/ffmpeg`）が開発ライブラリにリンクします（アプリと書き出しツールは FFmpeg をリンクしません）。FFmpeg 9 以降にはまだ対応していません。
 
 ## 1. OS の準備
 
@@ -63,10 +63,11 @@ pnpm run build:runtime
 
 ## 4. React コンポジションを開く
 
-コーデックプラグインを一度ビルドします（ソースを更新したらもう一度）。Celesta は動画と音声をこれで読み書きし、`target/release` の自分の実行ファイルと同じフォルダーから見つけます。
+コーデックプラグインを一度ビルドします（ソースを更新したらもう一度）。Celesta は動画と音声をこれで読み書きし、`CELESTA_PLUGIN_PATH` から見つけます。この変数には絶対パスを指定し、Celesta を実行する各シェルで設定してください。
 
 ```sh title="コーデックプラグインをビルド"
-cargo build -p celesta-codec-ffmpeg --release
+node scripts/plugins/build.mjs plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 
 ```sh title="ネイティブアプリを起動"

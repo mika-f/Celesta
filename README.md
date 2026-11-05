@@ -93,7 +93,7 @@ To run from source, use Rust 1.89 or later, Node.js 26, the pnpm version in
 [`mise.toml`](mise.toml) pins the Node.js and pnpm versions CI uses.
 Prepare the **FFmpeg 8.1.x development libraries** using the
 [source-build guide](https://celesta.natsuneko.cat/en/docs/build-from-source/)
-before running Cargo; the codec plugin (`crates/codec-ffmpeg`) and its tests
+before running Cargo; the codec plugin (`plugins/ffmpeg`) and its tests
 link them; the core's tests use a lossless test codec instead. The FFmpeg
 executable alone is insufficient; FFmpeg 9 and later are not supported yet.
 
@@ -102,12 +102,14 @@ git clone https://github.com/mika-f/Celesta.git celesta
 cd celesta
 pnpm install
 pnpm run build:runtime
-cargo build -p celesta-codec-ffmpeg --release
+node scripts/plugins/build.mjs plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx
 ```
 
 Celesta reads and writes video and audio through the codec plugin, which it
-finds beside its own executables in `target/release`.
+finds through `CELESTA_PLUGIN_PATH`. Give it the absolute path of
+`plugins/dist`, in each shell where you run Celesta.
 
 `pnpm run build:runtime` also generates the TypeScript bindings from the Rust
 types. It regenerates them only when those Rust sources change, so run it again

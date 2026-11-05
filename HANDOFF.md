@@ -18,8 +18,9 @@ Per-task specifications, implementation details, and validation results live in
 - Rust edition: 2024; minimum Rust version: 1.89.
 - The desktop app uses `gpui-kit` (`crates/editor/Cargo.toml`).
 - FFmpeg 8.1.x development libraries must be available for `ez-ffmpeg` /
-  `ffmpeg-sys-next` to link against. Only the codec plugin
-  (`celesta-codec-ffmpeg`) and its own tests link them; Celesta's own crates
+  `ffmpeg-sys-next` to link against. They are needed only for the codec
+  plugin, `plugins/ffmpeg` (`celesta-codec-ffmpeg`), and the plugins
+  workspace's tests; the root workspace links no FFmpeg. Celesta's own crates
   read and write media through the plugin's process, and their tests use the
   lossless test codec (`celesta-codec-test`) instead (see
   [`docs/handoff/2026-11-05-codec-plugin.md`](docs/handoff/2026-11-05-codec-plugin.md)).
@@ -97,7 +98,7 @@ compositions: no package a composition imports depends on them, though
 | `celesta-project` | Project loading and semantic validation. |
 | `celesta-evaluator` | Deterministic project-to-`Scene` and project-to-`AudioGraph` evaluation. |
 | `celesta-media` | Probing, exact-time video frames, and audio decoding through a codec plugin (`MediaBackend`, `CodecProvider`, the codec protocol), plus the audio mix, ducking, time stretching, and loudness. Links no codec library. |
-| `celesta-codec-ffmpeg` | The FFmpeg codec plugin: a program serving the codec protocol (probe, decode, encode, mux, HDR tone mapping), and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. |
+| `celesta-codec-ffmpeg` | `plugins/ffmpeg`, the FFmpeg codec plugin: a program serving the codec protocol (probe, decode, encode, mux, HDR tone mapping), and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. A member of the plugins workspace, `plugins/Cargo.toml`, with Celesta's version; built into a plugin directory by `scripts/plugins/build.mjs`. |
 | `celesta-codec-test` | The lossless test codec the core's tests read and write media with, in-process (`install`) or as the program `celesta-codec-test` in a temporary plugin folder (`TestCodecPlugin`); not published. |
 | `celesta-budoux` | Japanese phrase segmentation for text line breaking. |
 | `celesta-renderer` | CPU reference renderer, PNG output, and shared text/path rasterization. |
@@ -136,7 +137,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts; not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
-| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mjs`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mjs`, `cargo.mjs`, and `manifest.mjs`; not published. |
+| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mjs`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mjs`, `cargo.mjs`, `manifest.mjs`, `licenses.mjs`, and `version.mjs`; and `bump-version.mjs`, which bumps Celesta's version and the plugins that follow it; not published. |
 
 Useful entry points:
 
@@ -342,14 +343,17 @@ not a licensed VOICEROID sample.
 Typical preview and export commands, run from the repository root:
 
 ```sh
-cargo build -p celesta-codec-ffmpeg
+node scripts/plugins/build.mjs plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 cargo run -p celesta-editor -- packages/cli/examples/title.tsx
 cargo run -p celesta-exporter -- --react packages/cli/examples/title.tsx output.mp4
 ```
 
-The editor and exporter find the codec plugin's program beside themselves in
-`target/<profile>`; rebuild it after changing `crates/codec-ffmpeg` or
-`celesta-media`'s codec protocol. Tests whose `celesta-exporter` or
+The editor and exporter find the codec plugin through `CELESTA_PLUGIN_PATH`,
+which must be an absolute path and is set by hand in each shell; rebuild the
+plugin after changing `plugins/ffmpeg` or `celesta-media`'s codec protocol.
+A `celesta-codec-ffmpeg` program beside Celesta's executables serves only
+`cargo install`. Tests whose `celesta-exporter` or
 `celesta-mcp` child exports video give it the test codec's program instead, so
 they need
 `celesta-codec-test` built, which `cargo test --workspace` does; otherwise run
@@ -370,6 +374,11 @@ workspace; after changing it, a plugin, or the plugin build script, run
 `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`,
 `cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings`,
 `cargo fmt --check` in `plugins/`, and `pnpm --dir scripts/plugins test`.
+The plugins workspace's `--workspace` checks build the codec plugin, so they
+need FFmpeg on `PKG_CONFIG_PATH` (or `VCPKG_ROOT` on Windows).
+
+For a release, run `node scripts/plugins/bump-version.mjs X.Y.Z`, then set
+the version in each `packages/*/package.json` by hand.
 
 When composition/project types change, also run:
 
