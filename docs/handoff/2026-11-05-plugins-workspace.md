@@ -295,6 +295,172 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
 - After this layer, no core crate depends on `celesta-codec-ffmpeg` or
   `ez-ffmpeg`. The codec is still a root member until layer 3.
 
+## Layer 2: what was done
+
+- **The test codec.** `crates/codec-test` is the package
+  `celesta-codec-test` (library `celesta_codec_test`, program
+  `celesta-codec-test`), a root member with `publish = false`. Its
+  `[workspace.dependencies]` entry is `path` only, so `cargo publish` drops
+  it from the dev-dependencies of the crates that are published. It is a
+  crate of its own rather than a `celesta-media` feature, so no feature
+  unification can pull it into a release build.
+  - **File format.** One file per output, whatever its extension (fixtures
+    are named `*.ctc`): the magic `CLSTTEST`, a `u32` LE format version 1, a
+    `u32` LE header length, a JSON header (`container`, `video` with
+    `width`, `height`, `frameRate`, and `format`, and `audio` with
+    `sampleRate`, `channels`, and `leadInFrames`, each `null` when absent),
+    then chunks: a tag byte, a `u32` LE payload length, and a payload
+    compressed with `lz4_flex::block::compress_prepend_size`. `V` is one
+    video frame, the exact bytes passed to `encode_frame`; `A` is the whole
+    audio as interleaved `f32` LE samples, lead-in included; `E` ends the
+    file. A file without `E` is unfinished, as an aborted encode leaves it,
+    and `probe`, `read`, and decoding refuse it with "unfinished".
+  - **Encoding** stores every `PixelFormat` byte for byte, checks each
+    frame's length (YUV chroma is `ceil(w/2) × ceil(h/2)`), and refuses an
+    MP4 with a CRF over 51 or a bit depth other than 8 or 10 with FFmpeg's
+    messages. `check_encoder` accepts all three containers, `mux_audio`
+    refuses a video that already has audio, and `abort_encoder` drops the
+    writer at once.
+  - **Decoding** returns RGBA8 (`Rgba16` rounded per channel; YUV refused),
+    the frame at `floor(time × fps + 1e-9)` clamped to the last one, and a
+    negative or non-finite time as `InvalidTimestamp`. Audio is the samples
+    after the lead-in; it is never resampled (another rate is an error that
+    names both), and mono and stereo convert exactly. It reads 16-bit PCM
+    WAV (format tag 1, unknown chunks skipped), so the checked-in voices
+    keep their real waveforms; any other WAV is an error that names the
+    file, its format tag, and its bit depth. A missing file is
+    `MediaError::NotFound(path)`.
+  - `celesta_codec_test::read` gives a test-codec file's container, frames,
+    and samples (with `lead_in()` and `played()`), for comparing byte for
+    byte; it refuses WAV. `write_rgba_video` and `write_audio` write
+    fixtures, and `install()` sets the codec in-process.
+  - **The program and `TestCodecPlugin`.** `src/main.rs` serves the codec
+    protocol as `celesta-codec-ffmpeg`'s does. `TestCodecPlugin::new()`
+    finds the program in the test executable's profile folder (the parent
+    of `deps`), hard-links it into a temporary folder (falling back to a
+    copy, as the host refuses a symlink that leads outside the folder), and
+    writes a `celesta-plugin.json` with `"roles": ["codec"]` naming it with
+    `EXE_SUFFIX`. When it is not built, it panics with "celesta-codec-test
+    is not built in <profile>: build it first with cargo build -p
+    celesta-codec-test (with --release for release tests)".
+- **Core tests on the test codec.** `crates/exporter/src/tests.rs`
+  (`the_test_codec_has_every_format_encoder`),
+  `crates/exporter/tests/integration/export.rs`,
+  `crates/react-bridge/src/decode.rs`, and
+  `crates/react-bridge/tests/node_integration.rs` use it in-process; the
+  `lavfi` fixtures became `write_rgba_video` and `write_audio` fixtures.
+  Frame contents and counts, the audio's length, the silent mix, the
+  lead-in, reported versus written loudness, repeated exports, and the WAV
+  samples are now exact. The tolerances kept measure the core's DSP or the
+  half-float canvas: the pitch (±3 %), the fades' and the ducked bed's RMS
+  (±10 %), the loudness target (±0.1 LU), and the transparent quadrant (one
+  8-bit code, 257, in 16 bits). The solid-video fixture sets the item's
+  position to the canvas centre, so it covers every pixel the exact check
+  reads. The range test asserts that the full export's four frames all
+  differ, so the windowed frames cannot match by accident.
+- **Child processes.** `react_export` in
+  `crates/exporter/tests/integration/stills.rs` runs `celesta-exporter`
+  with `--plugin-dir` set to a `TestCodecPlugin` folder and
+  `CELESTA_PLUGIN_PATH` removed; the MCP export tests set
+  `CELESTA_PLUGIN_PATH` on the child to that folder
+  (`client_with_test_codec`), which replaces the developer's value. Each
+  child-written video is read back with `celesta_codec_test::read`, which
+  only a test-codec file passes: the MCP MP4 (60 frames, `mp4`) and, from
+  the CLI, the bad-frame React entry exported with `--to 1`, before its
+  failing frame 6 (4 frames, `mp4`). The MCP tests stop the server
+  (`client.cancel().await`) before the plugin folder is removed, which
+  matters on Windows, where a running program cannot be deleted.
+- **FFmpeg's contract in its own tests.** `crates/codec-ffmpeg/tests/export.rs`
+  drives the exporter through `FfmpegCodec` with the `lavfi` fixtures and
+  the original assertions and tolerances: MP4 with silent audio (with its
+  cancellation check), `converting_colors_on_the_gpu_matches_the_encoder_conversion`,
+  ProRes 4444 and VP9 WebM with alpha, every format muxing audio as long as
+  the video, `a_looping_mp4_starts_its_sound_from_its_end` (the AAC edit
+  list), `brings_the_mix_to_a_loudness_target` (24-bit PCM and AAC), and
+  `the_ffmpeg_codec_has_every_format_encoder`. Each has a core counterpart
+  on the test codec. `celesta-codec-ffmpeg` takes `celesta-exporter`,
+  `celesta-gpu-renderer`, `celesta-project`, `strum`, and `png` as
+  dev-dependencies.
+- **No react-bridge test moved to `celesta-codec-ffmpeg`.** The design's
+  example, `with-video.tsx`'s `./clip.mp4`, is not checked in, and the
+  bridge tests only read its timing; the only media they decode are the
+  checked-in WAVs. So `celesta-codec-ffmpeg` has no dev-dependency on
+  `celesta-react-bridge`.
+- **`audio-bench`** no longer links a codec: it uses
+  `InstalledPlugins::find_reporting(&[]).codec()`, and when that finds
+  none, the `celesta-codec-ffmpeg` program in `target/<profile>`, as
+  `preview-bench` does. The plan's Decisions said `codec()` alone "still
+  finds `celesta-codec-ffmpeg` beside it in `target/release`"; it does not,
+  because its sibling lookup looks beside the example's own executable,
+  `target/<profile>/examples/`. Without a codec the bench prints "no codec
+  plugin found: build one first (cargo build --release -p
+  celesta-codec-ffmpeg) or set CELESTA_PLUGIN_PATH" and exits 1. Layer 3
+  revisits the `target/<profile>` fallback once the codec leaves the root
+  workspace.
+- **Manifests.** `celesta-exporter` and `celesta-react-bridge` lost their
+  `celesta-codec-ffmpeg` and `ez-ffmpeg` dev-dependencies and take
+  `celesta-codec-test`, as `celesta-mcp` does. `cargo tree --workspace -e
+  normal,build,dev -i celesta-codec-ffmpeg` lists only the crate itself,
+  `cargo tree --workspace -e normal,build,dev -i ez-ffmpeg` lists only
+  `celesta-codec-ffmpeg` as its dependent, and
+  `git grep -n -E "celesta_codec_ffmpeg|ez_ffmpeg|FfmpegBackend|FfmpegCodec|lavfi" -- crates ':!crates/codec-ffmpeg'`
+  matches nothing. The root `Test` CI job still sets up FFmpeg, for
+  `celesta-codec-ffmpeg`; layer 3 removes it.
+- **Docs.** `HANDOFF.md` (development setup, the `celesta-codec-ffmpeg`
+  and new `celesta-codec-test` rows, the architecture boundary, and the
+  validation paragraph: tests that spawn `celesta-exporter` or
+  `celesta-mcp` need `celesta-codec-test` built), the README's FFmpeg
+  sentence, and `decode.rs`'s module comment (it decodes through the codec
+  plugin's `MediaBackend`) say the core's tests use the test codec. The
+  user guide and the Celesta skill do not change: no user-facing behavior
+  or command changed.
+- **Left for layer 3.** The children that
+  `crates/exporter/tests/integration/inspect.rs` starts pass no
+  `--plugin-dir`; once the sibling codec is gone from `target/<profile>`,
+  check what their native inspection probes media with.
+
+### Checks (macOS 26.7.1, Apple M5, Metal)
+
+Rust 1.99.1, rustfmt 1.10.0, Node.js 26.13.0, with `packages/cli/dist`
+built (`pnpm run build:runtime`) and `cargo build -p celesta-codec-test`
+run first. No test printed a "skipping" line.
+
+- `cargo build --workspace --all-targets --locked`: succeeds. Its only
+  warnings are the existing `block v0.1.6` future-incompatibility note and
+  the editor's debug-build linker note about the `__eh_frame` section.
+- `cargo test --workspace --no-run --locked`: builds every test target.
+- `cargo clippy -p celesta-codec-test -p celesta-exporter -p celesta-react-bridge -p celesta-mcp -p celesta-codec-ffmpeg --all-targets --locked -- -D warnings`:
+  no warnings.
+- `rustfmt --edition 2024 --check` on the 18 `.rs` files
+  `git diff --name-only claude/plugins-workspace -- '*.rs'` lists: clean
+  (not `cargo fmt --all`, which fails on existing formatting in
+  `crates/mcp` and `crates/react-bridge`).
+- `cargo test -p celesta-codec-test`: 12 passed (9 `codec`, 2
+  `plugin_folder`, 1 `process`).
+- `cargo test -p celesta-exporter --lib the_test_codec_has_every_format_encoder`:
+  1 passed.
+- `cargo test -p celesta-exporter --test integration export::`: 16 passed,
+  the GPU tests on Metal.
+- `cargo test -p celesta-exporter --test integration stills::separate_stills_and_videos_name_the_frame_that_failed`:
+  1 passed, including the `--to 1` export read back with
+  `celesta_codec_test::read`.
+- `cargo test -p celesta-react-bridge --lib decode::tests`: 4 passed.
+- `cargo test -p celesta-react-bridge --test node_integration`: 43 passed.
+- `cargo test -p celesta-mcp --test integration export::`: 5 passed.
+- With `CELESTA_PLUGIN_PATH` naming a codec plugin folder whose program
+  does not exist, the MCP `export::` tests (5) and the `stills::` test
+  above (1) passed again, so the developer's value does not reach the
+  children. Discovery does choose that plugin: `celesta-exporter
+  --plugin-dir <folder> examples/minimal.celesta.json out.mp4` fails with
+  "encoder check failed: the codec plugin is unavailable: could not start
+  …/does-not-exist".
+- `cargo test -p celesta-codec-ffmpeg --test export`: 8 passed; also with
+  `CELESTA_REQUIRE_GPU=1`.
+- `git diff --check claude/plugins-workspace`: clean.
+- The full workspace suite was not run here; it is left to CI, whose first
+  Linux run is also the first check of the exact pixel comparisons off
+  Metal.
+
 ## Layer 3: the codec moves to `plugins/ffmpeg`
 
 - `crates/codec-ffmpeg` moves to `plugins/ffmpeg` and joins the plugins
