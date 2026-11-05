@@ -58,6 +58,12 @@ bundled Node:
 "/Applications/Celesta.app/Contents/Helpers/node" <skill>/scripts/inspect.mjs scene.tsx
 ```
 
+The script stops after `--timeout` seconds (default 180), the entry's
+`prepare()` included; give a larger one for `--every 1` on a long video.
+The MCP `inspect` tool takes the same `timeout` and fails with error code
+`timeout` when it passes, but evaluates at most 1000 frames per call, so
+check every frame of a longer video with the script in a shell.
+
 Sample output:
 
 ```text
@@ -245,7 +251,8 @@ each `{frame, code, message}`, and `outputs` still lists the sheet
 with `--frame <n>` before exporting the sheet again. One sheet finds every
 failing frame it samples; frames between the samples are not checked, so for
 a final check of every frame use `inspect.mjs --every 1`, which evaluates
-without rendering.
+without rendering (in a shell: the MCP `inspect` tool evaluates at most 1000
+frames per call).
 
 A failure that is not about the frame's content (the GPU or its readback
 failing, the React runtime exiting, an output that cannot be written) stops

@@ -639,6 +639,7 @@ pub(crate) fn ensure_react_bridge<'a>(
                     source_locations: react.source_locations,
                     composition_id: react.composition_id.clone(),
                     plugins: Some(react.plugins.clone()),
+                    stop: None,
                 },
             ) {
                 Ok(mut bridge) => {

@@ -18,6 +18,7 @@ mod properties;
 mod protocol;
 mod statics;
 mod stderr;
+mod stop;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -33,6 +34,7 @@ pub use properties::{
     PropertyLayer, PropertySource, PropsFileChoice, ValueSource, effective_values,
     resolve_props_file,
 };
+pub use stop::RuntimeStop;
 pub use types::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest,
     ComponentResolutions, ComponentSchemaField, ElementKind, FrameEvaluation, FrameSpan,

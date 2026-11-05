@@ -3,6 +3,7 @@
 //! ([`celesta_plugin_host::stderr`]).
 
 use crate::error::ReactBridgeError;
+use crate::stop::lock;
 use celesta_plugin_host::stderr::{StderrTail, pump};
 use std::io;
 use std::process::{Child, ChildStderr};
@@ -48,7 +49,7 @@ impl StderrCapture {
     /// its end, both within [`EXIT_WAIT`], so the lines are complete.
     pub(crate) fn exit_error(
         &self,
-        child: &mut Child,
+        child: &Mutex<Child>,
         error: ReactBridgeError,
     ) -> ReactBridgeError {
         match &error {
@@ -57,7 +58,7 @@ impl StderrCapture {
             _ => return error,
         }
         let deadline = Instant::now() + EXIT_WAIT;
-        while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+        while matches!(lock(child).try_wait(), Ok(None)) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
         let _ = self

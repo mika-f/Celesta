@@ -26,10 +26,15 @@ use serde::Serialize;
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Arc, Mutex};
+
+use crate::stop::lock;
 
 /// A live connection to the `@celesta.studio/cli` process evaluating one entry module.
 pub struct ReactBridge {
-    pub(crate) child: Child,
+    /// Shared with a [`RuntimeStop`](crate::RuntimeStop), which can kill it
+    /// while this bridge waits on it.
+    pub(crate) child: Arc<Mutex<Child>>,
     pub(crate) stdin: ChildStdin,
     pub(crate) stdout: BufReader<ChildStdout>,
     /// The runtime's stderr, passed through and kept to explain an exit.
@@ -50,8 +55,7 @@ pub struct ReactBridge {
 impl Drop for ReactBridge {
     fn drop(&mut self) {
         // This also closes Node's stderr, which ends its reader thread.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        end(&mut lock(&self.child));
     }
 }
 
@@ -152,6 +156,10 @@ impl ReactBridge {
                 return Err(ReactBridgeError::Io(error));
             }
         };
+        let child = Arc::new(Mutex::new(child));
+        if let Some(stop) = &options.stop {
+            stop.watch(&child);
+        }
         let mut stdout = BufReader::new(stdout);
         let mut message = Vec::new();
         if let Some(payload) = property_payload {
@@ -284,10 +292,10 @@ impl ReactBridge {
         let metadata = match handshake() {
             Ok(metadata) => metadata,
             Err(error) => {
-                let error = stderr.exit_error(&mut child, error);
+                let error = stderr.exit_error(&child, error);
                 // The entry may already be imported; handles it opened could
                 // keep Node alive.
-                end(&mut child);
+                end(&mut lock(&child));
                 return Err(error);
             }
         };
@@ -717,7 +725,7 @@ impl ReactBridge {
     /// Gives an error from a runtime that went away the reason it printed;
     /// see [`StderrCapture::exit_error`].
     fn exit_error(&mut self, error: ReactBridgeError) -> ReactBridgeError {
-        self.stderr.exit_error(&mut self.child, error)
+        self.stderr.exit_error(&self.child, error)
     }
 
     fn receive_answering_measurements(&mut self) -> Result<(), ReactBridgeError> {

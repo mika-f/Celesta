@@ -61,7 +61,7 @@ claude mcp add celesta -- /Applications/Celesta.app/Contents/MacOS/Celesta-mcp
 
 | Shell command in this skill | MCP tool |
 | --- | --- |
-| `node inspect.mjs <entry> [--frames …] [--loop]` | `inspect` (`entry`, `frames`, `every`, `loop`) |
+| `node inspect.mjs <entry> [--frames …] [--loop] [--timeout …]` | `inspect` (`entry`, `frames`, `every`, `loop`, `timeout`) |
 | `Celesta-export --json … --frame/--frames/--every … out.png` | `render_frames` (returns the images; `format`: `png`, `jpeg`, `webp`) |
 | `Celesta-export --json … --every N --contact-sheet out.png` | `contact_sheet` (`output` extension or `format` picks the image format) |
 | `Celesta-export --json … out.mp4` | `export_video` |
@@ -74,6 +74,15 @@ Tool arguments are camelCase versions of the options (`propsFile`,
 `.json` is a JSON project, anything else a React entry. Failed calls return
 the same error `code`s as `--json` ([export.md](export.md#json-results)).
 `inspect.mjs --psd-layers` has no tool; run it in a shell.
+
+`inspect` evaluates at most 1000 frames per call; more (`every: 1` on a
+video over 1000 frames, for example) is a `usage` error that asks for a
+larger `every`. Like `inspect.mjs --timeout`, it stops after `timeout`
+seconds (default 180, the entry's `prepare()` included), ends the runtime,
+and fails with error code `timeout`; a cancelled request stops it the same
+way. `loop` picks its own frames, so `loop` with `frames` or `every` is a
+`usage` error. To check every frame of a longer video, run
+`inspect.mjs --every 1` in a shell ([verify.md](verify.md#inspectmjs)).
 
 ## Create a React project
 
