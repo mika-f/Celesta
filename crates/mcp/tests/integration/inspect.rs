@@ -287,8 +287,17 @@ fn running(pid: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+/// Whether process `pid` still runs: `tasklist` lists it by its id.
+#[cfg(windows)]
+fn running(pid: &str) -> bool {
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .expect("tasklist runs");
+    String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
+}
+
 /// Waits for process `pid` to end.
-#[cfg(unix)]
 async fn wait_for_exit(pid: &str) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while running(pid) {
@@ -316,9 +325,8 @@ async fn inspect_times_out_a_hanging_prepare_and_ends_its_runtime() {
         structured(&result)["error"]["message"],
         "inspect timed out after 2 s while loading the entry; pass a larger timeout, or check whether prepare() is waiting on something"
     );
-    let _pid = wait_for_pid(&pid_file).await;
-    #[cfg(unix)]
-    wait_for_exit(&_pid).await;
+    let pid = wait_for_pid(&pid_file).await;
+    wait_for_exit(&pid).await;
     let next = call(&client, "list_templates", json!({})).await;
     assert!(!is_error(&next));
 }
@@ -340,10 +348,9 @@ async fn inspect_cancel_ends_a_hanging_prepare() {
         )
         .await
         .unwrap();
-    let _pid = wait_for_pid(&pid_file).await;
+    let pid = wait_for_pid(&pid_file).await;
     handle.cancel(None).await.unwrap();
-    #[cfg(unix)]
-    wait_for_exit(&_pid).await;
+    wait_for_exit(&pid).await;
     let next = call(&client, "list_templates", json!({})).await;
     assert!(!is_error(&next));
 }

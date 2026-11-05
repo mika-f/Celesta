@@ -79,10 +79,12 @@ the same error `code`s as `--json` ([export.md](export.md#json-results)).
 video over 1000 frames, for example) is a `usage` error that asks for a
 larger `every`. Like `inspect.mjs --timeout`, it stops after `timeout`
 seconds (default 180, the entry's `prepare()` included), ends the runtime,
-and fails with error code `timeout`; a cancelled request stops it the same
-way. `loop` picks its own frames, so `loop` with `frames` or `every` is a
-`usage` error. To check every frame of a longer video, run
-`inspect.mjs --every 1` in a shell ([verify.md](verify.md#inspectmjs)).
+and fails with error code `timeout`; a cancelled request ends the runtime
+the same way and fails with `cancelled`. `loop` picks its own frames, so
+`loop` with `frames` or `every` is a `usage` error. To check every frame of
+a longer video, run `node <skill>/scripts/inspect.mjs scene.tsx --every 1`
+in a shell, with a larger `--timeout` if it needs one
+([verify.md](verify.md#inspectmjs)).
 
 ## Create a React project
 

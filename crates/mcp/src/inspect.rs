@@ -183,7 +183,12 @@ pub fn inspect(args: InspectArgs, stop: &Stop) -> CallToolResult {
         props.as_deref(),
     ) {
         Ok(runtime) => runtime,
-        Err(error) => return failed(error),
+        Err(error) => {
+            return match stop.halted() {
+                Some(halt) => stop.result(halt, LOADING),
+                None => failed(error),
+            };
+        }
     };
     let bridge = ReactBridge::spawn_with_options(
         &runtime.node,

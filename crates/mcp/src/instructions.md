@@ -10,7 +10,7 @@ Rules that are easy to get wrong:
 Workflow:
 1. Read the existing source, or create a project with `init_project` (see `list_templates`).
 2. Edit the source.
-3. `inspect` the React entry: it evaluates frames without rendering and reports layers, audio, and missing files. It evaluates at most 1000 frames per call and stops after `timeout` seconds (default 180); for every frame of a longer video, run `inspect.mjs --every 1` in a shell.
+3. `inspect` the React entry: it evaluates frames without rendering and reports layers, audio, and missing files. It evaluates at most 1000 frames per call and stops after `timeout` seconds (default 180); for every frame of a longer video, run `node <skill>/scripts/inspect.mjs <entry.tsx> --every 1` in a shell (`<skill>` is the celesta skill's folder; add `--timeout <seconds>` past its default 180).
 4. `render_frames` and look at the images; `contact_sheet` shows the whole video in one image. Do not claim the video looks right without looking at a rendered frame. Both write PNG unless given `format` (`jpeg`, `webp`) or, for `contact_sheet`, a `.jpg`/`.webp` `output`, with an optional `quality` (1–100, default 90); check with PNG, since compression blurs fine text and edges.
 5. `export_video` only for audio or the final video (.mp4, .mov or .webm).
 
