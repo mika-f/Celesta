@@ -255,8 +255,10 @@ jobs:
       - name: Test the build script
         run: pnpm --dir scripts/plugins test
 
+      # Every member of the workspace. --all would also check the root crates
+      # the plugins depend on by path.
       - name: Format
-        run: cargo fmt --manifest-path plugins/Cargo.toml --all --check
+        run: cargo fmt --manifest-path plugins/Cargo.toml --check
 
       - name: Clippy
         run: cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings

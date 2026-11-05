@@ -766,7 +766,7 @@ Besides MToon's list above, to check against UniVRM:
 - `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`,
   with `CELESTA_REQUIRE_GPU=1` so the GPU tests fail without an adapter
   instead of returning early; the plugins workspace's
-  `cargo fmt --all --check` and
+  `cargo fmt --check` and
   `cargo clippy --workspace --all-targets --locked -- -D warnings`;
   `pnpm --filter celesta-plugin-vrm-js test` (after `pnpm run
   build:runtime`), which also type-checks `demo.tsx`; and

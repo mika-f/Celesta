@@ -38,7 +38,7 @@ Celesta's.
 cargo build --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --release
 cargo test --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm
 cargo clippy --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --all-targets -- -D warnings
-cargo fmt --manifest-path plugins/Cargo.toml --all --check
+cargo fmt --manifest-path plugins/Cargo.toml --check
 ```
 
 The tests draw through Celesta's GPU renderer. Without a GPU adapter the
