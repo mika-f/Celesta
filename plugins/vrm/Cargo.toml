@@ -8,10 +8,6 @@ repository = "https://github.com/mika-f/celesta"
 rust-version = "1.89"
 publish = false
 
-# Built on its own: the root workspace excludes this directory, so
-# `cargo build --workspace` at the root never builds the plugin.
-[workspace]
-
 [[bin]]
 name = "celesta-plugin-vrm"
 path = "src/main.rs"

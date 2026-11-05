@@ -23,8 +23,8 @@ members = [
   "examples/plugins/flag",
   "examples/plugins/turntable",
 ]
-# The VRM plugin is a workspace of its own, built and tested on its own.
-exclude = ["plugins/vrm"]
+# First-party plugins are a workspace of their own, plugins/Cargo.toml.
+exclude = ["plugins"]
 
 [workspace.package]
 # The released version; a release tag (vX.Y.Z) must match it.

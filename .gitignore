@@ -2,9 +2,9 @@ node_modules/
 .turbo/
 /projects
 /target
-# The VRM plugin builds on its own (plugins/vrm/README.md).
-/plugins/vrm/target
-/plugins/vrm/dist
+# First-party plugins build in a workspace of their own (plugins/Cargo.toml).
+/plugins/target
+/plugins/dist
 /plugins/vrm/assets
 *.celesta.json~
 
