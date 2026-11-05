@@ -880,10 +880,8 @@ its Decisions give the reasons for the choices below.
   `inputs.test.mts` lives under `scripts/plugins/node_modules/.cache/`,
   inside the repository, where the pnpm `mise.toml` pins is on the path.
 - **Known gaps.** Build and test inputs outside both graphs and outside
-  `turbo.json` do not affect a plugin: `scripts/resolve-package-manifest.mjs`
-  (imported by `packages/cli/scripts/stage-project-types.mjs`),
-  `templates/` (read by `packages/cli/scripts/stage-templates.mjs`), and
-  `examples/minimal.celesta.json` (read by the codec's `tests/export.rs`).
+  `turbo.json` do not affect a plugin: `examples/minimal.celesta.json`
+  (read by the codec's `tests/export.rs`).
   Hand-kept lists are a non-goal; a push to `main` tests every plugin and
   catches such a change there. On Windows, the skip report's labels keep
   Cargo's `\` separators.

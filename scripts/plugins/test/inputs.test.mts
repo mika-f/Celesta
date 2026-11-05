@@ -474,6 +474,9 @@ describe("the repository's plugins", () => {
         'packages/cli',
         'packages/react',
         'packages/character',
+        // From turbo.json: what @celesta.studio/cli's build reads outside its folder.
+        'scripts/resolve-package-manifest.mjs',
+        'templates',
       ]),
     );
     for (const input of ['crates/exporter', 'crates/editor', 'plugins/ffmpeg']) expect(vrm.inputs).not.toContain(input);
@@ -493,7 +496,7 @@ describe("the repository's plugins", () => {
         'packaging/GPL-SOURCE-OFFER.md',
       ]),
     );
-    for (const input of ['packages/cli', 'crates/editor']) expect(ffmpeg.inputs).not.toContain(input);
+    for (const input of ['packages/cli', 'crates/editor', 'templates']) expect(ffmpeg.inputs).not.toContain(input);
 
     for (const { inputs } of plugins) {
       expect(inputs).toEqual([...new Set(inputs)].sort());
