@@ -110,7 +110,10 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   (`resolver = "3"`, `members = ["vrm"]`); `plugins/vrm/Cargo.lock` moved to
   `plugins/Cargo.lock`, and the build goes to `plugins/target`. The root
   `Cargo.toml` excludes `plugins`, and `.gitignore` ignores `/plugins/target`
-  and `/plugins/dist` (`/plugins/vrm/assets` stays).
+  and `/plugins/dist`, and `/plugins/*/target` and `/plugins/*/dist` for an
+  older checkout's `plugins/vrm/target` and `plugins/vrm/dist` and for a
+  plugin excluded into a workspace of its own (`/plugins/vrm/assets`
+  stays).
 - **Build script.** `scripts/plugins/` is a private pnpm package
   (`celesta-plugin-scripts`) with `platform.mjs` (a platform's
   `<os>-<arch>` from `rustc --print cfg`'s `target_os` and `target_arch`,
@@ -128,7 +131,11 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
 - **Versions.** A plugin with a `cargoPackage` takes its manifest version
   from that Cargo package, and its `plugin.json` must not have one (vrm,
   flag, and turntable lost theirs). beep-voice, with no program, keeps its
-  `version`.
+  `version`. The root workspace's plugin-host test
+  `the_repositorys_plugins_pass_the_manifest_checks`, which makes each
+  repository `plugin.json` into a manifest, follows the same rule: with a
+  `cargoPackage` it asserts there is no `version` and reads the
+  `[package]` `version` of the `Cargo.toml` beside the `plugin.json`.
 - **CI.** The `vrm-plugin` job (still `VRM plugin`) no longer sets up
   FFmpeg: neither `plugins/Cargo.lock` nor the codegen `build:runtime` runs
   has it. Its rust-cache workspaces are `plugins -> target` and
@@ -165,9 +172,11 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   - `cd ws && cargo fmt --all --check -- -l`: lists `a`, `b`, and `dep`.
 - **Docs.** `plugins/vrm/README.md`, `examples/plugins/README.md`, the flag
   and turntable READMEs, the four demos' usage comments, the user guide's
-  plugins page (en and ja), the Celesta skill's `plugins.md`, `HANDOFF.md`'s
-  flag and turntable rows, and `2026-11-03-plugin-vrm.md`'s build, file
-  table, and checks give the new commands and paths. `plugins/vrm/js`'s
+  plugins page (en and ja), the Celesta skill's `plugins.md`, `HANDOFF.md`
+  (the flag and turntable rows, new `celesta-plugin-vrm` and
+  `scripts/plugins` rows, and the plugins workspace's commands in its
+  validation section), and `2026-11-03-plugin-vrm.md`'s build, file table,
+  and checks give the new commands and paths. `plugins/vrm/js`'s
   `package.json` description and `tsconfig.json` comment name the new
   script.
 - **Stale references left.** `git grep -n -E "plugins/vrm/build\.mjs|examples/plugins/build\.mjs|plugins/vrm/dist|plugins/vrm/Cargo\.lock|manifest-path plugins/vrm"`
@@ -181,7 +190,9 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
 
 ### Checks (macOS, Apple Silicon, Metal)
 
-- `cargo fmt --manifest-path plugins/Cargo.toml --check`: clean.
+- `cargo fmt --check` in `plugins/`: clean; `cargo fmt --check -v` lists
+  only `plugins/vrm`'s files. `cargo fmt --manifest-path plugins/Cargo.toml
+  -p celesta-plugin-vrm --check` (the README's form): clean.
 - `cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings`:
   no warnings.
 - `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`:
@@ -193,6 +204,25 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
 - `pnpm --dir scripts/plugins test`: 17 passed (2 files).
 - `cargo metadata --format-version 1 --locked --no-deps` at the root:
   succeeds.
+- At the root, `cargo test -p celesta-plugin-host --lib --locked
+  the_repositorys_plugins_pass_the_manifest_checks`: failed before the test
+  took versions from the Cargo packages (`discover` refused vrm, flag, and
+  turntable: "invalid type: null, expected a string"), 1 passed after.
+  `cargo test -p celesta-plugin-host --locked`: 53 passed, 0 failed.
+- `node scripts/plugins/build.mjs plugins/vrm`: writes `plugins/dist/vrm`
+  whose manifest has version 0.1.0 and an `executable` for this machine
+  only (`macos-aarch64`), with `js/index.js` and `js/index.d.ts`.
+- `node scripts/plugins/build.mjs examples/plugins/flag
+  examples/plugins/turntable examples/plugins/beep-voice`: writes the three
+  into `examples/plugins/dist/`, each at version 0.1.0; flag and turntable
+  have a `macos-aarch64` executable, and beep-voice has no `executable`.
+- From `plugins/`, `node ../scripts/plugins/build.mjs vrm --skip-js`
+  resolves `vrm` against the current directory and writes
+  `plugins/dist/vrm` again (with `--out` to a scratch folder too: a
+  manifest and `bin/macos-aarch64/` only, no `js/`).
+- The Windows-target
+  `cargo check --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --locked --target x86_64-pc-windows-msvc --lib --bins`
+  was not run here; it is left to CI's `vrm-plugin` job.
 
 ## Layer 2: a lossless test codec in the core
 
