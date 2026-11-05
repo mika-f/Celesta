@@ -13,6 +13,9 @@ it.
   only.
 - CI's `Format` job runs `cargo fmt --all --check` on every push to
   `main` and every pull request, and fails on any difference.
+- The fframes benchmark (`examples/versus/bench/fframes`) is a workspace of
+  its own, which `--all` does not reach and no job checked. It is
+  formatted too, and the `Format` job checks it by its manifest.
 
 ## Implementation
 
@@ -23,6 +26,10 @@ it.
     after the test job's build.
   - The `test` job keeps installing `clippy` only, so the toolchain that
     rust-cache keys on does not change.
+- The job's second command, `cargo fmt --manifest-path
+  examples/versus/bench/fframes/Cargo.toml --check`, covers the fframes
+  benchmark. rustfmt reads the workspace with `cargo metadata --no-deps`,
+  so it fetches none of fframes' dependencies and needs no FFmpeg or Vulkan.
 - The VRM plugin keeps its own `Format` step in the `vrm-plugin` job;
   `--all` does not reach it, as the root workspace excludes it.
 
@@ -32,4 +39,7 @@ it.
   `crates/editor/src/element_edit/resolve.rs`, `crates/editor/src/preview.rs`,
   `crates/mcp/src/docs.rs`, `crates/react-bridge/src/protocol.rs`, and
   `crates/source-edit/tests/{add,imports,scenes}.rs`.
-- After: `cargo fmt --all --check` and `git diff --check` pass.
+- Before: the fframes benchmark's check reported 3 hunks in
+  `src/lib.rs` and `src/main.rs`. The `svgr!` bodies are unchanged; only
+  the call around one is wrapped.
+- After: both `cargo fmt` checks and `git diff --check` pass.
