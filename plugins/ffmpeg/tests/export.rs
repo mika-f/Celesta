@@ -57,13 +57,12 @@ fn generate_source(path: &Path, lavfi: &str, fps: (i32, i32)) {
         .unwrap();
 }
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
+/// An empty 1920x1080 project, a copy of `examples/minimal.celesta.json`
+/// kept beside these tests so a change to it is a change to this plugin
+/// (which is what decides when CI runs them).
+fn minimal_project() -> Project {
+    Project::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/minimal.celesta.json"))
         .unwrap()
-        .parent()
-        .unwrap()
-        .to_owned()
 }
 
 #[test]
@@ -83,8 +82,7 @@ fn exports_frame_exact_mp4_with_silent_audio() {
     let source = directory.path().join("source.mkv");
     generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
 
-    let mut project =
-        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
+    let mut project = minimal_project();
     project.settings.width = 64;
     project.settings.height = 64;
     project.settings.frame_rate = Rational::new(2, 1);
@@ -213,8 +211,7 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
     let source = directory.path().join("source.mkv");
     generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
 
-    let mut project =
-        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
+    let mut project = minimal_project();
     project.settings.width = 64;
     project.settings.height = 64;
     project.settings.frame_rate = Rational::new(2, 1);
@@ -343,8 +340,7 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
 /// straight `(255, 0, 0, 128)`. Images are centered on the canvas origin, so
 /// it covers the top-left 32x32 quadrant and leaves the rest undrawn.
 fn transparent_project(dir: &Path) -> Project {
-    let mut project =
-        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
+    let mut project = minimal_project();
     project.settings.width = 64;
     project.settings.height = 64;
     project.settings.frame_rate = Rational::new(2, 1);
