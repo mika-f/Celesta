@@ -63,6 +63,7 @@ export function workspaceVersion(cargoToml) {
  * `[workspace.package]` or `[package]` version and every pin on one of
  * Celesta's crates (`{ path = "...", version = "=<from>" }`) moved from `from`
  * to `to`. Comments and crates without a `path` are left as they are.
+ * A pin must be a one-line inline table: the scan reads one line at a time.
  *
  * @param {string} cargoToml
  * @param {string} from

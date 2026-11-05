@@ -183,7 +183,7 @@ async function buildModule(source, out, module) {
 }
 
 for (const { source, sourcePath, plugin, licenses } of plugins) {
-  const out =join(values.out === undefined ? join(dirname(source), 'dist') : resolve(values.out), plugin.id);
+  const out = join(values.out === undefined ? join(dirname(source), 'dist') : resolve(values.out), plugin.id);
   mkdirSync(out, { recursive: true });
   const manifestPath = join(out, 'celesta-plugin.json');
   const previous = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : {};

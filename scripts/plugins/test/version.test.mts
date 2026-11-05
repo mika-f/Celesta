@@ -63,6 +63,16 @@ describe('bumpCargoToml', () => {
     );
   });
 
+  it('leaves a commented-out pin on one of its crates', () => {
+    const commented = codecToml.replace(
+      '[dependencies]\n',
+      '[dependencies]\n# foo = { path = "x", version = "=0.9.0" }\n',
+    );
+    expect(bumpCargoToml(commented, '0.9.0', '0.10.0', 'plugins/ffmpeg/Cargo.toml')).toContain(
+      '# foo = { path = "x", version = "=0.9.0" }\n',
+    );
+  });
+
   it("bumps a package's version and its pins in [dependencies] and [dev-dependencies]", () => {
     expect(bumpCargoToml(codecToml, '0.9.0', '0.10.0', 'plugins/ffmpeg/Cargo.toml')).toBe(
       codecToml

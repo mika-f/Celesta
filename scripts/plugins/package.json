@@ -2,7 +2,7 @@
   "name": "celesta-plugin-scripts",
   "version": "0.1.0",
   "private": true,
-  "description": "The helpers of the shared plugin build script (scripts/plugins/build.mjs): a plugin's platform from rustc, its Cargo workspace from cargo metadata, its celesta-plugin.json, and its license files.",
+  "description": "The shared plugin build script (scripts/plugins/build.mjs) and its helpers: a plugin's platform from rustc, its Cargo workspace from cargo metadata, its celesta-plugin.json, and its license files; and the version bump script (bump-version.mjs) with its helper version.mjs.",
   "license": "MIT OR Apache-2.0",
   "type": "module",
   "scripts": {
