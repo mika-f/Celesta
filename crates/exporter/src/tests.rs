@@ -555,8 +555,8 @@ fn video_format_names_round_trip() {
 }
 
 #[test]
-fn the_ffmpeg_codec_has_every_format_encoder() {
-    celesta_codec_ffmpeg::install();
+fn the_test_codec_has_every_format_encoder() {
+    celesta_codec_test::install();
     for &format in VideoFormat::VARIANTS {
         ensure_encoders(format).unwrap_or_else(|error| panic!("{format}: {error}"));
     }
