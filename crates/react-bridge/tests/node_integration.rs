@@ -12,8 +12,8 @@ use celesta_react_bridge::{
     SpawnOptions, chapter_at, react_audio_clips,
 };
 
-/// [`ReactBridge`]'s constructors, reading media with the FFmpeg codec in
-/// this process, so the tests need no codec plugin installed.
+/// [`ReactBridge`]'s constructors, reading media with the lossless test codec
+/// in this process, so the tests need no codec plugin installed.
 struct Bridge;
 
 impl Bridge {
@@ -22,7 +22,7 @@ impl Bridge {
         cli_script: impl AsRef<Path>,
         entry: impl AsRef<Path>,
     ) -> Result<ReactBridge, ReactBridgeError> {
-        celesta_codec_ffmpeg::install();
+        celesta_codec_test::install();
         ReactBridge::spawn(node, cli_script, entry)
     }
 
@@ -32,7 +32,7 @@ impl Bridge {
         entry: impl AsRef<Path>,
         properties: &PropertyInputs,
     ) -> Result<ReactBridge, ReactBridgeError> {
-        celesta_codec_ffmpeg::install();
+        celesta_codec_test::install();
         ReactBridge::spawn_with_properties(node, cli_script, entry, properties)
     }
 
@@ -43,7 +43,7 @@ impl Bridge {
         properties: &PropertyInputs,
         options: SpawnOptions,
     ) -> Result<ReactBridge, ReactBridgeError> {
-        celesta_codec_ffmpeg::install();
+        celesta_codec_test::install();
         ReactBridge::spawn_with_options(node, cli_script, entry, properties, options)
     }
 }
@@ -471,7 +471,7 @@ fn audio_spectrum_is_the_same_in_preview_and_export_when_node_is_available() {
             .any(|(decoded, _)| decoded.iter().all(|value| *value > 0.0))
     );
     for (decoded, parsed) in export.values() {
-        // FFmpeg's samples are the WAV parser's, which @celesta.studio/web matches.
+        // The test codec's samples are the WAV parser's, which @celesta.studio/web matches.
         assert_eq!(decoded, parsed);
     }
 }

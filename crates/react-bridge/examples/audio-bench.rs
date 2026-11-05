@@ -1,15 +1,52 @@
 //! Compare the original per-frame protocol with batched audio collection.
+//! Media is decoded by an installed codec plugin's process, as in the editor:
+//! the first codec plugin found, else the `celesta-codec-ffmpeg` built beside
+//! this example's folder. Without one it exits with "no codec plugin found".
 //! Run after `pnpm run build:runtime` and generating any media:
+//!
+//! ```text
+//! cargo build --release -p celesta-codec-ffmpeg
 //! cargo run --release -p celesta-react-bridge --example audio-bench -- <entry> [runs]
+//! ```
 
-use std::{env, error::Error, path::PathBuf, time::Instant};
+use std::{env, error::Error, path::PathBuf, process, time::Instant};
 
 use celesta_composition::{AudioGraph, Time};
-use celesta_media::{MediaBackend, mix_audio_graph};
+use celesta_media::{CodecProcess, MediaBackend, mix_audio_graph};
+use celesta_plugin_host::{CodecPlugin, InstalledPlugins};
 use celesta_react_bridge::{ReactBridge, react_audio_clips};
 
+/// The codec plugin [`InstalledPlugins::codec`] finds, else the one built in
+/// the profile folder: Cargo puts examples in `target/<profile>/examples`,
+/// one folder below the codec's program, where `codec()` does not look.
+fn codec() -> Option<CodecPlugin> {
+    InstalledPlugins::find_reporting(&[]).codec().or_else(|| {
+        let executable = env::current_exe().ok()?;
+        let profile = executable.parent()?.parent()?.to_path_buf();
+        let program = profile.join(format!(
+            "{}{}",
+            celesta_plugin_host::CODEC_PROGRAM,
+            env::consts::EXE_SUFFIX
+        ));
+        program.is_file().then(|| CodecPlugin {
+            id: celesta_plugin_host::CODEC_PROGRAM.to_owned(),
+            executable: program,
+            directory: profile,
+        })
+    })
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    celesta_codec_ffmpeg::install();
+    let Some(codec) = codec() else {
+        eprintln!(
+            "no codec plugin found: build one first (cargo build --release -p celesta-codec-ffmpeg) or set CELESTA_PLUGIN_PATH"
+        );
+        process::exit(1);
+    };
+    celesta_media::set_codec(Some(CodecProcess::factory(
+        codec.executable,
+        codec.directory,
+    )));
     let mut args = env::args().skip(1);
     let entry =
         PathBuf::from(args.next().ok_or("usage: audio-bench <entry> [runs]")?).canonicalize()?;
