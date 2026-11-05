@@ -1,3 +1,4 @@
+use crate::stop::RuntimeStop;
 use celesta_composition::{
     Animatable, DuckGroups, DuckLevel, Layer, Rational, Scene, ShaderSource,
 };
@@ -35,6 +36,9 @@ pub struct SpawnOptions {
     /// runtime never reads `CELESTA_PLUGIN_PATH` from Celesta's own
     /// environment as it is.
     pub plugins: Option<RuntimePlugins>,
+    /// Lets another thread kill the runtime (see [`RuntimeStop`]), also while
+    /// the spawn waits on `prepare()`.
+    pub stop: Option<RuntimeStop>,
 }
 
 /// One element of the chain of JSX that produced a layer (see

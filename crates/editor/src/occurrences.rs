@@ -93,6 +93,7 @@ pub(crate) fn spawn_occurrences() -> anyhow::Result<OccurrenceWorker> {
                     composition_id: Some(request.composition_id),
                     source_locations: true,
                     plugins: Some(request.plugins),
+                    stop: None,
                 },
             ) {
                 Ok(mut bridge) => {

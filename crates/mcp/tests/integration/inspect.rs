@@ -1,4 +1,9 @@
-use crate::common::{call, client, entry, is_error, root, runtime_built, structured, text};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use crate::common::{call, client, entry, is_error, params, root, runtime_built, structured, text};
+use rmcp::model::{ClientRequest, Request};
+use rmcp::service::PeerRequestOptions;
 use serde_json::json;
 
 const RECT: &str = r##"
@@ -208,4 +213,144 @@ async fn inspect_rejects_frames_outside_the_composition() {
     assert_eq!(frames[0]["frame"], 0);
     assert_eq!(frames[1]["frame"], 30);
     assert!(frames[1]["error"].is_string());
+}
+
+#[tokio::test]
+async fn inspect_refuses_every_past_the_frame_cap() {
+    if !runtime_built() {
+        return;
+    }
+    let (_dir, entry) = entry(
+        r##"
+import { Composition, Rect } from '@celesta.studio/react';
+export default function Root() {
+  return <Composition width={320} height={180} fps={30} durationInFrames={1001}>
+    <Rect width={100} height={50} fill="#336699" />
+  </Composition>;
+}
+"##,
+    );
+    let (client, _) = client().await;
+    let result = call(&client, "inspect", json!({ "entry": entry, "every": 1 })).await;
+    assert!(is_error(&result), "{}", text(&result));
+    assert_eq!(structured(&result)["error"]["code"], "usage");
+    assert_eq!(
+        structured(&result)["error"]["message"],
+        "1001 frames selected; inspect evaluates at most 1000 (choose a larger every)"
+    );
+}
+
+/// An entry whose `prepare()` never resolves, after writing its runtime's
+/// process id to `pid.txt` beside it.
+fn hanging_entry() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let (dir, entry) = entry("");
+    let pid_file = dir.path().join("pid.txt");
+    let source = format!(
+        r##"
+import {{ writeFileSync }} from 'node:fs';
+import {{ Composition }} from '@celesta.studio/react';
+export async function prepare() {{
+  writeFileSync({}, String(process.pid));
+  await new Promise(() => setInterval(() => {{}}, 1000));
+}}
+export default function Root() {{
+  return <Composition width={{320}} height={{180}} fps={{30}} durationInFrames={{30}} />;
+}}
+"##,
+        serde_json::to_string(&pid_file).unwrap()
+    );
+    std::fs::write(&entry, source).unwrap();
+    (dir, entry, pid_file)
+}
+
+/// Waits for `prepare()` to write its runtime's process id.
+async fn wait_for_pid(pid_file: &Path) -> String {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if let Ok(pid) = std::fs::read_to_string(pid_file)
+            && !pid.is_empty()
+        {
+            return pid;
+        }
+        assert!(Instant::now() < deadline, "prepare() did not start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Whether process `pid` still runs.
+#[cfg(unix)]
+fn running(pid: &str) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Whether process `pid` still runs: `tasklist` lists it by its id.
+#[cfg(windows)]
+fn running(pid: &str) -> bool {
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .expect("tasklist runs");
+    String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
+}
+
+/// Waits for process `pid` to end.
+async fn wait_for_exit(pid: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while running(pid) {
+        assert!(Instant::now() < deadline, "the runtime {pid} still runs");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn inspect_times_out_a_hanging_prepare_and_ends_its_runtime() {
+    if !runtime_built() {
+        return;
+    }
+    let (_dir, entry, pid_file) = hanging_entry();
+    let (client, _) = client().await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(60),
+        call(&client, "inspect", json!({ "entry": entry, "timeout": 2 })),
+    )
+    .await
+    .expect("the deadline ended the inspection");
+    assert!(is_error(&result), "{}", text(&result));
+    assert_eq!(structured(&result)["error"]["code"], "timeout");
+    assert_eq!(
+        structured(&result)["error"]["message"],
+        "inspect timed out after 2 s while loading the entry; pass a larger timeout, or check whether prepare() is waiting on something"
+    );
+    let pid = wait_for_pid(&pid_file).await;
+    wait_for_exit(&pid).await;
+    let next = call(&client, "list_templates", json!({})).await;
+    assert!(!is_error(&next));
+}
+
+#[tokio::test]
+async fn inspect_cancel_ends_a_hanging_prepare() {
+    if !runtime_built() {
+        return;
+    }
+    let (_dir, entry, pid_file) = hanging_entry();
+    let (client, _) = client().await;
+    let handle = client
+        .send_cancellable_request(
+            ClientRequest::CallToolRequest(Request::new(params(
+                "inspect",
+                json!({ "entry": entry }),
+            ))),
+            PeerRequestOptions::no_options(),
+        )
+        .await
+        .unwrap();
+    let pid = wait_for_pid(&pid_file).await;
+    handle.cancel(None).await.unwrap();
+    wait_for_exit(&pid).await;
+    let next = call(&client, "list_templates", json!({})).await;
+    assert!(!is_error(&next));
 }

@@ -9,7 +9,7 @@ use celesta_composition::{
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentResolutionRequest, ComponentSchemaField, LegacyImport,
     PrepareDependency, ProjectFrame, PropertyInputs, ReactBridge, ReactBridgeError, ReactChapter,
-    SpawnOptions, chapter_at, react_audio_clips,
+    RuntimeStop, SpawnOptions, chapter_at, react_audio_clips,
 };
 
 /// [`ReactBridge`]'s constructors, reading media with the FFmpeg codec in
@@ -632,6 +632,65 @@ fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
     assert!(visible_layers.contains(&"face/eyes/open".to_owned()));
     assert_eq!(enabled_layers, &["face/mouth/a"]);
     assert_eq!(disabled_layers.len(), 5);
+}
+
+#[test]
+fn a_runtime_stop_ends_a_prepare_that_never_resolves_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+    let dir = tempfile::tempdir_in(&package_root).unwrap();
+    let entry = dir.path().join("hang.tsx");
+    std::fs::write(
+        &entry,
+        "import { Composition } from '@celesta.studio/react';\n\
+         export async function prepare() { await new Promise(() => setInterval(() => {}, 1000)); }\n\
+         export default () => <Composition width={8} height={8} fps={1} durationInFrames={1} />;\n",
+    )
+    .unwrap();
+    let stop = RuntimeStop::default();
+    let stopper = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            stop.stop();
+        })
+    };
+    let started = std::time::Instant::now();
+    let spawned = Bridge::spawn_with_options(
+        &node,
+        &cli_script,
+        &entry,
+        &PropertyInputs::default(),
+        SpawnOptions {
+            stop: Some(stop.clone()),
+            ..SpawnOptions::default()
+        },
+    );
+    stopper.join().unwrap();
+    assert!(
+        matches!(spawned, Err(ReactBridgeError::UnexpectedExit { .. })),
+        "{:?}",
+        spawned.err()
+    );
+    assert!(stop.is_stopped());
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+
+    // A stop called before the spawn kills the runtime as soon as it starts.
+    let spawned = Bridge::spawn_with_options(
+        &node,
+        &cli_script,
+        &entry,
+        &PropertyInputs::default(),
+        SpawnOptions {
+            stop: Some(stop),
+            ..SpawnOptions::default()
+        },
+    );
+    assert!(matches!(
+        spawned,
+        Err(ReactBridgeError::UnexpectedExit { .. })
+    ));
 }
 
 #[test]

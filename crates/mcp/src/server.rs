@@ -21,7 +21,7 @@ use crate::args::{ContactSheetArgs, ExportVideoArgs, RenderFramesArgs};
 use crate::docs;
 use crate::export::{self, Run};
 use crate::frames::{OutputDirs, image_blocks};
-use crate::inspect::{self, InspectArgs};
+use crate::inspect::{self, Halt, InspectArgs};
 
 #[derive(Clone)]
 pub struct CelestaServer {
@@ -179,10 +179,35 @@ impl CelestaServer {
     }
 
     #[tool(
-        description = "Evaluate a React entry's frames without rendering pixels, with real text shaping and media probing, and list every layer (type, position, size, paint, text), audio clip, and missing local file. With `loop`, check that the last frame runs seamlessly into the first. Use it after every edit, before render_frames."
+        description = "Evaluate a React entry's frames without rendering pixels, with real text shaping and media probing, and list every layer (type, position, size, paint, text), audio clip, and missing local file. With `loop`, check that the last frame runs seamlessly into the first. At most 1000 frames per call; stops after `timeout` seconds (default 180, prepare() included) with error code timeout, or when the request is cancelled. Use it after every edit, before render_frames."
     )]
-    async fn inspect(&self, Parameters(args): Parameters<InspectArgs>) -> CallToolResult {
-        blocking(move || inspect::inspect(args)).await
+    async fn inspect(
+        &self,
+        Parameters(args): Parameters<InspectArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        let timeout = match args.timeout() {
+            Ok(timeout) => timeout,
+            Err(message) => return usage_error(&message),
+        };
+        let stop = inspect::Stop::new(timeout);
+        // Seen before the inspection starts, so it evaluates no frame.
+        if context.ct.is_cancelled() {
+            stop.halt(Halt::Cancelled);
+        }
+        let watcher = {
+            let stop = stop.clone();
+            let cancelled = context.ct.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    () = cancelled.cancelled() => stop.halt(Halt::Cancelled),
+                    () = tokio::time::sleep(timeout) => stop.halt(Halt::TimedOut),
+                }
+            })
+        };
+        let result = blocking(move || inspect::inspect(args, &stop)).await;
+        watcher.abort();
+        result
     }
 
     #[tool(
