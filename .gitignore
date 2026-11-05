@@ -2,9 +2,14 @@ node_modules/
 .turbo/
 /projects
 /target
-# First-party plugins build in a workspace of their own (plugins/Cargo.toml).
+# First-party plugins build in a workspace of their own (plugins/Cargo.toml),
+# into plugins/target and plugins/dist. A plugin left out of that workspace
+# builds into its own target/, and the plugin's older layout built into
+# plugins/vrm/target and plugins/vrm/dist.
 /plugins/target
 /plugins/dist
+/plugins/*/target
+/plugins/*/dist
 /plugins/vrm/assets
 *.celesta.json~
 
