@@ -1,6 +1,5 @@
 {
   "id": "turntable",
-  "version": "0.1.0",
   "module": "js/index.ts",
   "cargoPackage": "celesta-plugin-turntable"
 }
