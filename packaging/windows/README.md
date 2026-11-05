@@ -45,8 +45,9 @@ Outputs are placed in `target/packages`:
 - A unique `staging-*/Celesta` directory for inspecting the package.
 
 Existing output files are never overwritten. `-SkipBuild` reuses already-built
-`target/release` executables and the built `packages/*/dist` runtime; use it only after building
-the current sources. A custom Cargo target directory is not supported.
+`target/release` executables and the built `packages/*/dist` runtime; the codec plugin is always
+built, which costs nothing when `plugins/target` is current. Use it only after building the
+current sources. A custom Cargo target directory is not supported.
 
 The installer installs for the current user without elevation, adds a Start menu
 shortcut, and registers an uninstaller. It does not change PATH, install Node.js

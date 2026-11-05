@@ -80,7 +80,7 @@ export default function Root() {
   // The codec's crates are in the plugins workspace, whose licenses the
   // package collects with the root's.
   const licenses = join(packageDirectory, mac ? 'Contents/Resources/licenses' : 'licenses');
-  const rustPackages = JSON.parse(readFileSync(join(licenses, 'rust-packages.json'), 'utf8').replace(/^﻿/, ''))
+  const rustPackages = JSON.parse(readFileSync(join(licenses, 'rust-packages.json'), 'utf8').replace(/^\u{FEFF}/u, ''))
     .map((crate) => crate.name);
   for (const crate of ['ez-ffmpeg', 'celesta-codec-ffmpeg']) {
     assert.ok(rustPackages.includes(crate), `licenses/rust-packages.json must name ${crate}`);
