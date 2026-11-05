@@ -1,11 +1,15 @@
 // What Cargo says about the workspace a plugin's Cargo.toml belongs to: where
-// it builds, and its packages' versions.
+// its root is and where it builds, its packages' versions, and the folders of
+// its members and their path dependencies.
 import { spawnSync } from 'node:child_process';
+import { dirname } from 'node:path';
 
 /**
  * @typedef {object} CargoMetadata
+ * @property {string} workspaceRoot The workspace root's folder, absolute, as Cargo gives it.
  * @property {string} targetDirectory Where the workspace builds (`CARGO_TARGET_DIR` or `build.target-dir` included).
  * @property {Map<string, string>} versions Each workspace member's version, by package name.
+ * @property {Map<string, string>} directories Each member's folder and each path dependency's folder, by package name; absolute, as Cargo gives them.
  */
 
 /**
@@ -27,7 +31,25 @@ export function cargoMetadata(manifest, { cwd } = {}) {
   });
   if (result.error) throw new Error(`${cargo} metadata failed: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`${cargo} metadata failed for ${manifest}`);
-  /** @type {{ target_directory: string, packages: { name: string, version: string }[] }} */
-  const { target_directory: targetDirectory, packages } = JSON.parse(result.stdout);
-  return { targetDirectory, versions: new Map(packages.map(({ name, version }) => [name, version])) };
+  /**
+   * @type {{
+   *   workspace_root: string,
+   *   target_directory: string,
+   *   packages: { name: string, version: string, manifest_path: string, dependencies: { name: string, path?: string }[] }[],
+   * }}
+   */
+  const { workspace_root: workspaceRoot, target_directory: targetDirectory, packages } = JSON.parse(result.stdout);
+  /** @type {Map<string, string>} */
+  const directories = new Map();
+  for (const { dependencies } of packages) {
+    for (const { name, path } of dependencies) if (path !== undefined) directories.set(name, path);
+  }
+  // A member's own folder wins over a path dependency's spelling of it.
+  for (const { name, manifest_path: manifestPath } of packages) directories.set(name, dirname(manifestPath));
+  return {
+    workspaceRoot,
+    targetDirectory,
+    versions: new Map(packages.map(({ name, version }) => [name, version])),
+    directories,
+  };
 }
