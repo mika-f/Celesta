@@ -1053,7 +1053,6 @@ dependencies = [
 name = "celesta-exporter"
 version = "0.9.0"
 dependencies = [
- "celesta-codec-ffmpeg",
  "celesta-codec-test",
  "celesta-composition",
  "celesta-evaluator",
@@ -1064,7 +1063,6 @@ dependencies = [
  "celesta-react-bridge",
  "celesta-remote",
  "clap",
- "ez-ffmpeg",
  "image",
  "png 0.18.1",
  "ratatui",
@@ -1213,7 +1211,6 @@ dependencies = [
 name = "celesta-react-bridge"
 version = "0.9.0"
 dependencies = [
- "celesta-codec-ffmpeg",
  "celesta-codec-test",
  "celesta-composition",
  "celesta-media",

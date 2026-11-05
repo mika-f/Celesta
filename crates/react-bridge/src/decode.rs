@@ -1,5 +1,6 @@
-//! `decodeAudio`: the PCM an entry's `prepare()` analyzes, decoded by the
-//! same FFmpeg backend that mixes preview and export audio.
+//! `decodeAudio`: the PCM an entry's `prepare()` analyzes, decoded through
+//! the codec plugin by the same `MediaBackend` that mixes preview and export
+//! audio.
 
 use celesta_media::{AudioDecoder, MediaBackend};
 use celesta_remote::{RemoteAssetCache, is_remote_url};

@@ -93,9 +93,9 @@ To run from source, use Rust 1.89 or later, Node.js 26, the pnpm version in
 [`mise.toml`](mise.toml) pins the Node.js and pnpm versions CI uses.
 Prepare the **FFmpeg 8.1.x development libraries** using the
 [source-build guide](https://celesta.natsuneko.cat/en/docs/build-from-source/)
-before running Cargo; the codec plugin (`crates/codec-ffmpeg`) and the tests
-link them. The FFmpeg executable alone is insufficient; FFmpeg 9 and later are
-not supported yet.
+before running Cargo; the codec plugin (`crates/codec-ffmpeg`) and its tests
+link them; the core's tests use a lossless test codec instead. The FFmpeg
+executable alone is insufficient; FFmpeg 9 and later are not supported yet.
 
 ```sh
 git clone https://github.com/mika-f/Celesta.git celesta

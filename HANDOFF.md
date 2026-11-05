@@ -19,8 +19,9 @@ Per-task specifications, implementation details, and validation results live in
 - The desktop app uses `gpui-kit` (`crates/editor/Cargo.toml`).
 - FFmpeg 8.1.x development libraries must be available for `ez-ffmpeg` /
   `ffmpeg-sys-next` to link against. Only the codec plugin
-  (`celesta-codec-ffmpeg`) and tests link them; Celesta's own crates read and
-  write media through the plugin's process (see
+  (`celesta-codec-ffmpeg`) and its own tests link them; Celesta's own crates
+  read and write media through the plugin's process, and their tests use the
+  lossless test codec (`celesta-codec-test`) instead (see
   [`docs/handoff/2026-11-05-codec-plugin.md`](docs/handoff/2026-11-05-codec-plugin.md)).
   The `ffmpeg`/`ffprobe` binaries are not used at runtime.
 - Windows: `vcpkg install ffmpeg[x264,vpx,opus]:x64-windows-static-md`, with
@@ -96,7 +97,8 @@ compositions: no package a composition imports depends on them, though
 | `celesta-project` | Project loading and semantic validation. |
 | `celesta-evaluator` | Deterministic project-to-`Scene` and project-to-`AudioGraph` evaluation. |
 | `celesta-media` | Probing, exact-time video frames, and audio decoding through a codec plugin (`MediaBackend`, `CodecProvider`, the codec protocol), plus the audio mix, ducking, time stretching, and loudness. Links no codec library. |
-| `celesta-codec-ffmpeg` | The FFmpeg codec plugin: a program serving the codec protocol (probe, decode, encode, mux, HDR tone mapping), and `FfmpegCodec` for tests to use in-process. The only crate that links FFmpeg. |
+| `celesta-codec-ffmpeg` | The FFmpeg codec plugin: a program serving the codec protocol (probe, decode, encode, mux, HDR tone mapping), and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. |
+| `celesta-codec-test` | The lossless test codec the core's tests read and write media with, in-process (`install`) or as the program `celesta-codec-test` in a temporary plugin folder (`TestCodecPlugin`); not published. |
 | `celesta-budoux` | Japanese phrase segmentation for text line breaking. |
 | `celesta-renderer` | CPU reference renderer, PNG output, and shared text/path rasterization. |
 | `celesta-gpu-renderer` | wgpu rendering, compositing, readback, and native preview bridge. |
@@ -169,8 +171,8 @@ React entry ─> React bridge ┘
 - No Celesta crate but `celesta-codec-ffmpeg` links FFmpeg (or any codec
   library), even optionally: media goes through `celesta_media::MediaBackend`
   and the codec plugin's process, so the editor, exporter, and MCP server
-  stay MIT/Apache-2.0 when packages ship a GPL FFmpeg. Tests may use the
-  codec in-process through dev-dependencies.
+  stay MIT/Apache-2.0 when packages ship a GPL FFmpeg. The core's tests use
+  `celesta-codec-test`; only `celesta-codec-ffmpeg`'s own tests link FFmpeg.
 - GPU preview and audio decoding/mixing run on background workers. Requests
   carry generations, queued work coalesces to the latest request, stale
   results are discarded, and superseded mixing checks cancellation.
@@ -348,7 +350,9 @@ cargo run -p celesta-exporter -- --react packages/cli/examples/title.tsx output.
 The editor and exporter find the codec plugin's program beside themselves in
 `target/<profile>`; rebuild it after changing `crates/codec-ffmpeg` or
 `celesta-media`'s codec protocol. Tests that spawn `celesta-exporter` or
-`celesta-mcp` need it built too, which `cargo test --workspace` does.
+`celesta-mcp` give the child the test codec's program instead, so they need
+`celesta-codec-test` built, which `cargo test --workspace` does; otherwise run
+`cargo build -p celesta-codec-test` first.
 
 Inspect `git status --short` before editing. Use targeted validation while
 iterating; the Rust baseline is:

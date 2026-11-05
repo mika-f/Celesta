@@ -28,8 +28,5 @@ strum.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-# Tests read and write media through the FFmpeg codec in their own process,
-# and make their fixtures with FFmpeg; Celesta itself links neither.
-celesta-codec-ffmpeg.workspace = true
+# Tests read and write media with the lossless test codec.
 celesta-codec-test.workspace = true
-ez-ffmpeg.workspace = true
