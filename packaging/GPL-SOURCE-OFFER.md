@@ -56,7 +56,7 @@ The exact versions and build configuration used for a given release are
 recorded inside that release's own package, under `licenses/native` (Windows,
 from the vcpkg `ffmpeg[x264,vpx,opus]:x64-windows-static-md` port) or
 `licenses/native` and `licenses/homebrew.json` (macOS, from the Homebrew
-`ffmpeg` formula and its dependency closure).
+`ffmpeg@8` formula and its dependency closure).
 
 ## Full license text
 

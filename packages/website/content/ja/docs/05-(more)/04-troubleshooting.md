@@ -6,12 +6,12 @@ macOS ではアプリ全体を Applications にコピーしてから起動しま
 :::
 :::toggle[ソースビルドで FFmpeg が見つからない]
 
-実行ファイルだけでなく、8.1.x の開発ライブラリが入っているか確認します。macOS では Cargo を実行するシェルで `PKG_CONFIG_PATH` を設定します。Windows は `VCPKG_ROOT` と MSVC ビルドツールを確認し、Linux は `PKG_CONFIG_PATH` に `/opt/ffmpeg8/lib/pkgconfig` などのビルド済み FFmpeg を指定します。[ソースビルドの準備](/ja/docs/build-from-source/)をご覧ください。
+実行ファイルだけでなく、8.1.x の開発ライブラリが入っているか確認します。macOS ではコーデックプラグインをビルドするシェルで `PKG_CONFIG_PATH` を設定します。Windows は `VCPKG_ROOT` と MSVC ビルドツールを確認し、Linux は `PKG_CONFIG_PATH` に `/opt/ffmpeg8/lib/pkgconfig` などのビルド済み FFmpeg を指定します。[ソースビルドの準備](/ja/docs/build-from-source/)をご覧ください。
 
 :::
 :::toggle[動画や音声が表示されない、書き出しが no_codec で失敗する]
 
-Celesta はメディアをコーデックプラグインで読み書きします。パッケージでは、Celesta に付属するプラグインフォルダー（`Celesta.exe` の隣の `plugins\ffmpeg`、macOS アプリでは `Contents/PlugIns/ffmpeg`）に `ffmpeg` プラグインが残っているか確認するか、パッケージを入れ直してください。ソースビルドでは、リポジトリのルートで `node scripts/plugins/build.mjs plugins/ffmpeg` を実行し、Celesta を実行するシェルで `CELESTA_PLUGIN_PATH` に `plugins/dist` の絶対パスを設定します（`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`）。[コーデックプラグイン](/ja/docs/plugins/#コーデックプラグイン)をご覧ください。
+Celesta はメディアをコーデックプラグインで読み書きします。パッケージでは、Celesta に同梱のプラグインフォルダー（`Celesta.exe` の隣の `plugins\ffmpeg`、macOS アプリでは `Contents/PlugIns/ffmpeg`）に `ffmpeg` プラグインが残っているか確認するか、パッケージを入れ直してください。ソースビルドでは、リポジトリのルートで `node scripts/plugins/build.mjs plugins/ffmpeg` を実行し、Celesta を実行するシェルで `CELESTA_PLUGIN_PATH` に `plugins/dist` の絶対パスを設定します（`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`）。[コーデックプラグイン](/ja/docs/plugins/#コーデックプラグイン)をご覧ください。
 
 :::
 :::toggle[メディアが見つからない]

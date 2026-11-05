@@ -74,7 +74,8 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   with `node scripts/plugins/build.mjs plugins/ffmpeg` and points
   `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
   (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root).
-  `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables.
+  `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables;
+  that lookup is skipped in a Cargo build folder such as `target/release`.
 - It is not imported and has no components. Without one, video and audio
   layers fail to decode and exports fail with `no_codec` (see
   [export.md](export.md)).

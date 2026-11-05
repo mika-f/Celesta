@@ -9,7 +9,7 @@
 ::::tabs[ソースをビルドする OS]{default="macOS"}
 :::tab[macOS]
 
-Xcode Command Line Tools と Homebrew をインストールします。続いてライブラリを入れ、Celesta をビルドするシェルで `pkg-config` に keg-only の FFmpeg パッケージを指定します。
+Xcode Command Line Tools と Homebrew をインストールします。続いてライブラリを入れ、コーデックプラグインをビルドするシェル（手順 4）で `pkg-config` に keg-only の FFmpeg パッケージを指定します。
 
 ```sh title="macOS の依存関係"
 xcode-select --install
@@ -40,7 +40,7 @@ sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
 export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
 ```
 
-Cargo を実行する各シェルで `PKG_CONFIG_PATH` を設定します。FFmpeg はコーデックプラグインのプログラムにリンクされるので `LD_LIBRARY_PATH` は不要です。ディストリビューションが FFmpeg 8.1.x を提供する場合は、スクリプトの代わりに `pkg-config` と `libavcodec`、`libavformat`、`libavfilter`、`libavdevice`、`libavutil`、`libswscale`、`libswresample` の開発パッケージをインストールしてください。GPU なしでの書き出しは、[動画の書き出し](/ja/docs/export/)をご覧ください。
+コーデックプラグインをビルドするシェル（手順 4 の `node scripts/plugins/build.mjs plugins/ffmpeg`）で `PKG_CONFIG_PATH` を設定します。Celesta 本体のクレートは FFmpeg をリンクしません。FFmpeg はコーデックプラグインのプログラムにリンクされるので `LD_LIBRARY_PATH` は不要です。ディストリビューションが FFmpeg 8.1.x を提供する場合は、スクリプトの代わりに `pkg-config` と `libavcodec`、`libavformat`、`libavfilter`、`libavdevice`、`libavutil`、`libswscale`、`libswresample` の開発パッケージをインストールしてください。GPU なしでの書き出しは、[動画の書き出し](/ja/docs/export/)をご覧ください。
 
 :::
 ::::

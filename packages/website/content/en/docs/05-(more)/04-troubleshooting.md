@@ -6,7 +6,7 @@ On macOS, copy the complete app into Applications before launching it. For a por
 :::
 :::toggle[A source build cannot find FFmpeg]
 
-Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set `PKG_CONFIG_PATH` in the same shell where you run Cargo. On Windows, check `VCPKG_ROOT` and the MSVC build tools. On Linux, point `PKG_CONFIG_PATH` at the FFmpeg you built, such as `/opt/ffmpeg8/lib/pkgconfig`. See [source-build setup](/en/docs/build-from-source/).
+Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set `PKG_CONFIG_PATH` in the same shell where you build the codec plugin. On Windows, check `VCPKG_ROOT` and the MSVC build tools. On Linux, point `PKG_CONFIG_PATH` at the FFmpeg you built, such as `/opt/ffmpeg8/lib/pkgconfig`. See [source-build setup](/en/docs/build-from-source/).
 
 :::
 :::toggle[Video and audio do not show, or an export fails with no_codec]

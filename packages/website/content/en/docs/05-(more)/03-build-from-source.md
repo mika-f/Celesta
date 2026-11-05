@@ -9,7 +9,7 @@ To build Celesta, install **Rust 1.89 or later**, your platform’s native build
 ::::tabs[Source build platform]{default="macOS"}
 :::tab[macOS]
 
-Install the Xcode Command Line Tools and Homebrew. Then install the libraries and point `pkg-config` at the keg-only FFmpeg package in the shell where you build Celesta.
+Install the Xcode Command Line Tools and Homebrew. Then install the libraries and point `pkg-config` at the keg-only FFmpeg package in the shell where you build the codec plugin (step 4).
 
 ```sh title="macOS dependencies"
 xcode-select --install
@@ -40,7 +40,7 @@ sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
 export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
 ```
 
-Set `PKG_CONFIG_PATH` in every shell where you run Cargo. FFmpeg is linked into the codec plugin’s program, so `LD_LIBRARY_PATH` is not needed. If your distribution does provide FFmpeg 8.1.x, install `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`, `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development packages instead of running the script. To export without a GPU, see [Export a video](/en/docs/export/).
+Set `PKG_CONFIG_PATH` in the shell where you build the codec plugin (`node scripts/plugins/build.mjs plugins/ffmpeg`, step 4); Celesta's own crates link no FFmpeg. FFmpeg is linked into the codec plugin’s program, so `LD_LIBRARY_PATH` is not needed. If your distribution does provide FFmpeg 8.1.x, install `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`, `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development packages instead of running the script. To export without a GPU, see [Export a video](/en/docs/export/).
 
 :::
 ::::
