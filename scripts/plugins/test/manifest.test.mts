@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { pluginManifest, pluginVersion } from '../manifest.mjs';
+import { checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mjs';
 
 const sourcePath = '/repo/plugins/vrm/plugin.json';
 const component = { name: 'Vrm', label: 'VRM avatar', src: 'model', extensions: ['vrm'], aspect: 1.7777778 };
@@ -62,11 +62,47 @@ describe('pluginManifest', () => {
     ).toThrow(`${sourcePath}: Cargo gave no version for the package celesta-plugin-vrm`);
   });
 
+  it("writes a codec plugin's roles and no module or types", () => {
+    const manifest = pluginManifest(
+      {
+        id: 'ffmpeg',
+        version: '0.9.0',
+        cargoPackage: 'celesta-codec-ffmpeg',
+        roles: ['codec'],
+        licenses: ['../../LICENSE-MIT'],
+      },
+      { cargoVersion: '0.9.0', executable: { 'macos-aarch64': 'bin/macos-aarch64/celesta-codec-ffmpeg' } },
+      sourcePath,
+    );
+    expect(manifest).toEqual({
+      id: 'ffmpeg',
+      version: '0.9.0',
+      protocol: 1,
+      roles: ['codec'],
+      executable: { 'macos-aarch64': 'bin/macos-aarch64/celesta-codec-ffmpeg' },
+    });
+    expect(Object.keys(manifest)).toEqual(['id', 'version', 'protocol', 'roles', 'executable']);
+  });
+
   it.each([
     ['without', { id: 'beep-voice', module: 'js/index.ts' }, {}],
     ['with', { id: 'vrm', cargoPackage: 'celesta-plugin-vrm', module: 'js/src/index.ts' }, { cargoVersion: '0.1.0' }],
   ])('throws, naming plugin.json, when a plugin %s a Cargo package has no version', (_, source, built) => {
     expect(() => pluginManifest(source, built, sourcePath)).toThrow(`${sourcePath}: version is required`);
+  });
+});
+
+describe('checkPluginSource', () => {
+  it('refuses components without a module', () => {
+    expect(() =>
+      checkPluginSource({ id: 'x', version: '0.1.0', cargoPackage: 'p', components: [component] }, sourcePath),
+    ).toThrow(`${sourcePath}: components need a module to import them from`);
+  });
+
+  it('refuses a plugin with nothing to build', () => {
+    expect(() => checkPluginSource({ id: 'x', version: '0.1.0' }, sourcePath)).toThrow(
+      `${sourcePath}: it has neither a module nor a cargoPackage to build`,
+    );
   });
 });
 

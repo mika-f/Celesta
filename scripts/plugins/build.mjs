@@ -1,17 +1,23 @@
 // Builds plugins into plugin directories Celesta loads: for each, its manifest
 // (celesta-plugin.json), its process when it has one, the component module
-// entries import as `@celesta-plugin/<id>`, and that module's declarations.
-// Each plugin's plugin.json says what it has, its version included. A plugin
-// with a process gives the same version in its Cargo package, and one whose
-// versions differ is refused before anything is built.
+// entries import as `@celesta-plugin/<id>` and that module's declarations
+// when it has one, and the license files it lists, under licenses/. Each
+// plugin's plugin.json says what it has, its version and roles included. A
+// plugin with a process gives the same version in its Cargo package, and one
+// whose versions differ is refused before that plugin is built. Every
+// plugin.json is checked first, so a plugin with nothing to build, components
+// but no module, no version, or a license file that is not there fails the
+// run before anything is built.
 //
 //   node scripts/plugins/build.mjs <plugin directory>...
 //                                  [--out <dir>] [--target <triple>] [--skip-js]
 //
 // Each plugin directory resolves against the current directory, as does
-// --out. Run `pnpm install && pnpm run build:runtime` at the repository root
-// first: the runtime supplies the declarations of `react` and
-// `@celesta.studio/*`, `tsc`, and `esbuild`. A plugin directory goes to
+// --out. When a plugin has a module, run `pnpm install && pnpm run
+// build:runtime` at the repository root first: the runtime supplies the
+// declarations of `react` and `@celesta.studio/*`, `tsc`, and `esbuild`. A
+// plugin with only a process needs Cargo alone. A plugin
+// directory goes to
 // <out>/<id>, where <out> is by default the dist/ folder beside the plugin's
 // folder (plugins/vrm goes to plugins/dist/vrm, examples/plugins/flag to
 // examples/plugins/dist/flag); put <out> on CELESTA_PLUGIN_PATH or pass it as
@@ -19,7 +25,8 @@
 //
 // Each run adds this platform's (or --target's) executable and keeps the
 // others', so builds on several platforms can fill one directory; the
-// JavaScript is the same everywhere, so later builds may pass --skip-js.
+// JavaScript is the same everywhere, so later builds may pass --skip-js. Each
+// run replaces licenses/ with the files plugin.json lists.
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -28,7 +35,8 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { cargoMetadata } from './cargo.mjs';
-import { pluginManifest, pluginVersion } from './manifest.mjs';
+import { licenseFiles } from './licenses.mjs';
+import { checkPluginSource, pluginManifest, pluginVersion } from './manifest.mjs';
 import { rustPlatform } from './platform.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -69,13 +77,6 @@ function run(command, args, options = {}) {
   if (result.status !== 0) fail(`${command} failed`);
 }
 
-const runtime = join(root, 'packages', 'cli');
-const projectTypes = join(runtime, 'dist', 'project-types');
-if (!values['skip-js'] && !existsSync(join(projectTypes, 'tsconfig.json'))) {
-  fail(`${projectTypes} is missing; run pnpm install && pnpm run build:runtime in ${root}`);
-}
-const fromRuntime = createRequire(join(runtime, 'package.json'));
-
 /**
  * @template T
  * @param {() => T} step
@@ -88,6 +89,26 @@ function orFail(step) {
     fail(error instanceof Error ? error.message : String(error));
   }
 }
+
+// Every plugin.json, checked before anything is built.
+const plugins = positionals.map((directory) => {
+  const source = resolve(directory);
+  const sourcePath = join(source, 'plugin.json');
+  /** @type {import('./manifest.mjs').PluginSource} */
+  const plugin = orFail(() => JSON.parse(readFileSync(sourcePath, 'utf8')));
+  orFail(() => checkPluginSource(plugin, sourcePath));
+  orFail(() => pluginVersion({ version: plugin.version }, undefined, sourcePath));
+  const licenses = orFail(() => licenseFiles(source, plugin, sourcePath));
+  return { source, sourcePath, plugin, licenses };
+});
+
+const runtime = join(root, 'packages', 'cli');
+const projectTypes = join(runtime, 'dist', 'project-types');
+const buildsModules = !values['skip-js'] && plugins.some(({ plugin }) => plugin.module !== undefined);
+if (buildsModules && !existsSync(join(projectTypes, 'tsconfig.json'))) {
+  fail(`${projectTypes} is missing; run pnpm install && pnpm run build:runtime in ${root}`);
+}
+const fromRuntime = createRequire(join(runtime, 'package.json'));
 
 /**
  * The plugin's process: built with Cargo in the workspace the plugin's
@@ -162,12 +183,8 @@ async function buildModule(source, out, module) {
   });
 }
 
-for (const directory of positionals) {
-  const source = resolve(directory);
-  const sourcePath = join(source, 'plugin.json');
-  /** @type {import('./manifest.mjs').PluginSource} */
-  const plugin = JSON.parse(readFileSync(sourcePath, 'utf8'));
-  const out = join(values.out === undefined ? join(dirname(source), 'dist') : resolve(values.out), plugin.id);
+for (const { source, sourcePath, plugin, licenses } of plugins) {
+  const out =join(values.out === undefined ? join(dirname(source), 'dist') : resolve(values.out), plugin.id);
   mkdirSync(out, { recursive: true });
   const manifestPath = join(out, 'celesta-plugin.json');
   const previous = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : {};
@@ -183,10 +200,14 @@ for (const directory of positionals) {
     orFail(() => pluginVersion(plugin, cargoVersion, sourcePath));
     const executable = buildExecutable(source, out, cargoPackage, targetDirectory);
     built = { cargoVersion, executable: { ...previous.executable, ...executable } };
-  } else {
-    orFail(() => pluginVersion(plugin, undefined, sourcePath));
   }
-  if (!values['skip-js']) await buildModule(source, out, plugin.module);
+  if (!values['skip-js'] && plugin.module !== undefined) await buildModule(source, out, plugin.module);
+
+  rmSync(join(out, 'licenses'), { recursive: true, force: true });
+  if (licenses.length > 0) {
+    mkdirSync(join(out, 'licenses'));
+    for (const { from, name } of licenses) copyFileSync(from, join(out, 'licenses', name));
+  }
 
   const manifest = orFail(() => pluginManifest(plugin, built, sourcePath));
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);

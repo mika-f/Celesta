@@ -27,7 +27,11 @@ describe("the repository's plugins", () => {
   it.each(withCargoPackage.map(([source, plugin]) => [source.slice(root.length + 1), plugin] as const))(
     "%s gives its Cargo package's version",
     (source, plugin) => {
-      const { versions } = cargoMetadata(join(root, source, 'Cargo.toml'), { cwd: join(root, source) });
+      const cargoToml = join(root, source, 'Cargo.toml');
+      const { versions } = cargoMetadata(cargoToml, { cwd: join(root, source) });
+      expect(versions.has(plugin.cargoPackage!), `${cargoToml} has no package named ${plugin.cargoPackage}`).toBe(
+        true,
+      );
       expect(plugin.version).toBe(versions.get(plugin.cargoPackage!));
     },
     60_000,

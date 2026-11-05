@@ -10,7 +10,9 @@
  * @property {string} id
  * @property {string} [version] Required; with `cargoPackage`, that package's version.
  * @property {string} [cargoPackage] The Cargo package, and binary, of the plugin's process.
- * @property {string} module The component module's entry, relative to the plugin's folder.
+ * @property {string} [module] The component module's entry, relative to the plugin's folder.
+ * @property {string[]} [roles] What the plugin is to Celesta (`content` when absent, `codec`).
+ * @property {string[]} [licenses] Files, relative to the plugin's folder, copied by name into licenses/.
  * @property {object[]} [components]
  */
 
@@ -29,11 +31,30 @@
  * @property {string} id
  * @property {string} version
  * @property {1} protocol
+ * @property {string[]} [roles]
  * @property {Record<string, string>} [executable]
- * @property {'js/index.js'} module
- * @property {'js/index.d.ts'} types
+ * @property {'js/index.js'} [module]
+ * @property {'js/index.d.ts'} [types]
  * @property {object[]} [components]
  */
+
+/**
+ * Checks that the plugin `source` (read from `sourcePath`, which errors name)
+ * has something to build: a module, a Cargo package, or both, and a module
+ * for any components, since Celesta skips a plugin listing components it
+ * cannot import.
+ *
+ * @param {PluginSource} source
+ * @param {string} sourcePath
+ */
+export function checkPluginSource(source, sourcePath) {
+  if (source.module === undefined && source.components !== undefined) {
+    throw new Error(`${sourcePath}: components need a module to import them from`);
+  }
+  if (source.module === undefined && source.cargoPackage === undefined) {
+    throw new Error(`${sourcePath}: it has neither a module nor a cargoPackage to build`);
+  }
+}
 
 /**
  * The manifest of the plugin `source` (read from `sourcePath`, which errors
@@ -45,13 +66,14 @@
  * @returns {PluginManifest}
  */
 export function pluginManifest(source, { cargoVersion, executable }, sourcePath) {
+  checkPluginSource(source, sourcePath);
   return {
     id: source.id,
     version: pluginVersion(source, cargoVersion, sourcePath),
     protocol: 1,
+    ...(source.roles ? { roles: source.roles } : {}),
     ...(executable ? { executable } : {}),
-    module: 'js/index.js',
-    types: 'js/index.d.ts',
+    ...(source.module !== undefined ? { module: 'js/index.js', types: 'js/index.d.ts' } : {}),
     ...(source.components ? { components: source.components } : {}),
   };
 }
