@@ -721,15 +721,24 @@ built.
     manifests (`cargo metadata --no-deps` of the root workspace, or reading
     `path` entries).
   - **JavaScript.** The pnpm dependency closure of the plugin's `js/`
-    package. Each plugin's `js/package.json` declares what its build
-    really uses, including `@celesta.studio/cli` for the project types, so
-    the graph matches the build.
+    package, and the repository paths `turbo.json` names for those
+    packages' tasks (`$TURBO_ROOT$/` inputs and `globalDependencies`):
+    `@celesta.studio/react`'s codegen reads `crates/project` and
+    `crates/composition`. Each plugin's `js/package.json` declares what its
+    build really uses, including `@celesta.studio/cli` for the project
+    types, so the graph matches the build.
   - **Every plugin** is affected when shared inputs change: the plugin
     workflow, `.github/actions/setup-ffmpeg/`, the shared build script and
-    this script, the root `Cargo.toml` (workspace inheritance) and
-    `Cargo.lock` (the codegen `build:runtime` runs), `plugins/Cargo.toml`
-    and `plugins/Cargo.lock`, `package.json`, `pnpm-lock.yaml`,
-    `pnpm-workspace.yaml`, `turbo.json`, `mise.toml`, and `mise.lock`.
+    this script, the root `Cargo.toml` (the root crates inherit their
+    package fields and dependencies from it when the plugins workspace
+    builds them) and
+    `Cargo.lock` (the third-party versions the codegen builds with
+    `--locked`, and part of rust-cache's key for the root `target/`; a
+    source edit in a codegen crate does not touch it, and `turbo.json`'s
+    inputs cover that edit; for the codec, which runs no codegen, it only
+    changes that cache key), `plugins/Cargo.toml` and `plugins/Cargo.lock`,
+    `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`,
+    `mise.toml`, and `mise.lock`.
   - On a push to `main` and on `workflow_dispatch`, every plugin is
     affected.
 - `ci.yml`'s `vrm-plugin` job becomes a `Plugins (<OS>)` job per operating
@@ -744,6 +753,176 @@ built.
 - No per-plugin declaration of operating systems: every plugin runs on all
   three. A declaration can be added when a plugin truly needs an
   exception.
+
+## Layer 4: what was done
+
+The plan is `docs/superpowers/plans/2026-11-05-plugins-workspace-layer4.md`;
+its Decisions give the reasons for the choices below.
+
+- **The script.** `node scripts/plugins/affected.mjs [--base <rev>]
+  [--head <rev>] [--github-output]` reads every `plugins/*/plugin.json`
+  (not `examples/plugins/`, which stay in the root `Test` job). With
+  `--base`, the changed paths are
+  `git diff --name-only --no-renames -z <base> <head>` (`<head>` defaults
+  to `HEAD`; a moved file's old path counts too); without it every plugin
+  is affected. It prints one JSON line,
+  `{"plugins": [{id, directory, workspace, cargoPackage, jsPackage, because}, ...]}`,
+  sorted by `id`. `workspace` is the Cargo workspace's folder (`plugins`),
+  and `workspace`, `cargoPackage`, and `jsPackage` are `null` when absent.
+  Each plugin's `because` is the first changed path, in `git diff` order,
+  that its own inputs or a shared input cover, so two plugins can name
+  different paths; without `--base` it is `"no base revision"`. An error
+  prints `affected.mjs: <message>` and exits 1; a bad argument, and
+  `--head` without `--base`, exit 2. `--github-output` appends `any`,
+  `plugins` (the array as compact JSON), `directories`, `js` (one
+  `--filter <jsPackage>` per plugin with one), and `cargo` (one
+  `<workspace> -p <package>...` line per workspace, in a
+  `cargo<<CARGO_WORKSPACES` block) to `$GITHUB_OUTPUT`, with `\n` line
+  endings only.
+- **A plugin's inputs** (`inputs.mjs`), as repository-relative `/` paths; a
+  folder covers the paths under it, not a sibling sharing its prefix
+  (`crates/plugin` does not cover `crates/plugin-host/...`), and a file
+  covers only itself:
+  - its folder;
+  - **Rust**: the folders of the packages without `source` that its
+    workspace's lockfile reaches from `cargoPackage` (`lockfile.mjs`, which
+    reads `\r\n` lockfiles and tells a local package from a git or registry
+    package of the same name and version). Names map to folders through
+    `cargo metadata --no-deps` of the root and of each plugin workspace
+    (`cargo.mjs`'s `directories`: members and path dependencies). A local
+    package with no known folder, or a name two folders claim, is an
+    error;
+  - **JavaScript**: the folders
+    `pnpm --filter "<name>..." ls --depth -1 --json` lists for its
+    `js/package.json`, and the paths `turbo.json` gives those packages'
+    tasks (below). A `module` without a `js/package.json` is an error;
+  - the files its `plugin.json` `licenses` lists.
+
+  On this repository, VRM's Rust closure is `crates/budoux`, `composition`,
+  `gpu-renderer`, `media`, `plugin`, `plugin-host`, `remote`, and
+  `renderer`; its JavaScript closure is `plugins/vrm/js` and 17 packages
+  (`aivis-speech`, `character`, `cli`, `code`, `components`, `debug`,
+  `layout`, `lottie`, `math`, `media-utils`, `project`, `react`, `shader`,
+  `shapes`, `text`, `transitions`, `voicevox`); `turbo.json` adds
+  `crates/project` (and `crates/composition`, `Cargo.toml`, `Cargo.lock`,
+  and `.cargo/config.toml`, which it already had). The codec's Rust
+  closure is `crates/budoux`, `composition`, `evaluator`, `exporter`,
+  `gpu-renderer`, `media`, `plugin`, `plugin-host`, `project`,
+  `react-bridge`, `remote`, and `renderer`, plus `LICENSE-APACHE`,
+  `LICENSE-GPL-2.0`, `LICENSE-MIT`, and `packaging/GPL-SOURCE-OFFER.md`;
+  it has no JavaScript package.
+- **`turbo.json`'s paths** (found in the layer's review). The VRM module
+  build runs `build:runtime`, whose `@celesta.studio/react` codegen runs
+  `cargo test -p celesta-project -p celesta-composition --features codegen`
+  and writes the ts-rs types; `turbo.json` declares that as `$TURBO_ROOT$/`
+  inputs, and `crates/project` is in no other graph of VRM's. For each
+  package in a plugin's pnpm closure, the inputs of `tasks.<script>` and
+  `tasks["<package>#<script>"]` for each of its `scripts` that start with
+  `$TURBO_ROOT$/` are inputs, with the prefix and a trailing `/**`
+  removed, and so are `globalDependencies`. `$TURBO_DEFAULT$`,
+  package-relative entries (inside the package's folder), and `!`
+  exclusions are skipped, which can only add paths; a deferred-hashing
+  entry's `globs` are read the same way. A pattern that maps to no folder
+  or file (a glob before its last part, `**` alone, a path outside the
+  repository, `$TURBO_ROOT$` elsewhere than the start), a package's own
+  `turbo.json`, or a root `turbo.jsonc` is an error. Before the fix, a
+  change to `crates/project/src/lib.rs` affected only the codec; now it
+  affects both.
+- **Shared inputs** (`SHARED_INPUTS`; a test checks each exists):
+  `.github/workflows/ci.yml`, `.github/workflows/actions.lock`,
+  `.github/actions/setup-ffmpeg`, `scripts/build-ffmpeg-linux.sh`,
+  `scripts/plugins`, `scripts/report-skipped-tests.mjs`,
+  `.cargo/config.toml`, `Cargo.toml`, `Cargo.lock`, `plugins/Cargo.toml`,
+  `plugins/Cargo.lock`, `package.json`, `pnpm-lock.yaml`,
+  `pnpm-workspace.yaml`, `turbo.json`, `mise.toml`, and `mise.lock`.
+- **`@celesta.studio/cli`.** `plugins/vrm/js/package.json` lists it in
+  `devDependencies` (`workspace:*`), since the build checks the module
+  against the CLI's project types and bundles with its `tsc` and
+  `esbuild`; that makes the whole runtime VRM's closure, which is what its
+  build uses.
+- **The job.** `Plugins (<OS>)` keeps the `Test` job's three runners,
+  `fail-fast: false`, 150 minutes, and bash. It checks out, fetches the
+  pull request's base at depth 1 (`pull_request` only; `HEAD` is the merge
+  commit onto it, so the two-dot diff is the pull request's change),
+  installs Rust 1.99.1 with clippy and rustfmt and mise, and runs
+  `affected.mjs` (`--base` the base SHA on a pull request; on a push to
+  `main` and on `workflow_dispatch`, no base, so every plugin). `ci.yml`
+  has no `merge_group` trigger. Every later step but `wait-all` is gated
+  at the step level, so the three check names stay stable: the Cargo
+  steps on `cargo != ''`, the JavaScript steps (`pnpm install`, the
+  codegen with `--locked` and `build:runtime`, `pnpm $JS test`) on
+  `js != ''`, and the rest on `any == 'true'`. FFmpeg is set up for any
+  affected plugin, not only the codec: rust-cache keys on
+  `FFMPEG_VERSION FFMPEG_FEATURES` and only `main` saves, so a job without
+  it would miss main's cache. rust-cache lists `plugins -> target` and
+  `. -> target`, with no `key`. Format and Clippy run on Linux only. Tests
+  run `cargo test <-p ...> --locked --no-fail-fast -- --show-output` in
+  each workspace's folder, through `tee` into a log, and
+  `scripts/report-skipped-tests.mjs` reads that log through `libtest.mjs`
+  (a JUnit file still when the path ends in `.xml`), naming a test
+  `<binary label> <test>`, or the label alone for a `harness = false`
+  binary. The plugin directories are then built with
+  `node scripts/plugins/build.mjs $DIRECTORIES`.
+- **The scripts' tests moved** to the root `Test` job's "Test Celesta
+  packages" step (`pnpm --dir scripts/plugins test`), which runs on every
+  pull request on all three systems, `inputs.test.mts`'s repository test
+  on Windows paths included.
+- **Docs.** `HANDOFF.md`'s `scripts/plugins` row and plugins-workspace
+  checks say how CI picks the plugins, what a plugin's inputs are, and
+  that a push to `main` and a manual run test every plugin.
+- **Deviations from the plan.** `--head` without `--base` exits 2 (the
+  plan left it open). `because` is per plugin, as above. `turbo.json`'s
+  paths are an addition from the review. The scratch pnpm workspace in
+  `inputs.test.mts` lives under `scripts/plugins/node_modules/.cache/`,
+  inside the repository, so mise finds the pnpm `mise.toml` pins.
+- **Known gaps.** Build and test inputs outside both graphs and outside
+  `turbo.json` do not affect a plugin: `scripts/resolve-package-manifest.mjs`
+  (imported by `packages/cli/scripts/stage-project-types.mjs`),
+  `templates/` (read by `packages/cli/scripts/stage-templates.mjs`), and
+  `examples/minimal.celesta.json` (read by the codec's `tests/export.rs`).
+  Hand-kept lists are a non-goal; a push to `main` tests every plugin and
+  catches such a change there. On Windows, the skip report's labels keep
+  Cargo's `\` separators.
+
+### Checks (macOS 26.7.1, Apple M5, Metal)
+
+Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
+
+- `pnpm --dir scripts/plugins test`: `tsc -p test`, then 110 passed
+  (10 files; `inputs.test.mts` 50).
+- `pnpm install --frozen-lockfile`: up to date.
+- `node scripts/plugins/affected.mjs`: ffmpeg and vrm, both
+  `"no base revision"`. `--base HEAD`: `{"plugins":[]}`, and with
+  `--github-output` `any=false`, empty `plugins` list, `directories`, and
+  `js`, and an empty `cargo` block. `--base claude/codec-plugin-move`:
+  both, `because: ".github/workflows/ci.yml"`; with `--github-output`,
+  `any=true`, `directories=plugins/ffmpeg plugins/vrm`,
+  `js=--filter celesta-plugin-vrm-js`, and the `cargo` line
+  `plugins -p celesta-codec-ffmpeg -p celesta-plugin-vrm`, with `\n`
+  endings only. Task 3 also ran single-commit ranges that affect the codec
+  alone (`crates/exporter/src/tests.rs`, `crates/react-bridge/src/decode.rs`)
+  and the error exits (`GITHUB_OUTPUT` unset and a bad revision exit 1,
+  an unknown option and `--head` alone exit 2).
+- `affectedPlugins` over the repository's plugins with the one changed
+  path `crates/project/src/lib.rs`: before the `turbo.json` fix, ffmpeg
+  only; after it, ffmpeg and vrm.
+- In `plugins/`,
+  `cargo fmt --check -p celesta-codec-ffmpeg -p celesta-plugin-vrm -- -l`:
+  clean; with `-v` it lists 12 targets, all under `plugins/`.
+- `cargo test --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --test render --locked -- --show-output`:
+  2 passed; `scripts/report-skipped-tests.mjs` on its log: "No tests
+  skipped themselves."
+- `ruby -ryaml -e 'ARGV.each { |f| YAML.load_file(f) }' .github/workflows/*.yml`:
+  all parse. The gate check (every `plugins` step after `affected` except
+  `wait-all` has an `if` reading `steps.affected.outputs.`): nothing
+  printed, exit 0. `git diff --check claude/codec-plugin-move`: clean.
+- Not run here: the `Plugins (<OS>)` jobs themselves, so a pull request
+  with nothing affected (the gated steps skipped, the job passing in about
+  a minute) is checked only by the gate check; Windows path behaviour
+  (`cargo metadata` and `pnpm ls` giving `C:\` paths, the `pnpm` `.cmd`
+  shim, a CRLF lockfile outside the unit test), which the `Test` job's
+  Windows run of the scripts' tests covers; the plugins' whole suites,
+  Clippy, and the JavaScript tests, which CI runs.
 
 ## Left to the builder
 
