@@ -49,13 +49,17 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function bump(cargo: string, CARGO = process.execPath) {
+// `fileSizeLimit` runs the script under bash's `ulimit -f` (in KiB), past
+// which a write fails with EFBIG once the file is open: Node ignores SIGXFSZ.
+function bump(
+  cargo: string,
+  { CARGO = process.execPath, to = '0.9.1', fileSizeLimit }: { CARGO?: string; to?: string; fileSizeLimit?: number } = {},
+) {
   writeFileSync(join(root, 'update'), cargo);
-  return spawnSync(process.execPath, [join(root, 'scripts', 'plugins', 'bump-version.mts'), '0.9.1'], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, CARGO },
-  });
+  const script = [process.execPath, join(root, 'scripts', 'plugins', 'bump-version.mts'), to];
+  const [command, ...args] =
+    fileSizeLimit === undefined ? script : ['bash', '-c', `ulimit -f ${fileSizeLimit} && exec "$@"`, 'bash', ...script];
+  return spawnSync(command, args, { cwd: root, encoding: 'utf8', env: { ...process.env, CARGO } });
 }
 
 const read = (path: string) => readFileSync(join(root, path), 'utf8');
@@ -90,7 +94,7 @@ describe('bump-version.mts', () => {
 
   it('names why Cargo did not start, and puts every file back', () => {
     const missing = join(root, 'no-cargo');
-    const result = bump('', missing);
+    const result = bump('', { CARGO: missing });
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(new RegExp(`update --workspace failed: .*ENOENT.*; the bump was undone`));
     expectUnchanged();
@@ -103,17 +107,42 @@ describe('bump-version.mts', () => {
     expectUnchanged();
   });
 
-  // Ctrl-C reaches the script and Cargo alike; Cargo here finishes anyway.
-  it.skipIf(process.platform === 'win32')('puts every file back when interrupted while Cargo runs', () => {
+  // Only the script is sent SIGINT here, as by `kill -INT`; it passes it on
+  // to Cargo, which stops, and puts the files back once Cargo has.
+  it.skipIf(process.platform === 'win32')('passes a Ctrl-C on to Cargo and puts every file back once it stops', () => {
     const result = bump(
       "const fs = require('node:fs');\n" +
         "if (process.argv.includes('--manifest-path')) fs.writeFileSync('ran-plugins-update', '');\n" +
-        "else process.kill(process.ppid, 'SIGINT'), fs.writeFileSync('Cargo.lock', 'rewritten\\n');\n",
+        'else {\n' +
+        "  process.on('SIGINT', () => { fs.writeFileSync('cargo-got-sigint', ''); process.exit(130); });\n" +
+        "  fs.writeFileSync('Cargo.lock', 'rewritten\\n');\n" +
+        "  process.kill(process.ppid, 'SIGINT');\n" +
+        '  setTimeout(() => {}, 3000);\n' +
+        '}\n',
     );
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(130);
     expect(result.stderr).toContain('interrupted during');
     expect(result.stderr).toContain('the bump was undone, every file is as it was');
+    expect(existsSync(join(root, 'cargo-got-sigint'))).toBe(true);
     expect(existsSync(join(root, 'ran-plugins-update'))).toBe(false);
+    expectUnchanged();
+  });
+
+  // Cargo ignores SIGINT here and goes on for a while; it notes what
+  // Cargo.toml holds by then.
+  it.skipIf(process.platform === 'win32')('puts every file back at once on a second Ctrl-C', () => {
+    const result = bump(
+      "const fs = require('node:fs');\n" +
+        'const script = process.ppid;\n' +
+        "process.on('SIGINT', () => {});\n" +
+        "process.kill(script, 'SIGINT');\n" +
+        "setTimeout(() => process.kill(script, 'SIGINT'), 300);\n" +
+        "setTimeout(() => fs.writeFileSync('cargo-saw', fs.readFileSync('Cargo.toml')), 1500);\n",
+    );
+    expect(result.status).toBe(130);
+    expect(result.stderr).toContain('interrupted again during');
+    expect(result.stderr).toContain('the bump was undone, every file is as it was');
+    expect(read('cargo-saw')).toBe(files['Cargo.toml']);
     expectUnchanged();
   });
 
@@ -122,10 +151,30 @@ describe('bump-version.mts', () => {
     const result = bump("require('node:fs').writeFileSync('ran-update', '');\n");
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('could not write plugins/ffmpeg/plugin.json');
-    expect(result.stderr).toContain('written: Cargo.toml, plugins/ffmpeg/Cargo.toml; not written: plugins/ffmpeg/plugin.json');
+    expect(result.stderr).toContain(
+      'written: Cargo.toml, plugins/ffmpeg/Cargo.toml; failed: plugins/ffmpeg/plugin.json; not written: none',
+    );
     expect(result.stderr).toContain('the bump was undone, every file is as it was');
     expect(existsSync(join(root, 'ran-update'))).toBe(false);
     expectUnchanged();
+  });
+
+  // plugin.json is 1 KiB, the limit, and one byte longer once bumped to
+  // 0.9.10, so its write fails after writing 1 KiB of it.
+  it.skipIf(process.platform === 'win32')('puts back a file whose write failed after it was opened', () => {
+    const head = '{\n  "id": "ffmpeg",\n  "version": "0.9.0",\n  "padding": "';
+    const tail = '"\n}\n';
+    const pluginJson = `${head}${'x'.repeat(1024 - head.length - tail.length)}${tail}`;
+    writeFileSync(join(root, 'plugins/ffmpeg/plugin.json'), pluginJson);
+    const result = bump("require('node:fs').writeFileSync('ran-update', '');\n", { to: '0.9.10', fileSizeLimit: 1 });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('could not write plugins/ffmpeg/plugin.json');
+    expect(result.stderr).toContain('failed: plugins/ffmpeg/plugin.json');
+    expect(result.stderr).toContain('the bump was undone, every file is as it was');
+    expect(existsSync(join(root, 'ran-update'))).toBe(false);
+    expect(read('plugins/ffmpeg/plugin.json')).toBe(pluginJson);
+    expect(read('Cargo.toml')).toBe(files['Cargo.toml']);
+    expect(read('plugins/ffmpeg/Cargo.toml')).toBe(files['plugins/ffmpeg/Cargo.toml']);
   });
 
   it.skipIf(writesAnyFile)('names what was and was not restored when putting a file back fails', () => {

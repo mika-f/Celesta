@@ -6,13 +6,17 @@
 // or a Cargo.toml that would keep a pin on it (one the line-by-line rewrite
 // cannot reach), fails the run with nothing changed. Then both lockfiles are
 // refreshed with `cargo update --workspace` (`$CARGO` when set). When a write
-// fails, Cargo fails, or the run is interrupted (Ctrl-C), every file written
-// is put back as it was, and the run says which files it could not restore.
+// fails (a file it fails in the middle of included), Cargo fails, or the run
+// is interrupted, every file written is put back as it was, and the run says
+// which files it could not restore. A Ctrl-C is passed on to Cargo and the
+// files are put back once Cargo stops; a second one puts them back at once.
+// An interrupted run exits with 130.
 //
 //   node scripts/plugins/bump-version.mts <X.Y.Z>
 //
 // packages/*/package.json are not bumped; edit them by hand.
 import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,14 +25,20 @@ import { FOLLOWS_CELESTA, bumpCargoToml, bumpPluginJson, workspaceVersion } from
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-function fail(message: string): never {
+/** The exit code of a run stopped by SIGINT, as a shell gives it. */
+const INTERRUPTED = 130;
+
+function fail(message: string, code = 1): never {
   console.error(`bump-version.mts: ${message}`);
-  process.exit(1);
+  process.exit(code);
 }
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/** The command running now, for the SIGINT listener to pass a Ctrl-C on to. */
+let running: { child: ChildProcess; command: string } | undefined;
 
 /**
  * Runs `command` at the root. It runs asynchronously, so a Ctrl-C reaches the
@@ -38,11 +48,17 @@ function messageOf(error: unknown): string {
  *   code>)`, or undefined when it succeeded.
  */
 function run(command: string, args: string[]): Promise<string | undefined> {
-  console.log(`> ${command} ${args.join(' ')}`);
+  const line = `${command} ${args.join(' ')}`;
+  console.log(`> ${line}`);
   return new Promise((resolve) => {
     const child = spawn(command, args, { cwd: root, stdio: 'inherit' });
-    child.on('error', (error) => resolve(`failed: ${error.message}`));
+    running = { child, command: line };
+    child.on('error', (error) => {
+      running = undefined;
+      resolve(`failed: ${error.message}`);
+    });
     child.on('close', (code, signal) => {
+      running = undefined;
       if (code === 0) resolve(undefined);
       else resolve(`failed (${signal !== null ? `signal ${signal}` : `exit code ${code}`})`);
     });
@@ -116,33 +132,53 @@ const originals = new Map(
   orFail(() => [...changes.map(([path]) => path), ...LOCKFILES].map((path): [string, string] => [path, read(path)])),
 );
 
+/** Whether the file at `path` (relative to the root) reads as `text`. */
+function holds(path: string, text: string): boolean {
+  try {
+    return readFileSync(join(root, path), 'utf8') === text;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Puts each of `paths` back as it was, going on past one that cannot be
- * written, and fails with `reason` and what was restored.
+ * written, and fails with `reason`, what was restored, and `code`. A file
+ * still as it was is left alone, so one the bump could not open is restored
+ * even when it cannot be written.
  */
-function undo(reason: string, paths: string[]): never {
+function undo(reason: string, paths: string[], code = 1): never {
   const restored: string[] = [];
   const notRestored: string[] = [];
   for (const path of paths) {
+    const original = originals.get(path) as string;
     try {
-      writeFileSync(join(root, path), originals.get(path) as string);
+      if (!holds(path, original)) writeFileSync(join(root, path), original);
       restored.push(path);
     } catch (error) {
       notRestored.push(`${path} (${messageOf(error)})`);
     }
   }
-  if (notRestored.length === 0) fail(`${reason}; the bump was undone, every file is as it was`);
+  if (notRestored.length === 0) fail(`${reason}; the bump was undone, every file is as it was`, code);
   return fail(
     `${reason}; the bump was undone only in part, put the rest back by hand (git checkout -- <file>). ` +
       `restored: ${list(restored)}; not restored: ${notRestored.join(', ')}`,
+    code,
   );
 }
 
-// A Ctrl-C stops the bump between steps, not in the middle of a write or of
-// the undo; Cargo gets it too.
+// The listener runs only while Cargo does: the writes and the undo are
+// synchronous, so a Ctrl-C never stops one in the middle. The first is passed
+// on to Cargo (a terminal's reaches it too), and the bump is undone once
+// Cargo stops; a second undoes it at once.
 let interrupted = false;
 process.on('SIGINT', () => {
+  if (interrupted) {
+    const during = running === undefined ? '' : ` during ${running.command}`;
+    undo(`interrupted again${during}`, [...originals.keys()], INTERRUPTED);
+  }
   interrupted = true;
+  running?.child.kill('SIGINT');
 });
 
 const written: string[] = [];
@@ -150,10 +186,12 @@ for (const [path, text] of changes) {
   try {
     writeFileSync(join(root, path), text);
   } catch (error) {
-    const notWritten = changes.map(([path]) => path).filter((path) => !written.includes(path));
+    const notWritten = changes.map(([other]) => other).filter((other) => other !== path && !written.includes(other));
+    // A write that fails once the file is open leaves it written in part.
     undo(
-      `could not write ${path}: ${messageOf(error)}; written: ${list(written)}; not written: ${list(notWritten)}`,
-      written,
+      `could not write ${path}: ${messageOf(error)}; written: ${list(written)}; failed: ${path}; ` +
+        `not written: ${list(notWritten)}`,
+      [...written, path],
     );
   }
   written.push(path);
@@ -165,7 +203,7 @@ for (const args of [
 ]) {
   const failure = await run(cargo, args);
   const command = `${cargo} ${args.join(' ')}`;
-  if (interrupted) undo(`interrupted during ${command}`, [...originals.keys()]);
+  if (interrupted) undo(`interrupted during ${command}`, [...originals.keys()], INTERRUPTED);
   if (failure !== undefined) undo(`${command} ${failure}`, [...originals.keys()]);
 }
 
