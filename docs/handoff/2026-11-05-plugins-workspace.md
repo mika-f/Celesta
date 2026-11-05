@@ -497,8 +497,8 @@ run first. No test printed a "skipping" line.
   (`crates/exporter/src/report.rs`) and the editor's missing-codec problem
   name what a source build is missing.
 - **Packaging.** `package-build.yml`, `packaging/linux/Dockerfile`,
-  `scripts/package-macos.py`, `scripts/package-windows.ps1`, and
-  build the codec from the plugins workspace with the shared build script.
+  `scripts/package-macos.py`, and `scripts/package-windows.ps1` build the
+  codec from the plugins workspace with the shared build script.
   The plugin folder, its GPL text, and its source offer are unchanged, and
   `scripts/test-package.mjs` still checks them.
   `packaging/GPL-SOURCE-OFFER.md` names the new path.
@@ -525,8 +525,10 @@ its Decisions give the reasons for the three deviations below.
   publishable. The root `Cargo.toml` lost the member and the
   `celesta-codec-ffmpeg` and `ez-ffmpeg` entries, and the root
   `Cargo.lock` lost `ez-ffmpeg`, `ffmpeg-next`, `ffmpeg-sys-next`,
-  `bindgen`, and `vcpkg`. `plugins/Cargo.lock` only gained entries, at the
-  versions the root lock had. `tests/export.rs`'s `workspace_root()`
+  `bindgen`, and `vcpkg`. `plugins/Cargo.lock` only gained packages, at the
+  versions the root lock had; two existing dependency lines now name a
+  version (`"itertools 0.13.0"` under bindgen, `"bindgen 0.70.1"` under
+  signalsmith-stretch), since a second version of each joined. `tests/export.rs`'s `workspace_root()`
   still lands on the repository root. The plugins workspace has no
   `[profile.dev.package.signalsmith-stretch] opt-level = 3`, which the
   root has; the codec's export tests showed no slowdown without it.
@@ -590,8 +592,8 @@ its Decisions give the reasons for the three deviations below.
   `cargo check --target x86_64-pc-windows-msvc` step is dropped: Windows
   builds and tests natively. Tests stay `cargo test`, because vrm's
   `process` target is `harness = false` and nextest cannot list it, so a
-  GPU test skipped on macOS or Windows shows only as a "skipping" line in
-  the log until layer 4. The `Test` job dropped setup-ffmpeg, its wait,
+  GPU test skipped on macOS or Windows shows only as a line starting
+  `skipping` or `skipped` in the log until layer 4. The `Test` job dropped setup-ffmpeg, its wait,
   and the FFmpeg cache key. `perf.yml` dropped them too, and
   `.github/actions/setup-ffmpeg/**` from its paths: `celesta-bench` links
   no codec.
@@ -604,9 +606,14 @@ its Decisions give the reasons for the three deviations below.
   codec, which costs nothing when `plugins/target` is current.
   `package-build.yml`'s rust-cache lists `. -> target` and
   `plugins -> target`, and `.dockerignore` has `plugins/target`. Both
-  packagers merge `cargo metadata --manifest-path plugins/Cargo.toml` into
-  the root's, deduplicated by package `id`, so the license inventory keeps
-  `ez-ffmpeg`, `ffmpeg-sys-next`, and the codec. That call runs without
+  packagers add to the root's `cargo metadata` the packages of
+  `cargo metadata --manifest-path plugins/Cargo.toml` that
+  `celesta-codec-ffmpeg` reaches through its normal and build dependencies
+  (walking `metadata.resolve`), deduplicated by package `id`, so the license
+  inventory keeps `ez-ffmpeg`, `ffmpeg-sys-next`, and the codec, and lists
+  none of VRM's crates, which no package ships (narrowed after the stack's
+  review; macOS's filter has a unit test, and Windows's walk is first
+  checked by the Windows package job on `main`). That call runs without
   `--offline`: the packages never build VRM, so its crates are not
   downloaded and an offline call would fail. `scripts/stage-codec-plugin.mjs`
   is deleted. `scripts/test-package.mjs` checks the codec's manifest (the
@@ -617,7 +624,10 @@ its Decisions give the reasons for the three deviations below.
   creates `Contents/MacOS`, without which POSIX cannot resolve
   `MacOS/../Frameworks` (that test failed on macOS before this layer).
 - **Finding the codec.** `InstalledPlugins::codec()` is unchanged; its
-  sibling fallback now serves only `cargo install`. The exporter's
+  sibling fallback now serves only `cargo install`. After the stack's
+  review it also skips the sibling when the running executable is in a
+  Cargo build folder such as `target/<profile>`, so a pre-move
+  `celesta-codec-ffmpeg` left there is never used. The exporter's
   `no_codec` hint and the editor's missing-codec problem tell a source
   checkout to run `node scripts/plugins/build.mjs plugins/ffmpeg` and add
   the absolute path of `plugins/dist` to `CELESTA_PLUGIN_PATH` (the editor
@@ -790,8 +800,9 @@ its Decisions give the reasons for the choices below.
     package of the same name and version). Names map to folders through
     `cargo metadata --no-deps` of the root and of each plugin workspace
     (`cargo.mjs`'s `directories`: members and path dependencies). A local
-    package with no known folder, or a name two folders claim, is an
-    error;
+    package with no known folder, or a name two folders claim within one
+    workspace's `cargo metadata`, is an error; across workspaces, the
+    plugin's own workspace's folder wins, then the root's;
   - **JavaScript**: the folders
     `pnpm --filter "<name>..." ls --depth -1 --json` lists for its
     `js/package.json`, and the paths `turbo.json` gives those packages'
@@ -829,9 +840,8 @@ its Decisions give the reasons for the choices below.
   `globalDependencies`), a `dependsOn` on `<package>#<task>` whose
   package is outside the closure (its inputs would be left out), a
   package's own `turbo.json`, or a root `turbo.jsonc` is an error.
-  Before the fix, a
-  change to `crates/project/src/lib.rs` affected only the codec; now it
-  affects both.
+  Before the fix, a change to `crates/project/src/lib.rs` affected only the
+  codec; now it affects both.
 - **Shared inputs** (`SHARED_INPUTS`; a test checks each exists):
   `.github/workflows/ci.yml`, `.github/workflows/actions.lock`,
   `.github/actions/setup-ffmpeg`, `scripts/build-ffmpeg-linux.sh`,
@@ -858,14 +868,18 @@ its Decisions give the reasons for the choices below.
   `js != ''`, and the rest on `any == 'true'`. FFmpeg is set up for any
   affected plugin, not only the codec: rust-cache keys on
   `FFMPEG_VERSION FFMPEG_FEATURES` and only `main` saves, so a job without
-  it would miss main's cache. rust-cache lists `plugins -> target` and
-  `. -> target`, with no `key`. Format and Clippy run on Linux only. Tests
+  it would miss main's cache. rust-cache lists only `plugins -> target`,
+  with no `key` (after the stack's review: the root codegen the job runs
+  compiles cold there, and the root `Test` job keeps the root cache).
+  Format and Clippy run on Linux only. Tests
   run `cargo test <-p ...> --locked --no-fail-fast -- --show-output` in
   each workspace's folder, through `tee` into a log, and
   `scripts/report-skipped-tests.mjs` reads that log through `libtest.mjs`
-  (a JUnit file still when the path ends in `.xml`), naming a test
+  (a JUnit file still when the path ends in `.xml`), reporting each test
+  whose output has a line starting `skipping` or `skipped` (as the VRM
+  sample tests and two plugin-host tests print), named
   `<binary label> <test>`, or the label alone for a `harness = false`
-  binary. The plugin directories are then built with
+  binary; labels use `/` on every system. The plugin directories are then built with
   `node scripts/plugins/build.mjs $DIRECTORIES`.
 - **The scripts' tests moved** to the root `Test` job's "Test Celesta
   packages" step (`pnpm --dir scripts/plugins test`), which runs on every
@@ -883,8 +897,7 @@ its Decisions give the reasons for the choices below.
   `turbo.json` do not affect a plugin: `examples/minimal.celesta.json`
   (read by the codec's `tests/export.rs`).
   Hand-kept lists are a non-goal; a push to `main` tests every plugin and
-  catches such a change there. On Windows, the skip report's labels keep
-  Cargo's `\` separators.
+  catches such a change there.
 
 ### Checks (macOS 26.7.1, Apple M5, Metal)
 
@@ -930,14 +943,16 @@ Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
 
 ## Left to the builder
 
-- The test codec's file format beyond the constraints above, and whether it
-  lives in a crate of its own under `crates/` or behind a feature of
-  `celesta-media`.
-- The build script's name and location, and the affected-plugin script's
-  name.
-- How the per-OS plugin jobs set up their tools (FFmpeg only when the codec
-  is affected, or always).
-- Which of the moved exporter tests still need a tolerance.
+Each was decided while building:
+
+- The test codec's file format and where it lives: a crate of its own,
+  `crates/codec-test` (Layer 2: what was done, **File format**).
+- The scripts' names and location: `scripts/plugins/build.mjs` and
+  `scripts/plugins/affected.mjs` (Layers 1 and 4).
+- How the per-OS plugin jobs set up their tools: FFmpeg for any affected
+  plugin, for rust-cache's key (Layer 4: what was done, **The job**).
+- Which of the moved exporter tests still need a tolerance: the list in
+  Layer 2: what was done, **Core tests on the test codec**.
 
 ## Related issues
 

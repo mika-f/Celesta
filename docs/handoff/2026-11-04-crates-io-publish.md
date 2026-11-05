@@ -11,13 +11,16 @@ plugin package rather than a crate.
 
 ## Specification
 
-- Every crate depends on the workspace's own crates through
+- Every root crate depends on the workspace's own crates through
   `[workspace.dependencies]` in the root `Cargo.toml`, which gives each a
-  `path` and an exact `version` (`=0.9.0`). A published crate names its
-  dependencies by version, so a path alone is refused by `cargo publish`.
-- The pins match `workspace.package.version`. A release bump changes them
-  with it; one left behind makes Cargo fail to resolve the workspace, so it
-  cannot slip through.
+  `path` and an exact `version` (`=0.9.0`); `celesta-codec-test`, never
+  published, has a `path` only. The codec (`plugins/ffmpeg/Cargo.toml`)
+  writes the same pins inline. A published crate names its dependencies by
+  version, so a path alone is refused by `cargo publish`.
+- The pins match `workspace.package.version`.
+  `node scripts/plugins/bump-version.mjs` moves them all with it; one left
+  behind makes Cargo fail to resolve its workspace (the root's, or the
+  plugins workspace's for the codec), so it cannot slip through.
 - Every publishable crate has a `description`.
 - `celesta-mcp` embeds the `celesta` skill and `celesta-editor` embeds
   `examples/editor-demo.celesta.json`, both from outside their crate folder.

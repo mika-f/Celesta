@@ -100,8 +100,10 @@ program links FFmpeg, and with it the GPL libx264 of the official packages.
 - **Choosing the codec.** `InstalledPlugins::codec()`: the first plugin that
   may run (the usual search order and approval) with the `codec` role and a
   program for this platform; else `celesta-codec-ffmpeg` beside the running
-  executable (`CODEC_PROGRAM`, links resolved), which is where `cargo build`,
-  `cargo install`, and the test binaries' `target/debug` have it; else none.
+  executable (`CODEC_PROGRAM`, links resolved) when that executable is an
+  installed program, as `cargo install` leaves it, never when it is in a
+  Cargo build folder such as `target/<profile>` (a later change; see
+  `2026-11-05-plugins-workspace.md`); else none.
   `InstalledPlugins::host()` gives the renderer only content plugins.
   `celesta_exporter::use_codec(&plugins)` installs the choice;
   `Exporter::new` does so when none was made yet; the exporter's `--inspect`

@@ -19,8 +19,9 @@ Per-task specifications, implementation details, and validation results live in
 - The desktop app uses `gpui-kit` (`crates/editor/Cargo.toml`).
 - FFmpeg 8.1.x development libraries must be available for `ez-ffmpeg` /
   `ffmpeg-sys-next` to link against. They are needed only for the codec
-  plugin, `plugins/ffmpeg` (`celesta-codec-ffmpeg`), and the plugins
-  workspace's tests; the root workspace links no FFmpeg. Celesta's own crates
+  plugin, `plugins/ffmpeg` (`celesta-codec-ffmpeg`), and its tests, which
+  the plugins workspace's `--workspace` checks include; the root workspace
+  and the VRM plugin link no FFmpeg. Celesta's own crates
   read and write media through the plugin's process, and their tests use the
   lossless test codec (`celesta-codec-test`) instead (see
   [`docs/handoff/2026-11-05-codec-plugin.md`](docs/handoff/2026-11-05-codec-plugin.md)).
@@ -354,13 +355,19 @@ The editor and exporter find the codec plugin through `CELESTA_PLUGIN_PATH`,
 which must be an absolute path and is set by hand in each shell; rebuild the
 plugin after changing `plugins/ffmpeg` or `celesta-media`'s codec protocol.
 A `celesta-codec-ffmpeg` program beside Celesta's executables serves only
-`cargo install`. Delete any `celesta-codec-ffmpeg` left in
-`target/<profile>` from when the codec was a root crate: Celesta would use
-it and hide a missing `CELESTA_PLUGIN_PATH`. Tests whose `celesta-exporter` or
-`celesta-mcp` child exports video give it the test codec's program instead, so
-they need
-`celesta-codec-test` built, which `cargo test --workspace` does; otherwise run
-`cargo build -p celesta-codec-test` first.
+installed programs, such as `cargo install`'s; a source build never uses a
+codec beside an executable in a Cargo build folder such as
+`target/<profile>`. Tests whose `celesta-exporter` or `celesta-mcp` child
+exports video give it the test codec's program instead, so they need
+`celesta-codec-test` built, which `cargo test --workspace` does; otherwise
+run `cargo build -p celesta-codec-test` first.
+
+An existing checkout from before the codec moved to `plugins/ffmpeg` may
+still have `celesta-codec-ffmpeg` in `target/<profile>`. Celesta ignores it
+there, so video and audio fail with `no_codec` and its hint until you build
+`plugins/dist` (`node scripts/plugins/build.mjs plugins/ffmpeg`) and set
+`CELESTA_PLUGIN_PATH` to its absolute path, as above. The old program can
+be deleted.
 
 Inspect `git status --short` before editing. Use targeted validation while
 iterating; the Rust baseline is:

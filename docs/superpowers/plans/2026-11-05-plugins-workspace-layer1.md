@@ -6,6 +6,8 @@
 
 **Architecture:** `plugins/Cargo.toml` becomes a virtual workspace with VRM as its only member, and VRM's lockfile becomes `plugins/Cargo.lock`. A small private pnpm package, `scripts/plugins/`, holds the build script with two tested helpers: one asks `rustc --print cfg` for the platform, and one makes the manifest with the version taken from Cargo. CI's `vrm-plugin` job and the docs move to the new paths.
 
+> **Superseded:** taking the version from Cargo was replaced while this layer was built: every `plugin.json` gives its `version`, which must equal its Cargo package's. See the **Versions** bullet of "Layer 1: what was done" in `docs/handoff/2026-11-05-plugins-workspace.md`.
+
 **Tech Stack:** Cargo workspaces (Rust 1.99.1), Node 26 ES modules, Vitest 5 + TypeScript 5 for tests, GitHub Actions.
 
 **Spec:** `docs/handoff/2026-11-05-plugins-workspace.md` (Layer 1, plus "One source of the plugin folder" from Layer 3 for the version rule). Layers 2–4 get their own plans when this layer's PR is up.
