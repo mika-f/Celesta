@@ -212,6 +212,60 @@ fn an_aborted_encode_is_unfinished() {
 }
 
 #[test]
+fn every_cut_of_a_file_and_an_extra_byte_are_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let video = directory.path().join("video.ctc");
+    let pcm = directory.path().join("audio.pcm");
+    let muxed = directory.path().join("muxed.ctc");
+    let mut codec = TestCodec::new();
+    let frames: Vec<_> = (0..2).map(|index| frame(16, index)).collect();
+    encode(
+        &mut codec,
+        &settings(&video, 2, 2, PixelFormat::Rgba8, Container::Mp4),
+        &frames,
+    )
+    .unwrap();
+    write_pcm(&pcm, &[0.25, -0.5, 0.75, -1.0]);
+    codec
+        .mux_audio(&MuxRequest {
+            video,
+            audio: pcm,
+            sample_rate: 48_000,
+            channels: 2,
+            output: muxed.clone(),
+            container: Container::Mp4,
+            lead_in_frames: 1,
+        })
+        .unwrap();
+    read(&muxed).unwrap();
+    codec.probe(&muxed).unwrap();
+    let bytes = std::fs::read(&muxed).unwrap();
+
+    // The magic, `CLSTTEST`: a file cut within it is not a test codec file
+    // at all; one cut anywhere after it is unfinished.
+    let magic = b"CLSTTEST".len();
+    for len in 0..bytes.len() {
+        let cut = directory.path().join(format!("cut-{len}.ctc"));
+        std::fs::write(&cut, &bytes[..len]).unwrap();
+        let read = read(&cut).unwrap_err().to_string();
+        let probed = codec.probe(&cut).unwrap_err().to_string();
+        if len >= magic {
+            assert!(read.contains("unfinished"), "{len} bytes: {read}");
+            assert!(probed.contains("unfinished"), "{len} bytes: {probed}");
+        }
+    }
+
+    let longer = directory.path().join("longer.ctc");
+    std::fs::write(&longer, [&bytes[..], &[0]].concat()).unwrap();
+    for message in [
+        read(&longer).unwrap_err().to_string(),
+        codec.probe(&longer).unwrap_err().to_string(),
+    ] {
+        assert!(message.contains("after its end chunk"), "{message}");
+    }
+}
+
+#[test]
 fn decodes_rgba_frames_at_their_times() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("two.ctc");
