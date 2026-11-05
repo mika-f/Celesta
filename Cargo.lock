@@ -962,6 +962,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-codec-test"
+version = "0.9.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-media",
+ "lz4_flex",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "celesta-composition"
 version = "0.9.0"
 dependencies = [
@@ -4636,6 +4648,15 @@ dependencies = [
  "float_next_after",
  "lyon_path",
  "num-traits",
+]
+
+[[package]]
+name = "lz4_flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
+dependencies = [
+ "twox-hash",
 ]
 
 [[package]]
@@ -8487,6 +8508,12 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 dependencies = [
  "core_maths",
 ]
+
+[[package]]
+name = "twox-hash"
+version = "2.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 
 [[package]]
 name = "typenum"

@@ -4,6 +4,7 @@ members = [
   "crates/bench",
   "crates/budoux",
   "crates/codec-ffmpeg",
+  "crates/codec-test",
   "crates/composition",
   "crates/editor",
   "crates/editor-core",
@@ -40,6 +41,9 @@ rust-version = "1.89"
 # version, and Cargo refuses to resolve them if a release bump misses one.
 celesta-budoux = { path = "crates/budoux", version = "=0.9.0" }
 celesta-codec-ffmpeg = { path = "crates/codec-ffmpeg", version = "=0.9.0" }
+# Path only: it is never published, so `cargo publish` drops it from the
+# dev-dependencies of the crates that are.
+celesta-codec-test = { path = "crates/codec-test" }
 celesta-composition = { path = "crates/composition", version = "=0.9.0" }
 celesta-editor-core = { path = "crates/editor-core", version = "=0.9.0" }
 celesta-editor-theme = { path = "crates/editor-theme", version = "=0.9.0" }
