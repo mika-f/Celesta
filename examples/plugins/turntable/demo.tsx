@@ -1,8 +1,9 @@
 // The turntable plugin's demo: the same scene turning at two speeds. Build
-// the plugin first, then export with its directory:
+// the plugin and the codec plugin first, then export with both directories:
 //
 //   node scripts/plugins/build.mjs examples/plugins/turntable
-//   cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx out.mp4 --plugin-dir examples/plugins/dist
+//   node scripts/plugins/build.mjs plugins/ffmpeg
+//   cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx out.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 import { Fragment } from 'react';
 
 import { Composition, Font, Rect, Text } from '@celesta.studio/react';

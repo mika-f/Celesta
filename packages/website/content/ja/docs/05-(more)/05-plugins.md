@@ -118,9 +118,12 @@ LGPL のみの FFmpeg など別の FFmpeg を使うには、`PKG_CONFIG_PATH` �
 
 ```sh
 node scripts/plugins/build.mjs examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
-cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist
-cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
+node scripts/plugins/build.mjs plugins/ffmpeg   # MP4 を書き出すコーデックプラグイン
+cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
+cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 ```
+
+2 つ目の `--plugin-dir` で、エクスポーターにコーデックプラグインを渡します。コーデックプラグインのビルドには FFmpeg の開発ライブラリが必要です（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。
 
 ## VRM プラグイン
 
@@ -131,7 +134,7 @@ pnpm install && pnpm run build:runtime       # 最初に一度、リポジトリ
 node scripts/plugins/build.mjs plugins/vrm   # plugins/dist/vrm に書き出します
 ```
 
-`plugins/dist/vrm` をユーザーのプラグインフォルダーにコピーするか、書き出しのときに `--plugin-dir` で `plugins/dist` を指定します。ビルドには、Celesta 本体のビルドと同じく Rust と Node.js が必要です。
+`plugins/dist/vrm` をユーザーのプラグインフォルダーにコピーするか、書き出しのときに `--plugin-dir` で `plugins/dist` を指定します。ビルドには、Celesta 本体のビルドと同じく Rust と Node.js が必要です。ソースからビルドしたエクスポーターで動画を書き出すときは、`node scripts/plugins/build.mjs plugins/vrm plugins/ffmpeg` でコーデックプラグインも同じフォルダーにビルドしてください。こうすると `--plugin-dir plugins/dist` で両方をエクスポーターに渡せます。コーデックのビルドには FFmpeg の開発ライブラリが必要です。
 
 ```tsx
 import { Composition } from '@celesta.studio/react';

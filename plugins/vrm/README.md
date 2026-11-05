@@ -93,10 +93,12 @@ files in `plugins/vrm/assets/`, which Git ignores:
   `packages/three-vrm-animation/examples/models`. Any other `.vrma` works
   too; change the demo's `motions` to its name.
 
-Then:
+Then build the plugin and the codec plugin, which writes the MP4, into
+`plugins/dist`, and export with it (the codec needs the FFmpeg development
+libraries, as in Celesta's source-build guide):
 
 ```sh
-node scripts/plugins/build.mjs plugins/vrm
+node scripts/plugins/build.mjs plugins/vrm plugins/ffmpeg
 cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/dist
 ```
 

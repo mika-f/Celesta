@@ -1,10 +1,12 @@
 // The beep-voice plugin's demo: two portraits talking in beeps. The voices
 // come from `prepareBeepNarration()` in prepare(), in place of a speech
 // engine; planDialogue(), <DialogueSeries>, and the portraits' lip sync are
-// Celesta's own. Build the plugin first, then export with its directory:
+// Celesta's own. Build the plugin and the codec plugin first, then export
+// with both directories:
 //
 //   node scripts/plugins/build.mjs examples/plugins/beep-voice
-//   cargo run -p celesta-exporter -- --react examples/plugins/beep-voice/demo.tsx out.mp4 --plugin-dir examples/plugins/dist
+//   node scripts/plugins/build.mjs plugins/ffmpeg
+//   cargo run -p celesta-exporter -- --react examples/plugins/beep-voice/demo.tsx out.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 import * as React from 'react';
 
 import { Assets, Composition, Font, Rect, Text } from '@celesta.studio/react';

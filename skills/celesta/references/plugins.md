@@ -86,7 +86,9 @@ The Celesta repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) as a
 `node scripts/plugins/build.mjs plugins/vrm` (after `pnpm install && pnpm
 run build:runtime` at the repository root); it writes `plugins/dist/vrm`,
 which the user copies into a plugin folder, or name `plugins/dist` with
-`--plugin-dir`.
+`--plugin-dir`. To export video from a source checkout, build the codec
+plugin with it (`node scripts/plugins/build.mjs plugins/vrm plugins/ffmpeg`),
+so `--plugin-dir plugins/dist` names both.
 
 ```tsx
 import { Vrm } from '@celesta-plugin/vrm';
