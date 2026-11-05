@@ -38,16 +38,26 @@
  * @property {object[]} [components]
  */
 
+/** The keys plugin.json may have, as PluginSource lists them. */
+const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components'];
+
 /**
  * Checks that the plugin `source` (read from `sourcePath`, which errors name)
- * has something to build: a module, a Cargo package, or both, and a module
- * for any components, since Celesta skips a plugin listing components it
- * cannot import.
+ * has only the keys PluginSource lists, so a misspelt one is not skipped
+ * without a word, and has something to build: a module, a Cargo package, or
+ * both, and a module for any components, since Celesta skips a plugin listing
+ * components it cannot import.
  *
  * @param {PluginSource} source
  * @param {string} sourcePath
  */
 export function checkPluginSource(source, sourcePath) {
+  const unknown = Object.keys(source).filter((key) => !PLUGIN_SOURCE_KEYS.includes(key));
+  if (unknown.length > 0) {
+    throw new Error(
+      `${sourcePath}: unknown key${unknown.length === 1 ? '' : 's'} ${unknown.join(', ')}; plugin.json may have ${PLUGIN_SOURCE_KEYS.join(', ')}`,
+    );
+  }
   if (source.module === undefined && source.components !== undefined) {
     throw new Error(`${sourcePath}: components need a module to import them from`);
   }

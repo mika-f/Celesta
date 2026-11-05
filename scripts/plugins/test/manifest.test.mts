@@ -104,6 +104,30 @@ describe('checkPluginSource', () => {
       `${sourcePath}: it has neither a module nor a cargoPackage to build`,
     );
   });
+
+  it('accepts every key plugin.json may have', () => {
+    expect(() =>
+      checkPluginSource(
+        {
+          id: 'x',
+          version: '0.1.0',
+          cargoPackage: 'p',
+          module: 'js/index.ts',
+          roles: ['content'],
+          licenses: ['LICENSE'],
+          components: [component],
+        },
+        sourcePath,
+      ),
+    ).not.toThrow();
+  });
+
+  it('refuses a key plugin.json may not have, listing the keys it may', () => {
+    const source = { id: 'x', version: '0.1.0', module: 'js/index.ts', modules: 'js/index.ts', exe: 'x' };
+    expect(() => checkPluginSource(source, sourcePath)).toThrow(
+      `${sourcePath}: unknown keys modules, exe; plugin.json may have id, version, cargoPackage, module, roles, licenses, components`,
+    );
+  });
 });
 
 describe('pluginVersion', () => {
