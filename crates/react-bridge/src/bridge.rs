@@ -99,11 +99,7 @@ impl ReactBridge {
         if !cfg!(debug_assertions) && std::env::var_os("NODE_ENV").is_none() {
             command.env("NODE_ENV", "production");
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        }
+        celesta_plugin_host::without_console_window(&mut command);
         command
             .arg(cli_script.as_ref())
             .arg(entry.as_ref())

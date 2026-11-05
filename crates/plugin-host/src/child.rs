@@ -14,6 +14,7 @@
 //!   caller starts it again rather than reading each answer as the next
 //!   request's.
 
+use crate::console::without_console_window;
 use crate::stderr::{StderrTail, pump};
 use celesta_plugin::protocol::{
     Message, PROTOCOL_VERSION, error_message, read_message, write_message,
@@ -83,11 +84,7 @@ impl PluginChild {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        }
+        without_console_window(&mut command);
         let mut child = command
             .spawn()
             .map_err(|error| format!("could not start {name}: {error}"))?;
