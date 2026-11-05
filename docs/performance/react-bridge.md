@@ -187,6 +187,8 @@ Build each variant in its own worktree:
 cd packages/react && pnpm install --frozen-lockfile && pnpm run codegen && pnpm run build && cd ../..
 cargo build --release -p celesta-exporter -p celesta-react-bridge --bins --examples
 python3 examples/reel/make-music.py   # reel's music.wav, once
+node scripts/plugins/build.mjs plugins/ffmpeg   # the codec plugin, for the exports
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 ```
 
 `--examples` alone builds only the examples, leaving the exporter stale.
@@ -200,7 +202,8 @@ target/release/examples/protocol-bench --pipelined examples/versus/bench/celesta
 ```
 
 Exports: `target/release/celesta-exporter --overwrite --no-ui --preset
-ultrafast --react <entry> out.mp4`. For the render-thread figures, add a
+ultrafast --react <entry> out.mp4`, in the shell where
+`CELESTA_PLUGIN_PATH` is set. For the render-thread figures, add a
 temporary timer to `render_react_video` in
 `crates/exporter/src/render.rs`: an `Instant` before `thread::scope` for
 the render loop, and an `Instant` around `frames.recv()` summed into a

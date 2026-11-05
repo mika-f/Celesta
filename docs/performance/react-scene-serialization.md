@@ -136,12 +136,14 @@ in CI, and within ±9% in local GPU time with nothing marked.
 
 ## Reproduce
 
-Build packages/react and the exporter:
+Build packages/react, the exporter, and the codec plugin it exports through:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm --dir packages/react run codegen --locked
 pnpm run build:runtime
+node scripts/plugins/build.mjs plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release -p celesta-exporter
 ```
 
