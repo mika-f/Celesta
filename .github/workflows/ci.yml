@@ -43,7 +43,6 @@ jobs:
       run:
         # bash -e stops at the first failing command; Windows pwsh steps would not.
         shell: bash
-    # The first Windows run builds FFmpeg and its encoders with vcpkg before the cache exists.
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7.0.1
@@ -55,23 +54,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev libxkbcommon-x11-dev libfontconfig-dev mesa-vulkan-drivers
-
-      # Installing FFmpeg takes about two minutes on macOS (Homebrew), so the
-      # Rust toolchain, Node.js, and the JS packages install meanwhile.
-      # rust-cache waits for it: FFMPEG_VERSION is part of its key, and a
-      # background step's environment reaches later steps only after a wait.
-      # It starts after the Linux packages, as both use apt.
-      - id: ffmpeg
-        if: runner.os != 'Windows'
-        uses: $/.github/actions/setup-ffmpeg
-        background: true
-
-      # Windows only downloads the pre-built package (about 10 seconds), and
-      # there a background composite action fails now and then: the runner
-      # rewrites event.json as each step starts, and two steps starting at
-      # once collide on the file lock (actions/runner#4641).
-      - if: runner.os == 'Windows'
-        uses: $/.github/actions/setup-ffmpeg
 
       # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
       - name: Isolate Rust toolchain
@@ -96,15 +78,10 @@ jobs:
       - name: Install JS packages
         run: pnpm install --frozen-lockfile
 
-      # FFmpeg is the only background step so far; Windows has none to wait
-      # for, and `wait` does not take `if`.
-      - wait-all:
-
       # Pull requests restore main's cache; saving their own copies only
       # crowds main's entries out of the repository's cache quota.
       - uses: Swatinem/rust-cache@v2.9.3
         with:
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # After rust-cache, which restores ~/.cargo/bin, where it installs.
@@ -191,43 +168,66 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # The VRM plugin is a member of the plugins workspace (plugins/Cargo.toml),
-  # which the root workspace excludes, so the test job never builds it.
-  vrm-plugin:
-    name: VRM plugin
-    runs-on: ubuntu-latest
+  # The first-party plugins (the VRM plugin and the FFmpeg codec) are members
+  # of the plugins workspace (plugins/Cargo.toml), which the root workspace
+  # excludes, so the test job never builds them. For now this job tests every
+  # plugin on every system the test job runs on, whatever a change touches.
+  # Windows builds and tests them natively, so no Linux step checks them
+  # against the Windows target.
+  plugins:
+    name: Plugins (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+          - name: macOS arm64
+            os: macos-latest
+          - name: Linux x64
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
+        # bash -e stops at the first failing command; Windows pwsh steps would not.
         shell: bash
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7.0.1
 
-      # Its tests draw through the GPU renderer: fonts, and Mesa's software
+      # The tests draw through the GPU renderer: fonts, and Mesa's software
       # Vulkan driver (lavapipe) so they run without a GPU.
       - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libfontconfig-dev mesa-vulkan-drivers
+
+      # The codec links FFmpeg. Installing it takes about two minutes on macOS
+      # (Homebrew), so the Rust toolchain, Node.js, and the JS packages
+      # install meanwhile. rust-cache waits for it: FFMPEG_VERSION is part of
+      # its key, and a background step's environment reaches later steps only
+      # after a wait. It starts after the Linux packages, as both use apt.
+      - id: ffmpeg
+        if: runner.os != 'Windows'
+        uses: $/.github/actions/setup-ffmpeg
+        background: true
+
+      # Windows only downloads the pre-built package (about 10 seconds), and
+      # there a background composite action fails now and then: the runner
+      # rewrites event.json as each step starts, and two steps starting at
+      # once collide on the file lock (actions/runner#4641).
+      - if: runner.os == 'Windows'
+        uses: $/.github/actions/setup-ffmpeg
 
       # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
 
-      # With the Windows target, for "Check for Windows" below.
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: 1.99.1
           components: clippy, rustfmt
-          targets: x86_64-pc-windows-msvc
-
-      # The root workspace's target/ holds the codegen build:runtime runs.
-      - uses: Swatinem/rust-cache@v2.9.3
-        with:
-          workspaces: |
-            plugins -> target
-            . -> target
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Node.js and pnpm as mise.lock pins them, for <Vrm> and the build.
       - uses: jdx/mise-action@v5.2.6
@@ -237,6 +237,19 @@ jobs:
 
       - name: Install JS packages
         run: pnpm install --frozen-lockfile
+
+      # FFmpeg is the only background step so far; Windows has none to wait
+      # for, and `wait` does not take `if`.
+      - wait-all:
+
+      # The root workspace's target/ holds the codegen build:runtime runs.
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: |
+            plugins -> target
+            . -> target
+          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # <Vrm> imports @celesta.studio/react and @celesta.studio/character, and the build
       # checks its declarations against the runtime's project types. As in
@@ -259,27 +272,28 @@ jobs:
       # Run in the workspace's directory, cargo fmt checks every member and
       # not the root crates they depend on by path (--all would). With
       # --manifest-path on the virtual manifest instead, it finds no targets
-      # once the workspace has two members.
+      # once the workspace has two members. Linux only, as in the test job.
       - name: Format
+        if: runner.os == 'Linux'
         working-directory: plugins
         run: cargo fmt --check
 
+      # Linux only, as in the test job: little code is behind a cfg for one OS.
       - name: Clippy
+        if: runner.os == 'Linux'
         run: cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings
 
-      # Users build the plugin on Windows themselves, and its code has
-      # branches for other platforms than Unix. Checking needs no linker, and
-      # the library and program use no C code, so the Windows target checks
-      # here; the tests and their dev-dependencies are left out.
-      - name: Check for Windows
-        run: cargo check --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --locked --target x86_64-pc-windows-msvc --lib --bins
-
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
+      # cargo test rather than nextest: the VRM plugin's process target sets
+      # harness = false, which nextest cannot list. A test that cannot run on
+      # macOS or Windows passes after printing "skipping ...".
       - name: Test
-        run: env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/Cargo.toml --workspace --locked
+        env:
+          CELESTA_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '0' }}
+        run: cargo test --manifest-path plugins/Cargo.toml --workspace --locked
 
-      - name: Build the plugin directory
-        run: node scripts/plugins/build.mjs plugins/vrm
+      - name: Build the plugin directories
+        run: node scripts/plugins/build.mjs plugins/vrm plugins/ffmpeg
 
   # Packages for Windows and macOS without signing them, so packaging breaks
   # here rather than at release time, and saves the release-profile Rust cache
