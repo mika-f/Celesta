@@ -3,7 +3,7 @@ use std::process::Command;
 
 use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
 use celesta_composition::{Rational, Time, TimeRange};
-use celesta_exporter::{ExportOptions, ExportProgress, ReactRuntimeOptions};
+use celesta_exporter::{ExportOptions, ExportProgress, ReactRuntimeOptions, VideoFormat};
 use celesta_project::{
     Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
 };
@@ -927,15 +927,18 @@ export default function Root() {
     entry
 }
 
-/// Runs the exporter CLI on the test codec, whatever codec the developer's
-/// `CELESTA_PLUGIN_PATH` names.
+/// Runs the exporter CLI on a React entry, ignoring the codec the developer's
+/// `CELESTA_PLUGIN_PATH` names. A video `output` gets the test codec; stills
+/// need no codec, so they run without the `celesta-codec-test` program.
 fn react_export(entry: &Path, args: &[&str], output: &Path) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"));
+    command.env_remove(PLUGIN_PATH_ENV);
     // Kept until the child exits: `output` waits for it.
-    let plugin = TestCodecPlugin::new();
-    Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
-        .env_remove(PLUGIN_PATH_ENV)
-        .arg("--plugin-dir")
-        .arg(plugin.folder())
+    let plugin = VideoFormat::from_extension(output).map(|_| TestCodecPlugin::new());
+    if let Some(plugin) = &plugin {
+        command.arg("--plugin-dir").arg(plugin.folder());
+    }
+    command
         .arg("--react")
         .args(args)
         .arg(entry)
