@@ -1,12 +1,11 @@
+use crate::DEFAULT_REACT_AUDIO_SAMPLE_RATE;
 use crate::error::ExportError;
-use crate::{AUDIO_SECONDS_TIMESCALE, DEFAULT_REACT_AUDIO_SAMPLE_RATE};
 use celesta_composition::{
-    AssetLocation, AudioClip, AudioGraph, InstanceShape, Layer, LayerContent, ResolvedAsset, Time,
-    TimeRange,
+    AssetLocation, AudioGraph, InstanceShape, Layer, LayerContent, ResolvedAsset,
 };
 use celesta_evaluator::Evaluator;
 use celesta_project::Project;
-use celesta_react_bridge::{ReactAudioClipDescriptor, react_ducking};
+use celesta_react_bridge::{ReactAudioClipDescriptor, react_audio_clips};
 use std::path::Path;
 
 /// Builds the complete `AudioGraph` a React export mixes down: every
@@ -38,67 +37,14 @@ pub(crate) fn build_audio_graph(
         },
     };
 
-    // The same declaration reports once per rendered frame; merge identical
-    // reports (bit-identical because every field is recomputed from the same
-    // inputs each frame) while preserving multiplicity — two distinct clips
-    // with identical parameters at the same instant really do play twice.
-    let merged = merge_react_audio_clips(react_audio);
-
-    for (index, (clip, _)) in merged.iter().enumerate() {
-        let mut asset = ResolvedAsset {
-            id: clip.src.clone(),
-            location: AssetLocation::File {
-                path: clip.src.clone(),
-            },
-        };
-        absolutize_asset(&mut asset, react_asset_root);
-        let (duck_group, duck) = react_ducking(clip).map_err(ExportError::React)?;
-        graph.clips.push(AudioClip {
-            id: format!("react-audio:{index}"),
-            asset,
-            range: TimeRange {
-                start: seconds_to_time(clip.start),
-                duration: seconds_to_time(clip.duration),
-            },
-            source_start: seconds_to_time(clip.source_start),
-            source_duration: None,
-            playback_rate: clip.playback_rate.clone(),
-            volume: clip.volume.clone(),
-            muted: clip.muted,
-            r#loop: clip.r#loop,
-            pitch: clip.pitch.clone(),
-            preserve_pitch: clip.preserve_pitch,
-            fade_in: seconds_to_time(clip.fade_in),
-            fade_out: seconds_to_time(clip.fade_out),
-            duck_group,
-            duck,
-        });
-    }
+    // The bridge builds the clips the same way for the preview: identical
+    // per-frame reports collapse into one clip, a remote `src` stays a URL,
+    // and a relative one resolves against the entry's own directory.
+    graph
+        .clips
+        .extend(react_audio_clips(react_audio, react_asset_root).map_err(ExportError::React)?);
 
     Ok(graph)
-}
-
-/// Collapses per-frame audio reports into one entry per distinct clip,
-/// keeping first-seen order and how many frames reported it (its
-/// multiplicity — two identical clips playing at once must stay two clips).
-pub(crate) fn merge_react_audio_clips(
-    clips: &[ReactAudioClipDescriptor],
-) -> Vec<(ReactAudioClipDescriptor, usize)> {
-    let mut merged: Vec<(ReactAudioClipDescriptor, usize)> = Vec::new();
-    for clip in clips {
-        match merged.iter_mut().find(|(known, _)| known == clip) {
-            Some((_, count)) => *count += 1,
-            None => merged.push((clip.clone(), 1)),
-        }
-    }
-    merged
-}
-
-pub(crate) fn seconds_to_time(seconds: f64) -> Time {
-    Time::new(
-        (seconds * f64::from(AUDIO_SECONDS_TIMESCALE)).round() as i64,
-        AUDIO_SECONDS_TIMESCALE,
-    )
 }
 
 /// Rewrites a project-evaluated layer tree's relative asset paths into
