@@ -258,14 +258,21 @@ pub struct CodecPlugin {
 }
 
 /// The name of the FFmpeg codec plugin's program, which
-/// [`InstalledPlugins::codec`] also looks for beside Celesta's own, as
-/// `cargo install` leaves it.
+/// [`InstalledPlugins::codec`] also looks for beside an installed Celesta
+/// program, as `cargo install` leaves it (never beside a source build in a
+/// Cargo profile folder).
 pub const CODEC_PROGRAM: &str = "celesta-codec-ffmpeg";
 
 /// The codec plugin's program beside `executable` (Celesta's own, links
-/// resolved), as `cargo install` leaves it.
+/// resolved), as `cargo install` leaves it. None when `executable` sits in a
+/// Cargo profile folder (`target/<profile>`, which has a `.fingerprint`
+/// folder): a source build takes its codec from the plugin folders, so a
+/// program an older build left there is never picked up.
 fn sibling_codec(executable: &Path) -> Option<CodecPlugin> {
     let directory = executable.parent()?;
+    if directory.join(".fingerprint").is_dir() {
+        return None;
+    }
     let program = directory.join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX));
     program.is_file().then(|| CodecPlugin {
         id: CODEC_PROGRAM.to_owned(),
@@ -690,8 +697,9 @@ impl InstalledPlugins {
 
     /// The codec to read and write media with: the first of these plugins
     /// that is a codec with a program for this platform, else the FFmpeg
-    /// codec plugin's program beside the running one ([`CODEC_PROGRAM`]),
-    /// else none.
+    /// codec plugin's program beside the running one ([`CODEC_PROGRAM`]) when
+    /// that is an installed program rather than a source build in a Cargo
+    /// profile folder, else none.
     pub fn codec(&self) -> Option<CodecPlugin> {
         self.plugins
             .iter()
@@ -1405,5 +1413,19 @@ mod tests {
                 directory: root.path().to_path_buf(),
             })
         );
+    }
+
+    #[test]
+    fn skips_the_codec_program_beside_a_cargo_profile_build() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("celesta-exporter");
+        std::fs::write(
+            root.path()
+                .join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX)),
+            "",
+        )
+        .unwrap();
+        std::fs::create_dir(root.path().join(".fingerprint")).unwrap();
+        assert_eq!(sibling_codec(&executable), None);
     }
 }
