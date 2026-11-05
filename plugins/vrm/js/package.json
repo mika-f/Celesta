@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "@celesta.studio/character": "workspace:*",
+    "@celesta.studio/cli": "workspace:*",
     "@celesta.studio/react": "workspace:*",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",

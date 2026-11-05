@@ -1390,6 +1390,9 @@ importers:
       '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../../packages/character
+      '@celesta.studio/cli':
+        specifier: workspace:*
+        version: link:../../../packages/cli
       '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../../packages/react
