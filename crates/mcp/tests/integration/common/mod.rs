@@ -67,8 +67,8 @@ pub async fn client() -> (Client, mpsc::UnboundedReceiver<ProgressNotificationPa
 
 /// A client whose server reads and writes media with the test codec
 /// `plugin`, whatever codec the developer's `CELESTA_PLUGIN_PATH` names.
-/// Bind `plugin` before the client, so that it drops after the client on
-/// every path, a panic included, and outlives the server.
+/// Bind `plugin` before the client, so that the plugin drops after the
+/// client on every path, a panic included.
 pub async fn client_with_test_codec(
     plugin: &TestCodecPlugin,
 ) -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {

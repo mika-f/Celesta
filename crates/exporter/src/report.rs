@@ -500,8 +500,8 @@ fn error_report(error: &ExportError, hints: HintStyle) -> ErrorReport {
     }
 }
 
-const NO_CODEC_HINT: &str = "install Celesta's codec plugin (celesta-codec-ffmpeg) beside Celesta \
-     or in a plugin folder; in a source checkout, build it with node scripts/plugins/build.mjs \
+const NO_CODEC_HINT: &str = "install Celesta's codec plugin (celesta-codec-ffmpeg) beside an \
+     installed Celesta or in a plugin folder; in a source checkout, build it with node scripts/plugins/build.mjs \
      plugins/ffmpeg and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH";
 
 /// The code and hint of `error`, collecting its issues into `issues`. A
