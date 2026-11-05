@@ -273,3 +273,90 @@ fn the_cpu_renderer_refuses_plugin_content() {
         .unwrap_err();
     assert!(error.to_string().contains("plugin"), "{error}");
 }
+
+/// Why the GPU renderer, with at most `max` texels a texture side (its own
+/// limit without one), refuses the model with only `texture`: the layer it
+/// names and the message. `None` without a GPU.
+fn refused_texture(texture: TextureSource, max: Option<u32>) -> Option<(String, String)> {
+    let mut renderer = renderer(transparent())?;
+    if let Some(max) = max {
+        renderer.max_texture_dimension = max;
+    }
+    let mut quads = Quads::new();
+    quads.model.textures = vec![texture];
+    renderer.renderer = renderer.renderer.with_content_provider(quads);
+    match renderer.render(&scene(0.0, serde_json::Value::Null)) {
+        Err(GpuRenderError::InvalidPluginContent { layer, message }) => Some((layer, message)),
+        Err(error) => panic!("expected invalid plugin content, got {error}"),
+        Ok(_) => panic!("expected invalid plugin content, got a frame"),
+    }
+}
+
+fn rgba(width: u32, height: u32) -> TextureSource {
+    TextureSource::Rgba {
+        width,
+        height,
+        pixels: Arc::new(vec![255; width as usize * height as usize * 4]),
+    }
+}
+
+#[test]
+fn refuses_mesh_textures_without_a_texel() {
+    for (width, height) in [(0, 0), (0, 4), (4, 0)] {
+        let Some((layer, message)) = refused_texture(rgba(width, height), None) else {
+            return;
+        };
+        assert_eq!(layer, "quads");
+        assert!(
+            message.starts_with(&format!("texture 0 is {width}x{height}, outside 1 to ")),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn refuses_mesh_textures_past_the_gpu_limit() {
+    // The renderer asks for wgpu's default limits: 8192 texels a side.
+    let Some((layer, message)) = refused_texture(rgba(8193, 1), None) else {
+        return;
+    };
+    assert_eq!(layer, "quads");
+    assert_eq!(
+        message,
+        "texture 0 is 8193x1, outside 1 to 8192 texels a side"
+    );
+}
+
+#[test]
+fn refuses_an_oversized_texture_file_from_its_header() {
+    // A 5x1 PNG cut off inside its pixel data: its header reads, its pixels
+    // do not decode.
+    let mut png = Vec::new();
+    image::RgbaImage::new(5, 1)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let data = png.windows(4).position(|name| name == b"IDAT").unwrap();
+    png.truncate(data + 6);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("wide.png");
+    std::fs::write(&path, &png).unwrap();
+
+    let Some((layer, message)) = refused_texture(TextureSource::Path(path.clone()), Some(4)) else {
+        return;
+    };
+    assert_eq!(layer, "quads");
+    assert_eq!(message, "texture 0 is 5x1, outside 1 to 4 texels a side");
+
+    // Within the limit, the file is decoded, and its cut-off pixels fail.
+    let mut renderer = renderer(transparent()).unwrap();
+    let mut quads = Quads::new();
+    quads.model.textures = vec![TextureSource::Path(path)];
+    renderer.renderer = renderer.renderer.with_content_provider(quads);
+    let error = renderer
+        .render(&scene(0.0, serde_json::Value::Null))
+        .unwrap_err();
+    assert!(
+        matches!(error, GpuRenderError::ImageDecode { .. }),
+        "{error}"
+    );
+}

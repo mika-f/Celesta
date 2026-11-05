@@ -21,6 +21,7 @@ use celesta_plugin::{
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::io::Seek;
 use std::path::PathBuf;
 use wgpu::util::DeviceExt;
 
@@ -473,29 +474,78 @@ fn invalid_model(model: &MeshModel) -> Option<String> {
     None
 }
 
-/// A model texture's pixels, read from its file or taken as sent.
+/// Why a texture `width` by `height` texels cannot be uploaded: it has no
+/// texel, or a side longer than `max` texels, the GPU's limit.
+fn check_texture_size(index: usize, width: u32, height: u32, max: u32) -> Result<(), String> {
+    if width == 0 || height == 0 || width.max(height) > max {
+        return Err(format!(
+            "texture {index} is {width}x{height}, outside 1 to {max} texels a side"
+        ));
+    }
+    Ok(())
+}
+
+/// Texture `index`'s pixels, read from its file or taken as sent, once its
+/// size is within 1 to `max_texture_dimension` texels a side. A file's size
+/// is read from its header, so an oversized one is refused undecoded.
 pub(crate) fn texture_image(
     source: &TextureSource,
+    index: usize,
+    max_texture_dimension: u32,
     layer: &str,
 ) -> Result<image::RgbaImage, GpuRenderError> {
-    Ok(match source {
-        TextureSource::Path(path) => image::open(path)
-            .map_err(|source| GpuRenderError::ImageDecode {
+    let invalid = |message| GpuRenderError::InvalidPluginContent {
+        layer: layer.to_owned(),
+        message,
+    };
+    let check = |width, height| {
+        check_texture_size(index, width, height, max_texture_dimension).map_err(invalid)
+    };
+    match source {
+        TextureSource::Path(path) => {
+            let decode_error = |source| GpuRenderError::ImageDecode {
                 asset: path.display().to_string(),
                 source,
-            })?
-            .to_rgba8(),
+            };
+            let io_error = |error| decode_error(image::ImageError::IoError(error));
+            // One handle for the header and the pixels, so both read the same
+            // file even if another replaces it at `path` in between.
+            let file = std::fs::File::open(path).map_err(io_error)?;
+            let reader = |file| {
+                image::ImageReader::new(std::io::BufReader::new(file))
+                    .with_guessed_format()
+                    .map_err(io_error)
+            };
+            let (width, height) = reader(&file)?.into_dimensions().map_err(decode_error)?;
+            check(width, height)?;
+            (&file)
+                .seek(std::io::SeekFrom::Start(0))
+                .map_err(io_error)?;
+            // Contents rewritten in place since the header was read are
+            // still held to the size, while decoding and after.
+            let mut limits = image::Limits::default();
+            limits.max_image_width = Some(max_texture_dimension);
+            limits.max_image_height = Some(max_texture_dimension);
+            let mut reader = reader(&file)?;
+            reader.limits(limits);
+            let image = reader.decode().map_err(decode_error)?.to_rgba8();
+            check(image.width(), image.height())?;
+            Ok(image)
+        }
         TextureSource::Rgba {
             width,
             height,
             pixels,
-        } => image::RgbaImage::from_raw(*width, *height, pixels.as_ref().clone()).ok_or_else(
-            || GpuRenderError::InvalidPluginContent {
-                layer: layer.to_owned(),
-                message: format!("a {width}x{height} texture of {} bytes", pixels.len()),
-            },
-        )?,
-    })
+        } => {
+            check(*width, *height)?;
+            image::RgbaImage::from_raw(*width, *height, pixels.as_ref().clone()).ok_or_else(|| {
+                invalid(format!(
+                    "a {width}x{height} texture of {} bytes",
+                    pixels.len()
+                ))
+            })
+        }
+    }
 }
 
 impl LoadedMeshes {
@@ -503,6 +553,7 @@ impl LoadedMeshes {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         pipelines: &Pipelines,
+        max_texture_dimension: u32,
         id: ModelId,
         model: MeshModel,
         layer: &str,
@@ -514,8 +565,8 @@ impl LoadedMeshes {
             });
         }
         let mut textures = Vec::new();
-        for source in &model.textures {
-            let image = texture_image(source, layer)?;
+        for (index, source) in model.textures.iter().enumerate() {
+            let image = texture_image(source, index, max_texture_dimension, layer)?;
             let levels = premultiplied_mips(image.width(), image.height(), image.as_raw());
             let data: Vec<u8> = levels
                 .iter()
@@ -602,6 +653,7 @@ impl GpuRenderer {
                     &self.device,
                     &self.queue,
                     pipelines_ref(&self.meshes),
+                    self.max_texture_dimension,
                     id,
                     model,
                     layer,

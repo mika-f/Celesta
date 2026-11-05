@@ -2323,13 +2323,8 @@ impl LoadedScene {
 
         let mut textures = Vec::new();
         for (index, texture) in model.textures.iter().enumerate() {
-            let image = texture_image(&texture.source, layer)?;
+            let image = texture_image(&texture.source, index, max_texture_dimension, layer)?;
             let (width, height) = image.dimensions();
-            if width == 0 || height == 0 || width.max(height) > max_texture_dimension {
-                return Err(invalid(format!(
-                    "texture {index} is {width}x{height}, outside 1 to {max_texture_dimension} texels a side"
-                )));
-            }
             let sampler = &texture.sampler;
             let levels = if sampler.mipmaps {
                 straight_mips(width, height, image.into_raw(), texture.color_space)
