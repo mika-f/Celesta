@@ -49,9 +49,13 @@ jobs:
           # The compiler CI tests with; a moving stable would also invalidate the cache.
           toolchain: 1.99.1
 
-      # Only main's cache is visible to the next release tag.
+      # Only main's cache is visible to the next release tag. The codec
+      # plugin builds in the plugins workspace, into plugins/target.
       - uses: Swatinem/rust-cache@v2.9.3
         with:
+          workspaces: |
+            . -> target
+            plugins -> target
           env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -119,6 +123,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2.9.3
         with:
+          workspaces: |
+            . -> target
+            plugins -> target
           env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 

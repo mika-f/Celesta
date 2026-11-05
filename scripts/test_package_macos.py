@@ -1,6 +1,7 @@
 """Portable checks for macOS package validation; no Apple tools are mocked as passing."""
 
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -28,6 +29,8 @@ class MacPackageValidationTests(unittest.TestCase):
             contents = Path(directory) / "Celesta.app/Contents"
             frameworks = contents / "Frameworks"
             frameworks.mkdir(parents=True)
+            # POSIX resolves `MacOS/..` only when MacOS exists, as in a bundle.
+            (contents / "MacOS").mkdir()
             (frameworks / "libavcodec.62.dylib").touch()
             binary = contents / "MacOS/Celesta"
             packaging.validate_dependencies(binary, contents, "Celesta:\n"
@@ -46,6 +49,35 @@ class MacPackageValidationTests(unittest.TestCase):
             (contents / "Helpers/libhelper.dylib").touch()
             packaging.validate_dependencies(contents / "Helpers/node", contents,
                 "node:\n\t@executable_path/libhelper.dylib (compatibility version 1.0.0, current version 1.0.0)\n")
+
+    def test_plugin_libraries_resolve_from_the_plugin_program_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            contents = Path(directory) / "Celesta.app/Contents"
+            plugin = contents / "PlugIns/ffmpeg"
+            (plugin / "Frameworks").mkdir(parents=True)
+            (plugin / "bin/macos-aarch64").mkdir(parents=True)
+            (plugin / "celesta-plugin.json").write_text(json.dumps(
+                {"executable": {"macos-aarch64": "bin/macos-aarch64/celesta-codec-ffmpeg"}}))
+            (plugin / "Frameworks/libavcodec.62.dylib").touch()
+            (plugin / "Frameworks/libx264.dylib").touch()
+            program = plugin / "bin/macos-aarch64/celesta-codec-ffmpeg"
+            self.assertEqual(packaging.plugin_program(plugin), program)
+            packaging.validate_dependencies(program, contents, "celesta-codec-ffmpeg:\n"
+                "\t@executable_path/../../Frameworks/libavcodec.62.dylib (compatibility version 1.0.0, current version 1.0.0)\n")
+            library = plugin / "Frameworks/libavcodec.62.dylib"
+            packaging.validate_dependencies(library, contents, "libavcodec.62.dylib:\n"
+                "\t@executable_path/../../Frameworks/libx264.dylib (compatibility version 1.0.0, current version 1.0.0)\n")
+            with self.assertRaises(RuntimeError):
+                packaging.validate_dependencies(library, contents, "libavcodec.62.dylib:\n"
+                    "\t@executable_path/../Frameworks/libx264.dylib (compatibility version 1.0.0, current version 1.0.0)\n")
+
+    def test_a_plugin_program_is_the_one_executable_its_manifest_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = Path(directory)
+            for executable in ({}, {"macos-aarch64": "bin/a", "macos-x86_64": "bin/b"}):
+                with self.subTest(executable=executable), self.assertRaises(RuntimeError):
+                    (plugin / "celesta-plugin.json").write_text(json.dumps({"executable": executable}))
+                    packaging.plugin_program(plugin)
 
 
 if __name__ == "__main__":

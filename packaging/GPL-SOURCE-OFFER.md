@@ -1,8 +1,8 @@
 # GPL corresponding-source offer
 
 Celesta's own source code is licensed under MIT OR Apache-2.0 (see
-[`LICENSE-MIT`](../LICENSE-MIT) and [`LICENSE-APACHE`](../LICENSE-APACHE)) and
-is always available at <https://github.com/mika-f/celesta>.
+`LICENSE-MIT` and `LICENSE-APACHE`, at the repository's root and beside this
+file in a package) and is always available at <https://github.com/mika-f/celesta>.
 
 Celesta's own executables link no FFmpeg. The official Windows and macOS
 binary packages, and the Linux container image, additionally bundle Celesta's
@@ -28,7 +28,7 @@ performing source distribution, a complete machine-readable copy of the
 corresponding source code for the GPL-licensed components in that specific
 build (FFmpeg and `x264`, built with the same version and configuration used
 for that release, and the codec plugin's own source, which is in this
-repository under `crates/codec-ffmpeg`), and for the BSD-licensed `libvpx` and
+repository under `plugins/ffmpeg`), and for the BSD-licensed `libvpx` and
 `libopus` linked into it, on a medium customarily used for software
 interchange.
 
@@ -60,6 +60,6 @@ from the vcpkg `ffmpeg[x264,vpx,opus]:x64-windows-static-md` port) or
 
 ## Full license text
 
-The complete GPL-2.0 text is included as [`LICENSE-GPL-2.0`](../LICENSE-GPL-2.0)
-at the repository root, and is copied into every release package alongside
-this offer, and into the codec plugin's `licenses` folder.
+The complete GPL-2.0 text is included as `LICENSE-GPL-2.0` at the repository
+root, and is copied into every release package alongside this offer, and into
+the codec plugin's `licenses` folder.

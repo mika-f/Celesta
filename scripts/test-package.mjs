@@ -69,10 +69,22 @@ export default function Root() {
   // plugin, which carries the GPL its libx264 needs.
   const codec = join(packageDirectory, mac ? 'Contents/PlugIns/ffmpeg' : 'plugins/ffmpeg');
   assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the codec plugin');
-  assert.ok(
-    existsSync(join(codec, 'licenses/LICENSE-GPL-2.0')),
-    'The codec plugin must carry the GPL text',
-  );
+  const codecManifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
+  assert.ok(codecManifest.roles?.includes('codec'), 'The codec plugin must have the codec role');
+  const programs = Object.values(codecManifest.executable ?? {});
+  assert.equal(programs.length, 1, 'The codec plugin must name exactly one executable');
+  assert.ok(existsSync(join(codec, programs[0])), `The codec plugin's program ${programs[0]} must exist`);
+  for (const license of ['LICENSE-GPL-2.0', 'GPL-SOURCE-OFFER.md']) {
+    assert.ok(existsSync(join(codec, 'licenses', license)), `The codec plugin must carry ${license}`);
+  }
+  // The codec's crates are in the plugins workspace, whose licenses the
+  // package collects with the root's.
+  const licenses = join(packageDirectory, mac ? 'Contents/Resources/licenses' : 'licenses');
+  const rustPackages = JSON.parse(readFileSync(join(licenses, 'rust-packages.json'), 'utf8').replace(/^﻿/, ''))
+    .map((crate) => crate.name);
+  for (const crate of ['ez-ffmpeg', 'celesta-codec-ffmpeg']) {
+    assert.ok(rustPackages.includes(crate), `licenses/rust-packages.json must name ${crate}`);
+  }
   const output = join(directory, 'test.mp4');
   run(exporter, ['--react', entry, output]);
   const mp4 = readFileSync(output);

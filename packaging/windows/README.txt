@@ -23,8 +23,10 @@ runtime/react/node_modules.
 
 Celesta.exe, Celesta-export.exe, and Celesta-mcp.exe link no FFmpeg and are
 MIT/Apache-2.0 licensed. Video and audio are read and written by the codec
-plugin in plugins\ffmpeg, a separate program built with an x264-enabled FFmpeg,
-which is GPL-2.0-or-later licensed. See plugins\ffmpeg\licenses (or
+plugin in plugins\ffmpeg, a separate program
+(plugins\ffmpeg\bin\windows-x86_64\celesta-codec-ffmpeg.exe, with its own MSVC
+runtime DLLs beside it) built with an x264-enabled FFmpeg, which is
+GPL-2.0-or-later licensed. See plugins\ffmpeg\licenses (or
 licenses/LICENSE-GPL-2.0) for the license text and
 licenses/GPL-SOURCE-OFFER.md for the corresponding-source offer.
 The build also includes libvpx and libopus (BSD-3-Clause); their notices are in

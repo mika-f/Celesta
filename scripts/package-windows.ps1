@@ -66,7 +66,7 @@ try {
         Invoke-Checked pnpm @('install', '--frozen-lockfile')
         Invoke-Checked pnpm @('--dir', 'packages/react', 'run', 'codegen')
         Invoke-Checked pnpm @('run', 'build:runtime')
-        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter', '-p', 'celesta-mcp', '-p', 'celesta-codec-ffmpeg')
+        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter', '-p', 'celesta-mcp')
     }
     $binaries = Join-Path $root 'target/release'
     Copy-Item -LiteralPath "$binaries/celesta-editor.exe" -Destination "$package/Celesta.exe"
@@ -101,9 +101,13 @@ try {
     # FFmpeg, and the GPL libx264 with it, is linked into the codec plugin's
     # program alone, in the bundled plugin folder beside Celesta.exe. Windows
     # looks for its DLLs beside the program, so it gets its own CRT copies.
+    # The shared build script builds it in the plugins workspace (Cargo finds
+    # it current when it is) and lays the folder out.
     $codec = Join-Path $package 'plugins/ffmpeg'
-    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/stage-codec-plugin.mjs", "$binaries/celesta-codec-ffmpeg.exe", $codec)
-    Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination "$codec/bin"
+    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/plugins/build.mjs", "$root/plugins/ffmpeg", '--out', "$package/plugins")
+    $codecManifest = Get-Content -Raw -LiteralPath "$codec/celesta-plugin.json" | ConvertFrom-Json
+    $codecProgram = Join-Path $codec $codecManifest.executable.'windows-x86_64'
+    Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination (Split-Path $codecProgram -Parent)
 
     Copy-Item -LiteralPath "$root/README.md" -Destination $package
     New-Item -ItemType Directory "$package/examples" | Out-Null
@@ -122,6 +126,12 @@ try {
     $metadataText = & cargo metadata --locked --offline --format-version 1 --filter-platform x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
     $metadata = $metadataText | ConvertFrom-Json
+    # The codec plugin and its crates are in the plugins workspace. Packaging
+    # builds only the codec there, so that workspace's other crates may not be
+    # downloaded yet: no --offline for it.
+    $pluginsText = & cargo metadata --manifest-path "$root/plugins/Cargo.toml" --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc
+    if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed for the plugins workspace' }
+    $metadata.packages = @(@($metadata.packages) + @(($pluginsText | ConvertFrom-Json).packages) | Sort-Object id -Unique)
     $metadata.packages | Select-Object name, version, license, repository | ConvertTo-Json -Depth 5 |
         Set-Content "$licenses/rust-packages.json"
     foreach ($crate in $metadata.packages) {
