@@ -138,7 +138,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts; not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
-| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mjs`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mjs`, `cargo.mjs`, `manifest.mjs`, and `licenses.mjs`; and `bump-version.mjs`, with its helper `version.mjs`, which bumps Celesta's version and the plugins that follow it; not published. |
+| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mjs`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mjs`, `cargo.mjs`, `manifest.mjs`, and `licenses.mjs`; `bump-version.mjs`, with its helper `version.mjs`, which bumps Celesta's version and the plugins that follow it; `affected.mjs`, with its helpers `inputs.mjs` and `lockfile.mjs`, which lists the first-party plugins a change affects, from `plugins/Cargo.lock` or a plugin's own lockfile and the pnpm graph, for CI's `Plugins (<OS>)` jobs; and `libtest.mjs`, which finds the skipped tests in a `cargo test -- --show-output` log for `scripts/report-skipped-tests.mjs`; not published. |
 
 Useful entry points:
 
@@ -379,6 +379,14 @@ workspace; after changing it, a plugin, or the plugin build script, run
 `cargo fmt --check` in `plugins/`, and `pnpm --dir scripts/plugins test`.
 The plugins workspace's `--workspace` checks build the codec plugin, so they
 need FFmpeg on `PKG_CONFIG_PATH` (or `VCPKG_ROOT` on Windows).
+CI's `Plugins (<OS>)` jobs run these checks with `-p` for the affected plugins
+only (every plugin on a push to `main`); the scripts' own tests run in the
+root `Test` job. To see which plugins a branch
+affects, commit and run
+`node scripts/plugins/affected.mjs --base "$(git merge-base origin/main HEAD)"`.
+A plugin's inputs are its folder, its lockfile's local packages, its `js/`
+package's workspace dependencies, and its `licenses` files, so a module's
+`js/package.json` must declare every workspace package its build uses.
 
 For a release, run `node scripts/plugins/bump-version.mjs X.Y.Z`, then set
 the version in each `packages/*/package.json` by hand.
