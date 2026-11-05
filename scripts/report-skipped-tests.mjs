@@ -1,7 +1,8 @@
 // Report the tests that skipped themselves in a nextest JUnit report or in a
 // `cargo test -- --show-output` log. The standard test runner cannot mark a
 // test skipped, so a test that cannot run here (no GPU adapter, no Node.js, no
-// color emoji font, ...) prints a line starting with "skipping" and passes.
+// color emoji font, ...) prints a line starting with "skipping" or "skipped"
+// and passes.
 // nextest keeps a passing test's output only in the report
 // (`store-success-output` in .config/nextest.toml); `cargo test` prints it
 // with `--show-output` (the plugin job, whose `harness = false` targets
@@ -14,7 +15,7 @@
 //   node scripts/report-skipped-tests.mjs "$RUNNER_TEMP/cargo-test.log"
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 
-import { skippedTests } from './plugins/libtest.mjs';
+import { SKIP_LINE, skippedTests } from './plugins/libtest.mjs';
 
 const [report] = process.argv.slice(2);
 if (!report) {
@@ -61,7 +62,7 @@ function junitSkippedTests(xml) {
     const test = `${attribute('classname')} ${attribute('name')}`;
     for (const [, output] of body.matchAll(/<system-(?:out|err)>([\s\S]*?)<\/system-(?:out|err)>/g)) {
       for (const line of unescape(output).split(/\r?\n/)) {
-        if (!line.startsWith('skipping')) continue;
+        if (!SKIP_LINE.test(line)) continue;
         const tests = reasons.get(line) ?? [];
         if (!tests.includes(test)) tests.push(test);
         reasons.set(line, tests);

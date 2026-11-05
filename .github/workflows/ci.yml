@@ -156,9 +156,9 @@ jobs:
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo clippy -p celesta-composition -p celesta-project --all-targets --features codegen --locked -- -D warnings
 
-      # A test that cannot run here passes after printing "skipping ...", so
-      # list those as warnings and in the job summary rather than leave them
-      # hidden among the passes.
+      # A test that cannot run here passes after printing "skipping ..." or
+      # "skipped: ...", so list those as warnings and in the job summary
+      # rather than leave them hidden among the passes.
       - name: Report skipped tests
         if: ${{ !cancelled() }}
         run: node scripts/report-skipped-tests.mjs target/nextest/ci/junit.xml
@@ -354,8 +354,9 @@ jobs:
             (cd "$workspace" && cargo test $packages --locked --no-fail-fast -- --show-output) < /dev/null 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log"
           done <<< "$CARGO_WORKSPACES"
 
-      # A test that cannot run on macOS or Windows passes after printing
-      # "skipping ...", so list those as warnings and in the job summary
+      # A test that cannot run here (on macOS or Windows, or without
+      # CELESTA_VRM_SAMPLES_DIR) passes after printing "skipping ..." or
+      # "skipped: ...", so list those as warnings and in the job summary
       # rather than leave them hidden among the passes.
       - name: Report skipped tests
         if: ${{ !cancelled() && steps.affected.outputs.cargo != '' }}
