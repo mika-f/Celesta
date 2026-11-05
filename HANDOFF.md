@@ -349,8 +349,9 @@ cargo run -p celesta-exporter -- --react packages/cli/examples/title.tsx output.
 
 The editor and exporter find the codec plugin's program beside themselves in
 `target/<profile>`; rebuild it after changing `crates/codec-ffmpeg` or
-`celesta-media`'s codec protocol. Tests that spawn `celesta-exporter` or
-`celesta-mcp` give the child the test codec's program instead, so they need
+`celesta-media`'s codec protocol. Tests whose `celesta-exporter` or
+`celesta-mcp` child exports video give it the test codec's program instead, so
+they need
 `celesta-codec-test` built, which `cargo test --workspace` does; otherwise run
 `cargo build -p celesta-codec-test` first.
 

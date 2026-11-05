@@ -458,8 +458,9 @@ run first. No test printed a "skipping" line.
   `CELESTA_REQUIRE_GPU=1`.
 - `git diff --check claude/plugins-workspace`: clean.
 - The full workspace suite was not run here; it is left to CI, whose first
-  Linux run is also the first check of the exact pixel comparisons off
-  Metal.
+  Linux (lavapipe) and Windows runs are also the first checks of the exact
+  pixel comparisons off Metal. If they fail, look first at `assert_solid` in
+  `exports_frame_exact_mp4_with_silent_audio`.
 
 ## Layer 3: the codec moves to `plugins/ffmpeg`
 
