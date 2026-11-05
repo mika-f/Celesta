@@ -358,7 +358,8 @@ function taskGlobs(entry, where) {
 function repositoryPattern(glob, where, pattern = glob) {
   const path = typeof glob === 'string' && glob.endsWith('/**') ? glob.slice(0, -'/**'.length) : glob;
   const parts = typeof path === 'string' ? path.split('/') : [''];
-  if (parts.some((part) => part === '' || part === '.' || part === '..' || /[*?[\]{}!]/.test(part))) {
+  // `$` too: a `$TURBO_ROOT$` or `$TURBO_DEFAULT$` left here would match no path.
+  if (parts.some((part) => part === '' || part === '.' || part === '..' || /[*?[\]{}!$]/.test(part))) {
     throw new Error(`${where} has ${String(pattern)}, which names no repository folder or file`);
   }
   return parts.join('/');

@@ -216,6 +216,15 @@ describe('turboInputs', () => {
     );
   });
 
+  it.each(['$TURBO_ROOT$/tsconfig.json', 'config/*.json', '../shared.json'])(
+    'refuses the global dependency %s, which names no repository folder or file',
+    (pattern) => {
+      expect(() => turboInputs({ globalDependencies: [pattern] }, [lib], 'turbo.json')).toThrow(
+        `turbo.json: globalDependencies has ${pattern}, which names no repository folder or file`,
+      );
+    },
+  );
+
   it('refuses an input it cannot read', () => {
     const turbo = { tasks: { codegen: { inputs: [{ mode: 'jit' }] } } };
     expect(() => turboInputs(turbo, [lib], 'turbo.json')).toThrow(

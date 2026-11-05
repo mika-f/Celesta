@@ -804,8 +804,9 @@ its Decisions give the reasons for the choices below.
   (`aivis-speech`, `character`, `cli`, `code`, `components`, `debug`,
   `layout`, `lottie`, `math`, `media-utils`, `project`, `react`, `shader`,
   `shapes`, `text`, `transitions`, `voicevox`); `turbo.json` adds
-  `crates/project` (and `crates/composition`, `Cargo.toml`, `Cargo.lock`,
-  and `.cargo/config.toml`, which it already had). The codec's Rust
+  `crates/project` (and `crates/composition`, already in its Cargo
+  closure, and `Cargo.toml`, `Cargo.lock`, and `.cargo/config.toml`,
+  already shared inputs). The codec's Rust
   closure is `crates/budoux`, `composition`, `evaluator`, `exporter`,
   `gpu-renderer`, `media`, `plugin`, `plugin-host`, `project`,
   `react-bridge`, `remote`, and `renderer`, plus `LICENSE-APACHE`,
@@ -824,7 +825,8 @@ its Decisions give the reasons for the choices below.
   exclusions are skipped, which can only add paths; a deferred-hashing
   entry's `globs` are read the same way. A pattern that maps to no folder
   or file (a glob before its last part, `**` alone, a path outside the
-  repository, `$TURBO_ROOT$` elsewhere than the start), a package's own
+  repository, `$TURBO_ROOT$` elsewhere than the start or in
+  `globalDependencies`), a package's own
   `turbo.json`, or a root `turbo.jsonc` is an error. Before the fix, a
   change to `crates/project/src/lib.rs` affected only the codec; now it
   affects both.
@@ -874,7 +876,7 @@ its Decisions give the reasons for the choices below.
   plan left it open). `because` is per plugin, as above. `turbo.json`'s
   paths are an addition from the review. The scratch pnpm workspace in
   `inputs.test.mts` lives under `scripts/plugins/node_modules/.cache/`,
-  inside the repository, so mise finds the pnpm `mise.toml` pins.
+  inside the repository, where the pnpm `mise.toml` pins is on the path.
 - **Known gaps.** Build and test inputs outside both graphs and outside
   `turbo.json` do not affect a plugin: `scripts/resolve-package-manifest.mjs`
   (imported by `packages/cli/scripts/stage-project-types.mjs`),
@@ -888,8 +890,8 @@ its Decisions give the reasons for the choices below.
 
 Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
 
-- `pnpm --dir scripts/plugins test`: `tsc -p test`, then 110 passed
-  (10 files; `inputs.test.mts` 50).
+- `pnpm --dir scripts/plugins test`: `tsc -p test`, then 113 passed
+  (10 files; `inputs.test.mts` 53).
 - `pnpm install --frozen-lockfile`: up to date.
 - `node scripts/plugins/affected.mjs`: ffmpeg and vrm, both
   `"no base revision"`. `--base HEAD`: `{"plugins":[]}`, and with
