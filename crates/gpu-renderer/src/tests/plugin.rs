@@ -450,13 +450,13 @@ fn models_no_layer_draws_for_a_while_are_closed() {
 }
 
 /// `provider`, counting how often a model is opened.
-struct Counted<P> {
+pub(super) struct Counted<P> {
     provider: P,
     opens: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl<P: ContentProvider> Counted<P> {
-    fn new(provider: P) -> (Self, Arc<std::sync::atomic::AtomicUsize>) {
+    pub(super) fn new(provider: P) -> (Self, Arc<std::sync::atomic::AtomicUsize>) {
         let opens = Arc::default();
         let counted = Self {
             provider,
@@ -490,7 +490,7 @@ impl<P: ContentProvider> ContentProvider for Counted<P> {
     }
 }
 
-fn opens(count: &std::sync::atomic::AtomicUsize) -> usize {
+pub(super) fn opens(count: &std::sync::atomic::AtomicUsize) -> usize {
     count.load(std::sync::atomic::Ordering::SeqCst)
 }
 
@@ -624,6 +624,30 @@ fn a_failed_model_is_opened_again_once_its_assets_change() {
     std::fs::write(&path, b"bb").unwrap();
     renderer.render(&scene).unwrap_err();
     renderer.render(&scene).unwrap_err();
+    assert_eq!(opens(&count), 2);
+}
+
+#[test]
+fn a_failed_model_is_opened_again_once_a_texture_file_it_lists_changes() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("texture.png");
+    std::fs::write(&path, b"not an image").unwrap();
+    let mut quads = Quads::new();
+    quads.model.textures = vec![TextureSource::Path(path.clone())];
+    let (provider, count) = Counted::new(quads);
+    renderer.renderer = renderer.renderer.with_content_provider(provider);
+    let scene = scene(0.0, serde_json::Value::Null);
+    renderer.render(&scene).unwrap_err();
+    renderer.render(&scene).unwrap_err();
+    assert_eq!(opens(&count), 1);
+    // The layer names no asset; the plugin's model names the file.
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([255; 4]))
+        .save(&path)
+        .unwrap();
+    renderer.render(&scene).unwrap();
     assert_eq!(opens(&count), 2);
 }
 

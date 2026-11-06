@@ -2187,6 +2187,8 @@ impl LoadedScene {
         model: SceneModel,
         layer: &str,
     ) -> Result<Self, GpuRenderError> {
+        // A model refused before `prepare` did not run out of memory.
+        pipelines.ran_out_of_memory = false;
         let invalid = |message| GpuRenderError::InvalidPluginContent {
             layer: layer.to_owned(),
             message,

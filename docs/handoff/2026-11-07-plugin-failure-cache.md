@@ -5,15 +5,19 @@ layer whose plugin could not start, or whose model could not be opened or
 loaded, asked again on each one. Each frame paid the plugin's start-up and
 model load on the preview thread for the same error, which is the reason
 the editor already caches a failed React bridge and the renderer caches
-refused material pipelines. An export stops at the first error, so only
-the preview was affected.
+refused material pipelines. A video export stops at the first error, so
+it asked once. Stills and contact sheets (`celesta-exporter` frame
+selections, the MCP server's `render_frames`) keep rendering the frames
+after a failed one, so they paid it once per frame too, and gain the same.
 
 ## Specification
 
 - **A plugin whose process cannot start is not started again** until
   `PluginHost::stop`. A start fails when the program cannot be spawned (or
   has no executable for this platform), its `hello` fails, or its `hello`
-  names another plugin id. Later requests return the same
+  names another plugin id, or `hello` misses its deadline. A start that
+  the host's `PluginKillSwitch` ended is not remembered: it says nothing
+  of the plugin. Later requests return the same
   `PluginError::Unavailable` without spawning. Reload Plugins builds a new
   host (through `EditorView::from_document`), so it tries again.
 - **Only a process that started is restarted.** `retry` restarts the
@@ -25,15 +29,19 @@ the preview was affected.
   and asset paths) and returns it for the next frames without asking the
   provider. This covers a failed `open` (any `PluginError`) and a refused
   load (`InvalidPluginContent`, or `ImageDecode` for a texture file). Each
-  frame still fails with the same error and the same text, naming the
-  frame's layer, so the editor's Problems shows it on every frame.
+  frame still fails with the same error variant and the same text, so the
+  editor's Problems shows it on every frame. `Plugin` and
+  `InvalidPluginContent` name the frame's layer; `ImageDecode` names the
+  texture file, and no layer, as it did before.
 - **Running out of memory is not kept.** A scene whose shader or pipeline
   ran out of GPU memory is loaded again on the next frame, which may not,
   as `ScenePipelines` already tries such a shader or pipeline again.
-- **Fixing an asset tries again.** With the error, the renderer keeps each
-  asset file's length and modification time. When one differs (a file
-  replaced in place at the same path), the next frame opens the model
-  again. A layer whose asset paths change has another key. Replacing the
+- **Fixing a file tries again.** With the error, the renderer keeps the
+  length and modification time of each asset file and, for a model that
+  failed to load, each texture file the model lists
+  (`TextureSource::Path`), which the layer need not name. When one
+  differs (a file replaced in place at the same path), the next frame
+  opens the model again. A layer whose asset paths change has another key. Replacing the
   provider clears the cache.
 - **A model reopened as another kind stays refused.** When a restarted
   process reopens a model as another kind (meshes, then a scene), the host
@@ -59,9 +67,13 @@ the preview was affected.
   again as an `IoError` with the first error's text, which reads the same.
   `plugin_texture` checks the cache before `open`, and records a failed
   `open` or load, except a scene load after which
-  `ScenePipelines::ran_out_of_memory` is set. `prepare` clears that flag
-  as it begins and sets it where it returns an out-of-memory error (a
-  shader compile or a pipeline). Without it, the existing
+  `ScenePipelines::ran_out_of_memory` is set. `LoadedScene::load` and
+  `prepare` clear that flag as they begin, so a scene refused before
+  `prepare` is still kept after an earlier one ran out of memory;
+  `prepare` sets it where it returns an out-of-memory error (a shader
+  compile or a pipeline). `FailedModel::files` lists the asset files and,
+  for a load, the model's texture files (`texture_files`), read before
+  the load takes the model. Without it, the existing
   `material_shaders_out_of_memory_is_tried_again` and
   `material_pipelines_the_device_refuses_are_not_made_again` failed.
 - `celesta-gpu-renderer` gains `celesta-plugin-host` as a dev-dependency,
@@ -95,6 +107,13 @@ GPU tests in `crates/gpu-renderer/src/tests/plugin.rs`:
   open once over two renders, with the same error and variant.
 - `a_failed_model_is_opened_again_once_its_assets_change`: rewriting the
   asset file in place opens the model again, once.
+- `a_failed_model_is_opened_again_once_a_texture_file_it_lists_changes`:
+  replacing an undecodable texture file the model lists, which the layer
+  does not name, with a PNG draws the layer on the next frame.
+- `a_scene_refused_after_one_ran_out_of_memory_is_not_opened_again`
+  (`tests/scene.rs`): after a scene ran out of memory, a scene refused
+  before `prepare` opens once over two renders (twice without the reset in
+  `LoadedScene::load`).
 - `a_plugin_that_cannot_open_is_not_started_for_every_frame` (Unix):
   through `PluginHost`, two frames start a plugin whose `hello` names
   another id once, and one that exits in `open` twice (four times before).
