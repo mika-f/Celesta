@@ -32,6 +32,7 @@ use crate::scene_material::{
     MAX_MATERIAL_PARAMS, MAX_MATERIAL_TEXTURES, MAX_SHADER_BYTES, check_material,
 };
 use crate::texture::LayerTexture;
+use crate::wgsl;
 use celesta_plugin::scene::{MAX_DIRECTIONAL_LIGHTS, MAX_SCENE_CANVAS_SIDE, MAX_SCENE_SHADERS};
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, CullFace, DrawState, EmptyTexel, Filter, Material, MaterialKind,
@@ -453,7 +454,7 @@ impl CompiledShader {
         label: &str,
     ) -> Result<Self, ShaderFailure> {
         let checked = check_material(wgsl, textures).map_err(ShaderFailure::Refused)?;
-        let module = scoped(device, || {
+        let module = wgsl::scoped(device, || {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
                 source: wgpu::ShaderSource::Naga(Cow::Owned(checked.module)),
@@ -470,25 +471,6 @@ impl CompiledShader {
             textures,
             outline: checked.outline,
         })
-    }
-}
-
-/// What `make` returns, or the first error the device reports while it
-/// runs: a validation error, an internal one (a backend's shader compiler
-/// refusing what naga accepted, such as a fragment function past Metal's
-/// stack), or running out of memory. What a material's WGSL decides runs in
-/// here, so that none of it reaches the device's uncaptured-error handler,
-/// which panics.
-fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> Result<T, wgpu::Error> {
-    let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-    let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
-    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let made = make();
-    // Popped innermost first.
-    let errors = [validation, internal, memory].map(|scope| pollster::block_on(scope.pop()));
-    match errors.into_iter().flatten().next() {
-        Some(error) => Err(error),
-        None => Ok(made),
     }
 }
 
@@ -1386,7 +1368,7 @@ impl ScenePipelines {
             }
         }
         let target = self.target;
-        scoped(device, || {
+        wgsl::scoped(device, || {
             Self::draw_pipeline(device, shader, layout, key, target)
         })
     }

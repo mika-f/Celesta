@@ -234,6 +234,9 @@ test('definitions and values are checked with messages naming the shader', () =>
     [() => defineShader({ name: 'x', wgsl: WGSL, padding: -1 }), /shader x: padding must be a finite number of at least 0/],
     [() => defineShader({ name: 'x', wgsl: WGSL, params: { 'bad-name': 'f32' } }), /shader x: parameter name "bad-name"/],
     [() => defineShader({ name: 'x', wgsl: WGSL, params: { celestaTime: 'f32' } }), /shader x: parameter name "celestaTime"/],
+    // In any letter case, as the renderer refuses it.
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { Celesta_x: 'f32' } }), /shader x: parameter name "Celesta_x"/],
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { CELESTAtime: 'f32' } }), /shader x: parameter name "CELESTAtime"/],
     [() => defineShader({ name: 'x', wgsl: WGSL, params: invalid({ a: 'mat4' }) }), /shader x: a must have a type of f32, vec2, vec3, vec4, or color/],
     [() => defineShader({ name: 'x', wgsl: WGSL, params: { fn: 'f32' } }), /shader x: parameter name "fn" is a WGSL keyword or reserved word/],
     [() => defineShader({ name: 'x', wgsl: WGSL, params: { self: 'f32' } }), /shader x: parameter name "self" is a WGSL keyword or reserved word/],

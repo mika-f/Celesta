@@ -828,6 +828,34 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
     );
     assert!(keyword.contains("`celestaTime`"), "{keyword}");
 
+    // The prefix is reserved in any letter case, as in scene materials.
+    for (declaration, name, line) in [
+        ("fn Celesta_x() {}\n", "Celesta_x", 4),
+        ("override CELESTA_k: f32 = 1.0;\n", "CELESTA_k", 4),
+        ("alias CeLeStA_t = f32;\n", "CeLeStA_t", 4),
+    ] {
+        let reserved = error(&mut renderer, &format!("{IDENTITY}{declaration}"));
+        assert!(reserved.contains(&format!("`{name}`")), "{reserved}");
+        assert!(reserved.contains("belong to Celesta"), "{reserved}");
+        assert!(
+            reserved.starts_with(&format!("invalid custom shader broken: {line}:")),
+            "{reserved}"
+        );
+    }
+    let parameter = render_error(
+        &mut renderer,
+        &scene(
+            vec![source(
+                "parameter",
+                IDENTITY,
+                &[("Celesta_x", ShaderParamType::F32)],
+            )],
+            vec![shaded(rect(), "parameter", vec![0.0], 0.0)],
+        ),
+    );
+    assert!(parameter.contains("`Celesta_x`"), "{parameter}");
+    assert!(parameter.contains("in any letter case"), "{parameter}");
+
     // The renderer still renders after the errors.
     renderer
         .render(&scene(
@@ -924,6 +952,100 @@ fn compiles_each_shader_once_until_it_changes() {
             .unwrap();
     }
     assert_eq!(renderer.shaders.cached(), 1, "unused shaders are dropped");
+}
+
+/// A device error as a backend's compiler refusing a shader reports it.
+fn refusal() -> wgpu::Error {
+    wgpu::Error::Internal {
+        source: "the test's device".into(),
+        description: "the test refuses it".to_owned(),
+    }
+}
+
+#[test]
+fn a_shader_the_device_refuses_is_an_error_kept_until_it_changes() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let rect = || corner_rect("rect", 8.0, 8.0, 16.0, 16.0, "#ffffff");
+    let refused = scene(
+        vec![source("refused", IDENTITY, &[])],
+        vec![shaded(rect(), "refused", Vec::new(), 0.0)],
+    );
+    renderer.shaders.refuse_pipeline = Some(refusal());
+    for _ in 0..2 {
+        let message = render_error(&mut renderer, &refused);
+        assert!(
+            message.starts_with("invalid custom shader refused:"),
+            "{message}"
+        );
+        assert!(message.contains("the test refuses it"), "{message}");
+    }
+    assert_eq!(
+        renderer.shaders.compiles, 1,
+        "a refused shader is not compiled again"
+    );
+
+    // An edit compiles it again.
+    let edited = scene(
+        vec![source("refused", &format!("{IDENTITY}// edited\n"), &[])],
+        vec![shaded(rect(), "refused", Vec::new(), 0.0)],
+    );
+    renderer.render(&edited).unwrap();
+    assert_eq!(renderer.shaders.compiles, 2);
+}
+
+#[test]
+fn a_shader_the_device_runs_out_of_memory_compiling_is_tried_again() {
+    let Some(mut renderer) = renderer(black_background()) else {
+        return;
+    };
+    let invert = scene(
+        vec![source(
+            "invert",
+            "fn effect(input: EffectInput) -> vec4f {\n    let color = source_load(vec2i(floor(input.position)));\n    return vec4f(color.a - color.rgb, color.a);\n}\n",
+            &[],
+        )],
+        vec![shaded(
+            corner_rect("rect", 8.0, 8.0, 32.0, 32.0, "#ff8000"),
+            "invert",
+            Vec::new(),
+            0.0,
+        )],
+    );
+    renderer.shaders.refuse_pipeline = Some(wgpu::Error::OutOfMemory {
+        source: "the test's device".into(),
+    });
+    let message = render_error(&mut renderer, &invert);
+    assert!(
+        message.starts_with("invalid custom shader invert:"),
+        "{message}"
+    );
+    assert!(message.contains("Out of Memory"), "{message}");
+    assert_eq!(renderer.shaders.cached(), 0, "running out is not kept");
+
+    let frame = renderer.render(&invert).unwrap();
+    assert_eq!(pixel_at(&frame, 20, 20), [0, 127, 255, 255]);
+    assert_eq!(renderer.shaders.compiles, 2);
+}
+
+#[test]
+fn a_built_in_filter_the_device_refuses_is_an_error_tried_again() {
+    let Some(mut renderer) = renderer(black_background()) else {
+        return;
+    };
+    let mut rect = corner_rect("rect", 8.0, 8.0, 32.0, 32.0, "#ff8000");
+    rect.effects
+        .filters
+        .push(LayerFilter::Invert { amount: 1.0 });
+    let inverted = scene(Vec::new(), vec![rect]);
+    renderer.shaders.refuse_pipeline = Some(refusal());
+    let message = render_error(&mut renderer, &inverted);
+    assert!(message.starts_with("invalid invert filter:"), "{message}");
+    assert!(message.contains("the test refuses it"), "{message}");
+
+    let frame = renderer.render(&inverted).unwrap();
+    assert_eq!(pixel_at(&frame, 20, 20), [0, 127, 255, 255]);
 }
 
 #[test]

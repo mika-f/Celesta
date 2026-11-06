@@ -99,7 +99,13 @@ fn effect(input: EffectInput) -> vec4f {
   parameter, so the shader follows `Sequence` and `FreezeFrame`.
 - Do not declare `@group`/`@binding` resources, entry points, workgroup
   variables (`var<workgroup>`, compute only), or names starting with
-  `celesta` (aliases and overrides included).
+  `celesta` in any letter case, such as `Celesta_x` (aliases, overrides,
+  and parameter names included).
+- A shader that passes these checks can still be refused by the GPU's
+  shader compiler (for example, a fragment function past Metal's stack).
+  The frame then fails with `invalid custom shader <name>: …` instead of
+  crashing, and the shader is not compiled again until its source changes:
+  simplify it rather than retrying the render.
 
 ## Parameters
 

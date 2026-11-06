@@ -1,7 +1,9 @@
 //! Checks shared by the WGSL Celesta assembles around someone else's code:
 //! custom shaders (`shader.rs`) and scene materials (`scene_material.rs`).
 //! Each is one module of Celesta's own declarations, the author's code at
-//! a known byte range, and Celesta's entry points after it.
+//! a known byte range, and Celesta's entry points after it. Both are
+//! compiled through `scoped`, so the device's verdict on them is an error
+//! of theirs, never a panic.
 
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -61,12 +63,37 @@ pub(crate) struct Rules<'a> {
     /// Follows the refusal of an entry point of the author's: what the
     /// author defines instead.
     pub(crate) instead: &'a str,
-    /// Whether a name belongs to Celesta, so the author cannot declare it.
-    pub(crate) reserved: &'a dyn Fn(&str) -> bool,
+}
+
+/// Whether `name` belongs to Celesta, so the author cannot declare it: it
+/// starts with `celesta` in any letter case, since Celesta's code declares
+/// `Celesta…` names too.
+pub(crate) fn reserved(name: &str) -> bool {
+    name.get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("celesta"))
+}
+
+/// What `make` returns, or the first error the device reports while it
+/// runs: a validation error, an internal one (a backend's shader compiler
+/// refusing what naga accepted, such as a fragment function past Metal's
+/// stack), or running out of memory. What an author's WGSL decides runs in
+/// here, so that none of it reaches the device's uncaptured-error handler,
+/// which panics.
+pub(crate) fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> Result<T, wgpu::Error> {
+    let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let made = make();
+    // Popped innermost first.
+    let errors = [validation, internal, memory].map(|scope| pollster::block_on(scope.pop()));
+    match errors.into_iter().flatten().next() {
+        Some(error) => Err(error),
+        None => Ok(made),
+    }
 }
 
 /// Rejects entry points, resources, and workgroup variables the author
-/// declared, and names `rules.reserved` keeps for Celesta: Celesta's
+/// declared, and names `reserved` keeps for Celesta: Celesta's
 /// declarations bind everything the author's code gets.
 pub(crate) fn check_declarations(
     module: &naga::Module,
@@ -121,20 +148,20 @@ pub(crate) fn check_declarations(
     // naga's module, then from the source for what the module keeps no
     // name of (aliases). The author's entry points need no name check:
     // every one that is not Celesta's was refused above.
-    let reserved = |at: Option<usize>, name: &str| {
+    let refuse = |at: Option<usize>, name: &str| {
         fail(
             at,
             format!("declares `{name}`; names starting with `celesta` belong to Celesta"),
         )
     };
     for (name, at) in module_names(module, author) {
-        if (rules.reserved)(name) {
-            return reserved(Some(at), name);
+        if reserved(name) {
+            return refuse(Some(at), name);
         }
     }
     for (offset, name) in module_declarations(&code[author.clone()]) {
-        if (rules.reserved)(name) {
-            return reserved(Some(author.start + offset), name);
+        if reserved(name) {
+            return refuse(Some(author.start + offset), name);
         }
     }
     Ok(())

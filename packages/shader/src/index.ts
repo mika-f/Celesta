@@ -165,8 +165,8 @@ export function defineShader<const P extends Record<string, ShaderParamSpec> = {
     throw fail(`declares ${entries.length} parameters; the most is ${MAX_PARAMS}`);
   }
   const declared = entries.map(([paramName, spec]) => {
-    if (!NAME.test(paramName) || paramName.startsWith('celesta')) {
-      throw fail(`parameter name ${JSON.stringify(paramName)} must be letters, digits, and underscores, start with a letter, and not start with "celesta"`);
+    if (!NAME.test(paramName) || /^celesta/i.test(paramName)) {
+      throw fail(`parameter name ${JSON.stringify(paramName)} must be letters, digits, and underscores, start with a letter, and not start with "celesta" in any letter case`);
     }
     if (RESERVED.has(paramName)) {
       throw fail(`parameter name ${JSON.stringify(paramName)} is a WGSL keyword or reserved word`);

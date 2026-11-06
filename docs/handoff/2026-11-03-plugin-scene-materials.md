@@ -270,7 +270,10 @@ checks (`wgsl.rs`), and change with them: a `var<workgroup>` in one is now
 refused (it drew on Metal before), and a name starting with `celesta` is
 now refused in an override, an alias, or a constant of abstract type too
 (`alias celesta_t = f32;` was accepted before). A 2D shader's prefix check
-stays case-sensitive: only a material's covers every letter case.
+stayed case-sensitive here; since
+[`2026-11-07-shader-device-refusals.md`](2026-11-07-shader-device-refusals.md)
+it covers every letter case, as a material's does, and 2D shaders compile
+in the same error scopes.
 
 ## Per-frame parameters
 
