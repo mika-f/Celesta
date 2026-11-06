@@ -233,11 +233,14 @@ fn failures() -> &'static Mutex<HashMap<(PathBuf, String), Failure>> {
     FAILURES.get_or_init(Default::default)
 }
 
-/// The remembered error for `key`, if its download failed recently.
+/// The remembered error for `key`, if its download failed recently. Expired
+/// failures are dropped, so the map holds only failures still in effect.
 fn recent_failure(key: &(PathBuf, String), retry_after: Duration) -> Option<RemoteAssetError> {
-    let failures = failures().lock().unwrap_or_else(PoisonError::into_inner);
+    let now = Instant::now();
+    let mut failures = failures().lock().unwrap_or_else(PoisonError::into_inner);
+    failures.retain(|_, failure| now < failure.until);
     let failure = failures.get(key)?;
-    (Instant::now() < failure.until).then(|| RemoteAssetError::RecentlyFailed {
+    Some(RemoteAssetError::RecentlyFailed {
         url: key.1.clone(),
         message: failure.message.clone(),
         retry_after,
@@ -310,8 +313,8 @@ pub enum RemoteAssetError {
     #[error("could not cache `{url}`: {source}")]
     Io { url: String, source: io::Error },
     /// Downloading `url` failed less than `retry_after` ago with `message`,
-    /// so it was not tried again yet.
-    #[error("{message} (tried again {}s after the failure)", .retry_after.as_secs())]
+    /// so no new request was made.
+    #[error("{message} (no new request is made until {}s after the failure)", .retry_after.as_secs())]
     RecentlyFailed {
         url: String,
         message: String,

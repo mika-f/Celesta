@@ -24,9 +24,11 @@ decoding, and export forever. It also cached only successes, so a failing URL
   with the original message, without touching the network; afterwards it
   tries again. The memory is process-wide (a `OnceLock<Mutex<HashMap>>`),
   since `RemoteAssetCache::standard()` makes a new cache for every lookup.
-  Expired entries are pruned on every insert.
-- `data:` URLs, invalid URLs, and unsupported schemes are not remembered:
-  they fail without a request. Local files are unaffected, so
+  Expired entries are pruned on every lookup and insert.
+- Only failed network downloads are remembered. A `data:` URL is decoded
+  locally (an invalid one fails without a request), and an invalid URL or an
+  unsupported scheme fails before any request; none of them enter the
+  failure memory. Local files are unaffected, so
   `AnimatedImages` still retries a missing local file on a later frame.
 
 ## Implementation notes
