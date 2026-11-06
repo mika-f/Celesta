@@ -11,7 +11,7 @@ use crate::element_edit::{inside_project, tag_name};
 use crate::helpers::{PathPick, pick_one_path};
 use crate::layer_select::{LookupResult, SourceLookup, letterbox, scene_point, to_scene};
 use crate::occurrences::OccurrenceState;
-use crate::preview::AddedUnder;
+use crate::preview::{AddedUnder, ChildrenSpace};
 use crate::scope::{Scope, ScopeState, chosen_scope, not_indexed_note, occurrence_index};
 use crate::timing::{WindowRole, set_timing_span, window_role};
 use crate::view::EditorView;
@@ -50,6 +50,9 @@ const REMAPPED: &str = "Can’t add inside a loop or freeze frame";
 const TURNED_3D: &str = "Can’t draw into a group turned in 3D";
 const SCALED_TO_ZERO: &str = "Can’t draw into a group scaled to zero";
 const READING: &str = "The source is still being read";
+const NOT_IN_FRAME: &str = "The group isn't drawn in this frame";
+const FRAME_FAILED: &str = "This frame couldn't be drawn";
+const NO_FILE: &str = "Choose a file first";
 const SOURCE_CHANGED: &str = "The source changed while editing";
 
 /// A press that moves less than this, in viewer pixels, is a click.
@@ -475,23 +478,26 @@ pub(crate) fn menu_items(
 
 /// Whether a frame is to ask for the children space of `parent` (the group
 /// an addition goes into, by its layer id): its space is not `reported`,
-/// and no frame was asked for it since the facts were read (`asked`).
+/// and no frame asking for it is on its way (`asked`: one was asked for
+/// since the facts were read, and no answer from it or a later frame came
+/// back without the space).
 pub(crate) fn space_request_due(parent: Option<&str>, reported: bool, asked: Option<&str>) -> bool {
     parent.is_some_and(|parent| !reported && asked != Some(parent))
 }
 
 /// Why the Add menu's items are disabled by the parent's children `space`
-/// as last reported (`None`: not yet, `Some(None)`: turned in 3D). An
-/// unreported space disables them only while paused, when it is being
-/// asked for; while `playing` they stay enabled, as choosing one pauses,
-/// which asks for it (until it arrives nothing is outlined, and a release
-/// refuses).
-pub(crate) fn space_reason(space: Option<Option<[f64; 6]>>, playing: bool) -> Option<&'static str> {
+/// as last reported (`None`: not yet). An unreported space disables them
+/// only while paused, when it is being asked for; while `playing` they
+/// stay enabled, as choosing one pauses, which asks for it (a release
+/// before it arrives waits for it).
+pub(crate) fn space_reason(space: Option<ChildrenSpace>, playing: bool) -> Option<&'static str> {
     match space {
-        Some(None) => Some(TURNED_3D),
-        Some(Some(space)) if invert_affine(space).is_none() => Some(SCALED_TO_ZERO),
-        Some(Some(_)) => None,
         None => (!playing).then_some(READING),
+        Some(ChildrenSpace::Map(space)) if invert_affine(space).is_none() => Some(SCALED_TO_ZERO),
+        Some(ChildrenSpace::Map(_)) => None,
+        Some(ChildrenSpace::Turned) => Some(TURNED_3D),
+        Some(ChildrenSpace::Absent) => Some(NOT_IN_FRAME),
+        Some(ChildrenSpace::Failed) => Some(FRAME_FAILED),
     }
 }
 
@@ -955,19 +961,27 @@ pub(crate) struct AddState {
     pub(crate) mode: AddMode,
     /// The parent shown when the drawn kind was chosen.
     pub(crate) chosen: Option<ChosenParent>,
-    /// The newest groups read, and the lookup the newest read is for.
+    /// The newest groups read, and the lookup the newest read is for with
+    /// the reload it reads (see [`Self::reloads`]).
     facts: Option<ParentFacts>,
-    wanted: Option<LookupKey>,
+    wanted: Option<(LookupKey, u64)>,
+    /// Counts the reloads applied, so a read started before one is not
+    /// taken after it for the same lookup.
+    reloads: u64,
     /// Counts the groups read, naming the facts in [`TargetKey`].
     facts_read: u64,
     /// The parent last picked, and what it was picked from.
     target: RefCell<Option<(TargetKey, Result<AddParent, String>)>>,
     /// A group's children space as the preview last reported it, by its
-    /// layer id: `None` inside when it turns in 3D.
-    space: Option<(String, Option<[f64; 6]>)>,
-    /// The group whose space a frame was asked for (see
-    /// [`space_request_due`]), until the facts are read again.
-    asked: Option<String>,
+    /// layer id.
+    space: Option<(String, ChildrenSpace)>,
+    /// The first preview generation drawn with the code on screen: a space
+    /// from an earlier one is the code's before the reload.
+    space_from: u64,
+    /// The group whose space a frame was asked for and that frame's
+    /// preview generation (see [`space_request_due`]), until the facts are
+    /// read again or an answer from it or later comes without the space.
+    asked: Option<(String, u64)>,
     /// The selection of the element just added, and the reload that reads
     /// it: one requested at or after that number.
     pending: Option<(PendingSelect, u64)>,
@@ -1004,13 +1018,17 @@ impl EditorView {
         let Some((layer, report, frame)) = self.add_lookup() else {
             return;
         };
-        let wanted = |(at, of, on): &LookupKey| at == layer && of == report && *on == frame;
+        let reloads = self.add.reloads;
+        let wanted = |((at, of, on), read): &(LookupKey, u64)| {
+            at == layer && of == report && *on == frame && *read == reloads
+        };
         if self.add.wanted.as_ref().is_some_and(wanted) {
             return;
         }
         let report = report.clone();
         let lookup = (layer.to_owned(), report.clone(), frame);
-        self.add.wanted = Some(lookup.clone());
+        let wanted = (lookup.clone(), reloads);
+        self.add.wanted = Some(wanted.clone());
         let chapters = self.react_chapters().unwrap_or_default().to_vec();
         let end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
         let playhead = u64::try_from(frame).unwrap_or(0);
@@ -1039,7 +1057,8 @@ impl EditorView {
                 })
                 .await;
             view.update(cx, |this, cx| {
-                if this.add.wanted.as_ref() == Some(&lookup) {
+                // Not a read of the code before a reload since.
+                if this.add.wanted.as_ref() == Some(&wanted) {
                     this.add.set_facts(ParentFacts { lookup, groups });
                     cx.notify();
                 }
@@ -1100,8 +1119,8 @@ impl EditorView {
     }
 
     /// The children space last reported for the group `layer_id`: `None`
-    /// before the preview answered, `Some(None)` when it turns in 3D.
-    fn add_space(&self, layer_id: &str) -> Option<Option<[f64; 6]>> {
+    /// before the preview answered.
+    fn add_space(&self, layer_id: &str) -> Option<ChildrenSpace> {
         self.add
             .space
             .as_ref()
@@ -1163,9 +1182,11 @@ impl EditorView {
         let reported = parent
             .as_deref()
             .is_some_and(|parent| self.add_space(parent).is_some());
-        if space_request_due(parent.as_deref(), reported, self.add.asked.as_deref()) {
-            self.add.asked = parent;
+        let asked = self.add.asked.as_ref().map(|(parent, _)| parent.as_str());
+        if space_request_due(parent.as_deref(), reported, asked) {
             self.refresh_preview();
+            let generation = self.preview_worker.generation();
+            self.add.asked = parent.map(|parent| (parent, generation));
         }
     }
 
@@ -1414,7 +1435,10 @@ impl EditorView {
             return None;
         };
         // In the parent the hint names, where it is written.
-        let space = self.add_space(&self.add.chosen.as_ref()?.layer_id)??;
+        let Some(ChildrenSpace::Map(space)) = self.add_space(&self.add.chosen.as_ref()?.layer_id)
+        else {
+            return None;
+        };
         let outline = drawn_outline(
             tool.kind,
             (*start, *now),
@@ -1441,9 +1465,8 @@ impl EditorView {
             }
             let timing = facts.timing.clone()?;
             let space = match self.add_space(&parent.layer_id) {
-                Some(Some(space)) => space,
-                Some(None) => return Err(TURNED_3D.to_owned()),
-                None => return Err(READING.to_owned()),
+                Some(ChildrenSpace::Map(space)) => space,
+                other => return Err(space_reason(other, false).unwrap_or(READING).to_owned()),
             };
             let slop = self.add_slop();
             let points = (start, end);
@@ -1455,7 +1478,15 @@ impl EditorView {
                 tool.aspect,
                 slop,
             )
-            .ok_or_else(|| SCALED_TO_ZERO.to_owned())?;
+            .ok_or_else(|| {
+                let file = matches!(tool.kind, NewKind::Image | NewKind::Video);
+                if file && tool.src.is_none() {
+                    NO_FILE
+                } else {
+                    SCALED_TO_ZERO
+                }
+                .to_owned()
+            })?;
             let new = match &self.add.component {
                 Some(component) => Addition::Component(component.element(&new)),
                 None => Addition::Element(new),
@@ -1516,12 +1547,10 @@ impl EditorView {
     pub(crate) fn take_add_answers(
         &mut self,
         generation: u64,
-        space: Option<(String, Option<[f64; 6]>)>,
+        space: Option<(String, ChildrenSpace)>,
         added: Option<(String, Option<String>)>,
     ) {
-        if space.is_some() {
-            self.add.space = space;
-        }
+        self.add.take_space(generation, space);
         let Some((pending, _)) = &self.add.pending else {
             return;
         };
@@ -1598,6 +1627,26 @@ impl EditorView {
 }
 
 impl AddState {
+    /// The space a frame of preview `generation` reported, if any: not one
+    /// from the code before the reload. A frame from the one asked for on
+    /// that comes without the asked group's space was replaced by a request
+    /// that did not ask for it (a lookup went stale meanwhile), so it is
+    /// asked for again.
+    fn take_space(&mut self, generation: u64, space: Option<(String, ChildrenSpace)>) {
+        if generation < self.space_from {
+            return;
+        }
+        if space.is_some() {
+            self.space = space;
+        }
+        if let Some((parent, at)) = &self.asked
+            && generation >= *at
+            && self.space.as_ref().is_none_or(|(id, _)| id != parent)
+        {
+            self.asked = None;
+        }
+    }
+
     /// The groups read for a lookup: the parent's space is asked for again,
     /// as the parent may be another group now.
     fn set_facts(&mut self, facts: ParentFacts) {
@@ -1645,7 +1694,9 @@ impl AddState {
     fn reload_applied(&mut self, sequence: u64, from: u64) {
         self.facts = None;
         self.wanted = None;
+        self.reloads = self.reloads.wrapping_add(1);
         self.space = None;
+        self.space_from = from;
         self.asked = None;
         if let Some((pending, after)) = &mut self.pending
             && sequence >= *after
@@ -2164,8 +2215,8 @@ mod tests {
                 lookup: ("g".to_owned(), report.clone(), 30),
                 groups: vec![],
             }),
-            wanted: Some(("g".to_owned(), report, 30)),
-            space: Some(("g".to_owned(), Some(IDENTITY))),
+            wanted: Some((("g".to_owned(), report, 30), 0)),
+            space: Some(("g".to_owned(), ChildrenSpace::Map(IDENTITY))),
             pending: Some((
                 PendingSelect {
                     position: pos("intro", 6),
@@ -2666,6 +2717,55 @@ mod tests {
     }
 
     #[test]
+    fn a_box_in_a_skewed_non_uniformly_scaled_parent() {
+        // Scaled 2 × 3 and skewed: the parent's x axis stays horizontal,
+        // its y axis leans right.
+        let space = [2.0, 0.0, 0.5, 3.0, 10.0, 20.0];
+        let (min, max) = (at(10.0, 20.0), at(60.0, 80.0));
+        let drag = (to_scene(space, min), to_scene(space, max));
+        assert_element(
+            drawn_geometry(NewKind::Rect, None, drag, space, None, SLOP),
+            NewElement::Rect {
+                x: 10.0,
+                y: 20.0,
+                width: 50.0,
+                height: 60.0,
+            },
+        );
+        // The outline is the parallelogram the box draws as.
+        assert_points(
+            &drawn_outline(NewKind::Rect, drag, space, None, SLOP),
+            &box_in_scene(space, min, max),
+        );
+
+        // Skewed on the other axis and mirrored: dragged from the box's
+        // greatest corner to its least.
+        let space = [-1.5, 0.25, 0.0, 0.5, 300.0, 40.0];
+        let drag = (to_scene(space, max), to_scene(space, min));
+        assert_element(
+            drawn_geometry(NewKind::Ellipse, None, drag, space, None, SLOP),
+            NewElement::Ellipse {
+                x: 10.0,
+                y: 20.0,
+                width: 50.0,
+                height: 60.0,
+            },
+        );
+        // A Circle's radius is measured in the parent's units, along the
+        // drag.
+        let edge = at(13.0, 24.0);
+        let circle = (to_scene(space, min), to_scene(space, at(13.0, 24.0)));
+        assert_element(
+            drawn_geometry(NewKind::Circle, None, circle, space, None, SLOP),
+            NewElement::Circle {
+                x: 10.0,
+                y: 20.0,
+                radius: (edge.x - min.x).hypot(edge.y - min.y),
+            },
+        );
+    }
+
+    #[test]
     fn a_circle_drags_from_its_center() {
         let space = turned();
         let center = to_scene(space, at(10.0, 20.0));
@@ -2853,26 +2953,71 @@ mod tests {
         // Playing: choosing an item pauses, which asks for it.
         assert_eq!(space_reason(None, true), None);
         for playing in [false, true] {
-            assert_eq!(space_reason(Some(Some(IDENTITY)), playing), None);
-            assert_eq!(space_reason(Some(None), playing), Some(TURNED_3D));
-            assert_eq!(
-                space_reason(Some(Some([0.0; 6])), playing),
-                Some(SCALED_TO_ZERO)
-            );
+            let reason = |space| space_reason(Some(space), playing);
+            assert_eq!(reason(ChildrenSpace::Map(IDENTITY)), None);
+            assert_eq!(reason(ChildrenSpace::Turned), Some(TURNED_3D));
+            assert_eq!(reason(ChildrenSpace::Map([0.0; 6])), Some(SCALED_TO_ZERO));
+            // Neither reads as a group turned in 3D any more.
+            assert_eq!(reason(ChildrenSpace::Absent), Some(NOT_IN_FRAME));
+            assert_eq!(reason(ChildrenSpace::Failed), Some(FRAME_FAILED));
         }
+    }
+
+    #[test]
+    fn an_answer_without_the_asked_space_asks_again() {
+        let asked = |generation| AddState {
+            space: None,
+            asked: Some(("g".to_owned(), generation)),
+            ..waiting_state()
+        };
+        let space = |id: &str| Some((id.to_owned(), ChildrenSpace::Map(IDENTITY)));
+
+        // An older frame's answer, or none: still on its way.
+        let mut state = asked(7);
+        state.take_space(6, None);
+        assert!(state.asked.is_some());
+        // The asked frame was replaced by one that did not ask (the same
+        // layer picked again while its lookup was stale).
+        state.take_space(8, None);
+        assert!(state.asked.is_none());
+        assert!(space_request_due(Some("g"), false, None));
+
+        // Another group's space: the asked one is still missing.
+        let mut state = asked(7);
+        state.take_space(7, space("h"));
+        assert!(state.asked.is_none());
+
+        // Answered, or failed to draw: reported, so nothing loops.
+        for answer in [space("g"), Some(("g".to_owned(), ChildrenSpace::Failed))] {
+            let mut state = asked(7);
+            state.take_space(7, answer);
+            assert!(state.space.is_some() && state.asked.is_some());
+        }
+    }
+
+    #[test]
+    fn a_space_from_before_the_reload_is_dropped() {
+        let mut state = waiting_state();
+        state.reload_applied(4, 21);
+        state.take_space(20, Some(("g".to_owned(), ChildrenSpace::Map(IDENTITY))));
+        assert!(state.space.is_none());
+        state.take_space(21, Some(("g".to_owned(), ChildrenSpace::Turned)));
+        assert_eq!(state.space, Some(("g".to_owned(), ChildrenSpace::Turned)));
+        // A read started before the reload names the reloads before it.
+        assert_eq!(state.reloads, 1);
     }
 
     #[test]
     fn a_reload_or_new_facts_ask_for_the_space_again() {
         let mut state = AddState {
-            asked: Some("g".to_owned()),
+            asked: Some(("g".to_owned(), 7)),
             ..waiting_state()
         };
         state.reload_applied(3, 20);
         assert!(state.asked.is_none());
 
         let mut landed = AddState {
-            asked: Some("g".to_owned()),
+            asked: Some(("g".to_owned(), 7)),
             ..waiting_state()
         };
         landed.set_facts(ParentFacts {

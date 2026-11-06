@@ -87,8 +87,11 @@ pub fn parent_space(scene: &Scene, id: &str) -> Option<[f64; 6]> {
     Some([space.a, space.b, space.c, space.d, space.tx, space.ty].map(f64::from))
 }
 
-/// Whether `transform`'s map is not an affine one: it turns in 3D or has a
-/// perspective.
+/// Whether `transform` is left out of the flat maps: it turns in 3D
+/// (`rotationX`, `rotationY`), or it has a perspective. A perspective
+/// without a 3D rotation still maps the plane affinely; it is left out on
+/// purpose, as a layer given one is set up to turn in 3D, and a map read
+/// from one frame of it would not hold once it does.
 fn turns_in_3d(transform: &EvaluatedTransform) -> bool {
     transform.rotation_x != 0.0 || transform.rotation_y != 0.0 || transform.perspective.is_some()
 }
@@ -480,6 +483,43 @@ mod tests {
             vec![group("g", EvaluatedTransform::default(), vec![leaf("a")])],
         )]);
         assert_eq!(parent_space(&scene_in_perspective, "g"), None);
+    }
+
+    #[test]
+    fn a_group_s_own_perspective_or_rotation_y_or_an_ancestor_s_rotation_x_has_none() {
+        let own = |transform| scene(vec![group("g", transform, vec![leaf("a")])]);
+        let perspective = EvaluatedTransform {
+            perspective: Some(800.0),
+            ..EvaluatedTransform::default()
+        };
+        assert_eq!(parent_space(&own(perspective), "g"), None);
+        let rotation_y = EvaluatedTransform {
+            rotation_y: 20.0,
+            ..EvaluatedTransform::default()
+        };
+        assert_eq!(parent_space(&own(rotation_y), "g"), None);
+        let rotation_x = EvaluatedTransform {
+            rotation_x: 15.0,
+            ..EvaluatedTransform::default()
+        };
+        let under_turned = scene(vec![group(
+            "outer",
+            rotation_x,
+            vec![group("g", EvaluatedTransform::default(), vec![leaf("a")])],
+        )]);
+        assert_eq!(parent_space(&under_turned, "g"), None);
+    }
+
+    #[test]
+    fn a_non_uniform_scale_scales_each_axis() {
+        let transform = EvaluatedTransform {
+            position: at(5.0, 7.0),
+            scale: at(2.0, 3.0),
+            ..EvaluatedTransform::default()
+        };
+        let scene = scene(vec![group("g", transform, vec![leaf("a")])]);
+        let space = parent_space(&scene, "g").expect("a children space");
+        assert_close(space, [2.0, 0.0, 0.0, 3.0, 5.0, 7.0]);
     }
 
     #[test]

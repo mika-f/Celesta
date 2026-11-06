@@ -75,6 +75,45 @@ pub(crate) struct PreviewRequest {
     pub(crate) reuse_scene: bool,
 }
 
+/// A group's children space as a frame reports it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ChildrenSpace {
+    /// The map from the group's children space to scene pixels (see
+    /// `parent_space`). It may collapse the plane (a group scaled to zero),
+    /// so it may have no inverse.
+    Map([f64; 6]),
+    /// The group or an ancestor turns in 3D or has a perspective.
+    Turned,
+    /// The frame has no group with that id.
+    Absent,
+    /// The frame's scene could not be evaluated.
+    Failed,
+}
+
+/// Group `id`'s children space in `scene`, or why it has none; `Failed`
+/// without a scene.
+pub(crate) fn children_space(scene: Result<&Scene, ()>, id: &str) -> ChildrenSpace {
+    let Ok(scene) = scene else {
+        return ChildrenSpace::Failed;
+    };
+    if let Some(space) = parent_space(scene, id) {
+        return ChildrenSpace::Map(space);
+    }
+    // As `parent_space` finds it: through groups' children, not their
+    // masks, whose layers are never picked.
+    fn is_group(layers: &[Layer], id: &str) -> bool {
+        layers.iter().any(|layer| match &layer.content {
+            LayerContent::Group { layers, .. } => layer.id == id || is_group(layers, id),
+            _ => false,
+        })
+    }
+    if is_group(&scene.layers, id) {
+        ChildrenSpace::Turned
+    } else {
+        ChildrenSpace::Absent
+    }
+}
+
 /// Where an element was just written: as the last child of the group layer
 /// `parent`, inside a `<Sequence>` of its own when `wrapped`.
 #[derive(Clone, Debug, PartialEq)]
@@ -306,12 +345,9 @@ pub(crate) struct PreviewResult {
     /// when the layer is absent or has no affine frame (see `layer_frame`).
     /// `None` when nothing was measured.
     pub(crate) layer_frame: Option<(String, Option<LayerFrame>)>,
-    /// The request's `space_of` and the map from that group's children space
-    /// to scene pixels (see `parent_space`): `None` inside when the frame has
-    /// no such group or it turns in 3D. The map may collapse the plane (a
-    /// group scaled to zero), so it may have no inverse. `None` when nothing
-    /// was asked.
-    pub(crate) parent_space: Option<(String, Option<[f64; 6]>)>,
+    /// The request's `space_of` and that group's children space in this
+    /// frame (see [`ChildrenSpace`]). `None` when nothing was asked.
+    pub(crate) parent_space: Option<(String, ChildrenSpace)>,
     /// The request's `added_under` parent and the layer `added_layer` found
     /// under it: `None` inside when there is none. `None` when nothing was
     /// asked.
@@ -611,10 +647,7 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
             (id, measured)
         });
         let children_space = request.space_of.filter(|_| whole_scene).map(|id| {
-            let space = drawn
-                .as_ref()
-                .ok()
-                .and_then(|scene| parent_space(scene, &id));
+            let space = children_space(drawn.as_ref().map(|scene| *scene).map_err(|_| ()), &id);
             (id, space)
         });
         let added = request.added_under.filter(|_| whole_scene).map(|under| {
@@ -1066,8 +1099,9 @@ mod tests {
     }
 
     /// Two instances of a `.map()` under the root group, the second with the
-    /// explicit id `card`; each takes a mask (the group's child 0) and three
-    /// children, the last of `card`'s being `last`.
+    /// explicit id `card`; each takes a mask, written as its first JSX
+    /// child (so the mask's layer ids run under `.0`), and three children,
+    /// the last of `card`'s being `last`.
     fn two_instances(last: Layer) -> Scene {
         scene_of(vec![group(
             "0",
@@ -1117,6 +1151,44 @@ mod tests {
         // A last child that is not a group holds nothing it wrapped.
         let unwrapped = two_instances(leaf("0.1.3"));
         assert_eq!(added_layer(&unwrapped, &under("card", true)), None);
+    }
+
+    #[test]
+    fn an_empty_parent_or_wrapper_adds_nothing() {
+        let scene = scene_of(vec![group("g", vec![], None)]);
+        assert_eq!(added_layer(&scene, &under("g", false)), None);
+        let scene = scene_of(vec![group("g", vec![group("g.0", vec![], None)], None)]);
+        assert_eq!(added_layer(&scene, &under("g", true)), None);
+    }
+
+    #[test]
+    fn children_space_says_why_there_is_none() {
+        let turned = Layer {
+            transform: EvaluatedTransform {
+                rotation_x: 30.0,
+                ..leaf("t").transform
+            },
+            ..group("t", vec![], None)
+        };
+        let scene = scene_of(vec![group(
+            "g",
+            vec![turned, leaf("r")],
+            Some(vec![group("m", vec![], None)]),
+        )]);
+        assert!(matches!(
+            children_space(Ok(&scene), "g"),
+            ChildrenSpace::Map(_)
+        ));
+        assert_eq!(children_space(Ok(&scene), "t"), ChildrenSpace::Turned);
+        // Not a group, not there, or only in a mask.
+        for id in ["r", "gone", "m"] {
+            assert_eq!(
+                children_space(Ok(&scene), id),
+                ChildrenSpace::Absent,
+                "{id}"
+            );
+        }
+        assert_eq!(children_space(Err(()), "g"), ChildrenSpace::Failed);
     }
 
     #[test]
