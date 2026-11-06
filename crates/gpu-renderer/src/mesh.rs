@@ -116,8 +116,9 @@ impl MeshState {
     /// renders and drops what Celesta held for them, as a render ends, also
     /// one that failed part way: their textures and buffers, and the draw
     /// pipelines no model still loaded uses. Compiled shaders stay in
-    /// `ScenePipelines`' cache, which is bounded by `MAX_CACHED_SHADERS`,
-    /// so a model opened again is not compiled again. A model is opened
+    /// `ScenePipelines`' cache, so a model opened again is not compiled
+    /// again; that cache drops the shaders no loaded model holds once it
+    /// reaches `MAX_CACHED_SHADERS`, a soft threshold. A model is opened
     /// again when a layer draws it later.
     pub(crate) fn close_idle_models(&mut self) {
         let renders = self.renders;

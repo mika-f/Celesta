@@ -64,8 +64,11 @@ in how long it keeps plugin models open.
   was a scene, `ScenePipelines::drop_unused_pipelines` then drops the draw
   pipelines no loaded model holds, so an idle renderer does not keep them
   until the next load fills the cache. Compiled shaders, and the refusals
-  kept with them, stay in the shader cache (bounded by
-  `MAX_CACHED_SHADERS`), so a model opened again is not compiled again.
+  kept with them, stay in the shader cache, so a model opened again is not
+  compiled again. They are dropped when compiling a shader finds the cache
+  at `MAX_CACHED_SHADERS`, a soft threshold: shaders that loaded models
+  hold are kept, so several loaded models can take the cache past it (see
+  `2026-11-03-plugin-scene-materials.md`).
 - 300 renders is about five seconds of playback or export at 60 fps (ten
   at 30). Scene canvases are evicted after one render, but reopening a model
   means the plugin reads and parses its file again (a VRM avatar can take a
