@@ -78,19 +78,39 @@ fn normalized(path: &Path) -> PathBuf {
 }
 
 /// The files an import of `base` (a relative specifier joined to the
-/// importing file's folder) may name, in the order they are tried.
+/// importing file's folder) may name, in the order they are tried. With a
+/// module extension that is `base` itself, then for `.js`, `.jsx`, `.mjs`
+/// and `.cjs` the TypeScript file it compiles from, as TypeScript and
+/// esbuild resolve it; without one, `base.ts`, `base.tsx` and the folder's
+/// `index.ts` and `index.tsx`.
 fn module_files(base: &Path) -> Vec<PathBuf> {
-    let with = |suffix: &str| {
-        let mut path = base.as_os_str().to_owned();
-        path.push(suffix);
-        PathBuf::from(path)
+    let sources: &[&str] = match base.extension().and_then(OsStr::to_str) {
+        Some("ts" | "tsx" | "mts" | "cts") => &[],
+        Some("js") => &["ts", "tsx"],
+        Some("jsx") => &["tsx"],
+        Some("mjs") => &["mts"],
+        Some("cjs") => &["cts"],
+        _ => {
+            let with = |suffix: &str| {
+                let mut path = base.as_os_str().to_owned();
+                path.push(suffix);
+                PathBuf::from(path)
+            };
+            return vec![
+                with(".ts"),
+                with(".tsx"),
+                base.join("index.ts"),
+                base.join("index.tsx"),
+            ];
+        }
     };
-    vec![
-        with(".ts"),
-        with(".tsx"),
-        base.join("index.ts"),
-        base.join("index.tsx"),
-    ]
+    std::iter::once(base.to_owned())
+        .chain(
+            sources
+                .iter()
+                .map(|extension| base.with_extension(extension)),
+        )
+        .collect()
 }
 
 /// Whether the composition's length is the list's `durationInFrames` (same
@@ -713,6 +733,20 @@ mod tests {
         // A package.
         let package = film("import { SCENES } from 'scenes';", duration);
         assert!(!follows(&package, timeline, "SCENES", &|_: &Path| true));
+        // With its extension, as the examples import.
+        let explicit = film("import { SCENES } from './timeline.tsx';", duration);
+        assert!(follows(&explicit, timeline, "SCENES", &only_timeline));
+        // `.js` names the `.ts` or `.tsx` file it compiles to, `.mjs` the `.mts`.
+        let compiled = film("import { SCENES } from './timeline.js';", duration);
+        assert!(follows(&compiled, timeline, "SCENES", &only_timeline));
+        let module = Path::new("/p/timeline.mts");
+        let mjs = film("import { SCENES } from './timeline.mjs';", duration);
+        assert!(follows(&mjs, module, "SCENES", &|path: &Path| path == module));
+        // A `.js` file of that name comes first.
+        let js = Path::new("/p/timeline.js");
+        let both = |path: &Path| path == js || only_timeline(path);
+        assert!(!follows(&compiled, timeline, "SCENES", &both));
+        assert!(follows(&compiled, js, "SCENES", &both));
     }
 
     #[test]
