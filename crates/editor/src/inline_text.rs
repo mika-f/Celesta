@@ -8,7 +8,7 @@
 //! indices past a layout's text (a layout lagging its edit) are clamped to
 //! it.
 
-use celesta_composition::{Point, TextAlign};
+use celesta_composition::{Matrix3, Point, TextAlign, invert3, multiply3, project};
 use celesta_gpu_renderer::{GlyphMetrics, TextLayout};
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
@@ -601,10 +601,10 @@ pub(crate) fn layout_size(layout: &TextLayout) -> (f64, f64) {
 /// `lines · line_height`) onto `HitRegion::text_box`, and back.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TextMap {
-    /// Row-major: a scene point's `[x, y, w]` is this times a layout
-    /// point's `[x, y, 1]`.
-    forward: [f64; 9],
-    inverse: [f64; 9],
+    /// A scene point's `[x, y, w]` is this times a layout point's
+    /// `[x, y, 1]`.
+    forward: Matrix3,
+    inverse: Matrix3,
     /// The layout rectangle it was fitted for.
     size: (f64, f64),
 }
@@ -618,9 +618,13 @@ impl TextMap {
         if !sized(width) || !sized(height) || !convex(text_box) {
             return Err(EDGE_ON.to_owned());
         }
-        let scale = [1.0 / width, 0.0, 0.0, 0.0, 1.0 / height, 0.0, 0.0, 0.0, 1.0];
-        let forward = multiply(square_to(text_box), scale);
-        let inverse = invert(forward).ok_or_else(|| EDGE_ON.to_owned())?;
+        let scale = [
+            [1.0 / width, 0.0, 0.0],
+            [0.0, 1.0 / height, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+        let forward = multiply3(&square_to(text_box), &scale);
+        let inverse = invert3(&forward).ok_or_else(|| EDGE_ON.to_owned())?;
         Ok(Self {
             forward,
             inverse,
@@ -636,17 +640,17 @@ impl TextMap {
     }
 
     pub(crate) fn to_scene(&self, layout_point: Point) -> Point {
-        let [x, y, w] = apply(&self.forward, layout_point);
-        Point { x: x / w, y: y / w }
+        let [x, y, _] = project(&self.forward, layout_point.x, layout_point.y);
+        Point { x, y }
     }
 
     /// `None` for a point no point of the text's plane is drawn at: one
     /// beyond its horizon.
     pub(crate) fn to_layout(&self, scene: Point) -> Option<Point> {
-        let [x, y, w] = apply(&self.inverse, scene);
-        let point = Point { x: x / w, y: y / w };
+        let [x, y, _] = project(&self.inverse, scene.x, scene.y);
+        let point = Point { x, y };
         // The plane is in front of the viewer where `w` is positive.
-        let [_, _, depth] = apply(&self.forward, point);
+        let [_, _, depth] = project(&self.forward, x, y);
         (point.x.is_finite() && point.y.is_finite() && depth > 0.0).then_some(point)
     }
 }
@@ -668,7 +672,7 @@ pub(crate) fn convex(quad: [Point; 4]) -> bool {
 
 /// The homography taking the unit square's corners (0, 0), (1, 0), (1, 1),
 /// (0, 1) to `quad`'s (Heckbert, "Fundamentals of Texture Mapping").
-fn square_to(quad: [Point; 4]) -> [f64; 9] {
+fn square_to(quad: [Point; 4]) -> Matrix3 {
     let [p0, p1, p2, p3] = quad;
     let (sx, sy) = (p0.x - p1.x + p2.x - p3.x, p0.y - p1.y + p2.y - p3.y);
     let (dx1, dx2) = (p1.x - p2.x, p3.x - p2.x);
@@ -681,51 +685,9 @@ fn square_to(quad: [Point; 4]) -> [f64; 9] {
         ((sx * dy2 - dx2 * sy) / det, (dx1 * sy - sx * dy1) / det)
     };
     [
-        p1.x - p0.x + g * p1.x,
-        p3.x - p0.x + h * p3.x,
-        p0.x,
-        p1.y - p0.y + g * p1.y,
-        p3.y - p0.y + h * p3.y,
-        p0.y,
-        g,
-        h,
-        1.0,
-    ]
-}
-
-fn multiply(a: [f64; 9], b: [f64; 9]) -> [f64; 9] {
-    std::array::from_fn(|i| {
-        let (row, column) = (i / 3, i % 3);
-        (0..3).map(|k| a[row * 3 + k] * b[k * 3 + column]).sum()
-    })
-}
-
-fn invert(m: [f64; 9]) -> Option<[f64; 9]> {
-    let [a, b, c, d, e, f, g, h, i] = m;
-    let (ea, eb, ec) = (e * i - f * h, f * g - d * i, d * h - e * g);
-    let det = a * ea + b * eb + c * ec;
-    if det == 0.0 || !det.is_finite() {
-        return None;
-    }
-    let adjugate = [
-        ea,
-        c * h - b * i,
-        b * f - c * e,
-        eb,
-        a * i - c * g,
-        c * d - a * f,
-        ec,
-        b * g - a * h,
-        a * e - b * d,
-    ];
-    Some(adjugate.map(|value| value / det))
-}
-
-fn apply(m: &[f64; 9], p: Point) -> [f64; 3] {
-    [
-        m[0] * p.x + m[1] * p.y + m[2],
-        m[3] * p.x + m[4] * p.y + m[5],
-        m[6] * p.x + m[7] * p.y + m[8],
+        [p1.x - p0.x + g * p1.x, p3.x - p0.x + h * p3.x, p0.x],
+        [p1.y - p0.y + g * p1.y, p3.y - p0.y + h * p3.y, p0.y],
+        [g, h, 1.0],
     ]
 }
 
