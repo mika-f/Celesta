@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::Engine;
 use celesta_exporter::{ExportedFile, StillFormat};
-use image::{ImageFormat, ImageReader};
+use celesta_renderer::resample::{Coverage, box_downscale};
+use image::codecs::png::PngEncoder;
+use image::{ExtendedColorType, ImageEncoder, ImageFormat, ImageReader};
 use rmcp::model::ContentBlock;
 
 /// Most frames one `render_frames` call returns as images; the rest are
@@ -119,40 +121,20 @@ fn inline_image(path: &Path) -> io::Result<InlineImage> {
         .max(1) as u32
     };
     let (small_width, small_height) = (scaled(width), scaled(height));
-    // The source pixels target pixel `i` of `small` covers out of `large`.
-    let span = |i: u32, small: u32, large: u32| {
-        let start = (u64::from(i) * u64::from(large) / u64::from(small)) as u32;
-        let end = (u64::from(i + 1) * u64::from(large) / u64::from(small)) as u32;
-        start..end.max(start + 1).min(large)
-    };
-    let mut small = Vec::with_capacity((small_width * small_height * 4) as usize);
-    for y in 0..small_height {
-        for x in 0..small_width {
-            // Average the source pixels this one covers.
-            let mut sum = [0u32; 4];
-            let mut count = 0;
-            for sy in span(y, small_height, height) {
-                for sx in span(x, small_width, width) {
-                    let at = ((sy * width + sx) * 4) as usize;
-                    for (channel, total) in sum.iter_mut().enumerate() {
-                        *total += u32::from(pixels[at + channel]);
-                    }
-                    count += 1;
-                }
-            }
-            small.extend(sum.map(|total| ((total + count / 2) / count) as u8));
-        }
-    }
+    // Straight averages, as before the box filter was shared: frames are
+    // normally opaque, where this matches `Coverage::Alpha` byte for byte.
+    let small = box_downscale(
+        width,
+        height,
+        &pixels,
+        small_width,
+        small_height,
+        Coverage::Straight,
+    );
     let mut encoded = Vec::new();
-    let mut encoder = png::Encoder::new(&mut encoded, small_width, small_height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let encode = |error: png::EncodingError| io::Error::other(error);
-    encoder
-        .write_header()
-        .map_err(encode)?
-        .write_image_data(&small)
-        .map_err(encode)?;
+    PngEncoder::new(&mut encoded)
+        .write_image(&small, small_width, small_height, ExtendedColorType::Rgba8)
+        .map_err(io::Error::other)?;
     Ok(InlineImage {
         bytes: encoded,
         mime_type: "image/png",
@@ -165,17 +147,11 @@ mod tests {
     use super::*;
 
     fn write_png(path: &std::path::Path, width: u32, height: u32) {
-        let mut encoder = png::Encoder::new(std::fs::File::create(path).unwrap(), width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let pixels: Vec<u8> = (0..width * height)
-            .flat_map(|i| [(i % 256) as u8, 0x40, 0x80, 0xff])
-            .collect();
-        encoder
-            .write_header()
-            .unwrap()
-            .write_image_data(&pixels)
-            .unwrap();
+        image::RgbaImage::from_fn(width, height, |x, y| {
+            image::Rgba([((y * width + x) % 256) as u8, 0x40, 0x80, 0xff])
+        })
+        .save(path)
+        .unwrap();
     }
 
     /// A JPEG or WebP (by `path`'s extension) of the same pattern as
@@ -197,10 +173,9 @@ mod tests {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&image.data)
             .unwrap();
-        let reader = png::Decoder::new(std::io::Cursor::new(bytes))
-            .read_info()
-            .unwrap();
-        (reader.info().width, reader.info().height)
+        ImageReader::with_format(std::io::Cursor::new(bytes), ImageFormat::Png)
+            .into_dimensions()
+            .unwrap()
     }
 
     #[test]
@@ -219,11 +194,7 @@ mod tests {
             "{width}×{height}"
         );
         assert_eq!((width, height), (1568, 882));
-        let on_disk =
-            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(&path).unwrap()))
-                .read_info()
-                .unwrap();
-        assert_eq!(on_disk.info().width, 3200);
+        assert_eq!(image::image_dimensions(&path).unwrap(), (3200, 1800));
     }
 
     #[test]

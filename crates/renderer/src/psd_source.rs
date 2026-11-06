@@ -10,7 +10,8 @@
 use super::{
     Color, RenderError,
     composite::{blend, blend_mixed, psd_blend},
-    image_source::{fit_within, resize_rgba},
+    image_source::fit_within,
+    resample::{Coverage, average_block, resize_rgba},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -458,30 +459,16 @@ fn reduce_layer(psd: &psd::Psd, layer: &psd::PsdLayer, level: u32) -> LayerRaste
         let source_rows = y * factor..((y + 1) * factor).min(canvas_height);
         for x in left..right {
             let source_columns = x * factor..((x + 1) * factor).min(canvas_width);
-            // Averaged with premultiplied alpha, so transparent pixels do not
-            // darken the edges.
-            let mut sums = [0_u64; 4];
-            for source_y in source_rows.clone() {
-                let row = source_y as usize * canvas_width as usize;
-                for source_x in source_columns.clone() {
-                    let offset = (row + source_x as usize) * 4;
-                    let alpha = u64::from(rgba[offset + 3]);
-                    for channel in 0..3 {
-                        sums[channel] += u64::from(rgba[offset + channel]) * alpha;
-                    }
-                    sums[3] += alpha;
-                }
-            }
-            let count = (source_rows.len() * source_columns.len()) as u64;
-            let alpha = sums[3];
-            if alpha == 0 {
-                pixels.extend_from_slice(&[0, 0, 0, 0]);
-                continue;
-            }
-            for sum in &sums[..3] {
-                pixels.push(((sum + alpha / 2) / alpha) as u8);
-            }
-            pixels.push(((alpha + count / 2) / count) as u8);
+            // Weighted by alpha, so transparent pixels do not darken the
+            // edges. Blocks stay aligned to the canvas, so the last ones at an
+            // odd edge are smaller rather than folded into their neighbours.
+            pixels.extend(average_block(
+                &rgba,
+                canvas_width,
+                source_rows.clone(),
+                source_columns,
+                Coverage::Alpha,
+            ));
         }
     }
     LayerRaster {

@@ -20,8 +20,9 @@ use celesta_composition::{
     BackfaceVisibility, BlendMode, Clip, ImageAnimation, ImageFit, InstanceShape, Layer,
     LayerContent, Matrix3, Point, ResolvedAsset, Scene, faces_away, multiply3, multiply3_flat,
 };
-use celesta_renderer::image_source::{display_size, fit_within, resize_rgba};
+use celesta_renderer::image_source::{display_size, fit_within};
 use celesta_renderer::psd_source::PsdSize;
+use celesta_renderer::resample::resize_rgba;
 use celesta_renderer::{
     Color as CpuColor, FlattenedPath, flatten_path, parse_color, rasterize_path, resolve_rect_paint,
 };
