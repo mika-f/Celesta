@@ -38,6 +38,8 @@ React コンポジションは自動で再読み込みされます。**File → 
 
 Celesta でコンポジションを開き、**File → Set Up TypeScript** を選びます。`tsconfig.json` が `./.celesta/tsconfig.json` を継承しているか確認します。ソースビルドの場合はランタイムのインストール・型生成・ビルドも済ませてください。
 
+コンポジションが `src/` などのサブフォルダーにあり、`.celesta/` がその上のフォルダーにある場合、そのフォルダーをプロジェクトのルートにするには `celesta.config.json` が必要です。**File → Set Up TypeScript in Folder…** でそのフォルダーを選ぶと、Celesta がファイルを置いて `.celesta/` を更新します。
+
 :::
 :::toggle[MP4 の書き出しが始まらない]
 

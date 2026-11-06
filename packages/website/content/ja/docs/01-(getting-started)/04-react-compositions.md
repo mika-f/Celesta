@@ -48,7 +48,9 @@ node skills/celesta/scripts/inspect.mjs film.tsx --composition portrait --json
 
 React コンポジションを開き、**File → Set Up TypeScript** を選びます。Celesta がすべての `@celesta.studio/*` パッケージ、React、Node.js の対応する型宣言をローカルの `.celesta/` ディレクトリにコピーします。
 
-まだコンポジションがない新規プロジェクトでは、**File → Set Up TypeScript in Folder…** でフォルダを選ぶと、最初から型を使って書けます。
+`.celesta/` と `tsconfig.json` は、プロジェクトのルートに置きます。ルートは、コンポジションのあるフォルダーから上にたどって最も近い、`celesta.config.json` があるフォルダーです。なければコンポジションのあるフォルダーです。上のフォルダーにある `package.json` や `tsconfig.json` は見ないので、プロジェクトの外に書き込むことはありません。`--init` や **Create New Project** で作ったプロジェクトには、コンポジションの隣に `celesta.config.json` がすでにあります。
+
+まだコンポジションがない新規プロジェクトや、コンポジションを `src/` などのサブフォルダーに置くプロジェクトでは、**File → Set Up TypeScript in Folder…** でプロジェクトのフォルダーを選びます。Celesta はそこに型を用意し、`celesta.config.json` がなければ空のものを置きます。これで、サブフォルダーにあるコンポジションもそのフォルダーをルートにします。このような形のプロジェクトで、以前のバージョンでプロジェクトのフォルダーに TypeScript を設定していた場合は、一度これを実行すると、その `.celesta/` がまた更新されるようになります。
 
 `tsconfig.json` がなければ Celesta が作成します。既存の設定がある場合は、ほかの設定を残して以下の `extends` を追加します。
 

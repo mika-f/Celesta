@@ -48,7 +48,9 @@ Both JSON outputs include `compositionId` and `compositions` (the inspector plac
 
 With a React composition open, choose **File → Set Up TypeScript**. Celesta copies matching declarations for every `@celesta.studio/*` package, React, and Node.js into a local `.celesta/` directory.
 
-Starting a new project with no composition yet? Choose **File → Set Up TypeScript in Folder…** and pick the project folder, so your first component is written with types in place.
+Celesta puts `.celesta/` and `tsconfig.json` in the project root: the nearest folder, from the composition's own up, that holds `celesta.config.json`, or else the composition's own folder. A `package.json` or `tsconfig.json` in a folder above does not count, so Celesta never writes outside the project. Projects created with `--init` or **Create New Project** already have `celesta.config.json` beside the composition.
+
+Starting a new project with no composition yet, or keeping the composition in a subfolder such as `src/`? Choose **File → Set Up TypeScript in Folder…** and pick the project folder. Celesta sets up types there and adds an empty `celesta.config.json` if the folder has none, so compositions in its subfolders use it as their root. If you set up TypeScript in the project folder of such a project with an earlier version, do this once so Celesta keeps refreshing that `.celesta/`.
 
 If there is no `tsconfig.json`, Celesta creates one. If you already have a configuration, add this `extends` property while preserving your other settings:
 
