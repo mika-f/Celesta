@@ -914,6 +914,7 @@ fn a_grip_the_kept_scope_would_refuse_is_locked_before_the_press() {
         shared: Ok(()),
         shared_reaches: vec!["Intro".to_owned()],
         sets_own: vec!["Price".to_owned()],
+        own_pending: false,
         called_here: None,
         drawn_alone: true,
     });
@@ -950,6 +951,7 @@ fn set_timing_offer_follows_the_scope() {
         shared: Ok(()),
         shared_reaches: vec!["Intro".to_owned(), "Price".to_owned()],
         sets_own: Vec::new(),
+        own_pending: false,
         called_here: None,
         drawn_alone: false,
     });

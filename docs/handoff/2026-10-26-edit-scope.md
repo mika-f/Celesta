@@ -326,10 +326,11 @@ amended to match.
   (`docs/handoff/2026-10-31-instance-overrides.md`).
 - Resolving `E` as one instance costs a second resolution (every parse
   again) for a repeated element in a component, also on every commit's
-  re-resolve.
+  re-resolve. Kept, with the reason (`docs/handoff/2026-11-07-edit-scope-gaps.md`).
 - A remembered choice switched while a drag runs: the release is gated and
   written on the targets of the drag's scope, but its handles were those of
-  the targets shown at its start.
+  the targets shown at its start. Verified not a gap: a drag starts only
+  when those are the same targets (`docs/handoff/2026-11-07-edit-scope-gaps.md`).
 - A refused inline text edit ended by a selection change, a seek, play, or a
   project command loses its text. It needs a scan landing or a lock appearing
   during the edit. After a refused blur the person may have to click back into
@@ -339,10 +340,12 @@ amended to match.
   text reverts, and the refusal shows at the top-left of the preview.
 - Until the background job reads the scene calls, the line leaves out the
   scenes that set their own, and "Every scene sets `rectWidth` itself" can't
-  fire yet.
+  fire yet. Fixed: the line says "Checking which scenes set their own…"
+  until then (`docs/handoff/2026-11-07-edit-scope-gaps.md`).
 - A row passed at the call is written at `S` while the index can't answer,
   as without the choice.
 - Anonymous and lowercase components count as not shared (no control).
+  Kept, with the reason (`docs/handoff/2026-11-07-edit-scope-gaps.md`).
 - With every row passing through, the timeline bands under "Shared value"
   are approximate: `Except` drops the calls that pass any parameter the
   element's rows read, per element, not per row being edited.
@@ -352,7 +355,8 @@ amended to match.
 - `current_calls` accepts an instance whose call couldn't be read (`None`)
   and doesn't retry until the index generation changes.
 - With the Size tool chosen and the size handles hidden by the scope, the
-  toggle's warning (`resize_note`) says nothing about why.
+  toggle's warning (`resize_note`) says nothing about why. Fixed: it names
+  the refused size prop and the refusal (`docs/handoff/2026-11-07-edit-scope-gaps.md`).
 - An edit outside the editor (and the manual Reload) forgets every scope
   choice, not only those in the files it changed: the reload watcher knows
   only that some file did. Loading another composition forgets none.
@@ -368,6 +372,8 @@ amended to match.
 - A pass-through whose value at `S` is locked for another reason than an
   expression (`OverriddenByParent`, say) counts as this scene's own value
   under "Shared value" too: anything but an absent attribute at `S` does.
+  Fixed: an `OverriddenByParent` counts only when `S` writes the attribute
+  (`docs/handoff/2026-11-07-edit-scope-gaps.md`).
 - The scope tabs copy the tool row's toggle look (`mode_toggle` in
   `viewer.rs` is private, with fixed 58 px tabs and no disabled or preview
   state); one tabs widget shared by the scope control and the tool row is

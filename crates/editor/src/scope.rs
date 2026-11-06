@@ -233,6 +233,10 @@ pub(crate) struct ScopeOptions {
     /// The scenes whose calls set their own value for a parameter the
     /// element's rows read.
     pub(crate) sets_own: Vec<String>,
+    /// The rows read a parameter and the scene calls are not read yet:
+    /// `shared_reaches` then holds every scene, those that set their own
+    /// too, and `sets_own` none.
+    pub(crate) own_pending: bool,
     /// When the current scene calls `C` more than once: "This scene" then
     /// writes the selected instance's call `S` only, the other calls
     /// keeping their values. `None` without chapters.
@@ -529,6 +533,7 @@ fn options_over(
         shared: row_lock(Scope::Shared, targets, calls),
         shared_reaches: scenes(false),
         sets_own: scenes(true),
+        own_pending: calls.is_none() && !params.is_empty(),
         called_here: (times > 1).then(|| CalledHere {
             component: component.to_owned(),
             times,
@@ -898,6 +903,10 @@ pub(crate) fn commit_scope(remembered: Option<Scope>, shown: &ScopeState) -> Opt
     }
 }
 
+/// The line while the scene calls are read: until then the scenes that
+/// set their own can't be told from those the shared value reaches.
+const OWN_PENDING: &str = "Checking which scenes set their own…";
+
 /// More scenes than this are counted instead of named.
 const NAMED_SCENES: usize = 3;
 
@@ -913,7 +922,8 @@ fn scenes_label(scenes: &[String]) -> String {
 /// or previewed) in a scene calling `C` more than once, that it edits the
 /// selected instance's call only; else the reason a locked option (the
 /// `chosen` one first) is disabled; otherwise the scenes the shared value
-/// reaches and those that set their own.
+/// reaches and those that set their own, once the scene calls tell them
+/// apart.
 pub(crate) fn scope_line(options: &ScopeOptions, chosen: Option<Scope>) -> String {
     if let (Some(Scope::ThisScene), Ok(()), Some(called)) =
         (chosen, &options.this_scene, &options.called_here)
@@ -929,6 +939,9 @@ pub(crate) fn scope_line(options: &ScopeOptions, chosen: Option<Scope>) -> Strin
         .find_map(|scope| options.option(scope).as_ref().err());
     if let Some(lock) = locked {
         return lock.text();
+    }
+    if options.own_pending {
+        return OWN_PENDING.to_owned();
     }
     let reach = match (&options.shared_reaches[..], &options.sets_own[..]) {
         ([], []) => "Shared value is used everywhere".to_owned(),
@@ -1061,7 +1074,7 @@ fn shared_default(
     at_call: &EditTarget,
     calls: Option<&SceneCalls>,
 ) -> ScopedRow {
-    let own = !matches!(at_call, EditTarget::Missing { .. });
+    let own = sets_own_value(targets, param, at_call);
     let sets_own = || {
         ScopedRow::Locked(ScopeLock::SetsOwn {
             param: param.to_owned(),
@@ -1093,6 +1106,23 @@ fn shared_default(
         None => ScopedRow::Locked(ScopeLock::DefaultNotFound {
             param: param.to_owned(),
         }),
+    }
+}
+
+/// Whether this scene sets its own value of parameter `param`, which `S`
+/// passes as `at_call`: anything but an absent attribute does (an
+/// expression, a spread that may hold it), except a value the runtime saw
+/// differ from what is written (`OverriddenByParent`), which counts only
+/// when `S` writes the attribute; left out, the parameter's default is what
+/// something above overrode, and no attribute at `S` could be removed.
+fn sets_own_value(targets: &ElementTargets, param: &str, at_call: &EditTarget) -> bool {
+    match at_call {
+        EditTarget::Missing { .. } => false,
+        EditTarget::Locked(LockReason::OverriddenByParent) => targets
+            .component
+            .as_ref()
+            .is_some_and(|component| component.written.iter().any(|written| written == param)),
+        _ => true,
     }
 }
 

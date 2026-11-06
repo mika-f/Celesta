@@ -2045,6 +2045,7 @@ mod tests {
             shared,
             shared_reaches: vec![],
             sets_own: vec![],
+            own_pending: false,
             called_here: None,
             drawn_alone: false,
         };

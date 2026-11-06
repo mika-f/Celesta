@@ -623,9 +623,11 @@ fn resolve_with(
         };
         // The call's children are not listed: they are the component's
         // content, not a value (a `children` attribute among them too).
-        let props = written_attributes(&site.text, &site.call)
-            .into_iter()
-            .filter(|name| name != "children" && !passed.contains(&name.as_str()))
+        let written = written_attributes(&site.text, &site.call);
+        let props = written
+            .iter()
+            .filter(|name| *name != "children" && !passed.contains(&name.as_str()))
+            .cloned()
             .map(|name| {
                 let target = resolve_call_site_prop(&site.text, &site.call, &name, &ctx);
                 let kind = literal_kind(&target);
@@ -649,6 +651,7 @@ fn resolve_with(
             call_site: SourcePos::from(site.entry),
             call: site.call,
             props,
+            written,
             schema: None,
         }
     });
