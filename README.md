@@ -103,7 +103,7 @@ git clone https://github.com/mika-f/Celesta.git celesta
 cd celesta
 pnpm install
 pnpm run build:runtime
-node scripts/plugins/build.mjs plugins/ffmpeg
+node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx
 ```

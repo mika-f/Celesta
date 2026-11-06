@@ -120,7 +120,7 @@ cargo test -p celesta-project -p celesta-composition --features codegen
 pnpm --filter @celesta.studio/react... build
 python3 examples/reel/make-music.py
 PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@8/lib/pkgconfig \
-  node scripts/plugins/build.mjs plugins/ffmpeg
+  node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release -p celesta-react-bridge --example audio-bench
 target/release/examples/audio-bench examples/reel/film.tsx 7

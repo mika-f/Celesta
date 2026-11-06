@@ -15,8 +15,8 @@ The manifest, the protocol, and how Celesta draws meshes are described in
 
 ```sh
 pnpm install && pnpm run build:runtime   # once, at the repository root
-node scripts/plugins/build.mjs examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
-node scripts/plugins/build.mjs plugins/ffmpeg   # the codec plugin, which writes the MP4
+node scripts/plugins/build.mts examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
+node scripts/plugins/build.mts plugins/ffmpeg   # the codec plugin, which writes the MP4
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/beep-voice/demo.tsx beep.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
@@ -27,7 +27,7 @@ Building the codec plugin needs the FFmpeg development libraries, as in
 With `CELESTA_PLUGIN_PATH` already naming `plugins/dist`, the second
 `--plugin-dir` can be left out.
 
-The repository's plugin build script, `scripts/plugins/build.mjs`, takes
+The repository's plugin build script, `scripts/plugins/build.mts`, takes
 the plugin directories to build (one, or several) and writes one plugin
 directory for each under `dist/` beside them:
 
@@ -65,7 +65,7 @@ celesta-plugin = { path = "/path/to/celesta/crates/plugin" }
 ```
 
 Build it with the checkout's script,
-`node /path/to/celesta/scripts/plugins/build.mjs <its folder>`. The script
+`node /path/to/celesta/scripts/plugins/build.mts <its folder>`. The script
 runs Cargo in the plugin's own folder, so its `.cargo/config.toml` applies,
 and takes the runtime's declarations, `tsc`, and `esbuild` from the
 checkout's `packages/cli`.

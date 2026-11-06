@@ -81,7 +81,7 @@ Celesta's own executables link no FFmpeg. FFmpeg is linked statically into the
 codec plugin's program, `plugins\ffmpeg\bin\windows-x86_64\celesta-codec-ffmpeg.exe`,
 which gets its own copies of the MSVC runtime DLLs beside it and carries the
 GPL text and source offer in `plugins\ffmpeg\licenses`. The shared plugin build
-script (`scripts/plugins/build.mjs`) builds `plugins/ffmpeg` in the plugins
+script (`scripts/plugins/build.mts`) builds `plugins/ffmpeg` in the plugins
 workspace and lays that folder out.
 
 The x264-enabled FFmpeg configuration is GPL-2.0-or-later licensed, which makes

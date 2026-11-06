@@ -46,7 +46,7 @@ GPU tests return early; `CELESTA_REQUIRE_GPU=1` makes them fail instead.
 
 ## The plugin directory and `<Vrm>`
 
-The repository's plugin build script, `scripts/plugins/build.mjs`, builds
+The repository's plugin build script, `scripts/plugins/build.mts`, builds
 what Celesta loads: the manifest, the program, and the module entries
 import as `@celesta-plugin/vrm` (`js/src/index.ts`, the `<Vrm>` component),
 with its declarations. The manifest's version is `plugin.json`'s, which
@@ -55,7 +55,7 @@ the plugin.
 
 ```sh
 pnpm install && pnpm run build:runtime          # once, at the repository root
-node scripts/plugins/build.mjs plugins/vrm      # writes plugins/dist/vrm
+node scripts/plugins/build.mts plugins/vrm      # writes plugins/dist/vrm
 pnpm --filter celesta-plugin-vrm-js test        # the component's tests
 ```
 
@@ -98,7 +98,7 @@ Then build the plugin and the codec plugin, which writes the MP4, into
 libraries, as in Celesta's source-build guide):
 
 ```sh
-node scripts/plugins/build.mjs plugins/vrm plugins/ffmpeg
+node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg
 cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/dist
 ```
 

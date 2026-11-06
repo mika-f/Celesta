@@ -53,7 +53,7 @@ From the repository root:
 pnpm install --frozen-lockfile
 pnpm --dir packages/react run codegen
 pnpm run build:runtime
-node scripts/plugins/build.mjs plugins/ffmpeg
+node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release -p celesta-exporter
 for round in 0 1 2 3 4 5; do

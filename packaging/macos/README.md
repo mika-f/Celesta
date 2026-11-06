@@ -154,7 +154,7 @@ and `packaging/GPL-SOURCE-OFFER.md`.
 
 Celesta's own executables link no FFmpeg. The codec plugin goes in
 `Contents/PlugIns/ffmpeg`, laid out by the shared plugin build script
-(`scripts/plugins/build.mjs`, which builds `plugins/ffmpeg` in the plugins
+(`scripts/plugins/build.mts`, which builds `plugins/ffmpeg` in the plugins
 workspace): its program in `bin/macos-<arch>/` (`macos-aarch64` on Apple
 Silicon), the Homebrew libraries it loads in `Frameworks/` (the packaging script
 bundles them there with dylibbundler, apart from the app's own

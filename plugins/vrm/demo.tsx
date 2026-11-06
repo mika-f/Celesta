@@ -5,7 +5,7 @@
 // `test.vrma` into plugins/vrm/assets/. Build the plugin and the codec plugin
 // first, then export with their directory:
 //
-//   node scripts/plugins/build.mjs plugins/vrm plugins/ffmpeg
+//   node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg
 //   cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/dist
 import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
 import { Vrm } from '@celesta-plugin/vrm';

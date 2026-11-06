@@ -150,7 +150,7 @@ built like `export_renderer`. The old shader was selected through a
 temporary constructor switch. For the exports:
 
 ```sh
-node scripts/plugins/build.mjs plugins/ffmpeg
+node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release --locked -p celesta-exporter --bin celesta-exporter
 /usr/bin/time -l target/release/celesta-exporter --no-ui --overwrite --react examples/versus/bench/celesta/nebula.tsx target/nebula.mp4

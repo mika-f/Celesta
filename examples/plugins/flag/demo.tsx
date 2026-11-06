@@ -1,8 +1,8 @@
 // The flag plugin's demo: the same portrait waving three ways. Build the
 // plugin and the codec plugin first, then export with both directories:
 //
-//   node scripts/plugins/build.mjs examples/plugins/flag
-//   node scripts/plugins/build.mjs plugins/ffmpeg
+//   node scripts/plugins/build.mts examples/plugins/flag
+//   node scripts/plugins/build.mts plugins/ffmpeg
 //   cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx out.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 import { Fragment } from 'react';
 
