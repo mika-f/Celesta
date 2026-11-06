@@ -1,4 +1,5 @@
 //! Shared raster and SVG decoding and display-box layout for both renderers.
+use crate::resample::{SourceRect, resample_rgba};
 use celesta_composition::{ImageAnimation, ImageFit};
 use image::{
     AnimationDecoder, ImageFormat, ImageReader, Rgba, RgbaImage,
@@ -184,14 +185,31 @@ impl Source {
                 pixel_height: pixels.height(),
             });
         }
-        // SVG rasterization follows the
-        // complete parent transform, including animated scale and rotation.
-        let density = match self {
-            Source::Svg(_) => density.max(1.0),
-            Source::Raster(_) | Source::Animated(_) => 1.0,
+        let (pw, ph) = match (fit, raster) {
+            // A fitted raster keeps its own resolution, as an unfitted one
+            // does, so the GPU filters and mipmaps it the same way and a
+            // parent's scale enlarges it as sharply: `@celesta.studio/web`
+            // draws the whole image under the final transform. Padding a
+            // long image to a square could hold far more texels than the
+            // image does; past the rasterization limits it is shrunk.
+            (Some(fit), Some(_)) => {
+                let rect = fitted_rect(sw, sh, w, h, fit);
+                let (pw, ph) = (rect.width.round().max(1.0), rect.height.round().max(1.0));
+                let shrink = (16384.0 / pw.max(ph))
+                    .min((64_000_000.0 / (pw * ph)).sqrt())
+                    .min(1.0);
+                (
+                    (pw * shrink).floor().max(1.0),
+                    (ph * shrink).floor().max(1.0),
+                )
+            }
+            // SVG rasterization follows the complete parent transform,
+            // including animated scale and rotation.
+            _ => {
+                let density = density.max(1.0);
+                ((w * density).ceil(), (h * density).ceil())
+            }
         };
-        let pw = (w * density).ceil();
-        let ph = (h * density).ceil();
         if !pw.is_finite()
             || !ph.is_finite()
             || pw > 16384.0
@@ -658,26 +676,37 @@ impl ImageSources {
                 return Ok(image);
             }
         }
-        let (sx, sy) = (pw as f64 / sw, ph as f64 / sh);
-        let (sx, sy) = match fit {
-            Some(ImageFit::Contain) => (sx.min(sy), sx.min(sy)),
-            Some(ImageFit::Cover) => (sx.max(sy), sx.max(sy)),
-            None => (sx, sy),
-        };
-        let (ox, oy) = ((pw as f64 - sw * sx) / 2.0, (ph as f64 - sh * sy) / 2.0);
         let pixels = match (source, raster) {
             (_, Some(image)) => {
-                let mut output = RgbaImage::new(pw, ph);
-                for (x, y, pixel) in output.enumerate_pixels_mut() {
-                    let x = (x as f64 + 0.5 - ox) / sx;
-                    let y = (y as f64 + 0.5 - oy) / sy;
-                    if x >= 0.0 && y >= 0.0 && x < sw && y < sh {
-                        *pixel = *image.get_pixel(x as u32, y as u32);
-                    }
+                let fit = fit.expect("an unfitted raster is drawn as it is");
+                let rect = fitted_rect(sw, sh, w, h, fit);
+                let whole = rect.x.abs() < 1e-6
+                    && rect.y.abs() < 1e-6
+                    && image.dimensions() == (pw, ph)
+                    && (rect.width - sw).abs() < 1e-6
+                    && (rect.height - sh).abs() < 1e-6;
+                if whole {
+                    // The box has the image's aspect ratio: nothing to crop
+                    // or pad.
+                    return Ok(DisplayImage {
+                        pixels: image.clone(),
+                        width: w,
+                        height: h,
+                        is_svg: false,
+                        frame,
+                        revision,
+                    });
                 }
-                output
+                resample_rgba(image.width(), image.height(), image.as_raw(), rect, pw, ph)
             }
             (Source::Svg(tree), None) => {
+                let (sx, sy) = (pw as f64 / sw, ph as f64 / sh);
+                let (sx, sy) = match fit {
+                    Some(ImageFit::Contain) => (sx.min(sy), sx.min(sy)),
+                    Some(ImageFit::Cover) => (sx.max(sy), sx.max(sy)),
+                    None => (sx, sy),
+                };
+                let (ox, oy) = ((pw as f64 - sw * sx) / 2.0, (ph as f64 - sh * sy) / 2.0);
                 let mut pixmap = tiny_skia::Pixmap::new(pw, ph)
                     .ok_or_else(|| invalid("invalid SVG raster size"))?;
                 resvg::render(
@@ -723,6 +752,24 @@ impl ImageSources {
         self.bytes += entry.bytes;
         self.evict(Some(key));
         Ok(image)
+    }
+}
+
+/// The part of a `sw` x `sh` image that `fit` shows in a `w` x `h` box, in
+/// the image's texels: a centered crop of the image for `cover`, and for
+/// `contain` the whole image centered in the transparency around it.
+fn fitted_rect(sw: f64, sh: f64, w: f64, h: f64, fit: ImageFit) -> SourceRect {
+    let (sx, sy) = (w / sw, h / sh);
+    let scale = match fit {
+        ImageFit::Contain => sx.min(sy),
+        ImageFit::Cover => sx.max(sy),
+    };
+    let (width, height) = (w / scale, h / scale);
+    SourceRect {
+        x: (sw - width) / 2.0,
+        y: (sh - height) / 2.0,
+        width,
+        height,
     }
 }
 
@@ -1087,14 +1134,14 @@ mod tests {
                 "photo",
                 Path::new("not-read.png"),
                 Some(4.0),
-                Some(4.0),
+                Some(2.0),
                 Some(ImageFit::Cover),
                 None,
                 1.0,
             )
             .unwrap();
-        // The 2x2 source and its 4x4 render.
-        assert_eq!(cache.cached_bytes(), 16 + 64);
+        // The 2x2 source and its 2x1 crop.
+        assert_eq!(cache.cached_bytes(), 16 + 8);
     }
 
     #[test]
@@ -1114,7 +1161,7 @@ mod tests {
                 .is_err()
         );
         cache.insert_raster("size", RgbaImage::new(1, 1));
-        for width in [0.0, -1.0, f64::NAN, 20000.0] {
+        for width in [0.0, -1.0, f64::NAN] {
             assert!(
                 cache
                     .render(
@@ -1129,7 +1176,85 @@ mod tests {
                     .is_err()
             );
         }
+        // A raster keeps its own pixels however large its box: only an SVG
+        // is drawn at the box's size.
+        let large = cache
+            .render(
+                "size",
+                &path,
+                Some(20000.0),
+                None,
+                Some(ImageFit::Contain),
+                None,
+                1.0,
+            )
+            .unwrap();
+        assert_eq!(large.pixels.dimensions(), (1, 1));
     }
+
+    #[test]
+    fn fits_a_raster_at_its_own_resolution() {
+        let mut cache = ImageSources::default();
+        cache.insert_raster(
+            "photo",
+            RgbaImage::from_fn(400, 300, |x, y| {
+                image::Rgba([(x % 256) as u8, (y % 256) as u8, 0, 255])
+            }),
+        );
+        let path = Path::new("not-read.png");
+        let mut render = |width, height, fit| {
+            cache
+                .render(
+                    "photo",
+                    path,
+                    Some(width),
+                    Some(height),
+                    Some(fit),
+                    None,
+                    1.0,
+                )
+                .unwrap()
+        };
+        // Cropped to the middle 300x300 texels, each copied as it is.
+        let cover = render(40.0, 40.0, ImageFit::Cover);
+        assert_eq!((cover.width, cover.height), (40.0, 40.0));
+        assert_eq!(cover.pixels.dimensions(), (300, 300));
+        assert_eq!(cover.pixels.get_pixel(0, 0).0, [50, 0, 0, 255]);
+        assert_eq!(cover.pixels.get_pixel(299, 299).0, [93, 43, 0, 255]);
+        // Padded with 50 transparent rows above and below.
+        let contain = render(40.0, 40.0, ImageFit::Contain);
+        assert_eq!(contain.pixels.dimensions(), (400, 400));
+        assert_eq!(contain.pixels.get_pixel(10, 49).0[3], 0);
+        assert_eq!(contain.pixels.get_pixel(10, 50).0, [10, 0, 0, 255]);
+        assert_eq!(contain.pixels.get_pixel(10, 349).0, [10, 43, 0, 255]);
+        assert_eq!(contain.pixels.get_pixel(10, 350).0[3], 0);
+        // A box of the image's aspect ratio draws the image itself.
+        let whole = render(40.0, 30.0, ImageFit::Cover);
+        let unfitted = cache
+            .render("photo", path, Some(40.0), Some(30.0), None, None, 1.0)
+            .unwrap();
+        assert!(Arc::ptr_eq(&whole.pixels, &unfitted.pixels));
+    }
+
+    #[test]
+    fn fits_a_long_raster_within_the_rasterization_limits() {
+        let mut cache = ImageSources::default();
+        cache.insert_raster("strip", RgbaImage::new(20000, 1));
+        let layout = cache
+            .layout(
+                "strip",
+                Path::new("not-read.png"),
+                Some(100.0),
+                Some(100.0),
+                Some(ImageFit::Contain),
+                None,
+                1.0,
+            )
+            .unwrap();
+        // Padded to 20000x20000, then shrunk to 64 million pixels.
+        assert_eq!((layout.pixel_width, layout.pixel_height), (8000, 8000));
+    }
+
     const RED: [u8; 4] = [255, 0, 0, 255];
     const GREEN: [u8; 4] = [0, 255, 0, 255];
     const BLUE: [u8; 4] = [0, 0, 255, 255];
