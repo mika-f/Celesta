@@ -235,6 +235,20 @@ test('bad cues and props fail with the cue named', () => {
   bad({ cues, color: 'nope' }, /<CaptionTrack> color "nope" is neither/);
 });
 
+test('padding and highlight.padding are checked, with a band, without one, and with render', () => {
+  const bad = (props: Record<string, unknown>, message: string) =>
+    assert.throws(() => at(mount(root(track({ cues, ...still, ...props } as unknown as CaptionTrackProps))), 10), { message });
+  const draws = [{}, { background: null }, { render: () => null }];
+  for (const draw of draws) {
+    bad({ ...draw, padding: -20 }, '<CaptionTrack> padding top must be a finite number of 0 or more, not -20');
+    bad({ ...draw, padding: Number.NaN }, '<CaptionTrack> padding top must be a finite number of 0 or more, not NaN');
+    bad({ ...draw, padding: { left: -1 } }, '<CaptionTrack> padding left must be a finite number of 0 or more, not -1');
+    bad({ ...draw, highlight: { padding: -20 } }, '<CaptionTrack> highlight.padding top must be a finite number of 0 or more, not -20');
+    bad({ ...draw, highlight: { padding: Number.NaN } }, '<CaptionTrack> highlight.padding top must be a finite number of 0 or more, not NaN');
+    bad({ ...draw, highlight: { padding: { right: Infinity } } }, '<CaptionTrack> highlight.padding right must be a finite number of 0 or more, not Infinity');
+  }
+});
+
 test('an empty caption shows no band, and the cues go into the subtitle file', () => {
   const withEmpty: CaptionCue[] = [...cues, { from: 220, durationInFrames: 10, text: '' }];
   const captions = mount(root(track({ cues: withEmpty, ...still })));

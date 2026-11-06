@@ -28,6 +28,7 @@ or `ERROR:` per frame (`UNSUPPORTED inspection:` for text it cannot measure). Di
 | `invalid project properties:` followed by `--props: key: …`, `--props-file <file>: key: …`, `props.json <file>: key: …` (the entry's automatic `props.json`), or `--project <file>: key: …` lines (`--json` code `invalid_properties`) | A value does not match `defineProjectProperties()`: the wrong type, a color that is not `#RRGGBB`/`#RRGGBBAA`, a `select` value outside `options`, or a `path` that is not an existing file. From `--props`/`--props-file`/`props.json`, an undeclared key is also an error (a `--project` file's undeclared keys are ignored). Fix the value or declare the key ([project-data.md](project-data.md#pass-values-from-the-command-line)). |
 | `project property "key" was read at module scope` | Call `getProjectProperty()` in `prepare()` or while rendering, not at module level. |
 | `<ProjectTimeline /> requires evaluated project layers` | Export with `--react entry.tsx --project project.celesta.json`. |
+| `<CaptionTrack> padding top must be a finite number of 0 or more, not -20` (or `highlight.padding top`, another edge, or `<Panel>`, `<Badge>`, `<StatCard>`, `<Callout>`, `<MediaFrame>` `padding`) | A padding edge is negative, `NaN`, or `Infinity`, often from a calculation. Give every edge a number of 0 or more. |
 | `… missing component` | A JSON `component` item has no matching `registerComponent`, or the project was exported without its React entry. |
 
 ## Text
