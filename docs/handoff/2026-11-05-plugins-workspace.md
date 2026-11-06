@@ -525,8 +525,9 @@ its Decisions give the reasons for the three deviations below.
   publishable. The root `Cargo.toml` lost the member and the
   `celesta-codec-ffmpeg` and `ez-ffmpeg` entries, and the root
   `Cargo.lock` lost `ez-ffmpeg`, `ffmpeg-next`, `ffmpeg-sys-next`,
-  `bindgen`, and `vcpkg`. `plugins/Cargo.lock` only gained packages, at the
-  versions the root lock had; two existing dependency lines now name a
+  `bindgen` 0.72.1, and `vcpkg` (`bindgen` 0.70.1 stays).
+  `plugins/Cargo.lock` only gained packages, at the versions the root lock
+  had; two existing dependency lines now name a
   version (`"itertools 0.13.0"` under bindgen, `"bindgen 0.70.1"` under
   signalsmith-stretch), since a second version of each joined.
   `tests/export.rs`'s `workspace_root()` still lands on the repository
@@ -544,7 +545,7 @@ its Decisions give the reasons for the three deviations below.
   `plugin.json` before it creates a folder or runs Cargo. A plugin without
   a `module` gets no `module`/`types` and no module build, and the
   `project-types` prerequisite applies only when some plugin in the run has
-  a module. A plugin with a key `plugin.json` may not have, with neither
+  a module. A plugin with an unknown `plugin.json` key, with neither
   `module` nor `cargoPackage`, or with `components` but no `module`, is
   refused; with `--skip-js`, so is a plugin with a module whose
   `js/index.js` and `js/index.d.ts` no earlier run left in its plugin
@@ -595,9 +596,9 @@ its Decisions give the reasons for the three deviations below.
   Cargo and puts them back at once; a Cargo stopped by SIGINT sent to it
   alone counts as an interruption too. An interrupted run exits with 130.
   On Windows, which cannot send a process Ctrl-C, Cargo is stopped
-  outright the first time. Each `packages/*/package.json`
-  stays a hand step, which `HANDOFF.md` names. `repository.test.mts`
-  checks that each `FOLLOWS_CELESTA` plugin gives the root's version, and
+  outright the first time. Each `packages/*/package.json`, and
+  `templates/package.json`, stays a hand step, which `HANDOFF.md` names.
+  `repository.test.mts` checks that each `FOLLOWS_CELESTA` plugin gives the root's version, and
   `package.yml`'s release check refuses a tag whose version differs from
   `plugins/ffmpeg/plugin.json`'s.
 - **CI.** The `vrm-plugin` job ("VRM plugin") became `plugins`
@@ -847,10 +848,10 @@ its Decisions give the reasons for the choices below.
   `cargo test -p celesta-project -p celesta-composition --features codegen`
   and writes the ts-rs types; `turbo.json` declares that as `$TURBO_ROOT$/`
   inputs, and `crates/project` is in no other graph of VRM's. For each
-  package in a plugin's pnpm closure, the inputs of `tasks.<script>` and
-  `tasks["<package>#<script>"]` for each of its `scripts` that start with
-  `$TURBO_ROOT$/` are inputs, with the prefix and a trailing `/**`
-  removed, and so are `globalDependencies`. `$TURBO_DEFAULT$`,
+  package in a plugin's pnpm closure and each of its `scripts`, the
+  entries of the inputs of `tasks.<script>` and `tasks["<package>#<script>"]`
+  that start with `$TURBO_ROOT$/` are inputs, with the prefix and a
+  trailing `/**` removed, and so are `globalDependencies`. `$TURBO_DEFAULT$`,
   package-relative entries (inside the package's folder), and `!`
   exclusions are skipped, which can only add paths; a deferred-hashing
   entry's `globs` are read the same way. A pattern that maps to no folder
@@ -1011,6 +1012,11 @@ The review of the whole stack changed:
 - `repository.test.mts` checks that `plugins/ffmpeg/Cargo.toml` gives the
   root `[workspace.package]`'s `edition`, `rust-version`, and `license`,
   which it cannot inherit.
+- From a later AI-review round: the test codec picks frames the way the
+  FFmpeg codec does, the first frame at or after the requested time (not
+  the `floor` that Decoding, in Layer 2: what was done, gives), and the
+  plugin scripts refuse a symlinked plugin folder and a `plugin.json`
+  whose `id` or `version` is missing or empty.
 
 ### Checks (macOS 26.7.1, Apple M5, Metal)
 

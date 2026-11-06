@@ -397,7 +397,8 @@ gives their tasks, and its `licenses` files, so a module's `js/package.json`
 must declare every workspace package its build uses.
 
 For a release, run `node scripts/plugins/bump-version.mts X.Y.Z`, then set
-the version in each `packages/*/package.json` by hand.
+the version in each `packages/*/package.json` and in `templates/package.json`
+by hand.
 
 When composition/project types change, also run:
 

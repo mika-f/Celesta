@@ -140,7 +140,9 @@ no FFmpeg crate. `celesta-codec-ffmpeg` is a workspace member, publishable
 like the others; its source is MIT OR Apache-2.0, and a build of it against a
 GPL FFmpeg is GPL as distributed. Tests and benches that read media use it in
 their own process through dev-dependencies (`celesta_codec_ffmpeg::install()`
-or `FfmpegCodec::factory()`), so nothing they ship links it. The VRM plugin's
+or `FfmpegCodec::factory()`), so nothing they ship links it; the core's tests
+now use the test codec instead (a later change; see
+`2026-11-05-plugins-workspace.md`, Layer 2). The VRM plugin's
 workspace no longer pulls FFmpeg in.
 
 ## Not done
