@@ -59,7 +59,8 @@ pub struct MeshInfo {
     /// bottom-right.
     pub double_sided: bool,
     pub mask: Option<MeshMask>,
-    /// Texture coordinates, `v` counting up from the bottom row.
+    /// Texture coordinates, `v` counting up from the bottom row, each
+    /// finite.
     pub uvs: Vec<[f32; 2]>,
     /// Triangles, three vertex indices each.
     pub indices: Vec<u32>,
