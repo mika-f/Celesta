@@ -10,7 +10,7 @@ use std::path::PathBuf;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ModelId(pub u64);
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum PluginError {
     #[error("no plugin provides \"{0}\" content")]
     UnknownPlugin(String),

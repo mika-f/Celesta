@@ -856,6 +856,10 @@ pub(crate) struct ScenePipelines {
     shaders: HashMap<ShaderKey, Result<Arc<CompiledShader>, String>>,
     /// The `ShaderId` the next plugin shader that compiles gets.
     next_shader: u32,
+    /// Whether the last `prepare` failed for running out of memory, which
+    /// another may not: the model it failed for is not remembered as one
+    /// that cannot be loaded.
+    pub(crate) ran_out_of_memory: bool,
     /// How many plugin shaders were checked: the cache's misses.
     #[cfg(test)]
     pub(crate) compiles: usize,
@@ -1095,6 +1099,7 @@ impl ScenePipelines {
             unlit,
             shaders: HashMap::new(),
             next_shader: 1,
+            ran_out_of_memory: false,
             #[cfg(test)]
             compiles: 0,
             #[cfg(test)]
@@ -1168,7 +1173,10 @@ impl ScenePipelines {
                 Ok(Arc::new(compiled))
             }
             Err(ShaderFailure::Refused(message)) => Err(message),
-            Err(ShaderFailure::OutOfMemory(message)) => return Err(message),
+            Err(ShaderFailure::OutOfMemory(message)) => {
+                self.ran_out_of_memory = true;
+                return Err(message);
+            }
         };
         if self.shaders.len() >= MAX_CACHED_SHADERS {
             self.drop_unused_shaders();
@@ -1255,6 +1263,7 @@ impl ScenePipelines {
         device: &wgpu::Device,
         model: &SceneModel,
     ) -> Result<Prepared, String> {
+        self.ran_out_of_memory = false;
         let mut compiled = Vec::with_capacity(model.shaders.len());
         for (index, shader) in model.shaders.iter().enumerate() {
             match self.shader(device, shader) {
@@ -1348,7 +1357,9 @@ impl ScenePipelines {
                     Ok(pipeline) => made.push((key, Arc::new(pipeline))),
                     Err(error) => {
                         let message = error.to_string();
-                        if !matches!(error, wgpu::Error::OutOfMemory { .. }) {
+                        if matches!(error, wgpu::Error::OutOfMemory { .. }) {
+                            self.ran_out_of_memory = true;
+                        } else {
                             self.refused.insert(key.stages(), message.clone());
                         }
                         return Err(format!("material {index}'s pipelines: {message}"));
@@ -2176,6 +2187,8 @@ impl LoadedScene {
         model: SceneModel,
         layer: &str,
     ) -> Result<Self, GpuRenderError> {
+        // A model refused before `prepare` did not run out of memory.
+        pipelines.ran_out_of_memory = false;
         let invalid = |message| GpuRenderError::InvalidPluginContent {
             layer: layer.to_owned(),
             message,

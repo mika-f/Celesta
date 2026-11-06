@@ -448,3 +448,269 @@ fn models_no_layer_draws_for_a_while_are_closed() {
         ["open a", "open b", "close a", "close b", "open a"]
     );
 }
+
+/// `provider`, counting how often a model is opened.
+pub(super) struct Counted<P> {
+    provider: P,
+    opens: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl<P: ContentProvider> Counted<P> {
+    pub(super) fn new(provider: P) -> (Self, Arc<std::sync::atomic::AtomicUsize>) {
+        let opens = Arc::default();
+        let counted = Self {
+            provider,
+            opens: Arc::clone(&opens),
+        };
+        (counted, opens)
+    }
+}
+
+impl<P: ContentProvider> ContentProvider for Counted<P> {
+    fn open(
+        &mut self,
+        plugin: &str,
+        assets: &BTreeMap<String, PathBuf>,
+    ) -> Result<Opened, PluginError> {
+        self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.provider.open(plugin, assets)
+    }
+
+    fn frame(
+        &mut self,
+        model: ModelId,
+        time: f64,
+        data: &serde_json::Value,
+    ) -> Result<ContentFrame, PluginError> {
+        self.provider.frame(model, time, data)
+    }
+
+    fn close(&mut self, model: ModelId) {
+        self.provider.close(model);
+    }
+}
+
+pub(super) fn opens(count: &std::sync::atomic::AtomicUsize) -> usize {
+    count.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// A provider that cannot open any model.
+struct Refusing;
+
+impl ContentProvider for Refusing {
+    fn open(
+        &mut self,
+        plugin: &str,
+        _assets: &BTreeMap<String, PathBuf>,
+    ) -> Result<Opened, PluginError> {
+        Err(PluginError::Failed {
+            plugin: plugin.to_owned(),
+            message: "no model here".to_owned(),
+        })
+    }
+
+    fn frame(
+        &mut self,
+        _model: ModelId,
+        _time: f64,
+        _data: &serde_json::Value,
+    ) -> Result<ContentFrame, PluginError> {
+        unreachable!("nothing was opened")
+    }
+}
+
+/// `scene`'s layer, drawn by `plugin` from `assets`, files by name.
+fn plugin_scene(plugin: &str, assets: &[(&str, &Path)]) -> Scene {
+    let mut scene = scene(0.0, serde_json::Value::Null);
+    let LayerContent::Plugin {
+        plugin: layer_plugin,
+        assets: layer_assets,
+        ..
+    } = &mut scene.layers[0].content
+    else {
+        unreachable!()
+    };
+    *layer_plugin = plugin.to_owned();
+    for (name, path) in assets {
+        layer_assets.insert(
+            (*name).to_owned(),
+            ResolvedAsset {
+                id: (*name).to_owned(),
+                location: AssetLocation::File {
+                    path: path.display().to_string(),
+                },
+            },
+        );
+    }
+    scene
+}
+
+#[test]
+fn a_model_that_fails_to_open_is_not_opened_again() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let (provider, count) = Counted::new(Refusing);
+    renderer.renderer = renderer.renderer.with_content_provider(provider);
+    let scene = plugin_scene("refusing", &[]);
+    let first = renderer.render(&scene).unwrap_err();
+    assert!(matches!(first, GpuRenderError::Plugin { .. }), "{first}");
+    // Each frame still fails, as the first did, so the editor shows it.
+    let second = renderer.render(&scene).unwrap_err();
+    assert!(matches!(second, GpuRenderError::Plugin { .. }), "{second}");
+    assert_eq!(second.to_string(), first.to_string());
+    assert_eq!(opens(&count), 1);
+}
+
+#[test]
+fn a_model_that_fails_to_load_is_not_opened_again() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("broken.png");
+    std::fs::write(&path, b"not an image").unwrap();
+    let mut quads = Quads::new();
+    quads.model.textures = vec![TextureSource::Path(path)];
+    let (provider, count) = Counted::new(quads);
+    renderer.renderer = renderer.renderer.with_content_provider(provider);
+    let scene = scene(0.0, serde_json::Value::Null);
+    let first = renderer.render(&scene).unwrap_err();
+    assert!(
+        matches!(first, GpuRenderError::ImageDecode { .. }),
+        "{first}"
+    );
+    let second = renderer.render(&scene).unwrap_err();
+    assert!(
+        matches!(second, GpuRenderError::ImageDecode { .. }),
+        "{second}"
+    );
+    assert_eq!(second.to_string(), first.to_string());
+    assert_eq!(opens(&count), 1);
+
+    // A refused model too.
+    let Some(mut renderer) = self::renderer(transparent()) else {
+        return;
+    };
+    let mut quads = Quads::new();
+    quads.model.textures = vec![rgba(0, 0)];
+    let (provider, count) = Counted::new(quads);
+    renderer.renderer = renderer.renderer.with_content_provider(provider);
+    let first = renderer.render(&scene).unwrap_err();
+    let second = renderer.render(&scene).unwrap_err();
+    assert!(
+        matches!(&second, GpuRenderError::InvalidPluginContent { layer, .. } if layer == "quads"),
+        "{second}"
+    );
+    assert_eq!(second.to_string(), first.to_string());
+    assert_eq!(opens(&count), 1);
+}
+
+#[test]
+fn a_failed_model_is_opened_again_once_its_assets_change() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("model.bin");
+    std::fs::write(&path, b"a").unwrap();
+    let (provider, count) = Counted::new(Refusing);
+    renderer.renderer = renderer.renderer.with_content_provider(provider);
+    let scene = plugin_scene("refusing", &[("model", &path)]);
+    renderer.render(&scene).unwrap_err();
+    renderer.render(&scene).unwrap_err();
+    assert_eq!(opens(&count), 1);
+    // Replaced in place, as by fixing it: the same path, another length.
+    std::fs::write(&path, b"bb").unwrap();
+    renderer.render(&scene).unwrap_err();
+    renderer.render(&scene).unwrap_err();
+    assert_eq!(opens(&count), 2);
+}
+
+#[test]
+fn a_failed_model_is_opened_again_once_a_texture_file_it_lists_changes() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("texture.png");
+    std::fs::write(&path, b"not an image").unwrap();
+    let mut quads = Quads::new();
+    quads.model.textures = vec![TextureSource::Path(path.clone())];
+    let (provider, count) = Counted::new(quads);
+    renderer.renderer = renderer.renderer.with_content_provider(provider);
+    let scene = scene(0.0, serde_json::Value::Null);
+    renderer.render(&scene).unwrap_err();
+    renderer.render(&scene).unwrap_err();
+    assert_eq!(opens(&count), 1);
+    // The layer names no asset; the plugin's model names the file.
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([255; 4]))
+        .save(&path)
+        .unwrap();
+    renderer.render(&scene).unwrap();
+    assert_eq!(opens(&count), 2);
+}
+
+/// Plugin processes that never open a model: one that says it is another
+/// plugin, and one that exits as it is asked to open. Two frames start each
+/// at most twice in all: the second asks for nothing.
+#[cfg(unix)]
+#[test]
+fn a_plugin_that_cannot_open_is_not_started_for_every_frame() {
+    use celesta_plugin::protocol::{Message, PROTOCOL_VERSION, write_message};
+    use celesta_plugin_host::{Manifest, PluginEntry, PluginHost, PluginRole, PluginSource};
+    use std::os::unix::fs::PermissionsExt;
+
+    for (says, body, most) in [
+        ("someone-else", "cat hello\nexec cat >/dev/null", 1),
+        ("p", "cat hello", 2),
+    ] {
+        let Some(mut renderer) = renderer(transparent()) else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut hello = Vec::new();
+        write_message(
+            &mut hello,
+            &Message::new(
+                serde_json::json!({ "type": "hello", "protocol": PROTOCOL_VERSION, "plugin": says }),
+            ),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("hello"), hello).unwrap();
+        let program = dir.path().join("plugin.sh");
+        std::fs::write(&program, format!("#!/bin/sh\necho >> starts\n{body}\n")).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let entry = PluginEntry {
+            manifest: Manifest {
+                id: "p".into(),
+                version: "1".into(),
+                protocol: PROTOCOL_VERSION,
+                celesta: None,
+                executable: [(
+                    celesta_plugin_host::platform().0.to_owned(),
+                    "plugin.sh".to_owned(),
+                )]
+                .into(),
+                module: None,
+                types: None,
+                components: Vec::new(),
+                roles: vec![PluginRole::Content],
+            },
+            directory: dir.path().to_owned(),
+            source: PluginSource::Explicit,
+        };
+        renderer.renderer = renderer
+            .renderer
+            .with_content_provider(PluginHost::new([entry]));
+        let scene = plugin_scene("p", &[]);
+        let first = renderer.render(&scene).unwrap_err();
+        let second = renderer.render(&scene).unwrap_err();
+        assert_eq!(second.to_string(), first.to_string());
+        let starts = std::fs::read_to_string(dir.path().join("starts"))
+            .unwrap()
+            .lines()
+            .count();
+        assert_eq!(starts, most, "{first}");
+    }
+}

@@ -2939,6 +2939,34 @@ fn material_shaders_out_of_memory_is_tried_again() {
     assert_eq!(pipelines(&mut renderer).compiles, 2);
 }
 
+#[test]
+fn a_scene_refused_after_one_ran_out_of_memory_is_not_opened_again() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let refused = || {
+        let mut refused = one_square();
+        refused.model.draws[0].material = 1;
+        refused
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(refused());
+    assert!(renderer.render(&scene()).is_err());
+    // A scene that runs out of memory, which is tried again...
+    pipelines(&mut renderer).out_of_memory = true;
+    renderer.renderer = renderer.renderer.with_content_provider(custom_square(
+        vec![shader(FLAT, &[])],
+        custom(0, bytes(&FLAT_GREEN)),
+    ));
+    assert!(renderer.render(&scene()).is_err());
+    // ...does not keep a scene refused before its shaders are compiled
+    // from being kept as failed.
+    let (provider, count) = super::plugin::Counted::new(refused());
+    renderer.renderer = renderer.renderer.with_content_provider(provider);
+    assert!(renderer.render(&scene()).is_err());
+    assert!(renderer.render(&scene()).is_err());
+    assert_eq!(super::plugin::opens(&count), 1);
+}
+
 const FLAT_RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 const FLAT_GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 

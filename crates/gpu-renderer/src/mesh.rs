@@ -16,7 +16,7 @@ use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
 use celesta_plugin::{
     ContentFrame, ContentModel, ContentProvider, MeshBlend, MeshModel, ModelId, Notice,
-    NoticeLevel, TextureSource,
+    NoticeLevel, PluginError, TextureSource,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -74,6 +74,12 @@ pub(crate) struct MeshState {
     models: HashMap<ModelKey, OpenModel>,
     /// The renders begun, which date when each model was last drawn.
     renders: u64,
+    /// Why the models that could not be opened or loaded could not be, by
+    /// plugin and asset paths, until the provider is replaced or one of
+    /// the asset files changes. A preview draws every frame, and asking
+    /// for the model again would cost the plugin's start and load again
+    /// for the same answer, as the `refused` pipelines of `scene.rs` do.
+    failed: HashMap<ModelKey, FailedModel>,
     /// The frames the provider answered in this render, so that a render
     /// asks for a model's frame at one time and data once: measuring a 3D
     /// plane and drawing each of its bands draw the same answer. Cleared
@@ -104,6 +110,7 @@ impl MeshState {
             }
         }
         self.models.clear();
+        self.failed.clear();
         self.provider = Some(provider);
     }
 
@@ -149,6 +156,95 @@ impl MeshState {
 /// from does not stay open, in Celesta and in the plugin's process, until
 /// the project is reopened.
 pub(crate) const MODEL_IDLE_RENDERS: u64 = 300;
+
+/// A model the provider could not open, or that could not be loaded.
+struct FailedModel {
+    /// The files it was made of: its asset files, and for a model that
+    /// failed to load, the texture files it lists.
+    files: Vec<PathBuf>,
+    /// Each file's length and modification time when it failed, so that a
+    /// file replaced since is tried again.
+    stamps: Vec<FileStamp>,
+    reason: FailedReason,
+}
+
+type FileStamp = Option<(u64, std::time::SystemTime)>;
+
+/// Why a model failed, kept as each frame it is drawn for reports it, with
+/// that frame's layer.
+enum FailedReason {
+    Open(PluginError),
+    /// A texture file it lists could not be decoded.
+    ImageDecode {
+        asset: String,
+        message: String,
+    },
+    /// Content that cannot be drawn, as `InvalidPluginContent`'s message.
+    Content(String),
+}
+
+/// Each file's length and modification time, `None` for one that cannot
+/// be read.
+fn file_stamps<'a>(paths: impl IntoIterator<Item = &'a PathBuf>) -> Vec<FileStamp> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let metadata = std::fs::metadata(path).ok()?;
+            Some((metadata.len(), metadata.modified().ok()?))
+        })
+        .collect()
+}
+
+/// The files `model`'s textures are read from.
+fn texture_files(model: &ContentModel) -> Vec<PathBuf> {
+    let sources: Vec<&TextureSource> = match model {
+        ContentModel::Meshes(model) => model.textures.iter().collect(),
+        ContentModel::Scene(model) => model
+            .textures
+            .iter()
+            .map(|texture| &texture.source)
+            .collect(),
+    };
+    sources
+        .into_iter()
+        .filter_map(|source| match source {
+            TextureSource::Path(path) => Some(path.clone()),
+            TextureSource::Rgba { .. } => None,
+        })
+        .collect()
+}
+
+impl FailedReason {
+    fn new(error: &GpuRenderError) -> Self {
+        match error {
+            GpuRenderError::Plugin { source, .. } => Self::Open(source.clone()),
+            GpuRenderError::ImageDecode { asset, source } => Self::ImageDecode {
+                asset: asset.clone(),
+                message: source.to_string(),
+            },
+            GpuRenderError::InvalidPluginContent { message, .. } => Self::Content(message.clone()),
+            other => Self::Content(other.to_string()),
+        }
+    }
+
+    /// The error `layer` fails with, as it first failed.
+    fn error(&self, layer: &str) -> GpuRenderError {
+        match self {
+            Self::Open(source) => GpuRenderError::Plugin {
+                layer: layer.to_owned(),
+                source: source.clone(),
+            },
+            Self::ImageDecode { asset, message } => GpuRenderError::ImageDecode {
+                asset: asset.clone(),
+                source: image::ImageError::IoError(std::io::Error::other(message.clone())),
+            },
+            Self::Content(message) => GpuRenderError::InvalidPluginContent {
+                layer: layer.to_owned(),
+                message: message.clone(),
+            },
+        }
+    }
+}
 
 /// A model the provider opened, and what it said about the model then.
 struct OpenModel {
@@ -684,16 +780,45 @@ impl GpuRenderer {
             self.meshes.pipelines = Some(Pipelines::new(&self.device, &self.queue));
         }
         if !self.meshes.models.contains_key(&key) {
+            if let Some(failed) = self.meshes.failed.get(&key) {
+                if file_stamps(&failed.files) == failed.stamps {
+                    return Err(failed.reason.error(layer));
+                }
+                self.meshes.failed.remove(&key);
+            }
+            // Before it is opened: a file replaced while it opens is tried
+            // again.
+            let stamps = file_stamps(key.1.values());
             let provider = self
                 .meshes
                 .provider
                 .as_mut()
                 .ok_or_else(|| GpuRenderError::MissingContentProvider(layer.to_owned()))?;
-            let opened = provider
-                .open(content.plugin, &key.1)
-                .map_err(plugin_error)?;
+            let fail = |meshes: &mut MeshState, error: GpuRenderError, textures: Vec<PathBuf>| {
+                let mut stamps = stamps;
+                stamps.extend(file_stamps(&textures));
+                let files = key.1.values().cloned().chain(textures).collect();
+                let reason = FailedReason::new(&error);
+                meshes.failed.insert(
+                    key.clone(),
+                    FailedModel {
+                        files,
+                        stamps,
+                        reason,
+                    },
+                );
+                error
+            };
+            let opened = match provider.open(content.plugin, &key.1) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    return Err(fail(&mut self.meshes, plugin_error(error), Vec::new()));
+                }
+            };
             let id = opened.model;
             let notices = opened.notices;
+            let textures = texture_files(&opened.content);
+            let scene = matches!(opened.content, ContentModel::Scene(_));
             let loaded = match opened.content {
                 ContentModel::Meshes(model) => LoadedMeshes::load(
                     &self.device,
@@ -736,7 +861,17 @@ impl GpuRenderer {
                     if let Some(provider) = self.meshes.provider.as_mut() {
                         provider.close(id);
                     }
-                    return Err(error);
+                    // Out of memory, another load may not be.
+                    let ran_out_of_memory = scene
+                        && self
+                            .meshes
+                            .scene_pipelines
+                            .as_ref()
+                            .is_some_and(|pipelines| pipelines.ran_out_of_memory);
+                    if ran_out_of_memory {
+                        return Err(error);
+                    }
+                    return Err(fail(&mut self.meshes, error, textures));
                 }
             };
             self.meshes.models.insert(
