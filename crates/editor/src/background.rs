@@ -207,19 +207,25 @@ impl EditorView {
             self.export_path = None;
             self.export_cancellation = None;
             self.export_cancelling = false;
+            self.problems.log_export_notices(&mut self.export_notices);
             self.problems.fail(Source::Export, error);
         }
     }
 
     fn take_export_event(&mut self, event: ExportEvent) {
         match event {
-            // The preview already lists font fallbacks and plugin notices;
-            // `Finished` reports the output, and the label stays on the
-            // last stage until then.
+            // The preview lists only the current frame's notices, so an
+            // export keeps its own and logs them once it ends.
+            ExportEvent::Progress(ExportProgress::Warning(warning)) => {
+                self.export_notices.warning(warning);
+            }
+            ExportEvent::Progress(ExportProgress::Note(note)) => {
+                self.export_notices.note(note);
+            }
+            // `Finished` reports the output, and the label stays on the last
+            // stage until then.
             ExportEvent::Progress(
-                ExportProgress::Warning(_)
-                | ExportProgress::Note(_)
-                | ExportProgress::Composition(_)
+                ExportProgress::Composition(_)
                 | ExportProgress::ReactCompositions { .. }
                 | ExportProgress::Wrote(_),
             ) => {}
@@ -235,6 +241,7 @@ impl EditorView {
                 self.export_progress = None;
                 self.export_cancellation = None;
                 self.export_cancelling = false;
+                self.problems.log_export_notices(&mut self.export_notices);
                 match result {
                     Ok(()) => {
                         self.problems.clear(Source::Export);

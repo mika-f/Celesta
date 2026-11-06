@@ -16,7 +16,7 @@ use crate::plugins::{FoundPlugins, trusted_root};
 use crate::preview::{
     AudioPreview, PreviewPresentation, PreviewWorker, ReactPreview, TextOverride, spawn_preview,
 };
-use crate::problems::{Problems, Source};
+use crate::problems::{ExportNotices, Problems, Source};
 use crate::property_panel::PropertyPanelState;
 use crate::react_audio::{ReactAudioWorker, spawn_react_audio};
 use crate::refresh::{ReloadOrder, SelectionKeep};
@@ -246,6 +246,8 @@ pub(crate) struct EditorView {
     pub(crate) export_path: Option<PathBuf>,
     pub(crate) export_cancellation: Option<ExportCancellation>,
     pub(crate) export_cancelling: bool,
+    /// What the running export has reported, logged once it ends.
+    pub(crate) export_notices: ExportNotices,
     /// Optional export in/out points, in composition frames. `out` is
     /// exclusive (one past the last frame to include). Both set and `in < out`
     /// means "Export…" renders only that span; otherwise the whole
@@ -529,6 +531,7 @@ impl EditorView {
             export_path: None,
             export_cancellation: None,
             export_cancelling: false,
+            export_notices: ExportNotices::default(),
             export_in_frame: None,
             export_out_frame: None,
             choosing_export_path: false,

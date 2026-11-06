@@ -79,6 +79,21 @@ impl Stage {
     }
 }
 
+enum Diagnostic {
+    Warning(String),
+    /// Says what it is (`note: …`).
+    Note(String),
+}
+
+impl Diagnostic {
+    fn line(&self) -> String {
+        match self {
+            Self::Warning(warning) => format!("warning: {warning}"),
+            Self::Note(note) => note.clone(),
+        }
+    }
+}
+
 pub(crate) struct State {
     stage: Stage,
     active_stage: Stage,
@@ -94,9 +109,9 @@ pub(crate) struct State {
     finished: Option<Instant>,
     frame: u64,
     total: u64,
-    warnings: Vec<String>,
-    /// Printed after the display closes; the panels list only warnings.
-    notes: Vec<String>,
+    /// Warnings and notes in the order they arrived. The panels list only
+    /// the warnings; all of them are printed after the display closes.
+    diagnostics: Vec<Diagnostic>,
     error: Option<String>,
 }
 
@@ -118,8 +133,7 @@ impl State {
             finished: None,
             frame: 0,
             total: 0,
-            warnings: Vec::new(),
-            notes: Vec::new(),
+            diagnostics: Vec::new(),
             error: None,
         }
     }
@@ -137,12 +151,30 @@ impl State {
             }
             ExportProgress::MixingAudio => self.end_rendering(Stage::Mixing),
             ExportProgress::Muxing => self.end_rendering(Stage::Muxing),
-            ExportProgress::Warning(warning) => self.warnings.push(warning),
-            ExportProgress::Note(note) => self.notes.push(note),
+            ExportProgress::Warning(warning) => {
+                self.diagnostics.push(Diagnostic::Warning(warning));
+            }
+            ExportProgress::Note(note) => self.diagnostics.push(Diagnostic::Note(note)),
             ExportProgress::Composition(_)
             | ExportProgress::ReactCompositions { .. }
             | ExportProgress::Wrote(_) => {}
         }
+    }
+
+    /// The warnings, oldest first.
+    fn warnings(&self) -> impl DoubleEndedIterator<Item = &str> {
+        self.diagnostics
+            .iter()
+            .filter_map(|diagnostic| match diagnostic {
+                Diagnostic::Warning(warning) => Some(warning.as_str()),
+                Diagnostic::Note(_) => None,
+            })
+    }
+
+    /// The lines left in scrollback once the display closes: every warning
+    /// and note in arrival order, as the plain output prints them.
+    fn scrollback(&self) -> impl Iterator<Item = String> + '_ {
+        self.diagnostics.iter().map(Diagnostic::line)
     }
 
     fn end_rendering(&mut self, stage: Stage) {
@@ -315,11 +347,8 @@ pub fn run(
     let state = state
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for note in &state.notes {
-        eprintln!("{note}");
-    }
-    for warning in &state.warnings {
-        eprintln!("warning: {warning}");
+    for line in state.scrollback() {
+        eprintln!("{line}");
     }
     result
 }
@@ -518,24 +547,24 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         Paragraph::new(profile).block(panel(" EXPORT PROFILE ")),
         details[1],
     );
+    let warnings = state.warnings().count();
     let diagnostics = match &state.error {
         Some(error) => Paragraph::new(error.as_str())
             .style(Style::new().fg(Color::Red))
             .block(panel(" EXPORT ERROR ")),
-        None if state.warnings.is_empty() => Paragraph::new(" ✓  No warnings reported")
+        None if warnings == 0 => Paragraph::new(" ✓  No warnings reported")
             .style(Style::new().fg(MUTED))
             .block(panel(" DIAGNOSTICS ")),
         None => Paragraph::new(
             state
-                .warnings
-                .iter()
+                .warnings()
                 .rev()
                 .take(3)
                 .map(|warning| Line::from(format!(" !  {warning}")))
                 .collect::<Vec<_>>(),
         )
         .style(Style::new().fg(Color::Yellow))
-        .block(panel(format!(" WARNINGS / {} ", state.warnings.len()))),
+        .block(panel(format!(" WARNINGS / {warnings} "))),
     };
     frame.render_widget(diagnostics.wrap(Wrap { trim: false }), rows[4]);
     frame.render_widget(
@@ -707,23 +736,23 @@ fn render_compact(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         ]),
         rows[3],
     );
+    let warnings = state.warnings().count();
     let diagnostics = if let Some(error) = &state.error {
         Paragraph::new(error.as_str())
             .style(Style::new().fg(Color::Red))
             .wrap(Wrap { trim: false })
-    } else if state.warnings.is_empty() {
+    } else if warnings == 0 {
         Paragraph::new(" No warnings").style(Style::new().fg(Color::DarkGray))
     } else {
         Paragraph::new(
             state
-                .warnings
-                .iter()
+                .warnings()
                 .rev()
                 .take(3)
                 .map(|warning| Line::from(format!(" ! {warning}")))
                 .collect::<Vec<_>>(),
         )
-        .block(Block::new().title(format!(" Warnings ({}) ", state.warnings.len())))
+        .block(Block::new().title(format!(" Warnings ({warnings}) ")))
         .style(Style::new().fg(Color::Yellow))
         .wrap(Wrap { trim: false })
     };
@@ -971,10 +1000,30 @@ mod tests {
     fn notes_are_kept_apart_from_warnings() {
         let mut state = State::new();
         state.update(ExportProgress::Note("note: terms of use".into()));
-        assert!(state.warnings.is_empty());
-        assert_eq!(state.notes, ["note: terms of use"]);
+        assert_eq!(state.warnings().count(), 0);
         let text = screen(&state, 110, 26);
         assert!(text.contains("No warnings reported"), "{text}");
+    }
+
+    #[test]
+    fn scrollback_keeps_warnings_and_notes_in_arrival_order() {
+        let mut state = State::new();
+        state.update(ExportProgress::Warning("fallback font".into()));
+        state.update(ExportProgress::Note("note: terms of use".into()));
+        state.update(ExportProgress::Rendering { frame: 1, total: 2 });
+        state.update(ExportProgress::Warning("missing glyph".into()));
+        assert_eq!(
+            state.scrollback().collect::<Vec<_>>(),
+            [
+                "warning: fallback font",
+                "note: terms of use",
+                "warning: missing glyph"
+            ]
+        );
+        assert_eq!(
+            state.warnings().collect::<Vec<_>>(),
+            ["fallback font", "missing glyph"]
+        );
     }
 
     #[test]
