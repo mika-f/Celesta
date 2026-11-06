@@ -274,7 +274,17 @@ fn decodes_rgba_frames_at_their_times() {
     write_rgba_video(&path, 2, 1, Rational::new(2, 1), &[a.clone(), b.clone()]).unwrap();
     let mut codec = TestCodec::new();
 
-    for (time, expected) in [(0.0, &a), (0.49, &a), (0.5, &b), (60.0, &b)] {
+    // The first frame at or after the time, as FFmpeg's decoder serves it: a
+    // time within 0.1 µs past a frame still lands on it, and an overrun holds
+    // the last frame.
+    for (time, expected) in [
+        (0.0, &a),
+        (5e-8, &a),
+        (1e-6, &b),
+        (0.49, &b),
+        (0.5, &b),
+        (60.0, &b),
+    ] {
         let decoded = frame_at(&mut codec, &path, time).unwrap();
         assert_eq!((decoded.width, decoded.height), (2, 1));
         assert_eq!(*decoded.pixels, *expected, "at {time}");

@@ -111,6 +111,25 @@ fn longer(a: Option<Time>, b: Option<Time>) -> Option<Time> {
     }
 }
 
+/// The index of the first frame at or after `time` seconds in a stream of
+/// `fps` frames a second, the frame FFmpeg's decoder serves: a frame counts as
+/// at the request when it is within the tolerance of the FFmpeg plugin's
+/// `timestamps_match` (`plugins/ffmpeg/src/sequential.rs`), so a time a
+/// rounding error past a frame still lands on that frame.
+fn first_frame_at_or_after(time: f64, fps: f64) -> usize {
+    let after = (time * fps).ceil() as usize;
+    match after.checked_sub(1) {
+        Some(before) if timestamps_match(before as f64 / fps, time) => before,
+        _ => after,
+    }
+}
+
+/// Whether two times are the same, with the FFmpeg plugin's tolerance: 0.1 µs,
+/// or a part in 10⁹ of the larger.
+fn timestamps_match(left: f64, right: f64) -> bool {
+    (left - right).abs() <= 1e-7_f64.max(left.abs().max(right.abs()) * 1e-9)
+}
+
 fn audio_stream(
     index: u32,
     codec: &str,
@@ -240,8 +259,9 @@ impl CodecProvider for TestCodec {
             return Err(invalid(path, "has no frames"));
         };
         let fps = f64::from(video.frame_rate.numerator) / f64::from(video.frame_rate.denominator);
-        // An overrun holds the last frame, as FFmpeg's decoder does.
-        let index = ((request.time * fps + 1e-9).floor() as usize).min(last);
+        // The first frame at or after the request, and an overrun holds the
+        // last frame, as FFmpeg's decoder does.
+        let index = first_frame_at_or_after(request.time, fps).min(last);
         let frame = scanned.frame(index)?;
         Ok(VideoFrame {
             width: video.width,
