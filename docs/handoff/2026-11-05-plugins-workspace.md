@@ -1013,8 +1013,9 @@ The review of the whole stack changed:
   root `[workspace.package]`'s `edition`, `rust-version`, and `license`,
   which it cannot inherit.
 - From a later AI-review round: the test codec picks frames the way the
-  FFmpeg codec does, the first frame at or after the requested time (not
-  the `floor` that Decoding, in Layer 2: what was done, gives), and the
+  FFmpeg codec does, the first frame at or after the requested time
+  (Decoding, in Layer 2: what was done, records the `floor` it used
+  before), and the
   plugin scripts refuse a symlinked plugin folder and a `plugin.json`
   whose `id` or `version` is missing or empty.
 
