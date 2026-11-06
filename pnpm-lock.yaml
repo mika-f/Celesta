@@ -1418,7 +1418,7 @@ importers:
         specifier: ^24.13.6
         version: 24.19.2
       typescript:
-        specifier: ^5.7.3
+        specifier: ^5.8.0
         version: 5.9.3
       vitest:
         specifier: ^5.0.3
