@@ -232,8 +232,9 @@ import { Vrm } from '@celesta-plugin/vrm';
 
 Every manifest gives `celesta`, the Celesta versions the plugin works with
 as a Cargo version range (`">=0.9.0, <0.10.0"`); a plugin without one, or
-whose range leaves out the running Celesta, is skipped. It covers what the
-program relies on beyond `protocol` (the message format alone, still `1`)
+whose range leaves out the running Celesta, is skipped, as is one whose
+`protocol` is not `1`. The range covers what the program relies on beyond
+`protocol` (the message format alone, still `1`)
 and the `react`/`@celesta.studio/*` APIs the module uses. A pre-release
 Celesta (`0.10.0-beta.1`) matches only a range naming a pre-release of
 that version. `scripts/plugins/build.mts` writes the range from the Celesta

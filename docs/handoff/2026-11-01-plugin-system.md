@@ -21,7 +21,8 @@ itself keeps only generic parts and a published protocol.
 - **Arm's length.** A plugin is a separate executable that talks to Celesta
   over its stdin/stdout with the documented protocol below. It never links
   Celesta's binaries; it may use the MIT/Apache `celesta-plugin` crate,
-  which depends on nothing but serde (and libc on Unix).
+  which depends on nothing of Celesta's (serde, serde_json, thiserror,
+  and libc).
 - **Deterministic content.** What a plugin returns for a frame is a function
   of the layer's content alone (its assets, data, and time). Celesta may ask
   for frames in any order, more than once, and from several processes.
@@ -149,8 +150,11 @@ the plugin has any. The `scene` kind's `opened` and `frame` are in
 
 A plugin exits when its stdin closes. Its stderr goes to Celesta's log.
 `celesta_plugin::protocol::serve` runs this loop over a `ContentProvider`;
-on Unix it answers through a duplicate of stdout and points stdout at
-stderr, so native libraries that print cannot corrupt the protocol.
+it answers through a duplicate of stdout and points stdout at stderr (on
+Windows, the C runtime's descriptor 1 and `STD_OUTPUT_HANDLE` too), so
+`println!` and native libraries that print cannot corrupt the protocol. A
+header is at most 16 MiB and a payload at most 1 GiB; a part's buffer grows
+as its bytes arrive (`2026-11-07-plugin-host-robustness.md`).
 
 ## Discovery and lifecycle
 
@@ -238,7 +242,7 @@ checkout to build:
 | Where | What |
 | --- | --- |
 | `crates/composition` | `LayerContent::Plugin { plugin, assets, time, data }`. |
-| `crates/plugin` (`celesta-plugin`) | Meshes, `ContentProvider` (with `close`), and `protocol`: framing, model/frame encoding, `serve`/`serve_on`. Depends on serde, and libc on Unix. |
+| `crates/plugin` (`celesta-plugin`) | Meshes, `ContentProvider` (with `close`), and `protocol`: framing, model/frame encoding, `serve`/`serve_on`. Depends on serde, serde_json, thiserror, and libc. |
 | `crates/plugin-host` (`celesta-plugin-host`) | `discover`, `plugin_paths`, the manifest types, `platform`, and `PluginHost` (a `ContentProvider`; `stop` restarts a plugin). |
 | `crates/gpu-renderer/src/mesh.rs`, `mesh.wgsl` | The mesh drawing; `with_content_provider`; models and textures cached by plugin and asset paths; models and frames that do not fit (bad indices, masks, vertex counts) are `InvalidPluginContent`; plugin content without a provider is `MissingContentProvider`. |
 | `crates/renderer` | Refuses plugin content (`UnsupportedPlugin`). |
