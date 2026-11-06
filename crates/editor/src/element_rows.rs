@@ -1445,8 +1445,12 @@ impl EditorView {
             let Some(held) = self.element_rows.held.pop(selected.as_deref()) else {
                 break;
             };
+            // Read on the targets of the scope the commit keeps, as it will
+            // be written (see `Self::commit_element`): under "This scene" the
+            // element as one instance may be a keyframe where the targets
+            // shown under "Shared value" are `Repeated`.
             let moved = self
-                .element_targets()
+                .targets_under(held.scope)
                 .and_then(|(targets, _)| targets.target(&held.key))
                 .is_some_and(|target| {
                     moved_off_keyframe(held.frame, self.source_lookup_frame, target)

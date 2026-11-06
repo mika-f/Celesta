@@ -201,6 +201,7 @@ fn options(this_scene: Result<(), ScopeLock>, shared: Result<(), ScopeLock>) -> 
         shared,
         shared_reaches: vec!["Intro".to_owned(), "Outro".to_owned()],
         sets_own: Vec::new(),
+        own_pending: false,
         called_here: None,
         drawn_alone: true,
     }
@@ -522,10 +523,11 @@ fn two_calls_in_this_scene_leave_this_scene_to_this_call() {
         scope_in_effect_here(Scope::ThisScene, options.called_here.as_ref()),
         "Edits change this `<PriceTag>` only"
     );
-    // "Shared value" says what it says for one call.
+    // "Shared value" says what it says for one call: with the scene calls
+    // not read yet, that they are being checked.
     assert_eq!(
         scope_line(&options, Some(Scope::Shared)),
-        "Shared value is used in Intro, Price"
+        "Checking which scenes set their own…"
     );
     assert_eq!(
         scope_in_effect_here(Scope::Shared, options.called_here.as_ref()),
@@ -575,9 +577,10 @@ fn one_call_in_this_scene_keeps_the_scene_copy() {
         scope_in_effect_here(Scope::ThisScene, options.called_here.as_ref()),
         "Edits change this scene"
     );
+    // No call count on the line; the scene calls are not read yet.
     assert_eq!(
         scope_line(&options, Some(Scope::ThisScene)),
-        "Shared value is used in Intro, Price, Outro"
+        "Checking which scenes set their own…"
     );
 }
 
@@ -776,6 +779,115 @@ fn a_hovered_option_previews_and_gates_with_its_own_targets() {
     assert!(std::ptr::eq(context.under(Some(Scope::Shared)), &targets));
     assert!(std::ptr::eq(context.under(Some(Scope::ThisScene)), one));
     assert!(std::ptr::eq(context.under(None), &targets));
+}
+
+#[test]
+fn a_gesture_starts_only_on_the_targets_of_the_scope_it_keeps() {
+    // The drag's handles come from the targets shown (those of the scope
+    // in effect, `chosen_scope`), its release from those of the scope it
+    // keeps (`commit_scope`): wherever the two differ, nothing starts, so a
+    // drag's handles and its write always read the same targets, whatever
+    // the control shows by its release.
+    let report = sale_report();
+    let targets = sale_targets(&report);
+    let calls = sale_calls();
+    let open = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&two_calls_here(1)),
+        Some(&calls),
+        &chapters(),
+        FRAME,
+    ));
+    assert!(open.drawn_alone && targets.one.is_some());
+    let lock = ScopeLock::ReusedCall;
+    let variants = [
+        open.clone(),
+        ScopeOptions {
+            this_scene: Err(lock.clone()),
+            ..open.clone()
+        },
+        ScopeOptions {
+            shared: Err(lock.clone()),
+            ..open.clone()
+        },
+        ScopeOptions {
+            this_scene: Err(lock.clone()),
+            shared: Err(lock),
+            ..open
+        },
+    ];
+    let keys = [TransformProp::X.key(), prop("width"), prop("cornerRadius")];
+    let mut differing = 0;
+    for options in variants {
+        let state = ScopeState::Options(options.clone());
+        for remembered in [None, Some(Scope::ThisScene), Some(Scope::Shared)] {
+            let shown =
+                targets_in_effect(&targets, chosen_scope(remembered, &options).ok(), &options);
+            let kept_scope = commit_scope(remembered, &state);
+            let kept = targets_in_effect(&targets, kept_scope, &options);
+            if std::ptr::eq(shown, kept) {
+                continue;
+            }
+            differing += 1;
+            for key in &keys {
+                assert!(
+                    gesture_start_refusal(remembered, &state, kept, key, Some(&calls)).is_some(),
+                    "{key:?} starts with {remembered:?} under {options:?}"
+                );
+            }
+        }
+    }
+    // A remembered "This scene" that is locked shows the targets as
+    // resolved but keeps the one instance's.
+    assert!(differing > 0);
+}
+
+#[test]
+fn a_held_keyframe_commit_is_checked_on_the_targets_of_its_scope() {
+    let report = sale_report();
+    let mut targets = sale_targets(&report);
+    let calls = sale_calls();
+    let state = scope_state(
+        &report,
+        &targets,
+        Some(&two_calls_here(1)),
+        Some(&calls),
+        &chapters(),
+        FRAME,
+    );
+    // As one instance, `x` is a keyframe at frame 10; the targets as
+    // resolved (shown under "Shared value") hold it as `Repeated`.
+    let x = TransformProp::X.key();
+    let one = targets.one.as_deref_mut().unwrap();
+    let (_, target) = one.targets.iter_mut().find(|(key, _)| *key == x).unwrap();
+    target.target = EditTarget::Keyframe {
+        span: Span { start: 0, end: 1 },
+        value: 10.0,
+        frame: 10.0,
+    };
+    assert!(matches!(
+        targets.target(&x),
+        Some(EditTarget::Locked(LockReason::Repeated { .. }))
+    ));
+    let context = ScopeContext {
+        targets: &targets,
+        resolved: &targets,
+        state,
+        calls: Some(&calls),
+        current: true,
+    };
+    // A commit held at frame 10 under "This scene" drains after a seek to
+    // frame 20 while "Shared value" is shown: its own scope's targets say
+    // the playhead left its keyframe, the shown ones would not.
+    let moved = |scope| {
+        context
+            .under(scope)
+            .target(&x)
+            .is_some_and(|target| moved_off_keyframe(10, 20, target))
+    };
+    assert!(moved(Some(Scope::ThisScene)));
+    assert!(!moved(Some(Scope::Shared)));
 }
 
 #[test]
@@ -1014,6 +1126,67 @@ fn a_remembered_choice_now_locked_is_refused_not_widened() {
 }
 
 #[test]
+fn the_line_waits_for_the_scene_calls_before_naming_scenes() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let state = |calls: Option<&SceneCalls>| {
+        options_of(scope_state(
+            &report,
+            &targets,
+            Some(&three_scenes()),
+            calls,
+            &chapters(),
+            FRAME,
+        ))
+    };
+
+    // Until the calls are read, Price, which sets its own, would read as
+    // reached: the line says the scenes are being checked instead.
+    let pending = state(None);
+    assert!(pending.own_pending);
+    assert_eq!(pending.shared_reaches, ["Intro", "Price", "Outro"]);
+    for chosen in [None, Some(Scope::ThisScene), Some(Scope::Shared)] {
+        assert_eq!(
+            scope_line(&pending, chosen),
+            "Checking which scenes set their own…"
+        );
+    }
+    // A lock still says why, first.
+    let locked = ScopeOptions {
+        this_scene: Err(ScopeLock::ReusedCall),
+        ..pending
+    };
+    assert_eq!(scope_line(&locked, None), ScopeLock::ReusedCall.text());
+
+    // Read, they tell the scenes apart.
+    let read = state(Some(&price_sets_its_own()));
+    assert!(!read.own_pending);
+    assert_eq!(
+        scope_line(&read, Some(Scope::Shared)),
+        "Shared value is used in Intro, Outro · Price sets its own"
+    );
+
+    // A row reading no parameter has nothing to wait for.
+    let mut on_element = tag_targets(&report, &tag_texts(SCENES_FILE));
+    on_element
+        .targets
+        .retain(|(_, target)| !matches!(target.target, EditTarget::PassThrough { .. }));
+    let options = options_of(scope_state(
+        &report,
+        &on_element,
+        Some(&three_scenes()),
+        None,
+        &chapters(),
+        FRAME,
+    ));
+    assert!(!options.own_pending);
+    assert_eq!(
+        scope_line(&options, Some(Scope::Shared)),
+        "Shared value is used in Intro, Price, Outro"
+    );
+}
+
+#[test]
 fn the_line_names_reaching_and_own_scenes() {
     let report = price_report();
     let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
@@ -1030,6 +1203,7 @@ fn the_line_names_reaching_and_own_scenes() {
 
     assert_eq!(options.shared_reaches, ["Intro", "Outro"]);
     assert_eq!(options.sets_own, ["Price"]);
+    assert!(!options.own_pending);
     assert_eq!(
         scope_line(&options, Some(Scope::ThisScene)),
         "Shared value is used in Intro, Outro · Price sets its own"
@@ -1203,6 +1377,46 @@ fn a_row_this_scene_sets_itself_leaves_shared_value_open() {
             PathBuf::from(SCENES_FILE),
             call.replace(" rectWidth={260}", "")
         )]
+    );
+}
+
+#[test]
+fn an_overridden_value_counts_as_this_scenes_own_only_when_s_writes_it() {
+    // Something above the `<Rect>` overrides its corner radius and width:
+    // the runtime saw 12 and 300, not the default 8 nor Price's 260.
+    let mut report = price_report();
+    for (name, value) in [("cornerRadius", 12.0), ("width", 300.0)] {
+        report
+            .props
+            .others
+            .insert(name.to_owned(), ReceivedValue::Number(value));
+    }
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let at_call = |key: &PropKey| match targets.target(key) {
+        Some(EditTarget::PassThrough { target, .. }) => (**target).clone(),
+        other => panic!("expected a pass-through, got {other:?}"),
+    };
+    let overridden = EditTarget::Locked(LockReason::OverriddenByParent);
+    let (corner, width) = (prop("cornerRadius"), prop("width"));
+    assert_eq!(at_call(&corner), overridden);
+    assert_eq!(at_call(&width), overridden);
+
+    // Price leaves `rectCornerRadius` out: it sets nothing of its own, so
+    // "Shared value" writes the default, and there is no attribute at `S`
+    // to remove.
+    assert_eq!(
+        scoped_row(Scope::Shared, &targets, &corner, None),
+        ScopedRow::Default {
+            shown: Some(EditValue::Number(8.0))
+        }
+    );
+    assert!(!scoped_removable(Scope::Shared, &targets, &corner, None));
+    // Price writes `rectWidth={260}`: its own value, whatever overrode it.
+    assert_eq!(
+        scoped_row(Scope::Shared, &targets, &width, None),
+        ScopedRow::Locked(ScopeLock::SetsOwn {
+            param: "rectWidth".to_owned()
+        })
     );
 }
 

@@ -716,6 +716,7 @@ fn commit_scoped_takes_any_element_s_targets() {
             },
             call,
             props: Vec::new(),
+            written: Vec::new(),
             schema: None,
         }),
         enclosing: Some("PriceTag".to_owned()),

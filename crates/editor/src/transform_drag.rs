@@ -766,6 +766,16 @@ pub(crate) fn without_refused(
     (props, resize, first)
 }
 
+/// Why the size handles are hidden though the layer can be resized: the
+/// first of its size props `keys` the release would refuse (`refusals`, in
+/// the order of `keys`), said as a locked size row is, "Width: This scene
+/// sets its own `rectWidth`".
+pub(crate) fn resize_refusal(keys: &[PropKey], refusals: Vec<Option<String>>) -> Option<String> {
+    keys.iter()
+        .zip(refusals)
+        .find_map(|(key, refusal)| Some(format!("{}: {}", key.label(), refusal?)))
+}
+
 pub(crate) fn drag_props_in(
     targets: &ElementTargets,
     frame: &LayerFrame,
@@ -1005,8 +1015,10 @@ impl EditorView {
     }
 
     /// Why the chosen Size tool is not in effect on the selected layer (its
-    /// handles scale instead), for the toggle's warning; `None` when it is,
-    /// or Scale is chosen.
+    /// handles scale instead), for the toggle's warning: the layer can't be
+    /// resized (see `resize_fallback`), or the release would refuse a size
+    /// prop (the scope the drag keeps, see `without_refused`); `None` when
+    /// it is in effect, or Scale is chosen.
     pub(crate) fn resize_note(&self) -> Option<String> {
         if self.resize_tool != ResizeTool::Size {
             return None;
@@ -1015,7 +1027,12 @@ impl EditorView {
             return None;
         };
         let (targets, _) = self.element_targets()?;
-        resize_fallback(ResizeTool::Size, targets, &frame).map(|fallback| fallback.reason())
+        if let Some(fallback) = resize_fallback(ResizeTool::Size, targets, &frame) {
+            return Some(fallback.reason());
+        }
+        // The handles were left out for a refusal (see `transform_state`).
+        let keys = resize_used(ResizeTool::Size, targets, &frame)?.keys();
+        resize_refusal(&keys, self.gesture_refusals(&keys))
     }
 
     /// Why the chosen Center is not in effect on the selected layer (its
@@ -2665,7 +2682,21 @@ mod tests {
         // Nothing refused: as offered.
         assert_eq!(
             without_refused(moves.clone(), Some(resize.clone()), |_| None),
-            (moves, Some(resize), None)
+            (moves, Some(resize.clone()), None)
         );
+
+        // The Size tool's warning says which size prop was refused, and why,
+        // as a locked size row does.
+        let keys = resize.keys();
+        let height_sets_own = "This scene sets its own `rectHeight`".to_owned();
+        assert_eq!(
+            resize_refusal(&keys, vec![None, Some(height_sets_own)]),
+            Some("Height: This scene sets its own `rectHeight`".to_owned())
+        );
+        assert_eq!(
+            resize_refusal(&keys, vec![Some(sets_own), None]),
+            Some("Width: This scene sets its own `rectWidth`".to_owned())
+        );
+        assert_eq!(resize_refusal(&keys, vec![None, None]), None);
     }
 }

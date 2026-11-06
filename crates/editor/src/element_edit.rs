@@ -80,6 +80,10 @@ pub(crate) struct ComponentTargets {
     pub(crate) call: ElementRef,
     /// In source order; `kind` from the registered schema or the literal.
     pub(crate) props: Vec<ComponentProp>,
+    /// Every attribute written at the call, `children` and the props a row
+    /// passes through to included (see `written_attributes`): whether this
+    /// scene sets a parameter itself.
+    pub(crate) written: Vec<String>,
     /// The schema `registerComponent()` registered for `name`, which typed
     /// the props; a commit types its fresh resolution with it again.
     pub(crate) schema: Option<ComponentPropertySchema>,
@@ -864,7 +868,10 @@ impl EditorView {
     /// [`ScopeContext::under`]): those of the scope it was made with, also
     /// when the control shows another by the time it goes; with the report
     /// it resolves them again for ([`commit_report`]).
-    fn targets_under(&self, scope: Option<Scope>) -> Option<(&ElementTargets, LayerSourceReport)> {
+    pub(crate) fn targets_under(
+        &self,
+        scope: Option<Scope>,
+    ) -> Option<(&ElementTargets, LayerSourceReport)> {
         let (resolved, report) = self.resolved_targets()?;
         let targets = self
             .shown_scope_context()
