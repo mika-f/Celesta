@@ -46,7 +46,7 @@ function Badge() {
 }
 ```
 
-Tune the feel with `config`: `stiffness` (default 100), `damping` (default 10), `mass` (default 1), and `overshootClamping`. Use `from` and `to` to map the result to another range. `frame`, `delay`, `from`, and `to` must be finite numbers and `fps` a finite number above 0; anything else, or a `NaN` `durationInFrames`, throws an error.
+Tune the feel with `config`: `stiffness` (default 100), `damping` (default 10), `mass` (default 1), and `overshootClamping`. Use `from` and `to` to map the result to another range. `frame`, `delay`, `from`, and `to` must be finite numbers, `fps` a finite number above 0, and `durationInFrames`, when set, a number other than `NaN` (`Infinity` is the same as leaving it out); anything else throws an error.
 
 ## Place a scene on the timeline
 

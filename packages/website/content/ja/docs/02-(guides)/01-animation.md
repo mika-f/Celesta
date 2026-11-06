@@ -46,7 +46,7 @@ function Badge() {
 }
 ```
 
-`config` の `stiffness`（既定 100）、`damping`（既定 10）、`mass`（既定 1）、`overshootClamping` で動きを調整します。`from` と `to` で別の範囲に変換できます。`frame`・`delay`・`from`・`to` は有限の数値、`fps` は 0 より大きい有限の数値でなければならず、それ以外や `NaN` の `durationInFrames` はエラーになります。
+`config` の `stiffness`（既定 100）、`damping`（既定 10）、`mass`（既定 1）、`overshootClamping` で動きを調整します。`from` と `to` で別の範囲に変換できます。`frame`・`delay`・`from`・`to` は有限の数値、`fps` は 0 より大きい有限の数値、`durationInFrames` は指定するなら `NaN` 以外の数値（`Infinity` は省略と同じ）でなければならず、それ以外はエラーになります。
 
 ## シーンをタイムラインに配置
 
