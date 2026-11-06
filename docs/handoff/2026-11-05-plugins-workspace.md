@@ -74,7 +74,7 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
 - GPU tests follow the root `Test` job. On Linux, Mesa's lavapipe runs them
   and `CELESTA_REQUIRE_GPU=1` makes a missing adapter a failure. On macOS
   and Windows, `CELESTA_REQUIRE_GPU=0`, and a test that finds no adapter
-  skips itself and is reported by `scripts/report-skipped-tests.mjs`. On
+  skips itself and is reported by `scripts/report-skipped-tests.mts`. On
   `main`'s latest run all three operating systems ran every GPU test.
 - Tests are Vitest in TypeScript for JavaScript, and Rust tests stay in
   Rust (`AGENTS.md`).
@@ -115,16 +115,16 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   plugin excluded into a workspace of its own (`/plugins/vrm/assets`
   stays).
 - **Build script.** `scripts/plugins/` is a private pnpm package
-  (`celesta-plugin-scripts`) with `platform.mjs` (a platform's
+  (`celesta-plugin-scripts`) with `platform.mts` (a platform's
   `<os>-<arch>` from `rustc --print cfg`'s `target_os` and `target_arch`,
   for the host or a `--target`, which closes mika-f/celesta#692),
-  `manifest.mjs` (the manifest from `plugin.json` and what the build made),
-  `cargo.mjs` (`cargo metadata --no-deps`: the target directory and the
-  members' versions), and `build.mjs`. Vitest tests cover `platform.mjs`
-  and `manifest.mjs`, one of them running the real `rustc`, and
+  `manifest.mts` (the manifest from `plugin.json` and what the build made),
+  `cargo.mts` (`cargo metadata --no-deps`: the target directory and the
+  members' versions), and `build.mts`. Vitest tests cover `platform.mts`
+  and `manifest.mts`, one of them running the real `rustc`, and
   `repository.test.mts` checks the repository's plugins' versions through
-  `cargo.mjs` (below).
-  `node scripts/plugins/build.mjs <plugin directory>... [--out <dir>]
+  `cargo.mts` (below).
+  `node scripts/plugins/build.mts <plugin directory>... [--out <dir>]
   [--target <triple>] [--skip-js]` replaces `plugins/vrm/build.mjs` and
   `examples/plugins/build.mjs`, which are deleted. Each directory resolves
   against the current directory, and its output goes by default to the
@@ -154,7 +154,7 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   `cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings`,
   `cargo check --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --locked --target x86_64-pc-windows-msvc --lib --bins`,
   `env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/Cargo.toml --workspace --locked`,
-  and `node scripts/plugins/build.mjs plugins/vrm`. The design's
+  and `node scripts/plugins/build.mts plugins/vrm`. The design's
   `-p celesta-plugin-vrm` became `--workspace` for clippy and the tests,
   so a new member is checked without editing the job.
 - **Formatting without `--all`.** The plan's
@@ -213,7 +213,7 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
 - `pnpm --dir scripts/plugins test`: 23 passed (3 files). With flag's
   `plugin.json` version changed to 0.1.1 by hand, `repository.test.mts`
   failed for flag (expected 0.1.0, received 0.1.1), and
-  `node scripts/plugins/build.mjs examples/plugins/flag` stopped with
+  `node scripts/plugins/build.mts examples/plugins/flag` stopped with
   "version 0.1.1 differs from the Cargo package celesta-plugin-flag's
   0.1.0" before building; the version was then put back.
 - `cargo metadata --format-version 1 --locked --no-deps` at the root:
@@ -223,14 +223,14 @@ Design for a four-layer stack. Each layer is one pull request, stacked with
   "invalid type: null, expected a string", if a `plugin.json` has no
   `version`). `cargo test -p celesta-plugin-host --locked`: 53 passed,
   0 failed.
-- `node scripts/plugins/build.mjs plugins/vrm`: writes `plugins/dist/vrm`
+- `node scripts/plugins/build.mts plugins/vrm`: writes `plugins/dist/vrm`
   whose manifest has version 0.1.0 and an `executable` for this machine
   only (`macos-aarch64`), with `js/index.js` and `js/index.d.ts`.
-- `node scripts/plugins/build.mjs examples/plugins/flag
+- `node scripts/plugins/build.mts examples/plugins/flag
   examples/plugins/turntable examples/plugins/beep-voice`: writes the three
   into `examples/plugins/dist/`, each at version 0.1.0; flag and turntable
   have a `macos-aarch64` executable, and beep-voice has no `executable`.
-- From `plugins/`, `node ../scripts/plugins/build.mjs vrm --skip-js`
+- From `plugins/`, `node ../scripts/plugins/build.mts vrm --skip-js`
   resolves `vrm` against the current directory and writes
   `plugins/dist/vrm` again (with `--out` to a scratch folder too: a
   manifest and `bin/macos-aarch64/` only, no `js/`).
@@ -539,13 +539,13 @@ its Decisions give the reasons for the three deviations below.
   `the_repositorys_plugins_pass_the_manifest_checks` writes each manifest
   as the build script does and asserts that `ffmpeg` has the codec role and
   no module.
-- **The build script** (`scripts/plugins/build.mjs`) reads and checks every
+- **The build script** (`scripts/plugins/build.mts`) reads and checks every
   `plugin.json` before it creates a folder or runs Cargo. A plugin without
   a `module` gets no `module`/`types` and no module build, and the
   `project-types` prerequisite applies only when some plugin in the run has
   a module. A plugin with neither `module` nor `cargoPackage`, or with
   `components` but no `module`, is refused. `roles` passes through to the
-  manifest. `licenses.mjs` resolves the optional `licenses` list; each run
+  manifest. `licenses.mts` resolves the optional `licenses` list; each run
   replaces `<plugin directory>/licenses/` with those files, copied by name,
   and refuses a missing file or two files with one name.
 - **Deviations from the spec text.**
@@ -569,8 +569,8 @@ its Decisions give the reasons for the three deviations below.
     `../LICENSE-*` links, so the same bytes read right in `packaging/`,
     the app's `licenses/`, and the plugin's `licenses/`; the build script
     never rewrites a file. It names `plugins/ffmpeg` for the source.
-- **Versions.** `node scripts/plugins/bump-version.mjs X.Y.Z` (helper
-  `version.mjs`) bumps the root `workspace.package.version`, every pin on
+- **Versions.** `node scripts/plugins/bump-version.mts X.Y.Z` (helper
+  `version.mts`) bumps the root `workspace.package.version`, every pin on
   one of Celesta's crates (a one-line inline table with `path` and
   `version = "=X"`; comments, third-party pins, and pins without a `path`
   stay), and, for each folder in `FOLLOWS_CELESTA` (`plugins/ffmpeg`), its
@@ -599,7 +599,7 @@ its Decisions give the reasons for the three deviations below.
   no codec.
 - **Packaging.** `scripts/package-macos.py`, `scripts/package-windows.ps1`,
   and `packaging/linux/Dockerfile` build the root crates without the codec
-  and the codec with `scripts/plugins/build.mjs plugins/ffmpeg --out <the
+  and the codec with `scripts/plugins/build.mts plugins/ffmpeg --out <the
   package's plugin folder>`, into `plugins/target`. macOS passes its
   `build_env` without `CARGO_TARGET_DIR`, with `--target <triple>` and the
   headerpad `RUSTFLAGS`; `--skip-build` and `-SkipBuild` still build the
@@ -629,7 +629,7 @@ its Decisions give the reasons for the three deviations below.
   Cargo build folder such as `target/<profile>`, so a pre-move
   `celesta-codec-ffmpeg` left there is never used. The exporter's
   `no_codec` hint and the editor's missing-codec problem tell a source
-  checkout to run `node scripts/plugins/build.mjs plugins/ffmpeg` and add
+  checkout to run `node scripts/plugins/build.mts plugins/ffmpeg` and add
   the absolute path of `plugins/dist` to `CELESTA_PLUGIN_PATH` (the editor
   also offers to reinstall Celesta), and their tests assert that. Both
   bench examples find the codec through `find_reporting(&[]).codec()`
@@ -695,7 +695,7 @@ built.
   codec folder. `cargo run -p celesta-exporter -- --react packages/cli/examples/title.tsx <out>.mp4 --json`
   exits 1 with `no_codec` and the new hint. Both bench examples print the
   "no codec plugin found" instruction and exit 1 (Task 6; not rerun).
-- `node scripts/plugins/build.mjs plugins/vrm plugins/ffmpeg`: writes
+- `node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg`: writes
   `plugins/dist/vrm` and `plugins/dist/ffmpeg`; the codec folder holds the
   manifest above (`macos-aarch64`), the program, and the four license
   files, each equal to its source. With
@@ -769,7 +769,7 @@ built.
 The plan is `docs/superpowers/plans/2026-11-05-plugins-workspace-layer4.md`;
 its Decisions give the reasons for the choices below.
 
-- **The script.** `node scripts/plugins/affected.mjs [--base <rev>]
+- **The script.** `node scripts/plugins/affected.mts [--base <rev>]
   [--head <rev>] [--github-output]` reads every `plugins/*/plugin.json`
   (not `examples/plugins/`, which stay in the root `Test` job). With
   `--base`, the changed paths are
@@ -782,24 +782,24 @@ its Decisions give the reasons for the choices below.
   Each plugin's `because` is the first changed path, in `git diff` order,
   that its own inputs or a shared input cover, so two plugins can name
   different paths; without `--base` it is `"no base revision"`. An error
-  prints `affected.mjs: <message>` and exits 1; a bad argument, and
+  prints `affected.mts: <message>` and exits 1; a bad argument, and
   `--head` without `--base`, exit 2. `--github-output` appends `any`,
   `plugins` (the array as compact JSON), `directories`, `js` (one
   `--filter <jsPackage>` per plugin with one), and `cargo` (one
   `<workspace> -p <package>...` line per workspace, in a
   `cargo<<CARGO_WORKSPACES` block) to `$GITHUB_OUTPUT`, with `\n` line
   endings only.
-- **A plugin's inputs** (`inputs.mjs`), as repository-relative `/` paths; a
+- **A plugin's inputs** (`inputs.mts`), as repository-relative `/` paths; a
   folder covers the paths under it, not a sibling sharing its prefix
   (`crates/plugin` does not cover `crates/plugin-host/...`), and a file
   covers only itself:
   - its folder;
   - **Rust**: the folders of the packages without `source` that its
-    workspace's lockfile reaches from `cargoPackage` (`lockfile.mjs`, which
+    workspace's lockfile reaches from `cargoPackage` (`lockfile.mts`, which
     reads `\r\n` lockfiles and tells a local package from a git or registry
     package of the same name and version). Names map to folders through
     `cargo metadata --no-deps` of the root and of each plugin workspace
-    (`cargo.mjs`'s `directories`: members and path dependencies). A local
+    (`cargo.mts`'s `directories`: members and path dependencies). A local
     package with no known folder, or a name two folders claim within one
     workspace's `cargo metadata`, is an error; across workspaces, the
     plugin's own workspace's folder wins, then the root's;
@@ -845,7 +845,7 @@ its Decisions give the reasons for the choices below.
 - **Shared inputs** (`SHARED_INPUTS`; a test checks each exists):
   `.github/workflows/ci.yml`, `.github/workflows/actions.lock`,
   `.github/actions/setup-ffmpeg`, `scripts/build-ffmpeg-linux.sh`,
-  `scripts/plugins`, `scripts/report-skipped-tests.mjs`,
+  `scripts/plugins`, `scripts/report-skipped-tests.mts`,
   `.cargo/config.toml`, `Cargo.toml`, `Cargo.lock`, `plugins/Cargo.toml`,
   `plugins/Cargo.lock`, `package.json`, `pnpm-lock.yaml`,
   `pnpm-workspace.yaml`, `turbo.json`, `mise.toml`, and `mise.lock`.
@@ -859,7 +859,7 @@ its Decisions give the reasons for the choices below.
   pull request's base at depth 1 (`pull_request` only; `HEAD` is the merge
   commit onto it, so the two-dot diff is the pull request's change),
   installs Rust 1.99.1 with clippy and rustfmt and mise, and runs
-  `affected.mjs` (`--base` the base SHA on a pull request; on a push to
+  `affected.mts` (`--base` the base SHA on a pull request; on a push to
   `main` and on `workflow_dispatch`, no base, so every plugin). `ci.yml`
   has no `merge_group` trigger. Every later step but `wait-all` is gated
   at the step level, so the three check names stay stable: the Cargo
@@ -874,13 +874,13 @@ its Decisions give the reasons for the choices below.
   Format and Clippy run on Linux only. Tests
   run `cargo test <-p ...> --locked --no-fail-fast -- --show-output` in
   each workspace's folder, through `tee` into a log, and
-  `scripts/report-skipped-tests.mjs` reads that log through `libtest.mjs`
+  `scripts/report-skipped-tests.mts` reads that log through `libtest.mts`
   (a JUnit file still when the path ends in `.xml`), reporting each test
   whose output has a line starting `skipping` or `skipped` (as the VRM
   sample tests and two plugin-host tests print), named
   `<binary label> <test>`, or the label alone for a `harness = false`
   binary; labels use `/` on every system. The plugin directories are then built with
-  `node scripts/plugins/build.mjs $DIRECTORIES`.
+  `node scripts/plugins/build.mts $DIRECTORIES`.
 - **The scripts' tests moved** to the root `Test` job's "Test Celesta
   packages" step (`pnpm --dir scripts/plugins test`), which runs on every
   pull request on all three systems, `inputs.test.mts`'s repository test
@@ -894,9 +894,7 @@ its Decisions give the reasons for the choices below.
   `inputs.test.mts` lives under `scripts/plugins/node_modules/.cache/`,
   inside the repository, where the pnpm `mise.toml` pins is on the path.
 - **Known gaps.** Build and test inputs outside both graphs and outside
-  `turbo.json` do not affect a plugin: `examples/minimal.celesta.json`
-  (read by the codec's `tests/export.rs`).
-  Hand-kept lists are a non-goal; a push to `main` tests every plugin and
+  `turbo.json` do not affect a plugin. Hand-kept lists are a non-goal; a push to `main` tests every plugin and
   catches such a change there.
 
 ### Checks (macOS 26.7.1, Apple M5, Metal)
@@ -906,7 +904,7 @@ Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
 - `pnpm --dir scripts/plugins test`: `tsc -p test`, then 115 passed
   (10 files; `inputs.test.mts` 55).
 - `pnpm install --frozen-lockfile`: up to date.
-- `node scripts/plugins/affected.mjs`: ffmpeg and vrm, both
+- `node scripts/plugins/affected.mts`: ffmpeg and vrm, both
   `"no base revision"`. `--base HEAD`: `{"plugins":[]}`, and with
   `--github-output` `any=false`, empty `plugins` list, `directories`, and
   `js`, and an empty `cargo` block. `--base claude/codec-plugin-move`:
@@ -925,7 +923,7 @@ Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
   `cargo fmt --check -p celesta-codec-ffmpeg -p celesta-plugin-vrm -- -l`:
   clean; with `-v` it lists 12 targets, all under `plugins/`.
 - `cargo test --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm --test render --locked -- --show-output`:
-  2 passed; `scripts/report-skipped-tests.mjs` on its log: "No tests
+  2 passed; `scripts/report-skipped-tests.mts` on its log: "No tests
   skipped themselves."
 - `ruby -ryaml -e 'ARGV.each { |f| YAML.load_file(f) }' .github/workflows/*.yml`:
   all parse. The gate check (every `plugins` step after `affected` except
@@ -941,14 +939,40 @@ Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
   or Windows runners; the plugins' whole suites, Clippy, and the
   JavaScript tests, which CI runs.
 
+## After review (2026-11-06)
+
+The review of the whole stack changed:
+
+- The skip parsers (`libtest.mts`, and the JUnit path of
+  `report-skipped-tests.mts`) count a line starting `skipped` as well as
+  `skipping`.
+- The codec's tests read their own fixtures, `minimal.celesta.json` and
+  `001.wav`, from `plugins/ffmpeg/tests/fixtures/`, so no input of theirs
+  lies outside the codec's folder.
+- The codec's tests check an FFmpeg encoder for every `VideoFormat`, not a
+  hand-written list, and pin FFmpeg's decode of the WAV to the samples the
+  core expects.
+- `InstalledPlugins::codec()` never uses a sibling codec when Celesta runs
+  from a Cargo build folder (one with `.fingerprint` or `.cargo-lock`, as
+  `target/<profile>` has).
+- The `Plugins (<OS>)` jobs cache only `plugins -> target`.
+- `inputs.mts` refuses a folder under `plugins/` (but `dist` and `target`)
+  without a `plugin.json`, and a plugin's JavaScript package without a
+  `test` script, which CI would otherwise pass over.
+- `turbo.json` hashes what the CLI's build reads outside its package.
+- The packages' license inventory takes from the plugins workspace only the
+  crates the codec reaches, so it lists none of VRM's.
+- The plugin scripts and `scripts/report-skipped-tests.mts` are TypeScript
+  (`.mts`), which Node runs directly, stripping the types.
+
 ## Left to the builder
 
 Each was decided while building:
 
 - The test codec's file format and where it lives: a crate of its own,
   `crates/codec-test` (Layer 2: what was done, **File format**).
-- The scripts' names and location: `scripts/plugins/build.mjs` and
-  `scripts/plugins/affected.mjs` (Layers 1 and 4).
+- The scripts' names and location: `scripts/plugins/build.mts` and
+  `scripts/plugins/affected.mts` (Layers 1 and 4).
 - How the per-OS plugin jobs set up their tools: FFmpeg for any affected
   plugin, for rust-cache's key (Layer 4: what was done, **The job**).
 - Which of the moved exporter tests still need a tolerance: the list in
