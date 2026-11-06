@@ -22,7 +22,7 @@ use crate::export_worker::{
 };
 use crate::helpers::{
     ExportLoudness, export_loudness_label, export_output, export_progress_label, export_range_for,
-    export_suggested_name, loop_range_for,
+    export_suggested_name, lexically_normalized, loop_range_for,
 };
 use crate::layer_panel::locked_summary;
 use crate::layer_select::{
@@ -2544,4 +2544,17 @@ fn lookup_is_not_allowed_while_editing_text() {
     // drawn with no edit running, so they look the layer up, as a released
     // scrub's do.)
     assert!(!lookup_allowed(false, false, true));
+}
+
+#[test]
+fn lexical_normalizing_keeps_a_leading_parent() {
+    let normal = |path: &str| lexically_normalized(Path::new(path));
+    assert_eq!(normal("a/./b/../c"), PathBuf::from("a/c"));
+    assert_eq!(normal("../x"), PathBuf::from("../x"));
+    assert_eq!(normal("a/../../x"), PathBuf::from("../x"));
+    assert_eq!(normal("../../x"), PathBuf::from("../../x"));
+    assert_eq!(normal("a/../.."), PathBuf::from(".."));
+    assert_eq!(normal("./a"), PathBuf::from("a"));
+    // Nothing is above a root.
+    assert_eq!(normal("/a/../../x"), PathBuf::from("/x"));
 }

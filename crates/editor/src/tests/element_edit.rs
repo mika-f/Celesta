@@ -695,6 +695,11 @@ fn transform_files_outside_the_project_are_locked() {
         Path::new("/project/src/node_modules/kit/rect.tsx"),
         entry_dir
     ));
+    // Relative: the file climbs out of `project` before coming back.
+    assert!(!inside_project(
+        Path::new("project/src/../../../project/src/scene.tsx"),
+        Path::new("project/src")
+    ));
     assert!(!inside_project(
         Path::new("/project/src/../lib/shared.tsx"),
         entry_dir

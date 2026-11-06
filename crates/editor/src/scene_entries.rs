@@ -4,10 +4,11 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::edit_history::Texts;
 use crate::element_edit::{CommitError, apply_checked, reason_text};
+use crate::helpers::lexically_normalized;
 use crate::source::source_files;
 use crate::timeline_drag::snap_targets;
 use crate::view::EditorView;
@@ -57,24 +58,6 @@ pub(crate) fn find_scene_sources(dir: &Path, entry: &Path, generation: u64) -> S
         length,
         entry: entry.to_path_buf(),
     }
-}
-
-/// `path` with its `.` and `..` components taken out, without reading the
-/// file system.
-fn normalized(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !out.pop() {
-                    out.push(component);
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// The files an import of `base` (a relative specifier joined to the
@@ -128,15 +111,15 @@ pub(crate) fn composition_follows(
     if binding != Some(name.as_str()) {
         return false;
     }
-    let list_file = normalized(list_file);
+    let list_file = lexically_normalized(list_file);
     let Some(module) = module else {
-        return normalized(entry) == list_file;
+        return lexically_normalized(entry) == list_file;
     };
     let relative = module.starts_with("./") || module.starts_with("../");
     let Some(dir) = entry.parent().filter(|_| relative) else {
         return false;
     };
-    module_files(&normalized(&dir.join(module)))
+    module_files(&lexically_normalized(&dir.join(module)))
         .into_iter()
         .find(|file| exists(file))
         .is_some_and(|file| file == list_file)

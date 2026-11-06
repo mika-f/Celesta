@@ -6,7 +6,7 @@ use celesta_gpu_renderer::PreviewFrame as GpuPreviewFrame;
 use gpui_kit::RenderImage;
 use image::{Frame, ImageBuffer, Rgba};
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 pub(crate) fn prepare_preview_frame(frame: GpuPreviewFrame) -> PreviewPresentation {
@@ -169,4 +169,26 @@ pub(crate) fn export_output(mut path: PathBuf) -> (PathBuf, VideoFormat) {
         return (path, VideoFormat::Mp4);
     };
     (path, format)
+}
+
+/// `path` with its `.` and `..` components taken out, without reading the
+/// file system. A `..` with nothing left to take off stays (`../x` is
+/// `../x`, `a/../../x` is `../x`); one right after a root goes, since
+/// nothing is above it.
+pub(crate) fn lexically_normalized(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                Some(Component::ParentDir | Component::CurDir) | None => out.push(component),
+            },
+            other => out.push(other),
+        }
+    }
+    out
 }

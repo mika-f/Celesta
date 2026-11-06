@@ -20,6 +20,7 @@ pub(crate) use resolve::{
 };
 
 use crate::element_rows::{removable, row_label};
+use crate::helpers::lexically_normalized;
 use crate::layer_select::SourceLookup;
 use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
@@ -41,7 +42,7 @@ use celesta_source_edit::{
 use gpui_kit::Context;
 use std::cell::RefCell;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// A row the editor writes: a table prop by its table key (`fontSize`, even
 /// when it writes `style.fontSize`).
@@ -1438,25 +1439,11 @@ pub(crate) fn row_removable_under(
 /// directory `entry_dir` and not inside any `node_modules`. Compares paths
 /// lexically after resolving `.` and `..`; callers pass real paths.
 pub(crate) fn inside_project(file: &Path, entry_dir: &Path) -> bool {
-    let file = normalize(file);
-    file.starts_with(normalize(entry_dir))
+    let file = lexically_normalized(file);
+    file.starts_with(lexically_normalized(entry_dir))
         && !file
             .components()
             .any(|component| component.as_os_str() == "node_modules")
-}
-
-fn normalize(path: &Path) -> PathBuf {
-    let mut normal = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normal.pop();
-            }
-            other => normal.push(other),
-        }
-    }
-    normal
 }
 
 /// Locks every target, row, input, or component prop, in a file `outside`
