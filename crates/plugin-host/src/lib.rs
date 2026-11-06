@@ -27,10 +27,10 @@ pub use locations::{
     PluginSource, SearchPath, bundled_plugin_dir, search_paths, unsafe_reason, user_plugin_dir,
 };
 pub use manifest::{
-    CODEC_PROGRAM, CodecPlugin, ComponentInfo, ComponentSource, DiscoveryError, InstalledPlugins,
-    MANIFEST, Manifest, PLUGIN_PATH_ENV, PluginEntry, PluginRole, RuntimePlugins,
-    WAITING_PLUGIN_PATH_ENV, discover, discover_in, is_contained_path, is_valid_id, platform,
-    plugin_paths,
+    CELESTA_VERSION, CODEC_PROGRAM, CodecPlugin, ComponentInfo, ComponentSource, DiscoveryError,
+    InstalledPlugins, MANIFEST, Manifest, PLUGIN_PATH_ENV, PluginEntry, PluginRole, RuntimePlugins,
+    WAITING_PLUGIN_PATH_ENV, celesta_range_for, discover, discover_in, is_contained_path,
+    is_valid_id, platform, plugin_paths,
 };
 pub use project::{
     PROJECT_CONFIG, ProjectConfigError, has_project_config, project_plugin_paths, project_root,

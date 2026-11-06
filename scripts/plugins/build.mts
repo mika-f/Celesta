@@ -9,7 +9,10 @@
 // have, nothing to build, components but no module, no version, a license
 // file that is not there, two license files sharing a name, or, with
 // --skip-js, a module no earlier run built, fails the run before anything is
-// built.
+// built. The manifest's `celesta` range, the Celesta versions the plugin
+// works with, comes from the Celesta this script belongs to (its root
+// Cargo.toml's version): the one whose crates the plugin's process is built
+// with and whose runtime its module is checked against.
 //
 //   node scripts/plugins/build.mts <plugin directory>...
 //                                  [--out <dir>] [--target <triple>] [--skip-js]
@@ -40,9 +43,10 @@ import { parseArgs } from 'node:util';
 
 import { cargoMetadata } from './cargo.mts';
 import { licenseFiles } from './licenses.mts';
-import { checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
+import { celestaRange, checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
 import type { Built, PluginManifest, PluginSource } from './manifest.mts';
 import { rustPlatform } from './platform.mts';
+import { workspaceVersion } from './version.mts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..', '..');
@@ -95,6 +99,10 @@ function readJson(path: string): any {
     }
   });
 }
+
+// The Celesta the plugins are built against, and the range its manifests give.
+const celestaVersion = orFail(() => workspaceVersion(readFileSync(join(root, 'Cargo.toml'), 'utf8')));
+orFail(() => celestaRange(celestaVersion));
 
 // Every plugin.json, checked before anything is built, and with --skip-js the
 // module an earlier run built.
@@ -203,7 +211,7 @@ for (const { source, sourcePath, plugin, licenses, out } of plugins) {
     Object.entries(previous.executable ?? {}).filter(([, path]) => existsSync(join(out, path))),
   );
 
-  let built: Built = {};
+  let built: Built = { celestaVersion };
   if (plugin.cargoPackage !== undefined) {
     const { cargoPackage } = plugin;
     const cargoToml = join(source, 'Cargo.toml');
@@ -212,7 +220,7 @@ for (const { source, sourcePath, plugin, licenses, out } of plugins) {
     if (cargoVersion === undefined) fail(`${cargoToml} is in no workspace with the package ${cargoPackage}`);
     orFail(() => pluginVersion(plugin, cargoVersion, sourcePath));
     const executable = buildExecutable(source, out, cargoPackage, targetDirectory);
-    built = { cargoVersion, executable: { ...kept, ...executable } };
+    built = { celestaVersion, cargoVersion, executable: { ...kept, ...executable } };
   }
   if (!values['skip-js'] && plugin.module !== undefined) await buildModule(source, out, plugin.module);
 

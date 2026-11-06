@@ -28,6 +28,7 @@ fn plugin_directory() -> tempfile::TempDir {
             "id": PLUGIN,
             "version": "0.1.0",
             "protocol": 1,
+            "celesta": format!("={}", celesta_plugin_host::CELESTA_VERSION),
             "executable": { format!("{os}-{arch}"): name },
         })
         .to_string(),

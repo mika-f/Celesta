@@ -46,7 +46,11 @@ desktop app, add `dist/` with **Add Folder…** in its Plugins tab (or copy a
 plugin's folder into your plugin folder) and allow them when it asks, or
 with **Allow** in the Plugins tab.
 
-Each sample's `plugin.json` gives its id, version, and module source.
+Each sample's `plugin.json` gives its id, version, and module source. The
+build adds the manifest's `celesta` range, the Celesta versions the plugin
+works with, from the Celesta checkout it builds against (`>=0.9.0, <0.10.0`
+for 0.9.0); Celesta skips a plugin whose range leaves it out, so rebuild
+the samples after updating the checkout to a new minor release.
 flag's and turntable's also name the Cargo package that builds the program,
 whose version must be the same: bump both together, since the build refuses
 a plugin whose versions differ. flag's also lists the `components` the

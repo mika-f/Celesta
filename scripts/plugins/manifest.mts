@@ -1,7 +1,9 @@
 // A plugin directory's manifest (celesta-plugin.json), from the plugin's
 // plugin.json and what the build made. plugin.json gives the version. A
 // plugin with a process gives the same version in its Cargo package; the two
-// are bumped together, and a plugin whose versions differ is refused.
+// are bumped together, and a plugin whose versions differ is refused. The
+// manifest's `celesta` range comes from the Celesta the plugin was built
+// against, so it does not drift by hand.
 
 /** plugin.json: what a plugin's source has. */
 export interface PluginSource {
@@ -21,6 +23,11 @@ export interface PluginSource {
 
 /** What the build made. */
 export interface Built {
+  /**
+   * The version of the Celesta it was built against: its crates' and its
+   * runtime packages' (the root Cargo.toml's `[workspace.package]` version).
+   */
+  celestaVersion: string;
   /** The version of `cargoPackage`, from Cargo. */
   cargoVersion?: string;
   /** Each platform's process, as `<os>-<arch>` to a path. */
@@ -32,6 +39,8 @@ export interface PluginManifest {
   id: string;
   version: string;
   protocol: 1;
+  /** The Celesta versions it works with: {@link celestaRange} of the one it was built against. */
+  celesta: string;
   roles?: string[];
   executable?: Record<string, string>;
   module?: 'js/index.js';
@@ -96,12 +105,17 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
  * The manifest of the plugin `source` (read from `sourcePath`, which errors
  * name) once `built`.
  */
-export function pluginManifest(source: PluginSource, { cargoVersion, executable }: Built, sourcePath: string): PluginManifest {
+export function pluginManifest(
+  source: PluginSource,
+  { celestaVersion, cargoVersion, executable }: Built,
+  sourcePath: string,
+): PluginManifest {
   checkPluginSource(source, sourcePath);
   return {
     id: source.id,
     version: pluginVersion(source, cargoVersion, sourcePath),
     protocol: 1,
+    celesta: celestaRange(celestaVersion),
     ...(source.roles ? { roles: source.roles } : {}),
     ...(executable ? { executable } : {}),
     ...(source.module !== undefined ? { module: 'js/index.js', types: 'js/index.d.ts' } : {}),
@@ -135,4 +149,22 @@ export function pluginVersion(
     }
   }
   return version;
+}
+
+/** A semver version: its major, minor, and patch, its pre-release, and its build metadata. */
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+
+/**
+ * The `celesta` range of a plugin built against Celesta `version`: that
+ * version (without build metadata) up to the next release that may break it,
+ * as Cargo's `^` reads (the next minor below 1.0, the next major from it),
+ * such as `>=0.9.0, <0.10.0`. Celesta's `celesta_range_for`
+ * (`crates/plugin-host/src/manifest.rs`) suggests the same.
+ */
+export function celestaRange(version: string): string {
+  const match = SEMVER.exec(version);
+  if (match === null) throw new Error(`Celesta's version ${JSON.stringify(version)} is not a semver version`);
+  const [, major, minor, patch, pre = ''] = match;
+  const next = major === '0' ? `0.${Number(minor) + 1}.0` : `${Number(major) + 1}.0.0`;
+  return `>=${major}.${minor}.${patch}${pre}, <${next}`;
 }

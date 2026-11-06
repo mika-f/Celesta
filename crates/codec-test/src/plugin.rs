@@ -77,6 +77,7 @@ impl TestCodecPlugin {
             "id": PLUGIN_ID,
             "version": env!("CARGO_PKG_VERSION"),
             "protocol": 1,
+            "celesta": format!("={}", celesta_plugin_host::CELESTA_VERSION),
             "roles": ["codec"],
             "executable": { std::env::consts::OS: name },
         });

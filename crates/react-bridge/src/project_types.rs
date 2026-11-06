@@ -243,6 +243,7 @@ pub(crate) mod tests {
                 id: "example".into(),
                 version: "0.1.0".into(),
                 protocol: 1,
+                celesta: Some("*".into()),
                 executable: Default::default(),
                 module: Some("js/index.js".into()),
                 types: Some("js/index.d.ts".into()),

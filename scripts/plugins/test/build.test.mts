@@ -15,7 +15,12 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { celestaRange } from '../manifest.mts';
+import { workspaceVersion } from '../version.mts';
+
 const script = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'build.mts');
+// The Celesta the script belongs to, whose version the manifests' ranges follow.
+const repository = resolve(dirname(script), '..', '..');
 
 // A plugin with a process, a module and a license file, in a temporary
 // folder. `CARGO` is Node, run in the plugin's folder, so `cargo metadata ...`
@@ -101,6 +106,7 @@ describe('build.mts', () => {
       id: 'demo',
       version: '0.1.0',
       protocol: 1,
+      celesta: celestaRange(workspaceVersion(readFileSync(join(repository, 'Cargo.toml'), 'utf8'))),
       executable: { 'linux-x86_64': 'bin/linux-x86_64/demo-plugin' },
       module: 'js/index.js',
       types: 'js/index.d.ts',
