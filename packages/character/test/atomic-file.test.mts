@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'vitest';
@@ -36,7 +36,8 @@ for (const [form, write] of [
     const target = join(dir, 'taken');
     mkdirSync(target);
     writeFileSync(join(target, 'inside'), '');
-    await assert.rejects(write(target, 'a'.repeat(1000), { ifExists: 'same-size' }));
+    // One byte more than the folder's size, whatever the filesystem reports.
+    await assert.rejects(write(target, 'a'.repeat(statSync(target).size + 1), { ifExists: 'same-size' }));
     assert.deepEqual(readdirSync(dir), ['taken']);
   });
 
@@ -44,4 +45,24 @@ for (const [form, write] of [
     await assert.rejects(write(join(dir, 'missing', 'out.wav'), 'data'));
     assert.deepEqual(readdirSync(dir), []);
   });
+
+  // A read-only folder stops the temporary file from being written; Windows
+  // ignores the mode, and root writes anyway.
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    `ifExists 'same-size' does not cover a failed write (${form})`,
+    async () => {
+      const folder = join(dir, 'locked');
+      mkdirSync(folder);
+      const target = join(folder, 'out.wav');
+      writeFileSync(target, 'old!');
+      chmodSync(folder, 0o555);
+      try {
+        // The target already has as many bytes as the data, but this write never happened.
+        await assert.rejects(write(target, 'new!', { ifExists: 'same-size' }), { code: 'EACCES' });
+        assert.equal(readFileSync(target, 'utf8'), 'old!');
+      } finally {
+        chmodSync(folder, 0o755);
+      }
+    },
+  );
 }

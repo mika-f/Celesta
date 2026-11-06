@@ -19,10 +19,8 @@ function temporaryPath(target: string): string {
   return `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
 }
 
-function publishedBySomeoneElse(target: string, data: Uint8Array | string, options: WriteFileAtomicOptions): boolean {
-  if (options.ifExists !== 'same-size') return false;
-  const size = typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength;
-  return fs.statSync(target, { throwIfNoEntry: false })?.size === size;
+function byteLength(data: Uint8Array | string): number {
+  return typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength;
 }
 
 /**
@@ -34,10 +32,16 @@ export function writeFileAtomicSync(target: string, data: Uint8Array | string, o
   const temporary = temporaryPath(target);
   try {
     fs.writeFileSync(temporary, data);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+  try {
     fs.renameSync(temporary, target);
   } catch (error) {
     fs.rmSync(temporary, { force: true });
-    if (!publishedBySomeoneElse(target, data, options)) throw error;
+    const published = options.ifExists === 'same-size' && fs.statSync(target, { throwIfNoEntry: false })?.size === byteLength(data);
+    if (!published) throw error;
   }
 }
 
@@ -46,9 +50,15 @@ export async function writeFileAtomic(target: string, data: Uint8Array | string,
   const temporary = temporaryPath(target);
   try {
     await fs.promises.writeFile(temporary, data);
+  } catch (error) {
+    await fs.promises.rm(temporary, { force: true });
+    throw error;
+  }
+  try {
     await fs.promises.rename(temporary, target);
   } catch (error) {
     await fs.promises.rm(temporary, { force: true });
-    if (!publishedBySomeoneElse(target, data, options)) throw error;
+    const size = options.ifExists === 'same-size' ? await fs.promises.stat(target).then((stat) => stat.size, () => undefined) : undefined;
+    if (size !== byteLength(data)) throw error;
   }
 }
