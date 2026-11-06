@@ -1331,7 +1331,7 @@ fn scoped_row_follows_the_table() {
     );
     assert_eq!(
         expression.text(),
-        "`rectOpacity`'s shared value is written as an expression"
+        "`rectOpacity`’s shared value is written as an expression"
     );
     // A Component-section row is outside the scope.
     assert_eq!(
@@ -1439,7 +1439,7 @@ fn scoped_row_follows_the_table() {
     );
     assert_eq!(
         not_found.text(),
-        "Can’t find where `rectAnchorX`'s shared value is written"
+        "Can’t find where `rectAnchorX`’s shared value is written"
     );
 
     // The lift can't extend the props type.
@@ -1453,7 +1453,7 @@ fn scoped_row_follows_the_table() {
     );
     assert_eq!(
         imported.text(),
-        "`PriceTag`'s props type is in another file"
+        "`PriceTag`’s props type is in another file"
     );
     targets.lift_lock = Some(LiftLock::PropsTypeNotEditable {
         component: "PriceTag".to_owned(),
@@ -1472,7 +1472,7 @@ fn scoped_row_follows_the_table() {
     };
     assert_eq!(
         not_editable.text(),
-        "Can’t add `rectWidth` to `PriceTag`'s props type"
+        "Can’t add `rectWidth` to `PriceTag`’s props type"
     );
     targets.lift_lock = Some(LiftLock::NotALiteral);
     assert_eq!(

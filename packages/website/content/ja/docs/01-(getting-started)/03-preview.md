@@ -97,7 +97,7 @@ Celesta が値を書き込むのは、ファイルに直接書かれた要素、
 | Set by a component, not written on this element | レイヤーにもっとも近い要素が、`<Rect>` のような Celesta の要素ではなく、自作（またはほかのライブラリ）のコンポーネント |
 | Written as an expression: `<expression>` | `W / 2` や `i * 24` のような式。または、**Anchor Y** の行の `anchorY="baseline"` のように、行が受け付けるのとは別の種類の値 |
 | Comes from `<name>`, which can’t be traced | import、`let`、内側のコンポーネントから読んだ外側のコンポーネントの引数、オブジェクトのプロパティ、またはコンポーネントの中で 2 回以上宣言された名前（ブロックやループの中での再宣言など） |
-| Comes from `<component>`'s caller | 呼び出し側が、自分の受け取った prop をそのまま渡している（`Card` の中の `<PriceTag x={x} />` など）。Celesta がたどる呼び出しは 1 つだけで、その呼び出しの呼び出しまではたどらない |
+| Comes from `<component>`’s caller | 呼び出し側が、自分の受け取った prop をそのまま渡している（`Card` の中の `<PriceTag x={x} />` など）。Celesta がたどる呼び出しは 1 つだけで、その呼び出しの呼び出しまではたどらない |
 | Can’t find where `<component>` is called | 値はコンポーネントの prop だが、このレイヤーを描画している呼び出しが見つからない、またはそのファイルを読めない |
 | `<name>` is used in `<count>` places | 共有されている `const` を編集すると、ほかの要素も動いてしまう |
 | Between keyframes at `<frame>` and `<frame>` | キーフレームのフレームではない。ボタンでキーフレームへ移動できる |

@@ -598,7 +598,7 @@ fn a_locked_lift_is_refused_with_its_text() {
 
     assert_eq!(
         refused,
-        Err("`PriceTag`'s props type is in another file".to_owned())
+        Err("`PriceTag`’s props type is in another file".to_owned())
     );
     assert_eq!(files.read(&files.tag()), tag);
     assert_eq!(files.read(&files.price()), PRICE);

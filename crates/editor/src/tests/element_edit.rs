@@ -325,7 +325,7 @@ fn pass_through_reason_texts() {
         reason_text(&LockReason::ParameterOfCaller {
             component: "Card".to_owned()
         }),
-        "Comes from `<Card>`'s caller"
+        "Comes from `<Card>`’s caller"
     );
     assert_eq!(
         reason_text(&LockReason::CallSiteNotFound {

@@ -87,19 +87,19 @@ impl ScopeLock {
                 format!("`{component}` doesn’t take its props as `{{ … }}`")
             }
             Self::ImportedPropsType { component } => {
-                format!("`{component}`'s props type is in another file")
+                format!("`{component}`’s props type is in another file")
             }
             Self::PropsTypeNotEditable { component, param } => {
-                format!("Can’t add `{param}` to `{component}`'s props type")
+                format!("Can’t add `{param}` to `{component}`’s props type")
             }
             Self::PerSceneUnsupported => "Can’t be set per scene yet".to_owned(),
             Self::EverySceneSets { param } => format!("Every scene sets `{param}` itself"),
             Self::SetsOwn { param } => format!("This scene sets its own `{param}`"),
             Self::DefaultIsExpression { param } => {
-                format!("`{param}`'s shared value is written as an expression")
+                format!("`{param}`’s shared value is written as an expression")
             }
             Self::DefaultNotFound { param } => {
-                format!("Can’t find where `{param}`'s shared value is written")
+                format!("Can’t find where `{param}`’s shared value is written")
             }
             Self::OutsideProject => reason_text(&LockReason::OutsideProject),
         }

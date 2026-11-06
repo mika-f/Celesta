@@ -339,7 +339,7 @@ pub(crate) fn reason_text(reason: &LockReason) -> String {
         LockReason::NoStyleObject => "No style object to set this in".to_owned(),
         LockReason::StyleMaySet => "May be set by `style`".to_owned(),
         LockReason::ParameterOfCaller { component } => {
-            format!("Comes from `<{component}>`'s caller")
+            format!("Comes from `<{component}>`’s caller")
         }
         LockReason::CallSiteNotFound { component } => {
             format!("Can’t find where `<{component}>` is called")

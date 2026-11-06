@@ -97,7 +97,7 @@ Anything else is locked: its field shows a lock icon and the reason, the header'
 | Set by a component, not written on this element | The element nearest the layer is your own component (or another library's), not a Celesta element such as `<Rect>` |
 | Written as an expression: `<expression>` | A value such as `W / 2` or `i * 24`, or a value of another kind than the row takes, such as `anchorY="baseline"` in the **Anchor Y** row |
 | Comes from `<name>`, which can’t be traced | An import, a `let`, a parameter of an outer component read inside a nested one, an object property, or a name declared more than once in the component, such as again inside a block or loop |
-| Comes from `<component>`'s caller | The call site passes on a prop it received itself, such as `<PriceTag x={x} />` inside `Card`. Celesta follows one call, not the call of that call |
+| Comes from `<component>`’s caller | The call site passes on a prop it received itself, such as `<PriceTag x={x} />` inside `Card`. Celesta follows one call, not the call of that call |
 | Can’t find where `<component>` is called | The value is a prop of the component, but Celesta can't find the call that renders this layer, or can't read its file |
 | `<name>` is used in `<count>` places | Editing the shared `const` would move other elements too |
 | Between keyframes at `<frame>` and `<frame>` | The frame is not one of the keyframes; use the buttons to jump to one |
