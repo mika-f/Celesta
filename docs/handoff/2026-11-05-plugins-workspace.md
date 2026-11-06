@@ -1031,6 +1031,18 @@ The review of the whole stack changed:
   - A second Ctrl-C during a bump undoes it only once Cargo has exited.
   - `templates/package.json` is bumped by hand with
     `packages/*/package.json`.
+  - A `plugin.json` `id` must pass the host's rule (`is_valid_id` in
+    `crates/plugin-host/src/manifest.rs`): lowercase ASCII letters,
+    digits, `-`, `_`, and `.`, starting with a letter or digit. That also
+    keeps `dist/<id>` inside `dist/`, so `..` or `a/b` is refused.
+  - `components`, when present, must be a list of objects.
+  - The frame-time tolerance both codecs use, `timestamps_match`, lives
+    once in `celesta-media`, next to `VideoRequest`; the test codec and
+    the FFmpeg plugin call it instead of keeping copies.
+  - The performance docs build the codec plugin with a plain
+    `node scripts/plugins/build.mts plugins/ffmpeg` and say once,
+    for every platform, that it needs FFmpeg 8's development files where
+    pkg-config finds them (`PKG_CONFIG_PATH`, or `VCPKG_ROOT` on Windows).
 
 ### Checks (macOS 26.7.1, Apple M5, Metal)
 
@@ -1038,10 +1050,17 @@ Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
 
 - `pnpm --dir scripts/plugins test`: `tsc -p test`, then 159 passed
   (13 files); 161 once the dot-folder and lone-SIGINT tests joined; 173
-  after the later AI-review round.
+  after the later AI-review round; 194 once the id and components checks
+  joined.
 - After that round: `cargo test -p celesta-codec-test` (all passed); the
   exporter's integration tests, 42; mcp's `export::`, 5; react-bridge's
   `node_integration`, 43; clippy and `cargo fmt --check`, clean.
+- After the shared tolerance moved to `celesta-media`:
+  `cargo test -p celesta-media --lib timestamps_match`, 1;
+  `cargo test -p celesta-codec-test`, all passed; in `plugins/`,
+  `cargo test -p celesta-codec-ffmpeg --test decode`, 4; clippy with
+  `-D warnings` for `celesta-media`, `celesta-codec-test`, and
+  `celesta-codec-ffmpeg`, and `cargo fmt --check` in `plugins/`, clean.
 - `python3 scripts/test_package_macos.py`: 8 passed.
 - `cargo build --workspace --all-targets --locked` at the root: succeeds.
 - In `plugins/`, `cargo fmt --check` and
