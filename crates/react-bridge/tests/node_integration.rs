@@ -694,6 +694,30 @@ fn a_runtime_stop_ends_a_prepare_that_never_resolves_when_node_is_available() {
 }
 
 #[test]
+fn a_stray_stdout_write_is_a_protocol_error_when_node_is_available() {
+    let Some((node, cli_script, _)) = live_react_runtime() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let entry = dir.path().join("chatty.tsx");
+    std::fs::write(
+        &entry,
+        "import { Composition } from '@celesta.studio/react';\n\
+         process.stdout.write('hello\\n');\n\
+         export default () => <Composition width={8} height={8} fps={1} durationInFrames={1} />;\n",
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let spawned = Bridge::spawn(&node, &cli_script, &entry);
+    assert!(
+        matches!(&spawned, Err(ReactBridgeError::Protocol(_))),
+        "{:?}",
+        spawned.err()
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+}
+
+#[test]
 fn reports_imports_of_the_legacy_scope_when_node_is_available() {
     let Some((node, cli_script, _)) = live_react_runtime() else {
         return;

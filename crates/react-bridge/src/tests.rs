@@ -1,14 +1,12 @@
 use crate::audio::{merge_react_audio_clips, react_audio_clips, react_video_clip_ids};
-use crate::bridge::ReactBridge;
+use crate::bridge::{ReactBridge, read_message};
 use crate::error::ReactBridgeError;
 use crate::occurrences::{ElementOccurrences, InstanceOccurrences, OccurrenceIndex};
 use crate::properties::{
     ENTRY_PROPS_FILE, EffectiveValue, PropertyInputError, PropertyInputs, PropertySource,
     ValueSource, effective_values, resolve_props_file,
 };
-use crate::protocol::{
-    PropertyInputsMessage, ReadyMessage, Request, Response, ready_property_order,
-};
+use crate::protocol::{PropertyInputsMessage, ReadyMessage, Request, Response};
 use crate::types::{
     ComponentPropertyField, ComponentSchemaField, ElementKind, FrameSpan, LayerSource,
     LayerSourceReport, LegacyImport, PrimitivePropertyField, PrimitiveSize, PropOverride,
@@ -1437,13 +1435,65 @@ fn ready_message_keeps_the_declared_property_order() {
             "accent": {"type": "color", "defaultValue": "#ff8800"}
         }
     }"##;
-    assert_eq!(
-        ready_property_order(json.as_bytes()),
-        ["title", "subtitle", "accent"]
-    );
+    let ReadyMessage::Ready {
+        project_property_schema,
+        project_property_order,
+        ..
+    } = serde_json::from_str(json).unwrap()
+    else {
+        panic!("expected a Ready message");
+    };
+    assert_eq!(project_property_order, ["title", "subtitle", "accent"]);
+    assert_eq!(project_property_schema.unwrap().len(), 3);
 
-    let without = r#"{"config":{},"propertySchema":null}"#;
-    assert!(ready_property_order(without.as_bytes()).is_empty());
+    let without = r#"{
+        "config": {
+            "width": 640,
+            "height": 360,
+            "frameRate": {"numerator": 30, "denominator": 1},
+            "durationInFrames": 30
+        },
+        "propertySchema": null
+    }"#;
+    let ReadyMessage::Ready {
+        project_property_schema,
+        project_property_order,
+        ..
+    } = serde_json::from_str(without).unwrap()
+    else {
+        panic!("expected a Ready message");
+    };
+    assert!(project_property_schema.is_none());
+    assert!(project_property_order.is_empty());
+}
+
+#[test]
+fn a_ready_message_that_fails_to_parse_names_the_field() {
+    let json = r#"{
+        "config": {
+            "width": 640,
+            "height": 360,
+            "frameRate": {"numerator": 30, "denominator": 1},
+            "durationInFrames": 30
+        },
+        "componentSchemas": {"Title": {"name": {"type": "strng"}}}
+    }"#;
+    let error = serde_json::from_str::<ReadyMessage>(json)
+        .err()
+        .expect("a malformed component schema is an error");
+    let message = error.to_string();
+    assert!(message.starts_with("`componentSchemas`: "), "{message}");
+    assert!(message.contains("strng"), "{message}");
+
+    let error = serde_json::from_str::<ReadyMessage>(r#"{"config": {"width": "wide"}}"#)
+        .err()
+        .expect("a malformed config is an error");
+    assert!(error.to_string().starts_with("`config`: "), "{error}");
+
+    let error = serde_json::from_str::<ReadyMessage>(r#"{"unknown": 1}"#)
+        .err()
+        .expect("a message of no known kind is an error");
+    assert!(error.to_string().contains("probeMedia"), "{error}");
 }
 
 #[test]
@@ -1835,4 +1885,48 @@ mod statics {
         let json = serde_json::to_string(&request(None)).unwrap();
         assert!(!json.contains("statics"), "{json}");
     }
+}
+
+/// `payload` framed as the CLI writes it: a little-endian `u32` length,
+/// then the bytes.
+fn framed(payload: &[u8]) -> Vec<u8> {
+    let mut bytes = u32::try_from(payload.len()).unwrap().to_le_bytes().to_vec();
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+#[test]
+fn reads_framed_messages_one_at_a_time() {
+    let mut stream = framed(br#"{"a":1}"#);
+    stream.extend(framed(br#"{"b":2}"#));
+    let mut stream = std::io::Cursor::new(stream);
+    let mut message = Vec::new();
+    read_message(&mut stream, &mut message).unwrap();
+    assert_eq!(message, br#"{"a":1}"#);
+    read_message(&mut stream, &mut message).unwrap();
+    assert_eq!(message, br#"{"b":2}"#);
+    assert!(matches!(
+        read_message(&mut stream, &mut message),
+        Err(ReactBridgeError::UnexpectedExit { .. })
+    ));
+}
+
+#[test]
+fn a_stray_write_before_a_message_is_a_protocol_error() {
+    // `hell` reads as a length of about 1.8 GB.
+    let mut stream = b"hello\n".to_vec();
+    stream.extend(framed(br#"{"a":1}"#));
+    let error = read_message(&mut std::io::Cursor::new(stream), &mut Vec::new()).unwrap_err();
+    assert!(matches!(error, ReactBridgeError::Protocol(_)), "{error:?}");
+    assert!(error.to_string().contains("stdout"), "{error}");
+
+    // A short write leaves a length under the cap; the payload then does not
+    // start with `{`.
+    let mut stream = b"ok\n".to_vec();
+    stream.extend(framed(br#"{"a":1}"#));
+    let error = read_message(&mut std::io::Cursor::new(stream), &mut Vec::new()).unwrap_err();
+    assert!(matches!(error, ReactBridgeError::Protocol(_)), "{error:?}");
+
+    let error = read_message(&mut std::io::Cursor::new(framed(b"")), &mut Vec::new()).unwrap_err();
+    assert!(matches!(error, ReactBridgeError::Protocol(_)), "{error:?}");
 }

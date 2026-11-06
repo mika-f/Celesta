@@ -2,6 +2,7 @@ use crate::color::conversion;
 use crate::converted::ConvertedFrames;
 use crate::decoder::SequentialVideoSession;
 use crate::ffmpeg_error;
+use celesta_composition::Time;
 use celesta_media::{MediaError, VideoFrame, VideoStream, frame_byte_len, timestamps_match};
 use ez_ffmpeg::Input;
 use ez_ffmpeg::frame_export::{FrameExtractor, FrameIter, PixelLayout};
@@ -152,8 +153,9 @@ pub(crate) fn ffmpeg_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// `seconds` in the microseconds FFmpeg seeks by.
 pub(crate) fn seconds_to_us(seconds: f64) -> i64 {
-    (seconds * 1_000_000.0).round() as i64
+    Time::from_seconds(seconds, Time::MICROSECONDS).value
 }
 
 /// Wraps decoded RGBA pixels in a [`VideoFrame`], rejecting any frame

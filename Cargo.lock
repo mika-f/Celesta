@@ -1196,6 +1196,7 @@ dependencies = [
  "celesta-composition",
  "data-url",
  "fnv",
+ "percent-encoding",
  "tempfile",
  "thiserror 2.0.21",
  "ureq",

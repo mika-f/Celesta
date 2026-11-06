@@ -1,6 +1,6 @@
 use crate::color::conversion;
 use crate::decoder::{FfmpegBackend, IDLE_SESSION_FRAMES, MAX_VIDEO_SESSIONS};
-use crate::probe::displayed_size;
+use crate::probe::{displayed_size, stream_duration};
 use crate::sequential::ffmpeg_path;
 use celesta_composition::Rational;
 use celesta_media::{
@@ -81,6 +81,57 @@ fn reports_a_missing_source_with_its_path() {
             "media file /definitely-not-a-real/celesta-media.mkv was not found"
         );
     }
+}
+
+#[test]
+fn stream_durations_are_exact_in_the_stream_time_base() {
+    use celesta_composition::Time;
+    use ez_ffmpeg::AVRational;
+    // 1001 ticks of 1/30000 s is one NTSC frame, 33366.67 µs.
+    assert_eq!(
+        stream_duration(
+            1001,
+            AVRational {
+                num: 1,
+                den: 30_000
+            }
+        ),
+        Some(Time::new(1001, 30_000))
+    );
+    assert_eq!(
+        stream_duration(
+            90_000,
+            AVRational {
+                num: 1,
+                den: 90_000
+            }
+        ),
+        Some(Time::new(1, 1))
+    );
+    assert_eq!(
+        stream_duration(i64::MAX, AVRational { num: 2, den: 1 }),
+        None
+    );
+    assert_eq!(stream_duration(0, AVRational { num: 1, den: 1 }), None);
+}
+
+#[test]
+fn refuses_to_decode_more_than_two_channels() {
+    let path = Path::new("/definitely-not-a-real/celesta-media.mkv");
+    let error = FfmpegBackend::new()
+        .decode_audio(path, 48_000, 6)
+        .err()
+        .unwrap();
+    assert!(
+        matches!(
+            error,
+            MediaError::InvalidAudioFormat {
+                sample_rate: 48_000,
+                channels: 6
+            }
+        ),
+        "{error:?}"
+    );
 }
 
 #[test]

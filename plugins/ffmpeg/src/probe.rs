@@ -118,14 +118,12 @@ pub(crate) fn is_plausible_frame_rate(rate: &Rational) -> bool {
 }
 
 /// A stream's own `duration` (in `time_base` units) as exact [`Time`], or
-/// `None` when the demuxer reported no usable value.
+/// `None` when the demuxer reported no usable value or it overflows.
 pub(crate) fn stream_duration(duration: i64, time_base: AVRational) -> Option<Time> {
     if duration <= 0 || time_base.num <= 0 || time_base.den <= 0 {
         return None;
     }
-    let micros =
-        i128::from(duration) * i128::from(time_base.num) * 1_000_000 / i128::from(time_base.den);
-    i64::try_from(micros)
-        .ok()
-        .map(|micros| Time::new(micros, 1_000_000).reduced())
+    let value = duration.checked_mul(i64::from(time_base.num))?;
+    let timescale = u32::try_from(time_base.den).ok()?;
+    Some(Time::new(value, timescale).reduced())
 }

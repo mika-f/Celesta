@@ -84,8 +84,40 @@ fn format_number_rules() {
         (1.5, "1.5"),
         (-0.0, "0"),
         (-0.001, "0"),
+        (9_007_199_254_740_991.0, "9007199254740991"),
+        (1e19, "10000000000000000000"),
+        (-1e19, "-10000000000000000000"),
+        (f64::INFINITY, "Infinity"),
+        (f64::NEG_INFINITY, "-Infinity"),
+        (f64::NAN, "NaN"),
     ] {
         assert_eq!(format_number(v), s, "{v}");
+    }
+}
+
+#[test]
+fn apply_refuses_numbers_that_are_not_finite() {
+    let text = "<Rect x={1} />";
+    for value in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        let replace = Edit::Replace {
+            start: 9,
+            end: 10,
+            value: EditValue::Number(value),
+            form: LiteralForm::Number,
+        };
+        let insert = Edit::Insert {
+            at: at(text, " />"),
+            name: "y".into(),
+            value: EditValue::Number(value),
+        };
+        let property = Edit::InsertProperty {
+            at: 9,
+            key: "y".into(),
+            value: EditValue::Number(value),
+        };
+        for edit in [replace, insert, property] {
+            assert_eq!(apply(text, &[edit]), Err(ApplyError::NonFinite), "{value}");
+        }
     }
 }
 

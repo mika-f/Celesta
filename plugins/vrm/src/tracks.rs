@@ -145,7 +145,7 @@ pub(crate) fn apply_checked_tracks(
 /// `seconds` as an exact timeline time, to the microsecond, as the Live2D
 /// plugin reads its tracks.
 fn track_time(seconds: f64) -> Time {
-    Time::new((seconds * 1_000_000.0).round() as i64, 1_000_000)
+    Time::from_seconds(seconds, Time::MICROSECONDS)
 }
 
 /// Checks `animation`'s keyframes (at `key`): at least one, each time with

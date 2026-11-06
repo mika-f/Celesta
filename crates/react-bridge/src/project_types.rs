@@ -197,17 +197,21 @@ fn copy_dir(from: &Path, to: &Path) -> io::Result<()> {
 pub(crate) mod tests {
     use super::*;
 
-    pub(crate) struct Scratch(pub(crate) PathBuf);
+    /// A new temporary folder, at `.0`, removed with everything in it when
+    /// this drops.
+    pub(crate) struct Scratch(
+        pub(crate) PathBuf,
+        #[expect(dead_code, reason = "held only to remove the folder when it drops")]
+        tempfile::TempDir,
+    );
 
     impl Scratch {
         pub(crate) fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "celesta-project-types-{name}-{}",
-                std::process::id()
-            ));
-            let _ = fs::remove_dir_all(&root);
-            fs::create_dir_all(&root).unwrap();
-            Self(root)
+            let folder = tempfile::Builder::new()
+                .prefix(&format!("celesta-project-types-{name}-"))
+                .tempdir()
+                .unwrap();
+            Self(folder.path().to_owned(), folder)
         }
 
         /// A scratch folder that no `celesta.config.json` above puts inside
@@ -226,12 +230,6 @@ pub(crate) mod tests {
                 return None;
             }
             Some(scratch)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
         }
     }
 

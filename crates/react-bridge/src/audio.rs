@@ -6,15 +6,10 @@ use celesta_composition::{
 use celesta_remote::is_remote_url;
 use std::path::Path;
 
-/// Timescale seconds-valued `<Audio>` fields are converted at, matching
-/// `packages/react/src/render.ts`'s `SECONDS_TIMESCALE`.
-pub(crate) const REACT_AUDIO_SECONDS_TIMESCALE: u32 = 1_000_000;
-
+/// A seconds-valued `<Audio>` field as a time, to the microsecond, as
+/// `packages/react/src/render.ts`'s `SECONDS_TIMESCALE` converts it.
 pub(crate) fn react_seconds_to_time(seconds: f64) -> Time {
-    Time::new(
-        (seconds * f64::from(REACT_AUDIO_SECONDS_TIMESCALE)).round() as i64,
-        REACT_AUDIO_SECONDS_TIMESCALE,
-    )
+    Time::from_seconds(seconds, Time::MICROSECONDS)
 }
 
 /// Collapses per-frame `<Audio>` reports into one entry per distinct clip,
