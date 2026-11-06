@@ -160,6 +160,22 @@ pub fn replace_file(file: &Path, text: &str) -> io::Result<()> {
 /// into `<project_root>/assets/` first. Always `/`-separated, starting with
 /// `./` or `../`.
 pub fn import_path(project_root: &Path, props_dir: &Path, chosen: &Path) -> io::Result<String> {
+    import_file(project_root, props_dir, chosen).map(|imported| imported.path)
+}
+
+/// What [`import_file`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Imported {
+    /// The value to store, as [`import_path`] returns it.
+    pub path: String,
+    /// The copy this import made in `assets/`, when it made one: not a file
+    /// referenced in place, nor an earlier copy of the same bytes reused.
+    /// Deleting it undoes the import.
+    pub copied: Option<PathBuf>,
+}
+
+/// [`import_path`], also saying which copy it made.
+pub fn import_file(project_root: &Path, props_dir: &Path, chosen: &Path) -> io::Result<Imported> {
     // Resolve `..` segments and symlinks first, so the three paths share one
     // frame of reference whichever way each of them was spelled.
     let project_root = resolve(project_root)?;
@@ -173,13 +189,16 @@ pub fn import_path(project_root: &Path, props_dir: &Path, chosen: &Path) -> io::
         ));
     }
 
-    let target = if chosen.strip_prefix(&project_root).is_ok() {
-        chosen
+    let (target, copied) = if chosen.strip_prefix(&project_root).is_ok() {
+        (chosen, false)
     } else {
         copy_into_assets(&project_root.join("assets"), &chosen)?
     };
 
-    relative_path(&props_dir, &target)
+    Ok(Imported {
+        path: relative_path(&props_dir, &target)?,
+        copied: copied.then_some(target),
+    })
 }
 
 /// `path` made absolute with `..` segments and symlinks resolved. A folder that
@@ -206,15 +225,16 @@ fn resolve(path: &Path) -> io::Result<PathBuf> {
     Ok(absolute)
 }
 
-/// Copies `chosen` into `assets` and returns the copy's path. A file of the
-/// same name with the same bytes is reused; one with different bytes makes the
+/// Copies `chosen` into `assets` and returns the copy's path, and whether
+/// this call wrote it. A file of the same name with the same bytes is
+/// reused; one with different bytes makes the
 /// copy take the next free `name-2.ext`, `name-3.ext`, ... name.
 ///
 /// The bytes are streamed, never held whole: the file may be a video of
 /// several gigabytes. A copy is written beside its name and renamed into
 /// place, so a half-written copy never shows and an existing file is never
 /// replaced.
-fn copy_into_assets(assets: &Path, chosen: &Path) -> io::Result<PathBuf> {
+fn copy_into_assets(assets: &Path, chosen: &Path) -> io::Result<(PathBuf, bool)> {
     let name_error = || io::Error::new(io::ErrorKind::InvalidInput, "the file has no name");
     let stem = chosen.file_stem().ok_or_else(name_error)?.to_string_lossy();
     let extension = chosen
@@ -234,14 +254,14 @@ fn copy_into_assets(assets: &Path, chosen: &Path) -> io::Result<PathBuf> {
 
         if candidate.symlink_metadata().is_err() {
             match copy_new(chosen, &candidate) {
-                Ok(()) => return Ok(candidate),
+                Ok(()) => return Ok((candidate, true)),
                 // Another writer took the name meanwhile; compare with it.
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => return Err(error),
             }
         }
         if same_contents(chosen, length, &candidate).unwrap_or(false) {
-            return Ok(candidate);
+            return Ok((candidate, false));
         }
     }
     unreachable!("the candidate numbers are unbounded")
@@ -520,6 +540,23 @@ mod tests {
             "./assets/c.png"
         );
         assert!(!root.join("assets/c-2.png").exists());
+    }
+
+    #[test]
+    fn an_import_names_only_the_copy_it_made() {
+        let (_scratch, root, other) = project("import-copied");
+        let chosen = other.join("c.png");
+        write(&chosen, "c");
+        let first = import_file(&root, &root, &chosen).unwrap();
+        assert_eq!(first.path, "./assets/c.png");
+        let copy = first.copied.expect("a copy");
+        assert_eq!(fs::read(&copy).unwrap(), b"c");
+        // The same bytes again reuse it: nothing of this import's to undo.
+        assert_eq!(import_file(&root, &root, &chosen).unwrap().copied, None);
+        // A file in the project is referenced in place.
+        let inside = root.join("d.png");
+        write(&inside, "d");
+        assert_eq!(import_file(&root, &root, &inside).unwrap().copied, None);
     }
 
     #[test]

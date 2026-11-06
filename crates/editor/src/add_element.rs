@@ -20,7 +20,7 @@ use celesta_gpu_renderer::invert_affine;
 use celesta_media::MediaBackend;
 use celesta_plugin_host::{ComponentInfo, ComponentSource, InstalledPlugins};
 use celesta_react_bridge::{
-    ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, import_path, scenes_of,
+    ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, import_file, scenes_of,
 };
 use celesta_source_edit::{
     EditValue, NewComponent, NewElement, NewKind, ParentReading, Timing, add_child, add_component,
@@ -226,18 +226,19 @@ pub(crate) fn pick_parent(
     Err(NO_PARENT_IN_SCENE.to_owned())
 }
 
-/// The Add menu's header: "Add to `<Group>` in `<PriceTag>`", "Add to
-/// `<Group>`" without a component, "… · This scene" when moved there.
+/// The Add menu's header: "Add to <Group> in <PriceTag>", "Add to <Group>"
+/// without a component, "… · This scene" when moved there. Plain text: the
+/// menu and the hint show no Markdown.
 pub(crate) fn add_header(parent: &AddParent, component: Option<&str>) -> String {
     format!("Add to {}", parent_label(parent, component))
 }
 
-/// The parent as the header names it: "`<Group>` in `<PriceTag>`", and
-/// "… · This scene" when moved there.
+/// The parent as the header names it: "<Group> in <PriceTag>", and "… ·
+/// This scene" when moved there.
 pub(crate) fn parent_label(parent: &AddParent, component: Option<&str>) -> String {
-    let mut label = format!("`<{}>`", parent.entry.name);
+    let mut label = format!("<{}>", parent.entry.name);
     if let Some(component) = component {
-        label.push_str(&format!(" in `<{component}>`"));
+        label.push_str(&format!(" in <{component}>"));
     }
     if parent.this_scene {
         label.push_str(" · This scene");
@@ -1394,20 +1395,29 @@ impl EditorView {
                 .ok();
                 return;
             }
+            // Cancelled meanwhile: nothing is copied into the project.
+            if !view.update(cx, |this, _| picking(this)).unwrap_or(false) {
+                return;
+            }
             let dir = entry_dir.clone();
             let imported = cx
                 .background_executor()
-                .spawn(async move { import_path(&dir, &dir, &chosen) })
+                .spawn(async move { import_file(&dir, &dir, &chosen) })
                 .await;
+            // A copy made for a mode cancelled during the copy goes again.
+            let mut undo = None;
             let picked = view
                 .update(cx, |this, cx| {
                     cx.notify();
                     match imported {
-                        Ok(src) if picking(this) => {
-                            this.step_add(AddEvent::Picked(Some(src.clone())));
-                            Some(src)
+                        Ok(imported) if picking(this) => {
+                            this.step_add(AddEvent::Picked(Some(imported.path.clone())));
+                            Some(imported.path)
                         }
-                        Ok(_) => None,
+                        Ok(imported) => {
+                            undo = imported.copied;
+                            None
+                        }
                         Err(error) => {
                             cancel(this, Some(format!("Couldn’t use the chosen file: {error}")));
                             None
@@ -1416,6 +1426,12 @@ impl EditorView {
                 })
                 .ok()
                 .flatten();
+            if let Some(copy) = undo {
+                cx.background_executor()
+                    .spawn(async move { fs::remove_file(copy) })
+                    .await
+                    .ok();
+            }
             let Some(src) = picked else {
                 return;
             };
@@ -2224,7 +2240,7 @@ mod tests {
         assert!(this_scene.this_scene);
         assert_eq!(
             add_header(&this_scene, Some("Intro")),
-            "Add to `<Group>` in `<Intro>` · This scene"
+            "Add to <Group> in <Intro> · This scene"
         );
 
         let shared = pick(&report, ParentScope::Chosen(Scope::Shared), &[4]).unwrap();
@@ -2260,7 +2276,7 @@ mod tests {
             (parent.layer_id.as_str(), parent.this_scene),
             ("root", false)
         );
-        assert_eq!(add_header(&parent, None), "Add to `<Group>`");
+        assert_eq!(add_header(&parent, None), "Add to <Group>");
         // Under "This scene" it is still refused.
         assert_eq!(
             pick_parent(
@@ -2374,13 +2390,13 @@ mod tests {
         };
         assert_eq!(
             add_header(&parent, Some("PriceTag")),
-            "Add to `<Group>` in `<PriceTag>`"
+            "Add to <Group> in <PriceTag>"
         );
-        assert_eq!(add_header(&parent, None), "Add to `<Group>`");
+        assert_eq!(add_header(&parent, None), "Add to <Group>");
         // The armed hint names it the same way.
         assert_eq!(
             parent_label(&parent, Some("PriceTag")),
-            "`<Group>` in `<PriceTag>`"
+            "<Group> in <PriceTag>"
         );
     }
 
@@ -2395,7 +2411,7 @@ mod tests {
         let chosen = ChosenParent {
             at: pos("intro", 5),
             layer_id: "g1".to_owned(),
-            label: "`<Group>`".to_owned(),
+            label: "<Group>".to_owned(),
         };
         assert!(is_chosen(Some(&chosen), &parent));
         assert!(!is_chosen(None, &parent));

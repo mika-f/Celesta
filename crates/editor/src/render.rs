@@ -1,4 +1,5 @@
 use crate::helpers::export_progress_label;
+use crate::inline_text_view::EditEvent;
 use crate::timeline_drag::{BandDrag, SceneDrag};
 use crate::view::EditorView;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
@@ -92,15 +93,22 @@ impl EditorView {
                 view.track_focus(focus_handle)
             })
             // Escape cancels a canvas drag, a band or scene drag, a row's
-            // scrub or the add mode before any other key handling.
+            // scrub or the add mode before any other key handling. Ending
+            // the add mode also cancels a canvas text edit open with it,
+            // which would otherwise take a second Escape.
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape"
-                    && (this.escape_transform_drag()
-                        || this.escape_timeline_drag::<BandDrag>()
-                        || this.escape_timeline_drag::<SceneDrag>()
-                        || this.escape_row_scrub()
-                        || this.escape_add())
-                {
+                if event.keystroke.key != "escape" {
+                    return;
+                }
+                let escaped = this.escape_transform_drag()
+                    || this.escape_timeline_drag::<BandDrag>()
+                    || this.escape_timeline_drag::<SceneDrag>()
+                    || this.escape_row_scrub();
+                let added = !escaped && this.escape_add();
+                if added {
+                    this.end_inline_text(EditEvent::Escape, cx);
+                }
+                if escaped || added {
                     cx.stop_propagation();
                     cx.notify();
                 }

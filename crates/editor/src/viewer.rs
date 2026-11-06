@@ -1149,18 +1149,24 @@ impl EditorView {
                 }
                 popup
             });
+        // The hint gives way first in a narrow row, cut with an ellipsis,
+        // so the button and the tools after it keep their size.
         div()
             .flex()
-            .flex_none()
+            .flex_shrink(1.0)
+            .min_w_0()
             .items_center()
             .gap_2()
-            .child(button)
+            .child(div().flex_none().child(button))
             .when_some(hint, |group, hint| {
                 group.child(
                     div()
+                        .min_w_0()
+                        .overflow_hidden()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .whitespace_nowrap()
+                        .text_ellipsis()
                         .child(hint),
                 )
             })
