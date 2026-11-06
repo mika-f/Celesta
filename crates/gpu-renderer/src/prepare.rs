@@ -50,6 +50,7 @@ impl GpuRenderer {
         self.pending_texts.clear();
         self.pending_paths.clear();
         self.texture_generation += 1;
+        self.image_sources.begin_frame();
         self.clip_entries.clear();
         self.paint_entries.clear();
         self.path_entries.clear();
@@ -1465,10 +1466,13 @@ impl GpuRenderer {
         let mipmaps = svg_mipmaps || !display.is_svg;
         let texture = self.cached_texture(
             // Both sizes: SVG rasterized at different densities can shrink to
-            // the same texture size from different pixels.
+            // the same texture size from different pixels. The revision
+            // changes when the asset's file does (a new `src` for the same
+            // id, or the file overwritten), so the old pixels are not drawn.
             format!(
-                "image\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}x{}\0{}x{}\0{}",
+                "image\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}x{}\0{}x{}\0{}",
                 asset.id,
+                display.revision,
                 width,
                 height,
                 fit,

@@ -3676,6 +3676,65 @@ fn svg_display_size_and_animated_scale_match_cpu() {
     }
 }
 
+/// Writes an 8x8 PNG of `rgba` to `path`, stamped `seconds` from now so an
+/// overwrite is seen whatever the file system's timestamp resolution.
+fn write_solid_png(path: &Path, rgba: [u8; 4], seconds: u64) {
+    image::RgbaImage::from_pixel(8, 8, image::Rgba(rgba))
+        .save(path)
+        .unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(seconds))
+        .unwrap();
+}
+
+#[test]
+fn draws_an_images_new_file_and_an_overwritten_one() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("a.png"), dir.path().join("b.png"));
+    write_solid_png(&a, [255, 0, 0, 255], 0);
+    write_solid_png(&b, [0, 0, 255, 255], 0);
+    // A React `<Image name="logo">` keeps its id when its `src` changes.
+    let scene = |path: &Path| {
+        let mut scene = empty_scene(20, 20);
+        scene.layers.push(Layer {
+            id: "logo".to_owned(),
+            transform: EvaluatedTransform {
+                position: Point { x: 10.0, y: 10.0 },
+                ..Default::default()
+            },
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Image {
+                asset: ResolvedAsset {
+                    id: "logo".to_owned(),
+                    location: AssetLocation::File {
+                        path: path.to_string_lossy().into_owned(),
+                    },
+                },
+                width: None,
+                height: None,
+                fit: None,
+                animation: None,
+            },
+        });
+        scene
+    };
+    let drawn = |renderer: &mut GpuRenderer, path: &Path| {
+        pixel_at(&renderer.render(&scene(path)).unwrap(), 10, 10)
+    };
+    assert_eq!(drawn(&mut renderer, &a), [255, 0, 0, 255]);
+    assert_eq!(drawn(&mut renderer, &b), [0, 0, 255, 255]);
+    write_solid_png(&b, [0, 255, 0, 255], 10);
+    assert_eq!(drawn(&mut renderer, &b), [0, 255, 0, 255]);
+}
+
 #[test]
 fn animated_images_draw_the_frame_at_their_time_as_the_cpu_does() {
     let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {

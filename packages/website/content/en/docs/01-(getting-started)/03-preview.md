@@ -6,6 +6,8 @@ Choose **File → Open…** to open a React composition (`.tsx`, `.jsx`, `.ts`, 
 
 Compositions reload when you save. You can also choose **File → Reload** to reload manually.
 
+An image file is read again when it changes. When you overwrite an image, or point an `<Image>`'s `src` at another file, the preview shows the new image from the next frame it draws, such as when you move the playhead or save the composition.
+
 **Keyboard shortcuts**
 
 | Action | macOS | Windows / Linux |

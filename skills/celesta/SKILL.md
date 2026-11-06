@@ -173,7 +173,8 @@ produces a video that differs between preview and export.
    - Export MP4 only for audio or the final file
      ([export.md](references/export.md)).
 4. **Report back.** Tell the user which file to open (File → Open…) or
-   reload (JSON projects need File → Reload; React entries reload on save),
+   reload (JSON projects need File → Reload; React entries reload on save;
+   an overwritten image file shows from the next frame the preview draws),
    what you verified, and what you could not verify (for example, audio you
    did not listen to).
 
