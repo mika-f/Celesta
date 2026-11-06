@@ -17,6 +17,7 @@ export type {
   SubtitleDescriptor,
 } from './render';
 export type { HostNode } from './reconciler';
+export { currentPackageName } from './package-scope';
 export { markPrimitive, sourceChain } from './source-chain';
 export type { LayerSourceEntry, LayerSourceReport, ReceivedProps, SourcePos, TimingWindow } from './source-chain';
 export { registerHostElement } from './host-elements';

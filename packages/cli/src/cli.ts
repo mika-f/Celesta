@@ -17,6 +17,7 @@ import type {
 } from '@celesta.studio/react';
 import {
   createResolver,
+  currentPackageName,
   holdProjectPropertyValues,
   listComponentSchemas,
   listPrimitiveProperties,
@@ -595,17 +596,6 @@ interface LoadedEntry {
 /** The esbuild namespace of the modules standing in for waiting plugins. */
 const STAND_IN_NAMESPACE = 'celesta-waiting-plugin';
 
-/** The scope the Celesta packages had before `@celesta.studio`. */
-const LEGACY_SCOPE = '@celesta/';
-
-/**
- * `specifier` with the legacy `@celesta/` scope renamed: entries written
- * before the packages moved to `@celesta.studio/` still import the runtime's.
- */
-function currentPackageName(specifier: string): string {
-  return specifier.startsWith(LEGACY_SCOPE) ? `@celesta.studio/${specifier.slice(LEGACY_SCOPE.length)}` : specifier;
-}
-
 async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<LoadedEntry> {
   const contents = path.resolve(__dirname, '../../..');
   if (process.platform === 'darwin' && path.basename(contents) === 'Contents') {
@@ -662,10 +652,11 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
             if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') throw error;
             return { errors: [{ text: `${args.path} is not a Celesta package` }] };
           }
-          if (args.path.startsWith(LEGACY_SCOPE)) {
+          const current = currentPackageName(args.path);
+          if (current !== args.path) {
             const file = path.relative(entryDirectory, args.importer).split(path.sep).join('/');
             if (!legacyImports.some((known) => known.file === file && known.specifier === args.path)) {
-              legacyImports.push({ file, specifier: args.path, current: currentPackageName(args.path) });
+              legacyImports.push({ file, specifier: args.path, current });
             }
           }
           return { path: pathToFileURL(resolved).href, external: true };

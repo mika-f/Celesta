@@ -17,7 +17,8 @@ import * as text from '../../text/src/index';
 import * as transitions from '../../transitions/src/index';
 import type { CompileOptions } from './engine';
 import { audioBytes, decodeAudioBytes } from './audio-decode';
-import { currentModuleName, projectFiles, runtimeModules } from './project-files';
+import { currentPackageName } from '../../react/src/package-scope';
+import { projectFiles, runtimeModules } from './project-files';
 import { loadFonts, loadedFamilies, requireLoadedFonts, resetFonts } from './fonts';
 import { loadFeatureFonts, textMeasurer, withLoadedFallback } from './text-layout';
 
@@ -76,7 +77,7 @@ async function handle(data: Request) {
       const module: { exports: Record<string, unknown> } = { exports: {} };
       const warned = new Set<string>();
       const require = (name: string): unknown => {
-        const current = currentModuleName(name);
+        const current = currentPackageName(name);
         if (current !== name && !warned.has(name)) {
           warned.add(name);
           console.warn(`${name} is an old name; import ${current} instead.`);
