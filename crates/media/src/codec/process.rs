@@ -29,12 +29,18 @@ pub struct CodecProcess(PluginChild);
 impl CodecProcess {
     /// Starts `executable` in `directory` (the plugin's own) and checks that
     /// it speaks this protocol as a codec. The process is registered with
-    /// `kill` before it is asked anything.
+    /// `kill` before it is asked anything, and none starts once `kill` was
+    /// killed.
     pub fn start(
         executable: &Path,
         directory: &Path,
         kill: &PluginKillSwitch,
     ) -> Result<Self, MediaError> {
+        if kill.is_killed() {
+            return Err(MediaError::CodecStopped(
+                "it was not started, as its plugins were stopped".to_owned(),
+            ));
+        }
         let mut child =
             PluginChild::start(executable, directory).map_err(MediaError::CodecUnavailable)?;
         kill.register(child.kill_handle());

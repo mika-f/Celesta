@@ -738,21 +738,16 @@ mod tests {
     }
 
     #[test]
-    fn a_backend_whose_switch_is_killed_opens_no_codec() {
-        let opened = Arc::new(AtomicUsize::new(0));
-        let counter = opened.clone();
+    fn a_codec_in_this_process_opens_after_its_switch_is_killed() {
+        // It has no process to stop, so it answers as before: an export's
+        // Cancel stops it between frames, as it always did.
         let kill = celesta_plugin_host::PluginKillSwitch::new();
-        let mut backend = MediaBackend::with_codec(Arc::new(move |_| {
-            counter.fetch_add(1, Ordering::SeqCst);
+        let mut backend = MediaBackend::with_codec(Arc::new(|_| {
             Ok(Box::new(Fake::default()) as Box<dyn CodecProvider>)
         }))
         .with_kill_switch(kill.clone());
         kill.kill();
-        assert!(matches!(
-            backend.probe("/a.mp4"),
-            Err(MediaError::CodecStopped(_))
-        ));
-        assert_eq!(opened.load(Ordering::SeqCst), 0);
+        assert!(backend.decode_audio(Path::new("/a.mp4"), 48_000, 1).is_ok());
     }
 
     #[test]

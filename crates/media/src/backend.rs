@@ -72,7 +72,8 @@ impl MediaBackend {
 
     /// Registers the codec process this backend opens with `kill`, which
     /// another thread can kill to end a request in progress, such as an
-    /// export's Cancel. A codec in this process is not stopped by it.
+    /// export's Cancel; once it is killed, no codec process starts. A codec
+    /// in this process is not stopped by it.
     pub fn with_kill_switch(mut self, kill: PluginKillSwitch) -> Self {
         self.kill = Some(kill);
         self
@@ -95,12 +96,9 @@ impl MediaBackend {
                 .or_else(codec)
                 .ok_or(MediaError::NoCodec)?;
             // A backend without a switch gives its codec one nothing kills.
+            // A codec process refuses to start on a killed switch; a codec
+            // in this process has no process to kill and opens as usual.
             let kill = self.kill.clone().unwrap_or_default();
-            if kill.is_killed() {
-                return Err(MediaError::CodecStopped(
-                    "it was not started, as its plugins were stopped".to_owned(),
-                ));
-            }
             self.codec = Some(factory(&kill)?);
         }
         Ok(self.codec.as_deref_mut().expect("opened above"))

@@ -49,8 +49,14 @@ nothing could end it sooner:
   `CodecProcess::start` registers its process with it before `hello`; a
   codec in this process (`TestCodec`, `FfmpegCodec`) ignores it.
   `MediaBackend::with_kill_switch` passes its switch to the factory (a
-  backend without one passes a switch nothing kills) and opens no codec once
-  it is killed. `RequestError::Stopped` maps to the new
+  backend without one passes a switch nothing kills); `CodecProcess::start`
+  starts no process once the switch is killed. A codec in this process has
+  nothing to kill and still opens, so an in-process export's Cancel stops it
+  between frames as before. (Refusing every codec once the switch was killed
+  made the frame in progress fail on a refused decoder instead, and the
+  FFmpeg plugin's `export` test, which cancels on its first frame, then
+  crashed with SIGSEGV on Linux CI with lavapipe, twice; macOS passed. Not
+  reproduced locally, so the cause is unconfirmed.) `RequestError::Stopped` maps to the new
   `MediaError::CodecStopped`, which the backend does not retry: it drops the
   codec and the next request opens another, as `PluginHost` does.
   `CodecUnavailable` (a process that went away) is still retried once.
@@ -87,8 +93,10 @@ nothing could end it sooner:
   `killing_its_switch_ends_a_frame_in_progress_and_starts_nothing`, and
   `a_switch_given_later_kills_the_processes_started_before`.
 - `celesta-media`: a stopped codec is not asked again but replaced on the
-  next request; a backend whose switch is killed opens no codec; a backend
-  gives its codec factory its switch.
+  next request; a codec in this process opens after its switch is killed; a
+  backend gives its codec factory its switch.
+- `celesta-codec-test` (Unix): killing the switch ends a codec start waiting
+  on `hello`; a killed switch starts no codec process.
 - `celesta-exporter` integration (Unix, needs `packages/cli` built and a
   GPU): `export::cancel_ends_a_frame_waiting_on_a_plugin_that_hangs` exports
   a React entry whose `<Hang>` layer is that plugin's content and cancels

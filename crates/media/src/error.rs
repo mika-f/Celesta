@@ -12,8 +12,8 @@ pub enum MediaError {
     /// No codec plugin is installed (see [`crate::set_codec`]).
     #[error("no codec plugin is installed, so video and audio files cannot be read or written")]
     NoCodec,
-    /// The codec plugin's process could not be started or stopped
-    /// answering.
+    /// The codec plugin's process could not be started, went away, or fell
+    /// out of step with its requests.
     #[error("the codec plugin is unavailable: {0}")]
     CodecUnavailable(String),
     /// The codec plugin's process was stopped on purpose: it missed a
