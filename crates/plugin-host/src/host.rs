@@ -87,6 +87,10 @@ struct OpenModel {
     /// The plugin process's own id for the model; `None` after the process
     /// was restarted, until it is opened again.
     remote: Option<ModelId>,
+    /// Why its frames are refused: reopened in a restarted process, it came
+    /// back as another kind. Later frames are refused with it without
+    /// reopening it, until [`PluginHost::stop`].
+    refused: Option<PluginError>,
 }
 
 /// Runs each plugin a renderer asks for in a process of its own, started on
@@ -94,10 +98,15 @@ struct OpenModel {
 /// reopening the models it had; one that missed its deadline is started
 /// again on the next request instead, so a hang costs one deadline. Every
 /// process is registered with the host's [`PluginKillSwitch`]: once that is
-/// killed, every request fails as unavailable and no process starts.
+/// killed, every request fails as unavailable and no process starts. A
+/// process that cannot be started is not tried again until [`Self::stop`]:
+/// a preview asks for every frame.
 pub struct PluginHost {
     plugins: BTreeMap<String, PluginEntry>,
     processes: HashMap<String, PluginProcess>,
+    /// Why each plugin whose process could not be started (spawned and
+    /// checked with `hello`) could not be, by plugin id.
+    failed: HashMap<String, String>,
     models: HashMap<ModelId, OpenModel>,
     next: u64,
     deadlines: Deadlines,
@@ -115,6 +124,7 @@ impl PluginHost {
                 .map(|entry| (entry.manifest.id.clone(), entry))
                 .collect(),
             processes: HashMap::new(),
+            failed: HashMap::new(),
             models: HashMap::new(),
             next: 0,
             deadlines: Deadlines::default(),
@@ -152,6 +162,12 @@ impl PluginHost {
     }
 
     fn process(&mut self, plugin: &str) -> Result<&mut PluginProcess, PluginError> {
+        if let Some(message) = self.failed.get(plugin) {
+            return Err(PluginError::Unavailable {
+                plugin: plugin.to_owned(),
+                message: message.clone(),
+            });
+        }
         if !self.processes.contains_key(plugin) {
             let entry = self
                 .plugins
@@ -164,15 +180,22 @@ impl PluginHost {
                     message: "it was not started, as its plugins were stopped".to_owned(),
                 });
             }
-            let process = PluginProcess::start(entry, &self.kill)
-                .map_err(|error| self.unavailable(plugin, error))?;
+            let process = PluginProcess::start(entry, &self.kill).map_err(|error| {
+                // Not when its switch stopped it: that says nothing of the
+                // plugin, and a switch given later may let it start.
+                if !self.kill.is_killed() {
+                    self.failed.insert(plugin.to_owned(), error.message());
+                }
+                self.unavailable(plugin, error)
+            })?;
             self.processes.insert(plugin.to_owned(), process);
         }
         Ok(self.processes.get_mut(plugin).expect("started above"))
     }
 
     /// Runs `attempt` against `plugin`'s process; once more on a fresh
-    /// process if the first went away (but not if it was stopped).
+    /// process if the first went away (but not if it was stopped, or did
+    /// not start).
     fn retry<T>(
         &mut self,
         plugin: &str,
@@ -185,7 +208,7 @@ impl PluginHost {
                 self.restart(plugin);
                 Err(stopped)
             }
-            Err(PluginError::Unavailable { .. }) => {
+            Err(PluginError::Unavailable { .. }) if !self.failed.contains_key(plugin) => {
                 self.restart(plugin);
                 attempt(self)
             }
@@ -194,8 +217,15 @@ impl PluginHost {
     }
 
     /// Stops `plugin`'s process, as when it should reload; it starts again,
-    /// reopening its models, when next needed.
+    /// reopening its models, when next needed. A process that could not be
+    /// started, and models it refused, are tried again.
     pub fn stop(&mut self, plugin: &str) {
+        self.failed.remove(plugin);
+        for model in self.models.values_mut() {
+            if model.plugin == plugin {
+                model.refused = None;
+            }
+        }
         self.restart(plugin);
     }
 
@@ -311,6 +341,7 @@ impl ContentProvider for PluginHost {
                 assets: assets.clone(),
                 kind: opened.content.kind(),
                 remote: Some(opened.model),
+                refused: None,
             },
         );
         Ok(Opened {
@@ -325,14 +356,14 @@ impl ContentProvider for PluginHost {
         time: f64,
         data: &Value,
     ) -> Result<ContentFrame, PluginError> {
-        let (plugin, kind) = self
-            .models
-            .get(&model)
-            .map(|open| (open.plugin.clone(), open.kind))
-            .ok_or_else(|| PluginError::Failed {
-                plugin: String::new(),
-                message: format!("no open model {}", model.0),
-            })?;
+        let open = self.models.get(&model).ok_or_else(|| PluginError::Failed {
+            plugin: String::new(),
+            message: format!("no open model {}", model.0),
+        })?;
+        if let Some(refused) = &open.refused {
+            return Err(refused.clone());
+        }
+        let (plugin, kind) = (open.plugin.clone(), open.kind);
         let answer = self.retry(&plugin, |host| {
             let open = &host.models[&model];
             let remote = match open.remote {
@@ -344,8 +375,8 @@ impl ContentProvider for PluginHost {
                     let assets = open.assets.clone();
                     let reopened = host.open_remote(&plugin, &assets)?;
                     if reopened.content.kind() != kind {
-                        // Nothing will draw it: the next frame reopens it.
-                        // As `close`, without starting a process for it.
+                        // Nothing will draw it. As `close`, without starting
+                        // a process for it.
                         if let Some(process) = host.processes.get_mut(&plugin) {
                             let close = json!({ "type": "close", "model": reopened.model.0 });
                             let _ = process.request(
@@ -354,14 +385,17 @@ impl ContentProvider for PluginHost {
                                 host.deadlines.close,
                             );
                         }
-                        return Err(PluginError::Failed {
+                        let refused = PluginError::Failed {
                             plugin: plugin.clone(),
                             message: format!(
                                 "model {} was opened as {kind:?} content but reopened as {:?}",
                                 model.0,
                                 reopened.content.kind()
                             ),
-                        });
+                        };
+                        // Reopening it again would come back the same.
+                        host.models.get_mut(&model).expect("open").refused = Some(refused.clone());
+                        return Err(refused);
                     }
                     host.models.get_mut(&model).expect("open").remote = Some(reopened.model);
                     reopened.model
@@ -728,5 +762,158 @@ mod texture_tests {
                 (json!("close"), json!(42)),
             ]
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod failure_tests {
+    use super::*;
+    use crate::locations::PluginSource;
+    use crate::manifest::{Manifest, PluginRole, platform};
+    use celesta_plugin::protocol::{PROTOCOL_VERSION, encode_opened, write_message};
+    use celesta_plugin::{ContentModel, MeshModel, SceneModel};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    /// Plugin `p`, a shell script running `body` in `directory`, after it
+    /// adds a line to `starts` there.
+    fn plugin(directory: &Path, body: &str) -> PluginEntry {
+        let path = directory.join("plugin.sh");
+        std::fs::write(&path, format!("#!/bin/sh\necho >> starts\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        PluginEntry {
+            manifest: Manifest {
+                id: "p".into(),
+                version: "1".into(),
+                protocol: PROTOCOL_VERSION,
+                celesta: None,
+                executable: [(platform().0.to_owned(), "plugin.sh".to_owned())].into(),
+                module: None,
+                types: None,
+                components: Vec::new(),
+                roles: vec![PluginRole::Content],
+            },
+            directory: directory.to_owned(),
+            source: PluginSource::Explicit,
+        }
+    }
+
+    /// How many times the plugin in `directory` was started.
+    fn starts(directory: &Path) -> usize {
+        std::fs::read_to_string(directory.join("starts"))
+            .map(|starts| starts.lines().count())
+            .unwrap_or(0)
+    }
+
+    /// Writes `messages` to `name` in `directory`, as a plugin answers.
+    fn answers(directory: &Path, name: &str, messages: &[Message]) {
+        let mut bytes = Vec::new();
+        for message in messages {
+            write_message(&mut bytes, message).unwrap();
+        }
+        std::fs::write(directory.join(name), bytes).unwrap();
+    }
+
+    fn hello(plugin: &str) -> Message {
+        Message::new(json!({ "type": "hello", "protocol": PROTOCOL_VERSION, "plugin": plugin }))
+    }
+
+    fn opened(content: ContentModel) -> Message {
+        encode_opened(&Opened {
+            model: ModelId(1),
+            content,
+            notices: Vec::new(),
+        })
+    }
+
+    fn meshes() -> ContentModel {
+        MeshModel {
+            canvas: [1.0, 1.0],
+            textures: Vec::new(),
+            meshes: Vec::new(),
+        }
+        .into()
+    }
+
+    fn scene() -> ContentModel {
+        SceneModel {
+            canvas: [1.0, 1.0],
+            textures: Vec::new(),
+            geometries: Vec::new(),
+            skins: Vec::new(),
+            shaders: Vec::new(),
+            materials: Vec::new(),
+            draws: Vec::new(),
+        }
+        .into()
+    }
+
+    #[test]
+    fn a_plugin_that_cannot_start_is_not_started_again_until_stopped() {
+        let directory = tempfile::tempdir().unwrap();
+        answers(directory.path(), "hello", &[hello("someone-else")]);
+        let entry = plugin(directory.path(), "cat hello\nexec cat >/dev/null");
+        let mut host = PluginHost::new([entry]);
+        for _ in 0..2 {
+            let error = host.open("p", &BTreeMap::new()).unwrap_err();
+            let PluginError::Unavailable { message, .. } = error else {
+                panic!("{error}");
+            };
+            assert!(message.contains("says it is plugin"), "{message}");
+        }
+        assert_eq!(starts(directory.path()), 1);
+
+        // Stopping it, as reloading plugins does, tries it again.
+        host.stop("p");
+        host.open("p", &BTreeMap::new()).unwrap_err();
+        assert_eq!(starts(directory.path()), 2);
+    }
+
+    #[test]
+    fn a_plugin_that_exits_in_open_is_started_again_once() {
+        let directory = tempfile::tempdir().unwrap();
+        answers(directory.path(), "hello", &[hello("p")]);
+        let entry = plugin(directory.path(), "cat hello");
+        let mut host = PluginHost::new([entry]);
+        let error = host.open("p", &BTreeMap::new()).unwrap_err();
+        assert!(matches!(error, PluginError::Unavailable { .. }), "{error}");
+        assert_eq!(starts(directory.path()), 2);
+    }
+
+    #[test]
+    fn a_model_reopened_as_another_kind_is_not_reopened_again() {
+        let directory = tempfile::tempdir().unwrap();
+        // The first process opens meshes and exits on the frame; the next
+        // reopens them as a scene, and would refuse a further reopen with
+        // an error of its own.
+        answers(directory.path(), "first", &[hello("p"), opened(meshes())]);
+        answers(
+            directory.path(),
+            "next",
+            &[
+                hello("p"),
+                opened(scene()),
+                Message::new(json!({ "type": "closed" })),
+                celesta_plugin::protocol::error_message("opened again"),
+            ],
+        );
+        let entry = plugin(
+            directory.path(),
+            r#"if [ "$(wc -l < starts)" -eq 1 ]; then cat first; exit 0; fi
+cat next
+exec cat >/dev/null"#,
+        );
+        let mut host = PluginHost::new([entry]);
+        let model = host.open("p", &BTreeMap::new()).unwrap().model;
+        let reopened = host.frame(model, 0.0, &Value::Null).unwrap_err();
+        assert!(
+            reopened
+                .to_string()
+                .contains("opened as Meshes content but reopened as Scene"),
+            "{reopened}"
+        );
+        let again = host.frame(model, 0.0, &Value::Null).unwrap_err();
+        assert_eq!(again.to_string(), reopened.to_string());
+        assert_eq!(starts(directory.path()), 2);
     }
 }

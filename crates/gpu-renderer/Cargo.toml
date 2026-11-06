@@ -40,6 +40,8 @@ objc2-metal = "0.3.2"
 wgpu-hal = "30.0.1"
 
 [dev-dependencies]
+# Its plugin tests run a `PluginHost` with fake plugin processes.
+celesta-plugin-host.workspace = true
 tempfile = "3.23.0"
 
 [features]

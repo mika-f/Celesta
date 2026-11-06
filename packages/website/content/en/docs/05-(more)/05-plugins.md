@@ -94,6 +94,8 @@ export default function Root() {
 
 An entry that imports a plugin no folder provides fails to load and names the plugin. A frame stays a function of its time: a plugin's layer depends only on its props and the frame, so preview, export, and scrubbing agree.
 
+When a plugin's program does not start, or cannot open a layer's model, the preview shows the error in the Problems tab and does not ask the plugin again for every frame. After you fix the plugin, use **Reload Plugins**; after you fix a file the layer draws from, such as `<Flag>`'s `src`, the next frame tries again with the new file.
+
 A plugin can tell you something about what a layer draws, such as a model's terms of use. The desktop app lists it in the Problems tab while the preview shows that layer, and again in the export's entry there once an export that drew it ends; `celesta-exporter` prints it once, as a `warning:` or, when it is only information, as a `note:`.
 
 Project TypeScript support copies each plugin's declarations into `.celesta/plugins/`, so your code editor completes its props. When the desktop app opens a project, that includes the project's own plugins and plugins still waiting for your approval: declarations run nothing.
