@@ -1,5 +1,5 @@
 use crate::color::conversion;
-use crate::decoder::FfmpegBackend;
+use crate::decoder::{FfmpegBackend, IDLE_SESSION_FRAMES, MAX_VIDEO_SESSIONS};
 use crate::probe::displayed_size;
 use crate::sequential::ffmpeg_path;
 use celesta_composition::Rational;
@@ -119,6 +119,80 @@ fn freezes_on_the_last_frame_past_the_source_end() {
     let tail_b = sequential.decode_frame_for("clip", &clip, 30.3).unwrap();
     assert_eq!(tail_a.pixels, tail_b.pixels);
     assert_eq!(tail_a.pixels, previous.pixels);
+
+    fs::remove_dir_all(&directory).ok();
+}
+
+/// The layer ids of the open sequential sessions, sorted.
+fn open_sessions(backend: &FfmpegBackend) -> Vec<String> {
+    let mut ids: Vec<String> = backend
+        .video_sessions
+        .keys()
+        .map(|(id, _)| id.clone())
+        .collect();
+    ids.sort();
+    ids
+}
+
+#[test]
+fn closes_the_session_of_a_layer_that_stopped_asking() {
+    let directory = fixture_dir("idle-session");
+    let clip = directory.join("clip.mkv");
+    generate_clip(&clip, "testsrc=size=32x32:rate=30:duration=5", (30, 1));
+
+    // Two layers show the clip, then only `a` does (`b`'s id changed, or
+    // its clip left the screen) for longer than the idle window.
+    let mut backend = FfmpegBackend::new().with_sequential_video(Rational::new(30, 1));
+    backend.decode_frame_for("a", &clip, 0.0).unwrap();
+    backend.decode_frame_for("b", &clip, 0.0).unwrap();
+    assert_eq!(open_sessions(&backend), ["a", "b"]);
+    for frame in 1..=IDLE_SESSION_FRAMES * 3 {
+        backend
+            .decode_frame_for("a", &clip, frame as f64 / 30.0)
+            .unwrap_or_else(|error| panic!("frame {frame} should decode: {error}"));
+    }
+    assert_eq!(open_sessions(&backend), ["a"]);
+    // `a` kept walking its own run forward the whole time.
+    assert_eq!(backend.sequential_video_processes_started(), 2);
+
+    fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn keeps_the_sessions_still_on_screen_without_reseeking() {
+    let directory = fixture_dir("busy-sessions");
+    let clip = directory.join("clip.mkv");
+    generate_clip(&clip, "testsrc=size=32x32:rate=30:duration=5", (30, 1));
+
+    let mut backend = FfmpegBackend::new().with_sequential_video(Rational::new(30, 1));
+    for frame in 0..IDLE_SESSION_FRAMES * 3 {
+        let time = frame as f64 / 30.0;
+        for layer in ["a", "b"] {
+            backend
+                .decode_frame_for(layer, &clip, time)
+                .unwrap_or_else(|error| panic!("{layer} frame {frame} should decode: {error}"));
+        }
+    }
+    assert_eq!(open_sessions(&backend), ["a", "b"]);
+    assert_eq!(backend.sequential_video_processes_started(), 2);
+
+    fs::remove_dir_all(&directory).ok();
+}
+
+#[test]
+fn closes_the_least_recently_asked_session_past_the_cap() {
+    let directory = fixture_dir("session-cap");
+    let clip = directory.join("clip.mkv");
+    generate_clip(&clip, "testsrc=size=16x16:rate=10:duration=1", (10, 1));
+
+    let mut backend = FfmpegBackend::new().with_sequential_video(Rational::new(10, 1));
+    let ids: Vec<String> = (0..=MAX_VIDEO_SESSIONS)
+        .map(|index| format!("layer-{index:02}"))
+        .collect();
+    for id in &ids {
+        backend.decode_frame_for(id, &clip, 0.0).unwrap();
+    }
+    assert_eq!(open_sessions(&backend), ids[1..]);
 
     fs::remove_dir_all(&directory).ok();
 }

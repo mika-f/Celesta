@@ -15,14 +15,35 @@ use std::path::{Path, PathBuf};
 pub struct FfmpegBackend {
     pub(crate) probes: HashMap<PathBuf, MediaProbe>,
     pub(crate) sequential_frame_rate: Option<Rational>,
-    pub(crate) video_sessions: HashMap<(String, PathBuf), SequentialVideoSession>,
+    pub(crate) video_sessions: HashMap<SessionKey, SequentialVideoSession>,
     pub(crate) sequential_video_processes_started: u64,
+    /// Sequential requests served so far: the clock sessions' idleness is
+    /// measured on.
+    pub(crate) sequential_requests: u64,
 }
+
+/// A sequential session: the renderer's layer id, and the file it shows.
+pub(crate) type SessionKey = (String, PathBuf);
 
 /// How far ahead of the last served frame a request may be while still being
 /// answered by walking the open decode run forward. Beyond this a fresh
 /// container seek is cheaper than decoding every frame in between.
 pub(crate) const MAX_FORWARD_WALK_SECONDS: f64 = 0.5;
+
+/// How many frames a session may go unasked before it is closed. A renderer
+/// asks once a frame for each video layer it draws, so between two requests
+/// of a session still on screen come at most as many requests as there are
+/// sessions open. A session left unasked for this many times that many
+/// requests has missed at least this many frames. A layer whose id changed
+/// (an element inserted above it) or a clip that left the screen stops
+/// asking, and its decode run and last frame go; a clip that comes back
+/// later has jumped in time and would open a new run anyway.
+pub(crate) const IDLE_SESSION_FRAMES: u64 = 30;
+
+/// The most sessions held open at once. Past it, the one asked least
+/// recently is closed, so a scene with more videos than this re-seeks
+/// instead of holding a decode run and a frame for each.
+pub(crate) const MAX_VIDEO_SESSIONS: usize = 16;
 
 /// The most decoded audio past a stream's stated length that is cut as
 /// encoder padding, in output frames (about 43 ms at 48 kHz).
@@ -50,6 +71,9 @@ pub(crate) struct SequentialVideoSession {
     /// already in hand answers a near-repeat request.
     pub(crate) last_frame_seconds: Option<f64>,
     pub(crate) last_frame: Option<VideoFrame>,
+    /// [`FfmpegBackend::sequential_requests`] when this session was last
+    /// asked.
+    pub(crate) last_used: u64,
 }
 
 impl FfmpegBackend {
@@ -59,6 +83,7 @@ impl FfmpegBackend {
             sequential_frame_rate: None,
             video_sessions: HashMap::new(),
             sequential_video_processes_started: 0,
+            sequential_requests: 0,
         }
     }
 
@@ -109,6 +134,10 @@ impl FfmpegBackend {
         Ok(frame)
     }
 
+    /// The frame at `source_time_seconds` for the session `request_id` shows
+    /// `path` in, walking its open decode run forward when it can. Then
+    /// closes the sessions left idle (see [`IDLE_SESSION_FRAMES`] and
+    /// [`MAX_VIDEO_SESSIONS`]).
     pub(crate) fn decode_sequential(
         &mut self,
         request_id: &str,
@@ -116,6 +145,41 @@ impl FfmpegBackend {
         source_time_seconds: f64,
         default_frame_rate: Rational,
     ) -> Result<VideoFrame, MediaError> {
+        self.sequential_requests = self.sequential_requests.saturating_add(1);
+        let key = (request_id.to_owned(), path.to_owned());
+        let frame = self.serve_sequential(&key, source_time_seconds, default_frame_rate);
+        if let Some(session) = self.video_sessions.get_mut(&key) {
+            session.last_used = self.sequential_requests;
+        }
+        self.close_idle_video_sessions();
+        frame
+    }
+
+    fn close_idle_video_sessions(&mut self) {
+        let now = self.sequential_requests;
+        let window = IDLE_SESSION_FRAMES.saturating_mul(self.video_sessions.len() as u64);
+        self.video_sessions
+            .retain(|_, session| now - session.last_used <= window);
+        while self.video_sessions.len() > MAX_VIDEO_SESSIONS {
+            let Some(oldest) = self
+                .video_sessions
+                .iter()
+                .min_by_key(|(_, session)| session.last_used)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.video_sessions.remove(&oldest);
+        }
+    }
+
+    fn serve_sequential(
+        &mut self,
+        key: &SessionKey,
+        source_time_seconds: f64,
+        default_frame_rate: Rational,
+    ) -> Result<VideoFrame, MediaError> {
+        let path = key.1.as_path();
         if !source_time_seconds.is_finite() || source_time_seconds < 0.0 {
             return Err(MediaError::InvalidTimestamp(source_time_seconds));
         }
@@ -125,8 +189,7 @@ impl FfmpegBackend {
             .clone()
             .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()))?;
         let source_time_seconds = clamp_to_source_end(source_time_seconds, &video, probe.duration);
-        let key = (request_id.to_owned(), path.to_owned());
-        if let Some(session) = self.video_sessions.get_mut(&key) {
+        if let Some(session) = self.video_sessions.get_mut(key) {
             if session
                 .last_timestamp
                 .is_some_and(|last| timestamps_match(last, source_time_seconds))
@@ -154,7 +217,7 @@ impl FfmpegBackend {
         // A discontinuity (a seek backwards, or a jump past one step): learn
         // the real request spacing from the last delivered frame, then open a
         // fresh decode run seeked to the request.
-        let learned_step = self.video_sessions.remove(&key).and_then(|session| {
+        let learned_step = self.video_sessions.remove(key).and_then(|session| {
             session
                 .last_timestamp
                 .map(|last| source_time_seconds - last)
@@ -168,7 +231,7 @@ impl FfmpegBackend {
         self.sequential_video_processes_started =
             self.sequential_video_processes_started.saturating_add(1);
         let frame = session.read_frame(source_time_seconds)?;
-        self.video_sessions.insert(key, session);
+        self.video_sessions.insert(key.clone(), session);
         Ok(frame)
     }
 }
