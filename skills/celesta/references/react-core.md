@@ -464,7 +464,11 @@ image.
 
 Paths are relative to the entry file's folder. `http(s)://` URLs are
 downloaded once into a per-user cache and never revalidated; change the URL
-to pick up a new file.
+to pick up a new file. A download fails when any step before the response
+(DNS lookup, connecting, sending the request, receiving the headers) takes
+more than 30 seconds, or when its data stops arriving for 30 seconds (a slow
+file that keeps arriving is not cut off). A failed URL is not requested again
+for 30 seconds.
 
 ## Lottie animations
 

@@ -6,19 +6,28 @@
 //! run; the cache never revalidates, so changing a remote file needs a new
 //! URL (or a cleared cache). Entries are keyed by the URL as a browser would
 //! request it (see `normalized`).
+//!
+//! A download never waits forever: every phase before the body has a time
+//! limit, and the body fails once it stops arriving for a while (a large file
+//! that keeps arriving is never cut off). A failed download is remembered for
+//! a short time, so a missing file asked for on every frame does not make a
+//! request on every frame.
 
+use std::collections::HashMap;
 use std::fs;
 use std::hash::Hasher;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use celesta_composition::AssetLocation;
 use data_url::DataUrl;
 use fnv::FnvHasher;
 use ureq::Agent;
+use ureq::config::ConfigBuilder;
 use ureq::tls::{RootCerts, TlsConfig};
+use ureq::typestate::AgentScope;
 use url::Url;
 
 mod staged;
@@ -30,8 +39,28 @@ pub use stylesheet::{
     stylesheet_font_faces,
 };
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const STANDARD_LIMITS: Limits = Limits {
+    phase: Duration::from_secs(30),
+    stall: Duration::from_secs(30),
+    retry_after: Duration::from_secs(30),
+};
 const MAX_FILE_NAME_LEN: usize = 96;
+
+/// How long a download may wait before it fails.
+#[derive(Clone, Copy, Debug)]
+struct Limits {
+    /// The limit for each phase before the body: the DNS lookup, connecting,
+    /// sending the request, and receiving the response headers. These are
+    /// small, so the limit holds at any download size.
+    phase: Duration,
+    /// How long the body may go without new data. It restarts on every read,
+    /// so a large video that keeps arriving is never cut off; there is no
+    /// limit on the whole download.
+    stall: Duration,
+    /// How long a failed download is remembered and its error returned
+    /// without touching the network.
+    retry_after: Duration,
+}
 
 /// Resolves an asset location to a readable local file: a relative `File`
 /// path is joined onto `asset_root`, and a `Url` is downloaded into the
@@ -61,6 +90,7 @@ pub fn is_remote_url(value: &str) -> bool {
 pub struct RemoteAssetCache {
     root: PathBuf,
     agent: Agent,
+    retry_after: Duration,
 }
 
 impl RemoteAssetCache {
@@ -72,6 +102,7 @@ impl RemoteAssetCache {
         Self {
             root,
             agent: shared_agent().clone(),
+            retry_after: STANDARD_LIMITS.retry_after,
         }
     }
 
@@ -83,6 +114,9 @@ impl RemoteAssetCache {
 
     /// Returns the cached file for `url`, downloading it first if needed. A
     /// `data:` URL (from a font stylesheet) is decoded instead.
+    ///
+    /// A download that failed less than `retry_after` ago fails again with
+    /// [`RemoteAssetError::RecentlyFailed`] without touching the network.
     pub fn fetch(&self, url: &str) -> Result<PathBuf, RemoteAssetError> {
         let url = &normalized(url)?;
         let path = self.entry_path(url)?;
@@ -100,17 +134,24 @@ impl RemoteAssetCache {
                 .map_err(|_| invalid("its base64 data is invalid"))?;
             self.store(&shortened(url), &path, &mut data.0.as_slice())?;
         } else {
-            let response =
-                self.agent
-                    .get(url)
-                    .call()
-                    .map_err(|source| RemoteAssetError::Request {
-                        url: url.to_owned(),
-                        source: Box::new(source),
-                    })?;
-            self.store(url, &path, &mut response.into_body().into_reader())?;
+            let key = (self.root.clone(), url.to_owned());
+            if let Some(error) = recent_failure(&key, self.retry_after) {
+                return Err(error);
+            }
+            self.download(url, &path).inspect_err(|error| {
+                remember_failure(key, error, self.retry_after);
+            })?;
         }
         Ok(path)
+    }
+
+    fn download(&self, url: &str, path: &Path) -> Result<(), RemoteAssetError> {
+        let response = self
+            .agent
+            .get(url)
+            .call()
+            .map_err(|source| request_error(url, source))?;
+        self.store(url, path, &mut response.into_body().into_reader())
     }
 
     fn entry_path(&self, url: &str) -> Result<PathBuf, RemoteAssetError> {
@@ -154,11 +195,69 @@ impl RemoteAssetCache {
                 result => result,
             }
         })();
-        result.map_err(|source| RemoteAssetError::Io {
-            url: url.to_owned(),
-            source,
+        result.map_err(|source| {
+            // The body reader reports a failed download, such as a stalled
+            // body, as an I/O error wrapping the request error.
+            if source
+                .get_ref()
+                .is_some_and(|inner| inner.is::<ureq::Error>())
+            {
+                return request_error(url, source.into());
+            }
+            RemoteAssetError::Io {
+                url: url.to_owned(),
+                source,
+            }
         })
     }
+}
+
+fn request_error(url: &str, source: ureq::Error) -> RemoteAssetError {
+    RemoteAssetError::Request {
+        url: url.to_owned(),
+        source: Box::new(source),
+    }
+}
+
+/// A download that failed, until it may be tried again.
+struct Failure {
+    message: String,
+    until: Instant,
+}
+
+/// Recently failed downloads by cache root and normalized URL. They are kept
+/// for the whole process, since [`RemoteAssetCache::standard`] makes a new
+/// cache for every lookup, and a frame looks the same URL up again.
+fn failures() -> &'static Mutex<HashMap<(PathBuf, String), Failure>> {
+    static FAILURES: OnceLock<Mutex<HashMap<(PathBuf, String), Failure>>> = OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+/// The remembered error for `key`, if its download failed recently. Expired
+/// failures are dropped, so the map holds only failures still in effect.
+fn recent_failure(key: &(PathBuf, String), retry_after: Duration) -> Option<RemoteAssetError> {
+    let now = Instant::now();
+    let mut failures = failures().lock().unwrap_or_else(PoisonError::into_inner);
+    failures.retain(|_, failure| now < failure.until);
+    let failure = failures.get(key)?;
+    Some(RemoteAssetError::RecentlyFailed {
+        url: key.1.clone(),
+        message: failure.message.clone(),
+        retry_after,
+    })
+}
+
+fn remember_failure(key: (PathBuf, String), error: &RemoteAssetError, retry_after: Duration) {
+    let now = Instant::now();
+    let mut failures = failures().lock().unwrap_or_else(PoisonError::into_inner);
+    failures.retain(|_, failure| now < failure.until);
+    failures.insert(
+        key,
+        Failure {
+            message: error.to_string(),
+            until: now + retry_after,
+        },
+    );
 }
 
 /// `url` as a browser's fetch would request it, so the same URL written two
@@ -213,6 +312,14 @@ pub enum RemoteAssetError {
     },
     #[error("could not cache `{url}`: {source}")]
     Io { url: String, source: io::Error },
+    /// Downloading `url` failed less than `retry_after` ago with `message`,
+    /// so no new request was made.
+    #[error("{message} (no new request is made until {}s after the failure)", .retry_after.as_secs())]
+    RecentlyFailed {
+        url: String,
+        message: String,
+        retry_after: Duration,
+    },
 }
 
 /// Why downloading `url` failed, with a hint for a Google Fonts stylesheet
@@ -232,8 +339,7 @@ fn request_message(url: &str, error: &ureq::Error) -> String {
 fn shared_agent() -> &'static Agent {
     static AGENT: OnceLock<Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
-        Agent::config_builder()
-            .timeout_connect(Some(CONNECT_TIMEOUT))
+        agent_config(STANDARD_LIMITS)
             // The OS trust store, so TLS-intercepting corporate proxies work.
             .tls_config(
                 TlsConfig::builder()
@@ -244,6 +350,20 @@ fn shared_agent() -> &'static Agent {
             .build()
             .into()
     })
+}
+
+/// An agent configuration with the time limits in `limits`. A total limit
+/// on the body (`timeout_recv_body` or `timeout_global`) is left out on
+/// purpose: it is not restarted for each read, so it would cut off a large
+/// download that is still arriving.
+fn agent_config(limits: Limits) -> ConfigBuilder<AgentScope> {
+    let phase = Some(limits.phase);
+    Agent::config_builder()
+        .timeout_resolve(phase)
+        .timeout_connect(phase)
+        .timeout_send_request(phase)
+        .timeout_recv_response(phase)
+        .timeout_per_read(Some(limits.stall))
 }
 
 /// The part of an `http`/`https` URL after `://`.
@@ -346,12 +466,145 @@ mod tests {
         (format!("http://{address}"), hits)
     }
 
+    const TEST_LIMITS: Limits = Limits {
+        phase: Duration::from_millis(300),
+        stall: Duration::from_millis(300),
+        retry_after: Duration::from_millis(300),
+    };
+
     fn cache(root: &Path) -> RemoteAssetCache {
+        cache_with(root, TEST_LIMITS)
+    }
+
+    fn cache_with(root: &Path, limits: Limits) -> RemoteAssetCache {
         RemoteAssetCache {
             root: root.to_owned(),
             // No proxy: the test server is local.
-            agent: Agent::config_builder().proxy(None).build().into(),
+            agent: agent_config(limits).proxy(None).build().into(),
+            retry_after: limits.retry_after,
         }
+    }
+
+    /// Accepts connections and passes each one to `respond` on its own
+    /// thread, keeping it open afterwards.
+    fn serve_with(respond: fn(&mut std::net::TcpStream)) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                thread::spawn(move || {
+                    respond(&mut stream);
+                    thread::sleep(Duration::from_secs(60));
+                });
+            }
+        });
+        format!("http://{address}")
+    }
+
+    fn is_timeout(error: &RemoteAssetError) -> bool {
+        matches!(error, RemoteAssetError::Request { source, .. } if matches!(**source, ureq::Error::Timeout(_)))
+    }
+
+    /// Every file under `directory`, at any depth.
+    fn files_under(directory: &Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files.extend(files_under(&path));
+            } else {
+                files.push(path);
+            }
+        }
+        files
+    }
+
+    #[test]
+    fn a_server_that_never_answers_times_out() {
+        let base = serve_with(|_| {});
+        let directory = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let error = cache(directory.path())
+            .fetch(&format!("{base}/silent.png"))
+            .unwrap_err();
+        assert!(is_timeout(&error), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(files_under(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn a_body_that_stops_arriving_times_out_and_leaves_no_file() {
+        let base = serve_with(|stream| {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|read| read > 2) {
+                line.clear();
+            }
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\npartial"
+            );
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let cache = cache(directory.path());
+        let url = format!("{base}/stalled.mp4");
+        let started = Instant::now();
+        let error = cache.fetch(&url).unwrap_err();
+        assert!(is_timeout(&error), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(cache.cached(&url), None);
+        assert!(files_under(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn a_body_that_keeps_arriving_is_not_cut_off() {
+        let base = serve_with(|stream| {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|read| read > 2) {
+                line.clear();
+            }
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n"
+            );
+            // Takes longer than the stall limit in total, never between reads.
+            for _ in 0..10 {
+                thread::sleep(Duration::from_millis(100));
+                let _ = stream.write_all(b"x");
+            }
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let path = cache(directory.path())
+            .fetch(&format!("{base}/slow.mp4"))
+            .unwrap();
+        assert_eq!(fs::read(path).unwrap(), b"xxxxxxxxxx");
+    }
+
+    #[test]
+    fn a_failed_url_is_not_requested_again_until_the_retry_delay_passes() {
+        let (base, hits) = serve("404 Not Found", b"missing");
+        let directory = tempfile::tempdir().unwrap();
+        let url = format!("{base}/missing.gif");
+        let first = cache(directory.path()).fetch(&url).unwrap_err();
+        assert!(matches!(first, RemoteAssetError::Request { .. }), "{first}");
+        // A new cache for the same root, as `standard()` makes on every frame.
+        let second = cache(directory.path()).fetch(&url).unwrap_err();
+        assert!(
+            matches!(&second, RemoteAssetError::RecentlyFailed { message, .. } if *message == first.to_string()),
+            "{second}"
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        // Another cache root does not share the failure.
+        let other = tempfile::tempdir().unwrap();
+        cache(other.path()).fetch(&url).unwrap_err();
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+
+        thread::sleep(TEST_LIMITS.retry_after);
+        let third = cache(directory.path()).fetch(&url).unwrap_err();
+        assert!(matches!(third, RemoteAssetError::Request { .. }), "{third}");
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
     }
 
     #[test]
