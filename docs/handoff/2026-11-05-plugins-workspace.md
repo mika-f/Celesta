@@ -593,8 +593,8 @@ its Decisions give the reasons for the three deviations below.
   restored, and names any file it could not restore. A Cargo failure
   names the spawn error, the signal, or the exit code. A Ctrl-C is passed
   on to Cargo and the files go back once Cargo stops; a second kills
-  Cargo and puts them back at once; a Cargo stopped by SIGINT sent to it
-  alone counts as an interruption too. An interrupted run exits with 130.
+  Cargo, and the files go back once it has exited; a Cargo stopped by
+  SIGINT sent to it alone counts as an interruption too. An interrupted run exits with 130.
   On Windows, which cannot send a process Ctrl-C, Cargo is stopped
   outright the first time. Each `packages/*/package.json`, and
   `templates/package.json`, stays a hand step, which `HANDOFF.md` names.
@@ -990,7 +990,9 @@ The review of the whole stack changed:
 - `bump-version.mts` says what it wrote, did not write, and restored when
   it stops, and puts back a file a write failed in the middle of. It
   passes a Ctrl-C on to Cargo and exits 130 once the files are back; a
-  second Ctrl-C kills Cargo and undoes the bump at once. It refuses,
+  second Ctrl-C kills Cargo, and the bump is undone once it has exited
+  (at first it undid at once; the later AI-review round below fixed
+  that). It refuses,
   before writing anything, a `Cargo.toml` that would keep a `"=<from>"`
   pin, and a Cargo failure names the signal, the exit code, or the spawn
   error (Versions, in Layer 3: what was done).
@@ -1012,19 +1014,34 @@ The review of the whole stack changed:
 - `repository.test.mts` checks that `plugins/ffmpeg/Cargo.toml` gives the
   root `[workspace.package]`'s `edition`, `rust-version`, and `license`,
   which it cannot inherit.
-- From a later AI-review round: the test codec picks frames the way the
-  FFmpeg codec does, the first frame at or after the requested time
-  (Decoding, in Layer 2: what was done, records the `floor` it used
-  before), and the
-  plugin scripts refuse a symlinked plugin folder and a `plugin.json`
-  whose `id` or `version` is missing or empty.
+- From a later AI-review round:
+  - The test codec picks frames the way the FFmpeg codec does: the first
+    frame at or after the requested time, with the sequential path's
+    0.1 µs tolerance. Decoding, in Layer 2: what was done, records the
+    `floor` it used before. FFmpeg's random access rounds its seek to
+    whole microseconds, so the two differ only for a request 0.1–0.5 µs
+    past a frame, which composition times do not produce.
+  - The plugin scripts refuse a symlink under `plugins/` (other than
+    `dist` and `target`, which are skipped first) and a `plugin.json`
+    whose `id` or `version` is missing, empty, or not a string. A plugin
+    with no module may have `components: []`, as the host allows.
+  - License names are compared without case, so two files that would
+    collide on APFS or NTFS are refused.
+  - A lockfile walk starts only from the local package of that name.
+  - A second Ctrl-C during a bump undoes it only once Cargo has exited.
+  - `templates/package.json` is bumped by hand with
+    `packages/*/package.json`.
 
 ### Checks (macOS 26.7.1, Apple M5, Metal)
 
 Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
 
 - `pnpm --dir scripts/plugins test`: `tsc -p test`, then 159 passed
-  (13 files); 161 once the dot-folder and lone-SIGINT tests joined.
+  (13 files); 161 once the dot-folder and lone-SIGINT tests joined; 173
+  after the later AI-review round.
+- After that round: `cargo test -p celesta-codec-test` (all passed); the
+  exporter's integration tests, 42; mcp's `export::`, 5; react-bridge's
+  `node_integration`, 43; clippy and `cargo fmt --check`, clean.
 - `python3 scripts/test_package_macos.py`: 8 passed.
 - `cargo build --workspace --all-targets --locked` at the root: succeeds.
 - In `plugins/`, `cargo fmt --check` and
