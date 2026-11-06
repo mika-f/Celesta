@@ -18,7 +18,9 @@ and the shared affine helpers are already tracked in mika-f/Celesta#701.
   in each component is unchanged: `useContext` (where used), `useMemo`,
   then `useImperativeHandle`.
 - **`React.ReactElement` replaces `ReturnType<typeof React.createElement>`**
-  in the 64 return types across `packages/*/src`. The old type picks the
+  in 64 type annotations across `packages/*/src`: 63 return types and the
+  local `media` variable in `components/src/media-frame.ts`. The old type
+  picks the
   last `createElement` overload of `@types/react` 19, which is
   `ReactElement<{}>`. `React.ReactElement` is `ReactElement<unknown>`. A
   caller that stores the result as a `ReactElement` or renders it sees no
@@ -47,7 +49,8 @@ and the shared affine helpers are already tracked in mika-f/Celesta#701.
 - `cargo clippy -p celesta-source-edit --all-targets -- -D warnings`,
   `cargo fmt --all -- --check` and `git diff --check` pass.
 - The source-edit public API is unchanged, so its dependants were not
-  rebuilt separately. No rendering code changed, so there are no
+  rebuilt separately. The React components changed, but only in how they
+  build their element trees, not in what those trees draw, so there are no
   screenshots. There is no user-facing change, so the user guide and the
   Celesta skill are untouched.
 
