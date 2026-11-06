@@ -52,11 +52,18 @@ nothing could end it sooner:
   backend without one passes a switch nothing kills); `CodecProcess::start`
   starts no process once the switch is killed. A codec in this process has
   nothing to kill and still opens, so an in-process export's Cancel stops it
-  between frames as before. (Refusing every codec once the switch was killed
-  made the frame in progress fail on a refused decoder instead, and the
-  FFmpeg plugin's `export` test, which cancels on its first frame, then
-  crashed with SIGSEGV on Linux CI with lavapipe, twice; macOS passed. Not
-  reproduced locally, so the cause is unconfirmed.) `RequestError::Stopped` maps to the new
+  between frames as before.
+
+  CI history: while `MediaBackend` itself refused every codec once its
+  switch was killed (5e5ad696, a2dd87c0), the FFmpeg plugin's `export` test
+  binary crashed with SIGSEGV on Linux CI (lavapipe) both times, before any
+  test reported; it passed on macOS and locally, and on other branches.
+  With the check moved into `CodecProcess::start` (6d8bcac4), Plugins
+  (Linux x64) passed. The hypothesis, not reproduced: that test cancels on
+  its first frame, and the refused in-process decoder made that frame fail
+  instead of the export stopping between frames.
+
+  `RequestError::Stopped` maps to the new
   `MediaError::CodecStopped`, which the backend does not retry: it drops the
   codec and the next request opens another, as `PluginHost` does.
   `CodecUnavailable` (a process that went away) is still retried once.
