@@ -59,9 +59,8 @@ pub(crate) type Texts = BTreeMap<PathBuf, String>;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HistoryError {
     /// A file no longer holds what the entry expects, so no file was touched.
-    // `path` names the first such file for callers that report per file.
-    #[allow(dead_code)]
-    #[error("The file changed outside Celesta")]
+    /// `path` names the first such file.
+    #[error("{} changed outside Celesta", path.display())]
     ChangedOutside { path: PathBuf },
     /// The file is read-only, so no file was touched.
     #[error("Couldn’t write {path}: the file is read-only")]
@@ -602,7 +601,10 @@ mod tests {
         let error = history.undo().unwrap_err();
 
         assert!(matches!(error, HistoryError::ChangedOutside { .. }));
-        assert_eq!(error.to_string(), "The file changed outside Celesta");
+        assert_eq!(
+            error.to_string(),
+            format!("{} changed outside Celesta", a.display())
+        );
         assert_eq!(fs::read_to_string(&a).unwrap(), "someone else");
         // Older entries for `a` are gone too; `b`'s entry is kept.
         assert_eq!(history.undo().unwrap(), Some(vec![b.clone()]));
@@ -847,6 +849,11 @@ mod tests {
 
         let error = history.undo().unwrap_err();
 
+        // The message names the file that changed, not the entry's first.
+        assert_eq!(
+            error.to_string(),
+            format!("{} changed outside Celesta", b.display())
+        );
         assert!(matches!(error, HistoryError::ChangedOutside { path } if path == b));
         assert_eq!(fs::read_to_string(&a).unwrap(), "y");
         assert_eq!(fs::read_to_string(&b).unwrap(), "r");
