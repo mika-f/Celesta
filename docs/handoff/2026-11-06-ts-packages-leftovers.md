@@ -11,8 +11,11 @@ duplicates the issue listed. Each landed as its own commit.
 - `padding` and `highlight.padding` go through `validators('CaptionTrack').insets`
   (`packages/components/src/validate.ts`) instead of the unchecked `edges()`,
   which is gone. Every edge must be a finite number of 0 or more.
-- `insets(padding, name?)` takes the prop's name for its message, `padding`
-  unless given: `<CaptionTrack> highlight.padding top must be a finite number
+- `insets(padding, name?)` rejects a padding that is neither a number nor an
+  object of edges (`<CaptionTrack> padding must be a number or { top, right,
+  bottom, left }, not "bad"`), for every component that uses it; before, a
+  string or `null` gave 0 on every edge. It takes the prop's name for its
+  message, `padding` unless given: `<CaptionTrack> highlight.padding top must be a finite number
   of 0 or more, not -20`. Before, `highlight={{ padding: -20 }}` or `NaN`
   silently drew no band, and a `NaN` track padding failed inside `fitText`
   under the wrong name.
@@ -65,7 +68,9 @@ duplicates the issue listed. Each landed as its own commit.
   `@celesta.studio/character` as `@internal`) write through a temporary file
   renamed into place and remove it on any error. `ifExists: 'same-size'`
   treats a failed rename onto a file of the data's size as another process
-  having published the same bytes, the voice snapshot's policy. VOICEVOX
+  having published the same bytes, the voice snapshot's policy. It covers
+  only the rename: a failed write of the temporary file always throws. The
+  async form checks the size with an async `stat`. VOICEVOX
   narration (`writeAtomically`) and the voice-folder snapshot use them. The
   sync form now also removes the temporary file when the write itself fails.
 

@@ -246,6 +246,8 @@ test('padding and highlight.padding are checked, with a band, without one, and w
     bad({ ...draw, highlight: { padding: -20 } }, '<CaptionTrack> highlight.padding top must be a finite number of 0 or more, not -20');
     bad({ ...draw, highlight: { padding: Number.NaN } }, '<CaptionTrack> highlight.padding top must be a finite number of 0 or more, not NaN');
     bad({ ...draw, highlight: { padding: { right: Infinity } } }, '<CaptionTrack> highlight.padding right must be a finite number of 0 or more, not Infinity');
+    bad({ ...draw, padding: 'bad' }, '<CaptionTrack> padding must be a number or { top, right, bottom, left }, not "bad"');
+    bad({ ...draw, highlight: { padding: 'bad' } }, '<CaptionTrack> highlight.padding must be a number or { top, right, bottom, left }, not "bad"');
   }
 });
 

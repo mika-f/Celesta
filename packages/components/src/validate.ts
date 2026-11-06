@@ -44,6 +44,9 @@ export function validators(component: string): Validators {
     return value;
   };
   const insets = (padding: number | Insets, name = 'padding'): Required<Insets> => {
+    if (typeof padding !== 'number' && (typeof padding !== 'object' || padding === null || Array.isArray(padding))) {
+      fail(`${name} must be a number or { top, right, bottom, left }, not ${JSON.stringify(padding)}`);
+    }
     const edges = typeof padding === 'number' ? { top: padding, right: padding, bottom: padding, left: padding } : padding;
     return {
       top: nonNegative(`${name} top`, edges.top ?? 0),
