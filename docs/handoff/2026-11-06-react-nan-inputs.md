@@ -57,6 +57,10 @@ now throws at render time.
   `originSec` / `windowEndSec`. `<Sequence>` still derives the children's
   `durationInFrames` from its own context when the window is open, since the
   walker does not track frames.
+- The dialogue template (`templates/dialogue/film.tsx`) passed `Infinity`
+  to `interpolate()` for a cast member who was not speaking and relied on
+  `'clamp'` to hold the last value. It now skips `interpolate()` and uses 0
+  for a silent member, which is the value the clamp gave.
 - `render.ts` adds `finiteNumber()` for plain numeric media props and gives
   `animatedNumber()` the element and prop names; it falls back only for
   `undefined`.
@@ -64,6 +68,9 @@ now throws at render time.
 ## Checks
 
 - `pnpm run build:runtime`
+- `pnpm --dir templates test`, `pnpm --dir packages/website test`, and
+  `pnpm --dir packages/exporter test` (the rest of CI's test step). The
+  templates test caught the dialogue template's `Infinity` input.
 - `pnpm run test:runtime`: every runtime package passes, including the
   `Loop`, `Motion`, `Scenes`, `Series`, `TransitionSeries`, caption-track,
   and dialogue-series tests built on `<Sequence>`.
