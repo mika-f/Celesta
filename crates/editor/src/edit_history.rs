@@ -63,6 +63,9 @@ pub(crate) enum HistoryError {
     #[allow(dead_code)]
     #[error("The file changed outside Celesta")]
     ChangedOutside { path: PathBuf },
+    /// The file is read-only, so no file was touched.
+    #[error("Couldn’t write {path}: the file is read-only")]
+    ReadOnly { path: PathBuf },
     /// The file could not be read or written.
     #[error("Couldn’t write {path}: {source}")]
     Io { path: PathBuf, source: io::Error },
@@ -256,7 +259,10 @@ fn read(path: &Path) -> Result<Option<String>, HistoryError> {
 }
 
 /// Writes every file of `writes` as one step, as far as the file system
-/// allows: each text first goes to a temp file beside its file
+/// allows. A read-only file among them refuses the step before anything is
+/// written: a rename would replace it, dropping its read-only bit, where its
+/// folder is writable, and fail with a bare "Access is denied" on Windows.
+/// Each text first goes to a temp file beside its file
 /// (`celesta_react_bridge::write_temp`), and only once all of
 /// them are written are they renamed over their files and the `None` files
 /// removed. A failed temp write removes the temps already written and leaves
@@ -268,6 +274,13 @@ fn write_files(writes: &[(&Path, Option<&str>)]) -> Result<(), HistoryError> {
         path: path.to_owned(),
         source,
     };
+    for &(path, _) in writes {
+        if fs::metadata(path).is_ok_and(|metadata| metadata.permissions().readonly()) {
+            return Err(HistoryError::ReadOnly {
+                path: path.to_owned(),
+            });
+        }
+    }
     let mut temps = Vec::with_capacity(writes.len());
     for &(path, text) in writes {
         let Some(text) = text else { continue };
@@ -298,17 +311,6 @@ fn write_files(writes: &[(&Path, Option<&str>)]) -> Result<(), HistoryError> {
     Ok(())
 }
 
-/// Refuses a read-only file, which a rename would replace without a word.
-fn refuse_read_only(path: &Path) -> Result<(), String> {
-    if fs::metadata(path).is_ok_and(|metadata| metadata.permissions().readonly()) {
-        return Err(format!(
-            "Couldn’t write {}: the file is read-only",
-            path.display()
-        ));
-    }
-    Ok(())
-}
-
 /// Reads `path` (a missing file reads as `""`), lets `edit` compute the new
 /// text, and writes it atomically; an existing file whose text `edit` left
 /// as it was is not written (see [`FileEdit::changes`]).
@@ -319,7 +321,6 @@ pub(crate) fn write_recorded(
     let before = read(path).map_err(|error| error.to_string())?;
     let after = edit(before.as_deref().unwrap_or(""))?;
     if before.as_deref() != Some(after.as_str()) {
-        refuse_read_only(path)?;
         write_files(&[(path, Some(&after))]).map_err(|error| error.to_string())?;
     }
     Ok(FileEdit {
@@ -363,9 +364,6 @@ pub(crate) fn write_all_recorded(
         });
     }
     files.retain(FileEdit::changes);
-    for file in &files {
-        refuse_read_only(&file.path)?;
-    }
     let writes: Vec<_> = files
         .iter()
         .map(|file| (file.path.as_path(), Some(file.after.as_str())))
@@ -770,6 +768,49 @@ mod tests {
 
         assert_eq!(error, "nope");
         assert_eq!(fs::read_to_string(&file).unwrap(), "x");
+    }
+
+    #[test]
+    fn undo_and_redo_refuse_a_read_only_file() {
+        let dir = scratch("readonly");
+        let (written, created) = (dir.join("a.txt"), dir.join("b.txt"));
+        fs::write(&written, "y").unwrap();
+        fs::write(&created, "new").unwrap();
+        let mut history = EditHistory::default();
+        history.push(edit(&created, None, "new").into());
+        history.push(edit(&written, Some("x"), "y").into());
+        set_readonly(&written, true);
+        set_readonly(&created, true);
+
+        let error = history.undo().unwrap_err();
+
+        assert!(matches!(&error, HistoryError::ReadOnly { path } if *path == written));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Couldn’t write {}: the file is read-only",
+                written.display()
+            )
+        );
+        assert_eq!(fs::read_to_string(&written).unwrap(), "y");
+        assert!(fs::metadata(&written).unwrap().permissions().readonly());
+        // The entry is kept: undo applies once the file is writable again.
+        set_readonly(&written, false);
+        assert_eq!(history.undo().unwrap(), Some(vec![written.clone()]));
+        assert_eq!(fs::read_to_string(&written).unwrap(), "x");
+        set_readonly(&written, true);
+        assert!(matches!(history.redo(), Err(HistoryError::ReadOnly { .. })));
+        assert_eq!(fs::read_to_string(&written).unwrap(), "x");
+        // Undoing a created file would remove it.
+        set_readonly(&written, false);
+        history.redo().unwrap();
+        assert!(matches!(history.undo(), Ok(Some(_))));
+        assert!(matches!(
+            history.undo(),
+            Err(HistoryError::ReadOnly { path }) if path == created
+        ));
+        assert!(created.exists());
+        set_readonly(&created, false);
     }
 
     fn set_readonly(path: &Path, readonly: bool) {
