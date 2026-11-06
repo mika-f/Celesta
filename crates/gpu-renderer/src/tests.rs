@@ -5588,6 +5588,118 @@ fn shrinks_cached_images_through_mipmaps() {
     }
 }
 
+/// A `width` x `height` image of one-texel black and white squares.
+fn checkerboard(width: u32, height: u32) -> DecodedImage {
+    let pixels = (0..width * height)
+        .flat_map(|index| {
+            let value = if (index % width + index / width).is_multiple_of(2) {
+                255
+            } else {
+                0
+            };
+            [value, value, value, 255]
+        })
+        .collect();
+    DecodedImage::new(width, height, pixels).unwrap()
+}
+
+#[test]
+fn filters_a_fitted_image_shrunk_into_its_box() {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
+    }) else {
+        return;
+    };
+    // `cover` crops the 128x96 checkerboard to 96x96 and shows it in a
+    // box a quarter of that: mipmapped, it averages to mid grey, where
+    // the box's own pixels picked from it would show black or white.
+    let transform = EvaluatedTransform {
+        position: Point { x: 0.37, y: 0.61 },
+        anchor: Point { x: 0.0, y: 0.0 },
+        ..EvaluatedTransform::default()
+    };
+    let mut layer = image_layer(
+        &mut renderer,
+        "checkerboard",
+        checkerboard(128, 96),
+        transform,
+    );
+    let LayerContent::Image {
+        width, height, fit, ..
+    } = &mut layer.content
+    else {
+        unreachable!("an image layer");
+    };
+    (*width, *height, *fit) = (Some(24.0), Some(24.0), Some(ImageFit::Cover));
+    let mut scene = empty_scene(32, 32);
+    scene.layers = vec![layer];
+    let frame = renderer.render(&scene).unwrap();
+    for y in 2..23 {
+        for x in 2..23 {
+            let value = pixel_at(&frame, x, y)[0];
+            assert!(
+                value.abs_diff(128) <= 16,
+                "pixel ({x}, {y}) is {value}, not mid grey"
+            );
+        }
+    }
+}
+
+#[test]
+fn enlarges_a_fitted_image_as_sharply_as_an_unfitted_one() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let texel = |x: u32, y: u32| {
+        [
+            (x * 37 + y * 91) as u8,
+            (x * 151) as u8,
+            (y * 59) as u8,
+            255,
+        ]
+    };
+    let image = |width: u32, height: u32, left: u32| {
+        let pixels = (0..width * height)
+            .flat_map(|index| texel(left + index % width, index / width))
+            .collect();
+        DecodedImage::new(width, height, pixels).unwrap()
+    };
+    // A parent scales each 5x: a slow zoom.
+    let zoomed = |layer: Layer| Layer {
+        transform: EvaluatedTransform {
+            anchor: Point { x: 0.0, y: 0.0 },
+            scale: Point { x: 5.0, y: 5.0 },
+            ..EvaluatedTransform::default()
+        },
+        ..blend_group(1.0, BlendMode::Normal, vec![layer])
+    };
+    let sized = |mut layer: Layer, set_fit: Option<ImageFit>| {
+        let LayerContent::Image {
+            width, height, fit, ..
+        } = &mut layer.content
+        else {
+            unreachable!("an image layer");
+        };
+        (*width, *height, *fit) = (Some(4.0), Some(4.0), set_fit);
+        layer
+    };
+    let transform = EvaluatedTransform {
+        anchor: Point { x: 0.0, y: 0.0 },
+        ..EvaluatedTransform::default()
+    };
+    // `cover` shows the middle 8x8 texels of the 16x8 image in a 4x4 box;
+    // the same texels as an image of their own, unfitted in that box.
+    let fitted = image_layer(&mut renderer, "wide", image(16, 8, 0), transform);
+    let middle = image_layer(&mut renderer, "middle", image(8, 8, 4), transform);
+    let mut scene = empty_scene(20, 20);
+    scene.layers = vec![zoomed(sized(fitted, Some(ImageFit::Cover)))];
+    let fitted = renderer.render(&scene).unwrap();
+    scene.layers = vec![zoomed(sized(middle, None))];
+    let unfitted = renderer.render(&scene).unwrap();
+    assert!(max_frame_difference(&fitted, &unfitted) <= 1);
+}
+
 #[test]
 fn anti_aliases_the_edges_of_rotated_images() {
     let Some(mut renderer) = renderer(GpuRenderOptions {

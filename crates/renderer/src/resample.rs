@@ -4,7 +4,8 @@
 //! output:
 //!
 //! - [`resize_rgba`], a triangle filter with alpha-weighted color in `f32`,
-//!   for any size change (image and PSD fitting, GPU texture limits).
+//!   for any size change (image and PSD fitting, GPU texture limits), and
+//!   [`resample_rgba`], the same over a rect of the source (a fitted image).
 //! - [`box_downscale`], an integer box average over the even partition
 //!   [`box_span`] gives, with [`average_block`] as its per-pixel kernel (GPU
 //!   mip levels, MCP inline previews). PSD layer reduction reuses
@@ -136,29 +137,71 @@ pub fn resize_rgba(
     to_width: u32,
     to_height: u32,
 ) -> RgbaImage {
+    let whole = SourceRect {
+        x: 0.0,
+        y: 0.0,
+        width: f64::from(width),
+        height: f64::from(height),
+    };
+    resample_rgba(width, height, pixels, whole, to_width, to_height)
+}
+
+/// A rectangle in an image's texels, which may reach past the image.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SourceRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// [`resize_rgba`] of the part of `pixels` that `rect` covers: the output
+/// spans `rect` exactly, so it may start between texels. Where `rect`
+/// reaches past the image the output is transparent, and its edge there is
+/// filtered against that transparency; elsewhere the filter reads the
+/// texels just outside `rect`, and stops at the image's edges.
+pub fn resample_rgba(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    rect: SourceRect,
+    to_width: u32,
+    to_height: u32,
+) -> RgbaImage {
     assert_eq!(
         pixels.len(),
         width as usize * height as usize * 4,
         "pixels match their size"
     );
-    let columns = triangle_taps(width, to_width);
-    let mut rows: VecDeque<(usize, Vec<[f32; 4]>)> = VecDeque::new();
-    let mut next_row = 0;
+    let columns = triangle_taps(width, rect.x, rect.width, to_width);
+    let mut rows: VecDeque<(isize, Vec<[f32; 4]>)> = VecDeque::new();
+    let mut next_row = isize::MIN;
     let mut output = Vec::with_capacity(to_width as usize * to_height as usize * 4);
-    for (first, weights) in triangle_taps(height, to_height) {
+    for (first, weights) in triangle_taps(height, rect.y, rect.height, to_height) {
         while rows.front().is_some_and(|(row, _)| *row < first) {
             rows.pop_front();
         }
         next_row = next_row.max(first);
-        while next_row < first + weights.len() {
-            let source = &pixels[next_row * width as usize * 4..][..width as usize * 4];
+        while next_row < first + weights.len() as isize {
+            // A row past the image is transparent.
+            let source = usize::try_from(next_row)
+                .ok()
+                .filter(|&row| row < height as usize)
+                .map(|row| &pixels[row * width as usize * 4..][..width as usize * 4]);
             let row = columns
                 .iter()
                 .map(|(first, weights)| {
                     let mut sum = [0.0f32; 4];
-                    for (pixel, weight) in
-                        source[first * 4..].as_chunks::<4>().0.iter().zip(weights)
-                    {
+                    let Some(source) = source else {
+                        return sum;
+                    };
+                    for (column, weight) in (*first..).zip(weights) {
+                        let Some(pixel) = usize::try_from(column)
+                            .ok()
+                            .and_then(|column| source.as_chunks::<4>().0.get(column))
+                        else {
+                            continue;
+                        };
                         let alpha = f32::from(pixel[3]) * weight;
                         for channel in 0..3 {
                             sum[channel] += f32::from(pixel[channel]) * alpha;
@@ -171,7 +214,7 @@ pub fn resize_rgba(
             rows.push_back((next_row, row));
             next_row += 1;
         }
-        let offset = first - rows.front().expect("the rows read are kept").0;
+        let offset = (first - rows.front().expect("the rows read are kept").0) as usize;
         for column in 0..to_width as usize {
             let mut sum = [0.0f32; 4];
             for ((_, row), weight) in rows.iter().skip(offset).zip(&weights) {
@@ -193,18 +236,23 @@ pub fn resize_rgba(
     RgbaImage::from_raw(to_width, to_height, output).expect("output matches its size")
 }
 
-/// For each of `to` output pixels along an axis of `from` source pixels,
-/// the first source pixel it reads and the normalized triangle weights of
-/// it and the ones after it. Shrinking widens the triangle to cover every
-/// source pixel; enlarging interpolates between neighbors.
-fn triangle_taps(from: u32, to: u32) -> Vec<(usize, Vec<f32>)> {
-    let scale = f64::from(from) / f64::from(to);
+/// For each of `to` output pixels spread over the `span` source pixels
+/// from `start` along an axis of `from` source pixels, the first source
+/// pixel it reads and the normalized triangle weights of it and the ones
+/// after it. Shrinking widens the triangle to cover every source pixel;
+/// enlarging interpolates between neighbors. The taps stop at the edges
+/// of the source, or past them where the span reaches past them: those
+/// taps read transparency.
+fn triangle_taps(from: u32, start: f64, span: f64, to: u32) -> Vec<(isize, Vec<f32>)> {
+    let scale = span / f64::from(to);
     let support = scale.max(1.0);
+    let lowest = start.floor().min(0.0);
+    let highest = (start + span).ceil().max(f64::from(from)) - 1.0;
     (0..to)
         .map(|index| {
-            let center = (f64::from(index) + 0.5) * scale - 0.5;
-            let first = ((center - support).floor() + 1.0).max(0.0) as usize;
-            let last = ((center + support).ceil() - 1.0).min(f64::from(from) - 1.0) as usize;
+            let center = start + (f64::from(index) + 0.5) * scale - 0.5;
+            let first = ((center - support).floor() + 1.0).max(lowest) as isize;
+            let last = ((center + support).ceil() - 1.0).min(highest) as isize;
             let mut weights: Vec<f32> = (first..=last.max(first))
                 .map(|source| (1.0 - (source as f64 - center).abs() / support).max(0.0) as f32)
                 .collect();
@@ -328,5 +376,29 @@ mod tests {
         let resized = resize_rgba(4, 1, &pixels, 2, 1);
         assert_eq!(resized.get_pixel(0, 0).0, [43, 43, 43, 255]);
         assert_eq!(resized.get_pixel(1, 0).0, [137, 137, 137, 255]);
+    }
+
+    #[test]
+    fn resamples_a_rect_starting_between_texels() {
+        let pixels = [0u8, 100, 200]
+            .iter()
+            .flat_map(|&value| [value, value, value, 255])
+            .collect::<Vec<_>>();
+        let rect = |x, width| SourceRect {
+            x,
+            y: 0.0,
+            width,
+            height: 1.0,
+        };
+        // Half a texel in: each output pixel falls midway between two.
+        let shifted = resample_rgba(3, 1, &pixels, rect(0.5, 2.0), 2, 1);
+        assert_eq!(shifted.get_pixel(0, 0).0, [50, 50, 50, 255]);
+        assert_eq!(shifted.get_pixel(1, 0).0, [150, 150, 150, 255]);
+        // Past the image's left edge: transparent, and the image's first
+        // texel filtered against that transparency.
+        let padded = resample_rgba(3, 1, &pixels, rect(-1.5, 3.0), 3, 1);
+        assert_eq!(padded.get_pixel(0, 0).0[3], 0);
+        assert_eq!(padded.get_pixel(1, 0).0, [0, 0, 0, 128]);
+        assert_eq!(padded.get_pixel(2, 0).0, [50, 50, 50, 255]);
     }
 }
