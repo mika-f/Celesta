@@ -72,15 +72,21 @@ export function covers(input: string, path: string): boolean {
 
 /**
  * The folders under plugins/ that hold no plugin: the built plugin
- * directories and the plugins workspace's build output.
+ * directories and the plugins workspace's build output. A folder whose name
+ * starts with `.` (an editor's, such as .idea) holds none either.
  */
 const NOT_PLUGINS = new Set(['dist', 'target']);
 
+function holdsNoPlugin(name: string): boolean {
+  return NOT_PLUGINS.has(name) || name.startsWith('.');
+}
+
 /**
  * Every plugins/<folder>/plugin.json under `root` (the repository's folder),
- * sorted by `id`, with its inputs. Every folder under plugins/ but dist and
- * target must have one, so a plugin whose plugin.json is missing fails rather
- * than goes untested. `cargo metadata` runs once per Cargo workspace.
+ * sorted by `id`, with its inputs. Every folder under plugins/ but dist,
+ * target, and the dot folders must have one, so a plugin whose plugin.json is
+ * missing fails rather than goes untested. `cargo metadata` runs once per
+ * Cargo workspace.
  */
 export function repositoryPlugins(root: string): PluginInputs[] {
   // Cargo and pnpm give real paths.
@@ -93,12 +99,13 @@ export function repositoryPlugins(root: string): PluginInputs[] {
   };
   const pluginsFolder = join(real, 'plugins');
   return readdirSync(pluginsFolder, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !NOT_PLUGINS.has(entry.name))
+    .filter((entry) => entry.isDirectory() && !holdsNoPlugin(entry.name))
     .map(({ name }) => {
       const source = join(pluginsFolder, name);
       if (!existsSync(join(source, 'plugin.json'))) {
         throw new Error(
-          `${repositoryPath(real, source)}: no plugin.json; every folder under plugins/ but dist and target is a plugin`,
+          `${repositoryPath(real, source)}: no plugin.json; ` +
+            'every folder under plugins/ but dist, target, and the dot folders is a plugin',
         );
       }
       return pluginInputs(real, source, workspaces, turboConfig);

@@ -359,10 +359,16 @@ describe('repositoryPlugins in a tree without workspaces', () => {
     expect(repositoryPlugins(tree)).toEqual([]);
   });
 
+  it('passes over folders whose name starts with a dot', () => {
+    file('plugins/.idea/workspace.xml', '<project />\n');
+    file('plugins/.cache/state', '');
+    expect(repositoryPlugins(tree)).toEqual([]);
+  });
+
   it('refuses a folder without a plugin.json', () => {
     file('plugins/stray/Cargo.toml', '');
     expect(() => repositoryPlugins(tree)).toThrow(
-      'plugins/stray: no plugin.json; every folder under plugins/ but dist and target is a plugin',
+      'plugins/stray: no plugin.json; every folder under plugins/ but dist, target, and the dot folders is a plugin',
     );
   });
 
