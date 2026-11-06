@@ -13,8 +13,9 @@ duplicates the issue listed. Each landed as its own commit.
   which is gone. Every edge must be a finite number of 0 or more.
 - `insets(padding, name?)` rejects a padding that is neither a number nor an
   object of edges (`<CaptionTrack> padding must be a number or { top, right,
-  bottom, left }, not "bad"`), for every component that uses it; before, a
-  string or `null` gave 0 on every edge. It takes the prop's name for its
+  bottom, left }, not "bad"`), for every component that uses it. Before, a
+  string or a boolean gave 0 on every edge, and `null` threw a bare
+  `TypeError` reading `top`. It takes the prop's name for its
   message, `padding` unless given: `<CaptionTrack> highlight.padding top must be a finite number
   of 0 or more, not -20`. Before, `highlight={{ padding: -20 }}` or `NaN`
   silently drew no band, and a `NaN` track padding failed inside `fitText`
@@ -69,7 +70,8 @@ duplicates the issue listed. Each landed as its own commit.
   renamed into place and remove it on any error. `ifExists: 'same-size'`
   treats a failed rename onto a file of the data's size as another process
   having published the same bytes, the voice snapshot's policy. It covers
-  only the rename: a failed write of the temporary file always throws. The
+  only the rename, and only a regular file (a folder of that size is not
+  one): a failed write of the temporary file always throws. The
   async form checks the size with an async `stat`. VOICEVOX
   narration (`writeAtomically`) and the voice-folder snapshot use them. The
   sync form now also removes the temporary file when the write itself fails.

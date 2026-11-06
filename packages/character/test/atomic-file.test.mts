@@ -41,6 +41,13 @@ for (const [form, write] of [
     assert.deepEqual(readdirSync(dir), ['taken']);
   });
 
+  test(`with ifExists 'same-size', a folder of the data's size is still an error (${form})`, async () => {
+    const target = join(dir, 'taken');
+    mkdirSync(target);
+    await assert.rejects(write(target, 'a'.repeat(statSync(target).size), { ifExists: 'same-size' }));
+    assert.deepEqual(readdirSync(dir), ['taken']);
+  });
+
   test(`a failed write throws and removes the temporary file (${form})`, async () => {
     await assert.rejects(write(join(dir, 'missing', 'out.wav'), 'data'));
     assert.deepEqual(readdirSync(dir), []);

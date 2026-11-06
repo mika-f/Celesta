@@ -19,8 +19,10 @@ function temporaryPath(target: string): string {
   return `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
 }
 
-function byteLength(data: Uint8Array | string): number {
-  return typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength;
+/** Whether `stat` is a regular file of `data`'s length: a folder of that size is not. */
+function sameSize(stat: fs.Stats | undefined, data: Uint8Array | string): boolean {
+  const length = typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength;
+  return stat !== undefined && stat.isFile() && stat.size === length;
 }
 
 /**
@@ -40,8 +42,7 @@ export function writeFileAtomicSync(target: string, data: Uint8Array | string, o
     fs.renameSync(temporary, target);
   } catch (error) {
     fs.rmSync(temporary, { force: true });
-    const published = options.ifExists === 'same-size' && fs.statSync(target, { throwIfNoEntry: false })?.size === byteLength(data);
-    if (!published) throw error;
+    if (!(options.ifExists === 'same-size' && sameSize(fs.statSync(target, { throwIfNoEntry: false }), data))) throw error;
   }
 }
 
@@ -58,7 +59,7 @@ export async function writeFileAtomic(target: string, data: Uint8Array | string,
     await fs.promises.rename(temporary, target);
   } catch (error) {
     await fs.promises.rm(temporary, { force: true });
-    const size = options.ifExists === 'same-size' ? await fs.promises.stat(target).then((stat) => stat.size, () => undefined) : undefined;
-    if (size !== byteLength(data)) throw error;
+    const stat = options.ifExists === 'same-size' ? await fs.promises.stat(target).catch(() => undefined) : undefined;
+    if (!sameSize(stat, data)) throw error;
   }
 }
