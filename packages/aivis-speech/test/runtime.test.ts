@@ -23,6 +23,14 @@ test.for([
   { name: 'packaged', packaged: true },
 ])('$name CLI resolves AivisSpeech outside the workspace and shares the lip-sync clock', ({ packaged }) => {
   const root = mkdtempSync(join(tmpdir(), 'celesta-aivis-speech-'));
+  // Milliseconds per phase, printed so a slow CI run shows where its time went.
+  const timings: Record<string, number> = {};
+  let mark = performance.now();
+  const lap = (phase: string) => {
+    const now = performance.now();
+    timings[phase] = Math.round(now - mark);
+    mark = now;
+  };
   try {
     let cli = fileURLToPath(new URL('../../cli/dist/cli.js', import.meta.url));
     if (packaged) {
@@ -30,6 +38,7 @@ test.for([
       const stage = fileURLToPath(new URL('../../../scripts/stage-react-runtime.mjs', import.meta.url));
       const result = spawnSync(process.execPath, [stage, runtime], { encoding: 'utf8', timeout: 30000 });
       assert.equal(result.status, 0, result.stdout + result.stderr);
+      lap('stage');
       cli = join(runtime, 'dist/cli.js');
       const types = join(runtime, 'dist/project-types');
       assert.match(readFileSync(join(types, 'node_modules/@celesta.studio/aivis-speech/dist/index.d.ts'), 'utf8'), /AivisSpeechAudioQuery/);
@@ -87,12 +96,15 @@ test.for([
         encoding: 'utf8', timeout: 30000,
       });
       assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+      lap('tsc');
     }
     const result = spawnSync(process.execPath, [cli, entry], {
       input: '{"time":{"value":0,"timescale":10}}\n{"time":{"value":3,"timescale":10}}\n',
       encoding: 'utf8', timeout: 30000,
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
+    lap('cli');
+    if (packaged) console.log(`packaged AivisSpeech phases (ms): ${JSON.stringify(timings)}`);
     const [metadata, first, second] = result.stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line)) as [Metadata, Frame, Frame];
     assert.equal(metadata.config.durationInFrames, 4);
     assert.equal(first.scene.layers[0].id, 'a');

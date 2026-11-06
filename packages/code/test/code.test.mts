@@ -388,12 +388,21 @@ test.for([
       return <Composition width={800} height={300} fps={30} durationInFrames={20}><Demo /></Composition>;
     }
   `);
+  // Milliseconds per phase, printed so a slow CI run shows where its time went.
+  const timings: Record<string, number> = {};
+  let mark = performance.now();
+  const lap = (phase: string) => {
+    const now = performance.now();
+    timings[phase] = Math.round(now - mark);
+    mark = now;
+  };
   let cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
   if (packaged) {
     const runtime = join(directory, 'runtime/react');
     const stage = fileURLToPath(new URL('../../../scripts/stage-react-runtime.mjs', import.meta.url));
     const staged = spawnSync(process.execPath, [stage, runtime], { encoding: 'utf8' });
     assert.equal(staged.status, 0, staged.stderr);
+    lap('stage');
     const closure = JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'));
     assert.ok(closure['@celesta.studio/code']);
     assert.ok(closure['@twinkleplop/core']);
@@ -407,6 +416,7 @@ test.for([
     const compiler = fileURLToPath(new URL('../node_modules/typescript/lib/tsc.js', import.meta.url));
     const checked = spawnSync(process.execPath, [compiler, '-p', directory], { encoding: 'utf8' });
     assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+    lap('tsc');
     cli = join(runtime, 'dist/cli.js');
   }
   const child = spawn(process.execPath, [cli, entry], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -438,6 +448,8 @@ test.for([
       }
     }
     assert.equal(await exited, 0, stderr);
+    lap('cli');
+    if (packaged) console.log(`packaged Code phases (ms): ${JSON.stringify(timings)}`);
     assert.equal(frames.length, 2);
     assert.equal(renderedText(frames[0]), 'c');
     assert.equal(renderedText(frames[1]), 'const value = "😀";');
