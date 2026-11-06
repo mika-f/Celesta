@@ -56,8 +56,10 @@ the one the plugin trust check already uses.
   `tsconfig.json`), but Celesta stops refreshing that `.celesta/`, and Set
   Up TypeScript sets up a new one in the entry's folder. Running Set Up
   TypeScript in Folder… on the intended root adds the mark and refreshes.
-  Projects from `--init` and every example have the entry, `package.json`,
-  and `tsconfig.json` in one folder, so they are not affected.
+  Projects from `--init` have the entry, `package.json`, and
+  `tsconfig.json` in one folder. Every example has its entry and
+  `package.json` in its own folder (12 also have a `tsconfig.json` there),
+  so the old walk stopped at that folder too. Neither is affected.
 - VOICEVOX's `prepareNarration()` cache (`.celesta/voices` beside the entry)
   is unaffected: refresh still needs `version.json`, and `install()` still
   leaves `voices` alone.

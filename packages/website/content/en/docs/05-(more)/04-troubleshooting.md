@@ -38,7 +38,7 @@ Lip sync needs an uncompressed WAV voice and a transcript with readable vowels (
 
 Open the composition in Celesta and choose **File → Set Up TypeScript**. Check that your `tsconfig.json` extends `./.celesta/tsconfig.json`. When building from source, also complete the runtime’s install, codegen, and build steps.
 
-If `.celesta/` is in a folder above the composition's, such as the project folder for a composition in `src/` or the repository root in a monorepo, that folder needs a `celesta.config.json` to be the project root. Choose **File → Set Up TypeScript in Folder…** and pick it; Celesta adds the file and refreshes `.celesta/`.
+If `.celesta/` is in a folder above the one containing the composition, such as the project folder for a composition in `src/` or the repository root in a monorepo, that folder needs a `celesta.config.json` to be the project root. Choose **File → Set Up TypeScript in Folder…** and pick it; Celesta adds an empty `celesta.config.json` if the folder has none, and refreshes `.celesta/`.
 
 :::
 :::toggle[MP4 export will not start]
