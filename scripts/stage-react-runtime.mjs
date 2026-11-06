@@ -30,8 +30,12 @@ function copyPackage(name, parent) {
       if (path === directory) return true;
       const parts = path.slice(directory.length + 1).split(/[\\/]/);
       if (parts.includes('node_modules')) return false;
+      // V8 compile caches are keyed to the Node.js version and architecture
+      // that wrote them, and nothing loads them; ag-psd's npm tarball carries
+      // ~3,500 such files, most of the files this script would copy.
+      if (parts.includes('.v8-cache')) return false;
       // Workspace packages contain development files that are not part of
-      // the installed runtime. Registry packages already have their publish set.
+      // the installed runtime. Registry packages otherwise keep their publish set.
       if (name.startsWith('@celesta.studio/')) {
         const top = parts[0];
         return top === 'dist' || top === 'package.json' || /^(readme|licen[cs]e)(\.|$)/i.test(top);

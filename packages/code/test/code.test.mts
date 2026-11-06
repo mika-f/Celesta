@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -397,6 +397,10 @@ test.for([
     const closure = JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'));
     assert.ok(closure['@celesta.studio/code']);
     assert.ok(closure['@twinkleplop/core']);
+    // ag-psd's npm tarball carries ~3,500 V8 compile-cache files for other
+    // Node.js versions, which nothing loads; the runtime leaves them out.
+    assert.ok(existsSync(join(runtime, 'node_modules/ag-psd/dist/index.js')));
+    assert.ok(!existsSync(join(runtime, 'node_modules/ag-psd/.v8-cache')), 'Runtime must not ship .v8-cache');
     // The editor copies this same support template into a project at setup.
     cpSync(join(runtime, 'dist/project-types'), join(directory, '.celesta'), { recursive: true });
     writeFileSync(join(directory, 'tsconfig.json'), '{"extends":"./.celesta/tsconfig.json"}');
