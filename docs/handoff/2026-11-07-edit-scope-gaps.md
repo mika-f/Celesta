@@ -12,9 +12,11 @@ here for each.
   `drain_held_rows` (`crates/editor/src/element_rows.rs`) checked whether
   the playhead moved off a held commit's keyframe (`moved_off_keyframe`) on
   `element_targets()`, the targets of the scope the control shows. It now
-  reads `targets_under(held.scope)` (made `pub(crate)` in
-  `element_edit.rs`), the targets the commit is written to by
-  `commit_element`. The case: a commit held under "This scene" for an
+  reads `targets_under(written_scope(held.scope, &gate))` (`targets_under`
+  made `pub(crate)` in `element_edit.rs`): the targets of the scope the
+  held gate goes with, which `commit_element` writes to. For a commit held
+  with no scope shown, that is the option in effect at the drain
+  (`drain_gate` lets it go under "This scene"), not `held.scope`. The case: a commit held under "This scene" for an
   element its component draws more than once, where the one-instance
   targets (`ElementTargets::one`) hold a keyframe and the targets as
   resolved hold `Repeated`; with "Shared value" shown by the drain (a tab
@@ -52,8 +54,12 @@ here for each.
   nothing to wait for and shows the reach at once. "Every scene sets
   `rectWidth` itself" still needs the calls: until then that row is locked
   as "This scene sets its own `rectWidth`", true of this scene and refused
-  the same way, and the text changes when the calls land. Test:
-  `the_line_waits_for_the_scene_calls_before_naming_scenes`.
+  the same way, and the text changes when the calls land. A call that
+  could not be read (`None` in `SceneCalls` for an instance whose chain has
+  an entry there) still counts as reached once the calls are read, as
+  before: it is not retried until the index generation changes (see
+  `current_calls`), so waiting on it would keep "Checking…" up for good.
+  Test: `the_line_waits_for_the_scene_calls_before_naming_scenes`.
 
 ## Verified, not a gap
 

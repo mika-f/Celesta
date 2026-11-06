@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::element_edit::{Resolved, ScopeContext, commit_report, resolved_scope_state};
-use crate::element_rows::default_row_text;
+use crate::element_rows::{default_row_text, written_scope};
 use crate::impact::{ImpactFilter, ImpactView, impact_line, impact_view};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
@@ -888,6 +888,30 @@ fn a_held_keyframe_commit_is_checked_on_the_targets_of_its_scope() {
     };
     assert!(moved(Some(Scope::ThisScene)));
     assert!(!moved(Some(Scope::Shared)));
+
+    // One held with no scope shown goes under the option in effect when it
+    // drains, "This scene" here: checked on that scope's targets too.
+    let origin = HeldOrigin {
+        gesture: false,
+        scanning: false,
+    };
+    let gate = held_gate(
+        None,
+        origin,
+        &context.state,
+        context.under(None),
+        std::slice::from_ref(&x),
+        context.calls,
+    );
+    assert_eq!(gate, CommitGate::Go(Some(Scope::ThisScene)));
+    assert_eq!(written_scope(None, &gate), Some(Scope::ThisScene));
+    assert!(moved(written_scope(None, &gate)));
+    // Refused or held, it keeps its own.
+    let refused = CommitGate::Refuse(SCANNED_MEANWHILE.to_owned());
+    assert_eq!(
+        written_scope(Some(Scope::Shared), &refused),
+        Some(Scope::Shared)
+    );
 }
 
 #[test]

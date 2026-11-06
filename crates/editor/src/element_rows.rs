@@ -946,6 +946,16 @@ pub(crate) fn moved_off_keyframe(held: i64, now: i64, target: &EditTarget) -> bo
         )
 }
 
+/// The scope a commit that keeps `kept` is written under once its gate
+/// says `gate`: the gate's when it goes (a commit held with no scope shown
+/// goes under the option in effect then), else the kept one.
+pub(crate) fn written_scope(kept: Option<Scope>, gate: &CommitGate) -> Option<Scope> {
+    match gate {
+        CommitGate::Go(scope) => *scope,
+        CommitGate::Hold(_) | CommitGate::Refuse(_) => kept,
+    }
+}
+
 /// Whether a finished commit for `commit_layer` may reset the row that now
 /// shows `row_layer`: rows are reused across layers by key, so a write of
 /// one layer's `x` must leave another layer's `x` row (and its typed text)
@@ -1416,18 +1426,19 @@ impl EditorView {
     pub(crate) fn drain_held_rows(&mut self, cx: &mut Context<Self>) {
         while !self.row_commit_waits() {
             let selected = self.selected_layer.clone();
-            let scanning = self
+            let Some((key, gate)) = self
                 .element_rows
                 .held
                 .first(selected.as_deref())
-                .and_then(|held| {
+                .map(|held| {
                     let keys = std::slice::from_ref(&held.key);
-                    match self.held_gate_for(held.scope, held.origin(), keys) {
-                        CommitGate::Hold(note) => Some((held.key.clone(), note)),
-                        CommitGate::Go(_) | CommitGate::Refuse(_) => None,
-                    }
-                });
-            if let Some((key, note)) = scanning {
+                    let gate = self.held_gate_for(held.scope, held.origin(), keys);
+                    (held.key.clone(), gate)
+                })
+            else {
+                break;
+            };
+            if let CommitGate::Hold(note) = &gate {
                 if self.element_rows.selection.waiting() {
                     self.element_rows.held.pop(selected.as_deref());
                     self.drop_scanning_row(&key);
@@ -1438,19 +1449,20 @@ impl EditorView {
                     held.scanning = true;
                 }
                 if let Some(row) = self.element_rows.rows.get_mut(&key) {
-                    row.held_note = Some(note);
+                    row.held_note = Some(note.clone());
                 }
                 break;
             }
             let Some(held) = self.element_rows.held.pop(selected.as_deref()) else {
                 break;
             };
-            // Read on the targets of the scope the commit keeps, as it will
-            // be written (see `Self::commit_element`): under "This scene" the
-            // element as one instance may be a keyframe where the targets
-            // shown under "Shared value" are `Repeated`.
+            // Read on the targets the commit will be written to (see
+            // `Self::commit_element`): those of the scope its gate goes
+            // with, which for one held with no scope shown is the option in
+            // effect now. Under "This scene" the element as one instance may
+            // be a keyframe where the targets as resolved are `Repeated`.
             let moved = self
-                .targets_under(held.scope)
+                .targets_under(written_scope(held.scope, &gate))
                 .and_then(|(targets, _)| targets.target(&held.key))
                 .is_some_and(|target| {
                     moved_off_keyframe(held.frame, self.source_lookup_frame, target)
