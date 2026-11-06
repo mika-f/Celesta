@@ -113,20 +113,31 @@ impl MeshState {
     }
 
     /// Closes the models no layer drew in the last [`MODEL_IDLE_RENDERS`]
-    /// renders and drops what Celesta held for them (textures, buffers, and
-    /// the shaders and pipelines only they used), as a render ends, also
-    /// one that failed part way. A model is opened again when a layer draws
-    /// it later.
+    /// renders and drops what Celesta held for them, as a render ends, also
+    /// one that failed part way: their textures and buffers, and the draw
+    /// pipelines no model still loaded uses. Compiled shaders stay in
+    /// `ScenePipelines`' cache, which is bounded by `MAX_CACHED_SHADERS`,
+    /// so a model opened again is not compiled again. A model is opened
+    /// again when a layer draws it later.
     pub(crate) fn close_idle_models(&mut self) {
         let renders = self.renders;
         let provider = &mut self.provider;
+        let mut closed_scene = false;
         self.models.retain(|_, open| {
             let idle = renders - open.last_used >= MODEL_IDLE_RENDERS;
-            if idle && let Some(provider) = provider.as_mut() {
-                provider.close(open.loaded.id());
+            if idle {
+                if let Some(provider) = provider.as_mut() {
+                    provider.close(open.loaded.id());
+                }
+                closed_scene |= matches!(open.loaded, LoadedModel::Scene(_));
             }
             !idle
         });
+        // The models are dropped, so the pipelines only they held are held
+        // by the cache alone.
+        if closed_scene && let Some(pipelines) = self.scene_pipelines.as_mut() {
+            pipelines.drop_unused_pipelines();
+        }
     }
 }
 

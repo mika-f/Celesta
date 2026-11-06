@@ -44,8 +44,9 @@ in how long it keeps plugin models open.
   what is used. The fingerprint still hashes each name as written.
 - `packages/cli/src/plugins.ts` keeps its own discovery; its
   `manifestPath` does the same with `path.join`.
-- A plugin whose manifest used `\` gets a different fingerprint now that its
-  files are found, so the app asks about it once more.
+- A plugin whose manifest used `\` may get a different fingerprint now that
+  its files are found (a missing file was hashed as empty, so an empty one
+  hashes as before), and the app then asks about it once more.
 
 ### Plugin models no layer draws are closed
 
@@ -59,9 +60,12 @@ in how long it keeps plugin models open.
   opening it, before the frame is asked for and checked, so a frame that
   fails still keeps its model. After the walk, also when it failed part
   way, `close_idle_models` closes on the provider and drops each model not
-  drawn in the last `MODEL_IDLE_RENDERS` (300) renders. Dropping a loaded
-  scene releases its hold on shaders and pipelines, which the materials
-  cache can then drop.
+  drawn in the last `MODEL_IDLE_RENDERS` (300) renders. When one of them
+  was a scene, `ScenePipelines::drop_unused_pipelines` then drops the draw
+  pipelines no loaded model holds, so an idle renderer does not keep them
+  until the next load fills the cache. Compiled shaders, and the refusals
+  kept with them, stay in the shader cache (bounded by
+  `MAX_CACHED_SHADERS`), so a model opened again is not compiled again.
 - 300 renders is about five seconds of playback or export at 60 fps (ten
   at 30). Scene canvases are evicted after one render, but reopening a model
   means the plugin reads and parses its file again (a VRM avatar can take a
@@ -74,16 +78,26 @@ in how long it keeps plugin models open.
 
 - `celesta-plugin-host`: `host::tests::a_relative_texture_path_is_refused_by_name`
   (meshes and scenes; the message names the texture's index and path; an
-  absolute path and inline pixels pass) and
+  absolute path and inline pixels pass, and a `\` is shown once),
+  `host::tests::a_refused_model_is_closed_in_the_plugin` (Unix: a shell
+  script plugin replays `hello`, `opened` with a relative texture, and
+  `closed`, and records what it is sent: `hello`, one `open`, and a `close`
+  for the model it gave, with no second open), and
   `manifest::tests::manifest_paths_use_this_platforms_separator` (`js\\index.js`
   and `./js//index.d.ts` resolve to the files on disk; an executable
   written with `/` uses the platform's separator, with no `/` on Windows).
 - `celesta-gpu-renderer`: `tests::plugin::models_no_layer_draws_for_a_while_are_closed`
   renders model `a` once, then only `b`: `a` is still open after
   `MODEL_IDLE_RENDERS - 1` renders and closed at the next; `b`, drawn in
-  every render, stays; an empty render counts; `a` opens again when drawn.
+  every render, stays, and closes after as many renders of an empty scene
+  (renders without plugin layers count); `a` opens again when drawn.
+- `tests::scene::an_idle_scene_model_lets_go_of_its_pipelines`: once a scene
+  model is closed for being undrawn, the cache keeps none of its draw
+  pipelines, and keeps its shader.
 - `packages/cli`: `plugins.test.mts` resolves a `module` written as
   `js\\index.ts` to the file on disk.
+- The texture message quotes the path as written (`"{}"`), since `{:?}`
+  would double each `\` of a Windows path.
 - Run on macOS (Apple Silicon, Metal): `cargo test --workspace`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo fmt --all -- --check`, `git diff --check`, and

@@ -433,9 +433,18 @@ fn models_no_layer_draws_for_a_while_are_closed() {
     assert_eq!(logged(), ["open a", "open b"]);
     renderer.render(&scene_of("b")).unwrap();
     assert_eq!(logged(), ["open a", "open b", "close a"]);
-    // A render that draws no plugin layer counts too, and "b", drawn in
-    // each render since it opened, is kept; "a" opens again when drawn.
+    // Renders that draw no plugin layer count too: "b", drawn in each
+    // render until now, closes after as many of them.
+    for _ in 1..crate::mesh::MODEL_IDLE_RENDERS {
+        renderer.render(&empty_scene(64, 64)).unwrap();
+    }
+    assert_eq!(logged(), ["open a", "open b", "close a"]);
     renderer.render(&empty_scene(64, 64)).unwrap();
+    assert_eq!(logged(), ["open a", "open b", "close a", "close b"]);
+    // A closed model opens again when a layer draws it.
     renderer.render(&scene_of("a")).unwrap();
-    assert_eq!(logged(), ["open a", "open b", "close a", "open a"]);
+    assert_eq!(
+        logged(),
+        ["open a", "open b", "close a", "close b", "open a"]
+    );
 }

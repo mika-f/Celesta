@@ -286,9 +286,10 @@ fn relative_texture(content: &ContentModel) -> Option<String> {
         .into_iter()
         .enumerate()
         .find_map(|(index, source)| match source {
+            // Quoted as written: `{:?}` would double a Windows path's `\`.
             TextureSource::Path(path) if !Path::new(path).is_absolute() => Some(format!(
-                "texture {index}'s path {:?} is relative; a plugin gives texture files as absolute paths",
-                path.display().to_string()
+                "texture {index}'s path \"{}\" is relative; a plugin gives texture files as absolute paths",
+                path.display()
             )),
             _ => None,
         })
@@ -606,7 +607,7 @@ mod texture_tests {
         let message =
             relative_texture(&meshes(vec![inline.clone(), relative.clone()])).expect("refused");
         assert!(message.contains("texture 1"), "{message}");
-        assert!(message.contains("textures/skin.png"), "{message}");
+        assert!(message.contains("\"textures/skin.png\""), "{message}");
         assert!(message.contains("absolute"), "{message}");
 
         let scene = ContentModel::Scene(SceneModel {
@@ -625,7 +626,107 @@ mod texture_tests {
         let message = relative_texture(&scene).expect("refused");
         assert!(message.contains("texture 0"), "{message}");
 
+        // A `\` is shown once, as the plugin wrote it.
+        let windows = TextureSource::Path(PathBuf::from(r"textures\skin.png"));
+        let message = relative_texture(&meshes(vec![windows])).expect("refused");
+        assert!(message.contains(r#""textures\skin.png""#), "{message}");
+
         let fine = meshes(vec![inline, TextureSource::Path(absolute())]);
         assert_eq!(relative_texture(&fine), None);
+    }
+
+    /// A plugin of a shell script that answers `hello`, then `opened` with a
+    /// model whose texture is relative, then `closed`, recording what it
+    /// is sent: the host refuses the model and closes it in the plugin,
+    /// without opening it again.
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_model_is_closed_in_the_plugin() {
+        use celesta_plugin::protocol::{encode_opened, read_message, write_message};
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Instant;
+
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("p");
+        std::fs::create_dir(&directory).unwrap();
+        let mut answers = Vec::new();
+        for answer in [
+            Message::new(json!({
+                "type": "hello",
+                "protocol": celesta_plugin::PROTOCOL_VERSION,
+                "plugin": "p",
+            })),
+            encode_opened(&Opened {
+                model: ModelId(42),
+                content: meshes(vec![TextureSource::Path("skin.png".into())]),
+                notices: Vec::new(),
+            }),
+            Message::new(json!({ "type": "closed" })),
+        ] {
+            write_message(&mut answers, &answer).unwrap();
+        }
+        std::fs::write(directory.join("answers"), answers).unwrap();
+        std::fs::write(
+            directory.join("plugin.sh"),
+            "#!/bin/sh\ncat answers\nexec cat > requests\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            directory.join("plugin.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let (os, _) = crate::manifest::platform();
+        std::fs::write(
+            directory.join(crate::manifest::MANIFEST),
+            json!({
+                "id": "p", "version": "1", "protocol": 1,
+                "celesta": concat!("=", env!("CARGO_PKG_VERSION")),
+                "executable": { os: "plugin.sh" },
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let (found, errors) = crate::manifest::discover(std::slice::from_ref(&directory));
+        assert!(errors.is_empty(), "{errors:?}");
+
+        let mut host = PluginHost::new(found);
+        let error = host.open("p", &BTreeMap::new()).unwrap_err();
+        let PluginError::Failed { plugin, message } = error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(plugin, "p");
+        assert!(
+            message.contains(r#"texture 0's path "skin.png""#),
+            "{message}"
+        );
+        assert!(host.models.is_empty());
+
+        // The requests reach the file a little after their answers were read.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let kinds = loop {
+            let bytes = std::fs::read(directory.join("requests")).unwrap_or_default();
+            let mut reader = &bytes[..];
+            let mut requests = Vec::new();
+            while let Ok(Some(request)) = read_message(&mut reader) {
+                requests.push(request.header);
+            }
+            if requests.len() >= 3 || Instant::now() > deadline {
+                break requests;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let kinds: Vec<_> = kinds
+            .iter()
+            .map(|header| (header["type"].clone(), header["model"].clone()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (json!("hello"), Value::Null),
+                (json!("open"), Value::Null),
+                (json!("close"), json!(42)),
+            ]
+        );
     }
 }
