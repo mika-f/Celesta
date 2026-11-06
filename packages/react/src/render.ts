@@ -586,25 +586,32 @@ function hostWalk(id: string, context: WalkContext, audio: AudioClipDescriptor[]
   };
 }
 
+/**
+ * Whether `value` is a non-empty list of keyframes, each with a finite
+ * `value` and a `time` whose `value` and `timescale` are numbers giving a
+ * finite time.
+ */
 function isKeyframeAnimation(value: unknown): value is KeyframeAnimation<number> {
   if (value === null || typeof value !== 'object') {
     return false;
   }
   const candidate = value as Partial<KeyframeAnimation<number>>;
-  return (
-    candidate.type === 'keyframes' &&
-    Array.isArray(candidate.keyframes) &&
-    candidate.keyframes.every(
-      (keyframe) =>
-        keyframe !== null &&
-        typeof keyframe === 'object' &&
-        typeof keyframe.value === 'number' &&
-        Number.isFinite(keyframe.value) &&
-        keyframe.time !== null &&
-        typeof keyframe.time === 'object' &&
-        Number.isFinite(secondsFromTime(keyframe.time)),
-    )
-  );
+  const keyframes = candidate.keyframes;
+  if (candidate.type !== 'keyframes' || !Array.isArray(keyframes) || keyframes.length === 0) {
+    return false;
+  }
+  // An indexed loop rather than every(), which skips sparse-array holes.
+  for (let i = 0; i < keyframes.length; i += 1) {
+    const keyframe = keyframes[i] as unknown;
+    if (keyframe === null || typeof keyframe !== 'object') return false;
+    const { value: number, time } = keyframe as { value?: unknown; time?: unknown };
+    if (typeof number !== 'number' || !Number.isFinite(number)) return false;
+    if (time === null || typeof time !== 'object') return false;
+    const { value: ticks, timescale } = time as { value?: unknown; timescale?: unknown };
+    if (typeof ticks !== 'number' || typeof timescale !== 'number') return false;
+    if (!Number.isFinite(ticks / timescale)) return false;
+  }
+  return true;
 }
 
 /**

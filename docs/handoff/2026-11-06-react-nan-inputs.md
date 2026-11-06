@@ -1,11 +1,17 @@
 # React rejects NaN timing, media, and animation inputs (2026-11-06)
 
-`<Sequence>`, `<Video>`, `<Audio>`, `interpolate()`, and `spring()` turned a
-`NaN` (usually computed from a misspelled field, an input prop, or data from
-`prepare()`) into a default in TypeScript, so the native side received a
-valid value and could not report anything (mika-f/Celesta#708). They now
-throw an error naming the component and the prop, as `<Loop>`, `<Image>`,
-`computeSeries`, `interpolateColor()`, and `frameKeyframes()` already did.
+A `NaN` in a composition usually comes from a misspelled field, an input
+prop, or data from `prepare()` (mika-f/Celesta#708). Two kinds of API let it
+through silently:
+
+- `<Sequence>`, `<Video>`, and `<Audio>` turned it into a default in
+  TypeScript, so the native side received a valid value and could not
+  report anything. They now throw an error naming the component and the
+  prop, as `<Loop>`, `<Image>`, and `computeSeries` already did.
+- `interpolate()` and `spring()` returned it, and a prop such as `opacity`
+  or `x` then dropped it to its default. They now throw an error naming the
+  function and the argument, as `interpolateColor()` and `frameKeyframes()`
+  already did.
 
 This is a breaking change: a composition that relied on the silent default
 now throws at render time.
@@ -39,7 +45,13 @@ now throws at render time.
   as missing, matching `interpolateColor()`. `extrapolate*: 'clamp'` never
   covered a `NaN` input (both comparisons are false).
 - **`spring()`**: requires `Number.isFinite(fps) && fps > 0` (the message is
-  unchanged, `spring() requires a positive fps`) and a finite `frame`.
+  unchanged, `spring() requires a positive fps`), a finite `frame`, `delay`,
+  `from`, and `to`, and a `durationInFrames` that is unset or a number other
+  than `NaN` (`Infinity` is the same as unset).
+- **Keyframes** (`isKeyframeAnimation`): a list must be non-empty and
+  dense, and each `time` must have numeric `value` and `timescale`; a
+  string such as `'15'` used to pass because only the quotient was checked.
+  `@celesta.studio/web`'s exporter already rejected an empty list.
 - Transform props and `opacity` keep dropping a non-finite value
   (`numberOr`); the opacity case is fixed at its usual source,
   `interpolate()`.

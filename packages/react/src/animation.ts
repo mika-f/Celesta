@@ -345,16 +345,23 @@ const DEFAULT_SPRING_CONFIG: Required<SpringConfig> = {
 /**
  * A damped harmonic oscillator's step response (0 at t=0 settling toward 1),
  * mapped into `[from, to]`. `frame`/`fps`/`delay` convert to elapsed seconds;
- * frames before `delay` return `from`. `frame` must be finite and `fps`
- * finite and positive.
+ * frames before `delay` return `from`. `frame`, `delay`, `from`, and `to`
+ * must be finite, `fps` finite and positive, and `durationInFrames`, when
+ * set, a number that is not NaN.
  */
 export function spring(options: SpringOptions): number {
   const { frame, fps, from = 0, to = 1, delay = 0 } = options;
   if (typeof fps !== 'number' || !Number.isFinite(fps) || fps <= 0) {
     throw new Error('spring() requires a positive fps');
   }
-  if (typeof frame !== 'number' || !Number.isFinite(frame)) {
-    throw new Error(`spring() requires a finite frame, not ${String(frame)}`);
+  for (const [name, value] of [['frame', frame], ['delay', delay], ['from', from], ['to', to]] as const) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`spring() requires a finite ${name}, not ${String(value)}`);
+    }
+  }
+  const { durationInFrames } = options;
+  if (durationInFrames !== undefined && (typeof durationInFrames !== 'number' || Number.isNaN(durationInFrames))) {
+    throw new Error(`spring() requires durationInFrames to be a number, not ${String(durationInFrames)}`);
   }
   const config = { ...DEFAULT_SPRING_CONFIG, ...options.config };
 

@@ -39,3 +39,13 @@ test('spring rejects a non-finite frame or fps', () => {
   expect(() => spring({ frame: 10, fps: 0 })).toThrow(/spring\(\) requires a positive fps/);
   expect(() => spring({ frame: Number.NaN, fps: 30 })).toThrow(/spring\(\) requires a finite frame, not NaN/);
 });
+
+test('spring rejects a NaN delay, from, to, or durationInFrames', () => {
+  expect(() => spring({ frame: 10, fps: 30, delay: Number.NaN })).toThrow(/spring\(\) requires a finite delay, not NaN/);
+  expect(() => spring({ frame: 10, fps: 30, from: Number.NaN })).toThrow(/spring\(\) requires a finite from, not NaN/);
+  expect(() => spring({ frame: 10, fps: 30, to: Infinity })).toThrow(/spring\(\) requires a finite to, not Infinity/);
+  expect(() => spring({ frame: 10, fps: 30, durationInFrames: Number.NaN }))
+    .toThrow(/spring\(\) requires durationInFrames to be a number, not NaN/);
+  // An endless spring is the same as none.
+  expect(spring({ frame: 10, fps: 30, durationInFrames: Infinity })).toBe(spring({ frame: 10, fps: 30 }));
+});

@@ -181,9 +181,14 @@ test('<Video> never reports pitch', () => {
 });
 
 test('<Video> rejects a startFrom or playbackRate that is not a finite number', () => {
-  for (const props of [{ startFrom: Number.NaN }, { playbackRate: Number.NaN }, { startFrom: Infinity }]) {
+  const invalid: [Partial<VideoProps>, RegExp][] = [
+    [{ startFrom: Number.NaN }, /<Video> startFrom must be a finite number/],
+    [{ playbackRate: Number.NaN }, /<Video> playbackRate must be a finite number/],
+    [{ startFrom: Infinity }, /<Video> startFrom must be a finite number/],
+  ];
+  for (const [props, message] of invalid) {
     const composition = mount(root(30, h(Video, { src: './clip.mp4', ...props })));
-    expect(() => at(composition, 0), JSON.stringify(props)).toThrow(/<Video> (startFrom|playbackRate) must be a finite number/);
+    expect(() => at(composition, 0), String(Object.keys(props))).toThrow(message);
   }
 });
 
@@ -195,6 +200,14 @@ test('<Audio> rejects a volume, playbackRate, pitch, or startFrom it cannot play
   const invalid: [Partial<AudioProps>, RegExp][] = [
     [{ volume: Number.NaN }, /<Audio> volume must be a finite number or keyframes with finite times and values/],
     [{ volume: nanKeyframe }, /<Audio> volume must be a finite number or keyframes with finite times and values/],
+    [{ volume: { type: 'keyframes', keyframes: [] } }, /<Audio> volume must be a finite number or keyframes/],
+    [{
+      volume: { type: 'keyframes', keyframes: [{ time: { value: '15', timescale: 30 }, value: 1 }] } as unknown as AnimatedNumber,
+    }, /<Audio> volume must be a finite number or keyframes/],
+    [{
+      // eslint-disable-next-line no-sparse-arrays
+      volume: { type: 'keyframes', keyframes: [{ time: { value: 0, timescale: 30 }, value: 0 }, , ] } as unknown as AnimatedNumber,
+    }, /<Audio> volume must be a finite number or keyframes/],
     [{ playbackRate: Number.NaN }, /<Audio> playbackRate must be a finite number or keyframes/],
     [{ pitch: Infinity }, /<Audio> pitch must be a finite number or keyframes/],
     [{ startFrom: Number.NaN }, /<Audio> startFrom must be a finite number/],

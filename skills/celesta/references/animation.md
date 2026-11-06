@@ -146,8 +146,9 @@ kebab case (`ease-out-back`).
 
 Damped spring from `from` (default 0) to `to` (default 1), which may
 overshoot. `config`: `stiffness` (100), `damping` (10), `mass` (1),
-`overshootClamping` (false). Frames before `delay` return `from`. `frame`
-must be finite and `fps` finite and above 0, or it throws.
+`overshootClamping` (false). Frames before `delay` return `from`. `frame`,
+`delay`, `from`, and `to` must be finite, `fps` finite and above 0, and
+`durationInFrames` not `NaN`, or it throws.
 
 ```tsx
 const frame = useCurrentFrame();
