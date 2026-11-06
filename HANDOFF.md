@@ -69,7 +69,9 @@ and its dependency closure. The CLI build stages their declarations,
 `@types/react`, `@types/node`, and a base tsconfig in `dist/project-types/`.
 File > Set Up TypeScript copies these into a project's `.celesta/`; the folder
 variant works before an entry exists. Opening a project refreshes the types
-when the staged content hash changes.
+when the staged content hash changes. Both use `celesta_plugin_host::project_root`
+and never write above it; see
+[`docs/handoff/2026-11-06-project-types-root.md`](docs/handoff/2026-11-06-project-types-root.md).
 The packages were named `@celesta/*` before they took the `@celesta.studio`
 npm scope; the CLI, `@celesta.studio/web`, the staged tsconfig, and
 `celesta-source-edit` still accept the old names, and the editor and the

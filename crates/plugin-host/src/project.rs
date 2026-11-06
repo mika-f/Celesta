@@ -45,9 +45,11 @@ pub enum ProjectConfigError {
 
 /// The project folder `entry` belongs to: the nearest folder from the
 /// entry's own up that holds `celesta.config.json`, else the entry's folder.
-/// It is what the user is asked to trust, and where `celesta.config.json` is
-/// read. A `package.json` or `tsconfig.json` does not make a project root:
-/// one in a home folder would make the whole home folder the project.
+/// It is what the user is asked to trust, where `celesta.config.json` is
+/// read, and where TypeScript support (`.celesta/`) is set up and refreshed;
+/// nothing above it is written. A `package.json` or `tsconfig.json` does not
+/// make a project root: one in a home folder would make the whole home
+/// folder the project.
 pub fn project_root(entry: &Path) -> PathBuf {
     let entry = std::path::absolute(entry).unwrap_or_else(|_| entry.to_path_buf());
     let folder = entry
@@ -65,6 +67,25 @@ pub fn project_root(entry: &Path) -> PathBuf {
 /// would be whatever folder an entry happened to be opened from.
 pub fn has_project_config(root: &Path) -> bool {
     root.join(PROJECT_CONFIG).is_file()
+}
+
+/// Makes `root` a project root by writing an empty `celesta.config.json`,
+/// keeping one that is already there. A write that fails removes the file
+/// it created, so a retry is not stopped by a partial one.
+pub fn mark_project_root(root: &Path) -> std::io::Result<()> {
+    let path = root.join(PROJECT_CONFIG);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => std::io::Write::write_all(&mut file, b"{}\n").inspect_err(|_| {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && path.is_file() => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 /// The plugin folders `root`'s `celesta.config.json` lists, absolute, in
@@ -136,6 +157,24 @@ mod tests {
         assert!(has_project_config(&project));
         assert_eq!(project_root(&project.join("scenes").join("a.tsx")), project);
         assert_eq!(project_root(&project.join("film.tsx")), project);
+    }
+
+    #[test]
+    fn marking_a_root_keeps_existing_settings() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        mark_project_root(project).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(project.join(PROJECT_CONFIG)).unwrap(),
+            "{}\n"
+        );
+        let settings = r#"{ "plugins": { "paths": [] } }"#;
+        std::fs::write(project.join(PROJECT_CONFIG), settings).unwrap();
+        mark_project_root(project).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(project.join(PROJECT_CONFIG)).unwrap(),
+            settings
+        );
     }
 
     #[test]

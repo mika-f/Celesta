@@ -33,7 +33,8 @@ pub use manifest::{
     plugin_paths,
 };
 pub use project::{
-    PROJECT_CONFIG, ProjectConfigError, has_project_config, project_plugin_paths, project_root,
+    PROJECT_CONFIG, ProjectConfigError, has_project_config, mark_project_root,
+    project_plugin_paths, project_root,
 };
 pub use settings::{
     Allowance, AllowedPlugin, SETTINGS_FILE, SettingsError, UserSettings, create_private_dir_all,
