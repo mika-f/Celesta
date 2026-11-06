@@ -6,6 +6,7 @@ use crate::text::{PendingText, rasterize_text, text_layer};
 use celesta_composition::ResolvedAsset;
 use celesta_remote::resolve_asset_path;
 use celesta_renderer::TextRasterizer;
+use celesta_renderer::resample::{Coverage, box_downscale};
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -200,39 +201,14 @@ pub(crate) fn upload_texture(
 pub(crate) fn downsample(width: u32, height: u32, pixels: &[u8]) -> (u32, u32, Vec<u8>) {
     let next_width = (width / 2).max(1);
     let next_height = (height / 2).max(1);
-    let mut next = vec![0; (next_width * next_height * BYTES_PER_PIXEL) as usize];
-    let span = |index: u32, size: u32, next_size: u32| {
-        let start = index * size / next_size;
-        let end = ((index + 1) * size / next_size).max(start + 1);
-        start..end
-    };
-    for y in 0..next_height {
-        for x in 0..next_width {
-            let mut color = [0_u32; 3];
-            let mut alpha = 0_u32;
-            let mut count = 0_u32;
-            for source_y in span(y, height, next_height) {
-                for source_x in span(x, width, next_width) {
-                    let offset = ((source_y * width + source_x) * BYTES_PER_PIXEL) as usize;
-                    let texel = &pixels[offset..offset + 4];
-                    let weight = u32::from(texel[3]);
-                    for channel in 0..3 {
-                        color[channel] += u32::from(texel[channel]) * weight;
-                    }
-                    alpha += weight;
-                    count += 1;
-                }
-            }
-            let offset = ((y * next_width + x) * BYTES_PER_PIXEL) as usize;
-            // A fully transparent block keeps a transparent black texel.
-            for channel in 0..3 {
-                if let Some(average) = (color[channel] + alpha / 2).checked_div(alpha) {
-                    next[offset + channel] = average as u8;
-                }
-            }
-            next[offset + 3] = ((alpha + count / 2) / count) as u8;
-        }
-    }
+    let next = box_downscale(
+        width,
+        height,
+        pixels,
+        next_width,
+        next_height,
+        Coverage::Alpha,
+    );
     (next_width, next_height, next)
 }
 

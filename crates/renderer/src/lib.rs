@@ -57,6 +57,7 @@ pub use types::{Color, RenderOptions, RgbaFrame, parse_color};
 pub mod image_source;
 mod path;
 pub mod psd_source;
+pub mod resample;
 
 pub use path::{
     FlattenedPath, LineSegment, PathDraw, PathShape, PathTransform, RasterizedPath, flatten_path,

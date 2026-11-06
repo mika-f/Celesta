@@ -290,6 +290,11 @@ fn text_width(text: &str, scale: u32) -> u32 {
 /// Area-filter taps reducing (or enlarging) `source` pixels to `target`:
 /// each output pixel covers `source / target` input pixels and weights each
 /// by how much of it falls inside that span.
+///
+/// Not `celesta_renderer::resample`: tiles are averaged premultiplied in
+/// linear light and composited over the checkerboard in the same pass, so
+/// opaque black beside white shrinks to 188 here rather than the 128 of the
+/// renderers' sRGB box and triangle filters.
 fn area_taps(source: u32, target: u32) -> Vec<Taps> {
     let scale = f64::from(source) / f64::from(target);
     (0..target)
