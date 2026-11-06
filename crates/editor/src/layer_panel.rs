@@ -6,7 +6,6 @@
 use crate::editor_launch::{Opened, open_source};
 use crate::element_edit::{ElementTargets, TransformProp, inner_target, reason_text};
 use crate::element_rows::row_label;
-use crate::icons::CelestaIcon;
 use crate::impact::{
     ImpactFilter, ImpactView, counted_scenes, impact_line, impact_view, other_scenes_label,
 };
@@ -22,10 +21,11 @@ use crate::view::EditorView;
 use crate::widgets::{inspector_row, inspector_section};
 use celesta_react_bridge::{ElementKind, LayerSource, LayerSourceReport, SourcePos};
 use celesta_source_edit::EditTarget;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, ClickEvent, Context, Div, Hsla, SharedString, Window, div, px};
 use std::path::{Path, PathBuf};
@@ -36,15 +36,15 @@ pub(crate) const LABEL_WIDTH: f32 = 84.0;
 
 /// The icon for a primitive element by its tag; any other shape (and an
 /// element that is not a primitive) gets the generic shapes icon.
-pub(crate) fn primitive_icon(name: &str) -> CelestaIcon {
+pub(crate) fn primitive_icon(name: &str) -> IconName {
     match name {
-        "Rect" => CelestaIcon::Square,
-        "Ellipse" | "Circle" => CelestaIcon::Circle,
-        "Text" => CelestaIcon::Type,
-        "Image" => CelestaIcon::Image,
-        "Video" => CelestaIcon::Film,
-        "Group" | "Stack" => CelestaIcon::Group,
-        _ => CelestaIcon::Shapes,
+        "Rect" => IconName::Square,
+        "Ellipse" | "Circle" => IconName::Circle,
+        "Text" => IconName::Type,
+        "Image" => IconName::Image,
+        "Video" => IconName::Film,
+        "Group" | "Stack" => IconName::Group,
+        _ => IconName::Shapes,
     }
 }
 
@@ -736,7 +736,7 @@ impl EditorView {
                         .ghost()
                         .small()
                         .w_full()
-                        .icon(CelestaIcon::MousePointerClick)
+                        .icon(IconName::MousePointerClick)
                         .child("Select")
                         .tooltip("Select this layer")
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -889,15 +889,15 @@ mod tests {
 
     #[test]
     fn primitive_icons() {
-        assert_eq!(primitive_icon("Rect"), CelestaIcon::Square);
-        assert_eq!(primitive_icon("Circle"), CelestaIcon::Circle);
-        assert_eq!(primitive_icon("Ellipse"), CelestaIcon::Circle);
-        assert_eq!(primitive_icon("Text"), CelestaIcon::Type);
-        assert_eq!(primitive_icon("Image"), CelestaIcon::Image);
-        assert_eq!(primitive_icon("Video"), CelestaIcon::Film);
-        assert_eq!(primitive_icon("Group"), CelestaIcon::Group);
-        assert_eq!(primitive_icon("Stack"), CelestaIcon::Group);
-        assert_eq!(primitive_icon("Star"), CelestaIcon::Shapes);
+        assert_eq!(primitive_icon("Rect"), IconName::Square);
+        assert_eq!(primitive_icon("Circle"), IconName::Circle);
+        assert_eq!(primitive_icon("Ellipse"), IconName::Circle);
+        assert_eq!(primitive_icon("Text"), IconName::Type);
+        assert_eq!(primitive_icon("Image"), IconName::Image);
+        assert_eq!(primitive_icon("Video"), IconName::Film);
+        assert_eq!(primitive_icon("Group"), IconName::Group);
+        assert_eq!(primitive_icon("Stack"), IconName::Group);
+        assert_eq!(primitive_icon("Star"), IconName::Shapes);
     }
 
     #[test]

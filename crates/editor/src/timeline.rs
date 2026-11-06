@@ -12,7 +12,7 @@ use celesta_react_bridge::{ReactChapter, SourcePos, chapter_at, scenes_of};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _,
 };
 use gpui_kit::{
     Bounds, Context, CursorStyle, Hsla, IntoElement, Modifiers, MouseButton, MouseDownEvent,
@@ -22,7 +22,6 @@ use gpui_kit::{
 };
 
 use crate::actions::{ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit};
-use crate::icons::CelestaIcon;
 use crate::impact::ImpactView;
 use crate::layer_select::display_path;
 use crate::scene_entries::SceneEdge;
@@ -32,6 +31,7 @@ use crate::timing::{SET_TIMING_NOTE, SetTimingOffer};
 use crate::view::EditorView;
 use crate::waveform::{level_at_time, waveform_segment};
 use celesta_editor_theme as theme;
+use gpui_kit::assets::IconName;
 
 const KEY_CONTEXT: Option<&str> = Some("CelestaEditor");
 
@@ -946,7 +946,7 @@ impl EditorView {
             .when(track.locked, |header| {
                 header.child(state_icon(
                     format!("track-locked-{}", track.id),
-                    Icon::new(CelestaIcon::Lock),
+                    Icon::new(IconName::Lock),
                     "Locked in the project",
                 ))
             })
