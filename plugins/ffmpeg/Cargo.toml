@@ -16,7 +16,7 @@ celesta-composition = { path = "../../crates/composition", version = "=0.9.0" }
 celesta-media = { path = "../../crates/media", version = "=0.9.0" }
 ez-ffmpeg = "0.19"
 # The same FFmpeg bindings ez-ffmpeg links, for reading decoded frames.
-ffmpeg-sys-next = "8.1.0"
+ffmpeg-sys-next = "9.0.0"
 rayon = "1.12.0"
 
 # macOS packages bundle Homebrew dylibs; retain static linking elsewhere.
