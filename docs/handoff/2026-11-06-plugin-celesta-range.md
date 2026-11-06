@@ -48,10 +48,21 @@ Celesta it belongs to: the root Cargo.toml's `[workspace.package]` version
 plugin's process builds with and of the runtime its module is checked
 against. `celestaRange` (`manifest.mts`) gives that version, without build
 metadata, up to the next release that may break it, as Cargo's `^` reads:
-the next minor below 1.0, the next major from it. `celesta_range_for` in
+the next patch below 0.1, the next minor below 1.0, the next major from it.
+It refuses a version that is not semver, pre-release identifiers included
+(empty, or numeric with a leading zero). `celesta_range_for` in
 `crates/plugin-host/src/manifest.rs` computes the same, for the message
-about a missing range. plugin.json has no `celesta` key; a plugin cannot
-widen its range by hand.
+about a missing range. plugin.json has no `celesta` key, so the build
+always writes the range of the Celesta it used. Nothing stops someone from
+editing the written `celesta-plugin.json` afterwards; discovery trusts the
+manifest it reads, as it does for every other field.
+
+The build keeps other platforms' executables, and with `--skip-js` the
+module, from an earlier run only when that run wrote the same range. A run
+for another range (after a release bump, say) drops the earlier
+executables from the manifest, and refuses `--skip-js` until the module is
+built again, so artifacts built against an older Celesta never carry the
+new range.
 
 The CLI (`packages/cli/src/plugins.ts`) does not check the range: it reads
 only the plugin directories the Rust side passes in `CELESTA_PLUGIN_PATH`
@@ -64,9 +75,13 @@ and `CELESTA_WAITING_PLUGIN_PATH`, which discovery has already filtered.
   unreadable), `skips_plugins_without_or_outside_a_celesta_range` (missing,
   unreadable, incompatible, compatible, and the messages), and
   `an_incompatible_codec_leaves_the_next_one`.
-- `pnpm --dir scripts/plugins test`: `celestaRange` and the manifests
-  `pluginManifest` and `build.mts` write.
-- Every test that writes a manifest (plugin-host, codec-test, editor,
-  react-bridge, the sample and VRM plugins' process tests) gives a range.
+- `pnpm --dir scripts/plugins test`: `celestaRange` (including 0.0.x and
+  invalid pre-releases), the manifests `pluginManifest` and `build.mts`
+  write, and `build.mts` dropping executables and refusing `--skip-js` for
+  an earlier run's other range.
+- The ordinary fixtures that write a manifest elsewhere (plugin-host,
+  codec-test, editor, react-bridge, the sample and VRM plugins' process
+  tests) give a compatible range; only the tests above leave it out or put
+  Celesta outside it on purpose.
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
   and the plugins workspace's `cargo test`/`cargo clippy` with `--locked`.

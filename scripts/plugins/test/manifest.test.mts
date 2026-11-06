@@ -202,11 +202,13 @@ describe('celestaRange', () => {
     ['0.10.0-beta.1', '>=0.10.0-beta.1, <0.11.0'],
     ['1.2.3', '>=1.2.3, <2.0.0'],
     ['0.9.0+build.5', '>=0.9.0, <0.10.0'],
+    ['0.0.3', '>=0.0.3, <0.0.4'],
+    ['0.10.0-rc.0', '>=0.10.0-rc.0, <0.11.0'],
   ])('ranges Celesta %s as Celesta suggests: %s', (version, range) => {
     expect(celestaRange(version)).toBe(range);
   });
 
-  it.each(['0.9', 'v0.9.0', '0.09.0', ''])('refuses %j, which is not a semver version', (version) => {
+  it.each(['0.9', 'v0.9.0', '0.09.0', '', '0.9.0-01', '0.9.0-alpha..1', '0.9.0-', '0.9.0+', '0.9.0+a..b'])('refuses %j, which is not a semver version', (version) => {
     expect(() => celestaRange(version)).toThrow(`Celesta's version ${JSON.stringify(version)} is not a semver version`);
   });
 });

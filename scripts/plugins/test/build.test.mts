@@ -21,6 +21,7 @@ import { workspaceVersion } from '../version.mts';
 const script = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'build.mts');
 // The Celesta the script belongs to, whose version the manifests' ranges follow.
 const repository = resolve(dirname(script), '..', '..');
+const range = celestaRange(workspaceVersion(readFileSync(join(repository, 'Cargo.toml'), 'utf8')));
 
 // A plugin with a process, a module and a license file, in a temporary
 // folder. `CARGO` is Node, run in the plugin's folder, so `cargo metadata ...`
@@ -78,10 +79,11 @@ beforeEach(() => {
       'mkdirSync(folder, { recursive: true });\n' +
       "writeFileSync(join(folder, at('--bin')), at('--target'));\n",
   );
-  // --skip-js keeps the module an earlier run built.
+  // --skip-js keeps the module an earlier run built for this range.
   mkdirSync(join(out, 'js'), { recursive: true });
   writeFileSync(join(out, 'js', 'index.js'), 'export {};\n');
   writeFileSync(join(out, 'js', 'index.d.ts'), 'export {};\n');
+  writeFileSync(join(out, 'celesta-plugin.json'), JSON.stringify({ celesta: range }));
 });
 
 afterEach(() => {
@@ -106,7 +108,7 @@ describe('build.mts', () => {
       id: 'demo',
       version: '0.1.0',
       protocol: 1,
-      celesta: celestaRange(workspaceVersion(readFileSync(join(repository, 'Cargo.toml'), 'utf8'))),
+      celesta: range,
       executable: { 'linux-x86_64': 'bin/linux-x86_64/demo-plugin' },
       module: 'js/index.js',
       types: 'js/index.d.ts',
@@ -132,6 +134,7 @@ describe('build.mts', () => {
     writeFileSync(
       join(out, 'celesta-plugin.json'),
       JSON.stringify({
+        celesta: range,
         executable: {
           'macos-aarch64': 'bin/macos-aarch64/demo-plugin',
           'windows-x86_64': 'bin/windows-x86_64/demo-plugin.exe',
@@ -144,6 +147,36 @@ describe('build.mts', () => {
       'macos-aarch64': 'bin/macos-aarch64/demo-plugin',
       'linux-x86_64': 'bin/linux-x86_64/demo-plugin',
     });
+  });
+
+  it('drops the executables an earlier run built for another Celesta range', () => {
+    // A plugin with a process alone, so the run needs no module.
+    writeFileSync(
+      join(plugin, 'plugin.json'),
+      JSON.stringify({ id: 'demo', version: '0.1.0', cargoPackage: 'demo-plugin', licenses: ['LICENSE-A'] }),
+    );
+    mkdirSync(join(out, 'bin', 'macos-aarch64'), { recursive: true });
+    writeFileSync(join(out, 'bin', 'macos-aarch64', 'demo-plugin'), '');
+    writeFileSync(
+      join(out, 'celesta-plugin.json'),
+      JSON.stringify({ celesta: '>=0.1.0, <0.2.0', executable: { 'macos-aarch64': 'bin/macos-aarch64/demo-plugin' } }),
+    );
+    const result = build(LINUX);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('dropping the executables built for Celesta >=0.1.0, <0.2.0');
+    expect(manifest().celesta).toBe(range);
+    expect(manifest().executable).toEqual({ 'linux-x86_64': 'bin/linux-x86_64/demo-plugin' });
+  });
+
+  it.each([
+    ['another range', { celesta: '>=0.1.0, <0.2.0' }, '>=0.1.0, <0.2.0'],
+    ['no range', {}, '(no range)'],
+  ])('with --skip-js, refuses a module an earlier run built for %s, before Cargo builds', (_, previous, named) => {
+    writeFileSync(join(out, 'celesta-plugin.json'), JSON.stringify(previous));
+    const result = build(LINUX);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${join(out, 'js')} was built for Celesta ${named}, not ${range}`);
+    expect(existsSync(join(tree, 'ran-build'))).toBe(false);
   });
 
   it('replaces licenses/ with the files plugin.json lists', () => {

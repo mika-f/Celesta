@@ -152,19 +152,42 @@ export function pluginVersion(
 }
 
 /** A semver version: its major, minor, and patch, its pre-release, and its build metadata. */
-const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/;
+
+/**
+ * Whether `identifiers` (a pre-release, or with `numeric` false build
+ * metadata) are dot-separated identifiers as semver allows them: none empty,
+ * and with `numeric`, none all digits with a leading zero.
+ */
+function validIdentifiers(identifiers: string, numeric: boolean): boolean {
+  return identifiers
+    .split('.')
+    .every((identifier) => identifier !== '' && !(numeric && /^0\d+$/.test(identifier)));
+}
 
 /**
  * The `celesta` range of a plugin built against Celesta `version`: that
  * version (without build metadata) up to the next release that may break it,
- * as Cargo's `^` reads (the next minor below 1.0, the next major from it),
- * such as `>=0.9.0, <0.10.0`. Celesta's `celesta_range_for`
- * (`crates/plugin-host/src/manifest.rs`) suggests the same.
+ * as Cargo's `^` reads (the next patch below 0.1, the next minor below 1.0,
+ * the next major from it), such as `>=0.9.0, <0.10.0`. Celesta's
+ * `celesta_range_for` (`crates/plugin-host/src/manifest.rs`) suggests the
+ * same.
  */
 export function celestaRange(version: string): string {
   const match = SEMVER.exec(version);
-  if (match === null) throw new Error(`Celesta's version ${JSON.stringify(version)} is not a semver version`);
-  const [, major, minor, patch, pre = ''] = match;
-  const next = major === '0' ? `0.${Number(minor) + 1}.0` : `${Number(major) + 1}.0.0`;
-  return `>=${major}.${minor}.${patch}${pre}, <${next}`;
+  const [, major, minor, patch, pre, build] = match ?? [];
+  if (
+    match === null ||
+    (pre !== undefined && !validIdentifiers(pre, true)) ||
+    (build !== undefined && !validIdentifiers(build, false))
+  ) {
+    throw new Error(`Celesta's version ${JSON.stringify(version)} is not a semver version`);
+  }
+  const next =
+    major === '0' && minor === '0'
+      ? `0.0.${Number(patch) + 1}`
+      : major === '0'
+        ? `0.${Number(minor) + 1}.0`
+        : `${Number(major) + 1}.0.0`;
+  return `>=${major}.${minor}.${patch}${pre === undefined ? '' : `-${pre}`}, <${next}`;
 }

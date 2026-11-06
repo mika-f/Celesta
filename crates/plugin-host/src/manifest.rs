@@ -29,15 +29,17 @@ fn celesta_version() -> semver::Version {
 
 /// The range a plugin built against Celesta `version` declares: that
 /// version (without build metadata) up to the next release that may break
-/// it, as Cargo's `^` reads (the next minor below 1.0, the next major from
-/// it), such as `">=0.9.0, <0.10.0"`. `scripts/plugins/build.mts` writes the
-/// same.
+/// it, as Cargo's `^` reads (the next patch below 0.1, the next minor below
+/// 1.0, the next major from it), such as `">=0.9.0, <0.10.0"`.
+/// `scripts/plugins/build.mts` writes the same.
 pub fn celesta_range_for(version: &semver::Version) -> String {
     let lowest = semver::Version {
         build: semver::BuildMetadata::EMPTY,
         ..version.clone()
     };
-    let next = if version.major == 0 {
+    let next = if version.major == 0 && version.minor == 0 {
+        format!("0.0.{}", version.patch + 1)
+    } else if version.major == 0 {
         format!("0.{}.0", version.minor + 1)
     } else {
         format!("{}.0.0", version.major + 1)
@@ -1552,6 +1554,7 @@ mod tests {
         assert_eq!(range("1.2.3"), ">=1.2.3, <2.0.0");
         assert_eq!(range("0.10.0-beta.1"), ">=0.10.0-beta.1, <0.11.0");
         assert_eq!(range("0.9.0+build.5"), ">=0.9.0, <0.10.0");
+        assert_eq!(range("0.0.3"), ">=0.0.3, <0.0.4");
         // This Celesta is in the range it suggests.
         let manifest = |celesta: Option<&str>| Manifest {
             id: "p".into(),
