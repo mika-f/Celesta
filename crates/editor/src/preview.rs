@@ -1,7 +1,7 @@
 use crate::helpers::prepare_preview_frame;
 use crate::layer_select::LookupResult;
 use crate::problems::error_chain;
-use crate::source::PropertyArgs;
+use crate::source::{PropertyArgs, WatchStamp};
 use crate::worker::LatestWorker;
 use celesta_composition::{
     Layer, LayerContent, Scene, ShaderSource, TextColorRun, TextFontRun, Time,
@@ -22,7 +22,6 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
 
 pub(crate) struct AudioPreview {
     pub(crate) _device_sink: rodio::MixerDeviceSink,
@@ -381,10 +380,10 @@ pub(crate) struct ReactPreview {
     /// loaded; kept across failed reloads. It types the Component section.
     pub(crate) component_schemas: BTreeMap<String, ComponentPropertySchema>,
     pub(crate) entry: PathBuf,
-    /// Newest source-file modification time seen under the entry's directory
-    /// (or of the `--props-file`). The reload watcher compares against this
-    /// to notice edits.
-    pub(crate) watched_mtime: Option<SystemTime>,
+    /// The reload watcher's last sample of the entry's sources and
+    /// `--props-file` (see [`WatchStamp`]). It compares against this to
+    /// notice edits.
+    pub(crate) watched: Option<WatchStamp>,
     /// Files and directories the entry's `prepare()` read (voice folders and
     /// the like, possibly outside the entry's directory), as last read. The
     /// reload watcher compares their state on disk against this.

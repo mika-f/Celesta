@@ -107,7 +107,7 @@ pub(crate) fn moved_impact_view(
     let index = match occurrences {
         None | Some(OccurrenceState::Scanning) => return span_only("Scanning scenes…".to_owned()),
         Some(OccurrenceState::Failed(message)) => {
-            return span_only(format!("Couldn't scan scenes: {message}"));
+            return span_only(format!("Couldn’t scan scenes: {message}"));
         }
         Some(OccurrenceState::Ready(index) | OccurrenceState::Refreshing(index)) => index,
     };
@@ -751,7 +751,7 @@ mod tests {
                 20,
                 &ImpactFilter::All
             ),
-            span_only(Some((15.0, 35.0)), "Couldn't scan scenes: boom")
+            span_only(Some((15.0, 35.0)), "Couldn’t scan scenes: boom")
         );
     }
 

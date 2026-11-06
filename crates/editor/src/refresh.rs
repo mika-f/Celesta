@@ -9,7 +9,7 @@ use crate::preview::{
 };
 use crate::problems::{Source, error_chain};
 use crate::source::{
-    DependencyDebounce, REACT_PREVIEW_SAMPLE_RATE, sample_dependencies, watched_mtime,
+    DependencyDebounce, REACT_PREVIEW_SAMPLE_RATE, WatchStamp, sample_dependencies, watched_stamp,
 };
 use crate::timecode::format_timecode;
 use crate::timeline_drag::{BandDrag, SceneDrag};
@@ -25,11 +25,11 @@ use celesta_react_bridge::{
 use gpui_kit::Context;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 /// What one background reload of a React entry produced.
 pub(crate) struct ReactReload {
-    pub(crate) watched: Option<SystemTime>,
+    pub(crate) watched: Option<WatchStamp>,
     /// The previously recorded preparation dependencies, sampled with
     /// `watched`: what a failed load records, since it reports none.
     pub(crate) dependencies: Vec<PrepareDependency>,
@@ -182,10 +182,10 @@ impl SelectionKeep {
     }
 }
 
-/// Whether reload `sequence`'s mtime sample may replace the watched mtime,
+/// Whether reload `sequence`'s watcher sample may replace the watched one,
 /// which was last sampled with `watched_since` as the next reload number. An
 /// older reload sampled before that, so its sample would move the watched
-/// mtime back and make the watcher reload again.
+/// sample back and make the watcher reload again.
 pub(crate) fn reload_sample_applies(sequence: u64, watched_since: u64) -> bool {
     sequence >= watched_since
 }
@@ -406,7 +406,7 @@ impl EditorView {
                 .spawn(async move {
                     // Sampled before reading, so an edit made while Node starts
                     // still differs from it and triggers another reload.
-                    let watched = watched_mtime(&entry, &property_args);
+                    let watched = watched_stamp(&entry, &property_args);
                     let dependencies = sample_dependencies(&recorded);
                     // Re-read --props-file so edits to a variant show up too.
                     match property_args.load(&entry) {
@@ -465,7 +465,7 @@ impl EditorView {
         }
         if let Some(react) = self.react_preview.as_mut() {
             if reload_sample_applies(sequence, self.watched_since) {
-                react.watched_mtime = reload.watched;
+                react.watched = reload.watched;
                 // What this load's `prepare()` read; a failed load keeps
                 // watching the old paths from their state before it, so it
                 // retries once they change rather than in a loop.
@@ -646,7 +646,7 @@ impl EditorView {
                     .background_executor()
                     .spawn(async move {
                         (
-                            watched_mtime(&entry, &property_args),
+                            watched_stamp(&entry, &property_args),
                             sample_dependencies(&recorded),
                         )
                     })
@@ -654,7 +654,7 @@ impl EditorView {
                 let changed = view
                     .update(cx, |this, _| match this.react_preview.as_ref() {
                         Some(_) if this.react_reloads.is_running() => false,
-                        Some(react) if latest.is_some() && latest != react.watched_mtime => {
+                        Some(react) if latest.is_some() && latest != react.watched => {
                             debounce.reset();
                             true
                         }
@@ -666,7 +666,7 @@ impl EditorView {
                     && view
                         .update(cx, |this, cx| {
                             if let Some(react) = this.react_preview.as_mut() {
-                                react.watched_mtime = latest;
+                                react.watched = latest;
                             }
                             this.watched_since = this.react_reloads.next();
                             this.request_react_reload(cx);
@@ -770,7 +770,7 @@ mod property_outcome {
             primitive_properties: BTreeMap::new(),
             component_schemas: BTreeMap::new(),
             entry: PathBuf::from("film.tsx"),
-            watched_mtime: None,
+            watched: None,
             dependencies: Vec::new(),
             property_args: PropertyArgs::default(),
             properties: PropertyInputs::default(),
@@ -1017,9 +1017,9 @@ mod property_outcome {
     }
 
     #[test]
-    fn the_watched_mtime_never_goes_back_to_an_older_sample() {
+    fn the_watched_sample_never_goes_back_to_an_older_one() {
         let mut order = ReloadOrder::default();
-        // R1 starts and samples, then a write samples a newer mtime.
+        // R1 starts and samples, then a write samples a newer state.
         let first = order.request();
         let watched_since = order.next();
         let second = order.request();

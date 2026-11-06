@@ -8,7 +8,7 @@ use crate::element_edit::{
 use crate::element_rows::{
     component_row_label, element_control_handler, row_field, row_label, scrubs, set_at_text,
 };
-use crate::icons::CelestaIcon;
+use crate::icons::DiamondFilled;
 use crate::layer_panel::LABEL_WIDTH;
 use crate::property_controls::{ControlKind, number_hint, render_control};
 use crate::scope::{SceneCalls, Scope, ScopedRow, gesture_lock, remove_tooltip, scoped_row};
@@ -16,8 +16,9 @@ use crate::view::EditorView;
 use crate::widgets::inspector_section;
 use celesta_react_bridge::{PrimitivePropertyField, SourcePos};
 use celesta_source_edit::{EditTarget, LockReason};
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, CursorStyle, Div, ElementId, MouseButton, MouseDownEvent, SharedString,
@@ -79,7 +80,7 @@ fn set_at_line(call_site: &SourcePos, entry_dir: &Path, cx: &Context<EditorView>
         .gap_1()
         .text_xs()
         .text_color(cx.theme().muted_foreground)
-        .child(Icon::new(CelestaIcon::CornerDownRight).xsmall())
+        .child(Icon::new(IconName::CornerDownRight).xsmall())
         .child(
             div()
                 .flex_1()
@@ -253,11 +254,13 @@ impl EditorView {
         // A pass-through row shows the state of the value at the call site.
         let shown = inner_target(target);
         let icon = match shown {
-            _ if scope_locked => Some(CelestaIcon::Lock),
+            _ if scope_locked => Some(Icon::new(IconName::Lock)),
             _ if default => None,
-            EditTarget::Keyframe { .. } => Some(CelestaIcon::DiamondFilled),
-            EditTarget::Locked(LockReason::BetweenKeyframes { .. }) => Some(CelestaIcon::Diamond),
-            EditTarget::Locked(_) => Some(CelestaIcon::Lock),
+            EditTarget::Keyframe { .. } => Some(Icon::new(DiamondFilled)),
+            EditTarget::Locked(LockReason::BetweenKeyframes { .. }) => {
+                Some(Icon::new(IconName::Diamond))
+            }
+            EditTarget::Locked(_) => Some(Icon::new(IconName::Lock)),
             EditTarget::Literal { .. }
             | EditTarget::Missing { .. }
             | EditTarget::PassThrough { .. } => None,
@@ -410,7 +413,7 @@ impl EditorView {
                             .items_center()
                             .justify_center()
                             .text_color(muted)
-                            .children(icon.map(|icon| Icon::new(icon).xsmall()))
+                            .children(icon.map(|icon| icon.xsmall()))
                             .children(remove),
                     ),
             )

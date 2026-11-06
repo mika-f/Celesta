@@ -6,11 +6,12 @@
 use celesta_composition::Point;
 use celesta_editor_theme as theme;
 use celesta_gpu_renderer::hit_test;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _};
 use gpui_kit::{
     AnyElement, App, BorderStyle, Bounds, ClickEvent, Context, CursorStyle, ElementInputHandler,
     Hitbox, HitboxBehavior, Hsla, IntoElement, MouseButton, MouseDownEvent, ObjectFit,
@@ -24,7 +25,6 @@ use crate::actions::{
 };
 use crate::add_element::AddMode;
 use crate::element_rows::{InteractiveToggle, interactive_toggle};
-use crate::icons::CelestaIcon;
 use crate::inline_text_view::{EditEvent, InlineEntry, paint_inline_text};
 use crate::layer_select::{SourceLookup, letterbox, outline_quads, scene_point};
 use crate::meter::audio_meter;
@@ -793,7 +793,7 @@ impl EditorView {
                 Button::new("go-to-start")
                     .small()
                     .ghost()
-                    .icon(CelestaIcon::SkipBack)
+                    .icon(IconName::SkipBack)
                     .tooltip_with_action("Go to start", &GoToStart, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.go_to_frame(0, cx))),
             )
@@ -841,7 +841,7 @@ impl EditorView {
                 Button::new("go-to-end")
                     .small()
                     .ghost()
-                    .icon(CelestaIcon::SkipForward)
+                    .icon(IconName::SkipForward)
                     .tooltip_with_action("Go to end", &GoToEnd, KEY_CONTEXT)
                     .on_click(
                         cx.listener(|this, _, _, cx| this.go_to_frame(this.clock.end_frame(), cx)),
@@ -852,7 +852,7 @@ impl EditorView {
                 Button::new("toggle-loop")
                     .small()
                     .ghost()
-                    .icon(CelestaIcon::Repeat)
+                    .icon(IconName::Repeat)
                     .selected(self.loop_playback)
                     .tooltip_with_action("Loop playback", &ToggleLoop, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_loop(cx))),
@@ -896,7 +896,7 @@ impl EditorView {
                 Button::new("toggle-safe-areas")
                     .small()
                     .ghost()
-                    .icon(CelestaIcon::Scan)
+                    .icon(IconName::Scan)
                     .selected(self.show_safe_areas)
                     .tooltip_with_action("Safe areas", &ToggleSafeAreas, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_safe_areas(cx))),
@@ -916,7 +916,7 @@ impl EditorView {
                     )
                 } else {
                     button
-                        .icon(CelestaIcon::MousePointerClick)
+                        .icon(IconName::MousePointerClick)
                         .tooltip_with_action("Select layers", &ToggleInteractive, KEY_CONTEXT)
                 };
                 bar.child(
@@ -977,7 +977,7 @@ impl EditorView {
             pivot(
                 "pivot-center",
                 "Center",
-                "Rotate and scale about the layer's center",
+                "Rotate and scale about the layer’s center",
                 PivotMode::Center,
             ),
             pivot(
@@ -1000,7 +1000,7 @@ impl EditorView {
             tool(
                 "handles-size",
                 "Size",
-                "Resize the layer's box, keeping the opposite edge",
+                "Resize the layer’s box, keeping the opposite edge",
                 ResizeTool::Size,
             ),
             tool(
@@ -1546,13 +1546,13 @@ fn paint_layer_outline(
 }
 
 /// The Add menu's icon for `kind` (Lucide's).
-fn kind_icon(kind: NewKind) -> CelestaIcon {
+fn kind_icon(kind: NewKind) -> IconName {
     match kind {
-        NewKind::Rect => CelestaIcon::Square,
-        NewKind::Ellipse | NewKind::Circle => CelestaIcon::Circle,
-        NewKind::Text => CelestaIcon::Type,
-        NewKind::Image => CelestaIcon::Image,
-        NewKind::Video => CelestaIcon::Film,
+        NewKind::Rect => IconName::Square,
+        NewKind::Ellipse | NewKind::Circle => IconName::Circle,
+        NewKind::Text => IconName::Type,
+        NewKind::Image => IconName::Image,
+        NewKind::Video => IconName::Film,
     }
 }
 

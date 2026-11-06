@@ -1,5 +1,6 @@
 //! Opens a layer's source position in the user's text editor, chosen by
-//! `VISUAL` or `EDITOR`, or in the OS default application when neither is set.
+//! `VISUAL` or `EDITOR`; with neither set, the caller opens it in the OS
+//! default application.
 
 use celesta_react_bridge::LayerSource;
 use std::io::Read;
@@ -192,50 +193,63 @@ pub(crate) fn editor_invocation(
     })
 }
 
-/// Opens `file`, without a position, in the OS default application.
-pub(crate) fn default_opener(file: &Path) -> Invocation {
-    let file = file.to_string_lossy().into_owned();
-    let (program, args) = if cfg!(target_os = "macos") {
-        ("open", vec![file])
-    } else if cfg!(windows) {
-        (
-            "cmd",
-            vec!["/C".to_string(), "start".to_string(), String::new(), file],
-        )
-    } else {
-        ("xdg-open", vec![file])
-    };
-    Invocation {
-        program: program.to_string(),
-        args,
-    }
+/// What [`open_source`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Opened {
+    /// The editor from `VISUAL`/`EDITOR` was started.
+    InEditor,
+    /// Neither is set: the caller opens the file in the OS default
+    /// application (`App::open_with_system`).
+    NoEditor,
 }
 
 /// Opens `source` in the editor from `VISUAL`/`EDITOR` (the login shell's
-/// when the process has neither), or in the OS default application when
-/// there is none. Blocks while looking up the login shell, so call it on a
-/// background executor. The process is not waited on beyond reaping it.
-pub(crate) fn open_source(source: &LayerSource, cwd: &Path) -> Result<(), LaunchError> {
-    let invocation = match editor_value(|name| std::env::var(name).ok()).or_else(login_shell_editor)
-    {
-        Some(value) => editor_invocation(&value, source)?,
-        None => default_opener(&source.file),
+/// when the process has neither). Blocks while looking up the login shell,
+/// so call it on a background executor. The process is not waited on beyond
+/// reaping it.
+pub(crate) fn open_source(source: &LayerSource, cwd: &Path) -> Result<Opened, LaunchError> {
+    let Some(value) = editor_value(|name| std::env::var(name).ok()).or_else(login_shell_editor)
+    else {
+        return Ok(Opened::NoEditor);
     };
-    spawn_detached(&invocation, cwd)
+    spawn_detached(&editor_invocation(&value, source)?, cwd)?;
+    Ok(Opened::InEditor)
+}
+
+/// The scripts to try, in order, when `program` is not found on Windows:
+/// `Command` looks only for `<program>.exe` there, while editors such as
+/// VS Code install `code.cmd`. None for a program named with an extension.
+pub(crate) fn script_fallbacks(program: &str) -> Vec<String> {
+    if Path::new(program).extension().is_some() {
+        return Vec::new();
+    }
+    vec![format!("{program}.cmd"), format!("{program}.bat")]
 }
 
 fn spawn_detached(invocation: &Invocation, cwd: &Path) -> Result<(), LaunchError> {
-    let mut command = Command::new(&invocation.program);
-    command
-        .args(&invocation.args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    celesta_plugin_host::without_console_window(&mut command);
-    let mut child = command
-        .spawn()
-        .map_err(|error| LaunchError::Spawn(error.to_string()))?;
+    let spawn = |program: &str| {
+        let mut command = Command::new(program);
+        command
+            .args(&invocation.args)
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        celesta_plugin_host::without_console_window(&mut command);
+        command.spawn()
+    };
+    let mut spawned = spawn(&invocation.program);
+    if cfg!(windows) {
+        for script in script_fallbacks(&invocation.program) {
+            match &spawned {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    spawned = spawn(&script);
+                }
+                _ => break,
+            }
+        }
+    }
+    let mut child = spawned.map_err(|error| LaunchError::Spawn(error.to_string()))?;
     // Reaps the process when the editor exits, so it does not linger as a zombie.
     std::thread::spawn(move || {
         let _ = child.wait();

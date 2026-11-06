@@ -34,7 +34,7 @@ pub(crate) const ROTATE_STEM: f32 = 20.0;
 /// How far from a handle's center a press still takes it, in viewer pixels.
 const HANDLE_REACH: f32 = 6.0;
 
-pub(crate) const NO_AFFINE_FRAME: &str = "Can't drag inside a 3D-transformed or collapsed group";
+pub(crate) const NO_AFFINE_FRAME: &str = "Can’t drag inside a 3D-transformed or collapsed group";
 
 /// A running (or released and being written) drag of the selected layer.
 #[derive(Clone, Debug)]
@@ -518,8 +518,8 @@ impl ResizeFallback {
         match self {
             Self::NoSize => "No size to resize".to_owned(),
             Self::Locked(reason) => reason.clone(),
-            Self::Uneditable => "Size can't be edited here".to_owned(),
-            Self::Pinned => "x or y can't move".to_owned(),
+            Self::Uneditable => "Size can’t be edited here".to_owned(),
+            Self::Pinned => "x or y can’t move".to_owned(),
             Self::Animated(reason) => (*reason).to_owned(),
             Self::NoBox => "No flat box to resize".to_owned(),
         }
@@ -684,7 +684,7 @@ impl PivotFallback {
     /// The toggle's tooltip for it, and the note beside the handles.
     pub(crate) fn reason(self) -> &'static str {
         match self {
-            Self::NotCompensable => "x or y can't be edited",
+            Self::NotCompensable => "x or y can’t be edited",
             Self::Animated => TURN_ANIMATED,
             Self::AnimatedBox => BOX_ANIMATED,
             Self::NoFlatBox => "No flat box to center on",
@@ -803,7 +803,7 @@ pub(crate) fn center_marker_text(has_anchor: bool, blocked: Option<String>) -> S
         (false, _) => "Rotates about the center".to_owned(),
         (true, None) => CENTER_MARKER.to_owned(),
         (true, Some(reason)) => {
-            format!("Rotates about the center; the anchor can't move: {reason}")
+            format!("Rotates about the center; the anchor can’t move: {reason}")
         }
     }
 }
@@ -861,7 +861,7 @@ fn unsettable(targets: &ElementTargets, key: &PropKey, animated: &str) -> Option
     Some(match target.map(inner_target) {
         Some(EditTarget::Locked(reason)) => format!("{}: {}", key.label(), reason_text(reason)),
         Some(EditTarget::Keyframe { .. }) => animated.to_owned(),
-        _ => format!("{} can't be edited", key.label()),
+        _ => format!("{} can’t be edited", key.label()),
     })
 }
 
@@ -894,7 +894,7 @@ fn anchor_blocker(targets: &ElementTargets, frame: &LayerFrame) -> Option<String
         })
 }
 
-pub(crate) const GROUP_ANCHOR: &str = "A group's anchor has no effect";
+pub(crate) const GROUP_ANCHOR: &str = "A group’s anchor has no effect";
 
 /// Why the pivot cross of the element `primitive` names can't be
 /// Alt-dragged (see `anchor_blocker`), its tooltip; a `<Group>`'s anchor has
@@ -1800,9 +1800,9 @@ mod tests {
         assert_eq!(
             center_marker_text(
                 true,
-                Some("X: Comes from DX, which can't be traced".to_owned())
+                Some("X: Comes from DX, which can’t be traced".to_owned())
             ),
-            "Rotates about the center; the anchor can't move: X: Comes from DX, which can't be traced"
+            "Rotates about the center; the anchor can’t move: X: Comes from DX, which can’t be traced"
         );
         // Without anchor rows there is no anchor to promise.
         assert_eq!(center_marker_text(false, None), "Rotates about the center");
@@ -2012,12 +2012,12 @@ mod tests {
         let mut rotation = drag(Handle::Rotate, None);
         assert_eq!(
             rotation.label().as_deref(),
-            Some("Pivot — x or y can't be edited")
+            Some("Pivot — x or y can’t be edited")
         );
         rotation.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
         assert_eq!(
             rotation.label().as_deref(),
-            Some("Pivot — x or y can't be edited  rotation 0 → 30")
+            Some("Pivot — x or y can’t be edited  rotation 0 → 30")
         );
         // The Scale tool's handles turn about it too; the Size tool's and a
         // move don't.
@@ -2079,7 +2079,7 @@ mod tests {
         );
         assert_eq!(
             PivotFallback::NotCompensable.reason(),
-            "x or y can't be edited"
+            "x or y can’t be edited"
         );
         assert_eq!(PivotFallback::Animated.reason(), TURN_ANIMATED);
     }
@@ -2101,7 +2101,7 @@ mod tests {
         });
         assert_eq!(
             reason(&traced, &frame).as_deref(),
-            Some("X: Comes from DX, which can't be traced")
+            Some("X: Comes from DX, which can’t be traced")
         );
         assert_eq!(
             reason(&rect_rows("y"), &frame).as_deref(),
@@ -2181,7 +2181,7 @@ mod tests {
         assert_eq!(resize_used(ResizeTool::Size, &rect, &centered()), None);
         let fallback = resize_fallback(ResizeTool::Size, &rect, &centered());
         assert_eq!(fallback, Some(ResizeFallback::Pinned));
-        assert_eq!(fallback.unwrap().reason(), "x or y can't move");
+        assert_eq!(fallback.unwrap().reason(), "x or y can’t move");
         // Anchored at its top-left, the right and bottom edges still work.
         assert!(resize_used(ResizeTool::Size, &rect, &rect_frame()).is_some());
         // A keyframed radius about its middle: x and y could move, but
@@ -2248,7 +2248,7 @@ mod tests {
         );
         let fallback = resize_fallback(ResizeTool::Size, &rect, &rect_frame());
         assert_eq!(fallback, Some(ResizeFallback::Uneditable));
-        assert_eq!(fallback.unwrap().reason(), "Size can't be edited here");
+        assert_eq!(fallback.unwrap().reason(), "Size can’t be edited here");
     }
 
     fn number_props(props: &[(&str, f64)]) -> ReceivedProps {

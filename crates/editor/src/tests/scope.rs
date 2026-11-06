@@ -297,7 +297,7 @@ fn an_unanswered_index_is_unknown() {
     );
     assert_eq!(
         state(Some(&OccurrenceState::Failed("x".to_owned()))),
-        unknown("Couldn't scan scenes: x")
+        unknown("Couldn’t scan scenes: x")
     );
     // A lift moved the element: the last index no longer finds it.
     let moved = OccurrenceState::Refreshing(OccurrenceIndex {
@@ -357,7 +357,7 @@ fn no_call_locks_this_scene() {
 
     let lock = price_tag(|component| ScopeLock::NoCall { component });
     assert_eq!(options.this_scene, Err(lock.clone()));
-    assert_eq!(lock.text(), "Can't find where `<PriceTag>` is called");
+    assert_eq!(lock.text(), "Can’t find where `<PriceTag>` is called");
 }
 
 #[test]
@@ -1569,7 +1569,7 @@ fn scoped_row_follows_the_table() {
     );
     assert_eq!(
         expression.text(),
-        "`rectOpacity`'s shared value is written as an expression"
+        "`rectOpacity`’s shared value is written as an expression"
     );
     // A Component-section row is outside the scope.
     assert_eq!(
@@ -1649,7 +1649,7 @@ fn scoped_row_follows_the_table() {
     );
     assert_eq!(
         ScopeLock::PerSceneUnsupported.text(),
-        "Can't be set per scene yet"
+        "Can’t be set per scene yet"
     );
     let no_pattern = price_tag(|component| ScopeLock::NotObjectPattern { component });
     assert_eq!(
@@ -1658,7 +1658,7 @@ fn scoped_row_follows_the_table() {
     );
     assert_eq!(
         no_pattern.text(),
-        "`PriceTag` doesn't take its props as `{ … }`"
+        "`PriceTag` doesn’t take its props as `{ … }`"
     );
     assert_eq!(
         both(&targets, prop("anchorY")),
@@ -1677,7 +1677,7 @@ fn scoped_row_follows_the_table() {
     );
     assert_eq!(
         not_found.text(),
-        "Can't find where `rectAnchorX`'s shared value is written"
+        "Can’t find where `rectAnchorX`’s shared value is written"
     );
 
     // The lift can't extend the props type.
@@ -1691,7 +1691,7 @@ fn scoped_row_follows_the_table() {
     );
     assert_eq!(
         imported.text(),
-        "`PriceTag`'s props type is in another file"
+        "`PriceTag`’s props type is in another file"
     );
     targets.lift_lock = Some(LiftLock::PropsTypeNotEditable {
         component: "PriceTag".to_owned(),
@@ -1710,7 +1710,7 @@ fn scoped_row_follows_the_table() {
     };
     assert_eq!(
         not_editable.text(),
-        "Can't add `rectWidth` to `PriceTag`'s props type"
+        "Can’t add `rectWidth` to `PriceTag`’s props type"
     );
     targets.lift_lock = Some(LiftLock::NotALiteral);
     assert_eq!(

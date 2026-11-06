@@ -4,10 +4,11 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::edit_history::Texts;
 use crate::element_edit::{CommitError, apply_checked, reason_text};
+use crate::helpers::lexically_normalized;
 use crate::source::source_files;
 use crate::timeline_drag::snap_targets;
 use crate::view::EditorView;
@@ -30,14 +31,19 @@ pub(crate) struct SceneSources {
     pub(crate) entry: PathBuf,
 }
 
-/// Reads every `.ts`/`.tsx` file under `dir` that contains `defineScenes`
+/// Reads every `.ts`/`.tsx`/`.mts`/`.cts` file under `dir` that contains `defineScenes`
 /// (`source_files`' skips), and the entry's composition length.
 pub(crate) fn find_scene_sources(dir: &Path, entry: &Path, generation: u64) -> SceneSources {
     let mut files = source_files(dir);
     files.sort();
     let lists = files
         .into_iter()
-        .filter(|path| matches!(path.extension().and_then(OsStr::to_str), Some("ts" | "tsx")))
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(OsStr::to_str),
+                Some("ts" | "tsx" | "mts" | "cts")
+            )
+        })
         .filter_map(|path| {
             let text = fs::read_to_string(&path).ok()?;
             text.contains("defineScenes").then_some((path, text))
@@ -59,38 +65,40 @@ pub(crate) fn find_scene_sources(dir: &Path, entry: &Path, generation: u64) -> S
     }
 }
 
-/// `path` with its `.` and `..` components taken out, without reading the
-/// file system.
-fn normalized(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !out.pop() {
-                    out.push(component);
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    out
-}
-
 /// The files an import of `base` (a relative specifier joined to the
-/// importing file's folder) may name, in the order they are tried.
+/// importing file's folder) may name, in the order they are tried. With a
+/// module extension that is `base` itself, then for `.js`, `.jsx`, `.mjs`
+/// and `.cjs` the TypeScript file it compiles from, as TypeScript and
+/// esbuild resolve it; without one, `base.ts`, `base.tsx` and the folder's
+/// `index.ts` and `index.tsx`.
 fn module_files(base: &Path) -> Vec<PathBuf> {
-    let with = |suffix: &str| {
-        let mut path = base.as_os_str().to_owned();
-        path.push(suffix);
-        PathBuf::from(path)
+    let sources: &[&str] = match base.extension().and_then(OsStr::to_str) {
+        Some("ts" | "tsx" | "mts" | "cts") => &[],
+        Some("js") => &["ts", "tsx"],
+        Some("jsx") => &["tsx"],
+        Some("mjs") => &["mts"],
+        Some("cjs") => &["cts"],
+        _ => {
+            let with = |suffix: &str| {
+                let mut path = base.as_os_str().to_owned();
+                path.push(suffix);
+                PathBuf::from(path)
+            };
+            return vec![
+                with(".ts"),
+                with(".tsx"),
+                base.join("index.ts"),
+                base.join("index.tsx"),
+            ];
+        }
     };
-    vec![
-        with(".ts"),
-        with(".tsx"),
-        base.join("index.ts"),
-        base.join("index.tsx"),
-    ]
+    std::iter::once(base.to_owned())
+        .chain(
+            sources
+                .iter()
+                .map(|extension| base.with_extension(extension)),
+        )
+        .collect()
 }
 
 /// Whether the composition's length is the list's `durationInFrames` (same
@@ -108,15 +116,15 @@ pub(crate) fn composition_follows(
     if binding != Some(name.as_str()) {
         return false;
     }
-    let list_file = normalized(list_file);
+    let list_file = lexically_normalized(list_file);
     let Some(module) = module else {
-        return normalized(entry) == list_file;
+        return lexically_normalized(entry) == list_file;
     };
     let relative = module.starts_with("./") || module.starts_with("../");
     let Some(dir) = entry.parent().filter(|_| relative) else {
         return false;
     };
-    module_files(&normalized(&dir.join(module)))
+    module_files(&lexically_normalized(&dir.join(module)))
         .into_iter()
         .find(|file| exists(file))
         .is_some_and(|file| file == list_file)
@@ -140,7 +148,7 @@ pub(crate) enum SceneEdge {
 /// Why the end of a chapter no `defineScenes` entry (or several) has
 /// doesn't drag.
 fn not_found(id: &str) -> String {
-    format!("Can't find scene `{id}` in the source")
+    format!("Can’t find scene `{id}` in the source")
 }
 
 /// Why the end of a part (a chapter inside another, such as one listed
@@ -224,7 +232,7 @@ pub(crate) fn scene_edges(
                         EditTarget::Locked(reason) => {
                             SceneEdge::Locked(lock_text(reason, &entry.inputs))
                         }
-                        _ => SceneEdge::Locked(format!("Can't write `{DURATION}`")),
+                        _ => SceneEdge::Locked(format!("Can’t write `{DURATION}`")),
                     }
                 }
                 [] if is_part(chapters, at) => SceneEdge::Locked(NOT_AN_ENTRY.to_owned()),
@@ -582,13 +590,13 @@ mod tests {
         assert_eq!(
             edges.get("main"),
             Some(&SceneEdge::Locked(
-                "Can't find scene `main` in the source".to_owned()
+                "Can’t find scene `main` in the source".to_owned()
             ))
         );
         assert_eq!(
             edges.get("credits"),
             Some(&SceneEdge::Locked(
-                "Can't find scene `credits` in the source".to_owned()
+                "Can’t find scene `credits` in the source".to_owned()
             ))
         );
         assert!(matches!(
@@ -619,7 +627,7 @@ mod tests {
         );
         assert_eq!(
             edges.get("credits").cloned(),
-            locked("Can't find scene `credits` in the source")
+            locked("Can’t find scene `credits` in the source")
         );
         assert!(matches!(
             edges.get("outro"),
@@ -650,7 +658,7 @@ mod tests {
         );
         assert_eq!(
             locked("main"),
-            "Written as an expression: S.words - 1\nComes from S, which can't be traced"
+            "Written as an expression: S.words - 1\nComes from S, which can’t be traced"
         );
         assert_eq!(locked("outro"), "Scene `outro` has no durationInFrames");
         assert_eq!(locked("end"), "Exported, so other files may read it");
@@ -713,6 +721,20 @@ mod tests {
         // A package.
         let package = film("import { SCENES } from 'scenes';", duration);
         assert!(!follows(&package, timeline, "SCENES", &|_: &Path| true));
+        // With its extension, as the examples import.
+        let explicit = film("import { SCENES } from './timeline.tsx';", duration);
+        assert!(follows(&explicit, timeline, "SCENES", &only_timeline));
+        // `.js` names the `.ts` or `.tsx` file it compiles to, `.mjs` the `.mts`.
+        let compiled = film("import { SCENES } from './timeline.js';", duration);
+        assert!(follows(&compiled, timeline, "SCENES", &only_timeline));
+        let module = Path::new("/p/timeline.mts");
+        let mjs = film("import { SCENES } from './timeline.mjs';", duration);
+        assert!(follows(&mjs, module, "SCENES", &|path: &Path| path == module));
+        // A `.js` file of that name comes first.
+        let js = Path::new("/p/timeline.js");
+        let both = |path: &Path| path == js || only_timeline(path);
+        assert!(!follows(&compiled, timeline, "SCENES", &both));
+        assert!(follows(&compiled, js, "SCENES", &both));
     }
 
     #[test]
@@ -968,6 +990,7 @@ mod tests {
             ("dist/y.ts", list("built")),
             (".tmp/z.ts", list("temporary")),
             ("other.js", list("script")),
+            ("module.mts", list("module")),
             // Without the text: not read for lists.
             ("plain.ts", "export const A = 1;\n".to_owned()),
             (
@@ -990,6 +1013,7 @@ mod tests {
         assert_eq!(
             found_ids,
             [
+                (dir.join("module.mts"), "module".to_owned()),
                 (dir.join("scenes/more.tsx"), "nested".to_owned()),
                 (dir.join("timeline.ts"), "root".to_owned()),
             ]

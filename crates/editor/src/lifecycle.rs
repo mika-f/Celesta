@@ -2,6 +2,7 @@ use crate::actions::{
     CloseWindow, CreateNewProject, OpenProject, ReloadPlugins, ReloadProject, SetUpTypeScript,
     SetUpTypeScriptInFolder,
 };
+use crate::helpers::{PathPick, pick_one_path};
 use crate::inline_text_view::EditEvent;
 use crate::plugins::{FoundPlugins, trust_request, trusted_root};
 use crate::problems::{Source, error_chain};
@@ -20,9 +21,7 @@ use gpui_kit::component::radio::Radio;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Root, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    App, ClickEvent, Context, Entity, PathPromptOptions, Pixels, ScrollHandle, Window, div, px,
-};
+use gpui_kit::{App, ClickEvent, Context, Entity, Pixels, ScrollHandle, Window, div, px};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -257,17 +256,11 @@ impl EditorView {
         if self.opening || !self.can_replace_contents(window, cx) {
             return;
         }
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Create New Project".into()),
-        });
+        let selection = pick_one_path(cx, PathPick::Folder, "Create New Project");
         cx.spawn_in(window, async move |view, cx| {
             let folder = match selection.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(error)) => {
+                Ok(path) => path,
+                Err(error) => {
                     view.update_in(cx, |this, _, cx| {
                         this.problems.report(
                             Source::Project,
@@ -366,17 +359,11 @@ impl EditorView {
         if self.opening || !self.can_replace_contents(window, cx) {
             return;
         }
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Open".into()),
-        });
+        let selection = pick_one_path(cx, PathPick::File, "Open");
         cx.spawn_in(window, async move |view, cx| {
             let path = match selection.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Ok(None)) => None,
-                Ok(Err(error)) => {
+                Ok(path) => path,
+                Err(error) => {
                     view.update_in(cx, |this, _, cx| {
                         this.problems.report(
                             Source::Project,
@@ -388,7 +375,6 @@ impl EditorView {
                     .ok();
                     None
                 }
-                Err(_) => None,
             };
             if let Some(path) = path {
                 view.update_in(cx, |this, window, cx| {
@@ -481,17 +467,11 @@ impl EditorView {
     ) {
         self.problems.clear(Source::TypeScript);
         cx.notify();
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Set Up TypeScript".into()),
-        });
+        let selection = pick_one_path(cx, PathPick::Folder, "Set Up TypeScript");
         cx.spawn_in(window, async move |view, cx| {
             let folder = match selection.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(error)) => {
+                Ok(path) => path,
+                Err(error) => {
                     view.update_in(cx, |this, _, cx| {
                         this.problems.report(
                             Source::TypeScript,

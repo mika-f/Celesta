@@ -6,15 +6,14 @@
 
 use crate::actions::{Redo, Undo};
 use crate::problems::Source;
-use crate::source::{PropertyArgs, watched_mtime};
+use crate::source::{PropertyArgs, WatchStamp, watched_stamp};
 use crate::view::EditorView;
-use celesta_react_bridge::write_temp;
+use celesta_remote::StagedFile;
 use gpui_kit::{Context, Window};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 /// The most entries kept; the oldest are dropped first.
 const CAPACITY: usize = 100;
@@ -60,10 +59,12 @@ pub(crate) type Texts = BTreeMap<PathBuf, String>;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HistoryError {
     /// A file no longer holds what the entry expects, so no file was touched.
-    // `path` names the first such file for callers that report per file.
-    #[allow(dead_code)]
-    #[error("The file changed outside Celesta")]
+    /// `path` names the first such file.
+    #[error("{} changed outside Celesta", path.display())]
     ChangedOutside { path: PathBuf },
+    /// The file is read-only, so no file was touched.
+    #[error("Couldn’t write {path}: the file is read-only")]
+    ReadOnly { path: PathBuf },
     /// The file could not be read or written.
     #[error("Couldn’t write {path}: {source}")]
     Io { path: PathBuf, source: io::Error },
@@ -257,39 +258,36 @@ fn read(path: &Path) -> Result<Option<String>, HistoryError> {
 }
 
 /// Writes every file of `writes` as one step, as far as the file system
-/// allows: each text first goes to a temp file beside its file
-/// (`celesta_react_bridge::write_temp`), and only once all of
-/// them are written are they renamed over their files and the `None` files
-/// removed. A failed temp write removes the temps already written and leaves
-/// every file alone. A failed rename removes the temps not yet renamed, but
-/// the files renamed before it stay changed, and no history entry records
-/// that change.
+/// allows. A read-only file among them refuses the step before anything is
+/// written: a rename would replace it, dropping its read-only bit, where its
+/// folder is writable, and fail with a bare "Access is denied" on Windows.
+/// Each text first goes to a [`StagedFile`] beside its file, and only once
+/// all of them are written are they published over their files and the
+/// `None` files removed. A failed staging leaves every file alone. A failed
+/// publish leaves the files published before it changed, and no history
+/// entry records that change. Staged files not published are removed when
+/// they drop.
 fn write_files(writes: &[(&Path, Option<&str>)]) -> Result<(), HistoryError> {
     let failed = |path: &Path, source| HistoryError::Io {
         path: path.to_owned(),
         source,
     };
-    let mut temps = Vec::with_capacity(writes.len());
-    for &(path, text) in writes {
-        let Some(text) = text else { continue };
-        match write_temp(path, text) {
-            Ok(temp) => temps.push((temp, path)),
-            Err(source) => {
-                for (temp, _) in &temps {
-                    let _ = fs::remove_file(temp);
-                }
-                return Err(failed(path, source));
-            }
+    for &(path, _) in writes {
+        if fs::metadata(path).is_ok_and(|metadata| metadata.permissions().readonly()) {
+            return Err(HistoryError::ReadOnly {
+                path: path.to_owned(),
+            });
         }
     }
-    let mut temps = temps.into_iter();
-    while let Some((temp, path)) = temps.next() {
-        if let Err(source) = fs::rename(&temp, path) {
-            for (temp, _) in std::iter::once((temp, path)).chain(temps) {
-                let _ = fs::remove_file(temp);
-            }
-            return Err(failed(path, source));
-        }
+    let mut staged = Vec::with_capacity(writes.len());
+    for &(path, text) in writes {
+        let Some(text) = text else { continue };
+        let file = stage(path, text).map_err(|source| failed(path, source))?;
+        staged.push((file, path));
+    }
+    for (file, path) in staged {
+        file.publish(path, true)
+            .map_err(|source| failed(path, source))?;
     }
     for &(path, text) in writes {
         if text.is_none() {
@@ -299,15 +297,13 @@ fn write_files(writes: &[(&Path, Option<&str>)]) -> Result<(), HistoryError> {
     Ok(())
 }
 
-/// Refuses a read-only file, which a rename would replace without a word.
-fn refuse_read_only(path: &Path) -> Result<(), String> {
-    if fs::metadata(path).is_ok_and(|metadata| metadata.permissions().readonly()) {
-        return Err(format!(
-            "Couldn’t write {}: the file is read-only",
-            path.display()
-        ));
-    }
-    Ok(())
+/// `text` written and synced to a [`StagedFile`] beside `path`.
+fn stage(path: &Path, text: &str) -> io::Result<StagedFile> {
+    let mut staged = StagedFile::beside(path, ".tmp")?;
+    let file = staged.as_file_mut();
+    file.write_all(text.as_bytes())?;
+    file.sync_all()?;
+    Ok(staged)
 }
 
 /// Reads `path` (a missing file reads as `""`), lets `edit` compute the new
@@ -320,7 +316,6 @@ pub(crate) fn write_recorded(
     let before = read(path).map_err(|error| error.to_string())?;
     let after = edit(before.as_deref().unwrap_or(""))?;
     if before.as_deref() != Some(after.as_str()) {
-        refuse_read_only(path)?;
         write_files(&[(path, Some(&after))]).map_err(|error| error.to_string())?;
     }
     Ok(FileEdit {
@@ -364,9 +359,6 @@ pub(crate) fn write_all_recorded(
         });
     }
     files.retain(FileEdit::changes);
-    for file in &files {
-        refuse_read_only(&file.path)?;
-    }
     let writes: Vec<_> = files
         .iter()
         .map(|file| (file.path.as_path(), Some(file.after.as_str())))
@@ -384,10 +376,10 @@ impl EditorView {
     }
 
     /// Takes a write the editor made itself as seen: `watched` (the watched
-    /// files' mtime sampled after the write) replaces the reload watcher's, so
+    /// files' [`WatchStamp`] sampled after the write) replaces the reload watcher's, so
     /// the write is not mistaken for an edit from elsewhere. Returns the reload
     /// order a reload requested from now on will read the write at.
-    pub(crate) fn apply_own_write_sample(&mut self, watched: Option<SystemTime>) -> u64 {
+    pub(crate) fn apply_own_write_sample(&mut self, watched: Option<WatchStamp>) -> u64 {
         let next_reload = self.react_reloads.next();
         // The reload that reads this write keeps the selected layer, whose
         // transform targets are resolved again from the reloaded code.
@@ -396,13 +388,13 @@ impl EditorView {
         if let Some(react) = self.react_preview.as_mut()
             && watched.is_some()
         {
-            react.watched_mtime = watched;
+            react.watched = watched;
             self.watched_since = next_reload;
         }
         next_reload
     }
 
-    /// The entry and arguments the reload watcher's mtime sample reads.
+    /// The entry and arguments the reload watcher's sample reads.
     fn watch_sample_inputs(&self) -> Option<(PathBuf, PropertyArgs)> {
         let react = self.react_preview.as_ref()?;
         Some((react.entry.clone(), react.property_args.clone()))
@@ -437,7 +429,7 @@ impl EditorView {
                 .background_executor()
                 .spawn(async move {
                     let files = write_all_recorded(paths, edit)?;
-                    Ok((files, watched_mtime(&entry, &property_args)))
+                    Ok((files, watched_stamp(&entry, &property_args)))
                 })
                 .await;
             view.update(cx, |this, cx| {
@@ -506,7 +498,7 @@ impl EditorView {
                     let result = pending.apply();
                     // Sampled after the write, so the reload watcher does not
                     // take it for an edit from elsewhere.
-                    let watched = watched_mtime(&entry, &property_args);
+                    let watched = watched_stamp(&entry, &property_args);
                     (pending, result, watched)
                 })
                 .await;
@@ -609,7 +601,10 @@ mod tests {
         let error = history.undo().unwrap_err();
 
         assert!(matches!(error, HistoryError::ChangedOutside { .. }));
-        assert_eq!(error.to_string(), "The file changed outside Celesta");
+        assert_eq!(
+            error.to_string(),
+            format!("{} changed outside Celesta", a.display())
+        );
         assert_eq!(fs::read_to_string(&a).unwrap(), "someone else");
         // Older entries for `a` are gone too; `b`'s entry is kept.
         assert_eq!(history.undo().unwrap(), Some(vec![b.clone()]));
@@ -773,6 +768,49 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).unwrap(), "x");
     }
 
+    #[test]
+    fn undo_and_redo_refuse_a_read_only_file() {
+        let dir = scratch("readonly");
+        let (written, created) = (dir.join("a.txt"), dir.join("b.txt"));
+        fs::write(&written, "y").unwrap();
+        fs::write(&created, "new").unwrap();
+        let mut history = EditHistory::default();
+        history.push(edit(&created, None, "new").into());
+        history.push(edit(&written, Some("x"), "y").into());
+        set_readonly(&written, true);
+        set_readonly(&created, true);
+
+        let error = history.undo().unwrap_err();
+
+        assert!(matches!(&error, HistoryError::ReadOnly { path } if *path == written));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Couldn’t write {}: the file is read-only",
+                written.display()
+            )
+        );
+        assert_eq!(fs::read_to_string(&written).unwrap(), "y");
+        assert!(fs::metadata(&written).unwrap().permissions().readonly());
+        // The entry is kept: undo applies once the file is writable again.
+        set_readonly(&written, false);
+        assert_eq!(history.undo().unwrap(), Some(vec![written.clone()]));
+        assert_eq!(fs::read_to_string(&written).unwrap(), "x");
+        set_readonly(&written, true);
+        assert!(matches!(history.redo(), Err(HistoryError::ReadOnly { .. })));
+        assert_eq!(fs::read_to_string(&written).unwrap(), "x");
+        // Undoing a created file would remove it.
+        set_readonly(&written, false);
+        history.redo().unwrap();
+        assert!(matches!(history.undo(), Ok(Some(_))));
+        assert!(matches!(
+            history.undo(),
+            Err(HistoryError::ReadOnly { path }) if path == created
+        ));
+        assert!(created.exists());
+        set_readonly(&created, false);
+    }
+
     fn set_readonly(path: &Path, readonly: bool) {
         let mut permissions = fs::metadata(path).unwrap().permissions();
         permissions.set_readonly(readonly);
@@ -811,6 +849,11 @@ mod tests {
 
         let error = history.undo().unwrap_err();
 
+        // The message names the file that changed, not the entry's first.
+        assert_eq!(
+            error.to_string(),
+            format!("{} changed outside Celesta", b.display())
+        );
         assert!(matches!(error, HistoryError::ChangedOutside { path } if path == b));
         assert_eq!(fs::read_to_string(&a).unwrap(), "y");
         assert_eq!(fs::read_to_string(&b).unwrap(), "r");
@@ -841,34 +884,24 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_temp_write_renames_nothing() {
-        let dir = scratch("temp");
-        let (writable, blocked) = (dir.join("a-writable"), dir.join("b-blocked"));
-        fs::create_dir(&writable).unwrap();
-        fs::create_dir(&blocked).unwrap();
-        let (a, b) = (writable.join("a.txt"), blocked.join("b.txt"));
-        fs::write(&a, "x").unwrap();
-        fs::write(&b, "p").unwrap();
-        // The file itself is writable, but its temp file can't be made: a
-        // directory holds its name. (A read-only directory would not stop the
-        // write on Windows.)
-        fs::create_dir(blocked.join(format!(".b.txt.tmp-{}", std::process::id()))).unwrap();
+    fn a_failed_staging_publishes_nothing() {
+        let dir = scratch("staged");
+        let written = dir.join("a.txt");
+        fs::write(&written, "x").unwrap();
+        // The second file can't be staged: its folder's name is a file.
+        fs::write(dir.join("blocked"), "").unwrap();
+        let blocked = dir.join("blocked/b.txt");
 
-        let result = write_all_recorded(vec![a.clone(), b.clone()], |_| {
-            Ok(vec![
-                (a.clone(), "y".to_owned()),
-                (b.clone(), "q".to_owned()),
-            ])
-        });
+        let result = write_files(&[(&written, Some("y")), (&blocked, Some("q"))]);
 
-        assert!(result.is_err());
-        assert_eq!(fs::read_to_string(&a).unwrap(), "x");
-        assert_eq!(fs::read_to_string(&b).unwrap(), "p");
-        let left: Vec<_> = fs::read_dir(&writable)
+        assert!(matches!(result, Err(HistoryError::Io { path, .. }) if path == blocked));
+        assert_eq!(fs::read_to_string(&written).unwrap(), "x");
+        let mut left: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        assert_eq!(left, vec!["a.txt"], "a's temp file is removed");
+        left.sort();
+        assert_eq!(left, ["a.txt", "blocked"], "a’s staged file is removed");
     }
 
     #[test]

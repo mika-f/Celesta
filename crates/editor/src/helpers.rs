@@ -1,12 +1,14 @@
 use crate::preview::{CpuPreviewFrame, PreviewPresentation};
+use crate::view::EditorView;
 use celesta_composition::{Rational, Time};
 use celesta_editor_core::ClipKind;
 use celesta_exporter::{AudioLoudness, ExportProgress, ExportRange, LoudnessTarget, VideoFormat};
 use celesta_gpu_renderer::PreviewFrame as GpuPreviewFrame;
-use gpui_kit::RenderImage;
+use celesta_react_bridge::import_path;
+use gpui_kit::{App, Context, PathPromptOptions, RenderImage};
 use image::{Frame, ImageBuffer, Rgba};
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 pub(crate) fn prepare_preview_frame(frame: GpuPreviewFrame) -> PreviewPresentation {
@@ -169,4 +171,106 @@ pub(crate) fn export_output(mut path: PathBuf) -> (PathBuf, VideoFormat) {
         return (path, VideoFormat::Mp4);
     };
     (path, format)
+}
+
+/// `path` with its `.` and `..` components taken out, without reading the
+/// file system. A `..` with nothing left to take off stays (`../x` is
+/// `../x`, `a/../../x` is `../x`, and on Windows `C:..\\x` stays
+/// drive-relative); one right after a root goes, since nothing is above it.
+pub(crate) fn lexically_normalized(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir) => {}
+                Some(Component::Prefix(_) | Component::ParentDir | Component::CurDir) | None => {
+                    out.push(component)
+                }
+            },
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// What a single-path dialog asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PathPick {
+    File,
+    Folder,
+}
+
+/// Shows the platform dialog for one file or folder, its button labeled
+/// `prompt`. Resolves to `Ok(None)` when it is dismissed (or goes away
+/// unanswered) and to `Err` when it could not be shown.
+pub(crate) fn pick_one_path(
+    cx: &App,
+    pick: PathPick,
+    prompt: &str,
+) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + use<> {
+    let selection = cx.prompt_for_paths(PathPromptOptions {
+        files: pick == PathPick::File,
+        directories: pick == PathPick::Folder,
+        multiple: false,
+        prompt: Some(prompt.to_owned().into()),
+    });
+    async move {
+        match selection.await {
+            Ok(Ok(paths)) => Ok(paths.and_then(|paths| paths.into_iter().next())),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+impl EditorView {
+    /// `Choose…` on a path row: asks for a file, imports it into the
+    /// project ([`import_path`]: a file under `project_root` is referenced
+    /// in place, any other is copied into its assets), and hands `done` the
+    /// path relative to `relative_to`, or the message saying why there is
+    /// none. Nothing happens when the dialog is dismissed, or when `current`
+    /// says the row the press came from is gone (another file opened,
+    /// another layer was picked).
+    pub(crate) fn choose_imported_path(
+        &mut self,
+        project_root: PathBuf,
+        relative_to: PathBuf,
+        current: impl Fn(&EditorView) -> bool + 'static,
+        done: impl FnOnce(&mut EditorView, Result<String, String>, &mut Context<EditorView>) + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = pick_one_path(cx, PathPick::File, "Choose");
+        cx.spawn(async move |view, cx| {
+            let chosen = match selection.await {
+                Ok(Some(chosen)) => chosen,
+                Ok(None) => return,
+                Err(error) => {
+                    let message = format!("Couldn’t show the file dialog: {error}");
+                    view.update(cx, |this, cx| {
+                        if current(this) {
+                            done(this, Err(message), cx);
+                        }
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            let imported = cx
+                .background_executor()
+                .spawn(async move { import_path(&project_root, &relative_to, &chosen) })
+                .await
+                .map_err(|error| format!("Couldn’t use the chosen file: {error}"));
+            view.update(cx, |this, cx| {
+                if current(this) {
+                    done(this, imported, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
 }

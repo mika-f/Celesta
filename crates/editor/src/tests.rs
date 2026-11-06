@@ -3,8 +3,8 @@ use crate::audio::{AudioCacheKey, CachedAudioDecoder};
 use crate::audio_cache::DiskAudioCache;
 use crate::edit_history::{EditHistory, HistoryEntry, Texts, write_all_recorded};
 use crate::editor_launch::{
-    Invocation, LaunchError, default_opener, editor_invocation, editor_value,
-    parse_login_shell_output, read_until_closing_marker, split_command,
+    Invocation, LaunchError, editor_invocation, editor_value, parse_login_shell_output,
+    read_until_closing_marker, script_fallbacks, split_command,
 };
 use crate::element_edit::{
     CommitError, ElementEdit, ElementTargets, PropKey, Target, TransformProp, apply_checked,
@@ -22,7 +22,7 @@ use crate::export_worker::{
 };
 use crate::helpers::{
     ExportLoudness, export_loudness_label, export_output, export_progress_label, export_range_for,
-    export_suggested_name, loop_range_for,
+    export_suggested_name, lexically_normalized, loop_range_for,
 };
 use crate::layer_panel::locked_summary;
 use crate::layer_select::{
@@ -958,16 +958,14 @@ fn parse_login_shell_output_is_none_without_a_value_or_markers() {
 }
 
 #[test]
-fn default_opener_uses_the_os_default_application() {
-    let expected = if cfg!(target_os = "macos") {
-        invocation("open", &["/p/a.tsx"])
-    } else if cfg!(windows) {
-        invocation("cmd", &["/C", "start", "", "/p/a.tsx"])
-    } else {
-        invocation("xdg-open", &["/p/a.tsx"])
-    };
-
-    assert_eq!(default_opener(Path::new("/p/a.tsx")), expected);
+fn a_program_without_an_extension_falls_back_to_its_scripts() {
+    assert_eq!(script_fallbacks("code"), ["code.cmd", "code.bat"]);
+    assert_eq!(
+        script_fallbacks(r"C:\Tools\code"),
+        [r"C:\Tools\code.cmd", r"C:\Tools\code.bat"]
+    );
+    assert!(script_fallbacks("code.exe").is_empty());
+    assert!(script_fallbacks("code.cmd").is_empty());
 }
 
 #[test]
@@ -1910,7 +1908,7 @@ fn read_from(texts: &Texts) -> impl Fn(&Path) -> Result<String, String> + '_ {
         texts
             .get(path)
             .cloned()
-            .ok_or_else(|| format!("Couldn't read {}", path.display()))
+            .ok_or_else(|| format!("Couldn’t read {}", path.display()))
     }
 }
 
@@ -2544,4 +2542,22 @@ fn lookup_is_not_allowed_while_editing_text() {
     // drawn with no edit running, so they look the layer up, as a released
     // scrub's do.)
     assert!(!lookup_allowed(false, false, true));
+}
+
+#[test]
+fn lexical_normalizing_keeps_a_leading_parent() {
+    let normal = |path: &str| lexically_normalized(Path::new(path));
+    assert_eq!(normal("a/./b/../c"), PathBuf::from("a/c"));
+    assert_eq!(normal("../x"), PathBuf::from("../x"));
+    assert_eq!(normal("a/../../x"), PathBuf::from("../x"));
+    assert_eq!(normal("../../x"), PathBuf::from("../../x"));
+    assert_eq!(normal("a/../.."), PathBuf::from(".."));
+    assert_eq!(normal("./a"), PathBuf::from("a"));
+    // Nothing is above a root.
+    assert_eq!(normal("/a/../../x"), PathBuf::from("/x"));
+    if cfg!(windows) {
+        assert_eq!(normal(r"C:\a\..\..\x"), PathBuf::from(r"C:\x"));
+        // Drive-relative: the parent of the drive's current folder.
+        assert_eq!(normal(r"C:..\x"), PathBuf::from(r"C:..\x"));
+    }
 }

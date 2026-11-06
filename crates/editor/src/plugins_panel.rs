@@ -6,6 +6,7 @@
 //! now are.
 
 use crate::actions::ReloadPlugins;
+use crate::helpers::{PathPick, pick_one_path};
 use crate::plugins::FoundPlugins;
 use crate::problems::{Source, error_chain};
 use crate::view::EditorView;
@@ -16,7 +17,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Context, PathPromptOptions, SharedString, Window, div};
+use gpui_kit::{AnyElement, App, Context, SharedString, Window, div};
 
 /// Whether a listed plugin may run.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -305,17 +306,11 @@ impl EditorView {
 
     /// Asks for a folder and adds it to the folders searched for plugins.
     fn add_plugin_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Add Plugin Folder".into()),
-        });
+        let selection = pick_one_path(cx, PathPick::Folder, "Add Plugin Folder");
         cx.spawn_in(window, async move |view, cx| {
             let folder = match selection.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(error)) => {
+                Ok(path) => path,
+                Err(error) => {
                     view.update(cx, |this, cx| {
                         this.problems.report(
                             Source::Plugins,
@@ -349,7 +344,7 @@ impl EditorView {
             self.problems.report(
                 Source::Plugins,
                 "There is no user plugin folder",
-                "The platform's home or app-data variable is not set.",
+                "The platform’s home or app-data variable is not set.",
             );
             cx.notify();
             return;

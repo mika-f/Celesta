@@ -150,7 +150,7 @@ fn transform_commit_refuses_locked_and_non_finite_values() {
     );
     assert_eq!(
         CommitError::NotEditable("Scale X".to_owned()).to_string(),
-        "Scale X can't be edited here"
+        "Scale X can’t be edited here"
     );
 }
 
@@ -243,7 +243,7 @@ fn transform_reason_texts_match_spec() {
         (LockReason::SyntaxError, "The source has syntax errors"),
         (
             LockReason::ElementNotFound,
-            "Couldn't find this element in the source",
+            "Couldn’t find this element in the source",
         ),
         (
             LockReason::NotPrimitive,
@@ -259,7 +259,7 @@ fn transform_reason_texts_match_spec() {
             LockReason::UnresolvedIdentifier {
                 name: "name".to_string(),
             },
-            "Comes from name, which can't be traced",
+            "Comes from name, which can’t be traced",
         ),
         (
             LockReason::SharedBinding {
@@ -294,7 +294,7 @@ fn transform_reason_texts_match_spec() {
         ),
         (
             LockReason::FrameUncertain,
-            "Can't tell which frame this animation reads",
+            "Can’t tell which frame this animation reads",
         ),
         (
             LockReason::OutsideProject,
@@ -325,13 +325,13 @@ fn pass_through_reason_texts() {
         reason_text(&LockReason::ParameterOfCaller {
             component: "Card".to_owned()
         }),
-        "Comes from `<Card>`'s caller"
+        "Comes from `<Card>`’s caller"
     );
     assert_eq!(
         reason_text(&LockReason::CallSiteNotFound {
             component: "PriceTag".to_owned()
         }),
-        "Can't find where `<PriceTag>` is called"
+        "Can’t find where `<PriceTag>` is called"
     );
 }
 
@@ -360,7 +360,7 @@ fn transform_state_drops_stale_resolutions() {
     state.reset();
     let second = state
         .begin("a", &report, 0)
-        .expect("the reload's lookup resolves again");
+        .expect("the reload’s lookup resolves again");
 
     // A newer report supersedes the one in flight.
     let third = state.begin("a", &moved, 0).expect("another report");
@@ -440,9 +440,9 @@ fn transform_explains_why_there_is_nothing_to_commit() {
     assert!(state.finish(
         request,
         Some("a"),
-        Err("Couldn't read scene.tsx".to_owned())
+        Err("Couldn’t read scene.tsx".to_owned())
     ));
-    assert_eq!(state.unavailable(Some("a")), "Couldn't read scene.tsx");
+    assert_eq!(state.unavailable(Some("a")), "Couldn’t read scene.tsx");
 
     let request = state.begin("a", &report, 1).unwrap();
     assert!(state.finish(request, Some("a"), resolve_in(TRANSFORM_FIXTURE, &report)));
@@ -694,6 +694,11 @@ fn transform_files_outside_the_project_are_locked() {
     assert!(!inside_project(
         Path::new("/project/src/node_modules/kit/rect.tsx"),
         entry_dir
+    ));
+    // Relative: the file climbs out of `project` before coming back.
+    assert!(!inside_project(
+        Path::new("project/src/../../../project/src/scene.tsx"),
+        Path::new("project/src")
     ));
     assert!(!inside_project(
         Path::new("/project/src/../lib/shared.tsx"),
@@ -1795,7 +1800,7 @@ fn an_edit_whose_result_does_not_parse_is_refused() {
     );
     assert_eq!(
         CommitError::Unparseable.to_string(),
-        "Couldn't edit the source: the result does not parse"
+        "Couldn’t edit the source: the result does not parse"
     );
     let whole = [Edit::Remove {
         start: at - 1,
@@ -1838,7 +1843,7 @@ fn a_required_or_absent_prop_is_not_removed() {
     );
     assert_eq!(
         CommitError::NotRemovable("Width".to_owned()).to_string(),
-        "Width can't be removed here"
+        "Width can’t be removed here"
     );
 }
 
@@ -1947,7 +1952,7 @@ fn a_commit_waits_unless_the_current_resolution_failed() {
     assert!(!state.failed(Some("a")));
 
     let request = state.begin("a", &report, 1).unwrap();
-    assert!(state.finish(request, Some("a"), Err("Couldn't read".to_owned())));
+    assert!(state.finish(request, Some("a"), Err("Couldn’t read".to_owned())));
     assert!(state.failed(Some("a")));
     assert!(!state.failed(Some("b")));
     // An own write's reload may read it again.

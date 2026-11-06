@@ -84,22 +84,22 @@ impl ScopeLock {
                 format!("`<{component}>` here draws this element more than once")
             }
             Self::NotObjectPattern { component } => {
-                format!("`{component}` doesn't take its props as `{{ … }}`")
+                format!("`{component}` doesn’t take its props as `{{ … }}`")
             }
             Self::ImportedPropsType { component } => {
-                format!("`{component}`'s props type is in another file")
+                format!("`{component}`’s props type is in another file")
             }
             Self::PropsTypeNotEditable { component, param } => {
-                format!("Can't add `{param}` to `{component}`'s props type")
+                format!("Can’t add `{param}` to `{component}`’s props type")
             }
-            Self::PerSceneUnsupported => "Can't be set per scene yet".to_owned(),
+            Self::PerSceneUnsupported => "Can’t be set per scene yet".to_owned(),
             Self::EverySceneSets { param } => format!("Every scene sets `{param}` itself"),
             Self::SetsOwn { param } => format!("This scene sets its own `{param}`"),
             Self::DefaultIsExpression { param } => {
-                format!("`{param}`'s shared value is written as an expression")
+                format!("`{param}`’s shared value is written as an expression")
             }
             Self::DefaultNotFound { param } => {
-                format!("Can't find where `{param}`'s shared value is written")
+                format!("Can’t find where `{param}`’s shared value is written")
             }
             Self::OutsideProject => reason_text(&LockReason::OutsideProject),
         }
@@ -289,7 +289,7 @@ pub(crate) fn occurrence_index(
     match occurrences {
         None => Err(NOT_SCANNED.to_owned()),
         Some(OccurrenceState::Scanning) => Err(SCANNING.to_owned()),
-        Some(OccurrenceState::Failed(message)) => Err(format!("Couldn't scan scenes: {message}")),
+        Some(OccurrenceState::Failed(message)) => Err(format!("Couldn’t scan scenes: {message}")),
         Some(OccurrenceState::Ready(index)) => Ok((index, false)),
         Some(OccurrenceState::Refreshing(index)) => Ok((index, true)),
     }

@@ -292,12 +292,8 @@ impl EditorDocument {
     /// hand it straight to `ReactBridge::spawn`.
     pub fn react_entry_absolute_path(&self) -> Option<PathBuf> {
         let entry = self.project.settings.react_entry.as_deref()?;
-        let path = Path::new(entry);
-        Some(if path.is_absolute() {
-            path.to_owned()
-        } else {
-            self.asset_root.join(path)
-        })
+        // `join` keeps an absolute `entry` as it is.
+        Some(self.asset_root.join(entry))
     }
 
     /// The project's GUI-editable `properties` map. React entries read these
@@ -334,14 +330,8 @@ pub(crate) fn local_asset_path(asset: &Asset, asset_root: &Path) -> Option<PathB
         | Asset::Font { source, .. } => source,
     };
     match source {
-        AssetSource::File { path } => {
-            let path = Path::new(path);
-            Some(if path.is_absolute() {
-                path.to_owned()
-            } else {
-                asset_root.join(path)
-            })
-        }
+        // `join` keeps an absolute `path` as it is.
+        AssetSource::File { path } => Some(asset_root.join(path)),
         AssetSource::Url { .. } => None,
     }
 }

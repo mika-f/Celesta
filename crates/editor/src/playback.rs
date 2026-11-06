@@ -338,13 +338,8 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let position = event.position;
-        let handled = if event.dragging() {
-            self.continue_scrub(position) || self.continue_overview_drag(position)
-        } else {
-            false
-        };
-        let handled = self.continue_timeline_pan(position, event.pressed_button) || handled;
+        let handled = self.continue_ruler_drag(event);
+        let handled = self.continue_timeline_pan(event.position, event.pressed_button) || handled;
         if handled {
             cx.notify();
         }
@@ -364,7 +359,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         self.end_inline_selection();
-        let ended = self.end_scrub() | self.end_overview_drag();
+        let ended = self.end_ruler_drag();
         let ended = self.master_volume_drag.take().is_some() | ended;
         let ended = self.end_transform_drag(cx) | ended;
         let ended = self.end_timeline_drag::<BandDrag>(cx) | ended;

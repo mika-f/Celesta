@@ -20,6 +20,7 @@ pub(crate) use resolve::{
 };
 
 use crate::element_rows::{removable, row_label};
+use crate::helpers::lexically_normalized;
 use crate::layer_select::SourceLookup;
 use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
@@ -41,7 +42,7 @@ use celesta_source_edit::{
 use gpui_kit::Context;
 use std::cell::RefCell;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// A row the editor writes: a table prop by its table key (`fontSize`, even
 /// when it writes `style.fontSize`).
@@ -318,13 +319,13 @@ fn one_line(source: &str) -> String {
 pub(crate) fn reason_text(reason: &LockReason) -> String {
     match reason {
         LockReason::SyntaxError => "The source has syntax errors".to_owned(),
-        LockReason::ElementNotFound => "Couldn't find this element in the source".to_owned(),
+        LockReason::ElementNotFound => "Couldn’t find this element in the source".to_owned(),
         LockReason::NotPrimitive => "Set by a component, not written on this element".to_owned(),
         LockReason::Expression { source } => {
             format!("Written as an expression: {}", one_line(source))
         }
         LockReason::UnresolvedIdentifier { name } => {
-            format!("Comes from {name}, which can't be traced")
+            format!("Comes from {name}, which can’t be traced")
         }
         LockReason::SharedBinding { name, uses } => format!("{name} is used in {uses} places"),
         LockReason::BetweenKeyframes { previous, next, .. } => format!(
@@ -337,15 +338,15 @@ pub(crate) fn reason_text(reason: &LockReason) -> String {
         LockReason::OverriddenByParent => "A layout component sets this value".to_owned(),
         LockReason::Spread => "May be set by a spread ({...props})".to_owned(),
         LockReason::Repeated { count } => format!("Rendered {count} times from this element"),
-        LockReason::FrameUncertain => "Can't tell which frame this animation reads".to_owned(),
+        LockReason::FrameUncertain => "Can’t tell which frame this animation reads".to_owned(),
         LockReason::OutsideProject => "This file is outside the project".to_owned(),
         LockReason::NoStyleObject => "No style object to set this in".to_owned(),
         LockReason::StyleMaySet => "May be set by `style`".to_owned(),
         LockReason::ParameterOfCaller { component } => {
-            format!("Comes from `<{component}>`'s caller")
+            format!("Comes from `<{component}>`’s caller")
         }
         LockReason::CallSiteNotFound { component } => {
-            format!("Can't find where `<{component}>` is called")
+            format!("Can’t find where `<{component}>` is called")
         }
         LockReason::Exported { .. } => "Exported, so other files may read it".to_owned(),
         LockReason::NoSceneDuration { id } => format!("Scene `{id}` has no durationInFrames"),
@@ -375,7 +376,7 @@ pub(crate) struct Resolved {
 }
 
 /// Why a window inside a `<Loop>` or `<FreezeFrame>` doesn't drag.
-pub(crate) const REMAPPED_WINDOW: &str = "Timing inside a loop or freeze frame can't be dragged";
+pub(crate) const REMAPPED_WINDOW: &str = "Timing inside a loop or freeze frame can’t be dragged";
 
 /// The values own writes put into rows; `None` removed the prop.
 type WrittenValues = Vec<(PropKey, Option<EditValue>)>;
@@ -791,7 +792,7 @@ impl EditorView {
                 .spawn(async move {
                     let read = |path: &Path| {
                         fs::read_to_string(path)
-                            .map_err(|error| format!("Couldn't read {}: {error}", path.display()))
+                            .map_err(|error| format!("Couldn’t read {}: {error}", path.display()))
                     };
                     let real = |path: &Path| fs::canonicalize(path).unwrap_or(path.to_path_buf());
                     let entry_dir = entry_dir.map(|dir| real(&dir));
@@ -1445,25 +1446,11 @@ pub(crate) fn row_removable_under(
 /// directory `entry_dir` and not inside any `node_modules`. Compares paths
 /// lexically after resolving `.` and `..`; callers pass real paths.
 pub(crate) fn inside_project(file: &Path, entry_dir: &Path) -> bool {
-    let file = normalize(file);
-    file.starts_with(normalize(entry_dir))
+    let file = lexically_normalized(file);
+    file.starts_with(lexically_normalized(entry_dir))
         && !file
             .components()
             .any(|component| component.as_os_str() == "node_modules")
-}
-
-fn normalize(path: &Path) -> PathBuf {
-    let mut normal = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normal.pop();
-            }
-            other => normal.push(other),
-        }
-    }
-    normal
 }
 
 /// Locks every target, row, input, or component prop, in a file `outside`

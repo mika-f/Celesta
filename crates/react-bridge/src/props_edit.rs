@@ -155,29 +155,6 @@ pub fn replace_file(file: &Path, text: &str) -> io::Result<()> {
     temporary.publish(file, true)
 }
 
-/// Writes `text` to a temporary file beside `file`, named
-/// `.<file name>.tmp-<process id>`, and returns its path for the caller to
-/// rename over `file`. Removes the temporary file again when the write fails.
-pub fn write_temp(file: &Path, text: &str) -> io::Result<PathBuf> {
-    let name = file
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a file path"))?
-        .to_string_lossy();
-    let temporary = file.with_file_name(format!(".{name}.tmp-{}", std::process::id()));
-
-    let written = fs::File::create(&temporary).and_then(|mut handle| {
-        handle.write_all(text.as_bytes())?;
-        handle.sync_all()
-    });
-    match written {
-        Ok(()) => Ok(temporary),
-        Err(error) => {
-            let _ = fs::remove_file(&temporary);
-            Err(error)
-        }
-    }
-}
-
 /// The value to store for `chosen` in a props file in `props_dir`. A file
 /// under `project_root` is referenced in place; any other file is copied
 /// into `<project_root>/assets/` first. Always `/`-separated, starting with

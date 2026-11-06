@@ -47,7 +47,7 @@ The **Layer** section at the bottom of the tab shows the layer's ID. Expand its 
 
 A layer is hit anywhere inside the box it is drawn in, including transparent pixels of an image and the gaps between glyphs. A `<Rect>` with a stroke and no fill is hit only on its stroke, so you can select what is inside an outline. Where layers overlap, the one drawn last wins. A layer that is not in the frame being shown reads **Not in this frame**. A reload after an edit made outside Celesta, or turning interactive mode off, clears the selection. Celesta's own edits from the canvas, the property rows, or the props file's **Properties** section, and undo and redo, keep it. While the preview reloads after one of them, the tab keeps showing the layer with a small spinner in the header, and the property rows are read-only until the reloaded composition has drawn the layer again.
 
-Celesta opens the position in the editor named by the `VISUAL` environment variable, then `EDITOR`. It can include arguments, such as `code -n`. On macOS and Linux, Celesta also asks your login shell for them when the app does not have them, such as when it was started from the Dock or Finder, so variables set in your shell profile still apply. VS Code (`code`), Cursor, Windsurf, Zed, Sublime Text, JetBrains IDEs, and TextMate open at the line and column; other editors are passed `+line file`. With neither variable set, the file opens in your system's default application, without a position.
+Celesta opens the position in the editor named by the `VISUAL` environment variable, then `EDITOR`. It can include arguments, such as `code -n`. On Windows, a command installed as a script, such as VS Code's `code.cmd`, can be named without its extension. On macOS and Linux, Celesta also asks your login shell for them when the app does not have them, such as when it was started from the Dock or Finder, so variables set in your shell profile still apply. VS Code (`code`), Cursor, Windsurf, Zed, Sublime Text, JetBrains IDEs, and TextMate open at the line and column; other editors are passed `+line file`. With neither variable set, the file opens in your system's default application, without a position.
 
 Editors that run inside a terminal, such as `vim`, `nano`, and `emacs -nw`, cannot be started from the app. Celesta shows a message instead; set `VISUAL` to a graphical editor.
 
@@ -59,7 +59,7 @@ Scenes are the chapters the composition declares with `chapters` on `<Compositio
 
 - **Appears in** lists the scenes the selected layer is on screen in. In a composition without chapters, it lists the time ranges instead, such as `00:00:02:00–00:00:04:00`; past the first three, the rest are counted, such as **and 2397 more**.
 - **Shared** appears in the warning color when the same element is also drawn in other scenes, such as **also in Intro, Outro (3 instances)**. With more than three other scenes, it counts them instead, such as **also in 11 other scenes (71 instances)**. Each place your code renders the element, such as each `<Title>` you wrote, is one instance. Hover over the row to list the `file:line:column` each instance is rendered from, after the scene names when the row only counts them. While **Edits change** offers its options (see "Edit one scene or every scene"), the row stays and reads **this scene only** when the chosen option changes no other scene.
-- **Can't move** lists the transform props that are locked and why, one reason per row, such as **X, Y — Written as an expression: W / 2**. The reasons are explained in the next section.
+- **Can’t move** lists the transform props that are locked and why, one reason per row, such as **X, Y — Written as an expression: W / 2**. The reasons are explained in the next section.
 
 At the top of the panel, above the header, one line says what committing a change would do. It stays there while the header and the property sections scroll beneath it. For a shared element, a choice of what an edit changes takes its place, as described under "Edit one scene or every scene" below.
 
@@ -69,7 +69,7 @@ At the top of the panel, above the header, one line says what committing a chang
 | Changes `<count>` places in this scene | The element is drawn in more than one place in the current scene, such as by two `<Title>`s or in `.map()`, and in no other scene. The moments `<MotionBlur>` and `<Trail>` draw count as one place |
 | Also changes `<scenes>` | The element is also drawn in the scenes named, shown in the warning color. With the playhead between chapters, every scene the element is in is named. More than three scenes are counted instead, such as **Also changes 11 other scenes**; hover over the line to list them |
 | Scanning scenes… | The scan has not finished yet |
-| Couldn't scan scenes: `<error>` | The composition failed on some frame during the scan; the rest of the preview works as before |
+| Couldn’t scan scenes: `<error>` | The composition failed on some frame during the scan; the rest of the preview works as before |
 | Not found in the scene scan | The scan did not see this element, such as when it has no source position |
 
 The line is shown for an element that is not shared: one with a single instance, or one written directly in a scene rather than inside one of your components. An element written inside one of your components with more than one instance, such as the `<Rect>` of `const PriceTag = ({ label }) => <Rect width={200} … />` used in Intro and Price, is shared. It shows **Edits change** with the options **This scene** and **Shared value** instead, and the **Shared** row and the timeline bands count the instances the option in effect changes.
@@ -90,15 +90,15 @@ Celesta writes a value only where your source states it plainly, on an element w
 
 A row whose value is set at a component's call site shows an arrow and **Set at `<file>`:`<line>`** under its field, such as **Set at scenes/price.tsx:12**, with the file relative to the entry file's folder. Dragging the layer or typing into the row writes that call, which may be in another file than the element. One drag can write both files, such as a call site's `x` and a `rotation` written on the element; it is still one change, and one undo restores both files. Because each call is edited on its own, an element in a component you call in several places is not locked as rendered more than once when its value is set at the call. A value passed at a call inside `.map()` is editable too, and changes every copy that call renders.
 
-Anything else is locked: its field shows a lock icon and the reason, the header's **Can't move** rows list it, and the outline turns dashed when nothing on the layer can be moved. The reasons are below; a word in angle brackets, such as `<name>`, stands for the part taken from your source.
+Anything else is locked: its field shows a lock icon and the reason, the header's **Can’t move** rows list it, and the outline turns dashed when nothing on the layer can be moved. The reasons are below; a word in angle brackets, such as `<name>`, stands for the part taken from your source.
 
 | Reason | Meaning |
 | --- | --- |
 | Set by a component, not written on this element | The element nearest the layer is your own component (or another library's), not a Celesta element such as `<Rect>` |
 | Written as an expression: `<expression>` | A value such as `W / 2` or `i * 24`, or a value of another kind than the row takes, such as `anchorY="baseline"` in the **Anchor Y** row |
-| Comes from `<name>`, which can't be traced | An import, a `let`, a parameter of an outer component read inside a nested one, an object property, or a name declared more than once in the component, such as again inside a block or loop |
-| Comes from `<component>`'s caller | The call site passes on a prop it received itself, such as `<PriceTag x={x} />` inside `Card`. Celesta follows one call, not the call of that call |
-| Can't find where `<component>` is called | The value is a prop of the component, but Celesta can't find the call that renders this layer, or can't read its file |
+| Comes from `<name>`, which can’t be traced | An import, a `let`, a parameter of an outer component read inside a nested one, an object property, or a name declared more than once in the component, such as again inside a block or loop |
+| Comes from `<component>`’s caller | The call site passes on a prop it received itself, such as `<PriceTag x={x} />` inside `Card`. Celesta follows one call, not the call of that call |
+| Can’t find where `<component>` is called | The value is a prop of the component, but Celesta can't find the call that renders this layer, or can't read its file |
 | `<name>` is used in `<count>` places | Editing the shared `const` would move other elements too |
 | Between keyframes at `<frame>` and `<frame>` | The frame is not one of the keyframes; use the buttons to jump to one |
 | Outside the keyframes | The frame is before the first or after the last keyframe |
@@ -107,9 +107,9 @@ Anything else is locked: its field shows a lock icon and the reason, the header'
 | May be set by a spread ({...props}) | The element has `{...props}` and no value of its own, or the spread comes after the value |
 | May be set by `style` | A font or color row of a `<Text>` whose `style` is not written as an object, or has a spread that could set the value (see the next section) |
 | Rendered `<count>` times from this element | An element in `.map()`, or in one of your components drawn more than once in the frame; editing it would move every copy. For a component, **This scene** can move the selected copy alone when the call that renders it draws it alone (see "Edit one scene or every scene") |
-| Can't tell which frame this animation reads | `frame` could hold more than one frame (each `<Sequence>` or `<FreezeFrame>` around the element gives another), and those frames give different keyframes with the same value |
+| Can’t tell which frame this animation reads | `frame` could hold more than one frame (each `<Sequence>` or `<FreezeFrame>` around the element gives another), and those frames give different keyframes with the same value |
 | This file is outside the project | The value is written in a file outside the entry file's folder, or inside `node_modules`: the element's file, or the call site's for a value set there |
-| Couldn't find this element in the source | The file no longer has the element where the preview found it, such as while a save is still reloading |
+| Couldn’t find this element in the source | The file no longer has the element where the preview found it, such as while a save is still reloading |
 | The source has syntax errors | Fix the file first; every field is locked until it parses |
 
 If a file the drag would write changes while you drag, Celesta discards the drag and says so instead of writing over your edit. Dragging on the canvas edits `x`, `y`, `rotation`, and `scale` (or `scaleX` and `scaleY`, when written), the props that hold the layer's size, such as `width`, and `anchorX` and `anchorY`, as described at the end of this section. Skew is not edited.
@@ -121,13 +121,13 @@ A layer inside a `<Group>` or `<Stack>` moves with its parent. A child of a `<St
 While **Select layers** is on, a row of tools sits at the top of the viewer, above the frame (which makes room for it). It starts with the **Add** menu, described under "Add elements on the canvas" below. While a layer is selected, two labelled toggles follow it; in each, the choice you made is the raised tab. The first, **Rotate about** [**Center** | **Pivot**], sets what the rotation handle and the **Scale** handles turn about; a cross on the selected layer marks that point:
 
 - **Pivot**, the default, turns the layer about its pivot, the point the renderer turns it about: its anchor (`anchorX` and `anchorY` of its box, the top-left corner unless you set them), moved by `originX` and `originY` when you set those. Only `rotation` or the scale is written. The cross sits on the pivot, and Alt-dragging it moves the anchor (see "Move the anchor" below).
-- **Center** keeps the middle of the layer's box where it is. To do that, Celesta also writes `x` and `y`: a rotation writes `rotation`, `x`, and `y` together, as one change, which writes two files when `x` and `y` are passed through from a component call. The cross sits on the middle of the box. It only marks that point: its tooltip says **Rotates about the center; switch to Pivot to move the anchor** (or, when the anchor couldn't move in **Pivot** either, **Rotates about the center; the anchor can't move:** and the reason, as listed under "Move the anchor"; for an element without anchor props, such as a `<Path>`, just **Rotates about the center**). Holding Alt over it and pressing does nothing.
+- **Center** keeps the middle of the layer's box where it is. To do that, Celesta also writes `x` and `y`: a rotation writes `rotation`, `x`, and `y` together, as one change, which writes two files when `x` and `y` are passed through from a component call. The cross sits on the middle of the box. It only marks that point: its tooltip says **Rotates about the center; switch to Pivot to move the anchor** (or, when the anchor couldn't move in **Pivot** either, **Rotates about the center; the anchor can’t move:** and the reason, as listed under "Move the anchor"; for an element without anchor props, such as a `<Path>`, just **Rotates about the center**). Holding Alt over it and pressing does nothing.
 
 **Center** needs `x` and `y` that Celesta can write: each a number, a prop left out, or a value passed through from a component call, as described above. It also needs a `rotation`, scale, size, and anchor that are not animated with keyframes: `x` and `y` written on one keyframe would keep the middle still on that keyframe only, and the layer would drift on the others. A layer that doesn't meet these turns about its pivot even with **Center** chosen, and the cross sits on the pivot. The toggle then keeps **Center** chosen, so the next layer you select uses it again, and shows a warning icon whose tooltip gives the reason:
 
 | Tooltip | Meaning |
 | --- | --- |
-| x or y can't be edited | `x` or `y` is animated with keyframes or locked, such as a value computed in your code |
+| x or y can’t be edited | `x` or `y` is animated with keyframes or locked, such as a value computed in your code |
 | Rotation or scale is animated | `rotation` or a scale is animated with keyframes |
 | Size or anchor is animated | A size prop, `anchorX`, or `anchorY` is animated with keyframes |
 | No flat box to center on | The layer is turned in its own perspective |
@@ -154,8 +154,8 @@ An element without size props, such as a `<Group>` or a `<Path>`, or one whose s
 | --- | --- |
 | No size to resize | The element has no size props, or the preview didn't report its size |
 | `<Row>`: `<reason>` | A size row is locked, such as **Height: Written as an expression: h * 2**; the reasons are listed above |
-| Size can't be edited here | A size prop has no row Celesta can write |
-| x or y can't move | Every handle would move the anchor, and `x` or `y` is animated with keyframes or locked |
+| Size can’t be edited here | A size prop has no row Celesta can write |
+| x or y can’t move | Every handle would move the anchor, and `x` or `y` is animated with keyframes or locked |
 | Rotation or scale is animated | Every handle would move the anchor, and `rotation` or a scale is animated with keyframes |
 | Anchor is animated | Every handle would move the anchor, and `anchorX` or `anchorY` is animated with keyframes |
 | Size is animated | Every handle would move the anchor along a size animated with keyframes |
@@ -171,12 +171,12 @@ When the cross can't be dragged, the pointer over it shows a not-allowed sign wh
 
 | Tooltip | Meaning |
 | --- | --- |
-| `<Row>`: `<reason>` | The row's own lock reason, such as **X: Comes from DX, which can't be traced** for an `x` set from an imported constant, or **Anchor Y: Written as an expression: "baseline"** for a `<Text>` with `anchorY="baseline"` |
+| `<Row>`: `<reason>` | The row's own lock reason, such as **X: Comes from DX, which can’t be traced** for an `x` set from an imported constant, or **Anchor Y: Written as an expression: "baseline"** for a `<Text>` with `anchorY="baseline"` |
 | X is animated, Y is animated | `x` or `y` is animated with keyframes |
 | Anchor is animated | `anchorX` or `anchorY` is animated with keyframes |
 | Rotation or scale is animated | `rotation` or a scale is animated with keyframes |
 | Size is animated | A size prop is animated with keyframes |
-| A group's anchor has no effect | A `<Group>` places its children by its position alone |
+| A group’s anchor has no effect | A `<Group>` places its children by its position alone |
 | No box to anchor in | The layer is turned in its own perspective, or the preview didn't report its size |
 
 A `<Path>`, `<Line>`, `<Arrow>`, and other elements without anchor props have no anchor to move.
@@ -229,7 +229,7 @@ The **Font family**, **Font size**, **Font weight**, and **Color** rows of a `<T
 
 When the element is written inside one of your components and Celesta finds the call that renders it, a **Component** section follows, such as **Component · PriceTag**, with **Set at `<file>`:`<line>`** for that call. It lists the props written at the call in the order they are written, so you can change `label="Sale"` on `<PriceTag>` while a `<Rect>` inside it is selected. A prop a row above already shows with **Set at** is not repeated, and `key`, `ref`, spreads, and children are left out. A number gets a number field, a string a text field, and `true` or `false` a switch. When the component is registered with `registerComponent()`, its schema gives the control and the range instead, a field's `label` names its row (a prop the schema leaves out shows its name as written), a number field with `integer: true` takes whole numbers only, a field with `required: true` can't be removed, and a value of another kind than the schema's is locked. When the schema is typed with your props, as in `ComponentPropertySchema<BadgeProps>`, TypeScript makes you mark each prop the props type requires `required: true`, and only those. A value that is not written plainly is locked with its reason.
 
-**Can't move** looks at the transform props only. A row of the **Component** section always writes its call, so it changes only the instances that call renders. For a shared element, every other row, a scrub, a drag on the canvas, and a text edited on the canvas write under the option chosen at the top of the panel, as described under "Edit one scene or every scene".
+**Can’t move** looks at the transform props only. A row of the **Component** section always writes its call, so it changes only the instances that call renders. For a shared element, every other row, a scrub, a drag on the canvas, and a text edited on the canvas write under the option chosen at the top of the panel, as described under "Edit one scene or every scene".
 
 ## Edit text on the canvas
 
@@ -261,9 +261,9 @@ A double-click doesn't begin an edit on a text Celesta can't write. It shows the
 | The **Text** row's lock reason, such as **Written as an expression: a + b** | The text is not written plainly in your source, such as a value computed in your code or `<Span>` children; the reasons are listed under "Move layers on the canvas" |
 | Why the layer's source couldn't be read, such as **Not in this frame** | As the **Layer** section says |
 | The code is reloading | The composition is reloading; double-click again when it has finished |
-| The text isn't drawn in this frame | The text is not in the frame shown, or a corner of it is behind the viewer |
+| The text isn’t drawn in this frame | The text is not in the frame shown, or a corner of it is behind the viewer |
 | The text is edge-on to the view | The text is turned so far in 3D that it has no area to type in |
-| The text can't be edited here | The **Text** row has nothing Celesta can write |
+| The text can’t be edited here | The **Text** row has nothing Celesta can write |
 
 A double-click on a text you have just committed waits while the commit is written, then shows **The code is reloading** while the composition reloads; once it has, double-click again to edit the new text. If your file changes outside Celesta while you edit, the edit ends without writing, and **The source changed while editing** shows at the top-left of the preview until your next click.
 
@@ -323,7 +323,7 @@ An option that can't write the edit is dimmed; the line under the tabs and the t
 
 | Reason | Meaning |
 | --- | --- |
-| Can't find where `<PriceTag>` is called | Celesta can't find the call that renders this scene's instance, or can't read its file |
+| Can’t find where `<PriceTag>` is called | Celesta can't find the call that renders this scene's instance, or can't read its file |
 | Passes through `<Card>` | Another of your components, here `<Card>` around `<PriceTag>`, sits between the scene and the component the element is written in. Scenes written as components and placed by hand, such as `<Sequence><PriceScene /></Sequence>`, count as one too |
 | The scenes reuse the same call (`.map()` or `defineScenes`) | One call renders the component for several scenes, such as scenes made by `defineScenes` and drawn by one `<Scenes>` |
 | `<PriceTag>` is called here for other scenes too | The call that renders this scene's instance also renders instances in other scenes, such as a call inside `.map()` |
@@ -333,10 +333,10 @@ The next reasons belong to a row. Under **This scene**, the row is locked with i
 
 | Reason | Meaning |
 | --- | --- |
-| `PriceTag` doesn't take its props as `{ … }` | The component's parameter is written as `(props)` or `(...args)` |
-| `PriceTag`'s props type is in another file | The parameter's type is imported |
-| Can't add `rectWidth` to `PriceTag`'s props type | The type has no type literal to add the field to, such as `type Props = Base & Other` |
-| Can't be set per scene yet | The value is animated with keyframes, is in a `style={{ … }}` object, or is an input row's `const` |
+| `PriceTag` doesn’t take its props as `{ … }` | The component's parameter is written as `(props)` or `(...args)` |
+| `PriceTag`’s props type is in another file | The parameter's type is imported |
+| Can’t add `rectWidth` to `PriceTag`’s props type | The type has no type literal to add the field to, such as `type Props = Base & Other` |
+| Can’t be set per scene yet | The value is animated with keyframes, is in a `style={{ … }}` object, or is an input row's `const` |
 | This file is outside the project | The component's file or the call's file is outside the entry file's folder, or inside `node_modules` |
 
 Under **Shared value**, a row is locked, and the option disabled when every row is, except by **This scene sets its own**, which locks the row but never the option:
@@ -345,9 +345,9 @@ Under **Shared value**, a row is locked, and the option disabled when every row 
 | --- | --- |
 | Every scene sets `rectWidth` itself | The parameter has no default, and every call passes the prop |
 | This scene sets its own `rectWidth` | The current scene's call passes the prop; the row shows this scene's value. When the call writes the value plainly, the row's **×** removes it from the call; otherwise, edit the shared value from a scene whose call leaves the prop out |
-| `rectWidth`'s shared value is written as an expression | The default is computed, such as `{ rectWidth = W * 2 }` |
-| `PriceTag` doesn't take its props as `{ … }` | The component reads `props.rectWidth`, which has no default to write |
-| Can't find where `rectWidth`'s shared value is written | Celesta can't find the parameter in the component |
+| `rectWidth`’s shared value is written as an expression | The default is computed, such as `{ rectWidth = W * 2 }` |
+| `PriceTag` doesn’t take its props as `{ … }` | The component reads `props.rectWidth`, which has no default to write |
+| Can’t find where `rectWidth`’s shared value is written | Celesta can't find the parameter in the component |
 | This file is outside the project | The component's file is outside the entry file's folder, or inside `node_modules` |
 
 If the option you chose is disabled, such as when you chose **This scene** in Price and select the element in a scene whose call also renders other scenes, Celesta doesn't switch to the other one: neither tab is raised, the line shows the reason in the warning color, and edits are refused with it until you choose an option.
@@ -367,7 +367,7 @@ Until the scan described under "See what an edit changes" answers, **Edits chang
 | Line | Meaning |
 | --- | --- |
 | Scanning scenes… | The scan has not finished yet |
-| Couldn't scan scenes: `<error>` | The composition failed on some frame during the scan |
+| Couldn’t scan scenes: `<error>` | The composition failed on some frame during the scan |
 | Not found in the scene scan | The scan did not see this element |
 | The scenes are not scanned | No scan runs for the composition |
 
@@ -405,9 +405,9 @@ A grip that can't drag shows a not-allowed pointer, and hovering over it shows w
 
 | Reason | Meaning |
 | --- | --- |
-| Timing inside a loop or freeze frame can't be dragged | The window nearest the element is inside a `<Loop>` or a `<FreezeFrame>` |
+| Timing inside a loop or freeze frame can’t be dragged | The window nearest the element is inside a `<Loop>` or a `<FreezeFrame>` |
 | Not a `<Sequence>` or `<Series.Sequence>` of @celesta.studio/react | The window comes from another wrapper, or from a `Sequence` your file doesn't import from `@celesta.studio/react` |
-| Couldn't find this element in the source | The file no longer has the window where the preview found it, such as while a save is still reloading |
+| Couldn’t find this element in the source | The file no longer has the window where the preview found it, such as while a save is still reloading |
 | The source is still being read | Celesta is reading the element's source, such as right after you select it |
 | Select the layer again | What Celesta read for the layer is no longer current, such as right after one of its own writes |
 | This file is outside the project | The window is written in a file outside the entry file's folder, or inside `node_modules` |
@@ -442,7 +442,7 @@ An end that can't drag shows a not-allowed pointer, and hovering over it shows w
 | Reason | Meaning |
 | --- | --- |
 | Reading source… | Celesta is still reading the files for the current reload |
-| Can't find scene `<id>` in the source | No written-out list has an entry with this id, or more than one does, such as for a scene of a list with a spread |
+| Can’t find scene `<id>` in the source | No written-out list has an entry with this id, or more than one does, such as for a scene of a list with a spread |
 | Not a `defineScenes` entry | The chapter is a part inside another chapter, such as one listed with `listChapters()`, and no list has an entry with its id |
 | Written as an expression: `<expression>` | The length is computed, such as `S.field - S.words`; the next lines of the tooltip list each name it reads, with its value, such as `BAR = 30`, or with why it can't be traced |
 | Exported, so other files may read it | The length is a `const` the file exports, so changing it could change other files |
@@ -477,9 +477,9 @@ For an element written inside one of your components that several scenes draw, *
 | Reason | Meaning |
 | --- | --- |
 | Wrap the element in a parent first | The element is not a child of another element: it is the root of what a component returns, a prop's value, or written inside `{…}`, such as `{show && <Rect />}` or `.map()` |
-| `Sequence` here is not Celesta's | The file uses the name `Sequence` for something else: its own declaration, a type-only import, or an import from another module |
+| `Sequence` here is not Celesta’s | The file uses the name `Sequence` for something else: its own declaration, a type-only import, or an import from another module |
 | No frame left after the playhead | The playhead is at the end of the scene |
-| Can't be set per scene yet | The element is shared and **This scene** is chosen; choose **Shared value** to give every scene the timing |
+| Can’t be set per scene yet | The element is shared and **This scene** is chosen; choose **Shared value** to give every scene the timing |
 | Scanning scenes… | The scan hasn't told yet whether the element is shared; when it can't tell, one of the other texts under "While the scenes are scanned" shows instead |
 | This file is outside the project | The element's file is outside the entry file's folder, or inside `node_modules` |
 
@@ -519,8 +519,8 @@ The element goes into the parent the line names when you choose the item. If the
 | The parent changed; choose the item again | The parent is no longer the one named when you chose the item |
 | The source changed while editing | The group is no longer where it was written, such as after an edit outside Celesta |
 | The source is still being read | The parent's position or its space on the canvas is still being read |
-| Couldn't show the file dialog: `<error>` | The file dialog failed to open |
-| Couldn't use the chosen file: `<error>` | The chosen file couldn't be copied into the `assets` folder |
+| Couldn’t show the file dialog: `<error>` | The file dialog failed to open |
+| Couldn’t use the chosen file: `<error>` | The chosen file couldn't be copied into the `assets` folder |
 
 The reasons in the next table can show here too, when they arise while you draw.
 
@@ -556,14 +556,14 @@ The line under the parent's name says why every item is disabled, and an item's 
 | Reason | Meaning |
 | --- | --- |
 | Select a group, or a layer inside one, to add into | Nothing is selected, or no group around the selected layer can be the parent |
-| No group in this scene's own code to add into | Under **This scene**, every group that could be the parent is shared. This also happens when the selected element is written once at the composition's root, inside a `<Group>` that spans several scenes (such as one around `<Scenes>`): such an element offers no **Edits change** control, and Celesta does not add into every scene unasked |
+| No group in this scene’s own code to add into | Under **This scene**, every group that could be the parent is shared. This also happens when the selected element is written once at the composition's root, inside a `<Group>` that spans several scenes (such as one around `<Scenes>`): such an element offers no **Edits change** control, and Celesta does not add into every scene unasked |
 | The source is still being read | The selected layer's source, or the group's space on the canvas, is still being looked up or read, such as right after a reload. During playback the group's space is not read and does not disable the items: choosing one pauses playback, which reads it, and until it is read nothing is outlined and a release is refused with this reason |
-| Scanning scenes…, Couldn't scan scenes: `<error>`, Not found in the scene scan, The scenes are not scanned | Celesta can't tell yet whether the group is shared; see "See what an edit changes" |
+| Scanning scenes…, Couldn’t scan scenes: `<error>`, Not found in the scene scan, The scenes are not scanned | Celesta can't tell yet whether the group is shared; see "See what an edit changes" |
 | A reason from "When an option can't be chosen" | The **Edits change** option in effect for the selected element is disabled: the one you chose earlier, or both options when you chose none. The tab's tooltip gives the same reason |
-| Can't add inside a loop or freeze frame | The nearest window around the group is a `<Loop>` or `<FreezeFrame>` |
-| Can't draw into a group turned in 3D | The group or one around it has `rotationX`, `rotationY`, or a `perspective` |
-| Can't draw into a group scaled to zero | The group or one around it is scaled to 0, so nothing drawn has a size inside it |
-| `Rect` here is not Celesta's | The file declares or imports another `Rect`, which disables that item only. With another `Sequence` (**`Sequence` here is not Celesta's**), every item is disabled when the element needs a `<Sequence>` |
+| Can’t add inside a loop or freeze frame | The nearest window around the group is a `<Loop>` or `<FreezeFrame>` |
+| Can’t draw into a group turned in 3D | The group or one around it has `rotationX`, `rotationY`, or a `perspective` |
+| Can’t draw into a group scaled to zero | The group or one around it is scaled to 0, so nothing drawn has a size inside it |
+| `Rect` here is not Celesta’s | The file declares or imports another `Rect`, which disables that item only. With another `Sequence` (**`Sequence` here is not Celesta’s**), every item is disabled when the element needs a `<Sequence>` |
 
 ## Undo
 

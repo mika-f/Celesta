@@ -23,7 +23,7 @@ use crate::refresh::{ReloadOrder, SelectionKeep};
 use crate::scene_entries::SceneEdge;
 use crate::scope::{SceneCalls, Scope, ScopeChoices};
 use crate::source::{PropertyArgs, load_source};
-use crate::timeline::LaneGesture;
+use crate::timeline::{LaneGesture, RulerDrag};
 use crate::timeline_drag::{BandDrag, BandNotice, SceneDrag, WindowScopeCache};
 use crate::transform_drag::TransformDrag;
 use crate::transform_handles::{PivotMode, ResizeTool};
@@ -180,7 +180,7 @@ pub(crate) struct EditorView {
     /// Numbers the React entry's reloads so a slow older one is not applied
     /// over a newer one.
     pub(crate) react_reloads: ReloadOrder,
-    /// The next reload number when `ReactPreview::watched_mtime` was last
+    /// The next reload number when `ReactPreview::watched` was last
     /// sampled outside a reload; older reloads' samples are not applied.
     pub(crate) watched_since: u64,
     /// The React Preview panel's Properties section.
@@ -223,7 +223,8 @@ pub(crate) struct EditorView {
     /// The interactive mode was left and the frame and sweep without it are
     /// still to be asked for (see `settle_interactive_mode`).
     pub(crate) interactive_refresh_due: bool,
-    pub(crate) scrubbing: bool,
+    /// The ruler scrub or the overview thumb drag, while one runs.
+    pub(crate) ruler_drag: RulerDrag,
     /// Playback gain for the preview only (0..=2). It scales the mixed
     /// buffer at the output device and never touches the project, so it has
     /// no effect on exports.
@@ -284,9 +285,6 @@ pub(crate) struct EditorView {
     pub(crate) timeline_lane_gesture: LaneGesture,
     /// The tracks' vertical scroll, moved directly by an Option pan.
     pub(crate) timeline_tracks_scroll: ScrollHandle,
-    /// Drag of the overview bar's thumb: `(pointer x at grab, view_start at
-    /// grab)`.
-    pub(crate) timeline_overview_drag: Option<(f32, f64)>,
     /// Window bounds of the clip lanes and the overview bar as last painted,
     /// for mapping pointer positions onto the composition.
     pub(crate) timeline_lane_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -527,7 +525,7 @@ impl EditorView {
             show_safe_areas: false,
             interactive: false,
             interactive_refresh_due: false,
-            scrubbing: false,
+            ruler_drag: RulerDrag::None,
             monitor_volume: 1.0,
             master_volume_drag: None,
             selected_clip_id: None,
@@ -564,7 +562,6 @@ impl EditorView {
             timeline_scrub_remainder: 0.0,
             timeline_lane_gesture: LaneGesture::default(),
             timeline_tracks_scroll: ScrollHandle::new(),
-            timeline_overview_drag: None,
             timeline_lane_bounds: Rc::default(),
             timeline_overview_bounds: Rc::default(),
             transport_width: Rc::default(),

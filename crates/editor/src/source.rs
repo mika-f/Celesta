@@ -9,8 +9,8 @@ use celesta_react_bridge::{
     refresh_project_types, runtime_paths as react_runtime_paths,
 };
 use std::ffi::OsStr;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 /// True when `path` should open as a standalone React composition rather than
 /// a `project.json`. A `*.celesta.json` is always a project; a JS/TS module
@@ -77,7 +77,7 @@ pub(crate) fn load_source(
         Some(path) if is_react_entry(path) => {
             let (node, cli_script) = react_runtime_paths();
             // Sampled before reading, so an edit made while Node starts is noticed.
-            let watched_mtime = watched_mtime(path, &property_args);
+            let watched = watched_stamp(path, &property_args);
             let properties = property_args.load(path)?;
             let metadata = ReactBridge::spawn_with_options(
                 &node,
@@ -116,7 +116,7 @@ pub(crate) fn load_source(
                     primitive_properties: metadata.primitive_properties,
                     component_schemas: metadata.component_schemas,
                     entry,
-                    watched_mtime,
+                    watched,
                     dependencies: metadata.prepare_dependencies,
                     property_args,
                     disk_properties: properties.clone(),
@@ -210,40 +210,62 @@ impl DependencyDebounce {
     }
 }
 
-/// Newest mtime among the entry's sources, its `--props-file` (which may live
-/// outside the entry's directory), and the entry directory itself, whose mtime
-/// moves when `props.json` is created or deleted.
-pub(crate) fn watched_mtime(entry: &Path, property_args: &PropertyArgs) -> Option<SystemTime> {
-    let sources = entry.parent().and_then(newest_source_mtime);
-    let props_file = property_args.props_file.as_deref().and_then(|file| {
-        std::fs::metadata(file)
-            .and_then(|meta| meta.modified())
-            .ok()
-    });
-    let folder = entry
-        .parent()
-        .and_then(|dir| std::fs::metadata(dir).and_then(|meta| meta.modified()).ok());
-    sources.max(props_file).max(folder)
-}
+/// A fingerprint of what the reload watcher watches: the path, mtime and
+/// size of every source file under the entry's folder (see
+/// [`source_files`]), the mtime of every folder walked (which changes when
+/// a file in it is added, removed or renamed), and the `--props-file`'s.
+/// Two samples differ when any of them changed, in either direction: a
+/// file restored with an older mtime (`cp -p`, `rsync -a`) counts, and so
+/// does a module deleted from a subfolder. `None` when the entry has no
+/// folder or its folder's metadata cannot be read; a subfolder that cannot
+/// be listed is left out of the sample.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WatchStamp(u64);
 
-/// Newest mtime among the JS/TS/JSON/CSS/WGSL source files under `dir` (see
-/// [`source_files`]). Used to notice when a React composition's code — the
-/// entry or any module it bundles — changed on disk.
-pub(crate) fn newest_source_mtime(dir: &Path) -> Option<SystemTime> {
-    source_files(dir)
-        .iter()
-        .filter_map(|path| {
-            std::fs::symlink_metadata(path)
-                .and_then(|meta| meta.modified())
+pub(crate) fn watched_stamp(entry: &Path, property_args: &PropertyArgs) -> Option<WatchStamp> {
+    let dir = entry.parent()?;
+    let mut seen = Vec::new();
+    // Relative to `dir`, so an entry opened as `film.tsx` and later
+    // sampled as `/p/film.tsx` gives the same stamp.
+    walk_sources(dir, &mut |path, metadata| {
+        let path = path.strip_prefix(dir).unwrap_or(path).to_owned();
+        seen.push((path, metadata.modified().ok(), metadata.len()));
+    });
+    if seen.is_empty() {
+        return None;
+    }
+    seen.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let mut hasher = DefaultHasher::new();
+    seen.hash(&mut hasher);
+    property_args
+        .props_file
+        .as_deref()
+        .map(|file| {
+            std::fs::metadata(file)
                 .ok()
+                .map(|metadata| (metadata.modified().ok(), metadata.len()))
         })
-        .max()
+        .hash(&mut hasher);
+    Some(WatchStamp(hasher.finish()))
 }
 
 /// The JS/TS/JSON/CSS/WGSL/subtitle source files under `dir`, recursively
 /// to depth 8, skipping `node_modules`, `dist`, `.tmp` and `.git`.
 pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
-    fn walk(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) {
+    let mut files = Vec::new();
+    walk_sources(dir, &mut |path, metadata| {
+        if !metadata.is_dir() {
+            files.push(path.to_owned());
+        }
+    });
+    files
+}
+
+/// Calls `visit` with `dir` and, recursively to depth 8, every folder and
+/// source file under it (see [`source_files`]), with their metadata (not
+/// followed through a symlink). An unreadable entry is skipped.
+fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
+    fn walk(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata), depth: u32) {
         if depth > 8 {
             return;
         }
@@ -252,21 +274,24 @@ pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(file_type) = entry.file_type() else {
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
                 continue;
             };
-            if file_type.is_dir() {
+            if metadata.is_dir() {
                 if !matches!(
                     path.file_name().and_then(OsStr::to_str),
                     Some("node_modules" | "dist" | ".tmp" | ".git")
                 ) {
-                    walk(&path, files, depth + 1);
+                    visit(&path, &metadata);
+                    walk(&path, visit, depth + 1);
                 }
             } else if matches!(
                 path.extension().and_then(OsStr::to_str),
                 Some(
                     "tsx"
                         | "ts"
+                        | "mts"
+                        | "cts"
                         | "jsx"
                         | "js"
                         | "mjs"
@@ -278,19 +303,21 @@ pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
                         | "vtt"
                 )
             ) {
-                files.push(path);
+                visit(&path, &metadata);
             }
         }
     }
-    let mut files = Vec::new();
-    walk(dir, &mut files, 0);
-    files
+    let Ok(metadata) = std::fs::metadata(dir) else {
+        return;
+    };
+    visit(dir, &metadata);
+    walk(dir, visit, 0);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     fn dependency(path: &str, mtime: &str) -> PrepareDependency {
         PrepareDependency {
@@ -354,8 +381,82 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A folder with `film.tsx` and `scenes/{a,b}.ts`. The entry's mtime is
+    /// a day ahead of the clock, so it stays the newest of everything.
+    fn scene_folder(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("celesta-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        for module in ["scenes/a.ts", "scenes/b.ts"] {
+            std::fs::write(dir.join(module), "export const x = 1;").unwrap();
+        }
+        let entry = dir.join("film.tsx");
+        std::fs::write(&entry, "export default null;").unwrap();
+        let ahead = SystemTime::now() + Duration::from_secs(86_400);
+        set_modified(&entry, ahead);
+        dir
+    }
+
+    fn set_modified(path: &Path, time: SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_modified(time))
+            .unwrap();
+    }
+
     #[test]
-    fn watched_mtime_notices_props_json_deletion() {
+    fn the_watcher_notices_a_module_deleted_from_a_subfolder() {
+        let dir = scene_folder("watch-delete");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+
+        let before = watched_stamp(&entry, &args);
+        // Neither the newest file nor the entry's folder changes.
+        std::fs::remove_file(dir.join("scenes/a.ts")).unwrap();
+        let after = watched_stamp(&entry, &args);
+
+        assert!(before.is_some());
+        assert_ne!(before, after);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_watcher_notices_a_file_restored_with_an_older_mtime() {
+        let dir = scene_folder("watch-restore");
+        let entry = dir.join("film.tsx");
+        let module = dir.join("scenes/a.ts");
+        let args = PropertyArgs::default();
+        let modified = std::fs::metadata(&module).unwrap().modified().unwrap();
+
+        let before = watched_stamp(&entry, &args);
+        // What `cp -p` of an older copy does: new text, an older mtime.
+        std::fs::write(&module, "export const x = 2;").unwrap();
+        set_modified(&module, modified - Duration::from_secs(3_600));
+        let after = watched_stamp(&entry, &args);
+
+        assert_ne!(before, after);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_watcher_sample_is_the_same_while_nothing_changes() {
+        let dir = scene_folder("watch-same");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+
+        assert_eq!(watched_stamp(&entry, &args), watched_stamp(&entry, &args));
+        // Another spelling of the same folder, such as a relative path on
+        // the command line and the absolute entry later.
+        let name = dir.file_name().unwrap();
+        let spelled = dir.join("..").join(name).join("film.tsx");
+        assert_eq!(watched_stamp(&spelled, &args), watched_stamp(&entry, &args));
+        assert_eq!(watched_stamp(&dir.join("missing/film.tsx"), &args), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_watcher_notices_props_json_deletion() {
         let dir = std::env::temp_dir().join(format!("celesta-watch-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -369,10 +470,10 @@ mod tests {
         tick();
         let args = PropertyArgs::default();
 
-        let before = watched_mtime(&entry, &args);
+        let before = watched_stamp(&entry, &args);
         tick();
         std::fs::remove_file(dir.join("props.json")).unwrap();
-        let after = watched_mtime(&entry, &args);
+        let after = watched_stamp(&entry, &args);
 
         assert_ne!(before, after);
         std::fs::remove_dir_all(&dir).unwrap();

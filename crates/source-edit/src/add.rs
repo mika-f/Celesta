@@ -186,7 +186,7 @@ impl AddLock {
     pub fn text(&self) -> String {
         match self {
             Self::NoChildrenRegion => "Its children come from a prop".to_string(),
-            Self::Import(ImportLock::Clash { name }) => format!("`{name}` here is not Celesta's"),
+            Self::Import(ImportLock::Clash { name }) => format!("`{name}` here is not Celesta’s"),
         }
     }
 }
