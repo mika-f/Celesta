@@ -123,7 +123,23 @@ pub(crate) fn stream_duration(duration: i64, time_base: AVRational) -> Option<Ti
     if duration <= 0 || time_base.num <= 0 || time_base.den <= 0 {
         return None;
     }
-    let value = duration.checked_mul(i64::from(time_base.num))?;
-    let timescale = u32::try_from(time_base.den).ok()?;
+    // Cancel common factors first, so a product that only overflows before
+    // reduction still fits.
+    let (mut duration, mut num, mut den) =
+        (duration, i64::from(time_base.num), i64::from(time_base.den));
+    let common = gcd(num, den);
+    (num, den) = (num / common, den / common);
+    let common = gcd(duration, den);
+    (duration, den) = (duration / common, den / common);
+    let value = duration.checked_mul(num)?;
+    let timescale = u32::try_from(den).ok()?;
     Some(Time::new(value, timescale).reduced())
+}
+
+/// The greatest common divisor of two positive numbers.
+fn gcd(mut left: i64, mut right: i64) -> i64 {
+    while right != 0 {
+        (left, right) = (right, left % right);
+    }
+    left
 }

@@ -1099,9 +1099,11 @@ conditional plays only on frames where it is rendered.
   only)). Refer to a font file by the **family name stored inside the
   font**, not the file name, and to a stylesheet's faces by its
   `font-family`, not the names in its files. A stylesheet's `url()` is
-  resolved against the stylesheet; in a local stylesheet file it is a URL
-  path (`url(My%20Font.woff2)` loads `My Font.woff2`; `?query` and
-  `#fragment` are ignored), and a `file:` URL names that file. See
+  resolved against the stylesheet. From a stylesheet URL, a relative one is
+  downloaded with its query. In a local stylesheet file, it is a URL path to
+  a file beside it (`url(My%20Font.woff2)` loads `My Font.woff2`; `?query`
+  and `#fragment` are ignored), a `file:` URL names that file, and a
+  protocol-relative `//host/...` is skipped. See
   [text.md](text.md#fonts-fallback-and-emoji) for weights and fallback.
 - Stylesheet descriptors work as in CSS in preview and export: each rule's
   `font-weight` (a range draws a variable font at the asked weight),

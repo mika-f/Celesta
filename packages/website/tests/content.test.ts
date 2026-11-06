@@ -113,7 +113,7 @@ test('both locales have the same tabs and toggles in every chapter', () => {
     'create-project': { tabs: 1, tab: 2, accordion: 0, toggle: 0 },
     'export': { tabs: 9, tab: 18, accordion: 0, toggle: 0 },
     'timelines': { tabs: 0, tab: 0, accordion: 0, toggle: 3 },
-    'troubleshooting': { tabs: 0, tab: 0, accordion: 1, toggle: 10 },
+    'troubleshooting': { tabs: 0, tab: 0, accordion: 1, toggle: 11 },
   };
   for (const slug of slugs) assert.deepEqual(en.get(slug), expected[slug] ?? { tabs: 0, tab: 0, accordion: 0, toggle: 0 }, slug);
 });

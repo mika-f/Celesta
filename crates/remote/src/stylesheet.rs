@@ -543,11 +543,15 @@ fn resolve_reference(
             // A URL path, as a browser reads it: `My%20Font.woff2` names
             // `My Font.woff2`.
             let reference = reference.split(['?', '#']).next().unwrap_or_default();
-            let reference = percent_decode_str(reference).decode_utf8_lossy();
+            let decoded = percent_decode_str(reference).decode_utf8().map_err(|_| {
+                RemoteAssetError::UndecodablePath {
+                    url: reference.to_owned(),
+                }
+            })?;
             let joined = Path::new(path)
                 .parent()
                 .unwrap_or_else(|| Path::new(""))
-                .join(&*reference);
+                .join(&*decoded);
             Ok(Some(AssetLocation::File {
                 path: joined.to_string_lossy().into_owned(),
             }))
@@ -963,6 +967,13 @@ mod tests {
             vec![AssetLocation::File {
                 path: font.to_string_lossy().into_owned(),
             }]
+        );
+
+        let undecodable = "@font-face { font-family: A; src: url(a%FF.woff2) }";
+        let error = stylesheet_font_faces(undecodable, &stylesheet).unwrap_err();
+        assert!(
+            matches!(&error, RemoteAssetError::UndecodablePath { url } if url == "a%FF.woff2"),
+            "{error:?}"
         );
 
         let remote_host = "@font-face { font-family: A; src: url(file://example.com/a.woff2) }";

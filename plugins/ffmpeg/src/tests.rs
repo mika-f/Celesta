@@ -112,6 +112,11 @@ fn stream_durations_are_exact_in_the_stream_time_base() {
         stream_duration(i64::MAX, AVRational { num: 2, den: 1 }),
         None
     );
+    // The product overflows only before the common factor of 2 cancels.
+    assert_eq!(
+        stream_duration(i64::MAX - 1, AVRational { num: 2, den: 4 }),
+        Some(Time::new(i64::MAX / 2, 1))
+    );
     assert_eq!(stream_duration(0, AVRational { num: 1, den: 1 }), None);
 }
 

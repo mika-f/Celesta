@@ -744,18 +744,19 @@ pub struct ReactMedia {
     pub video_clip_ids: Vec<String>,
 }
 
+/// The longest message the bridge reads. A frame's scene is hundreds of
+/// KiB; a length past this is not one the runtime wrote.
+const MAX_MESSAGE_LENGTH: usize = 1 << 30;
+
 /// Reads one message from the CLI into `buffer`, reusing its allocation. With
 /// `--length-prefixed` every message is a little-endian `u32` byte count
 /// followed by that many bytes of JSON, so a frame's scene is read in a few
 /// large reads instead of being scanned for its line end.
 ///
 /// A closed stdout fails as an `UnexpectedExit` without stderr;
-/// [`StderrCapture::exit_error`] fills it in.
-/// The longest message the bridge reads. A frame's scene is hundreds of
-/// KiB; a length past this is not one the runtime wrote.
-const MAX_MESSAGE_LENGTH: usize = 1 << 30;
-
-/// Reads one length-prefixed JSON message from the runtime into `buffer`.
+/// [`StderrCapture::exit_error`] fills it in. A length past
+/// [`MAX_MESSAGE_LENGTH`], an empty message, or one that does not start
+/// with `{` fails as a `Protocol` error: something else wrote to stdout.
 pub(crate) fn read_message(
     stdout: &mut impl Read,
     buffer: &mut Vec<u8>,

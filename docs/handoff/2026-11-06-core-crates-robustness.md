@@ -40,7 +40,9 @@ on the host side.
   `measureText`, `decodeAudio`, `invalidProperties`, `error`).
   `propertySchema` is read into an ordered list in the same pass, so
   `ReadyMessage::Ready` carries `project_property_order` and the second parse
-  (`ready_property_order`) is gone. A repeated key keeps its first position.
+  (`ready_property_order`) is gone. A repeated top-level key is a
+  `duplicate field` error, as a derived struct reports it; a repeated
+  `propertySchema` key keeps its first position.
   A `derive` with field context would need `serde_path_to_error`, which is
   not a dependency; the top-level key is what a version mismatch needs.
 - **Local stylesheet `url()`s** (`celesta-remote`, `resolve_reference`). In
@@ -48,7 +50,8 @@ on the host side.
   a browser reads it: after the query and fragment are cut, it is
   percent-decoded (`percent-encoding`, now a direct dependency), so
   `url(My%20Font.woff2)` finds `My Font.woff2` and `url(100%25.woff2#x)`
-  finds `100%.woff2`. A `file:` reference becomes a path through
+  finds `100%.woff2`. Escapes that are not UTF-8 are the new
+  `RemoteAssetError::UndecodablePath`, not a lookup of a mangled name. A `file:` reference becomes a path through
   `Url::to_file_path`; one that names no local path (a host, on Unix) is the
   new `RemoteAssetError::NotAFilePath`. Follows #600.
 
@@ -79,8 +82,9 @@ on the host side.
 - **`relative_path`** treated `..intro.mp4` as a parent path. It now checks
   `joined == ".." || joined.starts_with("../")`.
 - **`stream_duration`** (`plugins/ffmpeg`, `probe.rs`) is exact:
-  `Time::new(duration * num, den).reduced()`, with a checked multiply, not a
-  truncating conversion to microseconds. `None` on overflow. `probe_path`
+  `Time::new(duration * num, den).reduced()`, not a truncating conversion
+  to microseconds. Common factors of `num`/`den` and `duration`/`den` cancel
+  before the checked multiply, so only a duration that cannot fit is `None`. `probe_path`
   still opens the container twice (`find_all_stream_infos` and
   `container_info::get_duration_us`): ez-ffmpeg 0.19 exposes no shared
   format context, and probes are memoized per path, so it stays.

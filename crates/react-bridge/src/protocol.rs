@@ -338,6 +338,23 @@ struct RawReady {
     error: Option<String>,
 }
 
+/// The keys [`RawReady`] reads; others are skipped.
+const READY_KEYS: [&str; 13] = [
+    "config",
+    "compositionId",
+    "compositions",
+    "componentSchemas",
+    "primitiveProperties",
+    "propertySchema",
+    "dependencies",
+    "legacyImports",
+    "probeMedia",
+    "measureText",
+    "decodeAudio",
+    "invalidProperties",
+    "error",
+];
+
 impl<'de> Deserialize<'de> for RawReady {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct RawVisitor;
@@ -351,28 +368,35 @@ impl<'de> Deserialize<'de> for RawReady {
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<RawReady, A::Error> {
                 let mut raw = RawReady::default();
+                let mut seen: Vec<&'static str> = Vec::new();
                 while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "config" => raw.config = Some(value(&mut map, &key)?),
-                        "compositionId" => raw.composition_id = value(&mut map, &key)?,
-                        "compositions" => raw.compositions = value(&mut map, &key)?,
-                        "componentSchemas" => raw.component_schemas = value(&mut map, &key)?,
+                    let Some(&known) = READY_KEYS.iter().find(|known| **known == key) else {
+                        map.next_value::<IgnoredAny>()?;
+                        continue;
+                    };
+                    // As a derived struct does, rather than keep the last.
+                    if seen.contains(&known) {
+                        return Err(A::Error::duplicate_field(known));
+                    }
+                    seen.push(known);
+                    match known {
+                        "config" => raw.config = Some(value(&mut map, known)?),
+                        "compositionId" => raw.composition_id = value(&mut map, known)?,
+                        "compositions" => raw.compositions = value(&mut map, known)?,
+                        "componentSchemas" => raw.component_schemas = value(&mut map, known)?,
                         "primitiveProperties" => {
-                            raw.primitive_properties = value(&mut map, &key)?;
+                            raw.primitive_properties = value(&mut map, known)?;
                         }
-                        "propertySchema" => raw.property_schema = value(&mut map, &key)?,
-                        "dependencies" => raw.dependencies = value(&mut map, &key)?,
-                        "legacyImports" => raw.legacy_imports = value(&mut map, &key)?,
-                        "probeMedia" => raw.probe_media = Some(value(&mut map, &key)?),
-                        "measureText" => raw.measure_text = Some(value(&mut map, &key)?),
-                        "decodeAudio" => raw.decode_audio = Some(value(&mut map, &key)?),
+                        "propertySchema" => raw.property_schema = value(&mut map, known)?,
+                        "dependencies" => raw.dependencies = value(&mut map, known)?,
+                        "legacyImports" => raw.legacy_imports = value(&mut map, known)?,
+                        "probeMedia" => raw.probe_media = Some(value(&mut map, known)?),
+                        "measureText" => raw.measure_text = Some(value(&mut map, known)?),
+                        "decodeAudio" => raw.decode_audio = Some(value(&mut map, known)?),
                         "invalidProperties" => {
-                            raw.invalid_properties = Some(value(&mut map, &key)?);
+                            raw.invalid_properties = Some(value(&mut map, known)?);
                         }
-                        "error" => raw.error = Some(value(&mut map, &key)?),
-                        _ => {
-                            map.next_value::<IgnoredAny>()?;
-                        }
+                        _ => raw.error = Some(value(&mut map, known)?),
                     }
                 }
                 Ok(raw)

@@ -1490,6 +1490,14 @@ fn a_ready_message_that_fails_to_parse_names_the_field() {
         .expect("a malformed config is an error");
     assert!(error.to_string().starts_with("`config`: "), "{error}");
 
+    let error = serde_json::from_str::<ReadyMessage>(r#"{"error": "a", "error": "b"}"#)
+        .err()
+        .expect("a repeated key is an error");
+    assert!(
+        error.to_string().contains("duplicate field `error`"),
+        "{error}"
+    );
+
     let error = serde_json::from_str::<ReadyMessage>(r#"{"unknown": 1}"#)
         .err()
         .expect("a message of no known kind is an error");

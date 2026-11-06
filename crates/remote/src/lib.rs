@@ -316,6 +316,10 @@ pub enum RemoteAssetError {
     /// a host.
     #[error("`{url}` is not a path on this computer")]
     NotAFilePath { url: String },
+    /// A local stylesheet's reference whose percent escapes are not UTF-8,
+    /// so it names no file Celesta can look up.
+    #[error("`{url}` does not decode to a UTF-8 file name")]
+    UndecodablePath { url: String },
     /// `url` is shortened, since a `data:` URL can hold a whole file.
     #[error("`{url}` is not a valid data: URL: {reason}")]
     InvalidData { url: String, reason: &'static str },
