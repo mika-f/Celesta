@@ -20,6 +20,9 @@ pub struct ImageSources {
     /// display size and fit (its latest resolution), at most
     /// [`LAYOUTS_PER_SOURCE`].
     rendered: HashMap<String, VecDeque<Render>>,
+    /// The system fonts SVG text draws with, loaded on the first SVG and
+    /// shared by every SVG after it: scanning them is slow.
+    svg_fonts: Option<Arc<usvg::fontdb::Database>>,
 }
 
 struct Render {
@@ -356,11 +359,16 @@ impl ImageSources {
         let source = if svg {
             let text = std::str::from_utf8(&data).map_err(invalid)?;
             let text = css_fallbacks(text);
-            let mut options = usvg::Options {
+            let fonts = self.svg_fonts.get_or_insert_with(|| {
+                let mut fonts = usvg::fontdb::Database::new();
+                fonts.load_system_fonts();
+                Arc::new(fonts)
+            });
+            let options = usvg::Options {
                 resources_dir: path.parent().map(Path::to_path_buf),
+                fontdb: Arc::clone(fonts),
                 ..Default::default()
             };
-            options.fontdb_mut().load_system_fonts();
             Source::Svg(Box::new(
                 usvg::Tree::from_str(&text, &options).map_err(invalid)?,
             ))
@@ -1201,5 +1209,51 @@ mod tests {
             (40.0, 20.0, (80, 40))
         );
         assert_eq!(result.pixels.get_pixel(40, 20).0, [255, 255, 255, 128]);
+    }
+
+    #[test]
+    fn svgs_share_one_font_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sources = ImageSources::default();
+        for name in ["a", "b"] {
+            let path = dir.path().join(format!("{name}.svg"));
+            std::fs::write(
+                &path,
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>"#,
+            )
+            .unwrap();
+            sources.natural_size(name, &path).unwrap();
+        }
+        let fonts = |key: &str| match &sources.sources[key] {
+            Source::Svg(tree) => Arc::clone(tree.fontdb()),
+            _ => panic!("{key} is not an SVG"),
+        };
+        assert!(Arc::ptr_eq(&fonts("a"), &fonts("b")));
+    }
+
+    #[test]
+    fn svg_text_draws_with_a_system_font() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sources = ImageSources::default();
+        // The text loads after another SVG, so it draws with the fonts that
+        // SVG loaded.
+        let blank = dir.path().join("blank.svg");
+        std::fs::write(
+            &blank,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>"#,
+        )
+        .unwrap();
+        sources.natural_size("blank", &blank).unwrap();
+        let path = dir.path().join("text.svg");
+        std::fs::write(&path, r#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><text x="4" y="32" font-size="32" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" fill="white">Hi</text></svg>"#).unwrap();
+        let image = sources
+            .render("text", &path, None, None, None, None, 1.0)
+            .unwrap();
+        let drawn = image
+            .pixels
+            .pixels()
+            .filter(|pixel| pixel[3] == 255)
+            .count();
+        assert!(drawn > 20, "the text drew {drawn} opaque pixels");
     }
 }
