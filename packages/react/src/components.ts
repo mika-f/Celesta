@@ -542,10 +542,22 @@ function assetReference(
   };
 }
 
-function assignAssetRef(ref: React.ForwardedRef<AssetReference>, value: AssetReference): void {
+/**
+ * The reference an asset element declares, memoized on its `kind`, `src` and
+ * `name`. An object `ref` gets it during render as well as through the
+ * imperative handle.
+ */
+function useAssetReference(
+  ref: React.ForwardedRef<AssetReference>,
+  kind: AssetReference['kind'],
+  src: AssetInput,
+  name?: string,
+): void {
+  const reference = React.useMemo(() => assetReference(kind, src, name), [kind, src, name]);
   if (ref && typeof ref === 'object') {
-    ref.current = value;
+    ref.current = reference;
   }
+  React.useImperativeHandle(ref, () => reference, [reference]);
 }
 
 export function Composition(props: CompositionProps): React.ReactElement | null {
@@ -601,9 +613,7 @@ export function Mask(props: MaskProps): React.ReactElement {
 
 export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {
   const inAssets = React.useContext(AssetsContext);
-  const reference = React.useMemo(() => assetReference('image', props.src, props.name), [props.src, props.name]);
-  assignAssetRef(ref, reference);
-  React.useImperativeHandle(ref, () => reference, [reference]);
+  useAssetReference(ref, 'image', props.src, props.name);
   return React.createElement(inAssets ? 'asset-image' : 'image', props);
 });
 
@@ -704,12 +714,7 @@ function offsetPaint(paint: string | Paint, dx: number, dy: number): string | Pa
 
 export const Video = React.forwardRef<AssetReference, VideoProps>(function Video(props, ref) {
   const inAssets = React.useContext(AssetsContext);
-  const reference = React.useMemo(
-    () => assetReference('video', props.src, props.name),
-    [props.name, props.src],
-  );
-  assignAssetRef(ref, reference);
-  React.useImperativeHandle(ref, () => reference, [reference]);
+  useAssetReference(ref, 'video', props.src, props.name);
   return React.createElement(inAssets ? 'asset-video' : 'video', props);
 });
 
@@ -718,9 +723,7 @@ export const Font = React.forwardRef<AssetReference, FontProps>(function Font(pr
     throw new Error('<Font> accepts either `src` or `google`, but not both.');
   }
   const src = props.google !== undefined ? googleFont(props.google, props) : props.src;
-  const reference = React.useMemo(() => assetReference('font', src, props.name), [src, props.name]);
-  assignAssetRef(ref, reference);
-  React.useImperativeHandle(ref, () => reference, [reference]);
+  useAssetReference(ref, 'font', src, props.name);
   return React.createElement('asset-font', { src, name: props.name });
 });
 
@@ -1079,9 +1082,7 @@ export interface AudioDuck {
  */
 export const Audio = React.forwardRef<AssetReference, AudioProps>(function Audio(props, ref) {
   const inAssets = React.useContext(AssetsContext);
-  const reference = React.useMemo(() => assetReference('audio', props.src), [props.src]);
-  assignAssetRef(ref, reference);
-  React.useImperativeHandle(ref, () => reference, [reference]);
+  useAssetReference(ref, 'audio', props.src);
   return React.createElement(inAssets ? 'asset-audio' : 'audio', props);
 });
 
