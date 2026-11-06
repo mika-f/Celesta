@@ -179,3 +179,36 @@ test('<Video> never reports pitch', () => {
   const [clip] = at(composition, 0).audio;
   expect('pitch' in clip || 'preservePitch' in clip).toBe(false);
 });
+
+test('<Video> rejects a startFrom or playbackRate that is not a finite number', () => {
+  for (const props of [{ startFrom: Number.NaN }, { playbackRate: Number.NaN }, { startFrom: Infinity }]) {
+    const composition = mount(root(30, h(Video, { src: './clip.mp4', ...props })));
+    expect(() => at(composition, 0), JSON.stringify(props)).toThrow(/<Video> (startFrom|playbackRate) must be a finite number/);
+  }
+});
+
+test('<Audio> rejects a volume, playbackRate, pitch, or startFrom it cannot play', () => {
+  const nanKeyframe = {
+    type: 'keyframes',
+    keyframes: [{ time: { value: 0, timescale: 30 }, value: 0 }, { time: { value: 15, timescale: 30 }, value: Number.NaN }],
+  } as unknown as AnimatedNumber;
+  const invalid: [Partial<AudioProps>, RegExp][] = [
+    [{ volume: Number.NaN }, /<Audio> volume must be a finite number or keyframes with finite times and values/],
+    [{ volume: nanKeyframe }, /<Audio> volume must be a finite number or keyframes with finite times and values/],
+    [{ playbackRate: Number.NaN }, /<Audio> playbackRate must be a finite number or keyframes/],
+    [{ pitch: Infinity }, /<Audio> pitch must be a finite number or keyframes/],
+    [{ startFrom: Number.NaN }, /<Audio> startFrom must be a finite number/],
+  ];
+  for (const [props, message] of invalid) {
+    const composition = mount(root(30, h(Audio, { src: './a.wav', ...props })));
+    expect(() => at(composition, 0), String(Object.keys(props))).toThrow(message);
+  }
+  // Inside a later sequence, too.
+  const later = mount(root(60, h(Sequence, { from: 30 }, h(Audio, { src: './a.wav', volume: Number.NaN }))));
+  expect(() => at(later, 40)).toThrow(/<Audio> volume/);
+});
+
+test('<Video> soundtrack rejects a volume that is not a finite number', () => {
+  const composition = mount(root(30, h(Video, { src: './clip.mp4', volume: Number.NaN })));
+  expect(() => at(composition, 0)).toThrow(/<Video> volume must be a finite number or keyframes/);
+});

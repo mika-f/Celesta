@@ -32,7 +32,7 @@ import {
 import { markPrimitive, markTransparent, markWindow } from './source-chain';
 import { themeTextContent } from './rich-text';
 import { type TextShorthand, ThemeContext, themedShapePaint, themedTextStyle } from './theme';
-import { endsWithComposition, isBefore, secondsFromTime, secondsToTime } from './time';
+import { isBefore, secondsFromTime, secondsToTime, sequenceWindow } from './time';
 
 // Unlike the pre-reconciler tree walker, these are real function components:
 // each returns a host element (a lowercase intrinsic type the reconciler in
@@ -770,25 +770,19 @@ export function Sequence(props: SequenceProps): ReturnType<typeof React.createEl
   const fontFallback = resolveFontFallback(props.fontFallback, context.fontFallback);
   const fps = context.fps;
   const localSeconds = secondsFromTime(context.time);
-  const from = typeof props.from === 'number' && Number.isFinite(props.from) ? props.from : 0;
-  const durationInFrames = props.durationInFrames;
-  const hasDuration = typeof durationInFrames === 'number' && Number.isFinite(durationInFrames);
-  const duration =
-    hasDuration
-      ? Math.max(0, durationInFrames)
-      : Math.max(0, context.durationInFrames - from);
-  const endSeconds = hasDuration ? (from + duration) / fps : context.durationInFrames / fps;
-  // Past the composition's end (see `openEnd`), a window that ends with the
-  // composition stays open; one that ends later keeps its own end.
-  // render.ts's walker decides the same way.
-  const openEnd =
-    context.openEnd === true &&
-    root !== null &&
-    endsWithComposition(secondsFromTime(root.time) - localSeconds + endSeconds, root.durationInFrames / fps, fps);
-  if (isBefore(localSeconds, from / fps) || (!openEnd && !isBefore(localSeconds, endSeconds))) {
+  const placed = sequenceWindow(props, {
+    fps,
+    endSec: context.durationInFrames / fps,
+    originSec: root === null ? 0 : secondsFromTime(root.time) - localSeconds,
+    compositionEndSec: root === null ? Infinity : root.durationInFrames / fps,
+    openEnd: context.openEnd === true && root !== null,
+  });
+  const { from, openEnd } = placed;
+  const duration = placed.durationInFrames ?? Math.max(0, context.durationInFrames - from);
+  if (isBefore(localSeconds, placed.startSec) || (!openEnd && !isBefore(localSeconds, placed.endSec))) {
     return React.createElement('sequence', props, null);
   }
-  const shiftedTime = secondsToTime(localSeconds - from / fps);
+  const shiftedTime = secondsToTime(localSeconds - placed.startSec);
   return React.createElement(
     CompositionRuntimeContext.Provider,
     {

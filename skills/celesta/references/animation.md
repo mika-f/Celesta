@@ -97,7 +97,9 @@ interpolate(frame, [0, 20, 40], [0, 1, 0], {
 ```
 
 `inputRange` must be strictly increasing and the same length as
-`outputRange` (at least 2). **The default extrapolation is `extend`**, so
+`outputRange` (at least 2). `input` and every range entry must be finite: a
+`NaN` (say, from a misspelled field) throws rather than returning `NaN`,
+which `'clamp'` would not catch. **The default extrapolation is `extend`**, so
 values keep changing past the range; pass `'clamp'` for fades and moves.
 
 ## interpolateColor
@@ -144,7 +146,8 @@ kebab case (`ease-out-back`).
 
 Damped spring from `from` (default 0) to `to` (default 1), which may
 overshoot. `config`: `stiffness` (100), `damping` (10), `mass` (1),
-`overshootClamping` (false). Frames before `delay` return `from`.
+`overshootClamping` (false). Frames before `delay` return `from`. `frame`
+must be finite and `fps` finite and above 0, or it throws.
 
 ```tsx
 const frame = useCurrentFrame();
@@ -163,7 +166,11 @@ block of entrances:
 
 `<Sequence from? durationInFrames?>` shows its children only during
 `[from, from + durationInFrames)` in the parent's frames (default: until the
-parent's end). Inside, frames and media restart at 0. Sequences nest and
+parent's end). `from` defaults to 0 and must be finite; `durationInFrames`
+must be at least 0, where `0` is an empty window and omitted or `Infinity`
+runs to the parent's end. `NaN`, a negative duration, or a non-number throws
+(see errors.md), so a misspelled field cannot make a scene cover every later
+one. Inside, frames and media restart at 0. Sequences nest and
 accept common layer props, plus `lang` (default text language for the
 children) and `fontFallback` (`'loaded'` tries `<Font>` fonts before system
 fonts for the children's text; see text.md).

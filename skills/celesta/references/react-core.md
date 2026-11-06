@@ -892,9 +892,9 @@ import { Static } from '@celesta.studio/react';
 | --- | --- |
 | `src` | Path or URL. Without `width` or `height`, drawn at natural pixel size. |
 | `width`, `height` | Display size in pixels, as on `<Image>`: one alone keeps the frame's aspect ratio; both stretch the frame to that box. Finite and positive. No `fit`. `scale` applies afterwards. |
-| `startFrom` | Seconds into the file at the enclosing sequence's frame 0. Default `0`. |
-| `playbackRate` | Static number only. Default `1`. |
-| `volume` | Linear gain of the soundtrack, number or [keyframes](#keyframe-values). Default `1`. |
+| `startFrom` | Seconds into the file at the enclosing sequence's frame 0. Finite; default `0`. |
+| `playbackRate` | Static finite number only. Default `1`. |
+| `volume` | Linear gain of the soundtrack, finite number or [keyframes](#keyframe-values). Default `1`. |
 | `muted` | Silences the soundtrack. Default `false`. |
 | `duckGroup` / `duck` | As on `<Audio>`: see [Ducking](#ducking). |
 | `loop` | Past the end of the file, starts the picture and soundtrack over from the file's beginning. Default `false`: the last frame holds, in silence. |
@@ -977,17 +977,22 @@ Runnable: [`packages/cli/examples/with-media-frame.tsx`](../../../packages/cli/e
 | Prop | Notes |
 | --- | --- |
 | `src` | Path or URL. Any file FFmpeg can decode, including a video file's audio. |
-| `startFrom` | Seconds into the file. Default `0`. |
-| `playbackRate` | Number or [keyframes](#keyframe-values). Default `1`. |
+| `startFrom` | Seconds into the file. Finite; default `0`. |
+| `playbackRate` | Finite number or [keyframes](#keyframe-values). Default `1`. |
 | `pitch` | Semitones, number or [keyframes](#keyframe-values). Default `0`, range −24…24; fractions are cents (`0.5` = 50 cents). Values outside ±24 are clamped. |
 | `preservePitch` | Default `false`: `playbackRate` moves speed and pitch together. `true`: `playbackRate` changes only the duration and `pitch` alone sets the pitch. Heard transposition is `2^(pitch/12) × (preservePitch ? 1 : playbackRate)`. |
-| `volume` | Linear gain, number or [keyframes](#keyframe-values). Default `1`. |
+| `volume` | Linear gain, finite number or [keyframes](#keyframe-values). Default `1`. |
 | `muted` | Default `false`. |
 | `loop` | Past the end of the file, starts over from its beginning. Default `false`: silence. |
 | `fadeIn` | Seconds to rise from silence where the clip starts being heard. Default `0`. |
 | `fadeOut` | Seconds to fall to silence where the clip stops being heard. Default `0`. |
 | `duckGroup` | The [duck group](#ducking) the clip's sound belongs to. |
 | `duck` | Turns the clip down while clips of other groups play. See [Ducking](#ducking). |
+
+Unset numeric props take their defaults; a set one that is `NaN`, infinite,
+not a number, or keyframes with a non-finite time or value throws an error
+naming the component and the prop (see errors.md) instead of playing at the
+default.
 
 `pitch` and `preservePitch` apply to `<Audio>` only, not to a `<Video>`'s
 soundtrack or `<Dialogue>` voices. Preview and export sound the same;

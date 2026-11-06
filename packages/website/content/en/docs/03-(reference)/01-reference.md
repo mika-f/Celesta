@@ -19,7 +19,7 @@ Celesta is split into packages, like Remotion. The core APIs come from `@celesta
 
 | API | Package | Use it for |
 | --- | --- | --- |
-| `Sequence` | `@celesta.studio/react` | Places children at a frame offset with `from` and an optional `durationInFrames`. Optional `lang` sets their default text language, and `fontFallback` their font fallback. |
+| `Sequence` | `@celesta.studio/react` | Places children at a frame offset with `from` (a finite number, default 0) and an optional `durationInFrames` (at least 0; omitted or `Infinity` runs to the end of the enclosing window). `NaN` or a negative duration throws. Optional `lang` sets their default text language, and `fontFallback` their font fallback. |
 | `Loop` | `@celesta.studio/react` | Repeats its children every `durationInFrames` frames from `from`, `times` times or until the enclosing window ends; their clock, video, and audio restart each cycle. |
 | `FreezeFrame` | `@celesta.studio/react` | Draws its children as the composition looked at an absolute `frame`, silently. |
 | `MotionBlur` | `@celesta.studio/react` | Averages its children over a shutter (`shutterAngle`, 180 by default) around the frame, at `samples` moments (8). |

@@ -11,6 +11,7 @@
 - `loop` on a `Video` or `Audio` starts the file over from its beginning when playback reaches its end, picture and sound together, instead of holding the last frame in silence.
 - Media placed inside a `Sequence` starts when the sequence does and stops when it ends.
 - `volume` and an audio `playbackRate` can be a number or keyframes. Keyframe times are seconds from the start of the enclosing sequence, written as `{ value, timescale }`.
+- Each of these props, when set, must be a finite number, or keyframes whose times and values are all finite. A `NaN`, such as a volume computed from a misspelled field, throws an error that names the component and the prop instead of playing at the default.
 
 frameKeyframes(keys, { fps, origin? }) builds volume, playbackRate, or pitch keyframes from frame numbers. Times are (frame - origin) / fps on the enclosing sequence’s clock; origin defaults to 0. Use it for volume changes that a fade does not cover, such as lowering music under a voice. The browser exporter supports keyframed volume and playback rate, but not pitch.
 

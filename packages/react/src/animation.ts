@@ -16,8 +16,10 @@ export interface InterpolateOptions {
 /**
  * Maps `input` from `inputRange` into `outputRange`, linearly interpolating
  * within each segment (and applying `options.easing` to the 0-1 position
- * inside that segment, if given). `inputRange` must be strictly increasing
- * and the same length as `outputRange` (at least 2 entries each).
+ * inside that segment, if given). `input` must be finite, `inputRange` must
+ * be finite and strictly increasing, and `outputRange` must be finite and
+ * the same length as `inputRange` (at least 2 entries each). A NaN, such as
+ * a range built from a misspelled field, throws instead of returning NaN.
  *
  * Outside `inputRange`, `extrapolateLeft`/`extrapolateRight` control the
  * result: `'extend'` (default) continues the boundary segment's linear
@@ -30,12 +32,26 @@ export function interpolate(
   outputRange: readonly number[],
   options: InterpolateOptions = {},
 ): number {
+  if (typeof input !== 'number' || !Number.isFinite(input)) {
+    throw new Error(`interpolate() requires a finite input, not ${String(input)}`);
+  }
   if (inputRange.length < 2 || inputRange.length !== outputRange.length) {
     throw new Error('interpolate() requires inputRange and outputRange of the same length, at least 2');
   }
-  for (let i = 1; i < inputRange.length; i += 1) {
-    if (inputRange[i] <= inputRange[i - 1]) {
+  // Indexed loops rather than every()/map(), which skip sparse-array holes.
+  for (let i = 0; i < inputRange.length; i += 1) {
+    const value = inputRange[i];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`interpolate() requires finite inputRange values, not ${String(value)} at index ${i}`);
+    }
+    if (i > 0 && value <= inputRange[i - 1]) {
       throw new Error('interpolate() requires inputRange to be strictly increasing');
+    }
+  }
+  for (let i = 0; i < outputRange.length; i += 1) {
+    const value = outputRange[i];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`interpolate() requires finite outputRange values, not ${String(value)} at index ${i}`);
     }
   }
 
@@ -329,12 +345,16 @@ const DEFAULT_SPRING_CONFIG: Required<SpringConfig> = {
 /**
  * A damped harmonic oscillator's step response (0 at t=0 settling toward 1),
  * mapped into `[from, to]`. `frame`/`fps`/`delay` convert to elapsed seconds;
- * frames before `delay` return `from`.
+ * frames before `delay` return `from`. `frame` must be finite and `fps`
+ * finite and positive.
  */
 export function spring(options: SpringOptions): number {
   const { frame, fps, from = 0, to = 1, delay = 0 } = options;
-  if (fps <= 0) {
+  if (typeof fps !== 'number' || !Number.isFinite(fps) || fps <= 0) {
     throw new Error('spring() requires a positive fps');
+  }
+  if (typeof frame !== 'number' || !Number.isFinite(frame)) {
+    throw new Error(`spring() requires a finite frame, not ${String(frame)}`);
   }
   const config = { ...DEFAULT_SPRING_CONFIG, ...options.config };
 

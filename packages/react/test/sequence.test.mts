@@ -158,3 +158,42 @@ test('deeply nested sequences open on the same frame as one flattened sequence',
     assert.deepEqual(texts(at(flattened, frame).scene.layers), expected, `flattened at frame ${frame}`);
   }
 });
+
+test('Sequence rejects a from or durationInFrames it cannot place', () => {
+  // The non-number values are invalid on purpose.
+  const invalid: [Record<string, unknown>, RegExp][] = [
+    [{ from: Number.NaN }, /<Sequence> `from` must be a finite number of frames, not NaN/],
+    [{ from: Infinity }, /<Sequence> `from` must be a finite number of frames, not Infinity/],
+    [{ from: '10' }, /<Sequence> `from` must be a finite number of frames, not "10"/],
+    [{ durationInFrames: Number.NaN }, /<Sequence> `durationInFrames` must be a number of frames of at least 0, or Infinity, not NaN/],
+    [{ durationInFrames: -1 }, /<Sequence> `durationInFrames` must be a number of frames of at least 0, or Infinity, not -1/],
+    [{ durationInFrames: '10' }, /<Sequence> `durationInFrames` must be a number of frames of at least 0, or Infinity, not "10"/],
+  ];
+  for (const [props, message] of invalid) {
+    assert.throws(() => at(mount(() => h(Composition, { width: 10, height: 10, fps: 30, durationInFrames: 60 },
+      h(Sequence, props, h(Text, null, 'shown')))), 0), message, JSON.stringify(props));
+  }
+});
+
+test('Sequence durationInFrames undefined or Infinity runs to the end of its parent, and 0 is empty', () => {
+  function Clock() {
+    const frame = useCurrentFrame();
+    const { durationInFrames } = useVideoConfig();
+    return h(Text, null, `${frame}/${durationInFrames}`);
+  }
+  for (const durationInFrames of [undefined, Infinity]) {
+    const composition = mount(() => h(Composition, { width: 10, height: 10, fps: 30, durationInFrames: 120 },
+      h(Sequence, { from: 20, durationInFrames: 60 }, h(Sequence, { from: 10, durationInFrames }, h(Clock))),
+    ));
+    for (const frame of [29, 30, 79, 80]) {
+      const shown = frame >= 30 && frame < 80 ? [`${frame - 30}/50`] : [];
+      assert.deepEqual(texts(at(composition, frame).scene.layers), shown, `${durationInFrames} at frame ${frame}`);
+    }
+  }
+  const empty = mount(() => h(Composition, { width: 10, height: 10, fps: 30, durationInFrames: 60 },
+    h(Sequence, { from: 10, durationInFrames: 0 }, h(Clock)),
+  ));
+  for (const frame of [0, 9, 10, 11, 59]) {
+    assert.deepEqual(texts(at(empty, frame).scene.layers), [], `frame ${frame}`);
+  }
+});
