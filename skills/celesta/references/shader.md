@@ -99,7 +99,17 @@ fn effect(input: EffectInput) -> vec4f {
   parameter, so the shader follows `Sequence` and `FreezeFrame`.
 - Do not declare `@group`/`@binding` resources, entry points, workgroup
   variables (`var<workgroup>`, compute only), or names starting with
-  `celesta` (aliases and overrides included).
+  `celesta` in any letter case, such as `Celesta_x` (aliases, overrides,
+  and parameter names included).
+- A shader that passes these checks can still fail on the GPU, and the
+  frame then fails with `invalid custom shader <name>: …` instead of
+  crashing. Tell the two causes apart by the message:
+  - The GPU's shader compiler refused it (for example, a fragment function
+    past Metal's stack). The refusal is kept until the source changes, so
+    simplify the shader rather than retrying the render.
+  - The GPU ran out of memory (`Out of Memory`). This is not kept: the next
+    render compiles the shader again, so retry once memory is freed before
+    editing a shader that may be fine.
 
 ## Parameters
 

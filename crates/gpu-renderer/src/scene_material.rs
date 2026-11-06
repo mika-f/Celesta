@@ -110,7 +110,6 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
             prelude_resource: &|name| prelude_resource(name, textures),
             entry_points: &[],
             instead: "a material defines `material_fragment` and Celesta's entry points call it",
-            reserved: &material_reserved,
         },
     )?;
     // The pipelines Celesta makes for a material set only the constants of
@@ -167,7 +166,7 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
         if wgsl::predeclared(name) {
             return shadows(at, name);
         }
-        if material_reserved(name) {
+        if wgsl::reserved(name) {
             return Err(locate(
                 Some(at),
                 format!("declares `{name}`; names starting with `celesta` belong to Celesta"),
@@ -207,14 +206,6 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
         params_size,
         outline,
     })
-}
-
-/// Whether `name` belongs to Celesta in a material: it starts with
-/// `celesta` in any case, since Celesta's entry code declares `Celesta…`
-/// types too.
-fn material_reserved(name: &str) -> bool {
-    name.get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("celesta"))
 }
 
 /// Whether the prelude or the slots of a material with `textures` slots

@@ -57,10 +57,31 @@ impl ShaderChain {
     }
 }
 
+/// Why a shader was not compiled.
+#[derive(Debug)]
+enum CompileFailure {
+    /// Its WGSL breaks the rules or does not compile: it would again.
+    Invalid(String),
+    /// The device reported this making its module or pipeline: a refusal
+    /// (a backend's compiler refusing what naga accepted), or running out
+    /// of memory, which it may not the next time.
+    Device(wgpu::Error),
+}
+
+impl CompileFailure {
+    fn message(&self) -> String {
+        match self {
+            Self::Invalid(message) => message.clone(),
+            Self::Device(error) => error.to_string(),
+        }
+    }
+}
+
 struct CachedShader {
     source: ShaderSource,
     /// The compile error is kept too, so a broken shader is not compiled
-    /// again every frame while its author fixes it.
+    /// again every frame while its author fixes it; running out of memory
+    /// is not kept.
     pipeline: Result<wgpu::RenderPipeline, String>,
     /// The last frame whose scene listed the shader.
     last_used: u64,
@@ -113,6 +134,10 @@ pub(crate) struct ShaderProcessor {
     /// How many times a shader was compiled, for tests of the cache.
     #[cfg(test)]
     pub(crate) compiles: usize,
+    /// The next shader that passes naga's checks fails on the device with
+    /// this error instead, as a backend's compiler refusing it would.
+    #[cfg(test)]
+    pub(crate) refuse_pipeline: Option<wgpu::Error>,
 }
 
 impl ShaderProcessor {
@@ -171,6 +196,8 @@ impl ShaderProcessor {
             format,
             #[cfg(test)]
             compiles: 0,
+            #[cfg(test)]
+            refuse_pipeline: None,
         }
     }
 
@@ -233,7 +260,15 @@ impl ShaderProcessor {
                 {
                     self.compiles += 1;
                 }
-                let pipeline = self.compile(device, source);
+                let pipeline = match self.compile(device, source) {
+                    Ok(pipeline) => Ok(pipeline),
+                    // Not kept, so the next frame compiles it again.
+                    Err(CompileFailure::Device(error @ wgpu::Error::OutOfMemory { .. })) => {
+                        self.shaders.remove(&source.id);
+                        return Err(shader_error(source, error.to_string()));
+                    }
+                    Err(failure) => Err(failure.message()),
+                };
                 self.shaders.insert(
                     source.id.clone(),
                     CachedShader {
@@ -341,11 +376,8 @@ impl ShaderProcessor {
         }
         if self.color_filter.is_none() {
             let pipeline = self
-                .compile(
-                    device,
-                    &builtin_source("color filter", COLOR_FILTER, "color"),
-                )
-                .unwrap_or_else(|message| panic!("color_filter.wgsl does not compile: {message}"));
+                .compile_builtin(device, "color filter", COLOR_FILTER, "color")
+                .map_err(error)?;
             self.color_filter = Some(pipeline);
         }
         let mut params = [[0.0; 4]; MAX_SHADER_PARAMS];
@@ -501,13 +533,8 @@ impl ShaderProcessor {
         }
         if self.builtin_effect.is_none() {
             let pipeline = self
-                .compile(
-                    device,
-                    &builtin_source("built-in effect", BUILTIN_EFFECT, "more"),
-                )
-                .unwrap_or_else(|message| {
-                    panic!("builtin_effect.wgsl does not compile: {message}")
-                });
+                .compile_builtin(device, "built-in effect", BUILTIN_EFFECT, "more")
+                .map_err(error)?;
             self.builtin_effect = Some(pipeline);
         }
         let mut params = [[0.0; 4]; MAX_SHADER_PARAMS];
@@ -709,18 +736,39 @@ impl ShaderProcessor {
         pass.draw(0..3, 0..1);
     }
 
+    /// Compiles the built-in filter `wgsl`, named `name`, whose second
+    /// parameter is `second`. Its WGSL is Celesta's own, so only the device
+    /// can fail it: then the pipeline is tried again at its next use.
+    fn compile_builtin(
+        &mut self,
+        device: &wgpu::Device,
+        name: &str,
+        wgsl: &str,
+        second: &str,
+    ) -> Result<wgpu::RenderPipeline, String> {
+        self.compile(device, &builtin_source(name, wgsl, second))
+            .map_err(|failure| match failure {
+                CompileFailure::Invalid(message) => {
+                    panic!("the {name} WGSL does not compile: {message}")
+                }
+                CompileFailure::Device(error) => {
+                    format!("the device could not compile it: {error}")
+                }
+            })
+    }
+
     /// Assembles, validates, and compiles `source`, or says why it cannot.
     fn compile(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         source: &ShaderSource,
-    ) -> Result<wgpu::RenderPipeline, String> {
-        let (code, author) = assemble(source)?;
+    ) -> Result<wgpu::RenderPipeline, CompileFailure> {
+        let (code, author) = assemble(source).map_err(CompileFailure::Invalid)?;
         let module = naga::front::wgsl::parse_str(&code).map_err(|error| {
             let at = wgsl::parse_error_at(&error);
-            locate(&code, &author, at, error.message().to_owned())
+            CompileFailure::Invalid(locate(&code, &author, at, error.message().to_owned()))
         })?;
-        check_declarations(&module, &code, &author)?;
+        check_declarations(&module, &code, &author).map_err(CompileFailure::Invalid)?;
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::default(),
@@ -728,17 +776,36 @@ impl ShaderProcessor {
         .validate(&module)
         .map_err(|error| {
             let at = wgsl::validation_error_at(&error);
-            locate(&code, &author, at, wgsl::error_chain(error.as_inner()))
+            CompileFailure::Invalid(locate(
+                &code,
+                &author,
+                at,
+                wgsl::error_chain(error.as_inner()),
+            ))
         })?;
+        #[cfg(test)]
+        if let Some(error) = self.refuse_pipeline.take() {
+            return Err(CompileFailure::Device(error));
+        }
         let label = source.name.as_deref().unwrap_or(&source.id);
-        // naga accepted the module, so wgpu should too; the scope keeps a
-        // failure it still reports from reaching the device's error handler.
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        // naga accepted the module, but a backend's compiler may still
+        // refuse it, or the device run out of memory.
+        wgsl::scoped(device, || self.create_pipeline(device, module, label))
+            .map_err(CompileFailure::Device)
+    }
+
+    /// The pipeline of `module`, a checked custom shader or built-in filter.
+    fn create_pipeline(
+        &self,
+        device: &wgpu::Device,
+        module: naga::Module,
+        label: &str,
+    ) -> wgpu::RenderPipeline {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
             source: wgpu::ShaderSource::Naga(Cow::Owned(module)),
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&self.pipeline_layout),
             vertex: wgpu::VertexState {
@@ -762,11 +829,7 @@ impl ShaderProcessor {
             }),
             multiview_mask: None,
             cache: None,
-        });
-        match pollster::block_on(scope.pop()) {
-            Some(error) => Err(error.to_string()),
-            None => Ok(pipeline),
-        }
+        })
     }
 }
 
@@ -817,9 +880,9 @@ fn assemble(source: &ShaderSource) -> Result<(String, Range<usize>), String> {
             .next()
             .is_some_and(|first| first.is_ascii_alphabetic())
             && chars.all(|char| char.is_ascii_alphanumeric() || char == '_');
-        if !identifier || name.starts_with("celesta") {
+        if !identifier || wgsl::reserved(name) {
             return Err(format!(
-                "parameter name `{name}` must be letters, digits, and underscores, start with a letter, and not start with `celesta`"
+                "parameter name `{name}` must be letters, digits, and underscores, start with a letter, and not start with `celesta` in any letter case"
             ));
         }
         if source.params[..index]
@@ -868,7 +931,6 @@ fn check_declarations(
             prelude_resource: &|name| matches!(name, "celesta_source" | "celesta" | "params"),
             entry_points: &["celesta_vertex", "celesta_fragment"],
             instead: "a custom shader defines `effect` instead",
-            reserved: &|name| name.starts_with("celesta"),
         },
     )
 }
