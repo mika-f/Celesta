@@ -128,21 +128,29 @@ describe('bump-version.mts', () => {
     expectUnchanged();
   });
 
-  // Cargo ignores SIGINT here and goes on for a while; it notes what
-  // Cargo.toml holds by then.
-  it.skipIf(process.platform === 'win32')('puts every file back at once on a second Ctrl-C', () => {
+  // Cargo ignores SIGINT here and would rewrite its lockfile later; the
+  // second Ctrl-C kills it first. Cargo shares the script's output, so the
+  // test would wait for a Cargo left running.
+  it.skipIf(process.platform === 'win32')('kills Cargo and puts every file back at once on a second Ctrl-C', () => {
     const result = bump(
       "const fs = require('node:fs');\n" +
         'const script = process.ppid;\n' +
         "process.on('SIGINT', () => {});\n" +
         "process.kill(script, 'SIGINT');\n" +
         "setTimeout(() => process.kill(script, 'SIGINT'), 300);\n" +
-        "setTimeout(() => fs.writeFileSync('cargo-saw', fs.readFileSync('Cargo.toml')), 1500);\n",
+        "setTimeout(() => fs.writeFileSync('Cargo.lock', 'rewritten late\\n'), 1500);\n",
     );
     expect(result.status).toBe(130);
     expect(result.stderr).toContain('interrupted again during');
     expect(result.stderr).toContain('the bump was undone, every file is as it was');
-    expect(read('cargo-saw')).toBe(files['Cargo.toml']);
+    expectUnchanged();
+  });
+
+  it.skipIf(process.platform === 'win32')('counts a Cargo stopped by SIGINT alone as an interruption', () => {
+    const result = bump("process.kill(process.pid, 'SIGINT');\n");
+    expect(result.status).toBe(130);
+    expect(result.stderr).toContain('interrupted during');
+    expect(result.stderr).toContain('the bump was undone, every file is as it was');
     expectUnchanged();
   });
 

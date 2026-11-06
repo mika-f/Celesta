@@ -9,8 +9,10 @@
 // fails (a file it fails in the middle of included), Cargo fails, or the run
 // is interrupted, every file written is put back as it was, and the run says
 // which files it could not restore. A Ctrl-C is passed on to Cargo and the
-// files are put back once Cargo stops; a second one puts them back at once.
-// An interrupted run exits with 130.
+// files are put back once Cargo stops; a second one kills Cargo and puts them
+// back at once. On Windows, where a process cannot be sent Ctrl-C, Cargo is
+// stopped outright the first time. A Cargo stopped by SIGINT sent to it alone
+// counts as an interruption too. An interrupted run exits with 130.
 //
 //   node scripts/plugins/bump-version.mts <X.Y.Z>
 //
@@ -44,10 +46,11 @@ let running: { child: ChildProcess; command: string } | undefined;
  * Runs `command` at the root. It runs asynchronously, so a Ctrl-C reaches the
  * SIGINT listener while it runs.
  *
- * @returns Why it failed, as `failed: <error>` or `failed (<signal or exit
- *   code>)`, or undefined when it succeeded.
+ * @returns `interrupted` when SIGINT stopped it (a Ctrl-C sent to it alone
+ *   included), why it failed, as `failed: <error>` or `failed (<signal or
+ *   exit code>)`, or undefined when it succeeded.
  */
-function run(command: string, args: string[]): Promise<string | undefined> {
+function run(command: string, args: string[]): Promise<'interrupted' | string | undefined> {
   const line = `${command} ${args.join(' ')}`;
   console.log(`> ${line}`);
   return new Promise((resolve) => {
@@ -60,6 +63,7 @@ function run(command: string, args: string[]): Promise<string | undefined> {
     child.on('close', (code, signal) => {
       running = undefined;
       if (code === 0) resolve(undefined);
+      else if (signal === 'SIGINT') resolve('interrupted');
       else resolve(`failed (${signal !== null ? `signal ${signal}` : `exit code ${code}`})`);
     });
   });
@@ -170,11 +174,13 @@ function undo(reason: string, paths: string[], code = 1): never {
 // The listener runs only while Cargo does: the writes and the undo are
 // synchronous, so a Ctrl-C never stops one in the middle. The first is passed
 // on to Cargo (a terminal's reaches it too), and the bump is undone once
-// Cargo stops; a second undoes it at once.
+// Cargo stops; a second kills Cargo, so it cannot write a lockfile after the
+// undo, and undoes the bump at once.
 let interrupted = false;
 process.on('SIGINT', () => {
   if (interrupted) {
     const during = running === undefined ? '' : ` during ${running.command}`;
+    running?.child.kill('SIGKILL');
     undo(`interrupted again${during}`, [...originals.keys()], INTERRUPTED);
   }
   interrupted = true;
@@ -203,7 +209,9 @@ for (const args of [
 ]) {
   const failure = await run(cargo, args);
   const command = `${cargo} ${args.join(' ')}`;
-  if (interrupted) undo(`interrupted during ${command}`, [...originals.keys()], INTERRUPTED);
+  if (interrupted || failure === 'interrupted') {
+    undo(`interrupted during ${command}`, [...originals.keys()], INTERRUPTED);
+  }
   if (failure !== undefined) undo(`${command} ${failure}`, [...originals.keys()]);
 }
 
