@@ -41,6 +41,11 @@ Open the composition in Celesta and choose **File → Set Up TypeScript**. Check
 If `.celesta/` is in a folder above the one containing the composition, such as the project folder for a composition in `src/` or the repository root in a monorepo, that folder needs a `celesta.config.json` to be the project root. Choose **File → Set Up TypeScript in Folder…** and pick it; Celesta adds an empty `celesta.config.json` if the folder has none, and refreshes `.celesta/`.
 
 :::
+:::toggle[A composition fails because something wrote to the runtime’s stdout]
+
+Celesta talks to a React composition’s runtime over its standard output, so a direct `process.stdout.write()` in the composition or in a package it imports breaks that connection, and loading stops with an error that says something other than the Celesta runtime wrote to its stdout. Log with `console.log()` or `console.error()` instead, which go to standard error. If a package writes to standard output on its own, check its options for a quiet or logging setting.
+
+:::
 :::toggle[MP4 export will not start]
 
 Use non-zero, even-numbered dimensions and confirm that all local media is available. If the destination file already exists, choose another path or explicitly add `--overwrite` to the CLI command.

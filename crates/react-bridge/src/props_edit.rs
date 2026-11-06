@@ -13,13 +13,21 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 /// A JSON object's entries in the order they appear in the text.
 ///
 /// `serde_json::Map` sorts keys unless its `preserve_order` feature is on,
 /// which would reshuffle a hand-written props file on the first edit.
+///
+/// Only this top level keeps its order by itself. A nested object is a
+/// [`Value`], whose keys follow `preserve_order`, and the workspace does not
+/// set that feature: the editor gets it through GPUI, so there a nested
+/// object keeps its order, while the exporter, the MCP server, and
+/// `cargo test -p celesta-react-bridge` sort its keys on write. Declared
+/// property values are scalars, so this shows only in a hand-written nested
+/// value.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OrderedObject(pub Vec<(String, Value)>);
 
@@ -224,13 +232,18 @@ fn resolve(path: &Path) -> io::Result<PathBuf> {
 /// Copies `chosen` into `assets` and returns the copy's path. A file of the
 /// same name with the same bytes is reused; one with different bytes makes the
 /// copy take the next free `name-2.ext`, `name-3.ext`, ... name.
+///
+/// The bytes are streamed, never held whole: the file may be a video of
+/// several gigabytes. A copy is written beside its name and renamed into
+/// place, so a half-written copy never shows and an existing file is never
+/// replaced.
 fn copy_into_assets(assets: &Path, chosen: &Path) -> io::Result<PathBuf> {
     let name_error = || io::Error::new(io::ErrorKind::InvalidInput, "the file has no name");
     let stem = chosen.file_stem().ok_or_else(name_error)?.to_string_lossy();
     let extension = chosen
         .extension()
         .map(|extension| extension.to_string_lossy());
-    let bytes = fs::read(chosen)?;
+    let length = fs::metadata(chosen)?.len();
 
     fs::create_dir_all(assets)?;
     for number in 1_u32.. {
@@ -243,14 +256,49 @@ fn copy_into_assets(assets: &Path, chosen: &Path) -> io::Result<PathBuf> {
         let candidate = assets.join(name);
 
         if candidate.symlink_metadata().is_err() {
-            fs::write(&candidate, &bytes)?;
-            return Ok(candidate);
+            match copy_new(chosen, &candidate) {
+                Ok(()) => return Ok(candidate),
+                // Another writer took the name meanwhile; compare with it.
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
         }
-        if fs::read(&candidate).is_ok_and(|existing| existing == bytes) {
+        if same_contents(chosen, length, &candidate).unwrap_or(false) {
             return Ok(candidate);
         }
     }
     unreachable!("the candidate numbers are unbounded")
+}
+
+/// Copies `source` to `destination`, which must not exist yet.
+fn copy_new(source: &Path, destination: &Path) -> io::Result<()> {
+    let mut staged = StagedFile::beside(destination, ".tmp")?;
+    let handle = staged.as_file_mut();
+    io::copy(&mut fs::File::open(source)?, handle)?;
+    handle.sync_all()?;
+    staged.publish(destination, false)
+}
+
+/// Whether `existing` holds the same bytes as `chosen`, whose length is
+/// `length`. Only a file of the same length is read.
+fn same_contents(chosen: &Path, length: u64, existing: &Path) -> io::Result<bool> {
+    if fs::metadata(existing)?.len() != length {
+        return Ok(false);
+    }
+    let mut left = io::BufReader::new(fs::File::open(chosen)?);
+    let mut right = io::BufReader::new(fs::File::open(existing)?);
+    loop {
+        let (a, b) = (left.fill_buf()?, right.fill_buf()?);
+        if a.is_empty() || b.is_empty() {
+            return Ok(a.is_empty() && b.is_empty());
+        }
+        let common = a.len().min(b.len());
+        if a[..common] != b[..common] {
+            return Ok(false);
+        }
+        left.consume(common);
+        right.consume(common);
+    }
 }
 
 /// `target` as seen from `from`, joined with `/` and starting with `./` or
@@ -281,7 +329,8 @@ fn relative_path(from: &Path, target: &Path) -> io::Result<String> {
     );
 
     let joined = parts.join("/");
-    Ok(if joined.starts_with("..") {
+    // `..intro.mp4` is a file name, not the parent folder.
+    Ok(if joined == ".." || joined.starts_with("../") {
         joined
     } else {
         format!("./{joined}")
@@ -516,6 +565,43 @@ mod tests {
         assert_eq!(fs::read(root.join("assets/c.png")).unwrap(), b"first");
         assert_eq!(fs::read(root.join("assets/c-2.png")).unwrap(), b"second");
         assert_eq!(fs::read(root.join("assets/c-3.png")).unwrap(), b"third");
+    }
+
+    #[test]
+    fn content_longer_than_a_buffer_is_compared_to_the_last_byte() {
+        let (_scratch, root, other) = project("import-long");
+        let mut bytes = vec![7_u8; 100_000];
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("assets/v.mp4"), &bytes).unwrap();
+        let chosen = other.join("v.mp4");
+        fs::write(&chosen, &bytes).unwrap();
+        assert_eq!(
+            import_path(&root, &root, &chosen).unwrap(),
+            "./assets/v.mp4"
+        );
+
+        *bytes.last_mut().unwrap() = 8;
+        fs::write(&chosen, &bytes).unwrap();
+        assert_eq!(
+            import_path(&root, &root, &chosen).unwrap(),
+            "./assets/v-2.mp4"
+        );
+        assert_eq!(fs::read(root.join("assets/v-2.mp4")).unwrap(), bytes);
+        // Nothing staged is left beside the copies.
+        assert_eq!(fs::read_dir(root.join("assets")).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn a_name_starting_with_two_dots_is_not_a_parent_folder() {
+        let (_scratch, root, _) = project("import-two-dots");
+        let chosen = root.join("..intro.mp4");
+        write(&chosen, "a");
+
+        assert_eq!(import_path(&root, &root, &chosen).unwrap(), "./..intro.mp4");
+        assert_eq!(
+            import_path(&root, &root.join("variants"), &chosen).unwrap(),
+            "../..intro.mp4"
+        );
     }
 
     #[test]

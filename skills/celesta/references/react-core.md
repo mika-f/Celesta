@@ -63,7 +63,10 @@ export default function Root() {
 - Module-level code runs once. `registerComponent()` and
   `defineProjectProperties()` must be called at module level.
 - `console.log` output goes to the terminal (stderr), which is useful when
-  running `scripts/inspect.mjs`.
+  running `scripts/inspect.mjs`. Never write to `process.stdout` directly:
+  it carries the runtime's messages to Celesta, and a stray write stops the
+  composition with an error saying something other than the Celesta
+  runtime wrote to its stdout.
 - Imports: `react` and the Celesta packages in [SKILL.md](../SKILL.md#packages) come from
   Celesta's runtime. Relative files (including
   `import data from './data.json'`) are bundled. Other npm packages resolve
@@ -1095,7 +1098,12 @@ conditional plays only on frames where it is rendered.
   order, but the preview's browser matches them itself (Safari: OS fonts
   only)). Refer to a font file by the **family name stored inside the
   font**, not the file name, and to a stylesheet's faces by its
-  `font-family`, not the names in its files. See
+  `font-family`, not the names in its files. A stylesheet's `url()` is
+  resolved against the stylesheet. From a stylesheet URL, a relative one is
+  downloaded with its query. In a local stylesheet file, it is a URL path to
+  a file beside it (`url(My%20Font.woff2)` loads `My Font.woff2`; `?query`
+  and `#fragment` are ignored), a `file:` URL names that file, and a
+  protocol-relative `//host/...` is skipped. See
   [text.md](text.md#fonts-fallback-and-emoji) for weights and fallback.
 - Stylesheet descriptors work as in CSS in preview and export: each rule's
   `font-weight` (a range draws a variable font at the asked weight),

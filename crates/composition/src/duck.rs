@@ -155,7 +155,7 @@ pub fn check_duck_group(group: &str) -> Result<(), DuckError> {
 }
 
 fn microseconds(seconds: f64) -> Time {
-    Time::new((seconds * 1_000_000.0).round() as i64, 1_000_000)
+    Time::from_seconds(seconds, Time::MICROSECONDS)
 }
 
 /// The gain multiplier of a clip ducked by `duck` under voices playing over

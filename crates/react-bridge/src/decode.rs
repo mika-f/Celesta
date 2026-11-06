@@ -3,11 +3,11 @@
 //! audio.
 
 use celesta_media::{AudioDecoder, MediaBackend};
-use celesta_remote::{RemoteAssetCache, is_remote_url};
+use celesta_remote::local_asset_path;
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use tempfile::TempPath;
 
 #[derive(Deserialize)]
 pub(crate) struct DecodeAudioRequest {
@@ -36,19 +36,12 @@ pub(crate) struct DecodedAudioPayload {
 /// The temporary files handed to Node, removed once Node has read them: when
 /// its next message arrives, or when the handshake ends.
 #[derive(Default)]
-pub(crate) struct DecodedAudioFiles(Vec<PathBuf>);
+pub(crate) struct DecodedAudioFiles(Vec<TempPath>);
 
 impl DecodedAudioFiles {
     pub(crate) fn remove(&mut self) {
-        for path in self.0.drain(..) {
-            let _ = fs::remove_file(path);
-        }
-    }
-}
-
-impl Drop for DecodedAudioFiles {
-    fn drop(&mut self) {
-        self.remove();
+        // Dropping a `TempPath` removes its file.
+        self.0.clear();
     }
 }
 
@@ -74,13 +67,7 @@ fn decode_to_file(
     files: &mut DecodedAudioFiles,
     path: &str,
 ) -> Result<DecodedAudioPayload, String> {
-    let local = if is_remote_url(path) {
-        RemoteAssetCache::standard()
-            .fetch(path)
-            .map_err(|error| error.to_string())?
-    } else {
-        PathBuf::from(path)
-    };
+    let local = local_asset_path(path).map_err(|error| error.to_string())?;
     let stream = media
         .probe(&local)
         .map_err(|error| error.to_string())?
@@ -106,9 +93,10 @@ fn decode_to_file(
         bytes.extend_from_slice(&sample.to_le_bytes());
     }
     let file = write_temporary_file(&bytes).map_err(|error| error.to_string())?;
-    files.0.push(file.clone());
+    let path = file.to_path_buf();
+    files.0.push(file);
     Ok(DecodedAudioPayload {
-        path: file,
+        path,
         sample_rate,
         frames: mono.len(),
     })
@@ -128,20 +116,20 @@ pub(crate) fn downmix(samples: &[f32], channels: usize) -> Vec<f32> {
 /// Writes `bytes` to a new file in the temporary directory. The name is not
 /// guessable and the file must not exist yet, so on a shared `/tmp` another
 /// user cannot have placed a link there for it to write through; only the
-/// owner can read it.
-fn write_temporary_file(bytes: &[u8]) -> io::Result<PathBuf> {
+/// owner can read it. The file is removed when the returned path drops.
+fn write_temporary_file(bytes: &[u8]) -> io::Result<TempPath> {
     let mut file = tempfile::Builder::new()
         .prefix("celesta-pcm-")
         .suffix(".f32le")
         .tempfile()?;
     file.write_all(bytes)?;
-    let (_, path) = file.keep().map_err(|error| error.error)?;
-    Ok(path)
+    Ok(file.into_temp_path())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::Path;
 
     #[test]
@@ -174,7 +162,7 @@ mod tests {
     fn temporary_files_get_fresh_private_names() {
         let a = write_temporary_file(b"a").unwrap();
         let b = write_temporary_file(b"b").unwrap();
-        assert_ne!(a, b);
+        assert_ne!(&*a, &*b);
         assert_eq!(fs::read(&a).unwrap(), b"a");
         #[cfg(unix)]
         {
@@ -184,8 +172,9 @@ mod tests {
                 0o600
             );
         }
-        fs::remove_file(a).unwrap();
-        fs::remove_file(b).unwrap();
+        let paths = [a.to_path_buf(), b.to_path_buf()];
+        drop((a, b));
+        assert!(paths.iter().all(|path| !path.exists()));
     }
 
     #[test]

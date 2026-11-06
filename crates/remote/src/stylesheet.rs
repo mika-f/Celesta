@@ -10,6 +10,7 @@ use std::ops::RangeInclusive;
 use std::path::Path;
 
 use celesta_composition::AssetLocation;
+use percent_encoding::percent_decode_str;
 use url::Url;
 
 use crate::{RemoteAssetError, is_data_url, is_remote_url};
@@ -525,11 +526,32 @@ fn resolve_reference(
             if reference.starts_with("//") {
                 return Ok(None);
             }
+            if reference
+                .get(..5)
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+            {
+                let file = Url::parse(reference)
+                    .map_err(invalid(reference))?
+                    .to_file_path()
+                    .map_err(|()| RemoteAssetError::NotAFilePath {
+                        url: reference.to_owned(),
+                    })?;
+                return Ok(Some(AssetLocation::File {
+                    path: file.to_string_lossy().into_owned(),
+                }));
+            }
+            // A URL path, as a browser reads it: `My%20Font.woff2` names
+            // `My Font.woff2`.
             let reference = reference.split(['?', '#']).next().unwrap_or_default();
+            let decoded = percent_decode_str(reference).decode_utf8().map_err(|_| {
+                RemoteAssetError::UndecodablePath {
+                    url: reference.to_owned(),
+                }
+            })?;
             let joined = Path::new(path)
                 .parent()
                 .unwrap_or_else(|| Path::new(""))
-                .join(reference);
+                .join(&*decoded);
             Ok(Some(AssetLocation::File {
                 path: joined.to_string_lossy().into_owned(),
             }))
@@ -909,5 +931,66 @@ mod tests {
                 url("https://example.com/remote.ttf"),
             ]
         );
+    }
+
+    #[test]
+    fn local_references_are_percent_decoded() {
+        let stylesheet = AssetLocation::File {
+            path: "fonts/brand.css".to_owned(),
+        };
+        let css = "@font-face { font-family: A; src: url(My%20Font.woff2?v=1) }\
+            @font-face { font-family: B; src: url('%E3%83%95%E3%82%A9%E3%83%B3%E3%83%88.woff2') }\
+            @font-face { font-family: C; src: url(100%25.woff2#iefix) }";
+        let local = |name: &str| AssetLocation::File {
+            path: Path::new("fonts").join(name).to_string_lossy().into_owned(),
+        };
+        assert_eq!(
+            locations(css, &stylesheet),
+            vec![
+                local("My Font.woff2"),
+                local("フォント.woff2"),
+                local("100%.woff2")
+            ]
+        );
+    }
+
+    #[test]
+    fn local_stylesheets_read_file_urls_as_paths() {
+        let stylesheet = AssetLocation::File {
+            path: "fonts/brand.css".to_owned(),
+        };
+        let font = std::env::temp_dir().join("Brand Font.woff2");
+        let reference = Url::from_file_path(&font).unwrap();
+        let css = format!("@font-face {{ font-family: A; src: url('{reference}') }}");
+        assert_eq!(
+            locations(&css, &stylesheet),
+            vec![AssetLocation::File {
+                path: font.to_string_lossy().into_owned(),
+            }]
+        );
+
+        let undecodable = "@font-face { font-family: A; src: url(a%FF.woff2) }";
+        let error = stylesheet_font_faces(undecodable, &stylesheet).unwrap_err();
+        assert!(
+            matches!(&error, RemoteAssetError::UndecodablePath { url } if url == "a%FF.woff2"),
+            "{error:?}"
+        );
+
+        // A host names a network share on Windows, and no local path elsewhere.
+        let remote_host = "@font-face { font-family: A; src: url(file://example.com/a.woff2) }";
+        if cfg!(windows) {
+            assert_eq!(
+                locations(remote_host, &stylesheet),
+                vec![AssetLocation::File {
+                    path: r"\\example.com\a.woff2".to_owned(),
+                }]
+            );
+        } else {
+            let error = stylesheet_font_faces(remote_host, &stylesheet).unwrap_err();
+            assert!(
+                matches!(&error, RemoteAssetError::NotAFilePath { url } if url == "file://example.com/a.woff2"),
+                "{error:?}"
+            );
+        }
     }
 }

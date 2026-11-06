@@ -41,9 +41,25 @@ pub enum ApplyError {
     /// An edit lies outside the text or off a character boundary.
     #[error("edit is outside the source text")]
     OutOfRange,
+    /// An edit writes a number that is infinite or NaN, which a literal
+    /// cannot hold.
+    #[error("edit writes a number that is not finite")]
+    NonFinite,
 }
 
 impl Edit {
+    /// Whether the number this edit writes, if any, is finite.
+    fn is_finite(&self) -> bool {
+        match self {
+            Self::Replace { value, .. }
+            | Self::Insert { value, .. }
+            | Self::InsertProperty { value, .. } => {
+                !matches!(value, EditValue::Number(n) if !n.is_finite())
+            }
+            Self::Remove { .. } | Self::Splice { .. } => true,
+        }
+    }
+
     fn span(&self) -> (u32, u32) {
         match self {
             Self::Replace { start, end, .. }
@@ -56,6 +72,9 @@ impl Edit {
 
 /// Applies all `edits` to `text` in one pass.
 pub fn apply(text: &str, edits: &[Edit]) -> Result<String, ApplyError> {
+    if !edits.iter().all(Edit::is_finite) {
+        return Err(ApplyError::NonFinite);
+    }
     let mut sorted: Vec<&Edit> = edits.iter().collect();
     sorted.sort_by_key(|e| e.span());
 
@@ -209,8 +228,21 @@ fn template(s: &str) -> String {
 }
 
 /// Integer when within 0.005 of one, else up to 2 decimals with trailing zeros
-/// trimmed; negative zero is written `0`.
+/// trimmed; negative zero is written `0`. A magnitude of 2^53 or more, where
+/// `f64` holds only integers, is written in full. Infinity and NaN are
+/// spelled as JavaScript does (`Infinity`, `-Infinity`, `NaN`), though
+/// [`apply`] refuses to write them.
 pub fn format_number(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value.is_infinite() {
+        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
+    }
+    // Past 2^53 every `f64` is an integer, and past 2^63 `as i64` saturates.
+    if value.abs() >= 9_007_199_254_740_992.0 {
+        return format!("{value}");
+    }
     let rounded = value.round();
     if (value - rounded).abs() < 0.005 {
         return format!("{}", rounded as i64);

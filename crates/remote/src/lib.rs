@@ -82,6 +82,16 @@ pub fn resolve_asset_path(
     }
 }
 
+/// The local file for `path`: an `http` or `https` URL is downloaded into
+/// the standard cache on first use, and anything else is taken as a path.
+pub fn local_asset_path(path: &str) -> Result<PathBuf, RemoteAssetError> {
+    if is_remote_url(path) {
+        RemoteAssetCache::standard().fetch(path)
+    } else {
+        Ok(PathBuf::from(path))
+    }
+}
+
 /// Whether `value` is an asset URL this crate can download.
 pub fn is_remote_url(value: &str) -> bool {
     scheme_rest(value).is_some()
@@ -302,6 +312,14 @@ pub enum RemoteAssetError {
         url: String,
         source: url::ParseError,
     },
+    /// A `file:` URL that names no path on this computer, such as one with
+    /// a host outside Windows (on Windows a host names a network share).
+    #[error("`{url}` is not a path on this computer")]
+    NotAFilePath { url: String },
+    /// A local stylesheet's reference whose percent escapes are not UTF-8,
+    /// so it names no file Celesta can look up.
+    #[error("`{url}` does not decode to a UTF-8 file name")]
+    UndecodablePath { url: String },
     /// `url` is shortened, since a `data:` URL can hold a whole file.
     #[error("`{url}` is not a valid data: URL: {reason}")]
     InvalidData { url: String, reason: &'static str },

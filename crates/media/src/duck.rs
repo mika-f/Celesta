@@ -23,7 +23,7 @@ pub fn audible_end(clip: &AudioClip, source: &AudioBuffer) -> Result<f64, AudioM
         return Ok(start);
     }
     let played = |local: f64| -> Result<f64, AudioMixError> {
-        let time = Time::new((local * 1_000_000.0).round() as i64, 1_000_000);
+        let time = Time::from_seconds(local, Time::MICROSECONDS);
         Ok(integrate_f64(&clip.playback_rate, time)?)
     };
     let local = match clip.playback_rate {

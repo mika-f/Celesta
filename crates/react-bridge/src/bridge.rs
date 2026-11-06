@@ -8,7 +8,7 @@ use crate::probe::{MediaProbeResponse, animation_probe_payload, media_probe_payl
 use crate::properties::PropertyInputs;
 use crate::protocol::{
     ComponentRequest, ProjectPayload, PropertyInputsMessage, ReadyMessage, Request,
-    ResolutionRuntime, Response, StaticsRequest, ready_property_order,
+    ResolutionRuntime, Response, StaticsRequest,
 };
 use crate::statics::StaticCache;
 use crate::stderr::StderrCapture;
@@ -19,12 +19,12 @@ use crate::types::{
 };
 use celesta_composition::{AudioGraph, Scene, Time};
 use celesta_media::MediaBackend;
-use celesta_remote::{RemoteAssetCache, is_remote_url};
+use celesta_remote::local_asset_path;
 use celesta_renderer::TextRasterizer;
 use celesta_renderer::image_source::probe_animation;
 use serde::Serialize;
 use std::io::{self, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -183,16 +183,10 @@ impl ReactBridge {
                         component_schemas,
                         primitive_properties,
                         project_property_schema,
+                        project_property_order,
                         dependencies,
                         legacy_imports,
                     } => {
-                        // Without an order, fall back to the map's sorted keys.
-                        let mut project_property_order = ready_property_order(&message);
-                        if project_property_order.is_empty()
-                            && let Some(schema) = &project_property_schema
-                        {
-                            project_property_order = schema.keys().cloned().collect();
-                        }
                         let composition_id = composition_id.unwrap_or_else(|| "default".to_owned());
                         if compositions.is_empty() {
                             compositions.push(ReactCompositionInfo {
@@ -221,13 +215,7 @@ impl ReactBridge {
                     }
                     ReadyMessage::ProbeMedia { probe_media } => {
                         let path = probe_media.path;
-                        let local = if is_remote_url(&path) {
-                            RemoteAssetCache::standard()
-                                .fetch(&path)
-                                .map_err(|error| error.to_string())
-                        } else {
-                            Ok(PathBuf::from(&path))
-                        };
+                        let local = local_asset_path(&path).map_err(|error| error.to_string());
                         // `<Image>` plays an animated image itself; FFmpeg reads
                         // some of them as one frame, or not at all.
                         let animation = local
@@ -253,17 +241,11 @@ impl ReactBridge {
                                 error: Some(format!("could not probe {path}: {error}")),
                             },
                         };
-                        let payload =
-                            serde_json::to_string(&response).map_err(ReactBridgeError::Protocol)?;
-                        writeln!(stdin, "{payload}").map_err(ReactBridgeError::Io)?;
-                        stdin.flush().map_err(ReactBridgeError::Io)?;
+                        write_line(&mut stdin, &response)?;
                     }
                     ReadyMessage::MeasureText { measure_text } => {
                         let response = measure_text_response(&mut text_measurer, &measure_text);
-                        let payload =
-                            serde_json::to_string(&response).map_err(ReactBridgeError::Protocol)?;
-                        writeln!(stdin, "{payload}").map_err(ReactBridgeError::Io)?;
-                        stdin.flush().map_err(ReactBridgeError::Io)?;
+                        write_line(&mut stdin, &response)?;
                     }
                     ReadyMessage::DecodeAudio { decode_audio } => {
                         let response = decode_audio_response(
@@ -271,10 +253,7 @@ impl ReactBridge {
                             &mut decoded_audio,
                             &decode_audio.path,
                         );
-                        let payload =
-                            serde_json::to_string(&response).map_err(ReactBridgeError::Protocol)?;
-                        writeln!(stdin, "{payload}").map_err(ReactBridgeError::Io)?;
-                        stdin.flush().map_err(ReactBridgeError::Io)?;
+                        write_line(&mut stdin, &response)?;
                     }
                     ReadyMessage::InvalidProperties { invalid_properties } => {
                         return Err(ReactBridgeError::InvalidProperties(invalid_properties));
@@ -575,13 +554,8 @@ impl ReactBridge {
                 components,
                 shaders,
             }),
-            Response::Ok { .. } => Err(ReactBridgeError::UnexpectedResponse),
-            Response::CollectedAudio { .. }
-            | Response::CollectedSubtitles { .. }
-            | Response::CollectedOccurrences { .. } => Err(ReactBridgeError::UnexpectedResponse),
             Response::Err { error } => Err(ReactBridgeError::Render(error)),
-            Response::MeasureText { .. } => Err(ReactBridgeError::UnexpectedResponse),
-            Response::LayerSource { .. } => Err(ReactBridgeError::UnexpectedResponse),
+            _ => Err(ReactBridgeError::UnexpectedResponse),
         }
     }
 
@@ -770,15 +744,21 @@ pub struct ReactMedia {
     pub video_clip_ids: Vec<String>,
 }
 
+/// The longest message the bridge reads. A frame's scene is hundreds of
+/// KiB; a length past this is not one the runtime wrote.
+const MAX_MESSAGE_LENGTH: usize = 1 << 30;
+
 /// Reads one message from the CLI into `buffer`, reusing its allocation. With
 /// `--length-prefixed` every message is a little-endian `u32` byte count
 /// followed by that many bytes of JSON, so a frame's scene is read in a few
 /// large reads instead of being scanned for its line end.
 ///
 /// A closed stdout fails as an `UnexpectedExit` without stderr;
-/// [`StderrCapture::exit_error`] fills it in.
-fn read_message(
-    stdout: &mut BufReader<ChildStdout>,
+/// [`StderrCapture::exit_error`] fills it in. A length past
+/// [`MAX_MESSAGE_LENGTH`], an empty message, or one that does not start
+/// with `{` fails as a `Protocol` error: something else wrote to stdout.
+pub(crate) fn read_message(
+    stdout: &mut impl Read,
     buffer: &mut Vec<u8>,
 ) -> Result<(), ReactBridgeError> {
     let exited = || ReactBridgeError::UnexpectedExit {
@@ -788,18 +768,40 @@ fn read_message(
         io::ErrorKind::UnexpectedEof => exited(),
         _ => ReactBridgeError::Io(error),
     };
+    // Something other than the CLI's framing reached stdout, such as a
+    // `process.stdout.write("hello\n")` in the entry or a dependency: its
+    // first bytes read as a length, often of gigabytes, that would leave
+    // the bridge waiting for bytes that never come.
+    let stray = |what: &str| {
+        ReactBridgeError::Protocol(serde::de::Error::custom(format!(
+            "{what}; something other than the Celesta runtime wrote to its stdout"
+        )))
+    };
     let mut length = [0; 4];
     stdout.read_exact(&mut length).map_err(eof)?;
     let length = u32::from_le_bytes(length) as usize;
+    if length > MAX_MESSAGE_LENGTH {
+        return Err(stray(&format!(
+            "a message of {length} bytes is longer than {MAX_MESSAGE_LENGTH}"
+        )));
+    }
+    if length == 0 {
+        return Err(stray("a message is empty"));
+    }
+    let mut first = [0; 1];
+    stdout.read_exact(&mut first).map_err(eof)?;
+    if first[0] != b'{' {
+        return Err(stray("a message does not start with `{`"));
+    }
     buffer.clear();
-    buffer.reserve(length);
+    buffer
+        .try_reserve(length)
+        .map_err(|error| ReactBridgeError::Io(io::Error::new(io::ErrorKind::OutOfMemory, error)))?;
+    buffer.push(first[0]);
+    let rest = length - 1;
     let read = stdout
-        .take(length as u64)
+        .take(rest as u64)
         .read_to_end(buffer)
         .map_err(ReactBridgeError::Io)?;
-    if read == length {
-        Ok(())
-    } else {
-        Err(exited())
-    }
+    if read == rest { Ok(()) } else { Err(exited()) }
 }

@@ -11,6 +11,7 @@ rust-version.workspace = true
 celesta-composition.workspace = true
 data-url = "0.3.2"
 fnv = "1.0.7"
+percent-encoding = "2.3.2"
 tempfile = "3.23.0"
 thiserror.workspace = true
 ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier"] }

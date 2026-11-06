@@ -24,7 +24,11 @@ impl Rational {
 }
 
 /// Exact timeline time, represented as `value / timescale` seconds.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `==` compares the two fields, so `1/2 != 2/4`; compare the times they
+/// stand for with [`Time::cmp_exact`], or compare [`Time::reduced`] values.
+/// The default is [`Time::ZERO`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
 #[cfg_attr(feature = "codegen", ts(export))]
 #[serde(rename_all = "camelCase")]
@@ -39,8 +43,17 @@ impl Time {
         timescale: 1,
     };
 
+    /// The timescale of times converted from seconds to the microsecond.
+    pub const MICROSECONDS: u32 = 1_000_000;
+
     pub const fn new(value: i64, timescale: u32) -> Self {
         Self { value, timescale }
+    }
+
+    /// `seconds` rounded to the nearest `1 / timescale`. A value past the
+    /// range of `i64` saturates and NaN gives zero, as an `as` cast does.
+    pub fn from_seconds(seconds: f64, timescale: u32) -> Self {
+        Self::new((seconds * f64::from(timescale)).round() as i64, timescale)
     }
 
     pub const fn samples(value: i64, sample_rate: u32) -> Self {
@@ -108,6 +121,12 @@ impl Time {
 
         let divisor = gcd_u64(self.value.unsigned_abs(), u64::from(self.timescale));
         Self::new(self.value / divisor as i64, self.timescale / divisor as u32)
+    }
+}
+
+impl Default for Time {
+    fn default() -> Self {
+        Self::ZERO
     }
 }
 

@@ -26,6 +26,28 @@ fn adds_and_reduces_times() {
 }
 
 #[test]
+fn the_default_time_is_a_valid_zero() {
+    assert_eq!(Time::default(), Time::ZERO);
+    assert_eq!(Time::default().as_seconds(), Ok(0.0));
+}
+
+#[test]
+fn converts_seconds_to_the_nearest_tick() {
+    assert_eq!(
+        Time::from_seconds(1.5, Time::MICROSECONDS),
+        Time::new(1_500_000, 1_000_000)
+    );
+    assert_eq!(
+        Time::from_seconds(0.000_000_6, Time::MICROSECONDS),
+        Time::new(1, 1_000_000)
+    );
+    assert_eq!(
+        Time::from_seconds(-0.25, 48_000),
+        Time::new(-12_000, 48_000)
+    );
+}
+
+#[test]
 fn a_group_without_a_clip_or_mask_serializes_and_parses_as_before() {
     let content = LayerContent::Group {
         layers: Vec::new(),
