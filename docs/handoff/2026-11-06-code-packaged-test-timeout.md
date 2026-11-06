@@ -36,9 +36,15 @@ reason. Code kept an inline `{ timeout: 30000 }`.
 
 ## What changed
 
-- The packaged variant's timeout is 60 s, the same budget as the two sibling
-  packages. The source variant and every other test in `packages/code` keep
-  their timeouts. A comment above the test says why.
+- The test is written with `test.for` over `{ name, packaged }` cases instead
+  of a `for` loop with ternaries for its name and timeout. `test.for` passes
+  each case together with the test context, which the test needs for
+  `signal`; `test.each` does not.
+- The timeout is 60 s, the same budget as the two sibling packages. `test.for`
+  options apply to every case, so the source variant (about 0.5 s) gets 60 s
+  too; the only cost is a hang there failing after 60 s instead of 30 s. The
+  other tests in `packages/code` keep their timeouts. A comment above the test
+  says why.
 
 Vitest cannot interrupt the synchronous `spawnSync` calls anyway, so the failed
 run's 35 s test finished its work and was then reported as timed out. With

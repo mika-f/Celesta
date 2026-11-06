@@ -359,9 +359,12 @@ interface BridgeMessage {
 // The packaged variant copies the whole runtime closure and type-checks the
 // project with tsc. `test:runtime` runs it at the same time as the VOICEVOX
 // and AivisSpeech packaged tests, which do the same. On Windows runners this
-// has taken 10–16 s and, on a busy runner, 35 s. It gets the 60 s that those
-// packages' vitest.config.mjs gives them; the source variant stays at 30 s.
-for (const packaged of [false, true]) test(`${packaged ? 'packaged' : 'source'} CLI resolves Code without project dependencies and shares useTypewriter's runtime`, { timeout: packaged ? 60_000 : 30_000 }, async ({ signal }) => {
+// has taken 10–16 s and, on a busy runner, 35 s, so both variants get the 60 s
+// that those packages' vitest.config.mjs gives them.
+test.for([
+  { name: 'source', packaged: false },
+  { name: 'packaged', packaged: true },
+])('$name CLI resolves Code without project dependencies and shares useTypewriter\'s runtime', { timeout: 60_000 }, async ({ packaged }, { signal }) => {
   const directory = mkdtempSync(join(tmpdir(), 'celesta-code-'));
   onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
   const entry = join(directory, 'entry.tsx');
