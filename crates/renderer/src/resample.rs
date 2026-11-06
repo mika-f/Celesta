@@ -249,7 +249,8 @@ mod tests {
             average_block(&pixels, 2, 0..1, 0..2, Coverage::Straight),
             [128, 128, 128, 128]
         );
-        // Fully transparent blocks are transparent black either way.
+        // Fully transparent blocks have zero alpha either way; only alpha
+        // coverage also makes their color black (straight keeps 9, 9, 9).
         let clear = [9, 9, 9, 0].repeat(4);
         for coverage in [Coverage::Alpha, Coverage::Straight] {
             let block = average_block(&clear, 2, 0..2, 0..2, coverage);

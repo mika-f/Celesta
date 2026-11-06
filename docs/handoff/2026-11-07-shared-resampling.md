@@ -23,7 +23,8 @@ comment that says why.
   - `box_downscale`: `average_block` over `box_span` on both axes. It only
     shrinks.
 - **GPU mip levels** (`gpu-renderer` `texture::downsample`) are
-  `box_downscale(.., Coverage::Alpha)` to half size, rounded down.
+  `box_downscale(.., Coverage::Alpha)` to `max(1, side / 2)` on each axis:
+  half size, rounded down, and a side of 1 stays 1.
 - **PSD layer reduction** (`psd_source::reduce_layer`) keeps its own
   canvas-aligned power-of-two blocks. At an odd canvas edge the blocks are
   smaller instead of folded into their neighbours, and they are cropped to
@@ -63,5 +64,9 @@ comment that says why.
 - `cargo clippy -p celesta-renderer -p celesta-gpu-renderer
   -p celesta-exporter -p celesta-mcp --all-targets -- -D warnings` and
   `cargo fmt --all --check` pass.
-- No rendered output changes, because the comparison above showed the same
-  bytes. So no before and after screenshots were taken.
+- Before and after renders of the same scene, a PSD portrait at scales
+  0.18 and 0.07 (PSD reduction) and a 360×400 PNG shown at 4x and 8x
+  smaller (mip levels) on light and dark backgrounds, exported with
+  `celesta-exporter --react .. --frame 0` from the merge base and from this
+  branch, are the same PNG file byte for byte (`cmp`). The screenshots are
+  on the pull request. The scene was a temporary file and is not committed.
