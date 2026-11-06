@@ -466,7 +466,7 @@ export const CharacterView = React.forwardRef<CharacterViewReference, CharacterV
 );
 
 /** Renders a character portrait and its configured subtitle as one layer. */
-export function Dialogue(props: DialogueProps): ReturnType<typeof React.createElement> {
+export function Dialogue(props: DialogueProps): React.ReactElement {
   const { children, lipSync, mouth, expression, subtitlePages, emphasis, ...rest } = props;
   const tracked = useOptionalLipSync(lipSync);
   const time = useCurrentTime();

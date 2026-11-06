@@ -250,7 +250,7 @@ function Chart(props: BarChartProps & { ranks?: Omit<RankingProps, keyof BarChar
  * ]} />
  * ```
  */
-export function BarChart(props: BarChartProps): ReturnType<typeof React.createElement> {
+export function BarChart(props: BarChartProps): React.ReactElement {
   return Chart(props, 'BarChart');
 }
 
@@ -266,7 +266,7 @@ export function BarChart(props: BarChartProps): ReturnType<typeof React.createEl
  *   data={rows.map((row) => ({ id: row.name, label: row.name, value: row.score }))} />
  * ```
  */
-export function Ranking(props: RankingProps): ReturnType<typeof React.createElement> {
+export function Ranking(props: RankingProps): React.ReactElement {
   const { order, formatRank, rankWidth, rankGap, rankStyle, ...chart } = props;
   if (order === undefined) {
     throw new Error("<Ranking> order is required: 'descending', 'ascending', or 'input' to keep the given order");

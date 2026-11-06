@@ -227,7 +227,7 @@ function cueLabel(cues: readonly CaptionCue[], index: number): string {
  * ]} />
  * ```
  */
-export function CaptionTrack(props: CaptionTrackProps): ReturnType<typeof React.createElement> {
+export function CaptionTrack(props: CaptionTrackProps): React.ReactElement {
   const { cues, overlap = 'error', subtitles = true, lang } = props;
   const frame = useCurrentFrame();
   const ranges = React.useMemo(

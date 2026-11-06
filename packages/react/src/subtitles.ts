@@ -234,6 +234,6 @@ export interface SubtitlesProps {
  * <Subtitles lang="en" cues={englishCues} />
  * ```
  */
-export function Subtitles(props: SubtitlesProps): ReturnType<typeof React.createElement> {
+export function Subtitles(props: SubtitlesProps): React.ReactElement {
   return React.createElement('subtitles', props);
 }

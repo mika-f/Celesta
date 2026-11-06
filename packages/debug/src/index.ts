@@ -33,7 +33,7 @@ export function DebugOverlay({
   shade = DEFAULT_SHADE,
   showCenter = true,
   showFrame = true,
-}: DebugOverlayProps): ReturnType<typeof React.createElement> | null {
+}: DebugOverlayProps): React.ReactElement | null {
   const guides = useDebugGuides();
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();

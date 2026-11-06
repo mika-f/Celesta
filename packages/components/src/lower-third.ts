@@ -125,7 +125,7 @@ const { nonNegative, positive } = validators('LowerThird');
  * </Sequence>
  * ```
  */
-export function LowerThird(props: LowerThirdProps): ReturnType<typeof React.createElement> {
+export function LowerThird(props: LowerThirdProps): React.ReactElement {
   const bounds = useLayoutBounds();
   const canvas = useVideoConfig();
   const theme = useTheme();

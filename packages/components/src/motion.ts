@@ -161,7 +161,7 @@ function MotionGroup({ enter, exit, children, ...groupProps }: Omit<MotionProps,
  * its children at 0, or set `originX`/`originY`. For a cut, cross-fade, or
  * wipe between whole scenes, use `<TransitionSeries>` instead.
  */
-export function Motion({ from, durationInFrames, ...props }: MotionProps): ReturnType<typeof React.createElement> {
+export function Motion({ from, durationInFrames, ...props }: MotionProps): React.ReactElement {
   const group = React.createElement(MotionGroup, props);
   if (from === undefined && durationInFrames === undefined) return group;
   return React.createElement(Sequence, { from, durationInFrames }, group);

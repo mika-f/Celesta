@@ -34,7 +34,7 @@ export interface CounterProps extends Omit<TextProps, 'children'>, NumberFormat,
  *   suffix=" 件" fontSize={96} fontWeight={700} color="ink" />
  * ```
  */
-export function Counter(props: CounterProps): ReturnType<typeof React.createElement> {
+export function Counter(props: CounterProps): React.ReactElement {
   const {
     value, from = 0, delay = 0, durationInFrames = 30, easing = Easings.easeOutExpo,
     locale, decimals, prefix, suffix, formatter, ...text

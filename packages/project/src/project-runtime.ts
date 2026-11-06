@@ -22,7 +22,7 @@ export interface ProjectProviderProps {
   children?: ReactNode;
 }
 
-export function ProjectProvider(props: ProjectProviderProps): ReturnType<typeof React.createElement> {
+export function ProjectProvider(props: ProjectProviderProps): React.ReactElement {
   return React.createElement(ProjectContext.Provider, { value: props.project }, props.children);
 }
 
@@ -61,7 +61,7 @@ export function useProjectProperty<T extends JsonValue = JsonValue>(key: string,
 // evaluates it once per frame and the core renderer provides the layers (see
 // `ProjectLayersContext`), so this only hands them to the reconciler.
 
-export function ProjectTimeline(): ReturnType<typeof React.createElement> {
+export function ProjectTimeline(): React.ReactElement {
   useOutsideFreezeFrame('<ProjectTimeline />');
   const layers = React.useContext(ProjectLayersContext);
   if (!layers) {
@@ -115,12 +115,12 @@ export interface ProjectTrackProps {
   id: string;
 }
 
-export function ProjectTrack(props: ProjectTrackProps): ReturnType<typeof React.createElement> {
+export function ProjectTrack(props: ProjectTrackProps): React.ReactElement {
   const tracks = useProjectTrackLayers('<ProjectTrack />');
   return renderProjectLayers(trackLayers(tracks, props.id));
 }
 
-function renderProjectLayers(layers: Layer[]): ReturnType<typeof React.createElement> {
+function renderProjectLayers(layers: Layer[]): React.ReactElement {
   return React.createElement(
     React.Fragment,
     null,
@@ -142,7 +142,7 @@ function renderProjectLayers(layers: Layer[]): ReturnType<typeof React.createEle
 // (no matching registerComponent() call), the layer passes through as-is:
 // `GpuRenderer` errors on `missingComponent` content, which is the honest
 // outcome for a name the entry never registered.
-function ResolvedProjectLayer({ layer }: { layer: Layer }): ReturnType<typeof React.createElement> {
+function ResolvedProjectLayer({ layer }: { layer: Layer }): React.ReactElement {
   if (layer.content.type === 'missingComponent') {
     const definition = resolveComponent(layer.content.component);
     if (definition) {

@@ -71,7 +71,7 @@ const { nonNegative, insets } = validators('StatCard');
  *   fill="#182030" color="#F4F1EA" align="right" />
  * ```
  */
-export function StatCard(props: StatCardProps): ReturnType<typeof React.createElement> {
+export function StatCard(props: StatCardProps): React.ReactElement {
   const {
     value, from = 0, delay = 0, durationInFrames = 30, easing = Easings.easeOutExpo,
     locale, decimals, prefix, suffix, formatter, label, note,

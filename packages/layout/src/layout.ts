@@ -28,7 +28,7 @@ export interface LayoutBoundsProps extends LayoutSize {
  * nothing and does not move the children: a component with a size of its
  * own, such as a panel, wraps its content in it.
  */
-export function LayoutBounds({ width, height, children }: LayoutBoundsProps): ReturnType<typeof React.createElement> {
+export function LayoutBounds({ width, height, children }: LayoutBoundsProps): React.ReactElement {
   const value = React.useMemo(() => ({
     width: finiteNonNegative(width, 'LayoutBounds width'),
     height: finiteNonNegative(height, 'LayoutBounds height'),
@@ -122,7 +122,7 @@ export function SafeArea({
   x = 0,
   y = 0,
   ...props
-}: SafeAreaProps): ReturnType<typeof React.createElement> {
+}: SafeAreaProps): React.ReactElement {
   const bounds = useLayoutBounds();
   const canvas = useVideoConfig();
   const { top, right, bottom, left } = safeAreaInsets(padding, canvas.width, canvas.height);
@@ -209,7 +209,7 @@ export function Fit({
   x = 0,
   y = 0,
   ...props
-}: FitProps): ReturnType<typeof React.createElement> {
+}: FitProps): React.ReactElement {
   if (!Number.isFinite(sourceWidth) || sourceWidth <= 0 || !Number.isFinite(sourceHeight) || sourceHeight <= 0) {
     throw new Error('<Fit> requires positive finite `sourceWidth` and `sourceHeight` props');
   }

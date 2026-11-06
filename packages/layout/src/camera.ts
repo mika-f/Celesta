@@ -51,7 +51,7 @@ export function Camera({
   blendMode,
   id,
   children,
-}: CameraProps): ReturnType<typeof React.createElement> {
+}: CameraProps): React.ReactElement {
   if (!Number.isFinite(zoom) || zoom <= 0) {
     throw new Error('<Camera> requires a positive finite `zoom` prop');
   }

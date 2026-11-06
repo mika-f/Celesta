@@ -441,7 +441,7 @@ export interface InstancesProps
  * or rotate the particles as a whole. A `blendMode` blends the composited
  * particles as one layer, as on a `<Group>`.
  */
-export function Instances(props: InstancesProps): ReturnType<typeof React.createElement> {
+export function Instances(props: InstancesProps): React.ReactElement {
   return React.createElement('instances', props);
 }
 
@@ -506,7 +506,7 @@ export type FontProps = {
 
 const AssetsContext = React.createContext(false);
 
-export function Assets(props: AssetsProps): ReturnType<typeof React.createElement> {
+export function Assets(props: AssetsProps): React.ReactElement {
   return React.createElement(
     AssetsContext.Provider,
     { value: true },
@@ -548,7 +548,7 @@ function assignAssetRef(ref: React.ForwardedRef<AssetReference>, value: AssetRef
   }
 }
 
-export function Composition(props: CompositionProps): ReturnType<typeof React.createElement> | null {
+export function Composition(props: CompositionProps): React.ReactElement | null {
   const runtime = React.useContext(CompositionRuntimeContext);
   const selection = React.useContext(CompositionSelectionContext);
   const lang = resolveTextLanguage(props.lang);
@@ -562,7 +562,7 @@ export function Composition(props: CompositionProps): ReturnType<typeof React.cr
   );
 }
 
-export function Group({ mask, children, ...props }: GroupProps): ReturnType<typeof React.createElement> {
+export function Group({ mask, children, ...props }: GroupProps): React.ReactElement {
   const runtime = React.useContext(CompositionRuntimeContext);
   const lang = resolveTextLanguage(props.lang, runtime?.lang);
   const fontFallback = resolveFontFallback(props.fontFallback, runtime?.fontFallback);
@@ -595,7 +595,7 @@ function maskElement(mask: ReactNode): ReactNode {
  * pass it as the group's `mask` prop. Its children are positioned in the
  * group's coordinate space and never shown themselves.
  */
-export function Mask(props: MaskProps): ReturnType<typeof React.createElement> {
+export function Mask(props: MaskProps): React.ReactElement {
   return React.createElement('mask', props);
 }
 
@@ -607,7 +607,7 @@ export const Image = React.forwardRef<AssetReference, ImageProps>(function Image
   return React.createElement(inAssets ? 'asset-image' : 'image', props);
 });
 
-export function Text({ fontFamily, fontSize, fontWeight, color, ...props }: TextProps): ReturnType<typeof React.createElement> {
+export function Text({ fontFamily, fontSize, fontWeight, color, ...props }: TextProps): React.ReactElement {
   const theme = React.useContext(ThemeContext);
   const style = themedTextStyle(props.style, { fontFamily, fontSize, fontWeight, color }, theme, '<Text>');
   const children = themeTextContent(props.children, theme);
@@ -617,7 +617,7 @@ export function Text({ fontFamily, fontSize, fontWeight, color, ...props }: Text
 }
 
 /** A flat-shaded rectangle, optionally rounded and/or stroked. */
-export function Rect({ dash, dashOffset, cap, ...authored }: RectProps): ReturnType<typeof React.createElement> {
+export function Rect({ dash, dashOffset, cap, ...authored }: RectProps): React.ReactElement {
   const theme = React.useContext(ThemeContext);
   const themedFill = themedShapePaint(authored.fill, theme, '<Rect>', 'fill');
   const themedStroke = themedShapePaint(authored.stroke, theme, '<Rect>', 'stroke');
@@ -757,7 +757,7 @@ export interface SequenceProps extends CommonProps {
  * does not run and they contribute neither layers nor audio. Sequences work
  * under conditionals, `.map()`, and hooks like any other component.
  */
-export function Sequence(props: SequenceProps): ReturnType<typeof React.createElement> {
+export function Sequence(props: SequenceProps): React.ReactElement {
   // Gate children before React evaluates them, using the same local window
   // as render.ts's walker. The walker still clips layers and audio against
   // the enclosing windows.
@@ -859,7 +859,7 @@ export interface FreezeFrameProps extends CommonProps {
  * forever, so it throws, naming the frames it is nested in; so does nesting
  * more than 16 deep.
  */
-export function FreezeFrame(props: FreezeFrameProps): ReturnType<typeof React.createElement> {
+export function FreezeFrame(props: FreezeFrameProps): React.ReactElement {
   const context = React.useContext(CompositionRuntimeContext);
   const root = React.useContext(RootRuntimeContext);
   const ancestors = React.useContext(FreezeFrameChainContext);
@@ -950,7 +950,7 @@ export interface LoopProps extends CommonProps {
  * audio is a clip of its own, cut short where the loop ends. Only the
  * current cycle is mounted, so the picture depends on the frame alone.
  */
-export function Loop(props: LoopProps): ReturnType<typeof React.createElement> {
+export function Loop(props: LoopProps): React.ReactElement {
   const { durationInFrames: period, times, children, ...sequence } = props;
   if (typeof period !== 'number' || !Number.isFinite(period) || period <= 0) {
     throw new Error('<Loop> requires a positive finite `durationInFrames`');
@@ -966,7 +966,7 @@ export function Loop(props: LoopProps): ReturnType<typeof React.createElement> {
   );
 }
 
-function LoopCycle(props: { period: number; children?: ReactNode }): ReturnType<typeof React.createElement> {
+function LoopCycle(props: { period: number; children?: ReactNode }): React.ReactElement {
   const { period } = props;
   const { time, fps } = React.useContext(CompositionRuntimeContext)!;
   const localSeconds = secondsFromTime(time);

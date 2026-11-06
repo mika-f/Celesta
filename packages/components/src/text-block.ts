@@ -39,7 +39,7 @@ export function staggeredPiece(
   at: GroupProps & { key: string },
   { enter, exit, stagger }: StaggerTiming,
   children: ReactNode,
-): ReturnType<typeof React.createElement> {
+): React.ReactElement {
   if (enter === null && exit === null && stagger === 0) return React.createElement(Group, at, children);
   return React.createElement(Motion, {
     ...at,

@@ -83,7 +83,7 @@ export function TextReveal({
   easing = Easings.easeOutExpo,
   direction = 'in',
   ...groupProps
-}: TextRevealProps): ReturnType<typeof React.createElement> {
+}: TextRevealProps): React.ReactElement {
   const theme = React.useContext(ThemeContext);
   style = themedTextStyle(style, {}, theme, '<TextReveal>');
   const flat = flattenTextContent(themeTextContent(children, theme), '<TextReveal> children');

@@ -262,7 +262,7 @@ export interface TextBoxProps
  * that fits `width`, `height`, and `maxLines`. The box's top-left corner is
  * at `x`/`y`; `style.align` positions each line inside `width`.
  */
-export function TextBox(props: TextBoxProps): ReturnType<typeof React.createElement> {
+export function TextBox(props: TextBoxProps): React.ReactElement {
   const {
     children, width, height, minFontSize, maxFontSize, maxLines, lineHeight, step, style,
     verticalAlign = 'top', overflow = 'clip', ...common

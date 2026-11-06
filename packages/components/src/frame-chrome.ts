@@ -115,7 +115,7 @@ function filledFrames(frame: number, duration: number): number {
  *   color="#f4f1ea" blendMode="difference" fontFamily="mono" />
  * ```
  */
-export function FrameChrome<T extends SceneEntry>(props: FrameChromeProps<T>): ReturnType<typeof React.createElement> {
+export function FrameChrome<T extends SceneEntry>(props: FrameChromeProps<T>): React.ReactElement {
   const {
     margin = 56, corners = false, cornerLength = 24, strokeWidth = 2, gap = 14,
     color = '#ffffff', blendMode, progressBlendMode = blendMode, opacity,

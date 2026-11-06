@@ -100,7 +100,7 @@ function defined<T extends object>(props: T): Partial<T> {
  *   width={960} height={540} fit="cover" cornerRadius={24} caption="アプリのプレビュー" />
  * ```
  */
-export function MediaFrame(props: MediaFrameProps): ReturnType<typeof React.createElement> {
+export function MediaFrame(props: MediaFrameProps): React.ReactElement {
   const {
     kind, src, name, fit = 'contain', caption, captionStyle = DEFAULT_CAPTION_STYLE, captionGap = 12, variant = 'plain',
     width, height, padding = 0, cornerRadius = 0, ...rest
@@ -123,7 +123,7 @@ export function MediaFrame(props: MediaFrameProps): ReturnType<typeof React.crea
   const area = { width: Math.max(0, width - left - right), height: Math.max(0, height - top - bottom) };
   const radius = Math.max(0, cornerRadius - Math.min(top, right, bottom, left));
 
-  let media: ReturnType<typeof React.createElement>;
+  let media: React.ReactElement;
   if (kind === 'image') {
     media = React.createElement(Image, defined({
       src, name, width: area.width, height: area.height, fit, startFrom, playbackRate, loop,
