@@ -29,7 +29,10 @@ program links FFmpeg, and with it the GPL libx264 of the official packages.
   `MediaBackend::with_codec`. A request that finds the codec gone
   (`MediaError::CodecUnavailable`) opens a new one and is sent once more;
   encoder requests are not retried, since the encoder lived in the old one.
-  With no codec, requests fail with `MediaError::NoCodec`.
+  With no codec, requests fail with `MediaError::NoCodec`. A codec stopped
+  at its deadline or by a kill switch (`MediaError::CodecStopped`, a later
+  change; see `2026-11-06-plugin-kill-switch.md`) is not sent the request
+  again.
 - **Process.** `CodecProcess` starts the program in its plugin folder, checks
   that `hello`'s `roles` include `codec`, and makes every path absolute
   against Celesta's working directory before sending it (the renderer passes

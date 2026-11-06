@@ -594,6 +594,8 @@ fn render_stills(
             progress(ExportProgress::Wrote(file));
         }
     }
+    // A frame a cancel killed failed as frame-scoped; write no sheet of it.
+    ensure_not_cancelled(cancellation)?;
     if let Some(file) = destination.finish(frames, output, overwrite)? {
         progress(ExportProgress::Wrote(file));
     }

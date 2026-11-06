@@ -139,7 +139,7 @@ impl Exporter {
             self.options.video_format,
             self.options.overwrite,
         )?;
-        ensure_encoders(self.options.video_format)?;
+        ensure_encoders(self.options.video_format, cancellation)?;
         subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
 
         // Absolutize the asset roots up front: `absolutize_layers` and

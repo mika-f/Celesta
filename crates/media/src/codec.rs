@@ -16,6 +16,7 @@ pub use process::CodecProcess;
 use crate::error::MediaError;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
+use celesta_plugin_host::PluginKillSwitch;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -59,12 +60,6 @@ pub trait CodecProvider: Send {
     /// Writes `request.output`: the video of `request.video`, copied, with
     /// the PCM of `request.audio` encoded in the container's audio codec.
     fn mux_audio(&mut self, request: &MuxRequest) -> Result<(), MediaError>;
-
-    /// Kills the codec's process from another thread, for a codec that runs
-    /// in one; a [`crate::MediaBackend`] with a kill switch registers it.
-    fn kill_handle(&self) -> Option<celesta_plugin_host::PluginKillHandle> {
-        None
-    }
 }
 
 /// A frame request. With `sequential`, requests of the same session are
@@ -161,8 +156,12 @@ pub struct MuxRequest {
     pub lead_in_frames: usize,
 }
 
-/// Makes a codec instance, each time a [`crate::MediaBackend`] needs one.
-pub type CodecFactory = Arc<dyn Fn() -> Result<Box<dyn CodecProvider>, MediaError> + Send + Sync>;
+/// Makes a codec instance, each time a [`crate::MediaBackend`] needs one. A
+/// codec that runs in a process of its own registers it with the switch it
+/// is given, before it says `hello`, so killing the switch also ends a slow
+/// start; a codec in this process ignores it.
+pub type CodecFactory =
+    Arc<dyn Fn(&PluginKillSwitch) -> Result<Box<dyn CodecProvider>, MediaError> + Send + Sync>;
 
 static CODEC: RwLock<Option<CodecFactory>> = RwLock::new(None);
 

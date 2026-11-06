@@ -389,17 +389,22 @@ pub(crate) fn validate_output(
 
 /// Fails when the codec cannot write `format` (an FFmpeg build without one
 /// of its encoders), or there is no codec, before any frame is rendered.
-pub(crate) fn ensure_encoders(format: VideoFormat) -> Result<(), ExportError> {
+/// `cancellation` kills the codec's process.
+pub(crate) fn ensure_encoders(
+    format: VideoFormat,
+    cancellation: &ExportCancellation,
+) -> Result<(), ExportError> {
     MediaBackend::new()
+        .with_kill_switch(cancellation.plugins())
         .check_encoder(format.container())
         .map_err(|source| match source {
             MediaError::EncoderUnavailable { encoder } => {
                 ExportError::EncoderUnavailable { format, encoder }
             }
-            source => ExportError::Codec {
+            source => cancellation.settle(ExportError::Codec {
                 stage: "encoder check",
                 source,
-            },
+            }),
         })
 }
 
@@ -521,12 +526,12 @@ pub(crate) fn open_video_writer(
         bit_depth: encoding.bit_depth.bits(),
     };
     let mut codec = MediaBackend::new().with_kill_switch(cancellation.plugins());
-    let encoder = codec
-        .open_encoder(&settings)
-        .map_err(|source| ExportError::Codec {
+    let encoder = codec.open_encoder(&settings).map_err(|source| {
+        cancellation.settle(ExportError::Codec {
             stage: "video encoding",
             source,
-        })?;
+        })
+    })?;
     Ok(VideoWriter { codec, encoder })
 }
 

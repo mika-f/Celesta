@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 fn program() -> Box<dyn CodecProvider> {
     let executable = PathBuf::from(env!("CARGO_BIN_EXE_celesta-codec-test"));
     let folder = executable.parent().unwrap().to_path_buf();
-    CodecProcess::factory(executable, folder)().unwrap()
+    CodecProcess::factory(executable, folder)(&Default::default()).unwrap()
 }
 
 #[test]

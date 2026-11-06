@@ -16,6 +16,12 @@ pub enum MediaError {
     /// answering.
     #[error("the codec plugin is unavailable: {0}")]
     CodecUnavailable(String),
+    /// The codec plugin's process was stopped on purpose: it missed a
+    /// request's deadline, or its kill switch was killed (an export's
+    /// Cancel). Unlike [`Self::CodecUnavailable`], the request is not sent
+    /// again to a new process; a later request starts one.
+    #[error("the codec plugin was stopped: {0}")]
+    CodecStopped(String),
     /// The codec plugin cannot write a format, as an FFmpeg build without
     /// one of its encoders cannot.
     #[error("the codec plugin has no {encoder} encoder")]

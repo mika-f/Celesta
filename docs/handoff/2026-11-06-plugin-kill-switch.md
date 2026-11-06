@@ -36,6 +36,7 @@ nothing could end it sooner:
 - **`PluginHost`**:
   - `with_kill_switch` / `kill_switch`: every process it starts is
     registered with the switch before `hello`, so a slow start is killed too.
+    A switch given after processes started registers those as well.
     Once the switch is killed it starts no process: every request fails as
     `PluginError::Unavailable` at once.
   - A request whose process was stopped is not retried on a fresh process;
@@ -44,21 +45,25 @@ nothing could end it sooner:
     went away on its own is still retried once, as before.
   - The deadlines are a `Deadlines` field (the same constants: `open` 120 s,
     `frame` 30 s, `close` 5 s), which tests shorten.
-- **Codec**: `CodecProvider::kill_handle` (default `None`; `CodecProcess`
-  returns its child's). `MediaBackend::with_kill_switch` registers the codec
-  process it opens with the switch, and opens none once the switch is
-  killed. `Stopped` maps to `MediaError::CodecUnavailable`, so the backend's
-  own retry is unchanged (it refuses a fresh codec once the switch is
-  killed). The codec's `hello` runs inside the factory, before the backend
-  registers it, so a kill during the codec's start waits for its 30 s
-  deadline.
+- **Codec**: `CodecFactory` takes a `&PluginKillSwitch`.
+  `CodecProcess::start` registers its process with it before `hello`; a
+  codec in this process (`TestCodec`, `FfmpegCodec`) ignores it.
+  `MediaBackend::with_kill_switch` passes its switch to the factory (a
+  backend without one passes a switch nothing kills) and opens no codec once
+  it is killed. `RequestError::Stopped` maps to the new
+  `MediaError::CodecStopped`, which the backend does not retry: it drops the
+  codec and the next request opens another, as `PluginHost` does.
+  `CodecUnavailable` (a process that went away) is still retried once.
 - **Export** (`crates/exporter`): `ExportCancellation` holds a
-  `PluginKillSwitch`, and `cancel()` kills it. The export's renderer (its
-  `PluginHost` and video decoder), its encoder, the audio mix's decoder, and
-  the mux register with it. Once cancelled, the error a killed request
-  causes settles as `ExportError::Cancelled` (`ExportCancellation::settle`,
-  in `finish_encode`, `render_stills`, the mux, and the audio mix), so the
-  editor reports a cancelled export, not a failed one.
+  `PluginKillSwitch`, and `cancel()` kills it. The encoder check, the
+  export's renderer (its `PluginHost` and video decoder), its encoder, the
+  audio mix's decoder, and the mux register with it. Once cancelled, the
+  error a killed request causes settles as `ExportError::Cancelled`
+  (`ExportCancellation::settle`, in the encoder check, opening the encoder,
+  `finish_encode`, `render_stills`, the mux, and the audio mix), so the
+  editor reports a cancelled export, not a failed one. A contact sheet is
+  not written once the export was cancelled, even when the cancel only made
+  its last frame fail.
 - **Editor preview** (`crates/editor/src/view.rs`): the preview renderer's
   `PluginHost` and video decoder share a switch, and the preview worker kills
   it when dropped (`LatestWorker::stopping_on_drop`). Replacing the view
@@ -79,7 +84,11 @@ nothing could end it sooner:
   (a shell-script plugin that answers `hello` and `open` and never `frame`:
   `frame` fails as unavailable at its shortened deadline, the process
   exited, and none was started again) and
-  `killing_its_switch_ends_a_frame_in_progress_and_starts_nothing`.
+  `killing_its_switch_ends_a_frame_in_progress_and_starts_nothing`, and
+  `a_switch_given_later_kills_the_processes_started_before`.
+- `celesta-media`: a stopped codec is not asked again but replaced on the
+  next request; a backend whose switch is killed opens no codec; a backend
+  gives its codec factory its switch.
 - `celesta-exporter` integration (Unix, needs `packages/cli` built and a
   GPU): `export::cancel_ends_a_frame_waiting_on_a_plugin_that_hangs` exports
   a React entry whose `<Hang>` layer is that plugin's content and cancels

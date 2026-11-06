@@ -45,7 +45,7 @@ impl MediaBackend {
     pub(crate) fn with_factory_for_test(factory: Option<CodecFactory>) -> Self {
         let mut backend = Self::with_factory(factory.clone());
         if factory.is_none() {
-            backend.factory = Some(Arc::new(|| Err(MediaError::NoCodec)));
+            backend.factory = Some(Arc::new(|_| Err(MediaError::NoCodec)));
         }
         backend
     }
@@ -94,23 +94,23 @@ impl MediaBackend {
                 .clone()
                 .or_else(codec)
                 .ok_or(MediaError::NoCodec)?;
-            if self.kill.as_ref().is_some_and(PluginKillSwitch::is_killed) {
-                return Err(MediaError::CodecUnavailable(
-                    "the codec was not started, as its plugins were stopped".to_owned(),
+            // A backend without a switch gives its codec one nothing kills.
+            let kill = self.kill.clone().unwrap_or_default();
+            if kill.is_killed() {
+                return Err(MediaError::CodecStopped(
+                    "it was not started, as its plugins were stopped".to_owned(),
                 ));
             }
-            let opened = factory()?;
-            if let (Some(kill), Some(handle)) = (&self.kill, opened.kill_handle()) {
-                kill.register(handle);
-            }
-            self.codec = Some(opened);
+            self.codec = Some(factory(&kill)?);
         }
         Ok(self.codec.as_deref_mut().expect("opened above"))
     }
 
     /// Runs `request` on the codec; once more on a fresh one if the first
-    /// stopped answering. Only for requests that keep nothing open on the
-    /// codec's side that the caller relies on.
+    /// went away. One that was stopped (it missed its deadline, or was
+    /// killed) is dropped without being asked again; the next request opens
+    /// another. Only for requests that keep nothing open on the codec's side
+    /// that the caller relies on.
     fn retrying<T>(
         &mut self,
         mut request: impl FnMut(&mut dyn CodecProvider) -> Result<T, MediaError>,
@@ -119,6 +119,10 @@ impl MediaBackend {
             Err(MediaError::CodecUnavailable(_)) => {
                 self.codec = None;
                 request(self.codec()?)
+            }
+            Err(stopped @ MediaError::CodecStopped(_)) => {
+                self.codec = None;
+                Err(stopped)
             }
             result => result,
         }

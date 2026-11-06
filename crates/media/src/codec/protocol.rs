@@ -190,7 +190,10 @@ pub fn encode_error(error: &MediaError) -> Message {
         MediaError::EncoderUnavailable { encoder } => {
             json!({ "code": "encoderUnavailable", "encoder": encoder })
         }
-        MediaError::Codec(_) | MediaError::NoCodec | MediaError::CodecUnavailable(_) => json!({}),
+        MediaError::Codec(_)
+        | MediaError::NoCodec
+        | MediaError::CodecUnavailable(_)
+        | MediaError::CodecStopped(_) => json!({}),
     };
     let mut header = json!({ "type": "error", "message": error.to_string() });
     if let (Some(header), Value::Object(details)) = (header.as_object_mut(), details) {
@@ -663,7 +666,7 @@ mod tests {
         let counter = opened.clone();
         // The first codec dies on its first request; the second answers.
         let dead = Mutex::new(false);
-        let factory: CodecFactory = Arc::new(move || {
+        let factory: CodecFactory = Arc::new(move |_| {
             counter.fetch_add(1, Ordering::SeqCst);
             let mut dead = dead.lock().unwrap();
             let failed = *dead;
@@ -684,6 +687,89 @@ mod tests {
             backend.decode_audio(Path::new("/a.mp4"), 48_000, 2),
             Err(MediaError::Codec(_))
         ));
+    }
+
+    /// Fails every request as a codec stopped at its deadline would.
+    struct Stopped;
+
+    impl CodecProvider for Stopped {
+        fn probe(&mut self, _: &Path) -> Result<MediaProbe, MediaError> {
+            Err(MediaError::CodecStopped("did not answer in time".into()))
+        }
+        fn decode_video(&mut self, _: &VideoRequest<'_>) -> Result<VideoFrame, MediaError> {
+            unreachable!()
+        }
+        fn decode_audio(&mut self, _: &Path, _: u32, _: u16) -> Result<AudioBuffer, MediaError> {
+            unreachable!()
+        }
+        fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
+            unreachable!()
+        }
+        fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
+            unreachable!()
+        }
+        fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
+            unreachable!()
+        }
+        fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
+            unreachable!()
+        }
+        fn abort_encoder(&mut self, _: EncoderId) {}
+        fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn a_stopped_codec_is_not_asked_again_but_replaced_on_the_next_request() {
+        let opened = Arc::new(AtomicUsize::new(0));
+        let counter = opened.clone();
+        let mut backend = MediaBackend::with_codec(Arc::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(Stopped) as Box<dyn CodecProvider>)
+        }));
+        assert!(matches!(
+            backend.probe("/a.mp4"),
+            Err(MediaError::CodecStopped(_))
+        ));
+        assert_eq!(opened.load(Ordering::SeqCst), 1, "not sent again");
+        assert!(backend.probe("/a.mp4").is_err());
+        assert_eq!(opened.load(Ordering::SeqCst), 2, "a new codec next time");
+    }
+
+    #[test]
+    fn a_backend_whose_switch_is_killed_opens_no_codec() {
+        let opened = Arc::new(AtomicUsize::new(0));
+        let counter = opened.clone();
+        let kill = celesta_plugin_host::PluginKillSwitch::new();
+        let mut backend = MediaBackend::with_codec(Arc::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(Fake::default()) as Box<dyn CodecProvider>)
+        }))
+        .with_kill_switch(kill.clone());
+        kill.kill();
+        assert!(matches!(
+            backend.probe("/a.mp4"),
+            Err(MediaError::CodecStopped(_))
+        ));
+        assert_eq!(opened.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_backend_gives_its_codec_its_kill_switch() {
+        let kill = celesta_plugin_host::PluginKillSwitch::new();
+        let given = Arc::new(Mutex::new(None));
+        let seen = given.clone();
+        let mut backend = MediaBackend::with_codec(Arc::new(move |kill| {
+            *seen.lock().unwrap() = Some(kill.clone());
+            Ok(Box::new(Fake::default()) as Box<dyn CodecProvider>)
+        }))
+        .with_kill_switch(kill.clone());
+        let _ = backend.decode_audio(Path::new("/a.mp4"), 48_000, 1);
+        let given = given.lock().unwrap().take().expect("the codec was opened");
+        assert!(!given.is_killed());
+        kill.kill();
+        assert!(given.is_killed(), "the codec got the backend's switch");
     }
 
     #[test]
@@ -727,7 +813,7 @@ mod tests {
 
     #[test]
     fn a_backend_asks_only_for_mono_or_stereo() {
-        let mut backend = MediaBackend::with_codec(Arc::new(|| {
+        let mut backend = MediaBackend::with_codec(Arc::new(|_| {
             Ok(Box::new(Fake::default()) as Box<dyn CodecProvider>)
         }));
         assert!(matches!(

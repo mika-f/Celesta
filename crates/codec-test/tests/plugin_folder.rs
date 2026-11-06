@@ -35,7 +35,7 @@ fn the_folder_is_a_codec_plugin_for_this_platform() {
     assert_eq!(codec.id, PLUGIN_ID);
     assert_eq!(codec.executable, executable);
     // The program in the folder runs and answers as a codec.
-    CodecProcess::start(&codec.executable, &codec.directory).unwrap();
+    CodecProcess::start(&codec.executable, &codec.directory, &Default::default()).unwrap();
 }
 
 #[test]

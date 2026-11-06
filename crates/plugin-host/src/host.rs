@@ -121,10 +121,14 @@ impl PluginHost {
         }
     }
 
-    /// Registers every process this host starts with `kill`, which another
-    /// thread can kill to end a request in progress, such as an export's
-    /// Cancel.
+    /// Registers every process this host has started, and every one it
+    /// starts, with `kill`, which another thread can kill to end a request
+    /// in progress, such as an export's Cancel. The host's previous switch
+    /// still kills the processes started before.
     pub fn with_kill_switch(mut self, kill: PluginKillSwitch) -> Self {
+        for process in self.processes.values() {
+            kill.register(process.0.kill_handle());
+        }
         self.kill = kill;
         self
     }
@@ -465,6 +469,25 @@ mod tests {
         let starts = plugin.starts();
         assert_eq!(starts.len(), 1, "it was not started again for this frame");
         assert!(!running(starts[0]), "the plugin was stopped");
+    }
+
+    #[test]
+    fn a_switch_given_later_kills_the_processes_started_before() {
+        let plugin = HangingPlugin::new();
+        let mut host = plugin.host();
+        let opened = host.open("hang", &BTreeMap::new()).unwrap();
+        plugin.wait_until_started();
+        let switch = PluginKillSwitch::new();
+        let mut host = host.with_kill_switch(switch.clone());
+
+        switch.kill();
+        let begun = Instant::now();
+        assert!(matches!(
+            host.frame(opened.model, 0.0, &Value::Null),
+            Err(PluginError::Unavailable { .. })
+        ));
+        assert!(begun.elapsed() < Duration::from_secs(10));
+        assert!(!running(plugin.starts()[0]), "the plugin was stopped");
     }
 
     #[test]

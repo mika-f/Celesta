@@ -102,7 +102,7 @@ impl Exporter {
             self.options.video_format,
             self.options.overwrite,
         )?;
-        ensure_encoders(self.options.video_format)?;
+        ensure_encoders(self.options.video_format, cancellation)?;
         subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
         let duration = project.effective_duration().map_err(ExportError::Time)?;
         let full_frame_count = frame_count(duration, project.settings.frame_rate)?;
