@@ -4,7 +4,6 @@
 
 use std::path::Path;
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     CallExpression, Declaration, ExportDefaultDeclarationKind, Expression, JSXAttributeItem,
     JSXAttributeName, JSXAttributeValue, JSXOpeningElement, ModuleExportName, ObjectExpression,
@@ -18,7 +17,7 @@ use crate::imports::{Module, PACKAGE};
 use crate::inputs::inputs_at;
 use crate::resolve::{EditTarget, LockReason, Span, resolve_value_at};
 use crate::shape::{span_of, string_of};
-use crate::{parse_checked_as, source_type_of};
+use crate::{source_type_of, with_program_as};
 
 /// A `defineScenes([...])` call.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,35 +46,33 @@ pub struct SceneItem {
 /// string-literal ids, in source order. A list holding anything else (a
 /// spread, a hole, an entry with a spread or a computed key) is skipped.
 pub fn scene_lists(text: &str, path: &Path) -> Vec<SceneList> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked_as(text, source_type_of(path), &alloc);
-    if failed {
-        return Vec::new();
-    }
-    let module = Module::of(&program);
-    let mut calls = Calls {
-        module: &module,
-        lists: Vec::new(),
-        bindings: Vec::new(),
-    };
-    calls.visit_program(&program);
-    let Calls {
-        lists, bindings, ..
-    } = calls;
-    let exported = exported_names(&program);
-    lists
-        .into_iter()
-        .map(|(start, entries)| SceneList {
-            binding: bindings
-                .iter()
-                .find(|(at, _)| *at == start)
-                .map(|(_, name)| name.clone()),
-            entries: entries
-                .into_iter()
-                .map(|(id, duration)| item(&program, text, &exported, id, duration))
-                .collect(),
-        })
-        .collect()
+    with_program_as(text, source_type_of(path), |program| {
+        let module = Module::of(program);
+        let mut calls = Calls {
+            module: &module,
+            lists: Vec::new(),
+            bindings: Vec::new(),
+        };
+        calls.visit_program(program);
+        let Calls {
+            lists, bindings, ..
+        } = calls;
+        let exported = exported_names(program);
+        lists
+            .into_iter()
+            .map(|(start, entries)| SceneList {
+                binding: bindings
+                    .iter()
+                    .find(|(at, _)| *at == start)
+                    .map(|(_, name)| name.clone()),
+                entries: entries
+                    .into_iter()
+                    .map(|(id, duration)| item(program, text, &exported, id, duration))
+                    .collect(),
+            })
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// How `<Composition durationInFrames>` is written.
@@ -97,39 +94,38 @@ pub enum CompositionLength {
 /// `@celesta.studio/react`), or when the text does not parse. The first
 /// `<Composition>` counts.
 pub fn composition_length(text: &str, path: &Path) -> Option<CompositionLength> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked_as(text, source_type_of(path), &alloc);
-    if failed {
-        return None;
-    }
-    let module = Module::of(&program);
-    let mut find = FindComposition {
-        module: &module,
-        found: None,
-    };
-    find.visit_program(&program);
-    let list = find.found?;
-    let Some(list) = list else {
-        return Some(CompositionLength::Other);
-    };
-    if let Some(import) = module.import(&list) {
-        return Some(match &import.imported {
-            Some(name) => CompositionLength::ListDuration {
-                module: Some(import.source.clone()),
-                name: name.clone(),
-            },
-            None => CompositionLength::Other,
-        });
-    }
-    let local = module.declared(&list) == 1 && top_level_consts(&program).any(|name| name == list);
-    Some(if local {
-        CompositionLength::ListDuration {
-            module: None,
-            name: list,
+    with_program_as(text, source_type_of(path), |program| {
+        let module = Module::of(program);
+        let mut find = FindComposition {
+            module: &module,
+            found: None,
+        };
+        find.visit_program(program);
+        let list = find.found?;
+        let Some(list) = list else {
+            return Some(CompositionLength::Other);
+        };
+        if let Some(import) = module.import(&list) {
+            return Some(match &import.imported {
+                Some(name) => CompositionLength::ListDuration {
+                    module: Some(import.source.clone()),
+                    name: name.clone(),
+                },
+                None => CompositionLength::Other,
+            });
         }
-    } else {
-        CompositionLength::Other
+        let local =
+            module.declared(&list) == 1 && top_level_consts(program).any(|name| name == list);
+        Some(if local {
+            CompositionLength::ListDuration {
+                module: None,
+                name: list,
+            }
+        } else {
+            CompositionLength::Other
+        })
     })
+    .flatten()
 }
 
 /// An entry's `durationInFrames` as written.

@@ -358,7 +358,7 @@ export function DialogueSeries<L extends DialogueLine>({
   holdThroughGap = false,
   holdSubtitle = false,
   dialogueProps,
-}: DialogueSeriesProps<L>): ReturnType<typeof React.createElement> {
+}: DialogueSeriesProps<L>): React.ReactElement {
   // Runs of lines with no lead-in between them, which a held subtitle spans.
   const runs = new Map<PlannedDialogueLine<L>, { from: number; durationInFrames: number }>();
   if (holdSubtitle) {

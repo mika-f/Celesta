@@ -67,7 +67,7 @@ export function mergeTheme(outer: ResolvedTheme, inner: ThemeValues): ResolvedTh
  * name as a family name, a color as a color, so the `color` shorthand and a
  * shape's colors throw unless they are hex colors.
  */
-export function Theme({ fonts, colors, children }: ThemeProps): ReturnType<typeof React.createElement> {
+export function Theme({ fonts, colors, children }: ThemeProps): React.ReactElement {
   const outer = React.useContext(ThemeContext);
   const value = React.useMemo(() => mergeTheme(outer, { fonts, colors }), [outer, fonts, colors]);
   return React.createElement(ThemeContext.Provider, { value }, children);

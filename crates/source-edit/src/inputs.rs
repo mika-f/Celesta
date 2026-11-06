@@ -1,7 +1,6 @@
 //! The identifiers an expression reads, each resolved like a prop value, so
 //! a value computed from others can be edited at its inputs.
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     ArrowFunctionExpression, BindingIdentifier, CallExpression, Expression, Function,
     IdentifierReference, JSXElementName, NewExpression, Program, TSType, TaggedTemplateExpression,
@@ -10,13 +9,13 @@ use oxc_ast_visit::Visit;
 use oxc_syntax::scope::ScopeFlags;
 
 use crate::locate::ElementRef;
-use crate::parse_checked;
 use crate::pass_through::resolve_parameter;
 use crate::resolve::{
     Absent, EditTarget, Gather, LockReason, PropPath, ResolveContext, Span, read_written,
     resolve_identifier, value_context,
 };
 use crate::shape::Shape;
+use crate::with_program;
 
 /// For a prop locked as `Expression`, each identifier the expression reads
 /// (in order of first appearance, member objects only: `C.x` gives `C`),
@@ -46,17 +45,15 @@ pub fn resolve_inputs(
     ctx: &ResolveContext,
     call_site: Option<(&str, &ElementRef)>,
 ) -> Vec<(String, EditTarget)> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return Vec::new();
-    }
-    let mut gather = Gather::new(element.start, PropPath::parse(prop));
-    gather.visit_program(&program);
-    // `resolve`'s rules, up to an absent prop, which never locks as an
-    // expression.
-    let locked = read_written(&gather, text, prop, ctx, true);
-    inputs_of(&program, gather, locked, text, ctx, call_site)
+    with_program(text, |program| {
+        let mut gather = Gather::new(element.start, PropPath::parse(prop));
+        gather.visit_program(program);
+        // `resolve`'s rules, up to an absent prop, which never locks as an
+        // expression.
+        let locked = read_written(&gather, text, prop, ctx, true);
+        inputs_of(program, gather, locked, text, ctx, call_site)
+    })
+    .unwrap_or_default()
 }
 
 /// [`resolve_inputs`] for the expression at `value` in `program` (parsed

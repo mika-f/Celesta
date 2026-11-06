@@ -154,7 +154,7 @@ function range(first: number, last: number): number[] {
  *   background="#101820" color="#FFFFFF" opacity={0.12} />
  * ```
  */
-export function PatternBackground(props: PatternBackgroundProps): ReturnType<typeof React.createElement> {
+export function PatternBackground(props: PatternBackgroundProps): React.ReactElement {
   const frame = useCurrentFrame();
   const { width: canvasWidth, height: canvasHeight, fps } = useVideoConfig();
   const theme = useTheme();

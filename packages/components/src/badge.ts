@@ -69,7 +69,7 @@ const { fail, nonNegative, insets } = validators('Badge');
  * </Badge>
  * ```
  */
-export function Badge(props: BadgeProps): ReturnType<typeof React.createElement> {
+export function Badge(props: BadgeProps): React.ReactElement {
   const {
     children, style, fontFamily, fontSize, fontWeight, color, padding = DEFAULT_PADDING, cornerRadius = 8,
     leading, leadingWidth, gap = 8, maxWidth, ...panel

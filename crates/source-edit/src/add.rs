@@ -1,6 +1,5 @@
 //! Adding an element as a parent's last child.
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     ArrowFunctionExpression, BindingIdentifier, Expression, Function, JSXChild, JSXElement, Program,
 };
@@ -13,7 +12,7 @@ use crate::imports::{ImportLock, ImportName, PACKAGE, ensure_imports_in};
 use crate::insert::indent_unit;
 use crate::locate::ElementRef;
 use crate::resolve::{EditValue, LiteralForm, Span};
-use crate::{line_break, parse_checked};
+use crate::{line_break, with_program};
 
 /// The package of `Ellipse` and `Circle`.
 const SHAPES: &str = "@celesta.studio/shapes";
@@ -198,9 +197,7 @@ impl AddLock {
 /// reads a parameter of an enclosing function: `{children}`,
 /// `{props.children}`, a destructured prop. `{items.map(…)}` is a region.
 pub fn accepts_children(text: &str, element: &ElementRef) -> bool {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    !failed && has_region(&program, element)
+    with_program(text, |program| has_region(program, element)).unwrap_or(false)
 }
 
 /// [`accepts_children`] in a program that parsed without error.
@@ -227,17 +224,18 @@ pub fn add_locks(
     kinds: &[NewKind],
     wrapped: bool,
 ) -> Option<Vec<(NewKind, Option<AddLock>)>> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed || !has_region(&program, parent) {
-        return None;
-    }
-    let lock = |kind: NewKind| {
-        tags(text, &program, kind.module(), kind.tag(), wrapped)
-            .err()
-            .map(AddLock::Import)
-    };
-    Some(kinds.iter().map(|&kind| (kind, lock(kind))).collect())
+    with_program(text, |program| {
+        if !has_region(program, parent) {
+            return None;
+        }
+        let lock = |kind: NewKind| {
+            tags(text, program, kind.module(), kind.tag(), wrapped)
+                .err()
+                .map(AddLock::Import)
+        };
+        Some(kinds.iter().map(|&kind| (kind, lock(kind))).collect())
+    })
+    .flatten()
 }
 
 /// The edits and where the new element's `<` is in the edited text (1-based line and column, as the runtime reports positions).
@@ -309,109 +307,107 @@ fn add_written(
     timing: Option<&Timing>,
     element: impl FnOnce(&str) -> String,
 ) -> Result<Added, AddLock> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return Err(AddLock::NoChildrenRegion);
-    }
-    let mut find = FindParent::new(parent.start);
-    find.visit_program(&program);
-    let found = find
-        .found
-        .filter(|found| !found.prop_only)
-        .ok_or(AddLock::NoChildrenRegion)?;
-    let tags = tags(text, &program, module, tag, timing.is_some()).map_err(AddLock::Import)?;
+    with_program(text, |program| {
+        let mut find = FindParent::new(parent.start);
+        find.visit_program(program);
+        let found = find
+            .found
+            .filter(|found| !found.prop_only)
+            .ok_or(AddLock::NoChildrenRegion)?;
+        let tags = tags(text, program, module, tag, timing.is_some()).map_err(AddLock::Import)?;
 
-    let start = parent.start as usize;
-    let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
-    let line = &text[line_start..];
-    let indent = &line[..line.len() - line.trim_start().len()];
-    let unit = indent_unit(text, parent.start);
-    let newline = line_break(text);
+        let start = parent.start as usize;
+        let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+        let line = &text[line_start..];
+        let indent = &line[..line.len() - line.trim_start().len()];
+        let unit = indent_unit(text, parent.start);
+        let newline = line_break(text);
 
-    // The element, in its wrapper when timed, and what goes before its `<`.
-    let element = element(&tags.tag);
-    let lead = format!("{newline}{indent}{unit}");
-    let (block, before_element) = match (timing, tags.sequence) {
-        (Some(timing), Some(sequence)) => {
-            let open = format!(
-                "<{sequence}{}>",
-                attributes(&[
-                    ("from", EditValue::Number(timing.from as f64)),
-                    (
-                        "durationInFrames",
-                        EditValue::Number(timing.duration as f64)
-                    ),
-                ])
-            );
-            let before = format!("{open}{lead}{unit}");
-            (
-                format!("{before}{element}{lead}</{sequence}>"),
-                before.len(),
-            )
-        }
-        _ => (element, 0),
-    };
+        // The element, in its wrapper when timed, and what goes before its `<`.
+        let element = element(&tags.tag);
+        let lead = format!("{newline}{indent}{unit}");
+        let (block, before_element) = match (timing, tags.sequence) {
+            (Some(timing), Some(sequence)) => {
+                let open = format!(
+                    "<{sequence}{}>",
+                    attributes(&[
+                        ("from", EditValue::Number(timing.from as f64)),
+                        (
+                            "durationInFrames",
+                            EditValue::Number(timing.duration as f64)
+                        ),
+                    ])
+                );
+                let before = format!("{open}{lead}{unit}");
+                (
+                    format!("{before}{element}{lead}</{sequence}>"),
+                    before.len(),
+                )
+            }
+            _ => (element, 0),
+        };
 
-    // The bytes replaced, what replaces them, and how much of it comes
-    // before the block.
-    let (start, end, inserted, before_block) = match found.closing_start {
-        None => {
-            let name = &text[found.name.start as usize..found.name.end as usize];
-            let opened = format!(">{lead}{block}{newline}{indent}</{name}>");
-            (parent.end_of_attributes, found.opening_end, opened, 1)
-        }
-        Some(closing) => {
-            let children = &text[found.opening_end as usize..closing as usize];
-            let after = found.opening_end + children.trim_end().len() as u32;
-            if after == found.opening_end {
-                let filled = format!("{lead}{block}{newline}{indent}");
-                (found.opening_end, closing, filled, 0)
-            } else {
-                let rest = &text[after as usize..closing as usize];
-                let close = if rest.contains('\n') {
-                    String::new()
+        // The bytes replaced, what replaces them, and how much of it comes
+        // before the block.
+        let (start, end, inserted, before_block) = match found.closing_start {
+            None => {
+                let name = &text[found.name.start as usize..found.name.end as usize];
+                let opened = format!(">{lead}{block}{newline}{indent}</{name}>");
+                (parent.end_of_attributes, found.opening_end, opened, 1)
+            }
+            Some(closing) => {
+                let children = &text[found.opening_end as usize..closing as usize];
+                let after = found.opening_end + children.trim_end().len() as u32;
+                if after == found.opening_end {
+                    let filled = format!("{lead}{block}{newline}{indent}");
+                    (found.opening_end, closing, filled, 0)
                 } else {
-                    format!("{newline}{indent}")
-                };
-                (after, after, format!("{lead}{block}{close}"), 0)
+                    let rest = &text[after as usize..closing as usize];
+                    let close = if rest.contains('\n') {
+                        String::new()
+                    } else {
+                        format!("{newline}{indent}")
+                    };
+                    (after, after, format!("{lead}{block}{close}"), 0)
+                }
+            }
+        };
+
+        // The lines before the insertion in the edited text, and the inserted
+        // text up to the `<`, whose line starts inside it.
+        let mut line = 1 + text[..start as usize].matches('\n').count();
+        for edit in &tags.edits {
+            if let Edit::Splice {
+                start: at,
+                end,
+                text: written,
+            } = edit
+                && *at < start
+            {
+                line += written.matches('\n').count();
+                line -= text[*at as usize..*end as usize].matches('\n').count();
             }
         }
-    };
+        let prefix = &inserted[..before_block + lead.len() + before_element];
+        line += prefix.matches('\n').count();
+        let column = prefix[prefix.rfind('\n').map_or(0, |i| i + 1)..]
+            .encode_utf16()
+            .count()
+            + 1;
 
-    // The lines before the insertion in the edited text, and the inserted
-    // text up to the `<`, whose line starts inside it.
-    let mut line = 1 + text[..start as usize].matches('\n').count();
-    for edit in &tags.edits {
-        if let Edit::Splice {
-            start: at,
+        let mut edits = tags.edits;
+        edits.push(Edit::Splice {
+            start,
             end,
-            text: written,
-        } = edit
-            && *at < start
-        {
-            line += written.matches('\n').count();
-            line -= text[*at as usize..*end as usize].matches('\n').count();
-        }
-    }
-    let prefix = &inserted[..before_block + lead.len() + before_element];
-    line += prefix.matches('\n').count();
-    let column = prefix[prefix.rfind('\n').map_or(0, |i| i + 1)..]
-        .encode_utf16()
-        .count()
-        + 1;
-
-    let mut edits = tags.edits;
-    edits.push(Edit::Splice {
-        start,
-        end,
-        text: inserted,
-    });
-    Ok(Added {
-        edits,
-        line: line as u32,
-        column: column as u32,
+            text: inserted,
+        });
+        Ok(Added {
+            edits,
+            line: line as u32,
+            column: column as u32,
+        })
     })
+    .unwrap_or(Err(AddLock::NoChildrenRegion))
 }
 
 /// The tags an addition writes, and the import edits that make them usable.

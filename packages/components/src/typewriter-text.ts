@@ -126,7 +126,7 @@ function positive(value: number | undefined, prop: string): void {
  * Before `from` and once the text is typed, the caret blinks where the
  * next character would go; empty text shows only the blinking caret.
  */
-export function TypewriterText(props: TypewriterTextProps): ReturnType<typeof React.createElement> {
+export function TypewriterText(props: TypewriterTextProps): React.ReactElement {
   const {
     children, style, lang, maxWidth, anchorX = 0, anchorY = 0,
     fontFamily, fontSize, fontWeight, color,

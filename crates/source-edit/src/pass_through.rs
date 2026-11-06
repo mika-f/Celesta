@@ -1,18 +1,17 @@
 //! Props a component passes on from its own parameters, followed to the
 //! component's call site.
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::Expression;
 use oxc_ast_visit::Visit;
 
 use crate::locate::ElementRef;
-use crate::parse_checked;
 use crate::resolve::{
     Absent, EditTarget, EditValue, Gather, LiteralForm, LockReason, PropPath, Read, ResolveContext,
     Span, TOLERANCE, resolve, resolve_call_site_prop, resolve_written,
 };
 use crate::scope::{ParamDefault, ParamInfo};
 use crate::shape::{Children, StyleProperty};
+use crate::with_program;
 
 /// What `resolve` found when the value is a parameter of the enclosing
 /// component: the parameter's name at the call site and its literal default.
@@ -29,17 +28,15 @@ pub struct Parameter {
 /// when the element is in none (an anonymous function, or a lowercase name
 /// JSX reads as an intrinsic element) or the text does not parse.
 pub fn enclosing_component(text: &str, element: &ElementRef) -> Option<String> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return None;
-    }
-    let mut gather = Gather::new(element.start, PropPath::Children);
-    gather.visit_program(&program);
-    if !gather.found {
-        return None;
-    }
-    gather.scopes.component().map(str::to_string)
+    with_program(text, |program| {
+        let mut gather = Gather::new(element.start, PropPath::Children);
+        gather.visit_program(program);
+        if !gather.found {
+            return None;
+        }
+        gather.scopes.component().map(str::to_string)
+    })
+    .flatten()
 }
 
 /// The parameter of an enclosing component that `prop` on `element` reads:
@@ -78,24 +75,24 @@ pub enum DefaultTarget {
 /// `element` is written. `None` when the text does not parse, the element
 /// is in no component, or the component's pattern has no key `param`.
 pub fn parameter_default(text: &str, element: &ElementRef, param: &str) -> Option<DefaultTarget> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return None;
-    }
-    let mut gather = Gather::new(element.start, PropPath::Children);
-    gather.visit_program(&program);
-    if !gather.found {
-        return None;
-    }
-    Some(match gather.scopes.parameter_default(param)? {
-        ParamDefault::None { binding_end } => DefaultTarget::Absent {
-            insert_at: binding_end,
-        },
-        ParamDefault::Literal { value, span, form } => DefaultTarget::Literal { span, value, form },
-        ParamDefault::Other => DefaultTarget::Expression,
-        ParamDefault::NoPattern => DefaultTarget::NoPattern,
+    with_program(text, |program| {
+        let mut gather = Gather::new(element.start, PropPath::Children);
+        gather.visit_program(program);
+        if !gather.found {
+            return None;
+        }
+        Some(match gather.scopes.parameter_default(param)? {
+            ParamDefault::None { binding_end } => DefaultTarget::Absent {
+                insert_at: binding_end,
+            },
+            ParamDefault::Literal { value, span, form } => {
+                DefaultTarget::Literal { span, value, form }
+            }
+            ParamDefault::Other => DefaultTarget::Expression,
+            ParamDefault::NoPattern => DefaultTarget::NoPattern,
+        })
     })
+    .flatten()
 }
 
 /// Resolves `prop` on `element` (in `element_text`) and, when it is a
@@ -211,23 +208,21 @@ pub(crate) fn resolve_parameter(
 /// or a `{name}` child) is a parameter of an enclosing component. `None`
 /// when the text does not parse.
 fn parameter_in(text: &str, element: &ElementRef, prop: &str) -> Option<ParamInfo> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return None;
-    }
-    let mut gather = Gather::new(element.start, PropPath::parse(prop));
-    gather.visit_program(&program);
-    if !gather.found {
-        return None;
-    }
-    let shape = match gather.read()? {
-        Read::Children(Children::Reference { shape })
-        | Read::Property(StyleProperty::Value(shape))
-        | Read::Attribute(shape) => shape,
-        Read::Children(_) | Read::Property(_) => return None,
-    };
-    gather.scopes.parameter(shape)
+    with_program(text, |program| {
+        let mut gather = Gather::new(element.start, PropPath::parse(prop));
+        gather.visit_program(program);
+        if !gather.found {
+            return None;
+        }
+        let shape = match gather.read()? {
+            Read::Children(Children::Reference { shape })
+            | Read::Property(StyleProperty::Value(shape))
+            | Read::Attribute(shape) => shape,
+            Read::Children(_) | Read::Property(_) => return None,
+        };
+        gather.scopes.parameter(shape)
+    })
+    .flatten()
 }
 
 /// A prop absent at a call site takes the parameter's default. The

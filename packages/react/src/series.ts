@@ -64,7 +64,7 @@ export interface SeriesProps {
   children?: ReactNode;
 }
 
-function SeriesRoot({ children }: SeriesProps): ReturnType<typeof React.createElement> {
+function SeriesRoot({ children }: SeriesProps): React.ReactElement {
   const items: React.ReactElement<SeriesSequenceProps>[] = [];
   React.Children.forEach(children, (child) => {
     if (child === null || child === undefined || typeof child === 'boolean') {
@@ -130,7 +130,7 @@ export interface StaggerProps {
  * </Stagger>
  * ```
  */
-export function Stagger({ each, from = 0, durationInFrames, children }: StaggerProps): ReturnType<typeof React.createElement> {
+export function Stagger({ each, from = 0, durationInFrames, children }: StaggerProps): React.ReactElement {
   if (!Number.isFinite(each) || each < 0) {
     throw new Error('<Stagger> requires a finite non-negative `each` prop');
   }

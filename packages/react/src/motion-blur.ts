@@ -73,7 +73,7 @@ function requireNumber(value: number, name: string, min: number, max: number, in
   return value;
 }
 
-function FrameChildren({ render }: { render: (frame: number) => ReactNode }): ReturnType<typeof React.createElement> {
+function FrameChildren({ render }: { render: (frame: number) => ReactNode }): React.ReactElement {
   return React.createElement(React.Fragment, null, render(useCurrentFrame()));
 }
 
@@ -144,7 +144,7 @@ export function motionBlurFrames(
  * `<FreezeFrame>`'s: a `<CharacterView>` inside never attaches its ref, so a
  * `<Dialogue>` must be inside too.
  */
-export function MotionBlur(props: MotionBlurProps): ReturnType<typeof React.createElement> {
+export function MotionBlur(props: MotionBlurProps): React.ReactElement {
   const context = requireRuntime('MotionBlur');
   const { shutterAngle = 180, samples = 8, children, ...rest } = props;
   requireNumber(shutterAngle, '<MotionBlur> shutterAngle', 0, 720);
@@ -174,7 +174,7 @@ export function MotionBlur(props: MotionBlurProps): ReturnType<typeof React.crea
  * children only. A copy fades as a `<Group>` with that opacity does: overlapping
  * layers within it show through each other.
  */
-export function Trail(props: TrailProps): ReturnType<typeof React.createElement> {
+export function Trail(props: TrailProps): React.ReactElement {
   const context = requireRuntime('Trail');
   const { copies = 4, lagInFrames = 1, trailOpacity = 0.5, children, ...rest } = props;
   requireNumber(copies, '<Trail> copies', 0, 64, true);

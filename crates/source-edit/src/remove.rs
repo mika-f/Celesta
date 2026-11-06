@@ -1,7 +1,6 @@
 //! Removing a prop written on an element, so the element's (or a
 //! parameter's) default applies again.
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Expression, JSXAttribute, JSXAttributeItem, JSXAttributeName, JSXAttributeValue,
     JSXOpeningElement, ObjectPropertyKind,
@@ -11,9 +10,9 @@ use oxc_span::GetSpan;
 
 use crate::apply::Edit;
 use crate::locate::ElementRef;
-use crate::parse_checked;
 use crate::resolve::{PropPath, Span, skip_trivia};
 use crate::shape::span_of;
+use crate::with_program;
 
 /// The edit that removes `prop` from `element` in `text`, deleting bytes
 /// only:
@@ -32,33 +31,31 @@ use crate::shape::span_of;
 /// is written twice (the other would apply), a spread after it may set it
 /// again, or `style` is not an object literal.
 pub fn removal(text: &str, element: &ElementRef, prop: &str) -> Option<Edit> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return None;
-    }
-    let path = PropPath::parse(prop);
-    let mut find = Find {
-        element_start: element.start,
-        path,
-        found: false,
-        attributes: Vec::new(),
-        spread_after: false,
-        style: None,
-    };
-    find.visit_program(&program);
-    let [attribute] = find.attributes.as_slice() else {
-        return None;
-    };
-    if !find.found || find.spread_after {
-        return None;
-    }
-    let (start, end) = match path {
-        PropPath::Children => return None,
-        PropPath::Attribute(_) => attribute_removal(text, *attribute),
-        PropPath::Style(key) => find.style?.removal(text, key)?,
-    };
-    Some(Edit::Remove { start, end })
+    with_program(text, |program| {
+        let path = PropPath::parse(prop);
+        let mut find = Find {
+            element_start: element.start,
+            path,
+            found: false,
+            attributes: Vec::new(),
+            spread_after: false,
+            style: None,
+        };
+        find.visit_program(program);
+        let [attribute] = find.attributes.as_slice() else {
+            return None;
+        };
+        if !find.found || find.spread_after {
+            return None;
+        }
+        let (start, end) = match path {
+            PropPath::Children => return None,
+            PropPath::Attribute(_) => attribute_removal(text, *attribute),
+            PropPath::Style(key) => find.style?.removal(text, key)?,
+        };
+        Some(Edit::Remove { start, end })
+    })
+    .flatten()
 }
 
 /// The bytes that remove the attribute at `attribute`, never across a line

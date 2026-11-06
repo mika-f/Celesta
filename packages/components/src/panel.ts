@@ -64,7 +64,7 @@ const { fail, finite, nonNegative, insets } = validators('Panel');
  * </Panel>
  * ```
  */
-export function Panel(props: PanelProps): ReturnType<typeof React.createElement> {
+export function Panel(props: PanelProps): React.ReactElement {
   const theme = useTheme();
   const {
     width, height, padding = 0, fill, stroke, strokeWidth = 2, cornerRadius = 0, shadow, clip = false,

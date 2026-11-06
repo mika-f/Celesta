@@ -118,7 +118,7 @@ const { nonNegative, positive } = validators('TitleCard');
  *   subtitle="Celesta 入門" background="ink" color="paper" accentColor="accent" />
  * ```
  */
-export function TitleCard(props: TitleCardProps): ReturnType<typeof React.createElement> {
+export function TitleCard(props: TitleCardProps): React.ReactElement {
   const bounds = useLayoutBounds();
   const canvas = useVideoConfig();
   const theme = useTheme();

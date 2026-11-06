@@ -308,7 +308,7 @@ function SceneFrame({
   width: number;
   height: number;
   children?: ReactNode;
-}): ReturnType<typeof React.createElement> {
+}): React.ReactElement {
   const frame = useCurrentFrame();
   const exitStart = durationInFrames - (exit?.durationInFrames ?? 0);
   // computeTransitionSeries keeps a scene's transitions in and out apart, so
@@ -348,7 +348,7 @@ function dimension(value: number | undefined, fallback: number, label: string): 
   return value;
 }
 
-function TransitionSeriesRoot({ width, height, children }: TransitionSeriesProps): ReturnType<typeof React.createElement> {
+function TransitionSeriesRoot({ width, height, children }: TransitionSeriesProps): React.ReactElement {
   const bounds = useLayoutBounds();
   const size = {
     width: dimension(width, bounds.width, 'width'),

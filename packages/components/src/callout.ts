@@ -158,7 +158,7 @@ function fromEnd(points: PolylinePoint[], amount: number): PolylinePoint[] {
  *   fill="#182030" color="#F4F1EA" lineColor="#FF4D1F" />
  * ```
  */
-export function Callout(props: CalloutProps): ReturnType<typeof React.createElement> {
+export function Callout(props: CalloutProps): React.ReactElement {
   const {
     target, x, y, anchorX = 0, anchorY = 0, width, title, text, titleStyle = DEFAULT_TITLE_STYLE, textStyle = DEFAULT_TEXT_STYLE, color, gap = 8,
     padding = 20, cornerRadius = 12, side = 'auto', route: shape = 'straight', lineColor = '#FFFFFF', lineWidth = 2,

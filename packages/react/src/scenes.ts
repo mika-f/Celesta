@@ -167,7 +167,7 @@ export interface ScenesProps<T extends SceneEntry = SceneEntry> {
  * <Hud scenes={scenes} />
  * ```
  */
-export function Scenes<T extends SceneEntry>({ scenes }: ScenesProps<T>): ReturnType<typeof React.createElement> {
+export function Scenes<T extends SceneEntry>({ scenes }: ScenesProps<T>): React.ReactElement {
   const parent = React.useContext(ScenesContext);
   const base = useRootFrame('<Scenes>') - useCurrentFrame();
   const scope = React.useMemo(() => ({ list: scenes, base, parent }), [scenes, base, parent]);

@@ -1,13 +1,12 @@
 //! JSX insertion: wrapping an element in a parent.
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{JSXChild, JSXElement, JSXFragment, StringLiteral, TemplateLiteral};
 use oxc_ast_visit::Visit;
 
 use crate::apply::{Edit, after_name};
 use crate::locate::ElementRef;
 use crate::resolve::{EditValue, Span};
-use crate::{line_break, parse_checked};
+use crate::{line_break, with_program};
 
 /// Why an element can't be wrapped.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,49 +32,47 @@ pub fn wrap_element(
     tag: &str,
     attrs: &[(&str, EditValue)],
 ) -> Result<Vec<Edit>, WrapLock> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return Err(WrapLock::NotAChild);
-    }
-    let mut find = FindChild {
-        start: element.start,
-        found: None,
-    };
-    find.visit_program(&program);
-    let (span, strings) = find.found.ok_or(WrapLock::NotAChild)?;
+    with_program(text, |program| {
+        let mut find = FindChild {
+            start: element.start,
+            found: None,
+        };
+        find.visit_program(program);
+        let (span, strings) = find.found.ok_or(WrapLock::NotAChild)?;
 
-    let attributes: String = attrs
-        .iter()
-        .map(|(name, value)| format!(" {name}{}", after_name(value)))
-        .collect();
-    let open = format!("<{tag}{attributes}>");
-    let close = format!("</{tag}>");
-    let (start, end) = (span.start as usize, span.end as usize);
-    let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
-    let indent = &text[line_start..start];
-    let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i);
-    if !indent.chars().all(char::is_whitespace) || !text[end..line_end].trim().is_empty() {
-        return Ok(vec![insert(span.start, open), insert(span.end, close)]);
-    }
-
-    let unit = indent_unit(text, span.start);
-    let newline = line_break(text);
-    let mut edits = vec![insert(span.start, format!("{open}{newline}{indent}{unit}"))];
-    for (i, _) in text[start..end].match_indices('\n') {
-        let line = start + i + 1;
-        let rest = &text[line..];
-        let empty = rest.starts_with('\n') || rest.starts_with("\r\n");
-        // A line break inside a string is part of its value.
-        let in_string = strings
+        let attributes: String = attrs
             .iter()
-            .any(|s| (s.start as usize) < line && line <= s.end as usize);
-        if !empty && !in_string {
-            edits.push(insert(line as u32, unit.clone()));
+            .map(|(name, value)| format!(" {name}{}", after_name(value)))
+            .collect();
+        let open = format!("<{tag}{attributes}>");
+        let close = format!("</{tag}>");
+        let (start, end) = (span.start as usize, span.end as usize);
+        let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+        let indent = &text[line_start..start];
+        let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i);
+        if !indent.chars().all(char::is_whitespace) || !text[end..line_end].trim().is_empty() {
+            return Ok(vec![insert(span.start, open), insert(span.end, close)]);
         }
-    }
-    edits.push(insert(span.end, format!("{newline}{indent}{close}")));
-    Ok(edits)
+
+        let unit = indent_unit(text, span.start);
+        let newline = line_break(text);
+        let mut edits = vec![insert(span.start, format!("{open}{newline}{indent}{unit}"))];
+        for (i, _) in text[start..end].match_indices('\n') {
+            let line = start + i + 1;
+            let rest = &text[line..];
+            let empty = rest.starts_with('\n') || rest.starts_with("\r\n");
+            // A line break inside a string is part of its value.
+            let in_string = strings
+                .iter()
+                .any(|s| (s.start as usize) < line && line <= s.end as usize);
+            if !empty && !in_string {
+                edits.push(insert(line as u32, unit.clone()));
+            }
+        }
+        edits.push(insert(span.end, format!("{newline}{indent}{close}")));
+        Ok(edits)
+    })
+    .unwrap_or(Err(WrapLock::NotAChild))
 }
 
 /// The file's indent unit near `at` (a tab, or the leading spaces of one

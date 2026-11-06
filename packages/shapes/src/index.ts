@@ -174,7 +174,7 @@ export function Path({
   progress = 1,
   progressStart = 0,
   ...props
-}: PathProps): ReturnType<typeof React.createElement> {
+}: PathProps): React.ReactElement {
   if (commands === undefined && points === undefined) {
     throw new Error('<Path> requires `commands` or `points`');
   }
@@ -250,7 +250,7 @@ export function Line({
   strokeWidth,
   cap = 'round',
   ...props
-}: LineProps): ReturnType<typeof React.createElement> | null {
+}: LineProps): React.ReactElement | null {
   const width = strokeWidthOf(strokeWidth, 'Line');
   if (cap === 'butt' && x1 === x2 && y1 === y2) {
     return null;
@@ -307,7 +307,7 @@ export function Polyline({
   cap = 'round',
   join,
   ...props
-}: PolylineProps): ReturnType<typeof React.createElement> {
+}: PolylineProps): React.ReactElement {
   const width = strokeWidthOf(strokeWidth, 'Polyline');
   return React.createElement(Path, {
     ...props,
@@ -436,7 +436,7 @@ export function Ellipse({
   dashOffset,
   cap,
   ...props
-}: EllipseProps): ReturnType<typeof React.createElement> | null {
+}: EllipseProps): React.ReactElement | null {
   dimensionOf(width, 'width', 'Ellipse');
   dimensionOf(height, 'height', 'Ellipse');
   const strokeWidthDrawn = stroke === undefined
@@ -488,7 +488,7 @@ export function Circle({
   stroke,
   strokeWidth,
   ...props
-}: CircleProps): ReturnType<typeof React.createElement> | null {
+}: CircleProps): React.ReactElement | null {
   dimensionOf(radius, 'radius', 'Circle');
   // A rect with a non-finite size draws nothing, so reject one up front.
   if (!Number.isFinite(radius * 2)) {
@@ -574,7 +574,7 @@ export function Arrow({
   dash,
   dashOffset,
   ...props
-}: ArrowProps): ReturnType<typeof React.createElement> | null {
+}: ArrowProps): React.ReactElement | null {
   for (const [name, value] of [['x1', x1], ['y1', y1], ['x2', x2], ['y2', y2]] as const) {
     if (!Number.isFinite(value)) {
       throw new Error(`<Arrow> requires a finite \`${name}\`, got ${String(value)}`);
@@ -1086,7 +1086,7 @@ function closedShape(
   width: number,
   height: number,
   { anchorX = 0, anchorY = 0, fill, stroke, strokeWidth, ...props }: ClosedShapeProps,
-): ReturnType<typeof React.createElement> | null {
+): React.ReactElement | null {
   const strokeWidthDrawn = stroke === undefined ? undefined : strokeWidthOf(strokeWidth, component);
   if (commands.length === 0) {
     return null;
@@ -1114,7 +1114,7 @@ export function Triangle({
   apex,
   cornerRadius,
   ...props
-}: TriangleProps): ReturnType<typeof React.createElement> | null {
+}: TriangleProps): React.ReactElement | null {
   const commands = triangleCommands({ width, height, apex, cornerRadius }, '<Triangle>');
   return closedShape('Triangle', commands, width, height, props);
 }
@@ -1129,7 +1129,7 @@ export function Polygon({
   sides,
   cornerRadius,
   ...props
-}: PolygonProps): ReturnType<typeof React.createElement> | null {
+}: PolygonProps): React.ReactElement | null {
   const commands = polygonCommands({ radius, sides, cornerRadius }, '<Polygon>');
   return closedShape('Polygon', commands, radius * 2, radius * 2, props);
 }
@@ -1145,7 +1145,7 @@ export function Star({
   innerRatio,
   cornerRadius,
   ...props
-}: StarProps): ReturnType<typeof React.createElement> | null {
+}: StarProps): React.ReactElement | null {
   const commands = starCommands({ radius, points, innerRatio, cornerRadius }, '<Star>');
   return closedShape('Star', commands, radius * 2, radius * 2, props);
 }
@@ -1162,7 +1162,7 @@ export function Pie({
   endAngle,
   cornerRadius,
   ...props
-}: PieProps): ReturnType<typeof React.createElement> | null {
+}: PieProps): React.ReactElement | null {
   const commands = pieCommands({ radius, startAngle, endAngle, cornerRadius }, '<Pie>');
   return closedShape('Pie', commands, radius * 2, radius * 2, props);
 }
@@ -1172,7 +1172,7 @@ export function Heart({
   width,
   height,
   ...props
-}: HeartProps): ReturnType<typeof React.createElement> | null {
+}: HeartProps): React.ReactElement | null {
   const commands = heartCommands({ width, height }, '<Heart>');
   return closedShape('Heart', commands, width, height, props);
 }

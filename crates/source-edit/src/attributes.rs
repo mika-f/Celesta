@@ -1,13 +1,12 @@
 //! What is written on an element, for the rows that choose a prop by it.
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{JSXAttributeItem, JSXAttributeName, JSXOpeningElement};
 use oxc_ast_visit::Visit;
 
 use crate::locate::ElementRef;
-use crate::parse_checked;
 use crate::resolve::{Gather, LockReason, PropPath};
 use crate::shape::StyleProperty;
+use crate::with_program;
 
 /// Which prop a `Text` shorthand row edits: `style.<style_key>` when
 /// `style` is an object literal whose own properties set `style_key`,
@@ -25,25 +24,25 @@ pub fn text_style_path(
     shorthand: &str,
     style_key: &str,
 ) -> Result<String, LockReason> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return Err(LockReason::SyntaxError);
-    }
-    let mut gather = Gather::new(element.start, PropPath::Style(style_key));
-    gather.visit_program(&program);
-    if !gather.found {
-        return Err(LockReason::ElementNotFound);
-    }
-    // `{...rest}` with no `style` after it may carry one, which wins.
-    if gather.spread_may_set() {
-        return Err(LockReason::StyleMaySet);
-    }
-    match gather.property {
-        Some(StyleProperty::Value(_)) => Ok(format!("style.{style_key}")),
-        None | Some(StyleProperty::Absent { .. }) => Ok(shorthand.to_string()),
-        Some(StyleProperty::Unknown | StyleProperty::NotObject(_)) => Err(LockReason::StyleMaySet),
-    }
+    with_program(text, |program| {
+        let mut gather = Gather::new(element.start, PropPath::Style(style_key));
+        gather.visit_program(program);
+        if !gather.found {
+            return Err(LockReason::ElementNotFound);
+        }
+        // `{...rest}` with no `style` after it may carry one, which wins.
+        if gather.spread_may_set() {
+            return Err(LockReason::StyleMaySet);
+        }
+        match gather.property {
+            Some(StyleProperty::Value(_)) => Ok(format!("style.{style_key}")),
+            None | Some(StyleProperty::Absent { .. }) => Ok(shorthand.to_string()),
+            Some(StyleProperty::Unknown | StyleProperty::NotObject(_)) => {
+                Err(LockReason::StyleMaySet)
+            }
+        }
+    })
+    .unwrap_or(Err(LockReason::SyntaxError))
 }
 
 /// The attribute names written on `element`, in source order, without
@@ -53,17 +52,16 @@ pub fn text_style_path(
 /// Namespaced names (`xlink:href`) are left out too: the rules read
 /// attributes by plain name only.
 pub fn written_attributes(text: &str, element: &ElementRef) -> Vec<String> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return Vec::new();
-    }
-    let mut written = Written {
-        element_start: element.start,
-        names: None,
-    };
-    written.visit_program(&program);
-    written.names.unwrap_or_default()
+    with_program(text, |program| {
+        let mut written = Written {
+            element_start: element.start,
+            names: None,
+        };
+        written.visit_program(program);
+        written.names
+    })
+    .flatten()
+    .unwrap_or_default()
 }
 
 struct Written {
