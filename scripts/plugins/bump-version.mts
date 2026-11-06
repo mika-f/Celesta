@@ -9,14 +9,16 @@
 // fails (a file it fails in the middle of included), Cargo fails, or the run
 // is interrupted, every file written is put back as it was, and the run says
 // which files it could not restore. A Ctrl-C is passed on to Cargo and the
-// files are put back once Cargo stops; a second one kills Cargo and puts them
-// back at once. On Windows, where a process cannot be sent Ctrl-C, Cargo is
-// stopped outright the first time. A Cargo stopped by SIGINT sent to it alone
-// counts as an interruption too. An interrupted run exits with 130.
+// files are put back once Cargo stops; a second one kills Cargo, and the files
+// are put back once it has exited, so it cannot write a lockfile after them.
+// On Windows, where a process cannot be sent Ctrl-C, Cargo is stopped outright
+// the first time. A Cargo stopped by SIGINT sent to it alone counts as an
+// interruption too. An interrupted run exits with 130.
 //
 //   node scripts/plugins/bump-version.mts <X.Y.Z>
 //
-// packages/*/package.json are not bumped; edit them by hand.
+// packages/*/package.json and templates/package.json are not bumped; edit
+// them by hand.
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -174,14 +176,17 @@ function undo(reason: string, paths: string[], code = 1): never {
 // The listener runs only while Cargo does: the writes and the undo are
 // synchronous, so a Ctrl-C never stops one in the middle. The first is passed
 // on to Cargo (a terminal's reaches it too), and the bump is undone once
-// Cargo stops; a second kills Cargo, so it cannot write a lockfile after the
-// undo, and undoes the bump at once.
+// Cargo stops; a second kills Cargo, and the bump is undone once Cargo has
+// exited too. `kill` only sends the signal (and on Windows the process ends
+// some time after), so undoing before `run` resolves on Cargo's `close` could
+// let a lockfile write already under way land after the undo.
 let interrupted = false;
+let interruptedAgain = false;
 process.on('SIGINT', () => {
   if (interrupted) {
-    const during = running === undefined ? '' : ` during ${running.command}`;
+    interruptedAgain = true;
     running?.child.kill('SIGKILL');
-    undo(`interrupted again${during}`, [...originals.keys()], INTERRUPTED);
+    return;
   }
   interrupted = true;
   running?.child.kill('SIGINT');
@@ -210,11 +215,11 @@ for (const args of [
   const failure = await run(cargo, args);
   const command = `${cargo} ${args.join(' ')}`;
   if (interrupted || failure === 'interrupted') {
-    undo(`interrupted during ${command}`, [...originals.keys()], INTERRUPTED);
+    undo(`interrupted${interruptedAgain ? ' again' : ''} during ${command}`, [...originals.keys()], INTERRUPTED);
   }
   if (failure !== undefined) undo(`${command} ${failure}`, [...originals.keys()]);
 }
 
 console.log(`\nBumped Celesta from ${from} to ${to}:`);
 for (const path of [...changes.map(([path]) => path), ...LOCKFILES]) console.log(`  ${path}`);
-console.log('Bump packages/*/package.json by hand.');
+console.log('Bump packages/*/package.json and templates/package.json by hand.');

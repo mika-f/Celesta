@@ -77,6 +77,7 @@ describe('bump-version.mts', () => {
     expect(read('Cargo.toml')).toBe(files['Cargo.toml'].replaceAll('0.9.0', '0.9.1'));
     expect(read('plugins/ffmpeg/Cargo.toml')).toBe(files['plugins/ffmpeg/Cargo.toml'].replaceAll('0.9.0', '0.9.1'));
     expect(read('plugins/ffmpeg/plugin.json')).toBe(files['plugins/ffmpeg/plugin.json'].replace('0.9.0', '0.9.1'));
+    expect(result.stdout).toContain('Bump packages/*/package.json and templates/package.json by hand.');
   });
 
   it('puts every file back when Cargo fails', () => {
@@ -129,9 +130,10 @@ describe('bump-version.mts', () => {
   });
 
   // Cargo ignores SIGINT here and would rewrite its lockfile later; the
-  // second Ctrl-C kills it first. Cargo shares the script's output, so the
-  // test would wait for a Cargo left running.
-  it.skipIf(process.platform === 'win32')('kills Cargo and puts every file back at once on a second Ctrl-C', () => {
+  // second Ctrl-C kills it, and the files are put back once it has exited.
+  // Cargo shares the script's output, so the test would wait for a Cargo left
+  // running.
+  it.skipIf(process.platform === 'win32')('kills Cargo on a second Ctrl-C and puts every file back once it exits', () => {
     const result = bump(
       "const fs = require('node:fs');\n" +
         'const script = process.ppid;\n' +
