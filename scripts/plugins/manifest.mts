@@ -43,11 +43,20 @@ export interface PluginManifest {
 const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components'];
 
 /**
+ * Celesta's rule for a plugin id (`is_valid_id` in
+ * `crates/plugin-host/src/manifest.rs`): lowercase ASCII letters, digits, `-`,
+ * `_`, and `.`, starting with a letter or digit. The build names the plugin's
+ * folder under `dist/` after it, so the rule also keeps that folder there.
+ */
+const PLUGIN_ID = /^[a-z0-9][a-z0-9._-]*$/;
+
+/**
  * Checks that the plugin `source` (read from `sourcePath`, which errors name)
  * has only the keys PluginSource lists, so a misspelt one is not skipped
- * without a word, has an `id` (a non-empty string), and has something to
- * build: a module, a Cargo package, or both, and a module for any components,
- * since Celesta skips a plugin listing components it cannot import (an empty
+ * without a word, has an `id` Celesta accepts (see {@link PLUGIN_ID}), has
+ * `components`, if any, as a list of objects, and has something to build: a
+ * module, a Cargo package, or both, and a module for any components, since
+ * Celesta skips a plugin listing components it cannot import (an empty
  * `components` list, which Celesta accepts, needs none).
  */
 export function checkPluginSource(source: PluginSource, sourcePath: string): void {
@@ -57,12 +66,24 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
       `${sourcePath}: unknown key${unknown.length === 1 ? '' : 's'} ${unknown.join(', ')}; plugin.json may have ${PLUGIN_SOURCE_KEYS.join(', ')}`,
     );
   }
-  // plugin.json is read as JSON, so `id` may be anything at all.
+  // plugin.json is read as JSON, so `id` and `components` may be anything at all.
   const id: unknown = source.id;
   if (typeof id !== 'string' || id === '') {
     throw new Error(`${sourcePath}: id must be a non-empty string`);
   }
-  const noComponents = source.components === undefined || (Array.isArray(source.components) && source.components.length === 0);
+  if (!PLUGIN_ID.test(id)) {
+    throw new Error(
+      `${sourcePath}: id ${JSON.stringify(id)} may have only lowercase ASCII letters, digits, -, _, and ., starting with a letter or digit`,
+    );
+  }
+  const components: unknown = source.components;
+  if (
+    components !== undefined &&
+    !(Array.isArray(components) && components.every((entry) => typeof entry === 'object' && entry !== null && !Array.isArray(entry)))
+  ) {
+    throw new Error(`${sourcePath}: components must be a list of objects`);
+  }
+  const noComponents = source.components === undefined || source.components.length === 0;
   if (source.module === undefined && !noComponents) {
     throw new Error(`${sourcePath}: components need a module to import them from`);
   }

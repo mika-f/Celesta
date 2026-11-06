@@ -114,6 +114,33 @@ describe('checkPluginSource', () => {
     );
   });
 
+  it.each(['vrm', 'ffmpeg', 'beep-voice', '7z', 'a.b_c-d'])('accepts the id %s, as Celesta does', (id) => {
+    expect(() => checkPluginSource({ id, version: '0.1.0', module: 'js/index.ts' }, sourcePath)).not.toThrow();
+  });
+
+  it.each(['..', '.', 'a/b', 'a\\b', 'Upper', '-x', '_x', '.x', 'a b', 'é'])(
+    'refuses the id %s, which Celesta refuses, naming plugin.json and the rule',
+    (id) => {
+      expect(() => checkPluginSource({ id, version: '0.1.0', module: 'js/index.ts' }, sourcePath)).toThrow(
+        `${sourcePath}: id ${JSON.stringify(id)} may have only lowercase ASCII letters, digits, -, _, and ., starting with a letter or digit`,
+      );
+    },
+  );
+
+  it.each([
+    ['an object', { name: 'Vrm' }],
+    ['a string', 'Vrm'],
+    ['null', null],
+    ['a list holding null', [null]],
+    ['a list holding a list', [[component]]],
+    ['a list holding a string', ['Vrm']],
+  ])('refuses components that are %s, naming plugin.json', (_, components) => {
+    const source = { id: 'x', version: '0.1.0', module: 'js/index.ts', components };
+    expect(() => checkPluginSource(source as unknown as PluginSource, sourcePath)).toThrow(
+      `${sourcePath}: components must be a list of objects`,
+    );
+  });
+
   it('refuses a plugin with nothing to build', () => {
     expect(() => checkPluginSource({ id: 'x', version: '0.1.0' }, sourcePath)).toThrow(
       `${sourcePath}: it has neither a module nor a cargoPackage to build`,
