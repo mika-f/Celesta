@@ -24,6 +24,7 @@ impl Render for EditorView {
         self.settle_scope_hover();
         self.sync_add_facts(cx);
         self.ask_add_space();
+        self.settle_add_release(cx);
         self.settle_inline_text(window, cx);
         self.sync_element_rows(window, cx);
         self.update_playback(window);

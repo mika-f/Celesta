@@ -226,7 +226,10 @@ impl EditorView {
         let shows_tools = shows_tool_row(self.is_react_preview(), self.interactive);
         // The element being drawn, and whether a press draws one.
         let add_outline = self.add_outline();
-        let adding = matches!(self.add.mode, AddMode::Armed(_) | AddMode::Drawing { .. });
+        let adding = matches!(
+            self.add.mode,
+            AddMode::Armed(_) | AddMode::Drawing { .. } | AddMode::Waiting { .. }
+        );
         // Every region of the selected layer in the shown frame; none when
         // the frame does not draw it. The Size tool's handles sit on the box
         // they resize, which is then the outline drawn (a stroked text's
@@ -312,17 +315,22 @@ impl EditorView {
             }
             _ => None,
         };
-        let notice = match drag_state {
-            DragState::NoFrame => Some(NO_AFFINE_FRAME.to_owned()),
-            _ => None,
-        }
-        .or_else(|| {
-            self.element_edit
-                .error(self.selected_layer.as_deref())
-                .map(str::to_owned)
-        })
-        .or_else(|| self.inline_notice.clone())
-        .or_else(|| self.add.notice.clone());
+        // Why the last addition was not written comes first: it answers the
+        // release just made, and the next press clears it.
+        let notice = self
+            .add
+            .notice
+            .clone()
+            .or_else(|| match drag_state {
+                DragState::NoFrame => Some(NO_AFFINE_FRAME.to_owned()),
+                _ => None,
+            })
+            .or_else(|| {
+                self.element_edit
+                    .error(self.selected_layer.as_deref())
+                    .map(str::to_owned)
+            })
+            .or_else(|| self.inline_notice.clone());
         // Placed by the viewer's last painted bounds, relative to them.
         let last_bounds = self.viewer_bounds.get();
         // Why a double-click did not edit the text, beside it.
@@ -1060,6 +1068,17 @@ impl EditorView {
                 format!("Adding {}", self.adding_name(*kind)),
                 Some(format!("{to}Choose a file…")),
             ),
+            AddMode::Waiting { tool, .. } => {
+                let what = if tool.measuring() {
+                    "Reading the file…"
+                } else {
+                    "Reading the source…"
+                };
+                (
+                    format!("Adding {}", self.adding_name(tool.kind)),
+                    Some(format!("{to}{what} · Esc cancels")),
+                )
+            }
             AddMode::Armed(tool) | AddMode::Drawing { tool, .. } => {
                 let how = match tool.kind {
                     NewKind::Circle => "Drag from the center · Esc cancels",

@@ -103,16 +103,40 @@ pub(crate) fn parent_scope(state: &ScopeState, remembered: Option<Scope>) -> Par
     }
 }
 
-/// Whether the element at `entry` is shared: the index's instance chains
+/// How a group is shared (see [`is_shared`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Sharing {
+    /// It is reached through more than one call chain: a component's
+    /// group that several calls draw.
+    pub(crate) calls: bool,
+    /// Its instances show in more than one scene.
+    pub(crate) scenes: bool,
+}
+
+impl Sharing {
+    pub(crate) const NONE: Self = Self {
+        calls: false,
+        scenes: false,
+    };
+
+    pub(crate) fn any(self) -> bool {
+        self.calls || self.scenes
+    }
+}
+
+/// How the element at `entry` is shared: the index's instance chains
 /// through it (of every element) have more than one outer part (the chain
-/// after it), or their ranges show in more than one scene. Err is design
+/// after it), and their ranges show in more than one scene. Err is design
 /// 3's note when the index can't answer (see [`occurrence_index`]), and
-/// when no chain goes through `entry` (see [`not_indexed_note`]).
+/// when no chain goes through `entry` (see [`not_indexed_note`]). The
+/// selected element's own chain goes through each of its groups, so that
+/// is only when the element itself is not indexed either; treating such a
+/// group as unshared could write into a shared one unasked.
 pub(crate) fn is_shared(
     occurrences: Option<&OccurrenceState>,
     chapters: &[ReactChapter],
     entry: &SourcePos,
-) -> Result<bool, String> {
+) -> Result<Sharing, String> {
     let (index, refreshing) = occurrence_index(occurrences)?;
     let mut outer: Vec<&[SourcePos]> = Vec::new();
     let mut ranges = Vec::new();
@@ -126,21 +150,42 @@ pub(crate) fn is_shared(
     let Some(first) = outer.first() else {
         return Err(not_indexed_note(refreshing));
     };
-    Ok(outer.iter().any(|part| part != first) || scenes_of(&ranges, chapters).len() > 1)
+    Ok(Sharing {
+        calls: outer.iter().any(|part| part != first),
+        scenes: scenes_of(&ranges, chapters).len() > 1,
+    })
+}
+
+/// Why nothing can be added while the selected layer's lookup has no
+/// chain to pick a parent from: still on its way (none yet, or pending),
+/// or answered without one.
+pub(crate) fn lookup_reason(lookup: Option<&SourceLookup>) -> String {
+    match lookup {
+        None | Some(SourceLookup::Pending | SourceLookup::Found(_)) => READING.to_owned(),
+        Some(SourceLookup::NotInFrame) => "The selected layer is not in this frame".to_owned(),
+        Some(SourceLookup::NoPosition) => "The selected layer has no source position".to_owned(),
+        Some(SourceLookup::Failed(error)) => {
+            format!("Couldn't read the selected layer's source: {error}")
+        }
+    }
 }
 
 /// The parent of an element added with `report`'s layer selected (none
 /// selected: `None`). (1) The selected layer, if it is a `Group`; (2)
 /// otherwise the nearest `Group` in its chain. Either has a `layer_id` and
 /// `accepts` (its JSX has a children region). A shared one (`shared`, see
-/// [`is_shared`]) is the parent under "Shared value"; under "This scene",
-/// and without a scope control, the next such group outward that is not
-/// shared is; with an `Unknown` scope none is. Err is the menu's reason.
+/// [`is_shared`]) is the parent under "Shared value"; under "This scene"
+/// the next such group outward that is not shared is; with an `Unknown`
+/// scope none is. Without a scope control (an element written once, as at
+/// the composition's root) the next one outward that no other call draws
+/// is: a group written once that spans several scenes is used, as an edit
+/// of the element itself reaches them all too, and it is not marked "This
+/// scene". Err is the menu's reason.
 pub(crate) fn pick_parent(
     report: Option<&LayerSourceReport>,
     scope: &ParentScope,
     accepts: impl Fn(&LayerSource) -> bool,
-    shared: impl Fn(&LayerSource) -> Result<bool, String>,
+    shared: impl Fn(&LayerSource) -> Result<Sharing, String>,
 ) -> Result<AddParent, String> {
     let chain = report.map_or(&[][..], |report| &report.chain[..]);
     let mut groups = chain.iter().enumerate().filter_map(|(index, entry)| {
@@ -155,15 +200,27 @@ pub(crate) fn pick_parent(
         this_scene,
     };
     let nearest = groups.next().ok_or_else(|| NO_PARENT.to_owned())?;
-    if *scope == ParentScope::Chosen(Scope::Shared) || !shared(nearest.1)? {
+    if *scope == ParentScope::Chosen(Scope::Shared) {
         return Ok(parent(nearest, false));
     }
-    if let ParentScope::Unknown(note) = scope {
-        return Err(note.clone());
+    let sharing = shared(nearest.1)?;
+    if !sharing.any() {
+        return Ok(parent(nearest, false));
+    }
+    let usable = |sharing: Sharing| match scope {
+        ParentScope::NoControl => !sharing.calls,
+        _ => !sharing.any(),
+    };
+    match scope {
+        ParentScope::Unknown(note) => return Err(note.clone()),
+        ParentScope::NoControl if usable(sharing) => return Ok(parent(nearest, false)),
+        _ => {}
     }
     for group in groups {
-        if !shared(group.1)? {
-            return Ok(parent(group, true));
+        let sharing = shared(group.1)?;
+        if usable(sharing) {
+            // Moved into this scene's code, unless it spans scenes.
+            return Ok(parent(group, !sharing.scenes));
         }
     }
     Err(NO_PARENT_IN_SCENE.to_owned())
@@ -509,6 +566,16 @@ pub(crate) struct AddTool {
     pub(crate) src: Option<String>,
     /// The file's width over its height, once measured.
     pub(crate) aspect: Option<f64>,
+    /// The file was measured (`aspect` may still be unknown).
+    pub(crate) measured: bool,
+}
+
+impl AddTool {
+    /// Whether a release waits for the file's measurement: written before
+    /// it, an Image or a Video would take the box's height too.
+    pub(crate) fn measuring(&self) -> bool {
+        self.src.is_some() && !self.measured
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -522,6 +589,15 @@ pub(crate) enum AddMode {
         tool: AddTool,
         start: Point,
         now: Point,
+    },
+    /// Released before what the write reads was there (the selected
+    /// layer's lookup, the parent's groups or space, the file's
+    /// measurement): written once it is, on a render (see
+    /// `settle_add_release`).
+    Waiting {
+        tool: AddTool,
+        start: Point,
+        end: Point,
     },
 }
 
@@ -557,9 +633,15 @@ pub(crate) fn add_step(
             kind,
             src,
             aspect: None,
+            measured: false,
         })
     };
     let measures = |tool: &AddTool, src: &str| tool.src.as_deref() == Some(src);
+    let measured = |tool, aspect| AddTool {
+        aspect,
+        measured: true,
+        ..tool
+    };
     let next = match (mode, event) {
         (_, AddEvent::Escape | AddEvent::Ended) => AddMode::Off,
         (_, AddEvent::Chosen(kind @ (NewKind::Image | NewKind::Video))) => AddMode::Picking(kind),
@@ -567,15 +649,24 @@ pub(crate) fn add_step(
         (AddMode::Picking(_), AddEvent::Picked(None)) => AddMode::Off,
         (AddMode::Picking(kind), AddEvent::Picked(Some(src))) => armed(kind, Some(src)),
         (AddMode::Armed(tool), AddEvent::Measured { src, aspect }) if measures(&tool, &src) => {
-            AddMode::Armed(AddTool { aspect, ..tool })
+            AddMode::Armed(measured(tool, aspect))
         }
         (AddMode::Drawing { tool, start, now }, AddEvent::Measured { src, aspect })
             if measures(&tool, &src) =>
         {
             AddMode::Drawing {
-                tool: AddTool { aspect, ..tool },
+                tool: measured(tool, aspect),
                 start,
                 now,
+            }
+        }
+        (AddMode::Waiting { tool, start, end }, AddEvent::Measured { src, aspect })
+            if measures(&tool, &src) =>
+        {
+            AddMode::Waiting {
+                tool: measured(tool, aspect),
+                start,
+                end,
             }
         }
         (AddMode::Armed(tool), AddEvent::Press(start)) => AddMode::Drawing {
@@ -1074,12 +1165,11 @@ impl EditorView {
         let selected = self.selected_layer.as_deref();
         let report = match &self.source_lookup {
             _ if selected.is_none() => None,
-            Some(SourceLookup::Pending) => return Err(READING.to_owned()),
             Some(SourceLookup::Found(_)) if self.source_lookup_stale => {
                 return Err(READING.to_owned());
             }
             Some(SourceLookup::Found(report)) => Some(&**report),
-            _ => None,
+            lookup => return Err(lookup_reason(lookup.as_ref())),
         };
         let facts = match (report, &self.add.facts) {
             // Nothing selected, or no answer: no chain to pick from.
@@ -1428,10 +1518,16 @@ impl EditorView {
         self.step_add(AddEvent::Ended);
     }
 
-    /// The outline of the element being drawn, in scene pixels, while the
-    /// parent's space is known.
+    /// The outline of the element being drawn (or released and waiting to
+    /// be written), in scene pixels, while the parent's space is known.
     pub(crate) fn add_outline(&self) -> Option<(NewKind, Vec<Point>)> {
-        let AddMode::Drawing { tool, start, now } = &self.add.mode else {
+        let (AddMode::Drawing { tool, start, now }
+        | AddMode::Waiting {
+            tool,
+            start,
+            end: now,
+        }) = &self.add.mode
+        else {
             return None;
         };
         // In the parent the hint names, where it is written.
@@ -1457,10 +1553,9 @@ impl EditorView {
         (tool, start, end): (AddTool, Point, Point),
         cx: &mut Context<Self>,
     ) {
-        let chosen = self.add.chosen.take();
         let drawn = self.add_target().and_then(|(parent, facts)| {
             // Only into the parent the hint named while this was drawn.
-            if !is_chosen(chosen.as_ref(), &parent) {
+            if !is_chosen(self.add.chosen.as_ref(), &parent) {
                 return Err(PARENT_CHANGED.to_owned());
             }
             let timing = facts.timing.clone()?;
@@ -1493,6 +1588,12 @@ impl EditorView {
             };
             Ok((parent, facts.tag.clone(), timing, new))
         });
+        // Still being read, or the file measured: written once it is.
+        if tool.measuring() || drawn.as_ref().is_err_and(|reason| reason == READING) {
+            self.add.mode = AddMode::Waiting { tool, start, end };
+            return;
+        }
+        self.add.chosen = None;
         self.add.component = None;
         let (parent, tag, timing, new) = match drawn {
             Ok(drawn) => drawn,
@@ -1540,6 +1641,21 @@ impl EditorView {
             },
             cx,
         );
+    }
+
+    /// Writes a released element that waited for what its write reads (see
+    /// [`AddMode::Waiting`]), once that is there: it waits again otherwise.
+    pub(crate) fn settle_add_release(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.add.mode, AddMode::Waiting { .. }) {
+            return;
+        }
+        let AddMode::Waiting { tool, start, end } = std::mem::take(&mut self.add.mode) else {
+            unreachable!()
+        };
+        self.write_addition((tool, start, end), cx);
+        if !matches!(self.add.mode, AddMode::Waiting { .. }) {
+            cx.notify();
+        }
     }
 
     /// The preview's answers for an addition from preview `generation`: the
@@ -1856,8 +1972,8 @@ mod tests {
         true
     }
 
-    fn none_shared(_: &LayerSource) -> Result<bool, String> {
-        Ok(false)
+    fn none_shared(_: &LayerSource) -> Result<Sharing, String> {
+        Ok(Sharing::NONE)
     }
 
     /// `pick_parent` under `scope` with every group accepting, shared when
@@ -1868,7 +1984,11 @@ mod tests {
         shared_lines: &[u32],
     ) -> Result<AddParent, String> {
         pick_parent(Some(report), &scope, every_group, |entry| {
-            Ok(shared_lines.contains(&entry.line))
+            let shared = shared_lines.contains(&entry.line);
+            Ok(Sharing {
+                calls: shared,
+                scenes: shared,
+            })
         })
     }
 
@@ -1953,6 +2073,25 @@ mod tests {
     }
 
     #[test]
+    fn a_lookup_without_a_chain_says_why() {
+        assert_eq!(lookup_reason(None), READING);
+        assert_eq!(lookup_reason(Some(&SourceLookup::Pending)), READING);
+        assert_eq!(
+            lookup_reason(Some(&SourceLookup::NotInFrame)),
+            "The selected layer is not in this frame"
+        );
+        assert_eq!(
+            lookup_reason(Some(&SourceLookup::NoPosition)),
+            "The selected layer has no source position"
+        );
+        // Not "Select a group, or a layer inside one, to add into".
+        assert_eq!(
+            lookup_reason(Some(&SourceLookup::Failed("bridge closed".to_owned()))),
+            "Couldn't read the selected layer's source: bridge closed"
+        );
+    }
+
+    #[test]
     fn nothing_selected_gives_the_reason() {
         assert_eq!(
             pick_parent(None, &ParentScope::NoControl, every_group, none_shared),
@@ -1983,7 +2122,11 @@ mod tests {
             ],
             vec![(0, 30)],
         )]);
-        assert_eq!(is_shared(Some(&once), &chapters, &group), Ok(false));
+        let shared = |calls, scenes| Ok(Sharing { calls, scenes });
+        assert_eq!(
+            is_shared(Some(&once), &chapters, &group),
+            shared(false, false)
+        );
 
         // Two calls of `PriceTag`, in one scene.
         let twice = index(vec![
@@ -2001,16 +2144,25 @@ mod tests {
                 vec![(30, 60)],
             ),
         ]);
-        assert_eq!(is_shared(Some(&twice), &chapters, &group), Ok(true));
+        assert_eq!(
+            is_shared(Some(&twice), &chapters, &group),
+            shared(true, false)
+        );
         // The scene's own group is above both calls.
-        assert_eq!(is_shared(Some(&twice), &chapters, &scene), Ok(false));
+        assert_eq!(
+            is_shared(Some(&twice), &chapters, &scene),
+            shared(false, false)
+        );
 
         // One chain, showing in two scenes.
         let spanning = index(vec![instance(
             vec![rect, group.clone(), first_call, scene],
             vec![(30, 90)],
         )]);
-        assert_eq!(is_shared(Some(&spanning), &chapters, &group), Ok(true));
+        assert_eq!(
+            is_shared(Some(&spanning), &chapters, &group),
+            shared(false, true)
+        );
 
         // Design 3's notes, as the scope control shows them.
         assert_eq!(
@@ -2082,6 +2234,62 @@ mod tests {
         assert_eq!(
             pick(&report, ParentScope::Chosen(Scope::ThisScene), &[4, 5]),
             Err("No group in this scene’s own code to add into".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_root_group_spanning_scenes_takes_an_element_written_once() {
+        // A `<Rect>` written once at the root, in the `<Group>` around
+        // `<Scenes>`: no scope control, and the group spans both scenes.
+        let report = report(
+            vec![
+                primitive("Rect", &pos("root", 6), "r"),
+                primitive("Group", &pos("root", 4), "root"),
+            ],
+            vec![],
+        );
+        let spans = |_: &LayerSource| {
+            Ok(Sharing {
+                calls: false,
+                scenes: true,
+            })
+        };
+        let parent =
+            pick_parent(Some(&report), &ParentScope::NoControl, every_group, spans).unwrap();
+        assert_eq!(
+            (parent.layer_id.as_str(), parent.this_scene),
+            ("root", false)
+        );
+        assert_eq!(add_header(&parent, None), "Add to `<Group>`");
+        // Under "This scene" it is still refused.
+        assert_eq!(
+            pick_parent(
+                Some(&report),
+                &ParentScope::Chosen(Scope::ThisScene),
+                every_group,
+                spans
+            ),
+            Err(NO_PARENT_IN_SCENE.to_owned())
+        );
+
+        // Moved outward past a group other calls draw, into one that spans
+        // scenes: not marked "This scene".
+        let report = in_price_tag();
+        let parent = pick_parent(
+            Some(&report),
+            &ParentScope::NoControl,
+            every_group,
+            |entry| {
+                Ok(Sharing {
+                    calls: entry.line == 4,
+                    scenes: true,
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            (parent.layer_id.as_str(), parent.this_scene),
+            ("scene", false)
         );
     }
 
@@ -3070,10 +3278,13 @@ mod tests {
 
     #[test]
     fn add_mode_steps() {
-        let tool = |kind, src: Option<&str>, aspect| AddTool {
+        // Measured once it has an aspect (see the waiting cases below for
+        // a file measured without one).
+        let tool = |kind, src: Option<&str>, aspect: Option<f64>| AddTool {
             kind,
             src: src.map(str::to_owned),
             aspect,
+            measured: aspect.is_some(),
         };
         let step = |mode, event| add_step(mode, event);
 
@@ -3149,11 +3360,42 @@ mod tests {
             )
         );
 
+        // A release before the file is measured waits for it; measured
+        // without an aspect, it no longer waits.
+        let unmeasured = tool(NewKind::Image, Some("a.svg"), None);
+        assert!(unmeasured.measuring());
+        assert!(!tool(NewKind::Rect, None, None).measuring());
+        let waiting = |tool| AddMode::Waiting {
+            tool,
+            start: press,
+            end,
+        };
+        let (after, written) = step(waiting(unmeasured.clone()), measured("a.svg", None));
+        assert_eq!(written, None);
+        let AddMode::Waiting {
+            tool: measured_tool,
+            ..
+        } = &after
+        else {
+            panic!("{after:?}")
+        };
+        assert!(measured_tool.measured && !measured_tool.measuring());
+        assert_eq!(measured_tool.aspect, None);
+        // Nothing else moves it on but choosing again.
+        for event in [AddEvent::Press(press), AddEvent::Release(end)] {
+            assert_eq!(step(after.clone(), event), (after.clone(), None));
+        }
+        assert_eq!(
+            step(after.clone(), AddEvent::Chosen(NewKind::Rect)).0,
+            AddMode::Armed(tool(NewKind::Rect, None, None))
+        );
+
         for mode in [
             AddMode::Off,
             AddMode::Picking(NewKind::Image),
             armed,
             drawing(now, None),
+            waiting(unmeasured),
         ] {
             for event in [AddEvent::Escape, AddEvent::Ended] {
                 assert_eq!(step(mode.clone(), event), (AddMode::Off, None));
