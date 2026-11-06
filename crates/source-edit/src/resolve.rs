@@ -1,6 +1,5 @@
 use std::cell::Cell;
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     ArrowFunctionExpression, BindingIdentifier, Expression, Function, IdentifierReference,
     JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXElement, JSXOpeningElement, Program,
@@ -12,12 +11,12 @@ use oxc_syntax::scope::ScopeFlags;
 
 use crate::apply::Edit;
 use crate::locate::ElementRef;
-use crate::parse_checked;
 use crate::scope::{Binding, Scopes};
 use crate::shape::{
     Children, Input, Interpolate, Shape, StyleProperty, children_of, shape_of, span_of, string_of,
     style_property,
 };
+use crate::with_program;
 
 /// A byte range of the source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,14 +338,12 @@ pub(crate) fn resolve_written(
     ctx: &ResolveContext,
     checked: bool,
 ) -> Result<EditTarget, Absent> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return Ok(EditTarget::Locked(LockReason::SyntaxError));
-    }
-    let mut gather = Gather::new(element.start, PropPath::parse(prop));
-    gather.visit_program(&program);
-    read_written(&gather, text, prop, ctx, checked)
+    with_program(text, |program| {
+        let mut gather = Gather::new(element.start, PropPath::parse(prop));
+        gather.visit_program(program);
+        read_written(&gather, text, prop, ctx, checked)
+    })
+    .unwrap_or(Ok(EditTarget::Locked(LockReason::SyntaxError)))
 }
 
 /// [`resolve_written`] on what `gather` found in the parsed text. A prop
@@ -470,14 +467,12 @@ pub(crate) fn value_context() -> ResolveContext {
 /// Whether `prop` is written as an attribute on `element` (a spread does not
 /// count). False when the text does not parse or the element is not found.
 pub fn has_attribute(text: &str, element: &ElementRef, prop: &str) -> bool {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return false;
-    }
-    let mut gather = Gather::new(element.start, PropPath::Attribute(prop));
-    gather.visit_program(&program);
-    gather.attr.is_some()
+    with_program(text, |program| {
+        let mut gather = Gather::new(element.start, PropPath::Attribute(prop));
+        gather.visit_program(program);
+        gather.attr.is_some()
+    })
+    .unwrap_or(false)
 }
 
 /// The value the rules read for the prop, when one is written.

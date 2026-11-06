@@ -2,13 +2,12 @@
 //! file's `@celesta.studio/react` import, and the `Series` items after one.
 
 use line_index::{LineIndex, WideEncoding};
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{JSXChild, JSXElement, JSXElementName};
 use oxc_ast_visit::Visit;
 
 use crate::imports::Module;
 use crate::locate::ElementRef;
-use crate::parse_checked;
+use crate::with_program;
 
 /// Which timing wrapper an element is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,43 +22,39 @@ pub enum TimingKind {
 /// import (aliases and `import * as C` included); `None` for anything
 /// else, or when the text does not parse.
 pub fn timing_kind(text: &str, element: &ElementRef) -> Option<TimingKind> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return None;
-    }
-    let module = Module::of(&program);
-    let mut find = FindKind {
-        module: &module,
-        start: element.start,
-        found: None,
-    };
-    find.visit_program(&program);
-    find.found.flatten()
+    with_program(text, |program| {
+        let module = Module::of(program);
+        let mut find = FindKind {
+            module: &module,
+            start: element.start,
+            found: None,
+        };
+        find.visit_program(program);
+        find.found.flatten()
+    })
+    .flatten()
 }
 
 /// The `<Series.Sequence>` siblings after `element` in its `<Series>`, as
 /// 1-based line and UTF-16 column (what `element_at` takes). Only the
 /// `Series`' own children count; empty when `element` is not one of them.
 pub fn later_series_items(text: &str, element: &ElementRef) -> Vec<(u32, u32)> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return Vec::new();
-    }
-    let module = Module::of(&program);
-    let mut find = FindSiblings {
-        module: &module,
-        start: element.start,
-        found: None,
-    };
-    find.visit_program(&program);
-    let index = LineIndex::new(text);
-    find.found
-        .unwrap_or_default()
-        .into_iter()
-        .map(|offset| position_of(&index, offset))
-        .collect()
+    with_program(text, |program| {
+        let module = Module::of(program);
+        let mut find = FindSiblings {
+            module: &module,
+            start: element.start,
+            found: None,
+        };
+        find.visit_program(program);
+        let index = LineIndex::new(text);
+        find.found
+            .unwrap_or_default()
+            .into_iter()
+            .map(|offset| position_of(&index, offset))
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// The 1-based line and UTF-16 column of byte `offset`, as esbuild's

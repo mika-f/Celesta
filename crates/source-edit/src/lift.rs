@@ -1,7 +1,6 @@
 //! Lifting literals written at an element into new props of the component
 //! that encloses it, so each call site can set its own value.
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     ArrowFunctionExpression, BindingIdentifier, BindingPattern, Expression, FormalParameters,
     Function, IdentifierReference, ImportDeclaration, JSXOpeningElement, TSInterfaceDeclaration,
@@ -13,11 +12,11 @@ use oxc_syntax::scope::ScopeFlags;
 
 use crate::apply::{Edit, expression, write_value};
 use crate::locate::ElementRef;
-use crate::parse_checked;
 use crate::pass_through::{component_function, is_component_name, wrapper};
 use crate::resolve::{EditTarget, EditValue, LiteralForm, PropPath, Span};
 use crate::scope::Scopes;
 use crate::shape::span_of;
+use crate::with_program;
 
 /// A prop of the element to lift.
 #[derive(Debug, Clone, Copy)]
@@ -92,119 +91,117 @@ pub fn plan_lift_avoiding(
     props: &[LiftProp<'_>],
     also_taken: &[String],
 ) -> Result<Lift, LiftLock> {
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return Err(LiftLock::NoComponent);
-    }
-    let mut finder = Finder::new(text, element.start);
-    finder.visit_program(&program);
-    let (Some(tag), Some(component)) = (finder.tag.as_deref(), &finder.component) else {
-        return Err(LiftLock::NoComponent);
-    };
-    let Some(pattern) = &component.pattern else {
-        return Err(LiftLock::NotObjectPattern {
-            component: component.name.clone(),
-        });
-    };
-    let body = component
-        .props_type
-        .as_ref()
-        .map(|props_type| finder.resolve(props_type))
-        .transpose();
-
-    let mut taken: Vec<String> = finder.scopes.names().map(str::to_string).collect();
-    taken.extend(also_taken.iter().cloned());
-    if let Pattern::Object { keys, .. } = pattern {
-        taken.extend(keys.iter().cloned());
-    }
-    if let Ok(Some(body)) = &body {
-        taken.extend(finder.keys(body));
-    }
-    let mut params = Vec::with_capacity(props.len());
-    for prop in props {
-        let name = lift_name(tag, prop.prop, &taken);
-        taken.push(name.clone());
-        params.push(name);
-    }
-
-    let body = match body {
-        Ok(body) => body,
-        Err(TypeLock::Imported) => {
-            return Err(LiftLock::ImportedPropsType {
-                component: component.name.clone(),
-            });
-        }
-        Err(TypeLock::NotEditable) => {
-            return Err(LiftLock::PropsTypeNotEditable {
-                component: component.name.clone(),
-                param: params.first().cloned().unwrap_or_default(),
-            });
-        }
-    };
-    if props.is_empty() {
-        return Ok(Lift {
-            params,
-            edits: Vec::new(),
-        });
-    }
-
-    // A bare attribute's `={name}` goes right after its name, which may be
-    // where the attributes end: before any prop inserted there (`apply`
-    // keeps the order of edits at one offset).
-    let mut attached = Vec::new();
-    let mut edits = Vec::new();
-    let mut entries = Vec::with_capacity(props.len());
-    let mut fields = Vec::with_capacity(props.len());
-    for (prop, name) in props.iter().zip(&params) {
-        let path = PropPath::parse(prop.prop);
-        if matches!(path, PropPath::Style(_)) {
-            return Err(LiftLock::NotALiteral);
-        }
-        let (default, value) = match prop.target {
-            EditTarget::Literal { span, value, form } if within(*span, component.span) => {
-                let edit = Edit::Splice {
-                    start: span.start,
-                    end: span.end,
-                    text: at_element(name, *form),
-                };
-                if *form == LiteralForm::BareTrue {
-                    attached.push(edit);
-                } else {
-                    edits.push(edit);
-                }
-                (Some(literal_default(text, *span, value, *form)), value)
-            }
-            EditTarget::Missing { insert_at, default } => {
-                let written = match path {
-                    PropPath::Children => format!("{{{name}}}"),
-                    _ => format!(" {}={{{name}}}", prop.prop),
-                };
-                edits.push(Edit::Splice {
-                    start: *insert_at,
-                    end: *insert_at,
-                    text: written,
-                });
-                (
-                    default.as_ref().map(expression),
-                    default.as_ref().unwrap_or(prop.value),
-                )
-            }
-            _ => return Err(LiftLock::NotALiteral),
+    with_program(text, |program| {
+        let mut finder = Finder::new(text, element.start);
+        finder.visit_program(program);
+        let (Some(tag), Some(component)) = (finder.tag.as_deref(), &finder.component) else {
+            return Err(LiftLock::NoComponent);
         };
-        entries.push(match default {
-            Some(default) => format!("{name} = {default}"),
-            None => name.clone(),
-        });
-        fields.push(format!("{name}?: {}", type_of(value)));
-    }
-    attached.append(&mut edits);
-    let mut edits = attached;
-    edits.push(pattern_edit(text, pattern, &entries));
-    if let Some(body) = body {
-        edits.push(field_edit(text, body, &fields));
-    }
-    Ok(Lift { params, edits })
+        let Some(pattern) = &component.pattern else {
+            return Err(LiftLock::NotObjectPattern {
+                component: component.name.clone(),
+            });
+        };
+        let body = component
+            .props_type
+            .as_ref()
+            .map(|props_type| finder.resolve(props_type))
+            .transpose();
+
+        let mut taken: Vec<String> = finder.scopes.names().map(str::to_string).collect();
+        taken.extend(also_taken.iter().cloned());
+        if let Pattern::Object { keys, .. } = pattern {
+            taken.extend(keys.iter().cloned());
+        }
+        if let Ok(Some(body)) = &body {
+            taken.extend(finder.keys(body));
+        }
+        let mut params = Vec::with_capacity(props.len());
+        for prop in props {
+            let name = lift_name(tag, prop.prop, &taken);
+            taken.push(name.clone());
+            params.push(name);
+        }
+
+        let body = match body {
+            Ok(body) => body,
+            Err(TypeLock::Imported) => {
+                return Err(LiftLock::ImportedPropsType {
+                    component: component.name.clone(),
+                });
+            }
+            Err(TypeLock::NotEditable) => {
+                return Err(LiftLock::PropsTypeNotEditable {
+                    component: component.name.clone(),
+                    param: params.first().cloned().unwrap_or_default(),
+                });
+            }
+        };
+        if props.is_empty() {
+            return Ok(Lift {
+                params,
+                edits: Vec::new(),
+            });
+        }
+
+        // A bare attribute's `={name}` goes right after its name, which may be
+        // where the attributes end: before any prop inserted there (`apply`
+        // keeps the order of edits at one offset).
+        let mut attached = Vec::new();
+        let mut edits = Vec::new();
+        let mut entries = Vec::with_capacity(props.len());
+        let mut fields = Vec::with_capacity(props.len());
+        for (prop, name) in props.iter().zip(&params) {
+            let path = PropPath::parse(prop.prop);
+            if matches!(path, PropPath::Style(_)) {
+                return Err(LiftLock::NotALiteral);
+            }
+            let (default, value) = match prop.target {
+                EditTarget::Literal { span, value, form } if within(*span, component.span) => {
+                    let edit = Edit::Splice {
+                        start: span.start,
+                        end: span.end,
+                        text: at_element(name, *form),
+                    };
+                    if *form == LiteralForm::BareTrue {
+                        attached.push(edit);
+                    } else {
+                        edits.push(edit);
+                    }
+                    (Some(literal_default(text, *span, value, *form)), value)
+                }
+                EditTarget::Missing { insert_at, default } => {
+                    let written = match path {
+                        PropPath::Children => format!("{{{name}}}"),
+                        _ => format!(" {}={{{name}}}", prop.prop),
+                    };
+                    edits.push(Edit::Splice {
+                        start: *insert_at,
+                        end: *insert_at,
+                        text: written,
+                    });
+                    (
+                        default.as_ref().map(expression),
+                        default.as_ref().unwrap_or(prop.value),
+                    )
+                }
+                _ => return Err(LiftLock::NotALiteral),
+            };
+            entries.push(match default {
+                Some(default) => format!("{name} = {default}"),
+                None => name.clone(),
+            });
+            fields.push(format!("{name}?: {}", type_of(value)));
+        }
+        attached.append(&mut edits);
+        let mut edits = attached;
+        edits.push(pattern_edit(text, pattern, &entries));
+        if let Some(body) = body {
+            edits.push(field_edit(text, body, &fields));
+        }
+        Ok(Lift { params, edits })
+    })
+    .unwrap_or(Err(LiftLock::NoComponent))
 }
 
 /// Whether `inner` lies in `outer`: a literal outside the component can't

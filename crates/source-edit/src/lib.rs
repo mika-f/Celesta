@@ -54,39 +54,38 @@ use oxc_span::SourceType;
 
 /// Parses `text` as TSX. Syntax errors are tolerated; the recovered program is returned.
 pub(crate) fn parse<'a>(text: &'a str, alloc: &'a Allocator) -> Program<'a> {
-    parse_checked(text, alloc).0
+    Parser::new(alloc, text, SourceType::tsx()).parse().program
 }
 
 /// Whether `text` parses as TSX without any error: an edited text that
 /// does not is never written.
 pub fn parses(text: &str) -> bool {
-    let alloc = Allocator::default();
-    !parse_checked(text, &alloc).1
-}
-
-/// Like [`parse`], also reporting whether the parser found any error. A
-/// recovered program must never be written into.
-pub(crate) fn parse_checked<'a>(text: &'a str, alloc: &'a Allocator) -> (Program<'a>, bool) {
-    parse_checked_as(text, SourceType::tsx(), alloc)
+    with_program(text, |_| ()).is_some()
 }
 
 /// Whether `text` parses without error as `path`'s source type (TSX when
 /// the extension says nothing).
 pub fn parses_file(text: &str, path: &Path) -> bool {
-    let alloc = Allocator::default();
-    !parse_checked_as(text, source_type_of(path), &alloc).1
+    with_program_as(text, source_type_of(path), |_| ()).is_some()
 }
 
-/// [`parse_checked`] as `source_type`: a `.ts` file reads `<T>(x) => x`
+/// `f` of `text` parsed as TSX, or `None` when the parser found any error:
+/// a recovered program must never be written into.
+pub(crate) fn with_program<R>(text: &str, f: impl FnOnce(&Program<'_>) -> R) -> Option<R> {
+    with_program_as(text, SourceType::tsx(), f)
+}
+
+/// [`with_program`] as `source_type`: a `.ts` file reads `<T>(x) => x`
 /// and `<number>v`, which are not TSX.
-pub(crate) fn parse_checked_as<'a>(
-    text: &'a str,
+pub(crate) fn with_program_as<R>(
+    text: &str,
     source_type: SourceType,
-    alloc: &'a Allocator,
-) -> (Program<'a>, bool) {
-    let ret = Parser::new(alloc, text, source_type).parse();
+    f: impl FnOnce(&Program<'_>) -> R,
+) -> Option<R> {
+    let alloc = Allocator::default();
+    let ret = Parser::new(&alloc, text, source_type).parse();
     let failed = ret.fatal_error || ret.diagnostics.has_errors();
-    (ret.program, failed)
+    (!failed).then(|| f(&ret.program))
 }
 
 /// The line break `text` writes: `\r\n` when it has one, else `\n`.

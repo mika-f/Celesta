@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     BindingIdentifier, ImportDeclarationSpecifier, JSXElementName, JSXMemberExpression,
     JSXMemberExpressionObject, ModuleExportName, Program, Statement,
@@ -12,7 +11,7 @@ use oxc_span::GetSpan;
 
 use crate::apply::Edit;
 use crate::resolve::Span;
-use crate::{line_break, parse_checked};
+use crate::{line_break, with_program};
 
 /// The package whose components the editor knows.
 pub const PACKAGE: &str = "@celesta.studio/react";
@@ -68,14 +67,14 @@ pub fn ensure_imports(
     let Some(&first) = names.first() else {
         return Ok((None, Vec::new()));
     };
-    let alloc = Allocator::default();
-    let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return Err(ImportLock::Clash {
+    with_program(text, |program| {
+        ensure_imports_in(text, program, module, names)
+    })
+    .unwrap_or_else(|| {
+        Err(ImportLock::Clash {
             name: first.to_string(),
-        });
-    }
-    ensure_imports_in(text, &program, module, names)
+        })
+    })
 }
 
 /// [`ensure_imports`] in `text` already parsed (without error) as
