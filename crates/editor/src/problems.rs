@@ -4,7 +4,7 @@
 
 use chrono::{DateTime, Local};
 use std::borrow::Cow;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt::Write as _;
 
@@ -337,9 +337,11 @@ impl Problems {
 #[derive(Debug, Default)]
 pub(crate) struct ExportNotices {
     entries: Vec<ExportNotice>,
+    /// `entries`, for finding a repeat without scanning them.
+    seen: HashSet<ExportNotice>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum ExportNotice {
     Warning(String),
     /// Says what it is (`note: …`), as the exporter prints it.
@@ -366,13 +368,14 @@ impl ExportNotices {
     }
 
     fn add(&mut self, notice: ExportNotice) {
-        if !self.entries.contains(&notice) {
+        if self.seen.insert(notice.clone()) {
             self.entries.push(notice);
         }
     }
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+        self.seen.clear();
     }
 
     /// One log entry for everything reported, oldest first, one line each,
@@ -409,6 +412,7 @@ impl ExportNotices {
                 ),
             ),
         };
+        self.seen.clear();
         let detail = self
             .entries
             .drain(..)

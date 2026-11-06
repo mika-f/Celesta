@@ -31,8 +31,13 @@ Issue: [mika-f/Celesta#675](https://github.com/mika-f/Celesta/issues/675).
 - **Exporter TUI.** `progress::State` keeps one `diagnostics` list of
   `Diagnostic::Warning` / `Diagnostic::Note` in arrival order. The panels
   still list only the warnings (`State::warnings`); after the display closes,
-  `State::scrollback` prints every entry in order, the same lines the plain
-  output prints.
+  `State::take_scrollback` prints every entry not printed yet, in order, the
+  same lines the plain output prints. If the dashboard stops drawing midway,
+  later warnings and notes still go into that list, and each event prints
+  the unprinted ones, so the kept notices come before newer ones and none
+  prints twice.
+- Duplicates are found with a `HashSet` beside the ordered list, so many
+  distinct notices do not make collecting them quadratic.
 
 ## Checks
 
@@ -40,7 +45,7 @@ Issue: [mika-f/Celesta#675](https://github.com/mika-f/Celesta/issues/675).
   `export_notes_alone_are_logged_as_information`,
   `export_notices_are_emptied_once_logged`, `an_export_without_notices_logs_nothing`.
 - `cargo test -p celesta-exporter --bins progress` —
-  `scrollback_keeps_warnings_and_notes_in_arrival_order`.
+  `scrollback_keeps_warnings_and_notes_in_arrival_order`, `scrollback_prints_each_notice_once`.
 - `cargo clippy -p celesta-editor -p celesta-exporter --all-targets -- -D warnings`.
 - `cargo test -p celesta-editor -p celesta-exporter --lib --bins`.
 

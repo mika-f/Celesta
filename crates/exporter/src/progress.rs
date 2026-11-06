@@ -112,6 +112,8 @@ pub(crate) struct State {
     /// Warnings and notes in the order they arrived. The panels list only
     /// the warnings; all of them are printed after the display closes.
     diagnostics: Vec<Diagnostic>,
+    /// How many of `diagnostics` are already printed.
+    printed: usize,
     error: Option<String>,
 }
 
@@ -134,6 +136,7 @@ impl State {
             frame: 0,
             total: 0,
             diagnostics: Vec::new(),
+            printed: 0,
             error: None,
         }
     }
@@ -171,10 +174,15 @@ impl State {
             })
     }
 
-    /// The lines left in scrollback once the display closes: every warning
-    /// and note in arrival order, as the plain output prints them.
-    fn scrollback(&self) -> impl Iterator<Item = String> + '_ {
-        self.diagnostics.iter().map(Diagnostic::line)
+    /// The warnings and notes not printed yet, in arrival order, as the
+    /// plain output prints them; they count as printed from now on.
+    fn take_scrollback(&mut self) -> Vec<String> {
+        let lines = self.diagnostics[self.printed..]
+            .iter()
+            .map(Diagnostic::line)
+            .collect();
+        self.printed = self.diagnostics.len();
+        lines
     }
 
     fn end_rendering(&mut self, stage: Stage) {
@@ -333,7 +341,24 @@ pub fn run(
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .update(event);
             } else {
-                plain.update(event);
+                // The dashboard stopped drawing: the notices it kept print
+                // first, and later ones go through the same list, so every
+                // notice prints once, in arrival order.
+                let diagnostic =
+                    matches!(event, ExportProgress::Warning(_) | ExportProgress::Note(_));
+                let mut state = state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if diagnostic {
+                    state.update(event.clone());
+                }
+                for line in state.take_scrollback() {
+                    plain.print_diagnostic(&line);
+                }
+                drop(state);
+                if !diagnostic {
+                    plain.update(event);
+                }
             }
         });
         state
@@ -344,10 +369,10 @@ pub fn run(
         result
     });
     // Leave all diagnostics in scrollback, including ones displaced by newer warnings.
-    let state = state
+    let mut state = state
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for line in state.scrollback() {
+    for line in state.take_scrollback() {
         eprintln!("{line}");
     }
     result
@@ -820,19 +845,18 @@ impl PlainProgress {
             | ExportProgress::ReactCompositions { .. }
             | ExportProgress::Wrote(_) => {}
             ExportProgress::Warning(warning) => {
-                if self.terminal {
-                    eprintln!("\rwarning: {warning}");
-                } else {
-                    eprintln!("warning: {warning}");
-                }
+                self.print_diagnostic(&Diagnostic::Warning(warning.clone()).line());
             }
-            ExportProgress::Note(note) => {
-                if self.terminal {
-                    eprintln!("\r{note}");
-                } else {
-                    eprintln!("{note}");
-                }
-            }
+            ExportProgress::Note(note) => self.print_diagnostic(note),
+        }
+    }
+
+    /// A warning or note line, over the progress line on a terminal.
+    fn print_diagnostic(&self, line: &str) {
+        if self.terminal {
+            eprintln!("\r{line}");
+        } else {
+            eprintln!("{line}");
         }
     }
 }
@@ -1013,7 +1037,7 @@ mod tests {
         state.update(ExportProgress::Rendering { frame: 1, total: 2 });
         state.update(ExportProgress::Warning("missing glyph".into()));
         assert_eq!(
-            state.scrollback().collect::<Vec<_>>(),
+            state.take_scrollback(),
             [
                 "warning: fallback font",
                 "note: terms of use",
@@ -1024,6 +1048,17 @@ mod tests {
             state.warnings().collect::<Vec<_>>(),
             ["fallback font", "missing glyph"]
         );
+    }
+
+    #[test]
+    fn scrollback_prints_each_notice_once() {
+        let mut state = State::new();
+        state.update(ExportProgress::Warning("fallback font".into()));
+        assert_eq!(state.take_scrollback(), ["warning: fallback font"]);
+        assert!(state.take_scrollback().is_empty());
+        state.update(ExportProgress::Note("note: terms of use".into()));
+        assert_eq!(state.take_scrollback(), ["note: terms of use"]);
+        assert_eq!(state.warnings().count(), 1);
     }
 
     #[test]
