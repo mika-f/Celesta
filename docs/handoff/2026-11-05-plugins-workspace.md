@@ -947,8 +947,8 @@ The review of the whole stack changed:
   `report-skipped-tests.mts`) count a line starting `skipped` as well as
   `skipping`.
 - The codec's tests read their own fixtures, `minimal.celesta.json` and
-  `001.wav`, from `plugins/ffmpeg/tests/fixtures/`, so no input of theirs
-  lies outside the codec's folder.
+  `001.wav`, from `plugins/ffmpeg/tests/fixtures/`, so no fixture of theirs
+  lies outside the inputs the affected-plugin check reads.
 - The codec's tests check an FFmpeg encoder for every `VideoFormat`, not a
   hand-written list, and pin FFmpeg's decode of the WAV to the samples the
   core expects.
