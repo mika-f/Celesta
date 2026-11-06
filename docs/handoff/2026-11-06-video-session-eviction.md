@@ -3,9 +3,9 @@
 Issue #706: the FFmpeg codec plugin kept one open decode run per
 `(layer id, file)` for sequential frame requests and never closed any. The
 editor keeps one renderer, and so one codec process, per open document, and
-a React layer's id is its path in the element tree, so inserting an element
-above a `<Video>` gave it a new id and a new session while the old one stayed
-open. Each session holds an `ez-ffmpeg` decode run (its own threads and a
+a React layer's id is its path in the element tree unless the element sets
+`id`, so inserting an element above a `<Video>` without one gave it a new id
+and a new session while the old one stayed open. Each session holds an `ez-ffmpeg` decode run (its own threads and a
 bounded channel) and the last frame as RGBA (about 33 MB at 4K); they piled
 up until the document was closed.
 
