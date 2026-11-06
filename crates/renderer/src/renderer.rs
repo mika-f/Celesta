@@ -43,6 +43,7 @@ impl CpuRenderer {
     }
 
     pub fn render(&mut self, scene: &Scene) -> Result<RgbaFrame, RenderError> {
+        self.image_sources.begin_frame();
         self.text_rasterizer
             .load_fonts(&scene.fonts, &self.asset_root)?;
         let pixel_count = u64::from(scene.width)

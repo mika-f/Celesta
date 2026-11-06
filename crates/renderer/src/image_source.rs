@@ -9,22 +9,90 @@ use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
     io::Read,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 
-#[derive(Default)]
+/// Bytes [`ImageSources::default`] keeps decoded and rendered, besides the
+/// images the current frame uses.
+pub const DEFAULT_BUDGET: u64 = 1 << 30;
+
+/// The decoded images both renderers draw, keyed by asset id.
+///
+/// An entry remembers the file it was decoded from, and that file's
+/// modified time and length, and is decoded again when either changes: a
+/// React `<Image name>` keeps its id when its `src` changes across a reload,
+/// and a file can be overwritten while a document is open. Each decode gets
+/// a new [`DisplayImage::revision`], so a texture cached from the old pixels
+/// is not drawn again.
+///
+/// The entries hold at most a byte budget between them, besides the images
+/// the current frame uses (since [`Self::begin_frame`]), dropping the least
+/// recently used first.
 pub struct ImageSources {
-    sources: HashMap<String, Source>,
-    /// The latest renders of each source, most recently used first: one per
-    /// display size and fit (its latest resolution), at most
-    /// [`LAYOUTS_PER_SOURCE`].
-    rendered: HashMap<String, VecDeque<Render>>,
+    entries: HashMap<String, Entry>,
+    budget: u64,
+    bytes: u64,
+    /// Counts uses, to tell which entry was used least recently.
+    tick: u64,
+    /// The tick the current frame began at; `None` before the first frame,
+    /// when only the image being used is kept past the budget.
+    frame_start: Option<u64>,
+    /// The revisions handed out so far.
+    revisions: u64,
     /// The system fonts SVG text draws with, loaded on the first SVG and
     /// shared by every SVG after it: scanning them is slow. Fonts installed
     /// after the first SVG loads are not seen until a new `ImageSources`
     /// (a reopened document, or the next export run).
     svg_fonts: Option<Arc<usvg::fontdb::Database>>,
+}
+
+struct Entry {
+    source: Source,
+    /// The file `source` was decoded from and its stamp when it was read;
+    /// `None` for pixels given to [`ImageSources::insert_raster`], which
+    /// stand for whatever file a caller names.
+    file: Option<(PathBuf, FileStamp)>,
+    revision: u64,
+    /// The latest renders of `source`, most recently used first: one per
+    /// display size and fit (its latest resolution), at most
+    /// [`LAYOUTS_PER_SOURCE`].
+    rendered: VecDeque<Render>,
+    /// What `source` holds, estimated for an SVG from its file's length.
+    source_bytes: u64,
+    /// `source_bytes` and the pixels of `rendered`.
+    bytes: u64,
+    last_used: u64,
+}
+
+impl Entry {
+    fn count_bytes(&mut self) {
+        self.bytes = self.source_bytes
+            + self
+                .rendered
+                .iter()
+                .map(|render| render.image.pixels.as_raw().len() as u64)
+                .sum::<u64>();
+    }
+}
+
+/// When a file was last modified and how long it is, to tell when it was
+/// overwritten.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+impl FileStamp {
+    fn read(path: &Path) -> std::io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            modified: metadata.modified().ok(),
+            len: metadata.len(),
+        })
+    }
 }
 
 struct Render {
@@ -326,6 +394,10 @@ pub struct DisplayImage {
     pub is_svg: bool,
     /// Which frame of an animated image this is; 0 for any other image.
     pub frame: usize,
+    /// Which decode of its asset this was drawn from: a new one whenever
+    /// the asset's file changes, so a cache of what was drawn from it can
+    /// tell stale pixels by this alone.
+    pub revision: u64,
 }
 
 /// Where `ImageSources::render` lays an image out, without its pixels.
@@ -339,25 +411,83 @@ pub struct ImageLayout {
     pub pixel_height: u32,
 }
 
+impl Default for ImageSources {
+    fn default() -> Self {
+        Self::with_budget(DEFAULT_BUDGET)
+    }
+}
+
 impl ImageSources {
-    /// Adds decoded pixels, allowing callers to share an existing asset cache.
+    /// A cache holding at most `budget` bytes, besides the images the
+    /// current frame uses.
+    pub fn with_budget(budget: u64) -> Self {
+        Self {
+            entries: HashMap::new(),
+            budget,
+            bytes: 0,
+            tick: 0,
+            frame_start: None,
+            revisions: 0,
+            svg_fonts: None,
+        }
+    }
+
+    /// Starts a frame: the images used from here on stay past the budget
+    /// until the next frame begins, so a frame drawing more than the
+    /// budget does not decode its own images again, and the ones only
+    /// earlier frames used are dropped first.
+    pub fn begin_frame(&mut self) {
+        self.frame_start = Some(self.tick);
+        self.evict(None);
+    }
+
+    /// The bytes the cached images hold between them.
+    pub fn cached_bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    /// Adds decoded pixels, allowing callers to share an existing asset
+    /// cache. They are drawn for `key` whatever file a caller names, and
+    /// are not replaced by a later call for the same `key`.
     pub fn insert_raster(&mut self, key: &str, pixels: RgbaImage) {
-        self.sources
-            .entry(key.to_owned())
-            .or_insert(Source::Raster(Arc::new(pixels)));
+        if self.entries.contains_key(key) {
+            return;
+        }
+        self.tick += 1;
+        let bytes = pixels.as_raw().len() as u64;
+        self.insert(key, Source::Raster(Arc::new(pixels)), None, bytes);
     }
 
     /// Reads and parses (an SVG) or decodes (a raster image) the file at
-    /// `path` under `key`, once.
+    /// `path` under `key`, unless `key` already holds that file as it is
+    /// on disk now.
     fn load(&mut self, key: &str, path: &Path) -> Result<(), image::ImageError> {
-        if self.sources.contains_key(key) {
-            return Ok(());
+        self.tick += 1;
+        if let Some(entry) = self.entries.get_mut(key) {
+            let current = match &entry.file {
+                None => true,
+                Some((file, stamp)) => {
+                    file == path && FileStamp::read(path).is_ok_and(|now| now == *stamp)
+                }
+            };
+            if current {
+                entry.last_used = self.tick;
+                return Ok(());
+            }
+            // Stale: dropped before the new pixels are decoded, so both are
+            // never held at once.
+            let stale = self.entries.remove(key).expect("the entry was just found");
+            self.bytes -= stale.bytes;
         }
+        // Stamped before reading: a write landing during the read changes
+        // the file's stamp from this one, so the next use reads it again.
+        let stamp = FileStamp::read(path)?;
         let data = std::fs::read(path)?;
         let svg = path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
             || std::str::from_utf8(&data).is_ok_and(|s| s.contains("<svg"));
+        let file_bytes = data.len() as u64;
         let source = if svg {
             let text = std::str::from_utf8(&data).map_err(invalid)?;
             let text = css_fallbacks(text);
@@ -384,8 +514,65 @@ impl ImageSources {
                     .to_rgba8(),
             ))
         };
-        self.sources.insert(key.to_owned(), source);
+        let bytes = match &source {
+            Source::Raster(pixels) => pixels.as_raw().len() as u64,
+            Source::Animated(animation) => animation
+                .frames
+                .iter()
+                .map(|frame| frame.as_raw().len() as u64)
+                .sum(),
+            // The parsed tree is not measured; its renders are.
+            Source::Svg(_) => file_bytes,
+        };
+        self.insert(key, source, Some((path.to_owned(), stamp)), bytes);
         Ok(())
+    }
+
+    /// Stores `source` under `key` as a new revision, used now, and drops
+    /// what no longer fits the budget.
+    fn insert(
+        &mut self,
+        key: &str,
+        source: Source,
+        file: Option<(PathBuf, FileStamp)>,
+        source_bytes: u64,
+    ) {
+        self.revisions += 1;
+        let entry = Entry {
+            source,
+            file,
+            revision: self.revisions,
+            rendered: VecDeque::new(),
+            source_bytes,
+            bytes: source_bytes,
+            last_used: self.tick,
+        };
+        self.bytes += entry.bytes;
+        if let Some(previous) = self.entries.insert(key.to_owned(), entry) {
+            self.bytes -= previous.bytes;
+        }
+        self.evict(Some(key));
+    }
+
+    /// Drops the least recently used entries, other than `keep` and the
+    /// ones the current frame used, until the rest fit the budget.
+    fn evict(&mut self, keep: Option<&str>) {
+        let protected_after = self.frame_start.unwrap_or(u64::MAX);
+        while self.bytes > self.budget {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .filter(|(key, entry)| {
+                    Some(key.as_str()) != keep && entry.last_used <= protected_after
+                })
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            let evicted = self.entries.remove(&oldest).expect("evicted entry exists");
+            self.bytes -= evicted.bytes;
+        }
     }
 
     /// The image's own size in layer units, loading it under `key` without
@@ -396,12 +583,12 @@ impl ImageSources {
         path: &Path,
     ) -> Result<(f64, f64), image::ImageError> {
         self.load(key, path)?;
-        Ok(self.sources[key].size())
+        Ok(self.entries[key].source.size())
     }
 
     /// Where `render` lays out the image at `key` (loading it from `path`
-    /// once), without rasterizing or resampling it: for an SVG, only its
-    /// size counts.
+    /// unless it is loaded as it is now), without rasterizing or resampling
+    /// it: for an SVG, only its size counts.
     #[allow(clippy::too_many_arguments)]
     pub fn layout(
         &mut self,
@@ -414,14 +601,14 @@ impl ImageSources {
         density: f64,
     ) -> Result<ImageLayout, image::ImageError> {
         self.load(key, path)?;
-        let source = &self.sources[key];
+        let source = &self.entries[key].source;
         let (raster, _) = source.frame(animation);
         source.layout(raster, width, height, fit, density)
     }
 
-    /// Lays out the image at `key` (loading it from `path` once) in a
-    /// `width` x `height` box, drawing an animated image's frame at
-    /// `animation`.
+    /// Lays out the image at `key` (loading it from `path` unless it is
+    /// loaded as it is now) in a `width` x `height` box, drawing an animated
+    /// image's frame at `animation`.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -434,7 +621,12 @@ impl ImageSources {
         density: f64,
     ) -> Result<DisplayImage, image::ImageError> {
         self.load(key, path)?;
-        let source = &self.sources[key];
+        let entry = self
+            .entries
+            .get_mut(key)
+            .expect("the image was just loaded");
+        let revision = entry.revision;
+        let (source, renders) = (&entry.source, &mut entry.rendered);
         let (sw, sh) = source.size();
         let (raster, frame) = source.frame(animation);
         let ImageLayout {
@@ -452,10 +644,10 @@ impl ImageSources {
                 height: h,
                 is_svg: false,
                 frame,
+                revision,
             });
         }
         let layout = format!("{w}:{h}:{fit:?}:{frame}");
-        let renders = self.rendered.entry(key.to_owned()).or_default();
         // An animated SVG replaces its layout's render at a new resolution
         // instead of keeping one per resolution.
         if let Some(index) = renders.iter().position(|render| render.layout == layout) {
@@ -518,6 +710,7 @@ impl ImageSources {
             height: h,
             is_svg: matches!(source, Source::Svg(_)),
             frame,
+            revision,
         };
         renders.push_front(Render {
             layout,
@@ -525,6 +718,10 @@ impl ImageSources {
             image: image.clone(),
         });
         keep_recent(renders, OLDER_RENDER_PIXELS);
+        self.bytes -= entry.bytes;
+        entry.count_bytes();
+        self.bytes += entry.bytes;
+        self.evict(Some(key));
         Ok(image)
     }
 }
@@ -813,6 +1010,7 @@ mod tests {
                 height: 1.0,
                 is_svg: true,
                 frame: 0,
+                revision: 0,
             },
         };
         let layouts = |renders: &VecDeque<Render>| {
@@ -890,6 +1088,143 @@ mod tests {
             .unwrap();
         assert!(Arc::ptr_eq(&cover.pixels, &again.pixels));
     }
+    /// Writes a 2x2 PNG of `rgba` to `path`, stamped `seconds` from now so
+    /// an overwrite is seen whatever the file system's timestamp resolution.
+    fn write_png(path: &Path, rgba: [u8; 4], seconds: u64) {
+        RgbaImage::from_pixel(2, 2, image::Rgba(rgba))
+            .save(path)
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::now() + std::time::Duration::from_secs(seconds))
+            .unwrap();
+    }
+
+    fn drawn(cache: &mut ImageSources, key: &str, path: &Path) -> DisplayImage {
+        cache
+            .render(key, path, None, None, None, None, 1.0)
+            .unwrap()
+    }
+
+    #[test]
+    fn decodes_an_ids_new_file_and_its_file_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.png"), dir.path().join("b.png"));
+        write_png(&a, RED, 0);
+        write_png(&b, BLUE, 0);
+        let mut cache = ImageSources::default();
+        let first = drawn(&mut cache, "logo", &a);
+        assert_eq!(first.pixels.get_pixel(0, 0).0, RED);
+        // Unchanged: the same decode.
+        let again = drawn(&mut cache, "logo", &a);
+        assert!(Arc::ptr_eq(&first.pixels, &again.pixels));
+        assert_eq!(again.revision, first.revision);
+        // A React `<Image name="logo">` keeps its id when its `src` changes.
+        let moved = drawn(&mut cache, "logo", &b);
+        assert_eq!(moved.pixels.get_pixel(0, 0).0, BLUE);
+        assert_ne!(moved.revision, first.revision);
+        // The old file's pixels are not kept beside the new ones.
+        assert_eq!(cache.cached_bytes(), 16);
+        write_png(&b, GREEN, 10);
+        let overwritten = drawn(&mut cache, "logo", &b);
+        assert_eq!(overwritten.pixels.get_pixel(0, 0).0, GREEN);
+        assert_ne!(overwritten.revision, moved.revision);
+        // A render for a fit is drawn from the new pixels too.
+        let fitted = cache
+            .render(
+                "logo",
+                &b,
+                Some(4.0),
+                None,
+                Some(ImageFit::Cover),
+                None,
+                1.0,
+            )
+            .unwrap();
+        write_png(&b, RED, 20);
+        let refitted = cache
+            .render(
+                "logo",
+                &b,
+                Some(4.0),
+                None,
+                Some(ImageFit::Cover),
+                None,
+                1.0,
+            )
+            .unwrap();
+        assert_eq!(fitted.pixels.get_pixel(0, 0).0, GREEN);
+        assert_eq!(refitted.pixels.get_pixel(0, 0).0, RED);
+    }
+
+    #[test]
+    fn evicts_the_least_recently_used_images_past_the_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths: Vec<_> = ["a", "b", "c"]
+            .iter()
+            .map(|name| {
+                let path = dir.path().join(format!("{name}.png"));
+                write_png(&path, RED, 0);
+                path
+            })
+            .collect();
+        // Two 2x2 images fit.
+        let mut cache = ImageSources::with_budget(32);
+        cache.begin_frame();
+        let a = drawn(&mut cache, "a", &paths[0]).revision;
+        drawn(&mut cache, "b", &paths[1]);
+        cache.begin_frame();
+        // `a` used again, so `b` is the one only an earlier frame used.
+        assert_eq!(drawn(&mut cache, "a", &paths[0]).revision, a);
+        drawn(&mut cache, "c", &paths[2]);
+        assert_eq!(cache.cached_bytes(), 32);
+        assert_eq!(drawn(&mut cache, "a", &paths[0]).revision, a);
+        assert!(!cache.entries.contains_key("b"));
+    }
+
+    #[test]
+    fn keeps_the_images_the_current_frame_uses_past_the_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cache = ImageSources::with_budget(16);
+        cache.begin_frame();
+        let mut revisions = Vec::new();
+        for name in ["a", "b", "c"] {
+            let path = dir.path().join(format!("{name}.png"));
+            write_png(&path, RED, 0);
+            revisions.push((name, path.clone(), drawn(&mut cache, name, &path).revision));
+        }
+        // Drawn again in the same frame: none was decoded again.
+        for (name, path, revision) in &revisions {
+            assert_eq!(drawn(&mut cache, name, path).revision, *revision);
+        }
+        assert_eq!(cache.cached_bytes(), 48);
+        // The next frame drops what no longer fits, least recently used first.
+        cache.begin_frame();
+        assert_eq!(cache.cached_bytes(), 16);
+        assert!(cache.entries.contains_key("c"));
+    }
+
+    #[test]
+    fn counts_renders_toward_the_budget() {
+        let mut cache = ImageSources::with_budget(u64::MAX);
+        cache.insert_raster("photo", RgbaImage::new(2, 2));
+        cache
+            .render(
+                "photo",
+                Path::new("not-read.png"),
+                Some(4.0),
+                Some(4.0),
+                Some(ImageFit::Cover),
+                None,
+                1.0,
+            )
+            .unwrap();
+        // The 2x2 source and its 4x4 render.
+        assert_eq!(cache.cached_bytes(), 16 + 64);
+    }
+
     #[test]
     fn missing_invalid_and_oversized_images_return_asset_errors() {
         let dir = tempfile::tempdir().unwrap();
@@ -1180,7 +1515,7 @@ mod tests {
             let layout = sources
                 .layout(key, &path, width, height, fit, None, density)
                 .unwrap();
-            assert!(!sources.rendered.contains_key(key), "{key} rendered");
+            assert!(sources.entries[key].rendered.is_empty(), "{key} rendered");
             let image = sources
                 .render(key, &path, width, height, fit, None, density)
                 .unwrap();
@@ -1194,7 +1529,12 @@ mod tests {
                 layout, rendered,
                 "{key} {width:?} {height:?} {fit:?} {density}"
             );
-            sources.rendered.clear();
+            sources
+                .entries
+                .get_mut(key)
+                .expect("the image is loaded")
+                .rendered
+                .clear();
         }
     }
 
@@ -1226,7 +1566,7 @@ mod tests {
             .unwrap();
             sources.natural_size(name, &path).unwrap();
         }
-        let fonts = |key: &str| match &sources.sources[key] {
+        let fonts = |key: &str| match &sources.entries[key].source {
             Source::Svg(tree) => Arc::clone(tree.fontdb()),
             _ => panic!("{key} is not an SVG"),
         };
