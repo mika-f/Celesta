@@ -413,7 +413,9 @@ materials as `frame.lights` and `frame.ambient`.
   buffer limit).
 - **Both bounds are soft.** Shaders and pipelines that loaded models hold
   are never dropped, however many loaded models there are; the bounds are
-  on what models that failed or are gone leave behind. Each model holds at
+  on what models that failed or are gone leave behind. A model is gone
+  once no layer drew it in `MODEL_IDLE_RENDERS` (300) renders in a row
+  (see [`2026-11-06-plugin-paths-model-eviction.md`](2026-11-06-plugin-paths-model-eviction.md)). Each model holds at
   most 32 plugin shaders and the unlit one, and 1,024 pipelines.
 - **Another provider opens its own models.** Models are kept by plugin and
   asset paths, under the id the provider gave them.

@@ -61,6 +61,16 @@ export function isContainedPath(file: string): boolean {
   return file !== '' && !/^[/\\]/.test(file) && !/[:\0]/.test(file) && file.split(/[/\\]/).every((part) => part !== '..');
 }
 
+/**
+ * The file `file`, a path a manifest names, is under `directory`: split on
+ * either separator, as `isContainedPath` reads it, and joined with this
+ * platform's own, so that `js\\index.js` is `js/index.js` on macOS and Linux
+ * (celesta-plugin-host's `manifest_path`).
+ */
+export function manifestPath(directory: string, file: string): string {
+  return path.join(directory, ...file.split(/[/\\]/));
+}
+
 async function isFile(file: string): Promise<boolean> {
   try {
     return (await stat(file)).isFile();
@@ -98,7 +108,7 @@ async function readManifest(directory: string): Promise<FoundPlugin | SkippedPlu
   if (!isContainedPath(manifest.module)) {
     return { directory, id, reason: `${JSON.stringify(manifest.module)} is not a relative path inside the plugin directory` };
   }
-  const module = path.resolve(directory, manifest.module);
+  const module = manifestPath(directory, manifest.module);
   if (!(await staysInside(directory, module))) {
     return { directory, id, reason: `${JSON.stringify(manifest.module)} leads outside the plugin directory` };
   }

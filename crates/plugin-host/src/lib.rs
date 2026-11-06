@@ -32,7 +32,7 @@ pub use manifest::{
     CELESTA_VERSION, CODEC_PROGRAM, CodecPlugin, ComponentInfo, ComponentSource, DiscoveryError,
     InstalledPlugins, MANIFEST, Manifest, PLUGIN_PATH_ENV, PluginEntry, PluginRole, RuntimePlugins,
     WAITING_PLUGIN_PATH_ENV, celesta_range_for, discover, discover_in, is_contained_path,
-    is_valid_id, platform, plugin_paths,
+    is_valid_id, manifest_path, platform, plugin_paths,
 };
 pub use project::{
     PROJECT_CONFIG, ProjectConfigError, has_project_config, mark_project_root,

@@ -434,6 +434,37 @@ fn a_new_content_provider_closes_the_models_the_previous_one_opened() {
 }
 
 #[test]
+fn an_idle_scene_model_lets_go_of_its_pipelines() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let (provider, closed) = Closing::new(custom_square(
+        vec![shader(FLAT, &[])],
+        custom(0, bytes(&FLAT_RED)),
+    ));
+    renderer.renderer = renderer.renderer.with_content_provider(provider);
+    renderer.render(&scene()).unwrap();
+    let kept = |renderer: &TestRenderer| {
+        renderer
+            .meshes
+            .scene_pipelines
+            .as_ref()
+            .expect("made by the scene")
+            .kept()
+    };
+    let (shaders, pipelines, _) = kept(&renderer);
+    assert!(pipelines > 0);
+    for _ in 0..crate::mesh::MODEL_IDLE_RENDERS {
+        renderer.render(&empty_scene(64, 64)).unwrap();
+    }
+    assert_eq!(*closed.lock().unwrap(), [ModelId(9)]);
+    // Its pipelines go with it; its shader stays cached.
+    assert_eq!(kept(&renderer), (shaders, 0, 0));
+    let frame = renderer.render(&scene()).unwrap();
+    assert_pixel(&frame, 32, 32, RED);
+}
+
+#[test]
 fn scene_with_bad_index_is_invalid() {
     let mut scenes = valid();
     scenes.frame.draws[1].index = 3;

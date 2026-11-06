@@ -60,6 +60,7 @@ impl GpuRenderer {
         self.missing_glyphs.clear();
         self.plugin_notices.clear();
         self.meshes.scene_frames.begin_frame();
+        self.meshes.begin_render();
         self.meshes.asked.clear();
         self.hit_leaves.clear();
         self.hit_regions.clear();
@@ -72,8 +73,9 @@ impl GpuRenderer {
             .layers
             .iter()
             .try_for_each(|layer| self.prepare_layer(layer, LayerState::default(), &mut items));
-        // Only the walk asks for plugin frames.
+        // Only the walk asks for plugin frames, and opens plugin models.
         self.meshes.asked.clear();
+        self.meshes.close_idle_models();
         // Evict what this frame did not use, also when it failed part way
         // (the entries it did reach are still marked as used).
         let generation = self.texture_generation;

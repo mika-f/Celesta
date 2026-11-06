@@ -72,6 +72,8 @@ pub(crate) struct MeshState {
     pub(crate) scene_frames: SceneFrameResources,
     /// By plugin and asset paths.
     models: HashMap<ModelKey, OpenModel>,
+    /// The renders begun, which date when each model was last drawn.
+    renders: u64,
     /// The frames the provider answered in this render, so that a render
     /// asks for a model's frame at one time and data once: measuring a 3D
     /// plane and drawing each of its bands draw the same answer. Cleared
@@ -104,12 +106,56 @@ impl MeshState {
         self.models.clear();
         self.provider = Some(provider);
     }
+
+    /// Starts a render.
+    pub(crate) fn begin_render(&mut self) {
+        self.renders += 1;
+    }
+
+    /// Closes the models no layer drew in the last [`MODEL_IDLE_RENDERS`]
+    /// renders and drops what Celesta held for them, as a render ends, also
+    /// one that failed part way: their textures and buffers, and the draw
+    /// pipelines no model still loaded uses. Compiled shaders stay in
+    /// `ScenePipelines`' cache, so a model opened again is not compiled
+    /// again; that cache drops the shaders no loaded model holds once it
+    /// reaches `MAX_CACHED_SHADERS`, a soft threshold. A model is opened
+    /// again when a layer draws it later.
+    pub(crate) fn close_idle_models(&mut self) {
+        let renders = self.renders;
+        let provider = &mut self.provider;
+        let mut closed_scene = false;
+        self.models.retain(|_, open| {
+            let idle = renders - open.last_used >= MODEL_IDLE_RENDERS;
+            if idle {
+                if let Some(provider) = provider.as_mut() {
+                    provider.close(open.loaded.id());
+                }
+                closed_scene |= matches!(open.loaded, LoadedModel::Scene(_));
+            }
+            !idle
+        });
+        // The models are dropped, so the pipelines only they held are held
+        // by the cache alone.
+        if closed_scene && let Some(pipelines) = self.scene_pipelines.as_mut() {
+            pipelines.drop_unused_pipelines();
+        }
+    }
 }
+
+/// How many renders in a row a plugin model may go undrawn before it is
+/// closed: about five seconds of playback or export at 60 fps. Scrubbing
+/// or cutting back to a model within that keeps it, rather than have the
+/// plugin read and parse it again; a model the composition has moved on
+/// from does not stay open, in Celesta and in the plugin's process, until
+/// the project is reopened.
+pub(crate) const MODEL_IDLE_RENDERS: u64 = 300;
 
 /// A model the provider opened, and what it said about the model then.
 struct OpenModel {
     loaded: LoadedModel,
     notices: Vec<Notice>,
+    /// The render that last drew it (see `MeshState::renders`).
+    last_used: u64,
 }
 
 /// A model opened as 2D meshes or as a 3D scene.
@@ -693,10 +739,22 @@ impl GpuRenderer {
                     return Err(error);
                 }
             };
-            self.meshes
-                .models
-                .insert(key.clone(), OpenModel { loaded, notices });
+            self.meshes.models.insert(
+                key.clone(),
+                OpenModel {
+                    loaded,
+                    notices,
+                    last_used: 0,
+                },
+            );
         }
+        // Drawn in this render, before anything about its frame can fail.
+        let renders = self.meshes.renders;
+        self.meshes
+            .models
+            .get_mut(&key)
+            .expect("opened above")
+            .last_used = renders;
         let open = &self.meshes.models[&key];
         for notice in &open.notices {
             if !self.plugin_notices.iter().any(|reported| {

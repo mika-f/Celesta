@@ -49,7 +49,7 @@ pub fn fingerprint(entry: &PluginEntry) -> io::Result<String> {
     };
     add(MANIFEST, &std::fs::read(entry.directory.join(MANIFEST))?);
     for name in named {
-        match std::fs::read(entry.directory.join(name)) {
+        match std::fs::read(entry.file(name)) {
             Ok(contents) => add(name, &contents),
             Err(error) if error.kind() == io::ErrorKind::NotFound => add(name, b""),
             Err(error) => return Err(error),
@@ -121,7 +121,7 @@ impl PendingPlugin {
             .chain(manifest.executable.values().map(String::as_str))
             .chain(manifest.module.as_deref())
             .chain(manifest.types.as_deref())
-            .any(|name| from_the_internet(&entry.directory.join(name)));
+            .any(|name| from_the_internet(&entry.file(name)));
         Self {
             entry,
             fingerprint,

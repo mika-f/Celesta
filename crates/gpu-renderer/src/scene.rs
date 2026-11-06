@@ -1198,7 +1198,7 @@ impl ScenePipelines {
     /// Drops the draw pipelines no loaded model holds. Refusals stay while
     /// their shader is cached: a refused model is never loaded to hold
     /// them.
-    fn drop_unused_pipelines(&mut self) {
+    pub(crate) fn drop_unused_pipelines(&mut self) {
         self.draw
             .retain(|_, pipeline| Arc::strong_count(pipeline) > 1);
     }

@@ -288,21 +288,23 @@ impl PluginEntry {
         executables
             .get(&format!("{os}-{arch}"))
             .or_else(|| executables.get(os))
-            .map(|relative| self.directory.join(relative))
+            .map(|relative| self.file(relative))
     }
 
     pub fn module(&self) -> Option<PathBuf> {
         self.manifest
             .module
             .as_ref()
-            .map(|module| self.directory.join(module))
+            .map(|module| self.file(module))
     }
 
     pub fn types(&self) -> Option<PathBuf> {
-        self.manifest
-            .types
-            .as_ref()
-            .map(|types| self.directory.join(types))
+        self.manifest.types.as_ref().map(|types| self.file(types))
+    }
+
+    /// The file a path in the manifest names (see [`manifest_path`]).
+    pub fn file(&self, path: &str) -> PathBuf {
+        manifest_path(&self.directory, path)
     }
 
     pub fn has_role(&self, role: PluginRole) -> bool {
@@ -400,6 +402,22 @@ pub fn is_contained_path(path: &str) -> bool {
         && path.split(['/', '\\']).all(|part| part != "..")
 }
 
+/// The file `path`, a path a manifest names, is under `directory`. It is
+/// split on either separator, as [`is_contained_path`] reads it, and its
+/// parts are joined with this platform's own: one manifest serves every
+/// platform, so `js\\index.js` is `js/index.js` on macOS and Linux (where
+/// it would otherwise be one file name), and `bin/p.exe` is `bin\\p.exe` on
+/// Windows rather than a path of mixed separators. `.` and empty parts are
+/// left out.
+pub fn manifest_path(directory: &Path, path: &str) -> PathBuf {
+    let mut file = directory.to_path_buf();
+    file.extend(
+        path.split(['/', '\\'])
+            .filter(|part| !part.is_empty() && *part != "."),
+    );
+    file
+}
+
 /// Where to look for plugins: `extra` first, made absolute against the
 /// current directory, then `CELESTA_PLUGIN_PATH`. [`discover`] skips a
 /// relative entry of the latter, whose folder would depend on where Celesta
@@ -456,7 +474,7 @@ fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
                 "{path:?} is not a relative path inside the plugin directory"
             ));
         }
-        if let Ok(resolved) = std::fs::canonicalize(directory.join(path))
+        if let Ok(resolved) = std::fs::canonicalize(manifest_path(directory, path))
             && !resolved.starts_with(&root)
         {
             return Some(format!("{path:?} leads outside the plugin directory"));
@@ -929,6 +947,47 @@ mod tests {
             "p.exe:stream",
         ] {
             assert!(!is_contained_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn manifest_paths_use_this_platforms_separator() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("p");
+        std::fs::create_dir_all(directory.join("js")).unwrap();
+        std::fs::write(directory.join("js/index.js"), "export {};").unwrap();
+        std::fs::write(directory.join("js/index.d.ts"), "export {};").unwrap();
+        let (os, _) = platform();
+        write_manifest(
+            &directory,
+            serde_json::json!({
+                "id": "p", "version": "1", "protocol": 1, "celesta": COMPATIBLE,
+                "module": "js\\index.js", "types": "./js//index.d.ts",
+                "executable": { os: "bin/windows-x86_64/p.exe" },
+            }),
+        );
+        let (found, errors) = discover(std::slice::from_ref(&directory));
+        assert!(errors.is_empty(), "{errors:?}");
+        let entry = &found[0];
+        // Written with `\` or with `/`, the file is the one on disk.
+        let module = entry.module().unwrap();
+        assert_eq!(module, directory.join("js").join("index.js"));
+        assert!(module.is_file(), "{}", module.display());
+        assert_eq!(entry.types(), Some(directory.join("js").join("index.d.ts")));
+        let executable = entry.executable().unwrap();
+        assert_eq!(
+            executable,
+            directory.join("bin").join("windows-x86_64").join("p.exe")
+        );
+        if cfg!(windows) {
+            let text = executable.to_string_lossy();
+            assert!(!text.contains('/'), "{text}");
+        } else {
+            assert!(
+                !module.to_string_lossy().contains('\\'),
+                "{}",
+                module.display()
+            );
         }
     }
 
