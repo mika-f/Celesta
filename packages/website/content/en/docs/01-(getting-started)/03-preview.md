@@ -491,34 +491,36 @@ In interactive mode, the **Add** menu at the start of the tool row adds a **Rect
 
 ### Where the element goes
 
-The menu's first line names the parent, such as **Add to `<Group>` in `<PriceTag>`**, where `PriceTag` is the component the group is written in (just **Add to `<Group>`** outside your components). The parent is the selected layer when it is a `<Group>`, otherwise the nearest `<Group>` around it, as listed under **Source chain**. To add into another group, select it, for example with its row's **Select** button. A group can be the parent when it is Celesta's `<Group>` (imported under any name), is written in a file inside the project, and has children written between its tags. A group whose only child is `{children}` or another prop, such as `{props.children}`, shows what its caller passes, so the nearest group around it is taken instead; a `{items.map(…)}` child is fine, and the new element goes after it. An empty `<Group />` draws nothing to click, so it can't be the parent yet.
+The menu's first line names the parent, such as **Add to `<Group>` in `<PriceTag>`**, where `PriceTag` is the component the group is written in (just **Add to `<Group>`** outside your components). The parent is the selected layer when it is a `<Group>`, otherwise the nearest `<Group>` around it, as listed under **Source chain**. To add into another group, select it, for example with its row's **Select** button. A group can be the parent when it is Celesta's `<Group>` (imported under any name), is written in a file inside the project, and has children written between its tags. A group whose only child is `{children}` or another prop of its component, such as `{props.children}` or `{props['children']}`, shows what its caller passes, so the nearest group around it is taken instead. Other children are fine, and the new element goes after them: a `{items.map(…)}` child, an `{item}` that is a parameter of that `map` callback or of a lowercase helper function, and a local value, even one named like a prop. An empty `<Group />` draws nothing to click and is in no layer's **Source chain**, so it can't be the parent yet: add into the group around it instead, or give it a child first.
 
-When the group is shared, that is, written in a component drawn from more than one place in your code or in more than one scene, the **Edits change** control of the selected element (see "Edit one scene or every scene" above) decides. With **Shared value**, the element is added into that group, so every place that draws the component gets it. With **This scene**, and when the selected element offers no such control, Celesta passes over shared groups and adds into the nearest group around them that is written in the scene's own code; the first line then ends with **· This scene**.
+When the group is shared, that is, written in a component drawn from more than one place in your code or in more than one scene, the **Edits change** control of the selected element (see "Edit one scene or every scene" above) decides. With **Shared value**, the element is added into that group, so every place that draws the component gets it. With **This scene**, Celesta passes over shared groups and adds into the nearest group around them that is written in the scene’s own code; the first line then ends with **· This scene**.
+
+When the selected element offers no such control, because it is written once, Celesta passes over groups that more than one place draws, but adds into a group written once even when it spans several scenes, such as a `<Group>` around `<Scenes>` at the composition's root: editing the element itself changes every scene it shows in, too. The first line ends with **· This scene** only when the group it names is in one scene. An element passed into a shared component as its children, such as the `<Rect>` in `<Card><Rect /></Card>`, is one of these: Celesta adds around the `<Card>` call rather than into the card's own group. To add into that group, select the group itself, for example with its **Select** button under **Source chain**: its **Edits change** control then offers **Shared value**.
 
 ### Draw it
 
-Choosing an item pauses playback. The button then names it, such as **Adding Rect**, and a line beside it names the parent and says what to do, such as **to `<Group>` in `<PriceTag>` · Drag a box, or click · Esc cancels**. The pointer is a crosshair over the canvas, and while you drag, an outline in the accent color shows what will be written.
+Choosing an item pauses playback. The button then names it, such as **Adding Rect**, and a line beside it names the parent and says what to do, such as **to `<Group>` in `<PriceTag>` · Drag a box, or click · Esc cancels**. The pointer is a crosshair over the canvas, and while you drag, an outline in the accent color shows what will be written. In a narrow viewer, the end of that line is cut short.
 
 | Item | Draw | A click without dragging makes |
 | --- | --- | --- |
 | **Rect**, **Ellipse** | Drag a box | A 200 × 200 box, its top-left corner at the click |
 | **Circle** | Drag from the center outward | A radius of 100 around the click |
 | **Text** | Click where the text starts | — |
-| **Image**, **Video** | Choose a file, then drag a box: the drag sets the width, and the height follows the file's proportions | A width of 400, its top-left corner at the click |
+| **Image**, **Video** | Choose a file, then drag a box: the drag sets the width, and the height follows the file's proportions | A width of 400, its top-left corner at the click (a 400 × 400 box when the file's proportions are unknown) |
 
-A press that moves less than 4 pixels on the screen is a click. Sizes are in the parent's units, so the element appears where you drew it: in a group scaled by 2, a box dragged 200 pixels wide is written as `width={100}`, and in a rotated group the element is turned with the group. No side is smaller than 1. When Celesta can't read a file's proportions, such as an SVG's, the outline follows your drag, but only the width is written, so the picture keeps its own proportions.
+A press that moves less than 4 pixels on the screen is a click. Sizes are in the parent's units, so the element appears where you drew it: in a group scaled by 2, a box dragged 200 pixels wide is written as `width={100}`, and in a rotated group the element is turned with the group. No side is smaller than 1. When Celesta can't read a file's proportions, such as an SVG's, the outline follows your drag, and both the width and the height are written, so the element fills the box you drew.
 
-**Image** and **Video** open a file dialog first. Its path is written relative to the entry file's folder, and a file from outside that folder is copied into its `assets` folder first, as **Choose…** in a **Source** row does. Closing the dialog without a file ends the addition.
+**Image** and **Video** open a file dialog first. Its path is written relative to the entry file's folder, and a file from outside that folder is copied into its `assets` folder first, as **Choose…** in a **Source** row does. Closing the dialog without a file ends the addition. If you cancel while the chosen file is being copied, the copy is deleted again; a file already in the folder, and an earlier copy with the same contents, are left as they are.
 
-Start the drag inside the frame; it may end outside it. Escape cancels without writing. One drag or click adds one element; choose the item again to add another. The addition also ends when the selection changes, when you turn **Select layers** off or start playback, and when the composition reloads.
+Start the drag inside the frame; it may end outside it. Escape cancels without writing, and also cancels a text edit open on the canvas. If you release before Celesta has read what the element needs, such as right after playback pauses or the composition reloads, or while an image's proportions are being measured, the line says **Reading the source…** or **Reading the file…** and the element is written as soon as they are read. One drag or click adds one element; choose the item again to add another. The addition also ends when the selection changes, when you turn **Select layers** off or start playback, and when the composition reloads.
 
-The element goes into the parent the line names when you choose the item. If the parent changes before you release, nothing is written. Why nothing was written shows at the top-left of the preview until your next click:
+The element goes into the parent the line names when you choose the item. If the parent changes before you release, nothing is written. Why nothing was written shows at the top-left of the preview, ahead of the viewer's other notices, until your next click:
 
 | Notice | Meaning |
 | --- | --- |
 | The parent changed; choose the item again | The parent is no longer the one named when you chose the item |
 | The source changed while editing | The group is no longer where it was written, such as after an edit outside Celesta |
-| The source is still being read | The parent's position or its space on the canvas is still being read |
+| Choose a file first | An **Image** or **Video** was drawn without a file |
 | Couldn’t show the file dialog: `<error>` | The file dialog failed to open |
 | Couldn’t use the chosen file: `<error>` | The chosen file couldn't be copied into the `assets` folder |
 
@@ -533,7 +535,7 @@ The element is written with literal values only (numbers rounded to two decimals
 | **Rect**, **Ellipse** | `x` and `y` (the box's top-left corner), `width`, `height`, `fill="#4F7CFF"` |
 | **Circle** | `x` and `y` at the center, `anchorX={0.5}`, `anchorY={0.5}`, `radius`, `fill="#4F7CFF"` |
 | **Text** | `x`, `y`, `fontSize={48}`, `color="#FFFFFF"`, and the text `Text` |
-| **Image**, **Video** | `src`, `x`, `y`, `width` |
+| **Image**, **Video** | `src`, `x`, `y`, `width`, and `height` when the file's proportions are unknown |
 
 The element starts at the playhead and runs to the end of the nearest timing window around the parent: a `<Sequence>` or `<Scenes>` scene around the group, or, for a group on the composition's own timeline, the scene at the playhead (the composition's end outside the scenes). It is wrapped in a `<Sequence>` whose `from` counts from the start of that window. A `<Sequence>` written around the selected element itself, inside the group, does not count, since it does not wrap the new element. Adding a `<Rect>` at frame 45 of a group's 120-frame `<Sequence>` writes:
 
@@ -556,8 +558,10 @@ The line under the parent's name says why every item is disabled, and an item's 
 | Reason | Meaning |
 | --- | --- |
 | Select a group, or a layer inside one, to add into | Nothing is selected, or no group around the selected layer can be the parent |
-| No group in this scene’s own code to add into | Under **This scene**, every group that could be the parent is shared. This also happens when the selected element is written once at the composition's root, inside a `<Group>` that spans several scenes (such as one around `<Scenes>`): such an element offers no **Edits change** control, and Celesta does not add into every scene unasked |
-| The source is still being read | The selected layer's source, or the group's space on the canvas, is still being looked up or read, such as right after a reload. During playback the group's space is not read and does not disable the items: choosing one pauses playback, which reads it, and until it is read nothing is outlined and a release is refused with this reason |
+| The selected layer is not in this frame, The selected layer has no source position, Couldn’t read the selected layer’s source: `<error>` | The selected layer's source lookup found no chain to pick a parent from, as **Source chain** shows |
+| No group in this scene’s own code to add into | Under **This scene**, every group that could be the parent is shared; without an **Edits change** control, every one is drawn from more than one place |
+| The source is still being read | The selected layer's source, or the group's space on the canvas, is still being looked up or read, such as right after a reload. During playback the group's space is not read and does not disable the items: choosing one pauses playback, which reads it, and a release before it is read waits for it |
+| The group isn’t drawn in this frame, This frame couldn’t be drawn | The frame shown has no such group, or failed to evaluate (see **Problems**) |
 | Scanning scenes…, Couldn’t scan scenes: `<error>`, Not found in the scene scan, The scenes are not scanned | Celesta can't tell yet whether the group is shared; see "See what an edit changes" |
 | A reason from "When an option can't be chosen" | The **Edits change** option in effect for the selected element is disabled: the one you chose earlier, or both options when you chose none. The tab's tooltip gives the same reason |
 | Can’t add inside a loop or freeze frame | The nearest window around the group is a `<Loop>` or `<FreezeFrame>` |
