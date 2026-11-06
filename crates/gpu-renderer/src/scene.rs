@@ -1578,8 +1578,14 @@ fn finite(values: &[f32]) -> bool {
     values.iter().all(|value| value.is_finite())
 }
 
+/// The first vertex of `stream` with a number that is NaN or infinite.
+pub(crate) fn non_finite_vertex<const N: usize>(stream: &[[f32; N]]) -> Option<usize> {
+    stream.iter().position(|vertex| !finite(vertex))
+}
+
 /// Why `model` cannot be drawn: a canvas `invalid_canvas` refuses, vertex
-/// streams of different lengths, triangles outside their vertices, or a
+/// streams of different lengths, a vertex stream or morph target offset
+/// that is not finite, triangles outside their vertices, or a
 /// reference to something it lacks, buffers past `SCENE_BUFFER_BUDGET`, or
 /// shaders past the limits, more texture slots filled than a material's
 /// shader has, an unlit material's base color or texture transform that is
@@ -1634,6 +1640,41 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
                     offsets.positions.len(),
                     offsets.normals.len()
                 ));
+            }
+        }
+        // Every number the GPU reads from the geometry: a NaN or infinity
+        // would reach it otherwise.
+        let streams = [
+            ("positions", non_finite_vertex(&geometry.positions)),
+            ("normals", non_finite_vertex(&geometry.normals)),
+            ("uvs", non_finite_vertex(&geometry.uvs)),
+            (
+                "tangents",
+                geometry.tangents.as_deref().and_then(non_finite_vertex),
+            ),
+            (
+                "weights",
+                geometry.weights.as_deref().and_then(non_finite_vertex),
+            ),
+        ];
+        for (name, vertex) in streams {
+            if let Some(vertex) = vertex {
+                return Some(format!(
+                    "geometry {index}'s {name} are not finite at vertex {vertex}"
+                ));
+            }
+        }
+        for (target, offsets) in geometry.targets.iter().enumerate() {
+            let streams = [
+                ("positions", non_finite_vertex(&offsets.positions)),
+                ("normals", non_finite_vertex(&offsets.normals)),
+            ];
+            for (name, vertex) in streams {
+                if let Some(vertex) = vertex {
+                    return Some(format!(
+                        "geometry {index}'s target {target}'s {name} are not finite at vertex {vertex}"
+                    ));
+                }
             }
         }
     }
@@ -3473,6 +3514,57 @@ mod tests {
         let model = bare_model(100_000, 230);
         let message = invalid_scene(&model).expect("over the budget");
         assert!(message.contains("bytes"), "{message}");
+    }
+
+    #[test]
+    fn vertex_streams_and_morph_offsets_must_be_finite() {
+        // Skinned, with tangents and a morph target that moves normals: a
+        // model with every stream.
+        let mut model = bare_model(3, 1);
+        model.skins.push(celesta_plugin::Skin { joints: 1 });
+        model.draws[0].skin = Some(0);
+        let geometry = &mut model.geometries[0];
+        geometry.tangents = Some(vec![[1.0, 0.0, 0.0, 1.0]; 3]);
+        geometry.joints = Some(vec![[0; 4]; 3]);
+        geometry.weights = Some(vec![[1.0, 0.0, 0.0, 0.0]; 3]);
+        geometry.targets.push(celesta_plugin::MorphTarget {
+            positions: vec![[0.0; 3]; 3],
+            normals: vec![[0.0; 3]; 3],
+        });
+        assert_eq!(invalid_scene(&model), None);
+
+        type Set = fn(&mut celesta_plugin::Geometry);
+        let cases: [(&str, Set); 7] = [
+            ("positions are not finite at vertex 2", |g| {
+                g.positions[2][1] = f32::NAN
+            }),
+            ("normals are not finite at vertex 1", |g| {
+                g.normals[1][2] = f32::INFINITY
+            }),
+            ("uvs are not finite at vertex 0", |g| {
+                g.uvs[0][1] = f32::NEG_INFINITY
+            }),
+            ("tangents are not finite at vertex 1", |g| {
+                g.tangents.as_mut().unwrap()[1][3] = f32::NAN
+            }),
+            ("weights are not finite at vertex 2", |g| {
+                g.weights.as_mut().unwrap()[2][0] = f32::INFINITY
+            }),
+            ("target 0's positions are not finite at vertex 1", |g| {
+                g.targets[0].positions[1][0] = f32::NAN
+            }),
+            ("target 0's normals are not finite at vertex 2", |g| {
+                g.targets[0].normals[2][2] = f32::NEG_INFINITY
+            }),
+        ];
+        for (expected, set) in cases {
+            let mut model = model.clone();
+            set(&mut model.geometries[0]);
+            assert_eq!(
+                invalid_scene(&model),
+                Some(format!("geometry 0's {expected}"))
+            );
+        }
     }
 
     #[test]

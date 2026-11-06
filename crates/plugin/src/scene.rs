@@ -110,6 +110,9 @@ pub enum Filter {
 
 /// An indexed triangle list in its rest pose. Every vertex stream has one
 /// entry per vertex.
+///
+/// Every number in its streams and morph targets is finite: Celesta
+/// refuses a model with a NaN or an infinity there.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Geometry {
     pub positions: Vec<[f32; 3]>,

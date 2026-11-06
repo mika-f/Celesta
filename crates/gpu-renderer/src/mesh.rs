@@ -10,7 +10,7 @@ use crate::error::GpuRenderError;
 use crate::renderer::GpuRenderer;
 use crate::scene::{
     LoadedScene, SceneFrameResources, ScenePipelines, frame_canvas, invalid_frame_canvas,
-    scene_canvas_size,
+    non_finite_vertex, scene_canvas_size,
 };
 use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
@@ -582,7 +582,8 @@ fn premultiplied_mips(width: u32, height: u32, pixels: &[u8]) -> Vec<(u32, u32, 
     levels
 }
 
-/// Why `model` cannot be drawn, if it refers to a texture or mesh it lacks.
+/// Why `model` cannot be drawn: it refers to a texture or mesh it lacks,
+/// or a mesh's texture coordinates are not finite.
 fn invalid_model(model: &MeshModel) -> Option<String> {
     let meshes = model.meshes.len();
     for (index, mesh) in model.meshes.iter().enumerate() {
@@ -602,6 +603,11 @@ fn invalid_model(model: &MeshModel) -> Option<String> {
             return Some(format!(
                 "mesh {index} has triangles outside its {} vertices",
                 mesh.uvs.len()
+            ));
+        }
+        if let Some(vertex) = non_finite_vertex(&mesh.uvs) {
+            return Some(format!(
+                "mesh {index}'s uvs are not finite at vertex {vertex}"
             ));
         }
         if let Some(mask) = &mesh.mask
@@ -1262,4 +1268,40 @@ impl GpuRenderer {
 
 fn pipelines_ref(state: &MeshState) -> &Pipelines {
     state.pipelines.as_ref().expect("created before drawing")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use celesta_plugin::MeshInfo;
+    use std::sync::Arc;
+
+    #[test]
+    fn mesh_uvs_must_be_finite() {
+        let mut model = MeshModel {
+            canvas: [64.0, 64.0],
+            textures: vec![TextureSource::Rgba {
+                width: 1,
+                height: 1,
+                pixels: Arc::new(vec![255; 4]),
+            }],
+            meshes: vec![MeshInfo {
+                texture: 0,
+                blend: Default::default(),
+                double_sided: false,
+                mask: None,
+                uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+                indices: vec![0, 1, 2],
+            }],
+        };
+        assert_eq!(invalid_model(&model), None);
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            model.meshes[0].uvs[1][1] = value;
+            assert_eq!(
+                invalid_model(&model),
+                Some("mesh 0's uvs are not finite at vertex 1".to_owned()),
+                "{value}"
+            );
+        }
+    }
 }

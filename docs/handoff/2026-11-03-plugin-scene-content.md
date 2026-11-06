@@ -119,7 +119,9 @@ the identity as `world` for a glTF skinned mesh.
 - **Checked once and per frame.** On open, the model must have a canvas
   whose sides are finite, at least 1, and at most 16384 (a subnormal side
   would make the projection's aspect 0 or infinite), vertex streams of
-  equal length, triangles inside their
+  equal length, finite vertex streams and morph target offsets (see
+  [`2026-11-07-finite-vertex-streams.md`](2026-11-07-finite-vertex-streams.md)),
+  triangles inside their
   vertices, references to things it has (textures, geometries, materials,
   skins), and skins with every joint their geometries' vertices name;
   buffers and textures must fit the GPU. The buffers the model has the GPU
