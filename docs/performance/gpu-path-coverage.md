@@ -234,12 +234,14 @@ beyond this change; PR #120 has since paired the taps, see
 ```sh
 cargo run --release --locked -p celesta-gpu-renderer --example path-bench -- 120
 cargo run --release --locked -p celesta-gpu-renderer --example dense-geometry-bench
-node scripts/plugins/build.mts plugins/ffmpeg
+PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@8/lib/pkgconfig \
+  node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release --locked -p celesta-exporter --bin celesta-exporter
 /usr/bin/time -l target/release/celesta-exporter --no-ui --overwrite --react examples/versus/bench/celesta/nebula.tsx target/nebula.mp4
 ```
 
 The export encodes through the codec plugin, which `build.mts` builds. On
-macOS with Homebrew's FFmpeg 9 installed as the default, point
-`PKG_CONFIG_PATH` at `$(brew --prefix ffmpeg@8)/lib/pkgconfig` for that build.
+macOS with Homebrew's FFmpeg 9 installed as the default, its
+`PKG_CONFIG_PATH` points that build at FFmpeg 8
+(`$(brew --prefix ffmpeg@8)/lib/pkgconfig`, the path above on Apple Silicon).

@@ -76,7 +76,8 @@ use `examples/versus/bench/celesta/nebula.tsx` and its assets (now included on
 main through PR #113), build the React package, then:
 
 ```sh
-node scripts/plugins/build.mts plugins/ffmpeg
+PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@8/lib/pkgconfig \
+  node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release --locked -p celesta-exporter --bin celesta-exporter
 target/release/celesta-exporter --react <path-to-nebula.tsx> target/nebula.mp4 --preset medium --crf 18 --overwrite --no-ui

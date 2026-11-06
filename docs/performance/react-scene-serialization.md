@@ -142,7 +142,8 @@ Build packages/react, the exporter, and the codec plugin it exports through:
 pnpm install --frozen-lockfile
 pnpm --dir packages/react run codegen --locked
 pnpm run build:runtime
-node scripts/plugins/build.mts plugins/ffmpeg
+PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@8/lib/pkgconfig \
+  node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release -p celesta-exporter
 ```

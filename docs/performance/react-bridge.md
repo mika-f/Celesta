@@ -187,7 +187,8 @@ Build each variant in its own worktree:
 cd packages/react && pnpm install --frozen-lockfile && pnpm run codegen && pnpm run build && cd ../..
 cargo build --release -p celesta-exporter -p celesta-react-bridge --bins --examples
 python3 examples/reel/make-music.py   # reel's music.wav, once
-node scripts/plugins/build.mts plugins/ffmpeg   # the codec plugin, for the exports
+PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@8/lib/pkgconfig \
+  node scripts/plugins/build.mts plugins/ffmpeg   # the codec plugin, for the exports
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 ```
 
