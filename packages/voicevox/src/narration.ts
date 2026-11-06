@@ -17,10 +17,10 @@
 // Nothing here writes to stdout, which carries the bridge protocol.
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { readWavHeader } from '@celesta.studio/character';
+import { readWavHeader, writeFileAtomic } from '@celesta.studio/character';
 import type { DialogueLine } from '@celesta.studio/character';
 
 import { lipSyncFromVoicevox } from './lipsync.js';
@@ -436,8 +436,8 @@ async function runJob(job: Job, context: RunContext): Promise<NarrationAsset> {
       await mkdir(context.cacheDir, { recursive: true });
       // The JSON is the commit marker: written last, and only after the WAV it describes.
       await rm(jsonPath, { force: true });
-      await writeAtomically(wavPath, wav);
-      await writeAtomically(jsonPath, `${JSON.stringify(entry, null, 2)}\n`);
+      await writeFileAtomic(wavPath, wav);
+      await writeFileAtomic(jsonPath, `${JSON.stringify(entry, null, 2)}\n`);
     } catch (error) {
       throw fail('write', `could not write the cache entry in ${context.cacheDir}: ${messageOf(error)}`, error);
     }
@@ -563,17 +563,6 @@ function wavDuration(bytes: Uint8Array): number {
     throw new Error('it has no samples');
   }
   return frameCount / sampleRate;
-}
-
-async function writeAtomically(target: string, data: Uint8Array | string): Promise<void> {
-  const temporary = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  try {
-    await writeFile(temporary, data);
-    await rename(temporary, target);
-  } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
-  }
 }
 
 function semaphore(size: number): <T>(task: () => Promise<T>) => Promise<T> {

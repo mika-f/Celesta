@@ -17,6 +17,7 @@ import type {
 } from '@celesta.studio/react';
 import {
   createResolver,
+  currentPackageName,
   holdProjectPropertyValues,
   listComponentSchemas,
   listPrimitiveProperties,
@@ -47,6 +48,7 @@ import type {
   WirePropertyTable,
 } from '@celesta.studio/react/internal';
 
+import { ProtocolLines, requestQueue } from './channel';
 import { PLUGIN_SPECIFIER, WAITING_PLUGIN_PATH_ENV, findPlugins, resolvePluginImport, standInSource } from './plugins';
 import type { Plugins, StandIn } from './plugins';
 import { resolvePropertyInputs } from './property-inputs';
@@ -228,33 +230,10 @@ async function main(): Promise<void> {
 
   const lines = new ProtocolLines();
   // Prepare-time probes and measurements share one request/response channel.
-  let requestQueue = Promise.resolve();
-  setMediaProbe((mediaPath) => {
-    const result = requestQueue.then(() => requestMediaProbe(lines, mediaPath));
-    requestQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  });
-
-  setAudioDecoder((mediaPath) => {
-    const result = requestQueue.then(() => requestDecodedAudio(lines, mediaPath));
-    requestQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  });
-
-  setTextMeasurer((request) => {
-    const result = requestQueue.then(() => requestTextMeasure(lines, request));
-    requestQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  }, (request) => {
+  const serialized = requestQueue();
+  setMediaProbe(serialized((mediaPath: string) => requestMediaProbe(lines, mediaPath)));
+  setAudioDecoder(serialized((mediaPath: string) => requestDecodedAudio(lines, mediaPath)));
+  setTextMeasurer(serialized((request: MeasureTextRequest) => requestTextMeasure(lines, request)), (request) => {
     writeLine({ measureText: request });
     return textMeasureResponse(lines.nextSync());
   });
@@ -617,17 +596,6 @@ interface LoadedEntry {
 /** The esbuild namespace of the modules standing in for waiting plugins. */
 const STAND_IN_NAMESPACE = 'celesta-waiting-plugin';
 
-/** The scope the Celesta packages had before `@celesta.studio`. */
-const LEGACY_SCOPE = '@celesta/';
-
-/**
- * `specifier` with the legacy `@celesta/` scope renamed: entries written
- * before the packages moved to `@celesta.studio/` still import the runtime's.
- */
-function currentPackageName(specifier: string): string {
-  return specifier.startsWith(LEGACY_SCOPE) ? `@celesta.studio/${specifier.slice(LEGACY_SCOPE.length)}` : specifier;
-}
-
 async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<LoadedEntry> {
   const contents = path.resolve(__dirname, '../../..');
   if (process.platform === 'darwin' && path.basename(contents) === 'Contents') {
@@ -684,10 +652,11 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
             if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') throw error;
             return { errors: [{ text: `${args.path} is not a Celesta package` }] };
           }
-          if (args.path.startsWith(LEGACY_SCOPE)) {
+          const current = currentPackageName(args.path);
+          if (current !== args.path) {
             const file = path.relative(entryDirectory, args.importer).split(path.sep).join('/');
             if (!legacyImports.some((known) => known.file === file && known.specifier === args.path)) {
-              legacyImports.push({ file, specifier: args.path, current: currentPackageName(args.path) });
+              legacyImports.push({ file, specifier: args.path, current });
             }
           }
           return { path: pathToFileURL(resolved).href, external: true };
@@ -761,50 +730,6 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
     prepare: prepareExport as (() => Promise<void>) | undefined,
     legacyImports,
   };
-}
-
-/** A shared buffer prevents async reads from swallowing synchronous RPC replies. */
-class ProtocolLines implements AsyncIterator<string> {
-  private pending = Buffer.alloc(0);
-  private ended = false;
-
-  private takeLine(): IteratorResult<string> | undefined {
-    const newline = this.pending.indexOf(10);
-    if (newline >= 0 || (this.ended && this.pending.length > 0)) {
-      const end = newline >= 0 ? newline : this.pending.length;
-      const value = this.pending.subarray(0, end).toString('utf8');
-      this.pending = this.pending.subarray(end + 1);
-      return { done: false, value };
-    }
-    return this.ended ? { done: true, value: undefined } : undefined;
-  }
-
-  async next(): Promise<IteratorResult<string>> {
-    while (true) {
-      const line = this.takeLine();
-      if (line) return line;
-      const chunk = Buffer.alloc(4096);
-      const count = await new Promise<number>((resolve, reject) => {
-        fs.read(0, chunk, 0, chunk.length, null, (error, bytesRead) => {
-          if (error) reject(error);
-          else resolve(bytesRead);
-        });
-      });
-      this.ended = count === 0;
-      this.pending = Buffer.concat([this.pending, chunk.subarray(0, count)]);
-    }
-  }
-
-  nextSync(): IteratorResult<string> {
-    while (true) {
-      const line = this.takeLine();
-      if (line) return line;
-      const chunk = Buffer.alloc(4096);
-      const count = fs.readSync(0, chunk, 0, chunk.length, null);
-      this.ended = count === 0;
-      this.pending = Buffer.concat([this.pending, chunk.subarray(0, count)]);
-    }
-  }
 }
 
 main();

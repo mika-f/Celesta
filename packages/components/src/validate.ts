@@ -15,8 +15,11 @@ export interface Validators {
   nonNegative(name: string, value: number): number;
   /** `value`, checked to be a finite number greater than 0. */
   positive(name: string, value: number): number;
-  /** `padding` as pixels on every edge, each checked to be 0 or more; a missing edge is 0. */
-  insets(padding: number | Insets): Required<Insets>;
+  /**
+   * `padding` as pixels on every edge, each checked to be 0 or more; a missing
+   * edge is 0. Errors name the prop `name`, `padding` unless given.
+   */
+  insets(padding: number | Insets, name?: string): Required<Insets>;
 }
 
 /** The prop checks for `<component>`. */
@@ -40,13 +43,16 @@ export function validators(component: string): Validators {
     }
     return value;
   };
-  const insets = (padding: number | Insets): Required<Insets> => {
+  const insets = (padding: number | Insets, name = 'padding'): Required<Insets> => {
+    if (typeof padding !== 'number' && (typeof padding !== 'object' || padding === null || Array.isArray(padding))) {
+      fail(`${name} must be a number or { top, right, bottom, left }, not ${JSON.stringify(padding)}`);
+    }
     const edges = typeof padding === 'number' ? { top: padding, right: padding, bottom: padding, left: padding } : padding;
     return {
-      top: nonNegative('padding top', edges.top ?? 0),
-      right: nonNegative('padding right', edges.right ?? 0),
-      bottom: nonNegative('padding bottom', edges.bottom ?? 0),
-      left: nonNegative('padding left', edges.left ?? 0),
+      top: nonNegative(`${name} top`, edges.top ?? 0),
+      right: nonNegative(`${name} right`, edges.right ?? 0),
+      bottom: nonNegative(`${name} bottom`, edges.bottom ?? 0),
+      left: nonNegative(`${name} left`, edges.left ?? 0),
     };
   };
   return { fail, finite, nonNegative, positive, insets };

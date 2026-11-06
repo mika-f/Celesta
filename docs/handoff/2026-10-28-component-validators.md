@@ -51,7 +51,11 @@ expects `greater than 0`. The docs and the Agent Skill quote none of it.
 
 ## Left alone
 
-- `caption-track`'s `edges()` spreads `margin` without range checks.
+- `caption-track`'s `edges()`, which spread `padding` and `highlight.padding`
+  without range checks, was left alone here (`margin` goes through
+  `safeAreaInsets()`, which checks it). It no longer is: `edges()` is gone,
+  and both paddings go through `insets()` since
+  [`2026-11-06-ts-packages-leftovers.md`](2026-11-06-ts-packages-leftovers.md).
 - `typewriter-text`'s `positive` (optional value, different message),
   `motion`'s envelope checks, and `count.ts`'s `${caller}`-prefixed checks
   keep their own contracts.

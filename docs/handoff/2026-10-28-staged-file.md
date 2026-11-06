@@ -58,8 +58,11 @@ created exclusively, `0o600`) kept with `keep()`, replacing the hand-rolled
   rename over `celesta_react_bridge::write_temp`, which is unchanged.
 - The TypeScript writers (`packages/voicevox/src/narration.ts`
   `writeAtomically`, async; `packages/character/src/voice-folder.ts`
-  `snapshot`, sync and tolerant of a concurrent same-file write) are a few
-  lines each in packages with no shared dependency, so they stay as they are.
+  `snapshot`, sync and tolerant of a concurrent same-file write) were left
+  apart as "in packages with no shared dependency". `@celesta.studio/voicevox`
+  does depend on `@celesta.studio/character`, though; both now use its
+  `writeFileAtomic` / `writeFileAtomicSync`
+  ([`2026-11-06-ts-packages-leftovers.md`](2026-11-06-ts-packages-leftovers.md)).
 
 ## Checks
 

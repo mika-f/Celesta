@@ -76,6 +76,12 @@ export async function probeMedia(src: string): Promise<MediaInfo> {
   if (!pending) {
     pending = probe(path);
     cached.set(path, pending);
+    // A failure is not cached, so a later call can probe the path again.
+    // The check keeps a probe installed since then from losing its entry.
+    const failed = pending;
+    failed.catch(() => {
+      if (cached.get(path) === failed) cached.delete(path);
+    });
   }
   return { src, ...(await pending) };
 }
@@ -114,7 +120,10 @@ export function decodeAudio(src: string): Promise<DecodedAudio> {
     pending = audioDecoder(path);
     decoded.set(path, pending);
     // A failure is not cached, so a later call can try again.
-    pending.catch(() => decoded.delete(path));
+    const failed = pending;
+    failed.catch(() => {
+      if (decoded.get(path) === failed) decoded.delete(path);
+    });
   }
   return pending;
 }

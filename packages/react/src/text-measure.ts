@@ -156,10 +156,7 @@ export function useMeasurementFonts(extra: readonly string[] = []): ResolvedAsse
     ...declaredFonts.map((font) => font.location.type === 'file'
       ? { ...font, location: { ...font.location, path: entryRelativePath(font.location.path) } }
       : font),
-    ...extra.map((src): ResolvedAsset => ({
-      id: src,
-      location: isRemoteUrl(src) ? { type: 'url', url: src } : { type: 'file', path: entryRelativePath(src) },
-    })),
+    ...prepareFonts(extra),
   ];
 }
 

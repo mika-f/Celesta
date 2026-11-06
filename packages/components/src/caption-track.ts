@@ -9,7 +9,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, Rect, Sequence, Span, Subtitles, Text, useCurrentFrame, useTheme, useVideoConfig } from '@celesta.studio/react';
+import { Easings, Group, Rect, Sequence, Span, Subtitles, Text, useCurrentFrame, useTheme, useVideoConfig } from '@celesta.studio/react';
 import type { FontFamily, GlyphMetrics, Paint, TextMetrics, TextStyle } from '@celesta.studio/react';
 import { safeAreaInsets, useLayoutBounds } from '@celesta.studio/layout';
 import type { Insets, SafeAreaValue } from '@celesta.studio/layout';
@@ -205,16 +205,11 @@ export interface CaptionTrackProps {
   lang?: string;
 }
 
-const { fail, positive } = validators('CaptionTrack');
+const { fail, positive, insets } = validators('CaptionTrack');
 
 function cueLabel(cues: readonly CaptionCue[], index: number): string {
   const id = cues[index]?.id;
   return id === undefined ? `cue ${index}` : `cue ${index} ("${id}")`;
-}
-
-function edges(padding: number | Insets): Required<Insets> {
-  if (typeof padding === 'number') return { top: padding, right: padding, bottom: padding, left: padding };
-  return { top: padding.top ?? 0, right: padding.right ?? 0, bottom: padding.bottom ?? 0, left: padding.left ?? 0 };
 }
 
 /**
@@ -292,7 +287,7 @@ function Caption({ track, range, joinsBefore, joinsAfter }: {
   const minFontSize = Math.min(positive('minFontSize', track.minFontSize ?? fontSize), fontSize);
   const lineHeight = positive('lineHeight', track.lineHeight ?? 1.4);
   if (!Number.isInteger(maxLines) || maxLines < 1) fail(`maxLines must be a whole number of at least 1, not ${maxLines}`);
-  const padding = edges(track.padding ?? { top: fontSize * 0.3, bottom: fontSize * 0.3, left: fontSize * 0.6, right: fontSize * 0.6 });
+  const padding = insets(track.padding ?? { top: fontSize * 0.3, bottom: fontSize * 0.3, left: fontSize * 0.6, right: fontSize * 0.6 });
   const cornerRadius = track.cornerRadius ?? Math.round(fontSize * 0.2);
   const paged = highlight !== undefined || track.paging !== undefined;
   const paging = track.paging ?? {};
@@ -496,14 +491,14 @@ function litWord(options: {
   }
   const fontSize = style.fontSize ?? metrics.ascent;
   const lineHeight = metrics.lineHeight;
-  const padding = edges(highlight.padding ?? { top: fontSize * 0.08, bottom: fontSize * 0.08, left: fontSize * 0.12, right: fontSize * 0.12 });
+  const padding = insets(highlight.padding ?? { top: fontSize * 0.08, bottom: fontSize * 0.08, left: fontSize * 0.12, right: fontSize * 0.12 }, 'highlight.padding');
   const cornerRadius = highlight.cornerRadius ?? Math.round(fontSize * 0.15);
 
   const clusters = graphemes(text);
   const current = words.findIndex((word) => word.state === 'current');
   const word = words[current];
   const lines = word ? wordLines(metrics, text, clusters, word, shownLines) : [];
-  const progress = word === undefined || transition === 0 ? 1 : easeOut(Math.min(1, (frame - word.from) / transition));
+  const progress = word === undefined || transition === 0 ? 1 : Easings.easeOutCubic(Math.min(1, (frame - word.from) / transition));
   const grown = 1 + (scale - 1) * progress;
   const separate = scale !== 1 && lines.length > 0;
   const banded = highlight.background != null && lines.length > 0;
@@ -627,8 +622,4 @@ function coloredContent(
       }, part));
   }
   return parts;
-}
-
-function easeOut(t: number): number {
-  return 1 - (1 - t) ** 3;
 }

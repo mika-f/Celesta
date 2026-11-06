@@ -33,3 +33,16 @@ test('insets spreads a number to every edge and fills missing edges with 0', () 
   assert.deepEqual(insets({ top: 4, left: 2 }), { top: 4, right: 0, bottom: 0, left: 2 });
   assert.throws(() => insets({ right: -2 }), { message: '<Box> padding right must be a finite number of 0 or more, not -2' });
 });
+
+test('insets rejects padding that is neither a number nor an object of edges', () => {
+  for (const [padding, shown] of [['8', '"8"'], [null, 'null'], [[1, 2], '[1,2]'], [true, 'true']] as const) {
+    assert.throws(() => insets(padding as unknown as number), {
+      message: `<Box> padding must be a number or { top, right, bottom, left }, not ${shown}`,
+    });
+  }
+  assert.throws(() => insets({ top: '4' } as unknown as number), { message: '<Box> padding top must be a finite number of 0 or more, not 4' });
+});
+
+test('insets names the prop it was given', () => {
+  assert.throws(() => insets(-1, 'inner.padding'), { message: '<Box> inner.padding top must be a finite number of 0 or more, not -1' });
+});

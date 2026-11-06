@@ -41,8 +41,10 @@ export interface CompositionRuntimeContextValue extends VideoConfig {
 }
 
 // Populated by render.ts around the entry's default export on every frame
-// request; `time` is the only field that varies between requests, so a
-// component that only reads `useVideoConfig()` does not re-render per frame.
+// request. Each request provides a new value object, even where only `time`
+// changed, so every component that reads this context (`useCurrentFrame()`,
+// `useVideoConfig()`, ...) renders again on every frame; the reconciler then
+// leaves unchanged host props uncommitted (see `commitUpdate`).
 export const CompositionRuntimeContext = React.createContext<CompositionRuntimeContextValue | null>(
   null,
 );

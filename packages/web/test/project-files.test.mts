@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { build } from 'esbuild-wasm';
 import type { BuildOptions } from 'esbuild-wasm';
-import { currentModuleName, projectFiles } from '../src/project-files';
+import { currentPackageName } from '../../react/src/package-scope';
+import { projectFiles } from '../src/project-files';
 
 /** What a bundle's `module.exports` holds, read back as the test expects it. */
 type Exports<T> = { exports: { default?: T } };
@@ -30,16 +31,13 @@ test('bundle a nested TSX project, resolve JSON and keep runtime imports externa
 });
 
 test('the scope before @celesta.studio stays a runtime import', async () => {
-  assert.equal(currentModuleName('@celesta/react'), '@celesta.studio/react');
-  assert.equal(currentModuleName('@celesta.studio/react'), '@celesta.studio/react');
-  assert.equal(currentModuleName('react'), 'react');
   const files = { 'film.tsx': "import { Composition } from '@celesta/react'; export default Composition;" };
   const result = await build({ entryPoints: ['film.tsx'], bundle: true, write: false, format: 'cjs', plugins: [projectFiles(files, 'film.tsx')] });
   const module: Exports<unknown> = { exports: {} };
   const Component = Symbol('Composition');
   new Function('module', 'exports', 'require', result.outputFiles[0].text)(
     module, module.exports,
-    (name: string) => { assert.equal(currentModuleName(name), '@celesta.studio/react'); return { Composition: Component }; },
+    (name: string) => { assert.equal(currentPackageName(name), '@celesta.studio/react'); return { Composition: Component }; },
   );
   assert.equal(module.exports.default, Component);
 });
