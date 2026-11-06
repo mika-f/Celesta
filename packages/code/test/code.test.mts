@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -388,21 +388,35 @@ test.for([
       return <Composition width={800} height={300} fps={30} durationInFrames={20}><Demo /></Composition>;
     }
   `);
+  // Milliseconds per phase, printed so a slow CI run shows where its time went.
+  const timings: Record<string, number> = {};
+  let mark = performance.now();
+  const lap = (phase: string) => {
+    const now = performance.now();
+    timings[phase] = Math.round(now - mark);
+    mark = now;
+  };
   let cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
   if (packaged) {
     const runtime = join(directory, 'runtime/react');
     const stage = fileURLToPath(new URL('../../../scripts/stage-react-runtime.mjs', import.meta.url));
     const staged = spawnSync(process.execPath, [stage, runtime], { encoding: 'utf8' });
     assert.equal(staged.status, 0, staged.stderr);
+    lap('stage');
     const closure = JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'));
     assert.ok(closure['@celesta.studio/code']);
     assert.ok(closure['@twinkleplop/core']);
+    // ag-psd's npm tarball carries ~3,500 V8 compile-cache files for other
+    // Node.js versions, which nothing loads; the runtime leaves them out.
+    assert.ok(existsSync(join(runtime, 'node_modules/ag-psd/dist/index.js')));
+    assert.ok(!existsSync(join(runtime, 'node_modules/ag-psd/.v8-cache')), 'Runtime must not ship .v8-cache');
     // The editor copies this same support template into a project at setup.
     cpSync(join(runtime, 'dist/project-types'), join(directory, '.celesta'), { recursive: true });
     writeFileSync(join(directory, 'tsconfig.json'), '{"extends":"./.celesta/tsconfig.json"}');
     const compiler = fileURLToPath(new URL('../node_modules/typescript/lib/tsc.js', import.meta.url));
     const checked = spawnSync(process.execPath, [compiler, '-p', directory], { encoding: 'utf8' });
     assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+    lap('tsc');
     cli = join(runtime, 'dist/cli.js');
   }
   const child = spawn(process.execPath, [cli, entry], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -434,6 +448,8 @@ test.for([
       }
     }
     assert.equal(await exited, 0, stderr);
+    lap('cli');
+    if (packaged) console.log(`packaged Code phases (ms): ${JSON.stringify(timings)}`);
     assert.equal(frames.length, 2);
     assert.equal(renderedText(frames[0]), 'c');
     assert.equal(renderedText(frames[1]), 'const value = "😀";');
