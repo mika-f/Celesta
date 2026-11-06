@@ -11,7 +11,8 @@ import type { PluginSource } from './manifest.mts';
  * plugin.json read from `sourcePath`, which errors name): each `licenses`
  * entry resolved against `source`, in order, named by its base name. Every
  * entry must be a file, and no two may share a name, since they are copied
- * into one folder.
+ * into one folder; names that differ only in case are one name, as they are
+ * on macOS's and Windows's file systems.
  */
 export function licenseFiles(source: string, plugin: PluginSource, sourcePath: string): { from: string; name: string }[] {
   const names = new Set<string>();
@@ -21,10 +22,11 @@ export function licenseFiles(source: string, plugin: PluginSource, sourcePath: s
       throw new Error(`${sourcePath}: license file ${entry} is not a file`);
     }
     const name = basename(from);
-    if (names.has(name)) {
+    const key = name.toLowerCase();
+    if (names.has(key)) {
       throw new Error(`${sourcePath}: two license files are named ${name}`);
     }
-    names.add(name);
+    names.add(key);
     return { from, name };
   });
 }

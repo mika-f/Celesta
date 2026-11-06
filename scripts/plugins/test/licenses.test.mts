@@ -52,4 +52,15 @@ describe('licenseFiles', () => {
       licenseFiles(source, { ...plugin, licenses: ['../../LICENSE-MIT', 'LICENSE-MIT'] }, sourcePath),
     ).toThrow(`${sourcePath}: two license files are named LICENSE-MIT`);
   });
+
+  it('refuses two license files whose names differ only in case, which one folder cannot hold on macOS or Windows', () => {
+    // In sibling folders, so a case-insensitive file system keeps both.
+    mkdirSync(join(source, 'a'));
+    mkdirSync(join(source, 'b'));
+    writeFileSync(join(source, 'a', 'LICENSE'), 'a\n');
+    writeFileSync(join(source, 'b', 'license'), 'b\n');
+    expect(() => licenseFiles(source, { ...plugin, licenses: ['a/LICENSE', 'b/license'] }, sourcePath)).toThrow(
+      `${sourcePath}: two license files are named license`,
+    );
+  });
 });

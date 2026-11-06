@@ -103,7 +103,40 @@ describe('localPackages', () => {
   });
 
   it('rejects a package the lockfile does not have', () => {
-    expect(() => localPackages(packages, 'missing', 'Cargo.lock')).toThrow('Cargo.lock: no package missing');
+    expect(() => localPackages(packages, 'missing', 'Cargo.lock')).toThrow('Cargo.lock: no local package missing');
+  });
+
+  it('rejects a package the lockfile has only from a registry or git', () => {
+    expect(() => localPackages(packages, 'g', 'Cargo.lock')).toThrow('Cargo.lock: no local package g');
+  });
+
+  it("starts from the local package alone, not from a registry package of its name and what that reaches", () => {
+    const lock = `version = 4
+
+[[package]]
+name = "p"
+version = "0.1.0"
+dependencies = [
+ "q",
+]
+
+[[package]]
+name = "p"
+version = "2.0.0"
+source = "${registry}"
+dependencies = [
+ "x",
+]
+
+[[package]]
+name = "q"
+version = "0.1.0"
+
+[[package]]
+name = "x"
+version = "0.1.0"
+`;
+    expect(localPackages(parseCargoLock(lock, 'Cargo.lock'), 'p', 'Cargo.lock')).toEqual(['p', 'q']);
   });
 
   it('rejects a dependency that names no package', () => {

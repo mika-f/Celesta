@@ -73,17 +73,18 @@ export function parseCargoLock(text: string, path: string): LockPackage[] {
 
 /**
  * The sorted names of the local packages (`source === null`) reachable from
- * every package named `name`, those included, following every dependency,
+ * the local package named `name`, it included, following every dependency,
  * registry and git packages' too (a registry package can depend on a `[patch]`
- * path package).
+ * path package). A registry or git package of the same name is no start: only
+ * what the local package reaches is its.
  *
  * @param packages A lockfile's packages, from {@link parseCargoLock}.
- * @param name The package to start from.
+ * @param name The local package to start from.
  * @param path The lockfile's path, for error messages.
  */
 export function localPackages(packages: LockPackage[], name: string, path: string): string[] {
-  const start = packages.filter((pkg) => pkg.name === name);
-  if (start.length === 0) throw new Error(`${path}: no package ${name}`);
+  const start = packages.filter((pkg) => pkg.name === name && pkg.source === null);
+  if (start.length === 0) throw new Error(`${path}: no local package ${name}`);
 
   const seen = new Set<LockPackage>(start);
   const queue = [...start];

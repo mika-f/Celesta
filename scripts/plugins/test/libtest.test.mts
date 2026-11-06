@@ -14,7 +14,7 @@ const log = [
   `${running} unittests src/lib.rs (target/debug/deps/a-7bc534db127be6c4)`,
   'running 0 tests',
   `${running} tests/gpu.rs (target/debug/deps/gpu-777820c74e284fab)`,
-  'running 2 tests',
+  'running 3 tests',
   'successes:',
   '',
   '---- t stdout ----',
