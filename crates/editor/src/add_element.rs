@@ -2583,6 +2583,27 @@ mod tests {
         );
         // Under the selected group itself, every window stays.
         assert_eq!(report_at_parent(&report, 0), report);
+
+        // A source-less window between two windows above the parent (a
+        // `<Scenes>` entry's, say) stays: it is around the parent too.
+        let outer = pos("intro", 2);
+        let report = LayerSourceReport {
+            windows: vec![
+                window(330.0, 390.0, Some(&own)),
+                window(300.0, 420.0, Some(&groups)),
+                window(290.0, 430.0, None),
+                window(0.0, 600.0, Some(&outer)),
+            ],
+            ..report
+        };
+        assert_eq!(
+            report_at_parent(&report, 3).windows,
+            vec![
+                window(300.0, 420.0, Some(&groups)),
+                window(290.0, 430.0, None),
+                window(0.0, 600.0, Some(&outer)),
+            ]
+        );
     }
 
     #[test]

@@ -73,8 +73,10 @@ pub fn layer_frame(scene: &Scene, regions: &[HitRegion], id: &str) -> Option<Lay
 /// The map from group `id`'s children space to scene pixels, in
 /// `LayerFrame::parent`'s layout: the group's parents' map composed with its
 /// own transform. It comes from the layer tree alone, so an empty group has
-/// one. `None` when the scene has no such layer, the layer is not a group, or
-/// the group itself or an ancestor turns in 3D or has a perspective.
+/// one. `None` when the scene has no such layer outside a mask (a mask's
+/// layers are found through no group's children), the layer is not a group,
+/// or the group itself or an ancestor turns in 3D or has a perspective. The
+/// map may collapse the plane (a group scaled to zero).
 pub fn parent_space(scene: &Scene, id: &str) -> Option<[f64; 6]> {
     let (layer, parent) = find(&scene.layers, Affine::IDENTITY, id)??;
     let LayerContent::Group { .. } = &layer.content else {

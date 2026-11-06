@@ -125,6 +125,9 @@ pub(crate) struct AddedUnder {
 /// The added layer: `under.parent`'s last child, or that child's first child
 /// when `wrapped`. `None` when the scene has no such group, it has no
 /// children, or a wrapped addition's last child is not a group with one.
+/// A wrapper outside its window at this frame draws nothing, so the parent's
+/// last child is then the sibling before it (or that sibling's first child):
+/// the added layer's confirm check (`added_confirmed`) clears it.
 pub(crate) fn added_layer(scene: &Scene, under: &AddedUnder) -> Option<String> {
     let LayerContent::Group { layers, .. } = &find_layer(&scene.layers, &under.parent)?.content
     else {
