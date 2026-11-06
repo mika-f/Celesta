@@ -31,14 +31,19 @@ pub(crate) struct SceneSources {
     pub(crate) entry: PathBuf,
 }
 
-/// Reads every `.ts`/`.tsx` file under `dir` that contains `defineScenes`
+/// Reads every `.ts`/`.tsx`/`.mts`/`.cts` file under `dir` that contains `defineScenes`
 /// (`source_files`' skips), and the entry's composition length.
 pub(crate) fn find_scene_sources(dir: &Path, entry: &Path, generation: u64) -> SceneSources {
     let mut files = source_files(dir);
     files.sort();
     let lists = files
         .into_iter()
-        .filter(|path| matches!(path.extension().and_then(OsStr::to_str), Some("ts" | "tsx")))
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(OsStr::to_str),
+                Some("ts" | "tsx" | "mts" | "cts")
+            )
+        })
         .filter_map(|path| {
             let text = fs::read_to_string(&path).ok()?;
             text.contains("defineScenes").then_some((path, text))
@@ -985,6 +990,7 @@ mod tests {
             ("dist/y.ts", list("built")),
             (".tmp/z.ts", list("temporary")),
             ("other.js", list("script")),
+            ("module.mts", list("module")),
             // Without the text: not read for lists.
             ("plain.ts", "export const A = 1;\n".to_owned()),
             (
@@ -1007,6 +1013,7 @@ mod tests {
         assert_eq!(
             found_ids,
             [
+                (dir.join("module.mts"), "module".to_owned()),
                 (dir.join("scenes/more.tsx"), "nested".to_owned()),
                 (dir.join("timeline.ts"), "root".to_owned()),
             ]

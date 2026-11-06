@@ -9,17 +9,23 @@ Paths are under `crates/editor/src/` unless they say otherwise.
   did not see.** A pointer move without the button ends them, as it ends
   every other pointer drag. Before, the next left drag anywhere also sought
   the playhead or panned the timeline, and the thumb stayed highlighted.
-- **The React reload watcher notices every change under the entry's
-  folder.** It samples a fingerprint (`source::WatchStamp`) of every walked
+- **The React reload watcher notices every change to the files and folders
+  it watches**: the source files under the entry's folder (`source_files`'
+  extensions, to depth 8, skipping `node_modules`, `dist`, `.tmp` and
+  `.git`), those folders, and the `--props-file`. It samples a fingerprint (`source::WatchStamp`) of every walked
   source file's path, mtime and size, every walked folder's mtime, and the
-  `--props-file`'s, instead of the newest mtime. Deleting or renaming a
+  `--props-file`'s, instead of the newest mtime. Paths are hashed relative
+  to the entry's folder, so the relative path given on the command line and
+  the absolute entry sampled later give the same stamp. A change that keeps
+  a file's mtime and size is not noticed. Deleting or renaming a
   module that is not the newest file, and restoring a file with an older
   mtime (`cp -p`, `rsync -a`), now reload the preview.
 - **Scene-list imports that name their extension are followed.** A
   specifier with a module extension names that file first (`'./scenes.ts'`
   is `scenes.ts`, not `scenes.ts.ts`); `.js`, `.jsx`, `.mjs` and `.cjs`
   also name the `.ts`/`.tsx`, `.tsx`, `.mts` and `.cts` file they compile
-  from, after the literal file, as esbuild resolves them. A specifier
+  from, after the literal file, as esbuild resolves them. The scene scan
+  and the watcher read `.mts` and `.cts` files too. A specifier
   without one tries `.ts`, `.tsx` and the folder's `index.ts`/`index.tsx`,
   as before. An entry whose length is `SCENES.durationInFrames` with such
   an import now lets a chapter-end drag move the composition's end.
@@ -54,7 +60,8 @@ Paths are under `crates/editor/src/` unless they say otherwise.
   `ReactReload::watched` and `apply_own_write_sample` carry
   `Option<WatchStamp>`. `walk_sources` is the one walk behind
   `source_files` and the stamp; it visits folders too. `None` means the
-  entry's folder can't be read.
+  entry has no folder or its folder's metadata can't be read; a subfolder
+  that can't be listed is left out of the sample.
 - `scene_entries::module_files` handles the extension cases.
 - `edit_history::write_files` checks every file it writes or removes for
   the read-only bit first, so `write_recorded` and `write_all_recorded`
@@ -67,7 +74,8 @@ Paths are under `crates/editor/src/` unless they say otherwise.
 - `helpers::lexically_normalized` replaces `scene_entries::normalized` and
   `element_edit::normalize`. It keeps a `..` it can't take off (`../x`,
   `a/../../x` → `../x`) and drops one right after a root. The old
-  `element_edit` version dropped a leading `..`; the old `scene_entries`
+  `..` after a Windows drive prefix without a root (`C:..\x`, drive-relative)
+  stays. The old `element_edit` version dropped a leading `..`; the old `scene_entries`
   version popped a kept `..` with the next one (`../../x` → `x`).
 - `editor-core`'s `react_entry_absolute_path` and `local_asset_path` call
   `Path::join` directly; it keeps an absolute argument as it is.

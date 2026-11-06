@@ -2555,4 +2555,9 @@ fn lexical_normalizing_keeps_a_leading_parent() {
     assert_eq!(normal("./a"), PathBuf::from("a"));
     // Nothing is above a root.
     assert_eq!(normal("/a/../../x"), PathBuf::from("/x"));
+    if cfg!(windows) {
+        assert_eq!(normal(r"C:\a\..\..\x"), PathBuf::from(r"C:\x"));
+        // Drive-relative: the parent of the drive's current folder.
+        assert_eq!(normal(r"C:..\x"), PathBuf::from(r"C:..\x"));
+    }
 }

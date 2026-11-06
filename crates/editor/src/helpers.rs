@@ -175,8 +175,8 @@ pub(crate) fn export_output(mut path: PathBuf) -> (PathBuf, VideoFormat) {
 
 /// `path` with its `.` and `..` components taken out, without reading the
 /// file system. A `..` with nothing left to take off stays (`../x` is
-/// `../x`, `a/../../x` is `../x`); one right after a root goes, since
-/// nothing is above it.
+/// `../x`, `a/../../x` is `../x`, and on Windows `C:..\\x` stays
+/// drive-relative); one right after a root goes, since nothing is above it.
 pub(crate) fn lexically_normalized(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
@@ -186,8 +186,10 @@ pub(crate) fn lexically_normalized(path: &Path) -> PathBuf {
                 Some(Component::Normal(_)) => {
                     out.pop();
                 }
-                Some(Component::RootDir | Component::Prefix(_)) => {}
-                Some(Component::ParentDir | Component::CurDir) | None => out.push(component),
+                Some(Component::RootDir) => {}
+                Some(Component::Prefix(_) | Component::ParentDir | Component::CurDir) | None => {
+                    out.push(component)
+                }
             },
             other => out.push(other),
         }

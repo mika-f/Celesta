@@ -216,16 +216,20 @@ impl DependencyDebounce {
 /// a file in it is added, removed or renamed), and the `--props-file`'s.
 /// Two samples differ when any of them changed, in either direction: a
 /// file restored with an older mtime (`cp -p`, `rsync -a`) counts, and so
-/// does a module deleted from a subfolder. `None` when the entry's folder
-/// cannot be read.
+/// does a module deleted from a subfolder. `None` when the entry has no
+/// folder or its folder's metadata cannot be read; a subfolder that cannot
+/// be listed is left out of the sample.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WatchStamp(u64);
 
 pub(crate) fn watched_stamp(entry: &Path, property_args: &PropertyArgs) -> Option<WatchStamp> {
     let dir = entry.parent()?;
     let mut seen = Vec::new();
+    // Relative to `dir`, so an entry opened as `film.tsx` and later
+    // sampled as `/p/film.tsx` gives the same stamp.
     walk_sources(dir, &mut |path, metadata| {
-        seen.push((path.to_owned(), metadata.modified().ok(), metadata.len()));
+        let path = path.strip_prefix(dir).unwrap_or(path).to_owned();
+        seen.push((path, metadata.modified().ok(), metadata.len()));
     });
     if seen.is_empty() {
         return None;
@@ -286,6 +290,8 @@ fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
                 Some(
                     "tsx"
                         | "ts"
+                        | "mts"
+                        | "cts"
                         | "jsx"
                         | "js"
                         | "mjs"
@@ -440,6 +446,11 @@ mod tests {
         let args = PropertyArgs::default();
 
         assert_eq!(watched_stamp(&entry, &args), watched_stamp(&entry, &args));
+        // Another spelling of the same folder, such as a relative path on
+        // the command line and the absolute entry later.
+        let name = dir.file_name().unwrap();
+        let spelled = dir.join("..").join(name).join("film.tsx");
+        assert_eq!(watched_stamp(&spelled, &args), watched_stamp(&entry, &args));
         assert_eq!(watched_stamp(&dir.join("missing/film.tsx"), &args), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
