@@ -13,6 +13,9 @@ the database.
   first SVG it loads builds it with `load_system_fonts`; every SVG after it
   gets `options.fontdb = Arc::clone(&fonts)`, so the system fonts are
   scanned once per `ImageSources` (one editor document, or one export run).
+- Fonts installed after the first SVG loads are not seen by later SVGs
+  until a new `ImageSources` (a reopened document, or the next export run).
+  The per-SVG scan did see them; the trade-off is intended.
 - SVG text still resolves with usvg's default font resolver against the
   same system fonts, so what an SVG draws does not change.
 

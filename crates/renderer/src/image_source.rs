@@ -21,7 +21,9 @@ pub struct ImageSources {
     /// [`LAYOUTS_PER_SOURCE`].
     rendered: HashMap<String, VecDeque<Render>>,
     /// The system fonts SVG text draws with, loaded on the first SVG and
-    /// shared by every SVG after it: scanning them is slow.
+    /// shared by every SVG after it: scanning them is slow. Fonts installed
+    /// after the first SVG loads are not seen until a new `ImageSources`
+    /// (a reopened document, or the next export run).
     svg_fonts: Option<Arc<usvg::fontdb::Database>>,
 }
 
