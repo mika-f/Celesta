@@ -14,6 +14,7 @@ use celesta_plugin_vrm::synthetic::{SyntheticVrm, SyntheticVrma};
 use celesta_plugin_vrm::{PLUGIN, VrmProvider};
 use serde_json::{Value, json};
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use tempfile::TempDir;
 
 /// A 480x270 scene of one plugin layer: the avatar at `path`, 1920x1080
@@ -63,6 +64,14 @@ fn scene_of(assets: &[(&str, &Path)], time: f64, data: Value) -> Scene {
     }
 }
 
+/// GPU devices made at once in one process can stall or crash the driver
+/// (lavapipe on Linux CI), so the tests draw one at a time.
+static GPU: Mutex<()> = Mutex::new(());
+
+fn gpu() -> MutexGuard<'static, ()> {
+    GPU.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// A renderer onto a transparent background whose plugin layers the VRM
 /// provider answers, writing textures to `cache`; `None` without an
 /// adapter, unless `CELESTA_REQUIRE_GPU=1`.
@@ -93,6 +102,7 @@ fn pixel(frame: &GpuFrame, x: u32, y: u32) -> [u8; 4] {
 
 #[test]
 fn the_avatar_draws_and_repeats() {
+    let _gpu = gpu();
     let directory = TempDir::new().unwrap();
     let cache = TempDir::new().unwrap();
     let path = directory.path().join("avatar.vrm");
@@ -128,6 +138,7 @@ fn the_avatar_draws_and_repeats() {
 
 #[test]
 fn the_avatar_moves() {
+    let _gpu = gpu();
     let directory = TempDir::new().unwrap();
     let cache = TempDir::new().unwrap();
     let model = directory.path().join("avatar.vrm");
