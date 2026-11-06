@@ -11,6 +11,10 @@ use gpui_kit::{Context, CursorStyle, KeyDownEvent, MouseButton, Window, canvas, 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.poll_background_work();
+        // Replaced CPU frames leave the sprite atlas only through `drop_image`.
+        for image in self.preview.take_retired() {
+            cx.drop_image(image, Some(window));
+        }
         self.settle_added_selection(cx);
         self.watch_occurrence_sweep(cx);
         self.settle_row_requests(cx);

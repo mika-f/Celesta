@@ -449,6 +449,50 @@ pub(crate) enum PreviewPresentation {
     Surface(celesta_gpu_renderer::NativePreviewFrame),
 }
 
+/// The preview frame on screen, and the CPU images it has replaced.
+///
+/// GPUI keeps a painted `RenderImage` in the window's sprite atlas until
+/// `drop_image` removes it: dropping the `Arc` frees nothing. A frame
+/// arrives where no `Window` is at hand (`poll_background_work`), so a
+/// replaced image waits in `retired` until a render frees it
+/// (`take_retired`).
+#[derive(Default)]
+pub(crate) struct ShownPreview {
+    current: Option<PreviewPresentation>,
+    retired: Vec<Arc<RenderImage>>,
+}
+
+impl ShownPreview {
+    pub(crate) fn current(&self) -> Option<&PreviewPresentation> {
+        self.current.as_ref()
+    }
+
+    /// Shows `next`, keeping the frame it replaces for `take_retired`.
+    pub(crate) fn show(&mut self, next: PreviewPresentation) {
+        let replaced = self.current.replace(next);
+        self.retire(replaced);
+    }
+
+    /// Hands the frames still in GPUI's atlas to the view that replaces this
+    /// one, the frame on screen among them, so its first render frees them.
+    pub(crate) fn hand_over(&mut self, next: &mut ShownPreview) {
+        next.retired.append(&mut self.retired);
+        next.retire(self.current.take());
+    }
+
+    /// The replaced images, for the render to remove from the atlas.
+    pub(crate) fn take_retired(&mut self) -> Vec<Arc<RenderImage>> {
+        std::mem::take(&mut self.retired)
+    }
+
+    fn retire(&mut self, preview: Option<PreviewPresentation>) {
+        // A native surface is not in the atlas: dropping it frees it.
+        if let Some(PreviewPresentation::Image(image)) = preview {
+            self.retired.push(image);
+        }
+    }
+}
+
 pub(crate) type PreviewWorker = LatestWorker<PreviewRequest, PreviewResult>;
 
 /// The preview worker's long-lived connection to a React entry, respawned
@@ -929,6 +973,56 @@ pub(crate) fn splice_resolved_components(
 mod tests {
     use super::*;
     use celesta_composition::{EvaluatedTransform, GroupMask, MaskMode, Rational};
+
+    fn cpu_frame() -> PreviewPresentation {
+        PreviewPresentation::Image(crate::helpers::frame_to_image(CpuPreviewFrame {
+            width: 1,
+            height: 1,
+            pixels: vec![0; 4],
+        }))
+    }
+
+    fn image(preview: Option<&PreviewPresentation>) -> &Arc<RenderImage> {
+        match preview {
+            Some(PreviewPresentation::Image(image)) => image,
+            _ => panic!("expected a CPU image"),
+        }
+    }
+
+    fn ids(images: &[Arc<RenderImage>]) -> Vec<gpui_kit::ImageId> {
+        images.iter().map(|image| image.id).collect()
+    }
+
+    #[test]
+    fn a_shown_cpu_frame_retires_the_one_it_replaces() {
+        let mut shown = ShownPreview::default();
+        shown.show(cpu_frame());
+        let first = image(shown.current()).id;
+        assert!(shown.take_retired().is_empty());
+
+        shown.show(cpu_frame());
+        let second = image(shown.current()).id;
+        assert_ne!(first, second);
+        assert_eq!(ids(&shown.take_retired()), [first]);
+        // Taken once: the next render has nothing left to free.
+        assert!(shown.take_retired().is_empty());
+    }
+
+    #[test]
+    fn a_replaced_view_hands_its_images_to_the_next_one() {
+        let mut outgoing = ShownPreview::default();
+        outgoing.show(cpu_frame());
+        let replaced = image(outgoing.current()).id;
+        outgoing.show(cpu_frame());
+        let on_screen = image(outgoing.current()).id;
+
+        let mut next = ShownPreview::default();
+        outgoing.hand_over(&mut next);
+        assert!(next.current().is_none());
+        assert_eq!(ids(&next.take_retired()), [replaced, on_screen]);
+        assert!(outgoing.current().is_none());
+        assert!(outgoing.take_retired().is_empty());
+    }
 
     fn leaf(id: &str) -> Layer {
         Layer {

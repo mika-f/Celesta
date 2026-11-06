@@ -42,7 +42,7 @@ impl EditorView {
     fn show_preview_result(&mut self, generation: u64, result: PreviewResult) {
         match result.frame {
             Ok(preview) => {
-                self.preview = Some(preview);
+                self.preview.show(preview);
                 self.problems.clear(Source::Preview);
             }
             Err(error) => {
