@@ -79,10 +79,10 @@ in how long it keeps plugin models open.
 
 ## Checks
 
-- `celesta-plugin-host`: `host::tests::a_relative_texture_path_is_refused_by_name`
+- `celesta-plugin-host`: `host::texture_tests::a_relative_texture_path_is_refused_by_name`
   (meshes and scenes; the message names the texture's index and path; an
   absolute path and inline pixels pass, and a `\` is shown once),
-  `host::tests::a_refused_model_is_closed_in_the_plugin` (Unix: a shell
+  `host::texture_tests::a_refused_model_is_closed_in_the_plugin` (Unix: a shell
   script plugin replays `hello`, `opened` with a relative texture, and
   `closed`, and records what it is sent: `hello`, one `open`, and a `close`
   for the model it gave, with no second open), and
