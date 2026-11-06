@@ -2,7 +2,7 @@ use crate::color::conversion;
 use crate::converted::ConvertedFrames;
 use crate::decoder::SequentialVideoSession;
 use crate::ffmpeg_error;
-use celesta_media::{MediaError, VideoFrame, VideoStream, frame_byte_len};
+use celesta_media::{MediaError, VideoFrame, VideoStream, frame_byte_len, timestamps_match};
 use ez_ffmpeg::Input;
 use ez_ffmpeg::frame_export::{FrameExtractor, FrameIter, PixelLayout};
 use std::path::Path;
@@ -138,10 +138,6 @@ impl SequentialVideoSession {
             }
         }
     }
-}
-
-pub(crate) fn timestamps_match(left: f64, right: f64) -> bool {
-    (left - right).abs() <= 1e-7_f64.max(left.abs().max(right.abs()) * 1e-9)
 }
 
 /// Whether a decoded frame at `frame_seconds` satisfies a request for

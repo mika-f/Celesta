@@ -71,6 +71,14 @@ pub struct VideoRequest<'a> {
     pub sequential: Option<Sequential<'a>>,
 }
 
+/// Whether two times, in seconds, are the same: the tolerance codecs use to
+/// match a decoded frame to a [`VideoRequest::time`], 0.1 µs or a part in
+/// 10⁹ of the larger, so a time a rounding error past a frame still lands on
+/// that frame.
+pub fn timestamps_match(left: f64, right: f64) -> bool {
+    (left - right).abs() <= 1e-7_f64.max(left.abs().max(right.abs()) * 1e-9)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sequential<'a> {
     /// Which run of requests this is: a renderer asks for each layer
