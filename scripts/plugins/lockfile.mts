@@ -75,8 +75,8 @@ export function parseCargoLock(text: string, path: string): LockPackage[] {
  * The sorted names of the local packages (`source === null`) reachable from
  * the local package named `name`, it included, following every dependency,
  * registry and git packages' too (a registry package can depend on a `[patch]`
- * path package). A registry or git package of the same name is no start: only
- * what the local package reaches is its.
+ * path package). The walk starts only from the local package named `name`; a
+ * registry or git package of the same name is not a starting point.
  *
  * @param packages A lockfile's packages, from {@link parseCargoLock}.
  * @param name The local package to start from.
