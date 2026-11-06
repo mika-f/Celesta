@@ -6,7 +6,7 @@
 
 use crate::actions::{Redo, Undo};
 use crate::problems::Source;
-use crate::source::{PropertyArgs, watched_mtime};
+use crate::source::{PropertyArgs, WatchStamp, watched_stamp};
 use crate::view::EditorView;
 use celesta_react_bridge::write_temp;
 use gpui_kit::{Context, Window};
@@ -14,7 +14,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 /// The most entries kept; the oldest are dropped first.
 const CAPACITY: usize = 100;
@@ -384,10 +383,10 @@ impl EditorView {
     }
 
     /// Takes a write the editor made itself as seen: `watched` (the watched
-    /// files' mtime sampled after the write) replaces the reload watcher's, so
+    /// files' [`WatchStamp`] sampled after the write) replaces the reload watcher's, so
     /// the write is not mistaken for an edit from elsewhere. Returns the reload
     /// order a reload requested from now on will read the write at.
-    pub(crate) fn apply_own_write_sample(&mut self, watched: Option<SystemTime>) -> u64 {
+    pub(crate) fn apply_own_write_sample(&mut self, watched: Option<WatchStamp>) -> u64 {
         let next_reload = self.react_reloads.next();
         // The reload that reads this write keeps the selected layer, whose
         // transform targets are resolved again from the reloaded code.
@@ -396,13 +395,13 @@ impl EditorView {
         if let Some(react) = self.react_preview.as_mut()
             && watched.is_some()
         {
-            react.watched_mtime = watched;
+            react.watched = watched;
             self.watched_since = next_reload;
         }
         next_reload
     }
 
-    /// The entry and arguments the reload watcher's mtime sample reads.
+    /// The entry and arguments the reload watcher's sample reads.
     fn watch_sample_inputs(&self) -> Option<(PathBuf, PropertyArgs)> {
         let react = self.react_preview.as_ref()?;
         Some((react.entry.clone(), react.property_args.clone()))
@@ -437,7 +436,7 @@ impl EditorView {
                 .background_executor()
                 .spawn(async move {
                     let files = write_all_recorded(paths, edit)?;
-                    Ok((files, watched_mtime(&entry, &property_args)))
+                    Ok((files, watched_stamp(&entry, &property_args)))
                 })
                 .await;
             view.update(cx, |this, cx| {
@@ -506,7 +505,7 @@ impl EditorView {
                     let result = pending.apply();
                     // Sampled after the write, so the reload watcher does not
                     // take it for an edit from elsewhere.
-                    let watched = watched_mtime(&entry, &property_args);
+                    let watched = watched_stamp(&entry, &property_args);
                     (pending, result, watched)
                 })
                 .await;

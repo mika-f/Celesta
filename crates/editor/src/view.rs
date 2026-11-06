@@ -180,7 +180,7 @@ pub(crate) struct EditorView {
     /// Numbers the React entry's reloads so a slow older one is not applied
     /// over a newer one.
     pub(crate) react_reloads: ReloadOrder,
-    /// The next reload number when `ReactPreview::watched_mtime` was last
+    /// The next reload number when `ReactPreview::watched` was last
     /// sampled outside a reload; older reloads' samples are not applied.
     pub(crate) watched_since: u64,
     /// The React Preview panel's Properties section.

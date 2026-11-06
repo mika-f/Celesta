@@ -11,7 +11,7 @@ use crate::property_controls::{
     Control, ControlEvent, ControlKind, build_control, parse_color, parse_color_input,
     take_picked_color,
 };
-use crate::source::{PropertyArgs, watched_mtime};
+use crate::source::{PropertyArgs, WatchStamp, watched_stamp};
 use crate::view::EditorView;
 use crate::widgets::{format_component_number, json_display};
 use celesta_react_bridge::{
@@ -22,7 +22,6 @@ use gpui_kit::{App, Context, PathPromptOptions, Subscription, Window};
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 /// Commits waiting for the single writer, oldest first. A key appears at most
 /// once: a newer commit to a queued key replaces its value in place.
@@ -663,7 +662,7 @@ impl EditorView {
                     })
                     // Sampled after the write, so the reload watcher does
                     // not take this write for an edit from elsewhere.
-                    .map(|edit| (edit, watched_mtime(&entry, &property_args)))
+                    .map(|edit| (edit, watched_stamp(&entry, &property_args)))
                 })
                 .await;
             view.update(cx, |this, cx| {
@@ -680,7 +679,7 @@ impl EditorView {
     fn finish_property_commit(
         &mut self,
         key: &str,
-        result: Result<(FileEdit, Option<SystemTime>), String>,
+        result: Result<(FileEdit, Option<WatchStamp>), String>,
         cx: &mut Context<Self>,
     ) {
         self.property_panel.writing = None;
