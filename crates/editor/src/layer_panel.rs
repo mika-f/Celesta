@@ -3,7 +3,7 @@
 //! it, and the elements around that one, each opening its position in the
 //! user's editor.
 
-use crate::editor_launch::open_source;
+use crate::editor_launch::{Opened, open_source};
 use crate::element_edit::{ElementTargets, TransformProp, inner_target, reason_text};
 use crate::element_rows::row_label;
 use crate::icons::CelestaIcon;
@@ -781,7 +781,8 @@ impl EditorView {
     }
 
     /// Opens `source` in the user's editor off the UI thread (finding the
-    /// editor may run the login shell), then shows why it failed, if it did.
+    /// editor may run the login shell), or in the OS default application
+    /// when there is none, then shows why it failed, if it did.
     fn open_layer_source(&mut self, source: LayerSource, cx: &mut Context<Self>) {
         let cwd = self.entry_dir();
         let session = self.session;
@@ -789,11 +790,15 @@ impl EditorView {
         self.launch_error = None;
         cx.notify();
         cx.spawn(async move |view, cx| {
+            let file = source.file.clone();
             let result = cx
                 .background_executor()
                 .spawn(async move { open_source(&source, &cwd) })
                 .await;
             view.update(cx, |this, cx| {
+                if result == Ok(Opened::NoEditor) {
+                    cx.open_with_system(&file);
+                }
                 // Another file opened or another layer was picked meanwhile;
                 // the message belongs to the old one.
                 if launch_outcome_applies(

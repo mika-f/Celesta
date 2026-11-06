@@ -3,8 +3,8 @@ use crate::audio::{AudioCacheKey, CachedAudioDecoder};
 use crate::audio_cache::DiskAudioCache;
 use crate::edit_history::{EditHistory, HistoryEntry, Texts, write_all_recorded};
 use crate::editor_launch::{
-    Invocation, LaunchError, default_opener, editor_invocation, editor_value,
-    parse_login_shell_output, read_until_closing_marker, split_command,
+    Invocation, LaunchError, editor_invocation, editor_value, parse_login_shell_output,
+    read_until_closing_marker, script_fallbacks, split_command,
 };
 use crate::element_edit::{
     CommitError, ElementEdit, ElementTargets, PropKey, Target, TransformProp, apply_checked,
@@ -958,16 +958,14 @@ fn parse_login_shell_output_is_none_without_a_value_or_markers() {
 }
 
 #[test]
-fn default_opener_uses_the_os_default_application() {
-    let expected = if cfg!(target_os = "macos") {
-        invocation("open", &["/p/a.tsx"])
-    } else if cfg!(windows) {
-        invocation("cmd", &["/C", "start", "", "/p/a.tsx"])
-    } else {
-        invocation("xdg-open", &["/p/a.tsx"])
-    };
-
-    assert_eq!(default_opener(Path::new("/p/a.tsx")), expected);
+fn a_program_without_an_extension_falls_back_to_its_scripts() {
+    assert_eq!(script_fallbacks("code"), ["code.cmd", "code.bat"]);
+    assert_eq!(
+        script_fallbacks(r"C:\Tools\code"),
+        [r"C:\Tools\code.cmd", r"C:\Tools\code.bat"]
+    );
+    assert!(script_fallbacks("code.exe").is_empty());
+    assert!(script_fallbacks("code.cmd").is_empty());
 }
 
 #[test]
