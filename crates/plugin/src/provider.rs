@@ -14,6 +14,9 @@ pub struct ModelId(pub u64);
 pub enum PluginError {
     #[error("no plugin provides \"{0}\" content")]
     UnknownPlugin(String),
+    /// The model was never opened, or was closed.
+    #[error("no open model {}", .0.0)]
+    UnknownModel(ModelId),
     /// The plugin refused the request; `message` is its own.
     #[error("plugin \"{plugin}\": {message}")]
     Failed { plugin: String, message: String },

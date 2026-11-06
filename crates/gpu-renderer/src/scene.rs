@@ -32,7 +32,7 @@ use crate::scene_material::{
     MAX_MATERIAL_PARAMS, MAX_MATERIAL_TEXTURES, MAX_SHADER_BYTES, check_material,
 };
 use crate::texture::LayerTexture;
-use celesta_plugin::scene::{MAX_SCENE_CANVAS_SIDE, MAX_SCENE_SHADERS};
+use celesta_plugin::scene::{MAX_DIRECTIONAL_LIGHTS, MAX_SCENE_CANVAS_SIDE, MAX_SCENE_SHADERS};
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, CullFace, DrawState, EmptyTexel, Filter, Material, MaterialKind,
     MaterialOverrides, ModelId, Projection, SceneFrame, SceneModel, SceneShader, TextureRef,
@@ -727,10 +727,6 @@ struct SkinParams {
     counts: [u32; 4],
     flags: [u32; 4],
 }
-
-/// The most directional lights a frame has: Unity's default pixel light
-/// count, which `Frame`'s `lights` holds.
-const MAX_DIRECTIONAL_LIGHTS: usize = 4;
 
 /// One of `FrameUniform::lights`.
 #[repr(C)]

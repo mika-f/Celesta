@@ -356,10 +356,10 @@ impl ContentProvider for PluginHost {
         time: f64,
         data: &Value,
     ) -> Result<ContentFrame, PluginError> {
-        let open = self.models.get(&model).ok_or_else(|| PluginError::Failed {
-            plugin: String::new(),
-            message: format!("no open model {}", model.0),
-        })?;
+        let open = self
+            .models
+            .get(&model)
+            .ok_or(PluginError::UnknownModel(model))?;
         if let Some(refused) = &open.refused {
             return Err(refused.clone());
         }
@@ -915,5 +915,105 @@ exec cat >/dev/null"#,
         let again = host.frame(model, 0.0, &Value::Null).unwrap_err();
         assert_eq!(again.to_string(), reopened.to_string());
         assert_eq!(starts(directory.path()), 2);
+    }
+}
+
+/// A plugin that falls out of step, and models no plugin has.
+#[cfg(all(test, unix))]
+mod out_of_step {
+    use super::*;
+    use crate::locations::PluginSource;
+    use crate::manifest::{Manifest, PluginRole, platform};
+    use celesta_plugin::protocol::{encode_content_frame, encode_opened, write_message};
+    use celesta_plugin::{MeshFrame, MeshModel, PROTOCOL_VERSION};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    const ID: &str = "doubled";
+
+    /// The bytes of `answers`, as a plugin writes them.
+    fn answers(answers: &[Message]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for answer in answers {
+            write_message(&mut bytes, answer).unwrap();
+        }
+        bytes
+    }
+
+    /// A plugin whose first process answers `open` twice, and whose later
+    /// processes answer as they should. Each start is logged in `runs`.
+    fn doubling_plugin(directory: &Path) -> PluginEntry {
+        let hello = Message::new(json!({
+            "type": "hello", "protocol": PROTOCOL_VERSION, "plugin": ID,
+            "version": "1", "roles": ["content"],
+        }));
+        let opened = encode_opened(&Opened {
+            model: ModelId(1),
+            content: MeshModel {
+                canvas: [1.0, 1.0],
+                textures: Vec::new(),
+                meshes: Vec::new(),
+            }
+            .into(),
+            notices: Vec::new(),
+        });
+        let frame = encode_content_frame(&MeshFrame { meshes: Vec::new() }.into());
+        std::fs::write(
+            directory.join("first.bin"),
+            answers(&[hello.clone(), opened.clone(), opened.clone()]),
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("later.bin"),
+            answers(&[hello, opened, frame]),
+        )
+        .unwrap();
+        let script = directory.join("plugin.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\n\
+             if [ -e runs ]; then answers=later.bin; else answers=first.bin; fi\n\
+             echo run >> runs\n\
+             cat \"$answers\"\n\
+             exec cat >/dev/null\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        PluginEntry {
+            manifest: Manifest {
+                id: ID.into(),
+                version: "1".into(),
+                protocol: PROTOCOL_VERSION,
+                celesta: Some("*".into()),
+                executable: BTreeMap::from([(platform().0.to_owned(), "plugin.sh".into())]),
+                module: None,
+                types: None,
+                components: Vec::new(),
+                roles: vec![PluginRole::Content],
+            },
+            directory: directory.to_path_buf(),
+            source: PluginSource::Explicit,
+        }
+    }
+
+    #[test]
+    fn a_plugin_that_answers_twice_is_restarted_back_in_step() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut host = PluginHost::new([doubling_plugin(directory.path())]);
+        let opened = host.open(ID, &BTreeMap::new()).unwrap();
+        // The frame request reads the second `opened`: the process is
+        // stopped and started again, and the model reopened in it.
+        let frame = host.frame(opened.model, 0.0, &Value::Null).unwrap();
+        assert_eq!(frame, MeshFrame { meshes: Vec::new() }.into());
+        let runs = std::fs::read_to_string(directory.path().join("runs")).unwrap();
+        assert_eq!(runs.lines().count(), 2, "{runs}");
+    }
+
+    #[test]
+    fn an_unknown_model_names_no_plugin() {
+        let mut host = PluginHost::new([]);
+        let error = host.frame(ModelId(7), 0.0, &Value::Null).unwrap_err();
+        assert!(matches!(error, PluginError::UnknownModel(ModelId(7))));
+        assert_eq!(error.to_string(), "no open model 7");
     }
 }

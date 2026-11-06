@@ -2,8 +2,9 @@
 //! the provider interface the renderer asks through, and the protocol a
 //! plugin process speaks. See `docs/handoff/2026-11-01-plugin-system.md`.
 //!
-//! This crate depends on nothing of Celesta's (only serde, and libc on Unix),
-//! so a plugin can use it without linking any part of Celesta.
+//! This crate depends on nothing of Celesta's (only serde, serde_json,
+//! thiserror, and libc), so a plugin can use it without linking any part of
+//! Celesta.
 
 mod mesh;
 pub mod protocol;
