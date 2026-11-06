@@ -128,6 +128,7 @@ impl EditorView {
         self.export_progress = Some(ExportProgress::Rendering { frame: 0, total: 0 });
         self.export_cancellation = Some(cancellation);
         self.export_cancelling = false;
+        self.export_notices.clear();
         self.problems.clear(Source::Export);
         if let Err(error) = self.export_worker.request(request) {
             self.export_path = None;

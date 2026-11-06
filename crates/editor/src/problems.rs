@@ -4,7 +4,7 @@
 
 use chrono::{DateTime, Local};
 use std::borrow::Cow;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt::Write as _;
 
@@ -73,6 +73,9 @@ impl Source {
 pub(crate) enum Severity {
     Error,
     Warning,
+    /// Something to tell the user that is not a problem, such as a plugin's
+    /// note on a model's terms of use.
+    Info,
     Done,
 }
 
@@ -81,6 +84,7 @@ impl Severity {
         match self {
             Self::Error => "Error",
             Self::Warning => "Warning",
+            Self::Info => "Info",
             Self::Done => "Done",
         }
     }
@@ -229,6 +233,15 @@ impl Problems {
         );
     }
 
+    /// Logs what an export reported, if anything, and empties `notices`
+    /// for the next export. It is logged without a toast: the export's own
+    /// entry, logged next, announces how it ended.
+    pub(crate) fn log_export_notices(&mut self, notices: &mut ExportNotices) {
+        if let Some((severity, problem)) = notices.take() {
+            self.push(Local::now(), severity, Source::Export, problem, false);
+        }
+    }
+
     /// Replaces the preview's warnings. They are recomputed on every preview
     /// reload, so they are counted but not logged.
     pub(crate) fn set_preview_warnings(&mut self, warnings: Vec<String>) {
@@ -315,6 +328,98 @@ impl Problems {
             self.history.pop_front();
         }
         self.unannounced = self.unannounced.min(self.history.len());
+    }
+}
+
+/// The warnings and notes one export reported, in the order they arrived,
+/// each once. The exporter reports each once per export already; a notice
+/// repeated on many frames still appears once here.
+#[derive(Debug, Default)]
+pub(crate) struct ExportNotices {
+    entries: Vec<ExportNotice>,
+    /// `entries`, for finding a repeat without scanning them.
+    seen: HashSet<ExportNotice>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ExportNotice {
+    Warning(String),
+    /// Says what it is (`note: …`), as the exporter prints it.
+    Note(String),
+}
+
+impl ExportNotice {
+    /// The line the exporter prints for it.
+    fn line(&self) -> Cow<'_, str> {
+        match self {
+            Self::Warning(message) => Cow::Owned(format!("warning: {message}")),
+            Self::Note(message) => Cow::Borrowed(message),
+        }
+    }
+}
+
+impl ExportNotices {
+    pub(crate) fn warning(&mut self, message: String) {
+        self.add(ExportNotice::Warning(message));
+    }
+
+    pub(crate) fn note(&mut self, message: String) {
+        self.add(ExportNotice::Note(message));
+    }
+
+    fn add(&mut self, notice: ExportNotice) {
+        if self.seen.insert(notice.clone()) {
+            self.entries.push(notice);
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+        self.seen.clear();
+    }
+
+    /// One log entry for everything reported, oldest first, one line each,
+    /// leaving this empty: a warning if any was reported, information if
+    /// only notes were.
+    fn take(&mut self) -> Option<(Severity, Problem)> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        let warnings = self
+            .entries
+            .iter()
+            .filter(|notice| matches!(notice, ExportNotice::Warning(_)))
+            .count();
+        let notes = self.entries.len() - warnings;
+        let counted = |count: usize, noun: &str| {
+            format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+        };
+        let (severity, title) = match (warnings, notes) {
+            (0, notes) => (
+                Severity::Info,
+                format!("Export reported {}", counted(notes, "note")),
+            ),
+            (warnings, 0) => (
+                Severity::Warning,
+                format!("Export reported {}", counted(warnings, "warning")),
+            ),
+            (warnings, notes) => (
+                Severity::Warning,
+                format!(
+                    "Export reported {} and {}",
+                    counted(warnings, "warning"),
+                    counted(notes, "note")
+                ),
+            ),
+        };
+        self.seen.clear();
+        let detail = self
+            .entries
+            .drain(..)
+            .map(|notice| notice.line().into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some((severity, Problem::new(title, detail)))
     }
 }
 
@@ -545,6 +650,67 @@ mod tests {
         let mut problems = Problems::default();
         problems.set_preview_warnings(vec!["font fallback".to_owned()]);
         assert_eq!(problems.preview_warnings(), ["font fallback".to_owned()]);
+        assert_eq!(problems.history().count(), 0);
+    }
+
+    #[test]
+    fn export_notices_are_logged_once_in_arrival_order() {
+        let mut problems = Problems::default();
+        let mut notices = ExportNotices::default();
+        notices.warning("fallback font".to_owned());
+        notices.note("note: flag (layer hero): terms of use".to_owned());
+        notices.warning("missing glyph".to_owned());
+        notices.note("note: flag (layer hero): terms of use".to_owned());
+        notices.warning("fallback font".to_owned());
+        problems.log_export_notices(&mut notices);
+        assert_eq!(problems.history().count(), 1);
+        let entry = problems.history().next().unwrap();
+        assert_eq!(entry.severity, Severity::Warning);
+        assert_eq!(entry.source, Source::Export);
+        assert_eq!(
+            entry.problem,
+            problem(
+                "Export reported 2 warnings and 1 note",
+                "warning: fallback font\nnote: flag (layer hero): terms of use\nwarning: missing glyph"
+            )
+        );
+        assert!(problems.active(Source::Export).is_none());
+        assert_eq!(problems.warning_count(), 0);
+        assert!(problems.take_unannounced().is_empty());
+    }
+
+    #[test]
+    fn export_notes_alone_are_logged_as_information() {
+        let mut problems = Problems::default();
+        let mut notices = ExportNotices::default();
+        notices.note("note: flag (layer hero): terms of use".to_owned());
+        problems.log_export_notices(&mut notices);
+        let entry = problems.history().next().unwrap();
+        assert_eq!(entry.severity, Severity::Info);
+        assert_eq!(entry.problem.title, "Export reported 1 note");
+    }
+
+    #[test]
+    fn export_notices_are_emptied_once_logged() {
+        let mut problems = Problems::default();
+        let mut notices = ExportNotices::default();
+        notices.warning("fallback font".to_owned());
+        problems.log_export_notices(&mut notices);
+        problems.log_export_notices(&mut notices);
+        assert_eq!(problems.history().count(), 1);
+        assert_eq!(
+            problems.history().next().unwrap().problem.title,
+            "Export reported 1 warning"
+        );
+        notices.warning("fallback font".to_owned());
+        problems.log_export_notices(&mut notices);
+        assert_eq!(problems.history().count(), 2);
+    }
+
+    #[test]
+    fn an_export_without_notices_logs_nothing() {
+        let mut problems = Problems::default();
+        problems.log_export_notices(&mut ExportNotices::default());
         assert_eq!(problems.history().count(), 0);
     }
 

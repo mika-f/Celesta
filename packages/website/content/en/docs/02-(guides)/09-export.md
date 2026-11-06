@@ -4,7 +4,7 @@ Open the [web editor](/en/#playground), change or open a TSX composition, and ch
 
 ## From the app
 
-Choose **Export…** and select a destination. Name it `.mp4` for H.264 video, or `.mov` or `.webm` for transparent video (see Transparent video below); any other extension becomes `.mp4`. For a section of the composition, press `I` and `O` to mark the start and end. The status bar shows progress; **Cancel export** stops the job. To bring the soundtrack to a loudness target, choose **Loudness** next to **Export…** first: **Off**, **Streaming (-14 LUFS)**, or **Broadcast (-23 LUFS)**. The choice stays until you quit the app. When the export finishes, its notice shows the soundtrack's loudness (see Loudness for streaming and broadcast below).
+Choose **Export…** and select a destination. Name it `.mp4` for H.264 video, or `.mov` or `.webm` for transparent video (see Transparent video below); any other extension becomes `.mp4`. For a section of the composition, press `I` and `O` to mark the start and end. The status bar shows progress; **Cancel export** stops the job. To bring the soundtrack to a loudness target, choose **Loudness** next to **Export…** first: **Off**, **Streaming (-14 LUFS)**, or **Broadcast (-23 LUFS)**. The choice stays until you quit the app. When the export finishes, its notice shows the soundtrack's loudness (see Loudness for streaming and broadcast below). The warnings and notes the export reported, such as a font fallback or a plugin's note on a frame you never previewed, are logged as one entry in the **Problems** tab, each once and in the order they came, as the command line prints them.
 
 ## From the command line
 

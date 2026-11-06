@@ -341,6 +341,11 @@ impl EditorView {
                         .with_type(NotificationType::Warning)
                         .title(entry.problem.title.clone()),
                 ),
+                Severity::Info => with_message(
+                    Notification::new()
+                        .with_type(NotificationType::Info)
+                        .title(entry.problem.title.clone()),
+                ),
                 Severity::Done => Notification::new()
                     .with_type(NotificationType::Success)
                     .title(entry.problem.title.clone()),
@@ -388,6 +393,7 @@ fn severity_icon(severity: Severity, cx: &App) -> Icon {
     let (name, color): (IconName, Hsla) = match severity {
         Severity::Error => (IconName::CircleX, cx.theme().danger),
         Severity::Warning => (IconName::TriangleAlert, cx.theme().warning),
+        Severity::Info => (IconName::Info, cx.theme().muted_foreground),
         Severity::Done => (IconName::CircleCheck, cx.theme().success),
     };
     Icon::new(name).xsmall().text_color(color)
