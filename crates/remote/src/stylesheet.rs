@@ -976,11 +976,21 @@ mod tests {
             "{error:?}"
         );
 
+        // A host names a network share on Windows, and no local path elsewhere.
         let remote_host = "@font-face { font-family: A; src: url(file://example.com/a.woff2) }";
-        let error = stylesheet_font_faces(remote_host, &stylesheet).unwrap_err();
-        assert!(
-            matches!(&error, RemoteAssetError::NotAFilePath { url } if url == "file://example.com/a.woff2"),
-            "{error:?}"
-        );
+        if cfg!(windows) {
+            assert_eq!(
+                locations(remote_host, &stylesheet),
+                vec![AssetLocation::File {
+                    path: r"\\example.com\a.woff2".to_owned(),
+                }]
+            );
+        } else {
+            let error = stylesheet_font_faces(remote_host, &stylesheet).unwrap_err();
+            assert!(
+                matches!(&error, RemoteAssetError::NotAFilePath { url } if url == "file://example.com/a.woff2"),
+                "{error:?}"
+            );
+        }
     }
 }

@@ -313,7 +313,7 @@ pub enum RemoteAssetError {
         source: url::ParseError,
     },
     /// A `file:` URL that names no path on this computer, such as one with
-    /// a host.
+    /// a host outside Windows (on Windows a host names a network share).
     #[error("`{url}` is not a path on this computer")]
     NotAFilePath { url: String },
     /// A local stylesheet's reference whose percent escapes are not UTF-8,
