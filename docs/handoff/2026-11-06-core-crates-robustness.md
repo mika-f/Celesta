@@ -40,9 +40,11 @@ on the host side.
   `measureText`, `decodeAudio`, `invalidProperties`, `error`).
   `propertySchema` is read into an ordered list in the same pass, so
   `ReadyMessage::Ready` carries `project_property_order` and the second parse
-  (`ready_property_order`) is gone. A repeated top-level key is a
-  `duplicate field` error, as a derived struct reports it; a repeated
-  `propertySchema` key keeps its first position.
+  (`ready_property_order`) is gone. A known top-level key that repeats
+  (`propertySchema` included) is a `duplicate field` error, as a derived
+  struct reports it; unknown top-level keys are skipped, repeated or not.
+  A key repeated inside the `propertySchema` object keeps its first
+  position.
   A `derive` with field context would need `serde_path_to_error`, which is
   not a dependency; the top-level key is what a version mismatch needs.
 - **Local stylesheet `url()`s** (`celesta-remote`, `resolve_reference`). In
@@ -84,7 +86,9 @@ on the host side.
 - **`stream_duration`** (`plugins/ffmpeg`, `probe.rs`) is exact:
   `Time::new(duration * num, den).reduced()`, not a truncating conversion
   to microseconds. Common factors of `num`/`den` and `duration`/`den` cancel
-  before the checked multiply, so only a duration that cannot fit is `None`. `probe_path`
+  before the checked multiply. It is `None` for a missing or non-positive
+  duration, a time base whose `num` or `den` is not positive, or a duration
+  that still does not fit. `probe_path`
   still opens the container twice (`find_all_stream_infos` and
   `container_info::get_duration_us`): ez-ffmpeg 0.19 exposes no shared
   format context, and probes are memoized per path, so it stays.
