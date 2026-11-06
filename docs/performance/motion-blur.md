@@ -53,8 +53,7 @@ From the repository root:
 pnpm install --frozen-lockfile
 pnpm --dir packages/react run codegen
 pnpm run build:runtime
-PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@8/lib/pkgconfig \
-  node scripts/plugins/build.mts plugins/ffmpeg
+node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release -p celesta-exporter
 for round in 0 1 2 3 4 5; do
@@ -68,4 +67,9 @@ for round in 0 1 2 3 4 5; do
 done
 ```
 
-Each line is `round,samples,seconds`.
+Each line is `round,samples,seconds`. The export encodes through the codec
+plugin, which `build.mts` builds. Building it needs FFmpeg 8's development
+files where pkg-config finds them: `PKG_CONFIG_PATH` pointing at its
+`lib/pkgconfig` (with Homebrew, `$(brew --prefix ffmpeg@8)/lib/pkgconfig`),
+or, on Windows, `VCPKG_ROOT`. See the build-from-source guide or
+[HANDOFF.md's setup](../../HANDOFF.md#development-setup).
