@@ -392,17 +392,20 @@ impl EditorView {
             .justify_center()
             .overflow_hidden()
             .bg(cx.theme().background)
-            .when_some(self.preview.clone(), |area, preview| match preview {
-                PreviewPresentation::Image(preview) => {
-                    area.child(img(preview).size_full().object_fit(ObjectFit::Contain))
-                }
-                #[cfg(target_os = "macos")]
-                PreviewPresentation::Surface(preview) => area.child(
-                    gpui_kit::surface(preview.pixel_buffer())
-                        .size_full()
-                        .object_fit(ObjectFit::Contain),
-                ),
-            })
+            .when_some(
+                self.preview.current().cloned(),
+                |area, preview| match preview {
+                    PreviewPresentation::Image(preview) => {
+                        area.child(img(preview).size_full().object_fit(ObjectFit::Contain))
+                    }
+                    #[cfg(target_os = "macos")]
+                    PreviewPresentation::Surface(preview) => area.child(
+                        gpui_kit::surface(preview.pixel_buffer())
+                            .size_full()
+                            .object_fit(ObjectFit::Contain),
+                    ),
+                },
+            )
             .child(
                 canvas(
                     move |bounds, window, _| {

@@ -14,7 +14,7 @@ use crate::meter::MasterLevels;
 use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
 use crate::plugins::{FoundPlugins, trusted_root};
 use crate::preview::{
-    AudioPreview, PreviewPresentation, PreviewWorker, ReactPreview, TextOverride, spawn_preview,
+    AudioPreview, PreviewWorker, ReactPreview, ShownPreview, TextOverride, spawn_preview,
 };
 use crate::problems::{ExportNotices, Problems, Source};
 use crate::property_panel::PropertyPanelState;
@@ -240,7 +240,7 @@ pub(crate) struct EditorView {
     pub(crate) frame_rate_label: SharedString,
     pub(crate) assets: Vec<AssetSummary>,
     pub(crate) tracks: Vec<TrackSummary>,
-    pub(crate) preview: Option<PreviewPresentation>,
+    pub(crate) preview: ShownPreview,
     pub(crate) export_worker: ExportWorker,
     pub(crate) export_progress: Option<ExportProgress>,
     pub(crate) export_path: Option<PathBuf>,
@@ -541,7 +541,7 @@ impl EditorView {
             frame_rate_label,
             assets,
             tracks,
-            preview: None,
+            preview: ShownPreview::default(),
             export_worker,
             export_progress: None,
             export_path: None,

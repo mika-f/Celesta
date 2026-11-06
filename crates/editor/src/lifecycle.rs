@@ -754,6 +754,8 @@ impl EditorView {
         if self.react_entry().is_none() || self.react_entry() != next.react_entry() {
             next.edit_history.clear();
         }
+        // Its frames are still in the window's atlas: the new view frees them.
+        self.preview.hand_over(&mut next.preview);
         *self = next;
         if self.is_react_preview() {
             self.watch_react_entry(cx);
