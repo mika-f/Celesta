@@ -2,6 +2,7 @@
 
 use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
 use crate::settings::UserSettings;
+use celesta_plugin::PROTOCOL_VERSION;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -564,6 +565,19 @@ fn read_manifest(
             id: manifest.id,
             range: manifest.celesta.unwrap_or_default(),
             celesta: celesta.to_string(),
+        });
+    }
+    // After the range, which says better what to do about a plugin made for
+    // another Celesta: one whose range covers this Celesta should speak its
+    // protocol. Its process would refuse `hello`; a module alone is never
+    // asked.
+    if manifest.protocol != PROTOCOL_VERSION {
+        return Err(DiscoveryError::Invalid {
+            path,
+            reason: format!(
+                "it speaks plugin protocol {}, and this Celesta speaks protocol {PROTOCOL_VERSION}",
+                manifest.protocol
+            ),
         });
     }
     if let Some(reason) = unsafe_plugin(directory, source) {
@@ -1662,6 +1676,47 @@ mod tests {
         assert!(works_with("^0.9", "0.9.4"));
         assert!(works_with("*", "3.0.0"));
         assert!(!works_with("soon", "0.9.0"));
+    }
+
+    #[test]
+    fn skips_plugins_of_another_protocol() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |id: &str, protocol: u32, celesta: &str| {
+            write_manifest(
+                &root.path().join(id),
+                serde_json::json!({
+                    "id": id, "version": "1", "protocol": protocol, "celesta": celesta,
+                    "module": "js/index.js",
+                }),
+            );
+        };
+        write("a-next", PROTOCOL_VERSION + 1, COMPATIBLE);
+        write("b-future", PROTOCOL_VERSION + 1, ">=999.0.0");
+        write("c-fits", PROTOCOL_VERSION, COMPATIBLE);
+
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        let ids: Vec<_> = found
+            .iter()
+            .map(|entry| entry.manifest.id.as_str())
+            .collect();
+        assert_eq!(ids, ["c-fits"]);
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        let message = errors[0].to_string();
+        assert!(
+            matches!(errors[0], DiscoveryError::Invalid { .. })
+                && message.ends_with(&format!(
+                    "it speaks plugin protocol {}, and this Celesta speaks protocol {PROTOCOL_VERSION}",
+                    PROTOCOL_VERSION + 1
+                )),
+            "{message}"
+        );
+        // A plugin for another Celesta is reported as that, which says
+        // what to do about it.
+        assert!(
+            matches!(errors[1], DiscoveryError::Incompatible { .. }),
+            "{:?}",
+            errors[1]
+        );
     }
 
     #[test]
