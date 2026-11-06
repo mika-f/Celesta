@@ -191,7 +191,8 @@ the project. Both go in the project root: the nearest folder from the entry's
 own up that holds `celesta.config.json`, else the entry's folder; a
 `package.json` or `tsconfig.json` above does not count. With the entry in a
 subfolder such as `src/`, use **Set Up TypeScript in Folder…** on the project
-folder, which also writes an empty `celesta.config.json` there. Without a tsconfig, rely on `scripts/inspect.mjs` and PNG
+folder, which also adds an empty `celesta.config.json` there when it has none
+(an existing one is kept). Without a tsconfig, rely on `scripts/inspect.mjs` and PNG
 frames ([verify.md](verify.md)).
 
 Inside the Celesta repository, give a new `examples/<name>/` a

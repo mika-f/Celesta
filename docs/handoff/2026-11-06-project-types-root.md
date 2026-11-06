@@ -35,9 +35,10 @@ the one the plugin trust check already uses.
 ## Decisions
 
 - **Option 2 (asking for the root in Set Up TypeScript) is not added.**
-  Only projects with the entry in a subfolder and no `celesta.config.json`
-  behave differently, and Set Up TypeScript in Folder… on the project
-  folder already is that question, answered once: it writes the mark. The
+  Only projects without `celesta.config.json` whose old root was a folder
+  above the entry's own behave differently, and Set Up TypeScript in
+  Folder… on the project folder already is that question, answered once:
+  it writes the mark. The
   guide and troubleshooting page say so. If it turns out people miss it,
   Set Up TypeScript can offer it when it finds a `.celesta/` above the root.
 - **The rule stays in `celesta-plugin-host`.** `celesta-react-bridge`
@@ -45,12 +46,18 @@ the one the plugin trust check already uses.
   timelines, not project folders. The doc comment on `project_root` now
   names TypeScript support too. Moving it to a crate of its own can wait
   until something outside plugins and types needs it.
-- **Migration.** A project that had its `.celesta/` at the root and the entry
-  in `src/` keeps working with tsc and editors (they read the nearest
-  `tsconfig.json`), but Celesta stops refreshing that `.celesta/` until the
-  root gets a `celesta.config.json`. Running Set Up TypeScript in Folder… on
-  the root adds it and refreshes. Projects from `--init` and every example
-  have the entry at the root, so they are not affected.
+- **Migration.** The old root was the nearest folder above the entry with
+  a `package.json` or `tsconfig.json` (setup) or a `.celesta/version.json`
+  (refresh). A project without `celesta.config.json` that got its root from
+  such a folder above the entry's own now has the entry's folder as its
+  root: an entry in `src/` with the files in the project folder, or an
+  entry in a monorepo package whose `package.json` or `.celesta/` sits in
+  the repository root. tsc and editors keep working (they read the nearest
+  `tsconfig.json`), but Celesta stops refreshing that `.celesta/`, and Set
+  Up TypeScript sets up a new one in the entry's folder. Running Set Up
+  TypeScript in Folder… on the intended root adds the mark and refreshes.
+  Projects from `--init` and every example have the entry, `package.json`,
+  and `tsconfig.json` in one folder, so they are not affected.
 - VOICEVOX's `prepareNarration()` cache (`.celesta/voices` beside the entry)
   is unaffected: refresh still needs `version.json`, and `install()` still
   leaves `voices` alone.
