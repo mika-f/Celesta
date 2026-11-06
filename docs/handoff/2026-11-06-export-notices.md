@@ -19,7 +19,9 @@ Issue: [mika-f/Celesta#675](https://github.com/mika-f/Celesta/issues/675).
   each once. When the export ends (finished, cancelled, failed, or the worker
   stopped), `Problems::log_export_notices` logs them as one history entry
   under `Source::Export`, before the entry for how it ended, and empties the
-  list. `start_export` also empties it.
+  list. `start_export` also empties it. `ExportNotices` finds repeats with a
+  `HashSet` beside the ordered list, so many distinct notices do not make
+  collecting them quadratic.
   - Title: `Export reported 2 warnings and 1 note` (or only the kinds
     reported). Detail: one line per notice, as the exporter prints it:
     `warning: …` for a warning, and a note as it is (it starts with
@@ -36,8 +38,6 @@ Issue: [mika-f/Celesta#675](https://github.com/mika-f/Celesta/issues/675).
   later warnings and notes still go into that list, and each event prints
   the unprinted ones, so the kept notices come before newer ones and none
   prints twice.
-- Duplicates are found with a `HashSet` beside the ordered list, so many
-  distinct notices do not make collecting them quadratic.
 
 ## Checks
 
