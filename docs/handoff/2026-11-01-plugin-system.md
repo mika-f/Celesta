@@ -58,7 +58,11 @@ A model (`MeshModel`, sent once per opened asset set):
 
 - `canvas: [width, height]` — the layer's size in pixels.
 - `textures` — image files (absolute paths) or inline RGBA, straight alpha.
-  Celesta premultiplies and builds mipmaps.
+  Celesta premultiplies and builds mipmaps. `PluginHost` refuses a model
+  with a relative texture path (a `Failed` that names the texture) and
+  closes it in the plugin: the plugin runs in its own folder, but Celesta
+  would open the path against its own working directory. See
+  [`2026-11-06-plugin-paths-model-eviction.md`](2026-11-06-plugin-paths-model-eviction.md).
 - `meshes` — for each: `texture`, `blend` (`normal`, `additive`,
   `multiplicative`), `doubleSided`, optional `mask { meshes, inverted }`
   (the union of those meshes' texture alpha clips this one), `uvs`

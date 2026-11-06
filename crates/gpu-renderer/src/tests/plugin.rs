@@ -360,3 +360,82 @@ fn refuses_an_oversized_texture_file_from_its_header() {
         "{error}"
     );
 }
+
+/// `Quads` under any plugin name, giving each name a model id of its own,
+/// listing the models it opens and closes.
+struct Counting {
+    quads: Quads,
+    log: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl Counting {
+    fn id(plugin: &str) -> ModelId {
+        ModelId(u64::from(plugin.as_bytes()[0]))
+    }
+}
+
+impl ContentProvider for Counting {
+    fn open(
+        &mut self,
+        plugin: &str,
+        assets: &BTreeMap<String, PathBuf>,
+    ) -> Result<Opened, PluginError> {
+        self.log.lock().unwrap().push(format!("open {plugin}"));
+        let opened = self.quads.open("quads", assets)?;
+        Ok(Opened {
+            model: Self::id(plugin),
+            ..opened
+        })
+    }
+
+    fn frame(
+        &mut self,
+        _model: ModelId,
+        time: f64,
+        data: &serde_json::Value,
+    ) -> Result<ContentFrame, PluginError> {
+        self.quads.frame(ModelId(7), time, data)
+    }
+
+    fn close(&mut self, model: ModelId) {
+        let name = char::from(model.0 as u8);
+        self.log.lock().unwrap().push(format!("close {name}"));
+    }
+}
+
+/// `scene`'s layer drawn by `plugin`.
+fn scene_of(plugin: &str) -> Scene {
+    let mut scene = scene(0.0, serde_json::Value::Null);
+    let LayerContent::Plugin { plugin: name, .. } = &mut scene.layers[0].content else {
+        unreachable!("a plugin layer");
+    };
+    *name = plugin.to_owned();
+    scene
+}
+
+#[test]
+fn models_no_layer_draws_for_a_while_are_closed() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let log = Arc::default();
+    renderer.renderer = renderer.renderer.with_content_provider(Counting {
+        quads: Quads::new(),
+        log: Arc::clone(&log),
+    });
+    let logged = || log.lock().unwrap().clone();
+    renderer.render(&scene_of("a")).unwrap();
+    // Only "b" is drawn now: "a" stays open while a cut back to it is
+    // still likely.
+    for _ in 1..crate::mesh::MODEL_IDLE_RENDERS {
+        renderer.render(&scene_of("b")).unwrap();
+    }
+    assert_eq!(logged(), ["open a", "open b"]);
+    renderer.render(&scene_of("b")).unwrap();
+    assert_eq!(logged(), ["open a", "open b", "close a"]);
+    // A render that draws no plugin layer counts too, and "b", drawn in
+    // each render since it opened, is kept; "a" opens again when drawn.
+    renderer.render(&empty_scene(64, 64)).unwrap();
+    renderer.render(&scene_of("a")).unwrap();
+    assert_eq!(logged(), ["open a", "open b", "close a", "open a"]);
+}

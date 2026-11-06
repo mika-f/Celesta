@@ -17,6 +17,7 @@ import {
   findPlugins,
   isContainedPath,
   isValidPluginId,
+  manifestPath,
   resolvePluginImport,
   resolvePluginModule,
   standInSource,
@@ -98,6 +99,17 @@ test('plugin ids and manifest paths stay inside their directories', () => {
   for (const file of ['', '../p', 'bin/../../p', 'bin\\..\\p', '/usr/p', '\\\\server\\p', 'C:\\p', 'C:p', 'p:stream']) {
     assert.ok(!isContainedPath(file), file);
   }
+});
+
+test('a module path written with \\ names the same file on every platform', async () => {
+  const dir = pluginPath(['flag']);
+  writeManifest(join(dir, 'flag'), { id: 'flag', module: 'js\\index.ts' });
+  const plugins = await findPlugins(dir);
+  assert.deepEqual(plugins.skipped, []);
+  const [flag] = plugins.found;
+  assert.equal(flag?.module, join(dir, 'flag', 'js', 'index.ts'));
+  assert.ok(flag?.module !== undefined && existsSync(flag.module));
+  assert.equal(manifestPath(dir, './js//index.ts'), join(dir, 'js', 'index.ts'));
 });
 
 test('skips manifests that reach outside their directory, and relative paths', async () => {

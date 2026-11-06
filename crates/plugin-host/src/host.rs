@@ -5,10 +5,12 @@ use crate::child::{PluginChild, RequestError};
 use crate::kill::PluginKillSwitch;
 use crate::manifest::{InstalledPlugins, PluginEntry};
 use celesta_plugin::protocol::{ContentKind, Message, decode_content_frame, decode_opened};
-use celesta_plugin::{ContentFrame, ContentProvider, ModelId, Opened, PluginError};
+use celesta_plugin::{
+    ContentFrame, ContentModel, ContentProvider, ModelId, Opened, PluginError, TextureSource,
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// How long a content plugin may take to open a model (loading a file it
@@ -246,11 +248,50 @@ impl PluginHost {
         })?;
         let request = Message::new(json!({ "type": "open", "assets": assets }));
         let answer = self.send(plugin, request, "opened", self.deadlines.open)?;
-        decode_opened(&answer).map_err(|error| PluginError::Failed {
+        let opened = decode_opened(&answer).map_err(|error| PluginError::Failed {
             plugin: plugin.to_owned(),
             message: error.to_string(),
-        })
+        })?;
+        if let Some(message) = relative_texture(&opened.content) {
+            // Nothing will draw it. As `close`, without starting a process
+            // for it.
+            if let Some(process) = self.processes.get_mut(plugin) {
+                let close = json!({ "type": "close", "model": opened.model.0 });
+                let _ = process.request(Message::new(close), "closed", self.deadlines.close);
+            }
+            return Err(PluginError::Failed {
+                plugin: plugin.to_owned(),
+                message,
+            });
+        }
+        Ok(opened)
     }
+}
+
+/// Why `content` cannot be drawn, if one of its textures is a relative
+/// path: the protocol gives texture files as absolute paths. A plugin runs
+/// in its own folder, so it may mean one relative to that, but Celesta
+/// would open it against its own working directory (`/` for an app started
+/// from the Finder), finding nothing or another file of the same name.
+fn relative_texture(content: &ContentModel) -> Option<String> {
+    let sources: Vec<&TextureSource> = match content {
+        ContentModel::Meshes(model) => model.textures.iter().collect(),
+        ContentModel::Scene(model) => model
+            .textures
+            .iter()
+            .map(|texture| &texture.source)
+            .collect(),
+    };
+    sources
+        .into_iter()
+        .enumerate()
+        .find_map(|(index, source)| match source {
+            TextureSource::Path(path) if !Path::new(path).is_absolute() => Some(format!(
+                "texture {index}'s path {:?} is relative; a plugin gives texture files as absolute paths",
+                path.display().to_string()
+            )),
+            _ => None,
+        })
 }
 
 impl ContentProvider for PluginHost {
@@ -530,5 +571,61 @@ mod tests {
             Err(PluginError::Unavailable { .. })
         ));
         assert_eq!(plugin.starts().len(), 1);
+    }
+}
+
+/// The refusal of relative texture paths, on every platform.
+#[cfg(test)]
+mod texture_tests {
+    use super::*;
+    use celesta_plugin::MeshModel;
+    use celesta_plugin::scene::{ColorSpace, Sampler, SceneModel, SceneTexture};
+    use std::sync::Arc;
+
+    fn meshes(textures: Vec<TextureSource>) -> ContentModel {
+        MeshModel {
+            canvas: [1.0, 1.0],
+            textures,
+            meshes: Vec::new(),
+        }
+        .into()
+    }
+
+    fn absolute() -> PathBuf {
+        std::env::temp_dir().join("skin.png")
+    }
+
+    #[test]
+    fn a_relative_texture_path_is_refused_by_name() {
+        let inline = TextureSource::Rgba {
+            width: 1,
+            height: 1,
+            pixels: Arc::new(vec![0; 4]),
+        };
+        let relative = TextureSource::Path(PathBuf::from("textures/skin.png"));
+        let message =
+            relative_texture(&meshes(vec![inline.clone(), relative.clone()])).expect("refused");
+        assert!(message.contains("texture 1"), "{message}");
+        assert!(message.contains("textures/skin.png"), "{message}");
+        assert!(message.contains("absolute"), "{message}");
+
+        let scene = ContentModel::Scene(SceneModel {
+            canvas: [1.0, 1.0],
+            textures: vec![SceneTexture {
+                source: relative,
+                color_space: ColorSpace::Srgb,
+                sampler: Sampler::default(),
+            }],
+            geometries: Vec::new(),
+            skins: Vec::new(),
+            shaders: Vec::new(),
+            materials: Vec::new(),
+            draws: Vec::new(),
+        });
+        let message = relative_texture(&scene).expect("refused");
+        assert!(message.contains("texture 0"), "{message}");
+
+        let fine = meshes(vec![inline, TextureSource::Path(absolute())]);
+        assert_eq!(relative_texture(&fine), None);
     }
 }
