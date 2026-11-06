@@ -225,6 +225,34 @@ const TIME_DEPENDENT_TYPES = new Set([
   'video', 'audio', 'sequence', 'freeze-frame', 'motion-blur', 'trail', 'time-sample', 'rawLayers', 'subtitles',
 ]);
 
+/** How `MountedComposition.renderAt` renders a frame. */
+export interface RenderAtOptions {
+  openEnd?: boolean;
+  /**
+   * Leave out what Rust reads back by default: transform fields equal
+   * to `EvaluatedTransform`'s defaults, an opacity of 1, and a rect's
+   * corner radius of 0. Such a scene is only for Rust to read.
+   */
+  compact?: boolean;
+  /**
+   * Sent by the Rust bridge: emit each `<Static>` as a reference by key
+   * and return the layers the bridge still needs. `decoded` is the
+   * `seq` of the last frame it decoded.
+   */
+  statics?: { decoded: number };
+  /** Draw debug guides (`useDebugGuides()`), as PNG exports with `--debug-guides` ask. */
+  debugGuides?: boolean;
+  /** Evaluate as the editor preview, where `useIsPreview()` is true. Exports never set it. */
+  preview?: boolean;
+  /**
+   * Sent by the editor while a layer is dragged: elements written at an
+   * override's position are created with its value for this frame only
+   * (see `PropOverride`). Elements created outside any render (at module
+   * scope) keep their written values.
+   */
+  propOverrides?: FramePropOverrides;
+}
+
 export interface MountedComposition {
   /** Unmounts the persistent React root and runs effect cleanup. */
   dispose(): void;
@@ -243,32 +271,7 @@ export interface MountedComposition {
   renderAt(
     time: Time,
     project: ProjectFrame | null,
-    options?: {
-      openEnd?: boolean;
-      /**
-       * Leave out what Rust reads back by default: transform fields equal
-       * to `EvaluatedTransform`'s defaults, an opacity of 1, and a rect's
-       * corner radius of 0. Such a scene is only for Rust to read.
-       */
-      compact?: boolean;
-      /**
-       * Sent by the Rust bridge: emit each `<Static>` as a reference by key
-       * and return the layers the bridge still needs. `decoded` is the
-       * `seq` of the last frame it decoded.
-       */
-      statics?: { decoded: number };
-      /** Draw debug guides (`useDebugGuides()`), as PNG exports with `--debug-guides` ask. */
-      debugGuides?: boolean;
-      /** Evaluate as the editor preview, where `useIsPreview()` is true. Exports never set it. */
-      preview?: boolean;
-      /**
-       * Sent by the editor while a layer is dragged: elements written at an
-       * override's position are created with its value for this frame only
-       * (see `PropOverride`). Elements created outside any render (at module
-       * scope) keep their written values.
-       */
-      propOverrides?: FramePropOverrides;
-    },
+    options?: RenderAtOptions,
   ): { scene: Scene; audio: AudioClipDescriptor[]; subtitles: SubtitleDescriptor[]; statics?: StaticsFrame };
   /** Sweeps every frame without constructing visual layers; hooks and font measurements still run. */
   collectAudio(): AudioClipDescriptor[];
@@ -1568,6 +1571,31 @@ function walkChildren(
   );
 }
 
+/** The values `runtimeTree` provides. */
+interface RuntimeTreeValues {
+  layers: React.ContextType<typeof ProjectLayersContext>;
+  tracks: React.ContextType<typeof ProjectTrackLayersContext>;
+  /** The root's runtime, and the composition's until a nested one overrides it. */
+  runtime: NonNullable<React.ContextType<typeof CompositionRuntimeContext>>;
+  fonts: React.ContextType<typeof TextMetricsFontsContext>;
+  requestRerender: React.ContextType<typeof RerenderRequestContext>;
+}
+
+/**
+ * `child` under the runtime contexts that `mount()` and `createResolver()`
+ * both render with. A runtime context goes here, so that a registered
+ * component the resolver renders sees what it would in the composition.
+ */
+function runtimeTree(values: RuntimeTreeValues, child: React.ReactNode): React.ReactElement {
+  const { layers, tracks, runtime, fonts, requestRerender } = values;
+  return React.createElement(ProjectLayersContext.Provider, { value: layers },
+    React.createElement(ProjectTrackLayersContext.Provider, { value: tracks },
+      React.createElement(RootRuntimeContext.Provider, { value: runtime },
+        React.createElement(CompositionRuntimeContext.Provider, { value: runtime },
+          React.createElement(TextMetricsFontsContext.Provider, { value: fonts },
+            React.createElement(RerenderRequestContext.Provider, { value: requestRerender }, child))))));
+}
+
 /** Includes text supplied by a project timeline and its nested groups. */
 function inheritText(layers: Layer[], inherited: InheritedText): Layer[] {
   if (inherited.lang === undefined && inherited.fontFallback === undefined) return layers;
@@ -1627,32 +1655,11 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       lang: config.lang,
       openEnd,
     };
-    const element = React.createElement(
-      ProjectLayersContext.Provider,
-      { value: project?.layers ?? null },
-      React.createElement(
-        ProjectTrackLayersContext.Provider,
-        { value: project?.tracks ?? null },
-        React.createElement(
-          RootRuntimeContext.Provider,
-          { value: runtimeValue },
-          React.createElement(
-            CompositionRuntimeContext.Provider,
-            { value: runtimeValue },
-            React.createElement(
-              TextMetricsFontsContext.Provider,
-              { value: fonts },
-              React.createElement(
-                RerenderRequestContext.Provider,
-                { value: requestRerender },
-                React.createElement(CompositionSelectionContext.Provider, { value: selection },
-                  React.createElement(PropOverridesContext.Provider, { value: overridesValue },
-                    React.createElement(defaultExport, { key: entryKey }))),
-              ),
-            ),
-          ),
-        ),
-      ),
+    const element = runtimeTree(
+      { layers: project?.layers ?? null, tracks: project?.tracks ?? null, runtime: runtimeValue, fonts, requestRerender },
+      React.createElement(CompositionSelectionContext.Provider, { value: selection },
+        React.createElement(PropOverridesContext.Provider, { value: overridesValue },
+          React.createElement(defaultExport, { key: entryKey }))),
     );
     root.render(element);
   };
@@ -1754,18 +1761,10 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
     }
   };
 
-  const renderFrame = (
-    time: Time,
-    project: ProjectFrame | null,
-    audioOnly = false,
-    openEnd = false,
-    compact = false,
-    statics?: { decoded: number },
-    debugGuides = false,
-    preview = false,
-    propOverrides?: FramePropOverrides,
-  ) => {
-    const instance = settleTree(time, project, openEnd, debugGuides, preview, propOverrides);
+  /** `renderAt`; with `audioOnly`, only the audio is gathered and no layers are built. */
+  const renderFrame = (time: Time, project: ProjectFrame | null, options: RenderAtOptions & { audioOnly?: boolean } = {}) => {
+    const { audioOnly = false, openEnd = false, compact = false, statics, debugGuides = false, preview = false } = options;
+    const instance = settleTree(time, project, openEnd, debugGuides, preview, options.propOverrides);
     const audio: AudioClipDescriptor[] = [];
     const subtitles: SubtitleDescriptor[] = [];
     const context = rootWalkContext(
@@ -1844,23 +1843,12 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
     compositionId: selected.id,
     compositions,
     get fonts() { return fonts; },
-    renderAt: (time, project, options) =>
-      renderFrame(
-        time,
-        project,
-        false,
-        options?.openEnd === true,
-        options?.compact === true,
-        options?.statics,
-        options?.debugGuides === true,
-        options?.preview === true,
-        options?.propOverrides,
-      ),
+    renderAt: (time, project, options) => renderFrame(time, project, options),
     collectAudio() {
       const audio: AudioClipDescriptor[] = [];
       for (let frame = 0; frame < config.durationInFrames; frame++) {
         const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
-        for (const clip of renderFrame(time, null, true).audio) audio.push(clip);
+        for (const clip of renderFrame(time, null, { audioOnly: true }).audio) audio.push(clip);
       }
       return audio;
     },
@@ -2025,30 +2013,9 @@ export function createResolver(lang?: string): Resolver {
       const requestRerender = () => {
         rerenderRequested = true;
       };
-      const element = () => React.createElement(
-        ProjectLayersContext.Provider,
-        { value: [] },
-        React.createElement(
-          ProjectTrackLayersContext.Provider,
-          { value: {} },
-          React.createElement(
-            RootRuntimeContext.Provider,
-            { value: runtimeValue },
-            React.createElement(
-              CompositionRuntimeContext.Provider,
-              { value: runtimeValue },
-              React.createElement(
-                TextMetricsFontsContext.Provider,
-                { value: fonts },
-                React.createElement(
-                  RerenderRequestContext.Provider,
-                  { value: requestRerender },
-                  React.createElement(ResolverHost, { items }),
-                ),
-              ),
-            ),
-          ),
-        ),
+      const element = () => runtimeTree(
+        { layers: [], tracks: {}, runtime: runtimeValue, fonts, requestRerender },
+        React.createElement(ResolverHost, { items }),
       );
       root.render(element());
       if (rerenderRequested) {
