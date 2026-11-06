@@ -59,6 +59,5 @@ pub use project_types::{
 };
 pub use props_edit::{
     OrderedObject, PropsEditError, import_path, replace_file, set_property, set_property_text,
-    write_temp,
 };
 pub use runtime::runtime_paths;

@@ -8,11 +8,11 @@ use crate::actions::{Redo, Undo};
 use crate::problems::Source;
 use crate::source::{PropertyArgs, WatchStamp, watched_stamp};
 use crate::view::EditorView;
-use celesta_react_bridge::write_temp;
+use celesta_remote::StagedFile;
 use gpui_kit::{Context, Window};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 /// The most entries kept; the oldest are dropped first.
@@ -262,13 +262,12 @@ fn read(path: &Path) -> Result<Option<String>, HistoryError> {
 /// allows. A read-only file among them refuses the step before anything is
 /// written: a rename would replace it, dropping its read-only bit, where its
 /// folder is writable, and fail with a bare "Access is denied" on Windows.
-/// Each text first goes to a temp file beside its file
-/// (`celesta_react_bridge::write_temp`), and only once all of
-/// them are written are they renamed over their files and the `None` files
-/// removed. A failed temp write removes the temps already written and leaves
-/// every file alone. A failed rename removes the temps not yet renamed, but
-/// the files renamed before it stay changed, and no history entry records
-/// that change.
+/// Each text first goes to a [`StagedFile`] beside its file, and only once
+/// all of them are written are they published over their files and the
+/// `None` files removed. A failed staging leaves every file alone. A failed
+/// publish leaves the files published before it changed, and no history
+/// entry records that change. Staged files not published are removed when
+/// they drop.
 fn write_files(writes: &[(&Path, Option<&str>)]) -> Result<(), HistoryError> {
     let failed = |path: &Path, source| HistoryError::Io {
         path: path.to_owned(),
@@ -281,27 +280,15 @@ fn write_files(writes: &[(&Path, Option<&str>)]) -> Result<(), HistoryError> {
             });
         }
     }
-    let mut temps = Vec::with_capacity(writes.len());
+    let mut staged = Vec::with_capacity(writes.len());
     for &(path, text) in writes {
         let Some(text) = text else { continue };
-        match write_temp(path, text) {
-            Ok(temp) => temps.push((temp, path)),
-            Err(source) => {
-                for (temp, _) in &temps {
-                    let _ = fs::remove_file(temp);
-                }
-                return Err(failed(path, source));
-            }
-        }
+        let file = stage(path, text).map_err(|source| failed(path, source))?;
+        staged.push((file, path));
     }
-    let mut temps = temps.into_iter();
-    while let Some((temp, path)) = temps.next() {
-        if let Err(source) = fs::rename(&temp, path) {
-            for (temp, _) in std::iter::once((temp, path)).chain(temps) {
-                let _ = fs::remove_file(temp);
-            }
-            return Err(failed(path, source));
-        }
+    for (file, path) in staged {
+        file.publish(path, true)
+            .map_err(|source| failed(path, source))?;
     }
     for &(path, text) in writes {
         if text.is_none() {
@@ -309,6 +296,15 @@ fn write_files(writes: &[(&Path, Option<&str>)]) -> Result<(), HistoryError> {
         }
     }
     Ok(())
+}
+
+/// `text` written and synced to a [`StagedFile`] beside `path`.
+fn stage(path: &Path, text: &str) -> io::Result<StagedFile> {
+    let mut staged = StagedFile::beside(path, ".tmp")?;
+    let file = staged.as_file_mut();
+    file.write_all(text.as_bytes())?;
+    file.sync_all()?;
+    Ok(staged)
 }
 
 /// Reads `path` (a missing file reads as `""`), lets `edit` compute the new
@@ -881,34 +877,24 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_temp_write_renames_nothing() {
-        let dir = scratch("temp");
-        let (writable, blocked) = (dir.join("a-writable"), dir.join("b-blocked"));
-        fs::create_dir(&writable).unwrap();
-        fs::create_dir(&blocked).unwrap();
-        let (a, b) = (writable.join("a.txt"), blocked.join("b.txt"));
-        fs::write(&a, "x").unwrap();
-        fs::write(&b, "p").unwrap();
-        // The file itself is writable, but its temp file can't be made: a
-        // directory holds its name. (A read-only directory would not stop the
-        // write on Windows.)
-        fs::create_dir(blocked.join(format!(".b.txt.tmp-{}", std::process::id()))).unwrap();
+    fn a_failed_staging_publishes_nothing() {
+        let dir = scratch("staged");
+        let written = dir.join("a.txt");
+        fs::write(&written, "x").unwrap();
+        // The second file can't be staged: its folder's name is a file.
+        fs::write(dir.join("blocked"), "").unwrap();
+        let blocked = dir.join("blocked/b.txt");
 
-        let result = write_all_recorded(vec![a.clone(), b.clone()], |_| {
-            Ok(vec![
-                (a.clone(), "y".to_owned()),
-                (b.clone(), "q".to_owned()),
-            ])
-        });
+        let result = write_files(&[(&written, Some("y")), (&blocked, Some("q"))]);
 
-        assert!(result.is_err());
-        assert_eq!(fs::read_to_string(&a).unwrap(), "x");
-        assert_eq!(fs::read_to_string(&b).unwrap(), "p");
-        let left: Vec<_> = fs::read_dir(&writable)
+        assert!(matches!(result, Err(HistoryError::Io { path, .. }) if path == blocked));
+        assert_eq!(fs::read_to_string(&written).unwrap(), "x");
+        let mut left: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        assert_eq!(left, vec!["a.txt"], "a's temp file is removed");
+        left.sort();
+        assert_eq!(left, ["a.txt", "blocked"], "a's staged file is removed");
     }
 
     #[test]
