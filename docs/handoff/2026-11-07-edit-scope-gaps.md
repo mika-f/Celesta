@@ -16,8 +16,9 @@ here for each.
   made `pub(crate)` in `element_edit.rs`): the targets of the scope the
   held gate goes with, which `commit_element` writes to. For a commit held
   with no scope shown, that is the option in effect at the drain
-  (`drain_gate` lets it go under "This scene"), not `held.scope`. The case: a commit held under "This scene" for an
-  element its component draws more than once, where the one-instance
+  (`drain_gate` lets it go under "This scene"), not `held.scope`. The
+  case: a commit held under "This scene" for an element its component
+  draws more than once, where the one-instance
   targets (`ElementTargets::one`) hold a keyframe and the targets as
   resolved hold `Repeated`; with "Shared value" shown by the drain (a tab
   switch or a seek in between), the old check saw `Repeated`, never moved,
