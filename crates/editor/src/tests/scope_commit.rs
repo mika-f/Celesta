@@ -436,7 +436,7 @@ fn a_move_of_one_of_two_copies_lifts_to_its_call_only() {
     for scope in [None, Some(Scope::Shared)] {
         assert_eq!(
             files.commit(&targets, &report, scope, &move_to),
-            Err("X can't be edited here".to_owned())
+            Err("X can’t be edited here".to_owned())
         );
     }
     // As the Sale call's one instance, resolved again as one, it lifts to
@@ -575,7 +575,7 @@ fn per_scene_unsupported_values_are_refused() {
     );
     assert_eq!(
         refused.unwrap_err().to_string(),
-        "Can't be set per scene yet"
+        "Can’t be set per scene yet"
     );
 }
 
@@ -884,12 +884,12 @@ fn commit_gate_holds_until_the_index_answers() {
     let failed = state(&OccurrenceState::Failed("x".to_owned()));
     assert_eq!(
         gate(&failed, None, prop("x")),
-        CommitGate::Refuse("Couldn't scan scenes: x".to_owned())
+        CommitGate::Refuse("Couldn’t scan scenes: x".to_owned())
     );
     assert_eq!(gate(&failed, None, prop("width")), CommitGate::Go(None));
     assert_eq!(
         gate(&failed, Some(Scope::Shared), prop("width")),
-        CommitGate::Refuse("Couldn't scan scenes: x".to_owned())
+        CommitGate::Refuse("Couldn’t scan scenes: x".to_owned())
     );
     let missed = state(&OccurrenceState::Ready(two_scenes(pos(
         "/project/price_tag.tsx",

@@ -721,7 +721,7 @@ fn a_window_that_does_not_resolve_keeps_why() {
     let read = |path: &Path| fs::read_to_string(path).map_err(|error| error.to_string());
     // A window whose source no chain entry has.
     let elsewhere = resolve_window(read, &report, &files.pos("scene.tsx", 2, 1));
-    let why = "Couldn't find this element in the source";
+    let why = "Couldn’t find this element in the source";
     assert_eq!(elsewhere.as_ref().err().map(String::as_str), Some(why));
 
     let mut state = ElementEdit::default();
@@ -736,7 +736,7 @@ fn a_window_that_does_not_resolve_keeps_why() {
     ));
     let (window, _) = state
         .window_targets(Some("a"), Some((&report, 0)))
-        .expect("the window's outcome is kept beside the element's");
+        .expect("the window’s outcome is kept beside the element’s");
     assert_eq!(window.err(), Some(why));
 }
 
@@ -872,7 +872,7 @@ fn set_timing_offer_follows_the_role() {
             &ScopeState::NotShared,
             None
         ),
-        SetTimingOffer::Disabled("`Sequence` here is not Celesta's".to_owned())
+        SetTimingOffer::Disabled("`Sequence` here is not Celesta’s".to_owned())
     );
 }
 
@@ -961,7 +961,7 @@ fn set_timing_offer_follows_the_scope() {
         enabled
     );
     assert_eq!(offer(&options, Some(Scope::Shared)), enabled);
-    let per_scene = SetTimingOffer::Disabled("Can't be set per scene yet".to_owned());
+    let per_scene = SetTimingOffer::Disabled("Can’t be set per scene yet".to_owned());
     assert_eq!(offer(&options, Some(Scope::ThisScene)), per_scene);
     // "This scene" is the option in effect without a choice.
     assert_eq!(offer(&options, None), per_scene);

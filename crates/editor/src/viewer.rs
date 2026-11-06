@@ -974,7 +974,7 @@ impl EditorView {
             pivot(
                 "pivot-center",
                 "Center",
-                "Rotate and scale about the layer's center",
+                "Rotate and scale about the layer’s center",
                 PivotMode::Center,
             ),
             pivot(
@@ -997,7 +997,7 @@ impl EditorView {
             tool(
                 "handles-size",
                 "Size",
-                "Resize the layer's box, keeping the opposite edge",
+                "Resize the layer’s box, keeping the opposite edge",
                 ResizeTool::Size,
             ),
             tool(

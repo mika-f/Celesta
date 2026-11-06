@@ -24,25 +24,25 @@ pub(crate) enum CommitError {
     #[error("The source changed while editing")]
     SourceChanged,
     /// The row (by its label) is locked or not a target of this element.
-    #[error("{0} can't be edited here")]
+    #[error("{0} can’t be edited here")]
     NotEditable(String),
     /// The row (by its label) has no written value it can do without: the
     /// prop is required, absent, locked, or animated.
-    #[error("{0} can't be removed here")]
+    #[error("{0} can’t be removed here")]
     NotRemovable(String),
     /// The value is NaN or infinite.
     #[error("Enter a number")]
     NotANumber,
-    #[error("Couldn't edit the source: {0}")]
+    #[error("Couldn’t edit the source: {0}")]
     Apply(ApplyError),
     /// The edited text has syntax errors; nothing is written.
-    #[error("Couldn't edit the source: the result does not parse")]
+    #[error("Couldn’t edit the source: the result does not parse")]
     Unparseable,
     /// The row can't be written under the chosen scope.
     #[error("{}", .0.text())]
     Scope(ScopeLock),
     /// A name to import from `@celesta.studio/react` is bound otherwise.
-    #[error("`{}` here is not Celesta's", match .0 { ImportLock::Clash { name } => name })]
+    #[error("`{}` here is not Celesta’s", match .0 { ImportLock::Clash { name } => name })]
     Import(ImportLock),
 }
 

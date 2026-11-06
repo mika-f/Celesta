@@ -168,7 +168,7 @@ fn row_labels() {
     // A commit error names the row the way the panel labels it.
     assert_eq!(
         CommitError::NotEditable(prop("fontSize").label()).to_string(),
-        "Font size can't be edited here"
+        "Font size can’t be edited here"
     );
 }
 

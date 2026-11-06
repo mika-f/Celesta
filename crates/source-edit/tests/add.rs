@@ -443,7 +443,7 @@ fn a_clashing_binding_locks() {
         name: "Rect".to_string(),
     });
     assert_eq!(add_child(text, &parent, &rect(), None), Err(lock.clone()));
-    assert_eq!(lock.text(), "`Rect` here is not Celesta's");
+    assert_eq!(lock.text(), "`Rect` here is not Celesta’s");
     assert_eq!(
         add_lock(text, &parent, NewKind::Rect, false),
         Some(lock.clone())

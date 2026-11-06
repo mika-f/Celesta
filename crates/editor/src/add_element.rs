@@ -8,6 +8,7 @@
 use crate::canvas_geometry::apply;
 use crate::edit_history::Texts;
 use crate::element_edit::{inside_project, tag_name};
+use crate::helpers::{PathPick, pick_one_path};
 use crate::layer_select::{LookupResult, SourceLookup, letterbox, scene_point, to_scene};
 use crate::occurrences::OccurrenceState;
 use crate::preview::AddedUnder;
@@ -25,7 +26,7 @@ use celesta_source_edit::{
     EditValue, NewComponent, NewElement, NewKind, Timing, add_child, add_component, add_locks,
     element_at, enclosing_component,
 };
-use gpui_kit::{Context, MouseMoveEvent, PathPromptOptions, Pixels};
+use gpui_kit::{Context, MouseMoveEvent, Pixels};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::f64::consts::TAU;
@@ -44,10 +45,10 @@ const KINDS: [NewKind; 6] = [
 ];
 
 const NO_PARENT: &str = "Select a group, or a layer inside one, to add into";
-const NO_PARENT_IN_SCENE: &str = "No group in this scene's own code to add into";
-const REMAPPED: &str = "Can't add inside a loop or freeze frame";
-const TURNED_3D: &str = "Can't draw into a group turned in 3D";
-const SCALED_TO_ZERO: &str = "Can't draw into a group scaled to zero";
+const NO_PARENT_IN_SCENE: &str = "No group in this scene’s own code to add into";
+const REMAPPED: &str = "Can’t add inside a loop or freeze frame";
+const TURNED_3D: &str = "Can’t draw into a group turned in 3D";
+const SCALED_TO_ZERO: &str = "Can’t draw into a group scaled to zero";
 const READING: &str = "The source is still being read";
 const SOURCE_CHANGED: &str = "The source changed while editing";
 
@@ -1212,12 +1213,7 @@ impl EditorView {
             .as_ref()
             .and_then(AddComponent::model)
             .cloned();
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Choose".into()),
-        });
+        let selection = pick_one_path(cx, PathPick::File, "Choose");
         let picking = move |this: &EditorView| this.add.mode == AddMode::Picking(kind);
         // Nothing to draw: the mode ends, saying why when something failed.
         let cancel = move |this: &mut EditorView, notice: Option<String>| {
@@ -1228,10 +1224,9 @@ impl EditorView {
         };
         cx.spawn(async move |view, cx| {
             let chosen = match selection.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(error)) => {
-                    let notice = format!("Couldn't show the file dialog: {error}");
+                Ok(path) => path,
+                Err(error) => {
+                    let notice = format!("Couldn’t show the file dialog: {error}");
                     view.update(cx, |this, cx| {
                         cancel(this, Some(notice));
                         cx.notify();
@@ -1274,7 +1269,7 @@ impl EditorView {
                         }
                         Ok(_) => None,
                         Err(error) => {
-                            cancel(this, Some(format!("Couldn't use the chosen file: {error}")));
+                            cancel(this, Some(format!("Couldn’t use the chosen file: {error}")));
                             None
                         }
                     }
@@ -1949,7 +1944,7 @@ mod tests {
         let failed = OccurrenceState::Failed("x".to_owned());
         assert_eq!(
             is_shared(Some(&failed), &chapters, &group),
-            Err("Couldn't scan scenes: x".to_owned())
+            Err("Couldn’t scan scenes: x".to_owned())
         );
     }
 
@@ -2006,7 +2001,7 @@ mod tests {
 
         assert_eq!(
             pick(&report, ParentScope::Chosen(Scope::ThisScene), &[4, 5]),
-            Err("No group in this scene's own code to add into".to_owned())
+            Err("No group in this scene’s own code to add into".to_owned())
         );
     }
 
@@ -2032,9 +2027,9 @@ mod tests {
                 Some(&report),
                 &ParentScope::NoControl,
                 every_group,
-                |_| Err("Couldn't scan scenes: x".to_owned())
+                |_| Err("Couldn’t scan scenes: x".to_owned())
             ),
-            Err("Couldn't scan scenes: x".to_owned())
+            Err("Couldn’t scan scenes: x".to_owned())
         );
     }
 
@@ -2386,7 +2381,7 @@ mod tests {
         );
         assert_eq!(
             added_timing(&report, 1, &[], 600, 30),
-            Err("Can't add inside a loop or freeze frame".to_owned())
+            Err("Can’t add inside a loop or freeze frame".to_owned())
         );
     }
 
@@ -2749,7 +2744,7 @@ mod tests {
         let open = menu_items(None, no_lock);
         assert_eq!(open, kinds.map(|kind| (kind, None)).to_vec());
 
-        let reason = "Can't draw into a group turned in 3D";
+        let reason = "Can’t draw into a group turned in 3D";
         let disabled = menu_items(Some(reason), |_| Some("clash".to_owned()));
         assert_eq!(
             disabled,
@@ -2765,7 +2760,7 @@ mod tests {
             clashing[0],
             (
                 NewKind::Rect,
-                Some("`Rect` here is not Celesta's".to_owned())
+                Some("`Rect` here is not Celesta’s".to_owned())
             )
         );
         assert!(clashing[1..].iter().all(|(_, why)| why.is_none()));

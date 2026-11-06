@@ -19,12 +19,12 @@ use crate::scope::{CommitGate, HeldOrigin, SceneCalls, Scope, ScopedRow, scoped_
 use crate::transform_drag::override_sites;
 use crate::view::EditorView;
 use celesta_react_bridge::{
-    LayerSourceReport, PrimitivePropertyField, PropOverride, ReceivedProps, SourcePos, import_path,
+    LayerSourceReport, PrimitivePropertyField, PropOverride, ReceivedProps, SourcePos,
 };
 use celesta_source_edit::{
     DefaultTarget, EditTarget, EditValue, LockReason, default_for, format_number,
 };
-use gpui_kit::{Context, MouseMoveEvent, PathPromptOptions, Subscription, Window};
+use gpui_kit::{Context, MouseMoveEvent, Subscription, Window};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
@@ -199,7 +199,7 @@ const FRAME_MOVED: &str = "Not saved: the playhead moved off this keyframe";
 
 /// Why held commits were not written when the layer's source was not
 /// found again (not in the frame, or no source position).
-const SOURCE_LOST: &str = "Not saved: the layer's source was not found again";
+const SOURCE_LOST: &str = "Not saved: the layer’s source was not found again";
 
 /// Why commits held for the scene scan were not written when another
 /// layer was selected (or the interactive mode left) before it landed.
@@ -1772,49 +1772,20 @@ impl EditorView {
     /// writes the path relative to the entry's directory.
     fn choose_element_path(&mut self, key: &PropKey, cx: &mut Context<Self>) {
         let entry_dir = self.entry_dir();
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Choose".into()),
-        });
         let key = key.clone();
         let session = self.session;
         let layer = self.selected_layer.clone();
-        cx.spawn(async move |view, cx| {
-            let chosen = match selection.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(error)) => {
-                    let message = format!("Couldn't show the file dialog: {error}");
-                    view.update(cx, |this, cx| this.set_row_message(&key, message, cx))
-                        .ok();
-                    None
-                }
-            };
-            let Some(chosen) = chosen else {
-                return;
-            };
-            let imported = cx
-                .background_executor()
-                .spawn(async move { import_path(&entry_dir, &entry_dir, &chosen) })
-                .await;
-            view.update(cx, |this, cx| {
-                // Another file opened or another layer was picked meanwhile.
-                if this.session != session || this.selected_layer != layer {
-                    return;
-                }
-                match imported {
-                    Ok(path) => this.commit_element_row(&key, Some(EditValue::String(path)), cx),
-                    Err(error) => {
-                        let message = format!("Couldn't use the chosen file: {error}");
-                        this.set_row_message(&key, message, cx);
-                    }
-                }
-            })
-            .ok();
-        })
-        .detach();
+        self.choose_imported_path(
+            entry_dir.clone(),
+            entry_dir,
+            // Another file opened or another layer was picked meanwhile.
+            move |this| this.session == session && this.selected_layer == layer,
+            move |this, imported, cx| match imported {
+                Ok(path) => this.commit_element_row(&key, Some(EditValue::String(path)), cx),
+                Err(message) => this.set_row_message(&key, message, cx),
+            },
+            cx,
+        );
     }
 
     fn set_row_message(&mut self, key: &PropKey, message: String, cx: &mut Context<Self>) {

@@ -901,7 +901,7 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         left.sort();
-        assert_eq!(left, ["a.txt", "blocked"], "a's staged file is removed");
+        assert_eq!(left, ["a.txt", "blocked"], "a’s staged file is removed");
     }
 
     #[test]

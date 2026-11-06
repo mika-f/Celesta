@@ -59,7 +59,7 @@
 
 - **Appears in** には、選択したレイヤーが画面に現れるシーンが並びます。チャプターのないコンポジションでは、代わりに `00:00:02:00–00:00:04:00` のような時間の範囲が並びます。範囲が 4 つ以上あるときは、最初の 3 つのあとに **and 2397 more** のように残りの数を示します。
 - **Shared** は、同じ要素がほかのシーンにも描かれているときに、**also in Intro, Outro (3 instances)** のように警告色で表示されます。ほかのシーンが 4 つ以上あるときは、名前の代わりに **also in 11 other scenes (71 instances)** のように数を示します。コードが要素を描画する場所（たとえば、書いた `<Title>` の 1 つ 1 つ）が、それぞれ 1 つのインスタンスです。この行にポインタを合わせると、各インスタンスを描画している `ファイル:行:列` の一覧が表示されます。数だけを示しているときは、その前にシーンの名前が並びます。**Edits change** に選択肢が表示されているあいだ（「1 つのシーンだけを変えるか、すべてのシーンを変えるか」を参照）は、選んだ選択肢がほかのシーンを変えないときも、この行は消えずに **this scene only** と表示されます。
-- **Can't move** には、ロックされたトランスフォームの prop とその理由が、理由ごとに 1 行ずつ並びます（たとえば **X, Y — Written as an expression: W / 2**）。理由の意味は次の節で説明します。
+- **Can’t move** には、ロックされたトランスフォームの prop とその理由が、理由ごとに 1 行ずつ並びます（たとえば **X, Y — Written as an expression: W / 2**）。理由の意味は次の節で説明します。
 
 パネルのいちばん上、ヘッダーの上にある 1 行は、変更を確定すると何が変わるかを示します。この行はその位置にとどまり、ヘッダーとプロパティのセクションはその下でスクロールします。共有されている要素では、代わりに編集が何を変えるかを選ぶコントロールが表示されます。後述の「1 つのシーンだけを変えるか、すべてのシーンを変えるか」を参照してください。
 
@@ -69,7 +69,7 @@
 | Changes `<count>` places in this scene | 要素が現在のシーンの複数の場所に描かれていて（2 つの `<Title>` や `.map()` など）、ほかのシーンにはない。`<MotionBlur>` や `<Trail>` が描く各時点のコピーは 1 か所と数える |
 | Also changes `<scenes>` | 要素が、名前を挙げたシーンにも描かれている。警告色で表示される。再生ヘッドがチャプターのあいだにあるときは、要素が現れるすべてのシーンが挙がる。シーンが 4 つ以上あるときは **Also changes 11 other scenes** のように数を示し、この行にポインタを合わせるとシーンの名前が並ぶ |
 | Scanning scenes… | 走査がまだ終わっていない |
-| Couldn't scan scenes: `<error>` | 走査中に、あるフレームでコンポジションが失敗した。プレビューのほかの部分はそのまま使える |
+| Couldn’t scan scenes: `<error>` | 走査中に、あるフレームでコンポジションが失敗した。プレビューのほかの部分はそのまま使える |
 | Not found in the scene scan | 走査でこの要素が見つからなかった（ソースの位置がない場合など） |
 
 この行が表示されるのは、共有されていない要素です。つまり、インスタンスが 1 つだけの要素か、自作のコンポーネントの中ではなくシーンに直接書かれた要素です。自作のコンポーネントの中に書かれていてインスタンスが 2 つ以上ある要素（たとえば、Intro と Price で使う `const PriceTag = ({ label }) => <Rect width={200} … />` の `<Rect>`）は共有されています。その場合は代わりに **Edits change** と、**This scene** と **Shared value** の 2 つの選択肢が表示され、**Shared** の行とタイムラインの帯は、選んでいる選択肢で変わるインスタンスを数えます。
@@ -90,15 +90,15 @@ Celesta が値を書き込むのは、ファイルに直接書かれた要素、
 
 値がコンポーネントの呼び出し側で指定されている行には、フィールドの下に矢印と **Set at `<file>`:`<line>`**（たとえば **Set at scenes/price.tsx:12**）が表示されます。ファイルはエントリファイルのフォルダからの相対パスです。レイヤーをドラッグしたり、その行に値を入力したりすると、その呼び出しに書き込みます。呼び出しは要素とは別のファイルにあることもあります。1 回のドラッグで、呼び出し側の `x` と要素に書かれた `rotation` のように 2 つのファイルに書き込むこともありますが、それでも 1 回の変更で、1 回元に戻せば両方のファイルが戻ります。呼び出しごとに別々に編集するので、何か所からも呼び出すコンポーネントの中の要素でも、値が呼び出し側で指定されていれば、複数回描画されることを理由にロックされることはありません。`.map()` の中の呼び出しで渡した値も編集でき、変更はその呼び出しが描くすべてのコピーに及びます。
 
-それ以外はロックされます。フィールドに鍵のアイコンと理由が表示され、ヘッダーの **Can't move** の行にも並び、レイヤーのどの値も動かせないときは枠が破線になります。理由は次のとおりです。`<name>` のように山かっこで囲んだ語は、ソースから取った部分を表します。
+それ以外はロックされます。フィールドに鍵のアイコンと理由が表示され、ヘッダーの **Can’t move** の行にも並び、レイヤーのどの値も動かせないときは枠が破線になります。理由は次のとおりです。`<name>` のように山かっこで囲んだ語は、ソースから取った部分を表します。
 
 | 理由 | 意味 |
 | --- | --- |
 | Set by a component, not written on this element | レイヤーにもっとも近い要素が、`<Rect>` のような Celesta の要素ではなく、自作（またはほかのライブラリ）のコンポーネント |
 | Written as an expression: `<expression>` | `W / 2` や `i * 24` のような式。または、**Anchor Y** の行の `anchorY="baseline"` のように、行が受け付けるのとは別の種類の値 |
-| Comes from `<name>`, which can't be traced | import、`let`、内側のコンポーネントから読んだ外側のコンポーネントの引数、オブジェクトのプロパティ、またはコンポーネントの中で 2 回以上宣言された名前（ブロックやループの中での再宣言など） |
+| Comes from `<name>`, which can’t be traced | import、`let`、内側のコンポーネントから読んだ外側のコンポーネントの引数、オブジェクトのプロパティ、またはコンポーネントの中で 2 回以上宣言された名前（ブロックやループの中での再宣言など） |
 | Comes from `<component>`'s caller | 呼び出し側が、自分の受け取った prop をそのまま渡している（`Card` の中の `<PriceTag x={x} />` など）。Celesta がたどる呼び出しは 1 つだけで、その呼び出しの呼び出しまではたどらない |
-| Can't find where `<component>` is called | 値はコンポーネントの prop だが、このレイヤーを描画している呼び出しが見つからない、またはそのファイルを読めない |
+| Can’t find where `<component>` is called | 値はコンポーネントの prop だが、このレイヤーを描画している呼び出しが見つからない、またはそのファイルを読めない |
 | `<name>` is used in `<count>` places | 共有されている `const` を編集すると、ほかの要素も動いてしまう |
 | Between keyframes at `<frame>` and `<frame>` | キーフレームのフレームではない。ボタンでキーフレームへ移動できる |
 | Outside the keyframes | 最初のキーフレームより前、または最後のキーフレームより後のフレーム |
@@ -107,9 +107,9 @@ Celesta が値を書き込むのは、ファイルに直接書かれた要素、
 | May be set by a spread ({...props}) | 要素に `{...props}` があり、その要素自身には値がない。または値の後ろにスプレッドがある |
 | May be set by `style` | `<Text>` のフォントや色の行で、`style` がオブジェクトとして書かれていない、または値を指定しうるスプレッドがある（次の節を参照） |
 | Rendered `<count>` times from this element | `.map()` の中の要素、またはフレームに 2 回以上描かれる自作コンポーネントの中の要素で、編集すると全部のコピーが動いてしまう。コンポーネントの場合は、そのコピーを描画する呼び出しがそれだけを描いていれば、**This scene** で選んだコピーだけを動かせる（「1 つのシーンだけを変えるか、すべてのシーンを変えるか」を参照） |
-| Can't tell which frame this animation reads | `frame` が複数のフレームのどれかを持ちうる（要素を囲む `<Sequence>` や `<FreezeFrame>` ごとに別のフレームになる）うえ、それらのフレームが同じ値の別々のキーフレームを指している |
+| Can’t tell which frame this animation reads | `frame` が複数のフレームのどれかを持ちうる（要素を囲む `<Sequence>` や `<FreezeFrame>` ごとに別のフレームになる）うえ、それらのフレームが同じ値の別々のキーフレームを指している |
 | This file is outside the project | 値が、エントリファイルのフォルダの外にあるファイル、または `node_modules` の中に書かれている。要素のファイルか、呼び出し側で指定された値なら呼び出しのファイル |
-| Couldn't find this element in the source | プレビューが見つけた位置に、ファイルの要素がもうない（保存後の再読み込み中など） |
+| Couldn’t find this element in the source | プレビューが見つけた位置に、ファイルの要素がもうない（保存後の再読み込み中など） |
 | The source has syntax errors | 先にファイルを直してください。解析できるまで、すべてのフィールドがロックされます |
 
 ドラッグ中に、ドラッグが書き込むファイルが変更された場合、Celesta はドラッグを破棄してその旨を表示し、あなたの編集を上書きすることはありません。キャンバスでのドラッグで編集するのは、`x`、`y`、`rotation`、`scale`（`scaleX` と `scaleY` が書かれているときはそちら）と、`width` のようなレイヤーのサイズを決める prop、`anchorX` と `anchorY` です。サイズの prop とアンカーについてはこの節の最後で説明します。スキューは編集できません。
@@ -121,13 +121,13 @@ Celesta が値を書き込むのは、ファイルに直接書かれた要素、
 **Select layers** がオンのあいだは、ビューアの上端、フレームの上にツールの行が表示されます（フレームはその分だけ小さくなります）。行の先頭には **Add** メニューがあります（後述の「キャンバスに要素を追加する」を参照）。レイヤーを選択しているあいだは、その後ろにラベルの付いた 2 つの切り替えが並びます。それぞれの切り替えでは、選んだほうが浮き出たタブで示されます。1 つ目の **Rotate about** [**Center** | **Pivot**] は、回転のハンドルと **Scale** のハンドルが何を軸にするかを決めます。選択したレイヤーの上の十字が、その点を示します。
 
 - **Pivot**（既定）は、レイヤーのピボット、つまりレンダラーがレイヤーを回す点を軸にします。ピボットはアンカー（矩形に対する `anchorX` と `anchorY` の位置で、指定しなければ左上の角）を、`originX` と `originY` を指定していればその分だけずらした点です。書き込むのは `rotation` か拡大率だけです。十字はピボットの上にあり、Alt を押しながらドラッグするとアンカーが動きます（後述の「アンカーを動かす」を参照）。
-- **Center** は、レイヤーの矩形の中心をその場に保ちます。そのために、Celesta は `x` と `y` も書き込みます。回転では `rotation`、`x`、`y` をまとめて 1 回の変更として書き込み、`x` と `y` がコンポーネントの呼び出しから渡されていれば 2 つのファイルに書き込みます。十字は矩形の中心の上にあり、その点を示すだけです。ツールチップには **Rotates about the center; switch to Pivot to move the anchor** と表示されます（**Pivot** でもアンカーを動かせないときは、**Rotates about the center; the anchor can't move:** に続けて、「アンカーを動かす」で挙げる理由が表示されます。`<Path>` のようにアンカーの prop がない要素では、**Rotates about the center** だけが表示されます）。Alt を押しながら押しても何も起きません。
+- **Center** は、レイヤーの矩形の中心をその場に保ちます。そのために、Celesta は `x` と `y` も書き込みます。回転では `rotation`、`x`、`y` をまとめて 1 回の変更として書き込み、`x` と `y` がコンポーネントの呼び出しから渡されていれば 2 つのファイルに書き込みます。十字は矩形の中心の上にあり、その点を示すだけです。ツールチップには **Rotates about the center; switch to Pivot to move the anchor** と表示されます（**Pivot** でもアンカーを動かせないときは、**Rotates about the center; the anchor can’t move:** に続けて、「アンカーを動かす」で挙げる理由が表示されます。`<Path>` のようにアンカーの prop がない要素では、**Rotates about the center** だけが表示されます）。Alt を押しながら押しても何も起きません。
 
 **Center** には、Celesta が書き込める `x` と `y` が必要です。それぞれ数値か、書かれていない prop か、上で説明したようにコンポーネントの呼び出しから渡された値です。`rotation`、拡大率、サイズ、アンカーがキーフレームでアニメーションしていないことも必要です。あるキーフレームで書き込んだ `x` と `y` では、そのキーフレームでしか中心を保てず、ほかのキーフレームではレイヤーがずれるためです。これを満たさないレイヤーは、**Center** を選んでいてもピボットを軸にし、十字もピボットの上に表示されます。そのとき切り替えは **Center** が選ばれたまま残るので、次に選択したレイヤーではまた **Center** が使われます。切り替えには警告のアイコンが表示され、そのツールチップに理由が表示されます。
 
 | ツールチップ | 意味 |
 | --- | --- |
-| x or y can't be edited | `x` か `y` がキーフレームでアニメーションしているか、コードで計算した値のようにロックされている |
+| x or y can’t be edited | `x` か `y` がキーフレームでアニメーションしているか、コードで計算した値のようにロックされている |
 | Rotation or scale is animated | `rotation` か拡大率がキーフレームでアニメーションしている |
 | Size or anchor is animated | サイズの prop、`anchorX`、`anchorY` のどれかがキーフレームでアニメーションしている |
 | No flat box to center on | レイヤー自身の遠近法で傾いている |
@@ -154,8 +154,8 @@ Celesta が値を書き込むのは、ファイルに直接書かれた要素、
 | --- | --- |
 | No size to resize | 要素にサイズの prop がない、またはプレビューがサイズを伝えていない |
 | `<Row>`: `<reason>` | サイズの行がロックされている（たとえば **Height: Written as an expression: h * 2**）。理由は上の表のとおり |
-| Size can't be edited here | サイズの prop に、Celesta が書き込める行がない |
-| x or y can't move | どのハンドルもアンカーを動かすことになり、`x` か `y` がキーフレームでアニメーションしているか、ロックされている |
+| Size can’t be edited here | サイズの prop に、Celesta が書き込める行がない |
+| x or y can’t move | どのハンドルもアンカーを動かすことになり、`x` か `y` がキーフレームでアニメーションしているか、ロックされている |
 | Rotation or scale is animated | どのハンドルもアンカーを動かすことになり、`rotation` か拡大率がキーフレームでアニメーションしている |
 | Anchor is animated | どのハンドルもアンカーを動かすことになり、`anchorX` か `anchorY` がキーフレームでアニメーションしている |
 | Size is animated | どのハンドルも、キーフレームでアニメーションするサイズの向きにアンカーを動かすことになる |
@@ -171,12 +171,12 @@ Celesta が値を書き込むのは、ファイルに直接書かれた要素、
 
 | ツールチップ | 意味 |
 | --- | --- |
-| `<Row>`: `<reason>` | その行自身のロックの理由。たとえば、インポートした定数で `x` を指定していれば **X: Comes from DX, which can't be traced**、`anchorY="baseline"` と書いた `<Text>` では **Anchor Y: Written as an expression: "baseline"** |
+| `<Row>`: `<reason>` | その行自身のロックの理由。たとえば、インポートした定数で `x` を指定していれば **X: Comes from DX, which can’t be traced**、`anchorY="baseline"` と書いた `<Text>` では **Anchor Y: Written as an expression: "baseline"** |
 | X is animated、Y is animated | `x` か `y` がキーフレームでアニメーションしている |
 | Anchor is animated | `anchorX` か `anchorY` がキーフレームでアニメーションしている |
 | Rotation or scale is animated | `rotation` か拡大率がキーフレームでアニメーションしている |
 | Size is animated | サイズの prop がキーフレームでアニメーションしている |
-| A group's anchor has no effect | `<Group>` は、子要素を自身の位置だけで配置する |
+| A group’s anchor has no effect | `<Group>` は、子要素を自身の位置だけで配置する |
 | No box to anchor in | レイヤー自身の遠近法で傾いているか、プレビューがサイズを伝えていない |
 
 `<Path>`、`<Line>`、`<Arrow>` など、アンカーの prop がない要素には、動かせるアンカーがありません。
@@ -229,7 +229,7 @@ Celesta が値を書き込んで再読み込みしているあいだも、行は
 
 要素が自作のコンポーネントの中に書かれていて、Celesta がそれを描画している呼び出しを見つけたときは、続いて **Component · PriceTag** のような **Component** セクションが表示され、その呼び出しの **Set at `<file>`:`<line>`** が添えられます。このセクションには、呼び出しに書かれた prop が書かれた順に並ぶので、`<PriceTag>` の中の `<Rect>` を選択したまま、`<PriceTag>` の `label="Sale"` を変更できます。上の行がすでに **Set at** 付きで表示している prop は繰り返さず、`key`、`ref`、スプレッド、子要素は並びません。数値には数値のフィールド、文字列にはテキストのフィールド、`true` か `false` にはスイッチが付きます。コンポーネントが `registerComponent()` で登録されているときは、代わりにそのスキーマがコントロールと範囲を決め、フィールドの `label` が行の名前になり（スキーマにない prop は書かれた名前のまま表示されます）、`integer: true` の数値フィールドは整数だけを受け付け、`required: true` のフィールドは取り除けず、スキーマと別の種類の値はロックされます。`ComponentPropertySchema<BadgeProps>` のようにスキーマをprops の型で型付けしていると、props の型が必須とする prop には `required: true` を書くよう、またそれ以外には書かないよう TypeScript が求めます。値をそのまま示していない prop は、理由を添えてロックされます。
 
-**Can't move** が見るのは、トランスフォームの prop だけです。**Component** セクションの行は常にその呼び出しに書き込むので、変わるのはその呼び出しが描画するインスタンスだけです。共有されている要素では、それ以外の行、ラベルのドラッグ、キャンバスでのドラッグ、キャンバス上でのテキストの編集は、パネルのいちばん上で選んでいる選択肢に従って書き込みます。「1 つのシーンだけを変えるか、すべてのシーンを変えるか」を参照してください。
+**Can’t move** が見るのは、トランスフォームの prop だけです。**Component** セクションの行は常にその呼び出しに書き込むので、変わるのはその呼び出しが描画するインスタンスだけです。共有されている要素では、それ以外の行、ラベルのドラッグ、キャンバスでのドラッグ、キャンバス上でのテキストの編集は、パネルのいちばん上で選んでいる選択肢に従って書き込みます。「1 つのシーンだけを変えるか、すべてのシーンを変えるか」を参照してください。
 
 ## キャンバス上でテキストを編集する
 
@@ -261,9 +261,9 @@ Celesta が書き込めないテキストでは、ダブルクリックしても
 | **Text** の行のロックの理由（たとえば **Written as an expression: a + b**） | コードで計算した値や `<Span>` の子要素のように、テキストがソースにそのまま書かれていない。理由は「キャンバス上でレイヤーを動かす」の表のとおり |
 | レイヤーのソースを読めなかった理由（たとえば **Not in this frame**） | **Layer** セクションの表示と同じ |
 | The code is reloading | コンポジションを再読み込みしている。終わってからもう一度ダブルクリックする |
-| The text isn't drawn in this frame | 表示中のフレームにテキストがない、またはテキストの角が視点より後ろにある |
+| The text isn’t drawn in this frame | 表示中のフレームにテキストがない、またはテキストの角が視点より後ろにある |
 | The text is edge-on to the view | 3D で真横近くまで傾いていて、入力できる面がない |
-| The text can't be edited here | **Text** の行に、Celesta が書き込めるものがない |
+| The text can’t be edited here | **Text** の行に、Celesta が書き込めるものがない |
 
 確定した直後のテキストをダブルクリックすると、書き込みが終わるまで待ち、再読み込みのあいだは **The code is reloading** と表示します。再読み込みが終わってからもう一度ダブルクリックすると、新しいテキストを編集できます。編集中に Celesta の外でファイルが変わると、何も書き込まずに編集を終え、次にクリックするまでプレビューの左上に **The source changed while editing** と表示します。
 
@@ -323,7 +323,7 @@ function PriceTag({ label, rectWidth = 200 }: Props) {
 
 | 理由 | 意味 |
 | --- | --- |
-| Can't find where `<PriceTag>` is called | このシーンのインスタンスを描画している呼び出しが見つからない、またはそのファイルを読めない |
+| Can’t find where `<PriceTag>` is called | このシーンのインスタンスを描画している呼び出しが見つからない、またはそのファイルを読めない |
 | Passes through `<Card>` | シーンと、要素を書いたコンポーネントのあいだに、ここでは `<PriceTag>` を囲む `<Card>` という別の自作のコンポーネントがある。`<Sequence><PriceScene /></Sequence>` のように、コンポーネントとして書いて手で並べたシーンも、これにあたる |
 | The scenes reuse the same call (`.map()` or `defineScenes`) | `defineScenes` でつくり 1 つの `<Scenes>` で描くシーンのように、1 つの呼び出しが複数のシーンのコンポーネントを描画している |
 | `<PriceTag>` is called here for other scenes too | `.map()` の中の呼び出しのように、このシーンのインスタンスを描画している呼び出しが、ほかのシーンのインスタンスも描画している |
@@ -333,10 +333,10 @@ function PriceTag({ label, rectWidth = 200 }: Props) {
 
 | 理由 | 意味 |
 | --- | --- |
-| `PriceTag` doesn't take its props as `{ … }` | コンポーネントの引数が `(props)` や `(...args)` のように書かれている |
-| `PriceTag`'s props type is in another file | 引数の型をインポートしている |
-| Can't add `rectWidth` to `PriceTag`'s props type | `type Props = Base & Other` のように、フィールドを追加する型リテラルが型にない |
-| Can't be set per scene yet | 値がキーフレームでアニメーションする、`style={{ … }}` のオブジェクトの中にある、または入力の行の `const` である |
+| `PriceTag` doesn’t take its props as `{ … }` | コンポーネントの引数が `(props)` や `(...args)` のように書かれている |
+| `PriceTag`’s props type is in another file | 引数の型をインポートしている |
+| Can’t add `rectWidth` to `PriceTag`’s props type | `type Props = Base & Other` のように、フィールドを追加する型リテラルが型にない |
+| Can’t be set per scene yet | 値がキーフレームでアニメーションする、`style={{ … }}` のオブジェクトの中にある、または入力の行の `const` である |
 | This file is outside the project | コンポーネントのファイルか呼び出しのファイルが、エントリファイルのフォルダの外か `node_modules` の中にある |
 
 **Shared value** では、次の場合に行がロックされ、すべての行がロックされると選択肢を選べなくなります。ただし **This scene sets its own** は行をロックするだけで、選択肢を選べなくすることはありません。
@@ -345,9 +345,9 @@ function PriceTag({ label, rectWidth = 200 }: Props) {
 | --- | --- |
 | Every scene sets `rectWidth` itself | 引数にデフォルト値がなく、すべての呼び出しがその prop を渡している |
 | This scene sets its own `rectWidth` | 現在のシーンの呼び出しがその prop を渡している。行にはこのシーンの値が表示される。呼び出しが値をそのまま書いているときは、行の **×** で呼び出しから取り除ける。そうでないときは、その prop を渡していないシーンから共有の値を編集する |
-| `rectWidth`'s shared value is written as an expression | `{ rectWidth = W * 2 }` のように、デフォルト値が計算されている |
-| `PriceTag` doesn't take its props as `{ … }` | コンポーネントが `props.rectWidth` を読んでいて、書き込むデフォルト値の場所がない |
-| Can't find where `rectWidth`'s shared value is written | コンポーネントの中に引数が見つからない |
+| `rectWidth`’s shared value is written as an expression | `{ rectWidth = W * 2 }` のように、デフォルト値が計算されている |
+| `PriceTag` doesn’t take its props as `{ … }` | コンポーネントが `props.rectWidth` を読んでいて、書き込むデフォルト値の場所がない |
+| Can’t find where `rectWidth`’s shared value is written | コンポーネントの中に引数が見つからない |
 | This file is outside the project | コンポーネントのファイルが、エントリファイルのフォルダの外か `node_modules` の中にある |
 
 選んでいた選択肢を選べないとき（たとえば、Price で **This scene** を選んだあと、ほかのシーンも描画している呼び出しのあるシーンでその要素を選んだとき）も、Celesta はもう一方に切り替えません。どちらのタブも浮き上がらず、タブの下の行が警告色で理由を示し、選択肢を選び直すまで、編集はその理由で断られます。
@@ -367,7 +367,7 @@ function PriceTag({ label, rectWidth = 200 }: Props) {
 | 表示 | 意味 |
 | --- | --- |
 | Scanning scenes… | 走査がまだ終わっていない |
-| Couldn't scan scenes: `<error>` | 走査中に、あるフレームでコンポジションが失敗した |
+| Couldn’t scan scenes: `<error>` | 走査中に、あるフレームでコンポジションが失敗した |
 | Not found in the scene scan | 走査でこの要素が見つからなかった |
 | The scenes are not scanned | このコンポジションでは走査が動いていない |
 
@@ -405,9 +405,9 @@ function PriceTag({ label, rectWidth = 200 }: Props) {
 
 | 理由 | 意味 |
 | --- | --- |
-| Timing inside a loop or freeze frame can't be dragged | 要素にいちばん近いウィンドウが `<Loop>` か `<FreezeFrame>` の中にある |
+| Timing inside a loop or freeze frame can’t be dragged | 要素にいちばん近いウィンドウが `<Loop>` か `<FreezeFrame>` の中にある |
 | Not a `<Sequence>` or `<Series.Sequence>` of @celesta.studio/react | ウィンドウがほかのラッパーのもの、またはファイルが `@celesta.studio/react` からインポートしていない `Sequence` のもの |
-| Couldn't find this element in the source | プレビューが見つけた場所に、ファイルのウィンドウがもうない（保存後の再読み込みの途中など） |
+| Couldn’t find this element in the source | プレビューが見つけた場所に、ファイルのウィンドウがもうない（保存後の再読み込みの途中など） |
 | The source is still being read | 要素を選択した直後などで、Celesta が要素のソースを読んでいる |
 | Select the layer again | Celesta 自身が書き込んだ直後などで、レイヤーについて読んだ内容が古くなっている |
 | This file is outside the project | ウィンドウが、エントリファイルのフォルダの外か `node_modules` の中のファイルに書かれている |
@@ -442,7 +442,7 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 | 理由 | 意味 |
 | --- | --- |
 | Reading source… | Celesta が、今回の再読み込みに合わせてファイルを読んでいる |
-| Can't find scene `<id>` in the source | 書き下したリストに、この id のエントリがない、または 2 つ以上ある。スプレッドを含むリストのシーンも、これにあたる |
+| Can’t find scene `<id>` in the source | 書き下したリストに、この id のエントリがない、または 2 つ以上ある。スプレッドを含むリストのシーンも、これにあたる |
 | Not a `defineScenes` entry | チャプターが `listChapters()` で並べたパートのようにほかのチャプターの中にあり、その id のエントリを持つリストがない |
 | Written as an expression: `<expression>` | `S.field - S.words` のように、長さが計算されている。ツールチップの続く行には、式が読む名前が 1 つずつ、`BAR = 30` のような値か、たどれない理由とともに並ぶ |
 | Exported, so other files may read it | 長さが、ファイルがエクスポートしている `const` で、変えるとほかのファイルも変わりうる |
@@ -477,9 +477,9 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 | 理由 | 意味 |
 | --- | --- |
 | Wrap the element in a parent first | 要素がほかの要素の子ではない。コンポーネントが返すものの根元、prop の値、または `{show && <Rect />}` や `.map()` のような `{…}` の中に書かれている |
-| `Sequence` here is not Celesta's | ファイルが `Sequence` という名前をほかのものに使っている（自分の宣言、型だけのインポート、ほかのモジュールからのインポート） |
+| `Sequence` here is not Celesta’s | ファイルが `Sequence` という名前をほかのものに使っている（自分の宣言、型だけのインポート、ほかのモジュールからのインポート） |
 | No frame left after the playhead | 再生ヘッドがシーンの終わりにある |
-| Can't be set per scene yet | 要素が共有されていて、**This scene** が選ばれている。すべてのシーンにタイミングを付けるには **Shared value** を選ぶ |
+| Can’t be set per scene yet | 要素が共有されていて、**This scene** が選ばれている。すべてのシーンにタイミングを付けるには **Shared value** を選ぶ |
 | Scanning scenes… | 要素が共有されているかどうかが、走査でまだわからない。わからなかったときは「シーンを走査しているあいだ」のほかの表示になる |
 | This file is outside the project | 要素のファイルが、エントリファイルのフォルダの外か `node_modules` の中にある |
 
@@ -519,8 +519,8 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 | The parent changed; choose the item again | 親が、項目を選んだときに表示されていたものではなくなった |
 | The source changed while editing | Celesta の外での編集などで、グループが書かれていた位置からなくなった |
 | The source is still being read | 親の位置や、キャンバス上での親の座標系をまだ読んでいる |
-| Couldn't show the file dialog: `<error>` | ファイルを選ぶダイアログを開けなかった |
-| Couldn't use the chosen file: `<error>` | 選んだファイルを `assets` フォルダにコピーできなかった |
+| Couldn’t show the file dialog: `<error>` | ファイルを選ぶダイアログを開けなかった |
+| Couldn’t use the chosen file: `<error>` | 選んだファイルを `assets` フォルダにコピーできなかった |
 
 次の節の表の理由も、描いているあいだに生じたときはここに表示されます。
 
@@ -556,14 +556,14 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 | 理由 | 意味 |
 | --- | --- |
 | Select a group, or a layer inside one, to add into | 何も選択していないか、選択したレイヤーを囲むグループに親になれるものがない |
-| No group in this scene's own code to add into | **This scene** で、親になれるグループがすべて共有されている。選択した要素がコンポジションのルートに一度だけ書かれ、複数のシーンにまたがる `<Group>`（`<Scenes>` を囲むものなど）の中にある場合も該当する。このような要素には **Edits change** の切り替えがなく、Celesta は確認なしにすべてのシーンへ追加しない |
+| No group in this scene’s own code to add into | **This scene** で、親になれるグループがすべて共有されている。選択した要素がコンポジションのルートに一度だけ書かれ、複数のシーンにまたがる `<Group>`（`<Scenes>` を囲むものなど）の中にある場合も該当する。このような要素には **Edits change** の切り替えがなく、Celesta は確認なしにすべてのシーンへ追加しない |
 | The source is still being read | 再読み込みの直後などで、選択したレイヤーのソースか、キャンバス上でのグループの座標系をまだ探しているか読んでいる。再生中はグループの座標系を読まず、それで項目が選べなくなることもない。項目を選ぶと再生が止まって座標系を読み、読み終えるまでは輪郭が描かれず、離すとこの理由で断られる |
-| Scanning scenes…、Couldn't scan scenes: `<error>`、Not found in the scene scan、The scenes are not scanned | グループが共有されているかどうかがまだわからない。「編集で何が変わるかを確かめる」を参照 |
+| Scanning scenes…、Couldn’t scan scenes: `<error>`、Not found in the scene scan、The scenes are not scanned | グループが共有されているかどうかがまだわからない。「編集で何が変わるかを確かめる」を参照 |
 | 「選択肢を選べないとき」に挙げた理由 | 選択した要素で使われる **Edits change** の選択肢を選べない。以前に選んだ選択肢を選べないときと、何も選んでおらず両方とも選べないときがある。タブのツールチップにも同じ理由が表示される |
-| Can't add inside a loop or freeze frame | グループを囲むいちばん近い範囲が `<Loop>` か `<FreezeFrame>` |
-| Can't draw into a group turned in 3D | グループかその外側のグループに `rotationX`、`rotationY`、`perspective` がある |
-| Can't draw into a group scaled to zero | グループかその外側のグループの拡大率が 0 で、その中では描いたものに大きさがない |
-| `Rect` here is not Celesta's | ファイルが別の `Rect` を宣言しているか import していて、その項目だけが使えない。別の `Sequence` があるとき（**`Sequence` here is not Celesta's**）は、要素を `<Sequence>` で囲む必要があれば、すべての項目が使えない |
+| Can’t add inside a loop or freeze frame | グループを囲むいちばん近い範囲が `<Loop>` か `<FreezeFrame>` |
+| Can’t draw into a group turned in 3D | グループかその外側のグループに `rotationX`、`rotationY`、`perspective` がある |
+| Can’t draw into a group scaled to zero | グループかその外側のグループの拡大率が 0 で、その中では描いたものに大きさがない |
+| `Rect` here is not Celesta’s | ファイルが別の `Rect` を宣言しているか import していて、その項目だけが使えない。別の `Sequence` があるとき（**`Sequence` here is not Celesta’s**）は、要素を `<Sequence>` で囲む必要があれば、すべての項目が使えない |
 
 ## 元に戻す
 

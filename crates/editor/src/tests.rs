@@ -1908,7 +1908,7 @@ fn read_from(texts: &Texts) -> impl Fn(&Path) -> Result<String, String> + '_ {
         texts
             .get(path)
             .cloned()
-            .ok_or_else(|| format!("Couldn't read {}", path.display()))
+            .ok_or_else(|| format!("Couldn’t read {}", path.display()))
     }
 }
 

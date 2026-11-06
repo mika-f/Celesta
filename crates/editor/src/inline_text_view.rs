@@ -36,10 +36,10 @@ use std::ops::Range;
 const RELOADING: &str = "The code is reloading";
 /// Why a double-click on a text the shown frame recorded no box for (or one
 /// with a corner behind the viewer) does not edit.
-const NOT_DRAWN: &str = "The text isn't drawn in this frame";
+const NOT_DRAWN: &str = "The text isn’t drawn in this frame";
 /// Why a double-click on a text without a writable `text` row does not edit
 /// when nothing more precise is known.
-const NOT_EDITABLE: &str = "The text can't be edited here";
+const NOT_EDITABLE: &str = "The text can’t be edited here";
 /// Why an edit ended when the file changed outside the editor.
 const SOURCE_CHANGED: &str = "The source changed while editing";
 

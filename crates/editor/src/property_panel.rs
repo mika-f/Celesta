@@ -16,9 +16,9 @@ use crate::view::EditorView;
 use crate::widgets::{format_component_number, json_display};
 use celesta_react_bridge::{
     ComponentPropertyField, ENTRY_PROPS_FILE, PropertyInputs, PropertyIssue, effective_values,
-    import_path, resolve_props_file, set_property_text,
+    resolve_props_file, set_property_text,
 };
-use gpui_kit::{App, Context, PathPromptOptions, Subscription, Window};
+use gpui_kit::{App, Context, Subscription, Window};
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -731,54 +731,21 @@ impl EditorView {
         let props_dir = target
             .parent()
             .map_or_else(|| project_root.clone(), Path::to_path_buf);
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Choose".into()),
-        });
         let key = key.to_owned();
         let session = self.session;
-        cx.spawn(async move |view, cx| {
-            let chosen = match selection.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(error)) => {
-                    view.update(cx, |this, cx| {
-                        if this.session == session {
-                            let message = format!("Couldn’t show the file dialog: {error}");
-                            this.set_property_write_error(&key, message, cx);
-                        }
-                    })
-                    .ok();
-                    None
+        self.choose_imported_path(
+            project_root,
+            props_dir,
+            move |this| this.session == session,
+            move |this, imported, cx| match imported {
+                Ok(path) => {
+                    let value = Some(Value::String(path));
+                    this.commit_property(&key, value, TextUpdate::Always, cx);
                 }
-            };
-            let Some(chosen) = chosen else {
-                return;
-            };
-            let imported = cx
-                .background_executor()
-                .spawn(async move { import_path(&project_root, &props_dir, &chosen) })
-                .await;
-            view.update(cx, |this, cx| {
-                if this.session != session {
-                    return;
-                }
-                match imported {
-                    Ok(path) => {
-                        let value = Some(Value::String(path));
-                        this.commit_property(&key, value, TextUpdate::Always, cx);
-                    }
-                    Err(error) => {
-                        let message = format!("Couldn’t use the chosen file: {error}");
-                        this.set_property_write_error(&key, message, cx);
-                    }
-                }
-            })
-            .ok();
-        })
-        .detach();
+                Err(message) => this.set_property_write_error(&key, message, cx),
+            },
+            cx,
+        );
     }
 
     fn set_property_write_error(&mut self, key: &str, message: String, cx: &mut Context<Self>) {

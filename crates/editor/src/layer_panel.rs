@@ -470,7 +470,7 @@ impl EditorView {
                 .children(shared.map(|shared| row("Shared", shared)))
                 .children(locked.into_iter().enumerate().map(|(index, line)| {
                     row(
-                        if index == 0 { "Can't move" } else { "" },
+                        if index == 0 { "Can’t move" } else { "" },
                         text(line, foreground),
                     )
                 }))

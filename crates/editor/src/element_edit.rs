@@ -315,13 +315,13 @@ fn one_line(source: &str) -> String {
 pub(crate) fn reason_text(reason: &LockReason) -> String {
     match reason {
         LockReason::SyntaxError => "The source has syntax errors".to_owned(),
-        LockReason::ElementNotFound => "Couldn't find this element in the source".to_owned(),
+        LockReason::ElementNotFound => "Couldn’t find this element in the source".to_owned(),
         LockReason::NotPrimitive => "Set by a component, not written on this element".to_owned(),
         LockReason::Expression { source } => {
             format!("Written as an expression: {}", one_line(source))
         }
         LockReason::UnresolvedIdentifier { name } => {
-            format!("Comes from {name}, which can't be traced")
+            format!("Comes from {name}, which can’t be traced")
         }
         LockReason::SharedBinding { name, uses } => format!("{name} is used in {uses} places"),
         LockReason::BetweenKeyframes { previous, next, .. } => format!(
@@ -334,7 +334,7 @@ pub(crate) fn reason_text(reason: &LockReason) -> String {
         LockReason::OverriddenByParent => "A layout component sets this value".to_owned(),
         LockReason::Spread => "May be set by a spread ({...props})".to_owned(),
         LockReason::Repeated { count } => format!("Rendered {count} times from this element"),
-        LockReason::FrameUncertain => "Can't tell which frame this animation reads".to_owned(),
+        LockReason::FrameUncertain => "Can’t tell which frame this animation reads".to_owned(),
         LockReason::OutsideProject => "This file is outside the project".to_owned(),
         LockReason::NoStyleObject => "No style object to set this in".to_owned(),
         LockReason::StyleMaySet => "May be set by `style`".to_owned(),
@@ -342,7 +342,7 @@ pub(crate) fn reason_text(reason: &LockReason) -> String {
             format!("Comes from `<{component}>`'s caller")
         }
         LockReason::CallSiteNotFound { component } => {
-            format!("Can't find where `<{component}>` is called")
+            format!("Can’t find where `<{component}>` is called")
         }
         LockReason::Exported { .. } => "Exported, so other files may read it".to_owned(),
         LockReason::NoSceneDuration { id } => format!("Scene `{id}` has no durationInFrames"),
@@ -372,7 +372,7 @@ pub(crate) struct Resolved {
 }
 
 /// Why a window inside a `<Loop>` or `<FreezeFrame>` doesn't drag.
-pub(crate) const REMAPPED_WINDOW: &str = "Timing inside a loop or freeze frame can't be dragged";
+pub(crate) const REMAPPED_WINDOW: &str = "Timing inside a loop or freeze frame can’t be dragged";
 
 /// The values own writes put into rows; `None` removed the prop.
 type WrittenValues = Vec<(PropKey, Option<EditValue>)>;
@@ -788,7 +788,7 @@ impl EditorView {
                 .spawn(async move {
                     let read = |path: &Path| {
                         fs::read_to_string(path)
-                            .map_err(|error| format!("Couldn't read {}: {error}", path.display()))
+                            .map_err(|error| format!("Couldn’t read {}: {error}", path.display()))
                     };
                     let real = |path: &Path| fs::canonicalize(path).unwrap_or(path.to_path_buf());
                     let entry_dir = entry_dir.map(|dir| real(&dir));

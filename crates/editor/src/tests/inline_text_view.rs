@@ -166,7 +166,7 @@ fn inline_entry_skips_a_layer_without_a_text_box_while_its_lookup_is_pending() {
     for lookup in [
         SourceLookup::NotInFrame,
         SourceLookup::NoPosition,
-        SourceLookup::Failed("Couldn't look it up".to_owned()),
+        SourceLookup::Failed("Couldn’t look it up".to_owned()),
     ] {
         assert!(is_text_layer(&lookup, true), "{lookup:?}");
         assert!(!is_text_layer(&lookup, false), "{lookup:?}");
@@ -249,7 +249,7 @@ fn inline_entry_refuses_a_text_that_isn_t_drawn() {
     );
     assert_eq!(
         inline_entry(Some((&targets, &report)), false, None, false, None, None),
-        InlineEntry::Refuse("The text isn't drawn in this frame".to_owned())
+        InlineEntry::Refuse("The text isn’t drawn in this frame".to_owned())
     );
 }
 

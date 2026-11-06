@@ -138,7 +138,7 @@ pub(crate) fn grip_lock(
         match inner_target(target) {
             _ if editable(target) => None,
             EditTarget::Locked(reason) => Some(reason_text(reason)),
-            _ => Some(format!("Can't write `{name}`")),
+            _ => Some(format!("Can’t write `{name}`")),
         }
     })
 }
@@ -1318,7 +1318,7 @@ mod tests {
             ("from", literal(30.0)),
             ("durationInFrames", unresolved),
         ]);
-        let reason = "Comes from len, which can't be traced";
+        let reason = "Comes from len, which can’t be traced";
         let lock = |grip| grip_lock(TimingKind::Sequence, grip, &len);
         assert_eq!(lock(BandGrip::Start).as_deref(), Some(reason));
         assert_eq!(lock(BandGrip::End).as_deref(), Some(reason));
