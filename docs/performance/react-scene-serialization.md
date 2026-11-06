@@ -136,14 +136,21 @@ in CI, and within ±9% in local GPU time with nothing marked.
 
 ## Reproduce
 
-Build packages/react and the exporter:
+Build packages/react, the exporter, and the codec plugin it exports through:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm --dir packages/react run codegen --locked
 pnpm run build:runtime
+node scripts/plugins/build.mts plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release -p celesta-exporter
 ```
+
+Building the codec plugin needs FFmpeg 8's development files where pkg-config
+finds them: `PKG_CONFIG_PATH` pointing at its `lib/pkgconfig` (with Homebrew,
+`$(brew --prefix ffmpeg@8)/lib/pkgconfig`), or, on Windows, `VCPKG_ROOT`. See
+the build-from-source guide or [HANDOFF.md's setup](../../HANDOFF.md#development-setup).
 
 Save this preload as `stringify-probe.mjs`:
 

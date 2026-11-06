@@ -1,0 +1,16 @@
+{
+  "name": "celesta-plugin-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The shared plugin build script (scripts/plugins/build.mts) and its helpers: a plugin's platform from rustc, its Cargo workspace from cargo metadata, its celesta-plugin.json, and its license files; the version bump script (bump-version.mts) with its helper version.mts; the list of the plugins a change affects (affected.mts), from each plugin's inputs in the Cargo and pnpm dependency graphs and turbo.json (inputs.mts, lockfile.mts); and the skipped tests in a cargo test log (libtest.mts), for scripts/report-skipped-tests.mts. Node runs them as they are, stripping their types.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "test": "tsc -p test && vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.6",
+    "typescript": "^5.8.0",
+    "vitest": "^5.0.3"
+  }
+}

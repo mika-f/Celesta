@@ -150,7 +150,9 @@ impl FoundPlugins {
         } else {
             format!(
                 "No codec plugin was found, {consequence}. Install Celesta's {} plugin, or \
-                 reinstall Celesta.",
+                 reinstall Celesta. In a source checkout, build it with node \
+                 scripts/plugins/build.mts plugins/ffmpeg and add the absolute path of \
+                 plugins/dist to CELESTA_PLUGIN_PATH before starting Celesta.",
                 celesta_plugin_host::CODEC_PROGRAM
             )
         }
@@ -565,11 +567,19 @@ mod tests {
         };
         let problem = missing.problem().unwrap();
         assert_eq!(problem.title, "No codec plugin can run");
-        assert!(
-            problem.detail.contains("celesta-codec-ffmpeg"),
-            "{}",
-            problem.detail
-        );
+        for expected in [
+            "celesta-codec-ffmpeg",
+            "node scripts/plugins/build.mts plugins/ffmpeg",
+            "absolute path of plugins/dist",
+            "CELESTA_PLUGIN_PATH",
+            "reinstall Celesta",
+        ] {
+            assert!(
+                problem.detail.contains(expected),
+                "{expected}: {}",
+                problem.detail
+            );
+        }
         let skipped = FoundPlugins {
             skipped: vec!["a was skipped".into()],
             ..missing.clone()

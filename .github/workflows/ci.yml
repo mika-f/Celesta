@@ -67,7 +67,6 @@ jobs:
       run:
         # bash -e stops at the first failing command; Windows pwsh steps would not.
         shell: bash
-    # The first Windows run builds FFmpeg and its encoders with vcpkg before the cache exists.
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7.0.1
@@ -79,23 +78,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev libxkbcommon-x11-dev libfontconfig-dev mesa-vulkan-drivers
-
-      # Installing FFmpeg takes about two minutes on macOS (Homebrew), so the
-      # Rust toolchain, Node.js, and the JS packages install meanwhile.
-      # rust-cache waits for it: FFMPEG_VERSION is part of its key, and a
-      # background step's environment reaches later steps only after a wait.
-      # It starts after the Linux packages, as both use apt.
-      - id: ffmpeg
-        if: runner.os != 'Windows'
-        uses: $/.github/actions/setup-ffmpeg
-        background: true
-
-      # Windows only downloads the pre-built package (about 10 seconds), and
-      # there a background composite action fails now and then: the runner
-      # rewrites event.json as each step starts, and two steps starting at
-      # once collide on the file lock (actions/runner#4641).
-      - if: runner.os == 'Windows'
-        uses: $/.github/actions/setup-ffmpeg
 
       # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
       - name: Isolate Rust toolchain
@@ -120,15 +102,10 @@ jobs:
       - name: Install JS packages
         run: pnpm install --frozen-lockfile
 
-      # FFmpeg is the only background step so far; Windows has none to wait
-      # for, and `wait` does not take `if`.
-      - wait-all:
-
       # Pull requests restore main's cache; saving their own copies only
       # crowds main's entries out of the repository's cache quota.
       - uses: Swatinem/rust-cache@v2.9.3
         with:
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # After rust-cache, which restores ~/.cargo/bin, where it installs.
@@ -154,6 +131,16 @@ jobs:
           pnpm --dir templates test
           pnpm --dir packages/website test
           pnpm --dir packages/exporter test
+          # The plugin scripts' own tests. Here rather than in the plugins
+          # job: they check examples/plugins too, and must run on every pull
+          # request on every system.
+          pnpm --dir scripts/plugins test
+
+      # The macOS packaging script's own checks, beside the scripts' tests.
+      # They mock no Apple tool, so they run anywhere; Linux runs them once.
+      - name: Test the macOS packaging checks
+        if: runner.os == 'Linux'
+        run: python3 scripts/test_package_macos.py
 
       # Type checks have no timeouts, so they run beside the Rust build and
       # use the cores it leaves idle while it links.
@@ -199,12 +186,12 @@ jobs:
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo clippy -p celesta-composition -p celesta-project --all-targets --features codegen --locked -- -D warnings
 
-      # A test that cannot run here passes after printing "skipping ...", so
-      # list those as warnings and in the job summary rather than leave them
-      # hidden among the passes.
+      # A test that cannot run here passes after printing "skipping ..." or
+      # "skipped: ...", so list those as warnings and in the job summary
+      # rather than leave them hidden among the passes.
       - name: Report skipped tests
         if: ${{ !cancelled() }}
-        run: node scripts/report-skipped-tests.mjs target/nextest/ci/junit.xml
+        run: node scripts/report-skipped-tests.mts target/nextest/ci/junit.xml
 
       - name: Upload Cargo build timings
         if: always()
@@ -215,89 +202,204 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # The VRM plugin is a Cargo workspace of its own (plugins/vrm), which the
-  # root workspace excludes, so the test job never builds it.
-  vrm-plugin:
-    name: VRM plugin
-    runs-on: ubuntu-latest
+  # The first-party plugins (the VRM plugin and the FFmpeg codec) are members
+  # of the plugins workspace (plugins/Cargo.toml), which the root workspace
+  # excludes, so the test job never builds them. Each job first finds the
+  # plugins a change affects, from the Cargo and pnpm dependency graphs, and
+  # tests those on every system the test job runs on. Every later step is
+  # gated on that list rather than the job: a job-level if on a matrix job
+  # reports one unexpanded check name, so with nothing affected the three
+  # checks still report and pass. A push to main and a manual run test every
+  # plugin. Windows builds and tests them natively, so no Linux step checks
+  # them against the Windows target.
+  plugins:
+    name: Plugins (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+          - name: macOS arm64
+            os: macos-latest
+          - name: Linux x64
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
+        # bash -e stops at the first failing command; Windows pwsh steps would not.
         shell: bash
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7.0.1
 
-      # Its tests draw through the GPU renderer: fonts, and Mesa's software
-      # Vulkan driver (lavapipe) so they run without a GPU.
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libfontconfig-dev mesa-vulkan-drivers
+      # The checkout's HEAD is the pull request's merge commit onto this
+      # base, so the diff between the two is the pull request's change.
+      - name: Fetch the pull request's base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
 
-      # The renderer, a dev-dependency, links FFmpeg.
-      - uses: $/.github/actions/setup-ffmpeg
-
-      # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
+      # The toolchains install before the affected plugins are known, since
+      # finding them runs cargo metadata and pnpm ls. rust-cache hashes every
+      # installed toolchain; exclude the runner's moving stable.
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
 
-      # With the Windows target, for "Check for Windows" below.
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: 1.99.1
           components: clippy, rustfmt
-          targets: x86_64-pc-windows-msvc
 
-      # The root workspace's target/ holds the codegen build:runtime runs.
-      - uses: Swatinem/rust-cache@v2.9.3
-        with:
-          workspaces: |
-            plugins/vrm -> target
-            . -> target
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # Node.js and pnpm as mise.lock pins them, for <Vrm> and the build.
+      # Node.js and pnpm as mise.lock pins them, for the scripts, <Vrm>, and
+      # the build.
       - uses: jdx/mise-action@v5.2.6
         with:
           version: 2026.10.25
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
+      # Off pull requests BASE_SHA is empty, and every plugin is affected.
+      - id: affected
+        name: Find the affected plugins
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            node scripts/plugins/affected.mts --base "$BASE_SHA" --github-output
+          else
+            node scripts/plugins/affected.mts --github-output
+          fi
+
+      # The tests draw through the GPU renderer: fonts, and Mesa's software
+      # Vulkan driver (lavapipe) so they run without a GPU.
+      - name: Install Linux dependencies
+        if: steps.affected.outputs.any == 'true' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfontconfig-dev mesa-vulkan-drivers
+
+      # Only the codec links FFmpeg, but it is set up whenever any plugin is
+      # affected: rust-cache keys on FFMPEG_VERSION and FFMPEG_FEATURES, and
+      # only main saves, where every plugin runs with FFmpeg; a job without
+      # it would hash empty values, miss main's cache, and build cold.
+      # Installing it takes about two minutes on macOS (Homebrew), so the JS
+      # packages install meanwhile.
+      # rust-cache waits for it: a background step's environment reaches
+      # later steps only after a wait. It starts after the Linux packages, as
+      # both use apt.
+      - id: ffmpeg
+        if: steps.affected.outputs.any == 'true' && runner.os != 'Windows'
+        uses: $/.github/actions/setup-ffmpeg
+        background: true
+
+      # Windows only downloads the pre-built package (about 10 seconds), and
+      # there a background composite action fails now and then: the runner
+      # rewrites event.json as each step starts, and two steps starting at
+      # once collide on the file lock (actions/runner#4641).
+      - if: steps.affected.outputs.any == 'true' && runner.os == 'Windows'
+        uses: $/.github/actions/setup-ffmpeg
+
       - name: Install JS packages
+        if: steps.affected.outputs.js != ''
         run: pnpm install --frozen-lockfile
 
+      # FFmpeg is the only background step so far; Windows, and any job with
+      # nothing affected, has none to wait for, and `wait` does not take `if`.
+      - wait-all:
+
+      # The plugins workspace's target/ only. The root workspace's codegen,
+      # which build:runtime runs for a plugin with a JS package, compiles
+      # cold here: caching the root target/ again beside the Test job's
+      # copy, on three systems, crowds the repository's cache quota, and the
+      # Test job keeps the root cache.
+      # No key: the three jobs share the job id, and rust-cache's key hashes
+      # rustc -vV, whose host triple differs per system.
+      - uses: Swatinem/rust-cache@v2.9.3
+        if: steps.affected.outputs.any == 'true'
+        with:
+          workspaces: plugins -> target
+          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       # <Vrm> imports @celesta.studio/react and @celesta.studio/character, and the build
-      # checks its declarations against the runtime's project types. As in
-      # the test job, codegen runs first to add --locked.
+      # checks a module's declarations against the runtime's project types,
+      # so only a plugin with a JS package needs them. As in the test job,
+      # codegen runs first to add --locked.
       - name: Build Celesta packages
+        if: steps.affected.outputs.js != ''
         run: |
           pnpm --dir packages/react run codegen --locked
           pnpm run build:runtime
 
-      # Before the Rust steps, which take longer. Its type check covers
-      # demo.tsx too.
-      - name: Test the component
-        run: pnpm --filter celesta-plugin-vrm-js test
+      # Before the Rust steps, which take longer. VRM's type check covers
+      # demo.tsx too. JS holds one --filter per plugin, so it stays unquoted.
+      - name: Test the components
+        if: steps.affected.outputs.js != ''
+        env:
+          JS: ${{ steps.affected.outputs.js }}
+        run: pnpm $JS test
 
+      # CARGO_WORKSPACES holds one "<workspace> -p <package> ..." line per
+      # Cargo workspace; the empty-line guard keeps a trailing newline from
+      # running Cargo at the repository root, and /dev/null keeps Cargo from
+      # reading the remaining lines.
+      # Run in the workspace's directory, cargo fmt -p checks those members
+      # and not the root crates they depend on by path (--all would). With
+      # --manifest-path on the virtual manifest and no -p, it finds no
+      # targets once the workspace has two members. Linux only, as in the
+      # test job.
       - name: Format
-        run: cargo fmt --manifest-path plugins/vrm/Cargo.toml --check
+        if: steps.affected.outputs.cargo != '' && runner.os == 'Linux'
+        env:
+          CARGO_WORKSPACES: ${{ steps.affected.outputs.cargo }}
+        run: |
+          while read -r workspace packages; do
+            [ -n "$workspace" ] || continue
+            (cd "$workspace" && cargo fmt --check $packages) < /dev/null
+          done <<< "$CARGO_WORKSPACES"
 
+      # Linux only, as in the test job: little code is behind a cfg for one OS.
       - name: Clippy
-        run: cargo clippy --manifest-path plugins/vrm/Cargo.toml --all-targets --locked -- -D warnings
-
-      # Users build the plugin on Windows themselves, and its code has
-      # branches for other platforms than Unix. Checking needs no linker, and
-      # the library and program use no C code, so the Windows target checks
-      # here; the tests' dev-dependencies (FFmpeg) are left out.
-      - name: Check for Windows
-        run: cargo check --manifest-path plugins/vrm/Cargo.toml --locked --target x86_64-pc-windows-msvc --lib --bins
+        if: steps.affected.outputs.cargo != '' && runner.os == 'Linux'
+        env:
+          CARGO_WORKSPACES: ${{ steps.affected.outputs.cargo }}
+        run: |
+          while read -r workspace packages; do
+            [ -n "$workspace" ] || continue
+            (cd "$workspace" && cargo clippy $packages --all-targets --locked -- -D warnings) < /dev/null
+          done <<< "$CARGO_WORKSPACES"
 
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
+      # cargo test rather than nextest: the VRM plugin's process target sets
+      # harness = false, which nextest cannot list. --show-output keeps
+      # passing tests' output in the log, where the next step finds
+      # self-skipped tests.
       - name: Test
-        run: env CELESTA_REQUIRE_GPU=1 cargo test --manifest-path plugins/vrm/Cargo.toml --locked
+        if: steps.affected.outputs.cargo != ''
+        env:
+          CARGO_WORKSPACES: ${{ steps.affected.outputs.cargo }}
+          CELESTA_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '0' }}
+        run: |
+          while read -r workspace packages; do
+            [ -n "$workspace" ] || continue
+            (cd "$workspace" && cargo test $packages --locked --no-fail-fast -- --show-output) < /dev/null 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log"
+          done <<< "$CARGO_WORKSPACES"
 
-      - name: Build the plugin directory
-        run: node plugins/vrm/build.mjs
+      # A test that cannot run here (on macOS or Windows, or without
+      # CELESTA_VRM_SAMPLES_DIR) passes after printing "skipping ..." or
+      # "skipped: ...", so list those as warnings and in the job summary
+      # rather than leave them hidden among the passes.
+      - name: Report skipped tests
+        if: ${{ !cancelled() && steps.affected.outputs.cargo != '' }}
+        run: node scripts/report-skipped-tests.mts "$RUNNER_TEMP/cargo-test.log"
+
+      # DIRECTORIES holds one folder per plugin, so it stays unquoted.
+      - name: Build the plugin directories
+        if: steps.affected.outputs.any == 'true'
+        env:
+          DIRECTORIES: ${{ steps.affected.outputs.directories }}
+        run: node scripts/plugins/build.mts $DIRECTORIES
 
   # Packages for Windows and macOS without signing them, so packaging breaks
   # here rather than at release time, and saves the release-profile Rust cache

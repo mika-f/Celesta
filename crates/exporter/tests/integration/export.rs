@@ -1,20 +1,20 @@
 use std::path::{Path, PathBuf};
 
-use celesta_codec_ffmpeg::FfmpegBackend;
+use celesta_codec_test::{
+    StoredAudio, StoredVideo, TestCodec, TestMedia, write_audio, write_rgba_video,
+};
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{
-    AudioLoudness, BitDepth, ColorConversion, EncoderPreset, ExportCancellation, ExportError,
-    ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, Exporter, LoudnessTarget,
+    AudioLoudness, BitDepth, ColorConversion, ExportCancellation, ExportError, ExportJob,
+    ExportOptions, ExportProgress, ExportRange, ExportedFile, Exporter, LoudnessTarget,
     ReactRuntimeOptions, VideoEncoding, VideoFormat,
 };
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{AudioDecoder, VideoFrameDecoder, measure_loudness};
+use celesta_media::{CodecProvider, Container, PixelFormat, measure_loudness};
 use celesta_project::{
-    Animatable, Asset, AssetSource, DuckGroups, Project, ProjectDuck, TimelineContent,
-    TimelineItem, Track, TrackKind,
+    Animatable, AnimatablePoint, Asset, AssetSource, DuckGroups, Project, ProjectDuck,
+    TimelineContent, TimelineItem, Track, TrackKind, Transform,
 };
-use ez_ffmpeg::stream_info::{StreamInfo, find_audio_stream_info, find_video_stream_info};
-use ez_ffmpeg::{FfmpegContext, Input, Output};
 use strum::VariantArray;
 
 /// Reports a test skipped for want of a GPU adapter, or fails it when
@@ -27,31 +27,34 @@ fn skip_without_gpu(error: &impl std::fmt::Display) {
     eprintln!("skipping live export test: no GPU adapter is available: {error}");
 }
 
-/// Renders a synthetic `lavfi` source to a lossless MKV fixture through the
-/// linked FFmpeg libraries, forcing the output frame rate so the container
-/// records a real frame-duration hint.
-fn generate_source(path: &Path, lavfi: &str, fps: (i32, i32)) {
-    FfmpegContext::builder()
-        .input(Input::from(lavfi).set_format("lavfi"))
-        .output(
-            Output::from(path.to_string_lossy().into_owned())
-                .set_video_codec("ffv1")
-                .set_framerate(fps.0, fps.1),
-        )
-        .build()
-        .unwrap()
-        .start()
-        .unwrap()
-        .wait()
-        .unwrap();
+/// What the test codec stored in `path`: the frames its encoder was given
+/// and the audio muxed in, as they were.
+fn read(path: &Path) -> TestMedia {
+    celesta_codec_test::read(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
-#[test]
-fn exports_frame_exact_mp4_with_silent_audio() {
-    let directory = tempfile::tempdir().unwrap();
-    let output = directory.path().join("export.mp4");
-    let source = directory.path().join("source.mkv");
-    generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
+fn stored_video(media: &TestMedia) -> &StoredVideo {
+    media.video.as_ref().expect("the export has video")
+}
+
+fn stored_audio(media: &TestMedia) -> &StoredAudio {
+    media.audio.as_ref().expect("the export has audio")
+}
+
+/// A 64x64, 2 fps, 8 kHz project whose only item plays `source.ctc`, a 64x64
+/// video of one solid frame of each of `colors` in turn, over the whole
+/// canvas for as long as it lasts.
+fn solid_video_project(dir: &Path, colors: &[[u8; 4]]) -> Project {
+    let frames: Vec<Vec<u8>> = colors.iter().map(|color| color.repeat(64 * 64)).collect();
+    write_rgba_video(
+        &dir.join("source.ctc"),
+        64,
+        64,
+        Rational::new(2, 1),
+        &frames,
+    )
+    .unwrap();
+    let duration = Time::new(colors.len() as i64, 2);
 
     let mut project =
         Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
@@ -59,13 +62,13 @@ fn exports_frame_exact_mp4_with_silent_audio() {
     project.settings.height = 64;
     project.settings.frame_rate = Rational::new(2, 1);
     project.settings.sample_rate = 8_000;
-    project.settings.duration = Some(Time::new(1, 1));
+    project.settings.duration = Some(duration);
     project.assets.insert(
         "source".to_owned(),
         Asset::Video {
             name: Some("Source".to_owned()),
             source: AssetSource::File {
-                path: "source.mkv".to_owned(),
+                path: "source.ctc".to_owned(),
             },
         },
     );
@@ -82,7 +85,7 @@ fn exports_frame_exact_mp4_with_silent_audio() {
             name: Some("Video".to_owned()),
             range: TimeRange {
                 start: Time::ZERO,
-                duration: Time::new(1, 1),
+                duration,
             },
             content: TimelineContent::Video {
                 asset: "source".to_owned(),
@@ -94,16 +97,54 @@ fn exports_frame_exact_mp4_with_silent_audio() {
                 duck: None,
             },
             enabled: None,
-            transform: None,
+            // Centered on the canvas, so it covers every pixel.
+            transform: Some(Transform {
+                position: Some(AnimatablePoint {
+                    x: Some(Animatable::Static(32.0)),
+                    y: Some(Animatable::Static(32.0)),
+                }),
+                ..Transform::default()
+            }),
             opacity: None,
             blend_mode: None,
             effects: None,
         }],
     });
+    project
+}
+
+/// Fails at the first pixel of the 64x64 RGBA8 `frame` that is not `color`.
+fn assert_solid(frame: &[u8], color: [u8; 4], what: &str) {
+    assert_eq!(frame.len(), 64 * 64 * 4, "{what}: frame size");
+    if let Some((index, pixel)) = frame
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .enumerate()
+        .find(|(_, pixel)| **pixel != color)
+    {
+        panic!(
+            "{what}: pixel ({}, {}) is {pixel:?}, not {color:?}",
+            index % 64,
+            index / 64
+        );
+    }
+}
+
+#[test]
+fn exports_frame_exact_mp4_with_silent_audio() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("export.mp4");
+    let colors = [[200, 40, 90, 255], [30, 160, 220, 255]];
+    let project = solid_video_project(directory.path(), &colors);
 
     let exporter = crate::exporter(ExportOptions {
         overwrite: false,
         range: None,
+        video: VideoEncoding {
+            color_conversion: ColorConversion::Encoder,
+            ..VideoEncoding::default()
+        },
         ..ExportOptions::default()
     });
     match exporter.export_project(&project, directory.path(), &output) {
@@ -115,46 +156,25 @@ fn exports_frame_exact_mp4_with_silent_audio() {
         Err(error) => panic!("export failed: {error}"),
     }
 
-    let url = output.to_string_lossy().into_owned();
-    let Some(StreamInfo::Video {
-        width,
-        height,
-        avg_frame_rate,
-        ..
-    }) = find_video_stream_info(&url).unwrap()
-    else {
-        panic!("exported file has no video stream");
-    };
-    assert_eq!((width, height), (64, 64));
+    // The encoder gets each frame as rendered: the source's colors, opaque.
+    let media = read(&output);
+    assert_eq!(media.container, Some(Container::Mp4));
+    let video = stored_video(&media);
     assert_eq!(
-        (avg_frame_rate.num, avg_frame_rate.den),
-        (2, 1),
-        "exported frame rate"
+        (video.width, video.height, video.frame_rate, video.format),
+        (64, 64, Rational::new(2, 1), PixelFormat::Rgba8)
     );
-    let Some(StreamInfo::Audio {
-        sample_rate,
-        nb_channels,
-        ..
-    }) = find_audio_stream_info(&url).unwrap()
-    else {
-        panic!("exported file has no (silent) audio stream");
-    };
-    assert_eq!((sample_rate, nb_channels), (8_000, 2));
-
-    // The two rendered frames are distinct decoded frames carrying the
-    // testsrc2 pattern (not a flat fill).
-    let mut decoder = FfmpegBackend::new();
-    let first_frame = decoder.decode_frame(&output, 0.0).unwrap();
-    let second_frame = decoder.decode_frame(&output, 0.5).unwrap();
+    assert_eq!(video.frames.len(), 2);
+    for (index, (frame, color)) in video.frames.iter().zip(colors).enumerate() {
+        assert_solid(frame, color, &format!("frame {index}"));
+    }
+    let audio = stored_audio(&media);
+    assert_eq!((audio.sample_rate, audio.channels), (8_000, 2));
+    assert_eq!(audio.samples.len(), 8_000 * 2, "one second of stereo");
     assert!(
-        first_frame
-            .pixels
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .any(|pixel| { pixel[0] != pixel[1] || pixel[1] != pixel[2] || pixel[0] != 0 })
+        audio.samples.iter().all(|&sample| sample == 0.0),
+        "the mix is not silent"
     );
-    assert_ne!(first_frame.pixels, second_frame.pixels);
 
     let cancelled_output = directory.path().join("cancelled.mp4");
     let cancellation = ExportCancellation::default();
@@ -180,57 +200,16 @@ fn exports_frame_exact_mp4_with_silent_audio() {
 #[test]
 fn exports_only_the_selected_range_shifted_to_zero() {
     let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("source.mkv");
     // Four distinct frames at 2 fps over two seconds.
-    generate_source(&source, "testsrc2=size=64x64:rate=2:duration=2", (2, 1));
-
-    let mut project =
-        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
-    project.settings.width = 64;
-    project.settings.height = 64;
-    project.settings.frame_rate = Rational::new(2, 1);
-    project.settings.sample_rate = 8_000;
-    project.settings.duration = Some(Time::new(2, 1));
-    project.assets.insert(
-        "source".to_owned(),
-        Asset::Video {
-            name: Some("Source".to_owned()),
-            source: AssetSource::File {
-                path: "source.mkv".to_owned(),
-            },
-        },
+    let project = solid_video_project(
+        directory.path(),
+        &[
+            [200, 40, 90, 255],
+            [30, 160, 220, 255],
+            [250, 210, 20, 255],
+            [90, 90, 90, 255],
+        ],
     );
-    project.tracks.push(Track {
-        id: "video".to_owned(),
-        name: "Video".to_owned(),
-        kind: TrackKind::Video,
-        enabled: None,
-        locked: None,
-        muted: None,
-        solo: None,
-        items: vec![TimelineItem {
-            id: "video-clip".to_owned(),
-            name: Some("Video".to_owned()),
-            range: TimeRange {
-                start: Time::ZERO,
-                duration: Time::new(2, 1),
-            },
-            content: TimelineContent::Video {
-                asset: "source".to_owned(),
-                source_range: None,
-                playback_rate: None,
-                volume: None,
-                muted: None,
-                duck_group: None,
-                duck: None,
-            },
-            enabled: None,
-            transform: None,
-            opacity: None,
-            blend_mode: None,
-            effects: None,
-        }],
-    });
 
     let full_output = directory.path().join("full.mp4");
     let full = crate::exporter(ExportOptions {
@@ -257,31 +236,40 @@ fn exports_only_the_selected_range_shifted_to_zero() {
     .export_project(&project, directory.path(), &windowed_output)
     .expect("windowed export");
 
-    let url = windowed_output.to_string_lossy().into_owned();
-    let Some(StreamInfo::Video {
-        width,
-        height,
-        avg_frame_rate,
-        nb_frames,
-        ..
-    }) = find_video_stream_info(&url).unwrap()
-    else {
-        panic!("windowed export has no video stream");
-    };
-    assert_eq!((width, height), (64, 64));
-    assert_eq!((avg_frame_rate.num, avg_frame_rate.den), (2, 1));
-    // 1.0s .. 2.0s at 2 fps: two frames, not the full timeline's four.
-    assert_eq!(nb_frames, 2);
-    assert!(find_audio_stream_info(&url).unwrap().is_some());
-
-    // The window is shifted to start at the file's 00:00, so its first frame
-    // is the full export's frame at 1.0s, not the one at 0.0s.
-    let mut decoder = FfmpegBackend::new();
-    let windowed_first = decoder.decode_frame(&windowed_output, 0.0).unwrap();
-    assert_ne!(
-        windowed_first.pixels,
-        decoder.decode_frame(&full_output, 0.0).unwrap().pixels
+    let (full, windowed) = (read(&full_output), read(&windowed_output));
+    let (full_video, windowed_video) = (stored_video(&full), stored_video(&windowed));
+    assert_eq!(
+        (
+            windowed_video.width,
+            windowed_video.height,
+            windowed_video.frame_rate
+        ),
+        (64, 64, Rational::new(2, 1))
     );
+    // 1.0s .. 2.0s at 2 fps: two frames, not the full timeline's four.
+    assert_eq!(full_video.frames.len(), 4);
+    assert_eq!(windowed_video.frames.len(), 2);
+    assert!(windowed.audio.is_some());
+    // Every full-export frame differs from the others, so matching frames 2
+    // and 3 below cannot pass with frames from anywhere else.
+    for (index, frame) in full_video.frames.iter().enumerate() {
+        for (other, other_frame) in full_video.frames.iter().enumerate().skip(index + 1) {
+            assert!(
+                frame != other_frame,
+                "the full export's frames {index} and {other} are the same"
+            );
+        }
+    }
+
+    // The window is shifted to start at the file's 00:00, so its frames are
+    // the full export's frames at 1.0s and 1.5s.
+    for (index, frame) in windowed_video.frames.iter().enumerate() {
+        assert!(
+            *frame == full_video.frames[index + 2],
+            "windowed frame {index} is not the full export's frame {}",
+            index + 2
+        );
+    }
 }
 
 #[test]
@@ -335,75 +323,23 @@ fn workspace_root() -> PathBuf {
 }
 
 #[test]
-fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
+fn color_conversion_decides_the_frames_the_encoder_gets() {
     let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("source.mkv");
-    generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
+    let project = solid_video_project(directory.path(), &[[200, 40, 90, 255], [30, 160, 220, 255]]);
 
-    let mut project =
-        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
-    project.settings.width = 64;
-    project.settings.height = 64;
-    project.settings.frame_rate = Rational::new(2, 1);
-    project.settings.sample_rate = 8_000;
-    project.settings.duration = Some(Time::new(1, 1));
-    project.assets.insert(
-        "source".to_owned(),
-        Asset::Video {
-            name: None,
-            source: AssetSource::File {
-                path: "source.mkv".to_owned(),
-            },
-        },
-    );
-    project.tracks.push(Track {
-        id: "video".to_owned(),
-        name: "Video".to_owned(),
-        kind: TrackKind::Video,
-        enabled: None,
-        locked: None,
-        muted: None,
-        solo: None,
-        items: vec![TimelineItem {
-            id: "video-clip".to_owned(),
-            name: None,
-            range: TimeRange {
-                start: Time::ZERO,
-                duration: Time::new(1, 1),
-            },
-            content: TimelineContent::Video {
-                asset: "source".to_owned(),
-                source_range: None,
-                playback_rate: None,
-                volume: None,
-                muted: None,
-                duck_group: None,
-                duck: None,
-            },
-            enabled: None,
-            transform: None,
-            opacity: None,
-            blend_mode: None,
-            effects: None,
-        }],
-    });
-
-    // Lossless encodes, so any difference comes from the conversion itself.
     let export = |color_conversion, bit_depth, name: &str| {
         let output = directory.path().join(name);
         let result = crate::exporter(ExportOptions {
             video: VideoEncoding {
-                preset: EncoderPreset::Ultrafast,
-                crf: 0,
                 color_conversion,
                 bit_depth,
+                ..VideoEncoding::default()
             },
             ..ExportOptions::default()
         })
         .export_project(&project, directory.path(), &output);
         result.map(|()| output)
     };
-    let mut pixel_formats: Vec<i32> = Vec::new();
     for &bit_depth in BitDepth::VARIANTS {
         let on_gpu = match export(
             ColorConversion::Gpu,
@@ -428,42 +364,29 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
         )
         .unwrap();
 
-        let mut decoder = FfmpegBackend::new();
-        for time in [0.0, 0.5] {
-            let gpu = decoder.decode_frame(&on_gpu, time).unwrap();
-            let encoder = decoder.decode_frame(&in_encoder, time).unwrap();
-            assert_eq!(gpu.pixels.len(), encoder.pixels.len());
-            let difference: u64 = gpu
-                .pixels
-                .iter()
-                .zip(encoder.pixels.iter())
-                .map(|(left, right)| u64::from(left.abs_diff(*right)))
-                .sum();
-            let mean = difference as f64 / gpu.pixels.len() as f64;
-            // The two differ only in how chroma is filtered at color edges.
+        // On the GPU the frames arrive as 4:2:0 YUV (64x64 luma and two 32x32
+        // chroma planes, 16 bits a sample for 10 bits); else as RGBA of enough
+        // bits for the depth, for the encoder to convert.
+        let (gpu_format, gpu_bytes, encoder_format, encoder_bytes) = match bit_depth {
+            BitDepth::Eight => (PixelFormat::Yuv420p, 6_144, PixelFormat::Rgba8, 16_384),
+            BitDepth::Ten => (PixelFormat::Yuv420p10, 12_288, PixelFormat::Rgba16, 32_768),
+        };
+        for (output, format, bytes) in [
+            (&on_gpu, gpu_format, gpu_bytes),
+            (&in_encoder, encoder_format, encoder_bytes),
+        ] {
+            let media = read(output);
+            let video = stored_video(&media);
+            let name = output.file_name().unwrap().display();
+            assert_eq!(video.format, format, "{name}");
+            assert_eq!(video.frames.len(), 2, "{name}");
             assert!(
-                mean < 2.0,
-                "{bit_depth}-bit: mean difference {mean} at {time}s"
+                video.frames.iter().all(|frame| frame.len() == bytes),
+                "{name}: frames of {:?} bytes, not {bytes}",
+                video.frames.iter().map(Vec::len).collect::<Vec<_>>()
             );
         }
-        for output in [&on_gpu, &in_encoder] {
-            let url = output.to_string_lossy().into_owned();
-            let Some(StreamInfo::Video { pixel_format, .. }) =
-                find_video_stream_info(&url).unwrap()
-            else {
-                panic!("exported file has no video stream");
-            };
-            pixel_formats.push(pixel_format);
-        }
     }
-    // yuv420p (AV_PIX_FMT_YUV420P is 0) for 8 bits; another, the same for
-    // both conversions, for 10.
-    let [eight_gpu, eight_encoder, ten_gpu, ten_encoder] = pixel_formats[..] else {
-        panic!("{pixel_formats:?}");
-    };
-    assert_eq!((eight_gpu, eight_encoder), (0, 0));
-    assert_eq!(ten_gpu, ten_encoder);
-    assert_ne!(ten_gpu, 0);
 }
 
 /// A 64x64, 2 fps, one-second project whose only item is a 64x64 image of
@@ -544,171 +467,71 @@ fn export_as(project: &Project, dir: &Path, format: VideoFormat, name: &str) -> 
     }
 }
 
-/// The first video frame of `path` as `rgba64le` samples, decoded with
-/// `decoder` when given (FFmpeg's native VP9 decoder drops the alpha plane).
-fn decode_rgba64(path: &Path, decoder: Option<&str>) -> Vec<u16> {
-    let raw = path.with_extension("rgba64");
-    let mut input = Input::from(path.to_string_lossy().into_owned());
-    if let Some(decoder) = decoder {
-        input = input.set_video_codec(decoder);
+/// The pixel at `(x, y)` of a 64x64 `Rgba16` frame.
+fn rgba16_pixel(frame: &[u8], x: usize, y: usize) -> [u16; 4] {
+    let start = (y * 64 + x) * 8;
+    let (channels, _) = frame[start..start + 8].as_chunks::<2>();
+    std::array::from_fn(|channel| u16::from_le_bytes(channels[channel]))
+}
+
+#[test]
+fn alpha_formats_store_straight_16_bit_frames() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = transparent_project(directory.path());
+    for (format, name, container) in [
+        (VideoFormat::Mov, "clip.mov", Container::Mov),
+        (VideoFormat::Webm, "clip.webm", Container::Webm),
+    ] {
+        let Some(output) = export_as(&project, directory.path(), format, name) else {
+            return;
+        };
+        let media = read(&output);
+        assert_eq!(media.container, Some(container), "{format}");
+        let video = stored_video(&media);
+        assert_eq!(video.format, PixelFormat::Rgba16, "{format}");
+
+        // The red quadrant keeps its straight color and half alpha, within
+        // one 8-bit code of the half-float canvas; undrawn pixels are fully
+        // transparent.
+        let (inside, outside) = (
+            rgba16_pixel(&video.frames[0], 8, 8),
+            rgba16_pixel(&video.frames[0], 48, 48),
+        );
+        let near = |value: u16, expected: u16| value.abs_diff(expected) <= 257;
+        assert!(
+            near(inside[0], 65_535)
+                && near(inside[1], 0)
+                && near(inside[2], 0)
+                && near(inside[3], 32_896),
+            "{format}: {inside:?}"
+        );
+        assert_eq!(outside, [0; 4], "{format}");
     }
-    FfmpegContext::builder()
-        .input(input)
-        .output(
-            Output::from(raw.to_string_lossy().into_owned())
-                .add_stream_map("0:v:0")
-                .set_format("rawvideo")
-                .set_pix_fmt("rgba64le")
-                .set_max_video_frames(1),
-        )
-        .build()
-        .unwrap()
-        .start()
-        .unwrap()
-        .wait()
-        .unwrap();
-    std::fs::read(raw)
-        .unwrap()
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|&sample| u16::from_le_bytes(sample))
+}
+
+/// `seconds` of mono samples at `sample_rate`, each `signal` of its time.
+fn generate(sample_rate: u32, seconds: f64, signal: impl Fn(f64) -> f64) -> Vec<f32> {
+    let rate = f64::from(sample_rate);
+    let frames = (seconds * rate).round() as usize;
+    (0..frames)
+        .map(|frame| signal(frame as f64 / rate) as f32)
         .collect()
 }
 
-fn pixel(pixels: &[u16], x: usize, y: usize) -> [u16; 4] {
-    let start = (y * 64 + x) * 4;
-    pixels[start..start + 4].try_into().unwrap()
+/// A sine of `frequency` at amplitude 0.125, as FFmpeg's `sine` source
+/// makes it.
+fn sine(frequency: f64, sample_rate: u32, seconds: f64) -> Vec<f32> {
+    generate(sample_rate, seconds, |t| {
+        0.125 * (std::f64::consts::TAU * frequency * t).sin()
+    })
 }
 
-/// The video stream's codec, `(color space, primaries, transfer)` and
-/// metadata.
-fn video_stream(
-    url: &str,
-) -> (
-    String,
-    (i32, i32, i32),
-    std::collections::HashMap<String, String>,
-) {
-    let Some(StreamInfo::Video {
-        codec_name,
-        color_space,
-        color_primaries,
-        color_transfer,
-        metadata,
-        ..
-    }) = find_video_stream_info(url).unwrap()
-    else {
-        panic!("exported file has no video stream");
-    };
-    (
-        codec_name,
-        (color_space, color_primaries, color_transfer),
-        metadata,
-    )
-}
-
-fn audio_stream(url: &str) -> (String, i32) {
-    let Some(StreamInfo::Audio {
-        codec_name,
-        sample_rate,
-        ..
-    }) = find_audio_stream_info(url).unwrap()
-    else {
-        panic!("exported file has no audio stream");
-    };
-    (codec_name, sample_rate)
-}
-
-/// `path`'s first audio stream decoded to mono `f32` samples, with the sample
-/// rate the stream reports (the decoder drops the encoder's priming samples).
-fn decoded_audio(path: &Path) -> (Vec<f32>, u32) {
-    let raw = path.with_extension("f32");
-    FfmpegContext::builder()
-        .input(Input::from(path.to_string_lossy().into_owned()))
-        .output(
-            Output::from(raw.to_string_lossy().into_owned())
-                .add_stream_map("0:a:0")
-                .set_format("f32le")
-                .set_audio_codec("pcm_f32le")
-                .set_audio_channels(1),
-        )
-        .build()
+/// `path`'s sound from the video's start, decoded to mono at `sample_rate`.
+fn decoded_audio(path: &Path, sample_rate: u32) -> Vec<f32> {
+    TestCodec::new()
+        .decode_audio(path, sample_rate, 1)
         .unwrap()
-        .start()
-        .unwrap()
-        .wait()
-        .unwrap();
-    let (_, sample_rate) = audio_stream(&path.to_string_lossy());
-    let bytes = std::fs::read(raw).unwrap();
-    let samples = bytes
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|bytes| f32::from_le_bytes(*bytes))
-        .collect();
-    (samples, sample_rate as u32)
-}
-
-/// How many seconds of audio `path` decodes to, after the decoder drops the
-/// encoder's priming samples.
-fn decoded_audio_seconds(path: &Path) -> f64 {
-    let (samples, sample_rate) = decoded_audio(path);
-    samples.len() as f64 / f64::from(sample_rate)
-}
-
-/// The red quadrant keeps its straight color and half alpha (within
-/// `tolerance` 16-bit codes); undrawn pixels are fully transparent.
-fn assert_transparent_quadrant(pixels: &[u16], tolerance: u16) {
-    let (inside, outside) = (pixel(pixels, 8, 8), pixel(pixels, 48, 48));
-    assert!(inside[3].abs_diff(128 * 257) <= 2 * 257, "{inside:?}");
-    assert!(
-        inside[0].abs_diff(65535) <= tolerance && inside[1] <= tolerance,
-        "{inside:?}"
-    );
-    assert_eq!(outside[3], 0, "{outside:?}");
-}
-
-#[test]
-fn exports_transparent_prores_4444() {
-    let directory = tempfile::tempdir().unwrap();
-    let project = transparent_project(directory.path());
-    let Some(output) = export_as(&project, directory.path(), VideoFormat::Mov, "clip.mov") else {
-        return;
-    };
-
-    let url = output.to_string_lossy().into_owned();
-    // AVCOL_SPC_BT709, AVCOL_PRI_BT709 and AVCOL_TRC_BT709 are all 1.
-    let (codec_name, colors, _) = video_stream(&url);
-    assert_eq!(codec_name, "prores");
-    assert_eq!(colors, (1, 1, 1));
-    assert_eq!(audio_stream(&url), ("pcm_s24le".to_owned(), 8_000));
-    assert_transparent_quadrant(&decode_rgba64(&output, None), 3 * 257);
-}
-
-#[test]
-fn exports_transparent_vp9_webm() {
-    let directory = tempfile::tempdir().unwrap();
-    let project = transparent_project(directory.path());
-    let Some(output) = export_as(&project, directory.path(), VideoFormat::Webm, "clip.webm") else {
-        return;
-    };
-
-    let url = output.to_string_lossy().into_owned();
-    let (codec_name, colors, metadata) = video_stream(&url);
-    assert_eq!(codec_name, "vp9");
-    // Matroska tags read back upper-case (`ALPHA_MODE`).
-    assert!(
-        metadata
-            .iter()
-            .any(|(key, value)| key.eq_ignore_ascii_case("alpha_mode") && value == "1"),
-        "{metadata:?}"
-    );
-    assert_eq!(colors, (1, 1, 1));
-    // `mux_audio` always resamples Opus to 48 kHz.
-    assert_eq!(audio_stream(&url), ("opus".to_owned(), 48_000));
-    // 4:2:0 chroma blurs the quadrant's color a little more.
-    assert_transparent_quadrant(&decode_rgba64(&output, Some("libvpx-vp9")), 6 * 257);
+        .samples
 }
 
 #[test]
@@ -719,27 +542,19 @@ fn exports_a_pitched_audio_clip() {
     // at 2x in one second, which `preservePitch` keeps at 440 Hz, and `pitch` 7
     // lifts it a fifth to 440 * 2^(7/12) = 659.26 Hz. Dropping either field
     // gives 880 Hz, 1318 Hz or 440 Hz instead.
-    FfmpegContext::builder()
-        .input(Input::from("sine=frequency=440:sample_rate=8000:duration=2").set_format("lavfi"))
-        .output(
-            directory
-                .path()
-                .join("tone.wav")
-                .to_string_lossy()
-                .into_owned(),
-        )
-        .build()
-        .unwrap()
-        .start()
-        .unwrap()
-        .wait()
-        .unwrap();
+    write_audio(
+        &directory.path().join("tone.ctc"),
+        8_000,
+        1,
+        &sine(440.0, 8_000, 2.0),
+    )
+    .unwrap();
     project.assets.insert(
         "tone".to_owned(),
         Asset::Audio {
             name: None,
             source: AssetSource::File {
-                path: "tone.wav".to_owned(),
+                path: "tone.ctc".to_owned(),
             },
         },
     );
@@ -782,8 +597,8 @@ fn exports_a_pitched_audio_clip() {
         return;
     };
 
-    let (samples, sample_rate) = decoded_audio(&output);
-    let rate = f64::from(sample_rate);
+    let samples = decoded_audio(&output, 8_000);
+    let rate = 8_000.0;
     let window = &samples[(0.2 * rate) as usize..(0.8 * rate) as usize];
     let rising = window
         .windows(2)
@@ -798,7 +613,7 @@ fn exports_a_pitched_audio_clip() {
 }
 
 #[test]
-fn every_format_muxes_audio_as_long_as_the_video() {
+fn every_format_stores_the_mix_as_long_as_the_video() {
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
     for (format, name) in [
@@ -809,27 +624,25 @@ fn every_format_muxes_audio_as_long_as_the_video() {
         let Some(output) = export_as(&project, directory.path(), format, name) else {
             return;
         };
-        // AAC rounds the last frame up to 1024 samples (0.128 s at 8 kHz).
-        let seconds = decoded_audio_seconds(&output);
-        assert!(
-            (0.999..1.129).contains(&seconds),
-            "{format}: {seconds} s of audio"
+        // One second at 8 kHz, with nothing before the video's start.
+        let media = read(&output);
+        let audio = stored_audio(&media);
+        assert_eq!((audio.sample_rate, audio.channels), (8_000, 2), "{format}");
+        assert_eq!(audio.lead_in_frames, 0, "{format}");
+        assert_eq!(
+            audio.samples.len(),
+            8_000 * usize::from(audio.channels),
+            "{format}: {} samples in {} channels",
+            audio.samples.len(),
+            audio.channels
         );
     }
 }
 
-/// `project` with a one-second clip of `lavfi` audio from 0 s, written to
-/// `name` in `dir`.
-fn with_audio(mut project: Project, dir: &Path, lavfi: &str, name: &str) -> Project {
-    FfmpegContext::builder()
-        .input(Input::from(lavfi).set_format("lavfi"))
-        .output(dir.join(name).to_string_lossy().into_owned())
-        .build()
-        .unwrap()
-        .start()
-        .unwrap()
-        .wait()
-        .unwrap();
+/// `project` with a one-second clip from 0 s of `samples`, mono at the
+/// project's sample rate, written to `name` in `dir`.
+fn with_audio(mut project: Project, dir: &Path, samples: &[f32], name: &str) -> Project {
+    write_audio(&dir.join(name), project.settings.sample_rate, 1, samples).unwrap();
     project.assets.insert(
         "sound".to_owned(),
         Asset::Audio {
@@ -883,8 +696,8 @@ fn exports_an_audio_clip_with_fades() {
     let mut project = with_audio(
         transparent_project(directory.path()),
         directory.path(),
-        "sine=frequency=440:sample_rate=8000:duration=1",
-        "sound.wav",
+        &sine(440.0, 8_000, 1.0),
+        "sound.ctc",
     );
     let TimelineContent::Audio {
         fade_in, fade_out, ..
@@ -898,9 +711,9 @@ fn exports_an_audio_clip_with_fades() {
         return;
     };
 
-    let (samples, sample_rate) = decoded_audio(&output);
+    let samples = decoded_audio(&output, 8_000);
     let rms = |from: f64, to: f64| {
-        let rate = f64::from(sample_rate);
+        let rate = 8_000.0;
         let window = &samples[(from * rate) as usize..(to * rate) as usize];
         (window
             .iter()
@@ -931,8 +744,8 @@ fn exports_a_bed_ducked_under_a_voice() {
     let mut project = with_audio(
         transparent_project(directory.path()),
         directory.path(),
-        "sine=frequency=440:sample_rate=8000:duration=1",
-        "sound.wav",
+        &sine(440.0, 8_000, 1.0),
+        "sound.ctc",
     );
     let track = project.tracks.last_mut().unwrap();
     // A silent voice from 0.4 to 0.6 s: only the bed is heard.
@@ -965,9 +778,9 @@ fn exports_a_bed_ducked_under_a_voice() {
         return;
     };
 
-    let (samples, sample_rate) = decoded_audio(&output);
+    let samples = decoded_audio(&output, 8_000);
     let rms = |from: f64, to: f64| {
-        let rate = f64::from(sample_rate);
+        let rate = 8_000.0;
         let window = &samples[(from * rate) as usize..(to * rate) as usize];
         (window
             .iter()
@@ -991,7 +804,7 @@ fn a_looping_mp4_starts_its_sound_from_its_end() {
     let directory = tempfile::tempdir().unwrap();
     // Four hits a second, each a chord at full strength from its first
     // sample: played on repeat, the last one runs into the first as each
-    // runs into the next. One second is not a whole number of AAC frames.
+    // runs into the next.
     let hit = |t: f64| {
         let tau = std::f64::consts::TAU;
         0.2 * (-40.0 * t).exp()
@@ -1005,8 +818,8 @@ fn a_looping_mp4_starts_its_sound_from_its_end() {
     let project = with_audio(
         project,
         directory.path(),
-        "aevalsrc=exprs='0.2*exp(-40*mod(t,0.25))*(cos(2*PI*1000*mod(t,0.25))+sin(2*PI*2500*mod(t,0.25))+sin(2*PI*4400*mod(t,0.25))+cos(2*PI*6000*mod(t,0.25)))':sample_rate=48000:duration=1",
-        "hits.wav",
+        &generate(48_000, 1.0, |t| hit(t % 0.25)),
+        "hits.ctc",
     );
     let export = |looping, name: &str| {
         let output = directory.path().join(name);
@@ -1028,54 +841,20 @@ fn a_looping_mp4_starts_its_sound_from_its_end() {
         return;
     };
 
-    // The edit list hides the lead-in: the sound still starts at 0 and lasts
-    // exactly the video's second.
-    let Some(StreamInfo::Audio {
-        start_time,
-        duration,
-        time_base,
-        ..
-    }) = find_audio_stream_info(looped.to_string_lossy().into_owned()).unwrap()
-    else {
-        panic!("the looping export has no audio stream");
-    };
-    assert_eq!(start_time, 0);
-    assert_eq!(
-        duration * i64::from(time_base.num),
-        i64::from(time_base.den),
-        "the sound lasts {duration} x {}/{} s",
-        time_base.num,
-        time_base.den
-    );
-    let (once, _) = decoded_audio(&once);
-    let (looped, sample_rate) = decoded_audio(&looped);
-    // FFmpeg's decoder keeps the last AAC frame's padding, with or without
-    // the lead-in.
-    assert_eq!(looped.len(), once.len(), "the lead-in decodes to nothing");
-
-    // Each hit's first 1024 samples against the source, relative to their
-    // energy.
-    let hit_error = |decoded: &[f32], start: usize| -> f64 {
-        let (mut error, mut energy) = (0.0, 0.0);
-        for (n, &sample) in decoded.iter().enumerate().skip(start).take(1024) {
-            let expected = hit((n % 12_000) as f64 / f64::from(sample_rate));
-            error += (f64::from(sample) - expected).powi(2);
-            energy += expected.powi(2);
-        }
-        error / energy
-    };
-    let later = [12_000, 24_000, 36_000].map(|start| hit_error(&looped, start));
-    let worst_later = later.into_iter().fold(0.0, f64::max);
-    let (first_once, first_looped) = (hit_error(&once, 0), hit_error(&looped, 0));
-    // From the end of the loop, the first hit comes out like the others;
-    // encoded from silence, it smears (about six times the error here).
+    // The looping file's sound starts with the mix's last 16 384 frames,
+    // which play before the video's start; from the start on it is the mix.
+    let (once, looped) = (read(&once), read(&looped));
+    let (once, looped) = (stored_audio(&once), stored_audio(&looped));
+    assert_eq!(once.lead_in_frames, 0);
+    assert_eq!(looped.lead_in_frames, 16 * 1024);
+    let lead_in = 16 * 1024 * usize::from(once.channels);
     assert!(
-        first_looped < worst_later,
-        "with the lead-in the first hit is off by {first_looped}, the later ones by up to {worst_later}"
+        looped.lead_in() == &once.samples[once.samples.len() - lead_in..],
+        "the lead-in is not the end of the mix"
     );
     assert!(
-        first_once > 3.0 * first_looped,
-        "without the lead-in the first hit is off by {first_once}, with it by {first_looped}"
+        looped.played() == once.samples.as_slice(),
+        "from the video's start the looping sound is not the mix"
     );
 }
 
@@ -1118,65 +897,50 @@ fn brings_the_mix_to_a_loudness_target() {
     project.settings.sample_rate = 48_000;
     // A quiet tone under short, loud hits: at -14 LUFS the hits would go
     // over the -1 dBTP ceiling, so the limiter holds them there.
+    let tau = std::f64::consts::TAU;
     let project = with_audio(
         project,
         directory.path(),
-        "aevalsrc=exprs='0.02*sin(2*PI*440*t)+0.5*sin(2*PI*2000*t)*lt(mod(t,0.25),0.005)':sample_rate=48000:duration=1",
-        "tone.wav",
+        &generate(48_000, 1.0, |t| {
+            let hit = if t % 0.25 < 0.005 {
+                0.5 * (tau * 2000.0 * t).sin()
+            } else {
+                0.0
+            };
+            0.02 * (tau * 440.0 * t).sin() + hit
+        }),
+        "tone.ctc",
     );
-    let options = |format| ExportOptions {
-        video_format: format,
+    let options = ExportOptions {
+        video_format: VideoFormat::Mov,
         loudness: Some(LoudnessTarget::STREAMING),
         ..ExportOptions::default()
     };
-    let Some((first, reported, warnings)) = export_reporting(
-        &project,
-        directory.path(),
-        options(VideoFormat::Mov),
-        "first.mov",
-    ) else {
+    let Some((first, reported, warnings)) =
+        export_reporting(&project, directory.path(), options.clone(), "first.mov")
+    else {
         return;
     };
     assert!(warnings.is_empty(), "{warnings:?}");
     let reported = reported.expect("a video with sound reports its loudness");
-    let decode = |path: &Path| FfmpegBackend::new().decode_audio(path, 48_000, 2).unwrap();
+    let decode = |path: &Path| TestCodec::new().decode_audio(path, 48_000, 2).unwrap();
     let decoded = decode(&first);
     let measured = measure_loudness(&decoded);
 
-    // MOV keeps the mix as 24-bit PCM, so the file measures as reported.
+    // The file keeps the mix as it was measured, so it measures as reported.
     let integrated = measured.integrated_lufs.unwrap();
     assert!((integrated + 14.0).abs() <= 0.1, "{integrated} LUFS");
-    assert!((integrated - reported.integrated_lufs.unwrap()).abs() <= 0.01);
+    assert_eq!(measured.integrated_lufs, reported.integrated_lufs);
     let peak = measured.true_peak_dbtp.unwrap();
     assert!(peak <= -1.0 + 1e-3, "{peak} dBTP");
     // The gain alone would have taken the hits over the ceiling.
-    let source = measure_loudness(&decode(&directory.path().join("tone.wav")));
+    let source = measure_loudness(&decode(&directory.path().join("tone.ctc")));
     let gain = reported.gain_db.unwrap();
     assert!(source.true_peak_dbtp.unwrap() + gain > 0.0, "{gain} dB");
 
     // The same project comes out the same.
-    let (second, ..) = export_reporting(
-        &project,
-        directory.path(),
-        options(VideoFormat::Mov),
-        "second.mov",
-    )
-    .unwrap();
+    let (second, ..) = export_reporting(&project, directory.path(), options, "second.mov").unwrap();
     assert!(decode(&second).samples == decoded.samples);
-
-    // AAC moves the loudness by a few hundredths.
-    let (mp4, ..) = export_reporting(
-        &project,
-        directory.path(),
-        options(VideoFormat::Mp4),
-        "film.mp4",
-    )
-    .unwrap();
-    let integrated = measure_loudness(&decode(&mp4)).integrated_lufs.unwrap();
-    assert!(
-        (integrated + 14.0).abs() <= 0.3,
-        "{integrated} LUFS after AAC"
-    );
 }
 
 #[test]
@@ -1265,9 +1029,9 @@ export default function Root() {
         Err(error) => panic!("React WebM export failed: {error}"),
     }
 
-    let url = output.to_string_lossy().into_owned();
-    assert_eq!(video_stream(&url).0, "vp9");
-    assert!(find_audio_stream_info(&url).unwrap().is_none());
+    let media = read(&output);
+    assert_eq!(media.container, Some(Container::Webm));
+    assert!(media.audio.is_none());
     assert!(
         matches!(
             written[..],

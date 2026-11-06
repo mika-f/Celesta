@@ -500,8 +500,9 @@ fn error_report(error: &ExportError, hints: HintStyle) -> ErrorReport {
     }
 }
 
-const NO_CODEC_HINT: &str =
-    "install Celesta's codec plugin (celesta-codec-ffmpeg) beside Celesta or in a plugin folder";
+const NO_CODEC_HINT: &str = "install Celesta's codec plugin (celesta-codec-ffmpeg) beside an \
+     installed Celesta or in a plugin folder; in a source checkout, build it with node scripts/plugins/build.mts \
+     plugins/ffmpeg and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH";
 
 /// The code and hint of `error`, collecting its issues into `issues`. A
 /// frame's failure has the code of what failed.
@@ -988,12 +989,18 @@ mod tests {
             )
             .unwrap();
             assert_eq!(value["error"]["code"], "no_codec", "{value}");
-            assert!(
-                value["error"]["hint"]
-                    .as_str()
-                    .is_some_and(|hint| hint.contains("celesta-codec-ffmpeg")),
-                "{value}"
-            );
+            let hint = value["error"]["hint"].as_str().unwrap_or_default();
+            // A source checkout has no codec until it builds one into
+            // plugins/dist, which CELESTA_PLUGIN_PATH reaches only as an
+            // absolute path.
+            for expected in [
+                "celesta-codec-ffmpeg",
+                "node scripts/plugins/build.mts plugins/ffmpeg",
+                "absolute path of plugins/dist",
+                "CELESTA_PLUGIN_PATH",
+            ] {
+                assert!(hint.contains(expected), "{expected}: {value}");
+            }
         }
     }
 

@@ -79,5 +79,6 @@ work as on any layer.
   host starts the built program from a plugin directory, its answers match
   the provider's, and the GPU renderer draws them.
 
-Run `node ../build.mjs turntable` to make its plugin directory, then
-`demo.tsx` exports as the parent README shows.
+Run `node scripts/plugins/build.mts examples/plugins/turntable` at the
+repository root to make its plugin directory, then `demo.tsx` exports as
+the parent README shows.

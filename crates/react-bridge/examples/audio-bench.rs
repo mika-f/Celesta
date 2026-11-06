@@ -1,19 +1,38 @@
 //! Compare the original per-frame protocol with batched audio collection.
-//! Run after `pnpm run build:runtime` and generating any media:
-//! cargo run --release -p celesta-react-bridge --example audio-bench -- <entry> [runs]
+//! Media is decoded by an installed codec plugin's process, as in the editor:
+//! the first codec plugin found, as Celesta finds it. Without one it exits
+//! with "no codec plugin found". In a source checkout, build the codec into
+//! `plugins/dist` and pass that folder's absolute path. Run after
+//! `pnpm run build:runtime` and generating any media:
+//!
+//! ```text
+//! node scripts/plugins/build.mts plugins/ffmpeg
+//! CELESTA_PLUGIN_PATH="$PWD/plugins/dist" cargo run --release -p celesta-react-bridge --example audio-bench -- <entry> [runs]
+//! ```
 
-use std::{env, error::Error, path::PathBuf, time::Instant};
+use std::{env, error::Error, path::PathBuf, process, time::Instant};
 
 use celesta_composition::{AudioGraph, Time};
-use celesta_media::{MediaBackend, mix_audio_graph};
+use celesta_media::{CodecProcess, MediaBackend, mix_audio_graph};
+use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{ReactBridge, react_audio_clips};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    celesta_codec_ffmpeg::install();
     let mut args = env::args().skip(1);
     let entry =
         PathBuf::from(args.next().ok_or("usage: audio-bench <entry> [runs]")?).canonicalize()?;
     let runs: usize = args.next().map_or(Ok(5), |value| value.parse())?;
+    let Some(codec) = InstalledPlugins::find_reporting(&[]).codec() else {
+        eprintln!(
+            "no codec plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
+             and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH"
+        );
+        process::exit(1);
+    };
+    celesta_media::set_codec(Some(CodecProcess::factory(
+        codec.executable,
+        codec.directory,
+    )));
     let entry_dir = entry.parent().ok_or("entry has no parent")?;
     let cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/cli/dist/cli.js");
     println!("mode,run,frames,clips,spawn_ms,scan_ms,mix_ms,total_ms");

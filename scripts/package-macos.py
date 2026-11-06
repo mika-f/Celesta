@@ -20,6 +20,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 # Homebrew's unversioned ffmpeg formula is FFmpeg 9, which Celesta does not support yet.
 FFMPEG_FORMULA = "ffmpeg@8"
+# The plugins workspace's Cargo package of the bundled codec plugin.
+CODEC_PACKAGE = "celesta-codec-ffmpeg"
 MACHO_MAGIC = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
     b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -84,6 +86,14 @@ def minimum_version(load_commands):
     return max(versions)
 
 
+def plugin_program(plugin):
+    """The one program a plugin folder's celesta-plugin.json names."""
+    executables = json.loads((plugin / "celesta-plugin.json").read_text(encoding="utf-8")).get("executable", {})
+    if len(executables) != 1:
+        raise RuntimeError(f"{plugin}/celesta-plugin.json must name exactly one executable, not {executables}")
+    return plugin / next(iter(executables.values()))
+
+
 def validate_dependencies(binary, contents, listing):
     """Reject dependencies on the build machine, including unhandled @rpath links."""
     for line in listing.splitlines()[1:]:
@@ -96,9 +106,9 @@ def validate_dependencies(binary, contents, listing):
             if binary.suffix != ".dylib":
                 executable_directory = binary.parent
             elif binary.parent.parent.parent.name == "PlugIns":
-                # A plugin's libraries, in <plugin>/Frameworks, load for its
-                # program in <plugin>/bin.
-                executable_directory = binary.parent.parent / "bin"
+                # A plugin's libraries, in <plugin>/Frameworks, load for the
+                # program its manifest names.
+                executable_directory = plugin_program(binary.parent.parent).parent
             else:
                 executable_directory = contents / "MacOS"
             target = executable_directory / dependency.removeprefix("@executable_path/")
@@ -110,16 +120,46 @@ def validate_dependencies(binary, contents, listing):
             raise RuntimeError(f"Missing or external dependency in {binary}: {dependency}")
 
 
+def codec_packages(metadata):
+    """The plugins workspace's packages the bundled codec plugin ships.
+
+    That workspace also holds plugins the package does not bundle (VRM), so
+    only the codec and what its normal and build dependencies reach in
+    `cargo metadata`'s resolve graph are listed; a dependency it has only
+    for its tests is not shipped.
+    """
+    packages = {package["id"]: package for package in metadata["packages"]}
+    roots = [member for member in metadata["workspace_members"] if packages[member]["name"] == CODEC_PACKAGE]
+    if len(roots) != 1:
+        raise RuntimeError(f"The plugins workspace must have one {CODEC_PACKAGE} member, not {len(roots)}")
+    nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
+    reached, pending = set(), roots
+    while pending:
+        package = pending.pop()
+        if package not in reached:
+            reached.add(package)
+            pending.extend(dependency["pkg"] for dependency in nodes[package]["deps"]
+                           if any(kind["kind"] != "dev" for kind in dependency["dep_kinds"]))
+    return [packages[package] for package in sorted(reached)]
+
+
 def collect_licenses(resources, target):
     licenses = resources / "licenses"
     licenses.mkdir()
     for path in ROOT.glob("LICENSE*"):
         shutil.copy2(path, licenses / path.name)
     shutil.copy2(ROOT / "packaging" / "GPL-SOURCE-OFFER.md", licenses / "GPL-SOURCE-OFFER.md")
-    metadata = json.loads(run("cargo", "metadata", "--locked", "--offline", "--format-version", "1",
-                              "--filter-platform", target, capture=True))
+    flags = ("--locked", "--format-version", "1", "--filter-platform", target)
+    # The codec plugin and its crates are in the plugins workspace. Packaging
+    # builds only the codec there, so that workspace's other crates may not be
+    # downloaded yet: no --offline for it, and only the codec's are listed.
+    root = json.loads(run("cargo", "metadata", "--offline", *flags, capture=True))
+    plugins = json.loads(run("cargo", "metadata", "--manifest-path", ROOT / "plugins/Cargo.toml", *flags, capture=True))
+    packages = {}
+    for package in (*root["packages"], *codec_packages(plugins)):
+        packages.setdefault(package["id"], package)
     inventory = []
-    for package in metadata["packages"]:
+    for package in packages.values():
         inventory.append({key: package.get(key) for key in ("name", "version", "license", "repository")})
         directory = Path(package["manifest_path"]).parent
         texts = {path.name: path for path in directory.iterdir()
@@ -204,17 +244,17 @@ def main():
     executables = contents / "MacOS"
     for directory in (resources, helpers, executables):
         directory.mkdir(parents=True)
+    build_env = dict(os.environ)
+    build_env["CARGO_TARGET_DIR"] = str(ROOT / "target")
+    build_env["CARGO_BUILD_TARGET"] = target
+    # Reserve load-command space for relocating linked Homebrew libraries.
+    build_env["RUSTFLAGS"] = build_env.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-headerpad_max_install_names"
     if not args.skip_build:
         run("pnpm", "install", "--frozen-lockfile")
         run("pnpm", "--dir", "packages/react", "run", "codegen")
         run("pnpm", "run", "build:runtime")
-        build_env = dict(os.environ)
-        # Reserve load-command space for relocating linked Homebrew libraries.
-        build_env["CARGO_TARGET_DIR"] = str(ROOT / "target")
-        build_env["CARGO_BUILD_TARGET"] = target
-        build_env["RUSTFLAGS"] = build_env.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-headerpad_max_install_names"
         run("cargo", "build", "--release", "--locked", "-p", "celesta-editor", "-p", "celesta-exporter",
-            "-p", "celesta-mcp", "-p", "celesta-codec-ffmpeg", env=build_env)
+            "-p", "celesta-mcp", env=build_env)
     binaries = ROOT / "target" / target / "release"
     for source, name in (("celesta-editor", "Celesta"), ("celesta-exporter", "Celesta-export"),
                          ("celesta-mcp", "Celesta-mcp")):
@@ -256,11 +296,18 @@ def main():
 
     # FFmpeg, and the GPL libx264 with it, is linked by the codec plugin
     # alone: Celesta's own executables link no FFmpeg, so the plugin folder
-    # holds the program and every Homebrew library it loads.
+    # holds the program and every Homebrew library it loads. The shared build
+    # script builds it in the plugins workspace (plugins/target, so not with
+    # CARGO_TARGET_DIR; with --skip-build Cargo finds it current) and lays the
+    # folder out; --target matches CARGO_BUILD_TARGET, where the script looks.
     codec = contents / "PlugIns" / "ffmpeg"
-    run(helpers / "node", ROOT / "scripts/stage-codec-plugin.mjs", binaries / "celesta-codec-ffmpeg", codec)
-    run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", codec / "bin" / "celesta-codec-ffmpeg",
-        "-d", codec / "Frameworks", "-p", "@executable_path/../Frameworks/")
+    codec_env = {name: value for name, value in build_env.items() if name != "CARGO_TARGET_DIR"}
+    run(helpers / "node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins/ffmpeg",
+        "--out", contents / "PlugIns", "--target", target, env=codec_env)
+    program = plugin_program(codec)
+    frameworks_from_program = os.path.relpath(codec / "Frameworks", program.parent)
+    run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", program,
+        "-d", codec / "Frameworks", "-p", f"@executable_path/{frameworks_from_program}/")
     for binary in (executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp"):
         if re.search(r"\blibav|\blibx264|\bffmpeg", run("otool", "-L", binary, capture=True), re.I):
             raise RuntimeError(f"{binary} links FFmpeg, which only the codec plugin may")
@@ -271,7 +318,7 @@ def main():
         "-d", frameworks, "-p", "@executable_path/../Frameworks/")
     native = macho_files(app)
     required = {executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp",
-                helpers / "node", helpers / "esbuild", codec / "bin" / "celesta-codec-ffmpeg"}
+                helpers / "node", helpers / "esbuild", program}
     if not required.issubset(native):
         raise RuntimeError("The app, exporter, MCP server, Node.js, esbuild, and the codec plugin must all be Mach-O executables")
     minimum = (0, 0)

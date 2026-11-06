@@ -1,0 +1,13 @@
+# The first-party plugins' workspace, with one Cargo.lock and one target/.
+# The root workspace excludes this directory, so `cargo build --workspace`
+# at the root never builds a plugin.
+#
+# Cargo allows one package per `links` value in a workspace. A plugin that
+# cannot share this workspace (a conflicting `links`, such as another FFmpeg
+# binding) is left out of `members` and becomes a workspace of its own. Being
+# left out is not enough: Cargo still finds this workspace above the plugin
+# and refuses to build it, so the plugin also declares an empty `[workspace]`
+# in its own Cargo.toml, or is listed in `exclude` here.
+[workspace]
+resolver = "3"
+members = ["ffmpeg", "vrm"]

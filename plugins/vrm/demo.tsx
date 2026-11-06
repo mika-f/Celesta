@@ -2,11 +2,11 @@
 // animation on a loop, nodding once, looking at the camera and mouthing the
 // vowels. Neither Seed-san nor the animation is in the repository, and the
 // demo needs both: see README.md for where to download `Seed-san.vrm` and
-// `test.vrma` into plugins/vrm/assets/. Build the plugin first, then export
-// with its directory:
+// `test.vrma` into plugins/vrm/assets/. Build the plugin and the codec plugin
+// first, then export with their directory:
 //
-//   node plugins/vrm/build.mjs
-//   cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/vrm/dist
+//   node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg
+//   cargo run -p celesta-exporter -- --react plugins/vrm/demo.tsx seed-san.mp4 --plugin-dir plugins/dist
 import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
 import { Vrm } from '@celesta-plugin/vrm';
 

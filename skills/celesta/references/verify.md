@@ -133,6 +133,13 @@ node <skill>/scripts/inspect.mjs scene.tsx --every 15 --native "/Applications/Ce
 
 In a source checkout, build the exporter once
 (`cargo build -p celesta-exporter --release`) and `inspect.mjs` picks it up.
+For entries with video or audio, also build the codec plugin and point
+`CELESTA_PLUGIN_PATH` at it, from the repository root:
+
+```sh
+node scripts/plugins/build.mts plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
+```
 
 When no exporter is found (or with `--no-native`), a measurement the entry
 does not catch is reported as `UNSUPPORTED inspection: inspect.mjs cannot

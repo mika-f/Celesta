@@ -187,8 +187,14 @@ Build each variant in its own worktree:
 cd packages/react && pnpm install --frozen-lockfile && pnpm run codegen && pnpm run build && cd ../..
 cargo build --release -p celesta-exporter -p celesta-react-bridge --bins --examples
 python3 examples/reel/make-music.py   # reel's music.wav, once
+node scripts/plugins/build.mts plugins/ffmpeg   # the codec plugin, for the exports
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 ```
 
+Building the codec plugin needs FFmpeg 8's development files where pkg-config
+finds them: `PKG_CONFIG_PATH` pointing at its `lib/pkgconfig` (with Homebrew,
+`$(brew --prefix ffmpeg@8)/lib/pkgconfig`), or, on Windows, `VCPKG_ROOT`. See
+the build-from-source guide or [HANDOFF.md's setup](../../HANDOFF.md#development-setup).
 `--examples` alone builds only the examples, leaving the exporter stale.
 Run the variants alternately, round by round, and compare within a run.
 
@@ -200,7 +206,8 @@ target/release/examples/protocol-bench --pipelined examples/versus/bench/celesta
 ```
 
 Exports: `target/release/celesta-exporter --overwrite --no-ui --preset
-ultrafast --react <entry> out.mp4`. For the render-thread figures, add a
+ultrafast --react <entry> out.mp4`, in the shell where
+`CELESTA_PLUGIN_PATH` is set. For the render-thread figures, add a
 temporary timer to `render_react_video` in
 `crates/exporter/src/render.rs`: an `Instant` before `thread::scope` for
 the render loop, and an `Instant` around `frames.recv()` summed into a

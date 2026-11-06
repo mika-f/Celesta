@@ -23,6 +23,15 @@
         "RUSTDOCFLAGS"
       ]
     },
+    "@celesta.studio/cli#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "worker-configuration.d.ts"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/resolve-package-manifest.mjs",
+        "$TURBO_ROOT$/templates/**"
+      ]
+    },
     "@celesta.studio/react#build": {
       "dependsOn": ["codegen", "^build"],
       "inputs": [

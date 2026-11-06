@@ -71,6 +71,3 @@ cargo run --release -p celesta-react-bridge --example protocol-bench -- \
 cargo run --release -p celesta-react-bridge --example protocol-bench -- \
   crates/react-bridge/examples/static-100k-memo.tsx 120
 ```
-
-On macOS, build against FFmpeg 8 with
-`PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"`.

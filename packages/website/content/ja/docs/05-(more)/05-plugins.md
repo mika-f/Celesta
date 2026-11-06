@@ -100,11 +100,11 @@ export default function Root() {
 
 ## コーデックプラグイン
 
-Celesta は動画・音声ファイルの読み書きにコーデックライブラリを自分でリンクせず、コーデックプラグインを通して行います。macOS と Windows のパッケージには、Celesta に付属するプラグインフォルダーに `ffmpeg` プラグインが入っていて、FFmpeg でメディアの情報の取得、デコード、エンコード、多重化をします。この FFmpeg は GPL ライセンスの libx264 を含むため、GPL で配布されるのはこのコーデックプラグインだけです。アプリ、`celesta-exporter`、`Celesta-mcp` は MIT または Apache-2.0 です。
+Celesta は動画・音声ファイルの読み書きにコーデックライブラリを自分でリンクせず、コーデックプラグインを通して行います。macOS と Windows のパッケージには、Celesta に同梱のプラグインフォルダーに `ffmpeg` プラグインが入っていて、FFmpeg でメディアの情報の取得、デコード、エンコード、多重化をします。この FFmpeg は GPL ライセンスの libx264 を含むため、GPL で配布されるのはこのコーデックプラグインだけです。アプリ、`celesta-exporter`、`Celesta-mcp` は MIT または Apache-2.0 です。
 
-コーデックプラグインのマニフェストには `"roles": ["codec"]` があります。Celesta は実行してよいプラグインのうち、上の順で最初に見つかったコーデックを使います。ひとつもないときは、ソースからのビルドで置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` を使います。`cargo install` で Celesta を入れる場合は、コーデックも入れてアプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもコーデックは入りません。`celesta-codec-ffmpeg` が crates.io に公開されるまでは、`cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` でリポジトリから入れます（[ソースからのビルド](/ja/docs/build-from-source/)と同じく FFmpeg 8.1.x の開発ライブラリが必要です）。コーデックがないと動画と音声は表示も書き出しもできません。アプリは Problems にそう表示し、書き出しはエラーコード `no_codec` で失敗します。
+コーデックプラグインのマニフェストには `"roles": ["codec"]` があります。Celesta は実行してよいプラグインのうち、上の順で最初に見つかったコーデックを使います。ひとつもないときは、`cargo install` で置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` を使います。ただし、実行ファイルが `target/release` のような Cargo のビルドフォルダーにあるときは使いません。ソースビルドでは、自分でビルドしたコーデックプラグインを使います（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。`cargo install` で Celesta を入れる場合は、コーデックも入れてアプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもコーデックは入りません。`celesta-codec-ffmpeg` が crates.io に公開されるまでは、`cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` でリポジトリから入れます（[ソースからのビルド](/ja/docs/build-from-source/)と同じく FFmpeg 8.1.x の開発ライブラリが必要です）。コーデックがないと動画と音声は表示も書き出しもできません。アプリは Problems にそう表示し、書き出しはエラーコード `no_codec` で失敗します。
 
-LGPL のみの FFmpeg など別の FFmpeg を使うには、それに対して `celesta-codec-ffmpeg` をビルドし、プラグインとしてユーザープラグインフォルダーに置きます。`node scripts/stage-codec-plugin.mjs <プログラム> <フォルダー>` でプラグインのフォルダーを作れます。そのフォルダーの他のプラグインと同じく、アプリは実行する前に確認します。
+LGPL のみの FFmpeg など別の FFmpeg を使うには、その FFmpeg の `lib/pkgconfig` を `PKG_CONFIG_PATH` に指定し（Windows では、その FFmpeg をインストールした vcpkg のチェックアウト先を `VCPKG_ROOT` に設定し）、リポジトリのルートで `node scripts/plugins/build.mts plugins/ffmpeg --out <ユーザーのプラグインフォルダー>` を実行します。このコマンドは、その FFmpeg をリンクしてコーデックをビルドし、指定したフォルダーに `ffmpeg` プラグインとして置きます。ユーザーのプラグインフォルダーは、Celesta に同梱のプラグインフォルダーより先に探されます。ほかのプラグインと同じく、アプリは実行する前に確認します。`licenses/` には 4 つのファイルが入ります。`LICENSE-MIT` と `LICENSE-APACHE` は Celesta のコードのライセンス文、`LICENSE-GPL-2.0` と `GPL-SOURCE-OFFER.md` は公式の GPL ビルド向けの GPL とソースコードの提供の申し出です。プラグインを配布するときは、GPL の文書とソースコードの提供の申し出だけを、お使いの FFmpeg ビルドの条件に合わせて差し替えてください。MIT と Apache のライセンス文はそのまま残します。
 
 ## サンプル
 
@@ -117,21 +117,25 @@ LGPL のみの FFmpeg など別の FFmpeg を使うには、それに対して `
 | `beep-voice` | コンポーネントだけのプラグイン。音声合成エンジンの代わりにゲーム風のビープ音で `planDialogue()` のセリフを読み上げ、口パクも付ける音声チャンネルです。 |
 
 ```sh
-node examples/plugins/build.mjs
-cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist
-cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
+pnpm install && pnpm run build:runtime       # 最初に一度、リポジトリのルートで
+node scripts/plugins/build.mts examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
+node scripts/plugins/build.mts plugins/ffmpeg   # MP4 を書き出すコーデックプラグイン
+cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
+cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 ```
+
+2 つ目の `--plugin-dir` で、エクスポーターにコーデックプラグインを渡します。コーデックプラグインのビルドには FFmpeg の開発ライブラリが必要です（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。
 
 ## VRM プラグイン
 
 リポジトリの `plugins/vrm` は、VRM 1.0 のアバター（`.vrm`）を 3D で描くプラグインです。UniVRM と同じ MToon のトゥーン調の陰影で描き、表情・まばたき・口パク・目線に加えて、モーション（`.vrma`）を再生し、髪や服を揺らせます。ビルドしてから、書き出されたフォルダーをインストールします。
 
 ```sh
-pnpm install && pnpm run build:runtime   # 最初に一度、リポジトリのルートで
-node plugins/vrm/build.mjs               # plugins/vrm/dist/vrm に書き出します
+pnpm install && pnpm run build:runtime       # 最初に一度、リポジトリのルートで
+node scripts/plugins/build.mts plugins/vrm   # plugins/dist/vrm に書き出します
 ```
 
-`plugins/vrm/dist/vrm` をユーザーのプラグインフォルダーにコピーするか、書き出しのときに `--plugin-dir` で `plugins/vrm/dist` を指定します。ビルドには、Celesta 本体のビルドと同じく Rust と Node.js が必要です。
+`plugins/dist/vrm` をユーザーのプラグインフォルダーにコピーするか、書き出しのときに `--plugin-dir` で `plugins/dist` を指定します。ビルドには、Celesta 本体のビルドと同じく Rust と Node.js が必要です。ソースからビルドしたエクスポーターで動画を書き出すときは、`node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg` でコーデックプラグインも同じフォルダーにビルドしてください。こうすると `--plugin-dir plugins/dist` で両方をエクスポーターに渡せます。コーデックのビルドには FFmpeg の開発ライブラリが必要です。
 
 ```tsx
 import { Composition } from '@celesta.studio/react';

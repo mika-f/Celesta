@@ -2,14 +2,14 @@ To build Celesta, install **Rust 1.89 or later**, your platform’s native build
 
 > [!NOTE]
 > **The libraries matter**
-> The FFmpeg command-line executable alone is not enough. Celesta's codec plugin, `celesta-codec-ffmpeg`, links against the development libraries; the app and the exporter link no FFmpeg. FFmpeg 9 and later are not supported yet.
+> The FFmpeg command-line executable alone is not enough. Celesta's codec plugin, `plugins/ffmpeg` in the repository, links against the development libraries; the app and the exporter link no FFmpeg. FFmpeg 9 and later are not supported yet.
 
 ## 1. Prepare your platform
 
 ::::tabs[Source build platform]{default="macOS"}
 :::tab[macOS]
 
-Install the Xcode Command Line Tools and Homebrew. Then install the libraries and point `pkg-config` at the keg-only FFmpeg package in the shell where you build Celesta.
+Install the Xcode Command Line Tools and Homebrew. Then install the libraries and point `pkg-config` at the keg-only FFmpeg package in the shell where you build the codec plugin (step 4).
 
 ```sh title="macOS dependencies"
 xcode-select --install
@@ -40,7 +40,7 @@ sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
 export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
 ```
 
-Set `PKG_CONFIG_PATH` in every shell where you run Cargo. FFmpeg is linked into the codec plugin’s program, so `LD_LIBRARY_PATH` is not needed. If your distribution does provide FFmpeg 8.1.x, install `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`, `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development packages instead of running the script. To export without a GPU, see [Export a video](/en/docs/export/).
+Set `PKG_CONFIG_PATH` in the shell where you build the codec plugin (`node scripts/plugins/build.mts plugins/ffmpeg`, step 4); Celesta's own crates link no FFmpeg. FFmpeg is linked into the codec plugin’s program, so `LD_LIBRARY_PATH` is not needed. If your distribution does provide FFmpeg 8.1.x, install `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`, `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development packages instead of running the script. To export without a GPU, see [Export a video](/en/docs/export/).
 
 :::
 ::::
@@ -63,10 +63,11 @@ pnpm run build:runtime
 
 ## 4. Open a React composition
 
-Build the codec plugin once, and again after updating the source. Celesta reads and writes video and audio through it, and finds it beside its own executables in `target/release`:
+Build the codec plugin once, and again after updating the source. Celesta reads and writes video and audio through it, and finds it through `CELESTA_PLUGIN_PATH`, which must be an absolute path. Set the variable in every shell where you run Celesta:
 
 ```sh title="Build the codec plugin"
-cargo build -p celesta-codec-ffmpeg --release
+node scripts/plugins/build.mts plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 
 ```sh title="Launch the native app"

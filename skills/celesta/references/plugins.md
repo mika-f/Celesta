@@ -70,8 +70,12 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 - Celesta links no codec: video and audio files are probed, decoded,
   encoded, and muxed by a codec plugin (`"roles": ["codec"]` in its
-  manifest). The app's packages bundle `ffmpeg`; a source build or
-  `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables.
+  manifest). The app's packages bundle `ffmpeg`. A source build makes it
+  with `node scripts/plugins/build.mts plugins/ffmpeg` and points
+  `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
+  (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root).
+  `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables;
+  that lookup is skipped in a Cargo build folder such as `target/release`.
 - It is not imported and has no components. Without one, video and audio
   layers fail to decode and exports fail with `no_codec` (see
   [export.md](export.md)).
@@ -80,10 +84,12 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 The Celesta repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) as a
 3D layer, MToon-shaded as UniVRM draws them. Build it with
-`node plugins/vrm/build.mjs` (after `pnpm install && pnpm run
-build:runtime` at the repository root); it writes `plugins/vrm/dist/vrm`,
-which the user copies into a plugin folder, or name `plugins/vrm/dist`
-with `--plugin-dir`.
+`node scripts/plugins/build.mts plugins/vrm` (after `pnpm install && pnpm
+run build:runtime` at the repository root); it writes `plugins/dist/vrm`,
+which the user copies into a plugin folder, or name `plugins/dist` with
+`--plugin-dir`. To export video from a source checkout, build the codec
+plugin with it (`node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg`),
+so `--plugin-dir plugins/dist` names both.
 
 ```tsx
 import { Vrm } from '@celesta-plugin/vrm';

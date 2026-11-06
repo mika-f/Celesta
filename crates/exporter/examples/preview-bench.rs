@@ -2,45 +2,45 @@
 //! split into the Node round-trip and the GPU render, with and without the
 //! sequential video decoder. Frames are decoded by the codec plugin's
 //! process, as in the editor, so the times include sending them across it:
-//! the `celesta-codec-ffmpeg` built beside this example's folder. Build it
-//! first, then run:
+//! the first codec plugin found, as Celesta finds it. Without one it exits
+//! with "no codec plugin found". In a source checkout, build the codec into
+//! `plugins/dist` and pass that folder's absolute path. The entry runs on
+//! `packages/cli/dist/cli.js`, so build the runtime first:
 //!
 //! ```text
-//! cargo build --release -p celesta-codec-ffmpeg
-//! cargo run --release --example preview-bench -- <entry.tsx> [frames]
+//! pnpm install && pnpm run build:runtime
+//! node scripts/plugins/build.mts plugins/ffmpeg
+//! CELESTA_PLUGIN_PATH="$PWD/plugins/dist" cargo run --release -p celesta-exporter --example preview-bench -- <entry.tsx> [frames]
 //! ```
 
 use std::env;
 use std::path::PathBuf;
+use std::process;
 use std::time::Instant;
 
 use celesta_composition::Time;
 use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
 use celesta_media::{CodecProcess, MediaBackend};
+use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::ReactBridge;
 
 fn main() {
-    // Cargo puts examples in `target/<profile>/examples`, a folder below the
-    // plugin's program.
-    let profile = env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.to_path_buf()))
-        .expect("the example's folder");
-    let codec = profile.join(format!(
-        "{}{}",
-        celesta_plugin_host::CODEC_PROGRAM,
-        env::consts::EXE_SUFFIX
-    ));
-    assert!(
-        codec.is_file(),
-        "build the codec plugin first: cargo build --release -p celesta-codec-ffmpeg"
-    );
-    celesta_media::set_codec(Some(CodecProcess::factory(codec, profile)));
     let mut args = env::args().skip(1);
     let entry = PathBuf::from(args.next().expect("usage: preview-bench <entry> [frames]"));
     let frames: i64 = args
         .next()
         .map_or(30, |value| value.parse().expect("frames must be a number"));
+    let Some(codec) = InstalledPlugins::find_reporting(&[]).codec() else {
+        eprintln!(
+            "no codec plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
+             and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH"
+        );
+        process::exit(1);
+    };
+    celesta_media::set_codec(Some(CodecProcess::factory(
+        codec.executable,
+        codec.directory,
+    )));
     let sequential = env::var("SEQUENTIAL").is_ok();
 
     let cli_script =

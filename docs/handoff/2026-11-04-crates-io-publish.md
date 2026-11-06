@@ -1,21 +1,26 @@
 # Publishing the crates to crates.io
 
-The workspace's crates can be packaged for crates.io. `celesta-bench` and the
-sample plugins `celesta-plugin-flag` and `celesta-plugin-turntable` stay
-`publish = false`; the other 18 are publishable, `celesta-codec-ffmpeg`
-(`2026-11-05-codec-plugin.md`) among them. `celesta-plugin-vrm`
-(`plugins/vrm`) is a workspace of its own, also `publish = false`, and ships
-as a plugin package rather than a crate.
+The workspace's crates can be packaged for crates.io. `celesta-bench`,
+`celesta-codec-test`, and the sample plugins `celesta-plugin-flag` and
+`celesta-plugin-turntable` stay `publish = false`; the other 17 are
+publishable. The plugins workspace (`plugins/Cargo.toml`) holds
+`celesta-codec-ffmpeg` (`plugins/ffmpeg`, `2026-11-05-codec-plugin.md`),
+also publishable, which is published from there after the core crates, and
+`celesta-plugin-vrm` (`plugins/vrm`), `publish = false`, which ships as a
+plugin package rather than a crate.
 
 ## Specification
 
-- Every crate depends on the workspace's own crates through
+- Every root crate depends on the workspace's own crates through
   `[workspace.dependencies]` in the root `Cargo.toml`, which gives each a
-  `path` and an exact `version` (`=0.9.0`). A published crate names its
-  dependencies by version, so a path alone is refused by `cargo publish`.
-- The pins match `workspace.package.version`. A release bump changes them
-  with it; one left behind makes Cargo fail to resolve the workspace, so it
-  cannot slip through.
+  `path` and an exact `version` (`=0.9.0`); `celesta-codec-test`, never
+  published, has a `path` only. The codec (`plugins/ffmpeg/Cargo.toml`)
+  writes the same pins inline. A published crate names its dependencies by
+  version, so a path alone is refused by `cargo publish`.
+- The pins match `workspace.package.version`.
+  `node scripts/plugins/bump-version.mts` moves them all with it; one left
+  behind makes Cargo fail to resolve its workspace (the root's, or the
+  plugins workspace's for the codec), so it cannot slip through.
 - Every publishable crate has a `description`.
 - `celesta-mcp` embeds the `celesta` skill and `celesta-editor` embeds
   `examples/editor-demo.celesta.json`, both from outside their crate folder.
@@ -34,7 +39,6 @@ as a plugin package rather than a crate.
 ## Publishing
 
 ```bash
-export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"
 node scripts/bundle-crate-files.mjs
 cargo publish --workspace --dry-run --allow-dirty
 cargo publish --workspace --exclude celesta-editor --exclude celesta-mcp
@@ -43,13 +47,24 @@ cargo publish -p celesta-editor -p celesta-mcp --allow-dirty
 
 `cargo publish --workspace` (Cargo 1.90+) publishes in dependency order and
 skips `publish = false` crates. The dry run takes `--allow-dirty` for the
-`bundled/` copies only. Its verification builds every crate, so
-FFmpeg 8 must be on `PKG_CONFIG_PATH` (for `celesta-codec-ffmpeg`, the only
-crate that links it). crates.io rate-limits new crates, so a
-first publish of all 18 may stop partway; later, rerun the step that
+`bundled/` copies only. Its verification builds every crate; none of the
+root workspace's crates links FFmpeg. crates.io rate-limits new crates, so a
+first publish of all 17 may stop partway; later, rerun the step that
 stopped with `--exclude` for each crate already on crates.io (or `-p` for
 each one left), keeping `--allow-dirty` whenever celesta-editor or
 celesta-mcp is among them.
+
+After the core crates are on crates.io, publish the codec plugin's crate
+from the plugins workspace, with FFmpeg 8 on `PKG_CONFIG_PATH`:
+
+```bash
+export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"
+cargo publish --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg --dry-run
+cargo publish --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg
+```
+
+Its pins on the core crates resolve from crates.io, so neither command
+works before those versions are published.
 
 A dry run verifies each crate against the others as if they came from a
 registry, and Cargo never rebuilds a registry crate of the same version: a

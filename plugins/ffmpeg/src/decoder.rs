@@ -1,11 +1,11 @@
 use crate::ffmpeg_error;
 use crate::probe::{ensure_exists, probe_path};
-use crate::sequential::{FrameRun, ffmpeg_path, timestamps_match};
+use crate::sequential::{FrameRun, ffmpeg_path};
 use celesta_composition::Rational;
 use celesta_composition::Time;
 use celesta_media::{
     AudioBuffer, AudioDecoder, MediaError, MediaProbe, VideoFrame, VideoFrameDecoder, VideoStream,
-    video_seconds,
+    timestamps_match, video_seconds,
 };
 use ez_ffmpeg::Input;
 use ez_ffmpeg::frame_export::{Channels, SampleExtractor};

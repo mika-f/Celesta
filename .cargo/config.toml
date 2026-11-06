@@ -12,6 +12,7 @@ TS_RS_LARGE_INT = "number"
 
 # LLVM's lld-link, which ships with the Rust toolchain, links much faster than
 # MSVC's link.exe; a Windows test run links dozens of large binaries against
-# GPUI and static FFmpeg. rustc still supplies the MSVC library paths.
+# GPUI, and the plugins workspace's codec tests (Cargo reads this file there
+# too) against static FFmpeg. rustc still supplies the MSVC library paths.
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"

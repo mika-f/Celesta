@@ -1,5 +1,6 @@
-//! `decodeAudio`: the PCM an entry's `prepare()` analyzes, decoded by the
-//! same FFmpeg backend that mixes preview and export audio.
+//! `decodeAudio`: the PCM an entry's `prepare()` analyzes, decoded through
+//! the codec plugin by the same `MediaBackend` that mixes preview and export
+//! audio.
 
 use celesta_media::{AudioDecoder, MediaBackend};
 use celesta_remote::{RemoteAssetCache, is_remote_url};
@@ -153,14 +154,18 @@ mod tests {
     fn writes_mono_samples_and_removes_them_once_read() {
         let wav =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets/voices/001.wav");
-        let mut media = MediaBackend::with_codec(celesta_codec_ffmpeg::FfmpegCodec::factory());
+        let mut media = MediaBackend::with_codec(celesta_codec_test::TestCodec::factory());
         let mut files = DecodedAudioFiles::default();
         let response = decode_audio_response(&mut media, &mut files, wav.to_str().unwrap());
         let audio = response.audio.expect("decodes the WAV");
         assert_eq!(audio.sample_rate, 44_100);
+        assert_eq!(audio.frames, 84_022);
         let bytes = fs::read(&audio.path).unwrap();
         assert_eq!(bytes.len(), audio.frames * 4);
-        assert!(audio.frames > 44_100);
+        let sample =
+            |index: usize| f32::from_le_bytes(bytes[index * 4..index * 4 + 4].try_into().unwrap());
+        assert_eq!(sample(0), -11.0 / 32768.0);
+        assert_eq!(sample(1), -15.0 / 32768.0);
         files.remove();
         assert!(!audio.path.exists());
     }
@@ -185,7 +190,7 @@ mod tests {
 
     #[test]
     fn reports_a_file_it_cannot_decode() {
-        let mut media = MediaBackend::with_codec(celesta_codec_ffmpeg::FfmpegCodec::factory());
+        let mut media = MediaBackend::with_codec(celesta_codec_test::TestCodec::factory());
         let mut files = DecodedAudioFiles::default();
         let response = decode_audio_response(&mut media, &mut files, "missing.wav");
         assert!(response.audio.is_none());

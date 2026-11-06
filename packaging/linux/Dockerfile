@@ -47,18 +47,19 @@ RUN pnpm install --frozen-lockfile \
   && pnpm run build:runtime
 # The bundled plugin folder is /opt/celesta/plugins, where the codec plugin goes.
 RUN CELESTA_SYSTEM_PLUGIN_DIR=/opt/celesta/plugins \
-  cargo build -p celesta-exporter -p celesta-mcp -p celesta-codec-ffmpeg --release --locked
+  cargo build -p celesta-exporter -p celesta-mcp --release --locked
 
 # Lay the exporter out like the Windows package: a `runtime` directory beside
 # the executable holds Node.js and the React runtime, so nothing depends on the
 # source tree at run time.
 # FFmpeg is linked into the codec plugin's program alone, which goes in the
-# bundled plugin folder.
+# bundled plugin folder: the shared build script builds it in the plugins
+# workspace and lays out /out/plugins/ffmpeg.
 RUN mkdir -p /out/runtime \
   && cp target/release/celesta-exporter target/release/celesta-mcp /out/ \
   && cp /usr/local/bin/node /out/runtime/node \
   && node scripts/stage-react-runtime.mjs /out/runtime/react \
-  && node scripts/stage-codec-plugin.mjs target/release/celesta-codec-ffmpeg /out/plugins/ffmpeg
+  && node scripts/plugins/build.mts plugins/ffmpeg --out /out/plugins
 
 # --- Runtime stage ----------------------------------------------------------
 FROM ubuntu:26.04

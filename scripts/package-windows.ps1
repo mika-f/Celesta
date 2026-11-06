@@ -66,7 +66,7 @@ try {
         Invoke-Checked pnpm @('install', '--frozen-lockfile')
         Invoke-Checked pnpm @('--dir', 'packages/react', 'run', 'codegen')
         Invoke-Checked pnpm @('run', 'build:runtime')
-        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter', '-p', 'celesta-mcp', '-p', 'celesta-codec-ffmpeg')
+        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter', '-p', 'celesta-mcp')
     }
     $binaries = Join-Path $root 'target/release'
     Copy-Item -LiteralPath "$binaries/celesta-editor.exe" -Destination "$package/Celesta.exe"
@@ -101,9 +101,13 @@ try {
     # FFmpeg, and the GPL libx264 with it, is linked into the codec plugin's
     # program alone, in the bundled plugin folder beside Celesta.exe. Windows
     # looks for its DLLs beside the program, so it gets its own CRT copies.
+    # The shared build script builds it in the plugins workspace (Cargo finds
+    # it current when it is) and lays the folder out.
     $codec = Join-Path $package 'plugins/ffmpeg'
-    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/stage-codec-plugin.mjs", "$binaries/celesta-codec-ffmpeg.exe", $codec)
-    Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination "$codec/bin"
+    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/plugins/build.mts", "$root/plugins/ffmpeg", '--out', "$package/plugins")
+    $codecManifest = Get-Content -Raw -LiteralPath "$codec/celesta-plugin.json" | ConvertFrom-Json
+    $codecProgram = Join-Path $codec $codecManifest.executable.'windows-x86_64'
+    Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination (Split-Path $codecProgram -Parent)
 
     Copy-Item -LiteralPath "$root/README.md" -Destination $package
     New-Item -ItemType Directory "$package/examples" | Out-Null
@@ -122,6 +126,35 @@ try {
     $metadataText = & cargo metadata --locked --offline --format-version 1 --filter-platform x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
     $metadata = $metadataText | ConvertFrom-Json
+    # The codec plugin and its crates are in the plugins workspace. Packaging
+    # builds only the codec there, so that workspace's other crates may not be
+    # downloaded yet: no --offline for it. That workspace also holds plugins
+    # the package does not bundle (VRM), so only the codec and what its normal
+    # and build dependencies reach in the resolve graph are listed; a
+    # dependency it has only for its tests is not shipped. package-macos.py's
+    # codec_packages does the same.
+    $pluginsText = & cargo metadata --manifest-path "$root/plugins/Cargo.toml" --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc
+    if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed for the plugins workspace' }
+    $plugins = $pluginsText | ConvertFrom-Json
+    # Package ids are case-sensitive; a default hashtable's keys are not.
+    $pluginPackages = [hashtable]::new([StringComparer]::Ordinal)
+    foreach ($crate in $plugins.packages) { $pluginPackages[$crate.id] = $crate }
+    $nodes = [hashtable]::new([StringComparer]::Ordinal)
+    foreach ($node in $plugins.resolve.nodes) { $nodes[$node.id] = $node }
+    $codecIds = @($plugins.workspace_members | Where-Object { $pluginPackages[$_].name -eq 'celesta-codec-ffmpeg' })
+    if ($codecIds.Count -ne 1) { throw "The plugins workspace must have one celesta-codec-ffmpeg member, not $($codecIds.Count)" }
+    $reached = [hashtable]::new([StringComparer]::Ordinal)
+    $pending = [System.Collections.Generic.Stack[string]]::new()
+    $pending.Push($codecIds[0])
+    while ($pending.Count) {
+        $id = $pending.Pop()
+        if ($reached.ContainsKey($id)) { continue }
+        $reached[$id] = $pluginPackages[$id]
+        foreach ($dependency in $nodes[$id].deps) {
+            if (@($dependency.dep_kinds | Where-Object { $_.kind -ne 'dev' }).Count) { $pending.Push($dependency.pkg) }
+        }
+    }
+    $metadata.packages = @(@($metadata.packages) + @($reached.Values) | Sort-Object id -Unique)
     $metadata.packages | Select-Object name, version, license, repository | ConvertTo-Json -Depth 5 |
         Set-Content "$licenses/rust-packages.json"
     foreach ($crate in $metadata.packages) {

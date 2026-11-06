@@ -261,7 +261,7 @@ only Rust code implementing `ContentProvider` has to change.
 ## The turntable sample
 
 `examples/plugins/turntable` (`celesta-plugin-turntable`, a workspace
-member) is a program and a component, built by `build.mjs` like `flag`.
+member) is a program and a component, built by `scripts/plugins/build.mts` like `flag`.
 `<Turntable speed>` draws a 640x360 layer: a checkered cube turning about
 +Y by `speed` turns a second (default 0.5), a half-transparent blue pane in
 front of it (`blend`), and a leaf cut out of a square (`mask`, its stem in

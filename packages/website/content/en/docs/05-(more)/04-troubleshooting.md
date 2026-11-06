@@ -6,12 +6,12 @@ On macOS, copy the complete app into Applications before launching it. For a por
 :::
 :::toggle[A source build cannot find FFmpeg]
 
-Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set `PKG_CONFIG_PATH` in the same shell where you run Cargo. On Windows, check `VCPKG_ROOT` and the MSVC build tools. On Linux, point `PKG_CONFIG_PATH` at the FFmpeg you built, such as `/opt/ffmpeg8/lib/pkgconfig`. See [source-build setup](/en/docs/build-from-source/).
+Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set `PKG_CONFIG_PATH` in the same shell where you build the codec plugin. On Windows, check `VCPKG_ROOT` and the MSVC build tools. On Linux, point `PKG_CONFIG_PATH` at the FFmpeg you built, such as `/opt/ffmpeg8/lib/pkgconfig`. See [source-build setup](/en/docs/build-from-source/).
 
 :::
 :::toggle[Video and audio do not show, or an export fails with no_codec]
 
-Celesta reads and writes media through its codec plugin. In a package, check that the `ffmpeg` plugin is still in the plugin folder that comes with Celesta (`plugins\ffmpeg` beside `Celesta.exe`, or `Contents/PlugIns/ffmpeg` in the macOS app), or install the package again. In a source build, run `cargo build -p celesta-codec-ffmpeg --release` so the program is beside the app’s. See [The codec plugin](/en/docs/plugins/#the-codec-plugin).
+Celesta reads and writes media through its codec plugin. In a package, check that the `ffmpeg` plugin is still in the plugin folder that comes with Celesta (`plugins\ffmpeg` beside `Celesta.exe`, or `Contents/PlugIns/ffmpeg` in the macOS app), or install the package again. In a source build, run `node scripts/plugins/build.mts plugins/ffmpeg` from the repository root, and set `CELESTA_PLUGIN_PATH` to the absolute path of `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`) in the shell where you run Celesta. See [The codec plugin](/en/docs/plugins/#the-codec-plugin).
 
 :::
 :::toggle[My media is missing]

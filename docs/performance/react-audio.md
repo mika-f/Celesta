@@ -110,15 +110,21 @@ asynchronous side effects between frames.
 
 ## Reproduce
 
-From the repository root (on macOS, select an installed compatible FFmpeg):
+Run these from the repository root. The codec plugin decodes the media, and
+the bench finds it through the absolute path in `CELESTA_PLUGIN_PATH`.
+Building it needs FFmpeg 8's development files where pkg-config finds them:
+`PKG_CONFIG_PATH` pointing at its `lib/pkgconfig` (with Homebrew,
+`$(brew --prefix ffmpeg@8)/lib/pkgconfig`), or, on Windows, `VCPKG_ROOT`. See
+the build-from-source guide or [HANDOFF.md's setup](../../HANDOFF.md#development-setup).
 
 ```sh
 pnpm install --frozen-lockfile
 cargo test -p celesta-project -p celesta-composition --features codegen
 pnpm --filter @celesta.studio/react... build
 python3 examples/reel/make-music.py
-PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@8/lib/pkgconfig \
-  cargo build --release -p celesta-react-bridge --example audio-bench
+node scripts/plugins/build.mts plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
+cargo build --release -p celesta-react-bridge --example audio-bench
 target/release/examples/audio-bench examples/reel/film.tsx 7
 target/release/examples/audio-bench crates/react-bridge/examples/audio-long.tsx 3
 NODE_ENV=development target/release/examples/audio-bench examples/reel/film.tsx 5

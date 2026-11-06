@@ -1,0 +1,18 @@
+[package]
+name = "celesta-codec-test"
+description = "A lossless codec for Celesta's tests: stores exactly the frames and audio an export writes, and reads them and PCM WAV back."
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+celesta-composition.workspace = true
+celesta-media.workspace = true
+celesta-plugin-host.workspace = true
+lz4_flex = "0.14.0"
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3.23.0"

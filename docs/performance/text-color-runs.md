@@ -112,8 +112,6 @@ clock values are local observations, not regression thresholds.
 pnpm install --frozen-lockfile
 pnpm --dir packages/react run codegen
 pnpm run build:runtime
-# macOS with ffmpeg@8 installed:
-export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"
 node scripts/bench-code-runs.mjs f6ace76 3 > code-runs.jsonl
 ```
 

@@ -15,13 +15,21 @@ The manifest, the protocol, and how Celesta draws meshes are described in
 
 ```sh
 pnpm install && pnpm run build:runtime   # once, at the repository root
-node examples/plugins/build.mjs          # or: build.mjs flag
-cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist
-cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
-cargo run -p celesta-exporter -- --react examples/plugins/beep-voice/demo.tsx beep.mp4 --plugin-dir examples/plugins/dist
+node scripts/plugins/build.mts examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
+node scripts/plugins/build.mts plugins/ffmpeg   # the codec plugin, which writes the MP4
+cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
+cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
+cargo run -p celesta-exporter -- --react examples/plugins/beep-voice/demo.tsx beep.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 ```
 
-`build.mjs` writes one plugin directory per sample under `dist/`:
+Building the codec plugin needs the FFmpeg development libraries, as in
+[Build from source](https://celesta.natsuneko.cat/en/docs/build-from-source/).
+With `CELESTA_PLUGIN_PATH` already naming `plugins/dist`, the second
+`--plugin-dir` can be left out.
+
+The repository's plugin build script, `scripts/plugins/build.mts`, takes
+the plugin directories to build (one, or several) and writes one plugin
+directory for each under `dist/` beside them:
 
 ```text
 dist/flag/
@@ -39,9 +47,10 @@ plugin's folder into your plugin folder) and allow them when it asks, or
 with **Allow** in the Plugins tab.
 
 Each sample's `plugin.json` gives its id, version, and module source.
-flag's and turntable's also name the Cargo package that builds the
-program, and flag's the `components` the app's Add menu offers, which the
-build copies into the manifest.
+flag's and turntable's also name the Cargo package that builds the program,
+whose version must be the same: bump both together, since the build refuses
+a plugin whose versions differ. flag's also lists the `components` the
+app's Add menu offers, which the build copies into the manifest.
 
 ## Moving a sample out of this repository
 
@@ -55,6 +64,8 @@ from its `.cargo/config.toml` until the crates are published:
 celesta-plugin = { path = "/path/to/celesta/crates/plugin" }
 ```
 
-Its build script then runs `cargo build` in its own directory and takes the
-runtime's declarations, `tsc`, and `esbuild` from the checkout's
-`packages/cli`, as `build.mjs` does.
+Build it with the checkout's script,
+`node /path/to/celesta/scripts/plugins/build.mts <its folder>`. The script
+runs Cargo in the plugin's own folder, so its `.cargo/config.toml` applies,
+and takes the runtime's declarations, `tsc`, and `esbuild` from the
+checkout's `packages/cli`.

@@ -76,7 +76,5 @@ cargo run --release -p celesta-react-bridge --example protocol-bench -- \
 cargo run --release -p celesta-gpu-renderer --example dense-geometry-bench -- 120 3 298 3
 ```
 
-On macOS, build against FFmpeg 8 with
-`PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"`. For the
-100,000-`Rect` baseline, write an entry that renders 100,000 `<Rect>`s with
-the same positions and pass it to `protocol-bench`.
+For the 100,000-`Rect` baseline, write an entry that renders 100,000
+`<Rect>`s with the same positions and pass it to `protocol-bench`.

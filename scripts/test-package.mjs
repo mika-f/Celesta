@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 const packageDirectory = resolve(process.argv[2]);
 const mac = process.platform === 'darwin';
@@ -69,10 +69,32 @@ export default function Root() {
   // plugin, which carries the GPL its libx264 needs.
   const codec = join(packageDirectory, mac ? 'Contents/PlugIns/ffmpeg' : 'plugins/ffmpeg');
   assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the codec plugin');
-  assert.ok(
-    existsSync(join(codec, 'licenses/LICENSE-GPL-2.0')),
-    'The codec plugin must carry the GPL text',
+  const codecManifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
+  assert.ok(codecManifest.roles?.includes('codec'), 'The codec plugin must have the codec role');
+  const programs = Object.values(codecManifest.executable ?? {});
+  assert.equal(programs.length, 1, 'The codec plugin must name exactly one executable');
+  assert.ok(existsSync(join(codec, programs[0])), `The codec plugin's program ${programs[0]} must exist`);
+  for (const license of ['LICENSE-GPL-2.0', 'GPL-SOURCE-OFFER.md']) {
+    assert.ok(existsSync(join(codec, 'licenses', license)), `The codec plugin must carry ${license}`);
+  }
+  // The build script copies the files plugin.json lists, by name, and
+  // nothing else.
+  const codecSource = JSON.parse(readFileSync(new URL('../plugins/ffmpeg/plugin.json', import.meta.url), 'utf8'));
+  assert.deepEqual(
+    readdirSync(join(codec, 'licenses')).sort(),
+    codecSource.licenses.map((license) => basename(license)).sort(),
+    "The codec plugin's licenses/ must hold exactly the files plugins/ffmpeg/plugin.json lists",
   );
+  // The codec's crates are in the plugins workspace, whose licenses the
+  // package collects with the root's: the codec's alone, not those of the
+  // plugins it does not bundle.
+  const licenses = join(packageDirectory, mac ? 'Contents/Resources/licenses' : 'licenses');
+  const rustPackages = JSON.parse(readFileSync(join(licenses, 'rust-packages.json'), 'utf8').replace(/^\u{FEFF}/u, ''))
+    .map((crate) => crate.name);
+  for (const crate of ['ez-ffmpeg', 'celesta-codec-ffmpeg']) {
+    assert.ok(rustPackages.includes(crate), `licenses/rust-packages.json must name ${crate}`);
+  }
+  assert.ok(!rustPackages.includes('celesta-plugin-vrm'), 'licenses/rust-packages.json must not name the unbundled VRM plugin');
   const output = join(directory, 'test.mp4');
   run(exporter, ['--react', entry, output]);
   const mp4 = readFileSync(output);

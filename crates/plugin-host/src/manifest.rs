@@ -258,13 +258,22 @@ pub struct CodecPlugin {
 }
 
 /// The name of the FFmpeg codec plugin's program, which
-/// [`InstalledPlugins::codec`] also looks for beside Celesta's own.
+/// [`InstalledPlugins::codec`] also looks for beside an installed Celesta
+/// program, as `cargo install` leaves it (never beside a source build in a
+/// Cargo build folder).
 pub const CODEC_PROGRAM: &str = "celesta-codec-ffmpeg";
 
 /// The codec plugin's program beside `executable` (Celesta's own, links
-/// resolved), as `cargo build` and `cargo install` leave it.
+/// resolved), as `cargo install` leaves it. None when `executable` sits in a
+/// Cargo build folder (it has `.fingerprint` or `.cargo-lock`; with
+/// `build.build-dir` set, only `.cargo-lock` stays beside the programs): a
+/// source build takes its codec from the plugin folders, so a program an
+/// older build left there is never picked up.
 fn sibling_codec(executable: &Path) -> Option<CodecPlugin> {
     let directory = executable.parent()?;
+    if directory.join(".fingerprint").is_dir() || directory.join(".cargo-lock").is_file() {
+        return None;
+    }
     let program = directory.join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX));
     program.is_file().then(|| CodecPlugin {
         id: CODEC_PROGRAM.to_owned(),
@@ -689,8 +698,9 @@ impl InstalledPlugins {
 
     /// The codec to read and write media with: the first of these plugins
     /// that is a codec with a program for this platform, else the FFmpeg
-    /// codec plugin's program beside the running one ([`CODEC_PROGRAM`]),
-    /// else none.
+    /// codec plugin's program beside the running one ([`CODEC_PROGRAM`]) when
+    /// that is an installed program rather than a source build in a Cargo
+    /// build folder (it has `.fingerprint` or `.cargo-lock`), else none.
     pub fn codec(&self) -> Option<CodecPlugin> {
         self.plugins
             .iter()
@@ -1008,10 +1018,10 @@ mod tests {
     #[test]
     fn the_repositorys_plugins_pass_the_manifest_checks() {
         // Each `plugin.json` under `plugins/` and `examples/plugins/`, made
-        // into the manifest its build script writes (`id`, `version`,
-        // `components`, and the module it builds): a component the checks
-        // refuse would skip the whole plugin for every user, so it fails
-        // here instead.
+        // into the manifest its build script writes (`id`, `version`, and,
+        // when plugin.json has them, `roles`, the module it builds, and
+        // `components`): a component the checks refuse would skip the whole
+        // plugin for every user, so it fails here instead.
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let root = tempfile::tempdir().unwrap();
         let mut expected = Vec::new();
@@ -1028,26 +1038,43 @@ mod tests {
                     serde_json::from_str(&std::fs::read_to_string(&source).unwrap())
                         .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
                 let id = plugin["id"].as_str().unwrap().to_owned();
-                let written = plugin
-                    .get("components")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!([]));
-                let components: Vec<ComponentInfo> = serde_json::from_value(written.clone())
-                    .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
-                write_manifest(
-                    &root.path().join(&id),
-                    serde_json::json!({
-                        "id": id, "version": plugin["version"], "protocol": 1,
-                        "module": "js/index.js", "types": "js/index.d.ts",
-                        "components": written,
-                    }),
-                );
+                let mut manifest = serde_json::json!({
+                    "id": id, "version": plugin["version"], "protocol": 1,
+                });
+                if let Some(roles) = plugin.get("roles") {
+                    manifest["roles"] = roles.clone();
+                }
+                if plugin.get("module").is_some() {
+                    manifest["module"] = "js/index.js".into();
+                    manifest["types"] = "js/index.d.ts".into();
+                }
+                if let Some(components) = plugin.get("components") {
+                    manifest["components"] = components.clone();
+                }
+                let components: Vec<ComponentInfo> = serde_json::from_value(
+                    plugin
+                        .get("components")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!([])),
+                )
+                .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+                write_manifest(&root.path().join(&id), manifest);
                 expected.push((id, source, components));
             }
         }
 
         let (found, errors) = discover(&[root.path().to_path_buf()]);
         assert!(errors.is_empty(), "{errors:?}");
+        let codec = found
+            .iter()
+            .find(|entry| entry.manifest.id == "ffmpeg")
+            .expect("no plugin ffmpeg under plugins/");
+        assert!(
+            codec.has_role(PluginRole::Codec),
+            "{:?}",
+            codec.manifest.roles
+        );
+        assert_eq!(codec.module(), None);
         let mut found: Vec<_> = found
             .iter()
             .map(|entry| (entry.manifest.id.as_str(), &entry.manifest.components))
@@ -1387,5 +1414,35 @@ mod tests {
                 directory: root.path().to_path_buf(),
             })
         );
+    }
+
+    #[test]
+    fn skips_the_codec_program_beside_a_cargo_profile_build() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("celesta-exporter");
+        std::fs::write(
+            root.path()
+                .join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX)),
+            "",
+        )
+        .unwrap();
+        std::fs::create_dir(root.path().join(".fingerprint")).unwrap();
+        assert_eq!(sibling_codec(&executable), None);
+    }
+
+    #[test]
+    fn skips_the_codec_program_beside_a_cargo_build_with_a_separate_build_dir() {
+        // With `build.build-dir` set, `.fingerprint` moves out of
+        // `target/<profile>`, but the programs and `.cargo-lock` stay.
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("celesta-exporter");
+        std::fs::write(
+            root.path()
+                .join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX)),
+            "",
+        )
+        .unwrap();
+        std::fs::write(root.path().join(".cargo-lock"), "").unwrap();
+        assert_eq!(sibling_codec(&executable), None);
     }
 }

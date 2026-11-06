@@ -104,8 +104,11 @@ Celesta-export --json --react scene.tsx overlay.mov
 - The MCP `export_video` tool takes the same three extensions in `output`;
   `preset`, `crf`, `bitDepth`, and `loop` are rejected with `.mov` and
   `.webm`.
-- Celesta encodes through its codec plugin (`ffmpeg`, bundled with the app;
-  `celesta-codec-ffmpeg` beside the executables in a source build). A plugin
+- Celesta encodes through its codec plugin (`ffmpeg`, bundled with the app).
+  A source build makes it with `node scripts/plugins/build.mts plugins/ffmpeg`
+  and finds it once `CELESTA_PLUGIN_PATH` is the absolute path of
+  `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the
+  repository root). A plugin
   whose FFmpeg lacks the needed encoder fails with `encoder_unavailable`; no
   codec plugin at all fails with `no_codec`.
 
@@ -281,7 +284,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `empty_range` | `--from`/`--to` cover no frames of the composition. |
 | `unsupported_output` | The output is not a `.mp4`, `.mov`, or `.webm` path and no frame selection (`--frame`, `--frames`, `--every`) makes it a still export. |
 | `encoder_unavailable` | The codec plugin's FFmpeg lacks an encoder the format needs (video: H.264, ProRes, or VP9; audio: AAC, PCM, or Opus). |
-| `no_codec` | No codec plugin was found, so no video or audio could be decoded or encoded. Reinstall the app, or in a source build run `cargo build -p celesta-codec-ffmpeg --release`. |
+| `no_codec` | No codec plugin was found, so no video or audio could be decoded or encoded. Reinstall the app, or in a source build run `node scripts/plugins/build.mts plugins/ffmpeg` and `export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root, in the shell that runs Celesta. |
 | `unsupported_dimensions` | Video needs non-zero even width and height. |
 | `unsupported_subtitles` | The `--subtitles` path is not a `.srt` or `.vtt` file. |
 | `mixed_subtitle_languages` | Subtitles in several languages would share a `--subtitles` path without `{lang}`; see [subtitles.md](subtitles.md#several-languages). |

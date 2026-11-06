@@ -1390,6 +1390,9 @@ importers:
       '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../../packages/character
+      '@celesta.studio/cli':
+        specifier: workspace:*
+        version: link:../../../packages/cli
       '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../../packages/react
@@ -1404,6 +1407,18 @@ importers:
         version: 19.3.1
       typescript:
         specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.5(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0))
+
+  scripts/plugins:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.6
+        version: 24.19.2
+      typescript:
+        specifier: ^5.8.0
         version: 5.9.3
       vitest:
         specifier: ^5.0.3

@@ -234,9 +234,14 @@ beyond this change; PR #120 has since paired the taps, see
 ```sh
 cargo run --release --locked -p celesta-gpu-renderer --example path-bench -- 120
 cargo run --release --locked -p celesta-gpu-renderer --example dense-geometry-bench
+node scripts/plugins/build.mts plugins/ffmpeg
+export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release --locked -p celesta-exporter --bin celesta-exporter
 /usr/bin/time -l target/release/celesta-exporter --no-ui --overwrite --react examples/versus/bench/celesta/nebula.tsx target/nebula.mp4
 ```
 
-On macOS with Homebrew's FFmpeg 9 installed as the default, point
-`PKG_CONFIG_PATH` at `$(brew --prefix ffmpeg@8)/lib/pkgconfig` first.
+The export encodes through the codec plugin, which `build.mts` builds.
+Building it needs FFmpeg 8's development files where pkg-config finds them:
+`PKG_CONFIG_PATH` pointing at its `lib/pkgconfig` (with Homebrew,
+`$(brew --prefix ffmpeg@8)/lib/pkgconfig`), or, on Windows, `VCPKG_ROOT`. See
+the build-from-source guide or [HANDOFF.md's setup](../../HANDOFF.md#development-setup).

@@ -28,7 +28,6 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "scripts/bench.py"
-      - ".github/actions/setup-ffmpeg/**"
       - ".github/workflows/perf.yml"
   pull_request:
     types: [labeled, synchronize, reopened]
@@ -105,8 +104,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends valgrind mesa-vulkan-drivers fonts-noto-cjk
 
-      - uses: $/.github/actions/setup-ffmpeg
-
       # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
@@ -118,7 +115,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: perf
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Node.js and pnpm as mise.lock pins them.
@@ -192,8 +188,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: $/.github/actions/setup-ffmpeg
-
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
 
@@ -204,7 +198,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: perf-macos
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Never on main, so it only restores the cache ci.yml saves there.

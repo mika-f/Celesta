@@ -8,8 +8,8 @@ use crate::project::absolutize_layers;
 use crate::project::build_audio_graph;
 use crate::range::{ExportRange, resolve_window, shifted_audio_graph};
 use crate::render::{
-    LOOP_LEAD_IN_FRAMES, ensure_encoders, frame_count, loop_lead_in, open_video_writer,
-    validate_dimensions, validate_output,
+    LOOP_LEAD_IN_FRAMES, frame_count, loop_lead_in, open_video_writer, validate_dimensions,
+    validate_output,
 };
 use crate::timecode::{TimecodeError, parse_timecode};
 use celesta_composition::{
@@ -569,14 +569,6 @@ fn video_format_names_round_trip() {
         "gif".parse::<VideoFormat>().unwrap_err().to_string(),
         "unknown video format 'gif' (expected one of mp4 mov webm)"
     );
-}
-
-#[test]
-fn the_ffmpeg_codec_has_every_format_encoder() {
-    celesta_codec_ffmpeg::install();
-    for &format in VideoFormat::VARIANTS {
-        ensure_encoders(format).unwrap_or_else(|error| panic!("{format}: {error}"));
-    }
 }
 
 #[test]

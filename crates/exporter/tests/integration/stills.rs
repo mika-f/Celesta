@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
 use celesta_composition::{Rational, Time, TimeRange};
-use celesta_exporter::{ExportOptions, ExportProgress, ReactRuntimeOptions};
+use celesta_exporter::{ExportOptions, ExportProgress, ReactRuntimeOptions, VideoFormat};
 use celesta_project::{
     Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
 };
@@ -926,8 +927,18 @@ export default function Root() {
     entry
 }
 
+/// Runs the exporter CLI on a React entry, ignoring the codec the developer's
+/// `CELESTA_PLUGIN_PATH` names. A video `output` gets the test codec; stills
+/// need no codec, so they run without the `celesta-codec-test` program.
 fn react_export(entry: &Path, args: &[&str], output: &Path) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"));
+    command.env_remove(PLUGIN_PATH_ENV);
+    // Kept until the child exits: `output` waits for it.
+    let plugin = VideoFormat::from_extension(output).map(|_| TestCodecPlugin::new());
+    if let Some(plugin) = &plugin {
+        command.arg("--plugin-dir").arg(plugin.folder());
+    }
+    command
         .arg("--react")
         .args(args)
         .arg(entry)
@@ -1051,4 +1062,13 @@ fn separate_stills_and_videos_name_the_frame_that_failed() {
         text.contains("frame 6: could not ") && text.contains("ink"),
         "{text}"
     );
+
+    // Up to (excluding) 1 s, before frame 6, the video is written, and by the
+    // test codec: only its files read back with `celesta_codec_test::read`.
+    let film = dir.path().join("short.mp4");
+    let result = react_export(&entry, &["--to", "1"], &film);
+    assert!(result.status.success(), "{}", stderr(&result));
+    let media = celesta_codec_test::read(&film).unwrap();
+    assert_eq!(media.container, Some(celesta_media::Container::Mp4));
+    assert_eq!(media.video.unwrap().frames.len(), 4);
 }

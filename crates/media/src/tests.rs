@@ -1004,3 +1004,14 @@ fn audible_end_follows_a_keyframed_rate() {
     let end = audible_end(&clip, &tone(440.0, 0.0, 2.0, 2.0)).unwrap();
     assert!((end - (12.0_f64.sqrt() - 2.0)).abs() < 1e-6, "{end}");
 }
+
+#[test]
+fn timestamps_match_within_a_tenth_of_a_microsecond_or_a_part_in_a_billion() {
+    use crate::codec::timestamps_match;
+
+    assert!(timestamps_match(1.0, 1.0 + 0.9e-7));
+    assert!(!timestamps_match(1.0, 1.0 + 1.1e-7));
+    // A part in 10⁹ of the larger, once that is more than 0.1 µs.
+    assert!(timestamps_match(1000.0, 1000.0 + 0.9e-6));
+    assert!(!timestamps_match(1000.0, 1000.0 + 1.1e-6));
+}
