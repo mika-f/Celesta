@@ -16,35 +16,61 @@ const PLUGIN_ENV: &str = "CELESTA_PLUGIN_STDOUT_TEST_PLUGIN";
 /// The test's name, as `--list` gives it and a filter matches it.
 const NAME: &str = "stdout";
 
-/// Takes the part of libtest's command line that `cargo test` and
-/// `cargo nextest` use: `--list` (with `--format terse` and `--ignored`),
-/// and a name filter (with `--exact`).
+/// libtest's options that take a value, as the next argument or after `=`.
+const VALUED: &[&str] = &[
+    "--color",
+    "--format",
+    "--logfile",
+    "--report-time",
+    "--shuffle-seed",
+    "--skip",
+    "--test-threads",
+    "-Z",
+];
+
+/// Reads libtest's command line as `cargo test` and `cargo nextest` give
+/// it: `--list` (with `--format terse` and `--ignored`), name filters (with
+/// `--exact`), and `--skip`. Other options are taken and ignored.
 fn main() {
     if std::env::var_os(PLUGIN_ENV).is_some() {
         plugin();
         return;
     }
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let flag = |name: &str| args.iter().any(|arg| arg == name);
-    let exact = flag("--exact");
-    let filters: Vec<&str> = args
-        .iter()
-        .enumerate()
-        .filter(|(index, arg)| {
-            !arg.starts_with('-') && (*index == 0 || args[index - 1] != "--format")
-        })
-        .map(|(_, arg)| arg.as_str())
-        .collect();
-    let selected = !flag("--ignored")
-        && (filters.is_empty()
-            || filters.iter().any(|filter| {
-                if exact {
-                    *filter == NAME
-                } else {
-                    NAME.contains(filter)
+    let mut args = std::env::args().skip(1);
+    let (mut list, mut ignored, mut exact) = (false, false, false);
+    let (mut filters, mut skips) = (Vec::new(), Vec::new());
+    while let Some(arg) = args.next() {
+        let (option, inline) = match arg.split_once('=') {
+            Some((option, value)) if option.starts_with('-') => {
+                (option.to_owned(), Some(value.to_owned()))
+            }
+            _ => (arg.clone(), None),
+        };
+        match option.as_str() {
+            "--list" => list = true,
+            "--ignored" => ignored = true,
+            "--exact" => exact = true,
+            option if VALUED.contains(&option) => {
+                let value = inline.or_else(|| args.next()).unwrap_or_default();
+                if option == "--skip" {
+                    skips.push(value);
                 }
-            }));
-    if flag("--list") {
+            }
+            option if option.starts_with('-') => {}
+            _ => filters.push(arg),
+        }
+    }
+    let matches = |pattern: &String| {
+        if exact {
+            pattern == NAME
+        } else {
+            NAME.contains(pattern.as_str())
+        }
+    };
+    let selected = !ignored
+        && (filters.is_empty() || filters.iter().any(matches))
+        && !skips.iter().any(matches);
+    if list {
         if selected {
             println!("{NAME}: test");
         }
