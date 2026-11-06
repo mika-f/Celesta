@@ -37,6 +37,11 @@ when the new image had the same size.
   again. It also drops what only earlier frames used. `CpuRenderer::render`
   and `GpuRenderer::prepare_draws` call it. Before the first `begin_frame`,
   only the entry being used is kept past the budget.
+- Reloading an SVG does not reload the system fonts its text draws with.
+  They are scanned once, on the first SVG, and shared by every SVG the
+  same `ImageSources` loads after it. Fonts installed later are seen only
+  by a new `ImageSources` (a reopened document, or the next export run).
+  See [`2026-11-06-svg-shared-fonts.md`](2026-11-06-svg-shared-fonts.md).
 - `insert_raster` pixels have no file. They are drawn for their key whatever
   path a caller names, and a later `insert_raster` for the same key is
   ignored, as before.
