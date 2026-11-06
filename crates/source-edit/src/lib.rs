@@ -20,8 +20,8 @@ mod shape;
 mod timing;
 
 pub use add::{
-    AddLock, Added, NewComponent, NewElement, NewKind, Timing, accepts_children, add_child,
-    add_component, add_lock, add_locks,
+    AddLock, Added, NewComponent, NewElement, NewKind, ParentReading, Timing, accepts_children,
+    add_child, add_component, add_lock, add_locks, read_parent,
 };
 pub use apply::{ApplyError, Edit, apply, expression, format_number, write_value};
 pub use attributes::{text_style_path, written_attributes};

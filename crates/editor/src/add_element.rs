@@ -23,8 +23,8 @@ use celesta_react_bridge::{
     ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, import_path, scenes_of,
 };
 use celesta_source_edit::{
-    EditValue, NewComponent, NewElement, NewKind, Timing, add_child, add_component, add_locks,
-    element_at, enclosing_component,
+    EditValue, NewComponent, NewElement, NewKind, ParentReading, Timing, add_child, add_component,
+    element_at, read_parent,
 };
 use gpui_kit::{Context, MouseMoveEvent, Pixels};
 use std::cell::RefCell;
@@ -284,14 +284,15 @@ fn gesture((start, end): (Point, Point), parent_space: [f64; 6], slop: f64) -> O
 /// Video, as its least and greatest corners. A click makes a box at the
 /// press; a drag spans the press and the release, except that media with
 /// a known `aspect` take their height from the width, extending from the
-/// press towards the release. Every side is at least 1.
+/// press towards the release (media of unknown aspect write the box's
+/// height too, see [`drawn_geometry`]). Every side is at least 1.
 fn drawn_box(gesture: &Gesture, media: bool, aspect: Option<f64>) -> (Point, Point) {
     let Gesture {
         press,
         release,
         click,
     } = *gesture;
-    let aspect = aspect.filter(|aspect| aspect.is_finite() && *aspect > 0.0);
+    let aspect = aspect.filter(|&aspect| known(Some(aspect)));
     let corner = |min: Point, width: f64, height: f64| {
         let max = Point {
             x: min.x + width.max(1.0),
@@ -323,6 +324,12 @@ fn drawn_box(gesture: &Gesture, media: bool, aspect: Option<f64>) -> (Point, Poi
     )
 }
 
+/// Whether `aspect` is a file's measured width over its height: alone, an
+/// Image's or a Video's `width` then keeps it, so no `height` is written.
+fn known(aspect: Option<f64>) -> bool {
+    aspect.is_some_and(|aspect| aspect.is_finite() && aspect > 0.0)
+}
+
 /// A Circle's radius: the parent-space distance from the press, at least
 /// 1; a click's is [`CLICK_RADIUS`].
 fn drawn_radius(gesture: &Gesture) -> f64 {
@@ -336,8 +343,10 @@ fn drawn_radius(gesture: &Gesture) -> f64 {
 /// The written values for a gesture from `start` to `end` (scene pixels)
 /// in the parent's children space; `slop` is the click distance in scene
 /// pixels. Rect, Ellipse, Image and Video drag a box (see [`drawn_box`]),
-/// a Circle drags from its center, Text is placed at the press. `None`
-/// without `src` for an Image or a Video, and in a collapsed parent space.
+/// a Circle drags from its center, Text is placed at the press; an Image
+/// or a Video writes the box's height only when its `aspect` is unknown,
+/// so it draws the box outlined. `None` without `src` for an Image or a
+/// Video, and in a collapsed parent space.
 pub(crate) fn drawn_geometry(
     kind: NewKind,
     src: Option<&str>,
@@ -380,21 +389,23 @@ pub(crate) fn drawn_geometry(
             y: gesture.press.y,
         },
         NewKind::Image => {
-            let (x, y, width, _) = sized(true);
+            let (x, y, width, height) = sized(true);
             NewElement::Image {
                 src: src?.to_owned(),
                 x,
                 y,
                 width,
+                height: (!known(aspect)).then_some(height),
             }
         }
         NewKind::Video => {
-            let (x, y, width, _) = sized(true);
+            let (x, y, width, height) = sized(true);
             NewElement::Video {
                 src: src?.to_owned(),
                 x,
                 y,
                 width,
+                height: (!known(aspect)).then_some(height),
             }
         }
     })
@@ -701,19 +712,22 @@ pub(crate) fn parent_facts(
         else {
             continue;
         };
-        let Some(element) = element_at(text, entry.line, entry.column) else {
-            continue;
-        };
         let timing = added_timing(report, index, chapters, composition_end, playhead);
         let wrapped = matches!(timing, Ok(Some(_)));
-        // `None` without a children region.
-        let Some(locks) = add_locks(text, &element, &KINDS, wrapped) else {
+        // One parse; `None` for no such element or an unparsable file, no
+        // locks without a children region.
+        let Some(ParentReading {
+            element,
+            component,
+            locks: Some(locks),
+        }) = read_parent(text, entry.line, entry.column, &KINDS, wrapped)
+        else {
             continue;
         };
         groups.push(GroupFacts {
             at: SourcePos::from(entry),
             tag: tag_name(text, &element).to_owned(),
-            component: enclosing_component(text, &element),
+            component,
             timing,
             locks: locks
                 .into_iter()
@@ -828,13 +842,28 @@ impl AddComponent {
     pub(crate) fn element(&self, drawn: &NewElement) -> NewComponent {
         let number = |name: &str, value: f64| (name.to_owned(), EditValue::Number(value));
         let mut attributes = match drawn {
-            NewElement::Image { src, x, y, width } | NewElement::Video { src, x, y, width } => {
-                vec![
+            NewElement::Image {
+                src,
+                x,
+                y,
+                width,
+                height,
+            }
+            | NewElement::Video {
+                src,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let mut drawn = vec![
                     ("src".to_owned(), EditValue::String(src.clone())),
                     number("x", *x),
                     number("y", *y),
                     number("width", *width),
-                ]
+                ];
+                drawn.extend(height.map(|height| number("height", height)));
+                drawn
             }
             NewElement::Rect {
                 x,
@@ -2436,8 +2465,23 @@ mod tests {
             } => (vec![*x, *y, *width, *height], None),
             NewElement::Circle { x, y, radius } => (vec![*x, *y, *radius], None),
             NewElement::Text { x, y } => (vec![*x, *y], None),
-            NewElement::Image { src, x, y, width } | NewElement::Video { src, x, y, width } => {
-                (vec![*x, *y, *width], Some(src.as_str()))
+            NewElement::Image {
+                src,
+                x,
+                y,
+                width,
+                height,
+            }
+            | NewElement::Video {
+                src,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let mut values = vec![*x, *y, *width];
+                values.extend(*height);
+                (values, Some(src.as_str()))
             }
         };
         (element.kind(), values, src)
@@ -2550,6 +2594,7 @@ mod tests {
                 x: 100.0,
                 y: 200.0,
                 width: 400.0,
+                height: None,
             },
         );
         assert_points(
@@ -2574,6 +2619,7 @@ mod tests {
                 x: 100.0,
                 y: 50.0,
                 width: 300.0,
+                height: None,
             },
         );
         assert_points(
@@ -2589,11 +2635,27 @@ mod tests {
                 x: 100.0,
                 y: 120.0,
                 width: 300.0,
+                height: Some(80.0),
             },
         );
         assert_points(
             &drawn_outline(NewKind::Image, drag, IDENTITY, None, SLOP),
             &box_in_scene(IDENTITY, at(100.0, 120.0), at(400.0, 200.0)),
+        );
+        // A click: the 400 × 400 box outlined, both sides written.
+        assert_element(
+            drawn_geometry(NewKind::Video, Some("a.webm"), click, IDENTITY, None, SLOP),
+            NewElement::Video {
+                src: "a.webm".to_owned(),
+                x: 100.0,
+                y: 200.0,
+                width: 400.0,
+                height: Some(400.0),
+            },
+        );
+        assert_points(
+            &drawn_outline(NewKind::Video, click, IDENTITY, None, SLOP),
+            &box_in_scene(IDENTITY, press, at(500.0, 600.0)),
         );
 
         // No file, nothing to write.
@@ -2673,6 +2735,7 @@ mod tests {
                 x: 100.0,
                 y: 100.0,
                 width: 1.0,
+                height: None,
             },
         );
         let flat = (at(100.0, 100.0), at(180.0, 100.25));

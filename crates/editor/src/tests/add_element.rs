@@ -70,6 +70,7 @@ fn a_plugin_component_is_drawn_as_its_kind_and_written_with_its_import() {
         x: 40.0,
         y: 60.0,
         width: 320.0,
+        height: None,
     };
     let dir = scratch("component");
     let file = dir.join("scene.tsx");
@@ -145,6 +146,7 @@ fn model_components_draw_as_images_and_check_the_file() {
         x: 10.0,
         y: 20.0,
         width: 960.0,
+        height: None,
     };
     assert_eq!(
         model.element(&drawn).attributes,
