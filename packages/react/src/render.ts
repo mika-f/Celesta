@@ -51,7 +51,7 @@ import type {
 import { FILTER_PROPS, ShaderEffect, builtinFilter, isIdentityFilter } from './shader';
 import type { BuiltinFilter } from './shader';
 import type { JsonValue } from './generated/serde_json/JsonValue';
-import { SECONDS_TIMESCALE, endsWithComposition, isBefore, secondsFromTime, secondsToTime } from './time';
+import { SECONDS_TIMESCALE, isBefore, secondsFromTime, secondsToTime, sequenceWindow } from './time';
 
 const HOST_TYPES = new Set([
   'composition',
@@ -589,35 +589,59 @@ function hostWalk(id: string, context: WalkContext, audio: AudioClipDescriptor[]
   };
 }
 
+/**
+ * Whether `value` is a non-empty list of keyframes, each with a finite
+ * `value` and a `time` whose `value` and `timescale` are numbers giving a
+ * finite time.
+ */
 function isKeyframeAnimation(value: unknown): value is KeyframeAnimation<number> {
   if (value === null || typeof value !== 'object') {
     return false;
   }
   const candidate = value as Partial<KeyframeAnimation<number>>;
-  return (
-    candidate.type === 'keyframes' &&
-    Array.isArray(candidate.keyframes) &&
-    candidate.keyframes.every(
-      (keyframe) =>
-        keyframe !== null &&
-        typeof keyframe === 'object' &&
-        typeof keyframe.value === 'number' &&
-        Number.isFinite(keyframe.value) &&
-        keyframe.time !== null &&
-        typeof keyframe.time === 'object' &&
-        Number.isFinite(secondsFromTime(keyframe.time)),
-    )
-  );
+  const keyframes = candidate.keyframes;
+  if (candidate.type !== 'keyframes' || !Array.isArray(keyframes) || keyframes.length === 0) {
+    return false;
+  }
+  // An indexed loop rather than every(), which skips sparse-array holes.
+  for (let i = 0; i < keyframes.length; i += 1) {
+    const keyframe = keyframes[i] as unknown;
+    if (keyframe === null || typeof keyframe !== 'object') return false;
+    const { value: number, time } = keyframe as { value?: unknown; time?: unknown };
+    if (typeof number !== 'number' || !Number.isFinite(number)) return false;
+    if (time === null || typeof time !== 'object') return false;
+    const { value: ticks, timescale } = time as { value?: unknown; timescale?: unknown };
+    if (typeof ticks !== 'number' || typeof timescale !== 'number') return false;
+    if (!Number.isFinite(ticks / timescale)) return false;
+  }
+  return true;
 }
 
-function animatedNumber(value: unknown, fallback: number): AnimatedNumber {
-  if (typeof value === 'number' && Number.isFinite(value)) {
+/**
+ * A media prop that may be animated: `fallback` when unset, otherwise a
+ * finite number or keyframes with finite times and values. Anything else
+ * throws rather than turning into the default, which the native side could
+ * not tell from a value the author chose.
+ */
+function animatedNumber(value: unknown, fallback: number, element: string, name: string): AnimatedNumber {
+  if (value === undefined) {
+    return fallback;
+  }
+  if ((typeof value === 'number' && Number.isFinite(value)) || isKeyframeAnimation(value)) {
     return value;
   }
-  if (isKeyframeAnimation(value)) {
-    return value;
+  throw new Error(`${element} ${name} must be a finite number or keyframes with finite times and values`);
+}
+
+/** A media prop that is a plain number: `fallback` when unset, otherwise finite. */
+function finiteNumber(value: unknown, fallback: number, element: string, name: string): number {
+  if (value === undefined) {
+    return fallback;
   }
-  return fallback;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${element} ${name} must be a finite number`);
+  }
+  return value;
 }
 
 /** Leading value of an animation — used to map clip-head clipping onto the source clock. */
@@ -820,8 +844,8 @@ function buildLayer(
     // `playbackRate`, mirroring how celesta-evaluator derives it for a
     // project TimelineContent::Video at a constant playback rate.
     const size = displaySize(props, 'Video');
-    const startFrom = numberOr(props.startFrom, 0);
-    const playbackRate = numberOr(props.playbackRate, 1);
+    const startFrom = finiteNumber(props.startFrom, 0, '<Video>', 'startFrom');
+    const playbackRate = finiteNumber(props.playbackRate, 1, '<Video>', 'playbackRate');
     const localTime = context.mediaTime;
     content = {
       type: 'video',
@@ -1051,20 +1075,17 @@ function extractBackfaceVisibility(value: unknown): BackfaceVisibility {
  * time (its whole subtree then contributes neither layers nor audio).
  */
 function childSequenceContext(node: HostNode, context: WalkContext): WalkContext | null {
-  const { props } = node;
   const fps = context.fps;
-  const fromFrames = numberOr(props.from, 0);
-  const startLocalSec = fromFrames / fps;
-  const hasDuration = typeof props.durationInFrames === 'number' && Number.isFinite(props.durationInFrames);
-  const endLocalSec = hasDuration
-    ? (fromFrames + Math.max(0, props.durationInFrames as number)) / fps
-    : context.windowEndSec - context.originSec;
-  const windowEndSec = hasDuration ? context.originSec + endLocalSec : context.windowEndSec;
-  // Past the composition's end, a window that ends with the composition
-  // stays open; one that ends later keeps its own end. <Sequence> in
-  // components.ts decides the same way.
-  const openEnd = context.openEnd && endsWithComposition(windowEndSec, context.compositionEndSec, fps);
-  const windowEndLocalSec = openEnd ? context.rangeEndSec - context.originSec : endLocalSec;
+  // <Sequence> in components.ts places its window with the same helper.
+  const placed = sequenceWindow(node.props, {
+    fps,
+    endSec: context.windowEndSec - context.originSec,
+    originSec: context.originSec,
+    compositionEndSec: context.compositionEndSec,
+    openEnd: context.openEnd,
+  });
+  const { startSec: startLocalSec, compositionEndSec: windowEndSec, openEnd } = placed;
+  const windowEndLocalSec = openEnd ? context.rangeEndSec - context.originSec : placed.endSec;
   const localSec = secondsFromTime(context.time);
   if (isBefore(localSec, startLocalSec) || !isBefore(localSec, windowEndLocalSec)) {
     return null;
@@ -1264,6 +1285,14 @@ function collectAudioClip(
   // A `<Video>`'s soundtrack has no fades.
   const fadeIn = video ? 0 : fadeSeconds(props.fadeIn, 'fadeIn');
   const fadeOut = video ? 0 : fadeSeconds(props.fadeOut, 'fadeOut');
+  // Checked before the window is, so a bad clip throws even where none of
+  // it is heard.
+  const element = video ? '<Video>' : '<Audio>';
+  const startFrom = finiteNumber(props.startFrom, 0, element, 'startFrom');
+  const playbackRate = animatedNumber(props.playbackRate, 1, element, 'playbackRate');
+  const volume = animatedNumber(props.volume, 1, element, 'volume');
+  // A `<Video>`'s soundtrack has no pitch controls.
+  const pitch = video ? 0 : animatedNumber(props.pitch, 0, element, 'pitch');
   // An audio clip can play no earlier than its own local zero and not at
   // all outside the enclosing sequence window.
   const startSec = Math.max(context.rangeStartSec, context.originSec);
@@ -1271,11 +1300,6 @@ function collectAudioClip(
   if (endSec <= startSec) {
     return;
   }
-  const startFrom = numberOr(props.startFrom, 0);
-  const playbackRate = animatedNumber(props.playbackRate, 1);
-  const volume = animatedNumber(props.volume, 1);
-  // A `<Video>`'s soundtrack has no pitch controls.
-  const pitch = video ? 0 : animatedNumber(props.pitch, 0);
   // When the window clips the clip's head (an outer sequence started before
   // this clip's local zero, or negative `from`s stacked up), both the
   // source position and any animation keyframes shift by the clipped

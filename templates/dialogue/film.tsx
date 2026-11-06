@@ -371,11 +371,12 @@ function Member({ member, index }: { member: CastMember; index: number }) {
     line.speaker === member.id && frame >= from && frame < from + durationInFrames);
   const share = (width - 2 * MARGIN) / cast.length;
   const scale = Math.min(share / member.size.width, (stageBottom - stageTop) / member.size.height);
-  const since = speaking ? frame - speaking.from : Infinity;
-  const hop = interpolate(since, [0, HOP_UP, HOP_DOWN], [0, -HOP_HEIGHT, 0], {
-    extrapolateRight: 'clamp',
-    easing: Easings.easeOutQuad,
-  });
+  const hop = speaking
+    ? interpolate(frame - speaking.from, [0, HOP_UP, HOP_DOWN], [0, -HOP_HEIGHT, 0], {
+      extrapolateRight: 'clamp',
+      easing: Easings.easeOutQuad,
+    })
+    : 0;
   return (
     <Group
       x={MARGIN + (index + 0.5) * share - (member.size.width * scale) / 2}

@@ -12,7 +12,7 @@ const opacity = interpolate(frame, [0, 30], [0, 1], {
 });
 ```
 
-結果を `<Text opacity={opacity} … />` に渡します。入力範囲は単調増加で、出力範囲と要素数が同じ必要があります。外挿の既定値は `extend` です。最初と最後の値を保持するには `clamp` を使います。
+結果を `<Text opacity={opacity} … />` に渡します。入力範囲は単調増加で、出力範囲と要素数が同じ必要があります。入力値と範囲の各要素は有限の数値でなければなりません。綴りを誤ったフィールドなどから生じた `NaN` は、`NaN` を返さずにエラーになります。外挿の既定値は `extend` です。最初と最後の値を保持するには `clamp` を使います。
 
 `Easings` は easings.net の曲線に対応します。`linear` と、`Sine`、`Quad`、`Cubic`、`Quart`、`Quint`、`Expo`、`Circ`、`Back`、`Elastic`、`Bounce` の `easeIn` / `easeOut` / `easeInOut`（例：`Easings.easeOutBack`）が使えます。
 
@@ -46,7 +46,7 @@ function Badge() {
 }
 ```
 
-`config` の `stiffness`（既定 100）、`damping`（既定 10）、`mass`（既定 1）、`overshootClamping` で動きを調整します。`from` と `to` で別の範囲に変換できます。
+`config` の `stiffness`（既定 100）、`damping`（既定 10）、`mass`（既定 1）、`overshootClamping` で動きを調整します。`from` と `to` で別の範囲に変換できます。`frame`・`delay`・`from`・`to` は有限の数値、`fps` は 0 より大きい有限の数値、`durationInFrames` は指定するなら `NaN` 以外の数値（`Infinity` は省略と同じ）でなければならず、それ以外はエラーになります。
 
 ## シーンをタイムラインに配置
 
@@ -59,6 +59,8 @@ function Badge() {
 ```
 
 シーケンス内の `useCurrentFrame()` は開始時に 0 になります。子の映像と音声も同じローカル時計を使います。シーケンスの時間範囲外では子のレイヤーも音声も出力されません。
+
+`from` の既定値は 0 で、指定するなら有限の数値です（負の数も使えます）。`durationInFrames` を省略するか `Infinity` にすると、外側のシーケンスまたはコンポジションの終わりまで続きます。`0` は空の範囲です。`NaN`・無限大・数値以外の `from` と、`NaN`・負の数・数値以外の `durationInFrames` は、プロップ名を示すエラーになります。綴りを誤ったフィールドから計算したタイミングは、後のシーンすべてに重なる代わりにエラーで止まります。
 
 ## シーンを繰り返す
 

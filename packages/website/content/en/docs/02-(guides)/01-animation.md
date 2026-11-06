@@ -12,7 +12,7 @@ const opacity = interpolate(frame, [0, 30], [0, 1], {
 });
 ```
 
-Pass the result to `<Text opacity={opacity} … />`. Input ranges must be strictly increasing and have the same number of entries as the output range. Extrapolation defaults to `extend`; use `clamp` to hold the first and last values.
+Pass the result to `<Text opacity={opacity} … />`. Input ranges must be strictly increasing and have the same number of entries as the output range. The input and every range entry must be finite numbers: a `NaN`, such as one from a misspelled field, throws an error instead of returning `NaN`. Extrapolation defaults to `extend`; use `clamp` to hold the first and last values.
 
 `Easings` covers the familiar easings.net curves: `linear`, and the `easeIn`/`easeOut`/`easeInOut` variants of `Sine`, `Quad`, `Cubic`, `Quart`, `Quint`, `Expo`, `Circ`, `Back`, `Elastic`, and `Bounce` (for example `Easings.easeOutBack`).
 
@@ -46,7 +46,7 @@ function Badge() {
 }
 ```
 
-Tune the feel with `config`: `stiffness` (default 100), `damping` (default 10), `mass` (default 1), and `overshootClamping`. Use `from` and `to` to map the result to another range.
+Tune the feel with `config`: `stiffness` (default 100), `damping` (default 10), `mass` (default 1), and `overshootClamping`. Use `from` and `to` to map the result to another range. `frame`, `delay`, `from`, and `to` must be finite numbers, `fps` a finite number above 0, and `durationInFrames`, when set, a number other than `NaN` (`Infinity` is the same as leaving it out); anything else throws an error.
 
 ## Place a scene on the timeline
 
@@ -59,6 +59,8 @@ Import `Sequence` to delay or limit a group of layers. This shows the `Title` co
 ```
 
 Within that sequence, `useCurrentFrame()` starts at 0 when the sequence begins. Child video and audio use the same local clock. Children contribute neither layers nor audio outside the sequence’s time window.
+
+`from` defaults to 0 and must otherwise be a finite number; it may be negative. Leave `durationInFrames` out, or set it to `Infinity`, to run until the end of the enclosing sequence or composition; `0` is an empty window. A `from` that is `NaN`, infinite, or not a number, and a `durationInFrames` that is `NaN`, negative, or not a number, throw an error that names the prop, so a timing computed from a misspelled field fails instead of covering every later scene.
 
 ## Repeat a scene
 

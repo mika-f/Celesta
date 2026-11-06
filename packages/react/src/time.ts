@@ -36,6 +36,86 @@ export function endsWithComposition(endSec: number, compositionEndSec: number, f
   return Math.abs(endSec - compositionEndSec) < 0.5 / fps;
 }
 
+/** The window a `<Sequence>` is placed in. */
+export interface SequenceParent {
+  fps: number;
+  /** Where the enclosing window ends, in its local seconds. */
+  endSec: number;
+  /** The composition time, in seconds, of the enclosing window's local 0. */
+  originSec: number;
+  /** Where the composition ends, in seconds. */
+  compositionEndSec: number;
+  /**
+   * Whether the frame is rendered past the composition's end with the
+   * enclosing window held open.
+   */
+  openEnd: boolean;
+}
+
+/** A `<Sequence>`'s window, in its parent's local clock. */
+export interface SequenceWindow {
+  /** `from`, in frames. */
+  from: number;
+  /** `durationInFrames`; undefined when the window runs to the parent's end. */
+  durationInFrames: number | undefined;
+  /** Where the window starts, in the parent's local seconds. */
+  startSec: number;
+  /** Where the window ends, in the parent's local seconds. */
+  endSec: number;
+  /** Where the window ends, in composition seconds. */
+  compositionEndSec: number;
+  /**
+   * Whether the window stays open past `endSec`: past the composition's end
+   * (see `SequenceParent.openEnd`), a window that ends with the composition
+   * stays open, and one that ends later keeps its own end.
+   */
+  openEnd: boolean;
+}
+
+/**
+ * The window of a `<Sequence>` with these `from` and `durationInFrames`
+ * props. `<Sequence>` and render.ts's walker both place sequences with it,
+ * so the children React mounts are the ones the walker collects.
+ *
+ * `from` must be a finite number when set; it defaults to 0.
+ * `durationInFrames` must be at least 0 when set: `0` is an empty window,
+ * and `undefined` or `Infinity` runs to the end of the parent.
+ */
+export function sequenceWindow(
+  props: { from?: unknown; durationInFrames?: unknown },
+  parent: SequenceParent,
+): SequenceWindow {
+  const { from = 0, durationInFrames } = props;
+  if (typeof from !== 'number' || !Number.isFinite(from)) {
+    throw new Error(`<Sequence> \`from\` must be a finite number of frames, not ${describe(from)}`);
+  }
+  if (
+    durationInFrames !== undefined &&
+    (typeof durationInFrames !== 'number' || Number.isNaN(durationInFrames) || durationInFrames < 0)
+  ) {
+    throw new Error(
+      `<Sequence> \`durationInFrames\` must be a number of frames of at least 0, or Infinity, not ${describe(durationInFrames)}`,
+    );
+  }
+  const fps = parent.fps;
+  const bounded = durationInFrames !== undefined && durationInFrames !== Infinity;
+  const endSec = bounded ? (from + durationInFrames) / fps : parent.endSec;
+  const compositionEndSec = parent.originSec + endSec;
+  return {
+    from,
+    durationInFrames: bounded ? durationInFrames : undefined,
+    startSec: from / fps,
+    endSec,
+    compositionEndSec,
+    openEnd: parent.openEnd && endsWithComposition(compositionEndSec, parent.compositionEndSec, fps),
+  };
+}
+
+/** `value` as an error message shows it: strings quoted, numbers as written. */
+function describe(value: unknown): string {
+  return typeof value === 'string' ? JSON.stringify(value) : String(value);
+}
+
 /** Converts a `HH:MM:SS(.mmm)`, `MM:SS(.mmm)`, or `SS(.mmm)` timecode to a frame. */
 export function timecodeToFrame(timecode: string, fps: number): number {
   const trimmed = timecode.trim();
