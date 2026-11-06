@@ -70,7 +70,8 @@ pub fn has_project_config(root: &Path) -> bool {
 }
 
 /// Makes `root` a project root by writing an empty `celesta.config.json`,
-/// keeping one that is already there.
+/// keeping one that is already there. A write that fails removes the file
+/// it created, so a retry is not stopped by a partial one.
 pub fn mark_project_root(root: &Path) -> std::io::Result<()> {
     let path = root.join(PROJECT_CONFIG);
     match std::fs::OpenOptions::new()
@@ -78,7 +79,10 @@ pub fn mark_project_root(root: &Path) -> std::io::Result<()> {
         .create_new(true)
         .open(&path)
     {
-        Ok(mut file) => std::io::Write::write_all(&mut file, b"{}\n"),
+        Ok(mut file) => std::io::Write::write_all(&mut file, b"{}\n").inspect_err(|_| {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+        }),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && path.is_file() => Ok(()),
         Err(error) => Err(error),
     }
