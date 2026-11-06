@@ -9,7 +9,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, Rect, Sequence, Span, Subtitles, Text, useCurrentFrame, useTheme, useVideoConfig } from '@celesta.studio/react';
+import { Easings, Group, Rect, Sequence, Span, Subtitles, Text, useCurrentFrame, useTheme, useVideoConfig } from '@celesta.studio/react';
 import type { FontFamily, GlyphMetrics, Paint, TextMetrics, TextStyle } from '@celesta.studio/react';
 import { safeAreaInsets, useLayoutBounds } from '@celesta.studio/layout';
 import type { Insets, SafeAreaValue } from '@celesta.studio/layout';
@@ -498,7 +498,7 @@ function litWord(options: {
   const current = words.findIndex((word) => word.state === 'current');
   const word = words[current];
   const lines = word ? wordLines(metrics, text, clusters, word, shownLines) : [];
-  const progress = word === undefined || transition === 0 ? 1 : easeOut(Math.min(1, (frame - word.from) / transition));
+  const progress = word === undefined || transition === 0 ? 1 : Easings.easeOutCubic(Math.min(1, (frame - word.from) / transition));
   const grown = 1 + (scale - 1) * progress;
   const separate = scale !== 1 && lines.length > 0;
   const banded = highlight.background != null && lines.length > 0;
@@ -622,8 +622,4 @@ function coloredContent(
       }, part));
   }
   return parts;
-}
-
-function easeOut(t: number): number {
-  return 1 - (1 - t) ** 3;
 }
