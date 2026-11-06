@@ -1,4 +1,5 @@
 use crate::DEFAULT_REACT_AUDIO_SAMPLE_RATE;
+use crate::control::ExportCancellation;
 use crate::error::ExportError;
 use crate::options::{
     BitDepth, ColorConversion, EncoderPreset, UnknownBitDepth, UnknownEncoderPreset, VideoEncoding,
@@ -269,6 +270,7 @@ fn rejects_an_out_of_range_crf_before_encoding() {
         },
         ReadbackFormat::Rgba8,
         &directory.path().join("video.mp4"),
+        &ExportCancellation::default(),
     );
     assert!(matches!(result, Err(ExportError::InvalidCrf(52))));
 }

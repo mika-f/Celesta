@@ -89,6 +89,9 @@ pub(crate) struct LatestWorker<Req, Res> {
     newest: Arc<AtomicU64>,
     /// A request of the current generation has no result yet.
     pending: bool,
+    /// Run when the worker is dropped, to end a job that would otherwise
+    /// keep its thread waiting (see [`Self::stopping_on_drop`]).
+    on_drop: Option<Box<dyn FnOnce() + Send>>,
 }
 
 /// The request a [`LatestWorker`] is serving.
@@ -125,11 +128,29 @@ impl<Req: Send + 'static, Res: Send + 'static> LatestWorker<Req, Res> {
             generation: 0,
             newest: Arc::new(AtomicU64::new(0)),
             pending: false,
+            on_drop: None,
         })
     }
 }
 
+impl<Req, Res> Drop for LatestWorker<Req, Res> {
+    fn drop(&mut self) {
+        if let Some(stop) = self.on_drop.take() {
+            stop();
+        }
+    }
+}
+
 impl<Req, Res> LatestWorker<Req, Res> {
+    /// Runs `stop` when this worker is dropped. Dropping it closes its
+    /// channels, which ends its thread once the job in progress returns;
+    /// `stop` makes a job that waits on something else (a plugin's process)
+    /// return, so the thread and what it owns do not outlive the worker.
+    pub(crate) fn stopping_on_drop(mut self, stop: impl FnOnce() + Send + 'static) -> Self {
+        self.on_drop = Some(Box::new(stop));
+        self
+    }
+
     /// Starts a new generation: every earlier request is superseded, and
     /// nothing is pending until [`request`](Self::request).
     pub(crate) fn supersede(&mut self) {
@@ -341,6 +362,32 @@ mod tests {
             Err("test worker stopped unexpectedly".to_owned())
         );
         assert!(!worker.pending());
+    }
+
+    #[test]
+    fn dropping_a_worker_stops_its_job_and_ends_its_thread() {
+        // A job that waits until it is stopped, as a frame waits on a plugin
+        // that hangs, holding `alive` until its thread ends.
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let (alive, ended) = mpsc::channel::<()>();
+        let (started_tx, started) = mpsc::channel();
+        let mut worker = LatestWorker::spawn("test", move |(): (), _: &Job| {
+            let _alive = &alive;
+            started_tx.send(()).unwrap();
+            let _ = stop_rx.recv();
+        })
+        .unwrap()
+        .stopping_on_drop(move || drop(stop_tx));
+        worker.supersede();
+        worker.request(()).unwrap();
+        started.recv().unwrap();
+
+        drop(worker);
+        assert_eq!(
+            ended.recv_timeout(Duration::from_secs(5)),
+            Err(mpsc::RecvTimeoutError::Disconnected),
+            "the thread ended"
+        );
     }
 
     #[test]

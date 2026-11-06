@@ -589,11 +589,13 @@ fn render_stills(
             }
             Err(error) => Err(error),
         }
-        .map_err(|error| error.at_frame(frame))?;
+        .map_err(|error| cancellation.settle(error).at_frame(frame))?;
         if let Some(file) = file {
             progress(ExportProgress::Wrote(file));
         }
     }
+    // A frame a cancel killed failed as frame-scoped; write no sheet of it.
+    ensure_not_cancelled(cancellation)?;
     if let Some(file) = destination.finish(frames, output, overwrite)? {
         progress(ExportProgress::Wrote(file));
     }
@@ -682,6 +684,7 @@ impl Exporter {
             VideoFormat::Mp4,
             ColorConversion::Encoder,
             BitDepth::Eight,
+            cancellation,
         )?;
         render_stills(
             &frames,
@@ -812,6 +815,7 @@ impl Exporter {
             VideoFormat::Mp4,
             ColorConversion::Encoder,
             BitDepth::Eight,
+            cancellation,
         )?;
         render_stills(
             &frames,

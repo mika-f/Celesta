@@ -102,7 +102,7 @@ impl Exporter {
             self.options.video_format,
             self.options.overwrite,
         )?;
-        ensure_encoders(self.options.video_format)?;
+        ensure_encoders(self.options.video_format, cancellation)?;
         subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
         let duration = project.effective_duration().map_err(ExportError::Time)?;
         let full_frame_count = frame_count(duration, project.settings.frame_rate)?;
@@ -158,7 +158,8 @@ impl Exporter {
             let audio = scope.spawn(|| {
                 let abandoned =
                     || cancellation.is_cancelled() || abandon_audio.load(Ordering::Acquire);
-                let mut audio_decoder = MediaBackend::new();
+                let mut audio_decoder =
+                    MediaBackend::new().with_kill_switch(cancellation.plugins());
                 let mut mix = mix_audio_graph_unclipped_cancellable(
                     &graph,
                     asset_root,
@@ -190,7 +191,7 @@ impl Exporter {
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
             .map_err(|error| match error {
                 AudioMixError::Cancelled => ExportError::Cancelled,
-                error => ExportError::Audio(error),
+                error => cancellation.settle(ExportError::Audio(error)),
             })?;
         for warning in warnings {
             progress(ExportProgress::Warning(warning));

@@ -139,7 +139,7 @@ impl Exporter {
             self.options.video_format,
             self.options.overwrite,
         )?;
-        ensure_encoders(self.options.video_format)?;
+        ensure_encoders(self.options.video_format, cancellation)?;
         subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
 
         // Absolutize the asset roots up front: `absolutize_layers` and
@@ -223,10 +223,10 @@ impl Exporter {
         } else {
             progress(ExportProgress::MixingAudio);
             let graph = shifted_audio_graph(&graph, window_start).map_err(ExportError::Time)?;
-            let mut audio_decoder = MediaBackend::new();
+            let mut audio_decoder = MediaBackend::new().with_kill_switch(cancellation.plugins());
             let audio_error = |error| match error {
                 AudioMixError::Cancelled => ExportError::Cancelled,
-                error => ExportError::Audio(error),
+                error => cancellation.settle(ExportError::Audio(error)),
             };
             let mut audio = mix_audio_graph_unclipped_cancellable(
                 &graph,

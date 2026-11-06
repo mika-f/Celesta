@@ -7,6 +7,9 @@
 //! - Requests are written and answers read on threads of their own, so every
 //!   request has a deadline, even one whose payload a hung plugin would never
 //!   read. A plugin that misses it is killed.
+//! - Another thread can kill it through a [`PluginKillHandle`] (or a
+//!   [`crate::PluginKillSwitch`] it is registered with): the request it was
+//!   waiting on returns at once.
 //! - Its stderr is passed through to Celesta's and its last lines kept, so an
 //!   error for a process that went away says what it last printed.
 //! - An answer must be of the kind its request expects: a plugin that falls
@@ -15,6 +18,7 @@
 //!   request's.
 
 use crate::console::without_console_window;
+use crate::kill::{PluginKillHandle, SharedChild, lock, register_everywhere};
 use crate::stderr::{StderrTail, pump};
 use celesta_plugin::protocol::{
     Message, PROTOCOL_VERSION, error_message, read_message, write_message,
@@ -22,7 +26,7 @@ use celesta_plugin::protocol::{
 use serde_json::json;
 use std::io::{self, BufReader, BufWriter};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
@@ -36,12 +40,15 @@ pub const HELLO_TIMEOUT: Duration = Duration::from_secs(30);
 /// error waits for a plugin that went away to finish its stderr.
 const EXIT_WAIT: Duration = Duration::from_millis(500);
 
-/// How a request went wrong: the process cannot be talked to (it exited,
-/// missed its deadline, or fell out of step), or it refused with an `error`
-/// answer, kept whole for callers whose errors carry more than a message.
+/// How a request went wrong: the process cannot be talked to (it exited or
+/// fell out of step); it was stopped on purpose (it missed its deadline, or
+/// was killed through a [`PluginKillHandle`]), so sending the same request to
+/// a new process would not help; or it refused with an `error` answer, kept
+/// whole for callers whose errors carry more than a message.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RequestError {
     Unavailable(String),
+    Stopped(String),
     Refused(Message),
 }
 
@@ -49,7 +56,7 @@ impl RequestError {
     /// What went wrong, as text: an `error` answer's `message`.
     pub fn message(&self) -> String {
         match self {
-            Self::Unavailable(message) => message.clone(),
+            Self::Unavailable(message) | Self::Stopped(message) => message.clone(),
             Self::Refused(answer) => answer.header["message"]
                 .as_str()
                 .unwrap_or("unknown error")
@@ -62,7 +69,7 @@ impl RequestError {
 /// plugin's stdin, which asks it to exit, and kills it if it has not within
 /// half a second.
 pub struct PluginChild {
-    child: Child,
+    child: Arc<Mutex<SharedChild>>,
     /// What [`Self::request`] writes; dropping it ends the writer thread,
     /// which closes the plugin's stdin.
     requests: Option<Sender<Message>>,
@@ -138,6 +145,11 @@ impl PluginChild {
                 return Err(format!("could not start {name}: {error}"));
             }
         };
+        let child = Arc::new(Mutex::new(SharedChild {
+            child,
+            killed: false,
+        }));
+        register_everywhere(PluginKillHandle(Arc::downgrade(&child)));
         Ok(Self {
             child,
             requests: Some(requests),
@@ -146,6 +158,11 @@ impl PluginChild {
             stderr_closed,
             name,
         })
+    }
+
+    /// Kills the process from any thread (see [`crate::PluginKillSwitch`]).
+    pub fn kill_handle(&self) -> PluginKillHandle {
+        PluginKillHandle(Arc::downgrade(&self.child))
     }
 
     /// Says `hello` and checks the answer speaks this protocol; the caller
@@ -168,7 +185,8 @@ impl PluginChild {
     /// Sends `request` and waits up to `timeout` for its answer, which must
     /// be of the kind `expected` or an `error`. A plugin that misses the
     /// deadline, answers with another kind, or whose stream fails is killed;
-    /// an `error` answer leaves it running.
+    /// an `error` answer leaves it running. One killed through its
+    /// [`PluginKillHandle`] while this waits makes it return at once.
     pub fn request(
         &mut self,
         request: Message,
@@ -181,19 +199,21 @@ impl PluginChild {
             .as_ref()
             .is_some_and(|requests| requests.send(request).is_ok());
         if !sent {
-            return Err(self.gone("it stopped reading requests"));
+            return Err(self.gone(&kind, "it stopped reading requests"));
         }
         let answer = match self.answers.recv_timeout(timeout) {
             Ok(Ok(answer)) => answer,
-            Ok(Err(reason)) => return Err(self.gone(&reason)),
-            Err(RecvTimeoutError::Disconnected) => return Err(self.gone("its process exited")),
+            Ok(Err(reason)) => return Err(self.gone(&kind, &reason)),
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(self.gone(&kind, "its process exited"));
+            }
             Err(RecvTimeoutError::Timeout) => {
                 // Killed at once: it had its whole deadline.
                 self.stop();
-                return Err(self.unavailable(&format!(
+                return Err(RequestError::Stopped(self.explain(&format!(
                     "it did not answer `{kind}` within {} s, so it was stopped",
                     timeout.as_secs_f64()
-                )));
+                ))));
             }
         };
         match answer.kind() {
@@ -201,49 +221,57 @@ impl PluginChild {
             found if found == expected => Ok(answer),
             found => {
                 self.stop();
-                Err(self.unavailable(&format!(
+                Err(RequestError::Unavailable(self.explain(&format!(
                     "it answered `{kind}` with `{found}`, not `{expected}`, so it was stopped"
-                )))
+                ))))
             }
         }
     }
 
-    /// The process's stream failed for `reason`: it is given a moment to exit
-    /// on its own (so its stderr is complete), then stopped, since a process
-    /// whose stream failed cannot be talked to again.
-    fn gone(&mut self, reason: &str) -> RequestError {
+    /// The process's stream failed for `reason` while it worked on `kind`:
+    /// it is given a moment to exit on its own (so its stderr is complete),
+    /// then stopped, since a process whose stream failed cannot be talked to
+    /// again. A process killed through its [`PluginKillHandle`] is stopped.
+    fn gone(&mut self, kind: &str, reason: &str) -> RequestError {
         let deadline = Instant::now() + EXIT_WAIT;
-        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
+        while matches!(lock(&self.child).child.try_wait(), Ok(None)) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
         self.stop();
-        self.unavailable(reason)
+        if lock(&self.child).killed {
+            RequestError::Stopped(
+                self.explain(&format!("it was stopped while it worked on `{kind}`")),
+            )
+        } else {
+            RequestError::Unavailable(self.explain(reason))
+        }
     }
 
     /// Why the stopped process cannot be talked to: `reason`, and the last
     /// lines it printed on stderr, once they have all been read.
-    fn unavailable(&mut self, reason: &str) -> RequestError {
+    fn explain(&mut self, reason: &str) -> String {
         let _ = self.stderr_closed.recv_timeout(EXIT_WAIT);
         let tail = self
             .stderr
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .text();
-        RequestError::Unavailable(if tail.is_empty() {
+        if tail.is_empty() {
             format!("{} is unavailable: {reason}", self.name)
         } else {
             format!(
                 "{} is unavailable: {reason}; it last printed:\n{tail}",
                 self.name
             )
-        })
+        }
     }
 
     /// Kills the process, so the threads that wait on its pipes end.
     fn stop(&mut self) {
         self.requests = None;
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let mut child = lock(&self.child);
+        let _ = child.child.kill();
+        let _ = child.child.wait();
     }
 }
 
@@ -253,11 +281,10 @@ impl Drop for PluginChild {
         // to exit; it is killed if it has not in time.
         self.requests = None;
         let deadline = Instant::now() + EXIT_WAIT;
-        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
+        while matches!(lock(&self.child).child.try_wait(), Ok(None)) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.stop();
     }
 }
 
@@ -284,6 +311,10 @@ mod tests {
         }
     }
 
+    fn exited(child: &PluginChild) -> bool {
+        lock(&child.child).child.try_wait().unwrap().is_some()
+    }
+
     fn hello() -> Message {
         Message::new(json!({ "type": "hello", "protocol": PROTOCOL_VERSION }))
     }
@@ -306,17 +337,75 @@ mod tests {
             .request(hello(), "hello", Duration::from_millis(200))
             .unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(5));
-        let RequestError::Unavailable(message) = error else {
+        let RequestError::Stopped(message) = error else {
             panic!("{error:?}");
         };
         assert!(message.contains("did not answer `hello`"), "{message}");
         assert!(message.contains("loading the model"), "{message}");
-        assert!(child.child.try_wait().unwrap().is_some(), "it was killed");
+        assert!(exited(&child), "it was killed");
         // Later requests fail at once rather than wait again.
         assert!(matches!(
             child.request(hello(), "hello", Duration::from_secs(30)),
             Err(RequestError::Unavailable(_))
         ));
+    }
+
+    #[test]
+    fn killing_it_from_another_thread_ends_the_request_it_waits_on() {
+        let directory = tempfile::tempdir().unwrap();
+        let started = directory.path().join("started");
+        let program = script(
+            directory.path(),
+            &format!(
+                "echo 'drawing the frame' >&2\ntouch '{}'\nexec sleep 30",
+                started.display()
+            ),
+        );
+        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let switch = crate::PluginKillSwitch::new();
+        switch.register(child.kill_handle());
+        wait_for(&started);
+        let killer = {
+            let switch = switch.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(200));
+                switch.kill();
+            })
+        };
+        let begun = Instant::now();
+        let error = child
+            .request(hello(), "hello", Duration::from_secs(30))
+            .unwrap_err();
+        killer.join().unwrap();
+        assert!(
+            begun.elapsed() < Duration::from_secs(10),
+            "it returned at once"
+        );
+        let RequestError::Stopped(message) = error else {
+            panic!("{error:?}");
+        };
+        assert!(
+            message.contains("stopped while it worked on `hello`"),
+            "{message}"
+        );
+        assert!(message.contains("drawing the frame"), "{message}");
+        assert!(exited(&child), "it was killed");
+    }
+
+    #[test]
+    fn a_switch_killed_already_kills_what_is_registered_later() {
+        let directory = tempfile::tempdir().unwrap();
+        let program = script(directory.path(), "exec sleep 30");
+        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let switch = crate::PluginKillSwitch::new();
+        switch.kill();
+        assert!(switch.is_killed());
+        switch.register(child.kill_handle());
+        assert!(matches!(
+            child.request(hello(), "hello", Duration::from_secs(30)),
+            Err(RequestError::Stopped(_))
+        ));
+        assert!(exited(&child));
     }
 
     #[test]
@@ -351,7 +440,7 @@ exec cat >/dev/null"#,
             panic!("{error:?}");
         };
         assert!(message.contains("with `x`, not `hello`"), "{message}");
-        assert!(child.child.try_wait().unwrap().is_some(), "it was killed");
+        assert!(exited(&child), "it was killed");
     }
 
     #[test]
@@ -367,7 +456,7 @@ exec cat >/dev/null"#,
             .request(hello(), "hello", Duration::from_secs(5))
             .unwrap_err();
         assert!(matches!(error, RequestError::Unavailable(_)), "{error:?}");
-        assert!(child.child.try_wait().unwrap().is_some(), "it was killed");
+        assert!(exited(&child), "it was killed");
     }
 
     #[test]

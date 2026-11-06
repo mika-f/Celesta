@@ -1256,3 +1256,159 @@ export default function Root() {
         .unwrap();
     assert!(directory.path().join("film.ja.srt").exists());
 }
+
+/// Writes plugin `hang` into `directory`: a component, `<Hang>`, whose layer
+/// is the plugin's content, and a program that answers `hello` and `open`,
+/// then never answers `frame`. The program writes its process id to `pid`
+/// once it has answered.
+#[cfg(unix)]
+fn write_hanging_plugin(directory: &Path) {
+    use celesta_plugin::protocol::{Message, encode_opened, write_message};
+    use celesta_plugin::{MeshModel, ModelId, Opened};
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::create_dir_all(directory.join("bin")).unwrap();
+    std::fs::write(
+        directory.join(celesta_plugin_host::MANIFEST),
+        serde_json::json!({
+            "id": "hang",
+            "version": "1.0.0",
+            "protocol": 1,
+            "celesta": concat!("=", env!("CARGO_PKG_VERSION")),
+            "module": "index.ts",
+            "executable": { celesta_plugin_host::platform().0: "bin/p" },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("index.ts"),
+        r#"
+import * as React from 'react';
+import { registerHostElement } from '@celesta.studio/react/internal';
+
+const ELEMENT = 'celesta-plugin-hang';
+export function Hang(): React.ReactElement {
+  return React.createElement(ELEMENT, {});
+}
+registerHostElement(ELEMENT, {
+  content: () => ({ type: 'plugin', plugin: 'hang', assets: {}, time: 0 }),
+});
+"#,
+    )
+    .unwrap();
+    let mut answers = Vec::new();
+    let hello = serde_json::json!({
+        "type": "hello", "protocol": 1, "plugin": "hang",
+        "version": "1.0.0", "roles": ["content"],
+    });
+    write_message(&mut answers, &Message::new(hello)).unwrap();
+    let opened = Opened {
+        model: ModelId(1),
+        content: MeshModel {
+            canvas: [2.0, 2.0],
+            textures: Vec::new(),
+            meshes: Vec::new(),
+        }
+        .into(),
+        notices: Vec::new(),
+    };
+    write_message(&mut answers, &encode_opened(&opened)).unwrap();
+    std::fs::write(directory.join("answers"), answers).unwrap();
+    let program = directory.join("bin/p");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\ncat answers\necho $$ > '{}'\nexec sleep 60\n",
+            directory.join("pid").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Cancel kills the plugins an export runs: a frame waiting on a plugin that
+/// never answers returns at once, long before the frame's deadline, and the
+/// export ends as cancelled with the plugin's process gone.
+#[cfg(unix)]
+#[test]
+fn cancel_ends_a_frame_waiting_on_a_plugin_that_hangs() {
+    use std::time::{Duration, Instant};
+
+    let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
+    if !runtime_path.exists() {
+        eprintln!("skipping the hanging plugin test: build packages/cli first");
+        return;
+    }
+    let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
+    let plugin = directory.path().join("plugins/hang");
+    write_hanging_plugin(&plugin);
+    let (plugins, errors) = celesta_plugin_host::discover(&[directory.path().join("plugins")]);
+    assert!(errors.is_empty(), "{errors:?}");
+    let entry = directory.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        r#"
+import { Composition } from '@celesta.studio/react';
+import { Hang } from '@celesta-plugin/hang';
+export default function Root() {
+  return <Composition width={64} height={64} fps={2} durationInFrames={2}>
+    <Hang />
+  </Composition>;
+}
+"#,
+    )
+    .unwrap();
+
+    let cancellation = ExportCancellation::default();
+    let pid = plugin.join("pid");
+    let canceller = {
+        let cancellation = cancellation.clone();
+        let pid = pid.clone();
+        std::thread::spawn(move || {
+            // Once the plugin answered `open`, the frame waits on it.
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !pid.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            cancellation.cancel();
+        })
+    };
+    let output = directory.path().join("film.mp4");
+    let begun = Instant::now();
+    let result = crate::exporter(ExportOptions {
+        plugins: Some(celesta_plugin_host::InstalledPlugins {
+            plugins,
+            waiting: Vec::new(),
+        }),
+        ..ExportOptions::default()
+    })
+    .export_react_entry_cancellable(
+        &entry,
+        &ReactRuntimeOptions::new("node", runtime_path),
+        &output,
+        &cancellation,
+        |_| {},
+    );
+    if let Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) = &result {
+        skip_without_gpu(error);
+        cancellation.cancel();
+        canceller.join().unwrap();
+        return;
+    }
+    canceller.join().unwrap();
+    assert!(matches!(result, Err(ExportError::Cancelled)), "{result:?}");
+    assert!(
+        begun.elapsed() < Duration::from_secs(25),
+        "the frame returned before its 30 s deadline"
+    );
+    assert!(!output.exists());
+    let pid = std::fs::read_to_string(&pid).unwrap();
+    let running = std::process::Command::new("kill")
+        .args(["-0", pid.trim()])
+        .status()
+        .unwrap()
+        .success();
+    assert!(!running, "the plugin's process was stopped");
+}

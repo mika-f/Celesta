@@ -45,7 +45,7 @@ impl FfmpegCodec {
 
     /// A [`CodecFactory`] making an [`FfmpegCodec`] in this process.
     pub fn factory() -> CodecFactory {
-        Arc::new(|| Ok(Box::new(Self::new()) as Box<dyn CodecProvider>))
+        Arc::new(|_| Ok(Box::new(Self::new()) as Box<dyn CodecProvider>))
     }
 
     fn encoder(&mut self, encoder: EncoderId) -> Result<&mut VideoWriter, MediaError> {

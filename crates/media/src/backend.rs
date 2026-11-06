@@ -7,6 +7,7 @@ use crate::error::MediaError;
 use crate::mix::video_seconds;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
+use celesta_plugin_host::PluginKillSwitch;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
@@ -19,6 +20,9 @@ pub struct MediaBackend {
     /// `None` for the codec [`crate::set_codec`] chose when one is needed.
     factory: Option<CodecFactory>,
     codec: Option<Box<dyn CodecProvider>>,
+    /// What kills the codec's process from another thread; once it is
+    /// killed, no codec is opened.
+    kill: Option<PluginKillSwitch>,
     probes: HashMap<PathBuf, MediaProbe>,
     sequential_frame_rate: Option<Rational>,
 }
@@ -41,7 +45,7 @@ impl MediaBackend {
     pub(crate) fn with_factory_for_test(factory: Option<CodecFactory>) -> Self {
         let mut backend = Self::with_factory(factory.clone());
         if factory.is_none() {
-            backend.factory = Some(Arc::new(|| Err(MediaError::NoCodec)));
+            backend.factory = Some(Arc::new(|_| Err(MediaError::NoCodec)));
         }
         backend
     }
@@ -50,6 +54,7 @@ impl MediaBackend {
         Self {
             factory,
             codec: None,
+            kill: None,
             probes: HashMap::new(),
             sequential_frame_rate: None,
         }
@@ -62,6 +67,15 @@ impl MediaBackend {
         if frame_rate.is_valid() {
             self.sequential_frame_rate = Some(frame_rate);
         }
+        self
+    }
+
+    /// Registers the codec process this backend opens with `kill`, which
+    /// another thread can kill to end a request in progress, such as an
+    /// export's Cancel; once it is killed, no codec process starts. A codec
+    /// in this process is not stopped by it.
+    pub fn with_kill_switch(mut self, kill: PluginKillSwitch) -> Self {
+        self.kill = Some(kill);
         self
     }
 
@@ -81,14 +95,20 @@ impl MediaBackend {
                 .clone()
                 .or_else(codec)
                 .ok_or(MediaError::NoCodec)?;
-            self.codec = Some(factory()?);
+            // A backend without a switch gives its codec one nothing kills.
+            // A codec process refuses to start on a killed switch; a codec
+            // in this process has no process to kill and opens as usual.
+            let kill = self.kill.clone().unwrap_or_default();
+            self.codec = Some(factory(&kill)?);
         }
         Ok(self.codec.as_deref_mut().expect("opened above"))
     }
 
     /// Runs `request` on the codec; once more on a fresh one if the first
-    /// stopped answering. Only for requests that keep nothing open on the
-    /// codec's side that the caller relies on.
+    /// went away. One that was stopped (it missed its deadline, or was
+    /// killed) is dropped without being asked again; the next request opens
+    /// another. Only for requests that keep nothing open on the codec's side
+    /// that the caller relies on.
     fn retrying<T>(
         &mut self,
         mut request: impl FnMut(&mut dyn CodecProvider) -> Result<T, MediaError>,
@@ -97,6 +117,10 @@ impl MediaBackend {
             Err(MediaError::CodecUnavailable(_)) => {
                 self.codec = None;
                 request(self.codec()?)
+            }
+            Err(stopped @ MediaError::CodecStopped(_)) => {
+                self.codec = None;
+                Err(stopped)
             }
             result => result,
         }

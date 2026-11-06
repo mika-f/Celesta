@@ -7,7 +7,7 @@ use crate::codec::{
 use crate::error::MediaError;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_plugin::protocol::Message;
-use celesta_plugin_host::{PluginChild, RequestError};
+use celesta_plugin_host::{PluginChild, PluginKillSwitch, RequestError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,10 +28,22 @@ pub struct CodecProcess(PluginChild);
 
 impl CodecProcess {
     /// Starts `executable` in `directory` (the plugin's own) and checks that
-    /// it speaks this protocol as a codec.
-    pub fn start(executable: &Path, directory: &Path) -> Result<Self, MediaError> {
+    /// it speaks this protocol as a codec. The process is registered with
+    /// `kill` before it is asked anything, and none starts once `kill` was
+    /// killed.
+    pub fn start(
+        executable: &Path,
+        directory: &Path,
+        kill: &PluginKillSwitch,
+    ) -> Result<Self, MediaError> {
+        if kill.is_killed() {
+            return Err(MediaError::CodecStopped(
+                "it was not started, as its plugins were stopped".to_owned(),
+            ));
+        }
         let mut child =
             PluginChild::start(executable, directory).map_err(MediaError::CodecUnavailable)?;
+        kill.register(child.kill_handle());
         let hello = child.hello().map_err(media_error)?;
         let roles = hello.header["roles"].as_array();
         if !roles.is_some_and(|roles| roles.iter().any(|role| role == ROLES[0])) {
@@ -46,8 +58,11 @@ impl CodecProcess {
 
     /// Makes a [`CodecFactory`] that starts `executable` for each backend.
     pub fn factory(executable: PathBuf, directory: PathBuf) -> CodecFactory {
-        Arc::new(move || {
-            Ok(Box::new(CodecProcess::start(&executable, &directory)?) as Box<dyn CodecProvider>)
+        Arc::new(move |kill| {
+            Ok(
+                Box::new(CodecProcess::start(&executable, &directory, kill)?)
+                    as Box<dyn CodecProvider>,
+            )
         })
     }
 
@@ -64,10 +79,12 @@ impl CodecProcess {
 }
 
 /// A codec that could not be talked to is unavailable, so a backend starts
-/// another; one that refused says why, in the protocol's own error.
+/// another; one that was stopped (its deadline, or its kill switch) is not
+/// asked again; one that refused says why, in the protocol's own error.
 fn media_error(error: RequestError) -> MediaError {
     match error {
         RequestError::Unavailable(message) => MediaError::CodecUnavailable(message),
+        RequestError::Stopped(message) => MediaError::CodecStopped(message),
         RequestError::Refused(answer) => decode_error(&answer),
     }
 }

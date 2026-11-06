@@ -12,7 +12,74 @@ use std::path::{Path, PathBuf};
 fn program() -> Box<dyn CodecProvider> {
     let executable = PathBuf::from(env!("CARGO_BIN_EXE_celesta-codec-test"));
     let folder = executable.parent().unwrap().to_path_buf();
-    CodecProcess::factory(executable, folder)().unwrap()
+    CodecProcess::factory(executable, folder)(&Default::default()).unwrap()
+}
+
+/// A codec program that never answers `hello`, as one that hangs while it
+/// loads its libraries; it touches `started` first.
+#[cfg(unix)]
+fn hanging_program(directory: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let program = directory.join("codec.sh");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\ntouch '{}'\nexec sleep 60\n",
+            directory.join("started").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    program
+}
+
+#[cfg(unix)]
+#[test]
+fn killing_the_switch_ends_a_codec_start_waiting_on_hello() {
+    use celesta_plugin_host::PluginKillSwitch;
+    use std::time::{Duration, Instant};
+
+    let directory = tempfile::tempdir().unwrap();
+    let program = hanging_program(directory.path());
+    let kill = PluginKillSwitch::new();
+    let killer = {
+        let kill = kill.clone();
+        let started = directory.path().join("started");
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !started.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(200));
+            kill.kill();
+        })
+    };
+    let begun = Instant::now();
+    let result = CodecProcess::start(&program, directory.path(), &kill);
+    killer.join().unwrap();
+    assert!(
+        matches!(result, Err(MediaError::CodecStopped(_))),
+        "{:?}",
+        result.err()
+    );
+    assert!(
+        begun.elapsed() < Duration::from_secs(20),
+        "it returned before hello's 30 s deadline"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_killed_switch_starts_no_codec_process() {
+    let directory = tempfile::tempdir().unwrap();
+    let program = hanging_program(directory.path());
+    let kill = celesta_plugin_host::PluginKillSwitch::new();
+    kill.kill();
+    assert!(matches!(
+        CodecProcess::start(&program, directory.path(), &kill),
+        Err(MediaError::CodecStopped(_))
+    ));
+    assert!(!directory.path().join("started").exists(), "nothing ran");
 }
 
 #[test]

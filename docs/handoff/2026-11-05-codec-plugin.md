@@ -29,7 +29,10 @@ program links FFmpeg, and with it the GPL libx264 of the official packages.
   `MediaBackend::with_codec`. A request that finds the codec gone
   (`MediaError::CodecUnavailable`) opens a new one and is sent once more;
   encoder requests are not retried, since the encoder lived in the old one.
-  With no codec, requests fail with `MediaError::NoCodec`.
+  With no codec, requests fail with `MediaError::NoCodec`. A codec stopped
+  at its deadline or by a kill switch (`MediaError::CodecStopped`, a later
+  change; see `2026-11-06-plugin-kill-switch.md`) is not sent the request
+  again.
 - **Process.** `CodecProcess` starts the program in its plugin folder, checks
   that `hello`'s `roles` include `codec`, and makes every path absolute
   against Celesta's working directory before sending it (the renderer passes
@@ -60,9 +63,9 @@ program links FFmpeg, and with it the GPL libx264 of the official packages.
     stderr, a missed deadline's included.
   - Dropping it closes the plugin's stdin and kills it only if it has not
     exited within 500 ms.
-  - Not done here: killing a plugin from another thread (Cancel during an
-    export's frame, or the old preview worker on Reload Plugins); a hung
-    request now ends at its deadline instead.
+  - Killing a plugin from another thread (Cancel during an export's frame,
+    or the old preview worker on Reload Plugins) came later; see
+    `2026-11-06-plugin-kill-switch.md`.
 - **Protocol** (version 1, the framing of `celesta_plugin::protocol`; a
   codec plugin's main loop is `celesta_media::codec::protocol::serve`):
 

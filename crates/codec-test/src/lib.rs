@@ -60,7 +60,7 @@ impl TestCodec {
 
     /// A [`CodecFactory`] making a [`TestCodec`] in this process.
     pub fn factory() -> CodecFactory {
-        Arc::new(|| Ok(Box::new(Self::new()) as Box<dyn CodecProvider>))
+        Arc::new(|_| Ok(Box::new(Self::new()) as Box<dyn CodecProvider>))
     }
 }
 

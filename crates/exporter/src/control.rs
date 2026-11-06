@@ -1,6 +1,8 @@
+use crate::error::ExportError;
 use crate::options::VideoFormat;
 use crate::subtitles::SubtitleFormat;
 use celesta_composition::Rational;
+use celesta_plugin_host::PluginKillSwitch;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -90,17 +92,38 @@ pub struct AudioLoudness {
     pub gain_db: Option<f64>,
 }
 
+/// Cancels an export from another thread. The export stops before its next
+/// frame or stage, and the plugin and codec processes it runs are killed, so
+/// a frame or media request in progress (a plugin that hangs, say) ends at
+/// once too. Clones share it.
 #[derive(Clone, Debug, Default)]
 pub struct ExportCancellation {
     pub(crate) cancelled: Arc<AtomicBool>,
+    pub(crate) plugins: PluginKillSwitch,
 }
 
 impl ExportCancellation {
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
+        self.plugins.kill();
     }
 
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+    }
+
+    /// What kills the export's plugin and codec processes on cancel.
+    pub(crate) fn plugins(&self) -> PluginKillSwitch {
+        self.plugins.clone()
+    }
+
+    /// `error`, or [`ExportError::Cancelled`] once the export was
+    /// cancelled: the processes cancel kills fail what they were doing.
+    pub(crate) fn settle(&self, error: ExportError) -> ExportError {
+        if self.is_cancelled() {
+            ExportError::Cancelled
+        } else {
+            error
+        }
     }
 }

@@ -11,6 +11,7 @@ mod approval;
 mod child;
 mod console;
 mod host;
+mod kill;
 mod locations;
 mod manifest;
 mod project;
@@ -23,6 +24,7 @@ pub use approval::{
 pub use child::{HELLO_TIMEOUT, PluginChild, RequestError};
 pub use console::without_console_window;
 pub use host::PluginHost;
+pub use kill::{PluginKillHandle, PluginKillSwitch, kill_every_plugin};
 pub use locations::{
     PluginSource, SearchPath, bundled_plugin_dir, search_paths, unsafe_reason, user_plugin_dir,
 };

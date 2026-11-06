@@ -252,7 +252,9 @@ frames to draw only; speech channels synthesize in `prepare()` instead); a
 published SDK (below). The samples' demos are not type-checked in CI, as
 `typecheck:examples` covers `examples/<name>` projects only.
 Request timeouts, once also not done here, came with
-`2026-11-05-codec-plugin.md` (`celesta_plugin_host::PluginChild`).
+`2026-11-05-codec-plugin.md` (`celesta_plugin_host::PluginChild`), and
+killing a plugin from another thread with
+`2026-11-06-plugin-kill-switch.md`.
 
 ## Publishing an SDK (not done)
 

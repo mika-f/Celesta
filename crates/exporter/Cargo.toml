@@ -30,3 +30,5 @@ thiserror.workspace = true
 [dev-dependencies]
 # Tests read and write media with the lossless test codec.
 celesta-codec-test.workspace = true
+# A fake content plugin's answers, for the cancel test.
+celesta-plugin.workspace = true

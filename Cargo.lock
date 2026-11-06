@@ -1023,6 +1023,7 @@ dependencies = [
  "celesta-evaluator",
  "celesta-gpu-renderer",
  "celesta-media",
+ "celesta-plugin",
  "celesta-plugin-host",
  "celesta-project",
  "celesta-react-bridge",
