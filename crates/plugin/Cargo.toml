@@ -12,6 +12,12 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
-[target.'cfg(unix)'.dependencies]
-# Keeps stdout for the protocol alone (see protocol::serve).
+[target.'cfg(any(unix, windows))'.dependencies]
+# Keeps stdout for the protocol alone (see protocol::serve_requests).
 libc = "0.2"
+
+# Runs itself as a plugin process, which the default harness would garble by
+# printing its own progress on stdout first.
+[[test]]
+name = "stdout"
+harness = false
