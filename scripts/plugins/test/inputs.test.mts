@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -370,6 +370,24 @@ describe('repositoryPlugins in a tree without workspaces', () => {
     expect(() => repositoryPlugins(tree)).toThrow(
       'plugins/stray: no plugin.json; every folder under plugins/ but dist, target, and the dot folders is a plugin',
     );
+  });
+
+  it('refuses a symbolic link to a plugin folder, which is not a folder under plugins/', () => {
+    file('elsewhere/a/plugin.json', JSON.stringify({ id: 'a', version: '0.1.0', module: 'js/index.ts' }));
+    mkdirSync(join(tree, 'plugins'));
+    // A junction on Windows, which needs no privilege; elsewhere the type is ignored.
+    symlinkSync(join(tree, 'elsewhere', 'a'), join(tree, 'plugins', 'a'), 'junction');
+    expect(() => repositoryPlugins(tree)).toThrow(
+      'plugins/a: a symbolic link; a plugin under plugins/ must be a folder there',
+    );
+  });
+
+  it.each([
+    ['without an id', { version: '0.1.0', module: 'js/index.ts' }],
+    ['with an id that is not a string', { id: 7, version: '0.1.0', module: 'js/index.ts' }],
+  ])('refuses a plugin.json %s, as the build does', (_, source) => {
+    file('plugins/a/plugin.json', JSON.stringify(source));
+    expect(() => repositoryPlugins(tree)).toThrow('plugins/a/plugin.json: id must be a non-empty string');
   });
 
   it('names a plugin.json it cannot parse', () => {

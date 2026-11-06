@@ -45,9 +45,10 @@ const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 
 /**
  * Checks that the plugin `source` (read from `sourcePath`, which errors name)
  * has only the keys PluginSource lists, so a misspelt one is not skipped
- * without a word, and has something to build: a module, a Cargo package, or
- * both, and a module for any components, since Celesta skips a plugin listing
- * components it cannot import.
+ * without a word, has an `id` (a non-empty string), and has something to
+ * build: a module, a Cargo package, or both, and a module for any components,
+ * since Celesta skips a plugin listing components it cannot import (an empty
+ * `components` list, which Celesta accepts, needs none).
  */
 export function checkPluginSource(source: PluginSource, sourcePath: string): void {
   const unknown = Object.keys(source).filter((key) => !PLUGIN_SOURCE_KEYS.includes(key));
@@ -56,7 +57,13 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
       `${sourcePath}: unknown key${unknown.length === 1 ? '' : 's'} ${unknown.join(', ')}; plugin.json may have ${PLUGIN_SOURCE_KEYS.join(', ')}`,
     );
   }
-  if (source.module === undefined && source.components !== undefined) {
+  // plugin.json is read as JSON, so `id` may be anything at all.
+  const id: unknown = source.id;
+  if (typeof id !== 'string' || id === '') {
+    throw new Error(`${sourcePath}: id must be a non-empty string`);
+  }
+  const noComponents = source.components === undefined || (Array.isArray(source.components) && source.components.length === 0);
+  if (source.module === undefined && !noComponents) {
     throw new Error(`${sourcePath}: components need a module to import them from`);
   }
   if (source.module === undefined && source.cargoPackage === undefined) {
@@ -82,8 +89,8 @@ export function pluginManifest(source: PluginSource, { cargoVersion, executable 
 }
 
 /**
- * plugin.json's version, once it is checked: it must be there, and with a
- * `cargoPackage` it must be `cargoVersion`, that package's version.
+ * plugin.json's version, once it is checked: it must be a non-empty string,
+ * and with a `cargoPackage` it must be `cargoVersion`, that package's version.
  */
 export function pluginVersion(
   { version, cargoPackage }: Pick<PluginSource, 'version' | 'cargoPackage'>,
@@ -92,6 +99,11 @@ export function pluginVersion(
 ): string {
   if (version === undefined) {
     throw new Error(`${sourcePath}: version is required`);
+  }
+  // plugin.json is read as JSON, so `version` may be anything at all.
+  const given: unknown = version;
+  if (typeof given !== 'string' || given === '') {
+    throw new Error(`${sourcePath}: version must be a non-empty string`);
   }
   if (cargoPackage !== undefined) {
     if (cargoVersion === undefined) {

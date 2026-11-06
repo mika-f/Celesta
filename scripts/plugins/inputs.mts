@@ -13,6 +13,7 @@ import { cargoMetadata } from './cargo.mts';
 import type { CargoMetadata } from './cargo.mts';
 import { licenseFiles } from './licenses.mts';
 import { localPackages, parseCargoLock } from './lockfile.mts';
+import { checkPluginSource } from './manifest.mts';
 import type { PluginSource } from './manifest.mts';
 
 /**
@@ -85,8 +86,9 @@ function holdsNoPlugin(name: string): boolean {
  * Every plugins/<folder>/plugin.json under `root` (the repository's folder),
  * sorted by `id`, with its inputs. Every folder under plugins/ but dist,
  * target, and the dot folders must have one, so a plugin whose plugin.json is
- * missing fails rather than goes untested. `cargo metadata` runs once per
- * Cargo workspace.
+ * missing fails rather than goes untested, and a symbolic link there (to a
+ * plugin folder elsewhere, or anything else) is refused rather than passed
+ * over with the files. `cargo metadata` runs once per Cargo workspace.
  */
 export function repositoryPlugins(root: string): PluginInputs[] {
   // Cargo and pnpm give real paths.
@@ -99,7 +101,18 @@ export function repositoryPlugins(root: string): PluginInputs[] {
   };
   const pluginsFolder = join(real, 'plugins');
   return readdirSync(pluginsFolder, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !holdsNoPlugin(entry.name))
+    .filter((entry) => {
+      if (holdsNoPlugin(entry.name)) return false;
+      // `isDirectory()` is false for a link to a folder, which would otherwise
+      // be passed over as a file.
+      if (entry.isSymbolicLink()) {
+        throw new Error(
+          `${repositoryPath(real, join(pluginsFolder, entry.name))}: a symbolic link; ` +
+            'a plugin under plugins/ must be a folder there',
+        );
+      }
+      return entry.isDirectory();
+    })
     .map(({ name }) => {
       const source = join(pluginsFolder, name);
       if (!existsSync(join(source, 'plugin.json'))) {
@@ -141,6 +154,9 @@ function pluginInputs(
   const sourcePath = join(source, 'plugin.json');
   const sourceName = repositoryPath(root, sourcePath);
   const plugin: PluginSource = readJson(sourcePath, sourceName);
+  // The build's checks, so a plugin the build would refuse (one without an
+  // `id`, say) is not listed as affected.
+  checkPluginSource(plugin, sourceName);
   const directory = repositoryPath(root, source);
   const packageJson = join(source, 'js', 'package.json');
   const hasJs = existsSync(packageJson);

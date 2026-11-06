@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mts';
+import type { PluginSource } from '../manifest.mts';
 
 const sourcePath = '/repo/plugins/vrm/plugin.json';
 const component = { name: 'Vrm', label: 'VRM avatar', src: 'model', extensions: ['vrm'], aspect: 1.7777778 };
@@ -99,6 +100,20 @@ describe('checkPluginSource', () => {
     ).toThrow(`${sourcePath}: components need a module to import them from`);
   });
 
+  it('accepts an empty components list without a module, as Celesta does', () => {
+    expect(() => checkPluginSource({ id: 'x', version: '0.1.0', cargoPackage: 'p', components: [] }, sourcePath)).not.toThrow();
+  });
+
+  it.each([
+    ['no id', { version: '0.1.0', module: 'js/index.ts' }],
+    ['an empty id', { id: '', version: '0.1.0', module: 'js/index.ts' }],
+    ['an id that is not a string', { id: 7, version: '0.1.0', module: 'js/index.ts' }],
+  ])('refuses a plugin with %s, naming plugin.json', (_, source) => {
+    expect(() => checkPluginSource(source as unknown as PluginSource, sourcePath)).toThrow(
+      `${sourcePath}: id must be a non-empty string`,
+    );
+  });
+
   it('refuses a plugin with nothing to build', () => {
     expect(() => checkPluginSource({ id: 'x', version: '0.1.0' }, sourcePath)).toThrow(
       `${sourcePath}: it has neither a module nor a cargoPackage to build`,
@@ -135,6 +150,15 @@ describe('pluginVersion', () => {
     expect(pluginVersion({ version: '0.1.0', cargoPackage: 'celesta-plugin-vrm' }, '0.1.0', sourcePath)).toBe('0.1.0');
     expect(() => pluginVersion({ version: '0.1.0', cargoPackage: 'celesta-plugin-vrm' }, '0.1.1', sourcePath)).toThrow(
       /0\.1\.0 differs .* 0\.1\.1/,
+    );
+  });
+
+  it.each([
+    ['a number', 1],
+    ['an empty string', ''],
+  ])('refuses a version that is %s in a plugin without a Cargo package', (_, version) => {
+    expect(() => pluginVersion({ version: version as string }, undefined, sourcePath)).toThrow(
+      `${sourcePath}: version must be a non-empty string`,
     );
   });
 });
