@@ -53,5 +53,12 @@ not help.
   filter and passed after it.
 - `pnpm run test` in `packages/code`, `packages/voicevox` and
   `packages/aivis-speech`.
-- Windows CI timings, before (six runs on `main`, 2026-11-04/05) and after:
-  see the pull request.
+- Windows CI, Test (Windows x64), vitest per-test seconds. Before: six
+  `main` runs on 2026-11-04/05 took 8.7–20.5 s (Code 10.0–18.8, AivisSpeech
+  8.7–20.5, VOICEVOX 8.9–20.1). After: the pull request's run 42143106229
+  and two re-runs of its Windows job took 3.5–8.7 s (Code 4.7–8.7,
+  AivisSpeech 3.5–7.8, VOICEVOX 4.0–7.5).
+- In those three runs staging took 1.3–5.0 s, tsc 1.4–4.2 s and the CLI
+  0.2–0.5 s. Staging and tsc now cost about the same, so sharing one staged
+  runtime would save at most the stage share. Revisit it only if these tests
+  approach their timeouts again.
