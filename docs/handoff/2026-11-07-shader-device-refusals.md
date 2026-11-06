@@ -65,4 +65,6 @@ path, and reserved the `celesta` prefix only in lowercase.
   `cargo clippy -p celesta-gpu-renderer --all-targets -- -D warnings`,
   `cargo fmt --all -- --check`, `git diff --check`.
 - `pnpm --filter @celesta.studio/shader test`.
-- No rendering change: shaders that compiled before draw the same pixels.
+- No rendering change: shaders that still compile draw the same pixels as
+  before. Shaders that declare a newly reserved name (`Celesta_x` and the
+  like) no longer compile; see the specification above.
