@@ -528,8 +528,9 @@ its Decisions give the reasons for the three deviations below.
   `bindgen`, and `vcpkg`. `plugins/Cargo.lock` only gained packages, at the
   versions the root lock had; two existing dependency lines now name a
   version (`"itertools 0.13.0"` under bindgen, `"bindgen 0.70.1"` under
-  signalsmith-stretch), since a second version of each joined. `tests/export.rs`'s `workspace_root()`
-  still lands on the repository root. The plugins workspace has no
+  signalsmith-stretch), since a second version of each joined.
+  `tests/export.rs`'s `workspace_root()` still lands on the repository
+  root. The plugins workspace has no
   `[profile.dev.package.signalsmith-stretch] opt-level = 3`, which the
   root has; the codec's export tests showed no slowdown without it.
 - **The codec's manifest.** `plugins/ffmpeg/plugin.json` is
@@ -543,11 +544,17 @@ its Decisions give the reasons for the three deviations below.
   `plugin.json` before it creates a folder or runs Cargo. A plugin without
   a `module` gets no `module`/`types` and no module build, and the
   `project-types` prerequisite applies only when some plugin in the run has
-  a module. A plugin with neither `module` nor `cargoPackage`, or with
-  `components` but no `module`, is refused. `roles` passes through to the
-  manifest. `licenses.mts` resolves the optional `licenses` list; each run
-  replaces `<plugin directory>/licenses/` with those files, copied by name,
-  and refuses a missing file or two files with one name.
+  a module. A plugin with a key `plugin.json` may not have, with neither
+  `module` nor `cargoPackage`, or with `components` but no `module`, is
+  refused; with `--skip-js`, so is a plugin with a module whose
+  `js/index.js` and `js/index.d.ts` no earlier run left in its plugin
+  directory. `roles` passes through to the manifest. A step that fails
+  names its command and why: the spawn error, the signal, or the exit
+  code. Each run adds this platform's `executable` entry and keeps an
+  earlier run's only while its file is still there. `licenses.mts`
+  resolves the optional `licenses` list; each run replaces
+  `<plugin directory>/licenses/` with those files, copied by name, and
+  refuses a missing file or two files with one name.
 - **Deviations from the spec text.**
   - (a) The spec says the script "copies a plugin's `licenses/` folder".
     Instead, `plugin.json` has a `licenses` list naming repository files
@@ -575,9 +582,20 @@ its Decisions give the reasons for the three deviations below.
   `version = "=X"`; comments, third-party pins, and pins without a `path`
   stay), and, for each folder in `FOLLOWS_CELESTA` (`plugins/ffmpeg`), its
   Cargo package's `version` and `plugin.json`'s. A file whose version is
-  not Celesta's stops it before anything is written. It then runs
-  `cargo update --workspace` for both workspaces; when one fails, it
-  writes every manifest and lockfile back. Each `packages/*/package.json`
+  not Celesta's, or a `Cargo.toml` that would keep a `"=<from>"` pin
+  outside its comments (one split over lines, which the line-by-line
+  rewrite cannot reach), stops it before anything is written. It then
+  runs `cargo update --workspace` for both workspaces (`$CARGO` when
+  set). When a write fails (the file it fails in the middle of included),
+  Cargo fails, or the run is interrupted, it writes every manifest and
+  lockfile it changed back, says what it wrote, did not write, and
+  restored, and names any file it could not restore. A Cargo failure
+  names the spawn error, the signal, or the exit code. A Ctrl-C is passed
+  on to Cargo and the files go back once Cargo stops; a second kills
+  Cargo and puts them back at once; a Cargo stopped by SIGINT sent to it
+  alone counts as an interruption too. An interrupted run exits with 130.
+  On Windows, which cannot send a process Ctrl-C, Cargo is stopped
+  outright the first time. Each `packages/*/package.json`
   stays a hand step, which `HANDOFF.md` names. `repository.test.mts`
   checks that each `FOLLOWS_CELESTA` plugin gives the root's version, and
   `package.yml`'s release check refuses a tag whose version differs from
@@ -593,8 +611,9 @@ its Decisions give the reasons for the three deviations below.
   builds and tests natively. Tests stay `cargo test`, because vrm's
   `process` target is `harness = false` and nextest cannot list it, so a
   GPU test skipped on macOS or Windows shows only as a line starting
-  `skipping` or `skipped` in the log until layer 4. The `Test` job dropped setup-ffmpeg, its wait,
-  and the FFmpeg cache key. `perf.yml` dropped them too, and
+  `skipping` or `skipped` in the log until layer 4. The `Test` job
+  dropped setup-ffmpeg, its wait, and the FFmpeg cache key. `perf.yml`
+  dropped them too, and
   `.github/actions/setup-ffmpeg/**` from its paths: `celesta-bench` links
   no codec.
 - **Packaging.** `scripts/package-macos.py`, `scripts/package-windows.ps1`,
@@ -879,8 +898,8 @@ its Decisions give the reasons for the choices below.
   whose output has a line starting `skipping` or `skipped` (as the VRM
   sample tests and two plugin-host tests print), named
   `<binary label> <test>`, or the label alone for a `harness = false`
-  binary; labels use `/` on every system. The plugin directories are then built with
-  `node scripts/plugins/build.mts $DIRECTORIES`.
+  binary; labels use `/` on every system. The plugin directories are then
+  built with `node scripts/plugins/build.mts $DIRECTORIES`.
 - **The scripts' tests moved** to the root `Test` job's "Test Celesta
   packages" step (`pnpm --dir scripts/plugins test`), which runs on every
   pull request on all three systems, `inputs.test.mts`'s repository test
@@ -894,8 +913,8 @@ its Decisions give the reasons for the choices below.
   `inputs.test.mts` lives under `scripts/plugins/node_modules/.cache/`,
   inside the repository, where the pnpm `mise.toml` pins is on the path.
 - **Known gaps.** Build and test inputs outside both graphs and outside
-  `turbo.json` do not affect a plugin. Hand-kept lists are a non-goal; a push to `main` tests every plugin and
-  catches such a change there.
+  `turbo.json` do not affect a plugin. Hand-kept lists are a non-goal; a
+  push to `main` tests every plugin and catches such a change there.
 
 ### Checks (macOS 26.7.1, Apple M5, Metal)
 
@@ -956,14 +975,63 @@ The review of the whole stack changed:
   from a Cargo build folder (one with `.fingerprint` or `.cargo-lock`, as
   `target/<profile>` has).
 - The `Plugins (<OS>)` jobs cache only `plugins -> target`.
-- `inputs.mts` refuses a folder under `plugins/` (but `dist` and `target`)
-  without a `plugin.json`, and a plugin's JavaScript package without a
-  `test` script, which CI would otherwise pass over.
+- `inputs.mts` refuses a folder under `plugins/` (but `dist`, `target`,
+  and a folder whose name starts with `.`, such as `.idea`) without a
+  `plugin.json`, and a plugin's JavaScript package without a `test`
+  script, which CI would otherwise pass over.
 - `turbo.json` hashes what the CLI's build reads outside its package.
 - The packages' license inventory takes from the plugins workspace only the
   crates the codec reaches, so it lists none of VRM's.
 - The plugin scripts and `scripts/report-skipped-tests.mts` are TypeScript
-  (`.mts`), which Node runs directly, stripping the types.
+  (`.mts`), which Node runs directly, stripping the types. Earlier
+  sections give the scripts' commands under these `.mts` names, though
+  those layers wrote and ran them as `.mjs`.
+- `bump-version.mts` says what it wrote, did not write, and restored when
+  it stops, and puts back a file a write failed in the middle of. It
+  passes a Ctrl-C on to Cargo and exits 130 once the files are back; a
+  second Ctrl-C kills Cargo and undoes the bump at once. It refuses,
+  before writing anything, a `Cargo.toml` that would keep a `"=<from>"`
+  pin, and a Cargo failure names the signal, the exit code, or the spawn
+  error (Versions, in Layer 3: what was done).
+- `build.mts` names why a step failed, drops an earlier run's
+  `executable` entry whose file is gone, and with `--skip-js` needs the
+  module's `js/index.js` and `js/index.d.ts` already in the plugin
+  directory (the build script, in Layer 3: what was done).
+- `checkPluginSource` refuses a `plugin.json` key it does not know,
+  naming the keys it may have, so a misspelt key is not passed over.
+- The root `Test` job runs `python3 scripts/test_package_macos.py` on
+  Linux beside the scripts' tests; its checks mock no Apple tool.
+- `report-skipped-tests.mts` labels a test binary with `/` on Windows too.
+- `react_export` gives the test codec plugin only to video outputs, the
+  MCP tests bind the test codec before the client, and `codec-test`
+  refuses every truncation of a muxed file and one extra byte.
+- `scripts/test-package.mjs` checks that the codec's `licenses/` holds
+  exactly the files `plugins/ffmpeg/plugin.json` lists, and that the
+  license inventory names none of VRM's crates.
+- `repository.test.mts` checks that `plugins/ffmpeg/Cargo.toml` gives the
+  root `[workspace.package]`'s `edition`, `rust-version`, and `license`,
+  which it cannot inherit.
+
+### Checks (macOS 26.7.1, Apple M5, Metal)
+
+Rust 1.99.1, Node.js 26.13.0, pnpm 12.16.1.
+
+- `pnpm --dir scripts/plugins test`: `tsc -p test`, then 159 passed
+  (13 files); 161 once the dot-folder and lone-SIGINT tests joined.
+- `python3 scripts/test_package_macos.py`: 8 passed.
+- `cargo build --workspace --all-targets --locked` at the root: succeeds.
+- In `plugins/`, `cargo fmt --check` and
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`: clean.
+- `node scripts/plugins/affected.mts --base HEAD`: `{"plugins":[]}`.
+- `build.mts`, `bump-version.mts`, and `report-skipped-tests.mts` with no
+  arguments, under plain `node` on Node 26: each prints its usage and
+  exits 2.
+- The focused tests each fix's group ran: plugin-host's codec tests, 4;
+  the exporter's `stills::`, 16, and `no_codec`, 1; the editor's `codec`,
+  1; mcp's `export::`, 5; codec-test's `--test codec`, 10; and
+  codec-ffmpeg's `--test export`, 8, and `--test decode`, all passing.
+- Not run here: the Windows PowerShell license walk and the packages,
+  which the Package job on `main` first exercises.
 
 ## Left to the builder
 
