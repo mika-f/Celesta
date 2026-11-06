@@ -109,7 +109,8 @@ pub trait ContentProvider: Send {
     /// the kind the model was opened as. The answer must depend only on
     /// `model`, `time`, and `data`, not on the requests before it: the same
     /// frame can be asked for again, by a later render or an export, and
-    /// earlier times after later ones.
+    /// earlier times after later ones. A model it never opened, or already
+    /// closed, is an error, such as [`PluginError::UnknownModel`].
     fn frame(
         &mut self,
         model: ModelId,

@@ -109,13 +109,22 @@ pub fn write_message(writer: &mut impl Write, message: &Message) -> io::Result<(
     writer.flush()
 }
 
-/// A part of at most `max` bytes. Its buffer grows as its bytes arrive, so
-/// a length that is not one (such as text a plugin printed into the stream)
-/// is not allocated up front.
-fn read_part(reader: &mut impl Read, max: u32, what: &str) -> Result<Vec<u8>, ProtocolError> {
+/// A part's length prefix.
+fn read_length(reader: &mut impl Read) -> io::Result<u32> {
     let mut length = [0; 4];
     reader.read_exact(&mut length)?;
-    let length = u32::from_le_bytes(length);
+    Ok(u32::from_le_bytes(length))
+}
+
+/// A part of `length` bytes, at most `max`. Its buffer grows as its bytes
+/// arrive, so a length that is not one (such as text a plugin printed into
+/// the stream) is not allocated up front.
+fn read_body(
+    reader: &mut impl Read,
+    length: u32,
+    max: u32,
+    what: &str,
+) -> Result<Vec<u8>, ProtocolError> {
     if length > max {
         return Err(malformed(format!(
             "a {what} of {length} bytes, more than {max}"
@@ -136,20 +145,21 @@ fn read_part(reader: &mut impl Read, max: u32, what: &str) -> Result<Vec<u8>, Pr
     Ok(part)
 }
 
-/// The next message, or `None` when the stream ends between messages.
+/// The next message, or `None` when the stream ends between messages. A
+/// stream that ends inside one is an error.
 pub fn read_message(reader: &mut impl Read) -> Result<Option<Message>, ProtocolError> {
-    let header = match read_part(reader, MAX_HEADER, "header") {
-        Ok(header) => header,
-        Err(ProtocolError::Io(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
-            return Ok(None);
-        }
-        Err(error) => return Err(error),
+    let length = match read_length(reader) {
+        Ok(length) => length,
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error.into()),
     };
+    let header = read_body(reader, length, MAX_HEADER, "header")?;
     let header: Value = serde_json::from_slice(&header).map_err(malformed)?;
     if !header.is_object() {
         return Err(malformed("the header is not a JSON object"));
     }
-    let payload = read_part(reader, MAX_PAYLOAD, "payload")?;
+    let length = read_length(reader)?;
+    let payload = read_body(reader, length, MAX_PAYLOAD, "payload")?;
     Ok(Some(Message { header, payload }))
 }
 
@@ -1820,6 +1830,18 @@ mod tests {
             read_message(&mut &bytes[..]),
             Err(ProtocolError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn a_stream_that_ends_inside_a_header_is_an_error() {
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &Message::new(json!({ "type": "frame" }))).unwrap();
+        let error = read_message(&mut &bytes[..6]).unwrap_err();
+        assert!(
+            matches!(&error, ProtocolError::Io(io) if io.kind() == io::ErrorKind::UnexpectedEof),
+            "{error}"
+        );
+        assert!(read_message(&mut &b""[..]).unwrap().is_none());
     }
 
     #[test]

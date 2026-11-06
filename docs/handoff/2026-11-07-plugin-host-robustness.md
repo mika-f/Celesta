@@ -17,7 +17,10 @@ instead of a panic. This note covers the rest.
   ("it speaks plugin protocol N, and this Celesta speaks protocol 1"), so it
   is not offered for approval, and a module-only plugin is checked too. The
   check comes after the `celesta` range: a plugin made for another Celesta is
-  reported as `Incompatible`, which says what to do about it.
+  reported as `Incompatible`, which says what to do about it. It applies to
+  module-only plugins too, as #689 asked: `protocol` is a required field
+  every manifest declares, and one this Celesta does not speak marks a
+  plugin built for something else.
 - **stdout on Windows.** `serve_requests` (and so `serve`) keeps stdout for
   the protocol on Windows as on Unix: it answers through a duplicate of the
   stdout handle, points the C runtime's descriptor 1 at stderr with `_dup2`,
@@ -29,11 +32,16 @@ instead of a panic. This note covers the rest.
   more than 1 MiB and grows as its bytes arrive, so a bogus length (such as
   `"OK: "`, about 540 MB, from text printed into the stream) allocates no
   more than the bytes really sent; such a header length is refused at once.
-  A stream that ends inside a part is an `UnexpectedEof` naming how far it
-  got.
+  A stream that ends inside a part, header included, is an `UnexpectedEof`
+  error naming how far it got; only an end before a message's first length
+  is `Ok(None)`. Each part starts from a buffer of at most 1 MiB rather than
+  none, so a large payload (textures) is not regrown from a few bytes; that
+  1 MiB is all a bogus length can make it reserve.
 - **Unknown models.** `PluginHost::frame` for a model never opened is the new
   `PluginError::UnknownModel(ModelId)` ("no open model 7") rather than a
-  `Failed` naming plugin `""`.
+  `Failed` naming plugin `""`; `ContentProvider::frame`'s docs name it.
+  The sample providers keep answering `Failed` inside their processes,
+  where any error reaches Celesta as its message.
 - **Light limit.** `MAX_DIRECTIONAL_LIGHTS` (4) is `pub` in
   `celesta_plugin::scene`, beside the other scene limits; the GPU renderer
   and `Lights::directional`'s docs use it.
@@ -67,7 +75,9 @@ open: it changes the protocol.
   the Windows path was only cross-checked here
   (`cargo clippy -p celesta-plugin --all-targets --target x86_64-pc-windows-msvc`).
 - `protocol::tests`: `printed_text_is_refused_as_a_header_at_once`,
-  `a_part_longer_than_the_stream_ends_it`, `a_header_too_large_is_not_sent`.
+  `a_part_longer_than_the_stream_ends_it`,
+  `a_stream_that_ends_inside_a_header_is_an_error`,
+  `a_header_too_large_is_not_sent`.
 - `host::tests::a_plugin_that_answers_twice_is_restarted_back_in_step`: a
   shell-script plugin whose first process answers `open` twice; the next
   `frame` restarts it and succeeds. `an_unknown_model_names_no_plugin`.
