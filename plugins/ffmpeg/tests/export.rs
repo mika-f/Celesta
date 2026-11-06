@@ -4,6 +4,7 @@
 //! own tests run on the test codec; these hold the contract with FFmpeg.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use celesta_codec_ffmpeg::{FfmpegBackend, FfmpegCodec};
 use celesta_composition::{Rational, Time, TimeRange};
@@ -20,6 +21,18 @@ use celesta_project::{
 use ez_ffmpeg::stream_info::{StreamInfo, find_audio_stream_info, find_video_stream_info};
 use ez_ffmpeg::{FfmpegContext, Input, Output};
 use strum::VariantArray;
+
+/// GPU devices made at once in one process are unsafe on some drivers:
+/// Mesa's lavapipe, which Linux CI renders with, crashes the test binary
+/// with SIGSEGV. Every test that exports holds this for its whole body, so
+/// one exporter renders at a time.
+static GPU: Mutex<()> = Mutex::new(());
+
+/// The GPU lock; a test that panicked while holding it does not fail the
+/// rest.
+fn gpu() -> MutexGuard<'static, ()> {
+    GPU.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// An exporter that reads and writes media with the FFmpeg codec in this
 /// process, so the tests need no codec plugin installed.
@@ -77,6 +90,7 @@ fn the_ffmpeg_codec_has_every_format_encoder() {
 
 #[test]
 fn exports_frame_exact_mp4_with_silent_audio() {
+    let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("export.mp4");
     let source = directory.path().join("source.mkv");
@@ -207,6 +221,7 @@ fn exports_frame_exact_mp4_with_silent_audio() {
 
 #[test]
 fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
+    let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("source.mkv");
     generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
@@ -540,6 +555,7 @@ fn assert_transparent_quadrant(pixels: &[u16], tolerance: u16) {
 
 #[test]
 fn exports_transparent_prores_4444() {
+    let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
     let Some(output) = export_as(&project, directory.path(), VideoFormat::Mov, "clip.mov") else {
@@ -557,6 +573,7 @@ fn exports_transparent_prores_4444() {
 
 #[test]
 fn exports_transparent_vp9_webm() {
+    let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
     let Some(output) = export_as(&project, directory.path(), VideoFormat::Webm, "clip.webm") else {
@@ -582,6 +599,7 @@ fn exports_transparent_vp9_webm() {
 
 #[test]
 fn every_format_muxes_audio_as_long_as_the_video() {
+    let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
     for (format, name) in [
@@ -662,6 +680,7 @@ fn with_audio(mut project: Project, dir: &Path, lavfi: &str, name: &str) -> Proj
 
 #[test]
 fn a_looping_mp4_starts_its_sound_from_its_end() {
+    let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     // Four hits a second, each a chord at full strength from its first
     // sample: played on repeat, the last one runs into the first as each
@@ -790,6 +809,7 @@ fn export_reporting(
 
 #[test]
 fn brings_the_mix_to_a_loudness_target() {
+    let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let mut project = transparent_project(directory.path());
     project.settings.sample_rate = 48_000;
