@@ -14,6 +14,9 @@ pub struct ModelId(pub u64);
 pub enum PluginError {
     #[error("no plugin provides \"{0}\" content")]
     UnknownPlugin(String),
+    /// The model was never opened, or was closed.
+    #[error("no open model {}", .0.0)]
+    UnknownModel(ModelId),
     /// The plugin refused the request; `message` is its own.
     #[error("plugin \"{plugin}\": {message}")]
     Failed { plugin: String, message: String },
@@ -106,7 +109,8 @@ pub trait ContentProvider: Send {
     /// the kind the model was opened as. The answer must depend only on
     /// `model`, `time`, and `data`, not on the requests before it: the same
     /// frame can be asked for again, by a later render or an export, and
-    /// earlier times after later ones.
+    /// earlier times after later ones. A model it never opened, or already
+    /// closed, is an error, such as [`PluginError::UnknownModel`].
     fn frame(
         &mut self,
         model: ModelId,

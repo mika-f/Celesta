@@ -85,7 +85,8 @@ A frame (`SceneFrame`, per request):
   `intensity`; the first is the main light) and `ambient` as nine spherical
   harmonics coefficients per channel, in Unity's `ShadeSH9` order and scale.
   Custom materials read them; unlit ones ignore them. At most 4
-  directional lights (`2026-11-03-plugin-scene-materials.md`).
+  directional lights (`celesta_plugin::scene::MAX_DIRECTIONAL_LIGHTS`;
+  `2026-11-03-plugin-scene-materials.md`).
 - `time`: seconds, which custom materials read as `frame.time`.
 - `draws`: the draws to place, in any order. Each has its `index`,
   `visible`, `world`, one morph weight per target of its geometry, an

@@ -26,6 +26,10 @@ pub const MAX_MATERIAL_PARAMS: usize = 512;
 /// one a frame sets. Each side is also at least 1.
 pub const MAX_SCENE_CANVAS_SIDE: f32 = 16_384.0;
 
+/// The most directional lights a frame has: Unity's default pixel light
+/// count.
+pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
+
 /// A scene's fixed part, sent once when its assets are opened.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneModel {
@@ -424,8 +428,8 @@ pub enum Projection {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lights {
-    /// The first is the main light. At most 4, Unity's default pixel light
-    /// count: a frame with more is refused.
+    /// The first is the main light. At most [`MAX_DIRECTIONAL_LIGHTS`]: a
+    /// frame with more is refused.
     pub directional: Vec<DirectionalLight>,
     /// Light from every direction: `ambient[k]` is the RGB of coefficient
     /// `k` of

@@ -49,8 +49,16 @@ impl ContentModel {
     }
 }
 
-/// The largest header or payload either side accepts.
-const MAX_PART: u32 = 1 << 30;
+/// The largest payload either side accepts.
+const MAX_PAYLOAD: u32 = 1 << 30;
+
+/// The largest JSON header either side accepts: headers describe the
+/// payload's arrays rather than hold them.
+const MAX_HEADER: u32 = 16 << 20;
+
+/// What a part's buffer starts with before its bytes arrive; it grows as
+/// they do, so a bogus length costs no more than the bytes really sent.
+const PREALLOCATED: u32 = 1 << 20;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
@@ -87,10 +95,13 @@ impl Message {
 
 pub fn write_message(writer: &mut impl Write, message: &Message) -> io::Result<()> {
     let header = serde_json::to_vec(&message.header)?;
-    for part in [&header[..], &message.payload[..]] {
+    for (part, max) in [
+        (&header[..], MAX_HEADER),
+        (&message.payload[..], MAX_PAYLOAD),
+    ] {
         let length = u32::try_from(part.len())
             .ok()
-            .filter(|length| *length <= MAX_PART)
+            .filter(|length| *length <= max)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "message part too large"))?;
         writer.write_all(&length.to_le_bytes())?;
         writer.write_all(part)?;
@@ -98,32 +109,58 @@ pub fn write_message(writer: &mut impl Write, message: &Message) -> io::Result<(
     writer.flush()
 }
 
-fn read_part(reader: &mut impl Read) -> Result<Vec<u8>, ProtocolError> {
+/// A part's length prefix.
+fn read_length(reader: &mut impl Read) -> io::Result<u32> {
     let mut length = [0; 4];
     reader.read_exact(&mut length)?;
-    let length = u32::from_le_bytes(length);
-    if length > MAX_PART {
-        return Err(malformed(format!("a part of {length} bytes")));
+    Ok(u32::from_le_bytes(length))
+}
+
+/// A part of `length` bytes, at most `max`. Its buffer starts at no more
+/// than `PREALLOCATED` bytes and grows as its bytes arrive, so a length
+/// that is not one (such as text a plugin printed into the stream) reserves
+/// at most that much.
+fn read_body(
+    reader: &mut impl Read,
+    length: u32,
+    max: u32,
+    what: &str,
+) -> Result<Vec<u8>, ProtocolError> {
+    if length > max {
+        return Err(malformed(format!(
+            "a {what} of {length} bytes, more than {max}"
+        )));
     }
-    let mut part = vec![0; length as usize];
-    reader.read_exact(&mut part)?;
+    let mut part = Vec::with_capacity(length.min(PREALLOCATED) as usize);
+    reader.take(u64::from(length)).read_to_end(&mut part)?;
+    if part.len() != length as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!(
+                "the stream ended {} bytes into a {length}-byte {what}",
+                part.len()
+            ),
+        )
+        .into());
+    }
     Ok(part)
 }
 
-/// The next message, or `None` when the stream ends between messages.
+/// The next message, or `None` when the stream ends between messages. A
+/// stream that ends inside one is an error.
 pub fn read_message(reader: &mut impl Read) -> Result<Option<Message>, ProtocolError> {
-    let header = match read_part(reader) {
-        Ok(header) => header,
-        Err(ProtocolError::Io(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
-            return Ok(None);
-        }
-        Err(error) => return Err(error),
+    let length = match read_length(reader) {
+        Ok(length) => length,
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error.into()),
     };
+    let header = read_body(reader, length, MAX_HEADER, "header")?;
     let header: Value = serde_json::from_slice(&header).map_err(malformed)?;
     if !header.is_object() {
         return Err(malformed("the header is not a JSON object"));
     }
-    let payload = read_part(reader)?;
+    let length = read_length(reader)?;
+    let payload = read_body(reader, length, MAX_PAYLOAD, "payload")?;
     Ok(Some(Message { header, payload }))
 }
 
@@ -980,9 +1017,9 @@ pub fn serve(
     })
 }
 
-/// [`serve_requests_on`] this process's stdin and stdout. On Unix the
-/// answers go through a duplicate of stdout taken first, and stdout itself
-/// is pointed at stderr: whatever else the process prints, native
+/// [`serve_requests_on`] this process's stdin and stdout. The answers go
+/// through a duplicate of stdout taken first, and stdout itself is pointed
+/// at stderr: whatever else the process prints, `println!` and native
 /// libraries' banners and logs included, lands in Celesta's log instead of
 /// corrupting the protocol.
 pub fn serve_requests(
@@ -1013,7 +1050,45 @@ fn protocol_output() -> io::Result<std::fs::File> {
     Ok(std::fs::File::from(protocol))
 }
 
-#[cfg(not(unix))]
+/// As on Unix, for the C runtime's descriptors and the process's standard
+/// handles: Rust's `io::stdout()` writes to the `STD_OUTPUT_HANDLE` of the
+/// moment, and C's `printf` to descriptor 1.
+#[cfg(windows)]
+fn protocol_output() -> io::Result<std::fs::File> {
+    use std::os::windows::io::{AsHandle, RawHandle};
+
+    /// `STD_OUTPUT_HANDLE`, `(DWORD)-11`.
+    const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+    /// `INVALID_HANDLE_VALUE`, which `_get_osfhandle` also answers for a
+    /// descriptor that is not open.
+    const INVALID_HANDLE_VALUE: isize = -1;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetStdHandle(std_handle: u32, handle: RawHandle) -> i32;
+    }
+
+    // A handle of its own: `_dup2` closes descriptor 1's.
+    let protocol = io::stdout().as_handle().try_clone_to_owned()?;
+    // SAFETY: `_dup2` and `_get_osfhandle` on the C runtime's own standard
+    // descriptors; `SetStdHandle` with the handle descriptor 1 now owns,
+    // which the C runtime keeps open for the life of the process.
+    unsafe {
+        // The C runtime reports through `errno`, not `GetLastError`.
+        if libc::dup2(2, 1) < 0 {
+            return Err(io::Error::other("stdout could not be pointed at stderr"));
+        }
+        let stdout = libc::get_osfhandle(1);
+        if stdout == INVALID_HANDLE_VALUE {
+            return Err(io::Error::other("descriptor 1 has no handle"));
+        }
+        if SetStdHandle(STD_OUTPUT_HANDLE, stdout as RawHandle) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(std::fs::File::from(protocol))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn protocol_output() -> io::Result<io::StdoutLock<'static>> {
     Ok(io::stdout().lock())
 }
@@ -1724,5 +1799,57 @@ mod tests {
             scene_frame(0.5).into()
         );
         assert_eq!(next().kind(), "closed");
+    }
+
+    #[test]
+    fn printed_text_is_refused_as_a_header_at_once() {
+        // "OK: " read as a length is about 540 MB.
+        let error = read_message(&mut &b"OK: x"[..]).unwrap_err();
+        assert!(
+            matches!(&error, ProtocolError::Malformed(message) if message.contains("header of 540691279 bytes")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_part_longer_than_the_stream_ends_it() {
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &Message::new(json!({ "type": "frame" }))).unwrap();
+        // The payload claims 1 GiB and brings three bytes.
+        let payload = bytes.len() - 4;
+        bytes[payload..].copy_from_slice(&MAX_PAYLOAD.to_le_bytes());
+        bytes.extend_from_slice(b"abc");
+        let error = read_message(&mut &bytes[..]).unwrap_err();
+        assert!(
+            matches!(&error, ProtocolError::Io(io) if io.kind() == io::ErrorKind::UnexpectedEof),
+            "{error}"
+        );
+        assert!(error.to_string().contains("3 bytes into"), "{error}");
+        // More than the largest payload is refused before it is read.
+        bytes[payload..payload + 4].copy_from_slice(&(MAX_PAYLOAD + 1).to_le_bytes());
+        assert!(matches!(
+            read_message(&mut &bytes[..]),
+            Err(ProtocolError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn a_stream_that_ends_inside_a_header_is_an_error() {
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &Message::new(json!({ "type": "frame" }))).unwrap();
+        let error = read_message(&mut &bytes[..6]).unwrap_err();
+        assert!(
+            matches!(&error, ProtocolError::Io(io) if io.kind() == io::ErrorKind::UnexpectedEof),
+            "{error}"
+        );
+        assert!(read_message(&mut &b""[..]).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_header_too_large_is_not_sent() {
+        let text = "x".repeat(MAX_HEADER as usize);
+        let error =
+            write_message(&mut Vec::new(), &Message::new(json!({ "type": text }))).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 }
