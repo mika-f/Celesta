@@ -12,7 +12,7 @@ use celesta_plugin_host::UserSettings;
 use celesta_react_bridge::{
     DEFAULT_TEMPLATE, ProjectTsconfig, ProjectTypesSetup, TemplateInfo, initialize_project,
     list_templates, project_templates_dir, project_types_template,
-    runtime_paths as react_runtime_paths, set_up_project_types, set_up_project_types_in,
+    runtime_paths as react_runtime_paths, set_up_project_folder, set_up_project_types,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
@@ -470,7 +470,9 @@ impl EditorView {
     }
 
     /// File > Set Up TypeScript in Folder…: installs `.celesta/` into a folder
-    /// picked by the user, so a new project has types before its first entry.
+    /// picked by the user, so a new project has types before its first entry,
+    /// and marks it as the project root with `celesta.config.json`, so an
+    /// entry in a subfolder uses it.
     pub(crate) fn set_up_typescript_in_folder_action(
         &mut self,
         _: &SetUpTypeScriptInFolder,
@@ -505,7 +507,7 @@ impl EditorView {
             if let Some(folder) = folder {
                 view.update_in(cx, |this, window, cx| {
                     this.run_typescript_setup(window, cx, move |template| {
-                        set_up_project_types_in(template, &folder)
+                        set_up_project_folder(template, &folder)
                     });
                 })
                 .ok();

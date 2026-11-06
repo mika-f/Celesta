@@ -10,7 +10,7 @@
 use crate::project_types::{
     ProjectTypesSetup, STAMP, project_types_template, set_up_project_types_in,
 };
-use celesta_plugin_host::PROJECT_CONFIG;
+use celesta_plugin_host::mark_project_root;
 use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs;
@@ -156,7 +156,7 @@ pub fn initialize_project(
     )?;
     // Marks the project root, so the editor remembers that the user
     // trusts it and a project made inside another stays its own.
-    write_new(&setup.root.join(PROJECT_CONFIG), "{}\n")?;
+    mark_project_root(&setup.root)?;
     Ok(ProjectSetup {
         types: setup,
         template: info,
@@ -258,6 +258,7 @@ mod tests {
     use super::*;
     use crate::project_types::tests::{Scratch, template, write};
     use crate::project_types::{PROJECT_TYPES_DIR, ProjectTsconfig, STAMP};
+    use celesta_plugin_host::PROJECT_CONFIG;
     use std::fs;
 
     const BLANK_FILM: &str = "export default () => <Composition />;\n";
