@@ -44,6 +44,8 @@ export type {
 export { loadDialogueLipSync, spokenTextOf } from './spoken-text';
 export type { LoadDialogueLipSyncOptions } from './spoken-text';
 
+export { writeFileAtomic, writeFileAtomicSync } from './atomic-file';
+export type { WriteFileAtomicOptions } from './atomic-file';
 export { importVoiceFolder, naturalCompare } from './voice-folder';
 export type {
   ImportVoiceFolderOptions,

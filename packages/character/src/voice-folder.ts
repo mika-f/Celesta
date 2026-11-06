@@ -19,6 +19,7 @@ import { TextDecoder } from 'node:util';
 
 import { entryRelativePath, trackPrepareDependency } from '@celesta.studio/react/internal';
 
+import { writeFileAtomicSync } from './atomic-file';
 import type { DialogueExpression } from './components';
 import type { DialogueLine } from './dialogue-series';
 import { decodeWav, lipSyncFromAudio } from './lipsync';
@@ -525,14 +526,7 @@ function snapshot(bytes: Uint8Array, name: string): string {
     return target;
   }
   fs.mkdirSync(folder, { recursive: true });
-  const temporary = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  fs.writeFileSync(temporary, bytes);
-  try {
-    fs.renameSync(temporary, target);
-  } catch (error) {
-    fs.rmSync(temporary, { force: true });
-    // Another process published the same bytes first.
-    if (fs.statSync(target, { throwIfNoEntry: false })?.size !== bytes.length) throw error;
-  }
+  // Another process may publish the same bytes first.
+  writeFileAtomicSync(target, bytes, { ifExists: 'same-size' });
   return target;
 }
