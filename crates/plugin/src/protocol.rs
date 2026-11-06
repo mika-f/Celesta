@@ -116,9 +116,10 @@ fn read_length(reader: &mut impl Read) -> io::Result<u32> {
     Ok(u32::from_le_bytes(length))
 }
 
-/// A part of `length` bytes, at most `max`. Its buffer grows as its bytes
-/// arrive, so a length that is not one (such as text a plugin printed into
-/// the stream) is not allocated up front.
+/// A part of `length` bytes, at most `max`. Its buffer starts at no more
+/// than `PREALLOCATED` bytes and grows as its bytes arrive, so a length
+/// that is not one (such as text a plugin printed into the stream) reserves
+/// at most that much.
 fn read_body(
     reader: &mut impl Read,
     length: u32,

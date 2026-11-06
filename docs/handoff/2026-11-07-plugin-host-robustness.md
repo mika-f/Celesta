@@ -71,7 +71,9 @@ open: it changes the protocol.
 - `crates/plugin/tests/stdout.rs` runs itself as a plugin that prints with
   `println!` and with the C runtime's `write(1, …)` while answering, and
   checks that stdout carries only the answers and stderr the text. It has no
-  test harness, which would print on stdout first. It runs on every CI OS;
+  test harness, which would print on stdout first; it takes the part of
+  libtest's command line that `cargo test` and `cargo nextest` (CI) use:
+  `--list --format terse`, `--ignored`, and a name filter with `--exact`. It runs on every CI OS;
   the Windows path was only cross-checked here
   (`cargo clippy -p celesta-plugin --all-targets --target x86_64-pc-windows-msvc`).
 - `protocol::tests`: `printed_text_is_refused_as_a_header_at_once`,

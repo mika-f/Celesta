@@ -13,12 +13,46 @@ use std::process::{Command, Stdio};
 
 const PLUGIN_ENV: &str = "CELESTA_PLUGIN_STDOUT_TEST_PLUGIN";
 
+/// The test's name, as `--list` gives it and a filter matches it.
+const NAME: &str = "stdout";
+
+/// Takes the part of libtest's command line that `cargo test` and
+/// `cargo nextest` use: `--list` (with `--format terse` and `--ignored`),
+/// and a name filter (with `--exact`).
 fn main() {
     if std::env::var_os(PLUGIN_ENV).is_some() {
         plugin();
-    } else {
+        return;
+    }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let flag = |name: &str| args.iter().any(|arg| arg == name);
+    let exact = flag("--exact");
+    let filters: Vec<&str> = args
+        .iter()
+        .enumerate()
+        .filter(|(index, arg)| {
+            !arg.starts_with('-') && (*index == 0 || args[index - 1] != "--format")
+        })
+        .map(|(_, arg)| arg.as_str())
+        .collect();
+    let selected = !flag("--ignored")
+        && (filters.is_empty()
+            || filters.iter().any(|filter| {
+                if exact {
+                    *filter == NAME
+                } else {
+                    NAME.contains(filter)
+                }
+            }));
+    if flag("--list") {
+        if selected {
+            println!("{NAME}: test");
+        }
+        return;
+    }
+    if selected {
         test();
-        println!("test stdout ... ok");
+        println!("test {NAME} ... ok");
     }
 }
 
