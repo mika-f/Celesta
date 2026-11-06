@@ -34,7 +34,7 @@ use celesta_gpu_renderer::{
     GpuDriver, GpuRenderOptions, GpuRenderer, HitRegion, LayerFrame, TextLayout,
 };
 use celesta_media::MediaBackend;
-use celesta_plugin_host::InstalledPlugins;
+use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
 };
@@ -441,16 +441,32 @@ impl EditorView {
         // vs ~2ms of React evaluation on a 1080p source). Sharing one decode
         // run across the playhead's forward progress is what makes playback
         // track in real time; a backwards seek or a long jump still re-seeks.
+        //
+        // The preview's plugin and codec processes are killed with its
+        // worker, as when Reload Plugins or opening another file replaces this
+        // view: a frame waiting on a plugin that hangs then returns, and the
+        // worker's thread ends with its renderer instead of leaking them.
+        let preview_plugins = PluginKillSwitch::new();
         let renderer = GpuRenderer::new(GpuRenderOptions {
             driver,
             ..GpuRenderOptions::default()
         })?
         .with_asset_root(document.asset_root())
-        .with_video_decoder(MediaBackend::new().with_sequential_video(frame_rate_value))
-        .with_content_provider(plugins.installed.host());
+        .with_video_decoder(
+            MediaBackend::new()
+                .with_sequential_video(frame_rate_value)
+                .with_kill_switch(preview_plugins.clone()),
+        )
+        .with_content_provider(
+            plugins
+                .installed
+                .host()
+                .with_kill_switch(preview_plugins.clone()),
+        );
         let adapter = renderer.adapter_info();
         let gpu_name = format!("{} ({})", adapter.name, adapter.backend).into();
-        let preview_worker = spawn_preview(renderer)?;
+        let preview_worker =
+            spawn_preview(renderer)?.stopping_on_drop(move || preview_plugins.kill());
         let media_probe_worker = spawn_media_probe()?;
         let audio_mix_worker = spawn_audio_mix()?;
         let export_worker = spawn_export()?;

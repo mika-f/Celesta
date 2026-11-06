@@ -233,6 +233,14 @@ fn run() -> anyhow::Result<()> {
             }
         })
         .detach();
+        // A plugin that hangs would outlive the app: it never reads the end
+        // of its stdin, and the thread that would stop it may be waiting on
+        // it.
+        cx.on_app_quit(|_| {
+            celesta_plugin_host::kill_every_plugin();
+            async {}
+        })
+        .detach();
 
         let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
         cx.open_window(

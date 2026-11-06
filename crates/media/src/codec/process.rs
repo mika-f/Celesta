@@ -7,7 +7,7 @@ use crate::codec::{
 use crate::error::MediaError;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_plugin::protocol::Message;
-use celesta_plugin_host::{PluginChild, RequestError};
+use celesta_plugin_host::{PluginChild, PluginKillHandle, RequestError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -67,7 +67,9 @@ impl CodecProcess {
 /// another; one that refused says why, in the protocol's own error.
 fn media_error(error: RequestError) -> MediaError {
     match error {
-        RequestError::Unavailable(message) => MediaError::CodecUnavailable(message),
+        RequestError::Unavailable(message) | RequestError::Stopped(message) => {
+            MediaError::CodecUnavailable(message)
+        }
         RequestError::Refused(answer) => decode_error(&answer),
     }
 }
@@ -167,5 +169,9 @@ impl CodecProvider for CodecProcess {
         };
         self.request(protocol::mux_audio_request(&request)?, "muxed", MUX_TIMEOUT)
             .map(drop)
+    }
+
+    fn kill_handle(&self) -> Option<PluginKillHandle> {
+        Some(self.0.kill_handle())
     }
 }

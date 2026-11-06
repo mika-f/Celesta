@@ -41,6 +41,7 @@ impl Exporter {
             self.options.video_format,
             self.options.video.color_conversion,
             self.options.video.bit_depth,
+            cancellation,
         )?;
         let mut writer = open_video_writer(
             project.settings.width,
@@ -50,6 +51,7 @@ impl Exporter {
             self.options.video,
             renderer.readback_format(),
             output,
+            cancellation,
         )?;
 
         let mut reported_warnings = ReportedWarnings::default();
@@ -92,7 +94,7 @@ impl Exporter {
             }
             Ok(())
         })();
-        finish_encode(writer, result)
+        finish_encode(writer, result, cancellation)
     }
 
     pub(crate) fn render_react_video(
@@ -143,6 +145,7 @@ impl Exporter {
             self.options.video_format,
             self.options.video.color_conversion,
             self.options.video.bit_depth,
+            cancellation,
         )?;
         let mut writer = open_video_writer(
             metadata.width,
@@ -152,6 +155,7 @@ impl Exporter {
             self.options.video,
             renderer.readback_format(),
             output,
+            cancellation,
         )?;
 
         // Asks Node for a frame, after evaluating the project layers its
@@ -271,7 +275,7 @@ impl Exporter {
             }
             Ok(())
         });
-        finish_encode(writer, result)
+        finish_encode(writer, result, cancellation)
     }
 
     /// Muxes the encoded, audio-less `video` with the mixed `audio` (staged as
@@ -322,6 +326,7 @@ impl Exporter {
         ensure_not_cancelled(cancellation)?;
 
         let result = MediaBackend::new()
+            .with_kill_switch(cancellation.plugins())
             .mux_audio(&MuxRequest {
                 video: video.to_owned(),
                 audio: pcm_path.clone(),
@@ -331,9 +336,11 @@ impl Exporter {
                 container: self.options.video_format.container(),
                 lead_in_frames: lead_in.len() / usize::from(audio.channels),
             })
-            .map_err(|source| ExportError::Codec {
-                stage: "audio muxing",
-                source,
+            .map_err(|source| {
+                cancellation.settle(ExportError::Codec {
+                    stage: "audio muxing",
+                    source,
+                })
             });
         let _ = fs::remove_file(&pcm_path);
         result
@@ -398,7 +405,8 @@ pub(crate) fn ensure_encoders(format: VideoFormat) -> Result<(), ExportError> {
 
 impl Exporter {
     /// The renderer an export draws its frames with, at the options' render
-    /// quality, on their driver, with their plugins. For an alpha `format`
+    /// quality, on their driver, with their plugins, whose processes (and
+    /// its video decoder's) `cancellation` kills. For an alpha `format`
     /// it clears to transparent and reads back straight-alpha 16-bit RGBA,
     /// which the encoder converts; for MP4 it clears to the default opaque
     /// background and reads back yuv420p (or yuv420p10le for `bit_depth` 10)
@@ -411,6 +419,7 @@ impl Exporter {
         format: VideoFormat,
         color_conversion: ColorConversion,
         bit_depth: BitDepth,
+        cancellation: &ExportCancellation,
     ) -> Result<GpuRenderer, ExportError> {
         let background = if format.has_alpha() {
             Color::TRANSPARENT
@@ -422,9 +431,17 @@ impl Exporter {
             .map_err(ExportError::Render)?
             .with_render_quality(self.options.render_quality)
             .with_asset_root(asset_root)
-            .with_video_decoder(MediaBackend::new().with_sequential_video(frame_rate))
+            .with_video_decoder(
+                MediaBackend::new()
+                    .with_sequential_video(frame_rate)
+                    .with_kill_switch(cancellation.plugins()),
+            )
             // Plugin content comes from the plugins' own processes.
-            .with_content_provider(self.plugins().host());
+            .with_content_provider(
+                self.plugins()
+                    .host()
+                    .with_kill_switch(cancellation.plugins()),
+            );
         with_readback(renderer, format, color_conversion, bit_depth)
     }
 }
@@ -471,7 +488,9 @@ pub(crate) struct VideoWriter {
 /// H.264 (`encoding`'s preset, CRF, and bit depth) for `Mp4`, ProRes 4444
 /// for `Mov`, VP9 with alpha for `Webm`, each converted from RGB with the
 /// BT.709 matrix in limited range where the input is not YUV already. The
-/// alpha formats take straight-alpha 16-bit RGBA.
+/// alpha formats take straight-alpha 16-bit RGBA. `cancellation` kills the
+/// codec's process.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn open_video_writer(
     width: u32,
     height: u32,
@@ -480,6 +499,7 @@ pub(crate) fn open_video_writer(
     encoding: VideoEncoding,
     input: ReadbackFormat,
     output: &Path,
+    cancellation: &ExportCancellation,
 ) -> Result<VideoWriter, ExportError> {
     if format == VideoFormat::Mp4 && encoding.crf > VideoEncoding::MAX_CRF {
         return Err(ExportError::InvalidCrf(encoding.crf));
@@ -500,7 +520,7 @@ pub(crate) fn open_video_writer(
         crf: encoding.crf,
         bit_depth: encoding.bit_depth.bits(),
     };
-    let mut codec = MediaBackend::new();
+    let mut codec = MediaBackend::new().with_kill_switch(cancellation.plugins());
     let encoder = codec
         .open_encoder(&settings)
         .map_err(|source| ExportError::Codec {
@@ -592,10 +612,13 @@ pub(crate) fn write_frame(
 }
 
 /// Finalizes an encode: finishes the file on success (its container
-/// trailer), aborts the encoder on any earlier failure.
+/// trailer), aborts the encoder on any earlier failure. Once `cancellation`
+/// was cancelled, any failure is [`ExportError::Cancelled`]: cancelling
+/// killed the processes whose requests then failed.
 pub(crate) fn finish_encode(
     mut writer: VideoWriter,
     result: Result<(), ExportError>,
+    cancellation: &ExportCancellation,
 ) -> Result<(), ExportError> {
     match result {
         Ok(()) => writer
@@ -610,6 +633,7 @@ pub(crate) fn finish_encode(
             Err(error)
         }
     }
+    .map_err(|error| cancellation.settle(error))
 }
 
 pub(crate) fn ensure_not_cancelled(cancellation: &ExportCancellation) -> Result<(), ExportError> {

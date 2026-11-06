@@ -60,9 +60,9 @@ program links FFmpeg, and with it the GPL libx264 of the official packages.
     stderr, a missed deadline's included.
   - Dropping it closes the plugin's stdin and kills it only if it has not
     exited within 500 ms.
-  - Not done here: killing a plugin from another thread (Cancel during an
-    export's frame, or the old preview worker on Reload Plugins); a hung
-    request now ends at its deadline instead.
+  - Killing a plugin from another thread (Cancel during an export's frame,
+    or the old preview worker on Reload Plugins) came later; see
+    `2026-11-06-plugin-kill-switch.md`.
 - **Protocol** (version 1, the framing of `celesta_plugin::protocol`; a
   codec plugin's main loop is `celesta_media::codec::protocol::serve`):
 

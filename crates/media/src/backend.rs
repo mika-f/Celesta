@@ -7,6 +7,7 @@ use crate::error::MediaError;
 use crate::mix::video_seconds;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
+use celesta_plugin_host::PluginKillSwitch;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
@@ -19,6 +20,9 @@ pub struct MediaBackend {
     /// `None` for the codec [`crate::set_codec`] chose when one is needed.
     factory: Option<CodecFactory>,
     codec: Option<Box<dyn CodecProvider>>,
+    /// What kills the codec's process from another thread; once it is
+    /// killed, no codec is opened.
+    kill: Option<PluginKillSwitch>,
     probes: HashMap<PathBuf, MediaProbe>,
     sequential_frame_rate: Option<Rational>,
 }
@@ -50,6 +54,7 @@ impl MediaBackend {
         Self {
             factory,
             codec: None,
+            kill: None,
             probes: HashMap::new(),
             sequential_frame_rate: None,
         }
@@ -62,6 +67,14 @@ impl MediaBackend {
         if frame_rate.is_valid() {
             self.sequential_frame_rate = Some(frame_rate);
         }
+        self
+    }
+
+    /// Registers the codec process this backend opens with `kill`, which
+    /// another thread can kill to end a request in progress, such as an
+    /// export's Cancel. A codec in this process is not stopped by it.
+    pub fn with_kill_switch(mut self, kill: PluginKillSwitch) -> Self {
+        self.kill = Some(kill);
         self
     }
 
@@ -81,7 +94,16 @@ impl MediaBackend {
                 .clone()
                 .or_else(codec)
                 .ok_or(MediaError::NoCodec)?;
-            self.codec = Some(factory()?);
+            if self.kill.as_ref().is_some_and(PluginKillSwitch::is_killed) {
+                return Err(MediaError::CodecUnavailable(
+                    "the codec was not started, as its plugins were stopped".to_owned(),
+                ));
+            }
+            let opened = factory()?;
+            if let (Some(kill), Some(handle)) = (&self.kill, opened.kill_handle()) {
+                kill.register(handle);
+            }
+            self.codec = Some(opened);
         }
         Ok(self.codec.as_deref_mut().expect("opened above"))
     }

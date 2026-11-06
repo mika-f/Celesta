@@ -589,7 +589,7 @@ fn render_stills(
             }
             Err(error) => Err(error),
         }
-        .map_err(|error| error.at_frame(frame))?;
+        .map_err(|error| cancellation.settle(error).at_frame(frame))?;
         if let Some(file) = file {
             progress(ExportProgress::Wrote(file));
         }
@@ -682,6 +682,7 @@ impl Exporter {
             VideoFormat::Mp4,
             ColorConversion::Encoder,
             BitDepth::Eight,
+            cancellation,
         )?;
         render_stills(
             &frames,
@@ -812,6 +813,7 @@ impl Exporter {
             VideoFormat::Mp4,
             ColorConversion::Encoder,
             BitDepth::Eight,
+            cancellation,
         )?;
         render_stills(
             &frames,

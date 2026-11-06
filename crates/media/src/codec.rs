@@ -59,6 +59,12 @@ pub trait CodecProvider: Send {
     /// Writes `request.output`: the video of `request.video`, copied, with
     /// the PCM of `request.audio` encoded in the container's audio codec.
     fn mux_audio(&mut self, request: &MuxRequest) -> Result<(), MediaError>;
+
+    /// Kills the codec's process from another thread, for a codec that runs
+    /// in one; a [`crate::MediaBackend`] with a kill switch registers it.
+    fn kill_handle(&self) -> Option<celesta_plugin_host::PluginKillHandle> {
+        None
+    }
 }
 
 /// A frame request. With `sequential`, requests of the same session are
