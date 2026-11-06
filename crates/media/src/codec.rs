@@ -63,7 +63,8 @@ pub trait CodecProvider: Send {
 
 /// A frame request. With `sequential`, requests of the same session are
 /// expected to move forward at about its frame rate, and the codec may keep
-/// a decode run open between them.
+/// a decode run open between them. A session that stops asking may be
+/// closed at any time; a later request for it then seeks again.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VideoRequest<'a> {
     pub path: &'a Path,

@@ -91,6 +91,7 @@ impl SequentialVideoSession {
             last_timestamp: None,
             last_frame_seconds: None,
             last_frame: None,
+            last_used: 0,
         })
     }
 
