@@ -128,7 +128,7 @@ For entries with video or audio, also build the codec plugin and point
 `CELESTA_PLUGIN_PATH` at it, from the repository root:
 
 ```sh
-node scripts/plugins/build.mjs plugins/ffmpeg
+node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 

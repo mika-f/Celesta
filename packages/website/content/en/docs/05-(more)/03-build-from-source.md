@@ -40,7 +40,7 @@ sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
 export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
 ```
 
-Set `PKG_CONFIG_PATH` in the shell where you build the codec plugin (`node scripts/plugins/build.mjs plugins/ffmpeg`, step 4); Celesta's own crates link no FFmpeg. FFmpeg is linked into the codec plugin’s program, so `LD_LIBRARY_PATH` is not needed. If your distribution does provide FFmpeg 8.1.x, install `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`, `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development packages instead of running the script. To export without a GPU, see [Export a video](/en/docs/export/).
+Set `PKG_CONFIG_PATH` in the shell where you build the codec plugin (`node scripts/plugins/build.mts plugins/ffmpeg`, step 4); Celesta's own crates link no FFmpeg. FFmpeg is linked into the codec plugin’s program, so `LD_LIBRARY_PATH` is not needed. If your distribution does provide FFmpeg 8.1.x, install `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`, `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development packages instead of running the script. To export without a GPU, see [Export a video](/en/docs/export/).
 
 :::
 ::::
@@ -66,7 +66,7 @@ pnpm run build:runtime
 Build the codec plugin once, and again after updating the source. Celesta reads and writes video and audio through it, and finds it through `CELESTA_PLUGIN_PATH`, which must be an absolute path. Set the variable in every shell where you run Celesta:
 
 ```sh title="Build the codec plugin"
-node scripts/plugins/build.mjs plugins/ffmpeg
+node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 

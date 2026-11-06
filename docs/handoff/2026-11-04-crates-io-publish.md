@@ -18,7 +18,7 @@ plugin package rather than a crate.
   writes the same pins inline. A published crate names its dependencies by
   version, so a path alone is refused by `cargo publish`.
 - The pins match `workspace.package.version`.
-  `node scripts/plugins/bump-version.mjs` moves them all with it; one left
+  `node scripts/plugins/bump-version.mts` moves them all with it; one left
   behind makes Cargo fail to resolve its workspace (the root's, or the
   plugins workspace's for the codec), so it cannot slip through.
 - Every publishable crate has a `description`.

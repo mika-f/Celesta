@@ -40,7 +40,7 @@ sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
 export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
 ```
 
-コーデックプラグインをビルドするシェル（手順 4 の `node scripts/plugins/build.mjs plugins/ffmpeg`）で `PKG_CONFIG_PATH` を設定します。Celesta 本体のクレートは FFmpeg をリンクしません。FFmpeg はコーデックプラグインのプログラムにリンクされるので `LD_LIBRARY_PATH` は不要です。ディストリビューションが FFmpeg 8.1.x を提供する場合は、スクリプトの代わりに `pkg-config` と `libavcodec`、`libavformat`、`libavfilter`、`libavdevice`、`libavutil`、`libswscale`、`libswresample` の開発パッケージをインストールしてください。GPU なしでの書き出しは、[動画の書き出し](/ja/docs/export/)をご覧ください。
+コーデックプラグインをビルドするシェル（手順 4 の `node scripts/plugins/build.mts plugins/ffmpeg`）で `PKG_CONFIG_PATH` を設定します。Celesta 本体のクレートは FFmpeg をリンクしません。FFmpeg はコーデックプラグインのプログラムにリンクされるので `LD_LIBRARY_PATH` は不要です。ディストリビューションが FFmpeg 8.1.x を提供する場合は、スクリプトの代わりに `pkg-config` と `libavcodec`、`libavformat`、`libavfilter`、`libavdevice`、`libavutil`、`libswscale`、`libswresample` の開発パッケージをインストールしてください。GPU なしでの書き出しは、[動画の書き出し](/ja/docs/export/)をご覧ください。
 
 :::
 ::::
@@ -66,7 +66,7 @@ pnpm run build:runtime
 コーデックプラグインを一度ビルドします（ソースを更新したらもう一度）。Celesta は動画と音声をこれで読み書きし、`CELESTA_PLUGIN_PATH` から見つけます。この変数には絶対パスを指定し、Celesta を実行する各シェルで設定してください。
 
 ```sh title="コーデックプラグインをビルド"
-node scripts/plugins/build.mjs plugins/ffmpeg
+node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 

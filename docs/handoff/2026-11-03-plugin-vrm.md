@@ -36,7 +36,7 @@ Files ported from UniVRM carry its MIT notice and name their source.
 - `plugin.json` is the manifest's source: one component, `Vrm` ("VRM
   avatar"), taking a model file (below). `js/src/index.ts` is `<Vrm>`, a
   pnpm workspace package (`celesta-plugin-vrm-js`, private) for its tests.
-- `node scripts/plugins/build.mjs plugins/vrm`, the repository's plugin
+- `node scripts/plugins/build.mts plugins/vrm`, the repository's plugin
   build script, builds what Celesta loads into `plugins/dist/vrm`:
   `celesta-plugin.json` (its version `plugin.json`'s, which must equal the
   Cargo package's), the release program in `bin/<os>-<arch>/`, and
@@ -698,7 +698,7 @@ Celesta's side knows no format.
 | `plugins/vrm/src/meta.rs`, `provider.rs` | Usage-term notices; the provider and `data`. |
 | `plugins/vrm/src/notices.rs` | Warnings of one kind listed up to a limit, the rest counted. |
 | `plugins/vrm/src/synthetic.rs` | A small VRM 1.0 avatar built in code (feature `synthetic`), which every test opens. |
-| `plugins/vrm/js`, `plugin.json`, `demo.tsx`, `README.md` | `<Vrm>` and its tests, the manifest's source, and the demo; `scripts/plugins/build.mjs` builds the plugin directory. |
+| `plugins/vrm/js`, `plugin.json`, `demo.tsx`, `README.md` | `<Vrm>` and its tests, the manifest's source, and the demo; `scripts/plugins/build.mts` builds the plugin directory. |
 | `crates/plugin-host/src/manifest.rs` | `ComponentSource::Model`, `extensions`, `aspect`, and their checks. |
 | `crates/editor/src/add_element.rs` | Model components drawn as images, the file check, and the manifest's aspect. |
 | `Cargo.toml`, `.gitignore`, `pnpm-workspace.yaml`, `.github/workflows/ci.yml` | The root workspace excludes the plugin; its `target`, `dist`, and `assets` are ignored; `plugins/*/js` is a workspace package; a CI job for the plugin, now CI's `plugins` job (`Plugins (<OS>)`). |
@@ -772,7 +772,7 @@ Besides MToon's list above, to check against UniVRM:
   (`-p`, since `--workspace` also builds the codec plugin, which needs
   FFmpeg); `pnpm --filter celesta-plugin-vrm-js test` (after `pnpm run
   build:runtime`), which also type-checks `demo.tsx`; and
-  `node scripts/plugins/build.mjs plugins/vrm`. CI's `Plugins (<OS>)` jobs
+  `node scripts/plugins/build.mts plugins/vrm`. CI's `Plugins (<OS>)` jobs
   run them on Windows, macOS, and Linux (lavapipe) when a change affects
   the plugin, and on every push to `main`. Windows builds and tests the
   plugin natively, so its code for platforms other than Unix (the texture

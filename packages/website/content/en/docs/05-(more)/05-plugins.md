@@ -104,7 +104,7 @@ Celesta reads and writes video and audio files through a codec plugin rather tha
 
 A codec plugin's manifest has `"roles": ["codec"]`. Of the plugins Celesta may run, it uses the first codec in the order above; when there is none, it runs a `celesta-codec-ffmpeg` program beside its own executable, as `cargo install` leaves it, but not when that executable is in a Cargo build folder such as `target/release`: a source build uses the codec plugin you build (see [Build from source](/en/docs/build-from-source/)). If you install Celesta with `cargo install`, install the codec too, so it lands beside the app; installing only `celesta-editor` or `celesta-exporter` leaves no codec. Until `celesta-codec-ffmpeg` is published to crates.io, install it from the repository with `cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` (FFmpeg 8.1.x development libraries are needed, as in [Build from source](/en/docs/build-from-source/)). Without a codec, video and audio cannot be shown or exported: the app says so in Problems, and an export fails with the error code `no_codec`.
 
-To use another FFmpeg build, such as an LGPL-only one, point `PKG_CONFIG_PATH` at its `lib/pkgconfig` folder (on Windows, set `VCPKG_ROOT` to a vcpkg checkout that has that FFmpeg installed) and, from the repository root, run `node scripts/plugins/build.mjs plugins/ffmpeg --out <your user plugin folder>`. That builds the codec against your FFmpeg and lays it out as the plugin `ffmpeg` in that folder, which Celesta searches before the plugin folder that comes with it. The app asks before it runs it, as for any plugin from that folder. Its `licenses/` folder holds the texts for the official GPL build (the GPL and its source offer); replace them with the terms of your FFmpeg build before you share the plugin.
+To use another FFmpeg build, such as an LGPL-only one, point `PKG_CONFIG_PATH` at its `lib/pkgconfig` folder (on Windows, set `VCPKG_ROOT` to a vcpkg checkout that has that FFmpeg installed) and, from the repository root, run `node scripts/plugins/build.mts plugins/ffmpeg --out <your user plugin folder>`. That builds the codec against your FFmpeg and lays it out as the plugin `ffmpeg` in that folder, which Celesta searches before the plugin folder that comes with it. The app asks before it runs it, as for any plugin from that folder. Its `licenses/` folder holds the texts for the official GPL build (the GPL and its source offer); replace them with the terms of your FFmpeg build before you share the plugin.
 
 ## Samples
 
@@ -117,8 +117,8 @@ The repository's `examples/plugins` has three plugins to start from:
 | `beep-voice` | A plugin with only components: a speech channel that voices `planDialogue()` lines in game-style beeps instead of a speech engine, with lip sync. |
 
 ```sh
-node scripts/plugins/build.mjs examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
-node scripts/plugins/build.mjs plugins/ffmpeg   # the codec plugin, which writes the MP4
+node scripts/plugins/build.mts examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
+node scripts/plugins/build.mts plugins/ffmpeg   # the codec plugin, which writes the MP4
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 ```
@@ -131,10 +131,10 @@ The repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) in 3D, toon-shaded
 
 ```sh
 pnpm install && pnpm run build:runtime       # once, at the repository root
-node scripts/plugins/build.mjs plugins/vrm   # writes plugins/dist/vrm
+node scripts/plugins/build.mts plugins/vrm   # writes plugins/dist/vrm
 ```
 
-Copy `plugins/dist/vrm` into your user plugin folder, or pass `plugins/dist` to the exporter with `--plugin-dir`. Building needs Rust and Node.js, as building Celesta does. To export video with a source build of the exporter, build the codec plugin into the same folder too, `node scripts/plugins/build.mjs plugins/vrm plugins/ffmpeg`, so that `--plugin-dir plugins/dist` gives the exporter both; the codec needs the FFmpeg development libraries.
+Copy `plugins/dist/vrm` into your user plugin folder, or pass `plugins/dist` to the exporter with `--plugin-dir`. Building needs Rust and Node.js, as building Celesta does. To export video with a source build of the exporter, build the codec plugin into the same folder too, `node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg`, so that `--plugin-dir plugins/dist` gives the exporter both; the codec needs the FFmpeg development libraries.
 
 ```tsx
 import { Composition } from '@celesta.studio/react';

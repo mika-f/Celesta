@@ -11,7 +11,7 @@ Confirm that the 8.1.x development libraries are installed, not just the executa
 :::
 :::toggle[Video and audio do not show, or an export fails with no_codec]
 
-Celesta reads and writes media through its codec plugin. In a package, check that the `ffmpeg` plugin is still in the plugin folder that comes with Celesta (`plugins\ffmpeg` beside `Celesta.exe`, or `Contents/PlugIns/ffmpeg` in the macOS app), or install the package again. In a source build, run `node scripts/plugins/build.mjs plugins/ffmpeg` from the repository root, and set `CELESTA_PLUGIN_PATH` to the absolute path of `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`) in the shell where you run Celesta. See [The codec plugin](/en/docs/plugins/#the-codec-plugin).
+Celesta reads and writes media through its codec plugin. In a package, check that the `ffmpeg` plugin is still in the plugin folder that comes with Celesta (`plugins\ffmpeg` beside `Celesta.exe`, or `Contents/PlugIns/ffmpeg` in the macOS app), or install the package again. In a source build, run `node scripts/plugins/build.mts plugins/ffmpeg` from the repository root, and set `CELESTA_PLUGIN_PATH` to the absolute path of `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`) in the shell where you run Celesta. See [The codec plugin](/en/docs/plugins/#the-codec-plugin).
 
 :::
 :::toggle[My media is missing]
