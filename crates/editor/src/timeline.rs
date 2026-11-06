@@ -16,9 +16,9 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     Bounds, Context, CursorStyle, Hsla, IntoElement, Modifiers, MouseButton, MouseDownEvent,
-    ParentElement as _, PathBuilder, PinchEvent, Pixels, Point, ScrollDelta, ScrollEvent,
-    SharedString, TouchPhase, Window, canvas, div, fill, point, prelude::*, px, relative, rgb,
-    size,
+    MouseMoveEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Point, ScrollDelta,
+    ScrollEvent, SharedString, TouchPhase, Window, canvas, div, fill, point, prelude::*, px,
+    relative, rgb, size,
 };
 
 use crate::actions::{ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit};
@@ -535,21 +535,32 @@ impl EditorView {
     }
 
     fn begin_scrub(&mut self, event: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.scrubbing = true;
+        self.ruler_drag = RulerDrag::Scrub;
         self.scrub_to(event.position);
         cx.notify();
     }
 
-    pub(crate) fn continue_scrub(&mut self, position: Point<Pixels>) -> bool {
-        if !self.scrubbing {
-            return false;
+    /// Continues the ruler scrub or the overview drag to `position`; a move
+    /// without the button ends either (see [`RulerDrag::follow`]). True when
+    /// what is drawn changed.
+    pub(crate) fn continue_ruler_drag(&mut self, event: &MouseMoveEvent) -> bool {
+        let running = self.ruler_drag != RulerDrag::None;
+        match self.ruler_drag.follow(event.dragging()) {
+            RulerDrag::None => running,
+            RulerDrag::Scrub => {
+                self.scrub_to(event.position);
+                true
+            }
+            RulerDrag::Overview { grab_x, view_start } => {
+                self.pan_overview(grab_x, view_start, event.position);
+                true
+            }
         }
-        self.scrub_to(position);
-        true
     }
 
-    pub(crate) fn end_scrub(&mut self) -> bool {
-        std::mem::take(&mut self.scrubbing)
+    /// Ends the ruler scrub or the overview drag; true when one ran.
+    pub(crate) fn end_ruler_drag(&mut self) -> bool {
+        std::mem::take(&mut self.ruler_drag) != RulerDrag::None
     }
 
     /// Press on the overview bar: grab the thumb, or jump the view so the
@@ -569,15 +580,17 @@ impl EditorView {
         if !(view_start..=view_start + 1.0 / zoom).contains(&pressed) {
             self.timeline_view_start = pressed - 0.5 / zoom;
         }
-        self.timeline_overview_drag = Some((f32::from(event.position.x), self.timeline_view().1));
+        self.ruler_drag = RulerDrag::Overview {
+            grab_x: f32::from(event.position.x),
+            view_start: self.timeline_view().1,
+        };
         cx.stop_propagation();
         cx.notify();
     }
 
-    pub(crate) fn continue_overview_drag(&mut self, position: Point<Pixels>) -> bool {
-        let Some((grab_x, grab_view_start)) = self.timeline_overview_drag else {
-            return false;
-        };
+    /// Moves the view so the thumb grabbed at `grab_x` with the view at
+    /// `grab_view_start` follows `position`.
+    fn pan_overview(&mut self, grab_x: f32, grab_view_start: f64, position: Point<Pixels>) {
         let width = self
             .timeline_overview_bounds
             .get()
@@ -585,11 +598,6 @@ impl EditorView {
             .max(1.0);
         let delta = f64::from((f32::from(position.x) - grab_x) / width);
         self.timeline_view_start = (grab_view_start + delta).clamp(0.0, 1.0);
-        true
-    }
-
-    pub(crate) fn end_overview_drag(&mut self) -> bool {
-        self.timeline_overview_drag.take().is_some()
     }
 
     pub(crate) fn timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1847,7 +1855,7 @@ impl EditorView {
                             .w(relative((1.0 / view.zoom) as f32))
                             .min_w(px(12.0))
                             .rounded(cx.theme().radius)
-                            .bg(if self.timeline_overview_drag.is_some() {
+                            .bg(if matches!(self.ruler_drag, RulerDrag::Overview { .. }) {
                                 cx.theme().scrollbar_thumb_hover
                             } else {
                                 cx.theme().scrollbar_thumb
@@ -1954,6 +1962,33 @@ enum LaneAxis {
     Scroll,
     /// Panning both ways: a gesture begun with Option.
     Pan,
+}
+
+/// The ruler scrub and the overview thumb drag: the timeline's pointer
+/// drags that keep no [`DragSession`](crate::drag_session::DragSession).
+/// One press starts at most one of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum RulerDrag {
+    #[default]
+    None,
+    /// The playhead follows the pointer over the ruler.
+    Scrub,
+    /// The overview bar's thumb: the pointer x and the view start at the
+    /// grab.
+    Overview { grab_x: f32, view_start: f64 },
+}
+
+impl RulerDrag {
+    /// The drag a pointer move continues. A move without the button is a
+    /// release the view did not see (see `EditorView::release_unseen`): it
+    /// ends the drag there and continues none, so the next left drag
+    /// elsewhere neither seeks the playhead nor pans the view.
+    pub(crate) fn follow(&mut self, dragging: bool) -> Self {
+        if !dragging {
+            *self = Self::None;
+        }
+        *self
+    }
 }
 
 /// Locks a trackpad gesture over the lanes to one axis, so a vertical
@@ -2122,8 +2157,9 @@ fn wheel_zoom_factor(delta_y: f32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LaneGesture, LaneView, LaneWheel, SelectionBand, band_geometry, chapter_lanes, edit_points,
-        follow_playhead, merge_close_bands, scrub_frames, selection_bands, timeline_rows,
+        LaneGesture, LaneView, LaneWheel, RulerDrag, SelectionBand, band_geometry, chapter_lanes,
+        edit_points, follow_playhead, merge_close_bands, scrub_frames, selection_bands,
+        timeline_rows,
     };
     use crate::impact::ImpactView;
     use celesta_composition::Time;
@@ -2131,6 +2167,25 @@ mod tests {
     use celesta_project::TrackKind;
     use celesta_react_bridge::ReactChapter;
     use gpui_kit::{Modifiers, TouchPhase, point};
+
+    #[test]
+    fn a_ruler_drag_ends_at_a_move_without_the_button() {
+        for grabbed in [
+            RulerDrag::Scrub,
+            RulerDrag::Overview {
+                grab_x: 40.0,
+                view_start: 0.25,
+            },
+        ] {
+            let mut drag = grabbed;
+            assert_eq!(drag.follow(true), grabbed);
+            // The button came up where the view did not see it.
+            assert_eq!(drag.follow(false), RulerDrag::None);
+            // The next left drag, anywhere, neither seeks nor pans.
+            assert_eq!(drag.follow(true), RulerDrag::None);
+            assert_eq!(drag, RulerDrag::None);
+        }
+    }
 
     #[test]
     fn overlapping_chapters_stack_on_lanes_of_their_own() {

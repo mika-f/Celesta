@@ -43,7 +43,9 @@ chapters do not flash back.
 button: it runs `end`, notifies when it returns true, and returns true so the
 caller stops following. The band and chapter drags, the transform drag, the
 row scrub, the add-element drawing, the inline text selection and the master
-volume drag use it.
+volume drag use it. The ruler scrub and the overview thumb drag end the
+same way through `RulerDrag::follow` (`timeline.rs`), which their move
+handler calls with `event.dragging()` (2026-11-07, issue #702).
 
 The master volume drag used to ignore such a move and keep running until the
 next mouse-up; it now ends there, like the others.
