@@ -437,6 +437,7 @@ mod tests {
                 id: id.into(),
                 version: "1.0.0".into(),
                 protocol: 1,
+                celesta: Some("*".into()),
                 executable: executable
                     .iter()
                     .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))

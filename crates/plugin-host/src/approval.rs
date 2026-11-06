@@ -201,11 +201,14 @@ mod tests {
     use crate::locations::SearchPath;
     use crate::manifest::discover_in;
 
+    /// A `celesta` range this Celesta is in.
+    const COMPATIBLE: &str = concat!("=", env!("CARGO_PKG_VERSION"));
+
     fn plugin(directory: &Path, id: &str) {
         std::fs::create_dir_all(directory.join("js")).unwrap();
         std::fs::write(
             directory.join(MANIFEST),
-            serde_json::json!({ "id": id, "version": "1", "protocol": 1, "module": "js/index.js" })
+            serde_json::json!({ "id": id, "version": "1", "protocol": 1, "celesta": COMPATIBLE, "module": "js/index.js" })
                 .to_string(),
         )
         .unwrap();
@@ -242,7 +245,7 @@ mod tests {
             std::fs::write(
                 root.path().join("p").join(MANIFEST),
                 serde_json::json!({
-                    "id": "p", "version": version, "protocol": 1,
+                    "id": "p", "version": version, "protocol": 1, "celesta": COMPATIBLE,
                     "module": "js/index.js", "executable": executable,
                 })
                 .to_string(),
@@ -279,7 +282,7 @@ mod tests {
         std::fs::create_dir_all(directory.join("js")).unwrap();
         std::fs::write(
             directory.join(MANIFEST),
-            serde_json::json!({ "id": "p", "version": "1", "protocol": 1, "module": "js" })
+            serde_json::json!({ "id": "p", "version": "1", "protocol": 1, "celesta": COMPATIBLE, "module": "js" })
                 .to_string(),
         )
         .unwrap();

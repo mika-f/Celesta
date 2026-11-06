@@ -599,6 +599,7 @@ mod tests {
                 id: "ffmpeg".into(),
                 version: "1.0.0".into(),
                 protocol: 1,
+                celesta: Some("*".into()),
                 executable: [(format!("{os}-{arch}"), "bin/p".to_owned())].into(),
                 module: None,
                 types: None,
@@ -674,7 +675,7 @@ mod tests {
             .unwrap();
             std::fs::write(
                 plugin.join(celesta_plugin_host::MANIFEST),
-                r#"{ "id": "p", "version": "1", "protocol": 1, "module": "js/index.js" }"#,
+                r#"{ "id": "p", "version": "1", "protocol": 1, "celesta": "*", "module": "js/index.js" }"#,
             )
             .unwrap();
             std::fs::write(plugin.join("js/index.js"), "export {};").unwrap();

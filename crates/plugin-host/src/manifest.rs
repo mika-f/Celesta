@@ -18,12 +18,51 @@ pub const PLUGIN_PATH_ENV: &str = "CELESTA_PLUGIN_PATH";
 /// imports to stand-ins that run none of their code.
 pub const WAITING_PLUGIN_PATH_ENV: &str = "CELESTA_WAITING_PLUGIN_PATH";
 
+/// This Celesta's version, which every Celesta crate shares: a plugin runs
+/// only when its manifest's `celesta` range includes it.
+pub const CELESTA_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// [`CELESTA_VERSION`], parsed.
+fn celesta_version() -> semver::Version {
+    semver::Version::parse(CELESTA_VERSION).expect("Cargo package versions are semver")
+}
+
+/// The range a plugin built against Celesta `version` declares: that
+/// version (without build metadata) up to the next release that may break
+/// it, as Cargo's `^` reads (the next patch below 0.1, the next minor below
+/// 1.0, the next major from it), such as `">=0.9.0, <0.10.0"`.
+/// `scripts/plugins/build.mts` writes the same.
+pub fn celesta_range_for(version: &semver::Version) -> String {
+    let lowest = semver::Version {
+        build: semver::BuildMetadata::EMPTY,
+        ..version.clone()
+    };
+    let next = if version.major == 0 && version.minor == 0 {
+        format!("0.0.{}", version.patch + 1)
+    } else if version.major == 0 {
+        format!("0.{}.0", version.minor + 1)
+    } else {
+        format!("{}.0.0", version.major + 1)
+    };
+    format!(">={lowest}, <{next}")
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
     pub id: String,
     pub version: String,
+    /// The wire format its process speaks, which `hello` checks: features
+    /// added on top of it are what `celesta` covers.
     pub protocol: u32,
+    /// The Celesta versions the plugin works with, as a Cargo version
+    /// requirement such as `">=0.9.0, <0.10.0"`. It covers the features its
+    /// process relies on and the runtime packages (`@celesta.studio/*`) its
+    /// module imports, which ship with Celesta at its version. Required:
+    /// discovery skips a plugin without one, and reports one whose range
+    /// leaves this Celesta ([`CELESTA_VERSION`]) out as incompatible.
+    #[serde(default)]
+    pub celesta: Option<String>,
     /// The plugin process, relative to the plugin directory, by platform:
     /// `"<os>-<arch>"` (such as `windows-x86_64` or `macos-aarch64`) or the
     /// OS alone for any architecture. See [`platform`].
@@ -58,6 +97,31 @@ pub enum PluginRole {
 
 fn content_roles() -> Vec<PluginRole> {
     vec![PluginRole::Content]
+}
+
+impl Manifest {
+    /// Its `celesta` range, or why it has none Celesta can read.
+    fn celesta_range(&self) -> Result<semver::VersionReq, String> {
+        let Some(range) = &self.celesta else {
+            return Err(format!(
+                "it does not say which Celesta versions it works with: its manifest needs a \
+                 \"celesta\" range, such as {:?} for this Celesta",
+                celesta_range_for(&celesta_version())
+            ));
+        };
+        semver::VersionReq::parse(range).map_err(|error| {
+            format!("its \"celesta\" range {range:?} is not a version range: {error}")
+        })
+    }
+
+    /// Whether its `celesta` range includes Celesta `version`, as Cargo
+    /// matches versions: a pre-release such as `0.10.0-beta.1` only when a
+    /// bound of the range names a pre-release of `0.10.0`. False when it has
+    /// no range Celesta can read.
+    pub fn works_with(&self, version: &semver::Version) -> bool {
+        self.celesta_range()
+            .is_ok_and(|range| range.matches(version))
+    }
 }
 
 /// A component a plugin's module exports, as the editor's Add menu offers
@@ -298,6 +362,17 @@ pub enum DiscoveryError {
     },
     #[error("{path} was skipped: {reason}")]
     Invalid { path: PathBuf, reason: String },
+    #[error(
+        "{path} was skipped: the plugin {id} works with Celesta {range}, and this is Celesta {celesta}"
+    )]
+    Incompatible {
+        path: PathBuf,
+        id: String,
+        /// The plugin's `celesta` range.
+        range: String,
+        /// This Celesta's version.
+        celesta: String,
+    },
     #[error("plugin path {path} was skipped: it is not an absolute path")]
     RelativePath { path: PathBuf },
     #[error("the user's settings were not used: {0}")]
@@ -338,9 +413,10 @@ pub fn plugin_paths(extra: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Why `manifest` cannot be used from `directory`, if it cannot: a bad id, a
-/// component that cannot be offered (or components without a module), or a
-/// path that leads outside the directory, by its text or through a link.
+/// Why `manifest` cannot be used from `directory`, if it cannot: a bad id, no
+/// `celesta` range or one that cannot be read, a component that cannot be
+/// offered (or components without a module), or a path that leads outside
+/// the directory, by its text or through a link.
 /// Files that do not exist yet are left to fail where they are used.
 fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
     if !is_valid_id(&manifest.id) {
@@ -349,6 +425,9 @@ fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
              and must start with a letter or digit",
             manifest.id
         ));
+    }
+    if let Err(reason) = manifest.celesta_range() {
+        return Some(reason);
     }
     if !manifest.components.is_empty() && manifest.module.is_none() {
         return Some("it lists components but has no module to import them from".into());
@@ -455,9 +534,21 @@ fn read_manifest(
             path: path.clone(),
             source,
         })?;
-    if let Some(reason) =
-        invalid_reason(&manifest, directory).or_else(|| unsafe_plugin(directory, source))
-    {
+    if let Some(reason) = invalid_reason(&manifest, directory) {
+        return Err(DiscoveryError::Invalid { path, reason });
+    }
+    // Before the walk over its files, which a plugin this Celesta would not
+    // run need not go through.
+    let celesta = celesta_version();
+    if !manifest.works_with(&celesta) {
+        return Err(DiscoveryError::Incompatible {
+            path,
+            id: manifest.id,
+            range: manifest.celesta.unwrap_or_default(),
+            celesta: celesta.to_string(),
+        });
+    }
+    if let Some(reason) = unsafe_plugin(directory, source) {
         return Err(DiscoveryError::Invalid { path, reason });
     }
     // The React runtime gets each plugin directory in a path list, which a
@@ -491,9 +582,12 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
 /// The plugins under `paths`, in order: each is an absolute path to a
 /// plugin directory or a directory of them. The first plugin found with an
 /// id wins. Relative paths, folders and manifests that cannot be read,
-/// manifests that name a bad id or a file outside their directory, and,
-/// from a checked source, a folder or plugin other users could change are
-/// reported, not fatal; a missing folder is skipped quietly.
+/// manifests that name a bad id or a file outside their directory or give
+/// no `celesta` range, plugins whose range leaves this Celesta out
+/// ([`DiscoveryError::Incompatible`]), and, from a checked source, a folder
+/// or plugin other users could change are reported, not fatal; a missing
+/// folder is skipped quietly. A plugin skipped this way takes no id, so a
+/// later one with the same id is found in its place.
 pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
     let mut found: Vec<PluginEntry> = Vec::new();
     let mut errors = Vec::new();
@@ -697,7 +791,9 @@ impl InstalledPlugins {
     }
 
     /// The codec to read and write media with: the first of these plugins
-    /// that is a codec with a program for this platform, else the FFmpeg
+    /// that is a codec with a program for this platform (discovery leaves
+    /// out one this Celesta is outside the range of, so the next codec in
+    /// search order is used instead), else the FFmpeg
     /// codec plugin's program beside the running one ([`CODEC_PROGRAM`]) when
     /// that is an installed program rather than a source build in a Cargo
     /// build folder (it has `.fingerprint` or `.cargo-lock`), else none.
@@ -723,6 +819,9 @@ impl InstalledPlugins {
 mod tests {
     use super::*;
 
+    /// A `celesta` range this Celesta is in.
+    const COMPATIBLE: &str = concat!("=", env!("CARGO_PKG_VERSION"));
+
     fn write_plugin(directory: &Path, id: &str, version: &str) {
         std::fs::create_dir_all(directory).unwrap();
         std::fs::write(
@@ -730,7 +829,7 @@ mod tests {
             serde_json::json!({
                 "id": id,
                 "version": version,
-                "protocol": 1,
+                "protocol": 1, "celesta": COMPATIBLE,
                 "executable": { "windows": "bin/p.exe", "linux": "bin/p", "macos": "bin/p", "plan9-mips": "bin/other" },
                 "module": "js/index.js",
             })
@@ -747,6 +846,7 @@ mod tests {
                 id: "p".into(),
                 version: "1".into(),
                 protocol: 1,
+                celesta: Some(COMPATIBLE.into()),
                 executable: keys
                     .iter()
                     .map(|(key, value)| (key.clone(), (*value).to_owned()))
@@ -844,7 +944,7 @@ mod tests {
             write_manifest(
                 &root.path().join(name),
                 serde_json::json!({
-                    "id": name, "version": "1", "protocol": 1,
+                    "id": name, "version": "1", "protocol": 1, "celesta": COMPATIBLE,
                     "module": "js/index.js", "components": components,
                 }),
             );
@@ -872,7 +972,7 @@ mod tests {
         );
         write_manifest(
             &root.path().join("moduleless"),
-            serde_json::json!({ "id": "moduleless", "version": "1", "protocol": 1, "components": [{ "name": "Flag" }] }),
+            serde_json::json!({ "id": "moduleless", "version": "1", "protocol": 1, "celesta": COMPATIBLE, "components": [{ "name": "Flag" }] }),
         );
 
         let (found, errors) = discover(&[root.path().to_path_buf()]);
@@ -893,7 +993,7 @@ mod tests {
             write_manifest(
                 &root.path().join(id),
                 serde_json::json!({
-                    "id": id, "version": "1", "protocol": 1,
+                    "id": id, "version": "1", "protocol": 1, "celesta": COMPATIBLE,
                     "module": "js/index.js", "components": [component],
                 }),
             );
@@ -1039,7 +1139,7 @@ mod tests {
                         .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
                 let id = plugin["id"].as_str().unwrap().to_owned();
                 let mut manifest = serde_json::json!({
-                    "id": id, "version": plugin["version"], "protocol": 1,
+                    "id": id, "version": plugin["version"], "protocol": 1, "celesta": COMPATIBLE,
                 });
                 if let Some(roles) = plugin.get("roles") {
                     manifest["roles"] = roles.clone();
@@ -1095,7 +1195,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let collection = root.path().join("collection");
         let manifest = |id: &str, field: &str, path: &str| {
-            let mut manifest = serde_json::json!({ "id": id, "version": "1", "protocol": 1 });
+            let mut manifest = serde_json::json!({ "id": id, "version": "1", "protocol": 1, "celesta": COMPATIBLE });
             if field == "executable" {
                 manifest["executable"] = serde_json::json!({ platform().0: path });
             } else {
@@ -1151,7 +1251,7 @@ mod tests {
         let plugin = root.path().join("plugin");
         write_manifest(
             &plugin,
-            serde_json::json!({ "id": "p", "version": "1", "protocol": 1, "module": "index.js" }),
+            serde_json::json!({ "id": "p", "version": "1", "protocol": 1, "celesta": COMPATIBLE, "module": "index.js" }),
         );
         #[cfg(unix)]
         let linked = std::os::unix::fs::symlink(&outside, plugin.join("index.js"));
@@ -1348,7 +1448,7 @@ mod tests {
             let mut manifest = serde_json::json!({
                 "id": name,
                 "version": "1.0.0",
-                "protocol": 1,
+                "protocol": 1, "celesta": COMPATIBLE,
                 "executable": { std::env::consts::OS: "bin/p" },
             });
             if !roles.is_null() {
@@ -1444,5 +1544,148 @@ mod tests {
         .unwrap();
         std::fs::write(root.path().join(".cargo-lock"), "").unwrap();
         assert_eq!(sibling_codec(&executable), None);
+    }
+
+    #[test]
+    fn celesta_ranges_reach_the_next_breaking_release() {
+        let range = |version: &str| celesta_range_for(&semver::Version::parse(version).unwrap());
+        assert_eq!(range("0.9.0"), ">=0.9.0, <0.10.0");
+        assert_eq!(range("0.9.3"), ">=0.9.3, <0.10.0");
+        assert_eq!(range("1.2.3"), ">=1.2.3, <2.0.0");
+        assert_eq!(range("0.10.0-beta.1"), ">=0.10.0-beta.1, <0.11.0");
+        assert_eq!(range("0.9.0+build.5"), ">=0.9.0, <0.10.0");
+        assert_eq!(range("0.0.3"), ">=0.0.3, <0.0.4");
+        // This Celesta is in the range it suggests.
+        let manifest = |celesta: Option<&str>| Manifest {
+            id: "p".into(),
+            version: "1".into(),
+            protocol: 1,
+            celesta: celesta.map(Into::into),
+            executable: BTreeMap::new(),
+            module: None,
+            types: None,
+            components: Vec::new(),
+            roles: content_roles(),
+        };
+        let suggested = celesta_range_for(&celesta_version());
+        assert!(manifest(Some(&suggested)).works_with(&celesta_version()));
+        assert!(!manifest(None).works_with(&celesta_version()));
+    }
+
+    #[test]
+    fn celesta_ranges_match_as_cargo_does() {
+        let works_with = |celesta: &str, version: &str| {
+            Manifest {
+                id: "p".into(),
+                version: "1".into(),
+                protocol: 1,
+                celesta: Some(celesta.into()),
+                executable: BTreeMap::new(),
+                module: None,
+                types: None,
+                components: Vec::new(),
+                roles: content_roles(),
+            }
+            .works_with(&semver::Version::parse(version).unwrap())
+        };
+        let range = ">=0.9.0, <0.10.0";
+        assert!(works_with(range, "0.9.0"));
+        assert!(works_with(range, "0.9.7"));
+        assert!(!works_with(range, "0.8.9"));
+        assert!(!works_with(range, "0.10.0"));
+        // A pre-release only matches a range naming one of its version.
+        assert!(!works_with(range, "0.9.8-beta.1"));
+        let beta = ">=0.10.0-beta.1, <0.11.0";
+        assert!(works_with(beta, "0.10.0-beta.2"));
+        assert!(works_with(beta, "0.10.0"));
+        assert!(!works_with(beta, "0.10.1-beta.1"));
+        // Cargo's other forms read too.
+        assert!(works_with("^0.9", "0.9.4"));
+        assert!(works_with("*", "3.0.0"));
+        assert!(!works_with("soon", "0.9.0"));
+    }
+
+    #[test]
+    fn skips_plugins_without_or_outside_a_celesta_range() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |id: &str, celesta: Option<&str>| {
+            let mut manifest = serde_json::json!({ "id": id, "version": "1", "protocol": 1, "module": "js/index.js" });
+            if let Some(celesta) = celesta {
+                manifest["celesta"] = celesta.into();
+            }
+            write_manifest(&root.path().join(id), manifest);
+        };
+        write("a-missing", None);
+        write("b-unreadable", Some("soon"));
+        write("c-future", Some(">=999.0.0"));
+        write("d-fits", Some(COMPATIBLE));
+
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        let ids: Vec<_> = found
+            .iter()
+            .map(|entry| entry.manifest.id.as_str())
+            .collect();
+        assert_eq!(ids, ["d-fits"]);
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        let missing = errors[0].to_string();
+        assert!(
+            matches!(errors[0], DiscoveryError::Invalid { .. })
+                && missing.contains("\"celesta\" range")
+                && missing.contains(&celesta_range_for(&celesta_version())),
+            "{missing}"
+        );
+        assert!(
+            matches!(errors[1], DiscoveryError::Invalid { .. })
+                && errors[1]
+                    .to_string()
+                    .contains("\"soon\" is not a version range"),
+            "{}",
+            errors[1]
+        );
+        let DiscoveryError::Incompatible {
+            id, range, celesta, ..
+        } = &errors[2]
+        else {
+            panic!("{:?}", errors[2]);
+        };
+        assert_eq!(
+            (id.as_str(), range.as_str(), celesta.as_str()),
+            ("c-future", ">=999.0.0", CELESTA_VERSION)
+        );
+        assert!(
+            errors[2]
+                .to_string()
+                .ends_with(&format!("the plugin c-future works with Celesta >=999.0.0, and this is Celesta {CELESTA_VERSION}")),
+            "{}",
+            errors[2]
+        );
+    }
+
+    #[test]
+    fn an_incompatible_codec_leaves_the_next_one() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |folder: &str, celesta: &str| {
+            write_manifest(
+                &root.path().join(folder).join("ffmpeg"),
+                serde_json::json!({
+                    "id": "ffmpeg", "version": "1", "protocol": 1, "celesta": celesta,
+                    "roles": ["codec"], "executable": { platform().0: "bin/codec" },
+                }),
+            );
+        };
+        write("first", ">=999.0.0");
+        write("second", COMPATIBLE);
+
+        let (plugins, errors) = discover(&[root.path().join("first"), root.path().join("second")]);
+        assert!(
+            matches!(errors[..], [DiscoveryError::Incompatible { .. }]),
+            "{errors:?}"
+        );
+        let installed = InstalledPlugins {
+            plugins,
+            waiting: Vec::new(),
+        };
+        let codec = installed.codec().unwrap();
+        assert_eq!(codec.directory, root.path().join("second").join("ffmpeg"));
     }
 }

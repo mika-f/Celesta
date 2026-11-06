@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mts';
+import { celestaRange, checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mts';
 import type { PluginSource } from '../manifest.mts';
 
 const sourcePath = '/repo/plugins/vrm/plugin.json';
+const celestaVersion = '0.9.0';
+const celesta = '>=0.9.0, <0.10.0';
 const component = { name: 'Vrm', label: 'VRM avatar', src: 'model', extensions: ['vrm'], aspect: 1.7777778 };
 
 describe('pluginManifest', () => {
@@ -16,38 +18,40 @@ describe('pluginManifest', () => {
         module: 'js/src/index.ts',
         components: [component],
       },
-      { cargoVersion: '0.1.0', executable: { 'macos-aarch64': 'bin/macos-aarch64/celesta-plugin-vrm' } },
+      { celestaVersion, cargoVersion: '0.1.0', executable: { 'macos-aarch64': 'bin/macos-aarch64/celesta-plugin-vrm' } },
       sourcePath,
     );
     expect(manifest).toEqual({
       id: 'vrm',
       version: '0.1.0',
       protocol: 1,
+      celesta,
       executable: { 'macos-aarch64': 'bin/macos-aarch64/celesta-plugin-vrm' },
       module: 'js/index.js',
       types: 'js/index.d.ts',
       components: [component],
     });
-    expect(Object.keys(manifest)).toEqual(['id', 'version', 'protocol', 'executable', 'module', 'types', 'components']);
+    expect(Object.keys(manifest)).toEqual(['id', 'version', 'protocol', 'celesta', 'executable', 'module', 'types', 'components']);
   });
 
   it("writes the version of a plugin without a Cargo package, and no executable it doesn't have", () => {
-    const manifest = pluginManifest({ id: 'beep-voice', version: '0.1.0', module: 'js/index.ts' }, {}, sourcePath);
+    const manifest = pluginManifest({ id: 'beep-voice', version: '0.1.0', module: 'js/index.ts' }, { celestaVersion }, sourcePath);
     expect(manifest).toEqual({
       id: 'beep-voice',
       version: '0.1.0',
       protocol: 1,
+      celesta,
       module: 'js/index.js',
       types: 'js/index.d.ts',
     });
-    expect(Object.keys(manifest)).toEqual(['id', 'version', 'protocol', 'module', 'types']);
+    expect(Object.keys(manifest)).toEqual(['id', 'version', 'protocol', 'celesta', 'module', 'types']);
   });
 
   it("refuses a version in plugin.json that differs from the Cargo package's", () => {
     expect(() =>
       pluginManifest(
         { id: 'vrm', version: '0.1.0', cargoPackage: 'celesta-plugin-vrm', module: 'js/src/index.ts' },
-        { cargoVersion: '0.2.0' },
+        { celestaVersion, cargoVersion: '0.2.0' },
         sourcePath,
       ),
     ).toThrow(`${sourcePath}: version 0.1.0 differs from the Cargo package celesta-plugin-vrm's 0.2.0`);
@@ -57,7 +61,7 @@ describe('pluginManifest', () => {
     expect(() =>
       pluginManifest(
         { id: 'vrm', version: '0.1.0', cargoPackage: 'celesta-plugin-vrm', module: 'js/src/index.ts' },
-        {},
+        { celestaVersion },
         sourcePath,
       ),
     ).toThrow(`${sourcePath}: Cargo gave no version for the package celesta-plugin-vrm`);
@@ -72,22 +76,23 @@ describe('pluginManifest', () => {
         roles: ['codec'],
         licenses: ['../../LICENSE-MIT'],
       },
-      { cargoVersion: '0.9.0', executable: { 'macos-aarch64': 'bin/macos-aarch64/celesta-codec-ffmpeg' } },
+      { celestaVersion, cargoVersion: '0.9.0', executable: { 'macos-aarch64': 'bin/macos-aarch64/celesta-codec-ffmpeg' } },
       sourcePath,
     );
     expect(manifest).toEqual({
       id: 'ffmpeg',
       version: '0.9.0',
       protocol: 1,
+      celesta,
       roles: ['codec'],
       executable: { 'macos-aarch64': 'bin/macos-aarch64/celesta-codec-ffmpeg' },
     });
-    expect(Object.keys(manifest)).toEqual(['id', 'version', 'protocol', 'roles', 'executable']);
+    expect(Object.keys(manifest)).toEqual(['id', 'version', 'protocol', 'celesta', 'roles', 'executable']);
   });
 
   it.each([
-    ['without', { id: 'beep-voice', module: 'js/index.ts' }, {}],
-    ['with', { id: 'vrm', cargoPackage: 'celesta-plugin-vrm', module: 'js/src/index.ts' }, { cargoVersion: '0.1.0' }],
+    ['without', { id: 'beep-voice', module: 'js/index.ts' }, { celestaVersion }],
+    ['with', { id: 'vrm', cargoPackage: 'celesta-plugin-vrm', module: 'js/src/index.ts' }, { celestaVersion, cargoVersion: '0.1.0' }],
   ])('throws, naming plugin.json, when a plugin %s a Cargo package has no version', (_, source, built) => {
     expect(() => pluginManifest(source, built, sourcePath)).toThrow(`${sourcePath}: version is required`);
   });
@@ -187,5 +192,23 @@ describe('pluginVersion', () => {
     expect(() => pluginVersion({ version: version as string }, undefined, sourcePath)).toThrow(
       `${sourcePath}: version must be a non-empty string`,
     );
+  });
+});
+
+describe('celestaRange', () => {
+  it.each([
+    ['0.9.0', '>=0.9.0, <0.10.0'],
+    ['0.9.3', '>=0.9.3, <0.10.0'],
+    ['0.10.0-beta.1', '>=0.10.0-beta.1, <0.11.0'],
+    ['1.2.3', '>=1.2.3, <2.0.0'],
+    ['0.9.0+build.5', '>=0.9.0, <0.10.0'],
+    ['0.0.3', '>=0.0.3, <0.0.4'],
+    ['0.10.0-rc.0', '>=0.10.0-rc.0, <0.11.0'],
+  ])('ranges Celesta %s as Celesta suggests: %s', (version, range) => {
+    expect(celestaRange(version)).toBe(range);
+  });
+
+  it.each(['0.9', 'v0.9.0', '0.09.0', '', '0.9.0-01', '0.9.0-alpha..1', '0.9.0-', '0.9.0+', '0.9.0+a..b'])('refuses %j, which is not a semver version', (version) => {
+    expect(() => celestaRange(version)).toThrow(`Celesta's version ${JSON.stringify(version)} is not a semver version`);
   });
 });

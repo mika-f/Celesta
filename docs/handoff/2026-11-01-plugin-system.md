@@ -157,6 +157,7 @@ stderr, so native libraries that print cannot corrupt the protocol.
     "id": "example",
     "version": "0.1.0",
     "protocol": 1,
+    "celesta": ">=0.9.0, <0.10.0",
     "executable": {
       "windows-x86_64": "bin/windows-x86_64/celesta-plugin-example.exe",
       "linux-x86_64": "bin/linux-x86_64/celesta-plugin-example"
@@ -172,6 +173,12 @@ stderr, so native libraries that print cannot corrupt the protocol.
   architecture. The host takes this platform's exact entry, else its OS's
   (`celesta_plugin_host::platform`). One directory can carry every
   platform's build.
+- `celesta` (required) is the Celesta versions the plugin works with, as a
+  Cargo version requirement; `protocol` is the wire format alone. A
+  manifest without a readable range is skipped and reported as invalid,
+  and one whose range leaves the running Celesta out is skipped and
+  reported as `DiscoveryError::Incompatible` (see
+  [`2026-11-06-plugin-celesta-range.md`](2026-11-06-plugin-celesta-range.md)).
 - `id` is lowercase ASCII letters, digits, `-`, `_`, and `.`, starting with
   a letter or digit (`is_valid_id`), since it becomes one specifier segment
   and one path component (`.celesta/plugins/<id>/`).

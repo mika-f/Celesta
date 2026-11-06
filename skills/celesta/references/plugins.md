@@ -216,6 +216,8 @@ import { Vrm } from '@celesta-plugin/vrm';
 | --- | --- |
 | `no plugin "<id>" is installed (looked in CELESTA_PLUGIN_PATH)` | In the app, the plugin may be waiting for the user's approval (Problems says so): ask the user to allow it, and do not work around the question. Otherwise the entry imports a plugin no folder provides: put it in the user plugin folder, pass `--plugin-dir`, or set `CELESTA_PLUGIN_PATH` (absolute paths). |
 | `…; <folder> was skipped: <reason>` | That folder's manifest has a bad id or names a file outside the folder (`..`, an absolute path, a link out). The plugin must be fixed; do not work around it. |
+| `<folder>/celesta-plugin.json was skipped: the plugin <id> works with Celesta <range>, and this is Celesta <version>` | The plugin was made for other Celesta versions. Have the user install a release of it made for their Celesta; do not edit its manifest's `celesta` range. A later plugin with the same id, such as another codec plugin, is used in its place. |
+| `<folder>/celesta-plugin.json was skipped: it does not say which Celesta versions it works with: …`, or `… its "celesta" range "<range>" is not a version range: …` | The manifest has no `celesta` range (a plugin built before ranges were required) or one that is not a Cargo version range. Rebuild it with Celesta's `scripts/plugins/build.mts`, which writes the range, or get a newer release. |
 | `plugin "<id>" has no JavaScript module` | The plugin has only a program; its layers come from another package. |
 | `… has no executable for this platform` | The plugin was not built for this OS and CPU. |
 | `plugin "<id>": …` | The plugin's own error, such as a missing asset. |
@@ -226,6 +228,15 @@ import { Vrm } from '@celesta-plugin/vrm';
 | `<id> (layer <layer>): …`, or `note: <id> (layer <layer>): …` for information | Not an error: the plugin's notice about a model it opened, such as its terms of use. The exporter's terminal output prints a warning as a `warning: …` line; the app's Problems tab and `--json` (either kind among `warnings`) carry the message itself, a note keeping its `note: `. Relay it to the user; do not try to silence it. |
 
 ## Writing one
+
+Every manifest gives `celesta`, the Celesta versions the plugin works with
+as a Cargo version range (`">=0.9.0, <0.10.0"`); a plugin without one, or
+whose range leaves out the running Celesta, is skipped. It covers what the
+program relies on beyond `protocol` (the message format alone, still `1`)
+and the `react`/`@celesta.studio/*` APIs the module uses. A pre-release
+Celesta (`0.10.0-beta.1`) matches only a range naming a pre-release of
+that version. `scripts/plugins/build.mts` writes the range from the Celesta
+it builds against.
 
 The manifest's optional `components` puts a component in the app's Add
 menu: `{ "name": "Flag", "label": "Flag", "src": "image", "props": {

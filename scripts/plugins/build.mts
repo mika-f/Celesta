@@ -9,7 +9,10 @@
 // have, nothing to build, components but no module, no version, a license
 // file that is not there, two license files sharing a name, or, with
 // --skip-js, a module no earlier run built, fails the run before anything is
-// built.
+// built. The manifest's `celesta` range, the Celesta versions the plugin
+// works with, comes from the Celesta this script belongs to (its root
+// Cargo.toml's version): the one whose crates the plugin's process is built
+// with and whose runtime its module is checked against.
 //
 //   node scripts/plugins/build.mts <plugin directory>...
 //                                  [--out <dir>] [--target <triple>] [--skip-js]
@@ -28,7 +31,9 @@
 // Each run adds this platform's (or --target's) executable and keeps the
 // others' whose files are still there, so builds on several platforms can
 // fill one directory; the JavaScript is the same everywhere, so later builds
-// may pass --skip-js. Each run replaces licenses/ with the files plugin.json
+// may pass --skip-js. Both hold only while the earlier run wrote the same
+// `celesta` range: a run for another range drops the other executables, and
+// refuses --skip-js. Each run replaces licenses/ with the files plugin.json
 // lists.
 import { spawnSync } from 'node:child_process';
 import type { SpawnSyncOptions } from 'node:child_process';
@@ -40,9 +45,10 @@ import { parseArgs } from 'node:util';
 
 import { cargoMetadata } from './cargo.mts';
 import { licenseFiles } from './licenses.mts';
-import { checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
+import { celestaRange, checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
 import type { Built, PluginManifest, PluginSource } from './manifest.mts';
 import { rustPlatform } from './platform.mts';
+import { workspaceVersion } from './version.mts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..', '..');
@@ -96,8 +102,12 @@ function readJson(path: string): any {
   });
 }
 
+// The Celesta the plugins are built against, and the range its manifests give.
+const celestaVersion = orFail(() => workspaceVersion(readFileSync(join(root, 'Cargo.toml'), 'utf8')));
+const range = orFail(() => celestaRange(celestaVersion));
+
 // Every plugin.json, checked before anything is built, and with --skip-js the
-// module an earlier run built.
+// module an earlier run built for the same range.
 const plugins = positionals.map((directory) => {
   const source = resolve(directory);
   const sourcePath = join(source, 'plugin.json');
@@ -106,13 +116,21 @@ const plugins = positionals.map((directory) => {
   orFail(() => pluginVersion({ version: plugin.version }, undefined, sourcePath));
   const licenses = orFail(() => licenseFiles(source, plugin, sourcePath));
   const out = join(values.out === undefined ? join(dirname(source), 'dist') : resolve(values.out), plugin.id);
+  const manifestPath = join(out, 'celesta-plugin.json');
+  const previous: Partial<PluginManifest> = existsSync(manifestPath) ? readJson(manifestPath) : {};
   if (values['skip-js'] && plugin.module !== undefined) {
     for (const file of ['index.js', 'index.d.ts']) {
       const built = join(out, 'js', file);
       if (!existsSync(built)) fail(`${built} is missing; build ${source} once without --skip-js`);
     }
+    // A module built against another Celesta must not get this one's range.
+    if (previous.celesta !== range) {
+      fail(
+        `${join(out, 'js')} was built for Celesta ${previous.celesta ?? '(no range)'}, not ${range}; build ${source} once without --skip-js`,
+      );
+    }
   }
-  return { source, sourcePath, plugin, licenses, out };
+  return { source, sourcePath, plugin, licenses, out, manifestPath, previous };
 });
 
 const runtime = join(root, 'packages', 'cli');
@@ -194,16 +212,19 @@ async function buildModule(source: string, out: string, module: string): Promise
   });
 }
 
-for (const { source, sourcePath, plugin, licenses, out } of plugins) {
+for (const { source, sourcePath, plugin, licenses, out, manifestPath, previous } of plugins) {
   mkdirSync(out, { recursive: true });
-  const manifestPath = join(out, 'celesta-plugin.json');
-  const previous: Partial<PluginManifest> = existsSync(manifestPath) ? readJson(manifestPath) : {};
-  // The other platforms' executables an earlier run copied here, while they are.
+  // The other platforms' executables an earlier run copied here, while they
+  // are, and only when it built them against a Celesta with the same range.
+  const sameRange = previous.celesta === range;
   const kept = Object.fromEntries(
-    Object.entries(previous.executable ?? {}).filter(([, path]) => existsSync(join(out, path))),
+    Object.entries(previous.executable ?? {}).filter(([, path]) => sameRange && existsSync(join(out, path))),
   );
+  if (!sameRange && Object.keys(previous.executable ?? {}).length > 0) {
+    console.log(`${plugin.id}: dropping the executables built for Celesta ${previous.celesta ?? '(no range)'}, not ${range}`);
+  }
 
-  let built: Built = {};
+  let built: Built = { celestaVersion };
   if (plugin.cargoPackage !== undefined) {
     const { cargoPackage } = plugin;
     const cargoToml = join(source, 'Cargo.toml');
@@ -212,7 +233,7 @@ for (const { source, sourcePath, plugin, licenses, out } of plugins) {
     if (cargoVersion === undefined) fail(`${cargoToml} is in no workspace with the package ${cargoPackage}`);
     orFail(() => pluginVersion(plugin, cargoVersion, sourcePath));
     const executable = buildExecutable(source, out, cargoPackage, targetDirectory);
-    built = { cargoVersion, executable: { ...kept, ...executable } };
+    built = { celestaVersion, cargoVersion, executable: { ...kept, ...executable } };
   }
   if (!values['skip-js'] && plugin.module !== undefined) await buildModule(source, out, plugin.module);
 
