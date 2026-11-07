@@ -57,10 +57,7 @@
     "**/test/**",
     "**/tests/**",
     "**/__fixtures__/**",
-    "*/**/examples/**",
-    "examples/!(versus)/**",
-    "examples/versus/*",
-    "examples/versus/!(bench)/**"
+    "*/**/examples/**"
   ],
   "packageRules": [
     {
