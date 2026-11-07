@@ -9,7 +9,9 @@ so; under "Shared value" its rows read as if they changed every scene.
 ## Specification
 
 - While the panel shows "Edits change" (the scope state is `Options`, or
-  `Unknown` while the scenes are scanned or the scan failed), the Component
+  `Unknown` while whether the element is shared is not known yet: the
+  scenes are being scanned, are not scanned, the scan failed, or the index
+  does not find the element), the Component
   section shows, under its "Set at `<file>`:`<line>`" line, an `info` icon
   and **Writes this call only, whatever Edits change says**, muted, wrapping
   in a narrow panel.
@@ -25,7 +27,8 @@ so; under "Shared value" its rows read as if they changed every scene.
   `shown_scope_context()`'s state and adds the line in the box under the
   section heading, after `set_at_line`. `set_at_line` and the new
   `component_note_line` share `icon_line` (the muted row with a leading
-  icon); "Set at" still stays on one line with an ellipsis.
+  icon, centered); the note aligns its icon to the top instead, since it
+  wraps, and "Set at" still stays on one line with an ellipsis.
 - User guide: the Component section paragraph in
   `packages/website/content/{en,ja}/docs/01-(getting-started)/03-preview.md`
   names the line and says the rows write the call under either option. The

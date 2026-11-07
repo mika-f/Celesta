@@ -89,16 +89,18 @@ fn set_at_line(call_site: &SourcePos, entry_dir: &Path, cx: &Context<EditorView>
 }
 
 /// [`component_section_note`]'s text after an `info` icon, wrapping in a
-/// narrow panel.
+/// narrow panel, the icon at the top of the first line.
 fn component_note_line(note: &'static str, cx: &Context<EditorView>) -> Div {
-    icon_line(IconName::Info, cx).child(div().flex_1().min_w_0().child(note))
+    icon_line(IconName::Info, cx)
+        .items_start()
+        .child(div().flex_1().min_w_0().child(note))
 }
 
-/// A muted line starting with `icon`, for the text to follow.
+/// A muted line starting with `icon`, centered on the text to follow.
 fn icon_line(icon: IconName, cx: &Context<EditorView>) -> Div {
     div()
         .flex()
-        .items_start()
+        .items_center()
         .gap_1()
         .text_xs()
         .text_color(cx.theme().muted_foreground)
