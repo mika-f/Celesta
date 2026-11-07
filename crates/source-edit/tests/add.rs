@@ -744,6 +744,11 @@ fn only_a_component_s_parameters_are_props() {
         "export default ({ children }) => <Group>{children}</Group>;\n",
         "export default function ({ children }) {\n  return <Group>{children}</Group>;\n}\n",
         "const Box = memo(({ children }) => <Group>{children}</Group>);\n",
+        // Named after the binding, not the function's own name.
+        "const Card = function card({ children }) {\n  return <Group>{children}</Group>;\n};\n",
+        // A lowercase function exported as the default by its name.
+        "function box({ children }) {\n  return <Group>{children}</Group>;\n}\nexport default box;\n",
+        "const box = ({ children }) => <Group>{children}</Group>;\nexport { box as default };\n",
         // Read inside a callback, it is still the component's.
         "const Box = ({ children, items }) => (\n  <Group>\n    {items.map(() => <Group>{children}</Group>)}\n  </Group>\n);\n",
     ] {
@@ -760,6 +765,11 @@ fn only_a_component_s_parameters_are_props() {
         "function row(cells) {\n  return <Group>{cells}</Group>;\n}\n",
         "const Box = ({ label }) => {\n  {\n    const label = <Rect />;\n    return <Group>{label}</Group>;\n  }\n};\n",
         "const Box = ({ children }) => {\n  const render = (children) => <Group>{children}</Group>;\n  return render(children);\n};\n",
+        // A component's second parameter is not a prop.
+        "const Box = forwardRef((props, ref) => <Group>{ref}</Group>);\n",
+        "function Box(props, context) {\n  return <Group>{context}</Group>;\n}\n",
+        // Exported under another name than the default.
+        "function box({ children }) {\n  return <Group>{children}</Group>;\n}\nexport { box };\n",
     ] {
         let text = format!("{IMPORTS}{text}");
         let parent = text.rfind("<Group>{").unwrap();

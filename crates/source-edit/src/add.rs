@@ -3,7 +3,7 @@
 use oxc_ast::ast::{
     ArrowFunctionExpression, BindingIdentifier, ExportDefaultDeclaration,
     ExportDefaultDeclarationKind, Expression, FormalParameters, Function, IdentifierReference,
-    JSXChild, JSXElement, Program, VariableDeclarator,
+    JSXChild, JSXElement, ModuleExportName, Program, Statement, VariableDeclarator,
 };
 use oxc_ast_visit::Visit;
 use oxc_semantic::{Scoping, SemanticBuilder};
@@ -222,10 +222,11 @@ impl AddLock {
 /// A self-closing element has one (it is opened on insert), and so has any
 /// element with a closing tag, unless its only child is an expression that
 /// reads a parameter of an enclosing component: `{children}`,
-/// `{props.children}`, `{props['children']}`, a destructured prop. A
-/// component is a function a call site can name (`function Card`, `const
-/// Card = …`, through `memo`/`forwardRef`) or the module's default export,
-/// named or not. A callback's or a lowercase helper's parameter, and a
+/// `{props.children}`, `{props['children']}`, a destructured prop: a name
+/// a component's first parameter binds. A component is a function a call
+/// site can name (`function Card`, `const Card = …`, through
+/// `memo`/`forwardRef`) or the module's default export, named or not,
+/// also through the name it is bound to (`export default box`). A callback's or a lowercase helper's parameter, and a
 /// local that shadows a prop, are not props: `{items.map(…)}` and
 /// `{item}` inside it are regions. A text that does not parse has none.
 pub fn accepts_children(text: &str, element: &ElementRef) -> bool {
@@ -580,6 +581,7 @@ fn find_parent(program: &Program<'_>, start: u32) -> Option<Parent> {
         scoping: semantic.scoping(),
         names: Vec::new(),
         default_exports: Vec::new(),
+        default_bindings: default_bindings(program, semantic.scoping()),
         props: Vec::new(),
         found: None,
     };
@@ -587,39 +589,88 @@ fn find_parent(program: &Program<'_>, start: u32) -> Option<Parent> {
     find.found
 }
 
+/// The bindings the module exports as its default by name: `export default
+/// box` and `export { box as default }`, read before the functions they
+/// name are visited.
+fn default_bindings(program: &Program<'_>, scoping: &Scoping) -> Vec<SymbolId> {
+    let symbol = |id: &IdentifierReference<'_>| {
+        id.reference_id
+            .get()
+            .and_then(|reference| scoping.get_reference(reference).symbol_id())
+    };
+    let mut bindings = Vec::new();
+    for statement in &program.body {
+        match statement {
+            Statement::ExportDefaultDeclaration(export) => {
+                if let Some(Expression::Identifier(id)) = export
+                    .declaration
+                    .as_expression()
+                    .map(Expression::without_parentheses)
+                {
+                    bindings.extend(symbol(id));
+                }
+            }
+            Statement::ExportNamedDeclaration(export) => {
+                for specifier in &export.specifiers {
+                    if let (ModuleExportName::IdentifierReference(id), "default") =
+                        (&specifier.local, specifier.exported.name().as_str())
+                    {
+                        bindings.extend(symbol(id));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    bindings
+}
+
 /// The element whose `<` is at `start`, and the parameters of the
 /// components around it.
 struct FindParent<'s> {
     start: u32,
     scoping: &'s Scoping,
-    /// Functions a `const` names (`const Card = …`), by their offset.
-    names: Vec<(u32, String)>,
+    /// Functions a `const` names (`const Card = …`), by their offset, with
+    /// the binding.
+    names: Vec<(u32, String, Option<SymbolId>)>,
     /// The offsets of functions the module exports as its default.
     default_exports: Vec<u32>,
+    /// See [`default_bindings`].
+    default_bindings: Vec<SymbolId>,
     /// The names every component's parameters bind.
     props: Vec<SymbolId>,
     found: Option<Parent>,
 }
 
 impl FindParent<'_> {
-    /// A function is a component when a call site can name it (its own
-    /// name, or the `const` that holds it, through `memo`/`forwardRef`), or
-    /// when it is the module's default export: not a callback or a
-    /// lowercase helper, whose parameters its caller passes.
-    fn component_params(&mut self, start: u32, name: Option<&str>, params: &FormalParameters<'_>) {
-        let named = name
-            .or_else(|| {
-                self.names
-                    .iter()
-                    .find(|(at, _)| *at == start)
-                    .map(|(_, name)| name.as_str())
-            })
-            .is_some_and(is_component_name);
-        if !named && !self.default_exports.contains(&start) {
+    /// A function is a component when a call site can name it (the
+    /// `const` that holds it, through `memo`/`forwardRef`, else its own
+    /// name), or when it is the module's default export, directly or by
+    /// the name it is bound to: not a callback or a lowercase helper, whose
+    /// parameters its caller passes. Its props are what its first
+    /// parameter binds; a second one (`forwardRef`'s `ref`, a legacy
+    /// context) is not a prop.
+    fn component_params(
+        &mut self,
+        start: u32,
+        own: Option<&BindingIdentifier<'_>>,
+        params: &FormalParameters<'_>,
+    ) {
+        let held = self.names.iter().find(|(at, ..)| *at == start);
+        let name = held
+            .map(|(_, name, _)| name.as_str())
+            .or_else(|| own.map(|id| id.name.as_str()));
+        let binding = held
+            .and_then(|(.., symbol)| *symbol)
+            .or_else(|| own.and_then(|id| id.symbol_id.get()));
+        let component = name.is_some_and(is_component_name)
+            || self.default_exports.contains(&start)
+            || binding.is_some_and(|symbol| self.default_bindings.contains(&symbol));
+        let Some(first) = params.items.first().filter(|_| component) else {
             return;
-        }
+        };
         let mut names = Names::default();
-        names.visit_formal_parameters(params);
+        names.visit_binding_pattern(&first.pattern);
         self.props.extend(names.0);
     }
 
@@ -655,7 +706,8 @@ impl<'a> Visit<'a> for FindParent<'_> {
         if let (Some(id), Some(init)) = (it.id.get_binding_identifier(), &it.init)
             && let Some(start) = component_function(init)
         {
-            self.names.push((start, id.name.to_string()));
+            self.names
+                .push((start, id.name.to_string(), id.symbol_id.get()));
         }
         oxc_ast_visit::walk::walk_variable_declarator(self, it);
     }
@@ -670,8 +722,7 @@ impl<'a> Visit<'a> for FindParent<'_> {
     }
 
     fn visit_function(&mut self, it: &Function<'a>, flags: ScopeFlags) {
-        let name = it.id.as_ref().map(|id| id.name.as_str());
-        self.component_params(it.span.start, name, &it.params);
+        self.component_params(it.span.start, it.id.as_ref(), &it.params);
         oxc_ast_visit::walk::walk_function(self, it, flags);
     }
 
