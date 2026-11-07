@@ -43,7 +43,7 @@ fps (16.7 ms) needs the upload and draw cost cut whatever happens to the
 pipe, and shared memory alone does not get there. At 1080p the whole
 preview frame is 6–10 ms, so 0.8 ms matters little.
 
-Since then (`2026-11-08-video-upload-staging.md`): the upload was most of
+Since then (`2026-11-08-plugin-profiling.md`): the upload was most of
 that 17 ms, about 7 ms of fresh staging and texture memory, and now takes
 about 1.5 ms; 4K preview went from 24.6 to 21.2 ms a frame. What a 4K
 frame spends now: about 9 ms waiting for the plugin's frame (3.3 ms of it
@@ -61,7 +61,12 @@ Also:
   `encode_frame` calls. Timed whole, the CPU is about the same either way,
   and the overhead is wall-clock time: 1.1 ms (1080p) and 6.6 ms (4K), the
   frame's way through the pipe. Sending the next frame before the last
-  one's answer (pipelining) could hide part of it without shared memory.
+  one's answer (pipelining) could hide at most that transfer, less with
+  the default `medium` preset, where libx264 is the bottleneck; it would
+  change the protocol (several requests in flight, or an unanswered
+  `encodeFrame`), so it is not built (`2026-11-08-plugin-profiling.md`).
+  For exports, shared memory and pipelining aim at the same few
+  milliseconds; neither matters much while the encoder dominates.
 - **Exports are dominated by libx264** (about 15 ms a 1080p frame and 60 ms
   a 4K one with `medium`), so shared memory would change an export's time
   by a few percent.
@@ -236,7 +241,7 @@ arrives. A frame larger than its slot goes through the pipe.
 Option B, after the cheaper steps:
 
 1. Profile 4K preview's upload and draw, and the plugin's encode. Done:
-   the upload is fixed (`2026-11-08-video-upload-staging.md`), and the
+   the upload is fixed (`2026-11-08-plugin-profiling.md`), and the
    encode overhead is the pipe's.
 2. Decode a sequential session's next frame ahead in the plugin, and look
    at the GPU's 8 ms at 4K (a Metal capture). Both are smaller changes
