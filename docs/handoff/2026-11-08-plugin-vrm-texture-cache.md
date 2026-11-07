@@ -26,7 +26,9 @@ one. `plugins/vrm/src/texture_cache.rs` now sweeps it at each model open.
   there opens it (not through a link: `O_NOFOLLOW` on Unix, after
   `symlink_metadata` says it is a file), sets its time to now, then reads
   and compares the bytes through the same handle. A file whose time cannot
-  be set is written again.
+  be set is written again; when that write fails too (a cache that cannot
+  be written, which no sweep can empty either), the file is read without a
+  write handle and used as it is when it holds the bytes, as before.
 - **The lock** is `celesta-plugin-vrm.lock` in the cache (0600 on Unix,
   never through a link), with `std::fs::File` locks (`flock` on Unix,
   `LockFileEx` on Windows). `materials` holds it shared while it writes and
@@ -35,7 +37,9 @@ one. `plugins/vrm/src/texture_cache.rs` now sweeps it at each model open.
   opens in many processes still write side by side. Where the file cannot
   be made or locked, opens write without it and no sweep can run.
 - **The sweep** runs after every open that wrote or found an image, once
-  the shared lock is released. Only regular files the plugin names are
+  the shared lock is released. An open without images neither makes nor
+  sweeps the cache: the cache grows only through opens that write, and
+  each of those sweeps. Only regular files the plugin names are
   considered: `<64 lowercase hex>.<png|jpg|webp>` and the temporary files
   `<that>.<pid>-<n>.tmp`. Other files, directories, and links stay, so the
   cache may be a folder of the user's own (`CELESTA_VRM_TEXTURE_CACHE`).
@@ -63,8 +67,10 @@ one. `plugins/vrm/src/texture_cache.rs` now sweeps it at each model open.
 
 - The user guide's VRM cache paragraph
   (`packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md`) says
-  when images are removed, that recently used ones stay, that other files
-  stay, and how to empty the cache by hand.
+  when images and stale temporary files are removed, that recently used
+  ones stay, that other files stay, and how to empty the cache by hand
+  (the default folder whole; a folder of the user's own, only the
+  plugin's names).
 - `skills/celesta/references/plugins.md` says the same in brief.
 - `2026-11-03-plugin-vrm.md` points here instead of "Nothing ever cleans
   it", and its "Not done" entry is gone.

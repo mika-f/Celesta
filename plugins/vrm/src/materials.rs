@@ -915,24 +915,26 @@ fn cache_error(path: &Path, error: io::Error) -> LoadError {
     ))
 }
 
-/// Whether the file at `path`, not a link, holds `bytes`. Its time is set
-/// to now before it is read, through the handle that reads it: a sweep
-/// then counts it in use, and a file it removed in between is not found.
-/// A file whose time cannot be set is written again, which makes it new.
-fn holds_bytes(path: &Path, bytes: &[u8]) -> bool {
+/// Whether the file at `path`, not a link, holds `bytes`. With `mark`, its
+/// time is set to now before it is read, through the handle that reads it:
+/// a sweep then counts it in use, and a file it removed in between is not
+/// found. A file whose time cannot be set is not held, so it is written
+/// again, which makes it new; without `mark` (a cache that cannot be
+/// written, which no sweep can empty either) it is only read.
+fn holds_bytes(path: &Path, bytes: &[u8], mark: bool) -> bool {
     let is_file = fs::symlink_metadata(path)
         .is_ok_and(|metadata| metadata.is_file() && metadata.len() == bytes.len() as u64);
     if !is_file {
         return false;
     }
     let mut options = OpenOptions::new();
-    options.read(true).write(true);
+    options.read(true).write(mark);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NOFOLLOW);
     let Ok(file) = options.open(path) else {
         return false;
     };
-    if file.set_modified(SystemTime::now()).is_err() {
+    if mark && file.set_modified(SystemTime::now()).is_err() {
         return false;
     }
     let mut held = Vec::with_capacity(bytes.len());
@@ -968,7 +970,7 @@ fn write_cached_with(
     next: &AtomicU64,
 ) -> Result<PathBuf, LoadError> {
     let path = cache.join(name);
-    if holds_bytes(&path, bytes) {
+    if holds_bytes(&path, bytes, true) {
         return Ok(path);
     }
     let mut failure = None;
@@ -1005,8 +1007,9 @@ fn write_cached_with(
             }
         }
     }
-    // Another process may have put the same bytes there first.
-    if holds_bytes(&path, bytes) {
+    // Another process may have put the same bytes there first. Else the
+    // cache may not be writable, and the file there is used as it is.
+    if holds_bytes(&path, bytes, true) || holds_bytes(&path, bytes, false) {
         return Ok(path);
     }
     let error = failure.unwrap_or_else(|| io::Error::other("no temporary file could be made"));
@@ -1454,6 +1457,29 @@ mod tests {
         // The files there are left as they were, and nothing is added.
         assert_eq!(files(cache.path()), TEMPORARY_ATTEMPTS as usize);
         assert!(!cache.path().join("a.png").exists());
+    }
+
+    /// A cache that cannot be written still answers the images it holds,
+    /// without marking them used.
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_cache_still_answers_what_it_holds() {
+        use std::os::unix::fs::PermissionsExt;
+        let cache = TempDir::new().unwrap();
+        let next = AtomicU64::new(0);
+        let path = write_cached_with(cache.path(), "a.png", b"image", &next).unwrap();
+        let mode = |path: &Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        mode(&path, 0o444);
+        mode(cache.path(), 0o500);
+        let held = write_cached_with(cache.path(), "a.png", b"image", &next);
+        let other = write_cached_with(cache.path(), "b.png", b"other", &next);
+        mode(cache.path(), 0o700);
+        mode(&path, 0o644);
+        assert_eq!(held.unwrap(), path);
+        assert!(other.is_err());
+        assert_eq!(files(cache.path()), 1);
     }
 
     /// A temporary file the plugin made is removed when the rename fails.
