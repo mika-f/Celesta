@@ -45,13 +45,20 @@ preview frame is 6–10 ms, so 0.8 ms matters little.
 
 Since then (`2026-11-08-plugin-profiling.md`): the upload was most of
 that 17 ms, about 7 ms of fresh staging and texture memory, and now takes
-about 1.5 ms; 4K preview went from 24.6 to 21.2 ms a frame. What a 4K
-frame spends now: about 9 ms waiting for the plugin's frame (3.3 ms of it
-decoding, the rest the pipe), about 8 ms waiting for the GPU. That makes
-the pipe's 4–5 ms a larger share, about a fifth, but the GPU's 8 ms is
-still larger, and decoding the next frame ahead in the plugin while the
-host renders (the same note's Not done) would hide the decode without any
-protocol change.
+about 1.5 ms; 4K preview went from 24.6 to 21.2 ms a frame (19.3 ms in a
+quiet run). The plugin already decodes ahead (ez-ffmpeg's frame export
+keeps the next frame ready on its own threads; the plugin waits on a
+decoded frame 0.1% of the time), so the plugin's wait is the transfer
+alone. What a 4K preview frame spends now: about 8.3 ms waiting for the
+plugin's frame, which is the pipe (4.4–4.9 ms in isolation, 7–8 ms while
+the GPU upload and FFmpeg's decoding share the memory bandwidth), about
+6.6 ms waiting for the GPU, about 2 ms uploading. **The transfer is now
+the largest single cost of 4K preview, about 40% of the frame**, which
+makes the case for shared memory: it would replace about 8 ms with a copy
+of about 1 ms. The alternative that needs no protocol change is the host
+asking for the next frame of a sequential session as soon as it has the
+current one, on a thread of its own, so the transfer overlaps the render
+and the GPU wait instead of being removed.
 
 Also:
 
@@ -243,11 +250,11 @@ Option B, after the cheaper steps:
 1. Profile 4K preview's upload and draw, and the plugin's encode. Done:
    the upload is fixed (`2026-11-08-plugin-profiling.md`), and the
    encode overhead is the pipe's.
-2. Decode a sequential session's next frame ahead in the plugin, and look
-   at the GPU's 8 ms at 4K (a Metal capture). Both are smaller changes
-   than shared memory, and the first takes most of the plugin's wait off
-   4K preview.
-3. Then B with C's generation check: one slot a direction a process, the
+2. Decode-ahead in the plugin: already there, nothing to build.
+3. Then B (or, without a protocol change, the host prefetching a
+   sequential session's next frame; it hides the transfer behind the
+   render rather than removing it, costs a background thread in
+   `celesta-media`, and still moves 33 MB a 4K frame through the pipe) with C's generation check: one slot a direction a process, the
    host copying out, `VideoFrame` unchanged; Linux memfd with seals, macOS
    `shm_open` unlinked before spawn, Windows an unnamed section duplicated
    into the child; negotiated in `hello`, per message, with the pipe always
@@ -265,8 +272,9 @@ type change through `celesta-media`, both renderers, and their tests.
 
 ## Open questions for the user
 
-1. **Order.** Decided: profile first, done. Next: decode-ahead in the
-   plugin and the GPU's 4K cost (recommended), or shared memory now?
+1. **Order.** Decided: profile first, done; decode-ahead turned out to be
+   there already. Next: shared memory (B), host-side prefetch, or neither
+   for now? (The GPU's 6.6 ms at 4K is the other open cost.)
 2. **Option.** B (copy out, `VideoFrame` unchanged), or D (no host copy,
    a change to the public `VideoFrame` type and a slot ring)?
 3. **Scope.** Decode only first, or decode and encode (export) together?
