@@ -28,7 +28,7 @@ impl Exporter {
     pub fn new(mut options: ExportOptions) -> Self {
         let plugins = options
             .plugins
-            .get_or_insert_with(|| InstalledPlugins::find_reporting(&[]));
+            .get_or_insert_with(|| InstalledPlugins::find_reporting(&[], &[]));
         crate::codec::ensure_codec(plugins);
         Self { options }
     }

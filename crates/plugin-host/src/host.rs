@@ -154,7 +154,7 @@ impl PluginHost {
     /// The plugins in every location Celesta searches, `extra` first (see
     /// [`InstalledPlugins::find`]). Skipped plugins are reported on stderr.
     pub fn discover(extra: &[PathBuf]) -> Self {
-        InstalledPlugins::find_reporting(extra).host()
+        InstalledPlugins::find_reporting(extra, &[]).host()
     }
 
     pub fn plugins(&self) -> impl Iterator<Item = &PluginEntry> {
