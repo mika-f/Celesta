@@ -23,10 +23,12 @@
 //! counts toward [`TEXTURE_BUDGET`], once for each scene texture that
 //! samples it. Images are read only from the file:
 //! a buffer view or a `data:` URI, never another file or the network.
+//! `texture_cache` removes the images no open has used for a while.
 
 use crate::document::{Document, LoadError};
 use crate::mtoon::{self, Mtoon, OutlineWidthMode, ScaledTextureSlot, TextureSlot};
 use crate::notices::Warnings;
+use crate::texture_cache::{self, CacheLock};
 use base64::Engine as _;
 use celesta_plugin::{
     AlphaMode, ColorSpace, Filter, Material, MaterialKind, Notice, Sampler, SceneShader,
@@ -41,9 +43,10 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt::{self, Write as _};
 use std::fs::{self, OpenOptions};
-use std::io::{self, Cursor, Write as _};
+use std::io::{self, Cursor, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::SystemTime;
 use vrm_spec::vrmc_materials_mtoon_1_0::{
     OutlineWidthMode as MtoonOutlineWidthMode, VrmcMaterialsMtoonSchema,
 };
@@ -211,7 +214,8 @@ fn check_cache(cache: &Path, #[cfg(unix)] user: u32) -> Result<(), LoadError> {
 }
 
 /// Reads every material of `document`, and writes the images they use to
-/// `cache` once the textures are known to fit [`TEXTURE_BUDGET`].
+/// `cache` once the textures are known to fit [`TEXTURE_BUDGET`], holding
+/// the cache's lock shared, then sweeps the cache (see `texture_cache`).
 pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, LoadError> {
     let mut reader = Reader {
         document,
@@ -279,16 +283,19 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
     let mut paths: HashMap<usize, PathBuf> = HashMap::new();
     if !reader.used.is_empty() {
         prepare_cache(cache)?;
-    }
-    for &image in &reader.used {
-        if let Some(Image::Readable(readable)) = &reader.images[image] {
-            let name = format!(
-                "{}.{}",
-                hex(&Sha256::digest(&readable.bytes)),
-                readable.extension
-            );
-            paths.insert(image, write_cached(cache, &name, &readable.bytes)?);
+        let lock = CacheLock::shared(cache);
+        for &image in &reader.used {
+            if let Some(Image::Readable(readable)) = &reader.images[image] {
+                let name = format!(
+                    "{}.{}",
+                    hex(&Sha256::digest(&readable.bytes)),
+                    readable.extension
+                );
+                paths.insert(image, write_cached(cache, &name, &readable.bytes)?);
+            }
         }
+        drop(lock);
+        texture_cache::sweep(cache, &texture_cache::Policy::DEFAULT, SystemTime::now());
     }
     let textures: Vec<SceneTexture> = reader
         .keys
@@ -908,15 +915,46 @@ fn cache_error(path: &Path, error: io::Error) -> LoadError {
     ))
 }
 
+/// Whether the file at `path`, not a link, holds `bytes`. With `mark`, its
+/// time is set to now before it is read, through the handle that reads it:
+/// a sweep then counts it in use, and a file it removed in between is not
+/// found. A file whose time cannot be set is not held, so it is written
+/// again, which makes it new; without `mark` (a cache that cannot be
+/// written, which no sweep can empty either) it is only read.
+fn holds_bytes(path: &Path, bytes: &[u8], mark: bool) -> bool {
+    let is_file = fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.len() == bytes.len() as u64);
+    if !is_file {
+        return false;
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).write(mark);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NOFOLLOW);
+    let Ok(file) = options.open(path) else {
+        return false;
+    };
+    if mark && file.set_modified(SystemTime::now()).is_err() {
+        return false;
+    }
+    let mut held = Vec::with_capacity(bytes.len());
+    // One byte past what is wanted shows a file that has grown.
+    file.take(bytes.len() as u64 + 1)
+        .read_to_end(&mut held)
+        .is_ok_and(|_| held == bytes)
+}
+
 /// How many temporary names [`write_cached`] tries before it gives up.
 const TEMPORARY_ATTEMPTS: u64 = 8;
 
 /// `bytes` at `cache/name`, written unless a file there already holds
-/// them. The name is a content hash and an extension, so nothing in the
-/// model chooses where it goes. The bytes go to a new temporary file
-/// first (never one already there, nor through a link) and are renamed
-/// into place, so a reader never sees half a file.
-fn write_cached(cache: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, LoadError> {
+/// them, which is then marked used (see [`holds_bytes`]). The name is a
+/// content hash and an extension, so nothing in the model chooses where it
+/// goes. The bytes go to a new temporary file first (never one already
+/// there, nor through a link) and are renamed into place, so a reader
+/// never sees half a file. The caller holds the cache's lock shared, so no
+/// sweep removes the file before it is marked used.
+pub(crate) fn write_cached(cache: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, LoadError> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     write_cached_with(cache, name, bytes, &NEXT)
 }
@@ -932,12 +970,7 @@ fn write_cached_with(
     next: &AtomicU64,
 ) -> Result<PathBuf, LoadError> {
     let path = cache.join(name);
-    let holds_bytes = |path: &Path| {
-        fs::symlink_metadata(path)
-            .is_ok_and(|metadata| metadata.is_file() && metadata.len() == bytes.len() as u64)
-            && fs::read(path).is_ok_and(|held| held == bytes)
-    };
-    if holds_bytes(&path) {
+    if holds_bytes(&path, bytes, true) {
         return Ok(path);
     }
     let mut failure = None;
@@ -974,8 +1007,9 @@ fn write_cached_with(
             }
         }
     }
-    // Another process may have put the same bytes there first.
-    if holds_bytes(&path) {
+    // Another process may have put the same bytes there first. Else the
+    // cache may not be writable, and the file there is used as it is.
+    if holds_bytes(&path, bytes, true) || holds_bytes(&path, bytes, false) {
         return Ok(path);
     }
     let error = failure.unwrap_or_else(|| io::Error::other("no temporary file could be made"));
@@ -1058,8 +1092,12 @@ mod tests {
             .collect()
     }
 
+    /// The files in `dir`, but the cache's lock.
     fn files(dir: &Path) -> usize {
-        std::fs::read_dir(dir).unwrap().count()
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter(|entry| entry.as_ref().unwrap().file_name() != texture_cache::LOCK_NAME)
+            .count()
     }
 
     fn mtoon_extension(root: &mut Value, material: usize) -> &mut Value {
@@ -1274,6 +1312,65 @@ mod tests {
         assert_eq!(files(cache.path()), 2);
     }
 
+    /// Sets `path`'s time to `ago` before now.
+    fn last_used(path: &Path, ago: std::time::Duration) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::now() - ago)
+            .unwrap();
+    }
+
+    fn modified(path: &Path) -> SystemTime {
+        std::fs::metadata(path).unwrap().modified().unwrap()
+    }
+
+    const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+    /// Opening a model again marks the images it finds used, so a sweep
+    /// keeps them.
+    #[test]
+    fn finding_a_cached_image_marks_it_used() {
+        let vrm = SyntheticVrm::avatar();
+        let document = document(&vrm, |_| {});
+        let cache = TempDir::new().unwrap();
+        let materials = materials(&document, cache.path()).unwrap();
+        let file = path(&materials, 0).to_owned();
+        last_used(&file, 29 * DAY);
+        let before = modified(&file);
+        let again = super::materials(&document, cache.path()).unwrap();
+        assert_eq!(path(&again, 0), file);
+        assert!(modified(&file) > before + 28 * DAY);
+        assert_eq!(std::fs::read(&file).unwrap(), vrm.images[0].1);
+    }
+
+    /// An open sweeps the cache: an image no open has used for longer than
+    /// the age goes, and the model's own images stay.
+    #[test]
+    fn opening_a_model_sweeps_the_cache() {
+        let vrm = SyntheticVrm::avatar();
+        let document = document(&vrm, |_| {});
+        let cache = TempDir::new().unwrap();
+        let stale = cache
+            .path()
+            .join(format!("{}.png", sha256(b"another model")));
+        std::fs::write(&stale, b"another model").unwrap();
+        last_used(&stale, texture_cache::MAX_AGE + DAY);
+        let own = materials(&document, cache.path()).unwrap();
+        let file = path(&own, 0).to_owned();
+        last_used(&file, texture_cache::MAX_AGE + DAY);
+        let photo = cache.path().join("photo.png");
+        std::fs::write(&photo, b"the user's").unwrap();
+        last_used(&photo, texture_cache::MAX_AGE + DAY);
+
+        let materials = materials(&document, cache.path()).unwrap();
+        assert!(!stale.exists());
+        assert!(photo.exists());
+        assert_eq!(std::fs::read(path(&materials, 0)).unwrap(), vrm.images[0].1);
+        assert_eq!(files(cache.path()), 3);
+    }
+
     /// An 8-bit RGBA [`png_header_of`].
     fn png_header(width: u32, height: u32) -> Vec<u8> {
         png_header_of(width, height, 8)
@@ -1360,6 +1457,29 @@ mod tests {
         // The files there are left as they were, and nothing is added.
         assert_eq!(files(cache.path()), TEMPORARY_ATTEMPTS as usize);
         assert!(!cache.path().join("a.png").exists());
+    }
+
+    /// A cache that cannot be written still answers the images it holds,
+    /// without marking them used.
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_cache_still_answers_what_it_holds() {
+        use std::os::unix::fs::PermissionsExt;
+        let cache = TempDir::new().unwrap();
+        let next = AtomicU64::new(0);
+        let path = write_cached_with(cache.path(), "a.png", b"image", &next).unwrap();
+        let mode = |path: &Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        mode(&path, 0o444);
+        mode(cache.path(), 0o500);
+        let held = write_cached_with(cache.path(), "a.png", b"image", &next);
+        let other = write_cached_with(cache.path(), "b.png", b"other", &next);
+        mode(cache.path(), 0o700);
+        mode(&path, 0o644);
+        assert_eq!(held.unwrap(), path);
+        assert!(other.is_err());
+        assert_eq!(files(cache.path()), 1);
     }
 
     /// A temporary file the plugin made is removed when the rename fails.

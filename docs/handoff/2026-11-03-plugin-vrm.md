@@ -179,7 +179,7 @@ Files ported from UniVRM carry its MIT notice and name their source.
   anything is made (`the texture cache {path} is not an absolute path`):
   the host starts the plugin in the plugin's own folder, and Celesta
   resolves the paths it is sent against its own working directory.
-  Nothing ever cleans it.
+  Each open sweeps it: see `2026-11-08-plugin-vrm-texture-cache.md`.
 - **Budgets.** Each image is sized from its header alone. The scene
   textures may decode to at most 1 GiB at 4 bytes a texel
   (`TEXTURE_BUDGET`), an image two scene textures sample counted twice,
@@ -691,6 +691,7 @@ Celesta's side knows no format.
 | `plugins/vrm/src/document.rs`, `nodes.rs`, `humanoid.rs` | Opening the file and its refusals; the node tree, rest pose, and world matrices; the humanoid. |
 | `plugins/vrm/src/geometry.rs` | Compacted primitives, computed normals, MikkTSpace tangents, and the read and geometry budgets. |
 | `plugins/vrm/src/materials.rs` | Materials, scene textures, the texture cache, and the texture budget. |
+| `plugins/vrm/src/texture_cache.rs` | The texture cache's lock and its sweep (`2026-11-08-plugin-vrm-texture-cache.md`). |
 | `plugins/vrm/src/mtoon.rs`, `mtoon.wgsl` | MToon as the plugin's own material. |
 | `plugins/vrm/src/model.rs`, `first_person.rs` | The scene model, skins, draws, `center`, and each frame. |
 | `plugins/vrm/src/expressions.rs`, `look_at.rs` | Expressions and lookAt with UniVRM's rules. |
@@ -722,7 +723,6 @@ Celesta's side knows no format.
 - **Not read:** `TEXCOORD_1` and other UV sets (every slot samples
   `TEXCOORD_0`), vertex colours (`COLOR_0`), more than four joints a
   vertex (`JOINTS_1`/`WEIGHTS_1`), tangent morph deltas.
-- **The texture cache is never cleaned.**
 - **Celesta compiles the MToon shader once per renderer, when the first
   avatar opens,** and the pipelines an avatar's materials need that no
   model has used: a stall on the first MToon avatar.

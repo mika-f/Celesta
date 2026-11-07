@@ -28,6 +28,7 @@ mod springs;
 mod stepping;
 #[cfg(any(test, feature = "synthetic"))]
 pub mod synthetic;
+mod texture_cache;
 mod tracks;
 mod vrma;
 

@@ -143,7 +143,10 @@ import { Vrm } from '@celesta-plugin/vrm';
 - Textures are written as image files to a cache: `celesta-plugin-vrm` in
   the user's cache folder, or `CELESTA_VRM_TEXTURE_CACHE`, which must be
   an absolute path to a real folder of the user's own, not writable by
-  others. Never emptied.
+  others. Each open removes the images unused for 30 days, then the least
+  recently used past 2 GiB, and temporary files a crashed write left;
+  images used within a day stay, and files the plugin did not write are
+  never touched.
 - Not yet: VRM 0.x (refused, with how to convert it to 1.0).
 
 ### Motion, constraints, and spring bones
