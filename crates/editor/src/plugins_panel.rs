@@ -15,7 +15,9 @@ use celesta_plugin_host::{
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Context, SharedString, Window, div};
 
@@ -32,6 +34,17 @@ pub(crate) enum PluginState {
     },
     /// The user turned it off.
     Off,
+}
+
+/// How a row's switch shows its plugin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SwitchLook {
+    /// The plugin runs.
+    pub(crate) on: bool,
+    /// The switch can be used: not while the plugin waits for approval,
+    /// which the switch cannot give.
+    pub(crate) enabled: bool,
+    pub(crate) tooltip: &'static str,
 }
 
 /// One plugin as the Plugins tab lists it.
@@ -77,6 +90,29 @@ impl PluginRow {
             "Runs on this computer"
         } else {
             "Not built for this computer"
+        }
+    }
+
+    /// A waiting plugin does not run, so its switch is off, and greyed out
+    /// until it is allowed: allowing it is **Allow**'s, and turning it off
+    /// **Turn Off**'s.
+    pub(crate) fn switch(&self) -> SwitchLook {
+        match self.state {
+            PluginState::On => SwitchLook {
+                on: true,
+                enabled: true,
+                tooltip: "On or off",
+            },
+            PluginState::Waiting { .. } => SwitchLook {
+                on: false,
+                enabled: false,
+                tooltip: "Runs once allowed",
+            },
+            PluginState::Off => SwitchLook {
+                on: false,
+                enabled: true,
+                tooltip: "On or off",
+            },
         }
     }
 
@@ -210,6 +246,24 @@ impl EditorView {
                 ..
             }
         );
+        let turn_off = matches!(row.state, PluginState::Waiting { .. }).then(|| {
+            let (id, directory) = (id.clone(), directory.clone());
+            Button::new(("plugin-turn-off", index))
+                .xsmall()
+                .ghost()
+                .label("Turn Off")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let (id, directory) = (id.clone(), directory.clone());
+                    this.change_plugin_settings(
+                        move |settings| {
+                            settings.set_enabled(&id, &directory, false);
+                            Ok(())
+                        },
+                        window,
+                        cx,
+                    );
+                }))
+        });
         let allow = match &row.state {
             PluginState::Waiting { fingerprint, .. } => {
                 let (id, directory, fingerprint) =
@@ -237,10 +291,12 @@ impl EditorView {
         };
         let switch = {
             let (id, directory) = (id.clone(), directory.clone());
+            let look = row.switch();
             Switch::new(("plugin-enabled", index))
                 .small()
-                .checked(row.state != PluginState::Off)
-                .tooltip("On or off")
+                .checked(look.on)
+                .disabled(!look.enabled)
+                .tooltip(look.tooltip)
                 .on_click(cx.listener(move |this, checked: &bool, window, cx| {
                     let (id, directory, checked) = (id.clone(), directory.clone(), *checked);
                     this.change_plugin_settings(
@@ -300,7 +356,13 @@ impl EditorView {
                         .child("Downloaded from the internet."),
                 )
             })
-            .child(h_flex().gap_1().children(allow).child(show))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .children(allow)
+                    .children(turn_off)
+                    .child(show),
+            )
             .into_any_element()
     }
 
@@ -463,7 +525,11 @@ mod tests {
                 changed: true,
                 from_the_internet: false,
             }],
-            disabled: vec![entry("gamma", PluginSource::Project, &[])],
+            // The user's zeta is off, so the bundled one is used: both listed.
+            disabled: vec![
+                entry("gamma", PluginSource::Project, &[]),
+                entry("zeta", PluginSource::User, &[]),
+            ],
             ..FoundPlugins::default()
         };
         let rows = PluginRow::all(&found);
@@ -477,9 +543,49 @@ mod tests {
                 ("gamma", "Off"),
                 ("alpha", "On"),
                 ("beta", "Changed: waits for approval"),
+                ("zeta", "Off"),
                 ("zeta", "On"),
             ]
         );
+    }
+
+    #[test]
+    fn a_waiting_plugins_switch_is_off_and_greyed_out() {
+        let row = |state: PluginState| PluginRow {
+            entry: entry("p", PluginSource::User, &[]),
+            state,
+        };
+        let waiting = |changed| PluginState::Waiting {
+            fingerprint: "sha256:1".into(),
+            changed,
+            from_the_internet: false,
+        };
+        assert_eq!(
+            row(PluginState::On).switch(),
+            SwitchLook {
+                on: true,
+                enabled: true,
+                tooltip: "On or off"
+            }
+        );
+        assert_eq!(
+            row(PluginState::Off).switch(),
+            SwitchLook {
+                on: false,
+                enabled: true,
+                tooltip: "On or off"
+            }
+        );
+        for changed in [false, true] {
+            assert_eq!(
+                row(waiting(changed)).switch(),
+                SwitchLook {
+                    on: false,
+                    enabled: false,
+                    tooltip: "Runs once allowed"
+                }
+            );
+        }
     }
 
     #[test]

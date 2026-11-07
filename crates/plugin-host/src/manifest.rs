@@ -4,7 +4,7 @@ use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
 use crate::settings::UserSettings;
 use celesta_plugin::PROTOCOL_VERSION;
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// The file that makes a directory a plugin.
@@ -621,15 +621,25 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
 /// folder is skipped quietly. A plugin skipped this way takes no id, so a
 /// later one with the same id is found in its place.
 pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
+    discover_in_with(paths, |_| false)
+}
+
+/// [`discover_in`], where a plugin `turned_off` names is listed but, like a
+/// skipped one, takes no id: a later plugin with its id is found too, to be
+/// used in its place. One found after a plugin that took its id is not.
+pub(crate) fn discover_in_with(
+    paths: &[SearchPath],
+    turned_off: impl Fn(&PluginEntry) -> bool,
+) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
     let mut found: Vec<PluginEntry> = Vec::new();
+    let mut taken: HashSet<String> = HashSet::new();
     let mut errors = Vec::new();
     let mut add = |entry: Result<Option<PluginEntry>, DiscoveryError>,
                    found: &mut Vec<PluginEntry>| match entry {
-        Ok(Some(entry))
-            if !found
-                .iter()
-                .any(|other| other.manifest.id == entry.manifest.id) =>
-        {
+        Ok(Some(entry)) if !taken.contains(&entry.manifest.id) => {
+            if !turned_off(&entry) {
+                taken.insert(entry.manifest.id.clone());
+            }
             found.push(entry)
         }
         Ok(_) => {}
@@ -751,7 +761,8 @@ fn path_list(entries: &[PluginEntry]) -> std::ffi::OsString {
 impl InstalledPlugins {
     /// Discovers them, with the plugins that were skipped and why: the
     /// folders the user added in their settings are searched too, and the
-    /// plugins they turned off are left out. This is what command-line tools
+    /// plugins they turned off are left out, each giving way to the next
+    /// plugin with its id. This is what command-line tools
     /// run, without asking about anything (see
     /// [`InstalledPlugins::allowed_by`] for the app's questions).
     pub fn find(explicit: &[PathBuf]) -> (Self, Vec<DiscoveryError>) {
@@ -768,14 +779,17 @@ impl InstalledPlugins {
 
     /// Discovers them with a trusted project's own plugin folders (see
     /// [`crate::project_plugin_paths`]) and the folders `settings` adds,
-    /// leaving nothing out.
+    /// leaving nothing out: a plugin `settings` turns off is listed, and so
+    /// is the next one with its id, which is used in its place.
     pub fn find_with(
         explicit: &[PathBuf],
         project: &[PathBuf],
         settings: &UserSettings,
     ) -> (Self, Vec<DiscoveryError>) {
         let paths = search_paths(explicit, project, &settings.plugin_folders);
-        let (plugins, errors) = discover_in(&paths);
+        let (plugins, errors) = discover_in_with(&paths, |entry| {
+            settings.is_disabled(&entry.manifest.id, &entry.directory)
+        });
         (
             Self {
                 plugins,

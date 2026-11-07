@@ -21,7 +21,7 @@ Celesta looks for plugins in this order, and of several plugins with the same id
 5. Folders you added in the desktop app's [Plugins tab](#the-plugins-tab).
 6. The plugin folder that comes with Celesta: `plugins` beside the executable on Windows, `Contents/PlugIns` in the macOS app, and `../lib/celesta/plugins` from the executable's folder elsewhere.
 
-A plugin says which versions of Celesta it works with. Celesta skips a plugin made for other versions, or one that does not say, and tells you why in the Problems tab, the [Plugins tab](#the-plugins-tab), and the output of `celesta-exporter` and the MCP server; get a release of the plugin made for your Celesta. A skipped plugin does not hide another one with the same id found later in this order, so a codec plugin made for your Celesta further down the list is used instead.
+A plugin says which versions of Celesta it works with. Celesta skips a plugin made for other versions, or one that does not say, and tells you why in the Problems tab, the [Plugins tab](#the-plugins-tab), and the output of `celesta-exporter` and the MCP server; get a release of the plugin made for your Celesta. A skipped plugin does not hide another one with the same id found later in this order, so a codec plugin made for your Celesta further down the list is used instead. Neither does a plugin you turned off in the [Plugins tab](#the-plugins-tab).
 
 A folder in 1, 2, 3, or 5 may be a plugin itself or hold several. Give `CELESTA_PLUGIN_PATH` absolute paths: a relative entry is skipped, since the folder it names would depend on where Celesta is started.
 
@@ -58,16 +58,16 @@ Each path is relative to the project root and must stay inside it. The desktop a
 
 ## The Plugins tab
 
-The desktop app looks for plugins each time it opens a project. The **Plugins** tab in the right dock lists every plugin it found (of several with the same id, the one it uses), with:
+The desktop app looks for plugins each time it opens a project. The **Plugins** tab in the right dock lists every plugin it found (of several with the same id, the one it uses, and any before it that you turned off), with:
 
 - where the plugin came from (a project, your plugin folder, an added folder, `CELESTA_PLUGIN_PATH`, or the folder that comes with Celesta);
 - its version, and whether it brings only components or a program, and whether that program was built for this computer;
-- whether it is on, off, or waiting for your approval.
+- whether it is on, off, or waiting for your approval. A waiting plugin's switch is greyed out and off until you allow it.
 
 From the tab you can:
 
-- allow a waiting plugin;
-- turn any plugin off or back on (a plugin that is off does not run, in the app or in `celesta-exporter`);
+- allow a waiting plugin, or turn it off with **Turn Off**;
+- turn any plugin off or back on with its switch. A plugin that is off does not run, in the app or in `celesta-exporter`, and the next plugin with its id in the search order is used in its place, if there is one: turning off a plugin in your user plugin folder goes back to the one that comes with Celesta, for example. A plugin waiting for approval does not give way like this, so a plugin you have not allowed cannot be replaced by one further down the list without you noticing;
 - show its folder;
 - open your plugin folder, creating it if needed;
 - add more folders of plugins, which are searched after your plugin folder, and remove them again;

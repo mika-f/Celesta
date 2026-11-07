@@ -25,7 +25,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   Plugins; skipped plugins show in its Problems tab. Its Plugins tab lists
   every plugin with its source and state, and lets the user allow, turn
   off, and add folders of plugins (kept in their `settings.json`). A plugin
-  turned off there does not run in `Celesta-export` either.
+  turned off there does not run in `Celesta-export` either, and gives way
+  to the next plugin with its id (turning off a user-folder copy goes back
+  to the bundled one); a plugin waiting for approval does not give way.
 - A plugin whose manifest lists `components` offers them in the app's Add
   menu; the app writes the element with its `@celesta-plugin/<id>` import.
   Code written by hand works the same. A component that takes a model file
