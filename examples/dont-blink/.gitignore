@@ -1,0 +1,6 @@
+node_modules/
+.celesta/
+.DS_Store
+*.mp4
+assets/score.wav
+rendered/
