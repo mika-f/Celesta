@@ -1,6 +1,6 @@
 use celesta_source_edit::{
     EditTarget, EditValue, ElementRef, LiteralForm, LockReason, Span, TimingKind, element_at,
-    later_series_items, resolve_unchecked, timing_kind,
+    encloses_directly, later_series_items, resolve_unchecked, timing_kind,
 };
 
 /// The element whose `<` is the first `needle` in `text` (ASCII only).
@@ -139,6 +139,42 @@ fn later_series_items_are_the_following_siblings() {
     );
 }
 
+/// The lines of `later_series_items` for the `<Series.Sequence` on line
+/// `line` of `text` (each item on a line of its own).
+fn later_lines(text: &str, line: u32) -> Vec<u32> {
+    let column = text
+        .split('\n')
+        .nth(line as usize - 1)
+        .unwrap()
+        .find('<')
+        .unwrap() as u32
+        + 1;
+    let item = element_at(text, line, column).unwrap();
+    later_series_items(text, &item)
+        .into_iter()
+        .map(|(line, _)| line)
+        .collect()
+}
+
+#[test]
+fn later_series_items_include_those_inside_braces() {
+    let text = "import { Rect, Series } from '@celesta.studio/react';\nexport const Scene = ({ xs, on }) => (\n  <Series>\n    <Series.Sequence durationInFrames={30} />\n    {on && (\n      <Series.Sequence durationInFrames={40} />\n    )}\n    {xs.map((x) => (\n      <Series.Sequence key={x} durationInFrames={x} />\n    ))}\n    <Series.Sequence durationInFrames={50} />\n  </Series>\n);\n";
+    assert_eq!(later_lines(text, 4), [6, 9, 11]);
+    // From inside `{…}`: the items after it.
+    assert_eq!(later_lines(text, 6), [9, 11]);
+    assert_eq!(later_lines(text, 9), [11]);
+
+    // Through `C.Series` and an aliased `Series`.
+    let text = "import * as C from '@celesta.studio/react';\nexport const Scene = () => (\n  <C.Series>\n    <C.Series.Sequence durationInFrames={30} />\n    <C.Series.Sequence durationInFrames={40} />\n  </C.Series>\n);\n";
+    assert_eq!(later_lines(text, 4), [5]);
+    let text = "import { Series as S } from '@celesta.studio/react';\nexport const Scene = () => (\n  <S>\n    <S.Sequence durationInFrames={30} />\n    <S.Sequence durationInFrames={40} />\n  </S>\n);\n";
+    assert_eq!(later_lines(text, 4), [5]);
+
+    // A fragment is not an item (`<Series>` throws on one), nor what it holds.
+    let text = "import { Series } from '@celesta.studio/react';\nexport const Scene = () => (\n  <Series>\n    <Series.Sequence durationInFrames={30} />\n    <>\n      <Series.Sequence durationInFrames={40} />\n    </>\n    <Series.Sequence durationInFrames={50} />\n  </Series>\n);\n";
+    assert_eq!(later_lines(text, 4), [8]);
+}
+
 /// The first `<Sequence` of `text`, read unchecked, without a call site.
 fn unchecked(text: &str, prop: &str) -> EditTarget {
     resolve_unchecked(text, &element(text, "<Sequence"), prop, None)
@@ -213,4 +249,19 @@ fn resolve_unchecked_reads_written_props() {
             source: "cut - 9".into(),
         })
     );
+}
+
+#[test]
+fn encloses_directly_reads_children_and_braces() {
+    let text = "import { G, Rect, Sequence, Text } from '@celesta.studio/react';\nexport const Scene = ({ on }) => (\n  <Sequence from={0} durationInFrames={90}>\n    <Rect />\n    {on && <Text />}\n    <G>\n      <Rect width={1} />\n    </G>\n    <>\n      <Rect width={2} />\n    </>\n  </Sequence>\n);\n";
+    let sequence = element(text, "<Sequence");
+    let encloses = |needle: &str| encloses_directly(text, &sequence, &element(text, needle));
+    assert!(encloses("<Rect />"));
+    assert!(encloses("<Text"));
+    assert!(encloses("<G>"));
+    // Inside another element, or a fragment.
+    assert!(!encloses("<Rect width={1}"));
+    assert!(!encloses("<Rect width={2}"));
+    // Itself.
+    assert!(!encloses("<Sequence"));
 }
