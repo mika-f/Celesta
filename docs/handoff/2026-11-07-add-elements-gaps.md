@@ -146,9 +146,11 @@ Run on macOS (arm64) with the mbx cargo shim on `PATH`:
 - `cargo test -p celesta-editor`
 - `cargo test -p celesta-react-bridge --lib`
 - `cargo test -p celesta-gpu-renderer --lib layer_frame`
-- The workspace baseline (`cargo test --workspace`, `cargo clippy
-  --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`,
-  `git diff --check`): see the pull request for its result.
+- `cargo test --workspace`: passes (one test ignored, as on `main`).
+- `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo fmt --all -- --check`, `git diff --check`: clean.
+- `packages/website`: `vitest run tests/content.test.ts
+  tests/locales.test.ts` passes.
 
 Not verified in the app: the waiting release, the hint's ellipsis, the
 notice order, Escape with a text edit open, and the cancelled import.

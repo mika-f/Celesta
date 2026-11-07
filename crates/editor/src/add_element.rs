@@ -114,11 +114,6 @@ pub(crate) struct Sharing {
 }
 
 impl Sharing {
-    pub(crate) const NONE: Self = Self {
-        calls: false,
-        scenes: false,
-    };
-
     pub(crate) fn any(self) -> bool {
         self.calls || self.scenes
     }
@@ -1989,7 +1984,7 @@ mod tests {
     }
 
     fn none_shared(_: &LayerSource) -> Result<Sharing, String> {
-        Ok(Sharing::NONE)
+        Ok(Sharing::default())
     }
 
     /// `pick_parent` under `scope` with every group accepting, shared when
