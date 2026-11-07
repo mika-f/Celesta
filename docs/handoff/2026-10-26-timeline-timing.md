@@ -209,6 +209,10 @@ amended to match.
 
 ## Known gaps
 
+Issue #566 went through this list (except the items split off as #558,
+#559 and #560): `docs/handoff/2026-11-07-timeline-timing-gaps.md` says,
+item by item, what was fixed and what was kept and why.
+
 - A `defineScenes` list with a spread or a `.map()` (such as
   `examples/delta/v0.8.0/timeline.ts`) is skipped, so its chapters lock as
   "Can't find scene `<id>` in the source". A part (a chapter held inside
