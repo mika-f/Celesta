@@ -190,7 +190,10 @@ fn lock_text(reason: &LockReason, inputs: &[(String, EditTarget)]) -> String {
 /// entries after it, which `defineScenes` places after its end, then the
 /// chapters of no entry of the list that start inside one of them, as a
 /// `from` reading a later scene's start places them. A chapter outside every
-/// later scene, such as one of a list placed at a written frame, stays.
+/// later scene (after the list's end, or in a gap between its scenes) stays.
+/// One placed at a written frame inside a later scene moves too: its `from`
+/// can't be told from one reading the scene's start, and the reload puts it
+/// back.
 fn moving_chapters(chapters: &[ReactChapter], list: &SceneList, index: usize) -> Vec<String> {
     let after = &list.entries[index + 1..];
     let scenes: Vec<&ReactChapter> = chapters
@@ -332,15 +335,23 @@ pub(crate) fn clamp_scene_delta(
             .iter()
             .map(|chapter| frames(chapter.end()))
             .fold(frames(chapter.from) + visible, i64::max);
+        // Of a part and the dragged chapter starting together, the part
+        // holds the end: it is the one the note names.
+        let mut tightest: Option<(i64, &ReactChapter)> = None;
         for still in chapters
             .iter()
             .filter(|still| !later.iter().any(|moving| moving.id == still.id))
         {
             let bound = frames(still.from) + 1 - moving_end;
-            if bound > lowest {
-                lowest = bound;
-                holding = (still.id != id).then_some(still);
+            let wins = tightest
+                .is_none_or(|(best, held)| bound > best || (bound == best && held.id == id));
+            if wins {
+                tightest = Some((bound, still));
             }
+        }
+        if let Some((bound, still)) = tightest.filter(|(bound, _)| *bound > lowest) {
+            lowest = bound;
+            holding = (still.id != id).then_some(still);
         }
     }
     let lowest = lowest.min(0);
@@ -929,6 +940,17 @@ mod tests {
         assert_eq!(
             clamp_scene_delta(&three(), "outro", "intro", &[], -100, 300, true),
             (-89, None)
+        );
+        // A part starting with the dragged scene holds the same frame, and
+        // the note names it.
+        let mut together = three();
+        together.push(chapter("outro-hook", 210, 30));
+        assert_eq!(
+            clamp_scene_delta(&together, "outro", "intro", &[], -100, 300, true),
+            (
+                -89,
+                Some("Chapter `outro-hook` starts at frame 210".to_owned())
+            )
         );
         // What moves keeps the end ahead of what stays: Main shrinks to 0.
         assert_eq!(

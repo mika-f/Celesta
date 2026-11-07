@@ -434,7 +434,7 @@ The composition's length follows the drag when the entry file writes it as the l
 - A scene can shrink to 0 frames, which keeps it in the list but never plays it, and no scene after it starts before the list's first scene.
 - When the composition's length follows the list, shortening it stops before a chapter that stays where it is would start at or after the new end, since a chapter there fails the next reload. The last scene keeps at least 1 frame, and a part inside it holds the end after its start, with **Chapter `<id>` starts at frame `<frame>`** beside the end.
 - A chapter cut short by the composition's end is written as the length you see plus the drag; dragging it back to exactly its entry's length writes nothing.
-- The scenes after the dragged one in its list move, and so do the chapters that start inside one of them, such as parts listed with `listChapters(plan, { from: SCENES.scenes[1].from })`. Other chapters, such as parts inside the dragged scene or a list placed at a written frame, stay where they are.
+- The scenes after the dragged one in its list move, and so do the chapters that start inside one of them, such as parts listed with `listChapters(plan, { from: SCENES.scenes[1].from })`. Other chapters stay where they are: parts inside the dragged scene, and chapters that start after the list's end or in a gap between its scenes. A chapter placed at a written frame inside a later scene, such as with `listChapters(plan, { from: 250 })`, moves while you drag too, and is back at its frame after the reload.
 - The end snaps to the playhead and to the edges of the chapters that don't move.
 - A scene list is not a prop of a component, so **Edits change** doesn't apply.
 

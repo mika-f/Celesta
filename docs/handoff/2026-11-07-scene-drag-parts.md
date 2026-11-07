@@ -25,8 +25,8 @@ User docs: `packages/website/content/{en,ja}/docs/01-(getting-started)/03-previe
   the order the composition reports them. A chapter that is an entry of
   another `defineScenes` list counts too: a nested plan list placed in a
   later scene moves with it. Chapters inside the dragged scene keep their
-  start, so they stay. A chapter outside every later scene stays, such as
-  a list placed at a written frame: its `from` doesn't read the list.
+  start, so they stay. A chapter outside every later scene (after the
+  list's end, or in a gap between its scenes) stays.
 - `preview_chapters`, `scene_snap_targets` and the literal-length upper
   bound in `clamp_scene_delta` read `later`, so the moving parts are drawn
   moving, are left out of the snap targets, and stop the drag before one
@@ -41,7 +41,8 @@ User docs: `packages/website/content/{en,ja}/docs/01-(getting-started)/03-previe
   least as strict as the list's real end. So the last scene keeps at least
   1 frame (a scene starting at the end throws too), and a part inside it
   holds the end one frame after its start. When a chapter other than the
-  dragged one holds it, the label adds **Chapter `<id>` starts at frame
+  dragged one holds it (a part starting with the dragged scene wins the
+  tie), the label adds **Chapter `<id>` starts at frame
   `<from>`**. A bound already above 0 (a source that would throw already)
   holds the drag at 0 and never pushes it forward, as the floor does.
 
@@ -56,7 +57,8 @@ User docs: `packages/website/content/{en,ja}/docs/01-(getting-started)/03-previe
 
 - `cargo test -p celesta-editor` (new: `chapters_starting_inside_a_later_scene_move_with_the_end`,
   `moving_parts_bound_a_literal_length`,
-  `a_following_composition_ends_after_every_chapter_that_stays`,
+  `a_following_composition_ends_after_every_chapter_that_stays`, which
+  also covers a part starting with the dragged scene naming the bound,
   `a_drag_moves_the_parts_inside_later_scenes`; the old
   `only_later_entries_of_the_same_list_count`, which asserted the gap, is
   replaced).
@@ -66,6 +68,12 @@ User docs: `packages/website/content/{en,ja}/docs/01-(getting-started)/03-previe
   later scene.
 
 ## Known gaps
+
+- A chapter placed at a written frame inside a later scene
+  (`listChapters(plan, { from: 250 })`) moves during the drag and is back
+  at its frame after the reload: its start can't be told from one reading
+  the scene's start without the `from` expression. It also bounds the drag
+  as if it moved.
 
 - A chapter placed after the list's end or in a gap between scenes (with
   `from: SCENES.durationInFrames`, say) still stays during the drag and
