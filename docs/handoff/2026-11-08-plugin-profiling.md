@@ -125,14 +125,49 @@ pipe), about 8 ms waiting for the GPU, about 1.5 ms uploading.
   (412 passed; its codec tests export video through the renderer) and its
   clippy, and `git diff --check`, on macOS arm64 (Metal).
 
+## Decode-ahead: already there
+
+Asked to make the plugin decode a sequential session's next frame while
+the host renders, it turned out it does. `FrameExtractor` (ez-ffmpeg's
+frame export, which `FrameRun` uses) runs demuxing, decoding, and scaling
+on threads of its own and keeps the next frame in a bounded channel
+(capacity 1) for the next `next()`. Sampling the plugin during a 4K
+preview (3 s, after this change, 19.3 ms a frame):
+
+| the plugin's main thread | share |
+| --- | --- |
+| waiting for the host's next request | 62% |
+| writing the frame into the pipe | 38% (≈ 7 ms a frame) |
+| waiting for a decoded frame | 0.1% |
+
+and the host's main thread:
+
+| the host's main thread | share |
+| --- | --- |
+| waiting for the plugin's frame | 43% (≈ 8.3 ms) |
+| waiting for the GPU | 34% (≈ 6.6 ms) |
+| uploading the frame (`VideoUploads`) | 10% (≈ 2 ms) |
+| the React bridge | 2% |
+
+So the plugin's wait is the transfer, not the decode, and nothing was
+built. In isolation the transfer matches a raw pipe (a C program moving
+33 MB frames: 4.4–4.9 ms, the same with a fresh or a reused buffer, so the
+host's new buffer per frame costs nothing much); during preview it takes
+7–8 ms, the GPU upload and FFmpeg's decoding threads sharing the memory
+bandwidth meanwhile.
+
 ## Not done
 
-- **The plugin's frame** (about 9 ms at 4K) is now the largest wait. The
-  plugin could decode a sequential session's next frame as soon as it has
-  answered, while the host renders, so that only the transfer is left on
-  the next request; shared memory (`2026-11-08-codec-shared-memory-design.md`)
-  would then cut the transfer.
-- **The GPU's 8 ms** at 4K (compositing on a `Rgba16Float` canvas, the
+- **The transfer** (about 8 ms of a 19 ms 4K preview frame) is now the
+  largest wait. Two ways to take it off: shared memory
+  (`2026-11-08-codec-shared-memory-design.md`, option B), which replaces
+  it with a copy of about 1 ms; or the host asking for a sequential
+  session's next frame as soon as it has the current one, on a thread of
+  its own, so that the transfer overlaps the render and the GPU wait (no
+  protocol change, but a background request in `celesta-media` and a
+  frame discarded when the next request is not the one guessed). Both are
+  larger changes than this note's and need the user's choice.
+- **The GPU's 6.6 ms** at 4K (compositing on a `Rgba16Float` canvas, the
   native preview's NV12 conversion) was not looked into; it needs a Metal
   frame capture.
 - Exports' readback (`render()`), and other per-frame uploads (CPU-raster
