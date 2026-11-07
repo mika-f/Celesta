@@ -16,6 +16,6 @@
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
-    "ag-psd": "^31.0.2"
+    "ag-psd": "^34.0.0"
   }
 }
