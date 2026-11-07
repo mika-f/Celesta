@@ -91,7 +91,7 @@
       "separateMajorMinor": false
     },
     {
-      "description": "mise.lock and packageManager pin the same pnpm.",
+      "description": "mise.toml, mise.lock, and the packageManager fields pin the same pnpm.",
       "matchDepNames": [
         "pnpm"
       ],
