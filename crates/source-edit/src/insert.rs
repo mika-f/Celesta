@@ -12,9 +12,10 @@ use crate::{line_break, with_program};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WrapLock {
     /// The element is not a JSX child: the root of a return value or an
-    /// arrow body, a prop value, or inside `{ … }`. Also when the text does
-    /// not parse.
+    /// arrow body, a prop value, or inside `{ … }`.
     NotAChild,
+    /// The text does not parse.
+    SyntaxError,
 }
 
 /// Wraps the element at `element` in `<{tag} {attrs}>…</{tag}>`, indented
@@ -22,8 +23,8 @@ pub enum WrapLock {
 ///
 /// The opening tag goes on the element's line and the closing tag on a line
 /// of its own after it; every other line of the element gets one
-/// [`indent_unit`] more, except empty lines and lines that start inside a
-/// string or a template literal. An element that shares a line with other
+/// [`indent_unit`] more, except blank lines (empty or only whitespace) and
+/// lines that start inside a string or a template literal. An element that shares a line with other
 /// code is wrapped inline, with no line break added. Attributes are written
 /// as [`Edit::Insert`] writes them.
 pub fn wrap_element(
@@ -60,24 +61,28 @@ pub fn wrap_element(
         for (i, _) in text[start..end].match_indices('\n') {
             let line = start + i + 1;
             let rest = &text[line..];
-            let empty = rest.starts_with('\n') || rest.starts_with("\r\n");
+            let blank = rest[..rest.find('\n').unwrap_or(rest.len())]
+                .trim()
+                .is_empty();
             // A line break inside a string is part of its value.
             let in_string = strings
                 .iter()
                 .any(|s| (s.start as usize) < line && line <= s.end as usize);
-            if !empty && !in_string {
+            if !blank && !in_string {
                 edits.push(insert(line as u32, unit.clone()));
             }
         }
         edits.push(insert(span.end, format!("{newline}{indent}{close}")));
         Ok(edits)
     })
-    .unwrap_or(Err(WrapLock::NotAChild))
+    .unwrap_or(Err(WrapLock::SyntaxError))
 }
 
 /// The file's indent unit near `at` (a tab, or the leading spaces of one
 /// level): what the nearest line indented deeper than the line before it
-/// adds, looking at `at`'s line first, then outward. Two spaces when no
+/// adds, looking at `at`'s line first, then outward. A line after one
+/// ending in `,` doesn't count: it is aligned with an argument or an
+/// element (`f(a,` / `  b)`), not indented a level. Two spaces when no
 /// line is.
 pub fn indent_unit(text: &str, at: u32) -> String {
     let lines: Vec<&str> = text.split('\n').collect();
@@ -93,7 +98,14 @@ pub fn indent_unit(text: &str, at: u32) -> String {
     // What line `j` adds to the indent of the non-blank line before it.
     let step = |j: usize| {
         let inner = indent_of(lines[j])?;
-        let outer = lines[..j].iter().rev().find_map(|line| indent_of(line))?;
+        let before = lines[..j]
+            .iter()
+            .rev()
+            .find(|line| !line.trim().is_empty())?;
+        if before.trim_end().ends_with(',') {
+            return None;
+        }
+        let outer = indent_of(before)?;
         inner.strip_prefix(outer).filter(|extra| !extra.is_empty())
     };
     for distance in 0..lines.len() {

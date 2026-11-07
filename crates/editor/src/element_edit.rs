@@ -29,7 +29,7 @@ use crate::scope::{
     current_calls, drain_gate, gesture_gate, gesture_start_refusal, held_gate, previewed_scope,
     read_scene_calls, scope_state, scoped_removable, targets_in_effect,
 };
-use crate::timing::{WindowRole, window_role};
+use crate::timing::{WindowRole, window_role, written_around};
 use crate::view::EditorView;
 use celesta_react_bridge::{
     ComponentPropertySchema, ElementOccurrences, LayerSourceReport, PrimitivePropertyField,
@@ -373,6 +373,22 @@ pub(crate) struct Resolved {
     /// Why `Sequence` can't be imported into the element's file, tried
     /// beside [`Self::wrap_lock`].
     pub(crate) import_lock: Option<ImportLock>,
+    /// The source of the nearest window when it is written directly around
+    /// the element (see [`crate::timing::written_around`]): its timing is
+    /// the element's own even when its span is a chapter's.
+    pub(crate) wrapped_window: Option<SourcePos>,
+}
+
+/// What the background job reads of the element's nearest window, beside
+/// its targets. [`ElementEdit::finish_with_window`] keeps `targets` as
+/// [`Resolved::window_targets`], `wrap_lock` and `import_lock` as the
+/// fields of those names, and `wrapped` as [`Resolved::wrapped_window`].
+#[derive(Debug, Default)]
+pub(crate) struct WindowRead {
+    pub(crate) targets: Option<Result<WindowTargets, String>>,
+    pub(crate) wrap_lock: Option<WrapLock>,
+    pub(crate) import_lock: Option<ImportLock>,
+    pub(crate) wrapped: Option<SourcePos>,
 }
 
 /// Why a window inside a `<Loop>` or `<FreezeFrame>` doesn't drag.
@@ -458,22 +474,19 @@ impl ElementEdit {
         selected: Option<&str>,
         outcome: Result<ElementTargets, String>,
     ) -> bool {
-        self.finish_with_window(request, selected, outcome, None, None, None)
+        self.finish_with_window(request, selected, outcome, WindowRead::default())
     }
 
-    /// Keeps the outcome of resolution `request`, `window_targets`, the
-    /// element's own timing window (see [`Resolved::window_targets`]),
-    /// `wrap_lock` and `import_lock` (see [`Resolved::wrap_lock`]), when it
-    /// is the newest one and `selected` is still the layer it was for. True
-    /// when kept.
+    /// Keeps the outcome of resolution `request` and what was read of the
+    /// element's nearest `window` (see [`WindowRead`]), when it is the
+    /// newest one and `selected` is still the layer it was for. True when
+    /// kept.
     pub(crate) fn finish_with_window(
         &mut self,
         request: u64,
         selected: Option<&str>,
         outcome: Result<ElementTargets, String>,
-        window_targets: Option<Result<WindowTargets, String>>,
-        wrap_lock: Option<WrapLock>,
-        import_lock: Option<ImportLock>,
+        window: WindowRead,
     ) -> bool {
         let Some((layer, report, timeline_frame)) = self.wanted.as_ref() else {
             return false;
@@ -492,11 +505,25 @@ impl ElementEdit {
             report: report.clone(),
             timeline_frame: *timeline_frame,
             outcome,
-            window_targets,
-            wrap_lock,
-            import_lock,
+            window_targets: window.targets,
+            wrap_lock: window.wrap_lock,
+            import_lock: window.import_lock,
+            wrapped_window: window.wrapped,
         });
         true
+    }
+
+    /// The nearest window's source when the newest resolution for
+    /// `selected` found it written directly around the element, also while
+    /// a newer one is read (after a seek, or a write): how a window's text
+    /// encloses the element rarely changes, and the window's role must not
+    /// flip while it is read again.
+    pub(crate) fn wrapped_window(&self, selected: Option<&str>) -> Option<&SourcePos> {
+        self.resolved
+            .as_ref()
+            .filter(|resolved| Some(resolved.layer.as_str()) == selected)?
+            .wrapped_window
+            .as_ref()
     }
 
     /// The editor wrote the file: the targets are unknown until the layer is
@@ -765,29 +792,16 @@ impl EditorView {
             Some(react) => react.component_schemas.clone(),
             None => self.component_schemas.clone(),
         };
-        // The wrapper written around the element, when its timing is the
-        // element's own: resolved as an element of its own beside it. A
-        // loop's or a freeze frame's window is locked unread. Without one,
-        // "Set timing" is offered: the wrap is tried without writing.
-        let role = window_role(
-            report,
-            self.react_chapters().unwrap_or_default(),
-            u64::try_from(self.clock.end_frame()).unwrap_or(0),
-            u64::try_from(frame).unwrap_or(0),
-        );
-        let try_wrap = matches!(role, WindowRole::Scene(_) | WindowRole::None);
-        let window = match role {
-            WindowRole::Own(window) => window.source.clone().map(Ok),
-            WindowRole::Remapped => Some(Err(REMAPPED_WINDOW.to_owned())),
-            WindowRole::Scene(_) | WindowRole::None => None,
-        };
+        let chapters = self.react_chapters().unwrap_or_default().to_vec();
+        let composition_end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
+        let lookup_frame = u64::try_from(frame).unwrap_or(0);
         let report = report.clone();
         let entry_dir = self
             .react_entry()
             .and_then(Path::parent)
             .map(Path::to_path_buf);
         cx.spawn(async move |view, cx| {
-            let (outcome, window, wrap_lock, import_lock) = cx
+            let (outcome, window) = cx
                 .background_executor()
                 .spawn(async move {
                     let read = |path: &Path| {
@@ -807,7 +821,26 @@ impl EditorView {
                             lock_outside_project(&mut targets, outside);
                             targets
                         });
-                    let window = window.map(|source| {
+                    // The wrapper written around the element, when its
+                    // timing is the element's own: resolved as an element of
+                    // its own beside it. A loop's or a freeze frame's window
+                    // is locked unread. Without one, "Set timing" is
+                    // offered: the wrap is tried without writing.
+                    let wrapped = written_around(read, &report);
+                    let role = window_role(
+                        &report,
+                        &chapters,
+                        composition_end,
+                        lookup_frame,
+                        wrapped.as_ref(),
+                    );
+                    let try_wrap = matches!(role, WindowRole::Scene(_) | WindowRole::None);
+                    let source = match role {
+                        WindowRole::Own(window) => window.source.clone().map(Ok),
+                        WindowRole::Remapped => Some(Err(REMAPPED_WINDOW.to_owned())),
+                        WindowRole::Scene(_) | WindowRole::None => None,
+                    };
+                    let targets = source.map(|source| {
                         let mut window = resolve_window(read, &report, &source?)?;
                         lock_outside_project(&mut window.targets, outside);
                         Ok(window)
@@ -823,7 +856,13 @@ impl EditorView {
                         ),
                         _ => (None, None),
                     };
-                    (outcome, window, wrap_lock, import_lock)
+                    let window = WindowRead {
+                        targets,
+                        wrap_lock,
+                        import_lock,
+                        wrapped,
+                    };
+                    (outcome, window)
                 })
                 .await;
             view.update(cx, |this, cx| {
@@ -833,8 +872,6 @@ impl EditorView {
                     selected.as_deref(),
                     outcome,
                     window,
-                    wrap_lock,
-                    import_lock,
                 ) {
                     // Commits made while the targets were read go now.
                     this.drain_held_rows(cx);
@@ -878,6 +915,13 @@ impl EditorView {
             .shown_scope_context()
             .map_or(resolved, |context| context.under(scope));
         Some((targets, commit_report(resolved, targets, report)))
+    }
+
+    /// The nearest window's source when it is written directly around the
+    /// selected element (see [`ElementEdit::wrapped_window`]).
+    pub(crate) fn wrapped_window(&self) -> Option<&SourcePos> {
+        self.element_edit
+            .wrapped_window(self.selected_layer.as_deref())
     }
 
     /// The selected element's own timing window (or why it can't be

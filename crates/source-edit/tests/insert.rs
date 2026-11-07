@@ -79,6 +79,19 @@ fn wraps_a_multi_line_element_re_indenting_every_line() {
         wrap(text, "<Group"),
         "const a = (\n  <G>\n    <Sequence from={45} durationInFrames={75}>\n      <Group>\n        <Rect />\n\n        <Text>hi</Text>\n      </Group>\n    </Sequence>\n  </G>\n);\n"
     );
+    // A line of spaces stays as it is.
+    let text =
+        "const a = (\n  <G>\n    <Group>\n      <Rect />\n      \n    </Group>\n  </G>\n);\n";
+    assert_eq!(
+        wrap(text, "<Group"),
+        "const a = (\n  <G>\n    <Sequence from={45} durationInFrames={75}>\n      <Group>\n        <Rect />\n      \n      </Group>\n    </Sequence>\n  </G>\n);\n"
+    );
+    // CRLF: the wrap's line breaks follow the file's.
+    let text = "const a = (\r\n  <G>\r\n    <Group>\r\n      <Rect />\r\n\r\n    </Group>\r\n  </G>\r\n);\r\n";
+    assert_eq!(
+        wrap(text, "<Group"),
+        "const a = (\r\n  <G>\r\n    <Sequence from={45} durationInFrames={75}>\r\n      <Group>\r\n        <Rect />\r\n\r\n      </Group>\r\n    </Sequence>\r\n  </G>\r\n);\r\n"
+    );
 }
 
 #[test]
@@ -144,6 +157,18 @@ fn refuses_a_root_or_a_prop_value() {
 }
 
 #[test]
+fn refuses_a_file_that_does_not_parse() {
+    // The element is found in the text before the error.
+    let clean = "const a = <G><Rect /></G>;\n";
+    let text = &format!("{clean}const = ;\n");
+    let rect = element(clean, "<Rect");
+    assert_eq!(
+        wrap_element(text, &rect, "Sequence", &[]),
+        Err(WrapLock::SyntaxError)
+    );
+}
+
+#[test]
 fn indent_unit_reads_tabs_or_one_level_of_spaces() {
     let at = |text: &str, needle: &str| indent_unit(text, text.find(needle).unwrap() as u32);
 
@@ -157,4 +182,9 @@ fn indent_unit_reads_tabs_or_one_level_of_spaces() {
     // At the top level, from the lines below.
     let top = "<G>\n    <Rect />\n</G>\n";
     assert_eq!(at(top, "<G>"), "    ");
+
+    // A line aligned after a `,` is not a level.
+    let aligned =
+        "const a = f(one,\n            two);\nconst b = (\n  <G>\n    <Rect />\n  </G>\n);\n";
+    assert_eq!(at(aligned, "two"), "  ");
 }

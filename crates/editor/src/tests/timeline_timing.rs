@@ -3,14 +3,16 @@
 //! them (as resolved or under an edit scope) as one history entry.
 
 use super::*;
-use crate::element_edit::{WindowTargets, resolve_window, window_files, window_report};
+use crate::element_edit::{WindowRead, WindowTargets, resolve_window, window_files, window_report};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
     CommitGate, SceneCalls, Scope, ScopeLock, ScopeOptions, ScopeState, commit_scope, gesture_gate,
     window_scope_state,
 };
 use crate::timeline_drag::{BandGrip, band_writes, grip_refusal, timing_values};
-use crate::timing::{SetTimingOffer, WindowRole, set_timing_files, set_timing_offer};
+use crate::timing::{
+    SetTimingOffer, WindowRole, set_timing_files, set_timing_offer, window_role, written_around,
+};
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter, TimingWindow,
 };
@@ -730,9 +732,10 @@ fn a_window_that_does_not_resolve_keeps_why() {
         request,
         Some("a"),
         Err("no rows".to_owned()),
-        Some(elsewhere),
-        None,
-        None
+        WindowRead {
+            targets: Some(elsewhere),
+            ..WindowRead::default()
+        },
     ));
     let (window, _) = state
         .window_targets(Some("a"), Some((&report, 0)))
@@ -850,6 +853,18 @@ fn set_timing_offer_follows_the_role() {
             Some(&WrapLock::NotAChild)
         ),
         SetTimingOffer::Disabled("Wrap the element in a parent first".to_owned())
+    );
+    // A file that doesn't parse says so, not that `Sequence` clashes.
+    assert_eq!(
+        set_timing_offer(
+            &WindowRole::Scene(&window),
+            span,
+            Some(&WrapLock::SyntaxError),
+            Some(&ImportLock::SyntaxError),
+            &ScopeState::NotShared,
+            None
+        ),
+        SetTimingOffer::Disabled("The source has syntax errors".to_owned())
     );
     let no_frame_left = SetTimingOffer::Disabled("No frame left after the playhead".to_owned());
     assert_eq!(
@@ -975,4 +990,57 @@ fn set_timing_offer_follows_the_scope() {
         offer(&scanning, None),
         SetTimingOffer::Disabled("Scanning scenes…".to_owned())
     );
+}
+
+/// A `<Sequence>` as long as the chapter `intro` (0–90), written around a
+/// `<Rect>` at 5:5 and around a `<G>` holding another at 7:7.
+const SCENE_LONG: &str = "import { G, Rect, Sequence } from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n  <Sequence from={0} durationInFrames={90}>\n    <Rect width={200} />\n    <G>\n      <Rect width={100} />\n    </G>\n  </Sequence>\n);\n";
+
+#[test]
+fn a_sequence_written_around_the_element_is_its_own_whatever_its_span() {
+    let files = Files::new("wrapped", &[("scene.tsx", SCENE_LONG)]);
+    let read = |path: &Path| fs::read_to_string(path).map_err(|error| error.to_string());
+    let sequence = files.pos("scene.tsx", 4, 3);
+    let report_at = |at: (u32, u32)| LayerSourceReport {
+        windows: vec![TimingWindow {
+            kind: "Sequence".to_owned(),
+            from: 0.0,
+            to: 90.0,
+            source: Some(sequence.clone()),
+            remapped: false,
+        }],
+        ..report_of(vec![
+            files.entry("Rect", ElementKind::Primitive, "scene.tsx", at),
+            files.entry("Sequence", ElementKind::Wrapper, "scene.tsx", (4, 3)),
+        ])
+    };
+    let chapters = [scene("intro", 0, 90), scene("main", 90, 120)];
+
+    // Written around the `<Rect>`: its own, so it has grips and no "Set
+    // timing" (which would wrap it in a second `<Sequence>`).
+    let direct = report_at((5, 5));
+    let wrapped = written_around(read, &direct);
+    assert_eq!(wrapped.as_ref(), Some(&sequence));
+    assert!(matches!(
+        window_role(&direct, &chapters, 300, 10, wrapped.as_ref()),
+        WindowRole::Own(_)
+    ));
+    // Before that is read, the chapter's span makes it the scene's.
+    assert!(matches!(
+        window_role(&direct, &chapters, 300, 10, None),
+        WindowRole::Scene(_)
+    ));
+
+    // Around the `<G>` the `<Rect>` is in: the scene's window.
+    let nested = report_at((7, 7));
+    assert_eq!(written_around(read, &nested), None);
+    assert!(matches!(
+        window_role(&nested, &chapters, 300, 10, None),
+        WindowRole::Scene(_)
+    ));
+
+    // In another file than the element's, it is not written around it.
+    let mut elsewhere = report_at((5, 5));
+    elsewhere.windows[0].source = Some(files.pos("other.tsx", 4, 3));
+    assert_eq!(written_around(read, &elsewhere), None);
 }

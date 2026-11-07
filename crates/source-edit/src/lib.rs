@@ -43,7 +43,7 @@ pub use resolve::{
 };
 
 pub use scenes::{CompositionLength, SceneItem, SceneList, composition_length, scene_lists};
-pub use timing::{TimingKind, later_series_items, timing_kind};
+pub use timing::{TimingKind, encloses_directly, later_series_items, timing_kind};
 
 use std::path::Path;
 

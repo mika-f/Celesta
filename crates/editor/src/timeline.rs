@@ -230,6 +230,17 @@ fn merge_close_bands(
     merged
 }
 
+/// The frames of every band of `impact` (see [`selection_bands`]), before
+/// [`merge_close_bands`] joins those less than a pixel apart for drawing:
+/// the edges inside a run the row draws as one are still edges of the
+/// element's ranges, which a drag may snap to at a closer zoom.
+pub(crate) fn selection_ranges(impact: &ImpactView) -> Vec<(f64, f64)> {
+    selection_bands(impact)
+        .iter()
+        .map(|band| (band.range.0 as f64, band.range.1 as f64))
+        .collect()
+}
+
 /// The bands `impact` draws: this instance's ranges in the current scene, or
 /// the span rounded outward to whole frames, then every other occurrence.
 fn selection_bands(impact: &ImpactView) -> Vec<SelectionBand> {

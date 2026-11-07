@@ -22,6 +22,7 @@ use crate::scope::{
     CommitGate, SceneCalls, Scope, ScopeState, commit_scope, gesture_gate, gesture_start_refusal,
     impact_filter, scope_in_effect, window_scope_state,
 };
+use crate::timeline::selection_ranges;
 use crate::timing::{
     SetTimingOffer, WindowRole, set_timing_files, set_timing_offer, set_timing_span, window_role,
 };
@@ -723,6 +724,7 @@ impl EditorView {
             self.react_chapters().unwrap_or_default(),
             u64::try_from(self.clock.end_frame()).unwrap_or(0),
             u64::try_from(frame).unwrap_or(0),
+            self.wrapped_window(),
         ) {
             WindowRole::Own(window) => window,
             WindowRole::Remapped => report.windows.first()?,
@@ -905,9 +907,12 @@ impl EditorView {
 
     /// The "Set timing" offer for the selected element at its lookup frame
     /// (see [`set_timing_offer`]), under the scope the Properties panel
-    /// shows for it. Hidden while its targets are being read (again, after
-    /// a write too); disabled when they can't be read, and when its file is
-    /// outside the project. `None` without a found source.
+    /// shows for it. While a new lookup (after a seek) is resolved, the
+    /// last resolution of the layer stands in, as it does for the
+    /// Properties panel: the wrap and import locks are the element's file's,
+    /// whatever the frame. Hidden while its targets are first read, and
+    /// again after a write; disabled when they can't be read, and when its
+    /// file is outside the project. `None` without a found source.
     pub(crate) fn set_timing_action(&self) -> Option<SetTimingOffer> {
         let report = self.band_report()?;
         let chapters = self.react_chapters().unwrap_or_default();
@@ -918,31 +923,28 @@ impl EditorView {
         // band grips read the window's scope at it too (`band_scope`). The
         // playhead differs only until a seek's lookup answers.
         let frame = u64::try_from(self.source_lookup_frame).unwrap_or(0);
-        let role = window_role(report, chapters, end, frame);
+        let role = window_role(report, chapters, end, frame, self.wrapped_window());
         if matches!(role, WindowRole::Own(_) | WindowRole::Remapped) {
             return Some(SetTimingOffer::Hidden);
         }
         let selected = self.selected_layer.as_deref();
         let unavailable = || SetTimingOffer::Disabled(self.element_edit.unavailable(selected));
-        let Some((targets, _)) = self.element_targets() else {
+        let resolved = match self.element_edit.resolved(selected) {
+            Some((resolved, true)) if resolved.outcome.is_ok() => resolved,
             // A resolution or a reload on its way answers; a failed one
             // says why.
-            if !self.element_edit.failed(selected) {
-                return Some(SetTimingOffer::Hidden);
-            }
+            _ if !self.element_edit.failed(selected) => return Some(SetTimingOffer::Hidden),
+            _ => return Some(unavailable()),
+        };
+        let Some(context) = self.shown_scope_context() else {
             return Some(unavailable());
         };
+        let targets = context.targets;
         if targets.outside.contains(&targets.file) {
             return Some(SetTimingOffer::Disabled(reason_text(
                 &LockReason::OutsideProject,
             )));
         }
-        let (Some((resolved, _)), Some(context)) = (
-            self.element_edit.resolved(selected),
-            self.shown_scope_context(),
-        ) else {
-            return Some(unavailable());
-        };
         Some(set_timing_offer(
             &role,
             set_timing_span(&role, chapters, end, frame),
@@ -956,8 +958,9 @@ impl EditorView {
     /// Wraps the selected element in a `<Sequence>` from the playhead (see
     /// [`set_timing_files`]) as one history entry, then reloads. Playback
     /// pauses first, as a band drag's press does. An offer no longer
-    /// enabled, or a write that fails, leaves the notice why where the band
-    /// drag leaves its own.
+    /// enabled, targets still being read for the current lookup, or a
+    /// write that fails, leave the notice why where the band drag leaves
+    /// its own.
     pub(crate) fn set_timing(&mut self, cx: &mut Context<Self>) {
         self.pause();
         let at = self.source_lookup_frame as f64;
@@ -973,6 +976,13 @@ impl EditorView {
             Some(SetTimingOffer::Hidden) | None => return,
         };
         let Some((targets, report)) = self.element_targets() else {
+            let reason = self
+                .element_edit
+                .unavailable(self.selected_layer.as_deref());
+            self.band_notice = Some(BandNotice {
+                at,
+                text: not_written(&reason),
+            });
             return;
         };
         let (file, expected, report) = (targets.file.clone(), targets.element, report.clone());
@@ -1117,14 +1127,36 @@ impl EditorView {
 
     /// The chapter row's label: a running drag's (`durationInFrames 90 →
     /// 100`, and why the bounds stop it), or why the last one wrote
-    /// nothing; the frame it sits at, and whether it is a notice.
+    /// nothing; the frame it sits at, and whether it is a notice. The
+    /// value before is the entry's, the one after what the release writes
+    /// (see [`written_length`]): for a chapter the composition cuts, they
+    /// differ by more than the drag.
     pub(crate) fn scene_label(&self) -> Option<(f64, String, bool)> {
         if let Some(DragSession { gesture: drag, .. }) = &self.scene_drag {
+            let entry = match &drag.edge {
+                SceneEdge::Editable {
+                    duration:
+                        EditTarget::Literal {
+                            value: EditValue::Number(value),
+                            ..
+                        },
+                    ..
+                } => *value,
+                _ => drag.length,
+            };
             let before = TimingValues {
                 start: 0.0,
-                duration: drag.length,
+                duration: entry,
             };
-            let after = moved_values(BandGrip::End, drag.delta, before);
+            let after = TimingValues {
+                start: 0.0,
+                duration: written_length(
+                    &drag.chapters,
+                    &drag.id,
+                    drag.delta,
+                    drag.composition_end,
+                ),
+            };
             let mut lines = vec![drag_label(
                 TimingKind::Sequence,
                 BandGrip::End,
@@ -1162,7 +1194,13 @@ impl EditorView {
         };
         let composition_end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
         let length = written_length(chapters, id, 0, composition_end);
-        let snap_targets = scene_snap_targets(self.clock.frame() as f64, chapters, id, later);
+        // The selection's bands, as the composition row draws them.
+        let bands = self
+            .selection_impact()
+            .map(|impact| selection_ranges(&impact))
+            .unwrap_or_default();
+        let snap_targets =
+            scene_snap_targets(self.clock.frame() as f64, chapters, id, later, &bands);
         let drag = SceneDrag {
             id: id.to_owned(),
             first: first.clone(),
@@ -1188,7 +1226,7 @@ impl EditorView {
     /// at the press.
     fn scene_write(&self) -> Result<SceneEdge, String> {
         let drag = &self.scene_drag.as_ref().ok_or_else(String::new)?.gesture;
-        match self.scene_edge(&drag.id) {
+        match self.current_scene_edge(&drag.id) {
             SceneEdge::Locked(reason) => Err(not_written(&reason)),
             edge if edge == drag.edge => Ok(edge),
             SceneEdge::Editable { .. } => Err(not_written(&CommitError::SourceChanged.to_string())),

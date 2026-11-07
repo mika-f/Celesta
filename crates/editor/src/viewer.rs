@@ -32,6 +32,7 @@ use crate::preview::PreviewPresentation;
 use crate::problems::{ActiveProblem, Source, flow_line_breaks, summarize_warnings};
 use crate::problems_panel::{detail_block, show_in_problems_row};
 use crate::timecode::format_timecode;
+use crate::timeline_drag::BandDrag;
 use crate::transform_drag::{
     DragState, HANDLE_SIZE, NO_AFFINE_FRAME, ROTATE_STEM, TransformDrag, pivot_note_text,
     turns_about_pivot,
@@ -1451,6 +1452,11 @@ impl EditorView {
         // An added layer's check stays when the layer selected is that one.
         let confirm = self.add_take_confirm();
         self.clear_layer_selection(false);
+        // A released band drag waiting for its write's reload drew the old
+        // selection's window, and its notice was about that window: neither
+        // stays on the composition row. The write still goes.
+        self.drop_released_timeline_drag::<BandDrag>();
+        self.band_notice = None;
         self.selected_layer = layer;
         self.add_restore_confirm(confirm);
         if self.selected_layer.is_some() {
