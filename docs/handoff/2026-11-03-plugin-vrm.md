@@ -725,7 +725,9 @@ Celesta's side knows no format.
 - **The texture cache is never cleaned.**
 - **Celesta compiles the MToon shader once per renderer, when the first
   avatar opens,** and the pipelines an avatar's materials need that no
-  model has used: a stall on the first MToon avatar.
+  model has used: a stall on the first MToon avatar. Measured in
+  `2026-11-08-plugin-performance.md`: about 450 ms when Metal's shader
+  cache has not seen it, nothing noticeable after.
 - **Parity renders against UniVRM** (a reference Unity scene with the
   reference light) have not been made; the MToon formula tests check
   pixels worked out by hand.

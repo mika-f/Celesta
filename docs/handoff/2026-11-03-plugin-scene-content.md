@@ -307,8 +307,8 @@ Not done:
   the buffers of
   skinning matrices, morph weights, and uniforms, and their bind groups,
   which `SceneFrameResources` keeps
-  (`2026-11-03-plugin-scene-materials.md`). The layer texture is still
-  made each frame.
+  (`2026-11-03-plugin-scene-materials.md`). The layer texture too, since
+  (`2026-11-08-plugin-performance.md`).
 - **No Add-menu entry for `<Turntable>`.** Its `plugin.json` lists no
   `components`.
 - **The CPU renderer and `@celesta/web`** refuse plugin content, scenes
