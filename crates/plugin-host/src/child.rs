@@ -23,7 +23,8 @@ use crate::stderr::{StderrTail, pump};
 use celesta_plugin::protocol::{
     Message, PROTOCOL_VERSION, error_message, read_message, write_message,
 };
-use serde_json::json;
+use celesta_plugin::shared::SharedMemory;
+use serde_json::{Map, Value, json};
 use std::io::{self, BufReader, BufWriter};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -84,6 +85,17 @@ pub struct PluginChild {
 impl PluginChild {
     /// Starts `executable` in `directory`, the plugin's own folder.
     pub fn start(executable: &Path, directory: &Path) -> Result<Self, String> {
+        Self::start_sharing(executable, directory, None).map(|(child, _)| child)
+    }
+
+    /// [`Self::start`], passing `shared` on to the process, and the handle
+    /// the process maps it by (for its `hello`), or `None` when it could not
+    /// be passed on (the process then runs without it).
+    pub fn start_sharing(
+        executable: &Path,
+        directory: &Path,
+        shared: Option<&SharedMemory>,
+    ) -> Result<(Self, Option<u64>), String> {
         let name = executable.display().to_string();
         let mut command = Command::new(executable);
         command
@@ -92,9 +104,13 @@ impl PluginChild {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         without_console_window(&mut command);
+        if let Some(shared) = shared {
+            shared.prepare(&mut command);
+        }
         let mut child = command
             .spawn()
             .map_err(|error| format!("could not start {name}: {error}"))?;
+        let shared_handle = shared.and_then(|shared| shared.handle_for(&child).ok());
         let started = (|| -> io::Result<_> {
             let mut input = BufWriter::new(child.stdin.take().expect("piped"));
             let mut output = BufReader::new(child.stdout.take().expect("piped"));
@@ -150,14 +166,17 @@ impl PluginChild {
             killed: false,
         }));
         register_everywhere(PluginKillHandle(Arc::downgrade(&child)));
-        Ok(Self {
-            child,
-            requests: Some(requests),
-            answers,
-            stderr,
-            stderr_closed,
-            name,
-        })
+        Ok((
+            Self {
+                child,
+                requests: Some(requests),
+                answers,
+                stderr,
+                stderr_closed,
+                name,
+            },
+            shared_handle,
+        ))
     }
 
     /// Kills the process from any thread (see [`crate::PluginKillSwitch`]).
@@ -168,11 +187,16 @@ impl PluginChild {
     /// Says `hello` and checks the answer speaks this protocol; the caller
     /// checks the plugin and roles it names.
     pub fn hello(&mut self) -> Result<Message, RequestError> {
-        let hello = self.request(
-            Message::new(json!({ "type": "hello", "protocol": PROTOCOL_VERSION })),
-            "hello",
-            HELLO_TIMEOUT,
-        )?;
+        self.hello_with(Map::new())
+    }
+
+    /// [`Self::hello`], the request also carrying the fields of `offer`
+    /// (what a role offers the plugin, such as a codec's shared memory),
+    /// which cannot replace `type` or `protocol`.
+    pub fn hello_with(&mut self, mut offer: Map<String, Value>) -> Result<Message, RequestError> {
+        offer.insert("type".to_owned(), json!("hello"));
+        offer.insert("protocol".to_owned(), json!(PROTOCOL_VERSION));
+        let hello = self.request(Message::new(Value::Object(offer)), "hello", HELLO_TIMEOUT)?;
         if hello.header["protocol"].as_u64() != Some(u64::from(PROTOCOL_VERSION)) {
             return Err(RequestError::Refused(error_message(format!(
                 "{} speaks protocol {}, not {PROTOCOL_VERSION}",

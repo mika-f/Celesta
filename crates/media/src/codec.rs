@@ -11,7 +11,7 @@
 mod process;
 pub mod protocol;
 
-pub use process::CodecProcess;
+pub use process::{CodecProcess, FrameTransport, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE};
 
 use crate::error::MediaError;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};

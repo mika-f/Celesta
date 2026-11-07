@@ -1,13 +1,15 @@
 //! A codec plugin's process, behind the [`CodecProvider`] interface.
 
-use crate::codec::protocol::{self, ROLES, decode_error};
+use crate::codec::protocol::{self, ROLES, SharedFrames, decode_error};
 use crate::codec::{
     CodecFactory, CodecProvider, Container, EncoderId, EncoderSettings, MuxRequest, VideoRequest,
 };
 use crate::error::MediaError;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_plugin::protocol::Message;
+use celesta_plugin::shared::SharedMemory;
 use celesta_plugin_host::{PluginChild, PluginKillSwitch, RequestError};
+use serde_json::Map;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,29 +24,93 @@ const ENCODER_TIMEOUT: Duration = Duration::from_secs(60);
 const FINISH_ENCODER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MUX_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
+/// The bytes of the segment a codec process is offered for decoded frames:
+/// a slot's header and 40 MiB, which holds an RGBA frame up to 4096x2560
+/// (DCI 4K and UHD included); a larger frame goes through the pipe. Pages
+/// are reserved, not used, until a frame is written.
+pub const SHARED_FRAME_BYTES: usize = celesta_plugin::shared::SLOT_HEADER + (40 << 20);
+
+/// The environment variable that, set to `0`, keeps decoded frames in the
+/// pipe: no codec process is offered shared memory.
+pub const SHARED_MEMORY_VARIABLE: &str = "CELESTA_CODEC_SHARED_MEMORY";
+
+/// How a codec process's decoded frames reach Celesta.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameTransport {
+    /// Through the pipe, in each answer's payload.
+    Pipe,
+    /// Offered shared memory, which the plugin may decline (an older plugin
+    /// does), and through the pipe whatever does not fit it.
+    SharedMemory,
+}
+
+impl FrameTransport {
+    /// Shared memory, unless [`SHARED_MEMORY_VARIABLE`] is `0`.
+    pub fn from_environment() -> Self {
+        match std::env::var_os(SHARED_MEMORY_VARIABLE) {
+            Some(value) if value == "0" => Self::Pipe,
+            _ => Self::SharedMemory,
+        }
+    }
+}
+
 /// A running codec plugin, one request at a time (see [`PluginChild`] for
-/// its window, deadlines, and stderr). Dropping it stops the process.
-pub struct CodecProcess(PluginChild);
+/// its window, deadlines, and stderr). Dropping it stops the process before
+/// it unmaps the memory shared with it, so the process never writes into
+/// memory being unmapped.
+pub struct CodecProcess {
+    child: PluginChild,
+    /// The slot decoded frames arrive in, when the plugin accepted it.
+    frames: Option<SharedFrames>,
+}
 
 impl CodecProcess {
     /// Starts `executable` in `directory` (the plugin's own) and checks that
     /// it speaks this protocol as a codec. The process is registered with
     /// `kill` before it is asked anything, and none starts once `kill` was
-    /// killed.
+    /// killed. Its decoded frames come through shared memory unless
+    /// [`SHARED_MEMORY_VARIABLE`] says otherwise (see [`Self::start_with`]).
     pub fn start(
         executable: &Path,
         directory: &Path,
         kill: &PluginKillSwitch,
+    ) -> Result<Self, MediaError> {
+        Self::start_with(
+            executable,
+            directory,
+            kill,
+            FrameTransport::from_environment(),
+        )
+    }
+
+    /// [`Self::start`], offering the process shared memory for its decoded
+    /// frames when `transport` asks for it. A segment that cannot be made or
+    /// passed on, or a plugin that declines it, leaves the frames in the
+    /// pipe.
+    pub fn start_with(
+        executable: &Path,
+        directory: &Path,
+        kill: &PluginKillSwitch,
+        transport: FrameTransport,
     ) -> Result<Self, MediaError> {
         if kill.is_killed() {
             return Err(MediaError::CodecStopped(
                 "it was not started, as its plugins were stopped".to_owned(),
             ));
         }
-        let mut child =
-            PluginChild::start(executable, directory).map_err(MediaError::CodecUnavailable)?;
+        let memory = match transport {
+            FrameTransport::SharedMemory => SharedMemory::create(SHARED_FRAME_BYTES).ok(),
+            FrameTransport::Pipe => None,
+        };
+        let (mut child, handle) =
+            PluginChild::start_sharing(executable, directory, memory.as_ref())
+                .map_err(MediaError::CodecUnavailable)?;
         kill.register(child.kill_handle());
-        let hello = child.hello().map_err(media_error)?;
+        let offer = match (&memory, handle) {
+            (Some(memory), Some(handle)) => protocol::shared_frames_offer(handle, memory),
+            _ => Map::new(),
+        };
+        let hello = child.hello_with(offer).map_err(media_error)?;
         let roles = hello.header["roles"].as_array();
         if !roles.is_some_and(|roles| roles.iter().any(|role| role == ROLES[0])) {
             return Err(MediaError::CodecUnavailable(format!(
@@ -53,7 +119,13 @@ impl CodecProcess {
                 hello.header["roles"]
             )));
         }
-        Ok(Self(child))
+        let frames = memory
+            .filter(|_| handle.is_some() && protocol::accepted_shared_frames(&hello))
+            .map(|memory| SharedFrames {
+                memory,
+                generation: 0,
+            });
+        Ok(Self { child, frames })
     }
 
     /// Makes a [`CodecFactory`] that starts `executable` for each backend.
@@ -66,13 +138,19 @@ impl CodecProcess {
         })
     }
 
+    /// Whether decoded frames come through shared memory: the plugin
+    /// accepted it.
+    pub fn shares_frames(&self) -> bool {
+        self.frames.is_some()
+    }
+
     fn request(
         &mut self,
         request: Message,
         expected: &str,
         timeout: Duration,
     ) -> Result<Message, MediaError> {
-        self.0
+        self.child
             .request(request, expected, timeout)
             .map_err(media_error)
     }
@@ -122,10 +200,10 @@ impl CodecProvider for CodecProcess {
             path: &path,
             ..*request
         })?;
+        let answer = self.request(message, "videoFrame", DECODE_VIDEO_TIMEOUT);
         named(
             request.path,
-            self.request(message, "videoFrame", DECODE_VIDEO_TIMEOUT)
-                .and_then(protocol::decode_video_frame),
+            answer.and_then(|answer| protocol::decode_video_frame(answer, self.frames.as_mut())),
         )
     }
 

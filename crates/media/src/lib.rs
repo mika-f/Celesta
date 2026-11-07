@@ -18,8 +18,9 @@ mod types;
 
 pub use backend::MediaBackend;
 pub use codec::{
-    CodecFactory, CodecProcess, CodecProvider, Container, EncoderId, EncoderSettings, MuxRequest,
-    PixelFormat, Sequential, VideoRequest, set_codec, timestamps_match,
+    CodecFactory, CodecProcess, CodecProvider, Container, EncoderId, EncoderSettings,
+    FrameTransport, MuxRequest, PixelFormat, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE,
+    Sequential, VideoRequest, set_codec, timestamps_match,
 };
 pub use color::{DynamicRange, VideoColor};
 pub use decoder::{AudioDecoder, VideoFrameDecoder};

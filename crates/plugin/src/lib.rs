@@ -10,6 +10,7 @@ mod mesh;
 pub mod protocol;
 mod provider;
 pub mod scene;
+pub mod shared;
 
 pub use mesh::{MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState, TextureSource};
 pub use protocol::{PROTOCOL_VERSION, serve, serve_requests};

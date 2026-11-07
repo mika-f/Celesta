@@ -15,7 +15,9 @@
 //! wall-clock time a frame took and, on Unix, the CPU time (user and
 //! system) it cost this process and the plugin's, which a busy machine
 //! changes less than the wall clock. The plugin's includes opening it and
-//! its first frame.
+//! its first frame. Decoded frames come through shared memory when the
+//! plugin accepts it; `CELESTA_CODEC_SHARED_MEMORY=0` keeps them in the
+//! pipe, to compare the two.
 
 use celesta_composition::Rational;
 use celesta_media::{

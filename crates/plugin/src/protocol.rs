@@ -17,7 +17,7 @@ use crate::scene::{
     Skin,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -1020,21 +1020,47 @@ pub fn serve_requests_on<A: Into<Answer>>(
     plugin: &str,
     version: &str,
     roles: &[&str],
+    reader: impl Read,
+    writer: impl Write,
+    answer: impl FnMut(Message) -> A,
+) -> Result<(), ProtocolError> {
+    serve_requests_with_hello_on(
+        plugin,
+        version,
+        roles,
+        reader,
+        writer,
+        |_| Map::new(),
+        answer,
+    )
+}
+
+/// [`serve_requests_on`], whose `hello` answer also has the fields `hello`
+/// gives for the `hello` request: what a role accepts of what Celesta
+/// offered there (a codec's shared memory, say). The fields cannot replace
+/// the handshake's own (`type`, `protocol`, `plugin`, `version`, `roles`).
+pub fn serve_requests_with_hello_on<A: Into<Answer>>(
+    plugin: &str,
+    version: &str,
+    roles: &[&str],
     mut reader: impl Read,
     mut writer: impl Write,
+    mut hello: impl FnMut(&Message) -> Map<String, Value>,
     mut answer: impl FnMut(Message) -> A,
 ) -> Result<(), ProtocolError> {
     while let Some(request) = read_message(&mut reader)? {
         let answer: Answer = match request.kind() {
             "hello" => {
                 if request.header["protocol"].as_u64() == Some(u64::from(PROTOCOL_VERSION)) {
-                    Message::new(json!({
-                        "type": "hello",
-                        "protocol": PROTOCOL_VERSION,
-                        "plugin": plugin,
-                        "version": version,
-                        "roles": roles,
-                    }))
+                    let mut header = hello(&request);
+                    header.extend([
+                        ("type".to_owned(), json!("hello")),
+                        ("protocol".to_owned(), json!(PROTOCOL_VERSION)),
+                        ("plugin".to_owned(), json!(plugin)),
+                        ("version".to_owned(), json!(version)),
+                        ("roles".to_owned(), json!(roles)),
+                    ]);
+                    Message::new(Value::Object(header))
                 } else {
                     error_message(format!(
                         "this plugin speaks protocol {PROTOCOL_VERSION}, not {}",
@@ -1072,13 +1098,26 @@ pub fn serve_requests<A: Into<Answer>>(
     roles: &[&str],
     answer: impl FnMut(Message) -> A,
 ) -> Result<(), ProtocolError> {
+    serve_requests_with_hello(plugin, version, roles, |_| Map::new(), answer)
+}
+
+/// [`serve_requests_with_hello_on`] this process's stdin and stdout, as
+/// [`serve_requests`] does.
+pub fn serve_requests_with_hello<A: Into<Answer>>(
+    plugin: &str,
+    version: &str,
+    roles: &[&str],
+    hello: impl FnMut(&Message) -> Map<String, Value>,
+    answer: impl FnMut(Message) -> A,
+) -> Result<(), ProtocolError> {
     let stdin = io::stdin().lock();
-    serve_requests_on(
+    serve_requests_with_hello_on(
         plugin,
         version,
         roles,
         stdin,
         io::BufWriter::new(protocol_output()?),
+        hello,
         answer,
     )
 }
@@ -1345,6 +1384,38 @@ mod tests {
                 .contains("asked to")
         );
         assert_eq!(next().kind(), "closed");
+    }
+
+    #[test]
+    fn hello_answers_carry_the_hook_fields_but_keep_their_own() {
+        let mut requests = Vec::new();
+        write_message(
+            &mut requests,
+            &Message::new(json!({ "type": "hello", "protocol": 1, "offer": 3 })),
+        )
+        .unwrap();
+        let mut answers = Vec::new();
+        serve_requests_with_hello_on(
+            "hooked",
+            "1.0.0",
+            ROLES,
+            &requests[..],
+            &mut answers,
+            |hello| {
+                Map::from_iter([
+                    ("accepted".to_owned(), hello.header["offer"].clone()),
+                    ("type".to_owned(), json!("not hello")),
+                    ("roles".to_owned(), json!(["other"])),
+                ])
+            },
+            |_| error_message("no other requests"),
+        )
+        .unwrap();
+        let hello = read_message(&mut &answers[..]).unwrap().unwrap();
+        assert_eq!(hello.header["accepted"], 3);
+        assert_eq!(hello.kind(), "hello");
+        assert_eq!(hello.header["roles"], json!(["content"]));
+        assert_eq!(hello.header["plugin"], "hooked");
     }
 
     #[test]
