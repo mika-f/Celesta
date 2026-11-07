@@ -147,8 +147,11 @@ pub struct Allowed {
 impl InstalledPlugins {
     /// Sorts these into the plugins `settings` allows to run, the ones that
     /// wait for the user (see [`PluginSource::needs_allowance`]), and the
-    /// ones the user turned off. A plugin that waits or is off does not run,
-    /// and does not give way to a later plugin with its id either. The
+    /// ones the user turned off. A plugin that waits or is off does not run.
+    /// One that is off gives way to the next plugin with its id, which
+    /// discovery ([`InstalledPlugins::find_with`]) lists after it; one that
+    /// waits does not, so a plugin the user has not allowed is not silently
+    /// replaced by another. The
     /// waiting ones are also the result's [`InstalledPlugins::waiting`], for
     /// the React runtime to stand in for.
     pub fn allowed_by(self, settings: &UserSettings) -> Allowed {
@@ -363,6 +366,135 @@ mod tests {
         let allowed = found(root.path(), PluginSource::User).allowed_by(&settings);
         assert!(allowed.plugins.plugins.is_empty());
         assert!(allowed.pending[0].changed);
+    }
+
+    /// What `settings` lets run of the plugins in `roots`, searched in order,
+    /// as discovery and the app sort them.
+    fn allowed_in(roots: &[(&Path, PluginSource)], settings: &UserSettings) -> Allowed {
+        let paths: Vec<SearchPath> = roots
+            .iter()
+            .map(|(root, source)| SearchPath {
+                path: root.to_path_buf(),
+                source: *source,
+            })
+            .collect();
+        let (plugins, errors) = crate::manifest::discover_in_with(&paths, |entry| {
+            settings.is_disabled(&entry.manifest.id, &entry.directory)
+        });
+        assert!(errors.is_empty(), "{errors:?}");
+        InstalledPlugins {
+            plugins,
+            ..InstalledPlugins::default()
+        }
+        .allowed_by(settings)
+    }
+
+    fn directories(entries: &[PluginEntry]) -> Vec<&Path> {
+        entries
+            .iter()
+            .map(|entry| entry.directory.as_path())
+            .collect()
+    }
+
+    #[test]
+    fn a_plugin_turned_off_gives_way_to_the_next_with_its_id() {
+        let (user, bundled) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        plugin(&user.path().join("ffmpeg"), "ffmpeg");
+        plugin(&bundled.path().join("ffmpeg"), "ffmpeg");
+        let roots = [
+            (user.path(), PluginSource::User),
+            (bundled.path(), PluginSource::Bundled),
+        ];
+        let mut settings = UserSettings::default();
+        let pending = allowed_in(&roots, &settings).pending.remove(0);
+        settings.allow("ffmpeg", &pending.entry.directory, &pending.fingerprint);
+
+        // On, it hides the bundled one.
+        let allowed = allowed_in(&roots, &settings);
+        assert_eq!(
+            directories(&allowed.plugins.plugins),
+            [user.path().join("ffmpeg")]
+        );
+
+        // Off, the bundled one runs in its place, and both are listed.
+        settings.set_enabled("ffmpeg", &user.path().join("ffmpeg"), false);
+        let allowed = allowed_in(&roots, &settings);
+        assert_eq!(directories(&allowed.disabled), [user.path().join("ffmpeg")]);
+        assert_eq!(
+            directories(&allowed.plugins.plugins),
+            [bundled.path().join("ffmpeg")]
+        );
+        assert!(allowed.pending.is_empty());
+
+        // Every one with the id off: nothing with it runs.
+        settings.set_enabled("ffmpeg", &bundled.path().join("ffmpeg"), false);
+        let allowed = allowed_in(&roots, &settings);
+        assert!(allowed.plugins.plugins.is_empty());
+        assert_eq!(allowed.disabled.len(), 2);
+    }
+
+    #[test]
+    fn the_plugin_used_in_place_of_one_turned_off_is_asked_about_as_ever() {
+        let (user, folder, bundled) = (
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+        );
+        for root in [&user, &folder, &bundled] {
+            plugin(&root.path().join("p"), "p");
+        }
+        let roots = [
+            (user.path(), PluginSource::User),
+            (folder.path(), PluginSource::Folder),
+            (bundled.path(), PluginSource::Bundled),
+        ];
+        let mut settings = UserSettings::default();
+        settings.set_enabled("p", &user.path().join("p"), false);
+        // The added folder's takes its place, and waits; waiting, it does not
+        // give way to the bundled one.
+        let allowed = allowed_in(&roots, &settings);
+        assert_eq!(directories(&allowed.disabled), [user.path().join("p")]);
+        assert_eq!(allowed.pending.len(), 1);
+        assert_eq!(allowed.pending[0].entry.directory, folder.path().join("p"));
+        assert!(allowed.plugins.plugins.is_empty());
+    }
+
+    #[test]
+    fn a_waiting_plugin_does_not_give_way() {
+        let (user, bundled) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        plugin(&user.path().join("p"), "p");
+        plugin(&bundled.path().join("p"), "p");
+        let roots = [
+            (user.path(), PluginSource::User),
+            (bundled.path(), PluginSource::Bundled),
+        ];
+        let allowed = allowed_in(&roots, &UserSettings::default());
+        assert_eq!(
+            directories(&allowed.plugins.waiting),
+            [user.path().join("p")]
+        );
+        assert!(allowed.plugins.plugins.is_empty());
+    }
+
+    #[test]
+    fn a_plugin_turned_off_behind_the_one_used_is_not_listed() {
+        let (bundled, user) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        plugin(&bundled.path().join("p"), "p");
+        plugin(&user.path().join("p"), "p");
+        // Searched first, the bundled one takes the id; the one after it was
+        // never in use, turned off or not.
+        let roots = [
+            (bundled.path(), PluginSource::Bundled),
+            (user.path(), PluginSource::User),
+        ];
+        let mut settings = UserSettings::default();
+        settings.set_enabled("p", &user.path().join("p"), false);
+        let allowed = allowed_in(&roots, &settings);
+        assert_eq!(
+            directories(&allowed.plugins.plugins),
+            [bundled.path().join("p")]
+        );
+        assert!(allowed.disabled.is_empty());
     }
 
     #[test]
