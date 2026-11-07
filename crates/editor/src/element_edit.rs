@@ -25,9 +25,10 @@ use crate::layer_select::SourceLookup;
 use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
 use crate::scope::{
-    CommitGate, HeldOrigin, SceneCalls, Scope, ScopeState, calls_of, chosen_scope, commit_scope,
-    current_calls, drain_gate, gesture_gate, gesture_start_refusal, held_gate, previewed_scope,
-    read_scene_calls, scope_state, scoped_removable, targets_in_effect,
+    CommitGate, HeldOrigin, SceneCalls, Scope, ScopeState, WindowCallsRead, calls_of, chosen_scope,
+    commit_scope, current_calls, drain_gate, gesture_gate, gesture_start_refusal, held_gate,
+    previewed_scope, read_scene_calls, read_window_calls, scope_state, scoped_removable,
+    targets_in_effect, window_calls_read,
 };
 use crate::timing::{WindowRole, window_role, written_around};
 use crate::view::EditorView;
@@ -431,11 +432,10 @@ pub(crate) struct ElementEdit {
     /// The preview worker stopped: no lookup answers again, whatever
     /// reloads or is selected.
     preview_stopped: bool,
-    /// The scene calls of the component enclosing the element's own timing
-    /// window, when it is not the element's (see `sync_window_scene_calls`),
-    /// and the element, generation and calls they are read for.
-    window_calls: Option<SceneCalls>,
-    window_calls_wanted: Option<(SourcePos, u64, Vec<Option<SourcePos>>)>,
+    /// The scene calls of the element's own timing window, one per window
+    /// instance (see `sync_window_scene_calls`), and the read they answer.
+    window_calls: Option<(WindowCallsRead, SceneCalls)>,
+    window_calls_wanted: Option<WindowCallsRead>,
 }
 
 impl ElementEdit {
@@ -937,77 +937,63 @@ impl EditorView {
             .window_targets(self.selected_layer.as_deref(), lookup)
     }
 
-    /// The call `S` of the component enclosing the selected element's own
-    /// timing window, and whether it is the element's `S` too (whose scene
-    /// calls then serve the window).
-    fn window_call<'w>(&self, window: &'w WindowTargets) -> Option<(&'w SourcePos, bool)> {
-        let call = &window.targets.component.as_ref()?.call_site;
-        let shared = self
-            .element_targets()
-            .and_then(|(targets, _)| targets.component.as_ref())
-            .is_some_and(|component| component.call_site == *call);
-        Some((call, shared))
+    /// What reading the scene calls of the selected element's own timing
+    /// window takes now (see [`window_calls_read`]), over the index in use.
+    fn window_read(
+        &self,
+        window: &WindowTargets,
+        report: &LayerSourceReport,
+    ) -> Option<WindowCallsRead> {
+        let index = match self.occurrences.as_ref()? {
+            (_, OccurrenceState::Ready(index) | OccurrenceState::Refreshing(index)) => index,
+            (_, OccurrenceState::Scanning | OccurrenceState::Failed(_)) => return None,
+        };
+        window_calls_read(report, window, index, self.occurrence_generation)
     }
 
     /// The scene calls a commit of the selected element's own timing window
-    /// takes: the element's when the window's component is the element's,
-    /// else those [`Self::sync_window_scene_calls`] read; `None` until read,
-    /// or once the index or the chain moved on.
+    /// takes, one per window instance: those
+    /// [`Self::sync_window_scene_calls`] read; `None` until read, or once
+    /// the index, the window or the chain moved on.
     pub(crate) fn window_scene_calls(
         &self,
         window: &WindowTargets,
         report: &LayerSourceReport,
     ) -> Option<&SceneCalls> {
-        let (call, shared) = self.window_call(window)?;
-        if shared {
-            let (targets, _) = self.element_targets()?;
-            return self.current_scene_calls(targets, report);
-        }
-        current_calls(
-            self.element_edit.window_calls.as_ref(),
-            self.occurrence_generation,
-            report,
-            self.indexed_element(report)?,
-            call,
-        )
+        let wanted = self.window_read(window, report)?;
+        let (read, calls) = self.element_edit.window_calls.as_ref()?;
+        (*read == wanted).then_some(calls)
     }
 
-    /// [`Self::sync_scene_calls`] for the call of the component enclosing
-    /// the selected element's own timing window, when it is not the
-    /// element's: read at that call's place in the selected instance's
-    /// chain, for the element's instances.
+    /// [`Self::sync_scene_calls`] for the selected element's own timing
+    /// window: reads the call of the component enclosing it for every
+    /// instance the index renders through it (see [`read_window_calls`]).
     fn sync_window_scene_calls(&mut self, cx: &mut Context<Self>) {
         let Some((Ok(window), report)) = self.window_targets() else {
             return;
         };
-        let Some((call, false)) = self.window_call(window) else {
+        let Some(wanted) = self.window_read(window, report) else {
             return;
         };
-        let Some(element) = self.indexed_element(report) else {
-            return;
-        };
-        if self.window_scene_calls(window, report).is_some() {
-            return;
-        }
-        let generation = self.occurrence_generation;
-        let at = calls_of(report, element, call);
-        let position = element.element.clone();
-        let wanted = (position.clone(), generation, at.clone());
-        if self.element_edit.window_calls_wanted.as_ref() == Some(&wanted) {
+        let held = self.element_edit.window_calls.as_ref();
+        if held.is_some_and(|(read, _)| *read == wanted)
+            || self.element_edit.window_calls_wanted.as_ref() == Some(&wanted)
+        {
             return;
         }
         self.element_edit.window_calls_wanted = Some(wanted.clone());
         cx.spawn(async move |view, cx| {
+            let request = wanted.clone();
             let calls = cx
                 .background_executor()
                 .spawn(async move {
                     let read = |path: &Path| fs::read_to_string(path).map_err(|e| e.to_string());
-                    read_scene_calls(read, position, generation, at)
+                    read_window_calls(read, &request)
                 })
                 .await;
             view.update(cx, |this, cx| {
                 if this.element_edit.window_calls_wanted.as_ref() == Some(&wanted) {
-                    this.element_edit.window_calls = Some(calls);
+                    this.element_edit.window_calls = Some((wanted, calls));
                     this.scene_calls_version = this.scene_calls_version.wrapping_add(1);
                     cx.notify();
                 }

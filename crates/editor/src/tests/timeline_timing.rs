@@ -6,8 +6,8 @@ use super::*;
 use crate::element_edit::{WindowRead, WindowTargets, resolve_window, window_files, window_report};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
-    CommitGate, SceneCalls, Scope, ScopeLock, ScopeOptions, ScopeState, commit_scope, gesture_gate,
-    window_scope_state,
+    CommitGate, SceneCalls, Scope, ScopeLock, ScopeOptions, ScopeState, ScopedRow, commit_scope,
+    gesture_gate, read_window_calls, scoped_row, window_calls_read, window_scope_state,
 };
 use crate::timeline_drag::{BandGrip, band_writes, grip_refusal, timing_values};
 use crate::timing::{
@@ -439,11 +439,64 @@ fn scene(id: &str, from: u64, duration_in_frames: u64) -> ReactChapter {
     }
 }
 
+/// The `<Rect>` of [`INTRO_DELAYED`] selected in `intro.tsx`, its window
+/// (the `<Sequence>` in `delayed.tsx`), and an index where the `<Rect>` and
+/// the `<Circle>` come through Intro's call of `Delayed` and the `<Text>`
+/// of [`MAIN_DELAYED`] through Main's, over an Intro and a Main scene.
+fn delayed_scenes(
+    files: &Files,
+) -> (
+    LayerSourceReport,
+    WindowTargets,
+    OccurrenceIndex,
+    [ReactChapter; 2],
+) {
+    let report = report_of(vec![
+        files.entry("Rect", ElementKind::Primitive, "intro.tsx", (3, 5)),
+        files.entry("Sequence", ElementKind::Wrapper, "delayed.tsx", (4, 10)),
+        files.entry("Delayed", ElementKind::Component, "intro.tsx", (2, 3)),
+    ]);
+    let source = files.pos("delayed.tsx", 4, 10);
+    let window = files.window(&report, &source);
+    let intro_call = files.pos("intro.tsx", 2, 3);
+    let main_call = files.pos("main.tsx", 2, 3);
+    let element = |at: SourcePos, call: &SourcePos, ranges| ElementOccurrences {
+        element: at.clone(),
+        instances: vec![instance_of(
+            vec![at, call.clone()],
+            ranges,
+            vec![source.clone()],
+        )],
+    };
+    let index = OccurrenceIndex {
+        elements: vec![
+            element(files.pos("intro.tsx", 3, 5), &intro_call, vec![(30, 90)]),
+            element(files.pos("intro.tsx", 4, 5), &intro_call, vec![(30, 90)]),
+            element(files.pos("main.tsx", 3, 5), &main_call, vec![(120, 210)]),
+        ],
+    };
+    let chapters = [scene("intro", 0, 90), scene("main", 90, 120)];
+    (report, window, index, chapters)
+}
+
+/// The scene calls of `window`'s instances in `index`, read from the files.
+fn window_calls(
+    report: &LayerSourceReport,
+    window: &WindowTargets,
+    index: &OccurrenceIndex,
+) -> SceneCalls {
+    let request = window_calls_read(report, window, index, 0).expect("the window has a call");
+    read_window_calls(
+        |path: &Path| fs::read_to_string(path).map_err(|error| error.to_string()),
+        &request,
+    )
+}
+
 #[test]
 fn a_window_two_scenes_call_is_shared_by_its_own_instances() {
     // `Delayed` is called in Intro and in Main, around other elements: the
     // `<Rect>` selected in Intro has one instance, but writing the
-    // `<Sequence>` in `Delayed` would move Main's `<Text>` too.
+    // `<Sequence>` in `delayed.tsx` would move Main's `<Text>` too.
     let files = Files::new(
         "delayed",
         &[
@@ -452,13 +505,7 @@ fn a_window_two_scenes_call_is_shared_by_its_own_instances() {
             ("main.tsx", MAIN_DELAYED),
         ],
     );
-    let report = report_of(vec![
-        files.entry("Rect", ElementKind::Primitive, "intro.tsx", (3, 5)),
-        files.entry("Sequence", ElementKind::Wrapper, "delayed.tsx", (4, 10)),
-        files.entry("Delayed", ElementKind::Component, "intro.tsx", (2, 3)),
-    ]);
-    let source = files.pos("delayed.tsx", 4, 10);
-    let window = files.window(&report, &source);
+    let (report, window, index, chapters) = delayed_scenes(&files);
     let intro_call = files.pos("intro.tsx", 2, 3);
     assert_eq!(
         window
@@ -468,37 +515,22 @@ fn a_window_two_scenes_call_is_shared_by_its_own_instances() {
             .map(|component| &component.call_site),
         Some(&intro_call)
     );
-    let rect = files.pos("intro.tsx", 3, 5);
-    let circle = files.pos("intro.tsx", 4, 5);
-    let text = files.pos("main.tsx", 3, 5);
-    let main_call = files.pos("main.tsx", 2, 3);
-    let element = |at: &SourcePos, call: &SourcePos, ranges| ElementOccurrences {
-        element: at.clone(),
-        instances: vec![instance_of(
-            vec![at.clone(), call.clone()],
-            ranges,
-            vec![source.clone()],
-        )],
-    };
-    let occurrences = OccurrenceState::Ready(OccurrenceIndex {
-        elements: vec![
-            element(&rect, &intro_call, vec![(30, 90)]),
-            element(&circle, &intro_call, vec![(30, 90)]),
-            element(&text, &main_call, vec![(120, 210)]),
-        ],
-    });
-    let chapters = [scene("intro", 0, 90), scene("main", 90, 120)];
-    // The Rect's own instance's call of `Delayed`, as read.
-    let read = SceneCalls {
-        element: rect.clone(),
-        generation: 0,
-        calls: vec![Some((intro_call.clone(), Vec::new()))],
-    };
+    let read = window_calls(&report, &window, &index);
+    // The Circle comes through the same call as the Rect, the Text through
+    // Main's: each window instance's own call is read.
+    assert_eq!(
+        read.calls,
+        [
+            Some((intro_call.clone(), Vec::new())),
+            Some((intro_call.clone(), Vec::new())),
+            Some((files.pos("main.tsx", 2, 3), Vec::new())),
+        ]
+    );
 
     let (state, calls) = window_scope_state(
         &report,
         &window,
-        Some(&occurrences),
+        Some(&OccurrenceState::Ready(index)),
         Some(&read),
         &chapters,
         45,
@@ -509,17 +541,8 @@ fn a_window_two_scenes_call_is_shared_by_its_own_instances() {
     };
     assert_eq!(options.this_scene, Ok(()));
     assert_eq!(options.shared_reaches, ["intro", "main"]);
-    // The Circle comes through the same call as the Rect; Main's call
-    // wasn't read.
-    let calls = calls.expect("the calls are mapped onto the window");
-    assert_eq!(
-        calls.calls,
-        [
-            Some((intro_call.clone(), Vec::new())),
-            Some((intro_call.clone(), Vec::new())),
-            None
-        ]
-    );
+    let calls = calls.expect("the calls are the window's");
+    assert_eq!(calls, read);
     // No choice made: "This scene" applies, never a write as resolved
     // into `Delayed`.
     let keys = [prop("from")];
@@ -538,6 +561,144 @@ fn a_window_two_scenes_call_is_shared_by_its_own_instances() {
     );
     assert!(files.read("delayed.tsx").contains("from={sequenceFrom}"));
     assert_eq!(files.read("main.tsx"), MAIN_DELAYED);
+}
+
+/// [`DELAYED`] after "This scene" lifted `from`: its `<Sequence>` is still
+/// at 4:10.
+const DELAYED_LIFTED: &str = "import { Sequence } from \"@celesta.studio/react\";\n\nexport function Delayed({ children, sequenceFrom = 30 }) {\n  return <Sequence from={sequenceFrom}>{children}</Sequence>;\n}\n";
+
+#[test]
+fn a_window_reads_the_call_of_another_elements_scene() {
+    // Main's call of `Delayed` draws a `<Text>`, not an instance of the
+    // selected `<Rect>`: its own `sequenceFrom` is read all the same, so
+    // Main is not listed as using the shared value.
+    let main = MAIN_DELAYED.replace("<Delayed>", "<Delayed sequenceFrom={60}>");
+    let files = Files::new(
+        "delayed-own",
+        &[
+            ("delayed.tsx", DELAYED_LIFTED),
+            ("intro.tsx", INTRO_DELAYED),
+            ("main.tsx", &main),
+        ],
+    );
+    let (report, window, index, chapters) = delayed_scenes(&files);
+    let occurrences = OccurrenceState::Ready(index.clone());
+    let state = |read: &SceneCalls| {
+        window_scope_state(
+            &report,
+            &window,
+            Some(&occurrences),
+            Some(read),
+            &chapters,
+            45,
+        )
+    };
+
+    let (state_one, calls) = state(&window_calls(&report, &window, &index));
+
+    let ScopeState::Options(options) = &state_one else {
+        panic!("the window is shared: {state_one:?}");
+    };
+    assert_eq!(options.shared_reaches, ["intro"]);
+    assert_eq!(options.sets_own, ["main"]);
+    assert!(!options.own_pending);
+    assert_eq!(options.shared, Ok(()));
+    // The shared value is written as the release gate allows it, and the
+    // write leaves Main's own value.
+    let keys = [prop("from")];
+    let scope = commit_scope(Some(Scope::Shared), &state_one);
+    assert_eq!(
+        gesture_gate(scope, &state_one, &window.targets, &keys, calls.as_ref()),
+        CommitGate::Go(Some(Scope::Shared))
+    );
+
+    // Intro sets its own value too, and the parameter has no default:
+    // every scene sets it, so "Shared value" has no value of `from` to
+    // write.
+    fs::write(
+        files.path("intro.tsx"),
+        INTRO_DELAYED.replace("<Delayed>", "<Delayed sequenceFrom={45}>"),
+    )
+    .unwrap();
+    fs::write(
+        files.path("delayed.tsx"),
+        DELAYED_LIFTED.replace("sequenceFrom = 30", "sequenceFrom"),
+    )
+    .unwrap();
+    let window = files.window(&report, &files.pos("delayed.tsx", 4, 10));
+    let read = window_calls(&report, &window, &index);
+    let (state_all, calls) = window_scope_state(
+        &report,
+        &window,
+        Some(&occurrences),
+        Some(&read),
+        &chapters,
+        45,
+    );
+
+    let ScopeState::Options(options) = &state_all else {
+        panic!("the window is shared: {state_all:?}");
+    };
+    assert!(options.shared_reaches.is_empty());
+    assert_eq!(options.sets_own, ["intro", "main"]);
+    let every = ScopeLock::EverySceneSets {
+        param: "sequenceFrom".to_owned(),
+    };
+    // The `from` row is locked, as the grips and the release gate read it.
+    assert_eq!(
+        scoped_row(
+            Scope::Shared,
+            &window.targets,
+            &prop("from"),
+            calls.as_ref()
+        ),
+        ScopedRow::Locked(every.clone())
+    );
+    assert_eq!(
+        gesture_gate(
+            Some(Scope::Shared),
+            &state_all,
+            &window.targets,
+            &keys,
+            calls.as_ref()
+        ),
+        CommitGate::Refuse(every.text())
+    );
+}
+
+#[test]
+fn a_window_ignores_calls_read_for_the_element() {
+    // Calls read for the `<Rect>`'s instances (one) are not the window's
+    // (three): the options wait for the window's own read.
+    let files = Files::new(
+        "delayed-element-calls",
+        &[
+            ("delayed.tsx", DELAYED_LIFTED),
+            ("intro.tsx", INTRO_DELAYED),
+            ("main.tsx", MAIN_DELAYED),
+        ],
+    );
+    let (report, window, index, chapters) = delayed_scenes(&files);
+    let element_calls = SceneCalls {
+        element: files.pos("intro.tsx", 3, 5),
+        generation: 0,
+        calls: vec![Some((files.pos("intro.tsx", 2, 3), Vec::new()))],
+    };
+
+    let (state, calls) = window_scope_state(
+        &report,
+        &window,
+        Some(&OccurrenceState::Ready(index)),
+        Some(&element_calls),
+        &chapters,
+        45,
+    );
+
+    assert_eq!(calls, None);
+    let ScopeState::Options(options) = &state else {
+        panic!("the window is shared: {state:?}");
+    };
+    assert!(options.own_pending);
 }
 
 /// Intro calls `Delayed` at 3:5 around a `<Rect>` at 4:7 and a `<Circle>`

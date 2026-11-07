@@ -170,17 +170,10 @@ they say otherwise.
   holds: the drag writes that one element, so moving its bands together
   shows what the write does. The user guide says so.
 - **The scene calls reach another element's window instance only through
-  the selected element's instances.** Fixing it means reading the scene
-  calls of every window instance, not only those whose chain ends as one of
-  the selected element's does. `sync_window_scene_calls` reads the calls of
-  the window's component only when it isn't the element's, keyed by the
-  element's chain. Making it read per window instance changes the
-  `SceneCalls` keying that `window_scope_state`, `impact_filter` and
-  `gesture_gate` share. That is a change to design 3's scope reading of
-  its own, better as a separate issue than inside this list of small items.
-  Until then, such an instance counts as not setting its own value: it may
-  appear under "Shared value is used in", and "Every scene sets" may not
-  show. A write is still gated by the window's own scope at the release.
+  the selected element's instances.** Kept here because the fix changes
+  how `SceneCalls` is keyed for `window_scope_state`, `impact_filter` and
+  `gesture_gate`. It is now fixed: every window instance has its own call
+  read. See `docs/handoff/2026-11-07-window-scene-calls.md`.
 - **A window written directly in a scene component counts as not shared.**
   As the timing note says: `<Scenes>` creates the scene with
   `React.createElement(Scene)`, which records no source position, so the
