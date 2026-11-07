@@ -1161,6 +1161,45 @@ fn scene_layers(width: u32, layers: &[(&str, f64, f64, f64)]) -> Scene {
 }
 
 #[test]
+fn scene_layers_of_one_size_each_draw_into_their_own_texture() {
+    // The square moves with time, so two layers of one model at different
+    // times draw differently: one layer texture serving both would show the
+    // second's pixels in both.
+    let mut scenes = skinned_square();
+    scenes.animate = Some(|frame, time| {
+        frame.skins[0][1] = translation(0.25 * time as f32, 0.0, 0.0);
+    });
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(scenes);
+    let left = ("scenes", 0.0, 1.0, 0.0);
+    let right = ("scenes-b", 1.0, 1.0, 64.0);
+    let alone_left = renderer.render(&scene_layers(128, &[left])).unwrap();
+    let alone_right = renderer.render(&scene_layers(128, &[right])).unwrap();
+    let both = renderer.render(&scene_layers(128, &[left, right])).unwrap();
+    let allocations = renderer.meshes.scene_frames.allocations;
+    let again = renderer.render(&scene_layers(128, &[left, right])).unwrap();
+    assert_eq!(renderer.meshes.scene_frames.allocations, allocations);
+    assert!(
+        both.pixels == again.pixels,
+        "the two layers drew differently"
+    );
+    let half = |frame: &GpuFrame, from: u32| -> Vec<[u8; 4]> {
+        (0..64)
+            .flat_map(|y| (from..from + 64).map(move |x| (x, y)))
+            .map(|(x, y)| pixel(frame, x, y))
+            .collect()
+    };
+    assert!(
+        half(&alone_left, 0) != half(&alone_right, 64),
+        "time does not move the square"
+    );
+    assert!(half(&both, 0) == half(&alone_left, 0), "the left layer");
+    assert!(half(&both, 64) == half(&alone_right, 64), "the right layer");
+}
+
+#[test]
 fn scene_resources_evict_unused_sizes_over_budget() {
     let Some(mut renderer) = renderer(transparent()) else {
         return;

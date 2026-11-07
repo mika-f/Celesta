@@ -11,6 +11,7 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 impl GpuRenderer {
     pub(crate) fn local_asset_path(
@@ -124,6 +125,16 @@ pub(crate) fn upload_texture(
     image: &DecodedImage,
     mipmaps: bool,
 ) -> LayerTexture {
+    let levels = mip_levels(image, mipmaps);
+    let texture = layer_texture(device, layout, image, levels.len() as u32);
+    write_levels(queue, &texture._texture, &levels);
+    texture
+}
+
+/// `image`'s pixels, and with `mipmaps` each smaller level down to 1x1.
+type Levels = Vec<(u32, u32, Arc<Vec<u8>>)>;
+
+fn mip_levels(image: &DecodedImage, mipmaps: bool) -> Levels {
     let mut levels = vec![(image.width, image.height, Arc::clone(&image.pixels))];
     if mipmaps {
         loop {
@@ -135,6 +146,17 @@ pub(crate) fn upload_texture(
             levels.push((next.0, next.1, Arc::new(next.2)));
         }
     }
+    levels
+}
+
+/// A texture of `image`'s size with `mip_levels` levels, not yet written,
+/// as a layer texture carrying the rest of `image`'s description.
+fn layer_texture(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    image: &DecodedImage,
+    mip_levels: u32,
+) -> LayerTexture {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Celesta layer texture"),
         size: wgpu::Extent3d {
@@ -142,34 +164,13 @@ pub(crate) fn upload_texture(
             height: image.height,
             depth_or_array_layers: 1,
         },
-        mip_level_count: levels.len() as u32,
+        mip_level_count: mip_levels,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    for (level, (width, height, pixels)) in levels.iter().enumerate() {
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: level as u32,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * BYTES_PER_PIXEL),
-                rows_per_image: Some(*height),
-            },
-            wgpu::Extent3d {
-                width: *width,
-                height: *height,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Celesta layer texture bind group"),
@@ -191,6 +192,219 @@ pub(crate) fn upload_texture(
         raster_scale: image.raster_scale,
         premultiplied: false,
     }))
+}
+
+/// Writes `levels` into `texture` through `Queue::write_texture`.
+fn write_levels(queue: &wgpu::Queue, texture: &wgpu::Texture, levels: &Levels) {
+    for (level, (width, height, pixels)) in levels.iter().enumerate() {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * BYTES_PER_PIXEL),
+                rows_per_image: Some(*height),
+            },
+            wgpu::Extent3d {
+                width: *width,
+                height: *height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+}
+
+/// Video frames' textures, and the staging buffers their pixels are copied
+/// through, kept from render to render. A video brings new pixels every
+/// frame, and making a texture and going through `Queue::write_texture`,
+/// which makes a staging buffer of its own each time, costs a 4K frame
+/// several times the copy itself: both are fresh memory the system maps and
+/// clears as it is first touched.
+///
+/// A frame is written into a kept texture of its size that nothing else
+/// holds (`LayerTexture::unshared`), so two video layers of one size in a
+/// render each have their own, and a texture something still draws with is
+/// never written; its pixels are copied into a kept staging buffer of the
+/// same size the GPU has finished reading (mapped again), then copied to the
+/// texture. Every texel of the texture is written. A render lets go of what
+/// the render before it did not use.
+#[derive(Default)]
+pub(crate) struct VideoUploads {
+    textures: Vec<KeptTexture>,
+    staging: Vec<Staging>,
+    /// The textures and staging buffers created, ever.
+    pub(crate) allocations: u64,
+}
+
+struct KeptTexture {
+    /// The size and mip level count.
+    key: (u32, u32, u32),
+    texture: LayerTexture,
+    /// Whether the render being prepared, or the one before it, used it.
+    used: bool,
+}
+
+struct Staging {
+    buffer: wgpu::Buffer,
+    /// Set once the buffer is mapped for writing: when it is made, and when
+    /// the GPU has finished copying out of it.
+    mapped: Arc<AtomicBool>,
+    used: bool,
+}
+
+impl VideoUploads {
+    /// Starts a render: what the last render did not use goes.
+    pub(crate) fn begin_render(&mut self) {
+        self.textures
+            .retain_mut(|texture| std::mem::take(&mut texture.used));
+        self.staging
+            .retain_mut(|staging| std::mem::take(&mut staging.used));
+    }
+
+    /// How many textures and staging buffers are kept.
+    #[cfg(test)]
+    pub(crate) fn kept(&self) -> (usize, usize) {
+        (self.textures.len(), self.staging.len())
+    }
+
+    /// `image`, with `mipmaps` its smaller levels too, as a layer texture.
+    pub(crate) fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        image: &DecodedImage,
+        mipmaps: bool,
+    ) -> LayerTexture {
+        let levels = mip_levels(image, mipmaps);
+        let key = (image.width, image.height, levels.len() as u32);
+        let texture = match self
+            .textures
+            .iter_mut()
+            .find(|kept| kept.key == key && kept.texture.unshared())
+        {
+            Some(kept) => {
+                kept.used = true;
+                kept.texture.clone()
+            }
+            None => {
+                self.allocations += 1;
+                let texture = layer_texture(device, layout, image, key.2);
+                self.textures.push(KeptTexture {
+                    key,
+                    texture: texture.clone(),
+                    used: true,
+                });
+                texture
+            }
+        };
+
+        // Each level at an offset and with rows padded as a copy from a
+        // buffer to a texture needs.
+        let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let mut offsets = Vec::with_capacity(levels.len());
+        let mut size = 0u64;
+        for (width, height, _) in &levels {
+            size = wgpu::util::align_to(size, u64::from(alignment));
+            offsets.push(size);
+            let row = wgpu::util::align_to(width * BYTES_PER_PIXEL, alignment);
+            size += u64::from(row) * u64::from(*height);
+        }
+        let index = match self.staging.iter().position(|staging| {
+            staging.buffer.size() == size && staging.mapped.load(Ordering::Acquire)
+        }) {
+            Some(index) => index,
+            None => {
+                self.allocations += 1;
+                self.staging.push(Staging {
+                    buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("Celesta video staging buffer"),
+                        size,
+                        usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                        mapped_at_creation: true,
+                    }),
+                    mapped: Arc::new(AtomicBool::new(true)),
+                    used: false,
+                });
+                self.staging.len() - 1
+            }
+        };
+        let staging = &mut self.staging[index];
+        staging.used = true;
+        let Ok(mut mapped) = staging.buffer.get_mapped_range_mut(..) else {
+            // Not mapped after all: this frame goes the plain way, and the
+            // buffer is not offered again.
+            self.staging.swap_remove(index);
+            write_levels(queue, &texture._texture, &levels);
+            return texture;
+        };
+        for ((width, _, pixels), offset) in levels.iter().zip(&offsets) {
+            let offset = *offset as usize;
+            let row = (width * BYTES_PER_PIXEL) as usize;
+            let padded = wgpu::util::align_to(width * BYTES_PER_PIXEL, alignment) as usize;
+            if row == padded {
+                mapped
+                    .slice(offset..offset + pixels.len())
+                    .copy_from_slice(pixels);
+            } else {
+                for (index, from) in pixels.chunks_exact(row).enumerate() {
+                    let at = offset + index * padded;
+                    mapped.slice(at..at + row).copy_from_slice(from);
+                }
+            }
+        }
+        drop(mapped);
+        staging.buffer.unmap();
+        staging.mapped.store(false, Ordering::Release);
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Celesta video upload"),
+        });
+        for (level, ((width, height, _), offset)) in levels.iter().zip(&offsets).enumerate() {
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &staging.buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: *offset,
+                        bytes_per_row: Some(wgpu::util::align_to(
+                            width * BYTES_PER_PIXEL,
+                            alignment,
+                        )),
+                        rows_per_image: Some(*height),
+                    },
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture._texture,
+                    mip_level: level as u32,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: *width,
+                    height: *height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        // Submitted before the draws that sample the texture, which are
+        // submitted after this layer is prepared.
+        queue.submit([encoder.finish()]);
+        let mapped = Arc::clone(&staging.mapped);
+        staging
+            .buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Write, move |result| {
+                if result.is_ok() {
+                    mapped.store(true, Ordering::Release);
+                }
+            });
+        texture
+    }
 }
 
 /// The next mip level of straight-alpha RGBA pixels: each texel averages the
@@ -312,6 +526,12 @@ impl LayerTexture {
     /// Whether draws with `self` and `other` sample the same texture.
     pub(crate) fn same(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0) || self.bind_group == other.bind_group
+    }
+
+    /// Whether this is the texture's only handle: no layer of the frame
+    /// being prepared, nor anything else, draws with it.
+    pub(crate) fn unshared(&self) -> bool {
+        Arc::strong_count(&self.0) == 1
     }
 }
 

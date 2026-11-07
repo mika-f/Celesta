@@ -108,6 +108,8 @@ Celesta は動画・音声ファイルの読み書きにコーデックライブ
 
 コーデックプラグインのマニフェストには `"roles": ["codec"]` があります。Celesta は実行してよいプラグインのうち、上の順で最初に見つかったコーデックを使います。ひとつもないときは、`cargo install` で置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` を使います。ただし、実行ファイルが `target/release` のような Cargo のビルドフォルダーにあるときは使いません。ソースビルドでは、自分でビルドしたコーデックプラグインを使います（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。`cargo install` で Celesta を入れる場合は、コーデックも入れてアプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもコーデックは入りません。`celesta-codec-ffmpeg` が crates.io に公開されるまでは、`cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` でリポジトリから入れます（[ソースからのビルド](/ja/docs/build-from-source/)と同じく FFmpeg 8.1.x の開発ライブラリが必要です）。コーデックがないと動画と音声は表示も書き出しもできません。アプリは Problems にそう表示し、書き出しはエラーコード `no_codec` で失敗します。
 
+デコードした動画のフレームは、コーデックプラグインが対応していれば（`ffmpeg` プラグインは Celesta 0.10 から対応しています）、プラグインの出力のパイプではなく、Celesta とプラグインのプロセスが共有するメモリーを通って届きます。このメモリーはほかのプロセスやユーザーからは開けません。対応していないプラグインと、4096×2560 より大きなフレームはパイプを通ります。コーデックプラグインがこの共有メモリーでうまく動かないときは、Celesta を起動する環境で環境変数 `CELESTA_CODEC_SHARED_MEMORY=0` を設定すると、すべてのフレームがパイプを通ります。
+
 LGPL のみの FFmpeg など別の FFmpeg を使うには、その FFmpeg の `lib/pkgconfig` を `PKG_CONFIG_PATH` に指定し（Windows では、その FFmpeg をインストールした vcpkg のチェックアウト先を `VCPKG_ROOT` に設定し）、リポジトリのルートで `node scripts/plugins/build.mts plugins/ffmpeg --out <ユーザーのプラグインフォルダー>` を実行します。このコマンドは、その FFmpeg をリンクしてコーデックをビルドし、指定したフォルダーに `ffmpeg` プラグインとして置きます。ユーザーのプラグインフォルダーは、Celesta に同梱のプラグインフォルダーより先に探されます。ほかのプラグインと同じく、アプリは実行する前に確認します。`licenses/` には 4 つのファイルが入ります。`LICENSE-MIT` と `LICENSE-APACHE` は Celesta のコードのライセンス文、`LICENSE-GPL-2.0` と `GPL-SOURCE-OFFER.md` は公式の GPL ビルド向けの GPL とソースコードの提供の申し出です。プラグインを配布するときは、GPL の文書とソースコードの提供の申し出だけを、お使いの FFmpeg ビルドの条件に合わせて差し替えてください。MIT と Apache のライセンス文はそのまま残します。
 
 ## サンプル

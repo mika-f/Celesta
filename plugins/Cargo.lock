@@ -323,6 +323,7 @@ dependencies = [
  "celesta-project",
  "ez-ffmpeg",
  "ffmpeg-sys-next",
+ "libc",
  "png",
  "rayon",
  "strum",

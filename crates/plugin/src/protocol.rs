@@ -17,7 +17,7 @@ use crate::scene::{
     Skin,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -93,12 +93,43 @@ impl Message {
     }
 }
 
+/// What a plugin's main loop answers a request with: a [`Message`], or a
+/// header and a payload the plugin keeps a share of, such as the video frame
+/// a codec holds to answer the next request for it, which is written as it
+/// is rather than copied into a message first.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Answer {
+    Message(Message),
+    Shared {
+        header: Value,
+        payload: Arc<Vec<u8>>,
+    },
+}
+
+impl From<Message> for Answer {
+    fn from(message: Message) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl Answer {
+    /// Writes this answer as one message.
+    pub fn write(&self, writer: &mut impl Write) -> io::Result<()> {
+        match self {
+            Self::Message(message) => write_message(writer, message),
+            Self::Shared { header, payload } => write_parts(writer, header, payload),
+        }
+    }
+}
+
 pub fn write_message(writer: &mut impl Write, message: &Message) -> io::Result<()> {
-    let header = serde_json::to_vec(&message.header)?;
-    for (part, max) in [
-        (&header[..], MAX_HEADER),
-        (&message.payload[..], MAX_PAYLOAD),
-    ] {
+    write_parts(writer, &message.header, &message.payload)
+}
+
+/// Writes one message of `header` and `payload`.
+fn write_parts(writer: &mut impl Write, header: &Value, payload: &[u8]) -> io::Result<()> {
+    let header = serde_json::to_vec(header)?;
+    for (part, max) in [(&header[..], MAX_HEADER), (payload, MAX_PAYLOAD)] {
         let length = u32::try_from(part.len())
             .ok()
             .filter(|length| *length <= max)
@@ -117,9 +148,10 @@ fn read_length(reader: &mut impl Read) -> io::Result<u32> {
 }
 
 /// A part of `length` bytes, at most `max`. Its buffer starts at no more
-/// than `PREALLOCATED` bytes and grows as its bytes arrive, so a length
-/// that is not one (such as text a plugin printed into the stream) reserves
-/// at most that much.
+/// than `PREALLOCATED` bytes and doubles as its bytes fill it, up to
+/// `length` exactly, so a length that is not one (such as text a plugin
+/// printed into the stream) reserves at most twice the bytes that came, and
+/// a whole part ends in a buffer of its size.
 fn read_body(
     reader: &mut impl Read,
     length: u32,
@@ -131,9 +163,20 @@ fn read_body(
             "a {what} of {length} bytes, more than {max}"
         )));
     }
-    let mut part = Vec::with_capacity(length.min(PREALLOCATED) as usize);
-    reader.take(u64::from(length)).read_to_end(&mut part)?;
-    if part.len() != length as usize {
+    let length_bytes = length as usize;
+    let mut part = Vec::with_capacity(length_bytes.min(PREALLOCATED as usize));
+    loop {
+        // The room there is, never past the part: `read_to_end` stops at
+        // the limit rather than growing the buffer itself.
+        let room = (part.capacity() - part.len()).min(length_bytes - part.len());
+        let before = part.len();
+        reader.take(room as u64).read_to_end(&mut part)?;
+        if part.len() == length_bytes || part.len() - before < room {
+            break;
+        }
+        part.reserve_exact(part.len().min(length_bytes - part.len()));
+    }
+    if part.len() != length_bytes {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             format!(
@@ -973,35 +1016,62 @@ fn content_answer(provider: &mut impl ContentProvider, plugin: &str, request: Me
 /// `hello` handshake here, naming `plugin`, `version`, and `roles`, and every
 /// other request with `answer`. A plugin of a role other than content (a
 /// codec, say) runs its loop through this.
-pub fn serve_requests_on(
+pub fn serve_requests_on<A: Into<Answer>>(
+    plugin: &str,
+    version: &str,
+    roles: &[&str],
+    reader: impl Read,
+    writer: impl Write,
+    answer: impl FnMut(Message) -> A,
+) -> Result<(), ProtocolError> {
+    serve_requests_with_hello_on(
+        plugin,
+        version,
+        roles,
+        reader,
+        writer,
+        |_| Map::new(),
+        answer,
+    )
+}
+
+/// [`serve_requests_on`], whose `hello` answer also has the fields `hello`
+/// gives for the `hello` request: what a role accepts of what Celesta
+/// offered there (a codec's shared memory, say). The fields cannot replace
+/// the handshake's own (`type`, `protocol`, `plugin`, `version`, `roles`).
+pub fn serve_requests_with_hello_on<A: Into<Answer>>(
     plugin: &str,
     version: &str,
     roles: &[&str],
     mut reader: impl Read,
     mut writer: impl Write,
-    mut answer: impl FnMut(Message) -> Message,
+    mut hello: impl FnMut(&Message) -> Map<String, Value>,
+    mut answer: impl FnMut(Message) -> A,
 ) -> Result<(), ProtocolError> {
     while let Some(request) = read_message(&mut reader)? {
-        let answer = match request.kind() {
+        let answer: Answer = match request.kind() {
             "hello" => {
                 if request.header["protocol"].as_u64() == Some(u64::from(PROTOCOL_VERSION)) {
-                    Message::new(json!({
-                        "type": "hello",
-                        "protocol": PROTOCOL_VERSION,
-                        "plugin": plugin,
-                        "version": version,
-                        "roles": roles,
-                    }))
+                    let mut header = hello(&request);
+                    header.extend([
+                        ("type".to_owned(), json!("hello")),
+                        ("protocol".to_owned(), json!(PROTOCOL_VERSION)),
+                        ("plugin".to_owned(), json!(plugin)),
+                        ("version".to_owned(), json!(version)),
+                        ("roles".to_owned(), json!(roles)),
+                    ]);
+                    Message::new(Value::Object(header))
                 } else {
                     error_message(format!(
                         "this plugin speaks protocol {PROTOCOL_VERSION}, not {}",
                         request.header["protocol"]
                     ))
                 }
+                .into()
             }
-            _ => answer(request),
+            _ => answer(request).into(),
         };
-        write_message(&mut writer, &answer)?;
+        answer.write(&mut writer)?;
     }
     Ok(())
 }
@@ -1022,19 +1092,32 @@ pub fn serve(
 /// at stderr: whatever else the process prints, `println!` and native
 /// libraries' banners and logs included, lands in Celesta's log instead of
 /// corrupting the protocol.
-pub fn serve_requests(
+pub fn serve_requests<A: Into<Answer>>(
     plugin: &str,
     version: &str,
     roles: &[&str],
-    answer: impl FnMut(Message) -> Message,
+    answer: impl FnMut(Message) -> A,
+) -> Result<(), ProtocolError> {
+    serve_requests_with_hello(plugin, version, roles, |_| Map::new(), answer)
+}
+
+/// [`serve_requests_with_hello_on`] this process's stdin and stdout, as
+/// [`serve_requests`] does.
+pub fn serve_requests_with_hello<A: Into<Answer>>(
+    plugin: &str,
+    version: &str,
+    roles: &[&str],
+    hello: impl FnMut(&Message) -> Map<String, Value>,
+    answer: impl FnMut(Message) -> A,
 ) -> Result<(), ProtocolError> {
     let stdin = io::stdin().lock();
-    serve_requests_on(
+    serve_requests_with_hello_on(
         plugin,
         version,
         roles,
         stdin,
         io::BufWriter::new(protocol_output()?),
+        hello,
         answer,
     )
 }
@@ -1173,6 +1256,71 @@ mod tests {
         ));
     }
 
+    /// Gives at most `step` bytes a read, as a pipe gives what has arrived.
+    struct Trickle<'a> {
+        bytes: &'a [u8],
+        step: usize,
+    }
+
+    impl Read for Trickle<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let count = buffer.len().min(self.step).min(self.bytes.len());
+            buffer[..count].copy_from_slice(&self.bytes[..count]);
+            self.bytes = &self.bytes[count..];
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn a_large_payload_arriving_in_pieces_is_read_whole_into_its_size() {
+        let large = Message {
+            header: json!({ "type": "large" }),
+            payload: (0..(PREALLOCATED as usize * 5 + 3))
+                .map(|index| index as u8)
+                .collect(),
+        };
+        let next = Message::new(json!({ "type": "next" }));
+        let mut stream = Vec::new();
+        write_message(&mut stream, &large).unwrap();
+        write_message(&mut stream, &next).unwrap();
+        let mut reader = Trickle {
+            bytes: &stream,
+            step: 65_536 + 7,
+        };
+        let read = read_message(&mut reader).unwrap().unwrap();
+        assert_eq!(read, large);
+        assert_eq!(read.payload.capacity(), read.payload.len());
+        assert_eq!(read_message(&mut reader).unwrap().unwrap(), next);
+        assert!(read_message(&mut reader).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_payload_the_stream_ends_inside_is_an_error() {
+        let mut stream = Vec::new();
+        write_message(
+            &mut stream,
+            &Message {
+                header: json!({ "type": "cut" }),
+                payload: vec![7; PREALLOCATED as usize * 3],
+            },
+        )
+        .unwrap();
+        stream.truncate(stream.len() - 10);
+        let mut reader = Trickle {
+            bytes: &stream,
+            step: 100_000,
+        };
+        let error = read_message(&mut reader).unwrap_err().to_string();
+        assert!(
+            error.contains(&format!(
+                "{} bytes into a {}-byte payload",
+                PREALLOCATED * 3 - 10,
+                PREALLOCATED * 3
+            )),
+            "{error}"
+        );
+    }
+
     struct Fixed;
 
     impl ContentProvider for Fixed {
@@ -1239,6 +1387,38 @@ mod tests {
     }
 
     #[test]
+    fn hello_answers_carry_the_hook_fields_but_keep_their_own() {
+        let mut requests = Vec::new();
+        write_message(
+            &mut requests,
+            &Message::new(json!({ "type": "hello", "protocol": 1, "offer": 3 })),
+        )
+        .unwrap();
+        let mut answers = Vec::new();
+        serve_requests_with_hello_on(
+            "hooked",
+            "1.0.0",
+            ROLES,
+            &requests[..],
+            &mut answers,
+            |hello| {
+                Map::from_iter([
+                    ("accepted".to_owned(), hello.header["offer"].clone()),
+                    ("type".to_owned(), json!("not hello")),
+                    ("roles".to_owned(), json!(["other"])),
+                ])
+            },
+            |_| error_message("no other requests"),
+        )
+        .unwrap();
+        let hello = read_message(&mut &answers[..]).unwrap().unwrap();
+        assert_eq!(hello.header["accepted"], 3);
+        assert_eq!(hello.kind(), "hello");
+        assert_eq!(hello.header["roles"], json!(["content"]));
+        assert_eq!(hello.header["plugin"], "hooked");
+    }
+
+    #[test]
     fn hello_names_roles() {
         let mut requests = Vec::new();
         write_message(
@@ -1250,6 +1430,45 @@ mod tests {
         serve_on(&mut Fixed, "fixed", "1.0.0", &requests[..], &mut answers).unwrap();
         let hello = read_message(&mut &answers[..]).unwrap().unwrap();
         assert_eq!(hello.header["roles"], json!(["content"]));
+    }
+
+    #[test]
+    fn a_shared_answer_is_written_as_its_message() {
+        let mut requests = Vec::new();
+        for kind in ["frame", "other"] {
+            write_message(&mut requests, &Message::new(json!({ "type": kind }))).unwrap();
+        }
+        let kept = Arc::new(vec![1, 2, 3, 4]);
+        let mut answers = Vec::new();
+        serve_requests_on(
+            "shared",
+            "1",
+            ROLES,
+            &requests[..],
+            &mut answers,
+            |request| match request.kind() {
+                "frame" => Answer::Shared {
+                    header: json!({ "type": "pixels" }),
+                    payload: Arc::clone(&kept),
+                },
+                _ => Message::new(json!({ "type": "plain" })).into(),
+            },
+        )
+        .unwrap();
+        let mut reader = &answers[..];
+        let mut next = || read_message(&mut reader).unwrap().unwrap();
+        let shared = next();
+        assert_eq!(
+            shared,
+            Message {
+                header: json!({ "type": "pixels" }),
+                payload: vec![1, 2, 3, 4],
+            }
+        );
+        assert_eq!(next(), Message::new(json!({ "type": "plain" })));
+        assert!(read_message(&mut reader).unwrap().is_none());
+        // The answer's share went once it was written.
+        assert_eq!(Arc::strong_count(&kept), 1);
     }
 
     #[test]

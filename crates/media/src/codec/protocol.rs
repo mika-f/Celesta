@@ -10,10 +10,14 @@ use crate::error::MediaError;
 use crate::mix::frame_byte_len;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
-use celesta_plugin::protocol::{Message, ProtocolError, serve_requests, serve_requests_on};
+use celesta_plugin::protocol::{
+    Answer, Message, ProtocolError, serve_requests_with_hello, serve_requests_with_hello_on,
+};
+use celesta_plugin::shared::SharedMemory;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,9 +34,16 @@ pub fn serve_on(
     reader: impl Read,
     writer: impl Write,
 ) -> Result<(), ProtocolError> {
-    serve_requests_on(plugin, version, ROLES, reader, writer, |request| {
-        answer(provider, request)
-    })
+    let frames = RefCell::new(None);
+    serve_requests_with_hello_on(
+        plugin,
+        version,
+        ROLES,
+        reader,
+        writer,
+        |hello| accept_frames(hello, &frames),
+        |request| answer(provider, request, &mut frames.borrow_mut()),
+    )
 }
 
 /// [`serve_on`] this process's stdin and stdout, with stdout kept for the
@@ -43,7 +54,75 @@ pub fn serve(
     plugin: &str,
     version: &str,
 ) -> Result<(), ProtocolError> {
-    serve_requests(plugin, version, ROLES, |request| answer(provider, request))
+    let frames = RefCell::new(None);
+    serve_requests_with_hello(
+        plugin,
+        version,
+        ROLES,
+        |hello| accept_frames(hello, &frames),
+        |request| answer(provider, request, &mut frames.borrow_mut()),
+    )
+}
+
+/// The decoded frames' slot in memory shared with Celesta, on either side,
+/// and the generation of the frame last written to it.
+pub(crate) struct SharedFrames {
+    pub(crate) memory: SharedMemory,
+    pub(crate) generation: u64,
+}
+
+/// What Celesta's `hello` offers of shared memory for decoded frames: the
+/// handle the plugin maps the segment by, and its size.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedMemoryOffer {
+    handle: u64,
+    bytes: usize,
+}
+
+/// The fields of a `hello` request offering `memory`, mapped by `handle`
+/// in the plugin's process, for decoded frames.
+pub(crate) fn shared_frames_offer(handle: u64, memory: &SharedMemory) -> Map<String, Value> {
+    let offer = SharedMemoryOffer {
+        handle,
+        bytes: memory.len(),
+    };
+    Map::from_iter([("frames".to_owned(), json!({ "sharedMemory": offer }))])
+}
+
+/// Whether a `hello` answer accepted the shared memory its request offered.
+pub(crate) fn accepted_shared_frames(hello: &Message) -> bool {
+    hello.header["frames"] == "sharedMemory"
+}
+
+/// Maps the shared memory `hello` offers into `frames`, and says so in the
+/// answer's fields; an offer that cannot be mapped is declined (said on
+/// stderr), and the frames go through the pipe.
+fn accept_frames(hello: &Message, frames: &RefCell<Option<SharedFrames>>) -> Map<String, Value> {
+    let offer = &hello.header["frames"]["sharedMemory"];
+    if offer.is_null() {
+        return Map::new();
+    }
+    let opened = SharedMemoryOffer::deserialize(offer)
+        .map_err(|error| error.to_string())
+        .and_then(|offer| {
+            SharedMemory::open(offer.handle, offer.bytes).map_err(|error| error.to_string())
+        });
+    match opened {
+        Ok(memory) => {
+            *frames.borrow_mut() = Some(SharedFrames {
+                memory,
+                generation: 0,
+            });
+            Map::from_iter([("frames".to_owned(), json!("sharedMemory"))])
+        }
+        Err(error) => {
+            eprintln!(
+                "decoded frames go through the pipe: the shared memory offered could not be mapped ({error})"
+            );
+            Map::new()
+        }
+    }
 }
 
 fn malformed(message: impl std::fmt::Display) -> MediaError {
@@ -62,8 +141,12 @@ struct WireSequential {
     frame_rate: Rational,
 }
 
-fn answer(provider: &mut impl CodecProvider, mut request: Message) -> Message {
-    let answer = (|| -> Result<Message, MediaError> {
+fn answer(
+    provider: &mut impl CodecProvider,
+    mut request: Message,
+    frames: &mut Option<SharedFrames>,
+) -> Answer {
+    let answer = (|| -> Result<Answer, MediaError> {
         let request = &mut request;
         Ok(match request.kind() {
             "probe" => {
@@ -83,15 +166,37 @@ fn answer(provider: &mut impl CodecProvider, mut request: Message) -> Message {
                         frame_rate: sequential.frame_rate,
                     }),
                 })?;
-                Message {
+                // Into the shared slot when there is one and the frame fits:
+                // Celesta reads it from there before it sends another
+                // request, so nothing else writes the slot meanwhile.
+                if let Some(frames) = frames.as_mut()
+                    && frame.pixels.len() <= frames.memory.slot_bytes()
+                {
+                    // Even generations: the odd one between is the write.
+                    let generation = frames.generation + 2;
+                    frames
+                        .memory
+                        .write_slot(&frame.pixels, generation)
+                        .map_err(|error| MediaError::Codec(error.to_string()))?;
+                    frames.generation = generation;
+                    return Ok(Message::new(json!({
+                        "type": "videoFrame",
+                        "width": frame.width,
+                        "height": frame.height,
+                        "slot": { "generation": generation, "bytes": frame.pixels.len() },
+                    }))
+                    .into());
+                }
+                // The codec may keep the frame for a repeat request, so it is
+                // written from its share rather than copied.
+                return Ok(Answer::Shared {
                     header: json!({
                         "type": "videoFrame",
                         "width": frame.width,
                         "height": frame.height,
                     }),
-                    payload: Arc::try_unwrap(frame.pixels)
-                        .unwrap_or_else(|shared| (*shared).clone()),
-                }
+                    payload: frame.pixels,
+                });
             }
             "decodeAudio" => {
                 let path: PathBuf = field(request, "path")?;
@@ -143,9 +248,10 @@ fn answer(provider: &mut impl CodecProvider, mut request: Message) -> Message {
                 Message::new(json!({ "type": "muxed" }))
             }
             other => return Err(MediaError::Codec(format!("unknown request \"{other}\""))),
-        })
+        }
+        .into())
     })();
-    answer.unwrap_or_else(|error| encode_error(&error))
+    answer.unwrap_or_else(|error| encode_error(&error).into())
 }
 
 /// An `error` answer: the error's text, and, for the errors Celesta tells
@@ -287,10 +393,55 @@ pub(crate) fn decode_video_request(request: &VideoRequest<'_>) -> Result<Message
     })))
 }
 
-pub(crate) fn decode_video_frame(answer: Message) -> Result<VideoFrame, MediaError> {
+/// Where a `videoFrame` answer left its pixels in shared memory.
+#[derive(Deserialize)]
+struct WireSlot {
+    generation: u64,
+    bytes: usize,
+}
+
+/// The frame of a `videoFrame` answer: its payload, or, when it names a
+/// slot, the pixels copied out of `frames`. A slot that is not there, or
+/// does not hold the frame under the generation named (a newer one than the
+/// last), is `CodecUnavailable`: the codec has fallen out of step, and a new
+/// one is started.
+pub(crate) fn decode_video_frame(
+    answer: Message,
+    frames: Option<&mut SharedFrames>,
+) -> Result<VideoFrame, MediaError> {
     let width = field(&answer, "width")?;
     let height = field(&answer, "height")?;
     let expected = frame_byte_len(width, height)?;
+    if !answer.header["slot"].is_null() {
+        let slot: WireSlot = field(&answer, "slot")?;
+        let out_of_step = |what: &str| {
+            MediaError::CodecUnavailable(format!(
+                "the codec answered a {width}x{height} frame in shared memory {what}"
+            ))
+        };
+        let Some(frames) = frames else {
+            return Err(out_of_step("it was not offered"));
+        };
+        if slot.bytes != expected {
+            return Err(out_of_step(&format!(
+                "of {} bytes, not {expected}",
+                slot.bytes
+            )));
+        }
+        if slot.generation <= frames.generation {
+            return Err(out_of_step("under a generation already read"));
+        }
+        let pixels = frames
+            .memory
+            .read_slot(expected, slot.generation)
+            .ok_or_else(|| out_of_step("that the slot does not hold"))?;
+        frames.generation = slot.generation;
+        return Ok(VideoFrame {
+            width,
+            height,
+            pixels: Arc::new(pixels),
+        });
+    }
     if answer.payload.len() != expected {
         return Err(malformed(format!(
             "a {width}x{height} RGBA frame of {} bytes, not {expected}",
@@ -549,7 +700,7 @@ mod tests {
             decode_error(&answers[2]),
             MediaError::NotFound(path) if path == Path::new("/missing")
         ));
-        let frame = decode_video_frame(answers[3].clone()).unwrap();
+        let frame = decode_video_frame(answers[3].clone(), None).unwrap();
         assert_eq!((frame.width, frame.height), (2, 1));
         assert_eq!(*frame.pixels, [1, 2, 3, 4, 5, 6, 7, 8]);
         let audio = decode_audio_buffer(&answers[4]).unwrap();
@@ -576,6 +727,81 @@ mod tests {
                 "mux 16 /out/film.mp4",
             ]
         );
+    }
+
+    /// Serves the frame it keeps, as a codec keeps the last frame it decoded
+    /// for a repeat request.
+    struct Keeper {
+        kept: Arc<Vec<u8>>,
+    }
+
+    impl CodecProvider for Keeper {
+        fn probe(&mut self, _: &Path) -> Result<MediaProbe, MediaError> {
+            Ok(probe())
+        }
+
+        fn decode_video(&mut self, _: &VideoRequest<'_>) -> Result<VideoFrame, MediaError> {
+            Ok(VideoFrame {
+                width: 2,
+                height: 1,
+                pixels: Arc::clone(&self.kept),
+            })
+        }
+
+        fn decode_audio(&mut self, _: &Path, _: u32, _: u16) -> Result<AudioBuffer, MediaError> {
+            unreachable!()
+        }
+
+        fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
+            unreachable!()
+        }
+
+        fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn abort_encoder(&mut self, _: EncoderId) {}
+
+        fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn a_frame_the_codec_keeps_is_sent_whole_and_stays_its_own() {
+        let kept = Arc::new(vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut codec = Keeper {
+            kept: Arc::clone(&kept),
+        };
+        let request = decode_video_request(&VideoRequest {
+            path: Path::new("/a.mp4"),
+            time: 0.0,
+            sequential: None,
+        })
+        .unwrap();
+        let mut input = Vec::new();
+        for _ in 0..2 {
+            write_message(&mut input, &request).unwrap();
+        }
+        let mut output = Vec::new();
+        serve_on(&mut codec, "keeper", "1.0.0", &input[..], &mut output).unwrap();
+        let mut reader = &output[..];
+        for _ in 0..2 {
+            let frame =
+                decode_video_frame(read_message(&mut reader).unwrap().unwrap(), None).unwrap();
+            assert_eq!(*frame.pixels, *kept);
+        }
+        assert!(read_message(&mut reader).unwrap().is_none());
+        // The codec's share and this one: no answer holds the frame.
+        assert_eq!(Arc::strong_count(&kept), 2);
     }
 
     #[test]
@@ -799,11 +1025,151 @@ mod tests {
             header: json!({ "type": "videoFrame", "width": 2, "height": 1 }),
             payload,
         };
-        assert!(decode_video_frame(frame(vec![0; 8])).is_ok());
+        assert!(decode_video_frame(frame(vec![0; 8]), None).is_ok());
         assert!(matches!(
-            decode_video_frame(frame(vec![0; 7])),
+            decode_video_frame(frame(vec![0; 7]), None),
             Err(MediaError::Codec(_))
         ));
+    }
+
+    /// A `hello` request offering `memory` (by a second handle, which the
+    /// codec in this process maps as a plugin process would) for frames.
+    fn offering_hello(memory: &SharedMemory) -> Message {
+        let mut header = shared_frames_offer(memory.duplicate_handle().unwrap(), memory);
+        header.insert("type".to_owned(), json!("hello"));
+        header.insert("protocol".to_owned(), json!(1));
+        Message::new(Value::Object(header))
+    }
+
+    fn video_request() -> Message {
+        decode_video_request(&VideoRequest {
+            path: Path::new("/a.mp4"),
+            time: 0.5,
+            sequential: None,
+        })
+        .unwrap()
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn frames_come_through_shared_memory_once_hello_accepts_it() {
+        let memory = SharedMemory::create(celesta_plugin::shared::SLOT_HEADER + 64).unwrap();
+        let mut codec = Fake::default();
+        // Both requests are answered before either answer is read, which
+        // Celesta never does: the second frame takes the slot over.
+        let answers = serve_all(
+            &mut codec,
+            &[offering_hello(&memory), video_request(), video_request()],
+        );
+        assert!(accepted_shared_frames(&answers[0]));
+        for (answer, generation) in answers[1..].iter().zip([2, 4]) {
+            assert_eq!(answer.header["slot"]["generation"], generation);
+            assert!(
+                answer.payload.is_empty(),
+                "the pixels went through the pipe"
+            );
+        }
+        let mut frames = SharedFrames {
+            memory,
+            generation: 0,
+        };
+        assert!(
+            matches!(
+                decode_video_frame(answers[1].clone(), Some(&mut frames)),
+                Err(MediaError::CodecUnavailable(_))
+            ),
+            "the first frame was read from a slot written over"
+        );
+        let frame = decode_video_frame(answers[2].clone(), Some(&mut frames)).unwrap();
+        assert_eq!(*frame.pixels, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_frame_larger_than_the_slot_goes_through_the_pipe() {
+        // The fake's frame is 8 bytes; the slot holds 4.
+        let memory = SharedMemory::create(celesta_plugin::shared::SLOT_HEADER + 4).unwrap();
+        let answers = serve_all(
+            &mut Fake::default(),
+            &[offering_hello(&memory), video_request()],
+        );
+        assert!(accepted_shared_frames(&answers[0]));
+        assert!(answers[1].header["slot"].is_null());
+        let mut frames = SharedFrames {
+            memory,
+            generation: 0,
+        };
+        let frame = decode_video_frame(answers[1].clone(), Some(&mut frames)).unwrap();
+        assert_eq!(*frame.pixels, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn hello_without_an_offer_or_with_one_that_cannot_be_mapped_keeps_the_pipe() {
+        let unmappable = Message::new(json!({
+            "type": "hello",
+            "protocol": 1,
+            "frames": { "sharedMemory": { "handle": 1_000_000, "bytes": 4096 } },
+        }));
+        let answers = serve_all(
+            &mut Fake::default(),
+            &[
+                Message::new(json!({ "type": "hello", "protocol": 1 })),
+                unmappable,
+                video_request(),
+            ],
+        );
+        assert!(!accepted_shared_frames(&answers[0]));
+        assert!(!accepted_shared_frames(&answers[1]));
+        assert_eq!(answers[1].header["roles"], json!(["codec"]));
+        assert_eq!(answers[2].payload, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_slot_answer_out_of_step_means_the_codec_is_unavailable() {
+        let memory = SharedMemory::create(celesta_plugin::shared::SLOT_HEADER + 64).unwrap();
+        memory.write_slot(&[7; 8], 4).unwrap();
+        let answer = |generation: u64, bytes: usize| {
+            Message::new(json!({
+                "type": "videoFrame",
+                "width": 2,
+                "height": 1,
+                "slot": { "generation": generation, "bytes": bytes },
+            }))
+        };
+        let mut frames = SharedFrames {
+            memory,
+            generation: 0,
+        };
+        let unavailable = |result: Result<VideoFrame, MediaError>| {
+            matches!(result, Err(MediaError::CodecUnavailable(_)))
+        };
+        assert!(
+            unavailable(decode_video_frame(answer(4, 8), None)),
+            "never offered"
+        );
+        assert!(
+            unavailable(decode_video_frame(answer(4, 4), Some(&mut frames))),
+            "not the frame's size"
+        );
+        assert!(
+            unavailable(decode_video_frame(answer(2, 8), Some(&mut frames))),
+            "not the slot's generation"
+        );
+        assert!(
+            unavailable(decode_video_frame(answer(3, 8), Some(&mut frames))),
+            "an odd generation, a write"
+        );
+        assert_eq!(
+            *decode_video_frame(answer(4, 8), Some(&mut frames))
+                .unwrap()
+                .pixels,
+            [7; 8]
+        );
+        assert!(
+            unavailable(decode_video_frame(answer(4, 8), Some(&mut frames))),
+            "read already"
+        );
     }
 
     #[test]
