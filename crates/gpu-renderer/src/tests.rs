@@ -4412,6 +4412,184 @@ fn rejects_a_malformed_video_frame_larger_than_the_texture_limit() {
     ));
 }
 
+/// A 37 x 21 frame, whose rows (148 bytes) need padding on their way to
+/// the GPU, with colors that change across it and with its time.
+fn patterned_frame(time: f64) -> Vec<u8> {
+    let shift = (time * 50.0) as u32;
+    (0..21u32)
+        .flat_map(|y| {
+            (0..37u32).flat_map(move |x| {
+                [
+                    (x * 7 + shift) as u8,
+                    (y * 11) as u8,
+                    ((x + y) * 3) as u8,
+                    255,
+                ]
+            })
+        })
+        .collect()
+}
+
+/// Serves `patterned_frame` at the time asked for.
+struct PatternedDecoder;
+
+impl VideoFrameDecoder for PatternedDecoder {
+    fn decode_frame(&mut self, _: &Path, time: f64) -> Result<VideoFrame, MediaError> {
+        Ok(VideoFrame {
+            width: 37,
+            height: 21,
+            pixels: patterned_frame(time).into(),
+        })
+    }
+}
+
+/// A video layer of `clip.mp4` at `time`, its top-left corner at `x`, scaled
+/// by `scale`.
+fn video_at(id: &str, x: f64, time: f64, scale: f64) -> Layer {
+    Layer {
+        id: id.to_owned(),
+        transform: EvaluatedTransform {
+            anchor: Point { x: 0.0, y: 0.0 },
+            position: Point { x, y: 0.0 },
+            scale: Point { x: scale, y: scale },
+            ..EvaluatedTransform::default()
+        },
+        opacity: 1.0,
+        blend_mode: BlendMode::Normal,
+        effects: Default::default(),
+        content: LayerContent::Video {
+            asset: ResolvedAsset {
+                id: "clip".to_owned(),
+                location: AssetLocation::File {
+                    path: "clip.mp4".to_owned(),
+                },
+            },
+            timing: MediaTiming {
+                local_time: Time::ZERO,
+                source_start: Time::ZERO,
+                source_time_seconds: time,
+                playback_rate: 1.0,
+                r#loop: false,
+            },
+            width: None,
+            height: None,
+        },
+    }
+}
+
+/// The 37 x 21 region of `frame` (`width` wide) from `x`.
+fn region(frame: &GpuFrame, width: u32, x: u32) -> Vec<u8> {
+    (0..21)
+        .flat_map(|row| {
+            let start = ((row * width + x) * 4) as usize;
+            frame.pixels()[start..start + 37 * 4].to_vec()
+        })
+        .collect()
+}
+
+#[test]
+fn video_frames_reuse_their_texture_and_staging_memory() {
+    let Some(renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
+    }) else {
+        return;
+    };
+    let mut renderer = renderer.with_video_decoder(PatternedDecoder);
+    let scene = |time| {
+        let mut scene = empty_scene(37, 21);
+        scene.layers.push(video_at("video", 0.0, time, 1.0));
+        scene
+    };
+    let first = renderer.render(&scene(0.0)).unwrap();
+    assert_eq!(first.pixels(), patterned_frame(0.0));
+    let second = renderer.render(&scene(1.0)).unwrap();
+    assert_eq!(second.pixels(), patterned_frame(1.0));
+    let allocations = renderer.video_uploads.allocations;
+    assert_eq!(renderer.video_uploads.kept(), (1, 1));
+    let again = renderer.render(&scene(0.0)).unwrap();
+    assert!(again.pixels() == first.pixels(), "time 0 drew differently");
+    assert_eq!(renderer.video_uploads.allocations, allocations);
+
+    // What a render without video leaves goes as the render after it begins.
+    renderer.render(&empty_scene(37, 21)).unwrap();
+    renderer.render(&empty_scene(37, 21)).unwrap();
+    assert_eq!(renderer.video_uploads.kept(), (0, 0));
+}
+
+#[test]
+fn video_layers_of_one_size_each_draw_into_their_own_texture() {
+    let Some(renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
+    }) else {
+        return;
+    };
+    let mut renderer = renderer.with_video_decoder(PatternedDecoder);
+    let mut scene = empty_scene(74, 21);
+    scene.layers.push(video_at("left", 0.0, 0.0, 1.0));
+    scene.layers.push(video_at("right", 37.0, 1.0, 1.0));
+    for _ in 0..2 {
+        let frame = renderer.render(&scene).unwrap();
+        assert_eq!(
+            region(&frame, 74, 0),
+            patterned_frame(0.0),
+            "the left layer"
+        );
+        assert_eq!(
+            region(&frame, 74, 37),
+            patterned_frame(1.0),
+            "the right layer"
+        );
+    }
+    assert_eq!(renderer.video_uploads.kept().0, 2);
+}
+
+#[test]
+fn a_mipmapped_video_frame_draws_as_the_same_image_does() {
+    // Drawn at a quarter of its size in a final render, the frame gets
+    // mipmaps, which go up through the video's staging memory with padded
+    // rows at aligned offsets; the image goes through `write_texture`.
+    let Some(renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
+    }) else {
+        return;
+    };
+    let mut renderer = renderer.with_video_decoder(PatternedDecoder);
+    assert_eq!(renderer.render_quality(), RenderQuality::Final);
+    renderer.image_sources.insert_raster(
+        "pattern",
+        image::RgbaImage::from_raw(37, 21, patterned_frame(0.5)).unwrap(),
+    );
+    let mut scene = empty_scene(12, 8);
+    scene.layers.push(video_at("video", 1.0, 0.5, 0.25));
+    let video = renderer.render(&scene).unwrap();
+    let mut image = video_at("image", 1.0, 0.5, 0.25);
+    image.content = LayerContent::Image {
+        width: None,
+        height: None,
+        fit: None,
+        animation: None,
+        asset: ResolvedAsset {
+            id: "pattern".to_owned(),
+            location: AssetLocation::File {
+                path: "pattern.png".to_owned(),
+            },
+        },
+    };
+    scene.layers = vec![image];
+    let drawn = renderer.render(&scene).unwrap();
+    assert!(
+        video
+            .pixels()
+            .iter()
+            .any(|&value| value != 0 && value != 255),
+        "the frame drew nothing"
+    );
+    assert_eq!(video.pixels(), drawn.pixels());
+}
+
 #[test]
 fn keeps_psd_composites_of_different_levels_apart_at_the_same_size() {
     let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {

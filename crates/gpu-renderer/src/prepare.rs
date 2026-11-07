@@ -67,6 +67,7 @@ impl GpuRenderer {
         self.hit_regions.clear();
         self.plane_entries.clear();
         self.plane_video_frames.clear();
+        self.video_uploads.begin_render();
         self.measuring_plane = false;
         self.walk = Walk::default();
         let mut items = Vec::new();
@@ -863,12 +864,19 @@ impl GpuRenderer {
                         image = DecodedImage::new(width, height, pixels.into_raw())?;
                     }
                     // Every frame brings new pixels, so video is never
-                    // cached, and its mipmaps would be rebuilt every frame:
-                    // only a final render of a frame shrunk to half size or
-                    // less pays for them.
+                    // cached (its texture and staging memory are, see
+                    // `VideoUploads`), and its mipmaps would be rebuilt every
+                    // frame: only a final render of a frame shrunk to half
+                    // size or less pays for them.
                     let mipmaps = self.render_quality == RenderQuality::Final
                         && state.transform.texels_per_pixel(1.0) >= 2.0;
-                    self.upload_texture(&image, mipmaps)
+                    self.video_uploads.upload(
+                        &self.device,
+                        &self.queue,
+                        &self.texture_bind_group_layout,
+                        &image,
+                        mipmaps,
+                    )
                 };
                 output.push(PreparedItem::Layer(PreparedLayer::new(
                     texture,

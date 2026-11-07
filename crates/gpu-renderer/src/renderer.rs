@@ -16,7 +16,8 @@ use crate::scene::{SceneTarget, scene_target};
 use crate::shader::ShaderProcessor;
 use crate::text::{PendingText, TextLayout, TextSize, find_layer};
 use crate::texture::{
-    CachedTexture, CanvasTexture, DecodedImage, LayerTexture, canvas_format, upload_texture,
+    CachedTexture, CanvasTexture, DecodedImage, LayerTexture, VideoUploads, canvas_format,
+    upload_texture,
 };
 use crate::transform::{CLIP_ENTRY_SIZE, ClipEntry, Walk};
 #[cfg(target_os = "macos")]
@@ -183,6 +184,8 @@ pub struct GpuRenderer {
     /// The video frames decoded while planes were measured this frame, by
     /// layer and source time, for those layers' draws in the planes.
     pub(crate) plane_video_frames: Vec<(String, f64, VideoFrame)>,
+    /// Video frames' textures and staging buffers, kept between renders.
+    pub(crate) video_uploads: VideoUploads,
     /// The last prepared frame's leaf layers, in painter's order.
     pub(crate) hit_regions: Vec<HitRegion>,
 }
@@ -414,6 +417,7 @@ impl GpuRenderer {
             scene_area: u64::MAX,
             plane_area_limit: 4,
             plane_video_frames: Vec::new(),
+            video_uploads: VideoUploads::default(),
             hit_regions: Vec::new(),
         })
     }
