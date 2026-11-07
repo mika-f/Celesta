@@ -1,0 +1,640 @@
+# Media components: redesigning the codec role (2026-11-08)
+
+Design for mika-f/Celesta#782. It replaces the single `codec` role
+(`docs/handoff/2026-11-05-codec-plugin.md`) with **media components**:
+decoders, video encoders, audio encoders, and muxers, each declared by a
+plugin and chosen separately. v0.10 is unreleased, so nothing here keeps
+compatibility with the current `codec` role, its protocol, or the
+exporter's `--preset` / `--crf` / `--bit-depth` / `--color-conversion` /
+`--output-format` options.
+
+Decided with the user one question at a time. The answers to the issue's
+twelve open questions are summarized in [Decisions](#decisions); the rest
+of this note specifies them.
+
+## Goals
+
+- A plugin can add one piece (an H.264 encoder, an AAC encoder, a WebM
+  muxer, a decoder for one format) without implementing the rest.
+- Video from one plugin and audio from another can go into a muxer from a
+  third.
+- Encoder settings belong to the encoder: the plugin describes them, and the
+  editor's export dialog and the CLI are built from that description.
+- Users choose components and settings when they export: a dialog in the
+  editor, flags in the CLI. They can save presets for later use, which are
+  stored globally for the user.
+- Exports are not slower than on `main` today (#645's hard requirement).
+  Frames reach the encoder through shared memory, pipelined.
+- Colors are correct and tagged: BT.709 throughout.
+- Stills and image sequences are components too.
+- First plugins beyond FFmpeg: OS-native ones (AVFoundation / VideoToolbox
+  on macOS, Media Foundation on Windows).
+
+## Non-goals (for this design)
+
+- `@celesta.studio/web` stays on Mediabunny/WebCodecs, H.264 + AAC MP4
+  only.
+- GPU texture sharing with hardware encoders (IOSurface, DXGI shared handles,
+  Vulkan external memory): the negotiation names are reserved and nothing
+  else is done.
+- HDR output, more than two audio channels, localized setting labels,
+  plugin-provided presets, sniffing a file's first bytes, a disk cache of
+  `describe`, and user-chosen decoder priority. Each has a place reserved
+  where it matters ([Deferred](#deferred)).
+- Still image *input* (PNG/JPEG/GIF/WebP layers) stays in the renderer
+  (`crates/renderer/src/image_source.rs`), in process.
+
+## Decisions
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Granularity | Four component kinds: decoder, video encoder, audio encoder, muxer. Encoders return compressed packets (WebCodecs-style codec strings and decoder configuration); Celesta interleaves them and hands them to the muxer. |
+| 2 | Capability discovery | Two layers. The manifest declares components statically, which is enough to list them and route files without starting a plugin. A runtime `describe` is authoritative: availability with a reason, the settings schema, and accepted formats. `describe` is called on demand only (when the export dialog opens, when an export starts, `--list-components --check`). It is cached in memory, keyed by plugin folder and approval fingerprint, and the cache is dropped on Reload Plugins. |
+| 3 | Settings schema | A small custom vocabulary shaped like `registerComponent()`'s: `select` / `number` / `boolean` / `string`, with `group`, `advanced`, and `visibleWhen`. Celesta validates settings before `open`. No codec-neutral quality/speed setting, and no plugin presets. User presets go in `export-presets.json` in the user settings folder. |
+| 4 | Selection | Components are named `<plugin>/<component>`. By default the muxer comes from the output's extension, and its default codecs are served by encoders from the muxer's own plugin first, then bundled plugins, then the search order. Components from project plugins are never chosen by default. The editor has an export dialog. The CLI takes `--preset`, `--muxer`, `--video-encoder`, `--video-option`, `--audio-encoder`, `--audio-option`, `--list-components`, and `--describe`. |
+| 5 | Transport | Raw frames go through a shared-memory ring of N slots, sized at export start. Requests are pipelined in order, with up to N in flight, and answers come back in order, with no request IDs. Packets and audio go through the pipe. Decoding keeps #775's single slot. |
+| 6 | Pixel formats and color | Celesta offers `rgba8`, `rgba16` (straight), `yuv420p`, `yuv420p10`, `nv12`, and `p010`, and the encoder picks one. Every encoder is told `bt709 / bt709 / bt709 / limited`. The GPU conversion moves from BT.601 to BT.709, and every container is tagged. HDR fields are reserved. |
+| 7 | Audio | Interleaved `f32`, mono or stereo. The encoder picks the rate and channel count, and Celesta resamples. Audio streams to the encoder once the mix is done. Encoder delay and the loop pre-roll are expressed as negative timestamps that muxers declaring `trimsLeadingAudio` hide. `--audio-encoder none`. |
+| 8 | Stills and sequences | Video encoders `png` / `jpeg` / `webp` and muxers `image` / `imageSequence`, from a new bundled first-party `image` plugin. Contact sheets are composed in Celesta and written through them. |
+| 9 | Decoders | Routed by declared extension, trying each candidate's `probe` and moving on when one answers `unsupported`. Order: user-installed, then bundled, then approved project plugins; a project decoder in use is shown in the UI. Decoding processes are not shared with encoding or content plugins. |
+| 10 | Web | Unchanged. |
+| 11 | Exporter API | `ExportOptions.output: OutputChoice`, resolved by a single function every front end uses. A component registry replaces the global `set_codec`. |
+| 12 | First plugins and order | Phases P1–P6 ([Phases](#phases)): FFmpeg and the test codec ported in P1–P2, the `image` plugin in P4, macOS native in P5, Windows Media Foundation in P6. |
+
+## Components
+
+A **component** is one capability a plugin's process serves:
+
+| Kind | Does | Named by |
+| --- | --- | --- |
+| `decoder` | probe, exact-time and sequential video frames, whole-file audio | file extensions |
+| `videoEncoder` | raw frames → compressed video packets | codec families it produces |
+| `audioEncoder` | `f32` PCM → compressed audio packets | codec families it produces |
+| `muxer` | packets of one video and at most one audio track → an output file (or files) | file extensions, and the codec families it accepts |
+
+A component's reference is `<plugin id>/<component id>`, such as
+`ffmpeg/libx264`. Component IDs are unique within a plugin per kind. When
+two installed plugins share an ID, the earlier in search order wins, and
+listings show each one's folder.
+
+**Codec families** are the four-character names of ISO-BMFF sample entries
+(and WebCodecs' codec strings), used in manifests and for matching:
+`avc1`, `hvc1`, `av01`, `vp09`, `ap4h` (ProRes 4444), `apch` (ProRes 422
+HQ), `mp4a`, `opus`, `lpcm`, `png`, `jpeg`, `webp`. Families are compared as
+strings, so a plugin can use one Celesta does not know. A **codec string**,
+such as `avc1.640028` or `mp4a.40.2`, is the full form an encoder reports
+once it knows its configuration. Its family is the part before the first
+`.`.
+
+## Manifest
+
+The manifest's `roles` gains `media`, which replaces `codec` (an old
+`codec` manifest now reads as an unknown role and is ignored). A `media`
+plugin's `protocol` is `2`. Content plugins stay on protocol 1, and the host
+accepts each version only for its role. The new key is `media`, because
+`components` already means the module's Add-menu components:
+
+```json
+{
+  "id": "ffmpeg",
+  "version": "0.10.0",
+  "protocol": 2,
+  "roles": ["media"],
+  "executable": { "macos-aarch64": "bin/celesta-codec-ffmpeg" },
+  "media": {
+    "decoders": [
+      { "id": "ffmpeg", "name": "FFmpeg",
+        "extensions": ["mp4", "m4v", "mov", "webm", "mkv", "avi", "mp3", "wav", "flac", "ogg", "m4a", "aac", "opus"] }
+    ],
+    "videoEncoders": [
+      { "id": "libx264", "name": "H.264 (x264)", "codecs": ["avc1"] },
+      { "id": "prores", "name": "ProRes (prores_ks)", "codecs": ["ap4h", "apch"] },
+      { "id": "vp9", "name": "VP9 (libvpx)", "codecs": ["vp09"] }
+    ],
+    "audioEncoders": [
+      { "id": "aac", "name": "AAC", "codecs": ["mp4a"] },
+      { "id": "opus", "name": "Opus", "codecs": ["opus"] },
+      { "id": "pcm", "name": "PCM", "codecs": ["lpcm"] }
+    ],
+    "muxers": [
+      { "id": "mp4", "name": "MP4", "extensions": ["mp4", "m4v"],
+        "video": ["avc1", "hvc1", "av01"], "audio": ["mp4a", "opus"],
+        "defaultVideo": "avc1", "defaultAudio": "mp4a", "trimsLeadingAudio": true },
+      { "id": "mov", "name": "QuickTime", "extensions": ["mov"],
+        "video": ["avc1", "hvc1", "ap4h", "apch"], "audio": ["mp4a", "lpcm"],
+        "defaultVideo": "ap4h", "defaultAudio": "lpcm", "trimsLeadingAudio": true },
+      { "id": "webm", "name": "WebM", "extensions": ["webm"],
+        "video": ["vp09", "av01"], "audio": ["opus"],
+        "defaultVideo": "vp09", "defaultAudio": "opus" }
+    ]
+  }
+}
+```
+
+- A muxer with no `audio` list takes no audio track. A muxer may set
+  `"sequence": true` when it writes several files from one pattern, as
+  `imageSequence` does.
+- `name` is English display text.
+- The manifest is an upper bound. `describe` cannot add components, and a
+  component `describe` leaves out is unavailable.
+- Parsing is lenient as before: unknown keys are ignored, and a malformed
+  component is reported as a plugin problem and skipped, without
+  dropping the plugin's other components.
+
+## Protocol 2
+
+The plugin protocol's framing is unchanged (`celesta_plugin::protocol`):
+one JSON header line, optionally followed by a binary payload whose length
+the header names. Each message below is the header's JSON; `+ payload`
+marks one with a payload. Every request can be answered by
+`{"type":"error","message","code"?,…}` instead.
+
+### Handshake
+
+| Request | Answer |
+| --- | --- |
+| `{"type":"hello","protocol":2,"frames"?:{"sharedMemory":{"handle","bytes"}}}` | `{"type":"hello","protocol":2,"roles":["media"],"frames"?:"sharedMemory"}` |
+| `{"type":"describe"}` | `{"type":"described","components":[ComponentDescription]}` |
+
+`frames` is #775's negotiation, unchanged, and offered to every media
+process. A decoding process uses its segment as one slot, as today. An
+encoding process uses it as a ring ([Transport](#transport)).
+
+`ComponentDescription`:
+
+```json
+{
+  "kind": "videoEncoder", "id": "libx264",
+  "available": true,
+  "settings": [ SettingField ],
+  "inputFormats": ["yuv420p", "yuv420p10", "nv12", "p010", "rgba8", "rgba16"],
+  "transports": ["sharedMemory", "pipe"]
+}
+```
+
+- `available: false` comes with a `reason`, for example "this FFmpeg build has no libx264". A component that is not available has nothing else.
+- `inputFormats` (video encoders): every format it can take under any settings, best first.
+- `sampleRates` (audio encoders): a list, or `"any"`. `channels` (audio encoders): `[1, 2]`.
+- `transports` (video encoders): `sharedMemory` and `pipe` today. `ioSurface`, `dxgiShared`, and `vulkanExternal` are reserved names that Celesta does not offer yet.
+- Muxers and decoders describe `settings` only. A decoder needs nothing more.
+
+### Decoding
+
+| Request | Answer |
+| --- | --- |
+| `{"type":"probe","decoder","path"}` | `{"type":"probed","probe":MediaProbe}` |
+| `{"type":"decodeVideo","decoder","path","time","sequential"}` | `{"type":"videoFrame","width","height","slot"?}` + RGBA8 payload when not in the slot |
+| `{"type":"decodeAudio","decoder","path","sampleRate","channels"}` | `{"type":"audio","sampleRate","channels"}` + `f32` LE payload |
+
+The answers are those of protocol 1, plus `decoder`, the component's ID. A
+`probe` error with code `unsupported` means "not a file this decoder reads"
+and moves routing to the next candidate. Other errors keep today's codes
+(`notFound`, `noVideoStream`, `invalidTimestamp`, …).
+
+### Encoding
+
+Times are integers in a track's **timescale**. Video uses the frame rate's
+numerator, so a frame lasts its denominator: 30000/1001 fps is timescale
+30000 and duration 1001. Audio uses its sample rate, so time counts sample
+frames.
+
+| Request | Answer |
+| --- | --- |
+| `{"type":"openVideoEncoder","component","settings","width","height","frameRate","timescale","offered":[PixelFormat],"color":Color,"ring"?:{"slots","slotBytes"}}` | `{"type":"videoEncoderOpened","session","input":PixelFormat,"alpha"}` |
+| `{"type":"encodeVideoFrame","session","pts","slot"?}` (+ payload when not in a slot) | `{"type":"videoFrameAccepted","packets":[Packet],"config"?:TrackConfig}` + packet bytes |
+| `{"type":"finishVideoEncoder","session"}` | `{"type":"videoEncoderFinished","packets","config"?}` + packet bytes |
+| `{"type":"openAudioEncoder","component","settings","sampleRate","channels"}` | `{"type":"audioEncoderOpened","session","sampleRate","channels","delay"}` |
+| `{"type":"encodeAudio","session","pts","frames"}` + interleaved `f32` LE | `{"type":"audioAccepted","packets","config"?}` + packet bytes |
+| `{"type":"finishAudioEncoder","session"}` | `{"type":"audioEncoderFinished","packets","config"?}` + packet bytes |
+| `{"type":"abortEncoder","session"}` | `{"type":"encoderAborted"}` |
+
+- `settings` is the validated `{ key: value }` map. Values are JSON strings, numbers, or booleans.
+- `input` is one of `offered`, chosen for these settings: `p010` for 10-bit, for example. `alpha` says whether the encoded video keeps the frame's alpha (ProRes 4444 does, ProRes 422 does not).
+- `videoFrameAccepted` is sent once the frame has been read out of its slot or payload (copied into the encoder's own buffer), not once it is encoded. That frees the slot.
+- `Packet`: `{"pts","dts","duration","key","bytes"}`. The packets' bytes follow the header back to back, in order.
+  - Packets come out whenever the encoder produces them: on any later answer of the same session, or on `finish`. An answer may carry none.
+  - Audio packet times include the encoder's `delay`, so the first packets have negative `pts`.
+- `TrackConfig`: `{"codec":"avc1.640028","description"?:base64}`. `description` is the decoder configuration a muxer needs (avcC, hvcC, esds' AudioSpecificConfig, OpusHead, …), as WebCodecs' `decoderConfig`.
+  - It comes with the first packets, or earlier. VideoToolbox, for example, knows it only after the first frame.
+  - Celesta opens the muxer once it has every track's config.
+- `delay`: the encoder's priming, in sample frames (AAC's 1024 / 2112, Opus's pre-skip).
+
+### Muxing
+
+| Request | Answer |
+| --- | --- |
+| `{"type":"openMuxer","component","settings","output","tracks":[Track],"leadingAudio"?}` | `{"type":"muxerOpened","session"}` |
+| `{"type":"writePackets","session","packets":[{"track","pts","dts","duration","key","bytes"}]}` + bytes | `{"type":"packetsWritten"}` |
+| `{"type":"finishMuxer","session"}` | `{"type":"muxerFinished","files":[path]}` |
+| `{"type":"abortMuxer","session"}` | `{"type":"muxerAborted","files":[path]}` |
+
+- `Track` (video): `{"kind":"video","config":TrackConfig,"timescale","width","height","frameRate","color","alpha"}`.
+- `Track` (audio): `{"kind":"audio","config","timescale","sampleRate","channels","delay"}`.
+- `leadingAudio`: sample frames before 0 that the muxer must hide, beyond the encoder's `delay`. This is the loop pre-roll, sent only to muxers that declare `trimsLeadingAudio`.
+- `files` lists what the muxer wrote (one file, or a sequence), so Celesta can report it, or remove it on abort.
+- The output is written where Celesta says. Celesta handles overwrite checks and the temporary-file-then-rename (as today's exporter does).
+
+### Errors
+
+New codes:
+
+| Code | Meaning |
+| --- | --- |
+| `unsupported` | `probe` only: the decoder does not read this file. |
+| `invalidSettings` | Carries `key` and `message`, for a combination only the plugin can judge. |
+| `componentUnavailable` | Carries `component` and `reason`, for a component that turned out unusable at `open`. |
+
+Every other error keeps protocol 1's behavior: an unknown code is
+`MediaError::Codec(message)`, and the plugin keeps running.
+
+## Capability discovery
+
+- **Listing** (`InstalledPlugins::media()` in `celesta-plugin-host`) reads manifests only, and covers every plugin that may run under the usual search order, approval, and disabled list. It returns `MediaComponentInfo { reference, kind, name, plugin origin (user / bundled / project), manifest fields }`.
+- **`describe`** is called by `celesta_media::MediaRegistry::describe(plugin)`, which starts the plugin's process, says `hello`, asks `describe`, and stops it. It is called:
+  - when the editor's export dialog opens (in the background, per plugin; the dialog shows "Checking…" on that plugin's components until it answers)
+  - when an export starts (for the plugins of the chosen components)
+  - for `--list-components --check` and `--describe`
+
+  It is never called during discovery, project open, or editor start-up.
+- **Cache.** The answers live in the process's memory, keyed by (plugin folder, the approval fingerprint of `approval.rs`).
+  - A changed program changes the fingerprint and misses the cache.
+  - The editor's Reload Plugins clears it.
+  - A `describe` that fails (the process cannot start, a missed deadline, a bad answer) is not cached. Its components count as unavailable, with the failure as their reason.
+- **Mismatch.** Celesta ignores components that `describe` returns but the manifest lacks (and warns once, on stderr). Components the manifest has but `describe` leaves out count as unavailable, with the reason "the plugin did not describe it".
+
+## Settings schema
+
+`SettingField`, in the shape of `registerComponent()`'s fields
+(`crates/react-bridge/src/types.rs`, `ComponentPropertyField`) so the
+editor's property controls can be reused:
+
+```json
+{ "key": "rateControl", "type": "select", "label": "Rate control", "group": "Rate control",
+  "options": [ { "value": "crf", "label": "Constant quality (CRF)" },
+               { "value": "vbr", "label": "Average bitrate" } ],
+  "default": "crf" }
+{ "key": "crf", "type": "number", "integer": true, "min": 0, "max": 51, "step": 1,
+  "default": 18, "label": "CRF", "group": "Rate control",
+  "visibleWhen": { "rateControl": "crf" },
+  "description": "Lower is higher quality and larger." }
+{ "key": "bitrate", "type": "number", "integer": true, "min": 100000, "unit": "bit/s",
+  "default": 8000000, "label": "Bitrate", "group": "Rate control",
+  "visibleWhen": { "rateControl": "vbr" } }
+{ "key": "tune", "type": "string", "default": "", "label": "Tune", "advanced": true }
+{ "key": "faststart", "type": "boolean", "default": true, "label": "Fast start" }
+```
+
+- **Types.**
+  - `select`: `options` with `value` (a string) and `label`.
+  - `number`: `min`, `max`, `step`, `integer`, and `unit`.
+  - `boolean`.
+  - `string`: free text, for advanced use.
+- **Common fields.** `key`, `type`, `label`, and `default` are required. `description`, `group`, `advanced`, and `visibleWhen` are optional.
+  - `visibleWhen` maps keys to a value, or to a list of values. Every listed key must match for the field to show and apply.
+  - A hidden field is not sent.
+- **Validation** (`celesta_media::settings::validate`) runs before any `open`, and fails with `invalid_option` naming the key. It checks:
+  - every key is known and of its type
+  - numbers are in range, and whole when `integer`
+  - `select` values are among the options
+  - fields hidden by `visibleWhen` are not given
+
+  Missing keys take their defaults. The plugin may still refuse a combination with `invalidSettings`.
+- **No codec-neutral quality/speed setting** and no plugin presets. Defaults should be good on their own, and user presets carry "my usual settings". A future `hint: "quality" | "speed"` on a field could drive a simple mode.
+
+### User presets
+
+`export-presets.json`, in `celesta_plugin_host::user_settings_dir()`
+beside (not inside) `settings.json`, which stays "what code Celesta may
+run". It is written atomically as `settings.json` is. Owned by
+`celesta-exporter` (`presets.rs`), which the editor already depends on.
+
+```json
+{
+  "version": 1,
+  "presets": [
+    { "name": "YouTube 1080p",
+      "muxer": "ffmpeg/mp4",
+      "video": { "component": "ffmpeg/libx264", "options": { "crf": 18, "preset": "slow" } },
+      "audio": { "component": "ffmpeg/aac", "options": { "bitrate": 192000 } } }
+  ],
+  "last": { "muxer": "ffmpeg/mp4",
+            "video": { "component": "ffmpeg/libx264", "options": {} },
+            "audio": { "component": "ffmpeg/aac", "options": {} } }
+}
+```
+
+- `audio` may be `"none"`.
+- `last` is the dialog's most recent choice.
+- Projects store nothing.
+- **Stale presets.** After a plugin update, a preset may hold an unknown key, a value out of range, or a component that is gone. The response depends on who uses it:
+  - The editor drops the key or resets the value to its default, falls back to the default component, and shows a warning on the preset.
+  - `--preset` warns on stderr (and in the JSON report's `warnings`) and does the same.
+  - A value given explicitly on the command line, in MCP, or in TS fails with `invalid_option`.
+
+## Selection
+
+### Resolving an output
+
+`celesta_exporter::resolve_output(choice: &OutputChoice, output: &Path,
+registry: &MediaRegistry) -> Result<ResolvedOutput, ExportError>` is the one
+place choices become components. It runs these steps in order:
+
+1. **Preset.** With `preset`, its components and options are the base. A name that is not in `export-presets.json` is `unknown_preset`, with a hint when it is a libx264 preset name (`--preset ultrafast` → "use `--video-option preset=ultrafast`").
+2. **Muxer.** The explicit or preset muxer, or else the first muxer whose `extensions` include the output's extension, ranked as below. With none, the error is `unsupported_output`, listing the extensions available.
+3. **Video encoder.** The explicit or preset one, or else the first available encoder that produces the muxer's `defaultVideo`, ranked as below. An explicit one whose codecs the muxer does not accept is `incompatible_components`.
+4. **Audio encoder.** The same as step 3, against `defaultAudio`. It is `none` when the choice says so or the muxer takes no audio.
+5. **Options.** Explicit options are layered over the preset's and validated against each component's schema.
+6. **Availability.** Each chosen component's `describe` must say it is available. Otherwise the error is `component_unavailable`, with its reason (not installed, not approved, unavailable: "this FFmpeg build has no libx264").
+
+**Ranking** default candidates:
+
+1. the muxer's own plugin
+2. bundled first-party plugins
+3. user-installed plugins in search order
+
+Approved project plugins are never chosen by default, only when named.
+
+### Editor
+
+- Export opens a dialog that replaces today's save panel. From top to bottom:
+  - Preset
+  - Container (muxer)
+  - Video encoder and its fields (grouped; advanced fields collapsed; `visibleWhen` applied live)
+  - Audio encoder (or None) and its fields
+  - the existing range and loudness controls
+  - "Save as preset…"
+  - Export…, which opens the save panel with the muxer's first extension
+- Components show their plugin. A project plugin's components are marked "(project)". Unavailable ones are listed but disabled, with their reason. While `describe` is running, they show "Checking…".
+- The choice is remembered in `last`.
+- The editor's GUI follows the GPUI Kit design guides (no gradients, no uppercase labels, radius 0, lucide icons).
+
+### CLI (`celesta-exporter`)
+
+```text
+--preset <name>                 a user preset from export-presets.json
+--muxer <plugin/id>
+--video-encoder <plugin/id>
+--video-option <key=value>      repeatable; parsed by the field's type
+--audio-encoder <plugin/id|none>
+--audio-option <key=value>      repeatable
+--list-components [--check]     manifests only; --check also runs describe
+--describe <plugin/id>          availability and settings schema
+```
+
+`--json` gives `--list-components` and `--describe` machine-readable
+output.
+
+- Removed: `--output-format` (the extension and `--muxer` decide), `--preset <x264 name>`, `--crf`, `--bit-depth`, and `--color-conversion` ([Pixel formats](#pixel-formats-and-color)).
+- `--loop` stays and means the loop pre-roll ([Audio](#audio)).
+- Stills keep `--frame` and their other flags. Their format comes from the extension, routed to the `image` plugin's components (P4).
+
+### MCP and `@celesta.studio/exporter`
+
+Both mirror the CLI: `{ preset?, muxer?, videoEncoder?: { id?, options? },
+audioEncoder?: { id?, options? } | "none" }`, replacing `preset` / `crf` /
+`bitDepth` / `colorConversion` / `format`. They gain a
+`listComponents({ check? })` and a `describeComponent(id)`; MCP gets them as
+tools.
+
+## Exporter API
+
+```rust
+pub struct ExportOptions {
+    // … overwrite, range, render_quality, driver, subtitles, looping, loudness, plugins
+    pub output: OutputChoice,
+}
+
+pub struct OutputChoice {
+    pub preset: Option<String>,
+    pub muxer: Option<ComponentRef>,
+    pub video: EncoderChoice,
+    pub audio: AudioChoice,
+}
+
+pub struct EncoderChoice {
+    pub component: Option<ComponentRef>,
+    pub options: BTreeMap<String, SettingValue>,
+}
+
+/// `Encode` with no component takes the muxer's default audio encoder.
+pub enum AudioChoice { Encode(EncoderChoice), None }
+
+pub enum SettingValue { String(String), Number(f64), Boolean(bool) }
+```
+
+- **Removed:** `VideoFormat`, `VideoEncoding`, `EncoderPreset`, `BitDepth`, `ColorConversion`, `MAX_CRF`, and their `Unknown*` errors. From `celesta-media`: `Container`, the old `PixelFormat`, `EncoderSettings`, `MuxRequest`, `CodecProvider`'s encoder and mux methods, `set_codec`, and `codec`.
+- **`ExportedFile::Video`** carries `{ muxer, video: { component, codec }, audio: Option<{ component, codec }>, alpha, files }` instead of `format`. The JSON report's `output` has the same shape, and `alpha` now comes from the encoder's `videoEncoderOpened`.
+- **Error codes** (`report.rs`): `component_unavailable`, `incompatible_components`, `invalid_option`, `unknown_preset`, and `no_decoder` (which replaces `no_codec` for reading). They replace `invalid_crf`, `encoder_unavailable`, and `no_codec`. `unsupported_output` stays, with the new meaning.
+- **Progress dashboard** (`progress.rs`): labels come from component names and the settings that differ from their defaults ("H.264 (x264) · CRF 20 · slow"). This replaces the hard-coded "VP9 CRF 20" and "ProRes 4444".
+
+## Registry and routing
+
+`celesta_media::MediaRegistry` replaces the global `set_codec`. It is made
+from `InstalledPlugins::media()` (or, in tests, from in-process providers)
+and holds:
+
+- the component listing and the `describe` cache
+- a process factory per plugin (`MediaProcess`, the successor of `CodecProcess`)
+
+`MediaBackend::new(registry: Arc<MediaRegistry>)` takes it explicitly.
+The editor, the exporter, the MCP server, and the React bridge's probes
+each hold one registry, replaced on plugin discovery. Requests can then go
+to different plugins, which resolves #782's problem 9.
+
+The in-process provider trait splits along the component kinds, with
+`MediaProvider` advertising which a provider has:
+
+- `Decoder`: `probe`, `decode_video`, `decode_audio`, as `CodecProvider`'s are today, plus the decoder ID
+- `VideoEncoder`: `open`, `encode`, `finish`, `abort`, mirroring the protocol's encoding messages
+- `AudioEncoder`: the same four, for audio
+- `Muxer`: `open`, `write`, `finish`, `abort`
+
+Their exact signatures are settled in the implementation plan of the phase
+that introduces them (P1 for `Decoder`, P2 for the others), following the
+messages above one to one.
+
+`celesta_media::protocol::serve` dispatches protocol 2 to whichever the
+program registers. In-process implementations (tests, benches, and
+`FfmpegCodec` in its own tests) use the same traits.
+
+## Decoders
+
+- **Candidates** for a path are the decoders whose `extensions` include its extension (case-insensitively). When none do, or the path has no extension, every decoder is a candidate.
+- **Order**:
+  1. user-installed plugins (search order)
+  2. bundled plugins (FFmpeg first)
+  3. approved project plugins (search order)
+
+  User-installed plugins come first because a decoder that cannot read a file only costs a fallback. Project plugins come last, so a project cannot take over decoding of files Celesta can already read (#724's problem 3).
+- **Fallback.**
+  - `probe` goes to each candidate in turn. An `unsupported` error moves on to the next. Any other error, or a candidate whose process cannot start, also moves on, but is remembered.
+  - The first successful probe wins, and the path is pinned to that decoder in `MediaBackend`'s probe cache. Its later `decodeVideo` and `decodeAudio` go there, and errors after a successful probe do not fall back.
+  - When every candidate fails, the error is the most specific one remembered: `notFound`, or `noVideoStream` from a decoder that read the file. Otherwise it is `MediaError::Unsupported { path, tried }`. With no decoder installed at all, it is `MediaError::NoDecoder`.
+- **Processes.** Each `MediaBackend` has one process per decoder plugin, started on first use and reopened once on `CodecUnavailable` as today. The process gets #775's single shared slot. It is not shared with encoding (an export's components) or with content plugins.
+- **Visibility.** `MediaBackend` records which decoder served each path. When a project plugin's decoder serves any file, the editor's Plugins panel shows "<plugin> decodes <n> files in this project" with the files. Problems gets a matching info entry.
+- **Editor problem.** "No codec plugin can run" becomes "No media decoder can run", with the same reasons as today.
+
+## Transport
+
+- **Processes.** For an export, Celesta starts one process per plugin among the chosen components. FFmpeg's encoder, audio encoder, and muxer share one. An AVFoundation video encoder with FFmpeg's audio and muxer makes two.
+- **The ring.** Before starting the process that serves the video encoder, Celesta knows the frame size and the formats in the intersection of the encoder's `inputFormats` (from `describe`) and what the renderer can produce.
+  - It creates a segment of `slots × slotBytes`, where `slotBytes` is the largest of those formats at the frame size, plus the header. `slots` is 3 by default.
+  - It offers the segment at `hello` (#775's mechanism: inherited at spawn on Unix, `DuplicateHandle` on Windows) and declares the layout in `openVideoEncoder`'s `ring`.
+  - Each slot is a seqlock region exactly as #775's slot: a generation, then the bytes. Offsets and capacities are Celesta's.
+  - A codec that declines the segment at `hello` gets frames as payloads (`pipe`).
+- **Pipelining.** `PluginChild` gains a send window: up to `slots` requests in flight to one process.
+  - Answers come in order, one per request, since a plugin serves its input in order. No request IDs are needed. An answer of the wrong kind or out of order kills the plugin as today.
+  - Each request keeps its own deadline. `PluginChild::request` stays as the window of one.
+- **The flow.**
+  1. Celesta copies the GPU readback into a free slot and sends `encodeVideoFrame{slot}` without waiting.
+  2. When the window is full, it waits for the oldest answer, which frees that slot and brings packets.
+  3. Packets go to the interleaver, which sends `writePackets` to the muxer through the same window.
+
+  Rendering, the slot copy, encoding, and muxing then overlap.
+- **Packets and audio** go through the pipe: they are small next to raw frames. The largest are ProRes 4444 at 4K, a few MB a frame.
+- **The interleaver** (`celesta-exporter`) orders packets by decode time in seconds across the tracks.
+  - It writes video packets once audio packets up to the same time are known, or when there is no audio.
+  - Video packets that arrive before the mix is done are buffered in memory up to 256 MB, then spilled to a temporary file beside the output.
+- **Packets twice through Celesta.** Even when an encoder and its muxer share a process, packets travel through Celesta and back. That is accepted for its small size and uniformity. A same-process shortcut can come later.
+- **The escape hatch.** `CELESTA_CODEC_SHARED_MEMORY=0` turns off the encode ring too.
+- **Decoding** keeps #775's single slot, unchanged.
+
+## Pixel formats and color
+
+- **Formats** (the new `celesta_media::PixelFormat`):
+
+  | Format | Layout |
+  | --- | --- |
+  | `rgba8` | 8-bit RGBA; straight alpha, or opaque |
+  | `rgba16` | 16-bit LE RGBA, straight alpha (today's `Rgba16Straight`) |
+  | `yuv420p` | planar I420 |
+  | `yuv420p10` | planar, 10 bits in 16-bit LE |
+  | `nv12` | Y plane, then interleaved UV (new) |
+  | `p010` | 16-bit LE Y, then interleaved UV, 10 bits in the high bits (new) |
+
+  The YUV formats are opaque.
+- **Offered list.** Celesta offers, best first:
+  1. the YUV formats, when the GPU can convert (`supports_yuv420p_readback`)
+  2. `rgba16`
+  3. `rgba8`
+
+  The encoder answers the one it will take for these settings. This replaces `--color-conversion`: the conversion happens on the GPU whenever the encoder takes YUV and the GPU can produce it. Otherwise the encoder converts.
+- **`nv12` and `p010`** come from the existing `yuv420p.wgsl` with the chroma written interleaved (one two-channel chroma target). `ReadbackFormat` gains `Nv12` and `P010`.
+- **Alpha.**
+  - An encoder answering `alpha: true` gets frames cleared to transparent, as `rgba16` straight or `rgba8`.
+  - Otherwise frames are cleared to the default opaque background, as MP4 frames are today.
+
+  Alpha no longer follows from the container (`VideoFormat::has_alpha`) but from the encoder.
+- **Color.** Every `openVideoEncoder` and video `Track` carries `{ "primaries": "bt709", "transfer": "bt709", "matrix": "bt709", "range": "limited" }`.
+  - The GPU conversion changes from BT.601 to BT.709 (`yuv420p.wgsl`).
+  - Encoders converting RGBA themselves must use the given matrix and range (FFmpeg's `BT709_FILTER` already does).
+  - Every encoder and muxer tags its stream (H.264 VUI, `colr` atoms, WebM `Colour`).
+  - **Output change:** MP4 colors change from untagged BT.601 to tagged BT.709. That fixes a color shift in players that take untagged HD as BT.709, and the file is no longer byte-identical to `main`'s.
+- **HDR is reserved.** `transfer` may later be `pq` or `hlg`, and `Color` may carry `masteringDisplay` and `contentLightLevel`. Celesta renders SDR only and never sends them yet.
+
+## Audio
+
+- **Format.** Interleaved `f32` LE, 1 or 2 channels. Layout names (`mono`, `stereo`, `5.1`) are reserved for more.
+- **Negotiation.**
+  - `openAudioEncoder` sends the mix's rate (48 kHz by default) and channel count.
+  - The answer gives the rate and channels the encoder takes: Opus, for example, always 48 kHz.
+  - Celesta resamples with its shared resampler (`docs/handoff/2026-11-07-shared-resampling.md`) when they differ.
+- **Flow.**
+  - The mix still runs beside the video render (`exporter.rs`, as today), because loudness normalization needs all of it.
+  - Once it is done, Celesta streams it to the encoder in chunks of 1024 × 16 sample frames through the send window, and keeps the audio packets in memory (about 14 MB for 10 minutes at 192 kbps). The interleaver then merges them with the video packets.
+  - `mux_audio`, the PCM sidecar, and the second write of the output are gone.
+- **Delay.** The encoder's `delay` arrives with `audioEncoderOpened`, and its packets' `pts` already include it, starting negative. The muxer receives `delay` in the track and hides it (an MP4/MOV edit list, Opus pre-skip / WebM `CodecDelay`).
+- **The loop pre-roll** replaces `lead_in_frames`.
+  - With `looping`, and a muxer declaring `trimsLeadingAudio`, Celesta first feeds `LOOP_LEAD_IN_FRAMES` (16 × 1024) sample frames of the mix's end at negative `pts`, and sets `openMuxer`'s `leadingAudio` to that count.
+  - The muxer hides them as it hides `delay`.
+  - FFmpeg's MP4 and MOV declare it. Its WebM does not, so WebM behaves as today.
+- **No audio.** There is no audio track with `audio: None`, with a muxer without an `audio` list, or, as today, for a React entry whose audio graph has no clips. A project always gets the track of its mix, silent or not, as today.
+
+## Stills and sequences (P4)
+
+- A new first-party plugin, `plugins/image` (`celesta-media-image`, MIT OR Apache-2.0), bundled like `ffmpeg`. It moves `stills.rs`'s encoders into the plugin:
+  - Video encoders `png` (the `png` crate; settings: compression), `jpeg` (the `image` crate; quality), and `webp` (the `webp` crate; quality, lossless). Each takes `rgba8`, or `rgba16` for 16-bit PNG.
+  - Muxers `image` (one frame, one file; `extensions: ["png","jpg","jpeg","webp"]`, no audio) and `imageSequence` (`sequence: true`; writes `name-000090.ext` as today, with a `pattern` setting).
+- **`celesta-exporter`.** `--frame` and the other still options and the contact sheet's compositing stay. Their output goes through `resolve_output` with the `image` components, and the WebP size limit moves to the plugin's `invalidSettings`.
+- **Without the plugin**, stills fail with `component_unavailable`, as video does without FFmpeg.
+
+## OS-native plugins (P5, P6)
+
+- **P5, macOS** (`plugins/avfoundation`):
+  - Video encoders on VideoToolbox: `h264` (`avc1`), `hevc` (`hvc1`), and `prores` (`ap4h`, `apch`). They take `nv12`, `p010`, or `rgba16` for ProRes 4444, and report `available: false` when VideoToolbox lacks the encoder.
+  - Audio encoder `aac` on AudioToolbox.
+  - Muxers `mp4` and `mov` on AVAssetWriter, in passthrough (`outputSettings: nil`, with a source format hint built from `TrackConfig`).
+  - A decoder on AVFoundation (`AVAssetReader`) for `mp4`, `mov`, and `m4a`.
+
+  It is written in Rust with `objc2` bindings, and builds on macOS only (manifest `executable` for `macos-*`).
+- **P6, Windows** (`plugins/mediafoundation`): the same component set on Media Foundation (encoder MFTs, SinkWriter with compressed input, SourceReader). It cannot be run on the macOS development machine, so it is a separate session, verified by CI and on a Windows machine.
+
+These prove the design: an independent plugin, combined with FFmpeg's
+(for example AVFoundation's HEVC with FFmpeg's Opus in FFmpeg's MP4).
+
+## Testing and verification
+
+- **`celesta-plugin`**: the ring's slots read and write under the seqlock, as #775's slot; segments are sized for several slots.
+- **`celesta-plugin-host`**:
+  - `media` manifests parse, and an old `codec` role is ignored.
+  - Components are listed with their origin, and bad components are skipped.
+  - The send window keeps answers in order, enforces deadlines per request, and kills on an out-of-order answer.
+- **`celesta-media`**:
+  - Protocol 2 round-trips every message through a fake provider.
+  - Settings validation: every rule, `visibleWhen`, and defaults.
+  - Decoder routing: extension candidates, fallback on `unsupported`, pinning, ordering by origin, and the most specific error.
+  - The `describe` cache and its invalidation.
+  - The ring and pipelining against the test codec's program.
+- **`celesta-codec-test`**: ported to the four kinds (a lossless video encoder, a PCM encoder, its own muxer, its decoder), as program and in process. The core's export tests run through it, as today.
+- **`celesta-exporter`**:
+  - `resolve_output`: defaults by extension, ranking, presets and overrides, stale presets, and every error code.
+  - The interleaver: ordering, the spill, and audio-less runs.
+  - Pre-roll only with `trimsLeadingAudio`.
+  - The JSON report's shape.
+  - CLI parsing of the new flags.
+- **`celesta-codec-ffmpeg`**:
+  - Each component through the program.
+  - MP4, MOV, and WebM export and read back, and their colors are tagged BT.709.
+  - Looping MP4's first hit is as clean as before (the existing lead-in test).
+  - An LGPL-like build reports `libx264` unavailable with a reason.
+- **GPU**: `nv12` and `p010` readbacks match a CPU reference conversion. BT.709 values hold for known colors.
+- **Performance (the hard requirement).** These are measured against `main` (release builds, Apple M4, medians of several interleaved runs) and recorded in each phase's handoff note:
+  - `codec-bench` encode at 1080p and 4K
+  - exports of 300 frames at 1080p and 4K, with `ultrafast` and `medium`
+
+  The new path must not be slower.
+- **Rendering changes** (BT.709 in P2): screenshots of the same scene before and after, attached to the PR (AGENTS.md).
+- Each phase updates the user guide (`packages/website/content/en/` and `ja/`) and the Agent Skill (`skills/celesta/`) where they cover what it changes, and records its details in a `docs/handoff/<date>-<task>.md` note.
+
+## Phases
+
+Each phase is its own PR, stacked on the last. Each leaves `main`
+working.
+
+| Phase | Contents |
+| --- | --- |
+| P1: Protocol 2 and decoders | The manifest's `media` and `roles: ["media"]`, the component listing, `MediaRegistry`, the `describe` cache, decoder routing and fallback, the decoder half of protocol 2, the project-decoder notice, and "No media decoder can run". FFmpeg's and the test codec's decoders are ported. Until P2 replaces them, protocol 2 temporarily keeps protocol 1's `checkEncoder`, `openEncoder`, `encodeFrame`, `finishEncoder`, `abortEncoder`, and `muxAudio` messages unchanged, sent to the first runnable media plugin as `InstalledPlugins::codec()` chooses today, so exports keep working. P2 removes them. |
+| P2: Encoding | The settings schema and validation, the encoder and muxer halves of protocol 2, negotiation, the ring and the send window, the interleaver, audio streaming, delay and pre-roll, BT.709, `nv12`/`p010`, and `resolve_output`. Also FFmpeg's and the test codec's encoders and muxers; the exporter's options, CLI, JSON report, and progress labels; MCP and `@celesta.studio/exporter`; removal of the old types; and the performance comparison. |
+| P3: Export dialog | The editor's export dialog, `export-presets.json`, and the presets in the CLI, MCP, and TS (`--preset`). |
+| P4: Stills | The `image` plugin; stills, sequences, and contact sheets through it. |
+| P5: macOS native | `plugins/avfoundation`. |
+| P6: Windows native | `plugins/mediafoundation`, in its own session. |
+
+`--preset` is parsed from P2. Until P3 adds `export-presets.json` it
+fails with `unknown_preset` and the libx264 hint, so the old meaning never
+silently survives.
+
+## Deferred
+
+| Item | Where it would go |
+| --- | --- |
+| GPU texture sharing | `transports`: `ioSurface`, `dxgiShared`, `vulkanExternal`. |
+| HDR | `Color.transfer` `pq`/`hlg`, `masteringDisplay`, `contentLightLevel`. |
+| More than 2 channels | Channel layout names in `openAudioEncoder`. |
+| Out-of-order answers | Request IDs in protocol 2's headers, if a plugin ever needs to answer out of order. |
+| Disk cache of `describe` | Keyed as the memory cache is, if plugin start-up turns out slow. |
+| Sniffing | `magic` patterns in a decoder's manifest entry. |
+| User decoder priority | A list in `settings.json`, ahead of the origin order. |
+| Plugin presets, quality/speed hints, localized labels | `presets` in `describe`, `hint` on fields, `labels: { ja }`. |
+| Same-process packet shortcut | An `openMuxer` that names an encoder session of the same process. |
+| Web on the same model | WebCodecs-backed components in `@celesta.studio/web`. |
