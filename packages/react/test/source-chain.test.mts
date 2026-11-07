@@ -2,12 +2,13 @@
 // it.
 
 import assert from 'node:assert/strict';
-import { forwardRef, memo } from 'react';
+import { Fragment, forwardRef, memo } from 'react';
 import type { ReactNode } from 'react';
 import { jsx } from 'react/jsx-runtime';
 import { test } from 'vitest';
 
 import { markPrimitive, sourceChain } from '../src/internal.js';
+import { markTransparent } from '../src/source-chain.js';
 import { jsxDEV } from '../src/jsx-dev-runtime.js';
 import type { SourcePosition } from '../src/jsx-dev-runtime.js';
 import { createRoot } from '../src/reconciler.js';
@@ -141,5 +142,133 @@ test('omits layerId when the primitive has no host descendant', () => {
   const entry = chain.find((e) => e.name === 'Outer');
   assert.ok(entry);
   assert.equal(entry.kind, 'primitive');
+  assert.equal('layerId' in entry, false);
+});
+
+// Primitives as the runtime has them: components that render a host node
+// without a source position of their own.
+function G({ children }: { children?: ReactNode }) {
+  return jsxDEV('group', { children }, undefined, false);
+}
+function R() {
+  return jsxDEV('rect', {}, undefined, false);
+}
+markPrimitive(G);
+markPrimitive(R);
+
+/** Names every host node under `container` by `name`, for `layerIdOf`. */
+function ids(names: [HostNode, string][]): (node: HostNode) => string | undefined {
+  const map = new Map(names);
+  return (node) => map.get(node);
+}
+
+test('gives a component the id of its single root layer', () => {
+  function PriceTag() {
+    return jsxDEV(G, { children: jsxDEV(R, {}, undefined, false, at('tag.tsx', 3, 7)) }, undefined, false, at('tag.tsx', 2, 5));
+  }
+  const { container } = mount(jsxDEV(PriceTag, {}, undefined, false, at('scene.tsx', 9, 5)));
+  const group = container.children[0];
+  const rect = group.children[0];
+  const chain = sourceChain(rect, resolve, ids([[group, 'g'], [rect, 'r']]));
+  assert.deepEqual(
+    chain.map((entry) => [entry.name, entry.kind, entry.layerId]),
+    [
+      ['R', 'primitive', 'r'],
+      ['G', 'primitive', 'g'],
+      ['PriceTag', 'component', 'g'],
+    ],
+  );
+});
+
+test('gives a component that returns another component the same root', () => {
+  function Tag() {
+    return jsxDEV(G, { children: jsxDEV(R, {}, undefined, false, at('tag.tsx', 3, 7)) }, undefined, false, at('tag.tsx', 2, 5));
+  }
+  function PriceTag() {
+    return jsxDEV(Tag, {}, undefined, false, at('price.tsx', 2, 5));
+  }
+  const { container } = mount(jsxDEV(PriceTag, {}, undefined, false, at('scene.tsx', 9, 5)));
+  const group = container.children[0];
+  const rect = group.children[0];
+  const chain = sourceChain(rect, resolve, ids([[group, 'g'], [rect, 'r']]));
+  assert.equal(chain.find((entry) => entry.name === 'Tag')?.layerId, 'g');
+  assert.equal(chain.find((entry) => entry.name === 'PriceTag')?.layerId, 'g');
+});
+
+test('looks through a wrapper and empty children for the root', () => {
+  function Window({ children }: { children?: ReactNode }) {
+    return children;
+  }
+  markTransparent(Window);
+  function Card() {
+    return jsx(Fragment, {
+      children: [
+        null,
+        false,
+        jsxDEV(
+          Window,
+          { children: jsxDEV(G, { children: jsxDEV(R, {}, undefined, false, at('card.tsx', 4, 9)) }, undefined, false, at('card.tsx', 3, 7)) },
+          'w',
+          false,
+          at('card.tsx', 2, 5),
+        ),
+      ],
+    });
+  }
+  const { container } = mount(jsxDEV(Card, {}, undefined, false, at('scene.tsx', 9, 5)));
+  const group = container.children[0];
+  const rect = group.children[0];
+  const chain = sourceChain(rect, resolve, ids([[group, 'g'], [rect, 'r']]));
+  assert.equal(chain.find((entry) => entry.name === 'Card')?.layerId, 'g');
+});
+
+test('omits layerId for a component that draws several layers', () => {
+  function Pair() {
+    return jsx(Fragment, {
+      children: [
+        jsxDEV(R, {}, 'a', false, at('pair.tsx', 2, 5)),
+        jsxDEV(R, {}, 'b', false, at('pair.tsx', 3, 5)),
+      ],
+    });
+  }
+  const { container } = mount(jsxDEV(Pair, {}, undefined, false, at('scene.tsx', 9, 5)));
+  const [first, second] = container.children;
+  const chain = sourceChain(first, resolve, ids([[first, 'a'], [second, 'b']]));
+  const entry = chain.find((e) => e.name === 'Pair');
+  assert.ok(entry);
+  assert.equal('layerId' in entry, false);
+});
+
+test('omits layerId on wrapper entries', () => {
+  function Window({ children }: { children?: ReactNode }) {
+    return children;
+  }
+  markTransparent(Window);
+  const { container } = mount(
+    jsxDEV(Window, { children: jsxDEV(G, {}, undefined, false, at('scene.tsx', 3, 7)) }, undefined, false, at('scene.tsx', 2, 5)),
+  );
+  const group = container.children[0];
+  const chain = sourceChain(group, resolve, ids([[group, 'g']]));
+  const entry = chain.find((e) => e.name === 'Window');
+  assert.ok(entry);
+  assert.equal(entry.kind, 'wrapper');
+  assert.equal('layerId' in entry, false);
+});
+
+test('omits layerId for a component whose root is not written in the source', () => {
+  // As `<Stack>` does: a component of a package draws the group around
+  // its children with no source position, so the group can't be edited.
+  function Stack({ children }: { children?: ReactNode }) {
+    return jsx(G, { children });
+  }
+  const { container } = mount(
+    jsxDEV(Stack, { children: jsxDEV(R, {}, undefined, false, at('scene.tsx', 3, 7)) }, undefined, false, at('scene.tsx', 2, 5)),
+  );
+  const group = container.children[0];
+  const rect = group.children[0];
+  const chain = sourceChain(rect, resolve, ids([[group, 'g'], [rect, 'r']]));
+  const entry = chain.find((e) => e.name === 'Stack');
+  assert.ok(entry);
+  assert.equal(entry.kind, 'component');
   assert.equal('layerId' in entry, false);
 });

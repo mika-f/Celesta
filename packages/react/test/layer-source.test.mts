@@ -459,3 +459,24 @@ test('an empty chain reports only the chain', () => {
   );
   assert.deepEqual(reportFor(composition, 0), { chain: [] });
 });
+
+// A component's instance root, as the editor's Instance pick and Called from
+// rows read it: the one layer its call draws everything in.
+for (const [name, wrap] of [
+  ['Sequence', (children: ReactNode) => jsxDEV(Sequence, { from: 0, children }, undefined, false, at('tag.tsx', 2, 5))],
+  ['FreezeFrame', (children: ReactNode) => jsxDEV(FreezeFrame, { frame: 0, children }, undefined, false, at('tag.tsx', 2, 5))],
+] as const) {
+  test(`a component whose root is inside a <${name}> has that root`, () => {
+    function PriceTag() {
+      return wrap(
+        jsxDEV(Group, { x: 10, children: jsxDEV(Rect, { width: 1, height: 1 }, undefined, false, at('tag.tsx', 4, 9)) }, undefined, false, at('tag.tsx', 3, 7)),
+      );
+    }
+    const composition = mount(() => comp(jsxDEV(PriceTag, {}, undefined, false, at('scene.tsx', 3, 5))));
+    const report = reportFor(composition, 10);
+    const group = report.chain.find((entry) => entry.name === 'Group');
+    const tag = report.chain.find((entry) => entry.name === 'PriceTag');
+    assert.ok(group?.layerId);
+    assert.equal(tag?.layerId, group.layerId);
+  });
+}
