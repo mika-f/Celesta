@@ -21,8 +21,8 @@ of this note specifies them.
 - Encoder settings belong to the encoder: the plugin describes them, and the
   editor's export dialog and the CLI are built from that description.
 - Users choose components and settings when they export: a dialog in the
-  editor, flags in the CLI. They can save presets for later use, which are
-  stored globally for the user.
+  editor, flags in the CLI. They can save presets for later use, globally
+  for themselves or in the project, so a repository and its CI share them.
 - Exports are not slower than on `main` today (#645's hard requirement).
   Frames reach the encoder through shared memory, pipelined. The second
   write of the output (today's video-only intermediate, remuxed with the
@@ -30,7 +30,7 @@ of this note specifies them.
   is not, packets are staged once instead, which costs what today's
   intermediate does ([Audio](#audio)).
 - Colors are correct and tagged: BT.709 throughout.
-- Stills and image sequences are components too.
+- Stills and image sequences are components too (built in, in process).
 - First plugins beyond FFmpeg: OS-native ones (AVFoundation / VideoToolbox
   on macOS, Media Foundation on Windows).
 
@@ -61,16 +61,16 @@ of this note specifies them.
 | --- | --- | --- |
 | 1 | Granularity | Four component kinds: decoder, video encoder, audio encoder, muxer. Encoders return compressed packets (WebCodecs-style codec strings and decoder configuration); Celesta interleaves them and hands them to the muxer. |
 | 2 | Capability discovery | Two layers. The manifest declares components statically, which is enough to list them and route files without starting a plugin. A runtime `describe` is authoritative: availability with a reason, the settings schema, and accepted formats. `describe` is called on demand only (when the export dialog opens, when an export starts, `--list-components --check`). It is cached in memory, keyed by plugin folder and approval fingerprint, and the cache is dropped on Reload Plugins. |
-| 3 | Settings schema | A small custom vocabulary shaped like `registerComponent()`'s: `select` / `number` / `boolean` / `string`, with `group`, `advanced`, and `visibleWhen`. Celesta validates settings before `open`. No codec-neutral quality/speed setting, and no plugin presets. User presets go in `export-presets.json` in the user settings folder. |
-| 4 | Selection | Components are named `<plugin>/<component>`. By default the muxer comes from the output's extension, and its default codecs are served by encoders from the muxer's own plugin first, then bundled plugins, then the search order. Components from project plugins are never chosen by default. The editor has an export dialog. The CLI takes `--preset`, `--muxer`, `--video-encoder`, `--video-option`, `--audio-encoder`, `--audio-option`, `--list-components`, and `--describe`. |
+| 3 | Settings schema | A small custom vocabulary shaped like `registerComponent()`'s: `select` / `number` / `boolean` / `string`, with `group`, `advanced`, and `visibleWhen`. Celesta validates settings before `open`. No codec-neutral quality/speed setting, and no plugin presets. Presets go in `export-presets.json`, in the user settings folder and, optionally, at the project root, so a project's export settings travel with its repository and CI. |
+| 4 | Selection | Components are named `<plugin>/<component>`. By default the muxer comes from the output's extension, and its default codecs are served by encoders from the muxer's own plugin first, then bundled plugins, then the search order. Components from project plugins are never chosen by default. A preset name is looked up in `--preset-file`, then the project's presets, then the user's; a project may name a default preset. The editor has an export dialog. The CLI takes `--preset`, `--preset-file`, `--muxer`, `--video-encoder`, `--video-option`, `--audio-encoder`, `--audio-option`, `--list-components`, and `--describe`. |
 | 5 | Transport | Raw frames go through a shared-memory ring of N slots, sized at export start. Requests are pipelined in order, with up to N in flight, and answers come back in order, with no request IDs. Packets and audio go through the pipe. Decoding keeps #775's single slot. |
 | 6 | Pixel formats and color | Celesta offers `rgba8`, `rgba16` (straight), `yuv420p`, `yuv420p10`, `nv12`, and `p010`, and the encoder picks one. Every encoder is told `bt709 / bt709 / bt709 / limited`. The GPU conversion moves from BT.601 to BT.709, and every container is tagged. HDR fields are reserved. |
 | 7 | Audio | Interleaved `f32`, mono or stereo. The encoder picks the rate and channel count, and Celesta resamples. Audio streams to the encoder once the mix is done. Encoder delay and the loop pre-roll are expressed as negative timestamps. Every muxer that takes audio hides the encoder's delay; only muxers declaring `trimsLeadingAudio` are sent the loop pre-roll, which they hide too. `--audio-encoder none`. |
-| 8 | Stills and sequences | Video encoders `png` / `jpeg` / `webp` and muxers `image` / `imageSequence`, from a new bundled first-party `image` plugin. Contact sheets are composed in Celesta and written through them. |
+| 8 | Stills and sequences | Video encoders `png` / `jpeg` / `webp` and muxers `image` / `imageSequence`, as **built-in components**: in Celesta's process, through the same component model and `resolve_output`, with no plugin process (their crates are MIT/Apache, so no licensing reason to move them out). Plugins can add more image formats. Contact sheets are composed in Celesta and written through them. |
 | 9 | Decoders | Routed by declared extension, trying each candidate's `probe` and moving on when one answers `unsupported`. Order: user-installed, then bundled, then approved project plugins; a project decoder in use is shown in the UI. Decoding processes are not shared with encoding or content plugins. |
 | 10 | Web | Unchanged. |
 | 11 | Exporter API | `ExportOptions.output: OutputChoice`, resolved by a single function every front end uses. A component registry replaces the global `set_codec`. |
-| 12 | First plugins and order | Phases P1–P6 ([Phases](#phases)): FFmpeg and the test codec ported in P1–P2 (P2 split in three, BT.709 on its own), the `image` plugin in P4, macOS native in P5, Windows Media Foundation in P6. |
+| 12 | First plugins and order | Phases P1–P6 ([Phases](#phases)): FFmpeg and the test codec ported in P1–P2 (P2 split in three, BT.709 on its own), the built-in image components in P4, macOS native in P5, Windows Media Foundation in P6. |
 
 ## Components
 
@@ -84,7 +84,16 @@ A **component** is one capability a plugin's process serves:
 | `muxer` | packets of one video and at most one audio track → an output file (or files) | file extensions, and the codec families it accepts |
 
 A component's reference is `<plugin id>/<component id>`, such as
-`ffmpeg/libx264`. Component IDs are unique within a plugin per kind. When
+`ffmpeg/libx264`. **Built-in components** use the reserved plugin ID
+`builtin` (`builtin/png`), and Celesta refuses a plugin manifest with that
+ID.
+
+Built-in components run in Celesta's own process, through the same Rust
+traits as in-process test providers ([Registry and routing](#registry-and-routing)).
+They are listed and described like plugin components (their `describe` is
+answered in process) and are never approved or disabled. They are kept for
+pieces with no licensing or isolation reason to live in a plugin: the
+image encoders and muxers ([Stills](#stills-and-sequences-p4)). Component IDs are unique within a plugin per kind. When
 two installed plugins share an ID, the earlier in search order wins, and
 listings show each one's folder.
 
@@ -298,7 +307,7 @@ Every other error keeps protocol 1's behavior: an unknown code is
 
 ## Capability discovery
 
-- **Listing** (`InstalledPlugins::media()` in `celesta-plugin-host`) reads manifests only, and covers every plugin that may run under the usual search order, approval, and disabled list. It returns `MediaComponentInfo { reference, kind, name, plugin origin (user / bundled / project), manifest fields }`.
+- **Listing** (`InstalledPlugins::media()` in `celesta-plugin-host`) reads manifests only, and covers every plugin that may run under the usual search order, approval, and disabled list. It returns `MediaComponentInfo { reference, kind, name, origin (built-in / bundled / user / project), manifest fields }`. `MediaRegistry` adds the built-in components to it.
 - **The `cargo install` fallback is kept.** Today `celesta-codec-ffmpeg` beside the running executable serves as the codec when no plugin folder has one (`sibling_codec`, `manifest.rs`), and `cargo install` users rely on it.
   - The program answers `celesta-codec-ffmpeg --manifest` with its manifest JSON, without starting the protocol. `media()` runs it once for the sibling and caches the answer by the cache key below.
   - This is the one case where listing starts a process: `cargo install` cannot install a data file beside the program.
@@ -356,12 +365,16 @@ editor's property controls can be reused:
   Missing keys take their defaults. The plugin may still refuse a combination with `invalidSettings`.
 - **No codec-neutral quality/speed setting** and no plugin presets. Defaults should be good on their own, and user presets carry "my usual settings". A future `hint: "quality" | "speed"` on a field could drive a simple mode.
 
-### User presets
+### Presets
 
-`export-presets.json`, in `celesta_plugin_host::user_settings_dir()`
-beside (not inside) `settings.json`, which stays "what code Celesta may
-run". It is written atomically as `settings.json` is. Owned by
-`celesta-exporter` (`presets.rs`), which the editor already depends on.
+Presets are kept in two places, both named `export-presets.json` and both owned by `celesta-exporter` (`presets.rs`), which the editor already depends on.
+
+- **User presets** are in `celesta_plugin_host::user_settings_dir()`, beside (not inside) `settings.json`, which stays "what code Celesta may run". The file is written atomically, as `settings.json` is.
+- **Project presets** are at the project root (`celesta_plugin_host::project_root`), so they travel with the repository and CI.
+  - The editor writes them only when asked ("Save as preset… → This project").
+  - The file is plain data and needs no approval. A component it names still has to be installed and, for a project plugin, approved.
+
+The user file:
 
 ```json
 {
@@ -379,8 +392,14 @@ run". It is written atomically as `settings.json` is. Owned by
 ```
 
 - `audio` may be `"none"`.
-- `last` is the dialog's most recent choice.
-- Projects store nothing.
+- `last` is the dialog's most recent choice. It is kept in the user file only.
+- The project file has the same `version` and `presets`, no `last`, and an optional `"default": "<name>"`: the preset an export of that project uses when no `--preset` and no component flags are given.
+- **Name lookup** for `--preset <name>` (and MCP's and TS's `preset`):
+  1. the file given by `--preset-file <path>`, when given
+  2. the project's file
+  3. the user's file
+
+  The first match wins. A project preset that shadows a user preset of the same name gets a warning.
 - **Stale presets.** After a plugin update, a preset may hold an unknown key, a value out of range, or a component that is gone. The response depends on who uses it:
   - The editor drops the key or resets the value to its default, falls back to the default component, and shows a warning on the preset.
   - `--preset` warns on stderr (and in the JSON report's `warnings`) and does the same.
@@ -394,8 +413,8 @@ run". It is written atomically as `settings.json` is. Owned by
 registry: &MediaRegistry) -> Result<ResolvedOutput, ExportError>` is the one
 place choices become components. It runs these steps in order:
 
-1. **Preset.** With `preset`, its components and options are the base. A name that is not in `export-presets.json` is `unknown_preset`, with a hint when it is a libx264 preset name (`--preset ultrafast` → "use `--video-option preset=ultrafast`").
-2. **Muxer.** The explicit or preset muxer, or else the first muxer whose `extensions` include the output's extension. Muxers are ranked by origin: bundled first-party plugins, then user-installed plugins in search order. With none, the error is `unsupported_output`, listing the extensions available.
+1. **Preset.** With `preset`, looked up as [Presets](#presets) says, its components and options are the base. Without `preset` and without any component given, the project's `default` preset, if it names one, is the base. A name found in no file is `unknown_preset`, with a hint when it is a libx264 preset name (`--preset ultrafast` → "use `--video-option preset=ultrafast`").
+2. **Muxer.** The explicit or preset muxer, or else the first muxer whose `extensions` include the output's extension. Muxers are ranked by origin: built-in components, then bundled first-party plugins, then user-installed plugins in search order. With none, the error is `unsupported_output`, listing the extensions available.
 3. **Video encoder.** The explicit or preset one, or else the first available encoder that produces the muxer's `defaultVideo`, ranked as below. An explicit one whose codecs the muxer does not accept is `incompatible_components`.
 4. **Audio encoder.** The same as step 3, against `defaultAudio`. It is `none` when the choice says so or the muxer takes no audio.
 5. **Availability.** Each chosen component's `describe` must say it is available. Otherwise the error is `component_unavailable`, with its reason (not installed, not approved, unavailable: "this FFmpeg build has no libx264").
@@ -422,6 +441,7 @@ it is chosen only by name or preset.
   - the existing range and loudness controls
   - "Save as preset…"
   - Export…, which opens the save panel with the muxer's first extension
+- The preset list groups project presets ("This project") above user presets. "Save as preset…" asks which file to save to.
 - Components show their plugin. A project plugin's components are marked "(project)". Unavailable ones are listed but disabled, with their reason. While `describe` is running, they show "Checking…".
 - The choice is remembered in `last`.
 - The editor's GUI follows the GPUI Kit design guides (no gradients, no uppercase labels, radius 0, lucide icons).
@@ -429,7 +449,8 @@ it is chosen only by name or preset.
 ### CLI (`celesta-exporter`)
 
 ```text
---preset <name>                 a user preset from export-presets.json
+--preset <name>                 a preset, from --preset-file, the project, or the user
+--preset-file <path>            an export-presets.json to look names up in first
 --muxer <plugin/id>
 --video-encoder <plugin/id>
 --video-option <key=value>      repeatable; parsed by the field's type
@@ -444,11 +465,11 @@ output.
 
 - Removed: `--output-format` (the extension and `--muxer` decide), `--preset <x264 name>`, `--crf`, `--bit-depth`, and `--color-conversion` ([Pixel formats](#pixel-formats-and-color)).
 - `--loop` stays and means the loop pre-roll ([Audio](#audio)).
-- Stills keep `--frame` and their other flags. Their format comes from the extension, routed to the `image` plugin's components (P4).
+- Stills keep `--frame` and their other flags. Their format comes from the extension, routed to the built-in image components (P4).
 
 ### MCP and `@celesta.studio/exporter`
 
-Both mirror the CLI: `{ preset?, muxer?, videoEncoder?: { id?, options? },
+Both mirror the CLI: `{ preset?, presetFile?, muxer?, videoEncoder?: { id?, options? },
 audioEncoder?: { id?, options? } | "none" }`, replacing `preset` / `crf` /
 `bitDepth` / `colorConversion` / `format`. They gain a
 `listComponents({ check? })` and a `describeComponent(id)`; MCP gets them as
@@ -635,11 +656,12 @@ program registers. In-process implementations (tests, benches, and
 
 ## Stills and sequences (P4)
 
-- A new first-party plugin, `plugins/image` (`celesta-media-image`, MIT OR Apache-2.0), bundled like `ffmpeg`. It moves `stills.rs`'s encoders into the plugin:
-  - Video encoders `png` (the `png` crate; settings: compression), `jpeg` (the `image` crate; quality), and `webp` (the `webp` crate; quality, lossless). Each takes `rgba8`, or `rgba16` for 16-bit PNG.
-  - Muxers `image` (one frame, one file; `extensions: ["png","jpg","jpeg","webp"]`, no audio) and `imageSequence` (`sequence: true`; writes `name-000090.ext` as today, with a `pattern` setting).
-- **`celesta-exporter`.** `--frame` and the other still options and the contact sheet's compositing stay. Their output goes through `resolve_output` with the `image` components, and the WebP size limit moves to the plugin's `invalidSettings`.
-- **Without the plugin**, stills fail with `component_unavailable`, as video does without FFmpeg.
+- **Built-in components** in a new root-workspace crate, `crates/media-image` (`celesta-media-image`, MIT OR Apache-2.0, not a plugin). It moves `stills.rs`'s encoders behind the component traits, and `celesta-exporter` registers it in its `MediaRegistry`:
+  - Video encoders `builtin/png` (the `png` crate; settings: compression), `builtin/jpeg` (the `image` crate; quality), and `builtin/webp` (the `webp` crate; quality, lossless). Each takes `rgba8`, or `rgba16` for 16-bit PNG.
+  - Muxers `builtin/image` (one frame, one file; `extensions: ["png","jpg","jpeg","webp"]`, no audio) and `builtin/imageSequence` (`sequence: true`; writes Celesta's `name-000090.ext` naming as today, [Muxing](#muxing)).
+- **No process or ring.** Frames go to them as borrowed slices in process, and `describe` is answered in process. A still costs no process start, and `cargo install celesta-exporter` keeps `--frame` working with nothing else installed, as today.
+- **`celesta-exporter`.** `--frame` and the other still options and the contact sheet's compositing stay. Their output goes through `resolve_output` with these components, and the WebP size limit becomes the encoder's `invalidSettings`.
+- **Plugins can add image formats** (GIF, APNG, AVIF, …) as ordinary components. A plugin muxer for `png` ranks after `builtin/image` by default and is used when named.
 
 ## OS-native plugins (P5, P6)
 
@@ -701,8 +723,8 @@ working.
 | P2a: Encoders and muxers | The settings schema and validation; the encoder and muxer halves of protocol 2 through the pipe only (`transports: ["pipe"]`, a window of one); negotiation; the interleaver and its spill; audio streaming, delay, and pre-roll; `resolve_output`; FFmpeg's and the test codec's encoders and muxers; the exporter's options, CLI, JSON report, and progress labels; MCP and `@celesta.studio/exporter`; and removal of the old types and protocol 1's encoder messages. The FFmpeg plugin moves from ez-ffmpeg's file-writing pipeline (`VideoWriter`, `FfmpegContext`) to packet-level libavcodec / libavformat through `ffmpeg-sys-next` (already a dependency), since ez-ffmpeg's packet sink takes only avcC H.264 and raw AAC. Checked against `main` by decoding: video frames and audio samples identical. Files are not byte-identical (packet-level muxing, edit lists from negative `pts`). |
 | P2b: Shared memory and pipelining | The ring, the send window, `inputFormats` in the manifest, and the deadlines; the mix-against-render measurement; and the performance comparison against `main`. Checked byte-identical against P2a's output. |
 | P2c: BT.709 | The GPU conversion to BT.709, `nv12` and `p010`, and color tags in every container, with before/after screenshots of the same scene (AGENTS.md). Its own PR, so P2a and P2b are checked without a color change. |
-| P3: Export dialog | The editor's export dialog, `export-presets.json`, and the presets in the CLI, MCP, and TS (`--preset`). |
-| P4: Stills | The `image` components; stills, sequences, and contact sheets through them. |
+| P3: Export dialog and presets | The editor's export dialog; user and project `export-presets.json`, the project's `default`, and the presets in the CLI, MCP, and TS (`--preset`, `--preset-file`). |
+| P4: Stills | `celesta-media-image`'s built-in components; stills, sequences, and contact sheets through them. |
 | P5: macOS native | `plugins/avfoundation`. |
 | P6: Windows native | `plugins/mediafoundation`, in its own session. |
 
