@@ -23,7 +23,21 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// The protocol content plugins speak.
 pub const PROTOCOL_VERSION: u32 = 1;
+
+/// The protocol media plugins speak.
+pub const MEDIA_PROTOCOL_VERSION: u32 = 2;
+
+/// The protocol a plugin of `roles` speaks: [`MEDIA_PROTOCOL_VERSION`] when
+/// it has the `media` role, [`PROTOCOL_VERSION`] otherwise.
+pub fn protocol_for_roles(roles: &[&str]) -> u32 {
+    if roles.contains(&"media") {
+        MEDIA_PROTOCOL_VERSION
+    } else {
+        PROTOCOL_VERSION
+    }
+}
 
 /// What a content plugin answers `hello` with as its roles.
 pub const ROLES: &[&str] = &["content"];
@@ -1037,7 +1051,8 @@ pub fn serve_requests_on<A: Into<Answer>>(
 
 /// [`serve_requests_on`], whose `hello` answer also has the fields `hello`
 /// gives for the `hello` request: what a role accepts of what Celesta
-/// offered there (a codec's shared memory, say). The fields cannot replace
+/// offered there (a codec's shared memory, say). The plugin answers the
+/// protocol of its roles (see [`protocol_for_roles`]) and refuses another. The fields cannot replace
 /// the handshake's own (`type`, `protocol`, `plugin`, `version`, `roles`).
 pub fn serve_requests_with_hello_on<A: Into<Answer>>(
     plugin: &str,
@@ -1048,27 +1063,26 @@ pub fn serve_requests_with_hello_on<A: Into<Answer>>(
     mut hello: impl FnMut(&Message) -> Map<String, Value>,
     mut answer: impl FnMut(Message) -> A,
 ) -> Result<(), ProtocolError> {
+    let protocol = protocol_for_roles(roles);
     while let Some(request) = read_message(&mut reader)? {
         let answer: Answer = match request.kind() {
-            "hello" => {
-                if request.header["protocol"].as_u64() == Some(u64::from(PROTOCOL_VERSION)) {
-                    let mut header = hello(&request);
-                    header.extend([
-                        ("type".to_owned(), json!("hello")),
-                        ("protocol".to_owned(), json!(PROTOCOL_VERSION)),
-                        ("plugin".to_owned(), json!(plugin)),
-                        ("version".to_owned(), json!(version)),
-                        ("roles".to_owned(), json!(roles)),
-                    ]);
-                    Message::new(Value::Object(header))
-                } else {
-                    error_message(format!(
-                        "this plugin speaks protocol {PROTOCOL_VERSION}, not {}",
-                        request.header["protocol"]
-                    ))
-                }
-                .into()
+            "hello" => if request.header["protocol"].as_u64() == Some(u64::from(protocol)) {
+                let mut header = hello(&request);
+                header.extend([
+                    ("type".to_owned(), json!("hello")),
+                    ("protocol".to_owned(), json!(protocol)),
+                    ("plugin".to_owned(), json!(plugin)),
+                    ("version".to_owned(), json!(version)),
+                    ("roles".to_owned(), json!(roles)),
+                ]);
+                Message::new(Value::Object(header))
+            } else {
+                error_message(format!(
+                    "this plugin speaks protocol {protocol}, not {}",
+                    request.header["protocol"]
+                ))
             }
+            .into(),
             _ => answer(request).into(),
         };
         answer.write(&mut writer)?;
@@ -1416,6 +1430,52 @@ mod tests {
         assert_eq!(hello.kind(), "hello");
         assert_eq!(hello.header["roles"], json!(["content"]));
         assert_eq!(hello.header["plugin"], "hooked");
+    }
+
+    /// What a `hello` request of `protocol` gets from a plugin of `roles`.
+    fn hello_answer(roles: &[&str], protocol: u32) -> Message {
+        let mut requests = Vec::new();
+        write_message(
+            &mut requests,
+            &Message::new(json!({ "type": "hello", "protocol": protocol })),
+        )
+        .unwrap();
+        let mut answers = Vec::new();
+        serve_requests_with_hello_on(
+            "p",
+            "1.0.0",
+            roles,
+            &requests[..],
+            &mut answers,
+            |_| Map::new(),
+            |_| error_message("no other requests"),
+        )
+        .unwrap();
+        read_message(&mut &answers[..]).unwrap().unwrap()
+    }
+
+    #[test]
+    fn media_roles_answer_protocol_2() {
+        let hello = hello_answer(&["media"], 2);
+        assert_eq!(hello.kind(), "hello");
+        assert_eq!(hello.header["protocol"], 2);
+        assert_eq!(hello.header["roles"], json!(["media"]));
+    }
+
+    #[test]
+    fn media_roles_refuse_protocol_1() {
+        let answer = hello_answer(&["media"], 1);
+        assert_eq!(answer.kind(), "error");
+        let message = answer.header["message"].as_str().unwrap();
+        assert!(message.contains("speaks protocol 2"), "{message}");
+    }
+
+    #[test]
+    fn content_roles_still_answer_protocol_1() {
+        let hello = hello_answer(&["content"], 1);
+        assert_eq!(hello.kind(), "hello");
+        assert_eq!(hello.header["protocol"], 1);
+        assert_eq!(hello_answer(&["content"], 2).kind(), "error");
     }
 
     #[test]

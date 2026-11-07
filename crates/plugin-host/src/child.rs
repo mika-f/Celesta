@@ -192,14 +192,25 @@ impl PluginChild {
 
     /// [`Self::hello`], the request also carrying the fields of `offer`
     /// (what a role offers the plugin, such as a codec's shared memory),
-    /// which cannot replace `type` or `protocol`.
-    pub fn hello_with(&mut self, mut offer: Map<String, Value>) -> Result<Message, RequestError> {
+    /// which cannot replace `type` or `protocol`. A content plugin speaks
+    /// protocol 1 (see [`Self::hello_as`]).
+    pub fn hello_with(&mut self, offer: Map<String, Value>) -> Result<Message, RequestError> {
+        self.hello_as(PROTOCOL_VERSION, offer)
+    }
+
+    /// [`Self::hello_with`] in `protocol`, which the answer must speak too:
+    /// a media plugin speaks [`celesta_plugin::MEDIA_PROTOCOL_VERSION`].
+    pub fn hello_as(
+        &mut self,
+        protocol: u32,
+        mut offer: Map<String, Value>,
+    ) -> Result<Message, RequestError> {
         offer.insert("type".to_owned(), json!("hello"));
-        offer.insert("protocol".to_owned(), json!(PROTOCOL_VERSION));
+        offer.insert("protocol".to_owned(), json!(protocol));
         let hello = self.request(Message::new(Value::Object(offer)), "hello", HELLO_TIMEOUT)?;
-        if hello.header["protocol"].as_u64() != Some(u64::from(PROTOCOL_VERSION)) {
+        if hello.header["protocol"].as_u64() != Some(u64::from(protocol)) {
             return Err(RequestError::Refused(error_message(format!(
-                "{} speaks protocol {}, not {PROTOCOL_VERSION}",
+                "{} speaks protocol {}, not {protocol}",
                 self.name, hello.header["protocol"]
             ))));
         }
@@ -341,6 +352,27 @@ mod tests {
 
     fn hello() -> Message {
         Message::new(json!({ "type": "hello", "protocol": PROTOCOL_VERSION }))
+    }
+
+    #[test]
+    fn hello_as_checks_the_answered_protocol() {
+        let directory = tempfile::tempdir().unwrap();
+        // A plugin that answers `hello` with protocol 1 whatever it is asked.
+        let answer = directory.path().join("answer.bin");
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &hello()).unwrap();
+        std::fs::write(&answer, bytes).unwrap();
+        let program = script(
+            directory.path(),
+            &format!("cat '{}'\nexec sleep 30", answer.display()),
+        );
+        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let error = child.hello_as(2, Map::new()).unwrap_err();
+        let RequestError::Refused(refusal) = error else {
+            panic!("{error:?}");
+        };
+        let message = refusal.header["message"].as_str().unwrap();
+        assert!(message.contains("speaks protocol 1, not 2"), "{message}");
     }
 
     #[test]
