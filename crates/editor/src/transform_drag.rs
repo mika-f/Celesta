@@ -816,6 +816,22 @@ pub(crate) fn has_anchor_rows(targets: &ElementTargets) -> bool {
         .any(|key| targets.target(key).is_some())
 }
 
+/// The drag a press starts from the part of the selection it is on
+/// (`pressed`): any handle, or the body when the press is on it
+/// (`on_body`), `x` or `y` can move (`moves`), and moving is allowed
+/// (`allow_move`: not a double-click going inside an instance).
+pub(crate) fn drag_handle(
+    pressed: Option<Handle>,
+    on_body: bool,
+    moves: bool,
+    allow_move: bool,
+) -> Option<Handle> {
+    match pressed? {
+        Handle::Move => (on_body && moves && allow_move).then_some(Handle::Move),
+        handle => Some(handle),
+    }
+}
+
 /// Whether a press at `point` (scene pixels, within `reach` of the cross the
 /// canvas draws for `pivot`, see `marker`) with `alt` held is taken and
 /// starts nothing: Alt there means the anchor, and when no anchor drag is
@@ -1110,15 +1126,17 @@ impl EditorView {
     }
 
     /// Starts a drag when `position` (window pixels) is on a handle of the
-    /// selected layer, on its pivot cross with `alt` held, or on its body
-    /// with the layer topmost there. True when a drag started, and when the
-    /// press is taken without one (Alt on a cross that moves nothing, see
-    /// `swallows_alt_press`): the selection doesn't change either.
+    /// selected layer, on its pivot cross with `alt` held, or, when
+    /// `allow_move`, on its body with the layer topmost there. True when a
+    /// drag started, and when the press is taken without one (Alt on a cross
+    /// that moves nothing, see `swallows_alt_press`): the selection doesn't
+    /// change either.
     pub(crate) fn begin_transform_drag(
         &mut self,
         position: gpui_kit::Point<gpui_kit::Pixels>,
         topmost: Option<&str>,
         alt: bool,
+        allow_move: bool,
     ) -> bool {
         // Only a pressed drag takes the click; while a released one is being
         // written, clicks select as usual (and no second drag starts).
@@ -1168,16 +1186,15 @@ impl EditorView {
         if swallows_alt_press(&frame, &editable, pivot, start, reach, alt, reason) {
             return true;
         }
-        let handle = match pressed_handle(&frame, &shown, &editable, start, reach, alt) {
-            Some(Handle::Move)
-                if presses_body(&frame, topmost)
-                    && (editable.contains(&TransformProp::X.key())
-                        || editable.contains(&TransformProp::Y.key())) =>
-            {
-                Handle::Move
-            }
-            Some(Handle::Move) | None => return false,
-            Some(handle) => handle,
+        let moves = editable.contains(&TransformProp::X.key())
+            || editable.contains(&TransformProp::Y.key());
+        let Some(handle) = drag_handle(
+            pressed_handle(&frame, &shown, &editable, start, reach, alt),
+            presses_body(&frame, topmost),
+            moves,
+            allow_move,
+        ) else {
+            return false;
         };
         // A pressed scrub ends unwritten: the two never run together.
         if self.row_scrub_active() {
@@ -1344,6 +1361,29 @@ pub(crate) fn presses_body(frame: &LayerFrame, topmost: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_press_that_may_not_move_still_starts_handle_drags() {
+        // A double-click going inside an instance drags nothing by its
+        // body, but its handles and pivot cross still drag.
+        assert_eq!(drag_handle(Some(Handle::Move), true, true, false), None);
+        for handle in [
+            Handle::Corner(0),
+            Handle::Edge(1),
+            Handle::Rotate,
+            Handle::Anchor,
+        ] {
+            assert_eq!(drag_handle(Some(handle), false, true, false), Some(handle));
+        }
+        assert_eq!(
+            drag_handle(Some(Handle::Move), true, true, true),
+            Some(Handle::Move)
+        );
+        // Off the body, or with neither x nor y editable, the body doesn't move.
+        assert_eq!(drag_handle(Some(Handle::Move), false, true, true), None);
+        assert_eq!(drag_handle(Some(Handle::Move), true, false, true), None);
+        assert_eq!(drag_handle(None, true, true, true), None);
+    }
     use crate::canvas_geometry::{box_frame, with_anchor_box};
     use crate::edit_history::{EditHistory, HistoryEntry, write_all_recorded};
     use crate::element_edit::{Target, commit_files, resolve_targets};

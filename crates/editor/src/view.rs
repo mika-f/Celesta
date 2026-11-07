@@ -8,7 +8,7 @@ use crate::element_rows::ElementRows;
 use crate::export_worker::{ExportWorker, spawn_export};
 use crate::helpers::ExportLoudness;
 use crate::inline_text_view::{EditEvent, InlineTextSession, KeptOverride};
-use crate::layer_select::SourceLookup;
+use crate::layer_select::{InstanceDue, PendingInstance, PickMode, SourceLookup};
 use crate::media_probe::{MediaAssetInfo, MediaProbeWorker, spawn_media_probe};
 use crate::meter::MasterLevels;
 use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
@@ -348,6 +348,17 @@ pub(crate) struct EditorView {
     /// chose it for the session; a layer without editable size props scales
     /// whatever this says.
     pub(crate) resize_tool: ResizeTool,
+    /// What a click on the canvas selects, as the viewer's Select toggle
+    /// chose it for the session: the layer under the pointer, or the
+    /// component instance around it.
+    pub(crate) pick_mode: PickMode,
+    /// A click with `PickMode::Instance` whose hit layer is selected while
+    /// its source is looked up, to move the selection to the instance.
+    pub(crate) pending_instance: Option<PendingInstance>,
+    /// The instance a pending pick found, selected on the next render
+    /// (`settle_row_requests`), which has the context to, while its hit is
+    /// still the selection.
+    pub(crate) instance_due: Option<InstanceDue>,
     /// The text edited on the canvas, or committed and waiting for its
     /// reload: every requested frame draws it in place of its layer's text.
     pub(crate) text_override: Option<TextOverride>,
@@ -587,6 +598,9 @@ impl EditorView {
             scene_notice: None,
             pivot_mode: PivotMode::default(),
             resize_tool: ResizeTool::default(),
+            pick_mode: PickMode::default(),
+            pending_instance: None,
+            instance_due: None,
             text_override: None,
             reuse_scene: false,
             text_layout: None,

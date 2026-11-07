@@ -16,7 +16,13 @@ export interface LayerSourceEntry {
    * that draws its caller's JSX (`<Sequence>`, `<Loop>`, ...), or anything else.
    */
   kind: 'primitive' | 'wrapper' | 'component';
-  /** The layer a primitive entry produced, when it can be told. */
+  /**
+   * The layer a primitive entry produced, or, for a component entry, the
+   * one layer its call draws everything in (its instance's root), when it
+   * can be told. A component that draws several top-level layers, or none,
+   * or whose root is not written in the source (a package's `<Stack>`), has
+   * none.
+   */
   layerId?: string;
 }
 
@@ -228,8 +234,19 @@ function sourceFibers(
       const host = firstHostNode(fiber);
       const id = host ? layerIdOf?.(host) : undefined;
       if (id !== undefined) entry.layerId = id;
+    } else if (entry.kind === 'component' && layerIdOf) {
+      // Only when ids are asked for: the walk covers the call's subtree.
+      const id = soleRootLayer(fiber, layerIdOf);
+      if (id !== undefined) entry.layerId = id;
     }
     chain.push({ entry, fiber });
+  }
+  // A component's root counts only when its element is written in the
+  // source, as a primitive of the chain: a package's `<Stack>` draws its
+  // group with no position, which nothing can edit.
+  const written = new Set(chain.flatMap(({ entry }) => (entry.kind === 'primitive' && entry.layerId !== undefined ? [entry.layerId] : [])));
+  for (const { entry } of chain) {
+    if (entry.kind === 'component' && entry.layerId !== undefined && !written.has(entry.layerId)) delete entry.layerId;
   }
   return chain;
 }
@@ -242,6 +259,37 @@ function firstHostNode(fiber: Fiber): HostNode | null {
     if (found) return found;
   }
   return null;
+}
+
+/**
+ * The host nodes at or below `fiber` that are not inside another host node
+ * there: the top-level layers a component's call draws. The host a wrapper
+ * (`<Sequence>`, `<FreezeFrame>`, ...) renders around its children is looked
+ * through, down to the elements its caller wrote (which have positions).
+ */
+function* topHostNodes(fiber: Fiber, throughWrapper = false): Generator<HostNode> {
+  // What the caller wrote (it has a position) is never the wrapper's own.
+  const inWrapper = throughWrapper && !sourceOfProps(fiber.memoizedProps ?? fiber.pendingProps);
+  if (typeof fiber.type === 'string' && !inWrapper) {
+    const node = fiber.stateNode as HostNode | undefined;
+    if (node) yield node;
+    return;
+  }
+  const through = typeof fiber.type !== 'string' && (inWrapper || isTransparent(fiber.elementType ?? fiber.type));
+  for (let child = fiber.child ?? null; child; child = child.sibling ?? null) yield* topHostNodes(child, through);
+}
+
+/** The one layer `fiber`'s call draws everything in, if it draws exactly one; stops at the second. */
+function soleRootLayer(fiber: Fiber, layerIdOf: (node: HostNode) => string | undefined): string | undefined {
+  let sole: string | undefined;
+  for (const node of topHostNodes(fiber)) {
+    // Hosts that draw no layer (`<Audio>`) don't count.
+    const id = layerIdOf(node);
+    if (id === undefined) continue;
+    if (sole !== undefined) return undefined;
+    sole = id;
+  }
+  return sole;
 }
 
 // The bridge reads these as numbers; any other value would fail the report.

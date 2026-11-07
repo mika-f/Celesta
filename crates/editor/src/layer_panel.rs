@@ -738,7 +738,11 @@ impl EditorView {
                         .w_full()
                         .icon(IconName::MousePointerClick)
                         .child("Select")
-                        .tooltip("Select this layer")
+                        .tooltip(if source.kind == ElementKind::Component {
+                            "Select this instance"
+                        } else {
+                            "Select this layer"
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.select_layer(Some(parent.clone()), cx);
                         })),

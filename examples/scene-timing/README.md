@@ -40,6 +40,12 @@ scene's end drags on the **Chapters** row.
   set its width under **Edits change**: **This scene** gives `PriceTag` a
   `rectWidth` prop that only Main's call passes, while **Shared value**
   changes both scenes.
+- Choose **Instance** in the **Select** toggle at the top of the viewer and
+  click the light price tag in Intro: its whole tag is selected, the
+  `<Group>` at the root of `PriceTag`. Drag it under **This scene**: only
+  Intro's tag moves, and its `x` and `y` become props written on Intro's
+  `<PriceTag>` call. Undo, and drag it under **Shared value**: both scenes'
+  tags move. Double-click the tag to go inside and select its `<Rect>`.
 - Select the small mark at the top right, which every scene draws, choose
   **Shared value**, and change its fill: every scene changes.
 
