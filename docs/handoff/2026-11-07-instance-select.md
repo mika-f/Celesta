@@ -172,18 +172,31 @@ Run on macOS (Apple silicon), FFmpeg 8 through `PKG_CONFIG_PATH`:
   failed first:
   - A component whose root is inside a real `<Sequence>` had no root.
   - A second press within the double-click window skipped handle drags.
-  Deferred minor findings:
-  - A pick is lost when the selection change waits for held row commits.
-  - Cmd+click or a mode switch on the same layer does not cancel a pending
-    pick.
-  - A fast double-click on an unselected instance can land on the
-    innermost layer.
+- The PR review (cubic) fixed these, with tests in `tests/instance_select.rs`
+  where the logic is pure:
+  - A pick now waits for its own hit's lookup (`take_pending_for`). A
+    selection change waiting for a held commit no longer loses it.
+  - Cmd/Ctrl+click and a switch of the pick mode cancel a waiting pick
+    (`cancel_instance_pick`).
+  - A fast double-click on an unselected instance goes inside what its
+    first press picks (`merge_pending`, `then_descend`).
+  - A resolved pick (`InstanceDue`) selects its target only while its hit
+    is still the selection, so an added layer selected in the same render
+    wins (`due_target`).
+  - A click on the selected layer resolves at once only from a lookup for
+    this frame (not `source_lookup_stale`).
+  - `topHostNodes` is a generator, and `soleRootLayer` stops at a second
+    root.
+  - The review's claim that an old runtime without `kind` shows "Select this
+    instance" on a primitive does not hold: `kind` and `layerId` came in the
+    same change (#313), so such a runtime sends no `layer_id` either.
+- Still open, minor:
   - **Select this instance** can be a no-op when the root is already
     selected.
   - The hit-itself check reads `chain[0]`'s id for layers built by a host.
-  - `topHostNodes` does not stop early at two roots.
   - A report is cloned on every press.
 - Not run in this session: the hands-on check in the editor
   (`examples/scene-timing/film.tsx` with **This scene** and **Shared
   value**) and the before and after screenshots. This session had no tool to
-  drive the app's window.
+  drive the app's window. After the review fixes, `cargo test -p
+  celesta-editor` passes 713 tests and `pnpm --dir packages/react test` 321.

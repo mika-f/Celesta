@@ -273,6 +273,51 @@ pub(crate) struct PendingInstance {
     /// The selection before the click.
     pub(crate) selected_id: Option<String>,
     pub(crate) descend: bool,
+    /// A double-click's second press came before this pick resolved: go
+    /// one level inside what it picks.
+    pub(crate) then_descend: bool,
+}
+
+/// The pick a press leaves waiting, given the one already waiting: a
+/// double-click's second press on the same hit, before the first one's
+/// lookup answered, keeps the first pick and goes inside what it picks
+/// (the selection it would descend from is not known yet). Any other
+/// press replaces it.
+pub(crate) fn merge_pending(
+    waiting: Option<PendingInstance>,
+    press: PendingInstance,
+) -> PendingInstance {
+    match waiting {
+        Some(first) if press.descend && first.hit == press.hit => PendingInstance {
+            then_descend: true,
+            ..first
+        },
+        _ => press,
+    }
+}
+
+/// The waiting pick when `answered` is the layer it hit; a lookup for any
+/// other layer (the old selection, while the change to the hit waits for a
+/// held commit) leaves it waiting.
+pub(crate) fn take_pending_for(
+    waiting: &mut Option<PendingInstance>,
+    answered: &str,
+) -> Option<PendingInstance> {
+    waiting.take_if(|pending| pending.hit == answered)
+}
+
+/// A resolved pick waiting for the next render to select `target`, which
+/// it does only while `hit` is still the selection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstanceDue {
+    pub(crate) hit: String,
+    pub(crate) target: String,
+}
+
+/// The layer `due` selects, or `None` when the selection moved off its hit
+/// meanwhile (an added layer selected in the same render, say).
+pub(crate) fn due_target<'a>(due: &'a InstanceDue, selected: Option<&str>) -> Option<&'a str> {
+    (selected == Some(due.hit.as_str())).then_some(due.target.as_str())
 }
 
 /// Where a pending instance pick moves the selection once the selected
@@ -289,10 +334,15 @@ pub(crate) fn pending_instance_fate(
     if selected != Some(pending.hit.as_str()) {
         return None;
     }
-    instance_target(
+    let first = instance_target(
         report,
         pending.selected.as_deref(),
         pending.selected_id.as_deref(),
         pending.descend,
-    )
+    )?;
+    if pending.then_descend {
+        // Inside the first pick; nothing inside it keeps the hit.
+        return instance_target(report, None, Some(&first), true);
+    }
+    Some(first)
 }

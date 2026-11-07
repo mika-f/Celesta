@@ -1,7 +1,7 @@
 use crate::audio::{AudioMixRequest, AudioMixResult};
 use crate::export_worker::ExportEvent;
 use crate::helpers::export_loudness_label;
-use crate::layer_select::{pending_instance_fate, source_lookup};
+use crate::layer_select::{InstanceDue, pending_instance_fate, source_lookup, take_pending_for};
 use crate::preview::{AudioPreview, PreviewResult};
 use crate::problems::{Source, error_chain};
 use crate::react_audio::ReactAudioResult;
@@ -70,9 +70,16 @@ impl EditorView {
                 LookupFate::Show => {
                     let lookup = source_lookup(source);
                     // A click picking an instance waited for this chain.
-                    if let Some(pending) = self.pending_instance.take() {
+                    // One for another layer (the old selection, while the
+                    // change waits for a held commit) keeps waiting.
+                    if let Some(pending) = take_pending_for(&mut self.pending_instance, &id) {
                         self.instance_due =
-                            pending_instance_fate(&pending, Some(id.as_str()), &lookup);
+                            pending_instance_fate(&pending, Some(id.as_str()), &lookup).map(
+                                |target| InstanceDue {
+                                    hit: id.clone(),
+                                    target,
+                                },
+                            );
                     }
                     self.source_lookup = Some(lookup);
                     self.source_lookup_frame = result.timeline_frame;

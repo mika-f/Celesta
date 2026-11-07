@@ -816,13 +816,6 @@ pub(crate) fn has_anchor_rows(targets: &ElementTargets) -> bool {
         .any(|key| targets.target(key).is_some())
 }
 
-/// Whether a press at `point` (scene pixels, within `reach` of the cross the
-/// canvas draws for `pivot`, see `marker`) with `alt` held is taken and
-/// starts nothing: Alt there means the anchor, and when no anchor drag is
-/// offered but the cross says why (Center's marker, always; a pivot cross
-/// with a `reason`, see `anchor_reason`), falling through to the body would
-/// move the layer under the not-allowed cursor. A pivot cross that shows
-/// nothing (an element without anchor rows) lets the press through.
 /// The drag a press starts from the part of the selection it is on
 /// (`pressed`): any handle, or the body when the press is on it
 /// (`on_body`), `x` or `y` can move (`moves`), and moving is allowed
@@ -839,6 +832,13 @@ pub(crate) fn drag_handle(
     }
 }
 
+/// Whether a press at `point` (scene pixels, within `reach` of the cross the
+/// canvas draws for `pivot`, see `marker`) with `alt` held is taken and
+/// starts nothing: Alt there means the anchor, and when no anchor drag is
+/// offered but the cross says why (Center's marker, always; a pivot cross
+/// with a `reason`, see `anchor_reason`), falling through to the body would
+/// move the layer under the not-allowed cursor. A pivot cross that shows
+/// nothing (an element without anchor rows) lets the press through.
 pub(crate) fn swallows_alt_press(
     frame: &LayerFrame,
     editable: &[PropKey],

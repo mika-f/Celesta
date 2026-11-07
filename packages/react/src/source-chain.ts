@@ -236,12 +236,8 @@ function sourceFibers(
       if (id !== undefined) entry.layerId = id;
     } else if (entry.kind === 'component' && layerIdOf) {
       // Only when ids are asked for: the walk covers the call's subtree.
-      // Hosts that draw no layer (`<Audio>`) don't count.
-      const roots = topHostNodes(fiber).flatMap((root) => {
-        const id = layerIdOf(root);
-        return id === undefined ? [] : [id];
-      });
-      if (roots.length === 1) entry.layerId = roots[0];
+      const id = soleRootLayer(fiber, layerIdOf);
+      if (id !== undefined) entry.layerId = id;
     }
     chain.push({ entry, fiber });
   }
@@ -271,17 +267,29 @@ function firstHostNode(fiber: Fiber): HostNode | null {
  * (`<Sequence>`, `<FreezeFrame>`, ...) renders around its children is looked
  * through, down to the elements its caller wrote (which have positions).
  */
-function topHostNodes(fiber: Fiber, throughWrapper = false): HostNode[] {
+function* topHostNodes(fiber: Fiber, throughWrapper = false): Generator<HostNode> {
   // What the caller wrote (it has a position) is never the wrapper's own.
   const inWrapper = throughWrapper && !sourceOfProps(fiber.memoizedProps ?? fiber.pendingProps);
   if (typeof fiber.type === 'string' && !inWrapper) {
     const node = fiber.stateNode as HostNode | undefined;
-    return node ? [node] : [];
+    if (node) yield node;
+    return;
   }
   const through = typeof fiber.type !== 'string' && (inWrapper || isTransparent(fiber.elementType ?? fiber.type));
-  const nodes: HostNode[] = [];
-  for (let child = fiber.child ?? null; child; child = child.sibling ?? null) nodes.push(...topHostNodes(child, through));
-  return nodes;
+  for (let child = fiber.child ?? null; child; child = child.sibling ?? null) yield* topHostNodes(child, through);
+}
+
+/** The one layer `fiber`'s call draws everything in, if it draws exactly one; stops at the second. */
+function soleRootLayer(fiber: Fiber, layerIdOf: (node: HostNode) => string | undefined): string | undefined {
+  let sole: string | undefined;
+  for (const node of topHostNodes(fiber)) {
+    // Hosts that draw no layer (`<Audio>`) don't count.
+    const id = layerIdOf(node);
+    if (id === undefined) continue;
+    if (sole !== undefined) return undefined;
+    sole = id;
+  }
+  return sole;
 }
 
 // The bridge reads these as numbers; any other value would fail the report.

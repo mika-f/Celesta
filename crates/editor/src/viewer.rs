@@ -27,8 +27,8 @@ use crate::add_element::AddMode;
 use crate::element_rows::{InteractiveToggle, interactive_toggle};
 use crate::inline_text_view::{EditEvent, InlineEntry, paint_inline_text};
 use crate::layer_select::{
-    PendingInstance, PickMode, Press, SourceLookup, letterbox, outline_quads,
-    pending_instance_fate, press_pick, scene_point,
+    InstanceDue, PendingInstance, PickMode, Press, SourceLookup, letterbox, merge_pending,
+    outline_quads, pending_instance_fate, press_pick, scene_point,
 };
 use crate::meter::audio_meter;
 use crate::preview::PreviewPresentation;
@@ -1211,6 +1211,8 @@ impl EditorView {
     fn set_pick_mode(&mut self, mode: PickMode, cx: &mut Context<Self>) {
         if self.pick_mode != mode {
             self.pick_mode = mode;
+            // A pick made under the other mode no longer applies.
+            self.cancel_instance_pick();
             cx.notify();
         }
     }
@@ -1476,6 +1478,11 @@ impl EditorView {
         // instead of dragging its body (its first press dragged nothing),
         // while its handles still drag.
         let allow_move = !matches!(press, Press::Instance { descend: true });
+        // A press picking the layer itself (Cmd/Ctrl+click, or Layer) is
+        // the last word: an instance pick still waiting doesn't move it.
+        if press == Press::Layer {
+            self.cancel_instance_pick();
+        }
         if self.begin_transform_drag(
             event.position,
             hit.as_deref(),
@@ -1492,27 +1499,47 @@ impl EditorView {
         };
         self.select_layer(hit.clone(), cx);
         // The instance around the hit layer is known once its source is.
-        if let (Press::Instance { descend }, Some(hit)) = (press, hit)
-            && self.selected_layer.as_ref() == Some(&hit)
-        {
+        // Also while the change to the hit waits for a held commit:
+        // `change_selection` keeps the pick when it makes the hit selected.
+        if let (Press::Instance { descend }, Some(hit)) = (press, hit) {
             let already = selected_id.as_ref() == Some(&hit);
             let pending = PendingInstance {
                 hit,
                 selected,
                 selected_id,
                 descend,
+                then_descend: false,
             };
             match &self.source_lookup {
-                // The hit layer was selected and its source found already:
-                // no lookup is coming to wait for.
-                Some(lookup) if already && *lookup != SourceLookup::Pending => {
+                // The hit layer was selected and its source found already,
+                // for this frame: no lookup is coming to wait for.
+                Some(lookup)
+                    if already
+                        && !self.source_lookup_stale
+                        && *lookup != SourceLookup::Pending
+                        && self.pending_instance.is_none() =>
+                {
                     self.instance_due =
-                        pending_instance_fate(&pending, self.selected_layer.as_deref(), lookup);
+                        pending_instance_fate(&pending, self.selected_layer.as_deref(), lookup)
+                            .map(|target| InstanceDue {
+                                hit: pending.hit.clone(),
+                                target,
+                            });
                     cx.notify();
                 }
-                _ => self.pending_instance = Some(pending),
+                _ => {
+                    self.pending_instance =
+                        Some(merge_pending(self.pending_instance.take(), pending));
+                }
             }
         }
+    }
+
+    /// Forgets an instance pick waiting for its lookup or for the next
+    /// render.
+    fn cancel_instance_pick(&mut self) {
+        self.pending_instance = None;
+        self.instance_due = None;
     }
 
     /// Makes `layer` the selection (or clears it) at once, looking up its

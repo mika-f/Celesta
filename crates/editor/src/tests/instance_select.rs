@@ -126,6 +126,7 @@ fn pending(descend: bool) -> crate::layer_select::PendingInstance {
         selected: None,
         selected_id: None,
         descend,
+        then_descend: false,
     }
 }
 
@@ -164,4 +165,57 @@ fn pending_instance_drops_without_a_chain() {
             None
         );
     }
+}
+
+#[test]
+fn a_fast_double_click_descends_from_the_first_pick() {
+    use crate::layer_select::{merge_pending, pending_instance_fate};
+    // The second press arrives before the first press's lookup answered:
+    // it goes one level inside what the first press picks.
+    let first = pending(false);
+    let second = crate::layer_select::PendingInstance {
+        selected: None,
+        selected_id: Some("r".into()),
+        ..pending(true)
+    };
+    let merged = merge_pending(Some(first.clone()), second.clone());
+    assert!(merged.then_descend);
+    assert_eq!(merged.selected_id, None);
+    let found = SourceLookup::Found(Box::new(report_of(film_chain())));
+    assert_eq!(
+        pending_instance_fate(&merged, Some("r"), &found),
+        Some("g".into())
+    );
+    // Another hit replaces the waiting pick.
+    let other = crate::layer_select::PendingInstance {
+        hit: "s".into(),
+        ..pending(true)
+    };
+    assert_eq!(merge_pending(Some(first), other.clone()), other);
+    assert_eq!(merge_pending(None, second.clone()), second);
+}
+
+#[test]
+fn a_pending_pick_waits_for_its_own_hit_s_lookup() {
+    use crate::layer_select::take_pending_for;
+    // A lookup for the old selection (the change to the hit is waiting
+    // for a held commit) leaves the pick in place.
+    let mut waiting = Some(pending(false));
+    assert_eq!(take_pending_for(&mut waiting, "x"), None);
+    assert!(waiting.is_some());
+    assert_eq!(take_pending_for(&mut waiting, "r"), Some(pending(false)));
+    assert!(waiting.is_none());
+}
+
+#[test]
+fn a_due_instance_applies_only_while_its_hit_is_selected() {
+    use crate::layer_select::{InstanceDue, due_target};
+    let due = InstanceDue {
+        hit: "r".into(),
+        target: "g".into(),
+    };
+    assert_eq!(due_target(&due, Some("r")), Some("g"));
+    // An added layer selected in the same render wins.
+    assert_eq!(due_target(&due, Some("added")), None);
+    assert_eq!(due_target(&due, None), None);
 }

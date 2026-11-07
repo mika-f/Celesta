@@ -9,7 +9,7 @@ use crate::element_edit::{
     field_of, inner_target, required_of, table_default, text_style_key,
 };
 use crate::inline_text_view::EditEvent;
-use crate::layer_select::{SourceLookup, display_path};
+use crate::layer_select::{SourceLookup, display_path, due_target};
 use crate::property_controls::{
     Control, ControlEvent, ControlKind, build_control, parse_color, parse_color_input,
     parse_number_input, take_picked_color,
@@ -1604,8 +1604,10 @@ impl EditorView {
         }
         // A click with the Instance pick mode found the instance around
         // the layer it hit.
-        if let Some(instance) = self.instance_due.take() {
-            self.select_layer(Some(instance), cx);
+        if let Some(due) = self.instance_due.take()
+            && let Some(target) = due_target(&due, self.selected_layer.as_deref())
+        {
+            self.select_layer(Some(target.to_owned()), cx);
         }
         if std::mem::take(&mut self.element_rows.submit_requested) {
             self.submit_edited_rows(cx);

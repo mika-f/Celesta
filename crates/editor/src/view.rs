@@ -8,7 +8,7 @@ use crate::element_rows::ElementRows;
 use crate::export_worker::{ExportWorker, spawn_export};
 use crate::helpers::ExportLoudness;
 use crate::inline_text_view::{EditEvent, InlineTextSession, KeptOverride};
-use crate::layer_select::{PendingInstance, PickMode, SourceLookup};
+use crate::layer_select::{InstanceDue, PendingInstance, PickMode, SourceLookup};
 use crate::media_probe::{MediaAssetInfo, MediaProbeWorker, spawn_media_probe};
 use crate::meter::MasterLevels;
 use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
@@ -356,8 +356,9 @@ pub(crate) struct EditorView {
     /// its source is looked up, to move the selection to the instance.
     pub(crate) pending_instance: Option<PendingInstance>,
     /// The instance a pending pick found, selected on the next render
-    /// (`settle_row_requests`), which has the context to.
-    pub(crate) instance_due: Option<String>,
+    /// (`settle_row_requests`), which has the context to, while its hit is
+    /// still the selection.
+    pub(crate) instance_due: Option<InstanceDue>,
     /// The text edited on the canvas, or committed and waiting for its
     /// reload: every requested frame draws it in place of its layer's text.
     pub(crate) text_override: Option<TextOverride>,
