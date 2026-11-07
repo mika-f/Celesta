@@ -7,13 +7,12 @@ gain, and what has to be decided first.
 
 **Status.** Option B was built for decoded frames
 (`2026-11-08-codec-shared-memory.md`). A review of this note found points
-that the build does not follow yet, and that it should before it merges:
-the generation check cannot see a slot written under its reader (C below),
-the descriptor is moved to a fixed number 3 (Platform mechanisms), the
-plugin leaves that descriptor open for processes it starts, every backend
-gets a segment whatever it does (Segments), and on Windows the whole
-section is committed at creation. Each is written below as the design
-now says it.
+the build did not follow; it now does for three of them: the generation
+check is a seqlock (C below), the descriptor keeps its own number, and the
+plugin sets close-on-exec on it once mapped (Platform mechanisms). Two
+remain open questions here: a segment only for backends that need one
+(Segments; every codec process gets one now), and the Windows commit
+charge (questions 7 and 9).
 
 ## Goal and expected gain
 
