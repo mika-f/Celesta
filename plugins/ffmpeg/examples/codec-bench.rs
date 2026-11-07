@@ -147,7 +147,8 @@ fn decode(factory: CodecFactory, video: &Path, frames: u32) -> Timing {
 
 /// `frames` RGBA frames of `video`'s size encoded to H.264 (`ultrafast`, so
 /// the encoder's own work hides less of the transport) after one frame that
-/// opens the encoder, and the encoder finished.
+/// opens the encoder, and the encoder finished. The host's CPU time covers
+/// the whole run, the encoder's threads in this process included.
 fn encode(factory: CodecFactory, video: &Path, frames: u32) -> Timing {
     let opened = cpu();
     let mut backend = MediaBackend::with_codec(factory);
@@ -183,30 +184,23 @@ fn encode(factory: CodecFactory, video: &Path, frames: u32) -> Timing {
     backend
         .encode_frame(encoder, pixels[0].clone())
         .expect("a frame encodes");
-    let mut wall = Duration::ZERO;
-    let mut host = Some(Duration::ZERO);
+    // The whole loop is timed, copying each frame (as the renderer's
+    // readback makes one) included: an encoder in this process goes on
+    // encoding on its own threads while the next frame is copied, so timing
+    // only `encode_frame` would leave its work out.
+    let started = Instant::now();
+    let before = cpu();
     for index in 1..=frames {
-        // Cloning stands for the renderer's readback and is not timed.
         let frame = pixels[index as usize % pixels.len()].clone();
-        let started = Instant::now();
-        let before = cpu();
         backend
             .encode_frame(encoder, frame)
             .expect("a frame encodes");
-        host = host
-            .zip(since(before, |(own, _)| own))
-            .map(|(sum, more)| sum + more);
-        wall += started.elapsed();
     }
-    let started = Instant::now();
-    let before = cpu();
     backend
         .finish_encoder(encoder)
         .expect("the encoder finishes");
-    host = host
-        .zip(since(before, |(own, _)| own))
-        .map(|(sum, more)| sum + more);
-    wall += started.elapsed();
+    let wall = started.elapsed();
+    let host = since(before, |(own, _)| own);
     drop(backend);
     Timing {
         size: (width, height),

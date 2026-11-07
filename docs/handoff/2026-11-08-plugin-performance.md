@@ -28,15 +28,23 @@ through the codec plugin's program. Clips: `testsrc2`, H.264 yuv420p,
 | --- | --- | --- | --- |
 | decode 1080p | 0.78 ms | 2.19 ms | 1.69 ms |
 | decode 4K | 3.33 ms | 8.98 ms | 8.01 ms |
-| encode 1080p | 1.28 ms | 2.95 ms | 2.74 ms |
-| encode 4K | 4.93 ms | 13.21 ms | 13.77 ms |
+| encode 1080p | 1.75 ms | 3.02 ms | 2.83 ms |
+| encode 4K | 7.40 ms | 13.75 ms | 14.15 ms |
 
 The CPU time the plugin's process spent decoding dropped from 7.4 to
 6.9 ms (1080p) and from 28.7 to 26.7 ms (4K) a frame; the host's
 reading, from 1.08 to 0.77 ms (1080p). In a run under heavy load, the
 shared answer alone saved the plugin 2.0 ms (1080p) and 6.5 ms (4K) of
-CPU a frame. The encode rows did not change beyond the noise: the
-encoder, not the transport, dominates.
+CPU a frame. The encode rows did not change beyond the noise. They time
+the whole run of frames, copying each one included (four runs a side): a
+first version of the bench timed only the `encode_frame` calls, which
+left out what an encoder in the bench's process does on its own threads
+meanwhile, and so made in-process encoding look cheaper (1.28 and
+4.93 ms) and costlier in CPU through the plugin than it is. Counted
+whole, encoding costs about the same CPU either way (about 61 ms a 4K
+frame in process, 55 + 5 ms through the plugin); what the plugin adds is
+about 1.1 ms (1080p) and 6.6 ms (4K) of wall-clock time, the frame's way
+through the pipe.
 
 What the pipe itself costs: `dd` through a pipe moves 5.8–8.5 GiB/s here,
 about 1.0–1.3 ms for a 1080p RGBA frame (8.3 MB) and 4–5 ms for a 4K one
@@ -150,8 +158,8 @@ background thread would leave the first frame without the avatar instead.
 ## Not done
 
 - **Shared memory for codec frames.** What is left of the transport is
-  the pipe's own copy: 0.9 ms (1080p) and 4.7 ms (4K) a decoded frame, a
-  little more an encoded one. Frames in a shared mapping (a ring of slots
+  the pipe's own copy: 0.9 ms (1080p) and 4.7 ms (4K) a decoded frame,
+  1.1 and 6.6 ms an encoded one. Frames in a shared mapping (a ring of slots
   the host creates and the plugin writes, the answer naming the slot)
   would remove it, but the renderer keeps decoded frames past the next
   request, so the host would still copy out of a slot, or slots would need
