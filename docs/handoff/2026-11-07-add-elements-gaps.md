@@ -66,7 +66,9 @@ Drawing and writing:
   in `assets/`. The add mode publishes only while it is still picking, so a
   cancel during the copy drops the temporary file unnamed. Nothing in
   `assets/` is ever deleted, so a copy another import reused meanwhile
-  stays. A cancel during the rename itself keeps the named copy.
+  stays. The temporary file sits in `assets/`, which is created for it if
+  needed and kept. Once the copy is named, a later cancel (while drawing)
+  keeps it, as **Choose…** keeps a chosen file.
   `import_path` is the two steps at once. `StagedFile::publish_new`
   (`celesta-remote`) hands a staged file back when its name is taken, so
   it can be compared with that file or take the next name.
