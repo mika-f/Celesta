@@ -10,10 +10,10 @@ use crate::occurrences::OccurrenceState;
 use crate::scope::{
     CHANGED_MEANWHILE, CalledHere, CommitGate, HeldOrigin, SCANNED_MEANWHILE, SceneCalls, Scope,
     ScopeChoices, ScopeLock, ScopeOptions, ScopeState, ScopedRow, calls_of, chosen_scope,
-    commit_gate, commit_scope, drain_gate, gesture_gate, gesture_lock, gesture_start_refusal,
-    held_gate, impact_filter, previewed_scope, remove_tooltip, scope_in_effect,
-    scope_in_effect_here, scope_line, scope_state, scoped_removable, scoped_row, targets_in_effect,
-    this_scene_tooltip,
+    commit_gate, commit_scope, component_section_note, drain_gate, gesture_gate, gesture_lock,
+    gesture_start_refusal, held_gate, impact_filter, previewed_scope, remove_tooltip,
+    scope_in_effect, scope_in_effect_here, scope_line, scope_state, scoped_removable, scoped_row,
+    targets_in_effect, this_scene_tooltip,
 };
 use crate::transform_drag::{override_sites, prop_overrides};
 use celesta_react_bridge::{
@@ -2530,4 +2530,19 @@ fn calls_of_takes_each_instance_s_entry_at_s_s_index() {
         calls_of(&report, &element, &s()),
         vec![Some(s()), Some(intro_call()), None]
     );
+}
+
+#[test]
+fn the_component_section_says_it_writes_the_call_while_edits_change_shows() {
+    let note = Some("Writes this call only, whatever Edits change says");
+    // Both options known, under either choice, and while the scan runs.
+    let open = ScopeState::Options(options(Ok(()), Ok(())));
+    assert_eq!(component_section_note(Some(&open)), note);
+    let scanning = ScopeState::Unknown {
+        note: "Scanning scenes…".to_owned(),
+    };
+    assert_eq!(component_section_note(Some(&scanning)), note);
+    // No "Edits change" above: nothing to set apart from.
+    assert_eq!(component_section_note(Some(&ScopeState::NotShared)), None);
+    assert_eq!(component_section_note(None), None);
 }

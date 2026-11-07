@@ -822,6 +822,21 @@ pub(crate) fn this_scene_tooltip(options: &ScopeOptions) -> &'static str {
     }
 }
 
+/// The line under the Component section's "Set at" while the panel shows
+/// "Edits change": with the element's options, or while whether it is
+/// shared is not known yet (the scenes are being scanned, are not scanned,
+/// the scan failed, or the index does not find the element). The section's
+/// rows write the call whatever is chosen there. `None` without the
+/// control, where nothing above says otherwise.
+pub(crate) fn component_section_note(state: Option<&ScopeState>) -> Option<&'static str> {
+    match state {
+        Some(ScopeState::Options(_) | ScopeState::Unknown { .. }) => {
+            Some("Writes this call only, whatever Edits change says")
+        }
+        Some(ScopeState::NotShared) | None => None,
+    }
+}
+
 /// The remove button's tooltip on a row that writes `row` under `scope`
 /// (`None` for a row outside the scope, a Component-section one too): under
 /// "This scene", and under "Shared value" on a row this scene sets itself,
