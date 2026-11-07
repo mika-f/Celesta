@@ -133,13 +133,14 @@ pub(crate) fn source_position(source: &LayerSource, entry_dir: &Path) -> String 
     )
 }
 
-/// The layer a chain entry emitted, when it is a primitive (a `<Group>` or
-/// `<Stack>`) the user can select as a parent.
+/// The layer the user can select from a chain entry: the layer a primitive
+/// (a `<Group>` or `<Stack>`) emitted, or the root of a component's
+/// instance, the one layer its call draws everything in. A wrapper
+/// (`<Sequence>`) has none.
 pub(crate) fn parent_layer_id(entry: &LayerSource) -> Option<&str> {
     match entry.kind {
-        ElementKind::Primitive => entry.layer_id.as_deref(),
+        ElementKind::Primitive | ElementKind::Component => entry.layer_id.as_deref(),
         ElementKind::Wrapper => None,
-        ElementKind::Component => None,
     }
 }
 
@@ -175,4 +176,123 @@ pub(crate) fn outline_quads(
     } else {
         regions
     }
+}
+
+/// The root of a component instance a chain entry is, if it is one: a
+/// component the runtime reported a single root layer for.
+fn instance_root(entry: &LayerSource) -> Option<&str> {
+    (entry.kind == ElementKind::Component)
+        .then_some(entry.layer_id.as_deref())
+        .flatten()
+}
+
+/// The layer a click with the Instance pick mode selects instead of the
+/// layer it hit, or `None` to keep the hit layer (see
+/// `docs/handoff/2026-11-07-instance-select.md`). `hit` is the hit layer's
+/// report; `selected` and `selected_id` are the selection's before the
+/// click. The context is the instance just outside the selection, or the
+/// selection itself when `descend` (a double-click): a hit inside the
+/// context's root picks the outermost instance inside it, any other the
+/// outermost instance of all. An instance sharing the context's root
+/// (a component passing one child through) is not inside it.
+pub(crate) fn instance_target(
+    hit: &LayerSourceReport,
+    selected: Option<&LayerSourceReport>,
+    selected_id: Option<&str>,
+    descend: bool,
+) -> Option<String> {
+    let context = if descend {
+        selected_id
+    } else {
+        selected.and_then(|report| {
+            report
+                .chain
+                .iter()
+                .filter_map(instance_root)
+                .find(|root| Some(*root) != selected_id)
+        })
+    };
+    // Chains are innermost first: inside the context is before its root.
+    let bound = context
+        .and_then(|root| {
+            hit.chain
+                .iter()
+                .position(|entry| entry.layer_id.as_deref() == Some(root))
+        })
+        .unwrap_or(hit.chain.len());
+    let target = hit.chain[..bound]
+        .iter()
+        .rev()
+        .filter_map(instance_root)
+        .find(|root| Some(*root) != context)?;
+    (hit.chain
+        .first()
+        .and_then(|entry| entry.layer_id.as_deref())
+        != Some(target))
+    .then(|| target.to_owned())
+}
+
+/// What a click on the canvas selects: the layer under the pointer, or the
+/// component instance around it (the tool row's Select [Layer | Instance]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum PickMode {
+    #[default]
+    Layer,
+    Instance,
+}
+
+/// How one press on the canvas picks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Press {
+    /// The layer under the pointer.
+    Layer,
+    /// An instance around it, one level inside the selection when
+    /// `descend` (a double-click).
+    Instance { descend: bool },
+}
+
+/// How a press picks: with `PickMode::Instance` an instance, unless the
+/// platform modifier (Cmd on macOS, Ctrl elsewhere) is held. A descent
+/// needs no test of the hit being inside the selection: `instance_target`
+/// finds no context in the hit's chain then and picks as a plain click.
+pub(crate) fn press_pick(mode: PickMode, secondary: bool, double: bool) -> Press {
+    match mode {
+        PickMode::Instance if !secondary => Press::Instance { descend: double },
+        _ => Press::Layer,
+    }
+}
+
+/// A click with `PickMode::Instance` waiting for its hit layer's source to
+/// move the selection to the instance around it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PendingInstance {
+    /// The layer the click hit, selected meanwhile.
+    pub(crate) hit: String,
+    /// The selection's report before the click, when it had been found.
+    pub(crate) selected: Option<Box<LayerSourceReport>>,
+    /// The selection before the click.
+    pub(crate) selected_id: Option<String>,
+    pub(crate) descend: bool,
+}
+
+/// Where a pending instance pick moves the selection once the selected
+/// layer's lookup answered `lookup`: `None` when the hit layer is no longer
+/// selected, the lookup found no chain, or the hit layer is the pick.
+pub(crate) fn pending_instance_fate(
+    pending: &PendingInstance,
+    selected: Option<&str>,
+    lookup: &SourceLookup,
+) -> Option<String> {
+    let SourceLookup::Found(report) = lookup else {
+        return None;
+    };
+    if selected != Some(pending.hit.as_str()) {
+        return None;
+    }
+    instance_target(
+        report,
+        pending.selected.as_deref(),
+        pending.selected_id.as_deref(),
+        pending.descend,
+    )
 }

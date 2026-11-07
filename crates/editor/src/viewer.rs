@@ -26,7 +26,10 @@ use crate::actions::{
 use crate::add_element::AddMode;
 use crate::element_rows::{InteractiveToggle, interactive_toggle};
 use crate::inline_text_view::{EditEvent, InlineEntry, paint_inline_text};
-use crate::layer_select::{SourceLookup, letterbox, outline_quads, scene_point};
+use crate::layer_select::{
+    PendingInstance, PickMode, Press, SourceLookup, letterbox, outline_quads,
+    pending_instance_fate, press_pick, scene_point,
+};
 use crate::meter::audio_meter;
 use crate::preview::PreviewPresentation;
 use crate::problems::{ActiveProblem, Source, flow_line_breaks, summarize_warnings};
@@ -1018,7 +1021,31 @@ impl EditorView {
                 ResizeTool::Scale,
             ),
         ];
+        let pick = |id, label, tooltip, mode: PickMode| ToolTab {
+            id,
+            label,
+            tooltip,
+            chosen: self.pick_mode == mode,
+            on_click: Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.set_pick_mode(mode, cx);
+            })),
+        };
+        let pick_tabs = [
+            pick(
+                "pick-layer",
+                "Layer",
+                "Select the layer under the pointer",
+                PickMode::Layer,
+            ),
+            pick(
+                "pick-instance",
+                "Instance",
+                "Select the outermost component instance; double-click to go inside",
+                PickMode::Instance,
+            ),
+        ];
         let add = self.add_menu_button(cx);
+        let select = mode_toggle("pick-mode-note", pick_tabs, None, cx);
         let rotate = mode_toggle(
             "pivot-mode-note",
             pivot_tabs,
@@ -1043,6 +1070,7 @@ impl EditorView {
             .border_b_1()
             .border_color(cx.theme().border)
             .child(add)
+            .child(tool_group("Select", select, cx))
             .when(self.selected_layer.is_some(), |row| {
                 row.child(tool_group("Rotate about", rotate, cx))
                     .child(tool_group("Handles", handles, cx))
@@ -1176,6 +1204,13 @@ impl EditorView {
     fn set_pivot_mode(&mut self, mode: PivotMode, cx: &mut Context<Self>) {
         if self.pivot_mode != mode {
             self.pivot_mode = mode;
+            cx.notify();
+        }
+    }
+
+    fn set_pick_mode(&mut self, mode: PickMode, cx: &mut Context<Self>) {
+        if self.pick_mode != mode {
+            self.pick_mode = mode;
             cx.notify();
         }
     }
@@ -1431,12 +1466,53 @@ impl EditorView {
             self.enter_inline_text(layer, entry, window, cx);
             return;
         }
-        // A press on the selection's handles, or on its body, drags it.
-        if self.begin_transform_drag(event.position, hit.as_deref(), event.modifiers.alt) {
+        let press = press_pick(
+            self.pick_mode,
+            event.modifiers.secondary(cx),
+            event.click_count >= 2,
+        );
+        // A press on the selection's handles, or on its body, drags it; a
+        // double-click picking an instance goes inside the selection
+        // instead of dragging its body (its first press dragged nothing),
+        // while its handles still drag.
+        let allow_move = !matches!(press, Press::Instance { descend: true });
+        if self.begin_transform_drag(
+            event.position,
+            hit.as_deref(),
+            event.modifiers.alt,
+            allow_move,
+        ) {
             cx.notify();
             return;
         }
-        self.select_layer(hit, cx);
+        let selected_id = self.selected_layer.clone();
+        let selected = match &self.source_lookup {
+            Some(SourceLookup::Found(report)) => Some(report.clone()),
+            _ => None,
+        };
+        self.select_layer(hit.clone(), cx);
+        // The instance around the hit layer is known once its source is.
+        if let (Press::Instance { descend }, Some(hit)) = (press, hit)
+            && self.selected_layer.as_ref() == Some(&hit)
+        {
+            let already = selected_id.as_ref() == Some(&hit);
+            let pending = PendingInstance {
+                hit,
+                selected,
+                selected_id,
+                descend,
+            };
+            match &self.source_lookup {
+                // The hit layer was selected and its source found already:
+                // no lookup is coming to wait for.
+                Some(lookup) if already && *lookup != SourceLookup::Pending => {
+                    self.instance_due =
+                        pending_instance_fate(&pending, self.selected_layer.as_deref(), lookup);
+                    cx.notify();
+                }
+                _ => self.pending_instance = Some(pending),
+            }
+        }
     }
 
     /// Makes `layer` the selection (or clears it) at once, looking up its
@@ -1445,6 +1521,11 @@ impl EditorView {
         if layer == self.selected_layer {
             return;
         }
+        // A pending instance pick is for the layer it hit, not another.
+        let pending = self
+            .pending_instance
+            .take()
+            .filter(|pending| layer.as_ref() == Some(&pending.hit));
         // A text edited on the canvas is committed, not cancelled with the
         // selection it belongs to. (The viewer's notice stays: one set while
         // this change waited says why a held commit was dropped.)
@@ -1458,6 +1539,7 @@ impl EditorView {
         self.drop_released_timeline_drag::<BandDrag>();
         self.band_notice = None;
         self.selected_layer = layer;
+        self.pending_instance = pending;
         self.add_restore_confirm(confirm);
         if self.selected_layer.is_some() {
             self.source_lookup = Some(SourceLookup::Pending);
@@ -1481,6 +1563,8 @@ impl EditorView {
         self.inline_text_selection_cleared(outside_change);
         self.forget_held_rows();
         self.selected_layer = None;
+        self.pending_instance = None;
+        self.instance_due = None;
         self.source_lookup = None;
         self.source_lookup_stale = false;
         self.scope_carry_from = None;

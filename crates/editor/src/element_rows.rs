@@ -1602,6 +1602,11 @@ impl EditorView {
         if let Some(event) = self.inline_end_due.take() {
             self.end_inline_text(event, cx);
         }
+        // A click with the Instance pick mode found the instance around
+        // the layer it hit.
+        if let Some(instance) = self.instance_due.take() {
+            self.select_layer(Some(instance), cx);
+        }
         if std::mem::take(&mut self.element_rows.submit_requested) {
             self.submit_edited_rows(cx);
         }

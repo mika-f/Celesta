@@ -81,6 +81,7 @@ mod element_edit;
 mod element_rows;
 mod held_scene;
 mod inline_text_view;
+mod instance_select;
 mod scope;
 mod scope_commit;
 mod timeline_timing;
@@ -1773,12 +1774,18 @@ fn chain_entry(name: &str, kind: ElementKind, layer_id: Option<&str>) -> LayerSo
 }
 
 #[test]
-fn select_parent_group_sets_selection() {
+fn select_parent_layer_or_instance_root() {
     let group = chain_entry("Group", ElementKind::Primitive, Some("g"));
     assert_eq!(parent_layer_id(&group), Some("g"));
-    // A component or a primitive that emitted no layer has nothing to select.
+    // A component the runtime reported a root for selects that root.
     let title = chain_entry("Title", ElementKind::Component, Some("g"));
-    assert_eq!(parent_layer_id(&title), None);
+    assert_eq!(parent_layer_id(&title), Some("g"));
+    // A component without a single root, a wrapper, or a primitive that
+    // emitted no layer has nothing to select.
+    let pair = chain_entry("Pair", ElementKind::Component, None);
+    assert_eq!(parent_layer_id(&pair), None);
+    let sequence = chain_entry("Sequence", ElementKind::Wrapper, Some("g"));
+    assert_eq!(parent_layer_id(&sequence), None);
     let bare = chain_entry("Group", ElementKind::Primitive, None);
     assert_eq!(parent_layer_id(&bare), None);
 }
