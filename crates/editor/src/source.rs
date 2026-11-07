@@ -8,9 +8,10 @@ use celesta_react_bridge::{
     PrepareDependency, PropertyInputs, ReactBridge, SpawnOptions, project_types_template,
     refresh_project_types, runtime_paths as react_runtime_paths,
 };
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// True when `path` should open as a standalone React composition rather than
 /// a `project.json`. A `*.celesta.json` is always a project; a JS/TS module
@@ -116,6 +117,7 @@ pub(crate) fn load_source(
                     primitive_properties: metadata.primitive_properties,
                     component_schemas: metadata.component_schemas,
                     entry,
+                    loaded: watched.clone(),
                     watched,
                     dependencies: metadata.prepare_dependencies,
                     property_args,
@@ -210,43 +212,107 @@ impl DependencyDebounce {
     }
 }
 
-/// A fingerprint of what the reload watcher watches: the path, mtime and
-/// size of every source file under the entry's folder (see
-/// [`source_files`]), the mtime of every folder walked (which changes when
-/// a file in it is added, removed or renamed), and the `--props-file`'s.
-/// Two samples differ when any of them changed, in either direction: a
-/// file restored with an older mtime (`cp -p`, `rsync -a`) counts, and so
-/// does a module deleted from a subfolder. `None` when the entry has no
-/// folder or its folder's metadata cannot be read; a subfolder that cannot
-/// be listed is left out of the sample.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct WatchStamp(u64);
+/// A sample of what the reload watcher watches: the path, mtime and size of
+/// every source file under the entry's folder (see [`source_files`]), the
+/// mtime of every folder walked (which changes when a file in it is added,
+/// removed or renamed), and the `--props-file`'s. Two samples differ when
+/// any of them changed, in either direction: a file restored with an older
+/// mtime (`cp -p`, `rsync -a`) counts, and so does a module deleted from a
+/// subfolder. `None` when the entry has no folder or its folder's metadata
+/// cannot be read; a subfolder that cannot be listed is left out of the
+/// sample.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WatchStamp {
+    /// Every folder and source file walked, by path relative to the
+    /// entry's folder (so an entry opened as `film.tsx` and later sampled
+    /// as `/p/film.tsx` gives the same stamp), sorted by it.
+    sources: Vec<WatchedSource>,
+    /// The `--props-file`'s mtime and size; `Some(None)` when it cannot be
+    /// read.
+    props_file: Option<Option<(Option<SystemTime>, u64)>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WatchedSource {
+    path: PathBuf,
+    folder: bool,
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+impl WatchStamp {
+    /// The source files, relative to the entry's folder, that differ
+    /// between this sample and `newer`: changed, added or removed. Folders
+    /// are left out (their files are listed), and so is the `--props-file`.
+    pub(crate) fn changed_files(&self, newer: &WatchStamp) -> Vec<PathBuf> {
+        let older: HashMap<&Path, &WatchedSource> = self
+            .sources
+            .iter()
+            .map(|source| (source.path.as_path(), source))
+            .collect();
+        let newer_paths: HashSet<&Path> = newer
+            .sources
+            .iter()
+            .map(|source| source.path.as_path())
+            .collect();
+        let changed_or_added = newer
+            .sources
+            .iter()
+            .filter(|source| older.get(source.path.as_path()) != Some(source));
+        let removed = self
+            .sources
+            .iter()
+            .filter(|source| !newer_paths.contains(source.path.as_path()));
+        let mut files: Vec<PathBuf> = changed_or_added
+            .chain(removed)
+            .filter(|source| !source.folder)
+            .map(|source| source.path.clone())
+            .collect();
+        files.sort_unstable();
+        files.dedup();
+        files
+    }
+}
 
 pub(crate) fn watched_stamp(entry: &Path, property_args: &PropertyArgs) -> Option<WatchStamp> {
     let dir = entry.parent()?;
-    let mut seen = Vec::new();
-    // Relative to `dir`, so an entry opened as `film.tsx` and later
-    // sampled as `/p/film.tsx` gives the same stamp.
+    let mut sources = Vec::new();
     walk_sources(dir, &mut |path, metadata| {
-        let path = path.strip_prefix(dir).unwrap_or(path).to_owned();
-        seen.push((path, metadata.modified().ok(), metadata.len()));
+        sources.push(WatchedSource {
+            path: path.strip_prefix(dir).unwrap_or(path).to_owned(),
+            folder: metadata.is_dir(),
+            modified: metadata.modified().ok(),
+            len: metadata.len(),
+        });
     });
-    if seen.is_empty() {
+    if sources.is_empty() {
         return None;
     }
-    seen.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-    let mut hasher = DefaultHasher::new();
-    seen.hash(&mut hasher);
-    property_args
-        .props_file
-        .as_deref()
-        .map(|file| {
-            std::fs::metadata(file)
-                .ok()
-                .map(|metadata| (metadata.modified().ok(), metadata.len()))
-        })
-        .hash(&mut hasher);
-    Some(WatchStamp(hasher.finish()))
+    sources.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    let props_file = property_args.props_file.as_deref().map(|file| {
+        std::fs::metadata(file)
+            .ok()
+            .map(|metadata| (metadata.modified().ok(), metadata.len()))
+    });
+    Some(WatchStamp {
+        sources,
+        props_file,
+    })
+}
+
+/// The source files that differ between `loaded`, the sample the loaded
+/// code was read from, and `latest`, as real paths under the entry's
+/// folder: the bundler names the modules elements are written in by their
+/// real paths. `None` when either sample is missing or the folder cannot
+/// be resolved, so which files changed is not known.
+pub(crate) fn changed_sources(
+    entry: &Path,
+    loaded: Option<&WatchStamp>,
+    latest: Option<&WatchStamp>,
+) -> Option<Vec<PathBuf>> {
+    let changed = loaded?.changed_files(latest?);
+    let dir = std::fs::canonicalize(entry.parent()?).ok()?;
+    Some(changed.into_iter().map(|file| dir.join(file)).collect())
 }
 
 /// The JS/TS/JSON/CSS/WGSL/subtitle source files under `dir`, recursively
@@ -452,6 +518,72 @@ mod tests {
         let spelled = dir.join("..").join(name).join("film.tsx");
         assert_eq!(watched_stamp(&spelled, &args), watched_stamp(&entry, &args));
         assert_eq!(watched_stamp(&dir.join("missing/film.tsx"), &args), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn two_samples_name_the_files_changed_added_and_removed() {
+        let dir = scene_folder("watch-changed");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+        let before = watched_stamp(&entry, &args).unwrap();
+
+        // Saved outside Celesta with another length, so the change shows
+        // whatever the filesystem's mtime granularity.
+        std::fs::write(dir.join("scenes/a.ts"), "export const x = 10;").unwrap();
+        std::fs::write(dir.join("scenes/c.ts"), "export const x = 1;").unwrap();
+        std::fs::remove_file(dir.join("scenes/b.ts")).unwrap();
+        let after = watched_stamp(&entry, &args).unwrap();
+
+        // The `scenes` folder changed too, but its files are what is named.
+        assert_eq!(
+            before.changed_files(&after),
+            ["scenes/a.ts", "scenes/b.ts", "scenes/c.ts"].map(PathBuf::from)
+        );
+        assert_eq!(after.changed_files(&after.clone()), Vec::<PathBuf>::new());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn changed_sources_are_real_paths_under_the_entry_folder() {
+        let dir = scene_folder("watch-real");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+        let before = watched_stamp(&entry, &args);
+        std::fs::write(dir.join("scenes/a.ts"), "export const x = 10;").unwrap();
+        let after = watched_stamp(&entry, &args);
+
+        // The temporary folder is behind a symlink on macOS (`/var`); the
+        // bundler, and so the elements' positions, name the real path.
+        let real = std::fs::canonicalize(&dir).unwrap();
+        assert_eq!(
+            changed_sources(&entry, before.as_ref(), after.as_ref()),
+            Some(vec![real.join("scenes/a.ts")])
+        );
+        // Without the sample the loaded code was read from, which files
+        // changed is not known.
+        assert_eq!(changed_sources(&entry, None, after.as_ref()), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_props_file_change_names_no_source() {
+        let dir = scene_folder("watch-props");
+        let entry = dir.join("film.tsx");
+        // Outside the entry's folder, so only the --props-file sample has it.
+        let props =
+            std::env::temp_dir().join(format!("celesta-watch-props-{}.json", std::process::id()));
+        std::fs::write(&props, "{}").unwrap();
+        let args = PropertyArgs::new(Some(props.clone()), None);
+        let before = watched_stamp(&entry, &args).unwrap();
+
+        std::fs::write(&props, r#"{"title":"Another"}"#).unwrap();
+        let after = watched_stamp(&entry, &args).unwrap();
+
+        // It reloads, and no element's position moved.
+        assert_ne!(before, after);
+        assert_eq!(before.changed_files(&after), Vec::<PathBuf>::new());
+        std::fs::remove_file(&props).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -1438,8 +1438,32 @@ impl ScopeChoices {
             .retain(|element, _| Some(element) == keep || !files.contains(&element.file));
     }
 
-    /// Forgets every choice: files changed outside the editor.
+    /// Forgets every choice: which files changed is not known.
     pub(crate) fn clear(&mut self) {
         self.chosen.clear();
+    }
+
+    /// Forgets the choices a reload may have moved onto other elements:
+    /// those in `changed`, the source files that differ from the ones the
+    /// old code was read from (whoever changed them), and in `written`, the
+    /// files the editor's own writes changed. The one at `keep`, carried
+    /// for the element being edited, stays. When which files changed is not
+    /// known (`changed` is `None`), an own write's reload forgets the
+    /// choices in `written`, and any other reload every choice.
+    pub(crate) fn forget_reloaded(
+        &mut self,
+        changed: Option<Vec<PathBuf>>,
+        written: Vec<PathBuf>,
+        own_write: bool,
+        keep: Option<&SourcePos>,
+    ) {
+        match changed {
+            Some(mut files) => {
+                files.extend(written);
+                self.forget_in(&files, keep);
+            }
+            None if own_write => self.forget_in(&written, keep),
+            None => self.clear(),
+        }
     }
 }

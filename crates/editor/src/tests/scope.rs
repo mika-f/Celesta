@@ -1988,6 +1988,71 @@ fn a_reload_forgets_the_choices_in_the_files_it_changed() {
     assert_eq!(choices.get(&unchanged), None);
 }
 
+#[test]
+fn a_change_outside_the_editor_forgets_only_the_choices_in_its_files() {
+    let tag = pos(TAG_FILE, 2, 10);
+    let badge = pos("/project/badge.tsx", 2, 10);
+    let mut choices = ScopeChoices::default();
+    choices.set(tag.clone(), Scope::Shared);
+    choices.set(badge.clone(), Scope::ThisScene);
+
+    // Another file saved outside Celesta: both choices stay.
+    choices.forget_reloaded(
+        Some(vec![PathBuf::from("/project/intro.tsx")]),
+        Vec::new(),
+        false,
+        None,
+    );
+    assert_eq!(choices.get(&tag), Some(Scope::Shared));
+    assert_eq!(choices.get(&badge), Some(Scope::ThisScene));
+
+    // The tag's file saved outside Celesta: its position may name another
+    // element now.
+    choices.forget_reloaded(Some(vec![PathBuf::from(TAG_FILE)]), Vec::new(), false, None);
+    assert_eq!(choices.get(&tag), None);
+    assert_eq!(choices.get(&badge), Some(Scope::ThisScene));
+
+    // Which files changed is not known: every one goes.
+    choices.set(tag.clone(), Scope::Shared);
+    choices.forget_reloaded(None, Vec::new(), false, None);
+    assert_eq!(choices.get(&tag), None);
+    assert_eq!(choices.get(&badge), None);
+}
+
+#[test]
+fn an_own_write_reload_forgets_the_written_and_the_changed_files() {
+    let selected = pos(TAG_FILE, 3, 10);
+    let sibling = pos(TAG_FILE, 4, 10);
+    let badge = pos("/project/badge.tsx", 2, 10);
+    let intro = pos("/project/intro.tsx", 2, 10);
+    let mut choices = ScopeChoices::default();
+    for element in [&selected, &sibling, &badge, &intro] {
+        choices.set(element.clone(), Scope::Shared);
+    }
+
+    // The editor wrote the tag's file while badge.tsx was saved outside it.
+    choices.forget_reloaded(
+        Some(vec![
+            PathBuf::from(TAG_FILE),
+            PathBuf::from("/project/badge.tsx"),
+        ]),
+        vec![PathBuf::from(TAG_FILE)],
+        true,
+        Some(&selected),
+    );
+    assert_eq!(choices.get(&selected), Some(Scope::Shared));
+    assert_eq!(choices.get(&sibling), None);
+    assert_eq!(choices.get(&badge), None);
+    assert_eq!(choices.get(&intro), Some(Scope::Shared));
+
+    // Without the samples, an own write's reload forgets only what it wrote.
+    choices.set(sibling.clone(), Scope::Shared);
+    choices.forget_reloaded(None, vec![PathBuf::from(TAG_FILE)], true, Some(&selected));
+    assert_eq!(choices.get(&selected), Some(Scope::Shared));
+    assert_eq!(choices.get(&sibling), None);
+    assert_eq!(choices.get(&intro), Some(Scope::Shared));
+}
+
 /// The impact of an edit of the selected `<Rect>` (in Price) under
 /// `filter`, with `PriceTag` called once per scene.
 fn impact_under(filter: &ImpactFilter) -> crate::impact::Impact {

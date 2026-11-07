@@ -423,6 +423,10 @@ pub(crate) struct ReactPreview {
     /// `--props-file` (see [`WatchStamp`]). It compares against this to
     /// notice edits.
     pub(crate) watched: Option<WatchStamp>,
+    /// The watcher's sample of the sources the loaded code was read from:
+    /// the scope choices' positions are in those files as they were then.
+    /// A reload compares against it to tell which files changed.
+    pub(crate) loaded: Option<WatchStamp>,
     /// Files and directories the entry's `prepare()` read (voice folders and
     /// the like, possibly outside the entry's directory), as last read. The
     /// reload watcher compares their state on disk against this.
