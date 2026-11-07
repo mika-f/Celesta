@@ -160,7 +160,7 @@ Run on macOS (Apple silicon), FFmpeg 8 through `PKG_CONFIG_PATH`:
   inside a real `<Sequence>` and `<FreezeFrame>`).
 - `cargo test --workspace`: 2369 passed, 0 failed, 1 ignored
   (`write_web_effect_fixtures`, which writes fixtures on purpose). The new
-  editor tests are `tests/instance_select.rs`,
+  editor tests are `crates/editor/src/tests/instance_select.rs`,
   `select_parent_layer_or_instance_root`, and
   `a_press_that_may_not_move_still_starts_handle_drags`.
 - `cargo clippy --workspace --all-targets -- -D warnings`,
@@ -172,8 +172,8 @@ Run on macOS (Apple silicon), FFmpeg 8 through `PKG_CONFIG_PATH`:
   failed first:
   - A component whose root is inside a real `<Sequence>` had no root.
   - A second press within the double-click window skipped handle drags.
-- The PR review (cubic) fixed these, with tests in `tests/instance_select.rs`
-  where the logic is pure:
+- The PR review (cubic) fixed these, with tests in
+  `crates/editor/src/tests/instance_select.rs` where the logic is pure:
   - A pick now waits for its own hit's lookup (`take_pending_for`). A
     selection change waiting for a held commit no longer loses it.
   - Cmd/Ctrl+click and a switch of the pick mode cancel a waiting pick
@@ -184,7 +184,8 @@ Run on macOS (Apple silicon), FFmpeg 8 through `PKG_CONFIG_PATH`:
     is still the selection, so an added layer selected in the same render
     wins (`due_target`).
   - A click on the selected layer resolves at once only from a lookup for
-    this frame (not `source_lookup_stale`).
+    this frame (not `source_lookup_stale`), superseding a pick waiting for
+    another hit (`resolves_at_once`).
   - `topHostNodes` is a generator, and `soleRootLayer` stops at a second
     root.
   - The review's claim that an old runtime without `kind` shows "Select this

@@ -306,6 +306,24 @@ pub(crate) fn take_pending_for(
     waiting.take_if(|pending| pending.hit == answered)
 }
 
+/// Whether an Instance press on `hit` resolves at once from `lookup`
+/// rather than waiting for one: the hit was selected already (`already`),
+/// so no lookup is coming, and `lookup` answered for this frame (not
+/// `stale`). A pick waiting for the same hit (a fast double-click's first
+/// press) waits on with it; one for another hit is superseded.
+pub(crate) fn resolves_at_once(
+    already: bool,
+    stale: bool,
+    lookup: Option<&SourceLookup>,
+    waiting: Option<&PendingInstance>,
+    hit: &str,
+) -> bool {
+    already
+        && !stale
+        && lookup.is_some_and(|lookup| *lookup != SourceLookup::Pending)
+        && waiting.is_none_or(|pending| pending.hit != hit)
+}
+
 /// A resolved pick waiting for the next render to select `target`, which
 /// it does only while `hit` is still the selection.
 #[derive(Clone, Debug, PartialEq, Eq)]

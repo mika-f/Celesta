@@ -219,3 +219,42 @@ fn a_due_instance_applies_only_while_its_hit_is_selected() {
     assert_eq!(due_target(&due, Some("added")), None);
     assert_eq!(due_target(&due, None), None);
 }
+
+#[test]
+fn a_click_on_the_selected_layer_resolves_at_once_from_its_lookup() {
+    use crate::layer_select::resolves_at_once;
+    let found = SourceLookup::Found(Box::new(report_of(film_chain())));
+    // No lookup is coming for the layer already selected.
+    assert!(resolves_at_once(true, false, Some(&found), None, "r"));
+    // A pick for another hit (its change held for a commit) is superseded.
+    let other = crate::layer_select::PendingInstance {
+        hit: "s".into(),
+        ..pending(false)
+    };
+    assert!(resolves_at_once(
+        true,
+        false,
+        Some(&found),
+        Some(&other),
+        "r"
+    ));
+    // The first press of a fast double-click on the same hit waits.
+    assert!(!resolves_at_once(
+        true,
+        false,
+        Some(&found),
+        Some(&pending(false)),
+        "r"
+    ));
+    // A newly selected hit, a stale or pending lookup: a lookup is coming.
+    assert!(!resolves_at_once(false, false, Some(&found), None, "r"));
+    assert!(!resolves_at_once(true, true, Some(&found), None, "r"));
+    assert!(!resolves_at_once(
+        true,
+        false,
+        Some(&SourceLookup::Pending),
+        None,
+        "r"
+    ));
+    assert!(!resolves_at_once(true, false, None, None, "r"));
+}

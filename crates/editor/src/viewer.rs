@@ -28,7 +28,7 @@ use crate::element_rows::{InteractiveToggle, interactive_toggle};
 use crate::inline_text_view::{EditEvent, InlineEntry, paint_inline_text};
 use crate::layer_select::{
     InstanceDue, PendingInstance, PickMode, Press, SourceLookup, letterbox, merge_pending,
-    outline_quads, pending_instance_fate, press_pick, scene_point,
+    outline_quads, pending_instance_fate, press_pick, resolves_at_once, scene_point,
 };
 use crate::meter::audio_meter;
 use crate::preview::PreviewPresentation;
@@ -1510,21 +1510,25 @@ impl EditorView {
                 descend,
                 then_descend: false,
             };
+            // The hit layer was selected and its source found already, for
+            // this frame: no lookup is coming to wait for.
+            let at_once = resolves_at_once(
+                already,
+                self.source_lookup_stale,
+                self.source_lookup.as_ref(),
+                self.pending_instance.as_ref(),
+                &pending.hit,
+            );
             match &self.source_lookup {
-                // The hit layer was selected and its source found already,
-                // for this frame: no lookup is coming to wait for.
-                Some(lookup)
-                    if already
-                        && !self.source_lookup_stale
-                        && *lookup != SourceLookup::Pending
-                        && self.pending_instance.is_none() =>
-                {
+                Some(lookup) if at_once => {
                     self.instance_due =
                         pending_instance_fate(&pending, self.selected_layer.as_deref(), lookup)
                             .map(|target| InstanceDue {
                                 hit: pending.hit.clone(),
                                 target,
                             });
+                    // A pick for another hit is superseded.
+                    self.pending_instance = None;
                     cx.notify();
                 }
                 _ => {
