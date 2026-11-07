@@ -147,13 +147,14 @@ amended to match.
   The options are design 3's (`confined`, `row_lock`) over those instances;
   the scene calls are read for each window instance (see
   `docs/handoff/2026-11-07-window-scene-calls.md`).
-  A window's options leave `called_here` out and take `drawn_alone` as
-  true: its instances belong to every element it wraps, so they don't line
-  up with the selected chain for counting the scene's calls of the
-  component, and two elements in one call are not one call drawing it
-  twice. In a scene calling the component more than once, "This scene"
-  then writes the selected call only, and the drag label reads "Edits
-  change this scene".
+  A window's options take `drawn_alone` as true: two elements in one call
+  are not one call drawing it twice. Its instances belong to every element
+  it wraps, so they line up with the selected chain from the outside only:
+  `called_here` counts the calls at `S`'s place from the chain's outer end
+  (`scope::window_calls_here`). In a scene calling the component more than
+  once, "This scene" writes the selected call only, and the drag label
+  reads "Edits change this `<Delayed>` only" (mika-f/Celesta#560, see
+  `docs/handoff/2026-11-07-window-called-here.md`).
 - **A default is a value.** A window prop passed through to a parameter the
   call leaves out reads as the parameter's default (`number_of`), so a drag
   writes default + delta; a defaulted `durationInFrames` is not added by a

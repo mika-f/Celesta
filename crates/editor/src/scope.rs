@@ -527,8 +527,9 @@ pub(crate) fn read_window_calls(
 /// The options of an edit reaching the instances of `element` (`shared`
 /// when they are more than the selected one), whose targets are `targets`,
 /// written in `component`: see [`scope_state`]. For a timing `window` (see
-/// [`window_scope_state`]), the current scene's calls of `C` are not
-/// counted (`called_here` is `None`) and `S` draws it alone.
+/// [`window_scope_state`]), the current scene's calls of `C` are counted
+/// over the window's instances (see [`window_calls_here`]) and `S` draws
+/// it alone.
 #[allow(clippy::too_many_arguments)]
 fn options_over(
     report: &LayerSourceReport,
@@ -575,9 +576,10 @@ fn options_over(
         .map(|component| &component.call_site);
     // A window is resolved as rendered once (see `window_report`), and its
     // own sharing rule already says which calls it reaches; its instances,
-    // of every element it wraps, don't line up with the selected chain, so
-    // its calls are not counted.
+    // of every element it wraps, line up with the selected chain from the
+    // outside only.
     let (times, drawn_alone) = match call {
+        Some(call) if window => (window_calls_here(report, element, &scene, call), true),
         _ if window => (0, true),
         Some(call) => here(report, element, &scene, call),
         None => (0, false),
@@ -622,6 +624,37 @@ fn here(
         .filter_map(|(call, _)| call)
         .collect();
     (calls.len(), drawn_alone(element, scene, call))
+}
+
+/// How many calls of `C` draw the timing window `window` (its instances,
+/// see [`window_instances`]) in the current scene: each instance's entry
+/// at `call`'s (`S`'s) place, counted from the outer end of the selected
+/// chain, when its chain ends as the selected one's does above `S`; 0
+/// without chapters, as in [`here`]. The instances of the other elements
+/// the window wraps have chains of their own length below the window, so
+/// they line up with the selected chain from the outside only.
+fn window_calls_here(
+    report: &LayerSourceReport,
+    window: &ElementOccurrences,
+    scene: &Scene,
+    call: &SourcePos,
+) -> usize {
+    let chain = without_wrappers(&report.chain);
+    let Some(at) = chain.iter().position(|entry| entry == call) else {
+        return 0;
+    };
+    let above = &chain[at + 1..];
+    let calls: HashSet<&SourcePos> = window
+        .instances
+        .iter()
+        .filter(|instance| scene.current.is_some() && scene.shows(instance))
+        .filter(|instance| instance.chain.ends_with(above))
+        .filter_map(|instance| {
+            let at = instance.chain.len().checked_sub(above.len() + 1)?;
+            instance.chain.get(at)
+        })
+        .collect();
+    calls.len()
 }
 
 /// Whether `call` (`S`) draws one instance of `element` in `scene`, one

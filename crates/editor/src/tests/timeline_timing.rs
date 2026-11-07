@@ -6,8 +6,9 @@ use super::*;
 use crate::element_edit::{WindowRead, WindowTargets, resolve_window, window_files, window_report};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
-    CommitGate, SceneCalls, Scope, ScopeLock, ScopeOptions, ScopeState, ScopedRow, commit_scope,
-    gesture_gate, read_window_calls, scoped_row, window_calls_read, window_scope_state,
+    CalledHere, CommitGate, SceneCalls, Scope, ScopeLock, ScopeOptions, ScopeState, ScopedRow,
+    commit_scope, gesture_gate, read_window_calls, scope_in_effect_here, scoped_row,
+    window_calls_read, window_scope_state,
 };
 use crate::timeline_drag::{BandGrip, band_writes, grip_refusal, timing_values};
 use crate::timing::{
@@ -541,6 +542,13 @@ fn a_window_two_scenes_call_is_shared_by_its_own_instances() {
     };
     assert_eq!(options.this_scene, Ok(()));
     assert_eq!(options.shared_reaches, ["intro", "main"]);
+    // Intro calls `Delayed` once (the Circle comes through the same call):
+    // the band drag's label says "this scene", as before.
+    assert_eq!(options.called_here, None);
+    assert_eq!(
+        scope_in_effect_here(Scope::ThisScene, options.called_here.as_ref()),
+        "Edits change this scene"
+    );
     let calls = calls.expect("the calls are the window's");
     assert_eq!(calls, read);
     // No choice made: "This scene" applies, never a write as resolved
@@ -746,8 +754,26 @@ fn a_window_a_scene_calls_twice_writes_this_call_under_this_scene() {
         panic!("the window is shared: {state:?}");
     };
     assert_eq!(options.this_scene, Ok(()));
-    // A window's calls are not counted.
-    assert_eq!(options.called_here, None);
+    // Intro's two calls of `Delayed` both draw the window: "This scene"
+    // writes the selected call only, and the band drag's label says so.
+    assert_eq!(
+        options.called_here,
+        Some(CalledHere {
+            component: "Delayed".to_owned(),
+            times: 2,
+        })
+    );
+    assert_eq!(
+        scope_in_effect_here(Scope::ThisScene, options.called_here.as_ref()),
+        "Edits change this `<Delayed>` only"
+    );
+    // Without chapters the timeline is no scene of its own: nothing is
+    // counted, as for an element.
+    let (no_scenes, _) = window_scope_state(&report, &window, Some(&occurrences), None, &[], 45);
+    let ScopeState::Options(no_scenes) = &no_scenes else {
+        panic!("the window is shared: {no_scenes:?}");
+    };
+    assert_eq!(no_scenes.called_here, None);
     let scope = commit_scope(None, &state);
     assert_eq!(scope, Some(Scope::ThisScene));
     files
@@ -758,6 +784,83 @@ fn a_window_a_scene_calls_twice_writes_this_call_under_this_scene() {
         INTRO_DELAYED_TWICE.replacen("<Delayed>", "<Delayed sequenceFrom={45}>", 1)
     );
     assert!(files.read("delayed.tsx").contains("from={sequenceFrom}"));
+}
+
+/// `PriceTag` writes `<Sequence from={30}>` at 4:10 around its `<Text>` at
+/// 4:30.
+const PRICE_TAG: &str = "import { Sequence } from \"@celesta.studio/react\";\n\nexport function PriceTag() {\n  return <Sequence from={30}><Text>$</Text></Sequence>;\n}\n";
+
+/// Price calls `PriceTag` at 3:5 and at 4:5.
+const PRICE_TWICE: &str =
+    "export const Price = () => (\n  <>\n    <PriceTag />\n    <PriceTag />\n  </>\n);\n";
+
+#[test]
+fn a_window_in_a_component_a_scene_calls_twice_counts_the_calls() {
+    // The `<Text>` in `PriceTag` has its own `<Sequence>`, and Price calls
+    // `PriceTag` twice: the window's instances are the Text's two, one per
+    // call, so "This scene" writes the selected call only.
+    let files = Files::new(
+        "price-twice",
+        &[("price_tag.tsx", PRICE_TAG), ("price.tsx", PRICE_TWICE)],
+    );
+    let report = report_of(vec![
+        files.entry("Text", ElementKind::Primitive, "price_tag.tsx", (4, 30)),
+        files.entry("Sequence", ElementKind::Wrapper, "price_tag.tsx", (4, 10)),
+        files.entry("PriceTag", ElementKind::Component, "price.tsx", (3, 5)),
+    ]);
+    let source = files.pos("price_tag.tsx", 4, 10);
+    let window = files.window(&report, &source);
+    let text = files.pos("price_tag.tsx", 4, 30);
+    let instance = |call: SourcePos, ranges| {
+        instance_of(vec![text.clone(), call], ranges, vec![source.clone()])
+    };
+    let index = |second: Vec<(u64, u64)>| OccurrenceIndex {
+        elements: vec![ElementOccurrences {
+            element: text.clone(),
+            instances: vec![
+                instance(files.pos("price.tsx", 3, 5), vec![(30, 90)]),
+                instance(files.pos("price.tsx", 4, 5), second),
+            ],
+        }],
+    };
+    let chapters = [scene("price", 0, 90), scene("outro", 90, 90)];
+    let options_at = |index: OccurrenceIndex| {
+        let (state, _) = window_scope_state(
+            &report,
+            &window,
+            Some(&OccurrenceState::Ready(index)),
+            None,
+            &chapters,
+            45,
+        );
+        match state {
+            ScopeState::Options(options) => options,
+            state => panic!("the window is shared: {state:?}"),
+        }
+    };
+
+    let options = options_at(index(vec![(30, 90)]));
+
+    assert_eq!(options.this_scene, Ok(()));
+    assert_eq!(
+        options.called_here,
+        Some(CalledHere {
+            component: "PriceTag".to_owned(),
+            times: 2,
+        })
+    );
+    assert_eq!(
+        scope_in_effect_here(Scope::ThisScene, options.called_here.as_ref()),
+        "Edits change this `<PriceTag>` only"
+    );
+    // The second call drawn in another scene only: the current scene calls
+    // `PriceTag` once, and the label says "this scene".
+    let elsewhere = options_at(index(vec![(120, 150)]));
+    assert_eq!(elsewhere.called_here, None);
+    assert_eq!(
+        scope_in_effect_here(Scope::ThisScene, elsewhere.called_here.as_ref()),
+        "Edits change this scene"
+    );
 }
 
 /// Intro writes `<Sequence from={30}>` at 5:5 around its `<Tag>` call at
