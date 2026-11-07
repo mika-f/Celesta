@@ -408,7 +408,7 @@ pub enum DiscoveryError {
     #[error("plugin path {path} was skipped: it is not an absolute path")]
     RelativePath { path: PathBuf },
     #[error(
-        "{path} was skipped: the plugin {id} {} in the Celesta app; allow it in the app's Plugins tab, run celesta-exporter with --allow-plugin {id}, or name its folder with --plugin-dir or in CELESTA_PLUGIN_PATH",
+        "{path} was skipped: the plugin {id} {} in the Celesta app; allow it in the app's Plugins tab, or name its folder in CELESTA_PLUGIN_PATH; celesta-exporter also takes --allow-plugin {id} and --plugin-dir",
         if *.changed { "changed since you allowed it, and waits for your approval again" } else { "waits for your approval" }
     )]
     WaitsForApproval {
@@ -417,7 +417,9 @@ pub enum DiscoveryError {
         /// Allowed once, but changed since.
         changed: bool,
     },
-    #[error("--allow-plugin {id} names no plugin that was found")]
+    #[error(
+        "--allow-plugin {id} names no plugin that can run: no folder has one with that id, or it was skipped (see why above)"
+    )]
     UnknownAllowance { id: String },
     /// A plugin whose files could not be read to see whether the user
     /// allowed it as it is now, with why.

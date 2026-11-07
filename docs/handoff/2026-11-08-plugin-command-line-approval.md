@@ -32,13 +32,17 @@ The maintainer chose:
     in that folder with the same fingerprint, or when its id is in
     `allow`. Otherwise it is left out of `plugins`, listed in `waiting`,
     and reported as `DiscoveryError::WaitsForApproval`. The message says
-    whether the plugin is new or changed since it was allowed, and names
-    the three ways to allow it: the app's Plugins tab, `--allow-plugin <id>`,
-    and `--plugin-dir` / `CELESTA_PLUGIN_PATH`.
+    whether the plugin is new or changed since it was allowed, and how to
+    allow it: the app's Plugins tab or `CELESTA_PLUGIN_PATH`, then what only
+    the exporter takes (`--allow-plugin <id>`, `--plugin-dir`), since the
+    MCP server shows the same text.
   - An id in `allow` that matches no plugin found (running, waiting, or
     turned off) is reported once as `DiscoveryError::UnknownAllowance`.
     `find_reporting` prints it as `celesta: --allow-plugin <id> names no
-    plugin that was found`, without the "skipped a plugin" prefix.
+    plugin that can run: no folder has one with that id, or it was skipped
+    (see why above)`, after the skipped plugins and without their "skipped
+    a plugin" prefix: a plugin skipped as incompatible or invalid is not
+    found either.
   - A plugin whose files cannot be fingerprinted is skipped and reported as
     `DiscoveryError::Unreadable`, as the app already did.
   - `find_allowing(explicit, allow, settings)` is the same with given
@@ -58,10 +62,12 @@ The maintainer chose:
   reads as `CELESTA_WAITING_PLUGIN_IMPORTS === 'stand-in'`. Any other value,
   or none, fails the import of a waiting plugin with:
   `plugin "<id>" waits for your approval in the Celesta app, and does not
-  run until you allow it (<folder>): allow it in the app's Plugins tab, run
-  celesta-exporter with --allow-plugin <id>, or name its folder with
-  --plugin-dir or in CELESTA_PLUGIN_PATH`. Plugins that may run, and ids no
-  folder provides, resolve as before.
+  run until you allow it (<folder>): allow it in the app's Plugins tab, or
+  name its folder in CELESTA_PLUGIN_PATH; celesta-exporter also takes
+  --allow-plugin <id> and --plugin-dir`. A waiting plugin without a module
+  fails, in either mode, with `plugin "<id>" has no JavaScript module`, as
+  an allowed one does, since allowing it would not help. Plugins that may
+  run, and ids no folder provides, resolve as before.
 - **`celesta-exporter --allow-plugin <ID>`** is repeatable and is checked
   with `is_valid_id`. It covers both export and `--inspect`. It writes
   nothing to `settings.json`. The MCP server has no flag: the user allows

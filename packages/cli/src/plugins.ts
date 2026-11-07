@@ -185,8 +185,9 @@ export interface StandIn {
 /**
  * What `@celesta-plugin/<id>` resolves to: the module of a plugin in
  * `plugins`; else, for a plugin in `waiting` (the user has not allowed it
- * yet), a stand-in when `standIns` (the app) or an error saying it waits and
- * how to allow it; else an error message saying why there is neither.
+ * yet) with a module, a stand-in when `standIns` (the app) or an error saying
+ * it waits and how to allow it; else an error message saying why there is
+ * neither (a waiting plugin without a module says so, as an allowed one does).
  */
 export function resolvePluginImport(
   specifier: string,
@@ -201,15 +202,18 @@ export function resolvePluginImport(
   if (!id || plugins.found.some((plugin) => plugin.id === id)) return resolved;
   const plugin = waiting.found.find((candidate) => candidate.id === id);
   if (!plugin) return resolved;
+  // Allowing it would not make it importable, so that is the error to show.
+  if (!plugin.module) return { error: `plugin "${id}" has no JavaScript module` };
   if (!standIns) {
+    // The MCP server shows this too, so what only the exporter takes comes last.
     return {
       error:
         `plugin "${id}" waits for your approval in the Celesta app, and does not run until you allow it ` +
-        `(${plugin.directory}): allow it in the app's Plugins tab, run celesta-exporter with --allow-plugin ${id}, ` +
-        `or name its folder with --plugin-dir or in ${PLUGIN_PATH_ENV}`,
+        `(${plugin.directory}): allow it in the app's Plugins tab, or name its folder in ${PLUGIN_PATH_ENV}; ` +
+        `celesta-exporter also takes --allow-plugin ${id} and --plugin-dir`,
     };
   }
-  return plugin.module ? { standIn: { id, module: plugin.module } } : resolved;
+  return { standIn: { id, module: plugin.module } };
 }
 
 /**

@@ -206,7 +206,18 @@ test('a waiting plugin resolves to a stand-in, after the plugins that may run', 
   const refused = resolvePluginImport('@celesta-plugin/beep-voice', plugins, waitingPlugins, false);
   assert.ok('error' in refused);
   assert.match(refused.error, /plugin "beep-voice" waits for your approval/);
-  assert.match(refused.error, /--allow-plugin beep-voice/);
+  assert.match(refused.error, /in CELESTA_PLUGIN_PATH; celesta-exporter also takes --allow-plugin beep-voice/);
+
+  // A waiting plugin without a module could not be imported once allowed either, so that is the error, in both modes.
+  const programOnly = mkdtempSync(join(tmpdir(), 'celesta-plugins-'));
+  scratch.push(programOnly);
+  writeManifest(join(programOnly, 'codec'), { id: 'codec' });
+  const programOnlyPlugins = await findPlugins(programOnly);
+  for (const standIns of [true, false]) {
+    assert.deepEqual(resolvePluginImport('@celesta-plugin/codec', plugins, programOnlyPlugins, standIns), {
+      error: 'plugin "codec" has no JavaScript module',
+    });
+  }
   assert.deepEqual(resolvePluginImport('@celesta-plugin/flag', plugins, waitingPlugins, false), {
     path: join(allowed, 'flag', 'js', 'index.ts'),
   });
