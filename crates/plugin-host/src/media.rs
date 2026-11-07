@@ -112,27 +112,40 @@ pub(crate) fn parse_media(value: Value) -> (Option<MediaManifest>, Vec<String>) 
             Vec::new()
         }
     };
-    let decoders = entries
-        .into_iter()
-        .enumerate()
-        .filter_map(
-            |(index, entry)| match serde_json::from_value::<MediaDecoderEntry>(entry) {
-                Ok(mut decoder) => {
-                    for extension in &mut decoder.extensions {
-                        *extension = extension
-                            .strip_prefix('.')
-                            .unwrap_or(extension)
-                            .to_lowercase();
-                    }
-                    Some(decoder)
-                }
-                Err(error) => {
-                    problems.push(format!("media.decoders[{index}] cannot be read: {error}"));
-                    None
-                }
-            },
-        )
-        .collect();
+    let mut decoders: Vec<MediaDecoderEntry> = Vec::new();
+    for (index, entry) in entries.into_iter().enumerate() {
+        let mut decoder = match serde_json::from_value::<MediaDecoderEntry>(entry) {
+            Ok(decoder) => decoder,
+            Err(error) => {
+                problems.push(format!("media.decoders[{index}] cannot be read: {error}"));
+                continue;
+            }
+        };
+        // The decoder's reference is `<plugin id>/<id>`, so its id is one
+        // segment, as a plugin's is, and names one decoder.
+        if !is_valid_id(&decoder.id) {
+            problems.push(format!(
+                "media.decoders[{index}]'s id {:?} may use only lowercase letters, digits, \
+                 '-', '_', and '.', and must start with a letter or digit",
+                decoder.id
+            ));
+            continue;
+        }
+        if decoders.iter().any(|earlier| earlier.id == decoder.id) {
+            problems.push(format!(
+                "media.decoders[{index}]'s id {:?} is taken by an earlier decoder",
+                decoder.id
+            ));
+            continue;
+        }
+        for extension in &mut decoder.extensions {
+            *extension = extension
+                .strip_prefix('.')
+                .unwrap_or(extension)
+                .to_lowercase();
+        }
+        decoders.push(decoder);
+    }
     (Some(MediaManifest { decoders }), problems)
 }
 
@@ -519,6 +532,51 @@ mod tests {
         let media = installed(plugins).media_with_sibling(None);
         assert_eq!(ids(&media), ["p"]);
         assert_eq!(media[0].decoders, [decoder("ok", "OK", &[])]);
+    }
+
+    #[test]
+    fn a_decoder_needs_an_id_of_its_own() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("p");
+        write_manifest(
+            &directory,
+            media_manifest(
+                "p",
+                serde_json::json!([
+                    { "id": "ok", "name": "OK" },
+                    { "id": "a/b", "name": "Slashed" },
+                    { "id": "", "name": "Empty" },
+                    { "id": "ok", "name": "Again" },
+                    { "id": "next", "name": "Next" },
+                ]),
+            ),
+        );
+        let (plugins, errors) = discover(&[root.path().to_path_buf()]);
+        let reasons: Vec<_> = errors
+            .iter()
+            .map(|error| match error {
+                DiscoveryError::BadComponent { reason, .. } => reason.as_str(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(reasons.len(), 3, "{reasons:?}");
+        assert!(
+            reasons[0].starts_with("media.decoders[1]'s id \"a/b\""),
+            "{reasons:?}"
+        );
+        assert!(
+            reasons[1].starts_with("media.decoders[2]'s id \"\""),
+            "{reasons:?}"
+        );
+        assert_eq!(
+            reasons[2],
+            "media.decoders[3]'s id \"ok\" is taken by an earlier decoder"
+        );
+        let media = installed(plugins).media_with_sibling(None);
+        assert_eq!(
+            media[0].decoders,
+            [decoder("ok", "OK", &[]), decoder("next", "Next", &[])]
+        );
     }
 
     #[test]
