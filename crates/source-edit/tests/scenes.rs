@@ -106,30 +106,116 @@ fn finds_scene_lists_with_ids_in_order() {
 }
 
 #[test]
-fn a_list_with_a_spread_is_skipped() {
+fn a_list_with_a_spread_keeps_the_entries_it_can_read() {
+    // As `examples/delta/v0.8.0/timeline.ts` writes it.
     let text = &imported(
-        "export const SCENES = defineScenes([\n  { id: 'open', durationInFrames: 30 },\n  ...CHAPTERS.map((c) => ({ id: c.key, durationInFrames: c.len })),\n]);\n",
+        "export const SCENES = defineScenes([\n  { id: 'open', durationInFrames: 30 },\n  ...CHAPTERS.map((c) => ({ id: c.key, durationInFrames: c.len })),\n  { id: 'outro', durationInFrames: 60 },\n]);\n",
     );
-    assert!(lists(text).is_empty());
+    let found = lists(text);
+    assert_eq!(found.len(), 1);
+    assert_eq!(ids(&found[0]), ["open", "outro"]);
+    assert_eq!(found[0].unread, [1]);
+    assert_eq!(
+        number_at(text, &found[0].entries[1].duration),
+        ("60".into(), 60.0)
+    );
 
-    // Anything but object literals with string-literal ids.
-    for list in [
-        "CHAPTERS",
-        "CHAPTERS.map((c) => ({ id: c.key, durationInFrames: c.len }))",
-        "[{ id: 'a', durationInFrames: 1 }, ENTRY]",
-        "[{ id: `a`, durationInFrames: 1 }]",
-        "[{ id: KEY, durationInFrames: 1 }]",
-        "[{ durationInFrames: 1 }]",
-        "[{ ...BASE, id: 'a', durationInFrames: 1 }]",
-        "[{ id: 'a', durationInFrames: 1 }, , { id: 'b', durationInFrames: 1 }]",
+    // Anything but object literals with string-literal ids, by the number
+    // of entries read before it.
+    for (list, read, unread) in [
+        ("CHAPTERS", vec![], vec![0]),
+        (
+            "CHAPTERS.map((c) => ({ id: c.key, durationInFrames: c.len }))",
+            vec![],
+            vec![0],
+        ),
+        (
+            "[{ id: 'a', durationInFrames: 1 }, ENTRY]",
+            vec!["a"],
+            vec![1],
+        ),
+        ("[{ id: `a`, durationInFrames: 1 }]", vec![], vec![0]),
+        ("[{ id: KEY, durationInFrames: 1 }]", vec![], vec![0]),
+        ("[{ durationInFrames: 1 }]", vec![], vec![0]),
+        (
+            "[{ ...BASE, id: 'a', durationInFrames: 1 }]",
+            vec![],
+            vec![0],
+        ),
+        (
+            "[{ id: 'a', durationInFrames: 1 }, , { id: 'b', durationInFrames: 1 }]",
+            vec!["a", "b"],
+            vec![1],
+        ),
+        (
+            "[...A, { id: 'a', durationInFrames: 1 }, ...B]",
+            vec!["a"],
+            vec![0, 1],
+        ),
     ] {
         let text = imported(&format!("export const SCENES = defineScenes({list});\n"));
-        assert!(lists(&text).is_empty(), "{list}");
+        let found = lists(&text);
+        assert_eq!(found.len(), 1, "{list}");
+        assert_eq!(ids(&found[0]), read, "{list}");
+        assert_eq!(found[0].unread, unread, "{list}");
     }
+
+    // Every entry read.
+    assert!(
+        lists(&imported(
+            "export const S = defineScenes([{ id: 'a', durationInFrames: 1 }]);\n"
+        ))[0]
+            .unread
+            .is_empty()
+    );
 
     // A call of something else.
     let text = &imported("export const SCENES = makeScenes([{ id: 'a', durationInFrames: 1 }]);\n");
     assert!(lists(text).is_empty());
+}
+
+#[test]
+fn a_list_knows_the_names_it_is_exported_under() {
+    let exports = |body: &str| -> Vec<Vec<String>> {
+        lists(&imported(body))
+            .into_iter()
+            .map(|list| list.exports)
+            .collect()
+    };
+    let list = "defineScenes([{ id: 'a', durationInFrames: 1 }])";
+    assert_eq!(exports(&format!("export const S = {list};\n")), [["S"]]);
+    assert_eq!(
+        exports(&format!(
+            "const S = {list};\nexport {{ S, S as SCENES }};\n"
+        )),
+        [["S", "SCENES"]]
+    );
+    assert_eq!(
+        exports(&format!("const S = {list};\nexport default S;\n")),
+        [["default"]]
+    );
+    assert_eq!(
+        exports(&format!("const S = {list};\nexport {{ S as default }};\n")),
+        [["default"]]
+    );
+    assert_eq!(exports(&format!("export default {list};\n")), [["default"]]);
+    assert_eq!(
+        exports(&format!("export default ({list}) satisfies object;\n")),
+        [["default"]]
+    );
+    // Not exported; another module's `S`; a type-only export.
+    let none: [Vec<String>; 1] = [vec![]];
+    assert_eq!(exports(&format!("const S = {list};\n")), none);
+    assert_eq!(
+        exports(&format!(
+            "const S = {list};\nexport {{ S }} from './other';\n"
+        )),
+        none
+    );
+    assert_eq!(
+        exports(&format!("const S = {list};\nexport type {{ S }};\n")),
+        none
+    );
 }
 
 #[test]
@@ -211,6 +297,16 @@ fn an_exported_const_duration_is_locked() {
         })
     );
 
+    // `export { OUTRO } from` exports another module's `OUTRO`: the file's
+    // own stays editable.
+    let text = &imported(
+        "const OUTRO = 60;\nexport { OUTRO } from './other';\nexport const SCENES = defineScenes([\n  { id: 'outro', durationInFrames: OUTRO },\n]);\n",
+    );
+    assert_eq!(
+        number_at(text, &lists(text)[0].entries[0].duration),
+        ("60".into(), 60.0)
+    );
+
     // Another export of the file leaves the const editable.
     let text = &imported(
         "const OUTRO = 60;\nexport const END = 1;\nexport const SCENES = defineScenes([\n  { id: 'outro', durationInFrames: OUTRO },\n]);\n",
@@ -219,6 +315,41 @@ fn an_exported_const_duration_is_locked() {
         number_at(text, &lists(text)[0].entries[0].duration),
         ("60".into(), 60.0)
     );
+}
+
+#[test]
+fn a_getter_a_method_or_a_later_key_is_read_as_the_runtime_reads_it() {
+    // A getter or a method is not a literal.
+    for (entry, source) in [
+        (
+            "{ id: 'a', get durationInFrames() { return 30; } }",
+            "get durationInFrames() { return 30; }",
+        ),
+        (
+            "{ id: 'a', durationInFrames() { return 30; } }",
+            "durationInFrames() { return 30; }",
+        ),
+    ] {
+        let text = imported(&format!("export const S = defineScenes([{entry}]);\n"));
+        assert_eq!(
+            lists(&text)[0].entries[0].duration,
+            EditTarget::Locked(LockReason::Expression {
+                source: source.into(),
+            }),
+            "{entry}"
+        );
+    }
+    // A duplicate key: the later one wins, as at runtime.
+    let text = &imported(
+        "export const S = defineScenes([{ id: 'a', durationInFrames: 30, durationInFrames: 45 }]);\n",
+    );
+    assert_eq!(
+        number_at(text, &lists(text)[0].entries[0].duration),
+        ("45".into(), 45.0)
+    );
+    let text =
+        &imported("export const S = defineScenes([{ id: 'a', id: 'b', durationInFrames: 30 }]);\n");
+    assert_eq!(ids(&lists(text)[0]), ["b"]);
 }
 
 #[test]
@@ -322,6 +453,34 @@ fn composition_length_reads_the_list_reference() {
             name: "SCENES".into(),
         })
     );
+
+    // A default import names the module's `default` export, which
+    // `SceneList::exports` lists as `default`.
+    let text = film("import S from './timeline';", "", "{S.durationInFrames}");
+    assert_eq!(
+        length(&text),
+        Some(CompositionLength::ListDuration {
+            module: Some("./timeline".into()),
+            name: "default".into(),
+        })
+    );
+    // A namespace import doesn't name the binding.
+    let text = film(
+        "import * as T from './timeline';",
+        "",
+        "{T.durationInFrames}",
+    );
+    assert_eq!(length(&text), Some(CompositionLength::Other));
+    // The import shadowed in the file.
+    let text = film(
+        "import { SCENES } from './timeline';",
+        "function f(SCENES) { return SCENES; }",
+        "{SCENES.durationInFrames}",
+    );
+    assert_eq!(length(&text), Some(CompositionLength::Other));
+    // A spread after the attribute may set it.
+    let text = "import { Composition } from '@celesta.studio/react';\nimport { SCENES } from './timeline';\nexport const Film = () => <Composition durationInFrames={SCENES.durationInFrames} {...rest} />;\n";
+    assert_eq!(length(text), Some(CompositionLength::Other));
 
     assert_eq!(
         length(&film("", "", "{300}")),

@@ -19,13 +19,23 @@ use crate::resolve::{EditTarget, LockReason, Span, resolve_value_at};
 use crate::shape::{span_of, string_of};
 use crate::{source_type_of, with_program_as};
 
-/// A `defineScenes([...])` call.
+/// A `defineScenes(…)` call.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneList {
     /// `X` of `const X = defineScenes(…)`.
     pub binding: Option<String>,
-    /// The entries, in list order.
+    /// The names the file exports the list under: `X` for `export const X`
+    /// and `export { X }`, `Y` for `export { X as Y }`, and `default` for
+    /// `export default X` or `export default defineScenes(…)`.
+    pub exports: Vec<String>,
+    /// The entries read, in list order: object literals with a
+    /// string-literal id.
     pub entries: Vec<SceneItem>,
+    /// Where the list holds something else (a spread, a `.map()`, a hole,
+    /// an entry with a spread, a computed key or another id), as the
+    /// number of read entries before it; one `0` when the argument is not
+    /// an array literal. Empty when every entry was read.
+    pub unread: Vec<usize>,
 }
 
 /// An entry of a [`SceneList`].
@@ -40,11 +50,11 @@ pub struct SceneItem {
     pub inputs: Vec<(String, EditTarget)>,
 }
 
-/// Every call of `@celesta.studio/react`'s `defineScenes([...])` in `text` (parsed
-/// as `path`'s type; a function of another module or of the file's own is
-/// not it) whose argument is an array literal of object literals with
-/// string-literal ids, in source order. A list holding anything else (a
-/// spread, a hole, an entry with a spread or a computed key) is skipped.
+/// Every call of `@celesta.studio/react`'s `defineScenes(…)` in `text`
+/// (parsed as `path`'s type; a function of another module or of the file's
+/// own is not it), in source order. The entries that are object literals
+/// with a string-literal id are read; where the list holds anything else
+/// is in [`SceneList::unread`].
 pub fn scene_lists(text: &str, path: &Path) -> Vec<SceneList> {
     with_program_as(text, source_type_of(path), |program| {
         let module = Module::of(program);
@@ -57,18 +67,41 @@ pub fn scene_lists(text: &str, path: &Path) -> Vec<SceneList> {
         let Calls {
             lists, bindings, ..
         } = calls;
-        let exported = exported_names(program);
+        let exports = local_exports(program);
+        let exported: Vec<String> = exports
+            .iter()
+            .filter_map(|export| match export {
+                LocalExport::Name { local, .. } => Some(local.clone()),
+                LocalExport::DefaultCall(_) => None,
+            })
+            .collect();
         lists
             .into_iter()
-            .map(|(start, entries)| SceneList {
-                binding: bindings
+            .map(|(start, read)| {
+                let binding = bindings
                     .iter()
                     .find(|(at, _)| *at == start)
-                    .map(|(_, name)| name.clone()),
-                entries: entries
-                    .into_iter()
-                    .map(|(id, duration)| item(program, text, &exported, id, duration))
-                    .collect(),
+                    .map(|(_, name)| name.clone());
+                SceneList {
+                    exports: exports
+                        .iter()
+                        .filter_map(|export| match export {
+                            LocalExport::Name { local, exported } => {
+                                (binding.as_ref() == Some(local)).then(|| exported.clone())
+                            }
+                            LocalExport::DefaultCall(at) => {
+                                (*at == start).then(|| "default".to_owned())
+                            }
+                        })
+                        .collect(),
+                    binding,
+                    entries: read
+                        .entries
+                        .into_iter()
+                        .map(|(id, duration)| item(program, text, &exported, id, duration))
+                        .collect(),
+                    unread: read.unread,
+                }
             })
             .collect()
     })
@@ -82,7 +115,8 @@ pub enum CompositionLength {
     ListDuration {
         /// The import specifier `X` comes from; `None`: this file.
         module: Option<String>,
-        /// The binding's name in that module.
+        /// The name: the export's in that module (`default` for a default
+        /// import; see [`SceneList::exports`]), the binding's in this file.
         name: String,
     },
     /// A literal, any other expression, or none.
@@ -191,8 +225,15 @@ fn item(
 /// by the same offset.
 struct Calls<'m> {
     module: &'m Module,
-    lists: Vec<(u32, Vec<(String, Duration)>)>,
+    lists: Vec<(u32, ListRead)>,
     bindings: Vec<(u32, String)>,
+}
+
+/// What a `defineScenes(…)` argument holds that can be read.
+struct ListRead {
+    entries: Vec<(String, Duration)>,
+    /// See [`SceneList::unread`].
+    unread: Vec<usize>,
 }
 
 impl Calls<'_> {
@@ -237,37 +278,42 @@ impl<'a> Visit<'a> for Calls<'_> {
     }
 
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
-        if self.define_scenes(&it.callee)
-            && let Some(entries) = list_of(it)
-        {
-            self.lists.push((it.span.start, entries));
+        if self.define_scenes(&it.callee) {
+            self.lists.push((it.span.start, list_of(it)));
         }
         oxc_ast_visit::walk::walk_call_expression(self, it);
     }
 }
 
-/// The entries of a `defineScenes([...])` call, or `None` when its
-/// argument is anything but an array literal of object literals with
-/// string-literal ids.
-fn list_of(call: &CallExpression<'_>) -> Option<Vec<(String, Duration)>> {
-    let Expression::ArrayExpression(array) = call
+/// The entries of a `defineScenes(…)` call that are object literals with
+/// string-literal ids, and where it holds anything else.
+fn list_of(call: &CallExpression<'_>) -> ListRead {
+    let array = call
         .arguments
-        .first()?
-        .as_expression()?
-        .without_parentheses()
-    else {
-        return None;
+        .first()
+        .and_then(|argument| argument.as_expression())
+        .map(Expression::without_parentheses);
+    let Some(Expression::ArrayExpression(array)) = array else {
+        return ListRead {
+            entries: Vec::new(),
+            unread: vec![0],
+        };
     };
-    array
-        .elements
-        .iter()
-        .map(
-            |element| match element.as_expression()?.without_parentheses() {
-                Expression::ObjectExpression(object) => entry_of(object),
-                _ => None,
-            },
-        )
-        .collect()
+    let mut read = ListRead {
+        entries: Vec::new(),
+        unread: Vec::new(),
+    };
+    for element in &array.elements {
+        let entry = match element.as_expression().map(Expression::without_parentheses) {
+            Some(Expression::ObjectExpression(object)) => entry_of(object),
+            _ => None,
+        };
+        match entry {
+            Some(entry) => read.entries.push(entry),
+            None => read.unread.push(read.entries.len()),
+        }
+    }
+    read
 }
 
 /// An entry's id and `durationInFrames` (a later key wins, as at runtime),
@@ -372,39 +418,64 @@ fn list_duration(opening: &JSXOpeningElement<'_>) -> Option<String> {
     }
 }
 
-/// The local names the file exports: `export const X`, `export { X }`
-/// (`as` another name too) and `export default X`.
-fn exported_names(program: &Program<'_>) -> Vec<String> {
-    let mut names = Vec::new();
+/// What the file exports of its own.
+enum LocalExport {
+    /// A local name, and the name it is exported under: `export const X`,
+    /// `export { X }`, `export { X as Y }`, `export default X`.
+    Name { local: String, exported: String },
+    /// `export default <call>`: the offset of the call.
+    DefaultCall(u32),
+}
+
+/// What the file exports of its own. `export { X } from './y'` (an
+/// `ExportFromDeclaration`) exports another module's `X`, not a local one,
+/// and is left out, as is `export type { X }`.
+fn local_exports(program: &Program<'_>) -> Vec<LocalExport> {
+    let mut exports = Vec::new();
     for stmt in &program.body {
         match stmt {
             Statement::ExportDeclaration(export) => {
                 if let Declaration::VariableDeclaration(decl) = &export.declaration {
-                    names.extend(
+                    exports.extend(
                         decl.declarations
                             .iter()
                             .filter_map(|d| d.id.get_binding_identifier())
-                            .map(|id| id.name.to_string()),
+                            .map(|id| LocalExport::Name {
+                                local: id.name.to_string(),
+                                exported: id.name.to_string(),
+                            }),
                     );
                 }
             }
-            Statement::ExportNamedDeclaration(export) => {
-                names.extend(export.specifiers.iter().filter_map(
-                    |specifier| match &specifier.local {
-                        ModuleExportName::IdentifierReference(id) => Some(id.name.to_string()),
+            Statement::ExportNamedDeclaration(export) if !export.export_kind.is_type() => {
+                exports.extend(export.specifiers.iter().filter_map(|specifier| {
+                    match &specifier.local {
+                        ModuleExportName::IdentifierReference(id) => Some(LocalExport::Name {
+                            local: id.name.to_string(),
+                            exported: specifier.exported.name().to_string(),
+                        }),
                         _ => None,
-                    },
-                ));
+                    }
+                }));
             }
-            Statement::ExportDefaultDeclaration(export) => {
-                if let ExportDefaultDeclarationKind::Identifier(id) = &export.declaration {
-                    names.push(id.name.to_string());
+            Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                ExportDefaultDeclarationKind::Identifier(id) => exports.push(LocalExport::Name {
+                    local: id.name.to_string(),
+                    exported: "default".to_owned(),
+                }),
+                declaration => {
+                    if let Some(Expression::CallExpression(call)) = declaration
+                        .as_expression()
+                        .map(Expression::get_inner_expression)
+                    {
+                        exports.push(LocalExport::DefaultCall(call.span.start));
+                    }
                 }
-            }
+            },
             _ => {}
         }
     }
-    names
+    exports
 }
 
 /// The names the file's top-level `const`s (exported ones too) declare.
