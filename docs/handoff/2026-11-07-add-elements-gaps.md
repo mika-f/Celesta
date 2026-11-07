@@ -59,10 +59,17 @@ Drawing and writing:
   drawn box's `height` too, so it draws the box that was outlined
   (`NewElement::{Image, Video}::height`, `Option<f64>`).
 - **Cancelling during an import.** A cancel after the file dialog and
-  before the import copies nothing. A cancel during the copy deletes the
-  copy that import made. `celesta_react_bridge::import_file` reports that
-  copy in `Imported::copied`. A reused copy of the same bytes, or a file
-  already in the project, is never deleted.
+  before the import copies nothing. The import has two steps:
+  `celesta_react_bridge::stage_import` copies the file beside `assets/`'s
+  files under a hidden temporary name (or finds a copy of the same bytes
+  there, or the file in the project), and `StagedImport::publish` names it
+  in `assets/`. The add mode publishes only while it is still picking, so a
+  cancel during the copy drops the temporary file unnamed. Nothing in
+  `assets/` is ever deleted, so a copy another import reused meanwhile
+  stays. A cancel during the rename itself keeps the named copy.
+  `import_path` is the two steps at once. `StagedFile::publish_new`
+  (`celesta-remote`) hands a staged file back when its name is taken, so
+  it can be compared with that file or take the next name.
 - **Escape with an inline text edit open.** An Escape that ends the add
   mode also cancels the canvas text edit (`render.rs`'s key capture).
 - **Opening a self-closing parent** (`celesta-source-edit`, `add.rs`)
@@ -78,18 +85,23 @@ Drawing and writing:
 Checks and cleanup:
 
 - **`accepts_children`** resolves the only child's root identifier with
-  `oxc_semantic` (a new dependency of `celesta-source-edit`, the same 0.156
-  as the other oxc crates, which already need Rust 1.97). The child counts
-  as a prop only when the identifier is bound by a component's parameters.
-  A component is a function a call site can name (`function Card`, `const
-  Card = …`, through `memo`/`forwardRef`, `is_component_name`) or the
-  module's default export, named or anonymous. A callback's or a lowercase
-  helper's parameter, and a local that shadows a prop, leave a region.
-  `props['children']` and `props?.children` count as props.
+  `oxc_semantic`, a new dependency of `celesta-source-edit` on the same
+  0.156 as its other oxc crates. Like them, it declares `rust-version =
+  "1.97.0"`, above the workspace's declared 1.89. That gap is older than
+  this change, which leaves the declared versions as they are. The child
+  counts as a prop only when the identifier is bound by a component's
+  first parameter. A component is a function a call site can name (the
+  `const` that holds it, through `memo`/`forwardRef`, else its own name,
+  `is_component_name`), or the module's default export: named, anonymous,
+  or by the name it is bound to (`export default box`, `export { box as
+  default }`). A callback's or a lowercase helper's parameter, a
+  component's second parameter (`forwardRef`'s `ref`), and a local that
+  shadows a prop leave a region. `props['children']` and
+  `props?.children` count as props.
 - **One parse.** `read_parent` reads the element, its component, and the
-  locks from one parse; `parent_facts` uses it. A file that does not parse
-  gives `None`, since oxc recovers it as an empty program, so the element
-  can't be found in it either.
+  locks from one parse; `parent_facts` uses it. A file the parser reports
+  any error for gives `None`: `with_program` reads only a program that
+  parsed without error, as every reader of a file it may write does.
 - **Docs.** `turns_in_3d` says why a perspective alone is left out of the
   flat maps. `added_layer` says a wrapper outside its window yields the
   sibling before it, which the confirm check then clears. `parent_space`'s
