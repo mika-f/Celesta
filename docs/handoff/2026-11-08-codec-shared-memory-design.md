@@ -70,10 +70,35 @@ wait is the transfer alone. A 4K preview frame then spent about 8.3 ms
 waiting for the plugin's frame (4.4–4.9 ms of pipe in isolation, 7–8 ms
 while the GPU upload and FFmpeg's decoding share the memory bandwidth),
 about 6.6 ms waiting for the GPU, and about 2 ms uploading. That made the
-transfer the largest single cost, and the case for B. The alternative
-without a protocol change is the host asking for a sequential session's
-next frame as soon as it has the current one, on a thread of its own, so
-the transfer overlaps the render instead of being removed.
+transfer the largest single cost, and the case for B.
+
+The alternative without a protocol change is the host asking for a
+sequential session's next frame as soon as it has the current one, on a
+thread of its own, so the transfer overlaps the render instead of being
+removed. It costs more than it looks (estimates, not measured):
+
+- **It guesses wrong where it matters most.** Playback picks the next frame
+  by the wall clock (`crates/editor/src/playback.rs`), skipping frames
+  when a render takes longer than a frame: exactly when 4K is heavy, the
+  frame after the current one is not the one asked for next. It would have
+  to guess the frame due when the render ends, not `t + 1/fps`.
+- **A wrong guess is not free.** A process serves one request at a time,
+  and `PluginChild` cannot cancel one short of killing the process, so the
+  real request waits for the guessed frame's transfer (7–8 ms at 4K) and
+  arrives later than without prefetching; seeking and scrubbing likewise.
+- **It moves the plugin's state.** A guessed request advances the
+  session's decode run (`FrameRun`), so the real one after a wrong guess
+  may seek back.
+- **Several layers.** With sessions of several layers on one backend, it
+  must choose which to prefetch, and another session's request waits
+  behind a prefetch in flight.
+- **Errors.** A prefetch that misses its deadline, is killed, or finds the
+  codec unavailable has to hand that to the next real request from its
+  thread, and races `MediaBackend`'s reopening of the codec.
+- **Memory bandwidth.** The transfer takes 7–8 ms rather than 4–5 because
+  the upload and FFmpeg's decoding share the bandwidth meanwhile;
+  overlapping it with the render shares it further, so it may hide less
+  than its time.
 
 Encoding:
 
@@ -152,9 +177,13 @@ adds (about 0.6 ms at 1080p, 3 ms at 4K, above).
 **C. Generation counters, as a seqlock.** A safety check for B and the
 lease bookkeeping of A and D. Each slot's header holds a generation:
 
-- The writer stores an odd generation (the slot is being written) before
-  it touches the data, writes, then stores the next even generation with
-  release ordering, then answers naming that even generation.
+- The writer stores an odd generation (the slot is being written) with
+  relaxed ordering, issues a release fence, writes the data, then stores
+  the next even generation with release ordering, and answers naming that
+  even generation. The fence keeps the data's writes from becoming visible
+  before the odd generation: a release store orders what comes before it,
+  not what comes after, so without the fence a reader could see part of
+  the new data while both its loads still see the old even generation.
 - The reader loads the generation with acquire ordering and refuses the
   frame if it is odd or not the answer's; copies the data out; issues an
   acquire fence; loads the generation again and refuses the frame unless it
@@ -311,11 +340,12 @@ pages back after use (above) is part of the same question.
   before it. The manifest's `celesta` range need not change for
   compatibility; a plugin build that uses it will say `>=0.10.0` anyway,
   because it is built against that Celesta's `celesta-plugin`.
-- **Ordering.** C's sequence: the plugin stores an odd generation, writes
-  the pixels, stores the next even generation with release ordering, then
-  writes its answer to the pipe; the host reads the answer, loads the
-  generation with acquire ordering, checks it, copies, fences, and checks
-  it again.
+- **Ordering.** C's sequence: the plugin stores an odd generation
+  (relaxed), issues a release fence, writes the pixels, stores the next
+  even generation with release ordering, then writes its answer to the
+  pipe; the host reads the answer, loads the generation with acquire
+  ordering, checks it, copies, issues an acquire fence, and checks it
+  again.
 
 ## Determinism and testing
 
@@ -353,8 +383,10 @@ Option B, after the cheaper steps:
 2. Decode-ahead in the plugin: already there, nothing to build.
 3. Then B (or, without a protocol change, the host prefetching a
    sequential session's next frame; it hides the transfer behind the
-   render rather than removing it, costs a background thread in
-   `celesta-media`, and still moves 33 MB a 4K frame through the pipe),
+   render rather than removing it, guesses wrong when playback skips
+   frames, makes a wrong guess's real request wait for the guessed
+   transfer, costs a background thread in `celesta-media`, and still moves
+   33 MB a 4K frame through the pipe),
    with C as a seqlock: one slot for the direction a backend uses, the
    host copying out, `VideoFrame` unchanged; Linux memfd with seals, macOS
    `shm_open` unlinked before spawn, the descriptor passed at its own
