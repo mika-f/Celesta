@@ -20,7 +20,7 @@ use celesta_gpu_renderer::invert_affine;
 use celesta_media::MediaBackend;
 use celesta_plugin_host::{ComponentInfo, ComponentSource, InstalledPlugins};
 use celesta_react_bridge::{
-    ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, import_file, scenes_of,
+    ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, scenes_of, stage_import,
 };
 use celesta_source_edit::{
     EditValue, NewComponent, NewElement, NewKind, ParentReading, Timing, add_child, add_component,
@@ -1395,24 +1395,42 @@ impl EditorView {
                 return;
             }
             let dir = entry_dir.clone();
+            let staged = cx
+                .background_executor()
+                .spawn(async move { stage_import(&dir, &dir, &chosen) })
+                .await;
+            // The copy is named in `assets/` only for a mode still picking:
+            // one cancelled during the copy drops it unnamed, so nothing
+            // there is deleted (another import may have reused a file).
+            let wanted = view
+                .update(cx, |this, cx| match staged {
+                    Ok(staged) if picking(this) => Some(staged),
+                    Ok(_) => None,
+                    Err(error) => {
+                        cancel(this, Some(format!("Couldn’t use the chosen file: {error}")));
+                        cx.notify();
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+            let Some(staged) = wanted else {
+                return;
+            };
             let imported = cx
                 .background_executor()
-                .spawn(async move { import_file(&dir, &dir, &chosen) })
+                .spawn(async move { staged.publish() })
                 .await;
-            // A copy made for a mode cancelled during the copy goes again.
-            let mut undo = None;
             let picked = view
                 .update(cx, |this, cx| {
                     cx.notify();
                     match imported {
-                        Ok(imported) if picking(this) => {
-                            this.step_add(AddEvent::Picked(Some(imported.path.clone())));
-                            Some(imported.path)
+                        Ok(src) if picking(this) => {
+                            this.step_add(AddEvent::Picked(Some(src.clone())));
+                            Some(src)
                         }
-                        Ok(imported) => {
-                            undo = imported.copied;
-                            None
-                        }
+                        // Cancelled while it was named: the copy stays.
+                        Ok(_) => None,
                         Err(error) => {
                             cancel(this, Some(format!("Couldn’t use the chosen file: {error}")));
                             None
@@ -1421,12 +1439,6 @@ impl EditorView {
                 })
                 .ok()
                 .flatten();
-            if let Some(copy) = undo {
-                cx.background_executor()
-                    .spawn(async move { fs::remove_file(copy) })
-                    .await
-                    .ok();
-            }
             let Some(src) = picked else {
                 return;
             };

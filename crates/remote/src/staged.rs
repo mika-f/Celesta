@@ -52,6 +52,20 @@ impl StagedFile {
         };
         published.map(drop).map_err(|error| error.error)
     }
+
+    /// Renames the file to `destination` when no file is there. When one
+    /// is, the staged file comes back unpublished (`Ok(Err(self))`), so it
+    /// can be compared with that file or published under another name. Any
+    /// other failure removes it.
+    pub fn publish_new(self, destination: &Path) -> io::Result<Result<(), Self>> {
+        match self.0.persist_noclobber(destination) {
+            Ok(_) => Ok(Ok(())),
+            Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
+                Ok(Err(Self(error.file)))
+            }
+            Err(error) => Err(error.error),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -82,6 +96,24 @@ mod tests {
 
         assert_eq!(fs::read(&destination).unwrap(), b"video");
         assert_eq!(names(destination.parent().unwrap()), ["out.mp4"]);
+    }
+
+    #[test]
+    fn publish_new_hands_back_the_file_when_the_name_is_taken() {
+        let directory = tempfile::tempdir().unwrap();
+        let taken = directory.path().join("a.txt");
+        fs::write(&taken, b"there").unwrap();
+        let mut file = StagedFile::beside(&taken, ".tmp").unwrap();
+        file.as_file_mut().write_all(b"new").unwrap();
+
+        let back = file.publish_new(&taken).unwrap().expect_err("handed back");
+        assert_eq!(fs::read(back.path()).unwrap(), b"new");
+        assert_eq!(fs::read(&taken).unwrap(), b"there");
+
+        let free = directory.path().join("b.txt");
+        assert!(back.publish_new(&free).unwrap().is_ok());
+        assert_eq!(fs::read(&free).unwrap(), b"new");
+        assert_eq!(names(directory.path()), ["a.txt", "b.txt"]);
     }
 
     #[test]

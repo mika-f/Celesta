@@ -58,7 +58,7 @@ pub use project_types::{
     refresh_project_types, set_up_project_folder, set_up_project_types, set_up_project_types_in,
 };
 pub use props_edit::{
-    Imported, OrderedObject, PropsEditError, import_file, import_path, replace_file, set_property,
-    set_property_text,
+    OrderedObject, PropsEditError, StagedImport, import_path, replace_file, set_property,
+    set_property_text, stage_import,
 };
 pub use runtime::runtime_paths;
