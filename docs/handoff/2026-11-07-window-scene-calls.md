@@ -14,6 +14,15 @@ window's source, of any element (`scope::window_instances`). Each of them
 now has its call of `C` read, not only those whose chain ends as one of the
 selected element's instances does from the call.
 
+The rule needs a call of `C` with a source position in the selected chain.
+A window written directly in the component a `defineScenes` entry draws,
+such as a `<Sequence>` written directly around the selected element there,
+has none: `<Scenes>` creates the scene without one. Such a window is still
+treated as not shared, so it shows no **Edits change** options, and no
+calls are read for it (`window_calls_read` returns `None`). See the gap
+"A window written directly in a scene component" in
+`docs/handoff/2026-10-26-timeline-timing.md`.
+
 So for a `Delayed` that wraps its children in `<Sequence from={sequenceFrom}>`
 and that Intro calls around a `<Rect>` and Main around a `<Text>`, with the
 `<Rect>` selected:
@@ -96,7 +105,7 @@ cargo clippy -p celesta-editor --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-All pass: editor 697 tests.
+All pass, after rebasing onto main with #755 merged: editor 698 tests.
 
 ## Not checked on screen
 

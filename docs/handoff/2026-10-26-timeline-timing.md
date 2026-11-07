@@ -222,10 +222,12 @@ item by item, what was fixed and what was kept and why.
   of a skipped list and keeps "Can't find scene".
 - A runtime that reports no `wrappers` leaves every window "Not found in the
   scene scan", so no grip drags.
-- The scene calls reach a window instance of another element only through
-  an instance of the selected element with the same call; others count as
-  unread (not setting their own value), which can show a scene under
-  "Shared value is used in" that sets its own, and miss "Every scene sets".
+- Fixed since: the scene calls reached a window instance of another element
+  only through an instance of the selected element with the same call;
+  others counted as unread (not setting their own value), which could show
+  a scene under "Shared value is used in" that sets its own, and miss
+  "Every scene sets". Each window instance's call is read now (see
+  `docs/handoff/2026-11-07-window-scene-calls.md`).
 - A window written directly in a scene component has no chain entry above
   it: `<Scenes>` creates the scene with `React.createElement(Scene)`, which
   records no source position. The window is treated as not shared, so when
