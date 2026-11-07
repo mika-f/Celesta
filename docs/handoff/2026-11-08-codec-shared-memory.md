@@ -27,11 +27,18 @@ content plugins left for later.
     no name), whose size is fixed.
 - **Handing it over.** `PluginChild::start_sharing` prepares the command
   with the segment (`SharedMemory::prepare`): on Unix, a `pre_exec` that
-  `dup2`s it to descriptor 3 in the child only (so other children started
-  meanwhile do not inherit it); on Windows nothing. After the spawn,
-  `SharedMemory::handle_for` gives the handle the child maps it by: 3, or a
-  handle `DuplicateHandle`d into the child. A segment that cannot be handed
-  over leaves the process without it.
+  clears close-on-exec on the segment's own descriptor in the child only
+  (so other children started meanwhile do not inherit it); on Windows
+  nothing. After the spawn, `SharedMemory::handle_for` gives the handle the
+  child maps it by: the descriptor's number (the same in the child), or a
+  handle `DuplicateHandle`d into the child (not inheritable). A segment
+  that cannot be handed over leaves the process without it. The descriptor
+  is not moved to a fixed number: `dup2` onto 3 could close a descriptor
+  std still uses after `pre_exec` (the pipe it reports a failed `exec`
+  through), and in a process with only 0–2 open the segment itself is 3,
+  where `dup2(3, 3)` leaves close-on-exec set. The plugin sets
+  close-on-exec again once it has mapped the segment, so processes it
+  starts do not inherit it.
 - **Negotiation** (`hello`, no change to `protocol`): Celesta's `hello`
   request carries `"frames": { "sharedMemory": { "handle", "bytes" } }`. A
   codec that maps it answers `hello` with `"frames": "sharedMemory"`; one
@@ -43,18 +50,23 @@ content plugins left for later.
   `"slot": { "generation", "bytes" }` and no payload when the frame fits the
   slot, and the payload as before when it does not. Celesta accepts both
   every time. The slot is the segment after a 64-byte header holding its
-  generation (an atomic `u64`) and length. The codec copies the pixels in,
-  then stores the next generation with release ordering, then answers;
-  Celesta checks the answer's generation is newer than the last it read,
-  loads the slot's with acquire ordering, copies the pixels out into a new
-  `Vec` (so `VideoFrame` is unchanged), and checks the generation again. A
-  slot answer that was not offered, is not the frame's size, or whose
+  generation (an atomic `u64`) and length, used as a seqlock. Generations
+  answered are even and grow by 2; the codec stores the odd one between
+  (relaxed), issues a release fence, copies the pixels in, stores the new
+  even generation with release ordering, then answers. Celesta checks the
+  answer's generation is newer than the last it read, loads the slot's with
+  acquire ordering and refuses an odd one or another, copies the pixels out
+  into a new `Vec` (so `VideoFrame` is unchanged) through raw pointers,
+  issues an acquire fence, and checks the generation again. The slot's
+  offset and capacity are Celesta's own and the length is the frame's
+  `width * height * 4`; the length in the header is only compared with it.
+  A slot answer that was not offered, is not the frame's size, or whose
   generation does not match is `MediaError::CodecUnavailable`: the codec is
   out of step, and the backend starts another, as for any other.
 - **Who writes when.** Requests to a codec process are one at a time, and
   Celesta copies a frame out before it sends the next request, so the codec
-  never writes the slot while Celesta reads it. The generation check catches
-  a codec that breaks this.
+  never writes the slot while Celesta reads it. The seqlock catches a codec
+  that breaks this, mid-write included.
 - **Size.** `SHARED_FRAME_BYTES`: the header and 40 MiB, an RGBA frame up to
   4096x2560 (UHD and DCI 4K). Larger frames go through the pipe. The pages
   are reserved, and used only as frames are written.
@@ -107,17 +119,20 @@ shared memory, with the pipe, and with the exporter before this change.
 
 - `celesta-plugin`: a segment written on one side reads back on the other
   (through a second handle, as a plugin maps it); a read under another
-  generation or length, or past the slot, is refused; bytes that do not fit
-  are not written; a segment smaller than asked for is not mapped; a new
-  segment reads as zero. The `hello` hook's fields join the answer.
+  generation or length, or past the slot, is refused; a slot being written
+  (an odd generation in its header) is not read; an odd or zero generation
+  is not written; bytes that do not fit are not written; a segment smaller
+  than asked for is not mapped; a new segment reads as zero; on Unix, a
+  descriptor inherited without close-on-exec has it once mapped. The
+  `hello` hook's fields join the answer.
 - `celesta-media`: frames come through the slot once `hello` accepts it,
   and a frame read from a slot written over since is refused; a frame
   larger than the slot goes through the pipe; a `hello` without an offer, or
   with one that cannot be mapped, keeps the pipe; slot answers that were
-  not offered, are the wrong size, or carry a stale or wrong generation are
-  `CodecUnavailable`.
+  not offered, are the wrong size, or carry a stale, wrong, or odd
+  generation are `CodecUnavailable`.
 - `celesta-codec-test`: the program, as a real process, accepts the segment
-  (descriptor 3) and serves exact frames out of order and a sequential run
+  (at the descriptor's own number) and serves exact frames out of order and a sequential run
   (repeats, holding past the end) byte-identical to the pipe and to the
   codec in process. The kill-switch tests pass with the segment offered.
 - The FFmpeg plugin's process tests, which compare its program's frames
@@ -140,3 +155,16 @@ shared memory, with the pipe, and with the exporter before this change.
 - **Uploading straight from the slot** (option D) would save Celesta's copy
   out (about 1 ms a 4K frame) but changes `VideoFrame`.
 - **Content plugins** do not use it.
+
+## Review follow-ups
+
+The review of the design note (#773) found three points this build did
+not follow, now fixed: the generation check as a seqlock (it could not see
+a slot being written under its reader), the descriptor kept at its own
+number instead of `dup2`ed to 3, and the plugin setting close-on-exec on it
+once mapped. Two others are open questions in the design note: giving a
+segment only to backends that decode video or encode (every codec process
+gets one now, probing and audio-only ones included; their pages are
+untouched, so they cost address space, not memory, on Linux and macOS),
+and the Windows commit charge (each codec process's 40 MiB section is
+probably charged in full at creation; not verified).

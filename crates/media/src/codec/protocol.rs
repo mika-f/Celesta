@@ -172,7 +172,8 @@ fn answer(
                 if let Some(frames) = frames.as_mut()
                     && frame.pixels.len() <= frames.memory.slot_bytes()
                 {
-                    let generation = frames.generation + 1;
+                    // Even generations: the odd one between is the write.
+                    let generation = frames.generation + 2;
                     frames
                         .memory
                         .write_slot(&frame.pixels, generation)
@@ -1061,7 +1062,7 @@ mod tests {
             &[offering_hello(&memory), video_request(), video_request()],
         );
         assert!(accepted_shared_frames(&answers[0]));
-        for (answer, generation) in answers[1..].iter().zip(1..) {
+        for (answer, generation) in answers[1..].iter().zip([2, 4]) {
             assert_eq!(answer.header["slot"]["generation"], generation);
             assert!(
                 answer.payload.is_empty(),
@@ -1127,7 +1128,7 @@ mod tests {
     #[test]
     fn a_slot_answer_out_of_step_means_the_codec_is_unavailable() {
         let memory = SharedMemory::create(celesta_plugin::shared::SLOT_HEADER + 64).unwrap();
-        memory.write_slot(&[7; 8], 3).unwrap();
+        memory.write_slot(&[7; 8], 4).unwrap();
         let answer = |generation: u64, bytes: usize| {
             Message::new(json!({
                 "type": "videoFrame",
@@ -1144,25 +1145,29 @@ mod tests {
             matches!(result, Err(MediaError::CodecUnavailable(_)))
         };
         assert!(
-            unavailable(decode_video_frame(answer(3, 8), None)),
+            unavailable(decode_video_frame(answer(4, 8), None)),
             "never offered"
         );
         assert!(
-            unavailable(decode_video_frame(answer(3, 4), Some(&mut frames))),
+            unavailable(decode_video_frame(answer(4, 4), Some(&mut frames))),
             "not the frame's size"
         );
         assert!(
             unavailable(decode_video_frame(answer(2, 8), Some(&mut frames))),
             "not the slot's generation"
         );
+        assert!(
+            unavailable(decode_video_frame(answer(3, 8), Some(&mut frames))),
+            "an odd generation, a write"
+        );
         assert_eq!(
-            *decode_video_frame(answer(3, 8), Some(&mut frames))
+            *decode_video_frame(answer(4, 8), Some(&mut frames))
                 .unwrap()
                 .pixels,
             [7; 8]
         );
         assert!(
-            unavailable(decode_video_frame(answer(3, 8), Some(&mut frames))),
+            unavailable(decode_video_frame(answer(4, 8), Some(&mut frames))),
             "read already"
         );
     }

@@ -8,11 +8,13 @@
 //! else can open it by, its size is fixed once made, and it lives until both
 //! sides have let go of it:
 //!
-//! - Linux: a `memfd`, sealed against growing and shrinking, inherited by the
-//!   plugin as descriptor 3.
+//! - Linux: a `memfd`, sealed against growing and shrinking.
 //! - Other Unix (macOS): a POSIX shared memory object, mode `0600`, unlinked
 //!   as soon as it is made (whose size cannot change after its first
-//!   `ftruncate`), inherited as descriptor 3.
+//!   `ftruncate`).
+//! - On Unix the plugin inherits the descriptor at its own number, with
+//!   close-on-exec cleared in the plugin's process alone, and sets it again
+//!   once mapped, so processes the plugin starts do not inherit it.
 //! - Windows: an unnamed pagefile-backed section, duplicated into the
 //!   plugin's process after it starts.
 //!
@@ -23,7 +25,7 @@
 //! `docs/handoff/2026-11-08-codec-shared-memory.md`).
 
 use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering, fence};
 
 /// The bytes a slot's header takes before its data: its generation (an
 /// atomic `u64`) and its length, padded to a cache line.
@@ -60,7 +62,8 @@ impl SharedMemory {
     /// Maps the segment of `len` bytes that `handle` (a descriptor on Unix,
     /// a `HANDLE` on Windows, as the `hello` request names it) refers to.
     /// Fails when the segment is smaller than `len`. The handle becomes this
-    /// value's, and is closed with it.
+    /// value's, and is closed with it; on Unix it is made close-on-exec, so
+    /// processes this one starts do not inherit the segment.
     pub fn open(handle: u64, len: usize) -> io::Result<Self> {
         if len <= SLOT_HEADER {
             return Err(io::Error::new(
@@ -88,24 +91,35 @@ impl SharedMemory {
     }
 
     /// Makes `command` pass the segment on to the process it starts: on
-    /// Unix, as descriptor 3 in that process alone; on Windows, nothing (see
-    /// [`Self::handle_for`]).
+    /// Unix, its descriptor, kept open across `exec` in that process alone;
+    /// on Windows, nothing (see [`Self::handle_for`]).
     pub fn prepare(&self, command: &mut std::process::Command) {
         os::prepare(&self.handle, command);
     }
 
     /// The handle the process `child`, started from a command
-    /// [`Self::prepare`]d with this segment, maps it by: 3 on Unix, a handle
-    /// duplicated into it on Windows.
+    /// [`Self::prepare`]d with this segment, maps it by: the descriptor's
+    /// number on Unix (the same in the child), a handle duplicated into it on
+    /// Windows.
     pub fn handle_for(&self, child: &std::process::Child) -> io::Result<u64> {
         os::handle_for(&self.handle, child)
     }
 
-    /// Copies `bytes` into the slot's data and then stores `generation` as
-    /// its header's, with release ordering, so a reader that loads that
-    /// generation sees the bytes. Fails, writing nothing, when they do not
-    /// fit.
+    /// Copies `bytes` into the slot's data under `generation`, as a
+    /// seqlock's writer: it stores the odd generation before it (the slot is
+    /// being written) with relaxed ordering, issues a release fence so the
+    /// data cannot become visible before that, copies, then stores
+    /// `generation` with release ordering, so a reader that loads it sees the
+    /// bytes. `generation` must be even and not 0, and newer than the last
+    /// one written. Fails, writing nothing, when they do not fit or
+    /// `generation` is not even.
     pub fn write_slot(&self, bytes: &[u8], generation: u64) -> io::Result<()> {
+        if generation == 0 || !generation.is_multiple_of(2) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("a slot's generation is even and not 0, not {generation}"),
+            ));
+        }
         if bytes.len() > self.slot_bytes() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -116,6 +130,9 @@ impl SharedMemory {
                 ),
             ));
         }
+        self.slot_generation()
+            .store(generation - 1, Ordering::Relaxed);
+        fence(Ordering::Release);
         // SAFETY: the data starts after the header, and `bytes` fits it,
         // checked above; nothing in this process references the mapping.
         unsafe {
@@ -127,26 +144,35 @@ impl SharedMemory {
         Ok(())
     }
 
-    /// The slot's first `len` data bytes, copied out, if its generation is
-    /// `generation` both before and after the copy (acquire ordering), so
-    /// the bytes are the ones written under it and nothing wrote over them
-    /// meanwhile; `None` otherwise, or when `len` is more than the slot
-    /// holds or than was written.
+    /// The slot's first `len` data bytes, copied out, as a seqlock's reader:
+    /// only if its generation is `generation` (so not odd, being written)
+    /// when loaded with acquire ordering before the copy, and still after it
+    /// behind an acquire fence, so the bytes are the ones written under it
+    /// and nothing wrote over them meanwhile; `None` otherwise, or when `len`
+    /// is more than the slot holds or than was written. `len` and the slot's
+    /// size are the caller's and this value's own: the length in the shared
+    /// header is only compared with `len`.
     pub fn read_slot(&self, len: usize, generation: u64) -> Option<Vec<u8>> {
-        if len > self.slot_bytes() || self.slot_generation().load(Ordering::Acquire) != generation {
+        if generation % 2 == 1 || len > self.slot_bytes() {
             return None;
         }
-        if self.slot_length().load(Ordering::Relaxed) != len as u64 {
+        if self.slot_generation().load(Ordering::Acquire) != generation
+            || self.slot_length().load(Ordering::Relaxed) != len as u64
+        {
             return None;
         }
         let mut bytes = Vec::with_capacity(len);
         // SAFETY: the data starts after the header and holds `len` bytes,
-        // checked above; `bytes` has room for them.
+        // checked above; `bytes` has room for them. A writer breaking the
+        // protocol could be changing them meanwhile, which the second load
+        // below catches; they are copied through raw pointers, never read
+        // through a reference.
         unsafe {
             std::ptr::copy_nonoverlapping(self.ptr.add(SLOT_HEADER), bytes.as_mut_ptr(), len);
             bytes.set_len(len);
         }
-        (self.slot_generation().load(Ordering::Acquire) == generation).then_some(bytes)
+        fence(Ordering::Acquire);
+        (self.slot_generation().load(Ordering::Relaxed) == generation).then_some(bytes)
     }
 
     fn slot_generation(&self) -> &AtomicU64 {
@@ -172,9 +198,6 @@ impl Drop for SharedMemory {
 mod os {
     use std::io;
     use std::os::unix::process::CommandExt;
-
-    /// The descriptor a plugin process finds the segment at.
-    pub const CHILD_FD: libc::c_int = 3;
 
     pub type Handle = libc::c_int;
 
@@ -307,21 +330,25 @@ mod os {
             ));
         }
         let ptr = map(&fd, len)?;
+        // Inherited without close-on-exec: set it, so processes this one
+        // starts do not inherit the segment too.
+        // SAFETY: `fd` is this function's.
+        unsafe { libc::fcntl(fd.0, libc::F_SETFD, libc::FD_CLOEXEC) };
         Ok((fd.into_inner(), ptr))
     }
 
     pub fn prepare(handle: &Handle, command: &mut std::process::Command) {
         let fd = *handle;
-        // SAFETY: `dup2` and `fcntl` are async-signal-safe, as `pre_exec`
-        // requires, and touch only the child's descriptors.
+        // The descriptor keeps its own number: moving it to a fixed one
+        // could close one std still uses after `pre_exec` (the pipe it
+        // reports a failed `exec` through), and `dup2` onto its own number
+        // would leave close-on-exec set. Only the child's copy is cleared,
+        // so processes other threads start meanwhile do not inherit it.
+        // SAFETY: `fcntl` is async-signal-safe, as `pre_exec` requires, and
+        // touches only the child's descriptor.
         unsafe {
             command.pre_exec(move || {
-                if fd == CHILD_FD {
-                    // `dup2` onto itself would leave close-on-exec set.
-                    if libc::fcntl(fd, libc::F_SETFD, 0) != 0 {
-                        return Err(io::Error::last_os_error());
-                    }
-                } else if libc::dup2(fd, CHILD_FD) < 0 {
+                if libc::fcntl(fd, libc::F_SETFD, 0) != 0 {
                     return Err(io::Error::last_os_error());
                 }
                 Ok(())
@@ -329,8 +356,8 @@ mod os {
         }
     }
 
-    pub fn handle_for(_: &Handle, _: &std::process::Child) -> io::Result<u64> {
-        Ok(CHILD_FD as u64)
+    pub fn handle_for(handle: &Handle, _: &std::process::Child) -> io::Result<u64> {
+        Ok(*handle as u64)
     }
 
     pub fn close(handle: &Handle, ptr: *mut u8, len: usize) {
@@ -553,8 +580,8 @@ mod tests {
         let plugin = SharedMemory::open(host.duplicate_handle().unwrap(), host.len()).unwrap();
         assert_eq!(plugin.slot_bytes(), 1024);
         let bytes: Vec<u8> = (0..1000u32).map(|index| index as u8).collect();
-        plugin.write_slot(&bytes, 7).unwrap();
-        assert_eq!(host.read_slot(1000, 7), Some(bytes));
+        plugin.write_slot(&bytes, 8).unwrap();
+        assert_eq!(host.read_slot(1000, 8), Some(bytes));
     }
 
     #[test]
@@ -571,9 +598,27 @@ mod tests {
     #[test]
     fn bytes_that_do_not_fit_are_not_written() {
         let host = SharedMemory::create(SLOT_HEADER + 4).unwrap();
-        host.write_slot(&[9; 4], 1).unwrap();
-        assert!(host.write_slot(&[0; 5], 2).is_err());
-        assert_eq!(host.read_slot(4, 1), Some(vec![9; 4]));
+        host.write_slot(&[9; 4], 2).unwrap();
+        assert!(host.write_slot(&[0; 5], 4).is_err());
+        assert_eq!(host.read_slot(4, 2), Some(vec![9; 4]));
+    }
+
+    #[test]
+    fn a_slot_being_written_is_not_read() {
+        let host = SharedMemory::create(SLOT_HEADER + 4).unwrap();
+        host.write_slot(&[1, 2, 3, 4], 2).unwrap();
+        // What a writer leaves while it copies the next frame in.
+        host.slot_generation().store(3, Ordering::Relaxed);
+        assert_eq!(host.read_slot(4, 2), None, "the generation moved on");
+        assert_eq!(host.read_slot(4, 3), None, "an odd generation is a write");
+    }
+
+    #[test]
+    fn a_generation_that_is_odd_or_0_is_not_written() {
+        let host = SharedMemory::create(SLOT_HEADER + 4).unwrap();
+        assert!(host.write_slot(&[1], 3).is_err());
+        assert!(host.write_slot(&[1], 0).is_err());
+        assert_eq!(host.read_slot(0, 0), Some(Vec::new()), "nothing written");
     }
 
     #[test]
@@ -581,6 +626,25 @@ mod tests {
         let host = SharedMemory::create(SLOT_HEADER + 4096).unwrap();
         let handle = host.duplicate_handle().unwrap();
         assert!(SharedMemory::open(handle, 1 << 30).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_mapped_descriptor_is_not_inherited_further() {
+        let host = SharedMemory::create(SLOT_HEADER + 4).unwrap();
+        // A descriptor without close-on-exec, as the plugin inherits it.
+        // SAFETY: duplicates a descriptor this process holds.
+        let inherited = unsafe { libc::dup(host.handle) };
+        assert!(inherited >= 0);
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { libc::fcntl(inherited, libc::F_GETFD) } & libc::FD_CLOEXEC,
+            0
+        );
+        let plugin = SharedMemory::open(inherited as u64, host.len()).unwrap();
+        // SAFETY: as above.
+        let flags = unsafe { libc::fcntl(plugin.handle, libc::F_GETFD) };
+        assert_ne!(flags & libc::FD_CLOEXEC, 0);
     }
 
     #[test]
