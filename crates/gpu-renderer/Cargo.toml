@@ -20,7 +20,7 @@ pollster = "1.0.0"
 rayon = "1.12.0"
 serde_json.workspace = true
 # Keys the scene shader cache by the WGSL's digest.
-sha2 = "0.10"
+sha2 = "0.11"
 wgpu = { version = "30.0.1", features = ["naga-ir"] }
 clap = { workspace = true, optional = true }
 strum.workspace = true
