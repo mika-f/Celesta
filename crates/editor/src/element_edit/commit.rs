@@ -41,8 +41,9 @@ pub(crate) enum CommitError {
     /// The row can't be written under the chosen scope.
     #[error("{}", .0.text())]
     Scope(ScopeLock),
-    /// A name to import from `@celesta.studio/react` is bound otherwise.
-    #[error("`{}` here is not Celesta’s", match .0 { ImportLock::Clash { name } => name })]
+    /// A name to import from `@celesta.studio/react` is bound otherwise,
+    /// or the file does not parse.
+    #[error("{}", .0.text())]
     Import(ImportLock),
 }
 

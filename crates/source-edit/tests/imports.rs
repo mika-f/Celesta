@@ -57,6 +57,20 @@ fn adds_to_an_existing_named_import_keeping_it_sorted() {
         ensure(&text, &["Sequence"]).0,
         format!("import Celesta, {{ Rect, Sequence }} from '@celesta.studio/react';\n{BODY}")
     );
+
+    // Before an inline `type` member, sorted by its name.
+    let text = format!("import {{ Rect, type SceneEntry }} from '@celesta.studio/react';\n{BODY}");
+    assert_eq!(
+        ensure(&text, &["Sequence"]).0,
+        format!(
+            "import {{ Rect, type SceneEntry, Sequence }} from '@celesta.studio/react';\n{BODY}"
+        )
+    );
+    let text = format!("import {{ Rect, type Theme }} from '@celesta.studio/react';\n{BODY}");
+    assert_eq!(
+        ensure(&text, &["Sequence"]).0,
+        format!("import {{ Rect, Sequence, type Theme }} from '@celesta.studio/react';\n{BODY}")
+    );
 }
 
 #[test]
@@ -112,10 +126,48 @@ fn adds_a_new_import_after_the_last() {
         ensure(BODY, &["Sequence"]).0,
         format!("import {{ Sequence }} from \"@celesta.studio/react\";\n{BODY}")
     );
+    // Quoted as the file's first string, with its semicolon.
     let text = format!("'use client';\n{BODY}");
     assert_eq!(
         ensure(&text, &["Sequence"]).0,
-        format!("'use client';\nimport {{ Sequence }} from \"@celesta.studio/react\";\n{BODY}")
+        format!("'use client';\nimport {{ Sequence }} from '@celesta.studio/react';\n{BODY}")
+    );
+    let text = "export const Scene = () => <Text font=\"a\" text={'b'} />\n";
+    assert_eq!(
+        ensure(text, &["Sequence"]).0,
+        format!("import {{ Sequence }} from '@celesta.studio/react'\n{text}")
+    );
+    // A JSX attribute's string doesn't count.
+    let text = "export const Scene = () => <Text font=\"a\" />;\n";
+    assert_eq!(
+        ensure(text, &["Sequence"]).0,
+        format!("import {{ Sequence }} from \"@celesta.studio/react\";\n{text}")
+    );
+
+    // A comment ending the last import's line stays with it.
+    for comment in ["// the shapes", "/* the shapes */"] {
+        let text = format!("import {{ Circle }} from '@celesta.studio/shapes'; {comment}\n{BODY}");
+        assert_eq!(
+            ensure(&text, &["Sequence"]).0,
+            format!(
+                "import {{ Circle }} from '@celesta.studio/shapes'; {comment}\nimport {{ Sequence }} from '@celesta.studio/react';\n{BODY}"
+            ),
+            "{comment}"
+        );
+    }
+    // A comment that goes on, or code after it, is not one.
+    let text = format!("import {{ Circle }} from '@celesta.studio/shapes'; /* a\n b */\n{BODY}");
+    assert_eq!(
+        ensure(&text, &["Sequence"]).0,
+        format!(
+            "import {{ Circle }} from '@celesta.studio/shapes';\nimport {{ Sequence }} from '@celesta.studio/react'; /* a\n b */\n{BODY}"
+        )
+    );
+    // CRLF line breaks.
+    let text = "import { Circle } from '@celesta.studio/shapes'; // c\r\nexport const Scene = () => <Rect />;\r\n";
+    assert_eq!(
+        ensure(text, &["Sequence"]).0,
+        "import { Circle } from '@celesta.studio/shapes'; // c\r\nimport { Sequence } from '@celesta.studio/react';\r\nexport const Scene = () => <Rect />;\r\n"
     );
 
     // A side-effect import is not extended.
@@ -230,6 +282,16 @@ fn a_clashing_local_binding_locks() {
             "{text}"
         );
     }
+
+    // A file that doesn't parse is not a clash.
+    assert_eq!(
+        ensure_imports(
+            "import { Rect } from '@celesta.studio/react';\nconst = ;\n",
+            MODULE,
+            &["Sequence"]
+        ),
+        Err(ImportLock::SyntaxError)
+    );
 
     // One clashing name of two: no edit at all.
     let text =

@@ -3,8 +3,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use oxc_ast::ast::{
-    BindingIdentifier, ImportDeclarationSpecifier, JSXElementName, JSXMemberExpression,
-    JSXMemberExpressionObject, ModuleExportName, Program, Statement,
+    BindingIdentifier, Directive, ImportDeclarationSpecifier, JSXAttribute, JSXAttributeValue,
+    JSXElementName, JSXMemberExpression, JSXMemberExpressionObject, ModuleExportName, Program,
+    Statement, StringLiteral,
 };
 use oxc_ast_visit::Visit;
 use oxc_span::GetSpan;
@@ -43,9 +44,24 @@ pub enum ImportName {
 pub enum ImportLock {
     /// The file binds `name` otherwise: a local declaration, a type-only
     /// import, an import from another module, or a declaration shadowing
-    /// the module's import. Also when the text does not parse.
+    /// the module's import.
     Clash { name: String },
+    /// The text does not parse.
+    SyntaxError,
 }
+
+impl ImportLock {
+    /// The lock as the editor shows it.
+    pub fn text(&self) -> String {
+        match self {
+            Self::Clash { name } => format!("`{name}` here is not Celesta’s"),
+            Self::SyntaxError => SYNTAX_ERROR.to_owned(),
+        }
+    }
+}
+
+/// Why nothing is written into a file with syntax errors.
+pub(crate) const SYNTAX_ERROR: &str = "The source has syntax errors";
 
 /// The one edit (if any) that makes every name of `names` from `module`
 /// usable in `text`, and how to write each, in `names` order.
@@ -54,9 +70,11 @@ pub enum ImportLock {
 /// if any); under `import * as C` it writes `C.name`. The others go into
 /// the first value import of `module` with a `{ … }` list (a sorted list,
 /// compared ignoring case, stays sorted; any other list gets them at its
-/// end), else into a new import line after the last import, sorted, with
-/// that import's quotes and semicolon (`"` and `;` in a file without
-/// imports, where the line goes first). `import type { … }` is never
+/// end), else into a new import line after the last import (after a
+/// comment ending its line too), sorted, with that import's quotes and
+/// semicolon. In a file without imports the line goes first, quoted as the
+/// file's first string outside JSX and ended with `;` when its first
+/// statement is (`"` and `;` when it has neither). `import type { … }` is never
 /// extended. Several names into a list are one splice from the first
 /// insertion point to the last, the text between kept verbatim.
 pub fn ensure_imports(
@@ -64,17 +82,13 @@ pub fn ensure_imports(
     module: &str,
     names: &[&str],
 ) -> Result<(Option<Edit>, Vec<ImportName>), ImportLock> {
-    let Some(&first) = names.first() else {
+    if names.is_empty() {
         return Ok((None, Vec::new()));
-    };
+    }
     with_program(text, |program| {
         ensure_imports_in(text, program, module, names)
     })
-    .unwrap_or_else(|| {
-        Err(ImportLock::Clash {
-            name: first.to_string(),
-        })
-    })
+    .unwrap_or(Err(ImportLock::SyntaxError))
 }
 
 /// [`ensure_imports`] in `text` already parsed (without error) as
@@ -344,7 +358,8 @@ impl Module {
         let list = sorted.join(", ");
         let newline = line_break(text);
         let Some(last) = self.statements.last() else {
-            let line = format!("import {{ {list} }} from \"{module}\";");
+            let (quote, semicolon) = file_style(text, program);
+            let line = format!("import {{ {list} }} from {quote}{module}{quote}{semicolon}");
             // After a hashbang or the directives (`"use client"`), else
             // at the top.
             let after = program
@@ -374,10 +389,77 @@ impl Module {
         } else {
             ""
         };
+        let at = after_trailing_comment(text, last.span.end);
         Edit::Splice {
-            start: last.span.end,
-            end: last.span.end,
+            start: at,
+            end: at,
             text: format!("{newline}import {{ {list} }} from {quote}{module}{quote}{semicolon}"),
+        }
+    }
+}
+
+/// The end of a comment that ends the line at `end` (`// …`, or `/* … */`
+/// closing on it), else `end`: a new line goes after the comment, which
+/// belongs to the code before it.
+fn after_trailing_comment(text: &str, end: u32) -> u32 {
+    let rest = &text[end as usize..];
+    let line = rest[..rest.find('\n').unwrap_or(rest.len())].trim_end_matches('\r');
+    let comment = line.trim_start();
+    let ends_line = comment.starts_with("//")
+        || (comment.starts_with("/*")
+            && comment
+                .find("*/")
+                .is_some_and(|close| close + 2 == comment.len()));
+    if ends_line {
+        end + line.len() as u32
+    } else {
+        end
+    }
+}
+
+/// How a file without imports quotes and ends a line: the quote of its
+/// first string outside JSX attributes (`"` without one), and `;` unless
+/// its first statement or directive ends without one.
+fn file_style(text: &str, program: &Program<'_>) -> (char, &'static str) {
+    let mut first = FirstString(None);
+    first.visit_program(program);
+    let quote = first
+        .0
+        .and_then(|at| text[at as usize..].chars().next())
+        .unwrap_or('"');
+    let first_end = program
+        .directives
+        .first()
+        .map(|d| d.span.end)
+        .or_else(|| program.body.first().map(|s| s.span().end));
+    let semicolon = match first_end {
+        Some(end) if !text[..end as usize].ends_with(';') => "",
+        _ => ";",
+    };
+    (quote, semicolon)
+}
+
+/// Where the first string literal outside JSX attributes starts (prettier
+/// quotes those apart, with `"` by default). Directives count.
+struct FirstString(Option<u32>);
+
+impl<'a> Visit<'a> for FirstString {
+    fn visit_directive(&mut self, it: &Directive<'a>) {
+        if self.0.is_none() {
+            self.0 = Some(it.expression.span.start);
+        }
+    }
+
+    fn visit_string_literal(&mut self, it: &StringLiteral<'a>) {
+        if self.0.is_none() {
+            self.0 = Some(it.span.start);
+        }
+    }
+
+    fn visit_jsx_attribute(&mut self, it: &JSXAttribute<'a>) {
+        // The value is a JSX string; a `{…}` value holds code.
+        if let Some(JSXAttributeValue::ExpressionContainer(container)) = &it.value {
+            self.visit_jsx_expression_container(container);
         }
     }
 }
