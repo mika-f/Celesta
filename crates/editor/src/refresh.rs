@@ -9,7 +9,8 @@ use crate::preview::{
 };
 use crate::problems::{Source, error_chain};
 use crate::source::{
-    DependencyDebounce, REACT_PREVIEW_SAMPLE_RATE, WatchStamp, sample_dependencies, watched_stamp,
+    DependencyDebounce, REACT_PREVIEW_SAMPLE_RATE, WatchStamp, changed_sources,
+    sample_dependencies, watched_stamp,
 };
 use crate::timecode::format_timecode;
 use crate::timeline_drag::{BandDrag, SceneDrag};
@@ -30,6 +31,10 @@ use std::time::Duration;
 /// What one background reload of a React entry produced.
 pub(crate) struct ReactReload {
     pub(crate) watched: Option<WatchStamp>,
+    /// The source files (real paths) that differ between `watched` and the
+    /// sample the loaded code was read from; `None` when that is not known
+    /// (see [`changed_sources`]).
+    pub(crate) changed: Option<Vec<PathBuf>>,
     /// The previously recorded preparation dependencies, sampled with
     /// `watched`: what a failed load records, since it reports none.
     pub(crate) dependencies: Vec<PrepareDependency>,
@@ -377,6 +382,7 @@ impl EditorView {
         let entry = react.entry.clone();
         let property_args = react.property_args.clone();
         let recorded = react.dependencies.clone();
+        let loaded = react.loaded.clone();
         let (node, cli_script) = react_runtime_paths();
         let plugins = self.plugins.runtime();
         let same_composition = composition_id.as_deref() == Some(react.composition_id.as_str());
@@ -393,12 +399,6 @@ impl EditorView {
         // commits a text edit before it reloads).
         if !self.selection_keep.requested(sequence, same_composition) {
             self.clear_layer_selection(same_composition);
-            // Which files changed is not known: every scope choice's
-            // position may now name another element.
-            if same_composition {
-                self.scope_choices.clear();
-                self.scope_written.clear();
-            }
         }
         cx.spawn(async move |view, cx| {
             let reload = cx
@@ -407,6 +407,7 @@ impl EditorView {
                     // Sampled before reading, so an edit made while Node starts
                     // still differs from it and triggers another reload.
                     let watched = watched_stamp(&entry, &property_args);
+                    let changed = changed_sources(&entry, loaded.as_ref(), watched.as_ref());
                     let dependencies = sample_dependencies(&recorded);
                     // Re-read --props-file so edits to a variant show up too.
                     match property_args.load(&entry) {
@@ -426,6 +427,7 @@ impl EditorView {
                             .map_err(PreviewLoadError::from_bridge);
                             ReactReload {
                                 watched,
+                                changed,
                                 dependencies,
                                 properties: Some(properties),
                                 result,
@@ -433,6 +435,7 @@ impl EditorView {
                         }
                         Err(message) => ReactReload {
                             watched,
+                            changed,
                             dependencies,
                             properties: None,
                             result: Err(message.into()),
@@ -465,7 +468,7 @@ impl EditorView {
         }
         if let Some(react) = self.react_preview.as_mut() {
             if reload_sample_applies(sequence, self.watched_since) {
-                react.watched = reload.watched;
+                react.watched = reload.watched.clone();
                 // What this load's `prepare()` read; a failed load keeps
                 // watching the old paths from their state before it, so it
                 // retries once they change rather than in a loop.
@@ -491,6 +494,8 @@ impl EditorView {
                     self.set_react_audio_clips(Vec::new(), &HashMap::new());
                 }
                 if let Some(react) = self.react_preview.as_mut() {
+                    // The reloaded code was read from these sources.
+                    react.loaded = reload.watched;
                     react.composition_id = metadata.composition_id.clone();
                     react.compositions = metadata.compositions.clone();
                     react.chapters = metadata.chapters.clone();
@@ -559,14 +564,17 @@ impl EditorView {
                     // A layer picked while the reload ran belongs to the old code.
                     self.clear_layer_selection(false);
                 }
-                // The written files' positions may name other elements now
-                // (a lift adds lines): only the selected element's choice,
-                // carried to where it moved, stays in them.
-                if own_write {
-                    let written = std::mem::take(&mut self.scope_written);
-                    self.scope_choices
-                        .forget_in(&written, self.scope_carry_from.as_ref());
-                }
+                // The changed files' positions may name other elements now
+                // (a lift adds lines, so may an edit outside the editor):
+                // only the selected element's choice, carried to where it
+                // moved, stays in them. Choices in other files stay.
+                let written = std::mem::take(&mut self.scope_written);
+                self.scope_choices.forget_reloaded(
+                    reload.changed,
+                    written,
+                    own_write,
+                    self.scope_carry_from.as_ref(),
+                );
                 // A released band or scene drag's values are the reloaded
                 // code's now.
                 self.drop_released_timeline_drag::<BandDrag>();
@@ -771,6 +779,7 @@ mod property_outcome {
             component_schemas: BTreeMap::new(),
             entry: PathBuf::from("film.tsx"),
             watched: None,
+            loaded: None,
             dependencies: Vec::new(),
             property_args: PropertyArgs::default(),
             properties: PropertyInputs::default(),
@@ -821,6 +830,7 @@ mod property_outcome {
         let mut preview = preview(Some(kept(&["b", "a"])));
         let reload = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: None,
             result: Err(PreviewLoadError {
@@ -840,6 +850,7 @@ mod property_outcome {
         let mut preview = preview(Some(kept(&["a"])));
         let unreadable = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: None,
             result: Err(PreviewLoadError::from(
@@ -858,6 +869,7 @@ mod property_outcome {
         // A reload that read the file, even one the entry then rejected, clears it.
         let rejected = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: Some(inputs(r#"{"a": 1}"#)),
             result: Err(PreviewLoadError::from("node exited".to_owned())),
@@ -872,6 +884,7 @@ mod property_outcome {
         let fresh = inputs(r#"{"a": 1}"#);
         let reload = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: Some(fresh.clone()),
             result: Err(PreviewLoadError::from("node exited".to_owned())),
@@ -891,6 +904,7 @@ mod property_outcome {
         preview.property_issues = vec![issue("old")];
         let reload = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: Some(inputs(r#"{"b": true}"#)),
             result: Ok((PathBuf::from("film.tsx"), metadata(&["b", "a"]))),
@@ -909,6 +923,7 @@ mod property_outcome {
         let mut preview = preview(Some(kept(&["a"])));
         let reload = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: Some(PropertyInputs::default()),
             result: Ok((PathBuf::from("film.tsx"), metadata(&[]))),
@@ -949,6 +964,7 @@ mod property_outcome {
             .insert("Rect".to_owned(), rect_table());
         let reload = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: None,
             result: Ok((PathBuf::from("film.tsx"), loaded)),
@@ -958,6 +974,7 @@ mod property_outcome {
 
         let failed = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: None,
             result: Err(PreviewLoadError::from("node exited".to_owned())),
@@ -983,6 +1000,7 @@ mod property_outcome {
             .insert("Badge".to_owned(), schema.clone());
         let reload = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: None,
             result: Ok((PathBuf::from("film.tsx"), loaded)),
@@ -993,6 +1011,7 @@ mod property_outcome {
         // A failed load keeps them, as it keeps the tables.
         let failed = ReactReload {
             watched: None,
+            changed: None,
             dependencies: Vec::new(),
             properties: None,
             result: Err(PreviewLoadError::from("node exited".to_owned())),

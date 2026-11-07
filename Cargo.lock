@@ -974,6 +974,7 @@ dependencies = [
  "celesta-source-edit",
  "chrono",
  "clap",
+ "dunce",
  "fnv",
  "gpui-kit",
  "image",

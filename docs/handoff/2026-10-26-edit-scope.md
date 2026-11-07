@@ -122,7 +122,12 @@ properties" point to it).
   writes collect the files they changed in `scope_written`; the reload that
   reads them calls `ScopeChoices::forget_in` with the carried position, and a
   reload of the same composition that is not an own write (a change outside
-  the editor) calls `ScopeChoices::clear`.
+  the editor) calls `ScopeChoices::clear`. Changed since
+  (`docs/handoff/2026-11-07-scope-choices-changed-files.md`): a successful
+  reload calls `ScopeChoices::forget_reloaded`, which forgets the choices in
+  the files that changed and in `scope_written`; only when which files
+  changed is not known does it fall back to `forget_in(written)` for an own
+  write and `clear` for any other reload. A failed reload forgets none.
 - The control (`layer_panel.rs`, `impact.rs`, `element_rows_view.rs`,
   `element_rows.rs`): `impact_line` shows the control for `Options`
   ("Edits change", two tabs in the tool row's toggle look, `scope_line` under
@@ -250,8 +255,9 @@ amended to match.
   the element's new position on the kept reload. Choices are kept by
   position, so the reload of an own write forgets every other choice made in
   the files it wrote (a lift's added lines may move a sibling onto a
-  remembered position), and a change from outside the editor forgets them
-  all; forgetting falls back to the default (`chosen_scope` with nothing
+  remembered position), and a change from outside the editor forgets those
+  in the files it changed (`docs/handoff/2026-11-07-scope-choices-changed-files.md`;
+  at first it forgot them all); forgetting falls back to the default (`chosen_scope` with nothing
   remembered: "This scene" unless it is locked).
 - **A shared edit's impact is conservative.** Under "Shared value",
   `impact_filter` leaves out the scenes that set their own (`Except`) only
@@ -359,7 +365,11 @@ amended to match.
   the refused size prop and the refusal (`docs/handoff/2026-11-07-edit-scope-gaps.md`).
 - An edit outside the editor (and the manual Reload) forgets every scope
   choice, not only those in the files it changed: the reload watcher knows
-  only that some file did. Loading another composition forgets none.
+  only that some file did. Loading another composition forgets none. Fixed:
+  a successful reload forgets the choices in the files that changed since
+  the loaded code was read, whatever loaded it, and every choice only when
+  which files changed is not known
+  (`docs/handoff/2026-11-07-scope-choices-changed-files.md`).
 - The dry lift can lock every row as "Can't be set per scene yet" when a
   `const` in an outer function around `C` is read.
 - A lifted pattern entry is always written inline (`, rectWidth = 200`), even

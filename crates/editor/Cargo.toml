@@ -32,6 +32,7 @@ celesta-react-bridge.workspace = true
 celesta-source-edit.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap.workspace = true
+dunce = "1.0.5"
 fnv = "1.0.7"
 rodio = { version = "0.23.0", default-features = false, features = ["playback"] }
 serde_json.workspace = true
