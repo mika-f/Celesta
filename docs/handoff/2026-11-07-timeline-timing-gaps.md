@@ -269,7 +269,7 @@ cargo fmt --all -- --check
 (cd packages/react && pnpm run test)
 ```
 
-All pass: source-edit 218 tests, editor 684 tests, react 313 tests.
+All pass, after rebasing onto main with #559: source-edit 224 tests, editor 695 tests, react 313 tests.
 
 ## Not checked on screen
 

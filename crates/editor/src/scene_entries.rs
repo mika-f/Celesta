@@ -1196,7 +1196,7 @@ mod tests {
                 ("outro-end", 240, 250)
             ]
         );
-        let targets = scene_snap_targets(0.0, &with_parts(), "main", &later);
+        let targets = scene_snap_targets(0.0, &with_parts(), "main", &later, &[]);
         for moving in [240.0, 280.0, 290.0] {
             assert!(!targets.contains(&moving), "{moving} in {targets:?}");
         }
