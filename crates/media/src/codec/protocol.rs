@@ -10,7 +10,7 @@ use crate::error::MediaError;
 use crate::mix::frame_byte_len;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
-use celesta_plugin::protocol::{Message, ProtocolError, serve_requests, serve_requests_on};
+use celesta_plugin::protocol::{Answer, Message, ProtocolError, serve_requests, serve_requests_on};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -62,8 +62,8 @@ struct WireSequential {
     frame_rate: Rational,
 }
 
-fn answer(provider: &mut impl CodecProvider, mut request: Message) -> Message {
-    let answer = (|| -> Result<Message, MediaError> {
+fn answer(provider: &mut impl CodecProvider, mut request: Message) -> Answer {
+    let answer = (|| -> Result<Answer, MediaError> {
         let request = &mut request;
         Ok(match request.kind() {
             "probe" => {
@@ -83,15 +83,16 @@ fn answer(provider: &mut impl CodecProvider, mut request: Message) -> Message {
                         frame_rate: sequential.frame_rate,
                     }),
                 })?;
-                Message {
+                // The codec may keep the frame for a repeat request, so it is
+                // written from its share rather than copied.
+                return Ok(Answer::Shared {
                     header: json!({
                         "type": "videoFrame",
                         "width": frame.width,
                         "height": frame.height,
                     }),
-                    payload: Arc::try_unwrap(frame.pixels)
-                        .unwrap_or_else(|shared| (*shared).clone()),
-                }
+                    payload: frame.pixels,
+                });
             }
             "decodeAudio" => {
                 let path: PathBuf = field(request, "path")?;
@@ -143,9 +144,10 @@ fn answer(provider: &mut impl CodecProvider, mut request: Message) -> Message {
                 Message::new(json!({ "type": "muxed" }))
             }
             other => return Err(MediaError::Codec(format!("unknown request \"{other}\""))),
-        })
+        }
+        .into())
     })();
-    answer.unwrap_or_else(|error| encode_error(&error))
+    answer.unwrap_or_else(|error| encode_error(&error).into())
 }
 
 /// An `error` answer: the error's text, and, for the errors Celesta tells
@@ -576,6 +578,80 @@ mod tests {
                 "mux 16 /out/film.mp4",
             ]
         );
+    }
+
+    /// Serves the frame it keeps, as a codec keeps the last frame it decoded
+    /// for a repeat request.
+    struct Keeper {
+        kept: Arc<Vec<u8>>,
+    }
+
+    impl CodecProvider for Keeper {
+        fn probe(&mut self, _: &Path) -> Result<MediaProbe, MediaError> {
+            Ok(probe())
+        }
+
+        fn decode_video(&mut self, _: &VideoRequest<'_>) -> Result<VideoFrame, MediaError> {
+            Ok(VideoFrame {
+                width: 2,
+                height: 1,
+                pixels: Arc::clone(&self.kept),
+            })
+        }
+
+        fn decode_audio(&mut self, _: &Path, _: u32, _: u16) -> Result<AudioBuffer, MediaError> {
+            unreachable!()
+        }
+
+        fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
+            unreachable!()
+        }
+
+        fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn abort_encoder(&mut self, _: EncoderId) {}
+
+        fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn a_frame_the_codec_keeps_is_sent_whole_and_stays_its_own() {
+        let kept = Arc::new(vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut codec = Keeper {
+            kept: Arc::clone(&kept),
+        };
+        let request = decode_video_request(&VideoRequest {
+            path: Path::new("/a.mp4"),
+            time: 0.0,
+            sequential: None,
+        })
+        .unwrap();
+        let mut input = Vec::new();
+        for _ in 0..2 {
+            write_message(&mut input, &request).unwrap();
+        }
+        let mut output = Vec::new();
+        serve_on(&mut codec, "keeper", "1.0.0", &input[..], &mut output).unwrap();
+        let mut reader = &output[..];
+        for _ in 0..2 {
+            let frame = decode_video_frame(read_message(&mut reader).unwrap().unwrap()).unwrap();
+            assert_eq!(*frame.pixels, *kept);
+        }
+        assert!(read_message(&mut reader).unwrap().is_none());
+        // The codec's share and this one: no answer holds the frame.
+        assert_eq!(Arc::strong_count(&kept), 2);
     }
 
     #[test]
