@@ -1,9 +1,10 @@
-# Video frames upload through kept staging memory (2026-11-08)
+# Plugin profiling: 4K preview and the codec's encode (2026-11-08)
 
 `2026-11-08-codec-shared-memory-design.md` recommended profiling 4K
 preview's upload and draw cost, and the codec plugin's encode overhead,
-before building shared memory. This note is that profile and the fix it
-led to.
+before building shared memory; the user chose to profile first. This note
+is that profile and the fix it led to: video frames upload through kept
+staging memory and textures.
 
 ## Profile
 
@@ -41,6 +42,22 @@ meanwhile. Timed whole (fixed on #769's branch), encoding costs about the
 same CPU either way, and the plugin adds 1.1 ms (1080p) and 6.6 ms (4K) of
 wall-clock time: the frame's way through the pipe. Nothing to fix there
 but the transport.
+
+**Would pipelining `encodeFrame` hide it?** In an export
+(`crates/exporter/src/render.rs`), Node evaluates the next frame on its own
+thread and `GpuRenderer::submit` leaves the GPU working while the render
+thread goes on, but `write_frame` sends each frame to the codec and waits
+for `frameEncoded` before the render thread prepares the next one. Not
+waiting would let the transfer overlap preparing the next frame, so it
+could hide at most the transfer: about 6.6 ms a 4K frame with
+`ultrafast`, and less with the default `medium`, where libx264 (about
+55–60 ms a 4K frame here) is the bottleneck and the plugin's encoder
+threads are still busy with earlier frames while the next one crosses
+the pipe. It would also change the protocol: today `PluginChild` has one
+request in flight and pairs each answer with it, so a frame sent without
+waiting needs either several requests in flight with ordered answers or an
+`encodeFrame` that is not answered. Not built: it changes the protocol for
+a gain that only fast presets see, so it is the user's call.
 
 ## Change
 
