@@ -1,5 +1,5 @@
 //! Adding an element: the group it goes into (the selected one or the
-//! nearest around it, moved into the scene's own code under "This scene"),
+//! nearest around it, moved into the scene’s own code under "This scene"),
 //! the `<Sequence>` it is wrapped in, the values a gesture on the canvas
 //! writes and the outline drawn meanwhile, the Add menu's items, and the
 //! add mode's steps; then the write, the selection of the added layer after
@@ -50,8 +50,8 @@ const REMAPPED: &str = "Can’t add inside a loop or freeze frame";
 const TURNED_3D: &str = "Can’t draw into a group turned in 3D";
 const SCALED_TO_ZERO: &str = "Can’t draw into a group scaled to zero";
 const READING: &str = "The source is still being read";
-const NOT_IN_FRAME: &str = "The group isn't drawn in this frame";
-const FRAME_FAILED: &str = "This frame couldn't be drawn";
+const NOT_IN_FRAME: &str = "The group isn’t drawn in this frame";
+const FRAME_FAILED: &str = "This frame couldn’t be drawn";
 const NO_FILE: &str = "Choose a file first";
 const SOURCE_CHANGED: &str = "The source changed while editing";
 
@@ -160,7 +160,7 @@ pub(crate) fn lookup_reason(lookup: Option<&SourceLookup>) -> String {
         Some(SourceLookup::NotInFrame) => "The selected layer is not in this frame".to_owned(),
         Some(SourceLookup::NoPosition) => "The selected layer has no source position".to_owned(),
         Some(SourceLookup::Failed(error)) => {
-            format!("Couldn't read the selected layer's source: {error}")
+            format!("Couldn’t read the selected layer’s source: {error}")
         }
     }
 }
@@ -2098,7 +2098,7 @@ mod tests {
         // Not "Select a group, or a layer inside one, to add into".
         assert_eq!(
             lookup_reason(Some(&SourceLookup::Failed("bridge closed".to_owned()))),
-            "Couldn't read the selected layer's source: bridge closed"
+            "Couldn’t read the selected layer’s source: bridge closed"
         );
     }
 
