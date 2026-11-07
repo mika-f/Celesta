@@ -1,11 +1,12 @@
-//! A codec plugin's process, behind the [`CodecProvider`] interface.
+//! A media plugin's process, behind the [`MediaProvider`] interface.
 
 use crate::codec::protocol::{self, ROLES, SharedFrames, decode_error};
 use crate::codec::{
-    CodecFactory, CodecProvider, Container, EncoderId, EncoderSettings, MuxRequest, VideoRequest,
+    CodecFactory, Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, VideoRequest,
 };
 use crate::error::MediaError;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
+use celesta_plugin::MEDIA_PROTOCOL_VERSION;
 use celesta_plugin::protocol::Message;
 use celesta_plugin::shared::SharedMemory;
 use celesta_plugin_host::{PluginChild, PluginKillSwitch, RequestError};
@@ -54,19 +55,19 @@ impl FrameTransport {
     }
 }
 
-/// A running codec plugin, one request at a time (see [`PluginChild`] for
+/// A running media plugin, one request at a time (see [`PluginChild`] for
 /// its window, deadlines, and stderr). Dropping it stops the process before
 /// it unmaps the memory shared with it, so the process never writes into
 /// memory being unmapped.
-pub struct CodecProcess {
+pub struct MediaProcess {
     child: PluginChild,
     /// The slot decoded frames arrive in, when the plugin accepted it.
     frames: Option<SharedFrames>,
 }
 
-impl CodecProcess {
+impl MediaProcess {
     /// Starts `executable` in `directory` (the plugin's own) and checks that
-    /// it speaks this protocol as a codec. The process is registered with
+    /// it speaks this protocol as a media plugin. The process is registered with
     /// `kill` before it is asked anything, and none starts once `kill` was
     /// killed. Its decoded frames come through shared memory unless
     /// [`SHARED_MEMORY_VARIABLE`] says otherwise (see [`Self::start_with`]).
@@ -110,11 +111,13 @@ impl CodecProcess {
             (Some(memory), Some(handle)) => protocol::shared_frames_offer(handle, memory),
             _ => Map::new(),
         };
-        let hello = child.hello_with(offer).map_err(media_error)?;
+        let hello = child
+            .hello_as(MEDIA_PROTOCOL_VERSION, offer)
+            .map_err(media_error)?;
         let roles = hello.header["roles"].as_array();
         if !roles.is_some_and(|roles| roles.iter().any(|role| role == ROLES[0])) {
             return Err(MediaError::CodecUnavailable(format!(
-                "{} is not a codec plugin (its roles are {})",
+                "{} is not a media plugin (its roles are {})",
                 executable.display(),
                 hello.header["roles"]
             )));
@@ -132,8 +135,8 @@ impl CodecProcess {
     pub fn factory(executable: PathBuf, directory: PathBuf) -> CodecFactory {
         Arc::new(move |kill| {
             Ok(
-                Box::new(CodecProcess::start(&executable, &directory, kill)?)
-                    as Box<dyn CodecProvider>,
+                Box::new(MediaProcess::start(&executable, &directory, kill)?)
+                    as Box<dyn MediaProvider>,
             )
         })
     }
@@ -180,13 +183,17 @@ fn named<T>(path: &Path, result: Result<T, MediaError>) -> Result<T, MediaError>
     result.map_err(|error| match error {
         MediaError::NotFound(_) => MediaError::NotFound(path.to_owned()),
         MediaError::NoVideoStream(_) => MediaError::NoVideoStream(path.to_owned()),
+        MediaError::Unsupported { tried, .. } => MediaError::Unsupported {
+            path: path.to_owned(),
+            tried,
+        },
         error => error,
     })
 }
 
-impl CodecProvider for CodecProcess {
-    fn probe(&mut self, path: &Path) -> Result<MediaProbe, MediaError> {
-        let request = protocol::probe_request(&absolute(path))?;
+impl MediaProvider for MediaProcess {
+    fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
+        let request = protocol::probe_request(decoder, &absolute(path))?;
         named(
             path,
             self.request(request, "probed", PROBE_TIMEOUT)
@@ -194,12 +201,19 @@ impl CodecProvider for CodecProcess {
         )
     }
 
-    fn decode_video(&mut self, request: &VideoRequest<'_>) -> Result<VideoFrame, MediaError> {
+    fn decode_video(
+        &mut self,
+        decoder: &str,
+        request: &VideoRequest<'_>,
+    ) -> Result<VideoFrame, MediaError> {
         let path = absolute(request.path);
-        let message = protocol::decode_video_request(&VideoRequest {
-            path: &path,
-            ..*request
-        })?;
+        let message = protocol::decode_video_request(
+            decoder,
+            &VideoRequest {
+                path: &path,
+                ..*request
+            },
+        )?;
         let answer = self.request(message, "videoFrame", DECODE_VIDEO_TIMEOUT);
         named(
             request.path,
@@ -209,11 +223,13 @@ impl CodecProvider for CodecProcess {
 
     fn decode_audio(
         &mut self,
+        decoder: &str,
         path: &Path,
         sample_rate: u32,
         channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
-        let request = protocol::decode_audio_request(&absolute(path), sample_rate, channels)?;
+        let request =
+            protocol::decode_audio_request(decoder, &absolute(path), sample_rate, channels)?;
         named(
             path,
             self.request(request, "audio", DECODE_AUDIO_TIMEOUT)
@@ -262,5 +278,41 @@ impl CodecProvider for CodecProcess {
         };
         self.request(protocol::mux_audio_request(&request)?, "muxed", MUX_TIMEOUT)
             .map(drop)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use celesta_plugin::protocol::write_message;
+    use serde_json::json;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_media_process_needs_the_media_role() {
+        let directory = tempfile::tempdir().unwrap();
+        // A plugin that answers `hello` in protocol 2, with the retired role.
+        let answer = directory.path().join("answer.bin");
+        let mut bytes = Vec::new();
+        let hello = json!({ "type": "hello", "protocol": 2, "roles": ["codec"] });
+        write_message(&mut bytes, &Message::new(hello)).unwrap();
+        std::fs::write(&answer, bytes).unwrap();
+        let program = directory.path().join("plugin.sh");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ncat '{}'\nexec sleep 30\n", answer.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let result = MediaProcess::start_with(
+            &program,
+            directory.path(),
+            &PluginKillSwitch::default(),
+            FrameTransport::Pipe,
+        );
+        let Err(MediaError::CodecUnavailable(message)) = result else {
+            panic!("a codec plugin was accepted as a media plugin");
+        };
+        assert!(message.contains("is not a media plugin"), "{message}");
     }
 }

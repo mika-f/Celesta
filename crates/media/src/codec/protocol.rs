@@ -1,10 +1,12 @@
-//! The codec role of the plugin protocol (version 1): the same framing as
+//! The media role of the plugin protocol (version 2): the same framing as
 //! content plugins (`celesta_plugin::protocol`), with the requests of a
-//! [`CodecProvider`]. A codec plugin answers `hello` with the role
-//! `codec`. See `docs/handoff/2026-11-05-codec-plugin.md` for the requests.
+//! [`MediaProvider`]. A media plugin answers `hello` with the role
+//! `media`; `probe`, `decodeVideo`, and `decodeAudio` name the decoder
+//! component of the plugin that is to serve them. See
+//! `docs/handoff/2026-11-05-codec-plugin.md` for the requests.
 
 use crate::codec::{
-    CodecProvider, Container, EncoderId, EncoderSettings, MuxRequest, Sequential, VideoRequest,
+    Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Sequential, VideoRequest,
 };
 use crate::error::MediaError;
 use crate::mix::frame_byte_len;
@@ -22,13 +24,13 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// What a codec plugin answers `hello` with as its roles.
-pub const ROLES: &[&str] = &["codec"];
+/// What a media plugin answers `hello` with as its roles.
+pub const ROLES: &[&str] = &["media"];
 
 /// Answers requests from `reader` on `writer` with `provider` until the
 /// reader ends. `plugin` and `version` are what the plugin says it is.
 pub fn serve_on(
-    provider: &mut impl CodecProvider,
+    provider: &mut impl MediaProvider,
     plugin: &str,
     version: &str,
     reader: impl Read,
@@ -47,10 +49,10 @@ pub fn serve_on(
 }
 
 /// [`serve_on`] this process's stdin and stdout, with stdout kept for the
-/// protocol alone (see `celesta_plugin::protocol::serve_requests`): a codec
+/// protocol alone (see `celesta_plugin::protocol::serve_requests`): a media
 /// plugin's main loop.
 pub fn serve(
-    provider: &mut impl CodecProvider,
+    provider: &mut impl MediaProvider,
     plugin: &str,
     version: &str,
 ) -> Result<(), ProtocolError> {
@@ -142,7 +144,7 @@ struct WireSequential {
 }
 
 fn answer(
-    provider: &mut impl CodecProvider,
+    provider: &mut impl MediaProvider,
     mut request: Message,
     frames: &mut Option<SharedFrames>,
 ) -> Answer {
@@ -150,22 +152,27 @@ fn answer(
         let request = &mut request;
         Ok(match request.kind() {
             "probe" => {
+                let decoder: String = field(request, "decoder")?;
                 let path: PathBuf = field(request, "path")?;
-                let probe = provider.probe(&path)?;
+                let probe = provider.probe(&decoder, &path)?;
                 Message::new(json!({ "type": "probed", "probe": probe }))
             }
             "decodeVideo" => {
+                let decoder: String = field(request, "decoder")?;
                 let path: PathBuf = field(request, "path")?;
                 let time: f64 = field(request, "time")?;
                 let sequential: Option<WireSequential> = field(request, "sequential")?;
-                let frame = provider.decode_video(&VideoRequest {
-                    path: &path,
-                    time,
-                    sequential: sequential.as_ref().map(|sequential| Sequential {
-                        session: &sequential.session,
-                        frame_rate: sequential.frame_rate,
-                    }),
-                })?;
+                let frame = provider.decode_video(
+                    &decoder,
+                    &VideoRequest {
+                        path: &path,
+                        time,
+                        sequential: sequential.as_ref().map(|sequential| Sequential {
+                            session: &sequential.session,
+                            frame_rate: sequential.frame_rate,
+                        }),
+                    },
+                )?;
                 // Into the shared slot when there is one and the frame fits:
                 // Celesta reads it from there before it sends another
                 // request, so nothing else writes the slot meanwhile.
@@ -199,8 +206,10 @@ fn answer(
                 });
             }
             "decodeAudio" => {
+                let decoder: String = field(request, "decoder")?;
                 let path: PathBuf = field(request, "path")?;
                 let audio = provider.decode_audio(
+                    &decoder,
                     &path,
                     field(request, "sampleRate")?,
                     field(request, "channels")?,
@@ -260,6 +269,7 @@ pub fn encode_error(error: &MediaError) -> Message {
     let details = match error {
         MediaError::NotFound(path) => json!({ "code": "notFound", "path": path }),
         MediaError::NoVideoStream(path) => json!({ "code": "noVideoStream", "path": path }),
+        MediaError::Unsupported { path, .. } => json!({ "code": "unsupported", "path": path }),
         MediaError::InvalidTimestamp(time) => json!({ "code": "invalidTimestamp", "time": time }),
         MediaError::FrameTooLarge { width, height } => {
             json!({ "code": "frameTooLarge", "width": width, "height": height })
@@ -298,6 +308,7 @@ pub fn encode_error(error: &MediaError) -> Message {
         }
         MediaError::Codec(_)
         | MediaError::NoCodec
+        | MediaError::NoDecoder
         | MediaError::CodecUnavailable(_)
         | MediaError::CodecStopped(_) => json!({}),
     };
@@ -323,6 +334,10 @@ pub fn decode_error(answer: &Message) -> MediaError {
     let decoded = match header["code"].as_str() {
         Some("notFound") => path().map(MediaError::NotFound),
         Some("noVideoStream") => path().map(MediaError::NoVideoStream),
+        Some("unsupported") => path().map(|path| MediaError::Unsupported {
+            path,
+            tried: Vec::new(),
+        }),
         Some("invalidTimestamp") => header["time"].as_f64().map(MediaError::InvalidTimestamp),
         Some("frameTooLarge") => u32_of("width")
             .zip(u32_of("height"))
@@ -367,9 +382,9 @@ fn sendable(value: &impl Serialize) -> Result<Value, MediaError> {
 }
 
 /// Celesta's side: the requests, and what their answers carry.
-pub(crate) fn probe_request(path: &Path) -> Result<Message, MediaError> {
+pub(crate) fn probe_request(decoder: &str, path: &Path) -> Result<Message, MediaError> {
     Ok(Message::new(
-        json!({ "type": "probe", "path": sendable(&path)? }),
+        json!({ "type": "probe", "decoder": decoder, "path": sendable(&path)? }),
     ))
 }
 
@@ -377,13 +392,17 @@ pub(crate) fn decode_probe(answer: &Message) -> Result<MediaProbe, MediaError> {
     field(answer, "probe")
 }
 
-pub(crate) fn decode_video_request(request: &VideoRequest<'_>) -> Result<Message, MediaError> {
+pub(crate) fn decode_video_request(
+    decoder: &str,
+    request: &VideoRequest<'_>,
+) -> Result<Message, MediaError> {
     // JSON has no infinities or NaN: it would send `null`.
     if !request.time.is_finite() {
         return Err(MediaError::InvalidTimestamp(request.time));
     }
     Ok(Message::new(json!({
         "type": "decodeVideo",
+        "decoder": decoder,
         "path": sendable(&request.path)?,
         "time": request.time,
         "sequential": request.sequential.map(|sequential| json!({
@@ -456,12 +475,14 @@ pub(crate) fn decode_video_frame(
 }
 
 pub(crate) fn decode_audio_request(
+    decoder: &str,
     path: &Path,
     sample_rate: u32,
     channels: u16,
 ) -> Result<Message, MediaError> {
     Ok(Message::new(json!({
         "type": "decodeAudio",
+        "decoder": decoder,
         "path": sendable(&path)?,
         "sampleRate": sample_rate,
         "channels": channels,
@@ -561,8 +582,8 @@ mod tests {
         }
     }
 
-    impl CodecProvider for Fake {
-        fn probe(&mut self, path: &Path) -> Result<MediaProbe, MediaError> {
+    impl MediaProvider for Fake {
+        fn probe(&mut self, _: &str, path: &Path) -> Result<MediaProbe, MediaError> {
             self.asked.push(format!("probe {}", path.display()));
             if path == Path::new("/missing") {
                 return Err(MediaError::NotFound(path.to_owned()));
@@ -570,7 +591,11 @@ mod tests {
             Ok(probe())
         }
 
-        fn decode_video(&mut self, request: &VideoRequest<'_>) -> Result<VideoFrame, MediaError> {
+        fn decode_video(
+            &mut self,
+            _: &str,
+            request: &VideoRequest<'_>,
+        ) -> Result<VideoFrame, MediaError> {
             self.asked.push(format!(
                 "video {} {} {:?}",
                 request.path.display(),
@@ -586,6 +611,7 @@ mod tests {
 
         fn decode_audio(
             &mut self,
+            _: &str,
             _: &Path,
             sample_rate: u32,
             channels: u16,
@@ -664,19 +690,22 @@ mod tests {
         let answers = serve_all(
             &mut codec,
             &[
-                Message::new(json!({ "type": "hello", "protocol": 1 })),
-                probe_request(Path::new("/a.mp4")).unwrap(),
-                probe_request(Path::new("/missing")).unwrap(),
-                decode_video_request(&VideoRequest {
-                    path: Path::new("/a.mp4"),
-                    time: 0.5,
-                    sequential: Some(Sequential {
-                        session: "layer",
-                        frame_rate: Rational::new(30, 1),
-                    }),
-                })
+                Message::new(json!({ "type": "hello", "protocol": 2 })),
+                probe_request("ffmpeg", Path::new("/a.mp4")).unwrap(),
+                probe_request("ffmpeg", Path::new("/missing")).unwrap(),
+                decode_video_request(
+                    "ffmpeg",
+                    &VideoRequest {
+                        path: Path::new("/a.mp4"),
+                        time: 0.5,
+                        sequential: Some(Sequential {
+                            session: "layer",
+                            frame_rate: Rational::new(30, 1),
+                        }),
+                    },
+                )
                 .unwrap(),
-                decode_audio_request(Path::new("/a.mp4"), 48_000, 2).unwrap(),
+                decode_audio_request("ffmpeg", Path::new("/a.mp4"), 48_000, 2).unwrap(),
                 check_encoder_request(Container::Webm),
                 open_encoder_request(&settings).unwrap(),
                 encode_frame_request(EncoderId(7), vec![9, 9]),
@@ -694,7 +723,7 @@ mod tests {
                 Message::new(json!({ "type": "draw" })),
             ],
         );
-        assert_eq!(answers[0].header["roles"], json!(["codec"]));
+        assert_eq!(answers[0].header["roles"], json!(["media"]));
         assert_eq!(decode_probe(&answers[1]).unwrap(), probe());
         assert!(matches!(
             decode_error(&answers[2]),
@@ -735,12 +764,16 @@ mod tests {
         kept: Arc<Vec<u8>>,
     }
 
-    impl CodecProvider for Keeper {
-        fn probe(&mut self, _: &Path) -> Result<MediaProbe, MediaError> {
+    impl MediaProvider for Keeper {
+        fn probe(&mut self, _: &str, _: &Path) -> Result<MediaProbe, MediaError> {
             Ok(probe())
         }
 
-        fn decode_video(&mut self, _: &VideoRequest<'_>) -> Result<VideoFrame, MediaError> {
+        fn decode_video(
+            &mut self,
+            _: &str,
+            _: &VideoRequest<'_>,
+        ) -> Result<VideoFrame, MediaError> {
             Ok(VideoFrame {
                 width: 2,
                 height: 1,
@@ -748,7 +781,13 @@ mod tests {
             })
         }
 
-        fn decode_audio(&mut self, _: &Path, _: u32, _: u16) -> Result<AudioBuffer, MediaError> {
+        fn decode_audio(
+            &mut self,
+            _: &str,
+            _: &Path,
+            _: u32,
+            _: u16,
+        ) -> Result<AudioBuffer, MediaError> {
             unreachable!()
         }
 
@@ -781,11 +820,14 @@ mod tests {
         let mut codec = Keeper {
             kept: Arc::clone(&kept),
         };
-        let request = decode_video_request(&VideoRequest {
-            path: Path::new("/a.mp4"),
-            time: 0.0,
-            sequential: None,
-        })
+        let request = decode_video_request(
+            "ffmpeg",
+            &VideoRequest {
+                path: Path::new("/a.mp4"),
+                time: 0.0,
+                sequential: None,
+            },
+        )
         .unwrap();
         let mut input = Vec::new();
         for _ in 0..2 {
@@ -850,18 +892,28 @@ mod tests {
         failed: bool,
     }
 
-    impl CodecProvider for Dying {
-        fn probe(&mut self, _: &Path) -> Result<MediaProbe, MediaError> {
+    impl MediaProvider for Dying {
+        fn probe(&mut self, _: &str, _: &Path) -> Result<MediaProbe, MediaError> {
             if self.failed {
                 return Ok(probe());
             }
             self.failed = true;
             Err(MediaError::CodecUnavailable("exited".into()))
         }
-        fn decode_video(&mut self, _: &VideoRequest<'_>) -> Result<VideoFrame, MediaError> {
+        fn decode_video(
+            &mut self,
+            _: &str,
+            _: &VideoRequest<'_>,
+        ) -> Result<VideoFrame, MediaError> {
             unreachable!()
         }
-        fn decode_audio(&mut self, _: &Path, _: u32, _: u16) -> Result<AudioBuffer, MediaError> {
+        fn decode_audio(
+            &mut self,
+            _: &str,
+            _: &Path,
+            _: u32,
+            _: u16,
+        ) -> Result<AudioBuffer, MediaError> {
             Ok(AudioBuffer {
                 sample_rate: 44_100,
                 channels: 2,
@@ -897,7 +949,7 @@ mod tests {
             let mut dead = dead.lock().unwrap();
             let failed = *dead;
             *dead = true;
-            Ok(Box::new(Dying { failed }) as Box<dyn CodecProvider>)
+            Ok(Box::new(Dying { failed }) as Box<dyn MediaProvider>)
         });
         let mut backend = MediaBackend::with_codec(factory);
         assert_eq!(backend.probe("/a.mp4").unwrap(), &probe());
@@ -918,14 +970,24 @@ mod tests {
     /// Fails every request as a codec stopped at its deadline would.
     struct Stopped;
 
-    impl CodecProvider for Stopped {
-        fn probe(&mut self, _: &Path) -> Result<MediaProbe, MediaError> {
+    impl MediaProvider for Stopped {
+        fn probe(&mut self, _: &str, _: &Path) -> Result<MediaProbe, MediaError> {
             Err(MediaError::CodecStopped("did not answer in time".into()))
         }
-        fn decode_video(&mut self, _: &VideoRequest<'_>) -> Result<VideoFrame, MediaError> {
+        fn decode_video(
+            &mut self,
+            _: &str,
+            _: &VideoRequest<'_>,
+        ) -> Result<VideoFrame, MediaError> {
             unreachable!()
         }
-        fn decode_audio(&mut self, _: &Path, _: u32, _: u16) -> Result<AudioBuffer, MediaError> {
+        fn decode_audio(
+            &mut self,
+            _: &str,
+            _: &Path,
+            _: u32,
+            _: u16,
+        ) -> Result<AudioBuffer, MediaError> {
             unreachable!()
         }
         fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
@@ -952,7 +1014,7 @@ mod tests {
         let counter = opened.clone();
         let mut backend = MediaBackend::with_codec(Arc::new(move |_| {
             counter.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::new(Stopped) as Box<dyn CodecProvider>)
+            Ok(Box::new(Stopped) as Box<dyn MediaProvider>)
         }));
         assert!(matches!(
             backend.probe("/a.mp4"),
@@ -969,7 +1031,7 @@ mod tests {
         // Cancel stops it between frames, as it always did.
         let kill = celesta_plugin_host::PluginKillSwitch::new();
         let mut backend = MediaBackend::with_codec(Arc::new(|_| {
-            Ok(Box::new(Fake::default()) as Box<dyn CodecProvider>)
+            Ok(Box::new(Fake::default()) as Box<dyn MediaProvider>)
         }))
         .with_kill_switch(kill.clone());
         kill.kill();
@@ -983,7 +1045,7 @@ mod tests {
         let seen = given.clone();
         let mut backend = MediaBackend::with_codec(Arc::new(move |kill| {
             *seen.lock().unwrap() = Some(kill.clone());
-            Ok(Box::new(Fake::default()) as Box<dyn CodecProvider>)
+            Ok(Box::new(Fake::default()) as Box<dyn MediaProvider>)
         }))
         .with_kill_switch(kill.clone());
         let _ = backend.decode_audio(Path::new("/a.mp4"), 48_000, 1);
@@ -1001,19 +1063,25 @@ mod tests {
 
     #[test]
     fn what_json_cannot_carry_is_an_error_not_a_panic() {
-        let infinite = decode_video_request(&VideoRequest {
-            path: Path::new("/a.mp4"),
-            time: f64::INFINITY,
-            sequential: None,
-        });
+        let infinite = decode_video_request(
+            "ffmpeg",
+            &VideoRequest {
+                path: Path::new("/a.mp4"),
+                time: f64::INFINITY,
+                sequential: None,
+            },
+        );
         assert!(matches!(infinite, Err(MediaError::InvalidTimestamp(time)) if time.is_infinite()));
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;
             let legacy = Path::new(std::ffi::OsStr::from_bytes(b"/clip-\xff.mp4"));
-            assert!(matches!(probe_request(legacy), Err(MediaError::Codec(_))));
             assert!(matches!(
-                decode_audio_request(legacy, 48_000, 2),
+                probe_request("ffmpeg", legacy),
+                Err(MediaError::Codec(_))
+            ));
+            assert!(matches!(
+                decode_audio_request("ffmpeg", legacy, 48_000, 2),
                 Err(MediaError::Codec(_))
             ));
         }
@@ -1037,16 +1105,19 @@ mod tests {
     fn offering_hello(memory: &SharedMemory) -> Message {
         let mut header = shared_frames_offer(memory.duplicate_handle().unwrap(), memory);
         header.insert("type".to_owned(), json!("hello"));
-        header.insert("protocol".to_owned(), json!(1));
+        header.insert("protocol".to_owned(), json!(2));
         Message::new(Value::Object(header))
     }
 
     fn video_request() -> Message {
-        decode_video_request(&VideoRequest {
-            path: Path::new("/a.mp4"),
-            time: 0.5,
-            sequential: None,
-        })
+        decode_video_request(
+            "ffmpeg",
+            &VideoRequest {
+                path: Path::new("/a.mp4"),
+                time: 0.5,
+                sequential: None,
+            },
+        )
         .unwrap()
     }
 
@@ -1107,20 +1178,20 @@ mod tests {
     fn hello_without_an_offer_or_with_one_that_cannot_be_mapped_keeps_the_pipe() {
         let unmappable = Message::new(json!({
             "type": "hello",
-            "protocol": 1,
+            "protocol": 2,
             "frames": { "sharedMemory": { "handle": 1_000_000, "bytes": 4096 } },
         }));
         let answers = serve_all(
             &mut Fake::default(),
             &[
-                Message::new(json!({ "type": "hello", "protocol": 1 })),
+                Message::new(json!({ "type": "hello", "protocol": 2 })),
                 unmappable,
                 video_request(),
             ],
         );
         assert!(!accepted_shared_frames(&answers[0]));
         assert!(!accepted_shared_frames(&answers[1]));
-        assert_eq!(answers[1].header["roles"], json!(["codec"]));
+        assert_eq!(answers[1].header["roles"], json!(["media"]));
         assert_eq!(answers[2].payload, [1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
@@ -1175,7 +1246,7 @@ mod tests {
     #[test]
     fn a_backend_asks_only_for_mono_or_stereo() {
         let mut backend = MediaBackend::with_codec(Arc::new(|_| {
-            Ok(Box::new(Fake::default()) as Box<dyn CodecProvider>)
+            Ok(Box::new(Fake::default()) as Box<dyn MediaProvider>)
         }));
         assert!(matches!(
             backend.decode_audio(Path::new("/a.mp4"), 48_000, 3),
@@ -1188,5 +1259,124 @@ mod tests {
                 .channels,
             1
         );
+    }
+
+    #[test]
+    fn requests_name_their_decoder() {
+        let path = Path::new("/a.mp4");
+        let video = VideoRequest {
+            path,
+            time: 0.0,
+            sequential: None,
+        };
+        for request in [
+            probe_request("ffmpeg", path).unwrap(),
+            decode_video_request("ffmpeg", &video).unwrap(),
+            decode_audio_request("ffmpeg", path, 48_000, 2).unwrap(),
+        ] {
+            assert_eq!(request.header["decoder"], "ffmpeg", "{}", request.kind());
+        }
+    }
+
+    /// Records the decoder each request names.
+    #[derive(Default)]
+    struct Recorder {
+        decoders: Vec<String>,
+    }
+
+    impl MediaProvider for Recorder {
+        fn probe(&mut self, decoder: &str, _: &Path) -> Result<MediaProbe, MediaError> {
+            self.decoders.push(decoder.to_owned());
+            Ok(probe())
+        }
+
+        fn decode_video(
+            &mut self,
+            decoder: &str,
+            _: &VideoRequest<'_>,
+        ) -> Result<VideoFrame, MediaError> {
+            self.decoders.push(decoder.to_owned());
+            Ok(VideoFrame {
+                width: 2,
+                height: 1,
+                pixels: Arc::new(vec![0; 8]),
+            })
+        }
+
+        fn decode_audio(
+            &mut self,
+            decoder: &str,
+            _: &Path,
+            sample_rate: u32,
+            channels: u16,
+        ) -> Result<AudioBuffer, MediaError> {
+            self.decoders.push(decoder.to_owned());
+            Ok(AudioBuffer {
+                sample_rate,
+                channels,
+                samples: Vec::new(),
+            })
+        }
+
+        fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
+            unreachable!()
+        }
+
+        fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn abort_encoder(&mut self, _: EncoderId) {}
+
+        fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn serve_passes_the_decoder_on() {
+        let path = Path::new("/a.mp4");
+        let video = VideoRequest {
+            path,
+            time: 0.0,
+            sequential: None,
+        };
+        let mut input = Vec::new();
+        for request in [
+            Message::new(json!({ "type": "hello", "protocol": 2 })),
+            probe_request("x", path).unwrap(),
+            decode_video_request("y", &video).unwrap(),
+            decode_audio_request("z", path, 48_000, 2).unwrap(),
+        ] {
+            write_message(&mut input, &request).unwrap();
+        }
+        let mut recorder = Recorder::default();
+        let mut output = Vec::new();
+        serve_on(&mut recorder, "fake", "1.0.0", &input[..], &mut output).unwrap();
+        assert_eq!(recorder.decoders, ["x", "y", "z"]);
+        let mut reader = &output[..];
+        let hello = read_message(&mut reader).unwrap().unwrap();
+        assert_eq!(hello.header["protocol"], 2);
+    }
+
+    #[test]
+    fn unsupported_round_trips() {
+        let path = PathBuf::from("/a.xyz");
+        let error = MediaError::Unsupported {
+            path: path.clone(),
+            tried: vec!["ffmpeg".to_owned()],
+        };
+        assert!(matches!(
+            decode_error(&encode_error(&error)),
+            MediaError::Unsupported { path: decoded, tried } if decoded == path && tried.is_empty()
+        ));
     }
 }

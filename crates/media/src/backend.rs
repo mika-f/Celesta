@@ -1,5 +1,5 @@
 use crate::codec::{
-    CodecFactory, CodecProvider, Container, EncoderId, EncoderSettings, MuxRequest, Sequential,
+    CodecFactory, Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Sequential,
     VideoRequest, codec,
 };
 use crate::decoder::{AudioDecoder, VideoFrameDecoder};
@@ -19,7 +19,7 @@ use std::sync::Arc;
 pub struct MediaBackend {
     /// `None` for the codec [`crate::set_codec`] chose when one is needed.
     factory: Option<CodecFactory>,
-    codec: Option<Box<dyn CodecProvider>>,
+    codec: Option<Box<dyn MediaProvider>>,
     /// What kills the codec's process from another thread; once it is
     /// killed, no codec is opened.
     kill: Option<PluginKillSwitch>,
@@ -82,13 +82,15 @@ impl MediaBackend {
     pub fn probe(&mut self, path: impl AsRef<Path>) -> Result<&MediaProbe, MediaError> {
         let path = path.as_ref();
         if !self.probes.contains_key(path) {
-            let probe = self.retrying(|codec| codec.probe(path))?;
+            // The decoder id is `""` until the registry, which knows the
+            // decoder ids, replaces this single factory.
+            let probe = self.retrying(|codec| codec.probe("", path))?;
             self.probes.insert(path.to_owned(), probe);
         }
         Ok(self.probes.get(path).expect("probe was cached"))
     }
 
-    fn codec(&mut self) -> Result<&mut dyn CodecProvider, MediaError> {
+    fn codec(&mut self) -> Result<&mut dyn MediaProvider, MediaError> {
         if self.codec.is_none() {
             let factory = self
                 .factory
@@ -111,7 +113,7 @@ impl MediaBackend {
     /// that the caller relies on.
     fn retrying<T>(
         &mut self,
-        mut request: impl FnMut(&mut dyn CodecProvider) -> Result<T, MediaError>,
+        mut request: impl FnMut(&mut dyn MediaProvider) -> Result<T, MediaError>,
     ) -> Result<T, MediaError> {
         match request(self.codec()?) {
             Err(MediaError::CodecUnavailable(_)) => {
@@ -168,11 +170,15 @@ impl VideoFrameDecoder for MediaBackend {
         source_time_seconds: f64,
     ) -> Result<VideoFrame, MediaError> {
         self.retrying(|codec| {
-            codec.decode_video(&VideoRequest {
-                path,
-                time: source_time_seconds,
-                sequential: None,
-            })
+            // No decoder id yet: see `Self::probe`.
+            codec.decode_video(
+                "",
+                &VideoRequest {
+                    path,
+                    time: source_time_seconds,
+                    sequential: None,
+                },
+            )
         })
     }
 
@@ -187,11 +193,14 @@ impl VideoFrameDecoder for MediaBackend {
             frame_rate,
         });
         self.retrying(|codec| {
-            codec.decode_video(&VideoRequest {
-                path,
-                time: source_time_seconds,
-                sequential,
-            })
+            codec.decode_video(
+                "",
+                &VideoRequest {
+                    path,
+                    time: source_time_seconds,
+                    sequential,
+                },
+            )
         })
     }
 
@@ -218,7 +227,7 @@ impl AudioDecoder for MediaBackend {
                 channels,
             });
         }
-        let audio = self.retrying(|codec| codec.decode_audio(path, sample_rate, channels))?;
+        let audio = self.retrying(|codec| codec.decode_audio("", path, sample_rate, channels))?;
         if audio.sample_rate != sample_rate || audio.channels != channels {
             return Err(MediaError::Codec(format!(
                 "the codec decoded {} at {} Hz, {} channels, not {sample_rate} Hz, {channels} channels",

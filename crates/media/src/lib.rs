@@ -1,5 +1,5 @@
 //! Media for Celesta: probing, video frames, audio decoding, and encoding
-//! and muxing exports through a codec plugin (see [`set_codec`]), and the
+//! and muxing exports through a media plugin (see [`set_codec`]), and the
 //! audio mix, ducking, time stretching, and loudness Celesta does itself. No
 //! codec library is linked.
 
@@ -18,9 +18,9 @@ mod types;
 
 pub use backend::MediaBackend;
 pub use codec::{
-    CodecFactory, CodecProcess, CodecProvider, Container, EncoderId, EncoderSettings,
-    FrameTransport, MuxRequest, PixelFormat, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE,
-    Sequential, VideoRequest, set_codec, timestamps_match,
+    CodecFactory, Container, EncoderId, EncoderSettings, FrameTransport, MediaProcess,
+    MediaProvider, MuxRequest, PixelFormat, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE, Sequential,
+    VideoRequest, set_codec, timestamps_match,
 };
 pub use color::{DynamicRange, VideoColor};
 pub use decoder::{AudioDecoder, VideoFrameDecoder};

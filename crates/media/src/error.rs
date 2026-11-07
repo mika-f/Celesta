@@ -5,18 +5,25 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MediaError {
-    /// What the codec plugin said went wrong (such as an FFmpeg error), or
+    /// What the media plugin said went wrong (such as an FFmpeg error), or
     /// what it answered that does not fit the request.
     #[error("{0}")]
     Codec(String),
-    /// No codec plugin is installed (see [`crate::set_codec`]).
+    /// No media plugin is installed to encode with (see [`crate::set_codec`]).
     #[error("no codec plugin is installed, so video and audio files cannot be read or written")]
     NoCodec,
-    /// The codec plugin's process could not be started, went away, or fell
+    /// No media decoder is installed (see [`crate::set_codec`]).
+    #[error("no media decoder is installed, so video and audio files cannot be read")]
+    NoDecoder,
+    /// No decoder reads `path`: the decoders `tried` (by id, in order) each
+    /// answered that it is not a file they read.
+    #[error("no decoder could read {path} (tried {tried})", path = path.display(), tried = tried.join(", "))]
+    Unsupported { path: PathBuf, tried: Vec<String> },
+    /// The media plugin's process could not be started, went away, or fell
     /// out of step with its requests.
     #[error("the codec plugin is unavailable: {0}")]
     CodecUnavailable(String),
-    /// The codec plugin's process was stopped on purpose: it missed a
+    /// The media plugin's process was stopped on purpose: it missed a
     /// request's deadline, or its kill switch was killed (an export's
     /// Cancel). Unlike [`Self::CodecUnavailable`], the request is not sent
     /// again to a new process; a later request starts one.

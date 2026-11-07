@@ -1,8 +1,8 @@
-//! Reading and writing media files through a codec plugin.
+//! Reading and writing media files through a media plugin.
 //!
 //! Celesta links no codec library. Probing, decoding, encoding, and muxing
-//! go through a [`CodecProvider`]: a codec plugin's process
-//! ([`CodecProcess`], speaking [`protocol`]), or, in tests, a provider in
+//! go through a [`MediaProvider`]: a media plugin's process
+//! ([`MediaProcess`], speaking [`protocol`]), or, in tests, a provider in
 //! the same process. The application chooses the codec once with
 //! [`set_codec`]; each [`MediaBackend`](crate::MediaBackend) opens its own
 //! instance of the codec chosen when it first needs one. See
@@ -11,7 +11,7 @@
 mod process;
 pub mod protocol;
 
-pub use process::{CodecProcess, FrameTransport, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE};
+pub use process::{FrameTransport, MediaProcess, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE};
 
 use crate::error::MediaError;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
@@ -21,20 +21,26 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-/// What a codec plugin does, asked one request at a time. Every path is
-/// absolute and local.
-pub trait CodecProvider: Send {
-    fn probe(&mut self, path: &Path) -> Result<MediaProbe, MediaError>;
+/// What a media plugin does, asked one request at a time. Every path is
+/// absolute and local. `decoder` is the id of the plugin's decoder component
+/// that is to serve a `probe` or decode request.
+pub trait MediaProvider: Send {
+    fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError>;
 
     /// The video frame shown at `request.time` seconds into the file, as
     /// tightly packed straight-alpha RGBA8 at the probed (displayed) size.
-    fn decode_video(&mut self, request: &VideoRequest<'_>) -> Result<VideoFrame, MediaError>;
+    fn decode_video(
+        &mut self,
+        decoder: &str,
+        request: &VideoRequest<'_>,
+    ) -> Result<VideoFrame, MediaError>;
 
     /// The file's first audio stream, whole, as interleaved `f32` samples
     /// at `sample_rate` with `channels` channels (1 or 2); no samples when
     /// it has no audio.
     fn decode_audio(
         &mut self,
+        decoder: &str,
         path: &Path,
         sample_rate: u32,
         channels: u16,
@@ -138,7 +144,7 @@ pub struct EncoderSettings {
     pub bit_depth: u8,
 }
 
-/// What [`CodecProvider::mux_audio`] writes.
+/// What [`MediaProvider::mux_audio`] writes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MuxRequest {
@@ -161,7 +167,7 @@ pub struct MuxRequest {
 /// is given, before it says `hello`, so killing the switch also ends a slow
 /// start; a codec in this process ignores it.
 pub type CodecFactory =
-    Arc<dyn Fn(&PluginKillSwitch) -> Result<Box<dyn CodecProvider>, MediaError> + Send + Sync>;
+    Arc<dyn Fn(&PluginKillSwitch) -> Result<Box<dyn MediaProvider>, MediaError> + Send + Sync>;
 
 static CODEC: RwLock<Option<CodecFactory>> = RwLock::new(None);
 
