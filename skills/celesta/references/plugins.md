@@ -79,6 +79,10 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 - It is not imported and has no components. Without one, video and audio
   layers fail to decode and exports fail with `no_codec` (see
   [export.md](export.md)).
+- Decoded frames come through memory shared with the plugin's process when
+  the plugin accepts it (the `ffmpeg` plugin does), else through its pipe.
+  `CELESTA_CODEC_SHARED_MEMORY=0` keeps every frame in the pipe, for a codec
+  plugin that misbehaves with it.
 
 ## The VRM plugin
 
