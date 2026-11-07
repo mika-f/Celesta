@@ -4,14 +4,16 @@
 //! has none of its own.
 
 use crate::edit_history::Texts;
-use crate::element_edit::{CommitError, apply_checked};
+use crate::element_edit::{CommitError, apply_checked, reason_text};
 use crate::scope::{Scope, ScopeLock, ScopeState, chosen_scope};
-use celesta_react_bridge::{LayerSourceReport, ReactChapter, TimingWindow, outermost_chapter_at};
-use celesta_source_edit::{
-    CELESTA_REACT, EditValue, ElementRef, ImportLock, ImportName, WrapLock, element_at,
-    ensure_import, wrap_element,
+use celesta_react_bridge::{
+    LayerSourceReport, ReactChapter, SourcePos, TimingWindow, outermost_chapter_at,
 };
-use std::path::PathBuf;
+use celesta_source_edit::{
+    CELESTA_REACT, EditValue, ElementRef, ImportLock, ImportName, LockReason, WrapLock, element_at,
+    encloses_directly, ensure_import, wrap_element,
+};
+use std::path::{Path, PathBuf};
 
 /// What `report.windows[0]`, the window nearest the element, is.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -29,12 +31,15 @@ pub(crate) enum WindowRole<'a> {
 /// The role of `report.windows[0]` at the lookup `frame`. A window is the
 /// scene's when it has no source, or when its span, cut at
 /// `composition_end` and rounded to whole frames, is the span of a chapter
-/// holding `frame` (a part or the scene around it).
+/// holding `frame` (a part or the scene around it), unless it is
+/// `wrapped`: written directly around the element (see [`written_around`]),
+/// so its timing is the element's own whatever its span.
 pub(crate) fn window_role<'a>(
     report: &'a LayerSourceReport,
     chapters: &[ReactChapter],
     composition_end: u64,
     frame: u64,
+    wrapped: Option<&SourcePos>,
 ) -> WindowRole<'a> {
     let Some(window) = report.windows.first() else {
         return WindowRole::None;
@@ -42,8 +47,11 @@ pub(crate) fn window_role<'a>(
     if window.remapped {
         return WindowRole::Remapped;
     }
-    if window.source.is_none() {
+    let Some(source) = &window.source else {
         return WindowRole::Scene(window);
+    };
+    if wrapped == Some(source) {
+        return WindowRole::Own(window);
     }
     let span = whole_frames(window, composition_end);
     let spans_a_chapter = chapters.iter().any(|chapter| {
@@ -56,6 +64,24 @@ pub(crate) fn window_role<'a>(
     } else {
         WindowRole::Own(window)
     }
+}
+
+/// The source of `report.windows[0]` when that wrapper is written directly
+/// around the element: the element is one of its JSX children (or inside
+/// one of its `{…}` children) in the same file, read with `read`.
+pub(crate) fn written_around(
+    read: impl Fn(&Path) -> Result<String, String>,
+    report: &LayerSourceReport,
+) -> Option<SourcePos> {
+    let source = report.windows.first()?.source.as_ref()?;
+    let element = report.chain.first()?;
+    if element.file != source.file {
+        return None;
+    }
+    let text = read(&source.file).ok()?;
+    let parent = element_at(&text, source.line, source.column)?;
+    let child = element_at(&text, element.line, element.column)?;
+    encloses_directly(&text, &parent, &child).then(|| source.clone())
 }
 
 /// `window`'s span cut at `composition_end`, rounded to whole frames. A
@@ -134,8 +160,12 @@ pub(crate) fn set_timing_offer(
     if matches!(role, WindowRole::Own(_) | WindowRole::Remapped) {
         return SetTimingOffer::Hidden;
     }
-    if let Some(WrapLock::NotAChild) = wrap_lock {
-        return SetTimingOffer::Disabled(WRAP_FIRST.to_owned());
+    match wrap_lock {
+        Some(WrapLock::NotAChild) => return SetTimingOffer::Disabled(WRAP_FIRST.to_owned()),
+        Some(WrapLock::SyntaxError) => {
+            return SetTimingOffer::Disabled(reason_text(&LockReason::SyntaxError));
+        }
+        None => {}
     }
     if let Some(lock) = import_lock {
         return SetTimingOffer::Disabled(CommitError::Import(lock.clone()).to_string());
@@ -246,7 +276,7 @@ mod tests {
     fn no_windows_is_none() {
         let report = report(vec![]);
         assert_eq!(
-            window_role(&report, &[chapter("a", 0, 60)], 60, 10),
+            window_role(&report, &[chapter("a", 0, 60)], 60, 10, None),
             WindowRole::None
         );
     }
@@ -257,7 +287,7 @@ mod tests {
         for source in [true, false] {
             let report = report(vec![window(0.0, 60.0, source, true)]);
             assert_eq!(
-                window_role(&report, &chapters, 60, 10),
+                window_role(&report, &chapters, 60, 10, None),
                 WindowRole::Remapped
             );
         }
@@ -267,7 +297,7 @@ mod tests {
     fn a_window_without_source_is_the_scene_s() {
         let report = report(vec![window(30.0, 50.0, false, false)]);
         assert_eq!(
-            window_role(&report, &[chapter("a", 0, 60)], 60, 40),
+            window_role(&report, &[chapter("a", 0, 60)], 60, 40, None),
             WindowRole::Scene(&report.windows[0])
         );
     }
@@ -278,14 +308,14 @@ mod tests {
         let report_at = |from, to| report(vec![window(from, to, true, false)]);
 
         let whole = report_at(300.0, 420.0);
-        assert!(is_scene(window_role(&whole, &scene_only, 960, 345)));
+        assert!(is_scene(window_role(&whole, &scene_only, 960, 345, None)));
 
         // A part inside the scene holds the frame: both the part's and the
         // scene's span match.
         let with_part = [chapter("intro", 300, 120), chapter("intro-title", 330, 60)];
-        assert!(is_scene(window_role(&whole, &with_part, 960, 345)));
+        assert!(is_scene(window_role(&whole, &with_part, 960, 345, None)));
         let part = report_at(330.0, 390.0);
-        assert!(is_scene(window_role(&part, &with_part, 960, 345)));
+        assert!(is_scene(window_role(&part, &with_part, 960, 345, None)));
 
         // The last chapter, cut at the composition's end.
         let last = report_at(900.0, 1020.0);
@@ -293,18 +323,25 @@ mod tests {
             &last,
             &[chapter("outro", 900, 60)],
             960,
-            930
+            930,
+            None
         )));
 
         // Fractional edges round to whole frames.
         let fractional = report_at(299.6, 420.2);
-        assert!(is_scene(window_role(&fractional, &scene_only, 960, 345)));
+        assert!(is_scene(window_role(
+            &fractional,
+            &scene_only,
+            960,
+            345,
+            None
+        )));
     }
 
     #[test]
     fn a_hand_placed_sequence_inside_a_chapter_is_own() {
         let inside = report(vec![window(330.0, 360.0, true, false)]);
-        let role = window_role(&inside, &[chapter("intro", 300, 120)], 960, 345);
+        let role = window_role(&inside, &[chapter("intro", 300, 120)], 960, 345, None);
         assert!(is_own(role));
         assert_eq!(role, WindowRole::Own(&inside.windows[0]));
 
@@ -315,7 +352,8 @@ mod tests {
             &early,
             &[chapter("intro", 0, 60)],
             960,
-            30
+            30,
+            None
         )));
     }
 

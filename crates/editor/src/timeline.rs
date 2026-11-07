@@ -230,6 +230,14 @@ fn merge_close_bands(
     merged
 }
 
+/// The frames of the bands `impact` draws (see [`selection_bands`]).
+pub(crate) fn selection_ranges(impact: &ImpactView) -> Vec<(f64, f64)> {
+    selection_bands(impact)
+        .iter()
+        .map(|band| (band.range.0 as f64, band.range.1 as f64))
+        .collect()
+}
+
 /// The bands `impact` draws: this instance's ranges in the current scene, or
 /// the span rounded outward to whole frames, then every other occurrence.
 fn selection_bands(impact: &ImpactView) -> Vec<SelectionBand> {

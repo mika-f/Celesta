@@ -293,7 +293,7 @@ pub(crate) fn added_timing(
     playhead: u64,
 ) -> Result<Option<Timing>, String> {
     let at_parent = report_at_parent(report, parent_index);
-    let role = match window_role(&at_parent, chapters, composition_end, playhead) {
+    let role = match window_role(&at_parent, chapters, composition_end, playhead, None) {
         WindowRole::Remapped => return Err(REMAPPED.to_owned()),
         WindowRole::Own(window) => WindowRole::Scene(window),
         role => role,

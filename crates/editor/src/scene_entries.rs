@@ -101,25 +101,26 @@ fn module_files(base: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Whether the composition's length is the list's `durationInFrames` (same
-/// file, or an import resolving to it).
+/// Whether the composition's length is `list`'s `durationInFrames`: its
+/// binding in the same file, or a name it is exported under (`default`
+/// for a default import) through an import resolving to its file.
 pub(crate) fn composition_follows(
     entry: &Path,
     length: Option<&CompositionLength>,
     list_file: &Path,
-    binding: Option<&str>,
+    list: &SceneList,
     exists: impl Fn(&Path) -> bool,
 ) -> bool {
     let Some(CompositionLength::ListDuration { module, name }) = length else {
         return false;
     };
-    if binding != Some(name.as_str()) {
-        return false;
-    }
     let list_file = lexically_normalized(list_file);
     let Some(module) = module else {
-        return lexically_normalized(entry) == list_file;
+        return list.binding.as_ref() == Some(name) && lexically_normalized(entry) == list_file;
     };
+    if !list.exports.contains(name) {
+        return false;
+    }
     let relative = module.starts_with("./") || module.starts_with("../");
     let Some(dir) = entry.parent().filter(|_| relative) else {
         return false;
@@ -157,6 +158,21 @@ fn not_found(id: &str) -> String {
 /// Why the end of a part (a chapter inside another, such as one listed
 /// with `listChapters`) that no list has doesn't drag.
 const NOT_AN_ENTRY: &str = "Not a `defineScenes` entry";
+
+/// Why the end of an entry read before something its list holds that
+/// can't be read (a spread, a `.map()`) doesn't drag: the entries after it
+/// move with it, and they aren't known.
+const BEFORE_UNREAD: &str = "Entries after it in its list can’t be read (a spread or `.map()`)";
+
+/// The second line of a chapter no list has, when a list has entries that
+/// can't be read: it may be one of them.
+fn unread_in(file: &Path) -> String {
+    let name = file.file_name().unwrap_or(file.as_os_str());
+    format!(
+        "A `defineScenes` list in `{}` has entries Celesta can’t read",
+        name.to_string_lossy()
+    )
+}
 
 /// Whether `chapter` is a part: another chapter's span holds it (of two
 /// with the same span, the first is the scene).
@@ -214,13 +230,21 @@ fn moving_chapters(chapters: &[ReactChapter], list: &SceneList, index: usize) ->
 }
 
 /// The edge of each chapter: editable when one entry of all the lists has
-/// its id and a number written as a literal (or a `const` of the file);
-/// else locked with why.
+/// its id and a number written as a literal (or a `const` of the file),
+/// and every entry after it in its list was read; else locked with why. A
+/// top-level chapter no list has may come from a list's entries that can't
+/// be read (`SceneList::unread`): the lock names the first such list's
+/// file.
 pub(crate) fn scene_edges(
     sources: &SceneSources,
     chapters: &[ReactChapter],
     exists: impl Fn(&Path) -> bool,
 ) -> HashMap<String, SceneEdge> {
+    let unread = sources
+        .lists
+        .iter()
+        .find(|(_, list)| !list.unread.is_empty())
+        .map(|(file, _)| file.as_path());
     chapters
         .iter()
         .enumerate()
@@ -237,6 +261,9 @@ pub(crate) fn scene_edges(
                 })
                 .collect();
             let edge = match found.as_slice() {
+                [(_, list, index)] if list.unread.iter().any(|&at| at > *index) => {
+                    SceneEdge::Locked(BEFORE_UNREAD.to_owned())
+                }
                 [(file, list, index)] => {
                     let entry = &list.entries[*index];
                     match &entry.duration {
@@ -252,7 +279,7 @@ pub(crate) fn scene_edges(
                                 &sources.entry,
                                 sources.length.as_ref(),
                                 file,
-                                list.binding.as_deref(),
+                                list,
                                 &exists,
                             ),
                         },
@@ -263,6 +290,14 @@ pub(crate) fn scene_edges(
                     }
                 }
                 [] if is_part(chapters, at) => SceneEdge::Locked(NOT_AN_ENTRY.to_owned()),
+                [] => match unread {
+                    Some(file) => SceneEdge::Locked(format!(
+                        "{}\n{}",
+                        not_found(&chapter.id),
+                        unread_in(file)
+                    )),
+                    None => SceneEdge::Locked(not_found(&chapter.id)),
+                },
                 _ => SceneEdge::Locked(not_found(&chapter.id)),
             };
             (chapter.id.clone(), edge)
@@ -430,13 +465,16 @@ pub(crate) fn preview_chapters(
         .collect()
 }
 
-/// What the end of `id` snaps to: the playhead and the edges of the
-/// chapters that stay where they are, its own end left out.
+/// What the end of `id` snaps to: the playhead, the edges of the chapters
+/// that stay where they are, and those of the selected element's `bands`
+/// that end by its end (a band after it may move with the later
+/// chapters); its own end left out.
 pub(crate) fn scene_snap_targets(
     playhead: f64,
     chapters: &[ReactChapter],
     id: &str,
     later: &[String],
+    bands: &[(f64, f64)],
 ) -> Vec<f64> {
     let Some(end) = chapters
         .iter()
@@ -450,7 +488,8 @@ pub(crate) fn scene_snap_targets(
         .filter(|chapter| !later.contains(&chapter.id))
         .cloned()
         .collect();
-    snap_targets(playhead, &still, &[], (end, end))
+    let bands: Vec<(f64, f64)> = bands.iter().copied().filter(|&(_, to)| to <= end).collect();
+    snap_targets(playhead, &still, &bands, (end, end))
 }
 
 /// The entry's new text: found again in `texts`, at the same place,
@@ -490,7 +529,9 @@ pub(crate) fn scene_files(
     Ok(vec![(file.clone(), written)])
 }
 
-/// Why a chapter's end doesn't drag while the search for this reload runs.
+/// Why a chapter's end doesn't drag before the first search lands, and why
+/// a drag released while the search for the current reload runs is not
+/// written.
 const READING: &str = "Reading source…";
 
 impl EditorView {
@@ -529,14 +570,28 @@ impl EditorView {
         .detach();
     }
 
-    /// The end of chapter `id`, as the search for the current reload found
-    /// it.
+    /// The end of chapter `id` as the chapter row shows it and a press
+    /// starts a drag of it: as the search for the current reload found it,
+    /// or while that search runs, as the last one did (a reload rarely
+    /// changes a scene list, and the release checks the edge again with
+    /// [`Self::current_scene_edge`]). "Reading source…" before the first.
     pub(crate) fn scene_edge(&self, id: &str) -> SceneEdge {
         match &self.scene_edges {
-            Some((generation, edges)) if *generation == self.react_reload_generation => edges
+            Some((_, edges)) => edges
                 .get(id)
                 .cloned()
                 .unwrap_or_else(|| SceneEdge::Locked(not_found(id))),
+            None => SceneEdge::Locked(READING.to_owned()),
+        }
+    }
+
+    /// The end of chapter `id` as the search for the current reload found
+    /// it; "Reading source…" while it runs.
+    pub(crate) fn current_scene_edge(&self, id: &str) -> SceneEdge {
+        match &self.scene_edges {
+            Some((generation, _)) if *generation == self.react_reload_generation => {
+                self.scene_edge(id)
+            }
             _ => SceneEdge::Locked(READING.to_owned()),
         }
     }
@@ -698,6 +753,60 @@ mod tests {
     }
 
     #[test]
+    fn a_list_with_entries_it_can_t_read() {
+        // As `examples/delta/v0.8.0/timeline.ts` writes it.
+        let text = format!(
+            "{IMPORT}export const SCENES = defineScenes([\n  {{ id: 'open', durationInFrames: 30 }},\n  ...CHAPTERS.map((length, i) => ({{ id: `chapter-${{i}}`, durationInFrames: length }})),\n  {{ id: 'outro', durationInFrames: 60 }},\n]);\n"
+        );
+        let found = sources(&[("/p/timeline.ts", &text)], &film("", "{300}"));
+        let chapters = vec![
+            chapter("open", 0, 30),
+            chapter("chapter-0", 30, 80),
+            chapter("chapter-1", 110, 80),
+            chapter("outro", 190, 60),
+            // Listed with `listChapters` inside a chapter, and at the top.
+            chapter("open-title", 10, 10),
+            chapter("credits", 250, 50),
+        ];
+        let edges = scene_edges(&found, &chapters, only_timeline);
+        let locked = |id: &str| match edges.get(id) {
+            Some(SceneEdge::Locked(text)) => text.clone(),
+            other => panic!("{id} is not locked: {other:?}"),
+        };
+        // Before the spread: what moves with it isn't known.
+        assert_eq!(
+            locked("open"),
+            "Entries after it in its list can’t be read (a spread or `.map()`)"
+        );
+        // After it: every later entry is known.
+        assert!(matches!(
+            edges.get("outro"),
+            Some(SceneEdge::Editable { first, later, .. }) if first == "open" && later.is_empty()
+        ));
+        // A top-level chapter no list has may be one of the entries.
+        for id in ["chapter-0", "credits"] {
+            assert_eq!(
+                locked(id),
+                format!(
+                    "Can’t find scene `{id}` in the source\nA `defineScenes` list in `timeline.ts` has entries Celesta can’t read"
+                )
+            );
+        }
+        assert_eq!(locked("open-title"), "Not a `defineScenes` entry");
+
+        // A list whose argument isn't an array literal.
+        let text = format!("{IMPORT}export const SCENES = defineScenes(ENTRIES);\n");
+        let found = sources(&[("/p/scenes.ts", &text)], &film("", "{300}"));
+        assert_eq!(
+            scene_edges(&found, &three(), only_timeline)["intro"],
+            SceneEdge::Locked(
+                "Can’t find scene `intro` in the source\nA `defineScenes` list in `scenes.ts` has entries Celesta can’t read"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
     fn an_expression_duration_locks_with_its_inputs() {
         let text = format!(
             "{IMPORT}const BAR = 30;\nexport const S = {{ words: 40 }};\nexport const END = 30;\nexport const SCENES = defineScenes([\n  {{ id: 'intro', durationInFrames: BAR * 3 }},\n  {{ id: 'main', durationInFrames: S.words - 1 }},\n  {{ id: 'outro' }},\n  {{ id: 'end', durationInFrames: END }},\n]);\n"
@@ -730,12 +839,19 @@ mod tests {
     fn composition_follows_an_imported_scene_list() {
         let entry = Path::new("/p/film.tsx");
         let timeline = Path::new("/p/timeline.tsx");
+        // A list bound to `binding` and exported under that name.
         let follows = |film: &str, list: &Path, binding: &str, exists: &dyn Fn(&Path) -> bool| {
+            let exported = SceneList {
+                binding: Some(binding.to_owned()),
+                exports: vec![binding.to_owned()],
+                entries: Vec::new(),
+                unread: Vec::new(),
+            };
             composition_follows(
                 entry,
                 composition_length(film, entry).as_ref(),
                 list,
-                Some(binding),
+                &exported,
                 exists,
             )
         };
@@ -797,6 +913,53 @@ mod tests {
         let both = |path: &Path| path == js || only_timeline(path);
         assert!(!follows(&compiled, timeline, "SCENES", &both));
         assert!(follows(&compiled, js, "SCENES", &both));
+    }
+
+    #[test]
+    fn composition_follows_a_list_by_the_name_it_is_exported_under() {
+        let entry = Path::new("/p/film.tsx");
+        let timeline = Path::new("/p/timeline.tsx");
+        let follows = |film: &str, list: &str| {
+            let list = &scene_lists(list, timeline)[0];
+            composition_follows(
+                entry,
+                composition_length(film, entry).as_ref(),
+                timeline,
+                list,
+                only_timeline,
+            )
+        };
+        let list = "defineScenes([{ id: 'a', durationInFrames: 30 }])";
+        let default_import = film(
+            "import SCENES from './timeline';",
+            "{SCENES.durationInFrames}",
+        );
+        assert!(follows(
+            &default_import,
+            &format!("{IMPORT}export default {list};\n")
+        ));
+        assert!(follows(
+            &default_import,
+            &format!("{IMPORT}const S = {list};\nexport default S;\n")
+        ));
+        // Renamed by the export.
+        let renamed = film(
+            "import { SCENES } from './timeline';",
+            "{SCENES.durationInFrames}",
+        );
+        assert!(follows(
+            &renamed,
+            &format!("{IMPORT}const S = {list};\nexport {{ S as SCENES }};\n")
+        ));
+        // A binding of that name that isn't exported, or isn't the default.
+        assert!(!follows(
+            &renamed,
+            &format!("{IMPORT}const SCENES = {list};\n")
+        ));
+        assert!(!follows(
+            &default_import,
+            &format!("{IMPORT}export const SCENES = {list};\n")
+        ));
     }
 
     #[test]
@@ -1044,13 +1207,18 @@ mod tests {
     fn scene_snap_targets_leave_out_the_end_and_what_moves() {
         let mut chapters = three();
         chapters.push(chapter("credits", 250, 20));
-        let targets = scene_snap_targets(45.0, &chapters, "main", &ids(&["outro"]));
-        for edge in [45.0, 0.0, 90.0, 250.0, 270.0] {
+        // The selection's bands: one inside `main`, one ending at its end,
+        // one inside `outro`.
+        let bands = [(120.0, 150.0), (180.0, 210.0), (220.0, 240.0)];
+        let targets = scene_snap_targets(45.0, &chapters, "main", &ids(&["outro"]), &bands);
+        for edge in [45.0, 0.0, 90.0, 250.0, 270.0, 120.0, 150.0, 180.0] {
             assert!(targets.contains(&edge), "{edge} in {targets:?}");
         }
-        // The dragged end, and `outro`'s edges, which move with it.
-        assert!(!targets.contains(&210.0));
-        assert!(!targets.contains(&300.0));
+        // The dragged end, `outro`'s edges, and the band inside it, which
+        // move with it.
+        for edge in [210.0, 300.0, 220.0, 240.0] {
+            assert!(!targets.contains(&edge), "{edge} not in {targets:?}");
+        }
     }
 
     fn edge_in(text: &str, path: &str, id: &str) -> SceneEdge {
