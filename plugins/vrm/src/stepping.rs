@@ -53,6 +53,7 @@ use celesta_plugin::{Notice, NoticeLevel};
 use glam::Vec3;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -567,9 +568,24 @@ pub(crate) fn reach_notice(cost: u64) -> Option<Notice> {
 /// `0.0`, only misses the cache).
 fn performance_key(data: &PerformanceData) -> Result<PerformanceKey, FrameError> {
     let mut hasher = Sha256::new();
-    serde_json::to_writer(&mut hasher, &(&data.motions, &data.tracks))
+    serde_json::to_writer(HashWriter(&mut hasher), &(&data.motions, &data.tracks))
         .map_err(|error| FrameError(format!("the motions and tracks: {error}")))?;
     Ok(hasher.finalize().into())
+}
+
+/// Hands what serde_json writes to the hash as it goes, without a buffer:
+/// `Sha256` is no `io::Write` since sha2 0.11.
+struct HashWriter<'a>(&'a mut Sha256);
+
+impl io::Write for HashWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// What one kept state takes: its tails, its vectors, its step, and the

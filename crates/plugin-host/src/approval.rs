@@ -13,6 +13,7 @@ use crate::locations::PluginSource;
 use crate::manifest::{InstalledPlugins, MANIFEST, PluginEntry};
 use crate::settings::{Allowance, UserSettings};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::io;
 use std::path::Path;
 
@@ -55,7 +56,17 @@ pub fn fingerprint(entry: &PluginEntry) -> io::Result<String> {
             Err(error) => return Err(error),
         }
     }
-    Ok(format!("sha256:{:x}", hash.finalize()))
+    Ok(format!("sha256:{}", lower_hex(&hash.finalize())))
+}
+
+/// Two lowercase hex digits a byte, as `{:x}` wrote a digest before sha2
+/// 0.11, so the fingerprints saved in the settings still match.
+fn lower_hex(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
 }
 
 /// Whether `path` was downloaded from the internet, as far as the platform
@@ -225,6 +236,15 @@ mod tests {
             plugins,
             ..InstalledPlugins::default()
         }
+    }
+
+    #[test]
+    fn digests_are_written_as_lowercase_hex() {
+        // SHA-256 of "abc" (FIPS 180-2), as the saved fingerprints spell it.
+        assert_eq!(
+            lower_hex(&Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]
