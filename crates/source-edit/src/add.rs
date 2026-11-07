@@ -1,16 +1,21 @@
 //! Adding an element as a parent's last child.
 
 use oxc_ast::ast::{
-    ArrowFunctionExpression, BindingIdentifier, Expression, Function, JSXChild, JSXElement, Program,
+    ArrowFunctionExpression, BindingIdentifier, ExportDefaultDeclaration,
+    ExportDefaultDeclarationKind, Expression, FormalParameters, Function, IdentifierReference,
+    JSXChild, JSXElement, ModuleExportName, Program, Statement, VariableDeclarator,
 };
 use oxc_ast_visit::Visit;
+use oxc_semantic::{Scoping, SemanticBuilder};
 use oxc_span::GetSpan;
 use oxc_syntax::scope::ScopeFlags;
+use oxc_syntax::symbol::SymbolId;
 
 use crate::apply::{Edit, write_value};
 use crate::imports::{ImportLock, ImportName, PACKAGE, ensure_imports_in};
 use crate::insert::indent_unit;
-use crate::locate::ElementRef;
+use crate::locate::{ElementRef, element_in};
+use crate::pass_through::{component_function, component_in, is_component_name};
 use crate::resolve::{EditValue, LiteralForm, Span};
 use crate::{line_break, with_program};
 
@@ -82,17 +87,22 @@ pub enum NewElement {
         x: f64,
         y: f64,
     },
+    /// `height` is written only when given: alone, `width` keeps the
+    /// file's aspect.
     Image {
         src: String,
         x: f64,
         y: f64,
         width: f64,
+        height: Option<f64>,
     },
+    /// As [`Self::Image`].
     Video {
         src: String,
         x: f64,
         y: f64,
         width: f64,
+        height: Option<f64>,
     },
 }
 
@@ -145,12 +155,29 @@ impl NewElement {
                 ("fontSize", number(48.0)),
                 ("color", EditValue::String(TEXT_COLOR.to_string())),
             ],
-            Self::Image { src, x, y, width } | Self::Video { src, x, y, width } => vec![
-                ("src", EditValue::String(src.clone())),
-                ("x", number(*x)),
-                ("y", number(*y)),
-                ("width", number(*width)),
-            ],
+            Self::Image {
+                src,
+                x,
+                y,
+                width,
+                height,
+            }
+            | Self::Video {
+                src,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let mut written = vec![
+                    ("src", EditValue::String(src.clone())),
+                    ("x", number(*x)),
+                    ("y", number(*y)),
+                    ("width", number(*width)),
+                ];
+                written.extend(height.map(|height| ("height", number(height))));
+                written
+            }
         }
     }
 
@@ -194,17 +221,21 @@ impl AddLock {
 ///
 /// A self-closing element has one (it is opened on insert), and so has any
 /// element with a closing tag, unless its only child is an expression that
-/// reads a parameter of an enclosing function: `{children}`,
-/// `{props.children}`, a destructured prop. `{items.map(…)}` is a region.
+/// reads a parameter of an enclosing component: `{children}`,
+/// `{props.children}`, `{props['children']}`, a destructured prop: a name
+/// a component's first parameter binds. A component is a function a call
+/// site can name (`function Card`, `const Card = …`, through
+/// `memo`/`forwardRef`) or the module's default export, named or not,
+/// also through the name it is bound to (`export default box`). A callback's or a lowercase helper's parameter, and a
+/// local that shadows a prop, are not props: `{items.map(…)}` and
+/// `{item}` inside it are regions. A text that does not parse has none.
 pub fn accepts_children(text: &str, element: &ElementRef) -> bool {
     with_program(text, |program| has_region(program, element)).unwrap_or(false)
 }
 
 /// [`accepts_children`] in a program that parsed without error.
 fn has_region(program: &Program<'_>, element: &ElementRef) -> bool {
-    let mut find = FindParent::new(element.start);
-    find.visit_program(program);
-    find.found.is_some_and(|parent| !parent.prop_only)
+    find_parent(program, element.start).is_some_and(|parent| !parent.prop_only)
 }
 
 /// What would refuse adding a `kind` (wrapped or not) under `parent`, checked when the menu opens.
@@ -225,15 +256,58 @@ pub fn add_locks(
     wrapped: bool,
 ) -> Option<Vec<(NewKind, Option<AddLock>)>> {
     with_program(text, |program| {
-        if !has_region(program, parent) {
-            return None;
-        }
-        let lock = |kind: NewKind| {
-            tags(text, program, kind.module(), kind.tag(), wrapped)
-                .err()
-                .map(AddLock::Import)
-        };
-        Some(kinds.iter().map(|&kind| (kind, lock(kind))).collect())
+        locks_in(text, program, parent, kinds, wrapped)
+    })
+    .flatten()
+}
+
+/// [`add_locks`] in `program`, parsed from `text` without error.
+fn locks_in(
+    text: &str,
+    program: &Program<'_>,
+    parent: &ElementRef,
+    kinds: &[NewKind],
+    wrapped: bool,
+) -> Option<Vec<(NewKind, Option<AddLock>)>> {
+    if !has_region(program, parent) {
+        return None;
+    }
+    let lock = |kind: NewKind| {
+        tags(text, program, kind.module(), kind.tag(), wrapped)
+            .err()
+            .map(AddLock::Import)
+    };
+    Some(kinds.iter().map(|&kind| (kind, lock(kind))).collect())
+}
+
+/// What adding under the element at `line`/`column` of `text` reads, from
+/// one parse: the element, the component it is written in (see
+/// [`enclosing_component`](crate::enclosing_component)), and
+/// [`add_locks`]'s answer for `kinds`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParentReading {
+    pub element: ElementRef,
+    pub component: Option<String>,
+    pub locks: Option<Vec<(NewKind, Option<AddLock>)>>,
+}
+
+/// [`ParentReading`] for the element at `line`/`column` (as
+/// [`element_at`](crate::element_at) finds it); `None` when there is none
+/// or the text does not parse.
+pub fn read_parent(
+    text: &str,
+    line: u32,
+    column: u32,
+    kinds: &[NewKind],
+    wrapped: bool,
+) -> Option<ParentReading> {
+    with_program(text, |program| {
+        let element = element_in(text, program, line, column)?;
+        Some(ParentReading {
+            element,
+            component: component_in(program, &element),
+            locks: locks_in(text, program, &element, kinds, wrapped),
+        })
     })
     .flatten()
 }
@@ -308,10 +382,7 @@ fn add_written(
     element: impl FnOnce(&str) -> String,
 ) -> Result<Added, AddLock> {
     with_program(text, |program| {
-        let mut find = FindParent::new(parent.start);
-        find.visit_program(program);
-        let found = find
-            .found
+        let found = find_parent(program, parent.start)
             .filter(|found| !found.prop_only)
             .ok_or(AddLock::NoChildrenRegion)?;
         let tags = tags(text, program, module, tag, timing.is_some()).map_err(AddLock::Import)?;
@@ -351,9 +422,26 @@ fn add_written(
         // before the block.
         let (start, end, inserted, before_block) = match found.closing_start {
             None => {
+                // Only the `/>` and the spaces before it on its line: a
+                // comment after the last attribute stays, and a `/>` on a
+                // line of its own leaves its `>` there.
                 let name = &text[found.name.start as usize..found.name.end as usize];
                 let opened = format!(">{lead}{block}{newline}{indent}</{name}>");
-                (parent.end_of_attributes, found.opening_end, opened, 1)
+                let slash = text[..found.opening_end as usize]
+                    .rfind('/')
+                    .map_or(parent.end_of_attributes, |at| at as u32);
+                let kept = text[..slash as usize].trim_end_matches([' ', '\t']);
+                let before = if kept.ends_with('\n') {
+                    slash
+                } else {
+                    kept.len() as u32
+                };
+                (
+                    before.clamp(parent.end_of_attributes, slash),
+                    found.opening_end,
+                    opened,
+                    1,
+                )
             }
             Some(closing) => {
                 let children = &text[found.opening_end as usize..closing as usize];
@@ -361,14 +449,13 @@ fn add_written(
                 if after == found.opening_end {
                     let filled = format!("{lead}{block}{newline}{indent}");
                     (found.opening_end, closing, filled, 0)
+                } else if text[after as usize..closing as usize].contains('\n') {
+                    (after, after, format!("{lead}{block}"), 0)
                 } else {
-                    let rest = &text[after as usize..closing as usize];
-                    let close = if rest.contains('\n') {
-                        String::new()
-                    } else {
-                        format!("{newline}{indent}")
-                    };
-                    (after, after, format!("{lead}{block}{close}"), 0)
+                    // One line: the spaces before the closing tag give way
+                    // to its own line.
+                    let inserted = format!("{lead}{block}{newline}{indent}");
+                    (after, closing, inserted, 0)
                 }
             }
         };
@@ -480,56 +567,168 @@ struct Parent {
     opening_end: u32,
     /// The closing tag's `<`; `None` when self-closing.
     closing_start: Option<u32>,
-    /// Its only child reads a parameter of an enclosing function.
+    /// Its only child reads a parameter of an enclosing component.
     prop_only: bool,
 }
 
-/// The element whose `<` is at `start`, and the names the parameters of
-/// the functions around it bind.
-struct FindParent {
+/// The parent whose `<` is at `start` in `program`, parsed without error.
+fn find_parent(program: &Program<'_>, start: u32) -> Option<Parent> {
+    // Binds each read to its declaration, so a local or a callback's
+    // parameter that shadows a prop is not taken for it.
+    let semantic = SemanticBuilder::new().build(program).semantic;
+    let mut find = FindParent {
+        start,
+        scoping: semantic.scoping(),
+        names: Vec::new(),
+        default_exports: Vec::new(),
+        default_bindings: default_bindings(program, semantic.scoping()),
+        props: Vec::new(),
+        found: None,
+    };
+    find.visit_program(program);
+    find.found
+}
+
+/// The bindings the module exports as its default by name: `export default
+/// box` and `export { box as default }`, read before the functions they
+/// name are visited.
+fn default_bindings(program: &Program<'_>, scoping: &Scoping) -> Vec<SymbolId> {
+    let symbol = |id: &IdentifierReference<'_>| {
+        id.reference_id
+            .get()
+            .and_then(|reference| scoping.get_reference(reference).symbol_id())
+    };
+    let mut bindings = Vec::new();
+    for statement in &program.body {
+        match statement {
+            Statement::ExportDefaultDeclaration(export) => {
+                if let Some(Expression::Identifier(id)) = export
+                    .declaration
+                    .as_expression()
+                    .map(Expression::without_parentheses)
+                {
+                    bindings.extend(symbol(id));
+                }
+            }
+            Statement::ExportNamedDeclaration(export) => {
+                for specifier in &export.specifiers {
+                    if let (ModuleExportName::IdentifierReference(id), "default") =
+                        (&specifier.local, specifier.exported.name().as_str())
+                    {
+                        bindings.extend(symbol(id));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    bindings
+}
+
+/// The element whose `<` is at `start`, and the parameters of the
+/// components around it.
+struct FindParent<'s> {
     start: u32,
-    params: Vec<Vec<String>>,
+    scoping: &'s Scoping,
+    /// Functions a `const` names (`const Card = …`), by their offset, with
+    /// the binding.
+    names: Vec<(u32, String, Option<SymbolId>)>,
+    /// The offsets of functions the module exports as its default.
+    default_exports: Vec<u32>,
+    /// See [`default_bindings`].
+    default_bindings: Vec<SymbolId>,
+    /// The names every component's parameters bind.
+    props: Vec<SymbolId>,
     found: Option<Parent>,
 }
 
-impl FindParent {
-    fn new(start: u32) -> Self {
-        Self {
-            start,
-            params: Vec::new(),
-            found: None,
-        }
+impl FindParent<'_> {
+    /// A function is a component when a call site can name it (the
+    /// `const` that holds it, through `memo`/`forwardRef`, else its own
+    /// name), or when it is the module's default export, directly or by
+    /// the name it is bound to: not a callback or a lowercase helper, whose
+    /// parameters its caller passes. Its props are what its first
+    /// parameter binds; a second one (`forwardRef`'s `ref`, a legacy
+    /// context) is not a prop.
+    fn component_params(
+        &mut self,
+        start: u32,
+        own: Option<&BindingIdentifier<'_>>,
+        params: &FormalParameters<'_>,
+    ) {
+        let held = self.names.iter().find(|(at, ..)| *at == start);
+        let name = held
+            .map(|(_, name, _)| name.as_str())
+            .or_else(|| own.map(|id| id.name.as_str()));
+        let binding = held
+            .and_then(|(.., symbol)| *symbol)
+            .or_else(|| own.and_then(|id| id.symbol_id.get()));
+        let component = name.is_some_and(is_component_name)
+            || self.default_exports.contains(&start)
+            || binding.is_some_and(|symbol| self.default_bindings.contains(&symbol));
+        let Some(first) = params.items.first().filter(|_| component) else {
+            return;
+        };
+        let mut names = Names::default();
+        names.visit_binding_pattern(&first.pattern);
+        self.props.extend(names.0);
     }
 
-    fn reads_a_parameter(&self, expr: &Expression<'_>) -> bool {
-        root(expr).is_some_and(|name| self.params.iter().flatten().any(|p| p == name))
+    /// Whether `expr` reads a component's parameter: `children`,
+    /// `props.children`, `props['children']`, `props?.children`.
+    fn reads_a_prop(&self, expr: &Expression<'_>) -> bool {
+        root(expr)
+            .and_then(|id| id.reference_id.get())
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            .is_some_and(|symbol| self.props.contains(&symbol))
     }
 }
 
-/// The identifier `children` or `props.children` starts from.
-fn root<'e>(expr: &'e Expression<'_>) -> Option<&'e str> {
+/// The identifier `expr` reads a member of, or itself.
+fn root<'e, 'a>(expr: &'e Expression<'a>) -> Option<&'e IdentifierReference<'a>> {
     match expr.without_parentheses() {
-        Expression::Identifier(id) => Some(id.name.as_str()),
+        Expression::Identifier(id) => Some(id),
         Expression::StaticMemberExpression(member) => root(&member.object),
+        Expression::ComputedMemberExpression(member)
+            if matches!(member.expression, Expression::StringLiteral(_)) =>
+        {
+            root(&member.object)
+        }
+        Expression::ChainExpression(chain) => {
+            root(chain.expression.as_member_expression()?.object())
+        }
         _ => None,
     }
 }
 
-impl<'a> Visit<'a> for FindParent {
+impl<'a> Visit<'a> for FindParent<'_> {
+    fn visit_variable_declarator(&mut self, it: &VariableDeclarator<'a>) {
+        if let (Some(id), Some(init)) = (it.id.get_binding_identifier(), &it.init)
+            && let Some(start) = component_function(init)
+        {
+            self.names
+                .push((start, id.name.to_string(), id.symbol_id.get()));
+        }
+        oxc_ast_visit::walk::walk_variable_declarator(self, it);
+    }
+
+    fn visit_export_default_declaration(&mut self, it: &ExportDefaultDeclaration<'a>) {
+        let start = match &it.declaration {
+            ExportDefaultDeclarationKind::FunctionDeclaration(f) => Some(f.span.start),
+            kind => kind.as_expression().and_then(component_function),
+        };
+        self.default_exports.extend(start);
+        oxc_ast_visit::walk::walk_export_default_declaration(self, it);
+    }
+
     fn visit_function(&mut self, it: &Function<'a>, flags: ScopeFlags) {
-        let mut names = Names::default();
-        names.visit_formal_parameters(&it.params);
-        self.params.push(names.0);
+        self.component_params(it.span.start, it.id.as_ref(), &it.params);
         oxc_ast_visit::walk::walk_function(self, it, flags);
-        self.params.pop();
     }
 
     fn visit_arrow_function_expression(&mut self, it: &ArrowFunctionExpression<'a>) {
-        let mut names = Names::default();
-        names.visit_formal_parameters(&it.params);
-        self.params.push(names.0);
+        self.component_params(it.span.start, None, &it.params);
         oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
-        self.params.pop();
     }
 
     fn visit_jsx_element(&mut self, it: &JSXElement<'a>) {
@@ -550,7 +749,7 @@ impl<'a> Visit<'a> for FindParent {
             _ => None,
         };
         let prop_only = matches!(only, Some(JSXChild::ExpressionContainer(c))
-            if c.expression.as_expression().is_some_and(|e| self.reads_a_parameter(e)));
+            if c.expression.as_expression().is_some_and(|e| self.reads_a_prop(e)));
         let name = opening.name.span();
         self.found = Some(Parent {
             name: Span {
@@ -566,10 +765,10 @@ impl<'a> Visit<'a> for FindParent {
 
 /// The names a pattern binds.
 #[derive(Default)]
-struct Names(Vec<String>);
+struct Names(Vec<SymbolId>);
 
 impl<'a> Visit<'a> for Names {
     fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
-        self.0.push(it.name.to_string());
+        self.0.extend(it.symbol_id.get());
     }
 }

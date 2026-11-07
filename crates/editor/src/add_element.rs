@@ -1,5 +1,5 @@
 //! Adding an element: the group it goes into (the selected one or the
-//! nearest around it, moved into the scene's own code under "This scene"),
+//! nearest around it, moved into the scene’s own code under "This scene"),
 //! the `<Sequence>` it is wrapped in, the values a gesture on the canvas
 //! writes and the outline drawn meanwhile, the Add menu's items, and the
 //! add mode's steps; then the write, the selection of the added layer after
@@ -11,7 +11,7 @@ use crate::element_edit::{inside_project, tag_name};
 use crate::helpers::{PathPick, pick_one_path};
 use crate::layer_select::{LookupResult, SourceLookup, letterbox, scene_point, to_scene};
 use crate::occurrences::OccurrenceState;
-use crate::preview::AddedUnder;
+use crate::preview::{AddedUnder, ChildrenSpace};
 use crate::scope::{Scope, ScopeState, chosen_scope, not_indexed_note, occurrence_index};
 use crate::timing::{WindowRole, set_timing_span, window_role};
 use crate::view::EditorView;
@@ -20,11 +20,11 @@ use celesta_gpu_renderer::invert_affine;
 use celesta_media::MediaBackend;
 use celesta_plugin_host::{ComponentInfo, ComponentSource, InstalledPlugins};
 use celesta_react_bridge::{
-    ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, import_path, scenes_of,
+    ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, scenes_of, stage_import,
 };
 use celesta_source_edit::{
-    EditValue, NewComponent, NewElement, NewKind, Timing, add_child, add_component, add_locks,
-    element_at, enclosing_component,
+    EditValue, NewComponent, NewElement, NewKind, ParentReading, Timing, add_child, add_component,
+    element_at, read_parent,
 };
 use gpui_kit::{Context, MouseMoveEvent, Pixels};
 use std::cell::RefCell;
@@ -50,6 +50,9 @@ const REMAPPED: &str = "Can’t add inside a loop or freeze frame";
 const TURNED_3D: &str = "Can’t draw into a group turned in 3D";
 const SCALED_TO_ZERO: &str = "Can’t draw into a group scaled to zero";
 const READING: &str = "The source is still being read";
+const NOT_IN_FRAME: &str = "The group isn’t drawn in this frame";
+const FRAME_FAILED: &str = "This frame couldn’t be drawn";
+const NO_FILE: &str = "Choose a file first";
 const SOURCE_CHANGED: &str = "The source changed while editing";
 
 /// A press that moves less than this, in viewer pixels, is a click.
@@ -100,16 +103,35 @@ pub(crate) fn parent_scope(state: &ScopeState, remembered: Option<Scope>) -> Par
     }
 }
 
-/// Whether the element at `entry` is shared: the index's instance chains
+/// How a group is shared (see [`is_shared`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Sharing {
+    /// It is reached through more than one call chain: a component's
+    /// group that several calls draw.
+    pub(crate) calls: bool,
+    /// Its instances show in more than one scene.
+    pub(crate) scenes: bool,
+}
+
+impl Sharing {
+    pub(crate) fn any(self) -> bool {
+        self.calls || self.scenes
+    }
+}
+
+/// How the element at `entry` is shared: the index's instance chains
 /// through it (of every element) have more than one outer part (the chain
-/// after it), or their ranges show in more than one scene. Err is design
+/// after it), and their ranges show in more than one scene. Err is design
 /// 3's note when the index can't answer (see [`occurrence_index`]), and
-/// when no chain goes through `entry` (see [`not_indexed_note`]).
+/// when no chain goes through `entry` (see [`not_indexed_note`]). The
+/// selected element's own chain goes through each of its groups, so that
+/// is only when the element itself is not indexed either; treating such a
+/// group as unshared could write into a shared one unasked.
 pub(crate) fn is_shared(
     occurrences: Option<&OccurrenceState>,
     chapters: &[ReactChapter],
     entry: &SourcePos,
-) -> Result<bool, String> {
+) -> Result<Sharing, String> {
     let (index, refreshing) = occurrence_index(occurrences)?;
     let mut outer: Vec<&[SourcePos]> = Vec::new();
     let mut ranges = Vec::new();
@@ -123,21 +145,42 @@ pub(crate) fn is_shared(
     let Some(first) = outer.first() else {
         return Err(not_indexed_note(refreshing));
     };
-    Ok(outer.iter().any(|part| part != first) || scenes_of(&ranges, chapters).len() > 1)
+    Ok(Sharing {
+        calls: outer.iter().any(|part| part != first),
+        scenes: scenes_of(&ranges, chapters).len() > 1,
+    })
+}
+
+/// Why nothing can be added while the selected layer's lookup has no
+/// chain to pick a parent from: still on its way (none yet, or pending),
+/// or answered without one.
+pub(crate) fn lookup_reason(lookup: Option<&SourceLookup>) -> String {
+    match lookup {
+        None | Some(SourceLookup::Pending | SourceLookup::Found(_)) => READING.to_owned(),
+        Some(SourceLookup::NotInFrame) => "The selected layer is not in this frame".to_owned(),
+        Some(SourceLookup::NoPosition) => "The selected layer has no source position".to_owned(),
+        Some(SourceLookup::Failed(error)) => {
+            format!("Couldn’t read the selected layer’s source: {error}")
+        }
+    }
 }
 
 /// The parent of an element added with `report`'s layer selected (none
 /// selected: `None`). (1) The selected layer, if it is a `Group`; (2)
 /// otherwise the nearest `Group` in its chain. Either has a `layer_id` and
 /// `accepts` (its JSX has a children region). A shared one (`shared`, see
-/// [`is_shared`]) is the parent under "Shared value"; under "This scene",
-/// and without a scope control, the next such group outward that is not
-/// shared is; with an `Unknown` scope none is. Err is the menu's reason.
+/// [`is_shared`]) is the parent under "Shared value"; under "This scene"
+/// the next such group outward that is not shared is; with an `Unknown`
+/// scope none is. Without a scope control (an element written once, as at
+/// the composition's root) the next one outward that no other call draws
+/// is: a group written once that spans several scenes is used, as an edit
+/// of the element itself reaches them all too, and it is not marked "This
+/// scene". Err is the menu's reason.
 pub(crate) fn pick_parent(
     report: Option<&LayerSourceReport>,
     scope: &ParentScope,
     accepts: impl Fn(&LayerSource) -> bool,
-    shared: impl Fn(&LayerSource) -> Result<bool, String>,
+    shared: impl Fn(&LayerSource) -> Result<Sharing, String>,
 ) -> Result<AddParent, String> {
     let chain = report.map_or(&[][..], |report| &report.chain[..]);
     let mut groups = chain.iter().enumerate().filter_map(|(index, entry)| {
@@ -152,32 +195,45 @@ pub(crate) fn pick_parent(
         this_scene,
     };
     let nearest = groups.next().ok_or_else(|| NO_PARENT.to_owned())?;
-    if *scope == ParentScope::Chosen(Scope::Shared) || !shared(nearest.1)? {
+    if *scope == ParentScope::Chosen(Scope::Shared) {
         return Ok(parent(nearest, false));
     }
-    if let ParentScope::Unknown(note) = scope {
-        return Err(note.clone());
+    let sharing = shared(nearest.1)?;
+    if !sharing.any() {
+        return Ok(parent(nearest, false));
+    }
+    let usable = |sharing: Sharing| match scope {
+        ParentScope::NoControl => !sharing.calls,
+        _ => !sharing.any(),
+    };
+    match scope {
+        ParentScope::Unknown(note) => return Err(note.clone()),
+        ParentScope::NoControl if usable(sharing) => return Ok(parent(nearest, false)),
+        _ => {}
     }
     for group in groups {
-        if !shared(group.1)? {
-            return Ok(parent(group, true));
+        let sharing = shared(group.1)?;
+        if usable(sharing) {
+            // Moved into this scene's code, unless it spans scenes.
+            return Ok(parent(group, !sharing.scenes));
         }
     }
     Err(NO_PARENT_IN_SCENE.to_owned())
 }
 
-/// The Add menu's header: "Add to `<Group>` in `<PriceTag>`", "Add to
-/// `<Group>`" without a component, "… · This scene" when moved there.
+/// The Add menu's header: "Add to <Group> in <PriceTag>", "Add to <Group>"
+/// without a component, "… · This scene" when moved there. Plain text: the
+/// menu and the hint show no Markdown.
 pub(crate) fn add_header(parent: &AddParent, component: Option<&str>) -> String {
     format!("Add to {}", parent_label(parent, component))
 }
 
-/// The parent as the header names it: "`<Group>` in `<PriceTag>`", and
-/// "… · This scene" when moved there.
+/// The parent as the header names it: "<Group> in <PriceTag>", and "… ·
+/// This scene" when moved there.
 pub(crate) fn parent_label(parent: &AddParent, component: Option<&str>) -> String {
-    let mut label = format!("`<{}>`", parent.entry.name);
+    let mut label = format!("<{}>", parent.entry.name);
     if let Some(component) = component {
-        label.push_str(&format!(" in `<{component}>`"));
+        label.push_str(&format!(" in <{component}>"));
     }
     if parent.this_scene {
         label.push_str(" · This scene");
@@ -284,14 +340,15 @@ fn gesture((start, end): (Point, Point), parent_space: [f64; 6], slop: f64) -> O
 /// Video, as its least and greatest corners. A click makes a box at the
 /// press; a drag spans the press and the release, except that media with
 /// a known `aspect` take their height from the width, extending from the
-/// press towards the release. Every side is at least 1.
+/// press towards the release (media of unknown aspect write the box's
+/// height too, see [`drawn_geometry`]). Every side is at least 1.
 fn drawn_box(gesture: &Gesture, media: bool, aspect: Option<f64>) -> (Point, Point) {
     let Gesture {
         press,
         release,
         click,
     } = *gesture;
-    let aspect = aspect.filter(|aspect| aspect.is_finite() && *aspect > 0.0);
+    let aspect = aspect.filter(|&aspect| known(Some(aspect)));
     let corner = |min: Point, width: f64, height: f64| {
         let max = Point {
             x: min.x + width.max(1.0),
@@ -323,6 +380,12 @@ fn drawn_box(gesture: &Gesture, media: bool, aspect: Option<f64>) -> (Point, Poi
     )
 }
 
+/// Whether `aspect` is a file's measured width over its height: alone, an
+/// Image's or a Video's `width` then keeps it, so no `height` is written.
+fn known(aspect: Option<f64>) -> bool {
+    aspect.is_some_and(|aspect| aspect.is_finite() && aspect > 0.0)
+}
+
 /// A Circle's radius: the parent-space distance from the press, at least
 /// 1; a click's is [`CLICK_RADIUS`].
 fn drawn_radius(gesture: &Gesture) -> f64 {
@@ -336,8 +399,10 @@ fn drawn_radius(gesture: &Gesture) -> f64 {
 /// The written values for a gesture from `start` to `end` (scene pixels)
 /// in the parent's children space; `slop` is the click distance in scene
 /// pixels. Rect, Ellipse, Image and Video drag a box (see [`drawn_box`]),
-/// a Circle drags from its center, Text is placed at the press. `None`
-/// without `src` for an Image or a Video, and in a collapsed parent space.
+/// a Circle drags from its center, Text is placed at the press; an Image
+/// or a Video writes the box's height only when its `aspect` is unknown,
+/// so it draws the box outlined. `None` without `src` for an Image or a
+/// Video, and in a collapsed parent space.
 pub(crate) fn drawn_geometry(
     kind: NewKind,
     src: Option<&str>,
@@ -380,21 +445,23 @@ pub(crate) fn drawn_geometry(
             y: gesture.press.y,
         },
         NewKind::Image => {
-            let (x, y, width, _) = sized(true);
+            let (x, y, width, height) = sized(true);
             NewElement::Image {
                 src: src?.to_owned(),
                 x,
                 y,
                 width,
+                height: (!known(aspect)).then_some(height),
             }
         }
         NewKind::Video => {
-            let (x, y, width, _) = sized(true);
+            let (x, y, width, height) = sized(true);
             NewElement::Video {
                 src: src?.to_owned(),
                 x,
                 y,
                 width,
+                height: (!known(aspect)).then_some(height),
             }
         }
     })
@@ -464,23 +531,26 @@ pub(crate) fn menu_items(
 
 /// Whether a frame is to ask for the children space of `parent` (the group
 /// an addition goes into, by its layer id): its space is not `reported`,
-/// and no frame was asked for it since the facts were read (`asked`).
+/// and no frame asking for it is on its way (`asked`: one was asked for
+/// since the facts were read, and no answer from it or a later frame came
+/// back without the space).
 pub(crate) fn space_request_due(parent: Option<&str>, reported: bool, asked: Option<&str>) -> bool {
     parent.is_some_and(|parent| !reported && asked != Some(parent))
 }
 
 /// Why the Add menu's items are disabled by the parent's children `space`
-/// as last reported (`None`: not yet, `Some(None)`: turned in 3D). An
-/// unreported space disables them only while paused, when it is being
-/// asked for; while `playing` they stay enabled, as choosing one pauses,
-/// which asks for it (until it arrives nothing is outlined, and a release
-/// refuses).
-pub(crate) fn space_reason(space: Option<Option<[f64; 6]>>, playing: bool) -> Option<&'static str> {
+/// as last reported (`None`: not yet). An unreported space disables them
+/// only while paused, when it is being asked for; while `playing` they
+/// stay enabled, as choosing one pauses, which asks for it (a release
+/// before it arrives waits for it).
+pub(crate) fn space_reason(space: Option<ChildrenSpace>, playing: bool) -> Option<&'static str> {
     match space {
-        Some(None) => Some(TURNED_3D),
-        Some(Some(space)) if invert_affine(space).is_none() => Some(SCALED_TO_ZERO),
-        Some(Some(_)) => None,
         None => (!playing).then_some(READING),
+        Some(ChildrenSpace::Map(space)) if invert_affine(space).is_none() => Some(SCALED_TO_ZERO),
+        Some(ChildrenSpace::Map(_)) => None,
+        Some(ChildrenSpace::Turned) => Some(TURNED_3D),
+        Some(ChildrenSpace::Absent) => Some(NOT_IN_FRAME),
+        Some(ChildrenSpace::Failed) => Some(FRAME_FAILED),
     }
 }
 
@@ -492,6 +562,16 @@ pub(crate) struct AddTool {
     pub(crate) src: Option<String>,
     /// The file's width over its height, once measured.
     pub(crate) aspect: Option<f64>,
+    /// The file was measured (`aspect` may still be unknown).
+    pub(crate) measured: bool,
+}
+
+impl AddTool {
+    /// Whether a release waits for the file's measurement: written before
+    /// it, an Image or a Video would take the box's height too.
+    pub(crate) fn measuring(&self) -> bool {
+        self.src.is_some() && !self.measured
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -505,6 +585,15 @@ pub(crate) enum AddMode {
         tool: AddTool,
         start: Point,
         now: Point,
+    },
+    /// Released before what the write reads was there (the selected
+    /// layer's lookup, the parent's groups or space, the file's
+    /// measurement): written once it is, on a render (see
+    /// `settle_add_release`).
+    Waiting {
+        tool: AddTool,
+        start: Point,
+        end: Point,
     },
 }
 
@@ -540,9 +629,15 @@ pub(crate) fn add_step(
             kind,
             src,
             aspect: None,
+            measured: false,
         })
     };
     let measures = |tool: &AddTool, src: &str| tool.src.as_deref() == Some(src);
+    let measured = |tool, aspect| AddTool {
+        aspect,
+        measured: true,
+        ..tool
+    };
     let next = match (mode, event) {
         (_, AddEvent::Escape | AddEvent::Ended) => AddMode::Off,
         (_, AddEvent::Chosen(kind @ (NewKind::Image | NewKind::Video))) => AddMode::Picking(kind),
@@ -550,15 +645,24 @@ pub(crate) fn add_step(
         (AddMode::Picking(_), AddEvent::Picked(None)) => AddMode::Off,
         (AddMode::Picking(kind), AddEvent::Picked(Some(src))) => armed(kind, Some(src)),
         (AddMode::Armed(tool), AddEvent::Measured { src, aspect }) if measures(&tool, &src) => {
-            AddMode::Armed(AddTool { aspect, ..tool })
+            AddMode::Armed(measured(tool, aspect))
         }
         (AddMode::Drawing { tool, start, now }, AddEvent::Measured { src, aspect })
             if measures(&tool, &src) =>
         {
             AddMode::Drawing {
-                tool: AddTool { aspect, ..tool },
+                tool: measured(tool, aspect),
                 start,
                 now,
+            }
+        }
+        (AddMode::Waiting { tool, start, end }, AddEvent::Measured { src, aspect })
+            if measures(&tool, &src) =>
+        {
+            AddMode::Waiting {
+                tool: measured(tool, aspect),
+                start,
+                end,
             }
         }
         (AddMode::Armed(tool), AddEvent::Press(start)) => AddMode::Drawing {
@@ -701,19 +805,22 @@ pub(crate) fn parent_facts(
         else {
             continue;
         };
-        let Some(element) = element_at(text, entry.line, entry.column) else {
-            continue;
-        };
         let timing = added_timing(report, index, chapters, composition_end, playhead);
         let wrapped = matches!(timing, Ok(Some(_)));
-        // `None` without a children region.
-        let Some(locks) = add_locks(text, &element, &KINDS, wrapped) else {
+        // One parse; `None` for no such element or an unparsable file, no
+        // locks without a children region.
+        let Some(ParentReading {
+            element,
+            component,
+            locks: Some(locks),
+        }) = read_parent(text, entry.line, entry.column, &KINDS, wrapped)
+        else {
             continue;
         };
         groups.push(GroupFacts {
             at: SourcePos::from(entry),
             tag: tag_name(text, &element).to_owned(),
-            component: enclosing_component(text, &element),
+            component,
             timing,
             locks: locks
                 .into_iter()
@@ -828,13 +935,28 @@ impl AddComponent {
     pub(crate) fn element(&self, drawn: &NewElement) -> NewComponent {
         let number = |name: &str, value: f64| (name.to_owned(), EditValue::Number(value));
         let mut attributes = match drawn {
-            NewElement::Image { src, x, y, width } | NewElement::Video { src, x, y, width } => {
-                vec![
+            NewElement::Image {
+                src,
+                x,
+                y,
+                width,
+                height,
+            }
+            | NewElement::Video {
+                src,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let mut drawn = vec![
                     ("src".to_owned(), EditValue::String(src.clone())),
                     number("x", *x),
                     number("y", *y),
                     number("width", *width),
-                ]
+                ];
+                drawn.extend(height.map(|height| number("height", height)));
+                drawn
             }
             NewElement::Rect {
                 x,
@@ -926,19 +1048,27 @@ pub(crate) struct AddState {
     pub(crate) mode: AddMode,
     /// The parent shown when the drawn kind was chosen.
     pub(crate) chosen: Option<ChosenParent>,
-    /// The newest groups read, and the lookup the newest read is for.
+    /// The newest groups read, and the lookup the newest read is for with
+    /// the reload it reads (see [`Self::reloads`]).
     facts: Option<ParentFacts>,
-    wanted: Option<LookupKey>,
+    wanted: Option<(LookupKey, u64)>,
+    /// Counts the reloads applied, so a read started before one is not
+    /// taken after it for the same lookup.
+    reloads: u64,
     /// Counts the groups read, naming the facts in [`TargetKey`].
     facts_read: u64,
     /// The parent last picked, and what it was picked from.
     target: RefCell<Option<(TargetKey, Result<AddParent, String>)>>,
     /// A group's children space as the preview last reported it, by its
-    /// layer id: `None` inside when it turns in 3D.
-    space: Option<(String, Option<[f64; 6]>)>,
-    /// The group whose space a frame was asked for (see
-    /// [`space_request_due`]), until the facts are read again.
-    asked: Option<String>,
+    /// layer id.
+    space: Option<(String, ChildrenSpace)>,
+    /// The first preview generation drawn with the code on screen: a space
+    /// from an earlier one is the code's before the reload.
+    space_from: u64,
+    /// The group whose space a frame was asked for and that frame's
+    /// preview generation (see [`space_request_due`]), until the facts are
+    /// read again or an answer from it or later comes without the space.
+    asked: Option<(String, u64)>,
     /// The selection of the element just added, and the reload that reads
     /// it: one requested at or after that number.
     pending: Option<(PendingSelect, u64)>,
@@ -975,13 +1105,17 @@ impl EditorView {
         let Some((layer, report, frame)) = self.add_lookup() else {
             return;
         };
-        let wanted = |(at, of, on): &LookupKey| at == layer && of == report && *on == frame;
+        let reloads = self.add.reloads;
+        let wanted = |((at, of, on), read): &(LookupKey, u64)| {
+            at == layer && of == report && *on == frame && *read == reloads
+        };
         if self.add.wanted.as_ref().is_some_and(wanted) {
             return;
         }
         let report = report.clone();
         let lookup = (layer.to_owned(), report.clone(), frame);
-        self.add.wanted = Some(lookup.clone());
+        let wanted = (lookup.clone(), reloads);
+        self.add.wanted = Some(wanted.clone());
         let chapters = self.react_chapters().unwrap_or_default().to_vec();
         let end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
         let playhead = u64::try_from(frame).unwrap_or(0);
@@ -1010,7 +1144,8 @@ impl EditorView {
                 })
                 .await;
             view.update(cx, |this, cx| {
-                if this.add.wanted.as_ref() == Some(&lookup) {
+                // Not a read of the code before a reload since.
+                if this.add.wanted.as_ref() == Some(&wanted) {
                     this.add.set_facts(ParentFacts { lookup, groups });
                     cx.notify();
                 }
@@ -1026,12 +1161,11 @@ impl EditorView {
         let selected = self.selected_layer.as_deref();
         let report = match &self.source_lookup {
             _ if selected.is_none() => None,
-            Some(SourceLookup::Pending) => return Err(READING.to_owned()),
             Some(SourceLookup::Found(_)) if self.source_lookup_stale => {
                 return Err(READING.to_owned());
             }
             Some(SourceLookup::Found(report)) => Some(&**report),
-            _ => None,
+            lookup => return Err(lookup_reason(lookup.as_ref())),
         };
         let facts = match (report, &self.add.facts) {
             // Nothing selected, or no answer: no chain to pick from.
@@ -1071,8 +1205,8 @@ impl EditorView {
     }
 
     /// The children space last reported for the group `layer_id`: `None`
-    /// before the preview answered, `Some(None)` when it turns in 3D.
-    fn add_space(&self, layer_id: &str) -> Option<Option<[f64; 6]>> {
+    /// before the preview answered.
+    fn add_space(&self, layer_id: &str) -> Option<ChildrenSpace> {
         self.add
             .space
             .as_ref()
@@ -1134,9 +1268,11 @@ impl EditorView {
         let reported = parent
             .as_deref()
             .is_some_and(|parent| self.add_space(parent).is_some());
-        if space_request_due(parent.as_deref(), reported, self.add.asked.as_deref()) {
-            self.add.asked = parent;
+        let asked = self.add.asked.as_ref().map(|(parent, _)| parent.as_str());
+        if space_request_due(parent.as_deref(), reported, asked) {
             self.refresh_preview();
+            let generation = self.preview_worker.generation();
+            self.add.asked = parent.map(|parent| (parent, generation));
         }
     }
 
@@ -1254,10 +1390,36 @@ impl EditorView {
                 .ok();
                 return;
             }
+            // Cancelled meanwhile: nothing is copied into the project.
+            if !view.update(cx, |this, _| picking(this)).unwrap_or(false) {
+                return;
+            }
             let dir = entry_dir.clone();
+            let staged = cx
+                .background_executor()
+                .spawn(async move { stage_import(&dir, &dir, &chosen) })
+                .await;
+            // The copy is named in `assets/` only for a mode still picking:
+            // one cancelled during the copy drops it unnamed, so nothing
+            // there is deleted (another import may have reused a file).
+            let wanted = view
+                .update(cx, |this, cx| match staged {
+                    Ok(staged) if picking(this) => Some(staged),
+                    Ok(_) => None,
+                    Err(error) => {
+                        cancel(this, Some(format!("Couldn’t use the chosen file: {error}")));
+                        cx.notify();
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+            let Some(staged) = wanted else {
+                return;
+            };
             let imported = cx
                 .background_executor()
-                .spawn(async move { import_path(&dir, &dir, &chosen) })
+                .spawn(async move { staged.publish() })
                 .await;
             let picked = view
                 .update(cx, |this, cx| {
@@ -1267,6 +1429,7 @@ impl EditorView {
                             this.step_add(AddEvent::Picked(Some(src.clone())));
                             Some(src)
                         }
+                        // Cancelled while it was named: the copy stays.
                         Ok(_) => None,
                         Err(error) => {
                             cancel(this, Some(format!("Couldn’t use the chosen file: {error}")));
@@ -1378,14 +1541,23 @@ impl EditorView {
         self.step_add(AddEvent::Ended);
     }
 
-    /// The outline of the element being drawn, in scene pixels, while the
-    /// parent's space is known.
+    /// The outline of the element being drawn (or released and waiting to
+    /// be written), in scene pixels, while the parent's space is known.
     pub(crate) fn add_outline(&self) -> Option<(NewKind, Vec<Point>)> {
-        let AddMode::Drawing { tool, start, now } = &self.add.mode else {
+        let (AddMode::Drawing { tool, start, now }
+        | AddMode::Waiting {
+            tool,
+            start,
+            end: now,
+        }) = &self.add.mode
+        else {
             return None;
         };
         // In the parent the hint names, where it is written.
-        let space = self.add_space(&self.add.chosen.as_ref()?.layer_id)??;
+        let Some(ChildrenSpace::Map(space)) = self.add_space(&self.add.chosen.as_ref()?.layer_id)
+        else {
+            return None;
+        };
         let outline = drawn_outline(
             tool.kind,
             (*start, *now),
@@ -1404,17 +1576,15 @@ impl EditorView {
         (tool, start, end): (AddTool, Point, Point),
         cx: &mut Context<Self>,
     ) {
-        let chosen = self.add.chosen.take();
         let drawn = self.add_target().and_then(|(parent, facts)| {
             // Only into the parent the hint named while this was drawn.
-            if !is_chosen(chosen.as_ref(), &parent) {
+            if !is_chosen(self.add.chosen.as_ref(), &parent) {
                 return Err(PARENT_CHANGED.to_owned());
             }
             let timing = facts.timing.clone()?;
             let space = match self.add_space(&parent.layer_id) {
-                Some(Some(space)) => space,
-                Some(None) => return Err(TURNED_3D.to_owned()),
-                None => return Err(READING.to_owned()),
+                Some(ChildrenSpace::Map(space)) => space,
+                other => return Err(space_reason(other, false).unwrap_or(READING).to_owned()),
             };
             let slop = self.add_slop();
             let points = (start, end);
@@ -1426,13 +1596,27 @@ impl EditorView {
                 tool.aspect,
                 slop,
             )
-            .ok_or_else(|| SCALED_TO_ZERO.to_owned())?;
+            .ok_or_else(|| {
+                let file = matches!(tool.kind, NewKind::Image | NewKind::Video);
+                if file && tool.src.is_none() {
+                    NO_FILE
+                } else {
+                    SCALED_TO_ZERO
+                }
+                .to_owned()
+            })?;
             let new = match &self.add.component {
                 Some(component) => Addition::Component(component.element(&new)),
                 None => Addition::Element(new),
             };
             Ok((parent, facts.tag.clone(), timing, new))
         });
+        // Still being read, or the file measured: written once it is.
+        if tool.measuring() || drawn.as_ref().is_err_and(|reason| reason == READING) {
+            self.add.mode = AddMode::Waiting { tool, start, end };
+            return;
+        }
+        self.add.chosen = None;
         self.add.component = None;
         let (parent, tag, timing, new) = match drawn {
             Ok(drawn) => drawn,
@@ -1482,17 +1666,30 @@ impl EditorView {
         );
     }
 
+    /// Writes a released element that waited for what its write reads (see
+    /// [`AddMode::Waiting`]), once that is there: it waits again otherwise.
+    pub(crate) fn settle_add_release(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.add.mode, AddMode::Waiting { .. }) {
+            return;
+        }
+        let AddMode::Waiting { tool, start, end } = std::mem::take(&mut self.add.mode) else {
+            unreachable!()
+        };
+        self.write_addition((tool, start, end), cx);
+        if !matches!(self.add.mode, AddMode::Waiting { .. }) {
+            cx.notify();
+        }
+    }
+
     /// The preview's answers for an addition from preview `generation`: the
     /// parent's space, and the layer the pending selection waits for.
     pub(crate) fn take_add_answers(
         &mut self,
         generation: u64,
-        space: Option<(String, Option<[f64; 6]>)>,
+        space: Option<(String, ChildrenSpace)>,
         added: Option<(String, Option<String>)>,
     ) {
-        if space.is_some() {
-            self.add.space = space;
-        }
+        self.add.take_space(generation, space);
         let Some((pending, _)) = &self.add.pending else {
             return;
         };
@@ -1569,6 +1766,26 @@ impl EditorView {
 }
 
 impl AddState {
+    /// The space a frame of preview `generation` reported, if any: not one
+    /// from the code before the reload. A frame from the one asked for on
+    /// that comes without the asked group's space was replaced by a request
+    /// that did not ask for it (a lookup went stale meanwhile), so it is
+    /// asked for again.
+    fn take_space(&mut self, generation: u64, space: Option<(String, ChildrenSpace)>) {
+        if generation < self.space_from {
+            return;
+        }
+        if space.is_some() {
+            self.space = space;
+        }
+        if let Some((parent, at)) = &self.asked
+            && generation >= *at
+            && self.space.as_ref().is_none_or(|(id, _)| id != parent)
+        {
+            self.asked = None;
+        }
+    }
+
     /// The groups read for a lookup: the parent's space is asked for again,
     /// as the parent may be another group now.
     fn set_facts(&mut self, facts: ParentFacts) {
@@ -1616,7 +1833,9 @@ impl AddState {
     fn reload_applied(&mut self, sequence: u64, from: u64) {
         self.facts = None;
         self.wanted = None;
+        self.reloads = self.reloads.wrapping_add(1);
         self.space = None;
+        self.space_from = from;
         self.asked = None;
         if let Some((pending, after)) = &mut self.pending
             && sequence >= *after
@@ -1776,8 +1995,8 @@ mod tests {
         true
     }
 
-    fn none_shared(_: &LayerSource) -> Result<bool, String> {
-        Ok(false)
+    fn none_shared(_: &LayerSource) -> Result<Sharing, String> {
+        Ok(Sharing::default())
     }
 
     /// `pick_parent` under `scope` with every group accepting, shared when
@@ -1788,7 +2007,11 @@ mod tests {
         shared_lines: &[u32],
     ) -> Result<AddParent, String> {
         pick_parent(Some(report), &scope, every_group, |entry| {
-            Ok(shared_lines.contains(&entry.line))
+            let shared = shared_lines.contains(&entry.line);
+            Ok(Sharing {
+                calls: shared,
+                scenes: shared,
+            })
         })
     }
 
@@ -1873,6 +2096,25 @@ mod tests {
     }
 
     #[test]
+    fn a_lookup_without_a_chain_says_why() {
+        assert_eq!(lookup_reason(None), READING);
+        assert_eq!(lookup_reason(Some(&SourceLookup::Pending)), READING);
+        assert_eq!(
+            lookup_reason(Some(&SourceLookup::NotInFrame)),
+            "The selected layer is not in this frame"
+        );
+        assert_eq!(
+            lookup_reason(Some(&SourceLookup::NoPosition)),
+            "The selected layer has no source position"
+        );
+        // Not "Select a group, or a layer inside one, to add into".
+        assert_eq!(
+            lookup_reason(Some(&SourceLookup::Failed("bridge closed".to_owned()))),
+            "Couldn’t read the selected layer’s source: bridge closed"
+        );
+    }
+
+    #[test]
     fn nothing_selected_gives_the_reason() {
         assert_eq!(
             pick_parent(None, &ParentScope::NoControl, every_group, none_shared),
@@ -1903,7 +2145,11 @@ mod tests {
             ],
             vec![(0, 30)],
         )]);
-        assert_eq!(is_shared(Some(&once), &chapters, &group), Ok(false));
+        let shared = |calls, scenes| Ok(Sharing { calls, scenes });
+        assert_eq!(
+            is_shared(Some(&once), &chapters, &group),
+            shared(false, false)
+        );
 
         // Two calls of `PriceTag`, in one scene.
         let twice = index(vec![
@@ -1921,16 +2167,25 @@ mod tests {
                 vec![(30, 60)],
             ),
         ]);
-        assert_eq!(is_shared(Some(&twice), &chapters, &group), Ok(true));
+        assert_eq!(
+            is_shared(Some(&twice), &chapters, &group),
+            shared(true, false)
+        );
         // The scene's own group is above both calls.
-        assert_eq!(is_shared(Some(&twice), &chapters, &scene), Ok(false));
+        assert_eq!(
+            is_shared(Some(&twice), &chapters, &scene),
+            shared(false, false)
+        );
 
         // One chain, showing in two scenes.
         let spanning = index(vec![instance(
             vec![rect, group.clone(), first_call, scene],
             vec![(30, 90)],
         )]);
-        assert_eq!(is_shared(Some(&spanning), &chapters, &group), Ok(true));
+        assert_eq!(
+            is_shared(Some(&spanning), &chapters, &group),
+            shared(false, true)
+        );
 
         // Design 3's notes, as the scope control shows them.
         assert_eq!(
@@ -1992,7 +2247,7 @@ mod tests {
         assert!(this_scene.this_scene);
         assert_eq!(
             add_header(&this_scene, Some("Intro")),
-            "Add to `<Group>` in `<Intro>` · This scene"
+            "Add to <Group> in <Intro> · This scene"
         );
 
         let shared = pick(&report, ParentScope::Chosen(Scope::Shared), &[4]).unwrap();
@@ -2002,6 +2257,62 @@ mod tests {
         assert_eq!(
             pick(&report, ParentScope::Chosen(Scope::ThisScene), &[4, 5]),
             Err("No group in this scene’s own code to add into".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_root_group_spanning_scenes_takes_an_element_written_once() {
+        // A `<Rect>` written once at the root, in the `<Group>` around
+        // `<Scenes>`: no scope control, and the group spans both scenes.
+        let report = report(
+            vec![
+                primitive("Rect", &pos("root", 6), "r"),
+                primitive("Group", &pos("root", 4), "root"),
+            ],
+            vec![],
+        );
+        let spans = |_: &LayerSource| {
+            Ok(Sharing {
+                calls: false,
+                scenes: true,
+            })
+        };
+        let parent =
+            pick_parent(Some(&report), &ParentScope::NoControl, every_group, spans).unwrap();
+        assert_eq!(
+            (parent.layer_id.as_str(), parent.this_scene),
+            ("root", false)
+        );
+        assert_eq!(add_header(&parent, None), "Add to <Group>");
+        // Under "This scene" it is still refused.
+        assert_eq!(
+            pick_parent(
+                Some(&report),
+                &ParentScope::Chosen(Scope::ThisScene),
+                every_group,
+                spans
+            ),
+            Err(NO_PARENT_IN_SCENE.to_owned())
+        );
+
+        // Moved outward past a group other calls draw, into one that spans
+        // scenes: not marked "This scene".
+        let report = in_price_tag();
+        let parent = pick_parent(
+            Some(&report),
+            &ParentScope::NoControl,
+            every_group,
+            |entry| {
+                Ok(Sharing {
+                    calls: entry.line == 4,
+                    scenes: true,
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            (parent.layer_id.as_str(), parent.this_scene),
+            ("scene", false)
         );
     }
 
@@ -2086,13 +2397,13 @@ mod tests {
         };
         assert_eq!(
             add_header(&parent, Some("PriceTag")),
-            "Add to `<Group>` in `<PriceTag>`"
+            "Add to <Group> in <PriceTag>"
         );
-        assert_eq!(add_header(&parent, None), "Add to `<Group>`");
+        assert_eq!(add_header(&parent, None), "Add to <Group>");
         // The armed hint names it the same way.
         assert_eq!(
             parent_label(&parent, Some("PriceTag")),
-            "`<Group>` in `<PriceTag>`"
+            "<Group> in <PriceTag>"
         );
     }
 
@@ -2107,7 +2418,7 @@ mod tests {
         let chosen = ChosenParent {
             at: pos("intro", 5),
             layer_id: "g1".to_owned(),
-            label: "`<Group>`".to_owned(),
+            label: "<Group>".to_owned(),
         };
         assert!(is_chosen(Some(&chosen), &parent));
         assert!(!is_chosen(None, &parent));
@@ -2135,8 +2446,8 @@ mod tests {
                 lookup: ("g".to_owned(), report.clone(), 30),
                 groups: vec![],
             }),
-            wanted: Some(("g".to_owned(), report, 30)),
-            space: Some(("g".to_owned(), Some(IDENTITY))),
+            wanted: Some((("g".to_owned(), report, 30), 0)),
+            space: Some(("g".to_owned(), ChildrenSpace::Map(IDENTITY))),
             pending: Some((
                 PendingSelect {
                     position: pos("intro", 6),
@@ -2279,6 +2590,27 @@ mod tests {
         );
         // Under the selected group itself, every window stays.
         assert_eq!(report_at_parent(&report, 0), report);
+
+        // A source-less window between two windows above the parent (a
+        // `<Scenes>` entry's, say) stays: it is around the parent too.
+        let outer = pos("intro", 2);
+        let report = LayerSourceReport {
+            windows: vec![
+                window(330.0, 390.0, Some(&own)),
+                window(300.0, 420.0, Some(&groups)),
+                window(290.0, 430.0, None),
+                window(0.0, 600.0, Some(&outer)),
+            ],
+            ..report
+        };
+        assert_eq!(
+            report_at_parent(&report, 3).windows,
+            vec![
+                window(300.0, 420.0, Some(&groups)),
+                window(290.0, 430.0, None),
+                window(0.0, 600.0, Some(&outer)),
+            ]
+        );
     }
 
     #[test]
@@ -2436,8 +2768,23 @@ mod tests {
             } => (vec![*x, *y, *width, *height], None),
             NewElement::Circle { x, y, radius } => (vec![*x, *y, *radius], None),
             NewElement::Text { x, y } => (vec![*x, *y], None),
-            NewElement::Image { src, x, y, width } | NewElement::Video { src, x, y, width } => {
-                (vec![*x, *y, *width], Some(src.as_str()))
+            NewElement::Image {
+                src,
+                x,
+                y,
+                width,
+                height,
+            }
+            | NewElement::Video {
+                src,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let mut values = vec![*x, *y, *width];
+                values.extend(*height);
+                (values, Some(src.as_str()))
             }
         };
         (element.kind(), values, src)
@@ -2550,6 +2897,7 @@ mod tests {
                 x: 100.0,
                 y: 200.0,
                 width: 400.0,
+                height: None,
             },
         );
         assert_points(
@@ -2574,6 +2922,7 @@ mod tests {
                 x: 100.0,
                 y: 50.0,
                 width: 300.0,
+                height: None,
             },
         );
         assert_points(
@@ -2589,17 +2938,82 @@ mod tests {
                 x: 100.0,
                 y: 120.0,
                 width: 300.0,
+                height: Some(80.0),
             },
         );
         assert_points(
             &drawn_outline(NewKind::Image, drag, IDENTITY, None, SLOP),
             &box_in_scene(IDENTITY, at(100.0, 120.0), at(400.0, 200.0)),
         );
+        // A click: the 400 × 400 box outlined, both sides written.
+        assert_element(
+            drawn_geometry(NewKind::Video, Some("a.webm"), click, IDENTITY, None, SLOP),
+            NewElement::Video {
+                src: "a.webm".to_owned(),
+                x: 100.0,
+                y: 200.0,
+                width: 400.0,
+                height: Some(400.0),
+            },
+        );
+        assert_points(
+            &drawn_outline(NewKind::Video, click, IDENTITY, None, SLOP),
+            &box_in_scene(IDENTITY, press, at(500.0, 600.0)),
+        );
 
         // No file, nothing to write.
         assert_eq!(
             drawn_geometry(NewKind::Image, None, drag, IDENTITY, None, SLOP),
             None
+        );
+    }
+
+    #[test]
+    fn a_box_in_a_skewed_non_uniformly_scaled_parent() {
+        // Scaled 2 × 3 and skewed: the parent's x axis stays horizontal,
+        // its y axis leans right.
+        let space = [2.0, 0.0, 0.5, 3.0, 10.0, 20.0];
+        let (min, max) = (at(10.0, 20.0), at(60.0, 80.0));
+        let drag = (to_scene(space, min), to_scene(space, max));
+        assert_element(
+            drawn_geometry(NewKind::Rect, None, drag, space, None, SLOP),
+            NewElement::Rect {
+                x: 10.0,
+                y: 20.0,
+                width: 50.0,
+                height: 60.0,
+            },
+        );
+        // The outline is the parallelogram the box draws as.
+        assert_points(
+            &drawn_outline(NewKind::Rect, drag, space, None, SLOP),
+            &box_in_scene(space, min, max),
+        );
+
+        // Skewed on the other axis and mirrored: dragged from the box's
+        // greatest corner to its least.
+        let space = [-1.5, 0.25, 0.0, 0.5, 300.0, 40.0];
+        let drag = (to_scene(space, max), to_scene(space, min));
+        assert_element(
+            drawn_geometry(NewKind::Ellipse, None, drag, space, None, SLOP),
+            NewElement::Ellipse {
+                x: 10.0,
+                y: 20.0,
+                width: 50.0,
+                height: 60.0,
+            },
+        );
+        // A Circle's radius is measured in the parent's units, along the
+        // drag.
+        let edge = at(13.0, 24.0);
+        let circle = (to_scene(space, min), to_scene(space, at(13.0, 24.0)));
+        assert_element(
+            drawn_geometry(NewKind::Circle, None, circle, space, None, SLOP),
+            NewElement::Circle {
+                x: 10.0,
+                y: 20.0,
+                radius: (edge.x - min.x).hypot(edge.y - min.y),
+            },
         );
     }
 
@@ -2673,6 +3087,7 @@ mod tests {
                 x: 100.0,
                 y: 100.0,
                 width: 1.0,
+                height: None,
             },
         );
         let flat = (at(100.0, 100.0), at(180.0, 100.25));
@@ -2790,26 +3205,71 @@ mod tests {
         // Playing: choosing an item pauses, which asks for it.
         assert_eq!(space_reason(None, true), None);
         for playing in [false, true] {
-            assert_eq!(space_reason(Some(Some(IDENTITY)), playing), None);
-            assert_eq!(space_reason(Some(None), playing), Some(TURNED_3D));
-            assert_eq!(
-                space_reason(Some(Some([0.0; 6])), playing),
-                Some(SCALED_TO_ZERO)
-            );
+            let reason = |space| space_reason(Some(space), playing);
+            assert_eq!(reason(ChildrenSpace::Map(IDENTITY)), None);
+            assert_eq!(reason(ChildrenSpace::Turned), Some(TURNED_3D));
+            assert_eq!(reason(ChildrenSpace::Map([0.0; 6])), Some(SCALED_TO_ZERO));
+            // Neither reads as a group turned in 3D any more.
+            assert_eq!(reason(ChildrenSpace::Absent), Some(NOT_IN_FRAME));
+            assert_eq!(reason(ChildrenSpace::Failed), Some(FRAME_FAILED));
         }
+    }
+
+    #[test]
+    fn an_answer_without_the_asked_space_asks_again() {
+        let asked = |generation| AddState {
+            space: None,
+            asked: Some(("g".to_owned(), generation)),
+            ..waiting_state()
+        };
+        let space = |id: &str| Some((id.to_owned(), ChildrenSpace::Map(IDENTITY)));
+
+        // An older frame's answer, or none: still on its way.
+        let mut state = asked(7);
+        state.take_space(6, None);
+        assert!(state.asked.is_some());
+        // The asked frame was replaced by one that did not ask (the same
+        // layer picked again while its lookup was stale).
+        state.take_space(8, None);
+        assert!(state.asked.is_none());
+        assert!(space_request_due(Some("g"), false, None));
+
+        // Another group's space: the asked one is still missing.
+        let mut state = asked(7);
+        state.take_space(7, space("h"));
+        assert!(state.asked.is_none());
+
+        // Answered, or failed to draw: reported, so nothing loops.
+        for answer in [space("g"), Some(("g".to_owned(), ChildrenSpace::Failed))] {
+            let mut state = asked(7);
+            state.take_space(7, answer);
+            assert!(state.space.is_some() && state.asked.is_some());
+        }
+    }
+
+    #[test]
+    fn a_space_from_before_the_reload_is_dropped() {
+        let mut state = waiting_state();
+        state.reload_applied(4, 21);
+        state.take_space(20, Some(("g".to_owned(), ChildrenSpace::Map(IDENTITY))));
+        assert!(state.space.is_none());
+        state.take_space(21, Some(("g".to_owned(), ChildrenSpace::Turned)));
+        assert_eq!(state.space, Some(("g".to_owned(), ChildrenSpace::Turned)));
+        // A read started before the reload names the reloads before it.
+        assert_eq!(state.reloads, 1);
     }
 
     #[test]
     fn a_reload_or_new_facts_ask_for_the_space_again() {
         let mut state = AddState {
-            asked: Some("g".to_owned()),
+            asked: Some(("g".to_owned(), 7)),
             ..waiting_state()
         };
         state.reload_applied(3, 20);
         assert!(state.asked.is_none());
 
         let mut landed = AddState {
-            asked: Some("g".to_owned()),
+            asked: Some(("g".to_owned(), 7)),
             ..waiting_state()
         };
         landed.set_facts(ParentFacts {
@@ -2862,10 +3322,13 @@ mod tests {
 
     #[test]
     fn add_mode_steps() {
-        let tool = |kind, src: Option<&str>, aspect| AddTool {
+        // Measured once it has an aspect (see the waiting cases below for
+        // a file measured without one).
+        let tool = |kind, src: Option<&str>, aspect: Option<f64>| AddTool {
             kind,
             src: src.map(str::to_owned),
             aspect,
+            measured: aspect.is_some(),
         };
         let step = |mode, event| add_step(mode, event);
 
@@ -2941,11 +3404,42 @@ mod tests {
             )
         );
 
+        // A release before the file is measured waits for it; measured
+        // without an aspect, it no longer waits.
+        let unmeasured = tool(NewKind::Image, Some("a.svg"), None);
+        assert!(unmeasured.measuring());
+        assert!(!tool(NewKind::Rect, None, None).measuring());
+        let waiting = |tool| AddMode::Waiting {
+            tool,
+            start: press,
+            end,
+        };
+        let (after, written) = step(waiting(unmeasured.clone()), measured("a.svg", None));
+        assert_eq!(written, None);
+        let AddMode::Waiting {
+            tool: measured_tool,
+            ..
+        } = &after
+        else {
+            panic!("{after:?}")
+        };
+        assert!(measured_tool.measured && !measured_tool.measuring());
+        assert_eq!(measured_tool.aspect, None);
+        // Nothing else moves it on but choosing again.
+        for event in [AddEvent::Press(press), AddEvent::Release(end)] {
+            assert_eq!(step(after.clone(), event), (after.clone(), None));
+        }
+        assert_eq!(
+            step(after.clone(), AddEvent::Chosen(NewKind::Rect)).0,
+            AddMode::Armed(tool(NewKind::Rect, None, None))
+        );
+
         for mode in [
             AddMode::Off,
             AddMode::Picking(NewKind::Image),
             armed,
             drawing(now, None),
+            waiting(unmeasured),
         ] {
             for event in [AddEvent::Escape, AddEvent::Ended] {
                 assert_eq!(step(mode.clone(), event), (AddMode::Off, None));

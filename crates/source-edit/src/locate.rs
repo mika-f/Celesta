@@ -1,6 +1,6 @@
 use line_index::{LineIndex, TextSize, WideEncoding, WideLineCol};
 use oxc_allocator::Allocator;
-use oxc_ast::ast::JSXElement;
+use oxc_ast::ast::{JSXElement, Program};
 use oxc_ast_visit::Visit;
 use oxc_span::GetSpan;
 
@@ -23,14 +23,23 @@ pub struct ElementRef {
 /// Finds the JSX element whose `<` sits at the 1-based `line`/`column` that
 /// esbuild's `jsxDEV` reports (columns count UTF-16 code units).
 pub fn element_at(text: &str, line: u32, column: u32) -> Option<ElementRef> {
-    let offset = to_offset(text, line, column)?;
     let alloc = Allocator::default();
-    let program = parse(text, &alloc);
+    element_in(text, &parse(text, &alloc), line, column)
+}
+
+/// [`element_at`] in `program`, parsed from `text`.
+pub(crate) fn element_in(
+    text: &str,
+    program: &Program<'_>,
+    line: u32,
+    column: u32,
+) -> Option<ElementRef> {
+    let offset = to_offset(text, line, column)?;
     let mut finder = Finder {
         offset,
         found: None,
     };
-    finder.visit_program(&program);
+    finder.visit_program(program);
     finder.found
 }
 

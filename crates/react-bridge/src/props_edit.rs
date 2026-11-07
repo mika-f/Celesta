@@ -160,6 +160,38 @@ pub fn replace_file(file: &Path, text: &str) -> io::Result<()> {
 /// into `<project_root>/assets/` first. Always `/`-separated, starting with
 /// `./` or `../`.
 pub fn import_path(project_root: &Path, props_dir: &Path, chosen: &Path) -> io::Result<String> {
+    stage_import(project_root, props_dir, chosen)?.publish()
+}
+
+/// [`import_path`] in two steps, so an import can be dropped after its
+/// copy: [`stage_import`] copies an outside file beside `assets/`'s files
+/// under a hidden temporary name, and [`StagedImport::publish`] names it.
+/// Dropping it unpublished removes only that temporary file: nothing in
+/// `assets/` is ever deleted, so a file another import reused stays.
+pub struct StagedImport {
+    props_dir: PathBuf,
+    step: ImportStep,
+}
+
+enum ImportStep {
+    /// A file in the project, or an identical copy already in `assets/`.
+    Ready(PathBuf),
+    /// The copy, not yet named.
+    Copy {
+        staged: StagedFile,
+        assets: PathBuf,
+        name: AssetName,
+        length: u64,
+    },
+}
+
+/// Copies `chosen` beside `assets/` when it is outside the project and no
+/// copy of the same bytes is there yet (see [`StagedImport`]).
+pub fn stage_import(
+    project_root: &Path,
+    props_dir: &Path,
+    chosen: &Path,
+) -> io::Result<StagedImport> {
     // Resolve `..` segments and symlinks first, so the three paths share one
     // frame of reference whichever way each of them was spelled.
     let project_root = resolve(project_root)?;
@@ -173,13 +205,62 @@ pub fn import_path(project_root: &Path, props_dir: &Path, chosen: &Path) -> io::
         ));
     }
 
-    let target = if chosen.strip_prefix(&project_root).is_ok() {
-        chosen
+    let step = if chosen.strip_prefix(&project_root).is_ok() {
+        ImportStep::Ready(chosen)
     } else {
-        copy_into_assets(&project_root.join("assets"), &chosen)?
+        stage_into_assets(&project_root.join("assets"), &chosen)?
     };
+    Ok(StagedImport { props_dir, step })
+}
 
-    relative_path(&props_dir, &target)
+impl StagedImport {
+    /// Names the copy in `assets/` and returns the value to store, as
+    /// [`import_path`] does.
+    pub fn publish(self) -> io::Result<String> {
+        let target = match self.step {
+            ImportStep::Ready(target) => target,
+            ImportStep::Copy {
+                staged,
+                assets,
+                name,
+                length,
+            } => publish_into_assets(staged, &assets, &name, length)?,
+        };
+        relative_path(&self.props_dir, &target)
+    }
+}
+
+/// The names a copy of a file may take in `assets/`: `name.ext`, then
+/// `name-2.ext`, `name-3.ext`, ...
+struct AssetName {
+    stem: String,
+    extension: Option<String>,
+}
+
+impl AssetName {
+    fn of(chosen: &Path) -> io::Result<Self> {
+        let name_error = || io::Error::new(io::ErrorKind::InvalidInput, "the file has no name");
+        Ok(Self {
+            stem: chosen
+                .file_stem()
+                .ok_or_else(name_error)?
+                .to_string_lossy()
+                .into_owned(),
+            extension: chosen
+                .extension()
+                .map(|extension| extension.to_string_lossy().into_owned()),
+        })
+    }
+
+    fn numbered(&self, number: u32) -> String {
+        let (stem, extension) = (&self.stem, &self.extension);
+        match (number, extension) {
+            (1, Some(extension)) => format!("{stem}.{extension}"),
+            (1, None) => stem.clone(),
+            (number, Some(extension)) => format!("{stem}-{number}.{extension}"),
+            (number, None) => format!("{stem}-{number}"),
+        }
+    }
 }
 
 /// `path` made absolute with `..` segments and symlinks resolved. A folder that
@@ -206,54 +287,58 @@ fn resolve(path: &Path) -> io::Result<PathBuf> {
     Ok(absolute)
 }
 
-/// Copies `chosen` into `assets` and returns the copy's path. A file of the
-/// same name with the same bytes is reused; one with different bytes makes the
-/// copy take the next free `name-2.ext`, `name-3.ext`, ... name.
-///
-/// The bytes are streamed, never held whole: the file may be a video of
-/// several gigabytes. A copy is written beside its name and renamed into
-/// place, so a half-written copy never shows and an existing file is never
-/// replaced.
-fn copy_into_assets(assets: &Path, chosen: &Path) -> io::Result<PathBuf> {
-    let name_error = || io::Error::new(io::ErrorKind::InvalidInput, "the file has no name");
-    let stem = chosen.file_stem().ok_or_else(name_error)?.to_string_lossy();
-    let extension = chosen
-        .extension()
-        .map(|extension| extension.to_string_lossy());
+/// The step [`stage_import`] takes for `chosen`, outside the project: an
+/// existing copy in `assets` with the same bytes is reused, else `chosen`
+/// is copied beside them. The bytes are streamed, never held whole: the
+/// file may be a video of several gigabytes.
+fn stage_into_assets(assets: &Path, chosen: &Path) -> io::Result<ImportStep> {
+    let name = AssetName::of(chosen)?;
     let length = fs::metadata(chosen)?.len();
-
-    fs::create_dir_all(assets)?;
     for number in 1_u32.. {
-        let name = match (number, &extension) {
-            (1, Some(extension)) => format!("{stem}.{extension}"),
-            (1, None) => stem.to_string(),
-            (number, Some(extension)) => format!("{stem}-{number}.{extension}"),
-            (number, None) => format!("{stem}-{number}"),
-        };
-        let candidate = assets.join(name);
-
+        let candidate = assets.join(name.numbered(number));
         if candidate.symlink_metadata().is_err() {
-            match copy_new(chosen, &candidate) {
-                Ok(()) => return Ok(candidate),
-                // Another writer took the name meanwhile; compare with it.
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error),
-            }
+            break;
         }
         if same_contents(chosen, length, &candidate).unwrap_or(false) {
+            return Ok(ImportStep::Ready(candidate));
+        }
+    }
+    let mut staged = StagedFile::beside(&assets.join(name.numbered(1)), ".tmp")?;
+    let handle = staged.as_file_mut();
+    io::copy(&mut fs::File::open(chosen)?, handle)?;
+    handle.sync_all()?;
+    Ok(ImportStep::Copy {
+        staged,
+        assets: assets.to_path_buf(),
+        name,
+        length,
+    })
+}
+
+/// Renames `staged` to the first of `name`'s names that is free, or drops
+/// it for one already holding the same bytes (another import may have
+/// copied the file meanwhile); one with different bytes makes it take the
+/// next name. An existing file is never replaced.
+fn publish_into_assets(
+    mut staged: StagedFile,
+    assets: &Path,
+    name: &AssetName,
+    length: u64,
+) -> io::Result<PathBuf> {
+    for number in 1_u32.. {
+        let candidate = assets.join(name.numbered(number));
+        if candidate.symlink_metadata().is_err() {
+            match staged.publish_new(&candidate)? {
+                Ok(()) => return Ok(candidate),
+                // Another writer took the name meanwhile; compare with it.
+                Err(back) => staged = back,
+            }
+        }
+        if same_contents(staged.path(), length, &candidate).unwrap_or(false) {
             return Ok(candidate);
         }
     }
     unreachable!("the candidate numbers are unbounded")
-}
-
-/// Copies `source` to `destination`, which must not exist yet.
-fn copy_new(source: &Path, destination: &Path) -> io::Result<()> {
-    let mut staged = StagedFile::beside(destination, ".tmp")?;
-    let handle = staged.as_file_mut();
-    io::copy(&mut fs::File::open(source)?, handle)?;
-    handle.sync_all()?;
-    staged.publish(destination, false)
 }
 
 /// Whether `existing` holds the same bytes as `chosen`, whose length is
@@ -520,6 +605,47 @@ mod tests {
             "./assets/c.png"
         );
         assert!(!root.join("assets/c-2.png").exists());
+    }
+
+    #[test]
+    fn a_staged_import_dropped_leaves_assets_as_they_were() {
+        let (_scratch, root, other) = project("import-dropped");
+        let chosen = other.join("c.png");
+        write(&chosen, "c");
+        drop(stage_import(&root, &root, &chosen).unwrap());
+        // Neither the copy nor its temporary file is left.
+        let left: Vec<_> = fs::read_dir(root.join("assets"))
+            .map(|entries| entries.map(|entry| entry.unwrap().file_name()).collect())
+            .unwrap_or_default();
+        assert!(left.is_empty(), "{left:?}");
+
+        // A copy another import made meanwhile stays when this one drops.
+        let first = stage_import(&root, &root, &chosen).unwrap();
+        assert_eq!(
+            import_path(&root, &root, &chosen).unwrap(),
+            "./assets/c.png"
+        );
+        drop(first);
+        assert_eq!(fs::read(root.join("assets/c.png")).unwrap(), b"c");
+    }
+
+    #[test]
+    fn two_staged_imports_of_one_file_share_its_copy() {
+        let (_scratch, root, other) = project("import-shared");
+        let chosen = other.join("c.png");
+        write(&chosen, "c");
+        let first = stage_import(&root, &root, &chosen).unwrap();
+        let second = stage_import(&root, &root, &chosen).unwrap();
+        assert_eq!(first.publish().unwrap(), "./assets/c.png");
+        assert_eq!(second.publish().unwrap(), "./assets/c.png");
+        assert!(!root.join("assets/c-2.png").exists());
+
+        // A name taken by other bytes meanwhile: the next one.
+        write(&chosen, "d");
+        let staged = stage_import(&root, &root, &chosen).unwrap();
+        write(&root.join("assets/c-2.png"), "e");
+        assert_eq!(staged.publish().unwrap(), "./assets/c-3.png");
+        assert_eq!(fs::read(root.join("assets/c-3.png")).unwrap(), b"d");
     }
 
     #[test]

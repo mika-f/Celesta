@@ -226,6 +226,8 @@ impl EditorView {
         let shows_tools = shows_tool_row(self.is_react_preview(), self.interactive);
         // The element being drawn, and whether a press draws one.
         let add_outline = self.add_outline();
+        // Not while a release waits to be written: a press then draws
+        // nothing (`press_add` takes only an armed mode).
         let adding = matches!(self.add.mode, AddMode::Armed(_) | AddMode::Drawing { .. });
         // Every region of the selected layer in the shown frame; none when
         // the frame does not draw it. The Size tool's handles sit on the box
@@ -312,17 +314,22 @@ impl EditorView {
             }
             _ => None,
         };
-        let notice = match drag_state {
-            DragState::NoFrame => Some(NO_AFFINE_FRAME.to_owned()),
-            _ => None,
-        }
-        .or_else(|| {
-            self.element_edit
-                .error(self.selected_layer.as_deref())
-                .map(str::to_owned)
-        })
-        .or_else(|| self.inline_notice.clone())
-        .or_else(|| self.add.notice.clone());
+        // Why the last addition was not written comes first: it answers the
+        // release just made, and the next press clears it.
+        let notice = self
+            .add
+            .notice
+            .clone()
+            .or_else(|| match drag_state {
+                DragState::NoFrame => Some(NO_AFFINE_FRAME.to_owned()),
+                _ => None,
+            })
+            .or_else(|| {
+                self.element_edit
+                    .error(self.selected_layer.as_deref())
+                    .map(str::to_owned)
+            })
+            .or_else(|| self.inline_notice.clone());
         // Placed by the viewer's last painted bounds, relative to them.
         let last_bounds = self.viewer_bounds.get();
         // Why a double-click did not edit the text, beside it.
@@ -1060,6 +1067,17 @@ impl EditorView {
                 format!("Adding {}", self.adding_name(*kind)),
                 Some(format!("{to}Choose a file…")),
             ),
+            AddMode::Waiting { tool, .. } => {
+                let what = if tool.measuring() {
+                    "Reading the file…"
+                } else {
+                    "Reading the source…"
+                };
+                (
+                    format!("Adding {}", self.adding_name(tool.kind)),
+                    Some(format!("{to}{what} · Esc cancels")),
+                )
+            }
             AddMode::Armed(tool) | AddMode::Drawing { tool, .. } => {
                 let how = match tool.kind {
                     NewKind::Circle => "Drag from the center · Esc cancels",
@@ -1130,18 +1148,24 @@ impl EditorView {
                 }
                 popup
             });
+        // The hint gives way first in a narrow row, cut with an ellipsis,
+        // so the button and the tools after it keep their size.
         div()
             .flex()
-            .flex_none()
+            .flex_shrink(1.0)
+            .min_w_0()
             .items_center()
             .gap_2()
-            .child(button)
+            .child(div().flex_none().child(button))
             .when_some(hint, |group, hint| {
                 group.child(
                     div()
+                        .min_w_0()
+                        .overflow_hidden()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .whitespace_nowrap()
+                        .text_ellipsis()
                         .child(hint),
                 )
             })

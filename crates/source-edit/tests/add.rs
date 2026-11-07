@@ -1,6 +1,7 @@
 use celesta_source_edit::{
-    AddLock, EditValue, ElementRef, ImportLock, NewComponent, NewElement, NewKind, Timing,
-    accepts_children, add_child, add_component, add_lock, add_locks, apply, element_at, parses,
+    AddLock, EditValue, ElementRef, ImportLock, NewComponent, NewElement, NewKind, ParentReading,
+    Timing, accepts_children, add_child, add_component, add_lock, add_locks, apply, element_at,
+    enclosing_component, parses, read_parent,
 };
 
 /// The element whose `<` is the first `needle` in `text` (ASCII only).
@@ -168,6 +169,7 @@ fn writes_each_kind_s_literals() {
             x: 1.0,
             y: 2.0,
             width: 400.0,
+            height: None,
         }),
         "<Image src=\"assets/a.png\" x={1} y={2} width={400} />"
     );
@@ -177,8 +179,20 @@ fn writes_each_kind_s_literals() {
             x: 0.0,
             y: 0.0,
             width: 400.0,
+            height: None,
         }),
         "<Video src=\"assets/clip.mp4\" x={0} y={0} width={400} />"
+    );
+    // A file of unknown aspect gets the box's height too.
+    assert_eq!(
+        written(NewElement::Image {
+            src: "assets/a.svg".to_string(),
+            x: 1.0,
+            y: 2.0,
+            width: 400.0,
+            height: Some(300.0),
+        }),
+        "<Image src=\"assets/a.svg\" x={1} y={2} width={400} height={300} />"
     );
     // A path the attribute string can't hold goes in a container.
     assert_eq!(
@@ -187,6 +201,7 @@ fn writes_each_kind_s_literals() {
             x: 0.0,
             y: 0.0,
             width: 400.0,
+            height: None,
         }),
         "<Image src={\"assets/a\\\"b.png\"} x={0} y={0} width={400} />"
     );
@@ -629,4 +644,178 @@ fn reports_the_new_element_s_position() {
         position(&after, "<Rect x={120}"),
         "{after}"
     );
+}
+
+#[test]
+fn opening_a_self_closing_parent_keeps_its_comment() {
+    let text = format!(
+        "{IMPORTS}const a = (\n  <Group>\n    <Group x={{10}} /* empty for now */ />\n  </Group>\n);\n"
+    );
+    assert_eq!(
+        add(&text, "<Group x", &rect(), None),
+        format!(
+            "{IMPORTS}const a = (\n  <Group>\n    <Group x={{10}} /* empty for now */>\n      {RECT}\n    </Group>\n  </Group>\n);\n"
+        )
+    );
+
+    // A line comment before a `/>` on its own line: the `>` stays there.
+    let text = format!(
+        "{IMPORTS}const a = (\n  <Group>\n    <Group\n      x={{10}} // empty\n    />\n  </Group>\n);\n"
+    );
+    assert_eq!(
+        add(&text, "<Group\n", &rect(), None),
+        format!(
+            "{IMPORTS}const a = (\n  <Group>\n    <Group\n      x={{10}} // empty\n    >\n      {RECT}\n    </Group>\n  </Group>\n);\n"
+        )
+    );
+}
+
+#[test]
+fn a_one_line_parent_s_closing_tag_gets_its_own_line() {
+    let text = format!("{IMPORTS}const a = (\n  <Group><Rect />   </Group>\n);\n");
+    assert_eq!(
+        add(&text, "<Group", &rect(), None),
+        format!("{IMPORTS}const a = (\n  <Group><Rect />\n    {RECT}\n  </Group>\n);\n")
+    );
+}
+
+#[test]
+fn a_crlf_file_stays_crlf() {
+    let text = format!("{IMPORTS}const a = (\n  <Group>\n    <Rect />\n  </Group>\n);\n")
+        .replace('\n', "\r\n");
+    let after = add(&text, "<Group", &rect(), Some(&TIMING));
+    assert_eq!(
+        after,
+        format!(
+            "{IMPORTS}const a = (\n  <Group>\n    <Rect />\n    <Sequence from={{45}} durationInFrames={{75}}>\n      {RECT}\n    </Sequence>\n  </Group>\n);\n"
+        )
+        .replace('\n', "\r\n")
+    );
+    let added = add_child(&text, &element(&text, "<Group"), &rect(), Some(&TIMING)).unwrap();
+    assert_eq!(
+        (added.line, added.column),
+        position(&after, "<Rect x={120}")
+    );
+
+    // Opening a self-closing parent.
+    let text = format!("{IMPORTS}const a = (\n  <Group>\n    <Group />\n  </Group>\n);\n")
+        .replace('\n', "\r\n");
+    assert_eq!(
+        add(&text, "<Group />", &rect(), None),
+        format!(
+            "{IMPORTS}const a = (\n  <Group>\n    <Group>\n      {RECT}\n    </Group>\n  </Group>\n);\n"
+        )
+        .replace('\n', "\r\n")
+    );
+}
+
+#[test]
+fn both_import_lines_new_at_once() {
+    let text = "import React from 'react';\n\nconst a = (\n  <G>\n  </G>\n);\n";
+    let ellipse = NewElement::Ellipse {
+        x: 0.0,
+        y: 0.0,
+        width: 10.0,
+        height: 10.0,
+    };
+    let added = add_child(text, &element(text, "<G>"), &ellipse, Some(&TIMING)).unwrap();
+    let after = apply(text, &added.edits).unwrap();
+    assert!(parses(&after), "{after}");
+    assert!(
+        after.starts_with(
+            "import React from 'react';\nimport { Sequence } from '@celesta.studio/react';\nimport { Ellipse } from '@celesta.studio/shapes';\n"
+        ),
+        "{after}"
+    );
+    assert_eq!(
+        (added.line, added.column),
+        position(&after, "<Ellipse"),
+        "{after}"
+    );
+}
+
+#[test]
+fn only_a_component_s_parameters_are_props() {
+    // Not regions: a component's own parameter, however it is read, and
+    // in an anonymous default export or through `memo`.
+    for text in [
+        "const Box = (props) => <Group>{props['children']}</Group>;\n",
+        "const Box = (props) => <Group>{props?.children}</Group>;\n",
+        "export default ({ children }) => <Group>{children}</Group>;\n",
+        "export default function ({ children }) {\n  return <Group>{children}</Group>;\n}\n",
+        "const Box = memo(({ children }) => <Group>{children}</Group>);\n",
+        // Named after the binding, not the function's own name.
+        "const Card = function card({ children }) {\n  return <Group>{children}</Group>;\n};\n",
+        // A lowercase function exported as the default by its name.
+        "function box({ children }) {\n  return <Group>{children}</Group>;\n}\nexport default box;\n",
+        "const box = ({ children }) => <Group>{children}</Group>;\nexport { box as default };\n",
+        // Read inside a callback, it is still the component's.
+        "const Box = ({ children, items }) => (\n  <Group>\n    {items.map(() => <Group>{children}</Group>)}\n  </Group>\n);\n",
+    ] {
+        let text = format!("{IMPORTS}{text}");
+        let parent = text.rfind("<Group>{").unwrap();
+        let parent = element_at_offset(&text, parent);
+        assert!(!accepts_children(&text, &parent), "{text}");
+    }
+
+    // Regions: a callback's or a helper's parameter, a local shadowing a
+    // prop, and a lowercase function's parameter.
+    for text in [
+        "const Box = ({ items }) => (\n  <Group>\n    {items.map((item) => <Group>{item}</Group>)}\n  </Group>\n);\n",
+        "function row(cells) {\n  return <Group>{cells}</Group>;\n}\n",
+        "const Box = ({ label }) => {\n  {\n    const label = <Rect />;\n    return <Group>{label}</Group>;\n  }\n};\n",
+        "const Box = ({ children }) => {\n  const render = (children) => <Group>{children}</Group>;\n  return render(children);\n};\n",
+        // A component's second parameter is not a prop.
+        "const Box = forwardRef((props, ref) => <Group>{ref}</Group>);\n",
+        "function Box(props, context) {\n  return <Group>{context}</Group>;\n}\n",
+        // Exported under another name than the default.
+        "function box({ children }) {\n  return <Group>{children}</Group>;\n}\nexport { box };\n",
+    ] {
+        let text = format!("{IMPORTS}{text}");
+        let parent = text.rfind("<Group>{").unwrap();
+        let parent = element_at_offset(&text, parent);
+        assert!(accepts_children(&text, &parent), "{text}");
+        add_child(&text, &parent, &rect(), None).unwrap();
+    }
+}
+
+/// The element whose `<` is at byte `offset` of `text` (ASCII only).
+fn element_at_offset(text: &str, offset: usize) -> ElementRef {
+    let before = &text[..offset];
+    let line = before.matches('\n').count() as u32 + 1;
+    let column = (offset - before.rfind('\n').map_or(0, |i| i + 1)) as u32 + 1;
+    element_at(text, line, column).unwrap()
+}
+
+#[test]
+fn read_parent_reads_what_the_separate_calls_do() {
+    let text = format!(
+        "{IMPORTS}const Card = () => (\n  <Group>\n    <Rect />\n  </Group>\n);\nconst Box = ({{ children }}) => <Group>{{children}}</Group>;\n"
+    );
+    let kinds = [NewKind::Rect, NewKind::Ellipse];
+    for needle in ["<Group>\n", "<Group>{"] {
+        let (line, column) = position(&text, needle);
+        let parent = element(&text, needle);
+        for wrapped in [false, true] {
+            assert_eq!(
+                read_parent(&text, line, column, &kinds, wrapped),
+                Some(ParentReading {
+                    element: parent,
+                    component: enclosing_component(&text, &parent),
+                    locks: add_locks(&text, &parent, &kinds, wrapped),
+                }),
+                "{needle}"
+            );
+        }
+    }
+    let (line, column) = position(&text, "<Group>\n");
+    assert_eq!(
+        read_parent(&text, line, column, &kinds, false).map(|read| read.component),
+        Some(Some("Card".to_string()))
+    );
+    // No element there.
+    assert_eq!(read_parent(&text, 1, 2, &kinds, false), None);
+    // A text that does not parse.
+    let broken = format!("{text}const b = <Rect;\n");
+    assert_eq!(read_parent(&broken, line, column, &kinds, false), None);
 }

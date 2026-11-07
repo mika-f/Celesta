@@ -28,15 +28,20 @@ pub struct Parameter {
 /// when the element is in none (an anonymous function, or a lowercase name
 /// JSX reads as an intrinsic element) or the text does not parse.
 pub fn enclosing_component(text: &str, element: &ElementRef) -> Option<String> {
-    with_program(text, |program| {
-        let mut gather = Gather::new(element.start, PropPath::Children);
-        gather.visit_program(program);
-        if !gather.found {
-            return None;
-        }
-        gather.scopes.component().map(str::to_string)
-    })
-    .flatten()
+    with_program(text, |program| component_in(program, element)).flatten()
+}
+
+/// [`enclosing_component`] in a program that parsed without error.
+pub(crate) fn component_in(
+    program: &oxc_ast::ast::Program<'_>,
+    element: &ElementRef,
+) -> Option<String> {
+    let mut gather = Gather::new(element.start, PropPath::Children);
+    gather.visit_program(program);
+    if !gather.found {
+        return None;
+    }
+    gather.scopes.component().map(str::to_string)
 }
 
 /// The parameter of an enclosing component that `prop` on `element` reads:

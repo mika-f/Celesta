@@ -70,6 +70,7 @@ fn a_plugin_component_is_drawn_as_its_kind_and_written_with_its_import() {
         x: 40.0,
         y: 60.0,
         width: 320.0,
+        height: None,
     };
     let dir = scratch("component");
     let file = dir.join("scene.tsx");
@@ -145,6 +146,7 @@ fn model_components_draw_as_images_and_check_the_file() {
         x: 10.0,
         y: 20.0,
         width: 960.0,
+        height: None,
     };
     assert_eq!(
         model.element(&drawn).attributes,
@@ -280,6 +282,52 @@ fn an_aliased_group_is_added_to() {
         ),
         Err("The source changed while editing".to_owned())
     );
+}
+
+/// A group entry of a lookup's chain, at `line`:3 of `file`.
+fn group_at(file: &Path, line: u32, layer_id: &str) -> LayerSource {
+    LayerSource {
+        name: "Group".to_owned(),
+        file: file.to_path_buf(),
+        line,
+        column: 3,
+        kind: ElementKind::Primitive,
+        layer_id: Some(layer_id.to_owned()),
+    }
+}
+
+#[test]
+fn parent_facts_skips_the_groups_it_cannot_add_to() {
+    let scene = PathBuf::from("/project/intro.tsx");
+    let outside = PathBuf::from("/elsewhere/intro.tsx");
+    let unreadable = PathBuf::from("/project/gone.tsx");
+    let props = PathBuf::from("/project/box.tsx");
+    let broken = PathBuf::from("/project/broken.tsx");
+    // A group whose only child is its component's `children`.
+    let boxed = "import { Group } from '@celesta.studio/react';\n\nexport const Box = ({ children }) => (\n  <Group>{children}</Group>\n);\n";
+    let read = |path: &Path| match path.to_str()? {
+        "/project/intro.tsx" | "/elsewhere/intro.tsx" => Some(SCENE.to_owned()),
+        "/project/box.tsx" => Some(boxed.to_owned()),
+        "/project/broken.tsx" => Some(format!("{SCENE}const b = <Rect;\n")),
+        _ => None,
+    };
+    let report = LayerSourceReport {
+        chain: vec![
+            group_at(&props, 4, "box"),
+            group_at(&unreadable, 4, "gone"),
+            group_at(&outside, 4, "outside"),
+            group_at(&broken, 4, "broken"),
+            // No element at this position.
+            group_at(&scene, 2, "nothing"),
+            group_at(&scene, 4, "scene"),
+        ],
+        ..lookup_at(&at(&props, 4, 3))
+    };
+    let inside = |file: &Path| file.starts_with("/project");
+    let facts = parent_facts(read, inside, &report, &[], 600, 0);
+    let ats: Vec<&SourcePos> = facts.iter().map(|group| &group.at).collect();
+    assert_eq!(ats, [&at(&scene, 4, 3)]);
+    assert_eq!(facts[0].component.as_deref(), Some("Intro"));
 }
 
 #[test]

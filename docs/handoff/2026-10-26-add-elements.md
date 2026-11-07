@@ -174,6 +174,9 @@ of the Size handles and property sections); `<Video width height>` in
 
 ## Known gaps
 
+Each gap below was fixed, or kept with its reason, in
+[`2026-11-07-add-elements-gaps.md`](2026-11-07-add-elements-gaps.md) (#567).
+
 - An empty `<Group />` draws no region and is in no chain, so it can't be
   selected or picked as a parent; opening a self-closing parent is built and
   tested in `source-edit` but unreachable from the canvas.
