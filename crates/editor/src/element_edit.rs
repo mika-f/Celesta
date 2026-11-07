@@ -380,7 +380,9 @@ pub(crate) struct Resolved {
 }
 
 /// What the background job reads of the element's nearest window, beside
-/// its targets: see the fields of [`Resolved`] of the same names.
+/// its targets. [`ElementEdit::finish_with_window`] keeps `targets` as
+/// [`Resolved::window_targets`], `wrap_lock` and `import_lock` as the
+/// fields of those names, and `wrapped` as [`Resolved::wrapped_window`].
 #[derive(Debug, Default)]
 pub(crate) struct WindowRead {
     pub(crate) targets: Option<Result<WindowTargets, String>>,

@@ -203,6 +203,12 @@ fn a_list_knows_the_names_it_is_exported_under() {
         exports(&format!("export default ({list}) satisfies object;\n")),
         [["default"]]
     );
+    // A nested `const` of the exported name is another binding.
+    let found = lists(&imported(&format!(
+        "export const SCENES = {list};\nfunction f() {{\n  const SCENES = {list};\n  return SCENES;\n}}\n"
+    )));
+    assert_eq!(found[0].exports, ["SCENES"]);
+    assert!(found[1].exports.is_empty());
     // Not exported; another module's `S`; a type-only export.
     let none: [Vec<String>; 1] = [vec![]];
     assert_eq!(exports(&format!("const S = {list};\n")), none);

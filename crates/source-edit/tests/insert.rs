@@ -154,8 +154,11 @@ fn refuses_a_root_or_a_prop_value() {
             "{text}"
         );
     }
+}
 
-    // A file that doesn't parse (the element found before the error).
+#[test]
+fn refuses_a_file_that_does_not_parse() {
+    // The element is found in the text before the error.
     let clean = "const a = <G><Rect /></G>;\n";
     let text = &format!("{clean}const = ;\n");
     let rect = element(clean, "<Rect");

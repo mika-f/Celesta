@@ -68,14 +68,14 @@ pub(crate) fn find_scene_sources(dir: &Path, entry: &Path, generation: u64) -> S
 /// The files an import of `base` (a relative specifier joined to the
 /// importing file's folder) may name, in the order they are tried. With a
 /// module extension that is `base` itself, then for `.js`, `.jsx`, `.mjs`
-/// and `.cjs` the TypeScript file it compiles from, as TypeScript and
-/// esbuild resolve it; without one, `base.ts`, `base.tsx` and the folder's
-/// `index.ts` and `index.tsx`.
+/// and `.cjs` the TypeScript file it compiles from, as esbuild rewrites
+/// them; without one, `base.tsx`, `base.ts` and the folder's `index.tsx`
+/// and `index.ts`, in esbuild's default `resolveExtensions` order (the CLI
+/// sets none).
 fn module_files(base: &Path) -> Vec<PathBuf> {
     let sources: &[&str] = match base.extension().and_then(OsStr::to_str) {
         Some("ts" | "tsx" | "mts" | "cts") => &[],
-        Some("js") => &["ts", "tsx"],
-        Some("jsx") => &["tsx"],
+        Some("js" | "jsx") => &["ts", "tsx"],
         Some("mjs") => &["mts"],
         Some("cjs") => &["cts"],
         _ => {
@@ -85,10 +85,10 @@ fn module_files(base: &Path) -> Vec<PathBuf> {
                 PathBuf::from(path)
             };
             return vec![
-                with(".ts"),
                 with(".tsx"),
-                base.join("index.ts"),
+                with(".ts"),
                 base.join("index.tsx"),
+                base.join("index.ts"),
             ];
         }
     };
@@ -874,11 +874,31 @@ mod tests {
             "SCENES",
             &index
         ));
-        // `.ts` before `.tsx`.
+        // `.tsx` before `.ts`, as esbuild's default `resolveExtensions`.
         let both = |path: &Path| {
             path == Path::new("/p/timeline.ts") || path == Path::new("/p/timeline.tsx")
         };
-        assert!(!follows(&import, timeline, "SCENES", &both));
+        assert!(follows(&import, timeline, "SCENES", &both));
+        assert!(!follows(
+            &import,
+            Path::new("/p/timeline.ts"),
+            "SCENES",
+            &both
+        ));
+        // And a folder's `index.tsx` before its `index.ts`.
+        let indexes = |path: &Path| {
+            path == Path::new("/p/timeline/index.ts") || path == Path::new("/p/timeline/index.tsx")
+        };
+        assert!(follows(
+            &import,
+            Path::new("/p/timeline/index.tsx"),
+            "SCENES",
+            &indexes
+        ));
+        // `.jsx` names the `.ts` file too.
+        let jsx = film("import { SCENES } from './timeline.jsx';", duration);
+        let ts = Path::new("/p/timeline.ts");
+        assert!(follows(&jsx, ts, "SCENES", &|path: &Path| path == ts));
         // A path through `..`.
         let nested = film("import { SCENES } from '../p/./timeline';", duration);
         assert!(follows(&nested, timeline, "SCENES", &only_timeline));

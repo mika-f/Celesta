@@ -36,9 +36,11 @@ they say otherwise.
   `a_list_with_a_spread_keeps_the_entries_it_can_read` (source-edit),
   `a_list_with_entries_it_can_t_read` (editor).
 - **The scene end snaps to the selected element's bands.**
-  `scene_snap_targets` takes the bands the composition row draws for the
-  selection (`timeline::selection_ranges`, read at the press) and adds the
-  edges of those that end at or before the dragged end. A band after the
+  `scene_snap_targets` takes the selection's bands
+  (`timeline::selection_ranges`, read at the press: every range, before
+  `merge_close_bands` joins those less than a pixel apart for drawing, so
+  the edges inside a run drawn as one count too) and adds the edges of
+  those that end at or before the dragged end. A band after the
   end may sit in a later scene that moves with the drag, so it is left out.
   Test: `scene_snap_targets_leave_out_the_end_and_what_moves`.
 - **No "Reading source…" after every reload.** `scene_edge` (the chapter
@@ -68,6 +70,13 @@ they say otherwise.
   entry's own binding (`module: None`) still matches `binding`. Tests:
   `a_list_knows_the_names_it_is_exported_under`,
   `composition_follows_a_list_by_the_name_it_is_exported_under`.
+
+- **Extensionless imports are followed in esbuild's order.** Review of
+  this change found that `module_files` tried `timeline.ts` before
+  `timeline.tsx` (and `index.ts` before `index.tsx`), while the CLI's
+  esbuild uses its default `resolveExtensions` (`.tsx`, `.ts`, …). With both
+  files present, the composition followed the wrong one. The order is now
+  esbuild's, and `.jsx` names a `.ts` file too, as esbuild rewrites it.
 
 ### Verified, not a gap
 
@@ -216,8 +225,10 @@ CRLF), `indent_unit_reads_tabs_or_one_level_of_spaces`.
   counts every binding of the name in any scope, so a parameter named
   `Sequence` in an unrelated function locks the import ("`Sequence` here is
   not Celesta’s"). Telling whether the binding at the wrap point is the
-  import needs scope analysis (`oxc_semantic`), which the crate doesn't use
-  anywhere. Every other reader of `Module` (`timing_kind`, `scene_lists`,
+  import needs scope analysis. The crate builds an `oxc_semantic` model in
+  `add.rs` (`accepts_children`, since #567), but `Module`, which the import
+  edit and the readers below share, counts declarations without one. Every
+  other reader of `Module` (`timing_kind`, `scene_lists`,
   `composition_length`, the add-element tags) makes the same conservative
   choice. The lock never writes the wrong binding, and the case is rare in
   a composition file.
@@ -269,7 +280,7 @@ cargo fmt --all -- --check
 (cd packages/react && pnpm run test)
 ```
 
-All pass, after rebasing onto main with #559: source-edit 224 tests, editor 695 tests, react 313 tests.
+All pass, after rebasing onto main with #559: source-edit 225 tests, editor 695 tests, react 313 tests.
 
 ## Not checked on screen
 

@@ -8,7 +8,7 @@ use oxc_ast::ast::{
     CallExpression, Declaration, ExportDefaultDeclarationKind, Expression, JSXAttributeItem,
     JSXAttributeName, JSXAttributeValue, JSXOpeningElement, ModuleExportName, ObjectExpression,
     ObjectPropertyKind, Program, PropertyKind, Statement, VariableDeclaration,
-    VariableDeclarationKind,
+    VariableDeclarationKind, VariableDeclarator,
 };
 use oxc_ast_visit::Visit;
 use oxc_span::GetSpan;
@@ -68,6 +68,7 @@ pub fn scene_lists(text: &str, path: &Path) -> Vec<SceneList> {
             lists, bindings, ..
         } = calls;
         let exports = local_exports(program);
+        let top = top_level_calls(program);
         let exported: Vec<String> = exports
             .iter()
             .filter_map(|export| match export {
@@ -86,9 +87,12 @@ pub fn scene_lists(text: &str, path: &Path) -> Vec<SceneList> {
                     exports: exports
                         .iter()
                         .filter_map(|export| match export {
-                            LocalExport::Name { local, exported } => {
-                                (binding.as_ref() == Some(local)).then(|| exported.clone())
-                            }
+                            // The file's export of a name is its top-level
+                            // binding's, not a nested one's of the same name.
+                            LocalExport::Name { local, exported } => top
+                                .iter()
+                                .any(|(name, at)| name == local && *at == start)
+                                .then(|| exported.clone()),
                             LocalExport::DefaultCall(at) => {
                                 (*at == start).then(|| "default".to_owned())
                             }
@@ -478,8 +482,10 @@ fn local_exports(program: &Program<'_>) -> Vec<LocalExport> {
     exports
 }
 
-/// The names the file's top-level `const`s (exported ones too) declare.
-fn top_level_consts<'p>(program: &'p Program<'_>) -> impl Iterator<Item = &'p str> {
+/// The declarators of the file's top-level `const`s (exported ones too).
+fn top_level_const_declarators<'p, 'a>(
+    program: &'p Program<'a>,
+) -> impl Iterator<Item = &'p VariableDeclarator<'a>> {
     program
         .body
         .iter()
@@ -493,6 +499,24 @@ fn top_level_consts<'p>(program: &'p Program<'_>) -> impl Iterator<Item = &'p st
         })
         .filter(|decl| decl.kind == VariableDeclarationKind::Const)
         .flat_map(|decl| &decl.declarations)
+}
+
+/// The names the file's top-level `const`s (exported ones too) declare.
+fn top_level_consts<'p>(program: &'p Program<'_>) -> impl Iterator<Item = &'p str> {
+    top_level_const_declarators(program)
         .filter_map(|d| d.id.get_binding_identifier())
         .map(|id| id.name.as_str())
+}
+
+/// The top-level `const`s holding a call: the name, and the call's offset.
+fn top_level_calls(program: &Program<'_>) -> Vec<(String, u32)> {
+    top_level_const_declarators(program)
+        .filter_map(|d| {
+            let name = d.id.get_binding_identifier()?.name.to_string();
+            match d.init.as_ref()?.without_parentheses() {
+                Expression::CallExpression(call) => Some((name, call.span.start)),
+                _ => None,
+            }
+        })
+        .collect()
 }

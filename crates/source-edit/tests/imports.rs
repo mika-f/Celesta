@@ -137,6 +137,12 @@ fn adds_a_new_import_after_the_last() {
         ensure(text, &["Sequence"]).0,
         format!("import {{ Sequence }} from '@celesta.studio/react'\n{text}")
     );
+    // A declaration ending with a block says nothing of the style.
+    let text = "export function Scene() {\n  return <Text text={'b'} />;\n}\nexport const N = 1;\n";
+    assert_eq!(
+        ensure(text, &["Sequence"]).0,
+        format!("import {{ Sequence }} from '@celesta.studio/react';\n{text}")
+    );
     // A JSX attribute's string doesn't count.
     let text = "export const Scene = () => <Text font=\"a\" />;\n";
     assert_eq!(
@@ -145,7 +151,7 @@ fn adds_a_new_import_after_the_last() {
     );
 
     // A comment ending the last import's line stays with it.
-    for comment in ["// the shapes", "/* the shapes */"] {
+    for comment in ["// the shapes", "/* the shapes */", "/* the shapes */ \t"] {
         let text = format!("import {{ Circle }} from '@celesta.studio/shapes'; {comment}\n{BODY}");
         assert_eq!(
             ensure(&text, &["Sequence"]).0,

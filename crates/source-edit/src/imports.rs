@@ -404,7 +404,7 @@ impl Module {
 fn after_trailing_comment(text: &str, end: u32) -> u32 {
     let rest = &text[end as usize..];
     let line = rest[..rest.find('\n').unwrap_or(rest.len())].trim_end_matches('\r');
-    let comment = line.trim_start();
+    let comment = line.trim();
     let ends_line = comment.starts_with("//")
         || (comment.starts_with("/*")
             && comment
@@ -419,7 +419,9 @@ fn after_trailing_comment(text: &str, end: u32) -> u32 {
 
 /// How a file without imports quotes and ends a line: the quote of its
 /// first string outside JSX attributes (`"` without one), and `;` unless
-/// its first statement or directive ends without one.
+/// its first directive, or its first statement that doesn't end with a
+/// block (`export function Scene() {}` takes no `;` in either style), ends
+/// without one.
 fn file_style(text: &str, program: &Program<'_>) -> (char, &'static str) {
     let mut first = FirstString(None);
     first.visit_program(program);
@@ -427,11 +429,13 @@ fn file_style(text: &str, program: &Program<'_>) -> (char, &'static str) {
         .0
         .and_then(|at| text[at as usize..].chars().next())
         .unwrap_or('"');
-    let first_end = program
-        .directives
-        .first()
-        .map(|d| d.span.end)
-        .or_else(|| program.body.first().map(|s| s.span().end));
+    let first_end = program.directives.first().map(|d| d.span.end).or_else(|| {
+        program
+            .body
+            .iter()
+            .map(|s| s.span().end)
+            .find(|&end| !text[..end as usize].ends_with('}'))
+    });
     let semicolon = match first_end {
         Some(end) if !text[..end as usize].ends_with(';') => "",
         _ => ";",
