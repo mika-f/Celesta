@@ -8,5 +8,5 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-gpui-kit = "0.8"
+gpui-kit = "0.9"
 celesta-project.workspace = true
