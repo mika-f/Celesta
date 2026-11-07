@@ -138,7 +138,10 @@ pub(crate) enum SceneEdge {
         duration: EditTarget,
         /// The id of its list's first entry.
         first: String,
-        /// The ids after it in its list.
+        /// The ids of the chapters that move with its end: the entries after
+        /// it in its list, then the chapters of no entry of the list that
+        /// start inside one of those (parts placed in a later scene, such as
+        /// with `listChapters(plan, { from: scenes[1].from })`).
         later: Vec<String>,
         follows: bool,
     },
@@ -183,6 +186,33 @@ fn lock_text(reason: &LockReason, inputs: &[(String, EditTarget)]) -> String {
     lines.join("\n")
 }
 
+/// The chapters a drag of the end of `list`'s entry `index` moves: the
+/// entries after it, which `defineScenes` places after its end, then the
+/// chapters of no entry of the list that start inside one of them, as a
+/// `from` reading a later scene's start places them. A chapter outside every
+/// later scene (after the list's end, or in a gap between its scenes) stays.
+/// One placed at a written frame inside a later scene moves too: its `from`
+/// can't be told from one reading the scene's start, and the reload puts it
+/// back.
+fn moving_chapters(chapters: &[ReactChapter], list: &SceneList, index: usize) -> Vec<String> {
+    let after = &list.entries[index + 1..];
+    let scenes: Vec<&ReactChapter> = chapters
+        .iter()
+        .filter(|chapter| after.iter().any(|entry| entry.id == chapter.id))
+        .collect();
+    let parts = chapters.iter().filter(|chapter| {
+        !list.entries.iter().any(|entry| entry.id == chapter.id)
+            && scenes
+                .iter()
+                .any(|scene| scene.from <= chapter.from && chapter.from < scene.end())
+    });
+    after
+        .iter()
+        .map(|entry| entry.id.clone())
+        .chain(parts.map(|chapter| chapter.id.clone()))
+        .collect()
+}
+
 /// The edge of each chapter: editable when one entry of all the lists has
 /// its id and a number written as a literal (or a `const` of the file);
 /// else locked with why.
@@ -217,10 +247,7 @@ pub(crate) fn scene_edges(
                             file: (*file).clone(),
                             duration: entry.duration.clone(),
                             first: list.entries[0].id.clone(),
-                            later: list.entries[index + 1..]
-                                .iter()
-                                .map(|entry| entry.id.clone())
-                                .collect(),
+                            later: moving_chapters(chapters, list, *index),
                             follows: composition_follows(
                                 &sources.entry,
                                 sources.length.as_ref(),
@@ -252,12 +279,15 @@ fn visible_length(chapter: &ReactChapter, composition_end: u64) -> u64 {
         .saturating_sub(chapter.from)
 }
 
-/// `delta` within the bounds, and the note when the composition's end
-/// stopped it. The dragged chapter `id` keeps a length ≥ 0, and no chapter
-/// of `later` (the entries after it in its list, which move by `delta`)
-/// starts before the list's `first` chapter. When the composition's length
-/// doesn't follow the list, no later chapter starts at or after the
-/// composition's end, and the dragged end doesn't pass it.
+/// `delta` within the bounds, and the note when the composition's end, or a
+/// chapter that would start after it, stopped it. The dragged chapter `id`
+/// keeps a length ≥ 0, and no chapter of `later` (those moving by `delta`,
+/// see `SceneEdge::Editable`) starts before the list's `first` chapter. When
+/// the composition's length doesn't follow the list, no later chapter starts
+/// at or after the composition's end, and the dragged end doesn't pass it.
+/// When it follows, every chapter that stays, the dragged one included,
+/// starts before the end of what moves (`compositionChapters` throws for a
+/// chapter at or after the end).
 pub(crate) fn clamp_scene_delta(
     chapters: &[ReactChapter],
     id: &str,
@@ -292,13 +322,45 @@ pub(crate) fn clamp_scene_delta(
         .map_or(0, |first| frames(first.from));
     // A later chapter already before the floor holds the drag back, never
     // pushes it forward.
-    let lowest = later
+    let mut lowest = later
         .iter()
         .map(|chapter| floor - frames(chapter.from))
-        .fold(-visible, i64::max)
-        .min(0);
+        .fold(-visible, i64::max);
+    // The list then ends no sooner than what moves, moved (the entries
+    // before the dragged one taken to end at 0, a bound at least as
+    // strict): a chapter that stays must start before that.
+    let mut holding = None;
+    if follows {
+        let moving_end = later
+            .iter()
+            .map(|chapter| frames(chapter.end()))
+            .fold(frames(chapter.from) + visible, i64::max);
+        // Of a part and the dragged chapter starting together, the part
+        // holds the end: it is the one the note names.
+        let mut tightest: Option<(i64, &ReactChapter)> = None;
+        for still in chapters
+            .iter()
+            .filter(|still| !later.iter().any(|moving| moving.id == still.id))
+        {
+            let bound = frames(still.from) + 1 - moving_end;
+            let wins = tightest
+                .is_none_or(|(best, held)| bound > best || (bound == best && held.id == id));
+            if wins {
+                tightest = Some((bound, still));
+            }
+        }
+        if let Some((bound, still)) = tightest.filter(|(bound, _)| *bound > lowest) {
+            lowest = bound;
+            holding = (still.id != id).then_some(still);
+        }
+    }
+    let lowest = lowest.min(0);
     let mut delta = delta;
     let mut note = None;
+    if delta < lowest {
+        note =
+            holding.map(|still| format!("Chapter `{}` starts at frame {}", still.id, still.from));
+    }
     if !follows {
         let end = frames(composition_end);
         let highest = later
@@ -801,23 +863,99 @@ mod tests {
         assert_eq!(clamp(5), (5, None));
     }
 
-    #[test]
-    fn only_later_entries_of_the_same_list_count() {
-        // `credits`, of another list, starts after `outro`: it neither moves
-        // nor bounds the drag.
+    /// `three()` with parts: `main-hook` inside Main, `outro-hook` and
+    /// `outro-end` inside Outro (listed with `listChapters(plan, { from:
+    /// scenes[k].from })`).
+    fn with_parts() -> Vec<ReactChapter> {
         let mut chapters = three();
-        chapters.push(chapter("credits", 280, 20));
+        chapters.extend([
+            chapter("main-hook", 100, 20),
+            chapter("outro-hook", 210, 30),
+            chapter("outro-end", 280, 10),
+        ]);
+        chapters
+    }
+
+    #[test]
+    fn chapters_starting_inside_a_later_scene_move_with_the_end() {
+        // `outro-end` is also an entry of another list: it still moves.
+        let plan = format!(
+            "{IMPORT}export const PLAN = defineScenes([\n  {{ id: 'outro-end', durationInFrames: 10 }},\n]);\n"
+        );
+        let found = sources(
+            &[("/p/timeline.tsx", TIMELINE), ("/p/plan.ts", &plan)],
+            &film("", "{330}"),
+        );
+        // `credits` is placed at frame 300 of a 330-frame composition.
+        let mut chapters = with_parts();
+        chapters.push(chapter("credits", 300, 30));
+        let edges = scene_edges(&found, &chapters, only_timeline);
+        let later = |id: &str| match edges.get(id) {
+            Some(SceneEdge::Editable { later, .. }) => later.clone(),
+            other => panic!("{id} is not editable: {other:?}"),
+        };
         assert_eq!(
-            clamp_scene_delta(
-                &chapters,
-                "intro",
-                "intro",
-                &ids(&["main", "outro"]),
-                80,
-                300,
-                false
-            ),
-            (80, None)
+            later("intro"),
+            ids(&["main", "outro", "main-hook", "outro-hook", "outro-end"])
+        );
+        // `main-hook` is inside the dragged scene, which keeps its start.
+        assert_eq!(later("main"), ids(&["outro", "outro-hook", "outro-end"]));
+        // `credits` starts after every scene of the list.
+        assert_eq!(later("outro"), ids(&[]));
+        // The other list's own scenes don't take this list's chapters.
+        assert_eq!(later("outro-end"), ids(&[]));
+    }
+
+    #[test]
+    fn moving_parts_bound_a_literal_length() {
+        // `outro-end` moved to 300 would start at the composition's end.
+        let later = ids(&["outro", "outro-hook", "outro-end"]);
+        let clamp =
+            |delta| clamp_scene_delta(&with_parts(), "main", "intro", &later, delta, 300, false);
+        assert_eq!(
+            clamp(40),
+            (19, Some("The composition is 300 frames long".to_owned()))
+        );
+        assert_eq!(clamp(10), (10, None));
+    }
+
+    #[test]
+    fn a_following_composition_ends_after_every_chapter_that_stays() {
+        let chapters = with_parts();
+        let clamp = |id, later: &[&str], delta| {
+            clamp_scene_delta(&chapters, id, "intro", &ids(later), delta, 300, true)
+        };
+        // Shortening Outro: `outro-end` would start at or after the end.
+        assert_eq!(
+            clamp("outro", &[], -100),
+            (
+                -19,
+                Some("Chapter `outro-end` starts at frame 280".to_owned())
+            )
+        );
+        assert_eq!(clamp("outro", &[], -10), (-10, None));
+        assert_eq!(clamp("outro", &[], 40), (40, None));
+        // Without parts, the last scene keeps a frame: a scene starting at
+        // the end throws too.
+        assert_eq!(
+            clamp_scene_delta(&three(), "outro", "intro", &[], -100, 300, true),
+            (-89, None)
+        );
+        // A part starting with the dragged scene holds the same frame, and
+        // the note names it.
+        let mut together = three();
+        together.push(chapter("outro-hook", 210, 30));
+        assert_eq!(
+            clamp_scene_delta(&together, "outro", "intro", &[], -100, 300, true),
+            (
+                -89,
+                Some("Chapter `outro-hook` starts at frame 210".to_owned())
+            )
+        );
+        // What moves keeps the end ahead of what stays: Main shrinks to 0.
+        assert_eq!(
+            clamp("main", &["outro", "outro-hook", "outro-end"], -200),
+            (-120, None)
         );
     }
 
@@ -879,6 +1017,27 @@ mod tests {
                 ("credits", 250, 270)
             ]
         );
+    }
+
+    #[test]
+    fn a_drag_moves_the_parts_inside_later_scenes() {
+        let later = ids(&["outro", "outro-hook", "outro-end"]);
+        assert_eq!(
+            spans(&preview_chapters(&with_parts(), "main", &later, -40)),
+            [
+                ("intro", 0, 90),
+                ("main", 90, 170),
+                ("outro", 170, 260),
+                ("main-hook", 100, 120),
+                ("outro-hook", 170, 200),
+                ("outro-end", 240, 250)
+            ]
+        );
+        let targets = scene_snap_targets(0.0, &with_parts(), "main", &later);
+        for moving in [240.0, 280.0, 290.0] {
+            assert!(!targets.contains(&moving), "{moving} in {targets:?}");
+        }
+        assert!(targets.contains(&120.0));
     }
 
     #[test]

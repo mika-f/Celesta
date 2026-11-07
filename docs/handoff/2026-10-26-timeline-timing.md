@@ -235,11 +235,6 @@ amended to match.
   position: their bands move as one, and a drag writes the one element every
   item comes from. `later_series_items` counts direct element children only,
   so followers inside a fragment or `{…}` aren't previewed moving.
-- Chapters placed inside a later scene (`listChapters(plan, { from:
-  scenes[1].from })`) don't move with a scene-end drag and don't bound it.
-  Shortening the last scene while the composition follows can make the next
-  reload fail (`compositionChapters` throws for a chapter at or after the
-  end); undo recovers. No example uses the pattern.
 - A scene's end doesn't snap to the selected element's band edges.
 - After every reload each chapter end shows "Reading source…" until the
   scene search lands.
