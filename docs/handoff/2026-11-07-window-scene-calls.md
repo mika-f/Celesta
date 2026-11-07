@@ -96,7 +96,7 @@ cargo clippy -p celesta-editor --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-All pass: editor 686 tests.
+All pass: editor 697 tests.
 
 ## Not checked on screen
 
