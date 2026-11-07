@@ -7,13 +7,15 @@
 //! value, locks, removal) and the commit read; [`commit_gate`] decides
 //! whether a commit goes, waits for the index, or is refused.
 
-use crate::element_edit::{ElementTargets, PropKey, WindowTargets, editable, reason_text};
+use crate::element_edit::{
+    ElementTargets, PropKey, WindowTargets, editable, reason_text, tag_name,
+};
 use crate::element_rows::removable;
 use crate::impact::ImpactFilter;
 use crate::occurrences::OccurrenceState;
 use celesta_react_bridge::{
-    ElementKind, ElementOccurrences, InstanceOccurrences, LayerSourceReport, OccurrenceIndex,
-    ReactChapter, SourcePos, outermost_chapter_at, scenes_of,
+    ElementKind, ElementOccurrences, InstanceOccurrences, LayerSource, LayerSourceReport,
+    OccurrenceIndex, ReactChapter, SourcePos, outermost_chapter_at, scenes_of,
 };
 use celesta_source_edit::{
     DefaultTarget, EditTarget, EditValue, LiftLock, LockReason, element_at, written_attributes,
@@ -351,14 +353,13 @@ fn not_found(refreshing: bool) -> ScopeState {
 /// The scope state of writing the timing window `window` around the
 /// element `report` describes, with the playhead at `frame`, and the scene
 /// calls that count for it. The window's instances are those of any
-/// element the index renders through it; it is shared when one of them
-/// comes through another call of the component it is written in (its
-/// chain doesn't end as the selected one's does above the window), so
-/// one written once shares nothing with the element's other instances, and
-/// one in a component that several scenes call around other elements is
-/// shared. `calls`, read for the element's instances at the window's call
-/// (see [`calls_of`]), are carried to each window instance whose chain
-/// ends as an element instance's does from that call.
+/// element the index renders through it (see [`window_instances`]); it is
+/// shared when one of them comes through another call of the component it
+/// is written in (its chain doesn't end as the selected one's does above
+/// the window), so one written once shares nothing with the element's
+/// other instances, and one in a component that several scenes call
+/// around other elements is shared. `calls` count when they are read for
+/// the window's instances (see [`read_window_calls`]).
 pub(crate) fn window_scope_state(
     report: &LayerSourceReport,
     window: &WindowTargets,
@@ -375,13 +376,7 @@ pub(crate) fn window_scope_state(
         Ok(found) => found,
         Err(note) => return (ScopeState::Unknown { note }, None),
     };
-    let instances: Vec<InstanceOccurrences> = index
-        .elements
-        .iter()
-        .flat_map(|element| &element.instances)
-        .filter(|instance| instance.wrappers.contains(&window.source))
-        .cloned()
-        .collect();
+    let instances = window_instances(index, &window.source);
     let above = report
         .chain
         .iter()
@@ -391,11 +386,7 @@ pub(crate) fn window_scope_state(
     };
     // The selected instance's chain above the window (the index's chains
     // leave the wrappers out).
-    let tail: Vec<SourcePos> = report.chain[above..]
-        .iter()
-        .filter(|entry| entry.kind != ElementKind::Wrapper)
-        .map(SourcePos::from)
-        .collect();
+    let tail = without_wrappers(&report.chain[above..]);
     let shared = instances
         .iter()
         .any(|instance| !instance.chain.ends_with(&tail));
@@ -403,7 +394,11 @@ pub(crate) fn window_scope_state(
         element: window.source.clone(),
         instances,
     };
-    let calls = calls.and_then(|calls| window_calls(report, index, &element, targets, calls));
+    let calls = calls
+        .filter(|calls| {
+            calls.element == element.element && calls.calls.len() == element.instances.len()
+        })
+        .cloned();
     let state = options_over(
         report,
         targets,
@@ -418,48 +413,115 @@ pub(crate) fn window_scope_state(
     (state, calls)
 }
 
-/// `calls`, read for the instances of the element `report` describes, for
-/// the instances of `window` (see [`window_scope_state`]); `None` when they
-/// are not for that element.
-fn window_calls(
-    report: &LayerSourceReport,
+/// The instances of every element `index` renders through the timing
+/// window written at `source` (their `wrappers` hold it), in index order:
+/// the instances a window's [`SceneCalls`] are one per.
+pub(crate) fn window_instances(
     index: &OccurrenceIndex,
-    window: &ElementOccurrences,
-    targets: &ElementTargets,
-    calls: &SceneCalls,
-) -> Option<SceneCalls> {
-    let (element, _) = index.instance_for(report)?;
-    if calls.element != element.element || calls.calls.len() != element.instances.len() {
-        return None;
-    }
-    let at = targets
-        .component
-        .as_ref()
-        .and_then(|component| call_index(report, &component.call_site));
-    let mapped = window
-        .instances
+    source: &SourcePos,
+) -> Vec<InstanceOccurrences> {
+    index
+        .elements
         .iter()
-        .map(|instance| {
-            let at = at?;
-            element
-                .instances
+        .flat_map(|element| &element.instances)
+        .filter(|instance| instance.wrappers.contains(source))
+        .cloned()
+        .collect()
+}
+
+/// `entries` as the index writes chains: without the wrappers.
+fn without_wrappers(entries: &[LayerSource]) -> Vec<SourcePos> {
+    entries
+        .iter()
+        .filter(|entry| entry.kind != ElementKind::Wrapper)
+        .map(SourcePos::from)
+        .collect()
+}
+
+/// What reading the scene calls of a timing window takes: each window
+/// instance's chain (see [`window_instances`]), the selected instance's
+/// chain from its call `S` of the component `C` the window is written in,
+/// and the tag `S` writes.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WindowCallsRead {
+    pub(crate) window: SourcePos,
+    /// The occurrence index's generation the instances are from.
+    pub(crate) generation: u64,
+    /// The tag at `S` (`Delayed`), as `tag_name` reads it.
+    pub(crate) tag: String,
+    /// The selected chain from `S` outward, without the wrappers.
+    pub(crate) from_call: Vec<SourcePos>,
+    pub(crate) chains: Vec<Vec<SourcePos>>,
+}
+
+/// The read of `window`'s scene calls for the selected element `report`
+/// describes, over the instances of `index` (at `generation`); `None` when
+/// the window is not written in a called component or `S` is not in the
+/// chain.
+pub(crate) fn window_calls_read(
+    report: &LayerSourceReport,
+    window: &WindowTargets,
+    index: &OccurrenceIndex,
+    generation: u64,
+) -> Option<WindowCallsRead> {
+    let component = window.targets.component.as_ref()?;
+    let at = report
+        .chain
+        .iter()
+        .position(|entry| SourcePos::from(entry) == component.call_site)?;
+    Some(WindowCallsRead {
+        window: window.source.clone(),
+        generation,
+        tag: component.name.clone(),
+        from_call: without_wrappers(&report.chain[at..]),
+        chains: window_instances(index, &window.source)
+            .into_iter()
+            .map(|instance| instance.chain)
+            .collect(),
+    })
+}
+
+/// The scene calls of a timing window, one per window instance (see
+/// [`window_instances`]), reading the files with `read`. An instance's call
+/// of `C` is where its chain ends as the selected one's does from `S`
+/// (the selected instance, and another element written in the same call),
+/// else its innermost entry above the element whose tag is `S`'s (another
+/// element in another scene's call); `None` when neither is found or read.
+pub(crate) fn read_window_calls(
+    read: impl Fn(&Path) -> Result<String, String>,
+    request: &WindowCallsRead,
+) -> SceneCalls {
+    let mut texts: HashMap<PathBuf, Option<String>> = HashMap::new();
+    let mut read_at = |entry: &SourcePos, tag: Option<&str>| {
+        let text = texts
+            .entry(entry.file.clone())
+            .or_insert_with(|| read(&entry.file).ok())
+            .as_deref()?;
+        let at = element_at(text, entry.line, entry.column)?;
+        if tag.is_some_and(|tag| tag_name(text, &at) != tag) {
+            return None;
+        }
+        Some((entry.clone(), written_attributes(text, &at)))
+    };
+    let calls = request
+        .chains
+        .iter()
+        .map(|chain| {
+            if !request.from_call.is_empty() && chain.ends_with(&request.from_call) {
+                let call = &chain[chain.len() - request.from_call.len()];
+                return read_at(call, None);
+            }
+            chain
                 .iter()
-                .zip(&calls.calls)
-                .find(|(through, _)| {
-                    through.wrappers.contains(&window.element)
-                        && through
-                            .chain
-                            .get(at..)
-                            .is_some_and(|tail| !tail.is_empty() && instance.chain.ends_with(tail))
-                })
-                .and_then(|(_, call)| call.clone())
+                .skip(1)
+                .find_map(|entry| read_at(entry, Some(&request.tag)))
         })
         .collect();
-    Some(SceneCalls {
-        element: window.element.clone(),
-        generation: calls.generation,
-        calls: mapped,
-    })
+    SceneCalls {
+        element: request.window.clone(),
+        generation: request.generation,
+        calls,
+    }
 }
 
 /// The options of an edit reaching the instances of `element` (`shared`

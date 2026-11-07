@@ -145,8 +145,8 @@ amended to match.
   not. "Spans more than one scene" was the alternative; it misses a wrapper
   component called twice in one scene and one call reached by two paths.
   The options are design 3's (`confined`, `row_lock`) over those instances;
-  the scene calls read for the element's instances are carried to each
-  window instance whose chain ends as one of them does from the call.
+  the scene calls are read for each window instance (see
+  `docs/handoff/2026-11-07-window-scene-calls.md`).
   A window's options leave `called_here` out and take `drawn_alone` as
   true: its instances belong to every element it wraps, so they don't line
   up with the selected chain for counting the scene's calls of the
