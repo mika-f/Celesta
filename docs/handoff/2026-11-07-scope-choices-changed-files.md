@@ -38,9 +38,12 @@ that changed since the loaded code was read.
   `--props-file`'s mtime and size. Equality is what the hash compared, so
   the watcher reloads on the same changes. It is `Clone`, no longer `Copy`.
   `WatchStamp::changed_files(newer)` lists the source files changed, added,
-  or removed between two samples (folders and the `--props-file` left out).
+  or removed between two samples (a path that is a folder in both, and the
+  `--props-file`, left out; a file replaced by a folder of its name, or the
+  other way round, listed).
 - `changed_sources(entry, loaded, latest)` turns that list into real paths
-  under the canonicalized entry folder, since esbuild names modules, and so
+  under the entry folder canonicalized with `dunce` (no `\\?\` prefix on
+  Windows, a new dependency of `celesta-editor`), since esbuild names modules, and so
   `SourcePos::file`, by their real paths (a temporary folder on macOS is
   `/private/var/…` behind `/var`). `None` when either sample is missing or
   the folder cannot be resolved.
@@ -64,10 +67,11 @@ that changed since the loaded code was read.
 
 ## Checks
 
-- `cargo test -p celesta-editor`: 703 passed. New:
+- `cargo test -p celesta-editor`: 704 passed. New:
   `source::tests::two_samples_name_the_files_changed_added_and_removed`,
   `changed_sources_are_real_paths_under_the_entry_folder`,
-  `a_props_file_change_names_no_source`;
+  `a_props_file_change_names_no_source`,
+  `a_file_replaced_by_a_folder_of_its_name_is_named`;
   `tests::scope::a_change_outside_the_editor_forgets_only_the_choices_in_its_files`,
   `an_own_write_reload_forgets_the_written_and_the_changed_files`.
 - `cargo clippy -p celesta-editor --all-targets -- -D warnings`,

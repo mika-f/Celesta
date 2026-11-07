@@ -8,7 +8,7 @@ use celesta_react_bridge::{
     PrepareDependency, PropertyInputs, ReactBridge, SpawnOptions, project_types_template,
     refresh_project_types, runtime_paths as react_runtime_paths,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -242,35 +242,29 @@ struct WatchedSource {
 
 impl WatchStamp {
     /// The source files, relative to the entry's folder, that differ
-    /// between this sample and `newer`: changed, added or removed. Folders
-    /// are left out (their files are listed), and so is the `--props-file`.
+    /// between this sample and `newer`: changed, added or removed, sorted.
+    /// A path that is a folder in both samples is left out (its files are
+    /// listed), and so is the `--props-file`; a file replaced by a folder of
+    /// the same name, or the other way round, is listed.
     pub(crate) fn changed_files(&self, newer: &WatchStamp) -> Vec<PathBuf> {
-        let older: HashMap<&Path, &WatchedSource> = self
-            .sources
-            .iter()
-            .map(|source| (source.path.as_path(), source))
-            .collect();
-        let newer_paths: HashSet<&Path> = newer
-            .sources
-            .iter()
-            .map(|source| source.path.as_path())
-            .collect();
-        let changed_or_added = newer
-            .sources
-            .iter()
-            .filter(|source| older.get(source.path.as_path()) != Some(source));
-        let removed = self
-            .sources
-            .iter()
-            .filter(|source| !newer_paths.contains(source.path.as_path()));
-        let mut files: Vec<PathBuf> = changed_or_added
-            .chain(removed)
-            .filter(|source| !source.folder)
-            .map(|source| source.path.clone())
-            .collect();
-        files.sort_unstable();
-        files.dedup();
-        files
+        let by_path = |stamp: &WatchStamp| -> HashMap<PathBuf, WatchedSource> {
+            stamp
+                .sources
+                .iter()
+                .map(|source| (source.path.clone(), source.clone()))
+                .collect()
+        };
+        let (older, newer) = (by_path(self), by_path(newer));
+        let paths: BTreeSet<&PathBuf> = older.keys().chain(newer.keys()).collect();
+        paths
+            .into_iter()
+            .filter(|path| {
+                let (old, new) = (older.get(*path), newer.get(*path));
+                let file = |source: Option<&WatchedSource>| source.is_some_and(|s| !s.folder);
+                old != new && (file(old) || file(new))
+            })
+            .cloned()
+            .collect()
     }
 }
 
@@ -303,15 +297,16 @@ pub(crate) fn watched_stamp(entry: &Path, property_args: &PropertyArgs) -> Optio
 /// The source files that differ between `loaded`, the sample the loaded
 /// code was read from, and `latest`, as real paths under the entry's
 /// folder: the bundler names the modules elements are written in by their
-/// real paths. `None` when either sample is missing or the folder cannot
-/// be resolved, so which files changed is not known.
+/// real paths (on Windows without the `\\?\` prefix `std::fs::canonicalize`
+/// adds, as `dunce` resolves them). `None` when either sample is missing or
+/// the folder cannot be resolved, so which files changed is not known.
 pub(crate) fn changed_sources(
     entry: &Path,
     loaded: Option<&WatchStamp>,
     latest: Option<&WatchStamp>,
 ) -> Option<Vec<PathBuf>> {
     let changed = loaded?.changed_files(latest?);
-    let dir = std::fs::canonicalize(entry.parent()?).ok()?;
+    let dir = dunce::canonicalize(entry.parent()?).ok()?;
     Some(changed.into_iter().map(|file| dir.join(file)).collect())
 }
 
@@ -545,6 +540,24 @@ mod tests {
     }
 
     #[test]
+    fn a_file_replaced_by_a_folder_of_its_name_is_named() {
+        let dir = scene_folder("watch-replaced");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+        let before = watched_stamp(&entry, &args).unwrap();
+
+        // A path that is a folder in both samples is not named, but one that
+        // held a module (with choices made in it) is.
+        std::fs::remove_file(dir.join("scenes/a.ts")).unwrap();
+        std::fs::create_dir(dir.join("scenes/a.ts")).unwrap();
+        let after = watched_stamp(&entry, &args).unwrap();
+
+        assert_eq!(before.changed_files(&after), [PathBuf::from("scenes/a.ts")]);
+        assert_eq!(after.changed_files(&before), [PathBuf::from("scenes/a.ts")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn changed_sources_are_real_paths_under_the_entry_folder() {
         let dir = scene_folder("watch-real");
         let entry = dir.join("film.tsx");
@@ -555,7 +568,7 @@ mod tests {
 
         // The temporary folder is behind a symlink on macOS (`/var`); the
         // bundler, and so the elements' positions, name the real path.
-        let real = std::fs::canonicalize(&dir).unwrap();
+        let real = dunce::canonicalize(&dir).unwrap();
         assert_eq!(
             changed_sources(&entry, before.as_ref(), after.as_ref()),
             Some(vec![real.join("scenes/a.ts")])
