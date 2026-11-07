@@ -15,8 +15,12 @@ after that note's changes):
 | --- | --- | --- | --- |
 | decode 1080p | 0.80 ms | 1.83 ms | 1.0 ms |
 | decode 4K | 3.25 ms | 8.26 ms | 5.0 ms |
-| encode 1080p (`ultrafast`) | 1.14 ms | 2.85 ms | 1.7 ms |
-| encode 4K (`ultrafast`) | 4.63 ms | 13.11 ms | 8.5 ms |
+| encode 1080p (`ultrafast`) | 1.75 ms | 2.83 ms | 1.1 ms |
+| encode 4K (`ultrafast`) | 7.40 ms | 14.15 ms | 6.6 ms |
+
+(The encode rows time the whole run of frames; see
+`2026-11-08-plugin-performance.md` for why an earlier version of the bench
+timed less.)
 
 What shared memory would leave of that, by the options below:
 
@@ -39,16 +43,25 @@ fps (16.7 ms) needs the upload and draw cost cut whatever happens to the
 pipe, and shared memory alone does not get there. At 1080p the whole
 preview frame is 6–10 ms, so 0.8 ms matters little.
 
-Two things to look at before or with it:
+Since then (`2026-11-08-video-upload-staging.md`): the upload was most of
+that 17 ms, about 7 ms of fresh staging and texture memory, and now takes
+about 1.5 ms; 4K preview went from 24.6 to 21.2 ms a frame. What a 4K
+frame spends now: about 9 ms waiting for the plugin's frame (3.3 ms of it
+decoding, the rest the pipe), about 8 ms waiting for the GPU. That makes
+the pipe's 4–5 ms a larger share, about a fifth, but the GPU's 8 ms is
+still larger, and decoding the next frame ahead in the plugin while the
+host renders (the same note's Not done) would hide the decode without any
+protocol change.
 
-- **The encode overhead is larger than the pipe explains.** At 4K the
-  plugin spends about 55 ms of CPU a frame encoding against about 35 ms for
-  the same encode in process: about 20 ms more, where reading 33 MB from a
-  pipe costs a few. Part of the wall-clock overhead may be that each
-  `encodeFrame` waits for `frameEncoded` before the next frame is sent, so
-  the host's readback and the encoder no longer overlap. Profile this first:
-  sending the next frame before the last one's answer (pipelining) could
-  recover more than shared memory would, and helps every export.
+Also:
+
+- **The encode overhead is the pipe.** An earlier version of this note
+  said the plugin spent about 20 ms more CPU a 4K frame encoding than the
+  same encode in process; that was the bench timing only the
+  `encode_frame` calls. Timed whole, the CPU is about the same either way,
+  and the overhead is wall-clock time: 1.1 ms (1080p) and 6.6 ms (4K), the
+  frame's way through the pipe. Sending the next frame before the last
+  one's answer (pipelining) could hide part of it without shared memory.
 - **Exports are dominated by libx264** (about 15 ms a 1080p frame and 60 ms
   a 4K one with `medium`), so shared memory would change an export's time
   by a few percent.
@@ -220,18 +233,21 @@ arrives. A frame larger than its slot goes through the pipe.
 
 ## Recommendation
 
-Option B, after the 4K upload cost and the encode overhead have been
-profiled:
+Option B, after the cheaper steps:
 
-1. Profile 4K preview's upload and draw (about 17 ms of 25) and the
-   plugin's encode (about 20 ms of CPU a 4K frame more than in process).
-   Each may give more than shared memory for less.
-2. Then B with C's generation check: one slot a direction a process, the
+1. Profile 4K preview's upload and draw, and the plugin's encode. Done:
+   the upload is fixed (`2026-11-08-video-upload-staging.md`), and the
+   encode overhead is the pipe's.
+2. Decode a sequential session's next frame ahead in the plugin, and look
+   at the GPU's 8 ms at 4K (a Metal capture). Both are smaller changes
+   than shared memory, and the first takes most of the plugin's wait off
+   4K preview.
+3. Then B with C's generation check: one slot a direction a process, the
    host copying out, `VideoFrame` unchanged; Linux memfd with seals, macOS
    `shm_open` unlinked before spawn, Windows an unnamed section duplicated
    into the child; negotiated in `hello`, per message, with the pipe always
    accepted.
-3. D only if 4K at 60 fps still needs the last millisecond after 1 and 2.
+4. D only if 4K at 60 fps still needs the last millisecond after the rest.
 
 Rough size of B: the mapping type in `celesta-plugin` for three platforms
 with its tests (the larger part, mostly `unsafe` FFI and its checks),
@@ -244,8 +260,8 @@ type change through `celesta-media`, both renderers, and their tests.
 
 ## Open questions for the user
 
-1. **Order.** Profile 4K upload and draw, and the encode overhead, first
-   (recommended), or build shared memory now?
+1. **Order.** Decided: profile first, done. Next: decode-ahead in the
+   plugin and the GPU's 4K cost (recommended), or shared memory now?
 2. **Option.** B (copy out, `VideoFrame` unchanged), or D (no host copy,
    a change to the public `VideoFrame` type and a slot ring)?
 3. **Scope.** Decode only first, or decode and encode (export) together?
