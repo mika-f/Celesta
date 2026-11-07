@@ -30,3 +30,7 @@ celesta-project = { path = "../../crates/project", version = "=0.9.0" }
 png = "0.18.1"
 strum = { version = "0.28.0", features = ["derive"] }
 tempfile = "3.23.0"
+
+# The codec bench's CPU times (examples/codec-bench.rs).
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2.191"

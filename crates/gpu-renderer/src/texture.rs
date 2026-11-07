@@ -313,6 +313,12 @@ impl LayerTexture {
     pub(crate) fn same(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0) || self.bind_group == other.bind_group
     }
+
+    /// Whether this is the texture's only handle: no layer of the frame
+    /// being prepared, nor anything else, draws with it.
+    pub(crate) fn unshared(&self) -> bool {
+        Arc::strong_count(&self.0) == 1
+    }
 }
 
 impl std::ops::Deref for LayerTexture {

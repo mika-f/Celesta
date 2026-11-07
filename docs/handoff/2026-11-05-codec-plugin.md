@@ -155,7 +155,8 @@ workspace no longer pulls FFmpeg in.
   timed (below) took no longer than with FFmpeg in-process, but 4K playback
   in the editor may; shared memory would remove the copy. Preview playback
   was not timed (`crates/exporter/examples/preview-bench.rs` times it
-  through the plugin now).
+  through the plugin now). Timed, and two copies around the pipe removed,
+  in `2026-11-08-plugin-performance.md`; shared memory is still open.
 - No alternative codec plugin yet (an LGPL-only FFmpeg build, or one on the
   OS's codecs such as VideoToolbox or Media Foundation). With an LGPL-only
   FFmpeg, `celesta-codec-ffmpeg` builds and decodes, but MP4 export fails with

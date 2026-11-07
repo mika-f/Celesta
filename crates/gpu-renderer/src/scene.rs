@@ -20,10 +20,13 @@
 //!
 //! Besides the model's buffers and textures, `SceneFrameResources` keeps
 //! the canvases of each size the last frame drew, within
-//! `SCENE_TARGET_TEXELS`, and the buffers a frame's skinning and draws read,
-//! so that a frame allocates only what it outgrows; a frame without a scene
-//! lets them go. Nothing a frame draws depends on an earlier one: the canvases are
-//! cleared, and every part of a buffer the frame reads is written by it.
+//! `SCENE_TARGET_TEXELS`, the layer textures they were converted into, and
+//! the buffers a frame's skinning and draws read, so that a frame allocates
+//! only what it outgrows; a frame without a scene lets them go. Nothing a
+//! frame draws depends on an earlier one: the canvases and layer textures
+//! are cleared, and every part of a buffer the frame reads is written by it.
+//! A layer texture is drawn into again only once nothing holds it, so two
+//! scene layers of one size in a frame each have their own.
 
 use crate::error::GpuRenderError;
 use crate::mesh::{OUTPUT_FORMAT, texture_image};
@@ -334,13 +337,16 @@ fn make_room<T>(
 }
 
 /// A scene canvas of one size: its multisampled color and depth, the color
-/// they resolve to, and the bind group that converts it. At 1 sample there
-/// is no multisampled color: the draws go straight to `resolved`.
+/// they resolve to, the bind group that converts it, and the layer textures
+/// it was converted into. At 1 sample there is no multisampled color: the
+/// draws go straight to `resolved`.
 struct SceneTargets {
     multisampled: Option<wgpu::TextureView>,
     depth: wgpu::TextureView,
     resolved: wgpu::TextureView,
     convert_group: wgpu::BindGroup,
+    /// As many as the layers of this size one frame has drawn.
+    layers: Vec<LayerTexture>,
 }
 
 /// The bind groups of a frame's buffers.
@@ -2922,9 +2928,10 @@ impl GpuRenderer {
         if let Some(message) = invalid_scene_frame(&scene.model, &scene.shaders, frame) {
             return Err(invalid(message));
         }
-        let output = self.plugin_canvas(width, height);
         let queue = draw_queue(scene, frame);
         if queue.is_empty() {
+            // A new texture, which reads as transparent black.
+            let output = self.plugin_canvas(width, height);
             return Ok(self.plugin_layer_texture(output, width, height));
         }
         let pipelines = self
@@ -3119,7 +3126,8 @@ impl GpuRenderer {
             depth,
             resolved,
             convert_group,
-        } = &*targets.entry(size).or_insert_with(|| {
+            layers,
+        } = targets.entry(size).or_insert_with(|| {
             let mut target = |label, format, sample_count, usage| {
                 *allocations += 1;
                 device
@@ -3174,8 +3182,23 @@ impl GpuRenderer {
                 depth,
                 resolved,
                 convert_group,
+                layers: Vec::new(),
             }
         });
+        // One no layer of this frame holds, which the convert pass below
+        // clears and covers, or a new one.
+        let output = match layers.iter().find(|layer| layer.unshared()) {
+            Some(layer) => layer.clone(),
+            None => {
+                *allocations += 1;
+                let layer =
+                    self.plugin_layer_texture(self.plugin_canvas(width, height), width, height);
+                layers.push(layer.clone());
+                layer
+            }
+        };
+        let (multisampled, depth, resolved, convert_group) =
+            (&*multisampled, &*depth, &*resolved, &*convert_group);
 
         let mut encoder = self
             .device
@@ -3270,7 +3293,7 @@ impl GpuRenderer {
             }
         }
         {
-            let output_view = output.create_view(&Default::default());
+            let output_view = output._texture.create_view(&Default::default());
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Celesta scene convert"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3292,7 +3315,7 @@ impl GpuRenderer {
             pass.draw(0..3, 0..1);
         }
         self.queue.submit([encoder.finish()]);
-        Ok(self.plugin_layer_texture(output, width, height))
+        Ok(output)
     }
 }
 
