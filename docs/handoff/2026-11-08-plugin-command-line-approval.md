@@ -26,8 +26,10 @@ The maintainer chose:
   MCP server, `PluginHost::discover`, and the React bridge's default use)
   now sorts what it finds with `allowed_allowing(settings, allow)`, the
   app's `allowed_by` plus `allow`:
-  - A plugin turned off is left out, as before. `--allow-plugin` does not
-    turn it on, and does not count as naming an unknown id.
+  - A plugin turned off is left out, and gives way to the next plugin with
+    its id, as in the app (`2026-11-08-plugins-tab-waiting-and-fallback.md`).
+    `--allow-plugin` does not turn it on, and does not count as naming an
+    unknown id.
   - A plugin that needs approval runs when `settings.json` allows that id
     in that folder with the same fingerprint, or when its id is in
     `allow`. Otherwise it is left out of `plugins`, listed in `waiting`,
