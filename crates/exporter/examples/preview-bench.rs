@@ -30,7 +30,7 @@ fn main() {
     let frames: i64 = args
         .next()
         .map_or(30, |value| value.parse().expect("frames must be a number"));
-    let Some(codec) = InstalledPlugins::find_reporting(&[]).codec() else {
+    let Some(codec) = InstalledPlugins::find_reporting(&[], &[]).codec() else {
         eprintln!(
             "no codec plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
              and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH"

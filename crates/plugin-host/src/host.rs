@@ -151,10 +151,12 @@ impl PluginHost {
         self.kill.clone()
     }
 
-    /// The plugins in every location Celesta searches, `extra` first (see
-    /// [`InstalledPlugins::find`]). Skipped plugins are reported on stderr.
+    /// The plugins that may run, from every location Celesta searches,
+    /// `extra` first (see [`InstalledPlugins::find`]): plugins the user
+    /// turned off, and ones that wait for the user's approval, are left
+    /// out. Skipped plugins are reported on stderr.
     pub fn discover(extra: &[PathBuf]) -> Self {
-        InstalledPlugins::find_reporting(extra).host()
+        InstalledPlugins::find_reporting(extra, &[]).host()
     }
 
     pub fn plugins(&self) -> impl Iterator<Item = &PluginEntry> {

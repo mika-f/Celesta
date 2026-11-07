@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let entry =
         PathBuf::from(args.next().ok_or("usage: audio-bench <entry> [runs]")?).canonicalize()?;
     let runs: usize = args.next().map_or(Ok(5), |value| value.parse())?;
-    let Some(codec) = InstalledPlugins::find_reporting(&[]).codec() else {
+    let Some(codec) = InstalledPlugins::find_reporting(&[], &[]).codec() else {
         eprintln!(
             "no codec plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
              and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH"

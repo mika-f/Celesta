@@ -15,9 +15,38 @@ pub const MANIFEST: &str = "celesta-plugin.json";
 pub const PLUGIN_PATH_ENV: &str = "CELESTA_PLUGIN_PATH";
 
 /// The environment variable listing, like [`PLUGIN_PATH_ENV`], the plugins
-/// that wait for the user's approval. The React runtime resolves their
-/// imports to stand-ins that run none of their code.
+/// that wait for the user's approval. The React runtime runs none of their
+/// code: it resolves their imports to stand-ins or fails them, as
+/// [`WAITING_IMPORTS_ENV`] says.
 pub const WAITING_PLUGIN_PATH_ENV: &str = "CELESTA_WAITING_PLUGIN_PATH";
+
+/// The environment variable saying what the React runtime does with an
+/// import of a plugin that waits for approval ([`WaitingImports`]):
+/// `stand-in`, or anything else (`fail`) to fail the import.
+pub const WAITING_IMPORTS_ENV: &str = "CELESTA_WAITING_PLUGIN_IMPORTS";
+
+/// What an entry's import of a plugin that waits for approval resolves to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WaitingImports {
+    /// The import fails, saying the plugin waits and how to allow it, so a
+    /// render without the user watching never leaves its layers out
+    /// unseen: what command-line tools and the MCP server do.
+    #[default]
+    Fail,
+    /// A stand-in that draws nothing of its own and runs none of the
+    /// plugin's code, so the app can open the project while it asks.
+    StandIn,
+}
+
+impl WaitingImports {
+    /// Its [`WAITING_IMPORTS_ENV`] value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fail => "fail",
+            Self::StandIn => "stand-in",
+        }
+    }
+}
 
 /// This Celesta's version, which every Celesta crate shares: a plugin runs
 /// only when its manifest's `celesta` range includes it.
@@ -378,6 +407,24 @@ pub enum DiscoveryError {
     },
     #[error("plugin path {path} was skipped: it is not an absolute path")]
     RelativePath { path: PathBuf },
+    #[error(
+        "{path} was skipped: the plugin {id} {} in the Celesta app; allow it in the app's Plugins tab, or name its folder in CELESTA_PLUGIN_PATH; celesta-exporter also takes --allow-plugin {id} and --plugin-dir",
+        if *.changed { "changed since you allowed it, and waits for your approval again" } else { "waits for your approval" }
+    )]
+    WaitsForApproval {
+        path: PathBuf,
+        id: String,
+        /// Allowed once, but changed since.
+        changed: bool,
+    },
+    #[error(
+        "--allow-plugin {id} names no plugin that can run: no folder has one with that id, or it was skipped (see why above)"
+    )]
+    UnknownAllowance { id: String },
+    /// A plugin whose files could not be read to see whether the user
+    /// allowed it as it is now, with why.
+    #[error("{0}")]
+    Unreadable(String),
     #[error("the user's settings were not used: {0}")]
     Settings(String),
 }
@@ -718,10 +765,14 @@ pub(crate) fn discover_in_with(
 pub struct InstalledPlugins {
     /// What may run.
     pub plugins: Vec<PluginEntry>,
-    /// What waits for the user's approval (the app's
-    /// [`InstalledPlugins::allowed_by`]): never run, but the React runtime
-    /// stands in for their imports so an entry using one still opens.
+    /// What waits for the user's approval ([`InstalledPlugins::allowed_by`]):
+    /// never run. The React runtime treats their imports as
+    /// `waiting_imports` says.
     pub waiting: Vec<PluginEntry>,
+    /// What an entry's import of a waiting plugin resolves to: a stand-in
+    /// in the app ([`InstalledPlugins::allowed_by`]), a failure for
+    /// command-line tools ([`InstalledPlugins::find`]) and sets made by hand.
+    pub waiting_imports: WaitingImports,
 }
 
 /// What a React runtime's process is told about plugins, as environment
@@ -731,16 +782,22 @@ pub struct InstalledPlugins {
 pub struct RuntimePlugins {
     /// [`PLUGIN_PATH_ENV`]: the plugins it may load.
     pub path: std::ffi::OsString,
-    /// [`WAITING_PLUGIN_PATH_ENV`]: the plugins it stands in for.
+    /// [`WAITING_PLUGIN_PATH_ENV`]: the plugins that wait for approval.
     pub waiting: std::ffi::OsString,
+    /// [`WAITING_IMPORTS_ENV`]: what their imports resolve to.
+    pub waiting_imports: WaitingImports,
 }
 
 impl RuntimePlugins {
     /// The variables to set, by name.
-    pub fn env(&self) -> [(&'static str, &std::ffi::OsStr); 2] {
+    pub fn env(&self) -> [(&'static str, &std::ffi::OsStr); 3] {
         [
             (PLUGIN_PATH_ENV, &self.path),
             (WAITING_PLUGIN_PATH_ENV, &self.waiting),
+            (
+                WAITING_IMPORTS_ENV,
+                std::ffi::OsStr::new(self.waiting_imports.as_str()),
+            ),
         ]
     }
 }
@@ -759,22 +816,68 @@ fn path_list(entries: &[PluginEntry]) -> std::ffi::OsString {
 }
 
 impl InstalledPlugins {
-    /// Discovers them, with the plugins that were skipped and why: the
-    /// folders the user added in their settings are searched too, and the
-    /// plugins they turned off are left out, each giving way to the next
-    /// plugin with its id. This is what command-line tools
-    /// run, without asking about anything (see
-    /// [`InstalledPlugins::allowed_by`] for the app's questions).
-    pub fn find(explicit: &[PathBuf]) -> (Self, Vec<DiscoveryError>) {
+    /// Discovers them, with the plugins that were skipped and why: what
+    /// command-line tools and the MCP server run. The folders the user added
+    /// in their settings are searched too, and the user's settings decide as
+    /// in the app ([`InstalledPlugins::allowed_by`]): a plugin turned off is
+    /// left out, giving way to the next plugin with its id, and one that
+    /// needs the user's approval runs only when the app allowed it as it is
+    /// now, or its id is in `allow` (the exporter's `--allow-plugin`).
+    /// Nothing is asked: a plugin that waits is skipped with
+    /// [`DiscoveryError::WaitsForApproval`], and an entry importing it fails
+    /// ([`WaitingImports::Fail`]).
+    pub fn find(explicit: &[PathBuf], allow: &[String]) -> (Self, Vec<DiscoveryError>) {
         let (settings, settings_error) = UserSettings::current();
-        let (mut found, mut errors) = Self::find_with(explicit, &[], &settings);
+        let (found, mut errors) = Self::find_allowing(explicit, allow, &settings);
         if let Some(error) = settings_error {
             errors.insert(0, DiscoveryError::Settings(error.to_string()));
         }
-        found
-            .plugins
-            .retain(|entry| !settings.is_disabled(&entry.manifest.id, &entry.directory));
         (found, errors)
+    }
+
+    /// [`InstalledPlugins::find`] with these settings.
+    pub fn find_allowing(
+        explicit: &[PathBuf],
+        allow: &[String],
+        settings: &UserSettings,
+    ) -> (Self, Vec<DiscoveryError>) {
+        let (found, mut errors) = Self::find_with(explicit, &[], settings);
+        let allowed = found.allowed_allowing(settings, allow);
+        errors.extend(
+            allowed
+                .unreadable
+                .into_iter()
+                .map(DiscoveryError::Unreadable),
+        );
+        errors.extend(
+            allowed
+                .pending
+                .iter()
+                .map(|pending| DiscoveryError::WaitsForApproval {
+                    path: pending.entry.directory.clone(),
+                    id: pending.entry.manifest.id.clone(),
+                    changed: pending.changed,
+                }),
+        );
+        let named = |id: &String| {
+            allowed
+                .plugins
+                .plugins
+                .iter()
+                .chain(&allowed.disabled)
+                .any(|entry| &entry.manifest.id == id)
+        };
+        let mut unknown: Vec<&String> = allow.iter().filter(|id| !named(id)).collect();
+        unknown.sort();
+        unknown.dedup();
+        errors.extend(
+            unknown
+                .into_iter()
+                .map(|id| DiscoveryError::UnknownAllowance { id: id.clone() }),
+        );
+        let mut plugins = allowed.plugins;
+        plugins.waiting_imports = WaitingImports::Fail;
+        (plugins, errors)
     }
 
     /// Discovers them with a trusted project's own plugin folders (see
@@ -793,7 +896,7 @@ impl InstalledPlugins {
         (
             Self {
                 plugins,
-                waiting: Vec::new(),
+                ..Self::default()
             },
             errors,
         )
@@ -801,10 +904,13 @@ impl InstalledPlugins {
 
     /// Discovers them, reporting skipped plugins on stderr, for tools
     /// without a better place to show them.
-    pub fn find_reporting(explicit: &[PathBuf]) -> Self {
-        let (plugins, errors) = Self::find(explicit);
+    pub fn find_reporting(explicit: &[PathBuf], allow: &[String]) -> Self {
+        let (plugins, errors) = Self::find(explicit, allow);
         for error in errors {
-            eprintln!("celesta: skipped a plugin: {error}");
+            match error {
+                DiscoveryError::UnknownAllowance { .. } => eprintln!("celesta: {error}"),
+                _ => eprintln!("celesta: skipped a plugin: {error}"),
+            }
         }
         plugins
     }
@@ -817,12 +923,13 @@ impl InstalledPlugins {
         path_list(&self.plugins)
     }
 
-    /// Everything the React runtime is told: [`Self::runtime_path`], and
-    /// the waiting plugins it stands in for.
+    /// Everything the React runtime is told: [`Self::runtime_path`], the
+    /// waiting plugins, and what their imports resolve to.
     pub fn runtime(&self) -> RuntimePlugins {
         RuntimePlugins {
             path: self.runtime_path(),
             waiting: path_list(&self.waiting),
+            waiting_imports: self.waiting_imports,
         }
     }
 
@@ -1397,6 +1504,7 @@ mod tests {
         let installed = InstalledPlugins {
             plugins: found.clone(),
             waiting: found[1..].to_vec(),
+            waiting_imports: WaitingImports::StandIn,
         };
         let path: Vec<_> = std::env::split_paths(&installed.runtime_path()).collect();
         assert_eq!(path, [root.path().join("a"), root.path().join("b")]);
@@ -1404,8 +1512,20 @@ mod tests {
         assert_eq!(runtime.path, installed.runtime_path());
         assert_eq!(runtime.waiting, root.path().join("b").into_os_string());
         assert_eq!(
-            runtime.env().map(|(name, _)| name),
-            [PLUGIN_PATH_ENV, WAITING_PLUGIN_PATH_ENV]
+            runtime.env().map(|(name, value)| (name, value.to_owned())),
+            [
+                (PLUGIN_PATH_ENV, installed.runtime_path()),
+                (
+                    WAITING_PLUGIN_PATH_ENV,
+                    root.path().join("b").into_os_string()
+                ),
+                (WAITING_IMPORTS_ENV, "stand-in".into()),
+            ]
+        );
+        // A set made by hand fails a waiting plugin's import.
+        assert_eq!(
+            InstalledPlugins::default().runtime().env()[2],
+            (WAITING_IMPORTS_ENV, std::ffi::OsStr::new("fail"))
         );
         assert_eq!(
             InstalledPlugins::default().runtime(),
@@ -1566,7 +1686,7 @@ mod tests {
         );
         let installed = InstalledPlugins {
             plugins,
-            waiting: Vec::new(),
+            ..InstalledPlugins::default()
         };
         assert_eq!(
             installed.codec(),
@@ -1811,7 +1931,7 @@ mod tests {
         );
         let installed = InstalledPlugins {
             plugins,
-            waiting: Vec::new(),
+            ..InstalledPlugins::default()
         };
         let codec = installed.codec().unwrap();
         assert_eq!(codec.directory, root.path().join("second").join("ffmpeg"));

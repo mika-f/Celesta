@@ -40,7 +40,14 @@ celesta-exporter --react film.tsx out.mp4 --plugin-dir ~/celesta-plugins
 
 選んだ内容は Celesta の設定フォルダーの `settings.json` に保存されます。設定フォルダーは Windows では `%APPDATA%\Celesta`、macOS では `~/Library/Application Support/Celesta`、それ以外では `$XDG_CONFIG_HOME/celesta`（未設定なら `~/.config/celesta`）です。
 
-`celesta-exporter` と MCP サーバーは確認しません。上のフォルダーのうちプロジェクトのもの以外にあるプラグインを、アプリで許可したかどうかにかかわらず使います。
+`celesta-exporter` と MCP サーバーは確認しませんが、アプリで選んだ内容に従います。上のフォルダーのうちプロジェクトのもの以外を探し、オフにしたプラグインは使いません。ユーザーのプラグインフォルダーや追加したフォルダーにあるプラグインは、アプリで今の内容のまま許可したものだけを使い、そうでなければ承認待ちとして読み飛ばします。承認待ちのプラグインを import するエントリーは読み込みに失敗し、そのプラグインと許可の方法がエラーに表示されます。レイヤーが欠けたまま気づかずに書き出されることはありません。アプリを使わずにそのプラグインを使うには、次のどちらかにします。
+
+- `celesta-exporter` に `--allow-plugin <id>` を指定する（複数指定できます）。その書き出しの間だけ、そのプラグインを今の内容のまま使います。設定には何も保存しません。アプリでオフにしたプラグインはオフのままです。
+- `--plugin-dir` や `CELESTA_PLUGIN_PATH` でフォルダーを指定する。これらは確認の対象外です。アプリで許可していないプラグインを MCP サーバーに使わせるときは、この方法を使います。
+
+```sh
+celesta-exporter --react film.tsx out.mp4 --allow-plugin flag
+```
 
 ### プロジェクトに同梱するプラグイン
 
