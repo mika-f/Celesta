@@ -19,8 +19,8 @@ use crate::scene_entries::{
     writes_nothing, written_length,
 };
 use crate::scope::{
-    CommitGate, SceneCalls, Scope, ScopeState, commit_scope, gesture_gate, gesture_start_refusal,
-    impact_filter, scope_in_effect, window_scope_state,
+    CalledHere, CommitGate, SceneCalls, Scope, ScopeState, commit_scope, gesture_gate,
+    gesture_start_refusal, impact_filter, scope_in_effect_here, window_scope_state,
 };
 use crate::timeline::selection_ranges;
 use crate::timing::{
@@ -531,6 +531,11 @@ pub(crate) struct BandDrag {
     /// [`commit_scope`]): the drag is written under it or refused, and the
     /// label's second line says it.
     scope: Option<Scope>,
+    /// The current scene's calls of the component the window is written
+    /// in, when it calls it more than once (see
+    /// `ScopeOptions::called_here`): "This scene" then writes the selected
+    /// call only, and the label's second line says so.
+    called_here: Option<CalledHere>,
     /// The instances the bands show while the drag runs: those an edit
     /// under `scope` changes (see [`impact_filter`]).
     filter: ImpactFilter,
@@ -710,7 +715,10 @@ impl EditorView {
                 after,
                 drag.adds_duration,
             )];
-            lines.extend(drag.scope.map(|scope| scope_in_effect(scope).to_owned()));
+            lines.extend(
+                drag.scope
+                    .map(|scope| scope_in_effect_here(scope, drag.called_here.as_ref())),
+            );
             return Some(BandGrips {
                 window,
                 locks: Default::default(),
@@ -839,6 +847,10 @@ impl EditorView {
         let (state, calls, remembered) = self.band_scope(window, report);
         let scope = commit_scope(remembered, &state);
         let filter = impact_filter(scope, &window.targets, calls.as_ref());
+        let called_here = match &state {
+            ScopeState::Options(options) => options.called_here.clone(),
+            ScopeState::NotShared | ScopeState::Unknown { .. } => None,
+        };
         let preview = DragPreview {
             source: window.source.clone(),
             window: grips.window,
@@ -863,6 +875,7 @@ impl EditorView {
             series_start,
             seek,
             scope,
+            called_here,
             filter,
             preview,
         };
