@@ -1,8 +1,9 @@
 //! Plugin directories: a `celesta-plugin.json` and what it names.
 
 use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
+use crate::media::{MediaManifest, RESERVED_PLUGIN_ID, deserialize_media, media_problems};
 use crate::settings::UserSettings;
-use celesta_plugin::PROTOCOL_VERSION;
+use celesta_plugin::protocol_for_roles;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -107,9 +108,15 @@ pub struct Manifest {
     /// Components of `module` the editor's Add menu offers.
     #[serde(default)]
     pub components: Vec<ComponentInfo>,
-    /// What the plugin's process does; content alone when absent.
+    /// What the plugin's process does; content alone when absent. A plugin
+    /// is either `content` or `media`, never both.
     #[serde(default = "content_roles")]
     pub roles: Vec<PluginRole>,
+    /// The components a media plugin offers. Read leniently: a malformed
+    /// component is left out, and discovery reports it
+    /// ([`DiscoveryError::BadComponent`]).
+    #[serde(default, deserialize_with = "deserialize_media")]
+    pub media: Option<MediaManifest>,
 }
 
 /// What a plugin's process does, as its manifest and its `hello` say.
@@ -118,11 +125,24 @@ pub struct Manifest {
 pub enum PluginRole {
     /// Draws plugin layers (`celesta_plugin::ContentProvider`).
     Content,
-    /// Reads and writes media files (`celesta_media::CodecProvider`).
-    Codec,
-    /// A role this Celesta does not know, which it leaves alone.
+    /// Reads media files with the decoders its manifest's `media` declares,
+    /// speaking plugin protocol 2 (`celesta_plugin::MEDIA_PROTOCOL_VERSION`).
+    Media,
+    /// A role this Celesta does not know, which it leaves alone, such as
+    /// `codec`, which `media` replaced.
     #[serde(other)]
     Unknown,
+}
+
+impl PluginRole {
+    /// Its name in manifests and `hello`, for a role this Celesta knows.
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            Self::Content => Some("content"),
+            Self::Media => Some("media"),
+            Self::Unknown => None,
+        }
+    }
 }
 
 fn content_roles() -> Vec<PluginRole> {
@@ -342,42 +362,6 @@ impl PluginEntry {
     }
 }
 
-/// The codec plugin's process to start for reading and writing media.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CodecPlugin {
-    /// The plugin's id, or the program's name when it was found beside
-    /// Celesta's own.
-    pub id: String,
-    pub executable: PathBuf,
-    /// Where it runs.
-    pub directory: PathBuf,
-}
-
-/// The name of the FFmpeg codec plugin's program, which
-/// [`InstalledPlugins::codec`] also looks for beside an installed Celesta
-/// program, as `cargo install` leaves it (never beside a source build in a
-/// Cargo build folder).
-pub const CODEC_PROGRAM: &str = "celesta-codec-ffmpeg";
-
-/// The codec plugin's program beside `executable` (Celesta's own, links
-/// resolved), as `cargo install` leaves it. None when `executable` sits in a
-/// Cargo build folder (it has `.fingerprint` or `.cargo-lock`; with
-/// `build.build-dir` set, only `.cargo-lock` stays beside the programs): a
-/// source build takes its codec from the plugin folders, so a program an
-/// older build left there is never picked up.
-fn sibling_codec(executable: &Path) -> Option<CodecPlugin> {
-    let directory = executable.parent()?;
-    if directory.join(".fingerprint").is_dir() || directory.join(".cargo-lock").is_file() {
-        return None;
-    }
-    let program = directory.join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX));
-    program.is_file().then(|| CodecPlugin {
-        id: CODEC_PROGRAM.to_owned(),
-        executable: program,
-        directory: directory.to_path_buf(),
-    })
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryError {
     #[error("could not read {path}: {source}")]
@@ -427,6 +411,10 @@ pub enum DiscoveryError {
     Unreadable(String),
     #[error("the user's settings were not used: {0}")]
     Settings(String),
+    /// A component the plugin's manifest declares that cannot be read: it
+    /// is left out, and the plugin's other components are kept.
+    #[error("{path}: a media component was skipped: {reason}")]
+    BadComponent { path: PathBuf, reason: String },
 }
 
 /// Whether `id` can name a plugin: lowercase ASCII letters, digits, `-`,
@@ -479,7 +467,8 @@ pub fn plugin_paths(extra: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Why `manifest` cannot be used from `directory`, if it cannot: a bad id, no
+/// Why `manifest` cannot be used from `directory`, if it cannot: a bad or
+/// reserved id, both the content and media roles, no
 /// `celesta` range or one that cannot be read, a component that cannot be
 /// offered (or components without a module), or a path that leads outside
 /// the directory, by its text or through a link.
@@ -491,6 +480,18 @@ fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
              and must start with a letter or digit",
             manifest.id
         ));
+    }
+    if manifest.id == RESERVED_PLUGIN_ID {
+        return Some(format!(
+            "its id {RESERVED_PLUGIN_ID:?} is reserved for the components Celesta has built in"
+        ));
+    }
+    if manifest.roles.contains(&PluginRole::Content) && manifest.roles.contains(&PluginRole::Media)
+    {
+        return Some(
+            "it has both content and media roles; a plugin that does both ships as two plugins"
+                .into(),
+        );
     }
     if let Err(reason) = manifest.celesta_range() {
         return Some(reason);
@@ -585,10 +586,12 @@ fn unsafe_plugin(directory: &Path, source: PluginSource) -> Option<String> {
     None
 }
 
+/// The plugin in `directory`, if it has a manifest, with the components of
+/// it that were skipped ([`DiscoveryError::BadComponent`]).
 fn read_manifest(
     directory: &Path,
     source: PluginSource,
-) -> Result<Option<PluginEntry>, DiscoveryError> {
+) -> Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError> {
     let path = directory.join(MANIFEST);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -616,13 +619,24 @@ fn read_manifest(
     }
     // After the range, which says better what to do about a plugin made for
     // another Celesta: one whose range covers this Celesta should speak its
-    // protocol. Its process would refuse `hello`; a module alone is never
-    // asked.
-    if manifest.protocol != PROTOCOL_VERSION {
+    // protocol, the one of its role. Its process would refuse `hello`; a
+    // module alone is never asked.
+    let roles: Vec<&str> = manifest
+        .roles
+        .iter()
+        .filter_map(|role| role.name())
+        .collect();
+    let protocol = protocol_for_roles(&roles);
+    if manifest.protocol != protocol {
+        let kind = if manifest.roles.contains(&PluginRole::Media) {
+            "media"
+        } else {
+            "content"
+        };
         return Err(DiscoveryError::Invalid {
             path,
             reason: format!(
-                "it speaks plugin protocol {}, and this Celesta speaks protocol {PROTOCOL_VERSION}",
+                "it speaks plugin protocol {}, and this Celesta speaks protocol {protocol} with {kind} plugins",
                 manifest.protocol
             ),
         });
@@ -638,11 +652,21 @@ fn read_manifest(
             reason: "its folder's path contains the path-list separator or a quote".into(),
         });
     }
-    Ok(Some(PluginEntry {
-        manifest,
-        directory: directory.to_path_buf(),
-        source,
-    }))
+    let skipped = media_problems(&text)
+        .into_iter()
+        .map(|reason| DiscoveryError::BadComponent {
+            path: path.clone(),
+            reason,
+        })
+        .collect();
+    Ok(Some((
+        PluginEntry {
+            manifest,
+            directory: directory.to_path_buf(),
+            source,
+        },
+        skipped,
+    )))
 }
 
 /// The plugins under `paths`, each an absolute path to a plugin directory
@@ -664,7 +688,9 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
 /// manifests that name a bad id or a file outside their directory or give
 /// no `celesta` range, plugins whose range leaves this Celesta out
 /// ([`DiscoveryError::Incompatible`]), and, from a checked source, a folder
-/// or plugin other users could change are reported, not fatal; a missing
+/// or plugin other users could change are reported, not fatal, as are the
+/// components of a listed plugin that cannot be read
+/// ([`DiscoveryError::BadComponent`]); a missing
 /// folder is skipped quietly. A plugin skipped this way takes no id, so a
 /// later one with the same id is found in its place.
 pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
@@ -681,13 +707,14 @@ pub(crate) fn discover_in_with(
     let mut found: Vec<PluginEntry> = Vec::new();
     let mut taken: HashSet<String> = HashSet::new();
     let mut errors = Vec::new();
-    let mut add = |entry: Result<Option<PluginEntry>, DiscoveryError>,
+    let mut add = |entry: Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError>,
                    found: &mut Vec<PluginEntry>| match entry {
-        Ok(Some(entry)) if !taken.contains(&entry.manifest.id) => {
+        Ok(Some((entry, skipped))) if !taken.contains(&entry.manifest.id) => {
             if !turned_off(&entry) {
                 taken.insert(entry.manifest.id.clone());
             }
-            found.push(entry)
+            found.push(entry);
+            errors.extend(skipped);
         }
         Ok(_) => {}
         Err(error) => errors.push(error),
@@ -942,38 +969,15 @@ impl InstalledPlugins {
                 .cloned(),
         )
     }
-
-    /// The codec to read and write media with: the first of these plugins
-    /// that is a codec with a program for this platform (discovery leaves
-    /// out one this Celesta is outside the range of, so the next codec in
-    /// search order is used instead), else the FFmpeg
-    /// codec plugin's program beside the running one ([`CODEC_PROGRAM`]) when
-    /// that is an installed program rather than a source build in a Cargo
-    /// build folder (it has `.fingerprint` or `.cargo-lock`), else none.
-    pub fn codec(&self) -> Option<CodecPlugin> {
-        self.plugins
-            .iter()
-            .filter(|entry| entry.has_role(PluginRole::Codec))
-            .find_map(|entry| {
-                Some(CodecPlugin {
-                    id: entry.manifest.id.clone(),
-                    executable: entry.executable()?,
-                    directory: entry.directory.clone(),
-                })
-            })
-            .or_else(|| {
-                let executable = std::env::current_exe().ok()?;
-                sibling_codec(&std::fs::canonicalize(&executable).unwrap_or(executable))
-            })
-    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use celesta_plugin::PROTOCOL_VERSION;
 
     /// A `celesta` range this Celesta is in.
-    const COMPATIBLE: &str = concat!("=", env!("CARGO_PKG_VERSION"));
+    pub(crate) const COMPATIBLE: &str = concat!("=", env!("CARGO_PKG_VERSION"));
 
     fn write_plugin(directory: &Path, id: &str, version: &str) {
         std::fs::create_dir_all(directory).unwrap();
@@ -1008,6 +1012,7 @@ mod tests {
                 types: None,
                 components: Vec::new(),
                 roles: content_roles(),
+                media: None,
             },
             directory: PathBuf::from("plugin"),
             source: PluginSource::Explicit,
@@ -1126,7 +1131,7 @@ mod tests {
         }
     }
 
-    fn write_manifest(directory: &Path, manifest: serde_json::Value) {
+    pub(crate) fn write_manifest(directory: &Path, manifest: serde_json::Value) {
         std::fs::create_dir_all(directory).unwrap();
         std::fs::write(directory.join(MANIFEST), manifest.to_string()).unwrap();
     }
@@ -1312,10 +1317,11 @@ mod tests {
     #[test]
     fn the_repositorys_plugins_pass_the_manifest_checks() {
         // Each `plugin.json` under `plugins/` and `examples/plugins/`, made
-        // into the manifest its build script writes (`id`, `version`, and,
-        // when plugin.json has them, `roles`, the module it builds, and
-        // `components`): a component the checks refuse would skip the whole
-        // plugin for every user, so it fails here instead.
+        // into the manifest its build script writes (`id`, `version`, the
+        // protocol of its roles, and, when plugin.json has them, `roles`,
+        // the module it builds, `components`, and `media`): a component the
+        // checks refuse would skip the whole plugin for every user, so it
+        // fails here instead.
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let root = tempfile::tempdir().unwrap();
         let mut expected = Vec::new();
@@ -1332,11 +1338,19 @@ mod tests {
                     serde_json::from_str(&std::fs::read_to_string(&source).unwrap())
                         .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
                 let id = plugin["id"].as_str().unwrap().to_owned();
+                let roles: Vec<&str> = plugin
+                    .get("roles")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|roles| roles.iter().filter_map(serde_json::Value::as_str).collect())
+                    .unwrap_or_default();
                 let mut manifest = serde_json::json!({
-                    "id": id, "version": plugin["version"], "protocol": 1, "celesta": COMPATIBLE,
+                    "id": id, "version": plugin["version"], "protocol": protocol_for_roles(&roles),
+                    "celesta": COMPATIBLE,
                 });
-                if let Some(roles) = plugin.get("roles") {
-                    manifest["roles"] = roles.clone();
+                for key in ["roles", "media"] {
+                    if let Some(value) = plugin.get(key) {
+                        manifest[key] = value.clone();
+                    }
                 }
                 if plugin.get("module").is_some() {
                     manifest["module"] = "js/index.js".into();
@@ -1359,16 +1373,16 @@ mod tests {
 
         let (found, errors) = discover(&[root.path().to_path_buf()]);
         assert!(errors.is_empty(), "{errors:?}");
-        let codec = found
+        let ffmpeg = found
             .iter()
             .find(|entry| entry.manifest.id == "ffmpeg")
             .expect("no plugin ffmpeg under plugins/");
         assert!(
-            codec.has_role(PluginRole::Codec),
+            !ffmpeg.has_role(PluginRole::Content),
             "{:?}",
-            codec.manifest.roles
+            ffmpeg.manifest.roles
         );
-        assert_eq!(codec.module(), None);
+        assert_eq!(ffmpeg.module(), None);
         let mut found: Vec<_> = found
             .iter()
             .map(|entry| (entry.manifest.id.as_str(), &entry.manifest.components))
@@ -1647,7 +1661,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_roles_and_picks_the_first_codec() {
+    fn reads_roles_and_lists_the_media_plugins() {
         let root = tempfile::tempdir().unwrap();
         let write = |name: &str, roles: serde_json::Value| {
             let directory = root.path().join(name);
@@ -1655,7 +1669,8 @@ mod tests {
             let mut manifest = serde_json::json!({
                 "id": name,
                 "version": "1.0.0",
-                "protocol": 1, "celesta": COMPATIBLE,
+                "protocol": if roles == serde_json::json!(["media"]) { 2 } else { 1 },
+                "celesta": COMPATIBLE,
                 "executable": { std::env::consts::OS: "bin/p" },
             });
             if !roles.is_null() {
@@ -1665,9 +1680,10 @@ mod tests {
             directory
         };
         write("a-content", serde_json::Value::Null);
-        let codec = write("b-codec", serde_json::json!(["codec"]));
-        write("c-codec", serde_json::json!(["codec"]));
+        let media = write("b-media", serde_json::json!(["media"]));
+        write("c-media", serde_json::json!(["media"]));
         write("d-future", serde_json::json!(["content", "sound"]));
+        write("e-codec", serde_json::json!(["codec"]));
 
         let (plugins, errors) = discover(&[root.path().to_path_buf()]);
         assert!(errors.is_empty(), "{errors:?}");
@@ -1679,78 +1695,27 @@ mod tests {
             roles,
             [
                 vec![PluginRole::Content],
-                vec![PluginRole::Codec],
-                vec![PluginRole::Codec],
+                vec![PluginRole::Media],
+                vec![PluginRole::Media],
                 vec![PluginRole::Content, PluginRole::Unknown],
+                vec![PluginRole::Unknown],
             ]
         );
         let installed = InstalledPlugins {
             plugins,
             ..InstalledPlugins::default()
         };
-        assert_eq!(
-            installed.codec(),
-            Some(CodecPlugin {
-                id: "b-codec".into(),
-                executable: codec.join("bin/p"),
-                directory: codec,
-            })
-        );
+        let listed = installed.media_with_sibling(None);
+        let ids: Vec<_> = listed.iter().map(|plugin| plugin.id.as_str()).collect();
+        assert_eq!(ids, ["b-media", "c-media"]);
+        assert_eq!(listed[0].executable, media.join("bin").join("p"));
+        assert_eq!(listed[0].directory, media);
         let content: Vec<_> = installed
             .host()
             .plugins()
             .map(|entry| entry.manifest.id.clone())
             .collect();
         assert_eq!(content, ["a-content", "d-future"]);
-    }
-
-    #[test]
-    fn finds_the_codec_program_beside_celestas_own() {
-        let root = tempfile::tempdir().unwrap();
-        let executable = root.path().join("celesta-exporter");
-        assert_eq!(sibling_codec(&executable), None);
-        let program = root
-            .path()
-            .join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX));
-        std::fs::write(&program, "").unwrap();
-        assert_eq!(
-            sibling_codec(&executable),
-            Some(CodecPlugin {
-                id: CODEC_PROGRAM.into(),
-                executable: program,
-                directory: root.path().to_path_buf(),
-            })
-        );
-    }
-
-    #[test]
-    fn skips_the_codec_program_beside_a_cargo_profile_build() {
-        let root = tempfile::tempdir().unwrap();
-        let executable = root.path().join("celesta-exporter");
-        std::fs::write(
-            root.path()
-                .join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX)),
-            "",
-        )
-        .unwrap();
-        std::fs::create_dir(root.path().join(".fingerprint")).unwrap();
-        assert_eq!(sibling_codec(&executable), None);
-    }
-
-    #[test]
-    fn skips_the_codec_program_beside_a_cargo_build_with_a_separate_build_dir() {
-        // With `build.build-dir` set, `.fingerprint` moves out of
-        // `target/<profile>`, but the programs and `.cargo-lock` stay.
-        let root = tempfile::tempdir().unwrap();
-        let executable = root.path().join("celesta-exporter");
-        std::fs::write(
-            root.path()
-                .join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX)),
-            "",
-        )
-        .unwrap();
-        std::fs::write(root.path().join(".cargo-lock"), "").unwrap();
-        assert_eq!(sibling_codec(&executable), None);
     }
 
     #[test]
@@ -1773,6 +1738,7 @@ mod tests {
             types: None,
             components: Vec::new(),
             roles: content_roles(),
+            media: None,
         };
         let suggested = celesta_range_for(&celesta_version());
         assert!(manifest(Some(&suggested)).works_with(&celesta_version()));
@@ -1792,6 +1758,7 @@ mod tests {
                 types: None,
                 components: Vec::new(),
                 roles: content_roles(),
+                media: None,
             }
             .works_with(&semver::Version::parse(version).unwrap())
         };
@@ -1839,7 +1806,7 @@ mod tests {
         assert!(
             matches!(errors[0], DiscoveryError::Invalid { .. })
                 && message.ends_with(&format!(
-                    "it speaks plugin protocol {}, and this Celesta speaks protocol {PROTOCOL_VERSION}",
+                    "it speaks plugin protocol {}, and this Celesta speaks protocol {PROTOCOL_VERSION} with content plugins",
                     PROTOCOL_VERSION + 1
                 )),
             "{message}"
@@ -1910,14 +1877,14 @@ mod tests {
     }
 
     #[test]
-    fn an_incompatible_codec_leaves_the_next_one() {
+    fn an_incompatible_media_plugin_leaves_the_next_one() {
         let root = tempfile::tempdir().unwrap();
         let write = |folder: &str, celesta: &str| {
             write_manifest(
                 &root.path().join(folder).join("ffmpeg"),
                 serde_json::json!({
-                    "id": "ffmpeg", "version": "1", "protocol": 1, "celesta": celesta,
-                    "roles": ["codec"], "executable": { platform().0: "bin/codec" },
+                    "id": "ffmpeg", "version": "1", "protocol": 2, "celesta": celesta,
+                    "roles": ["media"], "executable": { platform().0: "bin/codec" },
                 }),
             );
         };
@@ -1933,7 +1900,11 @@ mod tests {
             plugins,
             ..InstalledPlugins::default()
         };
-        let codec = installed.codec().unwrap();
-        assert_eq!(codec.directory, root.path().join("second").join("ffmpeg"));
+        let media = installed.media_with_sibling(None);
+        assert_eq!(media.len(), 1, "{media:?}");
+        assert_eq!(
+            media[0].directory,
+            root.path().join("second").join("ffmpeg")
+        );
     }
 }
