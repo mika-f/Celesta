@@ -12,7 +12,7 @@
     "@celesta.studio/character": "workspace:*",
     "@celesta.studio/cli": "workspace:*",
     "@celesta.studio/react": "workspace:*",
-    "@types/node": "^24.13.6",
+    "@types/node": "^26.0.0",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",
     "typescript": "^5.7.3",
