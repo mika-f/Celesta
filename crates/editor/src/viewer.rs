@@ -226,10 +226,9 @@ impl EditorView {
         let shows_tools = shows_tool_row(self.is_react_preview(), self.interactive);
         // The element being drawn, and whether a press draws one.
         let add_outline = self.add_outline();
-        let adding = matches!(
-            self.add.mode,
-            AddMode::Armed(_) | AddMode::Drawing { .. } | AddMode::Waiting { .. }
-        );
+        // Not while a release waits to be written: a press then draws
+        // nothing (`press_add` takes only an armed mode).
+        let adding = matches!(self.add.mode, AddMode::Armed(_) | AddMode::Drawing { .. });
         // Every region of the selected layer in the shown frame; none when
         // the frame does not draw it. The Size tool's handles sit on the box
         // they resize, which is then the outline drawn (a stroked text's
