@@ -505,8 +505,8 @@ importers:
         specifier: ^19.3.0
         version: 19.3.0
       ag-psd:
-        specifier: ^31.0.2
-        version: 31.0.3
+        specifier: ^34.0.0
+        version: 34.1.0
 
   examples/shorts-loop:
     dependencies:
@@ -738,8 +738,8 @@ importers:
         specifier: ^19.3.0
         version: 19.3.0
       ag-psd:
-        specifier: ^31.0.2
-        version: 31.0.3
+        specifier: ^34.0.0
+        version: 34.1.0
 
   packages/aivis-speech:
     devDependencies:
@@ -851,8 +851,8 @@ importers:
         specifier: ^19.3.0
         version: 19.3.0
       ag-psd:
-        specifier: ^31.0.2
-        version: 31.0.3
+        specifier: ^34.0.0
+        version: 34.1.0
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -2382,8 +2382,8 @@ packages:
   '@vitest/spy@5.0.5':
     resolution: {integrity: sha512-lwJRExuH417257Q5wv9QYugN9IMJkoxcrKrYxGPQkBzl7wlNpTUxD/5yNX4ESKVUIShKPgkGchYPFMWOOk0wzw==}
 
-  ag-psd@31.0.3:
-    resolution: {integrity: sha512-THDYK+WK1F5GOH4G0l4wkQRc0Cyq5tnxIwBezACKwa6idKygphnGgMISr4lmW6n0Q89ceoqpdPZQF3Y7TL1pgg==}
+  ag-psd@34.1.0:
+    resolution: {integrity: sha512-OamTuun+q681j5NvK8LxMX8oRHS//Ah9+3Xmt0uGXVMdzMz2JpLqBvtXXQdGpucdLE3fs8EzwsPyB/vc1aVSvw==}
 
   argparse@1.0.10:
     resolution: {integrity: sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg==}
@@ -4105,7 +4105,7 @@ snapshots:
 
   '@vitest/spy@5.0.5': {}
 
-  ag-psd@31.0.3:
+  ag-psd@34.1.0:
     dependencies:
       base64-js: 1.5.1
       pako: 2.1.0
