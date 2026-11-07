@@ -213,8 +213,10 @@ fn checker() -> SceneTexture {
 }
 
 /// A green leaf pointing up, with a darker midrib and a short stem, on
-/// texels of alpha 0 that a cutoff throws away. The clear texels keep the
-/// leaf's green, so filtering does not darken its edge.
+/// transparent black texels that a cutoff throws away. Their black never
+/// shows: only cut-out and blended materials show the texture, so Celesta
+/// builds its mipmaps weighting color by alpha and gives the clear texels
+/// the leaf's green, and filtering does not darken the leaf's edge.
 fn leaf() -> SceneTexture {
     let (green, rib) = ([80, 160, 60], [50, 110, 40]);
     let size = LEAF_SIZE as f32;
@@ -232,7 +234,7 @@ fn leaf() -> SceneTexture {
             } else if off_middle < half_width {
                 (green, 255)
             } else {
-                (green, 0)
+                ([0, 0, 0], 0)
             };
             [color[0], color[1], color[2], alpha]
         })
