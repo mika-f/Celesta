@@ -83,9 +83,13 @@ averaged straight color:
   color to every transparent texel on every level, and a wholly
   transparent image left as it is. `srgb_mips_average_in_linear_light`
   keeps its bytes with `Coverage::Straight`.
-- Before and after screenshots of the turntable sample (with its leaf's
-  clear texels black) at four sizes on a light ground are in the pull
-  request.
+- Before and after screenshots, in the pull request: the turntable sample
+  (its leaf's clear texels now black) at layer scales 1, 1/2, 1/4, and 1/8
+  on a light ground, exported with a release `celesta-exporter` built
+  from this branch and one built with the old `scene.rs`. 919 pixels
+  differ, all at the leaf's edges and the cube's: at most 35 levels, and
+  each one darker before (a leaf edge pixel `[62, 127, 46]` before, the
+  leaf's own `[80, 160, 60]` after).
 - `cargo test -p celesta-gpu-renderer`, `cargo test -p
   celesta-plugin-turntable`, `cargo clippy --workspace --all-targets -- -D
   warnings`, and `cargo fmt --check` pass.
