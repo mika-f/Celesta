@@ -1902,6 +1902,8 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       type Instance = OccurrenceIndex['elements'][number]['instances'][number];
       const elements = new Map<string, { element: SourcePos; instances: Map<string, Instance> }>();
       const keyOf = ({ file, line, column }: SourcePos) => `${file}:${line}:${column}`;
+      // The keys of each instance's `wrappers`, to add a wrapper once.
+      const wrapperKeys = new Map<Instance, Set<string>>();
       const end = Math.min(from + frames, config.durationInFrames);
       for (let frame = Math.max(0, from); frame < end; frame++) {
         const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
@@ -1919,10 +1921,15 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
           if (!instance) {
             instance = { chain, wrappers: [], ranges: [], maxPerFrame: 0 };
             entry.instances.set(instanceKey, instance);
+            wrapperKeys.set(instance, new Set());
           }
+          const known = wrapperKeys.get(instance)!;
           for (const wrapper of wrappers) {
             const key = keyOf(wrapper);
-            if (!instance.wrappers.some((known) => keyOf(known) === key)) instance.wrappers.push(wrapper);
+            if (!known.has(key)) {
+              known.add(key);
+              instance.wrappers.push(wrapper);
+            }
           }
           let seen = places.get(instance);
           if (!seen) {
