@@ -155,6 +155,12 @@ struct Cli {
     /// folder and the folders they added, the bundled one); repeatable.
     #[arg(long, value_name = "DIR")]
     plugin_dir: Vec<PathBuf>,
+    /// Run the plugin with this id for this export without the desktop
+    /// app's approval, as it is now; repeatable. Plugins in the user's
+    /// plugin folder or a folder they added run only once allowed, in the
+    /// app or here. A plugin turned off in the app stays off.
+    #[arg(long, value_name = "ID", value_parser = parse_plugin_id)]
+    allow_plugin: Vec<String>,
     /// Replace an existing output file.
     #[arg(long)]
     overwrite: bool,
@@ -570,7 +576,7 @@ fn cancel_on_stdin(cancellation: ExportCancellation) {
 }
 
 fn inspect(cli: &Cli) -> ExitCode {
-    let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir);
+    let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir, &cli.allow_plugin);
     // The React runtime's media probes go through the codec.
     celesta_exporter::use_codec(&plugins);
     let result = match ReactRuntimeOptions::for_entry(
@@ -807,8 +813,23 @@ fn job(cli: &Cli, format: OutputChoice, range: Option<ExportRange>) -> ExportJob
             subtitles: cli.subtitles.clone(),
             looping: cli.looping,
             loudness: cli.loudness(),
-            plugins: Some(InstalledPlugins::find_reporting(&cli.plugin_dir)),
+            plugins: Some(InstalledPlugins::find_reporting(
+                &cli.plugin_dir,
+                &cli.allow_plugin,
+            )),
         },
+    }
+}
+
+/// A `--allow-plugin` value: a plugin id
+/// ([`celesta_plugin_host::is_valid_id`]).
+fn parse_plugin_id(id: &str) -> Result<String, String> {
+    if celesta_plugin_host::is_valid_id(id) {
+        Ok(id.to_owned())
+    } else {
+        Err(format!(
+            "{id:?} is not a plugin id (lowercase letters, digits, '-', '_', and '.', starting with a letter or digit)"
+        ))
     }
 }
 

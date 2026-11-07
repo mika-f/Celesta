@@ -49,7 +49,14 @@ import type {
 } from '@celesta.studio/react/internal';
 
 import { ProtocolLines, requestQueue } from './channel';
-import { PLUGIN_SPECIFIER, WAITING_PLUGIN_PATH_ENV, findPlugins, resolvePluginImport, standInSource } from './plugins';
+import {
+  PLUGIN_SPECIFIER,
+  WAITING_IMPORTS_ENV,
+  WAITING_PLUGIN_PATH_ENV,
+  findPlugins,
+  resolvePluginImport,
+  standInSource,
+} from './plugins';
 import type { Plugins, StandIn } from './plugins';
 import { resolvePropertyInputs } from './property-inputs';
 import type { PropertyInputLayer, PropertyIssue } from './property-inputs';
@@ -670,7 +677,8 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
         build.onResolve({ filter: PLUGIN_SPECIFIER }, async (args) => {
           plugins ??= findPlugins();
           waiting ??= findPlugins(process.env[WAITING_PLUGIN_PATH_ENV] ?? '');
-          const resolved = resolvePluginImport(args.path, await plugins, await waiting);
+          const standIns = process.env[WAITING_IMPORTS_ENV] === 'stand-in';
+          const resolved = resolvePluginImport(args.path, await plugins, await waiting, standIns);
           if ('error' in resolved) return { errors: [{ text: resolved.error }] };
           if ('standIn' in resolved) {
             return { path: resolved.standIn.module, namespace: STAND_IN_NAMESPACE, pluginData: resolved.standIn };

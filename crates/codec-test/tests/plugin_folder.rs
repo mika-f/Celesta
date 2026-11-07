@@ -28,7 +28,7 @@ fn the_folder_is_a_codec_plugin_for_this_platform() {
     );
 
     // Named explicitly, it is the codec chosen over any other installed.
-    let codec = InstalledPlugins::find(&[folder.to_path_buf()])
+    let codec = InstalledPlugins::find(&[folder.to_path_buf()], &[])
         .0
         .codec()
         .expect("the folder's codec");

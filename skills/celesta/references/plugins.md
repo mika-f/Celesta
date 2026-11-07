@@ -43,9 +43,15 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   components drawing nothing (missing layers are expected, not a bug in the
   entry), and calling its other exports throws "waits for your approval";
   Problems says it is waiting. Only the user can answer: tell them to,
-  rather than working around it. `Celesta-export` and MCP do not ask: they run the
-  plugins they find (not a project's own) whether or not the app allowed
-  them.
+  rather than working around it. `Celesta-export` and MCP do not ask, but
+  follow the app's choices: a plugin from the user's folder or an added
+  folder that the app has not allowed as it is now is skipped, and an entry
+  importing it fails with `plugin "<id>" waits for your approval in the
+  Celesta app`. Ask the user to allow it in the app. Only when the user
+  asks you to run it without the app's approval: pass `--allow-plugin <id>`
+  or `--plugin-dir` to `Celesta-export`; MCP takes neither, so the user
+  puts the folder in the server's `CELESTA_PLUGIN_PATH`. Plugins named with `--plugin-dir`
+  or `CELESTA_PLUGIN_PATH`, and the bundled ones, are not asked about.
 - A project may list its own plugin folders in `celesta.config.json` at its
   root: `{ "plugins": { "paths": ["./plugins"] } }`, relative and inside
   the project. Only the app reads it (after trust); give `Celesta-export`
@@ -224,6 +230,8 @@ import { Vrm } from '@celesta-plugin/vrm';
 | Message | Fix |
 | --- | --- |
 | `no plugin "<id>" is installed (looked in CELESTA_PLUGIN_PATH)` | In the app, the plugin may be waiting for the user's approval (Problems says so): ask the user to allow it, and do not work around the question. Otherwise the entry imports a plugin no folder provides: put it in the user plugin folder, pass `--plugin-dir`, or set `CELESTA_PLUGIN_PATH` (absolute paths). |
+| `plugin "<id>" waits for your approval in the Celesta app, and does not run until you allow it (<folder>): …` | `Celesta-export` or MCP found the plugin, but the user has not allowed it in the app, or it changed since. Ask the user to allow it in the app's Plugins tab. Only when the user asks you to run it without approval: with `Celesta-export`, pass `--allow-plugin <id>` or `--plugin-dir <folder>`; for MCP, which takes neither, the user puts the folder in the server's `CELESTA_PLUGIN_PATH`. |
+| `--allow-plugin <id> names no plugin that can run: …` | No usable plugin has that id. Read the skipped-plugin lines printed before it (an incompatible `celesta` range, a bad manifest, a folder others can write): a plugin skipped there must be fixed or replaced. If none names the id, check it against the plugin's manifest. |
 | `…; <folder> was skipped: <reason>` | That folder's manifest has a bad id or names a file outside the folder (`..`, an absolute path, a link out). The plugin must be fixed; do not work around it. |
 | `<folder>/celesta-plugin.json was skipped: the plugin <id> works with Celesta <range>, and this is Celesta <version>` | The plugin was made for other Celesta versions. Have the user install a release of it made for their Celesta; do not edit its manifest's `celesta` range. A later plugin with the same id, such as another codec plugin, is used in its place. |
 | `<folder>/celesta-plugin.json was skipped: it does not say which Celesta versions it works with: …`, or `… its "celesta" range "<range>" is not a version range: …` | The manifest has no `celesta` range (a plugin built before ranges were required) or one that is not a Cargo version range. Rebuild it with Celesta's `scripts/plugins/build.mts`, which writes the range, or get a newer release. |

@@ -40,7 +40,14 @@ Opening a project runs its code on your computer, and a plugin runs its own. The
 
 Your choices are kept in `settings.json` in Celesta's settings folder: `%APPDATA%\Celesta` on Windows, `~/Library/Application Support/Celesta` on macOS, and `$XDG_CONFIG_HOME/celesta` (`~/.config/celesta` when unset) elsewhere.
 
-`celesta-exporter` and the MCP server do not ask: they use every plugin in the folders above except a project's own, whether or not you allowed it in the app.
+`celesta-exporter` and the MCP server do not ask, but they follow the choices you made in the app. They search the folders above except a project's own, and skip a plugin you turned off. A plugin from your user plugin folder or a folder you added runs only once you allowed it in the app as it is now; otherwise they skip it and say it is waiting. An entry that imports a waiting plugin fails to load, with an error that names the plugin and how to allow it, so a layer is never left out of an export without your knowing. To use such a plugin without the app:
+
+- pass `--allow-plugin <id>` to `celesta-exporter` (repeatable). It runs that plugin as it is now, for that export only, and saves nothing. A plugin you turned off in the app stays off.
+- or name its folder with `--plugin-dir` or in `CELESTA_PLUGIN_PATH`, which are never asked about. This is how to give the MCP server a plugin you have not allowed in the app.
+
+```sh
+celesta-exporter --react film.tsx out.mp4 --allow-plugin flag
+```
 
 ### Plugins that come with a project
 

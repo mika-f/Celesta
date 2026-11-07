@@ -10,7 +10,7 @@
 //! on Windows).
 
 use crate::locations::PluginSource;
-use crate::manifest::{InstalledPlugins, MANIFEST, PluginEntry};
+use crate::manifest::{InstalledPlugins, MANIFEST, PluginEntry, WaitingImports};
 use crate::settings::{Allowance, UserSettings};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
@@ -164,15 +164,23 @@ impl InstalledPlugins {
     /// waits does not, so a plugin the user has not allowed is not silently
     /// replaced by another. The
     /// waiting ones are also the result's [`InstalledPlugins::waiting`], for
-    /// the React runtime to stand in for.
+    /// the React runtime to stand in for ([`WaitingImports::StandIn`]).
     pub fn allowed_by(self, settings: &UserSettings) -> Allowed {
+        self.allowed_allowing(settings, &[])
+    }
+
+    /// [`InstalledPlugins::allowed_by`], with the plugins whose id is in
+    /// `allow` allowed for this run as they are now, without asking. A
+    /// plugin the user turned off stays off.
+    pub fn allowed_allowing(self, settings: &UserSettings, allow: &[String]) -> Allowed {
         let mut allowed = Allowed::default();
+        allowed.plugins.waiting_imports = WaitingImports::StandIn;
         for entry in self.plugins {
             if settings.is_disabled(&entry.manifest.id, &entry.directory) {
                 allowed.disabled.push(entry);
                 continue;
             }
-            if !entry.source.needs_allowance() {
+            if !entry.source.needs_allowance() || allow.contains(&entry.manifest.id) {
                 allowed.plugins.plugins.push(entry);
                 continue;
             }
@@ -213,7 +221,7 @@ impl InstalledPlugins {
 mod tests {
     use super::*;
     use crate::locations::SearchPath;
-    use crate::manifest::discover_in;
+    use crate::manifest::{DiscoveryError, discover_in};
 
     /// A `celesta` range this Celesta is in.
     const COMPATIBLE: &str = concat!("=", env!("CARGO_PKG_VERSION"));
@@ -360,6 +368,7 @@ mod tests {
             assert!(!allowed.pending[0].changed);
             // The runtime stands in for it, and does not load it.
             assert_eq!(allowed.plugins.waiting, [allowed.pending[0].entry.clone()]);
+            assert_eq!(allowed.plugins.waiting_imports, WaitingImports::StandIn);
             let runtime = allowed.plugins.runtime();
             assert_eq!(runtime.path, "");
             assert_eq!(runtime.waiting, root.path().join("p").into_os_string());
@@ -515,6 +524,104 @@ mod tests {
             [bundled.path().join("p")]
         );
         assert!(allowed.disabled.is_empty());
+    }
+
+    #[test]
+    fn command_line_discovery_runs_only_what_the_app_or_the_command_allowed() {
+        let root = tempfile::tempdir().unwrap();
+        // Discovery also reads the real user's folders: an id none uses.
+        let id = "approval-test-command-line";
+        plugin(&root.path().join("p"), id);
+        let mut settings = UserSettings {
+            plugin_folders: vec![root.path().to_path_buf()],
+            ..UserSettings::default()
+        };
+        let find = |settings: &UserSettings, allow: &[&str]| {
+            let allow: Vec<String> = allow.iter().map(|id| id.to_string()).collect();
+            InstalledPlugins::find_allowing(&[], &allow, settings)
+        };
+        let runs = |found: &InstalledPlugins| found.plugins.iter().any(|e| e.manifest.id == id);
+        let waits = |found: &InstalledPlugins| found.waiting.iter().any(|e| e.manifest.id == id);
+        let said_it_waits = |errors: &[DiscoveryError], was_changed: bool| {
+            errors.iter().any(|error| {
+                matches!(error, DiscoveryError::WaitsForApproval { id: waiting, changed, .. }
+                    if waiting == id && *changed == was_changed)
+            })
+        };
+
+        // Not allowed yet: skipped, saying how to allow it, and an entry
+        // importing it fails rather than leaving its layers out.
+        let (found, errors) = find(&settings, &[]);
+        assert!(!runs(&found) && waits(&found));
+        assert!(said_it_waits(&errors, false), "{errors:?}");
+        let message = errors
+            .iter()
+            .find(|error| matches!(error, DiscoveryError::WaitsForApproval { id: waiting, .. } if waiting == id))
+            .unwrap()
+            .to_string();
+        assert!(
+            message.contains(&format!("--allow-plugin {id}")),
+            "{message}"
+        );
+        assert_eq!(found.waiting_imports, WaitingImports::Fail);
+        assert_eq!(found.runtime().waiting_imports, WaitingImports::Fail);
+
+        // `--allow-plugin` runs it as it is, for this run only.
+        let (found, errors) = find(&settings, &[id]);
+        assert!(runs(&found) && !waits(&found), "{errors:?}");
+        assert!(!said_it_waits(&errors, false));
+        assert!(settings.allowed_plugins.is_empty());
+
+        // Allowed in the app: it runs.
+        let entry = find(&settings, &[])
+            .0
+            .waiting
+            .into_iter()
+            .find(|entry| entry.manifest.id == id)
+            .unwrap();
+        settings.allow(id, &entry.directory, &fingerprint(&entry).unwrap());
+        let (found, errors) = find(&settings, &[]);
+        assert!(runs(&found), "{errors:?}");
+
+        // Changed since: it waits again, as a change.
+        std::fs::write(root.path().join("p/js/index.js"), "export const x = 1;").unwrap();
+        let (found, errors) = find(&settings, &[]);
+        assert!(!runs(&found) && waits(&found));
+        assert!(said_it_waits(&errors, true), "{errors:?}");
+
+        // Turned off in the app: `--allow-plugin` does not turn it on, and
+        // still names a plugin that was found.
+        settings.set_enabled(id, &entry.directory, false);
+        let (found, errors) = find(&settings, &[id]);
+        assert!(!runs(&found) && !waits(&found));
+        assert!(
+            !errors
+                .iter()
+                .any(|error| matches!(error, DiscoveryError::UnknownAllowance { .. })),
+            "{errors:?}"
+        );
+
+        // Named explicitly, it needs no approval.
+        let (found, errors) = InstalledPlugins::find_allowing(
+            &[root.path().to_path_buf()],
+            &[],
+            &UserSettings::default(),
+        );
+        assert!(runs(&found), "{errors:?}");
+
+        // An id no plugin has is reported once.
+        let none = "approval-test-command-line-none";
+        let (_, errors) = find(&UserSettings::default(), &[none, none]);
+        assert_eq!(
+            errors
+                .iter()
+                .filter(
+                    |error| matches!(error, DiscoveryError::UnknownAllowance { id } if id == none)
+                )
+                .count(),
+            1,
+            "{errors:?}"
+        );
     }
 
     #[test]

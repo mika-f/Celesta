@@ -1380,7 +1380,7 @@ export default function Root() {
     let result = crate::exporter(ExportOptions {
         plugins: Some(celesta_plugin_host::InstalledPlugins {
             plugins,
-            waiting: Vec::new(),
+            ..Default::default()
         }),
         ..ExportOptions::default()
     })

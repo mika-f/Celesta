@@ -120,10 +120,12 @@ pub fn refresh_project_types(
 }
 
 /// The plugins `InstalledPlugins::find` returns, as the exporter finds
-/// them: not a project's own plugin folders, and including plugins the app
-/// still asks about. Only their declarations are copied, which run nothing.
+/// them: not a project's own plugin folders, and including plugins that
+/// wait for the user's approval. Only their declarations are copied, which
+/// run nothing.
 fn installed_plugins() -> Vec<PluginEntry> {
-    InstalledPlugins::find(&[]).0.plugins
+    let found = InstalledPlugins::find(&[], &[]).0;
+    found.plugins.into_iter().chain(found.waiting).collect()
 }
 
 /// Copies each plugin's declarations to `target/plugins/<id>/index.d.ts`,

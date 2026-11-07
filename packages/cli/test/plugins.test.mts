@@ -49,7 +49,7 @@ function writeManifest(directory: string, fields: { id: string; module?: string 
 }
 
 /** The run of the built CLI on `source` for 30 fps frames `frames`, with plugins from `plugins` and waiting ones from `waiting`. */
-function run(source: string, frames: number[], plugins: string, waiting = '') {
+function run(source: string, frames: number[], plugins: string, waiting = '', waitingImports?: string) {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-plugin-entry-'));
   scratch.push(dir);
   const entry = join(dir, 'entry.tsx');
@@ -57,14 +57,28 @@ function run(source: string, frames: number[], plugins: string, waiting = '') {
   const result = spawnSync(process.execPath, [cli, entry], {
     input: frames.map((frame) => `{"time":{"value":${frame},"timescale":30}}\n`).join(''),
     encoding: 'utf8',
-    env: { ...process.env, CELESTA_PLUGIN_PATH: plugins, CELESTA_WAITING_PLUGIN_PATH: waiting },
+    env: {
+      ...withoutWaitingImports(process.env),
+      CELESTA_PLUGIN_PATH: plugins,
+      CELESTA_WAITING_PLUGIN_PATH: waiting,
+      ...(waitingImports === undefined ? {} : { CELESTA_WAITING_PLUGIN_IMPORTS: waitingImports }),
+    },
   });
   return { result, dir };
 }
 
-/** The scenes of 30 fps frames `frames` of `source`, with plugins from `plugins` and waiting ones from `waiting`. */
+/** `env` without what the runtime does with waiting plugins' imports, which a test sets itself. */
+function withoutWaitingImports(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const { CELESTA_WAITING_PLUGIN_IMPORTS: _, ...rest } = env;
+  return rest;
+}
+
+/**
+ * The scenes of 30 fps frames `frames` of `source`, with plugins from `plugins` and waiting ones from `waiting`,
+ * whose imports resolve to stand-ins as in the app.
+ */
 function render(source: string, frames: number[], plugins: string, waiting = ''): { scenes: Scene[]; dir: string } {
-  const { result, dir } = run(source, frames, plugins, waiting);
+  const { result, dir } = run(source, frames, plugins, waiting, 'stand-in');
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const [, ...lines] = result.stdout.split(/\r?\n/).filter(Boolean);
   return { scenes: lines.map((line) => (JSON.parse(line) as { scene: Scene }).scene), dir };
@@ -175,18 +189,38 @@ test('a waiting plugin resolves to a stand-in, after the plugins that may run', 
   const waiting = pluginPath(['flag', 'beep-voice']);
   const plugins = await findPlugins(allowed);
   const waitingPlugins = await findPlugins(waiting);
-  assert.deepEqual(resolvePluginImport('@celesta-plugin/flag', plugins, waitingPlugins), {
+  assert.deepEqual(resolvePluginImport('@celesta-plugin/flag', plugins, waitingPlugins, true), {
     path: join(allowed, 'flag', 'js', 'index.ts'),
   });
-  assert.deepEqual(resolvePluginImport('@celesta-plugin/beep-voice', plugins, waitingPlugins), {
+  assert.deepEqual(resolvePluginImport('@celesta-plugin/beep-voice', plugins, waitingPlugins, true), {
     standIn: { id: 'beep-voice', module: join(waiting, 'beep-voice', 'js', 'index.ts') },
   });
   const none = { found: [], skipped: [] };
   assert.match(
-    (resolvePluginImport('@celesta-plugin/missing', plugins, waitingPlugins) as { error: string }).error,
+    (resolvePluginImport('@celesta-plugin/missing', plugins, waitingPlugins, true) as { error: string }).error,
     /no plugin "missing"/,
   );
-  assert.ok('error' in resolvePluginImport('@celesta-plugin/flag', none, none));
+  assert.ok('error' in resolvePluginImport('@celesta-plugin/flag', none, none, true));
+
+  // Without stand-ins, as command-line tools resolve it, the import fails saying how to allow it.
+  const refused = resolvePluginImport('@celesta-plugin/beep-voice', plugins, waitingPlugins, false);
+  assert.ok('error' in refused);
+  assert.match(refused.error, /plugin "beep-voice" waits for your approval/);
+  assert.match(refused.error, /in CELESTA_PLUGIN_PATH; celesta-exporter also takes --allow-plugin beep-voice/);
+
+  // A waiting plugin without a module could not be imported once allowed either, so that is the error, in both modes.
+  const programOnly = mkdtempSync(join(tmpdir(), 'celesta-plugins-'));
+  scratch.push(programOnly);
+  writeManifest(join(programOnly, 'codec'), { id: 'codec' });
+  const programOnlyPlugins = await findPlugins(programOnly);
+  for (const standIns of [true, false]) {
+    assert.deepEqual(resolvePluginImport('@celesta-plugin/codec', plugins, programOnlyPlugins, standIns), {
+      error: 'plugin "codec" has no JavaScript module',
+    });
+  }
+  assert.deepEqual(resolvePluginImport('@celesta-plugin/flag', plugins, waitingPlugins, false), {
+    path: join(allowed, 'flag', 'js', 'index.ts'),
+  });
 });
 
 test('a stand-in draws nothing for components and throws for anything else', async () => {
@@ -230,9 +264,30 @@ test('an entry that imports a waiting plugin opens without its layers or code', 
     [0],
     plugins,
     pluginPath(['beep-voice']),
+    'stand-in',
   );
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /plugin \\?"beep-voice\\?" waits for your approval/);
+});
+
+test('without stand-ins, an entry that imports a waiting plugin fails saying how to allow it', () => {
+  const source = `import { Composition, Text } from '@celesta.studio/react';
+     import { Flag } from '@celesta-plugin/flag';
+     export default function Root() {
+       return <Composition width={64} height={64} fps={30} durationInFrames={1}>
+         <Flag id="flag" src="flag.png" />
+         <Text id="title">kept</Text>
+       </Composition>;
+     }`;
+  const waiting = pluginPath(['flag']);
+  // Unset, as a runtime started without the app's settings is, and set to fail.
+  for (const waitingImports of [undefined, 'fail']) {
+    const { result } = run(source, [0], pluginPath([]), join(waiting, 'flag'), waitingImports);
+    assert.notEqual(result.status, 0, String(waitingImports));
+    const output = result.stdout + result.stderr;
+    assert.match(output, /plugin \\?"flag\\?" waits for your approval/);
+    assert.match(output, /--allow-plugin flag/);
+  }
 });
 
 test('an entry that imports a plugin no directory provides fails naming it', () => {

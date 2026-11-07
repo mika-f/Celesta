@@ -19,7 +19,7 @@ pub fn use_codec(plugins: &InstalledPlugins) -> Option<CodecPlugin> {
 /// [`use_codec`] with the plugins in every location Celesta searches, for a
 /// tool that discovers none of its own, at start-up.
 pub fn use_installed_codec() {
-    use_codec(&InstalledPlugins::find_reporting(&[]));
+    use_codec(&InstalledPlugins::find_reporting(&[], &[]));
 }
 
 /// [`use_codec`], unless a codec was chosen already: by the application, or
