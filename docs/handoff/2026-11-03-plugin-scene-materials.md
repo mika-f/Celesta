@@ -608,10 +608,10 @@ item ends with what the VRM plugin does about it
   materials draw. Mask entry points that
   discard instead at 1 sample would draw there.
 - From the first phase, still open: straight-alpha mipmaps fringe cut-outs
-  at distance; the default 128 MiB storage-binding limit may refuse
-  morph-heavy geometry; the canvas (`SCENE_CANVAS_TEXELS`) and buffer
-  (`SCENE_BUFFER_BUDGET`) caps; no Add-menu entry for `<Turntable>`; the
-  CPU renderer and `@celesta/web` refuse plugin content; the out-of-tree
+  at distance (done since: `2026-11-08-plugin-mipmap-alpha.md`); the
+  default 128 MiB storage-binding limit may refuse morph-heavy geometry;
+  the canvas (`SCENE_CANVAS_TEXELS`) and buffer (`SCENE_BUFFER_BUDGET`)
+  caps; no Add-menu entry for `<Turntable>`; the CPU renderer and `@celesta/web` refuse plugin content; the out-of-tree
   Live2D plugin's interface update; zero-weight joint slots counting toward
   the skin check; no test for a reopen of the other kind.
 

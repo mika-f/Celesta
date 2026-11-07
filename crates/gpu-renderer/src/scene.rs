@@ -39,6 +39,7 @@ use celesta_plugin::{
     MaterialOverrides, ModelId, Projection, SceneFrame, SceneModel, SceneShader, TextureRef,
     UnlitMaterial, Wrap,
 };
+use celesta_renderer::resample::Coverage;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -2105,12 +2106,27 @@ pub(crate) fn invalid_scene_frame(
 /// Straight-alpha RGBA mip levels from the image down to 1x1, each texel
 /// the box average of the 2x2 above it. sRGB colors average in linear light;
 /// alpha, and linear data, as they are.
+///
+/// With [`Coverage::Alpha`] the alpha says how much of a texel the surface
+/// covers, as a cut-out or blended material's color does: colors are
+/// weighted by it, so a texel takes no color from the fully transparent
+/// texels it averages. Then [`fill_transparent`] gives every fully
+/// transparent texel, the image's own too, its surroundings' color: the
+/// texture is sampled with straight alpha, so filtering blends a
+/// transparent texel's color into its covered neighbours'. An image with
+/// nothing covered is averaged as with [`Coverage::Straight`].
 fn straight_mips(
     width: u32,
     height: u32,
     pixels: Vec<u8>,
     color_space: ColorSpace,
+    coverage: Coverage,
 ) -> Vec<(u32, u32, Vec<u8>)> {
+    let coverage = if pixels.as_chunks::<4>().0.iter().all(|texel| texel[3] == 0) {
+        Coverage::Straight
+    } else {
+        coverage
+    };
     let decode: [f32; 256] = std::array::from_fn(|value| {
         let value = value as f32 / 255.0;
         match color_space {
@@ -2132,6 +2148,9 @@ fn straight_mips(
         let (width, height, level) = levels.last().expect("starts with the image");
         let (width, height) = (*width, *height);
         if width == 1 && height == 1 {
+            if coverage == Coverage::Alpha {
+                fill_transparent(&mut levels);
+            }
             return levels;
         }
         let next_width = (width / 2).max(1);
@@ -2139,25 +2158,77 @@ fn straight_mips(
         let mut next = Vec::with_capacity((next_width * next_height * 4) as usize);
         for y in 0..next_height {
             for x in 0..next_width {
-                let mut sum = [0.0_f32; 4];
+                let mut color = [0.0_f32; 3];
+                let mut alpha = 0.0_f32;
+                let mut weights = 0.0_f32;
                 for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                     let sx = (x * 2 + dx).min(width - 1);
                     let sy = (y * 2 + dy).min(height - 1);
                     let texel = &level[((sy * width + sx) * 4) as usize..][..4];
+                    let opacity = f32::from(texel[3]);
+                    let weight = match coverage {
+                        Coverage::Alpha => opacity,
+                        Coverage::Straight => 1.0,
+                    };
                     for channel in 0..3 {
-                        sum[channel] += decode[usize::from(texel[channel])];
+                        color[channel] += decode[usize::from(texel[channel])] * weight;
                     }
-                    sum[3] += f32::from(texel[3]);
+                    alpha += opacity;
+                    weights += weight;
                 }
+                // Nothing covered: `fill_transparent` gives it its color.
+                let average = |channel: usize| {
+                    if weights > 0.0 {
+                        encode(color[channel] / weights)
+                    } else {
+                        0
+                    }
+                };
                 next.extend([
-                    encode(sum[0] / 4.0),
-                    encode(sum[1] / 4.0),
-                    encode(sum[2] / 4.0),
-                    (sum[3] / 4.0).round() as u8,
+                    average(0),
+                    average(1),
+                    average(2),
+                    (alpha / 4.0).round() as u8,
                 ]);
             }
         }
         levels.push((next_width, next_height, next));
+    }
+}
+
+/// Gives each fully transparent texel of `levels`, every level's but the
+/// last, the color of the texel under it on the next level, coarsest level
+/// first: a transparent texel takes the coverage-weighted color of the
+/// smallest block around it that covers something.
+fn fill_transparent(levels: &mut [(u32, u32, Vec<u8>)]) {
+    for index in (0..levels.len().saturating_sub(1)).rev() {
+        let (finer, coarser) = levels.split_at_mut(index + 1);
+        let (width, height, texels) = &mut finer[index];
+        let (coarse_width, coarse_height, under) = &coarser[0];
+        for y in 0..*height {
+            for x in 0..*width {
+                let texel = ((y * *width + x) * 4) as usize;
+                if texels[texel + 3] != 0 {
+                    continue;
+                }
+                let below = (((y / 2).min(coarse_height - 1) * coarse_width
+                    + (x / 2).min(coarse_width - 1))
+                    * 4) as usize;
+                texels[texel..texel + 3].copy_from_slice(&under[below..below + 3]);
+            }
+        }
+    }
+}
+
+/// The textures `material` shows.
+fn material_textures(material: &Material) -> Vec<usize> {
+    match &material.kind {
+        MaterialKind::Unlit(unlit) => unlit
+            .base_color_texture
+            .iter()
+            .map(|texture| texture.texture)
+            .collect(),
+        MaterialKind::Custom(custom) => custom.textures.iter().flatten().copied().collect(),
     }
 }
 
@@ -2353,13 +2424,35 @@ impl LoadedScene {
             });
         }
 
+        // An opaque material shows a texel's color whatever its alpha, so
+        // the textures one shows are averaged as they are; an sRGB texture
+        // only cut-out and blended materials show has alpha that is
+        // coverage. Linear textures are data.
+        let opaque_textures: HashSet<usize> = model
+            .materials
+            .iter()
+            .filter(|material| material.alpha_mode == AlphaMode::Opaque)
+            .flat_map(material_textures)
+            .collect();
         let mut textures = Vec::new();
         for (index, texture) in model.textures.iter().enumerate() {
             let image = texture_image(&texture.source, index, max_texture_dimension, layer)?;
             let (width, height) = image.dimensions();
             let sampler = &texture.sampler;
+            let coverage =
+                if texture.color_space == ColorSpace::Srgb && !opaque_textures.contains(&index) {
+                    Coverage::Alpha
+                } else {
+                    Coverage::Straight
+                };
             let levels = if sampler.mipmaps {
-                straight_mips(width, height, image.into_raw(), texture.color_space)
+                straight_mips(
+                    width,
+                    height,
+                    image.into_raw(),
+                    texture.color_space,
+                    coverage,
+                )
             } else {
                 vec![(width, height, image.into_raw())]
             };
@@ -3854,13 +3947,64 @@ mod tests {
     fn srgb_mips_average_in_linear_light() {
         // Black and white average to linear 0.5, which sRGB encodes as 188.
         let pixels = [0, 0, 0, 255, 255, 255, 255, 255].to_vec();
-        let levels = straight_mips(2, 1, pixels.clone(), ColorSpace::Srgb);
+        let levels = straight_mips(2, 1, pixels.clone(), ColorSpace::Srgb, Coverage::Straight);
         assert_eq!(levels.len(), 2);
         assert_eq!(levels[1], (1, 1, vec![188, 188, 188, 255]));
-        let levels = straight_mips(2, 1, pixels, ColorSpace::Linear);
+        let levels = straight_mips(2, 1, pixels, ColorSpace::Linear, Coverage::Straight);
         assert_eq!(levels[1], (1, 1, vec![128, 128, 128, 255]));
         // A uniform texel stays as it is.
-        let levels = straight_mips(2, 2, [128, 64, 200, 77].repeat(4), ColorSpace::Srgb);
+        let levels = straight_mips(
+            2,
+            2,
+            [128, 64, 200, 77].repeat(4),
+            ColorSpace::Srgb,
+            Coverage::Straight,
+        );
         assert_eq!(levels[1].2, vec![128, 64, 200, 77]);
+    }
+
+    const GREEN: [u8; 4] = [0, 255, 0, 255];
+    const CLEAR_MAGENTA: [u8; 4] = [255, 0, 255, 0];
+
+    #[test]
+    fn coverage_mips_take_no_color_from_transparent_texels() {
+        let pixels = [GREEN, CLEAR_MAGENTA].concat();
+        let levels = straight_mips(2, 1, pixels.clone(), ColorSpace::Srgb, Coverage::Alpha);
+        assert_eq!(levels[1], (1, 1, vec![0, 255, 0, 128]));
+        // Straight, the magenta comes through.
+        let levels = straight_mips(2, 1, pixels, ColorSpace::Srgb, Coverage::Straight);
+        assert_eq!(levels[1], (1, 1, vec![188, 188, 188, 128]));
+    }
+
+    #[test]
+    fn coverage_mips_weigh_color_by_alpha() {
+        // Linear red at alpha 1 and blue at 1/3: three quarters red.
+        let pixels = [[255, 0, 0, 255], [0, 0, 255, 85]].concat();
+        let levels = straight_mips(2, 1, pixels, ColorSpace::Linear, Coverage::Alpha);
+        assert_eq!(levels[1], (1, 1, vec![191, 0, 64, 170]));
+    }
+
+    #[test]
+    fn coverage_mips_fill_transparent_texels_from_their_surroundings() {
+        let pixels = [GREEN, CLEAR_MAGENTA, CLEAR_MAGENTA, CLEAR_MAGENTA].concat();
+        let levels = straight_mips(4, 1, pixels, ColorSpace::Srgb, Coverage::Alpha);
+        assert_eq!(levels.len(), 3);
+        // Every texel is green, transparent or not, on every level; alpha
+        // is as it was.
+        let clear_green = [0, 255, 0, 0];
+        assert_eq!(
+            levels[0].2,
+            [GREEN, clear_green, clear_green, clear_green].concat()
+        );
+        assert_eq!(levels[1].2, [[0, 255, 0, 128], clear_green].concat());
+        assert_eq!(levels[2].2, vec![0, 255, 0, 64]);
+    }
+
+    #[test]
+    fn coverage_mips_of_a_wholly_transparent_image_average_straight() {
+        let pixels = [CLEAR_MAGENTA, [0, 0, 0, 0]].concat();
+        let levels = straight_mips(2, 1, pixels.clone(), ColorSpace::Srgb, Coverage::Alpha);
+        assert_eq!(levels[0].2, pixels);
+        assert_eq!(levels[1].2, vec![188, 0, 188, 0]);
     }
 }

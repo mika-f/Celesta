@@ -332,7 +332,9 @@ Not done:
   geometry: all of a geometry's morph targets are one buffer.
 - **Straight-alpha mipmaps fringe cut-outs at distance:** averaging
   straight colors with transparent texels pulls in their (often black or
-  arbitrary) colors.
+  arbitrary) colors. Done: sRGB textures only cut-out and blended
+  materials show weight color by alpha and fill transparent texels
+  (`2026-11-08-plugin-mipmap-alpha.md`).
 - **No test for the reopen of the other kind.** Closing the reopened model
   needs a plugin that changes kind across a restart, which no test plugin
   does.

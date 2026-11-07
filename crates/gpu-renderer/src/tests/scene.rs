@@ -891,6 +891,115 @@ fn mask_cuts_at_cutoff() {
     assert_masked_halves(&frame);
 }
 
+/// `one_square` shrunk to 4x4 pixels in the middle of the canvas, its
+/// material in `alpha_mode` showing a 64x64 sRGB texture, with mipmaps,
+/// whose texels are opaque green except where `hole` says: those are
+/// `hole_color` at alpha 0. A hole in every 2x2 block makes each mip level
+/// from 1 on uniform, so the pixels the square covers sample a uniform
+/// color however far down the mips they read.
+fn far_cut_out(alpha_mode: AlphaMode, hole_color: [u8; 3], hole: fn(u32, u32) -> bool) -> Scenes {
+    let mut scenes = one_square();
+    let pixels = (0..64)
+        .flat_map(|y| (0..64).map(move |x| (x, y)))
+        .flat_map(|(x, y)| {
+            if hole(x, y) {
+                [hole_color[0], hole_color[1], hole_color[2], 0]
+            } else {
+                [0, 255, 0, 255]
+            }
+        })
+        .collect();
+    scenes.model.textures = vec![SceneTexture {
+        source: TextureSource::Rgba {
+            width: 64,
+            height: 64,
+            pixels: Arc::new(pixels),
+        },
+        color_space: ColorSpace::Srgb,
+        sampler: Sampler::default(),
+    }];
+    let material = &mut scenes.model.materials[0];
+    material.alpha_mode = alpha_mode;
+    let MaterialKind::Unlit(unlit) = &mut material.kind else {
+        unreachable!("the test scene's material is unlit");
+    };
+    unlit.base_color_texture = Some(celesta_plugin::TextureRef {
+        texture: 0,
+        transform: None,
+    });
+    // `one_square`'s square covers 32x32 pixels; an eighth of it is 4x4,
+    // 16 texels to a pixel: mip level 4.
+    scenes.frame.draws[0].world = scaling(0.125, 0.125, 1.0);
+    scenes
+}
+
+/// Every other texel, as a checkerboard: half of every 2x2 block.
+fn checker(x: u32, y: u32) -> bool {
+    (x + y) % 2 == 1
+}
+
+/// One texel of every 2x2 block.
+fn one_in_four(x: u32, y: u32) -> bool {
+    x % 2 == 1 && y % 2 == 1
+}
+
+/// The pixel at `(x, y)` with its alpha divided out, as sRGB bytes.
+fn unpremultiplied(frame: &GpuFrame, x: u32, y: u32) -> [u8; 4] {
+    let [r, g, b, a] = pixel(frame, x, y);
+    assert!(a > 0, "pixel ({x}, {y}) is transparent");
+    let straight = |channel: u8| (u32::from(channel) * 255 / u32::from(a)).min(255) as u8;
+    [straight(r), straight(g), straight(b), a]
+}
+
+#[test]
+fn far_blended_cut_outs_keep_their_color() {
+    for hole_color in [[0, 0, 0], [255, 0, 255]] {
+        let Some(frame) = render_scenes(far_cut_out(AlphaMode::BLEND, hole_color, checker)) else {
+            return;
+        };
+        for (x, y) in [(31, 31), (32, 32)] {
+            let [r, g, b, a] = unpremultiplied(&frame, x, y);
+            // Half covered, and the covered half is pure green: the
+            // transparent texels' color is nowhere.
+            assert!(a.abs_diff(128) <= 2, "holes {hole_color:?}: alpha {a}");
+            assert!(
+                near([r, g, b, 255], [0, 255, 0, 255]),
+                "holes {hole_color:?}: ({x}, {y}) is {:?}",
+                [r, g, b, a]
+            );
+        }
+    }
+}
+
+#[test]
+fn far_masked_cut_outs_keep_their_color_and_coverage() {
+    for hole_color in [[0, 0, 0], [255, 0, 255]] {
+        let scenes = far_cut_out(AlphaMode::Mask { cutoff: 0.5 }, hole_color, one_in_four);
+        let Some(frame) = render_scenes(scenes) else {
+            return;
+        };
+        for (x, y) in [(31, 31), (32, 32)] {
+            // Three quarters covered, above the cutoff: drawn, opaque and
+            // pure green.
+            assert_pixel(&frame, x, y, [0, 255, 0, 255]);
+        }
+    }
+}
+
+#[test]
+fn far_opaque_textures_average_their_transparent_texels_too() {
+    // An opaque material ignores alpha, so a texel's color shows whatever
+    // its alpha: magenta and green average to linear (0.5, 0.5, 0.5) at a
+    // distance, sRGB 188, as they always did.
+    let scenes = far_cut_out(AlphaMode::Opaque, [255, 0, 255], checker);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    for (x, y) in [(31, 31), (32, 32)] {
+        assert_pixel(&frame, x, y, [188, 188, 188, 255]);
+    }
+}
+
 /// An unlit, single-sided material of `color` blended by its alpha.
 fn blended(color: [f32; 4]) -> Material {
     Material {
