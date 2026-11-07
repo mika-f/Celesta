@@ -11,7 +11,9 @@ use crate::element_rows::{
 use crate::icons::DiamondFilled;
 use crate::layer_panel::LABEL_WIDTH;
 use crate::property_controls::{ControlKind, number_hint, render_control};
-use crate::scope::{SceneCalls, Scope, ScopedRow, gesture_lock, remove_tooltip, scoped_row};
+use crate::scope::{
+    SceneCalls, Scope, ScopedRow, component_section_note, gesture_lock, remove_tooltip, scoped_row,
+};
 use crate::view::EditorView;
 use crate::widgets::inspector_section;
 use celesta_react_bridge::{PrimitivePropertyField, SourcePos};
@@ -72,24 +74,35 @@ fn sections(targets: &ElementTargets) -> Vec<(String, Vec<&(PropKey, Target)>)> 
         .collect()
 }
 
-/// "Set at `<file>`:`<line>`" after a `corner-down-right` icon.
+/// "Set at `<file>`:`<line>`" after a `corner-down-right` icon, on one
+/// line.
 fn set_at_line(call_site: &SourcePos, entry_dir: &Path, cx: &Context<EditorView>) -> Div {
+    icon_line(IconName::CornerDownRight, cx).child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .child(set_at_text(call_site, entry_dir)),
+    )
+}
+
+/// [`component_section_note`]'s text after an `info` icon, wrapping in a
+/// narrow panel.
+fn component_note_line(note: &'static str, cx: &Context<EditorView>) -> Div {
+    icon_line(IconName::Info, cx).child(div().flex_1().min_w_0().child(note))
+}
+
+/// A muted line starting with `icon`, for the text to follow.
+fn icon_line(icon: IconName, cx: &Context<EditorView>) -> Div {
     div()
         .flex()
-        .items_center()
+        .items_start()
         .gap_1()
         .text_xs()
         .text_color(cx.theme().muted_foreground)
-        .child(Icon::new(IconName::CornerDownRight).xsmall())
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(set_at_text(call_site, entry_dir)),
-        )
+        .child(Icon::new(icon).xsmall())
 }
 
 impl EditorView {
@@ -154,11 +167,15 @@ impl EditorView {
         }
         // The props written at the component's call, under its name; none
         // when every prop written there already shows "Set at …" above.
+        // Under "Edits change", a line says the choice does not reach them.
         if let Some(component) = targets
             .component
             .as_ref()
             .filter(|component| !component.props.is_empty())
         {
+            let state = self.shown_scope_context().map(|context| context.state);
+            let note =
+                component_section_note(state.as_ref()).map(|note| component_note_line(note, cx));
             column = column
                 .child(inspector_section(
                     format!("Component · {}", component.name),
@@ -168,9 +185,13 @@ impl EditorView {
                     div()
                         .px_3()
                         .py_2()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
                         .border_b_1()
                         .border_color(cx.theme().border)
-                        .child(set_at_line(&component.call_site, &entry_dir, cx)),
+                        .child(set_at_line(&component.call_site, &entry_dir, cx))
+                        .children(note),
                 );
             for prop in &component.props {
                 let key = PropKey::CallSite(prop.name.clone());
