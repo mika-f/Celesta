@@ -64,7 +64,7 @@ impl SharedMedia {
     /// The registry, after discovering the plugins again: the one held while
     /// they are the same plugins, else a new one, which exports then use too.
     fn current(&self) -> Arc<MediaRegistry> {
-        let found = media_registry(&InstalledPlugins::find_reporting(&[]));
+        let found = media_registry(&InstalledPlugins::find_reporting(&[], &[]));
         let (registry, _) = self.update(found, |registry| {
             celesta_media::set_registry(Some(registry.clone()));
         });

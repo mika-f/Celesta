@@ -567,7 +567,7 @@ fn read_preset_file(path: &Path) -> Result<(), String> {
 /// `--list-components` and `--describe`: what is installed, from the
 /// manifests (and with `--check` from each plugin), as JSON with `--json`.
 fn components(cli: &Cli) -> ExitCode {
-    let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir);
+    let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir, &cli.allow_plugin);
     let registry = celesta_exporter::media_registry(&plugins);
     let kill = PluginKillSwitch::new();
     if let Some(reference) = &cli.describe {

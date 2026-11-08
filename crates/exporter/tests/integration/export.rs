@@ -1690,7 +1690,7 @@ pub fn hanging_media_plugin() -> celesta_media::RegisteredPlugin {
     assert!(errors.is_empty(), "{errors:?}");
     let installed = celesta_plugin_host::InstalledPlugins {
         plugins,
-        waiting: Vec::new(),
+        ..Default::default()
     };
     let registry = celesta_exporter::media_registry(&installed);
     assert_eq!(registry.plugins().len(), 1);
