@@ -90,14 +90,28 @@ this plan. P1's plan (`2026-11-08-media-components-p1.md`) and handoff
   `export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"`
   (Homebrew's default `ffmpeg` is 9 and breaks the build).
 - **Builds between tasks.** Task 3 adds `Nv12` and `P010` to
-  `PixelFormat`, which `celesta-codec-test` and `celesta-codec-ffmpeg`
-  match exhaustively, so those two do not compile from Task 3 until Tasks 8
-  and 12 rewrite them. Task 7 removes protocol 1's encoder messages and the
-  old types, so `celesta-exporter`, `celesta-editor`, and `celesta-mcp` do
-  not compile during Tasks 7–8; Task 9 restores the exporter and the
-  editor, Task 10 the CLI, Task 11 `celesta-mcp`. Each task builds and
-  tests only the crates it names; from Task 11 on, `cargo test --workspace`
-  passes, and from Task 13 on, the plugins workspace too.
+  `PixelFormat` and makes `MediaProvider::describe` required, and Task 4
+  changes `RegisteredPlugin` and `ProviderFactory`. `celesta-codec-test` is
+  `celesta-exporter`'s dev-dependency, so Tasks 3 and 4 each patch its
+  library and program minimally (Task 3: the two `PixelFormat` arms in
+  `format.rs` and `lib.rs`, a `describe` answering its decoder, `main.rs`'s
+  `protocol::serve` path; Task 4: the new
+  `RegisteredPlugin` fields and a `|_, _|` factory), and
+  `cargo test -p celesta-exporter` runs in Tasks 5 and 6; Task 8 rewrites
+  those lines. Its `tests/plugin_folder.rs` reads `plugin.decoders` and
+  stops compiling at Task 1; nothing builds it until Task 8 rewrites it.
+  `crates/react-bridge/examples/audio-bench.rs` follows Tasks 1 and 4.
+  `celesta-codec-ffmpeg` does not compile from Task 3 until Task 12. Task 7
+  removes protocol 1's encoder messages and the old types, so
+  `celesta-exporter`, `celesta-editor`, `celesta-mcp`, and
+  `celesta-codec-test` do not compile during Task 7; Task 8 restores the
+  test codec, Task 9 the exporter (library and binary: the old flags go
+  there) and the editor, Task 10 adds the CLI's new flags, Task 11 restores
+  `celesta-mcp`. Each task builds and tests only the crates it names; from
+  Task 11 on, `cargo test --workspace` passes. From Task 12 on,
+  `celesta-codec-ffmpeg` builds with `--all-targets` (Task 7's `rubato`
+  changes `plugins/Cargo.lock`, which Task 12 commits), and from Task 13 on
+  the plugins workspace's tests pass too.
 
 ## Deviations from the spec (recorded in Task 15's spec edit)
 
@@ -107,6 +121,9 @@ Numbered after P1's seven.
    spec's BT.709 limited `Color`, but FFmpeg's libx264 converts RGBA input
    with libswscale's default (BT.601, untagged) and its ProRes and VP9 keep
    today's BT.709 conversion and tags, and the GPU's `yuv420p` stays BT.601.
+   The muxers tag MOV and WebM streams BT.709 from `Track.color` for
+   ProRes (`ap4h`, `apch`) and VP9 (`vp09`) only, as `main` does; H.264
+   (`avc1`) and HEVC (`hvc1`) streams stay untagged in P2a.
    P2c switches the conversion and tags everywhere at once, so P2a's output
    decodes identically to `main`'s.
 9. **Audio sample-rate conversion uses `rubato`.** The spec's "shared
@@ -151,6 +168,20 @@ Numbered after P1's seven.
     since lavapipe and WARP convert slower than libswscale. That keeps
     `main`'s output on CI's software renderers.
 
+P2b's plan uses 19–23 and P2c's 30–31, so P2a continues at 24.
+
+24. **`EncoderChoice.options` holds `SettingInput { Text, Value }`**, not
+    the spec's `BTreeMap<String, SettingValue>`. The CLI's `key=value` text
+    can only be typed against the component's schema, which arrives with
+    `describe` at resolve; MCP and TS give typed values (`Value`).
+25. **Decoded frames on the RGBA-input paths may differ by ≤ 1 code
+    value** from `main`'s (16-bit codes for MOV and WebM): MOV, WebM, and
+    MP4 on a software renderer. The spec's P2a row says identical; P2a
+    converts with libswscale's `sws_scale` where `main`'s filter graph used
+    the `scale` filter with the same flags, and the two entry points round
+    differently in ways P2a cannot match exactly. The GPU `yuv420p` path and
+    every audio path stay identical.
+
 ## Decisions the spec left to this plan
 
 - The provider traits' signatures (Task 3), the serve-side dispatch
@@ -170,7 +201,11 @@ Numbered after P1's seven.
 - The test codec's components and file format version 2 (Task 8).
 - The end-to-end check (Task 15): decoded frames and samples compared with
   `cmp`, expected identical; see that task for where identity is realistic
-  and what is recorded otherwise.
+  and for the ≤ 1 code value accepted on the RGBA-input paths (deviation 25).
+- Channel negotiation (Task 9): an encoder answering another channel count
+  gets the mix converted, mono to stereo by copying the channel and stereo
+  to mono by averaging, as the spec's "the encoder picks the rate and
+  channel count, and Celesta resamples" asks.
 - The P2a performance measurement (Task 15): `codec-bench` encode at 1080p
   and 4K and the spec's export set (300 frames at 1080p and 4K with
   `ultrafast` and `medium`, ProRes 4444 at 4K) against `main`, pipe to pipe.
@@ -185,7 +220,9 @@ The tests that pin each of these are in the task named.
    (Task 4, `described_components_follow_the_manifest`).
 2. **Cancel while frames are being encoded** leaves no output file and no
    spill file, and does not wait on the plugin beyond the abort deadline
-   (Task 9, `cancel_during_encoding_leaves_no_files`).
+   (Task 9, `cancel_during_encoding_leaves_no_files`: its hanging-plugin
+   case asserts the export returns within the 5 s abort deadline plus a
+   margin).
 3. **A React entry with no audio clips exported with `--loop`** gets a
    video-only file and no error: the pre-roll needs a mix (Task 9,
    `a_silent_react_entry_with_loop_has_no_audio_track`).
@@ -204,6 +241,7 @@ The tests that pin each of these are in the task named.
 - Modify: `crates/plugin-host/src/media.rs` (`MediaManifest`, `parse_media`, `MediaPlugin`, `printed_manifest`, tests)
 - Modify: `crates/plugin-host/src/lib.rs` (re-exports)
 - Modify: `crates/exporter/src/media.rs:14-18` (`decoders: plugin.media.decoders`, so the exporter keeps compiling)
+- Modify: `crates/react-bridge/examples/audio-bench.rs:38-42` (`decoders: plugin.media.decoders`, so the example keeps compiling)
 - Test: `crates/plugin-host/src/media.rs` tests
 
 **Interfaces:**
@@ -217,27 +255,36 @@ The tests that pin each of these are in the task named.
                                pub audio: Option<Vec<String>>, pub default_video: Option<String>, pub default_audio: Option<String>,
                                pub trims_leading_audio: bool, pub sequence: bool }
   pub fn codec_family(codec: &str) -> String;   // before the first '.', then avc3→avc1, hev1→hvc1
+  impl MediaManifest { pub fn from_json(value: Value) -> (Self, Vec<String>) }   // the `media` object; the Vec holds each skipped entry's reason
   pub struct MediaPlugin { pub id, pub version, pub executable, pub directory, pub origin, pub media: MediaManifest }  // `media` replaces `decoders`
   ```
+- The three new entry structs derive `Serialize` and `Deserialize` with
+  `#[serde(rename_all = "camelCase")]` (`inputFormats`, `defaultVideo`,
+  `defaultAudio`, `trimsLeadingAudio`), so Task 10's `listing_json` writes
+  them as the manifest does. `from_json` applies the rules below and is
+  what a plugin crate uses to build its `MediaManifest` from its
+  `plugin.json` (Task 12's `registered()`); `parse_media` calls it.
 - Reading rules, each a `BadComponent` that skips the one entry: an id that
   fails `is_valid_id` or repeats an earlier id of the same kind; an encoder
   with no `codecs`; a muxer with no `extensions` or no `video`; a
   `defaultVideo` not in `video`, or a `defaultAudio` not in `audio`.
-  `codecs`, `video`, and `audio` are stored through `codec_family`;
+  `codecs`, `video`, `audio`, `defaultVideo`, and `defaultAudio` are stored
+  through `codec_family` (before the default checks);
   extensions lower-cased without a dot, as decoders' are. `inputFormats`
   is kept as the strings given (`celesta-media` maps them to `PixelFormat`
   and ignores unknown names).
 
 - [ ] **Step 1: Write failing tests** in `media.rs`'s tests, on the existing manifest helpers:
   - `reads_encoders_and_muxers`: the spec's Manifest example lists three video encoders, three audio encoders, and three muxers; `muxers[0]` has `extensions == ["mp4","m4v"]`, `default_video == Some("avc1")`, `trims_leading_audio`, and `muxers[2].trims_leading_audio == false`, `sequence == false`.
-  - `codec_families_are_normalized`: `"codecs": ["avc3", "hev1.1.6.L93"]` reads as `["avc1", "hvc1"]`; `codec_family("mp4a.40.2") == "mp4a"`.
+  - `codec_families_are_normalized`: `"codecs": ["avc3", "hev1.1.6.L93"]` reads as `["avc1", "hvc1"]`; `codec_family("mp4a.40.2") == "mp4a"`; a muxer with `"video":["avc3"],"defaultVideo":"avc3"` is kept with `video == ["avc1"]` and `default_video == Some("avc1")`.
+  - `entries_serialize_in_camel_case`: `serde_json::to_value(&muxers[0])` has `"defaultVideo"` and `"trimsLeadingAudio": true`; `MediaManifest::from_json` of the spec's example equals what `parse_media` reads, with an empty reason list.
   - `a_bad_encoder_is_skipped_alone`: `videoEncoders: [{"id":"ok","name":"OK","codecs":["avc1"]}, {"id":"none","name":"No codecs","codecs":[]}]` keeps `ok` and adds one `BadComponent` whose reason contains `"codecs"`.
   - `a_muxer_default_must_be_accepted`: `{"id":"m","name":"M","extensions":["x"],"video":["avc1"],"defaultVideo":"vp09"}` is skipped with a reason containing `"defaultVideo"`.
   - `ids_are_unique_per_kind`: a decoder and a video encoder may share the id `ffmpeg`; two muxers with id `mp4` keep the first.
   - `the_sibling_prints_every_kind`: the fake `--manifest` program's JSON with all four keys lists them on the `MediaPlugin`.
 - [ ] **Step 2:** `cargo test -p celesta-plugin-host media` fails.
-- [ ] **Step 3: Implement.** `parse_media` reads the three new lists the way it reads `decoders` (each entry from its own `serde_json::Value`), applying the rules above.
-- [ ] **Step 4:** `cargo test -p celesta-plugin-host` and `cargo build -p celesta-exporter` pass.
+- [ ] **Step 3: Implement.** `MediaManifest::from_json` reads the three new lists the way `parse_media` reads `decoders` today (each entry from its own `serde_json::Value`), applying the rules above; `parse_media` delegates to it. Update `exporter/src/media.rs` and `react-bridge/examples/audio-bench.rs` to `plugin.media.decoders`.
+- [ ] **Step 4:** `cargo test -p celesta-plugin-host`, `cargo build -p celesta-exporter`, and `cargo build -p celesta-react-bridge --examples` pass.
 - [ ] **Step 5: Commit:** `feat(plugin-host): encoder and muxer entries in media manifests`.
 
 ### Task 2: The settings schema and validation (`celesta-media`)
@@ -267,7 +314,11 @@ The tests that pin each of these are in the task named.
   pub fn differences<'a>(schema: &'a [SettingField], settings: &'a Settings) -> Vec<(&'a SettingField, &'a SettingValue)>;  // visible fields whose value is not the default, schema order
   ```
 - `visibleWhen` on the wire maps a key to one value or a list; the Rust
-  side always holds a list (a custom deserializer). `validate` returns the
+  side always holds a list (a custom deserializer) and writes a list.
+  Serialization writes a whole-number `f64` (`SettingValue::Number`, and
+  `min`, `max`, `step`) as a JSON integer (`18`, not `18.0`), so plugins
+  reading integers keep working, and skips `None`, `false` (`advanced`,
+  `integer`), and empty (`visible_when`) fields. `validate` returns the
   full map: given values checked, missing visible keys filled with their
   defaults, hidden fields left out. Visibility is evaluated against the
   given values and defaults together. Messages: `"unknown setting"`,
@@ -277,9 +328,9 @@ The tests that pin each of these are in the task named.
   `"applies only when {key} is {value}"` for a given hidden field.
 
 - [ ] **Step 1: Write failing tests** using the spec's five example fields (`rateControl`, `crf`, `bitrate`, `tune`, `faststart`) as the schema:
-  - `the_spec_fields_round_trip_json`: each example JSON deserializes to a `SettingField` and serializes back to the same JSON (`visibleWhen` written as a list).
+  - `the_spec_fields_round_trip_json`: each example JSON deserializes to a `SettingField` and serializes back to the spec's JSON with its `visibleWhen` values wrapped in lists (`{"rateControl": ["crf"]}`), compared as `serde_json::Value`; `crf`'s `"default": 18` and `"max": 51` come back as integers.
   - `defaults_fill_missing_keys`: `validate(schema, &{})` gives `rateControl = "crf"`, `crf = 18`, `tune = ""`, `faststart = true`, and no `bitrate`.
-  - `a_hidden_field_may_not_be_given`: `{"bitrate": 4000000}` fails with key `bitrate` and the message `"applies only when rateControl is crf"`.
+  - `a_hidden_field_may_not_be_given`: `{"bitrate": 4000000}` fails with key `bitrate` and the message `"applies only when rateControl is vbr"`.
   - `switching_rate_control_shows_bitrate`: `{"rateControl":"vbr"}` gives `bitrate = 8000000` and no `crf`.
   - `numbers_are_ranged_and_whole`: `crf = 52` → `"must be at most 51"`; `crf = 17.5` → `"must be a whole number"`; `crf = "18"` → `"must be a number"`.
   - `selects_take_their_options`: `rateControl = "abr"` → `"must be one of crf, vbr"`.
@@ -295,8 +346,9 @@ The tests that pin each of these are in the task named.
 
 **Files:**
 - Rename: `crates/media/src/codec.rs` → `crates/media/src/provider.rs`; `crates/media/src/codec/protocol.rs` → `crates/media/src/protocol.rs`; `crates/media/src/codec/process.rs` → `crates/media/src/process.rs` (`pub mod protocol`, `mod provider`, `mod process`; `celesta_media::protocol::serve` is the program entry point, as the spec names it)
-- Modify: `crates/media/src/provider.rs` (traits and types), `crates/media/src/protocol.rs` (dispatch, builders, decoders), `crates/media/src/process.rs` (client impls), `crates/media/src/error.rs`, `crates/media/src/lib.rs`
-- Modify: `crates/media/src/tests.rs` and `protocol.rs`'s fakes (add `describe`)
+- Modify: `crates/media/src/provider.rs` (traits and types), `crates/media/src/protocol.rs` (dispatch, builders, decoders), `crates/media/src/process.rs` (client impls), `crates/media/src/error.rs`, `crates/media/src/lib.rs`, `crates/media/Cargo.toml` (`base64 = "0.23"`, for `TrackConfig.description`), `Cargo.lock`
+- Modify: the fakes in `crates/media/src/tests/backend.rs` (`impl MediaProvider for Fake`, `:96`) and in `protocol.rs`'s tests (add `describe`)
+- Modify: `crates/codec-test/src/format.rs:155-163` (`frame_len`: `Nv12` as long as `Yuv420p`, `P010` as `Yuv420p10`) and `crates/codec-test/src/lib.rs:221-233` (`rgba8` refuses `Nv12` / `P010` as it refuses the YUV formats), `crates/codec-test/src/lib.rs` (a `describe` answering its one decoder `available`), `crates/codec-test/src/main.rs` (`celesta_media::protocol::serve`), so `celesta-exporter`'s tests keep building and the program they run (`TestCodecPlugin`) still builds; Task 8 rewrites the provider lines
 - Test: `crates/media/src/protocol.rs` tests
 
 **Interfaces:**
@@ -380,7 +432,11 @@ The tests that pin each of these are in the task named.
   provider without that kind answers `error` with the message
   `"this plugin has no {kind}"`; `abortEncoder` tries the video encoder's
   `abort_video` and the audio encoder's `abort_audio` with the session
-  (one of them owns it). The decoding and legacy arms are untouched until
+  (one of them owns it). A plugin's session IDs are therefore unique per
+  process across every kind (one counter for video encoders, audio
+  encoders, and muxers), so a video abort never frees an audio session
+  with the same number; the trait docs say so, and Tasks 8, 12, and 13's
+  providers follow it. The decoding and legacy arms are untouched until
   Task 7.
 
 - [ ] **Step 1: Write failing tests** in `protocol.rs`'s tests, on a fake implementing the four traits that records calls and answers canned values:
@@ -391,17 +447,19 @@ The tests that pin each of these are in the task named.
   - `a_provider_without_the_kind_refuses`: a fake whose `muxer()` is `None` answers `openMuxer` with an `error` whose message is `"this plugin has no muxer"`.
   - `packets_pack_back_to_back`: `pack_packets` of two packets (3 and 2 main bytes, the first with 4 additional bytes) gives a 9-byte payload in the order main₁, additional₁, main₂, and `unpack_packets` inverts it; a payload one byte short is `malformed`.
   - `new_error_codes_round_trip`: `InvalidSettings` and `ComponentUnavailable` survive `decode_error(&encode_error(..))`.
+  - `an_abort_reaches_whichever_kind_owns_the_session`: with the fake's video session 1 and audio session 2 open, `abortEncoder { session: 2 }` ends the audio session and leaves session 1 open.
 - [ ] **Step 2:** `cargo test -p celesta-media protocol` fails.
-- [ ] **Step 3: Implement** the renames, types, traits, dispatch, request builders (`describe_request`, `open_video_request`, `encode_video_request`, `finish_video_request`, `open_audio_request`, `encode_audio_request`, `finish_audio_request`, `abort_encoder_request`, `open_muxer_request`, `write_packets_request`, `finish_muxer_request`, `abort_muxer_request`) and answer decoders, and `MediaProcess`'s impls. Add `describe` to every fake in `crates/media`.
-- [ ] **Step 4:** `cargo test -p celesta-media` passes.
+- [ ] **Step 3: Implement** the renames, types, traits, dispatch, request builders (`describe_request`, `open_video_request`, `encode_video_request`, `finish_video_request`, `open_audio_request`, `encode_audio_request`, `finish_audio_request`, `abort_encoder_request`, `open_muxer_request`, `write_packets_request`, `finish_muxer_request`, `abort_muxer_request`) and answer decoders, and `MediaProcess`'s impls. Add `describe` to every fake in `crates/media` (`tests/backend.rs`, `protocol.rs`). Patch `celesta-codec-test` as the Files list says.
+- [ ] **Step 4:** `cargo test -p celesta-media` passes and `cargo build -p celesta-codec-test` (library and program, not its tests) succeeds.
 - [ ] **Step 5: Commit:** `feat(media): protocol 2 encoding, muxing, and describe`.
 
 ### Task 4: Component listing, `ProviderUse`, and the `describe` cache (`celesta-media`)
 
 **Files:**
 - Modify: `crates/media/src/registry.rs`, `crates/media/src/provider.rs` (`ProviderFactory`), `crates/media/src/process.rs` (`factory`), `crates/media/src/backend.rs` (`Processes::get` passes `ProviderUse::Decode`), `crates/media/src/lib.rs`
-- Modify: `crates/exporter/src/media.rs` (`RegisteredPlugin` construction)
-- Test: `crates/media/src/registry.rs` tests, `crates/media/src/tests.rs`
+- Modify: `crates/exporter/src/media.rs` and `crates/react-bridge/examples/audio-bench.rs:38-42` (`RegisteredPlugin` construction)
+- Modify: `crates/codec-test/src/lib.rs:70-87` (`factory()` takes `|_, _|`; `registered()` fills the new fields with `media` holding its one decoder), so `celesta-exporter`'s tests keep building; Task 8 rewrites these lines
+- Test: `crates/media/src/registry.rs` tests, `crates/media/src/tests/backend.rs` (its `plugin` helper and factories)
 
 **Interfaces:**
 - Consumes: Task 1's manifest entries; Task 3's `ComponentDescription`, `ComponentKind`.
@@ -446,8 +504,8 @@ The tests that pin each of these are in the task named.
   - `describe_with_fills_the_same_cache`: `describe_with(0, &mut provider)` then `describe(0, kill)` starts nothing.
   - `factories_learn_their_use`: `describe` passes `ProviderUse::Describe`; `MediaBackend::probe` passes `Decode`.
 - [ ] **Step 2:** `cargo test -p celesta-media registry` fails.
-- [ ] **Step 3: Implement.** Update `exporter/src/media.rs` to fill `version`, `directory`, `executable: Some(plugin.executable)`, and `media: plugin.media`.
-- [ ] **Step 4:** `cargo test -p celesta-media` passes and `cargo build -p celesta-exporter` succeeds.
+- [ ] **Step 3: Implement.** Update `exporter/src/media.rs` and `react-bridge/examples/audio-bench.rs` to fill `version`, `directory`, `executable: Some(plugin.executable)`, and `media: plugin.media`; patch `celesta-codec-test` as the Files list says.
+- [ ] **Step 4:** `cargo test -p celesta-media` passes; `cargo build -p celesta-exporter`, `cargo build -p celesta-codec-test` (library and program), and `cargo build -p celesta-react-bridge --examples` succeed.
 - [ ] **Step 5: Commit:** `feat(media): list components and cache describe`.
 
 ### Task 5: `OutputChoice`, the new error codes, and `resolve_output` (`celesta-exporter`)
@@ -455,13 +513,14 @@ The tests that pin each of these are in the task named.
 **Files:**
 - Create: `crates/exporter/src/resolve.rs`
 - Modify: `crates/exporter/src/options.rs` (add the choice types; the old ones stay until Task 9), `crates/exporter/src/error.rs`, `crates/exporter/src/report.rs` (`classify`), `crates/exporter/src/render.rs:373-388` (`validate_output` constructs the new `UnsupportedOutput` with `extensions` = `VideoFormat::VARIANTS`' names, so the crate keeps compiling until Task 9), `crates/exporter/src/lib.rs`
-- Test: `crates/exporter/src/resolve.rs` tests, `crates/exporter/src/report.rs` tests
+- Modify: `crates/exporter/src/tests.rs:418-429` (the `validate_output` assertions match `UnsupportedOutput { .. }` instead of its old `format` field)
+- Test: `crates/exporter/src/resolve.rs` tests, `crates/exporter/src/report.rs` tests; `crates/exporter/tests/integration/cli_formats.rs`'s `json_reports_a_png_path_without_frame_selection_as_unsupported_output` keeps passing unchanged
 
 **Interfaces:**
 - Consumes: Task 2's `settings`, Task 4's registry.
 - Produces, in `celesta_exporter`:
   ```rust
-  pub enum SettingInput { Text(String), Value(SettingValue) }   // Text from the CLI's key=value, parsed by the field's type at resolve
+  pub enum SettingInput { Text(String), Value(SettingValue) }   // Text from the CLI's key=value, parsed by the field's type at resolve (deviation 24)
   pub struct EncoderChoice { pub component: Option<ComponentRef>, pub options: BTreeMap<String, SettingInput> }   // Default: none
   pub enum AudioChoice { Encode(EncoderChoice), None }          // Default: Encode(default)
   pub struct OutputChoice { pub preset: Option<String>, pub muxer: Option<ComponentRef>, pub video: EncoderChoice, pub audio: AudioChoice }   // Default
@@ -480,23 +539,32 @@ The tests that pin each of these are in the task named.
   ExportError::IncompatibleComponents { component: ComponentRef, muxer: ComponentRef, reason: String }
   ExportError::ComponentUnavailable { component: ComponentRef, reason: String }
   ExportError::InvalidOption { component: ComponentRef, key: String, message: String }   // "{component}: {key} {message}"
+  // report.rs: now pub(crate), and hints may carry a name or a list
+  pub(crate) fn classify(error: &ExportError, hints: HintStyle, issues: &mut Vec<Issue>) -> (&'static str, Option<Cow<'static, str>>);
   ```
 - Report codes: `unknown_preset` (hint `"use --video-option preset=<name>"`
   when `name` is in `X264_PRESETS`, else none; MCP style: `videoEncoder.options.preset`),
   `unsupported_output` (hint names the extensions, or `NO_DECODER_HINT` when
-  there are none), `incompatible_components`, `component_unavailable`,
+  there are none; when the output's extension is `png`, `jpg`, `jpeg`, or
+  `webp` it keeps today's sentence pointing to `--frame` / `--every`),
+  `incompatible_components`, `component_unavailable`,
   `invalid_option`. A plugin's own refusal at `open` maps too:
   `ExportError::Codec { source: MediaError::InvalidSettings { .. }, .. }` →
   `invalid_option`, `MediaError::ComponentUnavailable { .. }` →
-  `component_unavailable`. `invalid_crf` and `encoder_unavailable` go
-  (Task 9 removes the variants; the arms go here).
+  `component_unavailable`. The `invalid_crf` and `encoder_unavailable` arms
+  stay until Task 9, which removes them together with their variants.
+- `UnsupportedOutput.extensions` lists every muxer `resolve_output` may
+  pick by default (bundled and user), deduplicated and sorted.
 - Steps, as the spec's Resolving an output: (1) a `preset` is always
   `UnknownPreset` in P2a; (2) muxer by `extensions` (case-insensitive),
   ranked bundled → user by search order, project never by default; an
   explicit muxer may be any installed one; (3) video encoder: explicit, or
   the first available encoder producing `default_video`, ranked muxer's
   plugin → bundled → user; an explicit encoder none of whose `codecs` the
-  muxer's `video` accepts is `IncompatibleComponents`; (4) audio likewise
+  muxer's `video` accepts is `IncompatibleComponents`, and a reference to a
+  component of another kind (no video encoder by that reference) is
+  `ComponentUnavailable` with reason `"not a video encoder"` (`"not an
+  audio encoder"`, `"not a muxer"` likewise); (4) audio likewise
   against `default_audio`, `None` for `AudioChoice::None` or a muxer with
   no `audio`; an explicit audio encoder for such a muxer is
   `IncompatibleComponents`; (5) each chosen component's description must be
@@ -506,17 +574,18 @@ The tests that pin each of these are in the task named.
   `InvalidOption`. Muxer settings come from the muxer's own
   `EncoderChoice`-less options: the muxer takes defaults only in P2a.
 
-- [ ] **Step 1: Write failing tests** in `resolve.rs`, with a registry of in-process fakes: `b` (Bundled: muxer `mp4` taking `avc1`/`mp4a`, encoders `x264` → `avc1` with the spec's five settings, `aac` → `mp4a`), `u` (User: muxer `mp4`, encoder `h264` → `avc1`), `p` (Project: muxer `mp4`, encoders for both). Describes are canned.
-  - `defaults_follow_the_extension_and_origin`: `film.MP4` → muxer `b/mp4`, video `b/x264`, audio `b/aac`; `film.mkv` → `UnsupportedOutput { extensions: ["mp4"] }`.
+- [ ] **Step 1: Write failing tests** in `resolve.rs`, with a registry of in-process fakes: `b` (Bundled: muxer `mp4` taking `avc1`/`mp4a` with `default_video: avc1`, `default_audio: mp4a`; muxer `ivf` with `extensions: ["ivf"]`, `video: ["vp09"]`, `default_video: vp09`, and no `audio`; encoders `x264` → `avc1` with the spec's five settings plus a `preset` select inserted before `crf` (`medium` default labeled "Medium", `slow` labeled "Slow"), `vp9` → `vp09`, `aac` → `mp4a`), `u` (User: muxer `mp4`, encoder `h264` → `avc1`), `p` (Project: muxer `mp4`, encoders for both). Describes are canned.
+  - `defaults_follow_the_extension_and_origin`: `film.MP4` → muxer `b/mp4`, video `b/x264`, audio `b/aac`; `film.mkv` → `UnsupportedOutput { extensions: ["ivf", "mp4"] }`.
   - `the_muxers_plugin_ranks_first`: with `--muxer u/mp4` and no encoder, video is `u/h264`.
   - `project_components_are_never_defaults`: with only `p` installed, `film.mp4` is `UnsupportedOutput`; naming `p/mp4` and `p/…` explicitly works.
-  - `an_incompatible_encoder_is_refused`: `--video-encoder b/aac` → `IncompatibleComponents`.
-  - `audio_none_and_muxers_without_audio`: `AudioChoice::None` gives `audio: None`; a muxer without `audio` does too; naming an audio encoder for it is `IncompatibleComponents`.
+  - `an_incompatible_encoder_is_refused`: `film.mp4` with `--video-encoder b/vp9` → `IncompatibleComponents { component: b/vp9, muxer: b/mp4, .. }`; `--video-encoder b/aac` → `ComponentUnavailable { component: b/aac, reason: "not a video encoder" }`.
+  - `audio_none_and_muxers_without_audio`: `AudioChoice::None` gives `audio: None`; `film.ivf` (muxer `b/ivf`, video `b/vp9`) does too; `film.ivf` with `--audio-encoder b/aac` is `IncompatibleComponents`.
   - `an_unavailable_component_names_its_reason`: `b/x264` described `available: false, reason: "this FFmpeg build has no libx264"` → `ComponentUnavailable` with that reason.
   - `options_are_parsed_and_validated`: `Text("20")` for `crf` resolves to `Number(20)`; `Text("x")` → `InvalidOption { key: "crf", message: "must be a number" }`; `Value(Number(4000000))` for `bitrate` → the hidden-field message.
-  - `an_x264_preset_name_gets_the_video_option_hint`: `preset: Some("ultrafast")` → `UnknownPreset`, and `report::classify` gives `("unknown_preset", Some("use --video-option preset=ultrafast"))`; `Some("YouTube")` gives no hint.
+  - `an_x264_preset_name_gets_the_video_option_hint`: `preset: Some("ultrafast")` → `UnknownPreset`, and `report::classify(&error, HintStyle::Cli, &mut issues)` gives `("unknown_preset", Some("use --video-option preset=ultrafast".into()))`; `Some("YouTube")` gives no hint.
   - `a_plugins_refusal_at_open_is_an_invalid_option` (in `report.rs`'s tests): `ExportError::Codec { stage: "video encoding", source: MediaError::InvalidSettings { key: "alpha".into(), message: "needs rgba16".into() } }` classifies as `invalid_option`, and `MediaError::ComponentUnavailable { .. }` as `component_unavailable`.
-  - `the_plan_names_components_and_changed_settings`: with `crf = 20` and `preset = slow`, `encoding_label(&plan.video) == "H.264 (x264) · Slow · CRF 20"` (schema order: preset before crf in the fake's schema).
+  - `a_still_extension_keeps_the_frame_hint` (in `report.rs`'s tests): `UnsupportedOutput { path: "out.png", extensions: ["mp4"] }` classifies as `unsupported_output` with a hint containing `mp4` and `--frame`; with `out.mkv` the hint contains `mp4` and not `--frame`.
+  - `the_plan_names_components_and_changed_settings`: with `crf = 20` and `preset = slow`, `encoding_label(&plan.video) == "H.264 (x264) · Slow · CRF 20"` (schema order: preset before crf in the fixture's schema).
 - [ ] **Step 2:** `cargo test -p celesta-exporter resolve` fails.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4:** `cargo test -p celesta-exporter` passes.
@@ -553,7 +622,9 @@ The tests that pin each of these are in the task named.
   in `i128`; video first on a tie). A queue that is empty and not finished
   stops the merge; a finished track lets the other flow. Before
   `finish_audio` or any `push_audio`, nothing is released.
-- Spill: video packets count toward `staged_bytes` by their byte lengths.
+- Spill: video packets count toward `staged_bytes` by their byte lengths
+  while they are held in memory (a released packet no longer counts, so a
+  long export whose audio is known early never spills).
   Once a push would take the memory total over the limit, that packet and
   every later one go to the spill file (`tempfile::NamedTempFile::new_in(spill_dir)`,
   made on first use, deleted on drop): the bytes and additional data are
@@ -565,7 +636,7 @@ The tests that pin each of these are in the task named.
   - `video_waits_for_audio_up_to_its_time`: video packets at dts 0, 1001, 2002 (timescale 30000) and audio at 0, 1024 (timescale 48000, 1024/48000 ≈ 0.0213 s < 1001/30000 ≈ 0.0334 s): `take_ready` gives `[v0, a0, a1024]`; after `finish_audio`, `[v1001, v2002]`.
   - `no_audio_releases_everything`: `finish_audio` first; three video pushes come back in order with `track == 0`.
   - `nothing_moves_before_the_audio_is_known`: video pushed, no audio call → `take_ready` is empty.
-  - `audio_waits_for_video_too`: audio at 0 and 48000, video only at 0 (not finished): `[v0, a0]`; `finish_video` → `[a48000]`.
+  - `audio_waits_for_video_too`: audio at 0 and 48000, video only at 0 (not finished): `take_ready` gives `[v0]` (the video queue is then empty and not finished, which stops the merge); `finish_video` → `[a0, a48000]`.
   - `spilled_packets_come_back_identical_and_the_file_goes`: limit 1024 bytes; six 300-byte packets (the fourth with 8 bytes of additional id 1); `spilled()` after the fourth push; `finish_audio`; `take_ready` returns the six packets equal to those pushed; the spill directory holds no file after the interleaver is dropped.
   - `a_spilled_queue_keeps_decode_order`: after spilling, dts values come back strictly increasing.
 - [ ] **Step 2:** `cargo test -p celesta-exporter interleave` fails.
@@ -576,9 +647,9 @@ The tests that pin each of these are in the task named.
 ### Task 7: Removing protocol 1's encoder messages and the old types; the audio resampler (`celesta-media`)
 
 **Files:**
-- Modify: `crates/media/src/provider.rs` (move `probe`, `decode_video`, `decode_audio` into `Decoder`; delete `check_encoder`…`mux_audio`, `EncoderId`, `Container`, the old `EncoderSettings`, `MuxRequest`), `crates/media/src/protocol.rs` (decoding arms through `provider.decoder()`; delete the legacy arms, builders, and their tests), `crates/media/src/process.rs` (`impl Decoder for MediaProcess`; `decoder()` returns `Some(self)`), `crates/media/src/backend.rs` (delete `check_encoder`, `open_encoder`, `encode_frame`, `finish_encoder`, `abort_encoder`, `mux_audio`, `encoder`, `encoding`, `encoder_process`; `decoding` uses `provider.decoder()`), `crates/media/src/registry.rs` (delete `legacy_encoder`), `crates/media/src/error.rs`, `crates/media/src/lib.rs`, `crates/media/Cargo.toml` (`rubato = "0.16"`)
+- Modify: `crates/media/src/provider.rs` (move `probe`, `decode_video`, `decode_audio` into `Decoder`; delete `check_encoder`…`mux_audio`, `EncoderId`, `Container`, the old `EncoderSettings`, `MuxRequest`), `crates/media/src/protocol.rs` (decoding arms through `provider.decoder()`; delete the legacy arms, builders, and their tests), `crates/media/src/process.rs` (`impl Decoder for MediaProcess`; `decoder()` returns `Some(self)`), `crates/media/src/backend.rs` (delete `check_encoder`, `open_encoder`, `encode_frame`, `finish_encoder`, `abort_encoder`, `mux_audio`, `encoder`, `encoding`, `encoder_process`; `decoding` uses `provider.decoder()`), `crates/media/src/registry.rs` (delete `legacy_encoder`), `crates/media/src/error.rs`, `crates/media/src/lib.rs`, `crates/media/Cargo.toml` (`rubato = "0.16"`), `Cargo.lock` (`plugins/Cargo.lock` changes too once the plugins workspace builds; Task 12 commits it)
 - Create: `crates/media/src/resample.rs`
-- Test: `crates/media/src/tests.rs` (delete `encoding_uses_the_first_plugin`; add the two below), `crates/media/src/resample.rs` tests
+- Test: `crates/media/src/tests/backend.rs` (delete `encoding_without_a_bundled_plugin_uses_the_first` and `encoding_prefers_the_first_bundled_plugin`, `:767` and `:797`; add the one below), `crates/media/src/protocol.rs` tests, `crates/media/src/resample.rs` tests
 
 **Interfaces:**
 - Produces:
@@ -595,7 +666,8 @@ The tests that pin each of these are in the task named.
     delay compensated). The same rate returns a clone.
 
 - [ ] **Step 1: Write failing tests**:
-  - `tests.rs`: `a_provider_without_a_decoder_cannot_route`: a fake whose `decoder()` is `None` makes `probe` fail with `Codec` containing `"has no decoder"`; `the_unavailable_message_names_the_media_plugin`: `CodecUnavailable("x").to_string()` starts with `"the media plugin is unavailable"`.
+  - `tests/backend.rs`: `a_provider_without_a_decoder_cannot_route`: a fake whose `decoder()` is `None` makes `probe` fail with `Codec` containing `"has no decoder"`.
+  - `protocol.rs`'s tests: `renamed_errors_say_media`: `CodecUnavailable("x").to_string() == "the media plugin is unavailable: x"`, `CodecStopped("x").to_string() == "the media plugin was stopped: x"`, and `unpack_packets` of a header listing a 3-byte packet with an empty payload fails with a message starting `"malformed media message: "`.
   - `resample.rs`: `resampling_keeps_length_and_tone`: a 1 s 440 Hz stereo sine at 44 100 Hz resampled to 48 000 has 48 000 frames, both channels equal, and its zero crossings count 880 ± 2; `the_same_rate_is_returned_as_is`.
 - [ ] **Step 2:** `cargo test -p celesta-media` fails to compile or fails.
 - [ ] **Step 3: Implement** the removals and the resampler.
@@ -605,7 +677,7 @@ The tests that pin each of these are in the task named.
 ### Task 8: The test codec's four components (`celesta-codec-test`)
 
 **Files:**
-- Modify: `crates/codec-test/src/lib.rs` (whole provider), `crates/codec-test/src/format.rs` (format version 2), `crates/codec-test/src/plugin.rs` (manifest), `crates/codec-test/src/main.rs` (`celesta_media::protocol::serve`)
+- Modify: `crates/codec-test/src/lib.rs` (whole provider), `crates/codec-test/src/format.rs` (format version 2), `crates/codec-test/src/plugin.rs` (manifest)
 - Create: `crates/codec-test/src/components.rs` (describe, schemas, ids)
 - Test: `crates/codec-test/tests/codec.rs` (rewritten), `crates/codec-test/tests/process.rs`, `crates/codec-test/tests/plugin_folder.rs`
 
@@ -637,7 +709,9 @@ The tests that pin each of these are in the task named.
     first answer carries `TrackConfig { codec: "ctst", description: Some(<format name>.as_bytes()) }`.
     Audio packets: one per chunk, `bytes` = the samples as `f32` LE,
     `pts = given − delay`; with `delay > 0` the first packet holds `delay`
-    frames of zeros at `pts = −delay`; config `{ codec: "lpcm.f32le", description: None }`.
+    frames of zeros at `pts = (the first given pts) − delay`; config `{ codec: "lpcm.f32le", description: None }`.
+  - Session IDs come from one counter per `TestCodec` for every kind
+    (Task 3's rule), so `abortEncoder` reaches the one session it names.
   - File format version 2 (`format.rs`): `Header { extension: Option<String>, video: Option<VideoHeader>, audio: Option<AudioHeader> }`
     (`AudioHeader.lead_in_frames = delay + leading_audio`); `V` chunks are
     the video packets' bytes as given (already LZ4), written as they arrive;
@@ -648,6 +722,8 @@ The tests that pin each of these are in the task named.
     config is not `ctst`, or a frame whose decompressed length is not the
     header's (`MediaError::Codec`).
   - The decoder reads version 2 only (version 1 files are `Unsupported`).
+    The crate's file writers that the exporter's and its own tests use to
+    make inputs, `write_rgba_video` and `write_audio`, write version 2 too.
 - `TestCodecPlugin::in_profile`'s manifest declares all four components.
 
 - [ ] **Step 1: Rewrite the tests** in `tests/codec.rs` against the traits (helpers `open_video`, `encode_frames`, `mux` through `TestCodec`):
@@ -656,6 +732,8 @@ The tests that pin each of these are in the task named.
   - `pcm_delay_and_pre_roll_are_hidden`: the encoder opened with `delay = 1024` is fed 2048 pre-roll frames at `pts = -2048` and then 8000 frames at `pts = 0`, and the muxer is opened with `leading_audio = 2048`: the encoder's first packet holds 1024 zero frames at `pts == -3072`; the file's `lead_in_frames == 3072`; `played()` has 8000 frames equal to the input.
   - `a_fixed_sample_rate_is_answered`: `sampleRate = "48000"` with a 44 100 Hz request answers 48 000.
   - `an_aborted_mux_leaves_no_file`.
+  - `sessions_are_unique_across_kinds`: a video encoder, an audio encoder, and a muxer opened on one `TestCodec` get three different `SessionId`s.
+  - `written_inputs_read_back`: `write_rgba_video` and `write_audio` files read back through `read` (version 2).
   - `describe_lists_four_available_components` with the ids above.
   - `reads_the_checked_in_voices` and `names_files_it_cannot_read` stay.
   - `tests/process.rs`: `the_program_describes_and_exports`: through `MediaProcess` (`ProviderUse::Export`), describe, open/encode/finish video, open/encode/finish audio, open/write/finish muxer, then `read` the file.
@@ -669,9 +747,11 @@ The tests that pin each of these are in the task named.
 
 **Files:**
 - Create: `crates/exporter/src/encode.rs`
-- Modify: `crates/exporter/src/render.rs` (delete `VideoWriter`, `open_video_writer`, `write_frame`, `finish_encode`, `mux_audio`, `ensure_encoders`, `with_readback`; `export_renderer(&self, asset_root, frame_rate, cancellation)`; `validate_output(output, overwrite)` checks `OutputExists` only), `crates/exporter/src/exporter.rs`, `crates/exporter/src/react_entry.rs`, `crates/exporter/src/options.rs` (delete `VideoFormat`, `VideoEncoding`, `EncoderPreset`, `BitDepth`, `ColorConversion`, their `Unknown*`; `ExportOptions.output: OutputChoice` replaces `video_format` and `video`), `crates/exporter/src/control.rs`, `crates/exporter/src/report.rs`, `crates/exporter/src/progress.rs`, `crates/exporter/src/error.rs` (delete `InvalidCrf`, `EncoderUnavailable`), `crates/exporter/src/stills.rs` (the two `export_renderer` calls), `crates/exporter/src/lib.rs`, `crates/exporter/src/tests.rs`, `crates/exporter/tests/integration/{export,stills,cli_formats}.rs`
+- Modify: `crates/exporter/src/render.rs` (delete `VideoWriter`, `open_video_writer`, `write_frame`, `finish_encode`, `mux_audio`, `ensure_encoders`, `with_readback`; `export_renderer(&self, asset_root, frame_rate, cancellation)`; `validate_output(output, overwrite)` checks `OutputExists` only), `crates/exporter/src/exporter.rs`, `crates/exporter/src/react_entry.rs`, `crates/exporter/src/options.rs` (delete `VideoFormat`, `VideoEncoding`, `EncoderPreset`, `BitDepth`, `ColorConversion`, their `Unknown*`; `ExportOptions.output: OutputChoice` replaces `video_format` and `video`), `crates/exporter/src/control.rs`, `crates/exporter/src/report.rs` (delete the `invalid_crf` and `encoder_unavailable` arms with their variants), `crates/exporter/src/error.rs` (delete `InvalidCrf`, `EncoderUnavailable`), `crates/exporter/src/stills.rs` (the two `export_renderer` calls), `crates/exporter/src/lib.rs`, `crates/exporter/src/tests.rs`
+- Modify (the binary, so it keeps compiling once the old types go): `crates/exporter/src/main.rs` (delete `--output-format`, `--crf`, `--bit-depth`, `--color-conversion`, `--preset` (libx264), `OutputFormat`, the `--output-format` checks, and the H.264 flag checks; drop the ids `output_format`, `preset`, `crf`, `color_conversion`, `bit_depth` from `--inspect`'s and `--info`'s `conflicts_with_all`; rename the binary's private `enum OutputChoice` (`:639`) to `OutputKind { Video(celesta_exporter::OutputChoice), Stills, SubtitlesOnly }`, no longer `Copy`, with `output_choice` returning `Video(OutputChoice::default())` for every non-still output; `job` passes it as `ExportOptions.output`), `crates/exporter/src/progress.rs` (the binary's dashboard; see below)
+- Modify: `crates/exporter/tests/integration/{export,stills,cli_formats,inspect}.rs`: `inspect.rs:272` drops the `--crf 18` case; `stills.rs:545` and `:729-731` delete the `--output-format` cases
 - Modify: `crates/gpu-renderer/src/renderer.rs` (`pub fn set_background(&mut self, color: Color)`)
-- Modify: `crates/editor/src/export_worker.rs` (`ExportRequest.format` removed; `export_options` sets `output: OutputChoice::default()`), `crates/editor/src/helpers.rs` (`export_output(path) -> PathBuf`), `crates/editor/src/export_control.rs` (`start_export(output)`), `crates/editor/src/tests.rs`
+- Modify: `crates/editor/src/export_worker.rs` (`ExportRequest.format` removed; `export_options` sets `output: OutputChoice::default()`), `crates/editor/src/helpers.rs` (`export_output(path) -> PathBuf`; `export_progress_label` gains an `ExportProgress::Output(_)` arm, labeled "Starting export…"), `crates/editor/src/background.rs:240-246` (`ExportProgress::Output(_)` joins the ignored arm, so the label does not flicker), `crates/editor/src/export_control.rs` (`start_export(output)`), `crates/editor/src/tests.rs`
 - Test: `crates/exporter/src/encode.rs` tests, `crates/exporter/tests/integration/export.rs`
 
 **Interfaces:**
@@ -698,7 +778,10 @@ The tests that pin each of these are in the task named.
   }
   pub(crate) struct ExportedTracks { pub muxer: ComponentRef, pub video: TrackInfo, pub audio: Option<TrackInfo>, pub alpha: bool, pub files: Vec<PathBuf> }
   pub(crate) fn readback_of(format: PixelFormat) -> Result<ReadbackFormat, ExportError>;   // Rgba16 → Rgba16Straight; Nv12/P010 → ExportError::Codec "not produced yet"
+  pub(crate) fn convert_channels(audio: &AudioBuffer, channels: u16) -> AudioBuffer;   // 1→2 copies the channel, 2→1 averages (l + r) / 2, same count clones
   ```
+- `encode.rs` uses both `celesta_media::Color` and the GPU renderer's
+  `Color`; it imports the media one as `MediaColor`.
 - `open_video`: timescale = `frame_rate.numerator`; the answer's `input`
   must be in `offered`, and `alpha` only with `Rgba16`, else
   `ExportError::Codec { stage: "video encoding", source: InvalidSettings { key: "alpha", … } }`.
@@ -709,7 +792,9 @@ The tests that pin each of these are in the task named.
   `output = staged`, the tracks, `leading_audio`, and the muxer's settings;
   `flush` writes `take_ready()` in one `write_packets`.
 - `encode_audio`: `openAudioEncoder` with the mix's rate and channels; a
-  different answered rate resamples with `resample_audio`; `looping` and
+  different answered channel count converts the mix with
+  `convert_channels`, then a different answered rate resamples it with
+  `resample_audio`; `looping` and
   `muxer.entry.trims_leading_audio` feed `loop_lead_in` (moved here from
   `render.rs`, applied to the resampled mix) first at `pts = -LOOP_LEAD_IN_FRAMES`
   and set `leading_audio`; chunks of `AUDIO_CHUNK_FRAMES` at increasing
@@ -717,9 +802,13 @@ The tests that pin each of these are in the task named.
 - `finish`: `finishVideoEncoder` (packets in), `finish_video` on the
   interleaver, `try_open_muxer` (it is an error to have no video config:
   `ExportError::Codec` "the encoder produced no configuration"), `flush`,
-  `finishMuxer`; returns the tracks' `TrackInfo`s and `files`.
+  `finishMuxer`; returns the tracks' `TrackInfo`s and `files` (the staged
+  paths `finishMuxer` answered).
   `abort` sends `abortEncoder` / `abortMuxer` for open sessions and drops
   the processes.
+- After `publish`, each of `ExportedTracks.files` that is the staged
+  output is replaced by its published path (`staged` → `output`) before
+  `Wrote`, so the report never names a temporary file.
 - `export_project_cancellable`: `validate_output` → `ExportSession::start`
   → `resolve` → `progress(Output(plan))` → the composition checks →
   `export_renderer` → `offered_formats` → `output::stage` → `open_video` →
@@ -727,7 +816,8 @@ The tests that pin each of these are in the task named.
   → the mix thread as today → the frame loop, which after each frame polls
   the mix's channel (`mpsc::Receiver::try_recv`) and on a result runs
   `finish_mix` and `encode_audio` → after the loop, if not yet, waits for
-  the mix and encodes it → `finish` → `publish` → `Wrote`. The React path
+  the mix and encodes it → `finish` → `publish` → the published `files` →
+  `Wrote`. The React path
   stages everything: frames, then `build_audio_graph`; clips → mix →
   `encode_audio`, none → `no_audio` (with the loudness warning as today);
   `finish`; `publish`. Any error aborts the session; the staged file and
@@ -736,6 +826,9 @@ The tests that pin each of these are in the task named.
   `"resolving…"` until `Output`, then `"{muxer_name} · {video label} · {audio label | no audio}"`.
   `report.rs`: `Output::Video { …, muxer: String, video: {component, codec}, audio: Option<{component, codec}>, alpha, files }`,
   `format` gone; the `output` progress event.
+- `main.rs` (the binary) builds every video export with
+  `OutputChoice::default()` in this task; Task 10 adds the component flags,
+  `--preset`, and the listings on top of `OutputKind`.
 
 - [ ] **Step 1: Write failing tests.**
   - `encode.rs` tests, with an in-process fake registry (a fake plugin with a video encoder that answers canned packets and a config on the first frame, a PCM encoder with `delay = 1024`, and a muxer that records every request):
@@ -744,22 +837,24 @@ The tests that pin each of these are in the task named.
     - `no_audio_opens_a_video_only_muxer`: `no_audio()` → one track.
     - `a_looping_export_sends_the_pre_roll_only_to_trimming_muxers`: with `looping` and `trims_leading_audio`, `leading_audio == 16384` and the first audio chunk's `pts == -16384`; with a muxer without the flag, `leading_audio == 0` and the first `pts == 0`.
     - `a_refused_rate_is_resampled`: the PCM fake answers 48 000 to a 44 100 request; the frames it receives number `round(mix × 48000 / 44100)` (± 1).
+    - `a_refused_channel_count_is_converted`: the PCM fake answers 1 channel to a stereo request; it receives the mix's frame count of mono samples, each `(l + r) / 2`; answering 2 to a mono request, it receives each sample twice.
     - `alpha_needs_rgba16_input`: an encoder answering `alpha: true, input: Yuv420p` fails with `InvalidSettings { key: "alpha" }`.
-    - `abort_ends_every_open_session`: after two frames, `abort` records `abortEncoder` for the video session and `abortMuxer` only if opened.
-  - `tests/integration/export.rs`, through the test codec (replace the `VideoEncoding`/`ColorConversion` uses with `--video-option input=rgba8` as `OutputChoice`): port `exports_frame_exact_mp4_with_silent_audio` (asserting `media.extension == Some("mp4")` and `Wrote` carries `muxer == "celesta-test-codec/file"`, `video.codec == "ctst"`, `audio.is_some()`, `alpha == false`), `alpha_formats_store_straight_16_bit_frames` (now `alpha=true`), `every_format_stores_the_mix_as_long_as_the_video`, `a_looping_mp4_starts_its_sound_from_its_end` (the stored `lead_in_frames == 16384` and `played()` equals the mix), `exports_a_silent_react_entry_to_webm`, and add `a_silent_react_entry_with_loop_has_no_audio_track` (`looping: true`, `Wrote.audio.is_none()`, no error) and `cancel_during_encoding_leaves_no_files` (cancel at `Rendering { frame: 1 }`; afterwards the output's directory holds no file at all).
+    - `abort_ends_every_open_session`: after two frames (no audio yet, so no muxer), `abort` records `abortEncoder` for the video session and no `abortMuxer`; after two frames and `encode_audio` (the muxer open), `abort` records `abortEncoder` for the video session and `abortMuxer` for the muxer's (the audio encoder already finished).
+  - `tests/integration/export.rs`, through the test codec (replace the `VideoEncoding`/`ColorConversion` uses with `--video-option input=rgba8` as `OutputChoice`): port `exports_frame_exact_mp4_with_silent_audio` (asserting `media.extension == Some("mp4")` and `Wrote` carries `muxer == "celesta-test-codec/file"`, `video.codec == "ctst"`, `audio.is_some()`, `alpha == false`), `alpha_formats_store_straight_16_bit_frames` (now the video options `input=rgba16` and `alpha=true` as `OutputChoice`, so a GPU host offering `yuv420p` first does not refuse `alpha`), `every_format_stores_the_mix_as_long_as_the_video`, `a_looping_mp4_starts_its_sound_from_its_end` (the stored `lead_in_frames == 16384` and `played()` equals the mix), `exports_a_silent_react_entry_to_webm`, and add `a_silent_react_entry_with_loop_has_no_audio_track` (`looping: true`, `Wrote.audio.is_none()`, no error), `a_written_file_is_named_by_its_published_path` (`Wrote`'s `files == [output]`, which exists, and no file in it is under a staging name), and `cancel_during_encoding_leaves_no_files`, in two cases, each writing its output into a temporary directory of its own: (a) through the test codec, cancel at `Rendering { frame: 1 }`; afterwards the output's directory holds no file at all; (b) with a hanging media plugin `hang` (`unix` only): a `plugin.json` declaring the media role and one video encoder `video` with `codecs: ["ctst"]`, and a `#!/bin/sh` program written as `write_hanging_plugin` writes its own (`cat answers`, the pid file, `exec sleep 60`; the answers are protocol 2 `hello`, `described` with `video` available, and `videoEncoderOpened` with `input: rgba8`), installed beside the test codec and chosen with `OutputChoice { video.component: hang/video }` (the test codec's `file` muxer takes `ctst`); its first `encodeVideoFrame` gets no answer; cancel 300 ms after the pid file appears, as `cancel_ends_a_frame_waiting_on_a_plugin_that_hangs` does; the export ends `ExportError::Cancelled`, `begun.elapsed() < Duration::from_secs(5 + 2)` (the 5 s abort deadline plus a margin), the plugin's process is gone, and the output's directory holds no file.
   - `report.rs`: `a_video_output_names_its_components`: a `Wrote(ExportedFile::Video { .. })` with `muxer "celesta-test-codec/file"`, `video { "celesta-test-codec/video", "ctst" }`, `audio: None`, `alpha: false`, `files: [path]` serializes to `{"type":"video", …, "muxer":"celesta-test-codec/file", "video":{"component":"celesta-test-codec/video","codec":"ctst"}, "audio":null, "alpha":false, "files":[…]}` with no `format` key; `ExportProgress::Output(plan)` serializes as the `output` progress event with `muxer`, `muxerName`, `video.settings`, and `audio`.
-  - `cli_formats.rs`: delete `json_reports_h264_flags_on_mov_as_usage_errors` and `…mismatched_output_format…` (Task 10 adds the new ones).
-  - Editor tests: `export_output` returns `a.gif` → `a.mp4`, `a.WebM` unchanged.
+  - `cli_formats.rs`: delete `json_reports_h264_flags_on_mov_as_usage_errors` and `…mismatched_output_format…` (Task 10 adds the new ones); `json_reports_a_png_path_without_frame_selection_as_unsupported_output` stays and passes.
+  - `inspect.rs` and `stills.rs`: the cases the Files list names are deleted; the rest pass unchanged.
+  - Editor tests: `export_output` returns `a.gif` → `a.mp4`, `a.WebM` unchanged; `export_progress_label(&ExportProgress::Output(plan)) == "Starting export…"`.
 - [ ] **Step 2:** `cargo test -p celesta-exporter -p celesta-editor` fails to compile.
-- [ ] **Step 3: Implement.** Keep `loop_lead_in` and `LOOP_LEAD_IN_FRAMES` (moved to `encode.rs`, `pub(crate)`); delete the PCM sidecar and the remux.
-- [ ] **Step 4:** `cargo test -p celesta-exporter -p celesta-editor -p celesta-gpu-renderer` passes (`celesta-mcp` compiles in Task 11; `cargo test -p celesta-exporter` needs `celesta-codec-test` built).
+- [ ] **Step 3: Implement.** Keep `loop_lead_in` and `LOOP_LEAD_IN_FRAMES` (moved to `encode.rs`, `pub(crate)`); delete the PCM sidecar and the remux. Port `main.rs` and `progress.rs` as the Files list says, adding no new flag.
+- [ ] **Step 4:** `cargo test -p celesta-exporter -p celesta-editor -p celesta-gpu-renderer` passes, the binary's tests included (`celesta-mcp` compiles in Task 11; `cargo test -p celesta-exporter` needs `celesta-codec-test` built).
 - [ ] **Step 5: Commit:** `feat(exporter)!: encode and mux through media components`.
 
 ### Task 10: The CLI's component flags, `--list-components`, and `--describe` (`celesta-exporter`)
 
 **Files:**
 - Create: `crates/exporter/src/components.rs` (shared by the CLI and MCP)
-- Modify: `crates/exporter/src/main.rs` (`Cli`, `output_choice`, `subtitles_only_choice`, `job`, the help text, a `components` mode), `crates/exporter/src/lib.rs`
+- Modify: `crates/exporter/src/main.rs` (`Cli`, `output_choice`, `subtitles_only_choice`, `job`, the help text, a `components` mode; Task 9 already removed the old flags and renamed the binary's enum to `OutputKind`), `crates/exporter/src/lib.rs`
 - Test: `crates/exporter/src/main.rs` tests, `crates/exporter/tests/integration/cli_formats.rs`
 
 **Interfaces:**
@@ -768,7 +863,7 @@ The tests that pin each of these are in the task named.
   pub struct ListedComponent { pub info: MediaComponentInfo, pub available: Option<bool>, pub reason: Option<String> }
   pub fn list_components(registry: &MediaRegistry, check: bool, kill: &PluginKillSwitch) -> Vec<ListedComponent>;
   pub fn describe_component(registry: &MediaRegistry, reference: &ComponentRef, kill: &PluginKillSwitch) -> Result<(MediaComponentInfo, ComponentDescription), ExportError>;  // ComponentUnavailable "not installed" when unknown; the kind is found by trying the four
-  pub fn listing_json(components: &[ListedComponent]) -> Value;   // {"components":[{"id","kind","name","plugin","origin","version", manifest fields…, "available"?, "reason"?}]}
+  pub fn listing_json(components: &[ListedComponent]) -> Value;   // {"components":[{"id","kind","name","plugin","origin","version", manifest fields… (the entry through Task 1's camelCase `Serialize`: "extensions", "trimsLeadingAudio", …), "available"?, "reason"?}]}
   pub fn description_json(info: &MediaComponentInfo, description: &ComponentDescription) -> Value;   // the listing entry plus "available","reason"?,"settings","inputFormats"?,"transports"?,"sampleRates"?,"channels"?
   ```
 - CLI (exactly the spec's block): `--preset <NAME>`, `--preset-file <PATH>`,
@@ -776,7 +871,10 @@ The tests that pin each of these are in the task named.
   `--video-option <KEY=VALUE>` (repeatable, `SettingInput::Text`),
   `--audio-encoder <PLUGIN/ID|none>`, `--audio-option <KEY=VALUE>`,
   `--list-components`, `--check` (requires `--list-components`),
-  `--describe <PLUGIN/ID>`; `source` is `required_unless_present_any = ["list_components", "describe", "inspect"]`.
+  `--describe <PLUGIN/ID>`. `source` becomes `Option<PathBuf>` with
+  `required_unless_present_any = ["list_components", "describe"]` (`--inspect`
+  and `--info` still take a source); `output`'s `required_unless_present_any`
+  gains `"list_components"` and `"describe"` (`["inspect", "info", "subtitles", "list_components", "describe"]`).
   `--json` makes the two listings machine-readable; the plain listing prints
   one line per component, `<id>  <kind>  <name>  (<origin>)`, with
   `--check` appending `available` or `unavailable: <reason>`; the plain
@@ -789,14 +887,14 @@ The tests that pin each of these are in the task named.
   is not here, every `--preset` still fails at resolve.
 - `--loop` is accepted for every video output (deviation 17).
 
-- [ ] **Step 1: Write failing tests** in `main.rs`'s tests (the existing `choice`/`error` helpers):
-  - `component_flags_build_the_choice`: `["out.mp4","--muxer","ffmpeg/mp4","--video-encoder","ffmpeg/libx264","--video-option","crf=20","--video-option","preset=slow","--audio-encoder","none"]` → `OutputChoice { muxer: ffmpeg/mp4, video.component: ffmpeg/libx264, video.options: {crf: Text("20"), preset: Text("slow")}, audio: None }`.
+- [ ] **Step 1: Write failing tests** in `main.rs`'s tests (the existing `choice`/`error` helpers, which prepend a source and return `OutputKind`):
+  - `component_flags_build_the_choice`: `["out.mp4","--muxer","ffmpeg/mp4","--video-encoder","ffmpeg/libx264","--video-option","crf=20","--video-option","preset=slow","--audio-encoder","none"]` → `OutputKind::Video(OutputChoice { muxer: ffmpeg/mp4, video.component: ffmpeg/libx264, video.options: {crf: Text("20"), preset: Text("slow")}, audio: AudioChoice::None, preset: None })`.
   - `a_video_option_needs_an_equals_sign`: `"--video-option","crf"` → an error mentioning `KEY=VALUE`.
   - `component_flags_need_a_video_output`: with `--frame 0` and with `--subtitles` alone, `--video-encoder` is an error naming the flag; `--loop` with `--frame 0` stays an error; `--loop` with `out.webm` is accepted.
-  - `list_components_needs_no_source`: `["--list-components"]` and `["--describe","ffmpeg/libx264"]` parse; `["--list-components","--check","film.tsx","out.mp4"]` parses too (the listing wins).
-  - `cli_formats.rs`: `json_reports_a_bad_component_reference_as_a_usage_error` (`--video-encoder libx264`), `json_lists_the_test_codecs_components` (with `TestCodecPlugin` on `--plugin-dir`: `--list-components --json` has four entries, the muxer with `"trimsLeadingAudio": true`; `--check` adds `"available": true`), `json_describes_the_test_video_encoder` (`--describe celesta-test-codec/video --json` has `settings[0].key == "input"`), `an_x264_preset_fails_with_the_hint` (`--preset ultrafast` → `unknown_preset`, hint contains `--video-option preset=ultrafast`), `a_hidden_option_is_an_invalid_option` (`--audio-option sampleRate=48000` is fine; `--video-option alpha=true` with `input=yuv420p` → `invalid_option` whose message names `alpha`).
+  - `list_components_needs_no_source`, through `Cli::try_parse_from` directly (not `choice`, which prepends a source): `["celesta-exporter","--list-components"]` and `["celesta-exporter","--describe","ffmpeg/libx264"]` parse with `source == None`; `["celesta-exporter","--list-components","--check","film.tsx","out.mp4"]` parses too (the listing wins).
+  - `cli_formats.rs`: `json_reports_a_bad_component_reference_as_a_usage_error` (`--video-encoder libx264`), `json_lists_the_test_codecs_components` (with `TestCodecPlugin` on `--plugin-dir`: `--list-components --json` has four entries, the muxer with `"trimsLeadingAudio": true`; `--check` adds `"available": true`), `json_describes_the_test_video_encoder` (`--describe celesta-test-codec/video --json` has `settings[0].key == "input"`), `an_x264_preset_fails_with_the_hint` (`--preset ultrafast` → `unknown_preset`, hint contains `--video-option preset=ultrafast`), `a_plugins_refusal_is_an_invalid_option` (`--audio-option sampleRate=48000` is fine; `--video-option input=rgba8 --video-option alpha=true` → `invalid_option` whose message names `alpha`: the test codec refuses `alpha` without `rgba16`, on software renderers too, since `rgba8` is always offered).
 - [ ] **Step 2:** `cargo test -p celesta-exporter main cli_formats` fails.
-- [ ] **Step 3: Implement.** Remove `OutputFormat`, the `--output-format` checks, and the H.264 flag checks. Rewrite the help text's encoder paragraph: the extension picks the muxer, `--list-components` and `--describe` show what is installed and each component's settings.
+- [ ] **Step 3: Implement** the flags and the `components` mode on top of Task 9's `OutputKind`. Rewrite the help text's encoder paragraph: the extension picks the muxer, `--list-components` and `--describe` show what is installed and each component's settings.
 - [ ] **Step 4:** `cargo test -p celesta-exporter` passes.
 - [ ] **Step 5: Commit:** `feat(exporter): component flags, --list-components, and --describe`.
 
@@ -804,7 +902,8 @@ The tests that pin each of these are in the task named.
 
 **Files:**
 - Modify: `crates/mcp/src/args.rs` (`ExportVideoArgs`, new arg types, tests), `crates/mcp/src/server.rs` (two tools), `crates/mcp/src/instructions.md` (the tool map line)
-- Test: `crates/mcp/src/args.rs` tests
+- Modify: `crates/mcp/tests/integration/export.rs:59` (Task 8 removed `TestMedia.container`: assert `media.extension.as_deref() == Some("mp4")` and drop the `Container` comment)
+- Test: `crates/mcp/src/args.rs` tests, `crates/mcp/tests/integration/export.rs`
 
 **Interfaces:**
 - Produces, as the spec's MCP shape:
@@ -838,16 +937,19 @@ The tests that pin each of these are in the task named.
 **Files:**
 - Create: `plugins/ffmpeg/src/ffi.rs` (RAII `CodecContext`, `Frame`, `PacketBuf`, `Scaler`; `av_error(code: c_int, what: &str) -> MediaError` through `av_strerror`), `plugins/ffmpeg/src/video_encoder.rs`, `plugins/ffmpeg/src/components.rs` (component ids, schemas, `describe`, availability), `plugins/ffmpeg/src/h264.rs` (`avcc_from_annexb`, `annexb_to_avc`, `codec_string`)
 - Delete: `plugins/ffmpeg/src/encoder.rs`
-- Modify: `plugins/ffmpeg/src/lib.rs` (`FfmpegCodec: MediaProvider + Decoder + VideoEncoder`; `AudioEncoder` and `Muxer` arrive in Task 13), `plugins/ffmpeg/plugin.json` (the spec's `videoEncoders`, `audioEncoders`, `muxers`, with `inputFormats`: libx264 `["yuv420p","yuv420p10","rgba16","rgba8"]`, prores and vp9 `["rgba16"]`)
-- Test: `plugins/ffmpeg/tests/encoders.rs` (new), `plugins/ffmpeg/tests/process.rs` (`manifest_flag_prints_the_media_manifest` checks `media.muxers[0].id == "mp4"`)
+- Modify: `plugins/ffmpeg/src/lib.rs` (`FfmpegCodec: MediaProvider + Decoder + VideoEncoder`; `AudioEncoder` and `Muxer` arrive in Task 13; `registered()` builds `media` with `MediaManifest::from_json(plugin_json()["media"].clone())`, replacing `decoders()`, and fills the new `RegisteredPlugin` fields; `factory()` takes `|kill, use_|`), `plugins/ffmpeg/plugin.json` (the spec's `videoEncoders`, `audioEncoders`, `muxers`, with `inputFormats`: libx264 `["yuv420p","yuv420p10","rgba16","rgba8"]`, prores and vp9 `["rgba16"]`)
+- Modify: `plugins/ffmpeg/src/main.rs:13` (`celesta_media::codec::protocol::serve` → `celesta_media::protocol::serve`)
+- Modify, only so they compile (Task 13 ports them): `plugins/ffmpeg/tests/export.rs` (the factory and fields; export test bodies behind `#[ignore = "ported in Task 13"]`), `plugins/ffmpeg/tests/process.rs` (the same), `plugins/ffmpeg/examples/codec-bench.rs` (the factory; the body of `encode`, which calls the removed `open_encoder`, becomes `unimplemented!("ported in Task 13")` with its parameters prefixed `_`)
+- Modify: `plugins/Cargo.lock` (Task 7's `rubato`, and anything this task adds; committed here)
+- Test: `plugins/ffmpeg/tests/encoders.rs` (new); `plugins/ffmpeg/tests/process.rs`'s `manifest_flag_prints_the_media_manifest` keeps its current assertions (Task 13's `the_manifest_lists_every_kind` covers the new keys)
 
 **Interfaces:**
 - Consumes: Tasks 3, 4, 7.
-- Produces (component ids `libx264`, `prores`, `vp9`; the audio and muxer ids of Task 13 are declared in `plugin.json` now and described as `available: false, reason: "arrives with the muxers"` until then):
+- Produces (component ids `libx264`, `prores`, `vp9`; the audio and muxer ids of Task 13 are declared in `plugin.json` now and described as `available: false, reason: "arrives with the muxers"` until then; session IDs from one `FfmpegCodec` counter for every kind, Task 3's rule):
   - `pub(crate) fn availability(encoder: &str) -> Result<(), String>` in `components.rs`: `Ok` when `avcodec_find_encoder_by_name` finds it, else `Err(format!("this FFmpeg build has no {encoder}"))`.
   - `describe`: a video encoder is `available` by `availability` of `libx264` / `prores_ks` / `libvpx-vp9`, with the `Err` as its `reason`; `transports: ["pipe"]`; `input_formats` as the manifest.
   - Schemas. `libx264`: `preset` select of the nine x264 presets (labels capitalized, default `medium`); `rateControl` select `crf` / `vbr` (default `crf`); `crf` number integer 0–51 step 1 default 18, `visibleWhen rateControl=crf`; `bitrate` number integer min 100000 unit `bit/s` default 8000000, `visibleWhen rateControl=vbr`; `bitDepth` select `8` / `10` default `8`; `tune` string default `""` advanced. `prores`: `profile` select `4444` (label `4444`, default) / `hq` (label `422 HQ`). `vp9`: `crf` number integer 0–63 default 20; `alpha` boolean default `true`.
-  - Input choice and conversion (`open_video`): `libx264` takes `Yuv420p` (`bitDepth` 8) or `Yuv420p10` (10) when offered, else `Rgba8`/`Rgba16`, converted with `sws_scale` (`SWS_BICUBIC`, default coefficients: today's untagged BT.601) to `yuv420p` / `yuv420p10le`; `alpha: false`. `prores` and `vp9` take `Rgba16` (else `InvalidSettings { key: "input", message: "needs rgba16" }`), converted with BT.709 limited (`sws_setColorspaceDetails` with `sws_getCoefficients(SWS_CS_ITU709)`, dst range 0) and the frames tagged `AVCOL_PRI_BT709`, `AVCOL_TRC_BT709`, `AVCOL_SPC_BT709`, `AVCOL_RANGE_MPEG`, to `yuva444p10le` (4444: `alpha: true`, `alpha_bits=16`, `vendor=apl0`) / `yuv422p10le` (`hq`) / `yuva420p` (vp9 with `alpha`) or `yuv420p`; vp9 options `crf`, `b=0`, `row-mt=1`. Every context: `time_base = 1/timescale`, `framerate = frame_rate`, `AV_CODEC_FLAG_GLOBAL_HEADER`, frame `pts` as given.
+  - Input choice and conversion (`open_video`): `libx264` with `bitDepth` 8 takes `Yuv420p` when offered, else `Rgba8`; with `bitDepth` 10 takes `Yuv420p10` when offered, else `Rgba16` (as `main` reads back on software renderers; neither offered is `InvalidSettings { key: "input", message: "needs yuv420p or rgba8" }` / `"needs yuv420p10 or rgba16"`). RGBA input is converted with `sws_scale` (`SWS_BICUBIC`, default coefficients: today's untagged BT.601) to `yuv420p` / `yuv420p10le`; `alpha: false`. `prores` and `vp9` take `Rgba16` (else `InvalidSettings { key: "input", message: "needs rgba16" }`), converted with BT.709 limited (`sws_setColorspaceDetails` with `sws_getCoefficients(SWS_CS_ITU709)`, dst range 0) and the frames tagged `AVCOL_PRI_BT709`, `AVCOL_TRC_BT709`, `AVCOL_SPC_BT709`, `AVCOL_RANGE_MPEG`, to `yuva444p10le` (4444: `alpha: true`, `alpha_bits=16`, `vendor=apl0`) / `yuv422p10le` (`hq`) / `yuva420p` (vp9 with `alpha`) or `yuv420p`; vp9 options `crf`, `b=0`, `row-mt=1`. Every context: `time_base = 1/timescale`, `framerate = frame_rate`, `AV_CODEC_FLAG_GLOBAL_HEADER`, frame `pts` as given.
   - Packets: `pts`, `dts`, `duration` from the `AVPacket` (its `time_base` is the context's), `key` from `AV_PKT_FLAG_KEY`, side data `AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL` → `SideData { id: u32 from its first 8 bytes big-endian, bytes: the rest }`. H.264 packets are converted `annexb_to_avc` (each 3- or 4-byte start code replaced by the NAL's 4-byte big-endian length).
   - `TrackConfig` with the first answer that has packets: `libx264` → `codec_string(sps) == format!("avc1.{:02X}{:02X}{:02X}", sps[1], sps[2], sps[3])`, `description = avcc_from_annexb(extradata)` = `[1, sps[1], sps[2], sps[3], 0xFF, 0xE1, len(sps) as u16 BE, sps…, 1, len(pps) as u16 BE, pps…]` (the first NAL of type 7 and of type 8); `prores` → `ap4h` / `apch`, no description; `vp9` → `vp09.00.10.08`, no description.
   - `finish_video` drains the encoder (`avcodec_send_frame(NULL)`); `abort_video` frees it.
@@ -856,13 +958,15 @@ The tests that pin each of these are in the task named.
   - `libx264_packets_carry_an_avcc_and_a_codec_string`: the first answer with packets has `config.codec` starting `"avc1."`, `description[0] == 1`, `description[5] & 0x1F == 1`; ten packets in all after `finish_video`, the first `key`, and each packet's first four bytes read as a length no larger than the packet.
   - `ten_bit_h264_picks_yuv420p10_when_offered`: `bitDepth = "10"` with `[Yuv420p, Yuv420p10, Rgba16]` → `input == Yuv420p10` and `codec` starts `"avc1.6E"`.
   - `rgba_input_is_converted`: offered `[Rgba8]` → `input == Rgba8`; the packets fed to libavcodec's `h264` decoder (`avcodec_find_decoder(AV_CODEC_ID_H264)`, `extradata` = the avcC) decode to ten 32×16 frames (a muxed round trip is Task 13's).
+  - `software_offers_pick_rgba_by_bit_depth`: offered `[Rgba16, Rgba8]` (a software renderer's list) → `input == Rgba8` with `bitDepth = "8"` and `input == Rgba16` with `bitDepth = "10"`.
+  - `sessions_are_unique_across_kinds`: two video sessions opened on one `FfmpegCodec` get different `SessionId`s (Task 13 extends it to audio encoders and muxers).
   - `prores_4444_keeps_alpha_and_hq_does_not`: `profile` `4444` → `alpha, codec == "ap4h"`; `hq` → `!alpha, "apch"`.
   - `vp9_alpha_rides_as_block_additions`: `alpha = true` → every packet has `additional == [SideData { id: 1, .. }]`; `alpha = false` → none.
   - `describe_names_every_manifest_component`: `plugin.json`'s ids per kind equal `describe`'s, and `libx264` is available on this machine.
   - `a_missing_encoder_has_a_reason`: `components::availability("no_such_encoder") == Err("this FFmpeg build has no no_such_encoder")`.
 - [ ] **Step 2:** `PKG_CONFIG_PATH=… cargo test --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg --test encoders` fails to compile.
-- [ ] **Step 3: Implement.** `tests/export.rs` and `tests/process.rs`'s export tests, and `examples/codec-bench.rs`, are updated in Task 13; mark them `#[ignore = "ported in Task 13"]` only where they cannot compile otherwise.
-- [ ] **Step 4:** The `encoders` and `decode` tests pass; `cargo clippy --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg --all-targets -- -D warnings` passes.
+- [ ] **Step 3: Implement.** Make `tests/export.rs`, `tests/process.rs`, and `examples/codec-bench.rs` compile as the Files list says (the factory and fields); the export test bodies that need Task 13's audio encoders and muxers go behind `#[ignore = "ported in Task 13"]`, and Task 13 ports them.
+- [ ] **Step 4:** The `encoders` and `decode` tests and `manifest_flag_prints_the_media_manifest` pass; `cargo clippy --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg --all-targets -- -D warnings` passes; `plugins/Cargo.lock` is staged with the commit.
 - [ ] **Step 5: Commit:** `feat(codec-ffmpeg): video encoders on libavcodec with describe`.
 
 ### Task 13: The FFmpeg plugin's audio encoders, muxers, and export tests (`plugins/ffmpeg`)
@@ -870,19 +974,20 @@ The tests that pin each of these are in the task named.
 **Files:**
 - Create: `plugins/ffmpeg/src/audio_encoder.rs`, `plugins/ffmpeg/src/muxer.rs`
 - Modify: `plugins/ffmpeg/src/lib.rs` (`AudioEncoder`, `Muxer`), `plugins/ffmpeg/src/components.rs`, `plugins/ffmpeg/tests/export.rs`, `plugins/ffmpeg/tests/process.rs`, `plugins/ffmpeg/examples/codec-bench.rs`, `scripts/test-package.mjs:70-72` (also assert `videoEncoders`, `audioEncoders`, and `muxers` are non-empty)
-- Test: `plugins/ffmpeg/tests/export.rs`, `plugins/ffmpeg/tests/process.rs`
+- Test: `plugins/ffmpeg/tests/export.rs`, `plugins/ffmpeg/tests/process.rs`, `plugins/ffmpeg/tests/encoders.rs` (`sessions_are_unique_across_kinds` extended)
 
 **Interfaces:**
-- Produces (ids `aac`, `opus`, `pcm`; `mp4`, `mov`, `webm`):
+- Produces (ids `aac`, `opus`, `pcm`; `mp4`, `mov`, `webm`; their sessions from the same `FfmpegCodec` counter as Task 12's video sessions):
   - `aac`: FFmpeg's `aac` encoder, `bitrate` number integer 32000–512000 unit `bit/s` default 192000; `sample_rates: Only(the encoder's supported list)`, `channels: [1, 2]`; answers the request's rate when supported, else 48 000; `delay = initial_padding` (1024); description = the 2-byte AudioSpecificConfig extradata; codec `mp4a.40.2`. `opus`: `libopus`, `bitrate` default 192000; always 48 000; `delay = initial_padding`; description = the OpusHead extradata; codec `opus`. `pcm`: no libavcodec; `format` select `s16le` / `s24le` (default) / `f32le`; any rate; `delay 0`; codec `lpcm.<format>`; samples packed as libswresample and `pcm_s24le` do on `main`: `s24 = clip_i32(round(x × 2³¹)) >> 8` as three LE bytes, `s16 = clip_i16(round(x × 2¹⁵))`, `f32le` raw.
   - Buffering: an `AVAudioFifo` gathers `frame_size` frames per `AVFrame` (`fltp` for aac, `flt` for libopus); the remainder is flushed at `finish_audio`. Packet `pts`/`dts`/`duration` in `1/sample_rate`; the encoder's own `pts` already includes `-delay`.
-  - Muxers: `avformat_alloc_output_context2` with `"mp4"`, `"mov"`, `"webm"`; `avio_open` the given `output`; one `AVStream` per `Track` with `codecpar` from the config: codec id by family (`avc1`→H264, `hvc1`→HEVC, `av01`→AV1, `vp09`→VP9, `ap4h`/`apch`→PRORES with `codec_tag` from the family, `mp4a`→AAC, `opus`→OPUS, `lpcm.s16le`/`s24le`/`f32le`→`PCM_S16LE`/`PCM_S24LE`/`PCM_F32LE` with `bits_per_coded_sample`), `extradata` = description, `width`/`height`, `time_base = 1/timescale`, `sample_rate`, `ch_layout`, `initial_padding = delay`, and `format = AV_PIX_FMT_YUVA420P` for a `vp09` track with `alpha`; an unknown family is `MediaError::Codec("{muxer} does not take {codec}")`. Settings: `mp4` and `mov` `faststart` boolean default `true` → `movflags=+faststart`; `webm` none. `write_packets`: an `AVPacket` per `TrackPacket` with `pts`, `dts`, `duration`, `AV_PKT_FLAG_KEY`, and `AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL` side data rebuilt (8-byte big-endian id, then bytes) → `av_interleaved_write_frame`. `finish_muxer` → `av_write_trailer`, close → `[output]`; `abort_muxer` → close without a trailer → `[output]`. Negative audio timestamps pass through: libavformat writes MP4/MOV edit lists from them, and WebM's `CodecDelay` from `initial_padding`.
+  - Muxers: `avformat_alloc_output_context2` with `"mp4"`, `"mov"`, `"webm"`; `avio_open` the given `output`; one `AVStream` per `Track` with `codecpar` from the config: codec id by family (`avc1`→H264, `hvc1`→HEVC, `av01`→AV1, `vp09`→VP9, `ap4h`/`apch`→PRORES with `codec_tag` from the family, `mp4a`→AAC, `opus`→OPUS, `lpcm.s16le`/`s24le`/`f32le`→`PCM_S16LE`/`PCM_S24LE`/`PCM_F32LE` with `bits_per_coded_sample`), `extradata` = description, `width`/`height`, `time_base = 1/timescale`, `sample_rate`, `ch_layout`, `initial_padding = delay`, and `format = AV_PIX_FMT_YUVA420P` for a `vp09` track with `alpha`; for an `ap4h`, `apch`, or `vp09` track, `color_primaries`, `color_trc`, `color_space`, and `color_range` from `Track.color` (`bt709` → `AVCOL_PRI_BT709` / `AVCOL_TRC_BT709` / `AVCOL_SPC_BT709`, `limited` → `AVCOL_RANGE_MPEG`), while `avc1` and `hvc1` tracks stay untagged in P2a (deviation 8); an unknown family is `MediaError::Codec("{muxer} does not take {codec}")`. Settings: `mp4` and `mov` `faststart` boolean default `true` → `movflags=+faststart`; `webm` none. `write_packets`: an `AVPacket` per `TrackPacket` with `pts`, `dts`, `duration`, `AV_PKT_FLAG_KEY`, and `AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL` side data rebuilt (8-byte big-endian id, then bytes) → `av_interleaved_write_frame`. `finish_muxer` → `av_write_trailer`, close → `[output]`; `abort_muxer` → close without a trailer → `[output]`. Negative audio timestamps pass through: libavformat writes MP4/MOV edit lists from them, and WebM's `CodecDelay` from `initial_padding`.
   - `codec-bench`: `encode` opens `libx264` through `VideoEncoder`, sends rgba8 frames, discards packets.
 
 - [ ] **Step 1: Write failing tests.**
-  - `tests/export.rs`, through `celesta_codec_ffmpeg::install()` and the exporter (`OutputChoice::default()` unless said), keeping today's helpers: `exports_frame_exact_mp4_with_silent_audio` (decoded frames as today; the probe's audio codec `aac`), `exports_transparent_prores_4444` (`.mov`), `exports_transparent_vp9_webm`, `every_format_muxes_audio_as_long_as_the_video` (mp4, mov, webm), `a_looping_mp4_starts_its_sound_from_its_end` (unchanged assertions), `brings_the_mix_to_a_loudness_target`, `mov_and_webm_stay_tagged_bt709_and_mp4_untagged` (today's `video_stream` tags), `a_looping_webm_is_written_as_without_loop` (identical decoded samples with and without `looping`), `mp4_and_mov_start_with_an_edit_list_hiding_the_delay` (`start_time == 0` and the decoded sample count equals the mix's), `opus_webm_declares_its_codec_delay` (decoded length within one Opus frame of the mix), `pcm_mov_decodes_to_the_mix_exactly` (`.mov` with the default `pcm` `s24le`: samples within 2⁻²³ of the mix).
+  - `tests/export.rs`, through `celesta_codec_ffmpeg::install()` and the exporter (`OutputChoice::default()` unless said), keeping today's helpers: `exports_frame_exact_mp4_with_silent_audio` (decoded frames as today; the probe's audio codec `aac`), `exports_transparent_prores_4444` (`.mov`), `exports_transparent_vp9_webm`, `every_format_muxes_audio_as_long_as_the_video` (mp4, mov, webm), `a_looping_mp4_starts_its_sound_from_its_end` (unchanged assertions), `brings_the_mix_to_a_loudness_target`, `mov_and_webm_stay_tagged_bt709_and_mp4_untagged` (`video_stream`'s colors: `(1, 1, 1)` for the MOV and the WebM, as `exports_transparent_prores_4444` and `exports_transparent_vp9_webm` assert today; for the MP4, `AVCOL_SPC_UNSPECIFIED`, `AVCOL_PRI_UNSPECIFIED`, `AVCOL_TRC_UNSPECIFIED`, `(2, 2, 2)`), `a_looping_webm_is_written_as_without_loop` (identical decoded samples with and without `looping`), `mp4_and_mov_start_with_an_edit_list_hiding_the_delay` (`start_time == 0` and the decoded sample count equals the mix's), `opus_webm_declares_its_codec_delay` (decoded length within one Opus frame of the mix), `pcm_mov_decodes_to_the_mix_exactly` (`.mov` with the default `pcm` `s24le`: samples within 2⁻²³ of the mix).
   - `tests/process.rs`: `writes_an_export_through_the_program` ported: describe (`libx264` available), open/encode/finish video, open/encode/finish audio (`aac`, delay 1024), open/write/finish `mp4`, then probe and decode as today.
-  - `the_manifest_lists_every_kind` on `--manifest`.
+  - `the_manifest_lists_every_kind` on `--manifest` (in `tests/process.rs`): `media.videoEncoders`, `audioEncoders`, and `muxers` list `plugin.json`'s ids, `muxers[0].id == "mp4"`.
+  - `sessions_are_unique_across_kinds` (Task 12's, in `tests/encoders.rs`) extended: a video encoder, an audio encoder, and a muxer opened on one `FfmpegCodec` get three different `SessionId`s.
 - [ ] **Step 2:** `cargo test --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg` fails.
 - [ ] **Step 3: Implement.** Remove every `ez_ffmpeg::VideoWriter`, `FfmpegContext` mux use, and `capabilities::is_encoder_available`; ez-ffmpeg stays for decoding and the tests' readback.
 - [ ] **Step 4:** `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`, its clippy with `-D warnings`, `cargo fmt --check` in `plugins/`, and `node --check scripts/test-package.mjs` pass. `node scripts/plugins/build.mts plugins/ffmpeg` writes a `celesta-plugin.json` with the three new lists.
@@ -910,7 +1015,7 @@ The tests that pin each of these are in the task named.
       origin: 'user' | 'bundled' | 'project'; available?: boolean; reason?: string; [manifest: string]: unknown }
   export interface ComponentDescription extends ComponentInfo { available: boolean; settings: SettingField[]; inputFormats?: string[]; transports?: string[]; sampleRates?: 'any' | number[]; channels?: number[] }
   export interface SettingField { key: string; type: 'select' | 'number' | 'boolean' | 'string'; label: string; default: SettingValue; … }
-  export async function listComponents(options?: CompositionOptions & { check?: boolean }): Promise<ComponentInfo[]>;   // --list-components [--check] --json
+  export async function listComponents(options?: Omit<RunOptions, 'onProgress'> & { check?: boolean }): Promise<ComponentInfo[]>;   // --list-components [--check] --json; no source
   export async function describeComponent(id: string, options?: Omit<RunOptions, 'onProgress'>): Promise<ComponentDescription>;   // --describe <id> --json
   ```
   Flags: `--muxer=`, `--video-encoder=`, one `--video-option=key=value` per
@@ -931,20 +1036,21 @@ The tests that pin each of these are in the task named.
 
 **Files:**
 - Modify: `packages/website/content/en/docs/02-(guides)/09-export.md` (sections "From the command line", "Encoding quality and speed" → "Choosing encoders and settings", "Videos that play on repeat", "Transparent video", the JSON paragraph) and `ja/docs/02-(guides)/09-export.md` (the same sections: コマンドラインから, 画質と書き出し速度, 繰り返し再生する動画, 透過動画); `05-(more)/05-plugins.md` (en, ja: media plugins now declare encoders and muxers; `--list-components`); `05-(more)/04-troubleshooting.md` (en, ja: `no_codec` → `unsupported_output` / `component_unavailable`)
-- Modify: `skills/celesta/references/export.md` (Options table, Transparent video, Looping video, JSON results' codes, the preset advice at `:252-254`), `skills/celesta/references/errors.md` (`no_codec`, `encoder_unavailable`, `invalid_crf` rows), `skills/celesta/references/plugins.md:105-106`, `skills/celesta/references/verify.md` where it names `--preset`
-- Modify: `HANDOFF.md` rows for `celesta-media`, `celesta-codec-ffmpeg`, `celesta-codec-test`, `celesta-exporter` ("Frame-exact export through media components (MP4, MOV, WebM, and whatever muxers plugins add)"), `celesta-plugin-host` ("their decoders" → "their components"), and `packages/exporter`; the stale-program paragraph (`no_codec` → `unsupported_output`)
-- Modify: `docs/superpowers/specs/2026-11-08-media-components-design.md`: deviations 8–17 in Pixel formats and color, Audio, Capability discovery, Exporter API, Registry and routing, CLI, and Phases → P2a
+- Modify: `skills/celesta/references/export.md` (Options table, Transparent video, Looping video, JSON results' codes, the preset advice at `:252-254`), `skills/celesta/references/errors.md` (`no_codec`, `encoder_unavailable`, `invalid_crf` rows), `skills/celesta/references/plugins.md:105-106`, `skills/celesta/references/verify.md` where it names `--preset`, `skills/celesta/references/performance.md:69-81` and `skills/celesta/references/subtitles.md:278` (the removed flags → `--video-option` / the extension)
+- Modify (examples that name the removed flags, AGENTS.md): `examples/perfect-loop/package.json:7` (`--crf 16` → `--video-option crf=16`), `examples/afterimage/render.py:28`, and the READMEs of `examples/greenscreen`, `examples/afterimage`, `examples/prism`, and `examples/perfect-loop`
+- Modify: `HANDOFF.md` rows for `celesta-media`, `celesta-codec-ffmpeg`, `celesta-codec-test`, `celesta-exporter` ("Frame-exact export through media components (MP4, MOV, WebM, and whatever muxers plugins add)"), `celesta-plugin-host` ("their decoders" → "their components"), and `packages/exporter`; the stale-program paragraph (`no_codec` → `unsupported_output`); `HANDOFF.md:291-295` (the removed flags)
+- Modify: `docs/superpowers/specs/2026-11-08-media-components-design.md`: deviations 8–18, 24, and 25 in Pixel formats and color, Audio, Capability discovery, Exporter API (24), Registry and routing, CLI, and Phases → P2a (25, against the row's "identical")
 - Create: `docs/handoff/2026-11-08-media-encoders.md`
 
-- [ ] **Step 1: Write the docs.** The guide explains: the extension picks the container; `--list-components` and `--describe`; `--video-encoder` / `--video-option` with the bundled FFmpeg plugin's keys as of this release (libx264 `preset`, `rateControl`, `crf`, `bitrate`, `bitDepth`, `tune`; prores `profile`; vp9 `crf`, `alpha`; aac/opus `bitrate`; pcm `format`; mp4/mov `faststart`); `--audio-encoder none`; that `--preset` names an export preset (P3) and `--video-option preset=` the x264 one; `--loop` on any output, hidden by muxers that trim; the JSON output's `muxer`, `video`, `audio`, `files`; the error codes. Keep en and ja in step; the Agent Skill's `export.md` documents the same keys and points to `--describe`.
+- [ ] **Step 1: Write the docs.** Every place the Files list names stops naming `--output-format`, `--crf`, `--bit-depth`, `--color-conversion`, and `--preset`'s libx264 meaning (`rg -n -- '--crf|--output-format|--bit-depth|--color-conversion' examples skills packages/website HANDOFF.md` finds none afterwards; a `--preset <x264 name>` such as `examples/afterimage/render.py:28`'s `'--preset', 'medium'` becomes `--video-option preset=<name>`, since `--preset` fails until P3). The guide explains: the extension picks the container; `--list-components` and `--describe`; `--video-encoder` / `--video-option` with the bundled FFmpeg plugin's keys as of this release (libx264 `preset`, `rateControl`, `crf`, `bitrate`, `bitDepth`, `tune`; prores `profile`; vp9 `crf`, `alpha`; aac/opus `bitrate`; pcm `format`; mp4/mov `faststart`); `--audio-encoder none`; that `--preset` names an export preset (P3) and `--video-option preset=` the x264 one; `--loop` on any output, hidden by muxers that trim; the JSON output's `muxer`, `video`, `audio`, `files`; the error codes. Keep en and ja in step; the Agent Skill's `export.md` documents the same keys and points to `--describe`.
 - [ ] **Step 2: Verify.** Each passes: `cargo test --workspace`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; `cargo fmt --all -- --check`; with `PKG_CONFIG_PATH`: `cargo test --manifest-path plugins/Cargo.toml --workspace --locked` and its clippy; `pnpm run test:runtime`; `pnpm --dir scripts/plugins test`; `pnpm --dir packages/website test`; `git diff --check`.
 - [ ] **Step 3: The end-to-end check against `main`.** Build `main`'s exporter and plugin in a temporary worktree and this branch's, release, each staged alone as P1's note did (own `CELESTA_PLUGIN_PATH`, empty `HOME`). Export, with each: `examples/greenscreen/composite.tsx` as MP4; a `<Video>` (the green-screen footage) + `<Audio>` (`examples/assets/voices/001.wav`) entry as MP4, as MP4 with `--loop`, as MOV, and as WebM. Then decode each pair with `ffmpeg` (`-pix_fmt rgba64le -f rawvideo` for video, `-f f32le` for audio, the branch's plugin's FFmpeg or Homebrew's `ffmpeg@8`) and compare with `cmp`.
-  - **Expected: identical** decoded frames and samples for every pair. This is realistic on this machine because the default path converts on the GPU (`yuv420p`, no libswscale), libx264 gets the same parameters (preset, CRF, pixel format, frame rate, `GLOBAL_HEADER`, auto threads) through the same library, the AAC/Opus/PCM encoders get the same `f32` samples, and libavformat writes the same edit lists from the same negative timestamps. If an MP4 differs, compare the x264 `options:` SEI strings of the two files (`ffmpeg -i … -c copy -bsf:v trace_headers -f null -` or `strings | grep options:`): a parameter that differs there is a bug to fix. The RGBA-input paths (MOV, WebM, and MP4 on a software renderer) go through `sws_scale` with `SWS_BICUBIC` where `main`'s filter graph used `scale` with the same flags; a difference there is a rounding difference of libswscale's two entry points: record the maximum per-channel difference and the PSNR, and accept only ≤ 1 code value (16-bit codes for MOV/WebM) with the cause named in the handoff note. Any audio difference is a bug.
+  - **Expected: identical** decoded frames and samples for every pair. This is realistic on this machine because the default path converts on the GPU (`yuv420p`, no libswscale), libx264 gets the same parameters (preset, CRF, pixel format, frame rate, `GLOBAL_HEADER`, auto threads) through the same library, the AAC/Opus/PCM encoders get the same `f32` samples, and libavformat writes the same edit lists from the same negative timestamps. If an MP4 differs, compare the x264 `options:` SEI strings of the two files (`ffmpeg -i … -c copy -bsf:v trace_headers -f null -` or `strings | grep options:`): a parameter that differs there is a bug to fix. The RGBA-input paths (MOV, WebM, and MP4 on a software renderer) go through `sws_scale` with `SWS_BICUBIC` where `main`'s filter graph used `scale` with the same flags; a difference there is a rounding difference of libswscale's two entry points: record the maximum per-channel difference and the PSNR, and accept only ≤ 1 code value (16-bit codes for MOV/WebM) with the cause named in the handoff note (deviation 25); more is a bug to fix. Any audio difference is a bug.
   - Also: the branch's exporter with no plugin fails with `unsupported_output` and the install hint; with `--preset ultrafast`, `unknown_preset` and the hint; `--list-components --check` lists FFmpeg's ten components as available.
 - [ ] **Step 4: The performance measurement** (release builds, Apple M4, medians of three interleaved runs each, against `main`):
   - `codec-bench` encode at 1080p and 4K (its decode half too, unchanged);
   - a React entry of 300 frames at 1920×1080 and the same entry at 3840×2160 as MP4, with `--video-option preset=ultrafast` (`main`: `--preset ultrafast`) and with the default `medium`;
   - the 4K entry as MOV (ProRes 4444), whose packets cross the pipe twice.
   P2a must not be slower: its median is at or below `main`'s within `main`'s own run spread. Record every number in the handoff note; an excess is a blocker to fix before the PR.
-- [ ] **Step 5: Write `docs/handoff/2026-11-08-media-encoders.md`** in the P1 note's format: the specification as built (components, protocol, resolve, the session, the interleaver, the FFmpeg and test codec components, the CLI/MCP/TS surface), deviations 8–17, docs, checks (Steps 2–4's results, with the SHA-256 or `cmp` results and the timings), and what is not done (the ring and send window, BT.709, presets, stills through components).
+- [ ] **Step 5: Write `docs/handoff/2026-11-08-media-encoders.md`** in the P1 note's format: the specification as built (components, protocol, resolve, the session, the interleaver, the FFmpeg and test codec components, the CLI/MCP/TS surface, the mono↔stereo conversion), deviations 8–18, 24, and 25, docs, checks (Steps 2–4's results, with the SHA-256 or `cmp` results, Step 3's maximum per-channel differences and PSNRs on the RGBA-input paths, and the timings), and what is not done (the ring and send window, BT.709, presets, stills through components). Also record, as differences from the spec's phase plan that need no deviation: the deadlines and the manifest's `inputFormats` land in P2a, not P2b; `plugin.json`'s libx264 `inputFormats` leaves out the spec example's `nv12` and `p010` (never offered in P2a); `MediaRegistry::describe` takes a `kill` argument.
 - [ ] **Step 6: Commit:** `docs: media encoders and muxers (P2a)`.
