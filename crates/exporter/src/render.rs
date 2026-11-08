@@ -18,6 +18,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc;
 use std::{fs, io, thread};
+use strum::VariantArray;
 
 impl Exporter {
     pub(crate) fn render_video(
@@ -378,7 +379,10 @@ pub(crate) fn validate_output(
     if VideoFormat::from_extension(output) != Some(format) {
         return Err(ExportError::UnsupportedOutput {
             path: output.to_owned(),
-            format,
+            extensions: VideoFormat::VARIANTS
+                .iter()
+                .map(|format| format.as_str().to_owned())
+                .collect(),
         });
     }
     if !overwrite && output.exists() {

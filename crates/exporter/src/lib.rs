@@ -14,6 +14,7 @@ mod react;
 mod react_entry;
 mod render;
 pub mod report;
+mod resolve;
 mod subtitles;
 #[cfg(test)]
 mod tests;
@@ -28,11 +29,16 @@ pub use exporter::Exporter;
 pub use job::ExportJob;
 pub use media::{media_registry, use_installed_media, use_media};
 pub use options::{
-    BitDepth, ColorConversion, EncoderPreset, ExportOptions, UnknownBitDepth,
-    UnknownColorConversion, UnknownEncoderPreset, UnknownVideoFormat, VideoEncoding, VideoFormat,
+    AudioChoice, BitDepth, ColorConversion, EncoderChoice, EncoderPreset, ExportOptions,
+    OutputChoice, SettingInput, UnknownBitDepth, UnknownColorConversion, UnknownEncoderPreset,
+    UnknownVideoFormat, VideoEncoding, VideoFormat,
 };
 pub use range::ExportRange;
 pub use react::{CompanionProject, ReactRuntimeOptions};
+pub use resolve::{
+    EncoderPlan, OutputPlan, ResolvedEncoder, ResolvedMuxer, ResolvedOutput, X264_PRESETS,
+    encoding_label, resolve_output,
+};
 pub use subtitles::SubtitleFormat;
 pub use timecode::{TimecodeError, parse_timecode};
 

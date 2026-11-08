@@ -1,7 +1,8 @@
 use crate::range::ExportRange;
 use crate::{GpuDriver, RenderQuality};
-use celesta_media::{Container, LoudnessTarget};
+use celesta_media::{ComponentRef, Container, LoudnessTarget, SettingValue};
 use celesta_plugin_host::InstalledPlugins;
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use strum::VariantArray;
@@ -48,6 +49,51 @@ pub struct ExportOptions {
     /// [`InstalledPlugins::find`]); a caller that already discovered them,
     /// as the editor and `--plugin-dir` do, passes its set.
     pub plugins: Option<InstalledPlugins>,
+}
+
+/// What an export writes its video with, before
+/// [`resolve_output`](crate::resolve_output) turns it into components: a
+/// preset, a muxer, and the video and audio encoders, each with options.
+/// The default takes the muxer the output's extension names and that
+/// muxer's default encoders, with their default settings.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OutputChoice {
+    /// A preset's name. Presets arrive with P3: in P2a every name is
+    /// [`ExportError::UnknownPreset`](crate::ExportError::UnknownPreset).
+    pub preset: Option<String>,
+    pub muxer: Option<ComponentRef>,
+    pub video: EncoderChoice,
+    pub audio: AudioChoice,
+}
+
+/// An encoder, or the muxer's default when `component` is `None`, and the
+/// options given for it by key.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EncoderChoice {
+    pub component: Option<ComponentRef>,
+    pub options: BTreeMap<String, SettingInput>,
+}
+
+/// The audio of an export: encoded (by the muxer's default audio encoder
+/// when the choice names none), or left out.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AudioChoice {
+    Encode(EncoderChoice),
+    None,
+}
+
+impl Default for AudioChoice {
+    fn default() -> Self {
+        Self::Encode(EncoderChoice::default())
+    }
+}
+
+/// One option as given: command-line text, read as the field's type once
+/// the component's schema is known, or a typed value (MCP, TS, presets).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SettingInput {
+    Text(String),
+    Value(SettingValue),
 }
 
 /// The container (and, with it, the codecs) an exported video is written in.

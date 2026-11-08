@@ -415,10 +415,7 @@ fn refuses_unmatched_and_existing_outputs() {
     }
     assert!(matches!(
         validate_output(&directory.path().join("video.mov"), VideoFormat::Mp4, false),
-        Err(ExportError::UnsupportedOutput {
-            format: VideoFormat::Mp4,
-            ..
-        })
+        Err(ExportError::UnsupportedOutput { .. })
     ));
     assert!(matches!(
         validate_output(

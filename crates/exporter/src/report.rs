@@ -1,6 +1,7 @@
 //! The machine-readable result of one export: `Celesta-export --json`
 //! prints it, and the MCP server returns it from its rendering tools.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -11,7 +12,10 @@ use celesta_project::LoadError;
 use celesta_react_bridge::{PropsFileChoice, ReactBridgeError};
 use serde::Serialize;
 
-use crate::{AudioLoudness, CompositionInfo, ExportError, ExportProgress, ExportedFile};
+use crate::{
+    AudioLoudness, CompositionInfo, ExportError, ExportProgress, ExportedFile, StillFormat,
+    X264_PRESETS,
+};
 
 /// Whose options an error's hint names: `Celesta-export`'s flags or the MCP
 /// server's tool arguments. Error codes are the same either way.
@@ -64,7 +68,7 @@ struct ErrorReport {
     message: String,
     /// What to change to get past the error, when that is a CLI option.
     #[serde(skip_serializing_if = "Option::is_none")]
-    hint: Option<&'static str>,
+    hint: Option<Cow<'static, str>>,
     /// Every project validation error, each with its JSON path, or every
     /// rejected project property, each with its key.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -88,7 +92,7 @@ struct FailedFrame {
 }
 
 #[derive(Serialize)]
-struct Issue {
+pub(crate) struct Issue {
     /// Absent for a property issue about a whole source rather than one key.
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
@@ -506,17 +510,43 @@ const NO_DECODER_HINT: &str = "install Celesta's media plugin (celesta-codec-ffm
 
 /// The code and hint of `error`, collecting its issues into `issues`. A
 /// frame's failure has the code of what failed.
-fn classify(
+pub(crate) fn classify(
     error: &ExportError,
     hints: HintStyle,
     issues: &mut Vec<Issue>,
-) -> (&'static str, Option<&'static str>) {
+) -> (&'static str, Option<Cow<'static, str>>) {
     let cli = hints == HintStyle::Cli;
     match error {
         ExportError::Frame(failure) => classify(&failure.error, hints, issues),
+        ExportError::UnknownPreset { name } => (
+            "unknown_preset",
+            X264_PRESETS.contains(&name.as_str()).then(|| {
+                Cow::Owned(if cli {
+                    format!("use --video-option preset={name}")
+                } else {
+                    format!("set videoEncoder.options.preset to {name}")
+                })
+            }),
+        ),
+        ExportError::UnsupportedOutput { path, extensions } => (
+            "unsupported_output",
+            Some(unsupported_output_hint(path, extensions, cli)),
+        ),
+        ExportError::IncompatibleComponents { .. } => ("incompatible_components", None),
+        ExportError::ComponentUnavailable { .. }
+        | ExportError::Codec {
+            source: MediaError::ComponentUnavailable { .. },
+            ..
+        } => ("component_unavailable", None),
+        // A plugin refusing a combination of settings at `open`.
+        ExportError::InvalidOption { .. }
+        | ExportError::Codec {
+            source: MediaError::InvalidSettings { .. },
+            ..
+        } => ("invalid_option", None),
         ExportError::FramesFailed { .. } => (
             "frames_failed",
-            Some(
+            fixed(
                 "the sheet was written with failed tiles; fix the frames in failedFrames and export again",
             ),
         ),
@@ -540,7 +570,7 @@ fn classify(
         | ExportError::Codec {
             source: MediaError::NoDecoder,
             ..
-        } => ("no_decoder", Some(NO_DECODER_HINT)),
+        } => ("no_decoder", fixed(NO_DECODER_HINT)),
         ExportError::Render(GpuRenderError::Media(MediaError::Unsupported { .. }))
         | ExportError::Audio(AudioMixError::Media(MediaError::Unsupported { .. }))
         | ExportError::Codec {
@@ -549,7 +579,7 @@ fn classify(
         } => ("unsupported_media", None),
         ExportError::Render(GpuRenderError::Media(MediaError::NoCodec))
         | ExportError::Audio(AudioMixError::Media(MediaError::NoCodec)) => {
-            ("no_codec", Some(NO_DECODER_HINT))
+            ("no_codec", fixed(NO_DECODER_HINT))
         }
         ExportError::Render(_) => ("render", None),
         ExportError::Audio(_) => ("audio", None),
@@ -563,7 +593,7 @@ fn classify(
                 .collect();
             (
                 "invalid_properties",
-                Some("pass values matching the entry's defineProjectProperties() schema"),
+                fixed("pass values matching the entry's defineProjectProperties() schema"),
             )
         }
         ExportError::React(_) => ("react", None),
@@ -573,38 +603,30 @@ fn classify(
         ExportError::Codec {
             source: MediaError::NoCodec,
             ..
-        } => ("no_codec", Some(NO_DECODER_HINT)),
+        } => ("no_codec", fixed(NO_DECODER_HINT)),
         ExportError::Codec { .. } => ("codec", None),
         ExportError::OutputExists(_) => (
             "output_exists",
-            Some(if cli {
+            fixed(if cli {
                 "pass --overwrite to replace it, or write to another path"
             } else {
                 "set overwrite to replace it, or write to another path"
             }),
         ),
         ExportError::InvalidSelection(_) => ("invalid_selection", None),
-        ExportError::UnsupportedOutput { .. } => (
-            "unsupported_output",
-            Some(if cli {
-                "write video to a .mp4, .mov or .webm path, or select frames with --frame or --every for PNG, JPEG or WebP stills"
-            } else {
-                "write video to a .mp4, .mov or .webm path with export_video, or render PNG, JPEG or WebP stills with render_frames"
-            }),
-        ),
         ExportError::UnsupportedSubtitles(_) => (
             "unsupported_subtitles",
-            Some("write subtitles to a .srt or .vtt path"),
+            fixed("write subtitles to a .srt or .vtt path"),
         ),
         ExportError::MixedSubtitleLanguages { .. } => (
             "mixed_subtitle_languages",
-            Some(
+            fixed(
                 "put {lang} in the subtitle path to write one file per language, or set the same lang on every <Subtitles>",
             ),
         ),
         ExportError::NoOutput => (
             "no_output",
-            Some(if cli {
+            fixed(if cli {
                 "give an output video, or --subtitles to write only subtitle files"
             } else {
                 "give output, or subtitles to write only subtitle files"
@@ -613,7 +635,7 @@ fn classify(
         ExportError::EncoderUnavailable { .. } => ("encoder_unavailable", None),
         ExportError::UnsupportedDimensions { .. } => (
             "unsupported_dimensions",
-            Some(
+            fixed(
                 "make the composition width and height even; still frame exports accept odd sizes",
             ),
         ),
@@ -621,7 +643,7 @@ fn classify(
         ExportError::EmptyTimeline => ("empty_timeline", None),
         ExportError::EmptyRange => (
             "empty_range",
-            Some(if cli {
+            fixed(if cli {
                 "choose --from/--to inside the composition (composition.duration seconds)"
             } else {
                 "choose start/end inside the composition (composition.duration seconds)"
@@ -630,6 +652,39 @@ fn classify(
         ExportError::Cancelled => ("cancelled", None),
         ExportError::TimelineTooLong => ("timeline_too_long", None),
     }
+}
+
+fn fixed(hint: &'static str) -> Option<Cow<'static, str>> {
+    Some(Cow::Borrowed(hint))
+}
+
+/// The extensions a video may be written to, and for a still's extension
+/// how to export stills instead; with no muxer at all, how to install the
+/// media plugin.
+fn unsupported_output_hint(path: &Path, extensions: &[String], cli: bool) -> Cow<'static, str> {
+    let dotted: Vec<String> = extensions
+        .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect();
+    let Some((last, rest)) = dotted.split_last() else {
+        return Cow::Borrowed(NO_DECODER_HINT);
+    };
+    let listed = if rest.is_empty() {
+        last.clone()
+    } else {
+        format!("{} or {last}", rest.join(", "))
+    };
+    let still = StillFormat::from_extension(path).is_some();
+    Cow::Owned(match (cli, still) {
+        (true, false) => format!("write video to a {listed} path"),
+        (true, true) => format!(
+            "write video to a {listed} path, or select frames with --frame or --every for PNG, JPEG or WebP stills"
+        ),
+        (false, false) => format!("write video to a {listed} path with export_video"),
+        (false, true) => format!(
+            "write video to a {listed} path with export_video, or render PNG, JPEG or WebP stills with render_frames"
+        ),
+    })
 }
 
 /// `path` from the filesystem root, so it does not depend on the caller's
@@ -874,7 +929,11 @@ mod tests {
                 ExportError::OutputExists(PathBuf::from("/tmp/a.mp4")),
                 ExportError::UnsupportedOutput {
                     path: PathBuf::from("/tmp/a.gif"),
-                    format: VideoFormat::Mp4,
+                    extensions: vec!["mov".into(), "mp4".into(), "webm".into()],
+                },
+                ExportError::UnsupportedOutput {
+                    path: PathBuf::from("/tmp/a.png"),
+                    extensions: vec!["mp4".into()],
                 },
                 ExportError::EmptyRange,
             ]
@@ -893,7 +952,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "set overwrite to replace it, or write to another path",
-                "write video to a .mp4, .mov or .webm path with export_video, or render PNG, JPEG or WebP stills with render_frames",
+                "write video to a .mov, .mp4 or .webm path with export_video",
+                "write video to a .mp4 path with export_video, or render PNG, JPEG or WebP stills with render_frames",
                 "choose start/end inside the composition (composition.duration seconds)",
             ]
         );
@@ -1041,6 +1101,105 @@ mod tests {
                 value["error"].get("hint").is_none_or(|hint| hint.is_null()),
                 "{value}"
             );
+        }
+    }
+
+    fn classified(error: &ExportError, hints: HintStyle) -> (&'static str, Option<String>) {
+        let (code, hint) = classify(error, hints, &mut Vec::new());
+        (code, hint.map(Cow::into_owned))
+    }
+
+    #[test]
+    fn a_plugins_refusal_at_open_is_an_invalid_option() {
+        let refused = ExportError::Codec {
+            stage: "video encoding",
+            source: MediaError::InvalidSettings {
+                key: "alpha".into(),
+                message: "needs rgba16".into(),
+            },
+        };
+        assert_eq!(classified(&refused, HintStyle::Cli).0, "invalid_option");
+        let unavailable = ExportError::Codec {
+            stage: "video encoding",
+            source: MediaError::ComponentUnavailable {
+                component: "ffmpeg/libx264".into(),
+                reason: "this FFmpeg build has no libx264".into(),
+            },
+        };
+        assert_eq!(
+            classified(&unavailable, HintStyle::Cli).0,
+            "component_unavailable"
+        );
+    }
+
+    #[test]
+    fn a_still_extension_keeps_the_frame_hint() {
+        let unsupported = |path: &str| ExportError::UnsupportedOutput {
+            path: PathBuf::from(path),
+            extensions: vec!["mp4".into()],
+        };
+        for path in ["out.png", "out.JPG", "out.jpeg", "out.webp"] {
+            let (code, hint) = classified(&unsupported(path), HintStyle::Cli);
+            assert_eq!(code, "unsupported_output");
+            let hint = hint.unwrap();
+            assert!(hint.contains(".mp4") && hint.contains("--frame"), "{hint}");
+        }
+        let (code, hint) = classified(&unsupported("out.mkv"), HintStyle::Cli);
+        assert_eq!(code, "unsupported_output");
+        let hint = hint.unwrap();
+        assert!(hint.contains(".mp4") && !hint.contains("--frame"), "{hint}");
+        assert_eq!(hint, "write video to a .mp4 path");
+
+        let two = ExportError::UnsupportedOutput {
+            path: PathBuf::from("out.mkv"),
+            extensions: vec!["ivf".into(), "mp4".into()],
+        };
+        assert_eq!(
+            classified(&two, HintStyle::Cli).1.unwrap(),
+            "write video to a .ivf or .mp4 path"
+        );
+        // With no muxer at all, the media plugin is what is missing.
+        let none = ExportError::UnsupportedOutput {
+            path: PathBuf::from("out.png"),
+            extensions: Vec::new(),
+        };
+        assert_eq!(
+            classified(&none, HintStyle::Cli),
+            ("unsupported_output", Some(NO_DECODER_HINT.to_owned()))
+        );
+    }
+
+    #[test]
+    fn component_errors_have_their_codes() {
+        let component: celesta_media::ComponentRef = "b/vp9".parse().unwrap();
+        let muxer: celesta_media::ComponentRef = "b/mp4".parse().unwrap();
+        let errors = [
+            (
+                ExportError::IncompatibleComponents {
+                    component: component.clone(),
+                    muxer,
+                    reason: "it writes vp09".into(),
+                },
+                "incompatible_components",
+            ),
+            (
+                ExportError::ComponentUnavailable {
+                    component: component.clone(),
+                    reason: "not installed".into(),
+                },
+                "component_unavailable",
+            ),
+            (
+                ExportError::InvalidOption {
+                    component,
+                    key: "crf".into(),
+                    message: "must be a number".into(),
+                },
+                "invalid_option",
+            ),
+        ];
+        for (error, code) in errors {
+            assert_eq!(classified(&error, HintStyle::Cli).0, code, "{error}");
         }
     }
 

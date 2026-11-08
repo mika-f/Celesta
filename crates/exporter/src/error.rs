@@ -2,11 +2,11 @@ use crate::options::{VideoEncoding, VideoFormat};
 use celesta_composition::TimeError;
 use celesta_evaluator::EvaluationError;
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{AudioMixError, MediaError};
+use celesta_media::{AudioMixError, ComponentRef, MediaError};
 use celesta_project::LoadError;
 use celesta_react_bridge::{PropertyInputError, ReactBridgeError};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
@@ -43,9 +43,40 @@ pub enum ExportError {
     /// contact sheet layout cannot be exported.
     #[error("could not export still frames: {0}")]
     InvalidSelection(String),
-    /// The output path's extension is not the one `format` writes.
-    #[error("export output must use the .{format} extension: {path}")]
-    UnsupportedOutput { path: PathBuf, format: VideoFormat },
+    /// No muxer that may be picked by default writes the output path's
+    /// extension. `extensions` are those such muxers write, sorted; none
+    /// when no media plugin offers one.
+    #[error("{}", unsupported_output(.path, .extensions))]
+    UnsupportedOutput {
+        path: PathBuf,
+        extensions: Vec<String>,
+    },
+    /// A preset name found in no presets file.
+    #[error("unknown preset `{name}`")]
+    UnknownPreset { name: String },
+    /// An encoder the choice names writes no codec its muxer takes, or an
+    /// audio encoder for a muxer that takes no audio.
+    #[error("{component} cannot be used with {muxer}: {reason}")]
+    IncompatibleComponents {
+        component: ComponentRef,
+        muxer: ComponentRef,
+        reason: String,
+    },
+    /// A component that is not installed, is not of the kind it was chosen
+    /// as, or that its plugin describes as unavailable.
+    #[error("{component} is unavailable: {reason}")]
+    ComponentUnavailable {
+        component: ComponentRef,
+        reason: String,
+    },
+    /// An option that is not one of the component's settings, or not a
+    /// value it takes.
+    #[error("{component}: {key} {message}")]
+    InvalidOption {
+        component: ComponentRef,
+        key: String,
+        message: String,
+    },
     /// The subtitle file's extension is neither `.srt` nor `.vtt`.
     #[error("subtitles must use the .srt or .vtt extension: {0}")]
     UnsupportedSubtitles(PathBuf),
@@ -111,6 +142,16 @@ pub struct FrameFailure {
     pub frame: u64,
     #[source]
     pub error: ExportError,
+}
+
+fn unsupported_output(path: &Path, extensions: &[String]) -> String {
+    if extensions.is_empty() {
+        return "no media plugin offers a muxer".to_owned();
+    }
+    match path.extension() {
+        Some(extension) => format!("no muxer writes .{} files", extension.to_string_lossy()),
+        None => "no muxer writes files without an extension".to_owned(),
+    }
 }
 
 fn failure_lines(failures: &[FrameFailure]) -> String {
