@@ -97,7 +97,11 @@ pub(crate) fn readback_of(format: PixelFormat) -> Result<ReadbackFormat, ExportE
 }
 
 /// `files` as they are once the staged output is published at `output`.
+/// A muxer that lists none wrote the output alone.
 pub(crate) fn published_files(files: Vec<PathBuf>, staged: &Path, output: &Path) -> Vec<PathBuf> {
+    if files.is_empty() {
+        return vec![output.to_owned()];
+    }
     let staged = absolute(staged);
     files
         .into_iter()
@@ -490,7 +494,17 @@ impl ExportSession {
             .audio_encoder()
             .ok_or_else(|| missing(&registry, plugin, "audio encoder"))?;
         let opened = encoder.open_audio(&request)?;
+        // Opened: an abort from here on ends the session.
         self.audio_session = Some(opened.session);
+        if !(1..=2).contains(&opened.channels) {
+            return Err(MediaError::InvalidSettings {
+                key: "channels".to_owned(),
+                message: format!(
+                    "the encoder chose {} channels; Celesta sends 1 or 2",
+                    opened.channels
+                ),
+            });
+        }
 
         let mix = if opened.channels == mix.channels {
             Cow::Borrowed(mix)
@@ -507,7 +521,7 @@ impl ExportSession {
         } else {
             Vec::new()
         };
-        let channels = usize::from(opened.channels.max(1));
+        let channels = usize::from(opened.channels);
         let lead_frames = lead_in.len() / channels;
         let chunk = AUDIO_CHUNK_FRAMES * channels;
 
@@ -1314,6 +1328,35 @@ mod tests {
     }
 
     #[test]
+    fn more_than_two_channels_are_refused_and_aborted() {
+        let (mut session, log) = fake_session(Answers {
+            channels: Some(3),
+            ..Answers::default()
+        });
+        open(&mut session);
+        let result = session.encode_audio(&mix(48_000, 100), false);
+        assert!(
+            matches!(
+                &result,
+                Err(ExportError::Codec {
+                    stage: AUDIO_STAGE,
+                    source: MediaError::InvalidSettings { key, .. },
+                }) if key == "channels"
+            ),
+            "{result:?}"
+        );
+        assert!(sent_audio(&log).is_empty());
+        session.abort();
+        assert!(
+            log_of(&log)
+                .iter()
+                .any(|asked| matches!(asked, Asked::AbortAudio(_))),
+            "{:?}",
+            log_of(&log)
+        );
+    }
+
+    #[test]
     fn alpha_needs_rgba16_input() {
         let (mut session, _) = fake_session(Answers {
             input: Some(PixelFormat::Yuv420p),
@@ -1404,6 +1447,14 @@ mod tests {
         assert_eq!(
             files,
             [PathBuf::from("/out/film.mp4"), PathBuf::from("/out/other")]
+        );
+        assert_eq!(
+            published_files(
+                Vec::new(),
+                Path::new("/out/.celesta-x.mp4"),
+                Path::new("/out/film.mp4"),
+            ),
+            [PathBuf::from("/out/film.mp4")]
         );
     }
 
