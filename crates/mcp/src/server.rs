@@ -1,12 +1,14 @@
 //! The MCP tool router: argument types, validation, and dispatch.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use celesta_exporter::components::{
     describe_component, description_json, list_components, listing_json,
 };
-use celesta_exporter::{media_registry, report};
+use celesta_exporter::media_registry;
+use celesta_exporter::report::{self, HintStyle};
+use celesta_media::{MediaRegistry, RegisteredPlugin};
 use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
 use celesta_react_bridge::{
     TemplateError, initialize_project, list_templates, project_templates_dir, runtime_paths,
@@ -35,16 +37,69 @@ pub struct CelestaServer {
     /// Held by every tool that renders, so they take turns on the GPU.
     render_lock: Arc<Mutex<()>>,
     outputs: Arc<OutputDirs>,
+    media: Arc<SharedMedia>,
 }
 
 impl CelestaServer {
-    pub fn new() -> std::io::Result<Self> {
+    /// A server whose tools share `media`, the registry its exports use.
+    pub fn new(media: Arc<MediaRegistry>) -> std::io::Result<Self> {
         Ok(Self {
             tool_router: Self::tool_router(),
             render_lock: Arc::new(Mutex::new(())),
             outputs: Arc::new(OutputDirs::new()?),
+            media: Arc::new(SharedMedia::new(media)),
         })
     }
+}
+
+/// The one media registry the tools share, so a plugin's `describe` answer
+/// is cached across calls.
+struct SharedMedia(std::sync::Mutex<Arc<MediaRegistry>>);
+
+impl SharedMedia {
+    fn new(registry: Arc<MediaRegistry>) -> Self {
+        Self(std::sync::Mutex::new(registry))
+    }
+
+    /// The registry, after discovering the plugins again: the one held while
+    /// they are the same plugins, else a new one, which exports then use too.
+    fn current(&self) -> Arc<MediaRegistry> {
+        let (registry, replaced) =
+            self.update(media_registry(&InstalledPlugins::find_reporting(&[])));
+        if replaced {
+            celesta_media::set_registry(Some(registry.clone()));
+        }
+        registry
+    }
+
+    /// The held registry, unless `found` lists other plugins: then `found`,
+    /// which replaces it (and `true`).
+    fn update(&self, found: Arc<MediaRegistry>) -> (Arc<MediaRegistry>, bool) {
+        let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let same = held.plugins().len() == found.plugins().len()
+            && held
+                .plugins()
+                .iter()
+                .zip(found.plugins())
+                .all(|(a, b)| same_plugin(a, b));
+        if same {
+            return (held.clone(), false);
+        }
+        *held = found.clone();
+        (found, true)
+    }
+}
+
+/// Whether `a` and `b` are the same plugin, as discovery found it. A
+/// program rebuilt in place is still the same: the registry's `describe`
+/// cache notices that itself.
+fn same_plugin(a: &RegisteredPlugin, b: &RegisteredPlugin) -> bool {
+    a.id == b.id
+        && a.version == b.version
+        && a.origin == b.origin
+        && a.directory == b.directory
+        && a.executable == b.executable
+        && a.media == b.media
 }
 
 /// A rendering tool's result: the stills it wrote as images, then its report.
@@ -265,8 +320,9 @@ impl CelestaServer {
         &self,
         Parameters(args): Parameters<ListComponentsArgs>,
     ) -> CallToolResult {
+        let media = self.media.clone();
         blocking(move || {
-            let registry = media_registry(&InstalledPlugins::find_reporting(&[]));
+            let registry = media.current();
             let listed = list_components(
                 &registry,
                 args.check.unwrap_or(false),
@@ -289,14 +345,18 @@ impl CelestaServer {
             Ok(reference) => reference,
             Err(error) => return usage_error(&format!("{error}")),
         };
+        let media = self.media.clone();
         blocking(move || {
-            let registry = media_registry(&InstalledPlugins::find_reporting(&[]));
+            let registry = media.current();
             match describe_component(&registry, &reference, &PluginKillSwitch::new()) {
                 Ok((info, description)) => {
                     let value = description_json(&info, &description);
                     success(value.to_string(), value)
                 }
-                Err(error) => error_result("component_unavailable", error.to_string()),
+                Err(error) => CallToolResult::structured_error(
+                    serde_json::to_value(report::failure(&error, HintStyle::Mcp))
+                        .expect("reports serialize"),
+                ),
             }
         })
         .await
@@ -325,5 +385,45 @@ impl ServerHandler for CelestaServer {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("celesta", env!("CARGO_PKG_VERSION")))
             .with_instructions(include_str!("instructions.md"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registry(plugins: Vec<RegisteredPlugin>) -> Arc<MediaRegistry> {
+        Arc::new(MediaRegistry::new(plugins))
+    }
+
+    #[test]
+    fn the_same_plugins_keep_the_registry_and_its_cache() {
+        let held = registry(vec![celesta_codec_test::registered()]);
+        let media = SharedMedia::new(held.clone());
+        let described = held.describe(0, &PluginKillSwitch::new());
+        let (current, replaced) = media.update(registry(vec![celesta_codec_test::registered()]));
+        assert!(!replaced);
+        assert!(Arc::ptr_eq(&current, &held));
+        assert!(Arc::ptr_eq(
+            &current.describe(0, &PluginKillSwitch::new()),
+            &described
+        ));
+    }
+
+    #[test]
+    fn other_plugins_replace_the_registry() {
+        let media = SharedMedia::new(registry(vec![celesta_codec_test::registered()]));
+        let found = registry(Vec::new());
+        let (current, replaced) = media.update(found.clone());
+        assert!(replaced);
+        assert!(Arc::ptr_eq(&current, &found));
+        let mut renamed = celesta_codec_test::registered();
+        renamed.version.push_str("-next");
+        let (current, replaced) = media.update(registry(vec![renamed]));
+        assert!(replaced);
+        assert_eq!(
+            current.plugins()[0].version,
+            celesta_codec_test::registered().version + "-next"
+        );
     }
 }

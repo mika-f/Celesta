@@ -33,9 +33,9 @@ pub fn use_media(plugins: &InstalledPlugins) -> Arc<MediaRegistry> {
 }
 
 /// [`use_media`] with the plugins in every location Celesta searches, for a
-/// tool that discovers none of its own, at start-up.
-pub fn use_installed_media() {
-    use_media(&InstalledPlugins::find_reporting(&[], &[]));
+/// tool that discovers none of its own, at start-up. Returns the registry.
+pub fn use_installed_media() -> Arc<MediaRegistry> {
+    use_media(&InstalledPlugins::find_reporting(&[], &[]))
 }
 
 /// The registry exports write through: the one chosen, or an empty one,
