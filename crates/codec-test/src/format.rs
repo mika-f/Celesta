@@ -159,8 +159,10 @@ pub(crate) fn frame_len(format: PixelFormat, width: u32, height: u32) -> Option<
     let bytes = match format {
         PixelFormat::Rgba8 => pixels.checked_mul(4)?,
         PixelFormat::Rgba16 => pixels.checked_mul(8)?,
-        PixelFormat::Yuv420p => pixels.checked_add(chroma.checked_mul(2)?)?,
-        PixelFormat::Yuv420p10 => pixels.checked_add(chroma.checked_mul(2)?)?.checked_mul(2)?,
+        PixelFormat::Yuv420p | PixelFormat::Nv12 => pixels.checked_add(chroma.checked_mul(2)?)?,
+        PixelFormat::Yuv420p10 | PixelFormat::P010 => {
+            pixels.checked_add(chroma.checked_mul(2)?)?.checked_mul(2)?
+        }
     };
     usize::try_from(bytes).ok()
 }

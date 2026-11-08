@@ -59,6 +59,15 @@ pub enum MediaError {
     InvalidAudioFormat { sample_rate: u32, channels: u16 },
     #[error("decoded audio has {samples} samples, not divisible by {channels} channels")]
     InvalidAudioSampleCount { samples: usize, channels: u16 },
+    /// A component's settings that it refused: `key` and why, for a
+    /// combination only the plugin can judge, or one that failed Celesta's
+    /// validation against the component's schema.
+    #[error("{key}: {message}")]
+    InvalidSettings { key: String, message: String },
+    /// A component that turned out unusable, at `open` or when it was
+    /// described.
+    #[error("{component} is unavailable: {reason}")]
+    ComponentUnavailable { component: String, reason: String },
 }
 
 #[derive(Debug, thiserror::Error)]

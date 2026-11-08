@@ -3,11 +3,12 @@
 //! are asked.
 
 use crate::backend::MediaBackend;
-use crate::codec::{
-    Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, PixelFormat, VideoRequest,
-};
 use crate::decoder::{AudioDecoder, VideoFrameDecoder};
 use crate::error::MediaError;
+use crate::provider::{
+    ComponentDescription, Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest,
+    PixelFormat, VideoRequest,
+};
 use crate::registry::{
     ComponentRef, DecoderUse, MediaRegistry, RegisteredPlugin, registry, set_registry,
 };
@@ -94,6 +95,10 @@ fn probe_of(plugin: &str) -> MediaProbe {
 }
 
 impl MediaProvider for Fake {
+    fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+        Ok(Vec::new())
+    }
+
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
         self.journal
             .push(format!("probe {}/{decoder}", self.plugin));

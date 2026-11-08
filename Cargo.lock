@@ -1100,6 +1100,7 @@ dependencies = [
 name = "celesta-media"
 version = "0.9.0"
 dependencies = [
+ "base64 0.23.1",
  "celesta-composition",
  "celesta-plugin",
  "celesta-plugin-host",

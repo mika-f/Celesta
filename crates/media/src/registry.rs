@@ -1,7 +1,7 @@
 //! The media plugins Celesta reads and writes media files through, and
 //! which of their decoders is tried for a file.
 
-use crate::codec::ProviderFactory;
+use crate::provider::ProviderFactory;
 use celesta_plugin_host::{MediaDecoderEntry, MediaOrigin};
 use std::fmt;
 use std::path::{Path, PathBuf};

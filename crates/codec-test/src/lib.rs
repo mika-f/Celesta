@@ -20,9 +20,9 @@ pub use plugin::{TestCodecPlugin, profile_dir};
 
 use celesta_composition::Time;
 use celesta_media::{
-    AudioBuffer, AudioStream, Container, EncoderId, EncoderSettings, MediaError, MediaProbe,
-    MediaProvider, MediaRegistry, MuxRequest, PixelFormat, ProviderFactory, RegisteredPlugin,
-    VideoFrame, VideoRequest, VideoStream, timestamps_match,
+    AudioBuffer, AudioStream, ComponentDescription, ComponentKind, Container, EncoderId,
+    EncoderSettings, MediaError, MediaProbe, MediaProvider, MediaRegistry, MuxRequest, PixelFormat,
+    ProviderFactory, RegisteredPlugin, VideoFrame, VideoRequest, VideoStream, timestamps_match,
 };
 use celesta_plugin_host::{MediaDecoderEntry, MediaOrigin};
 use format::{AudioHeader, Kind, Scanned, VideoHeader, VideoWriter, invalid};
@@ -230,17 +230,34 @@ fn rgba8(path: &Path, format: PixelFormat, frame: Vec<u8>) -> Result<Vec<u8>, Me
                 ((value * 255 + 32767) / 65535) as u8
             })
             .collect()),
-        PixelFormat::Yuv420p | PixelFormat::Yuv420p10 => Err(invalid(
-            path,
-            format_args!(
-                "is {format:?} video, which the test codec does not decode; \
+        PixelFormat::Yuv420p | PixelFormat::Yuv420p10 | PixelFormat::Nv12 | PixelFormat::P010 => {
+            Err(invalid(
+                path,
+                format_args!(
+                    "is {format:?} video, which the test codec does not decode; \
                  compare its frames through celesta_codec_test::read"
-            ),
-        )),
+                ),
+            ))
+        }
     }
 }
 
 impl MediaProvider for TestCodec {
+    /// Its one decoder, available.
+    fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+        Ok(vec![ComponentDescription {
+            kind: ComponentKind::Decoder,
+            id: DECODER_ID.to_owned(),
+            available: true,
+            reason: None,
+            settings: Vec::new(),
+            input_formats: Vec::new(),
+            transports: Vec::new(),
+            sample_rates: None,
+            channels: Vec::new(),
+        }])
+    }
+
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
         check_decoder(decoder)?;
         match Source::open(path)? {

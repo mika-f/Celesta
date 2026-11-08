@@ -4,13 +4,15 @@
 //! codec library is linked.
 
 mod backend;
-pub mod codec;
 mod color;
 mod decoder;
 mod duck;
 mod error;
 mod loudness;
 mod mix;
+mod process;
+pub mod protocol;
+mod provider;
 mod registry;
 pub mod settings;
 mod stretch;
@@ -19,11 +21,6 @@ mod tests;
 mod types;
 
 pub use backend::MediaBackend;
-pub use codec::{
-    Container, EncoderId, EncoderSettings, FrameTransport, MediaProcess, MediaProvider, MuxRequest,
-    PixelFormat, ProviderFactory, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE, Sequential,
-    VideoRequest, timestamps_match,
-};
 pub use color::{DynamicRange, VideoColor};
 pub use decoder::{AudioDecoder, VideoFrameDecoder};
 pub use duck::{DuckCurves, audible_end};
@@ -35,6 +32,14 @@ pub use loudness::{
 pub use mix::{
     frame_byte_len, mix_audio_graph, mix_audio_graph_cancellable,
     mix_audio_graph_unclipped_cancellable, mix_audio_graph_with_ducks_cancellable, video_seconds,
+};
+pub use process::{FrameTransport, MediaProcess, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE};
+pub use provider::{
+    AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription,
+    ComponentKind, Container, Decoder, Encoded, EncoderId, EncoderSettings, MediaProvider,
+    MuxRequest, Muxer, MuxerRequest, Packet, PixelFormat, ProviderFactory, SampleRates, Sequential,
+    SessionId, SideData, Track, TrackConfig, TrackPacket, VideoEncoder, VideoEncoderOpened,
+    VideoEncoderRequest, VideoRequest, timestamps_match,
 };
 pub use registry::{
     ComponentRef, DecoderUse, InvalidComponentRef, MediaRegistry, RegisteredPlugin, registry,

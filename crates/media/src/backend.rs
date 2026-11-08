@@ -1,9 +1,9 @@
-use crate::codec::{
-    Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Sequential, VideoRequest,
-};
 use crate::decoder::{AudioDecoder, VideoFrameDecoder};
 use crate::error::MediaError;
 use crate::mix::video_seconds;
+use crate::provider::{
+    Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Sequential, VideoRequest,
+};
 use crate::registry::{ComponentRef, MediaRegistry, registry};
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;

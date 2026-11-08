@@ -1,16 +1,24 @@
 //! The media role of the plugin protocol (version 2): the same framing as
 //! content plugins (`celesta_plugin::protocol`), with the requests of a
 //! [`MediaProvider`]. A media plugin answers `hello` with the role
-//! `media`; `probe`, `decodeVideo`, and `decodeAudio` name the decoder
-//! component of the plugin that is to serve them. See the media components
-//! spec (`docs/superpowers/specs/2026-11-08-media-components-design.md`)
-//! and `docs/handoff/2026-11-08-media-decoders.md` for the requests.
+//! `media`, and `describe` with its components; `probe`, `decodeVideo`, and
+//! `decodeAudio` name the decoder component of the plugin that is to serve
+//! them, and the encoding and muxing requests go to the provider's
+//! [`VideoEncoder`], [`AudioEncoder`], or [`Muxer`]. A media plugin's
+//! program runs [`serve`]. See `docs/handoff/2026-11-05-codec-plugin.md`
+//! and the spec's Protocol 2
+//! (`docs/superpowers/specs/2026-11-08-media-components-design.md`) for the
+//! requests.
 
-use crate::codec::{
-    Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Sequential, VideoRequest,
-};
 use crate::error::MediaError;
 use crate::mix::frame_byte_len;
+use crate::provider::{
+    AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription, Container,
+    Encoded, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Muxer, MuxerRequest, Packet,
+    PixelFormat, Sequential, SessionId, SideData, Track, TrackPacket, VideoEncoder,
+    VideoEncoderOpened, VideoEncoderRequest, VideoRequest,
+};
+use crate::settings::Settings;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
 use celesta_plugin::protocol::{
@@ -248,7 +256,8 @@ fn answer(
                 provider.finish_encoder(field(request, "encoder")?)?;
                 Message::new(json!({ "type": "encoderFinished" }))
             }
-            "abortEncoder" => {
+            // Protocol 1's names an `encoder`, protocol 2's a `session`.
+            "abortEncoder" if request.header["session"].is_null() => {
                 provider.abort_encoder(field(request, "encoder")?);
                 Message::new(json!({ "type": "encoderAborted" }))
             }
@@ -257,11 +266,191 @@ fn answer(
                 provider.mux_audio(&mux)?;
                 Message::new(json!({ "type": "muxed" }))
             }
+            "describe" => {
+                let components = provider.describe()?;
+                Message::new(json!({ "type": "described", "components": sendable(&components)? }))
+            }
+            "openVideoEncoder" | "encodeVideoFrame" | "finishVideoEncoder" => {
+                let encoder = provider
+                    .video_encoder()
+                    .ok_or_else(|| lacks("video encoder"))?;
+                answer_video(encoder, request)?
+            }
+            "openAudioEncoder" | "encodeAudio" | "finishAudioEncoder" => {
+                let encoder = provider
+                    .audio_encoder()
+                    .ok_or_else(|| lacks("audio encoder"))?;
+                answer_audio(encoder, request)?
+            }
+            "abortEncoder" => {
+                // Sessions are unique across kinds, so at most one of them
+                // owns it; the other ignores it.
+                let session: SessionId = field(request, "session")?;
+                if let Some(encoder) = provider.video_encoder() {
+                    encoder.abort_video(session);
+                }
+                if let Some(encoder) = provider.audio_encoder() {
+                    encoder.abort_audio(session);
+                }
+                Message::new(json!({ "type": "encoderAborted" }))
+            }
+            "openMuxer" | "writePackets" | "finishMuxer" | "abortMuxer" => {
+                let muxer = provider.muxer().ok_or_else(|| lacks("muxer"))?;
+                answer_muxer(muxer, request)?
+            }
             other => return Err(MediaError::Codec(format!("unknown request \"{other}\""))),
         }
         .into())
     })();
     answer.unwrap_or_else(|error| encode_error(&error).into())
+}
+
+/// The refusal of a provider that has no component of `kind`.
+fn lacks(kind: &str) -> MediaError {
+    MediaError::Codec(format!("this plugin has no {kind}"))
+}
+
+fn answer_video(
+    encoder: &mut dyn VideoEncoder,
+    request: &mut Message,
+) -> Result<Message, MediaError> {
+    Ok(match request.kind() {
+        "openVideoEncoder" => {
+            let component: String = field(request, "component")?;
+            let settings: Settings = field(request, "settings")?;
+            let offered: Vec<PixelFormat> = field(request, "offered")?;
+            let color: Color = field(request, "color")?;
+            let opened = encoder.open_video(&VideoEncoderRequest {
+                component: &component,
+                settings: &settings,
+                width: field(request, "width")?,
+                height: field(request, "height")?,
+                frame_rate: field(request, "frameRate")?,
+                timescale: field(request, "timescale")?,
+                offered: &offered,
+                color: &color,
+            })?;
+            opened_answer("videoEncoderOpened", &opened)?
+        }
+        "encodeVideoFrame" => {
+            let encoded = encoder.encode_video(
+                field(request, "session")?,
+                field(request, "pts")?,
+                std::mem::take(&mut request.payload),
+            )?;
+            encoded_answer("videoFrameAccepted", &encoded)?
+        }
+        _ => {
+            let encoded = encoder.finish_video(field(request, "session")?)?;
+            encoded_answer("videoEncoderFinished", &encoded)?
+        }
+    })
+}
+
+fn answer_audio(
+    encoder: &mut dyn AudioEncoder,
+    request: &mut Message,
+) -> Result<Message, MediaError> {
+    Ok(match request.kind() {
+        "openAudioEncoder" => {
+            let component: String = field(request, "component")?;
+            let settings: Settings = field(request, "settings")?;
+            let opened = encoder.open_audio(&AudioEncoderRequest {
+                component: &component,
+                settings: &settings,
+                sample_rate: field(request, "sampleRate")?,
+                channels: field(request, "channels")?,
+            })?;
+            opened_answer("audioEncoderOpened", &opened)?
+        }
+        "encodeAudio" => {
+            let frames: usize = field(request, "frames")?;
+            let samples = f32_samples(&request.payload)?;
+            let whole = match frames {
+                0 => samples.is_empty(),
+                frames => samples.len().is_multiple_of(frames),
+            };
+            if !whole {
+                return Err(malformed(format!(
+                    "{} samples that are not {frames} whole frames",
+                    samples.len()
+                )));
+            }
+            let encoded = encoder.encode_audio(
+                field(request, "session")?,
+                field(request, "pts")?,
+                &samples,
+            )?;
+            encoded_answer("audioAccepted", &encoded)?
+        }
+        _ => {
+            let encoded = encoder.finish_audio(field(request, "session")?)?;
+            encoded_answer("audioEncoderFinished", &encoded)?
+        }
+    })
+}
+
+fn answer_muxer(muxer: &mut dyn Muxer, request: &mut Message) -> Result<Message, MediaError> {
+    Ok(match request.kind() {
+        "openMuxer" => {
+            let component: String = field(request, "component")?;
+            let settings: Settings = field(request, "settings")?;
+            let output: PathBuf = field(request, "output")?;
+            let tracks: Vec<Track> = field(request, "tracks")?;
+            let leading_audio: Option<u64> = field(request, "leadingAudio")?;
+            let session = muxer.open_muxer(&MuxerRequest {
+                component: &component,
+                settings: &settings,
+                output: &output,
+                tracks: &tracks,
+                leading_audio: leading_audio.unwrap_or(0),
+            })?;
+            Message::new(json!({ "type": "muxerOpened", "session": session }))
+        }
+        "writePackets" => {
+            let entries: Vec<Value> = field(request, "packets")?;
+            let packets = unpack_track_packets(&entries, &request.payload)?;
+            muxer.write_packets(field(request, "session")?, &packets)?;
+            Message::new(json!({ "type": "packetsWritten" }))
+        }
+        "finishMuxer" => {
+            let files = muxer.finish_muxer(field(request, "session")?)?;
+            Message::new(json!({ "type": "muxerFinished", "files": sendable(&files)? }))
+        }
+        _ => {
+            let files = muxer.abort_muxer(field(request, "session")?);
+            Message::new(json!({ "type": "muxerAborted", "files": sendable(&files)? }))
+        }
+    })
+}
+
+/// An `…Opened` answer: `opened`'s fields beside the `type`.
+fn opened_answer(kind: &str, opened: &impl Serialize) -> Result<Message, MediaError> {
+    let mut header = sendable(opened)?;
+    if let Some(header) = header.as_object_mut() {
+        header.insert("type".to_owned(), json!(kind));
+    }
+    Ok(Message::new(header))
+}
+
+/// An encoder's answer: its packets, with their bytes as the payload, and
+/// the config when it has one.
+fn encoded_answer(kind: &str, encoded: &Encoded) -> Result<Message, MediaError> {
+    let (packets, payload) = pack_packets(&encoded.packets);
+    let mut header = json!({ "type": kind, "packets": packets });
+    if let Some(config) = &encoded.config {
+        header["config"] = sendable(config)?;
+    }
+    Ok(Message { header, payload })
+}
+
+/// A payload of `f32` LE samples.
+fn f32_samples(payload: &[u8]) -> Result<Vec<f32>, MediaError> {
+    let (samples, rest) = payload.as_chunks::<4>();
+    if !rest.is_empty() {
+        return Err(malformed("audio that is not whole `f32` samples"));
+    }
+    Ok(samples.iter().copied().map(f32::from_le_bytes).collect())
 }
 
 /// An `error` answer: the error's text, and, for the errors Celesta tells
@@ -306,6 +495,14 @@ pub fn encode_error(error: &MediaError) -> Message {
         }),
         MediaError::EncoderUnavailable { encoder } => {
             json!({ "code": "encoderUnavailable", "encoder": encoder })
+        }
+        // The spec's `key` and `message`: the message without the key, in
+        // place of the error's text.
+        MediaError::InvalidSettings { key, message } => {
+            json!({ "code": "invalidSettings", "key": key, "message": message })
+        }
+        MediaError::ComponentUnavailable { component, reason } => {
+            json!({ "code": "componentUnavailable", "component": component, "reason": reason })
         }
         MediaError::Codec(_)
         | MediaError::NoCodec
@@ -369,6 +566,19 @@ pub fn decode_error(answer: &Message) -> MediaError {
                     encoder: encoder.to_owned(),
                 })
         }
+        Some("invalidSettings") => header["key"]
+            .as_str()
+            .map(|key| MediaError::InvalidSettings {
+                key: key.to_owned(),
+                message: message.clone(),
+            }),
+        Some("componentUnavailable") => header["component"]
+            .as_str()
+            .zip(header["reason"].as_str())
+            .map(|(component, reason)| MediaError::ComponentUnavailable {
+                component: component.to_owned(),
+                reason: reason.to_owned(),
+            }),
         _ => None,
     };
     decoded.unwrap_or(MediaError::Codec(message))
@@ -527,7 +737,8 @@ pub(crate) fn finish_encoder_request(encoder: EncoderId) -> Message {
     Message::new(json!({ "type": "finishEncoder", "encoder": encoder }))
 }
 
-pub(crate) fn abort_encoder_request(encoder: EncoderId) -> Message {
+/// Protocol 1's `abortEncoder`, by `encoder` rather than `session`.
+pub(crate) fn legacy_abort_encoder_request(encoder: EncoderId) -> Message {
     Message::new(json!({ "type": "abortEncoder", "encoder": encoder }))
 }
 
@@ -537,11 +748,275 @@ pub(crate) fn mux_audio_request(request: &MuxRequest) -> Result<Message, MediaEr
     ))
 }
 
+pub(crate) fn describe_request() -> Message {
+    Message::new(json!({ "type": "describe" }))
+}
+
+pub(crate) fn decode_described(answer: &Message) -> Result<Vec<ComponentDescription>, MediaError> {
+    field(answer, "components")
+}
+
+pub(crate) fn open_video_request(request: &VideoEncoderRequest<'_>) -> Result<Message, MediaError> {
+    Ok(Message::new(json!({
+        "type": "openVideoEncoder",
+        "component": request.component,
+        "settings": sendable(request.settings)?,
+        "width": request.width,
+        "height": request.height,
+        "frameRate": request.frame_rate,
+        "timescale": request.timescale,
+        "offered": request.offered,
+        "color": request.color,
+    })))
+}
+
+pub(crate) fn decode_video_encoder_opened(
+    answer: &Message,
+) -> Result<VideoEncoderOpened, MediaError> {
+    VideoEncoderOpened::deserialize(&answer.header).map_err(malformed)
+}
+
+/// An `encodeVideoFrame` with the frame as its payload.
+pub(crate) fn encode_video_request(session: SessionId, pts: i64, frame: Vec<u8>) -> Message {
+    Message {
+        header: json!({ "type": "encodeVideoFrame", "session": session, "pts": pts }),
+        payload: frame,
+    }
+}
+
+pub(crate) fn finish_video_request(session: SessionId) -> Message {
+    Message::new(json!({ "type": "finishVideoEncoder", "session": session }))
+}
+
+pub(crate) fn open_audio_request(request: &AudioEncoderRequest<'_>) -> Result<Message, MediaError> {
+    Ok(Message::new(json!({
+        "type": "openAudioEncoder",
+        "component": request.component,
+        "settings": sendable(request.settings)?,
+        "sampleRate": request.sample_rate,
+        "channels": request.channels,
+    })))
+}
+
+pub(crate) fn decode_audio_encoder_opened(
+    answer: &Message,
+) -> Result<AudioEncoderOpened, MediaError> {
+    AudioEncoderOpened::deserialize(&answer.header).map_err(malformed)
+}
+
+/// An `encodeAudio` of interleaved `samples` in `channels` channels, which
+/// must be whole frames.
+pub(crate) fn encode_audio_request(
+    session: SessionId,
+    pts: i64,
+    channels: u16,
+    samples: &[f32],
+) -> Result<Message, MediaError> {
+    if channels == 0 || !samples.len().is_multiple_of(usize::from(channels)) {
+        return Err(MediaError::InvalidAudioSampleCount {
+            samples: samples.len(),
+            channels,
+        });
+    }
+    Ok(Message {
+        header: json!({
+            "type": "encodeAudio",
+            "session": session,
+            "pts": pts,
+            "frames": samples.len() / usize::from(channels),
+        }),
+        payload: samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect(),
+    })
+}
+
+pub(crate) fn finish_audio_request(session: SessionId) -> Message {
+    Message::new(json!({ "type": "finishAudioEncoder", "session": session }))
+}
+
+/// `abortEncoder` for a video or an audio encoder's session.
+pub(crate) fn abort_encoder_request(session: SessionId) -> Message {
+    Message::new(json!({ "type": "abortEncoder", "session": session }))
+}
+
+/// The packets of an encoder's answer.
+pub(crate) fn decode_encoded(answer: &Message) -> Result<Encoded, MediaError> {
+    let entries: Vec<Value> = field(answer, "packets")?;
+    Ok(Encoded {
+        packets: unpack_packets(&entries, &answer.payload)?,
+        config: field(answer, "config")?,
+    })
+}
+
+pub(crate) fn open_muxer_request(request: &MuxerRequest<'_>) -> Result<Message, MediaError> {
+    let mut header = json!({
+        "type": "openMuxer",
+        "component": request.component,
+        "settings": sendable(request.settings)?,
+        "output": sendable(&request.output)?,
+        "tracks": sendable(&request.tracks)?,
+    });
+    if request.leading_audio > 0 {
+        header["leadingAudio"] = json!(request.leading_audio);
+    }
+    Ok(Message::new(header))
+}
+
+pub(crate) fn decode_muxer_opened(answer: &Message) -> Result<SessionId, MediaError> {
+    field(answer, "session")
+}
+
+/// A `writePackets`: each packet's header with its `track`, and their bytes
+/// as the payload.
+pub(crate) fn write_packets_request(session: SessionId, packets: &[TrackPacket]) -> Message {
+    let (mut entries, payload) = pack(packets.iter().map(|packet| &packet.packet));
+    for (entry, packet) in entries.iter_mut().zip(packets) {
+        entry["track"] = json!(packet.track);
+    }
+    Message {
+        header: json!({ "type": "writePackets", "session": session, "packets": entries }),
+        payload,
+    }
+}
+
+pub(crate) fn finish_muxer_request(session: SessionId) -> Message {
+    Message::new(json!({ "type": "finishMuxer", "session": session }))
+}
+
+pub(crate) fn abort_muxer_request(session: SessionId) -> Message {
+    Message::new(json!({ "type": "abortMuxer", "session": session }))
+}
+
+/// The `files` a muxer's `muxerFinished` or `muxerAborted` lists.
+pub(crate) fn decode_files(answer: &Message) -> Result<Vec<PathBuf>, MediaError> {
+    field(answer, "files")
+}
+
+/// A packet's header: `bytes` and each side data's `bytes` are lengths.
+#[derive(Deserialize, Serialize)]
+struct WirePacket {
+    pts: i64,
+    dts: i64,
+    duration: i64,
+    key: bool,
+    bytes: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    additional: Vec<WireSideData>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct WireSideData {
+    id: u32,
+    bytes: usize,
+}
+
+/// `packets`' headers, and their bytes back to back: each packet's own,
+/// then its side data's in order.
+pub(crate) fn pack_packets(packets: &[Packet]) -> (Vec<Value>, Vec<u8>) {
+    pack(packets)
+}
+
+/// [`pack_packets`] of packets wherever they are kept.
+fn pack<'a>(packets: impl IntoIterator<Item = &'a Packet>) -> (Vec<Value>, Vec<u8>) {
+    let mut payload = Vec::new();
+    let entries = packets
+        .into_iter()
+        .map(|packet| {
+            payload.extend_from_slice(&packet.bytes);
+            for side in &packet.additional {
+                payload.extend_from_slice(&side.bytes);
+            }
+            json!(WirePacket {
+                pts: packet.pts,
+                dts: packet.dts,
+                duration: packet.duration,
+                key: packet.key,
+                bytes: packet.bytes.len(),
+                additional: packet
+                    .additional
+                    .iter()
+                    .map(|side| WireSideData {
+                        id: side.id,
+                        bytes: side.bytes.len(),
+                    })
+                    .collect(),
+            })
+        })
+        .collect();
+    (entries, payload)
+}
+
+/// The packets [`pack_packets`] made, from their headers and payload. A
+/// payload that is not exactly the lengths listed is malformed.
+pub(crate) fn unpack_packets(entries: &[Value], payload: &[u8]) -> Result<Vec<Packet>, MediaError> {
+    let mut rest = payload;
+    let mut take = |length: usize| {
+        let Some((bytes, after)) = rest.split_at_checked(length) else {
+            return Err(malformed(format!(
+                "packets listing more bytes than the {} sent",
+                payload.len()
+            )));
+        };
+        rest = after;
+        Ok(bytes.to_vec())
+    };
+    let packets = entries
+        .iter()
+        .map(|entry| {
+            let wire = WirePacket::deserialize(entry)
+                .map_err(|error| malformed(format!("`packets`: {error}")))?;
+            let bytes = take(wire.bytes)?;
+            let additional = wire
+                .additional
+                .iter()
+                .map(|side| {
+                    Ok(SideData {
+                        id: side.id,
+                        bytes: take(side.bytes)?,
+                    })
+                })
+                .collect::<Result<_, MediaError>>()?;
+            Ok(Packet {
+                pts: wire.pts,
+                dts: wire.dts,
+                duration: wire.duration,
+                key: wire.key,
+                bytes,
+                additional,
+            })
+        })
+        .collect::<Result<Vec<_>, MediaError>>()?;
+    if !rest.is_empty() {
+        return Err(malformed(format!(
+            "{} bytes past the packets listed",
+            rest.len()
+        )));
+    }
+    Ok(packets)
+}
+
+/// The packets of a `writePackets`, each with its `track`.
+fn unpack_track_packets(entries: &[Value], payload: &[u8]) -> Result<Vec<TrackPacket>, MediaError> {
+    let packets = unpack_packets(entries, payload)?;
+    entries
+        .iter()
+        .zip(packets)
+        .map(|(entry, packet)| {
+            let track = usize::deserialize(&entry["track"])
+                .map_err(|error| malformed(format!("`track`: {error}")))?;
+            Ok(TrackPacket { track, packet })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::VideoColor;
-    use crate::codec::PixelFormat;
+    use crate::provider::{ComponentKind, Decoder, SampleRates, TrackConfig};
+    use crate::settings::{SettingField, SettingValue};
     use crate::types::{AudioStream, VideoStream};
     use celesta_composition::Time;
     use celesta_plugin::protocol::{read_message, write_message};
@@ -580,6 +1055,10 @@ mod tests {
     }
 
     impl MediaProvider for Fake {
+        fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+            Ok(Vec::new())
+        }
+
         fn probe(&mut self, _: &str, path: &Path) -> Result<MediaProbe, MediaError> {
             self.asked.push(format!("probe {}", path.display()));
             if path == Path::new("/missing") {
@@ -659,7 +1138,7 @@ mod tests {
     }
 
     /// Serves `requests` with `codec`, returning its answers.
-    fn serve_all(codec: &mut Fake, requests: &[Message]) -> Vec<Message> {
+    fn serve_all(codec: &mut impl MediaProvider, requests: &[Message]) -> Vec<Message> {
         let mut input = Vec::new();
         for request in requests {
             write_message(&mut input, request).unwrap();
@@ -762,6 +1241,10 @@ mod tests {
     }
 
     impl MediaProvider for Keeper {
+        fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+            Ok(Vec::new())
+        }
+
         fn probe(&mut self, _: &str, _: &Path) -> Result<MediaProbe, MediaError> {
             Ok(probe())
         }
@@ -1090,6 +1573,10 @@ mod tests {
     }
 
     impl MediaProvider for Recorder {
+        fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+            Ok(Vec::new())
+        }
+
         fn probe(&mut self, decoder: &str, _: &Path) -> Result<MediaProbe, MediaError> {
             self.decoders.push(decoder.to_owned());
             Ok(probe())
@@ -1183,5 +1670,669 @@ mod tests {
             decode_error(&encode_error(&error)),
             MediaError::Unsupported { path: decoded, tried } if decoded == path && tried.is_empty()
         ));
+    }
+
+    /// Implements the four component traits: records what it is asked and
+    /// answers canned values. Its sessions come from one counter, as a
+    /// plugin's must.
+    struct Components {
+        has_muxer: bool,
+        next: u64,
+        /// The requests it was given, as `{request:?}`.
+        asked: Vec<String>,
+        video_sessions: Vec<SessionId>,
+        audio_sessions: Vec<(SessionId, u16)>,
+        /// Each frame: its pts and bytes.
+        frames: Vec<(i64, Vec<u8>)>,
+        /// Each audio chunk: its pts and sample frames.
+        chunks: Vec<(i64, usize)>,
+        written: Vec<TrackPacket>,
+        output: PathBuf,
+    }
+
+    impl Components {
+        fn new(next: u64) -> Self {
+            Self {
+                has_muxer: true,
+                next,
+                asked: Vec::new(),
+                video_sessions: Vec::new(),
+                audio_sessions: Vec::new(),
+                frames: Vec::new(),
+                chunks: Vec::new(),
+                written: Vec::new(),
+                output: PathBuf::new(),
+            }
+        }
+
+        fn session(&mut self) -> SessionId {
+            let session = SessionId(self.next);
+            self.next += 1;
+            session
+        }
+    }
+
+    fn settings_schema() -> Vec<SettingField> {
+        serde_json::from_value(json!([
+            { "key": "crf", "type": "number", "integer": true, "min": 0, "max": 51,
+              "default": 23, "label": "CRF" },
+            { "key": "preset", "type": "select", "default": "medium", "label": "Preset",
+              "options": [{ "value": "fast", "label": "Fast" },
+                          { "value": "medium", "label": "Medium" }] },
+        ]))
+        .unwrap()
+    }
+
+    fn descriptions() -> Vec<ComponentDescription> {
+        vec![
+            ComponentDescription {
+                kind: ComponentKind::VideoEncoder,
+                id: "x264".into(),
+                available: true,
+                reason: None,
+                settings: settings_schema(),
+                input_formats: vec![PixelFormat::Yuv420p, PixelFormat::Rgba8],
+                transports: vec!["pipe".into()],
+                sample_rates: None,
+                channels: Vec::new(),
+            },
+            ComponentDescription {
+                kind: ComponentKind::Muxer,
+                id: "mkv".into(),
+                available: false,
+                reason: Some("this build has no Matroska muxer".into()),
+                settings: Vec::new(),
+                input_formats: Vec::new(),
+                transports: Vec::new(),
+                sample_rates: None,
+                channels: Vec::new(),
+            },
+        ]
+    }
+
+    fn encoded_packets() -> Vec<Packet> {
+        vec![
+            Packet {
+                pts: 0,
+                dts: -1001,
+                duration: 1001,
+                key: true,
+                bytes: vec![1, 2, 3, 4],
+                additional: vec![SideData {
+                    id: 1,
+                    bytes: vec![9, 8, 7],
+                }],
+            },
+            Packet {
+                pts: 3003,
+                dts: 0,
+                duration: 1001,
+                key: false,
+                bytes: vec![5, 6],
+                additional: Vec::new(),
+            },
+        ]
+    }
+
+    fn avc_config() -> TrackConfig {
+        TrackConfig {
+            codec: "avc1.640028".into(),
+            description: Some(vec![1, 0x64, 0, 0x28, 0xff, 0xe1, 0]),
+        }
+    }
+
+    impl Decoder for Components {
+        fn probe(&mut self, _: &str, _: &Path) -> Result<MediaProbe, MediaError> {
+            Ok(probe())
+        }
+
+        fn decode_video(
+            &mut self,
+            _: &str,
+            _: &VideoRequest<'_>,
+        ) -> Result<VideoFrame, MediaError> {
+            unreachable!()
+        }
+
+        fn decode_audio(
+            &mut self,
+            _: &str,
+            _: &Path,
+            _: u32,
+            _: u16,
+        ) -> Result<AudioBuffer, MediaError> {
+            unreachable!()
+        }
+    }
+
+    impl VideoEncoder for Components {
+        fn open_video(
+            &mut self,
+            request: &VideoEncoderRequest<'_>,
+        ) -> Result<VideoEncoderOpened, MediaError> {
+            self.asked.push(format!("{request:?}"));
+            let session = self.session();
+            self.video_sessions.push(session);
+            Ok(VideoEncoderOpened {
+                session,
+                input: request.offered[0],
+                alpha: false,
+            })
+        }
+
+        fn encode_video(
+            &mut self,
+            session: SessionId,
+            pts: i64,
+            frame: Vec<u8>,
+        ) -> Result<Encoded, MediaError> {
+            assert!(self.video_sessions.contains(&session));
+            self.frames.push((pts, frame));
+            Ok(Encoded {
+                packets: encoded_packets(),
+                config: Some(avc_config()),
+            })
+        }
+
+        fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+            self.video_sessions.retain(|open| *open != session);
+            Ok(Encoded {
+                packets: encoded_packets()[1..].to_vec(),
+                config: None,
+            })
+        }
+
+        fn abort_video(&mut self, session: SessionId) {
+            self.video_sessions.retain(|open| *open != session);
+        }
+    }
+
+    impl AudioEncoder for Components {
+        fn open_audio(
+            &mut self,
+            request: &AudioEncoderRequest<'_>,
+        ) -> Result<AudioEncoderOpened, MediaError> {
+            self.asked.push(format!("{request:?}"));
+            let session = self.session();
+            self.audio_sessions.push((session, request.channels));
+            Ok(AudioEncoderOpened {
+                session,
+                sample_rate: request.sample_rate,
+                channels: request.channels,
+                delay: 1024,
+            })
+        }
+
+        fn encode_audio(
+            &mut self,
+            session: SessionId,
+            pts: i64,
+            samples: &[f32],
+        ) -> Result<Encoded, MediaError> {
+            let (_, channels) = self
+                .audio_sessions
+                .iter()
+                .find(|(open, _)| *open == session)
+                .copied()
+                .unwrap();
+            self.chunks
+                .push((pts, samples.len() / usize::from(channels)));
+            Ok(Encoded::default())
+        }
+
+        fn finish_audio(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+            self.audio_sessions.retain(|(open, _)| *open != session);
+            Ok(Encoded::default())
+        }
+
+        fn abort_audio(&mut self, session: SessionId) {
+            self.audio_sessions.retain(|(open, _)| *open != session);
+        }
+    }
+
+    impl Muxer for Components {
+        fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
+            self.asked.push(format!("{request:?}"));
+            self.output = request.output.to_owned();
+            Ok(self.session())
+        }
+
+        fn write_packets(
+            &mut self,
+            _: SessionId,
+            packets: &[TrackPacket],
+        ) -> Result<(), MediaError> {
+            self.written.extend_from_slice(packets);
+            Ok(())
+        }
+
+        fn finish_muxer(&mut self, _: SessionId) -> Result<Vec<PathBuf>, MediaError> {
+            Ok(vec![self.output.clone()])
+        }
+
+        fn abort_muxer(&mut self, _: SessionId) -> Vec<PathBuf> {
+            vec![self.output.clone(), self.output.with_extension("part")]
+        }
+    }
+
+    impl MediaProvider for Components {
+        fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+            Ok(descriptions())
+        }
+
+        fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+            Some(self)
+        }
+
+        fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
+            Some(self)
+        }
+
+        fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
+            Some(self)
+        }
+
+        fn muxer(&mut self) -> Option<&mut dyn Muxer> {
+            if self.has_muxer { Some(self) } else { None }
+        }
+
+        fn probe(&mut self, _: &str, _: &Path) -> Result<MediaProbe, MediaError> {
+            unreachable!()
+        }
+
+        fn decode_video(
+            &mut self,
+            _: &str,
+            _: &VideoRequest<'_>,
+        ) -> Result<VideoFrame, MediaError> {
+            unreachable!()
+        }
+
+        fn decode_audio(
+            &mut self,
+            _: &str,
+            _: &Path,
+            _: u32,
+            _: u16,
+        ) -> Result<AudioBuffer, MediaError> {
+            unreachable!()
+        }
+
+        fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
+            unreachable!()
+        }
+
+        fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
+            unreachable!()
+        }
+
+        fn abort_encoder(&mut self, _: EncoderId) {}
+
+        fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
+            unreachable!()
+        }
+    }
+
+    fn hello() -> Message {
+        Message::new(json!({ "type": "hello", "protocol": 2 }))
+    }
+
+    #[test]
+    fn describe_round_trips() {
+        let answers = serve_all(&mut Components::new(1), &[hello(), describe_request()]);
+        assert_eq!(answers[1].kind(), "described");
+        assert_eq!(answers[1].header["components"][0]["kind"], "videoEncoder");
+        assert_eq!(
+            answers[1].header["components"][0]["inputFormats"],
+            json!(["yuv420p", "rgba8"])
+        );
+        assert_eq!(decode_described(&answers[1]).unwrap(), descriptions());
+    }
+
+    #[test]
+    fn sample_rates_are_any_or_a_list() {
+        let wire = |rates: SampleRates| serde_json::to_value(rates).unwrap();
+        assert_eq!(wire(SampleRates::Any), json!("any"));
+        assert_eq!(wire(SampleRates::Only(vec![48_000])), json!([48_000]));
+        for rates in [SampleRates::Any, SampleRates::Only(vec![44_100, 48_000])] {
+            let decoded: SampleRates = serde_json::from_value(wire(rates.clone())).unwrap();
+            assert_eq!(decoded, rates);
+        }
+        assert!(serde_json::from_value::<SampleRates>(json!("some")).is_err());
+    }
+
+    #[test]
+    fn pixel_formats_read_and_print_their_wire_names() {
+        let names = ["rgba8", "rgba16", "yuv420p", "yuv420p10", "nv12", "p010"];
+        let formats = [
+            PixelFormat::Rgba8,
+            PixelFormat::Rgba16,
+            PixelFormat::Yuv420p,
+            PixelFormat::Yuv420p10,
+            PixelFormat::Nv12,
+            PixelFormat::P010,
+        ];
+        for (name, format) in names.into_iter().zip(formats) {
+            assert_eq!(format.to_string(), name);
+            assert_eq!(name.parse::<PixelFormat>().unwrap(), format);
+            assert_eq!(serde_json::to_value(format).unwrap(), name);
+        }
+        assert!("rgb24".parse::<PixelFormat>().is_err());
+    }
+
+    #[test]
+    fn video_encoding_round_trips() {
+        let mut fake = Components::new(7);
+        let settings: Settings = [("crf".to_owned(), SettingValue::Number(18.0))].into();
+        let color = Color::bt709_limited();
+        let request = VideoEncoderRequest {
+            component: "x264",
+            settings: &settings,
+            width: 4,
+            height: 2,
+            frame_rate: Rational::new(30_000, 1001),
+            timescale: 30_000,
+            offered: &[PixelFormat::Yuv420p, PixelFormat::Rgba8],
+            color: &color,
+        };
+        let open = open_video_request(&request).unwrap();
+        assert_eq!(open.header["offered"], json!(["yuv420p", "rgba8"]));
+        assert_eq!(open.header["color"]["matrix"], "bt709");
+        assert_eq!(open.header["settings"], json!({ "crf": 18 }));
+        let frame: Vec<u8> = (0..16).collect();
+        let answers = serve_all(
+            &mut fake,
+            &[
+                hello(),
+                open,
+                encode_video_request(SessionId(7), 3003, frame.clone()),
+                finish_video_request(SessionId(7)),
+            ],
+        );
+        assert_eq!(fake.asked, [format!("{request:?}")]);
+        assert_eq!(
+            decode_video_encoder_opened(&answers[1]).unwrap(),
+            VideoEncoderOpened {
+                session: SessionId(7),
+                input: PixelFormat::Yuv420p,
+                alpha: false,
+            }
+        );
+        assert_eq!(fake.frames, [(3003, frame)]);
+        assert_eq!(answers[2].kind(), "videoFrameAccepted");
+        assert_eq!(
+            decode_encoded(&answers[2]).unwrap(),
+            Encoded {
+                packets: encoded_packets(),
+                config: Some(avc_config()),
+            }
+        );
+        assert_eq!(answers[3].kind(), "videoEncoderFinished");
+        assert_eq!(
+            decode_encoded(&answers[3]).unwrap(),
+            Encoded {
+                packets: encoded_packets()[1..].to_vec(),
+                config: None,
+            }
+        );
+    }
+
+    #[test]
+    fn audio_encoding_round_trips() {
+        let mut fake = Components::new(1);
+        let settings = Settings::new();
+        let request = AudioEncoderRequest {
+            component: "aac",
+            settings: &settings,
+            sample_rate: 48_000,
+            channels: 2,
+        };
+        let open = open_audio_request(&request).unwrap();
+        let encode = encode_audio_request(SessionId(1), -16_384, 2, &[0.25; 2048]).unwrap();
+        assert_eq!(encode.header["frames"], 1024);
+        assert_eq!(encode.payload.len(), 2048 * 4);
+        let answers = serve_all(
+            &mut fake,
+            &[hello(), open, encode, finish_audio_request(SessionId(1))],
+        );
+        assert_eq!(fake.asked, [format!("{request:?}")]);
+        assert_eq!(
+            decode_audio_encoder_opened(&answers[1]).unwrap(),
+            AudioEncoderOpened {
+                session: SessionId(1),
+                sample_rate: 48_000,
+                channels: 2,
+                delay: 1024,
+            }
+        );
+        assert_eq!(fake.chunks, [(-16_384, 1024)]);
+        assert_eq!(answers[2].kind(), "audioAccepted");
+        assert_eq!(decode_encoded(&answers[2]).unwrap(), Encoded::default());
+        assert_eq!(answers[3].kind(), "audioEncoderFinished");
+        assert!(matches!(
+            encode_audio_request(SessionId(1), 0, 2, &[0.0; 3]),
+            Err(MediaError::InvalidAudioSampleCount {
+                samples: 3,
+                channels: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn muxing_round_trips() {
+        let mut fake = Components::new(1);
+        let settings: Settings = [("faststart".to_owned(), SettingValue::Boolean(true))].into();
+        let output = Path::new("/out/film.mp4");
+        let tracks = [
+            Track::Video {
+                config: avc_config(),
+                timescale: 30_000,
+                width: 4,
+                height: 2,
+                frame_rate: Rational::new(30_000, 1001),
+                color: Color::bt709_limited(),
+                alpha: false,
+            },
+            Track::Audio {
+                config: TrackConfig {
+                    codec: "mp4a.40.2".into(),
+                    description: Some(vec![0x12, 0x10]),
+                },
+                timescale: 48_000,
+                sample_rate: 48_000,
+                channels: 2,
+                delay: 1024,
+            },
+        ];
+        let request = MuxerRequest {
+            component: "mp4",
+            settings: &settings,
+            output,
+            tracks: &tracks,
+            leading_audio: 16_384,
+        };
+        let open = open_muxer_request(&request).unwrap();
+        assert_eq!(open.header["tracks"][0]["kind"], "video");
+        assert_eq!(
+            open.header["tracks"][0]["frameRate"],
+            json!(Rational::new(30_000, 1001))
+        );
+        assert_eq!(open.header["tracks"][1]["kind"], "audio");
+        assert_eq!(open.header["tracks"][1]["delay"], 1024);
+        assert_eq!(open.header["tracks"][1]["config"]["description"], "EhA=");
+        assert_eq!(open.header["leadingAudio"], 16_384);
+        let packets = [
+            TrackPacket {
+                track: 1,
+                packet: Packet {
+                    pts: -1024,
+                    dts: -1024,
+                    duration: 1024,
+                    key: true,
+                    bytes: vec![1, 2, 3],
+                    additional: Vec::new(),
+                },
+            },
+            TrackPacket {
+                track: 0,
+                packet: encoded_packets()[0].clone(),
+            },
+        ];
+        let write = write_packets_request(SessionId(1), &packets);
+        assert_eq!(write.header["packets"][0]["track"], 1);
+        let answers = serve_all(
+            &mut fake,
+            &[
+                hello(),
+                open,
+                write,
+                finish_muxer_request(SessionId(1)),
+                abort_muxer_request(SessionId(1)),
+            ],
+        );
+        assert_eq!(fake.asked, [format!("{request:?}")]);
+        assert_eq!(decode_muxer_opened(&answers[1]).unwrap(), SessionId(1));
+        assert_eq!(answers[2].kind(), "packetsWritten");
+        assert_eq!(fake.written, packets);
+        assert_eq!(answers[3].kind(), "muxerFinished");
+        assert_eq!(decode_files(&answers[3]).unwrap(), [output]);
+        assert_eq!(answers[4].kind(), "muxerAborted");
+        assert_eq!(
+            decode_files(&answers[4]).unwrap(),
+            [output.to_owned(), output.with_extension("part")]
+        );
+    }
+
+    #[test]
+    fn a_provider_without_the_kind_refuses() {
+        let mut fake = Components::new(1);
+        fake.has_muxer = false;
+        let request = MuxerRequest {
+            component: "mp4",
+            settings: &Settings::new(),
+            output: Path::new("/out/film.mp4"),
+            tracks: &[],
+            leading_audio: 0,
+        };
+        let answers = serve_all(&mut fake, &[hello(), open_muxer_request(&request).unwrap()]);
+        assert_eq!(answers[1].kind(), "error");
+        assert_eq!(answers[1].header["message"], "this plugin has no muxer");
+        assert!(fake.asked.is_empty());
+    }
+
+    #[test]
+    fn packets_pack_back_to_back() {
+        let packets = vec![
+            Packet {
+                pts: 0,
+                dts: 0,
+                duration: 1,
+                key: true,
+                bytes: vec![1, 2, 3],
+                additional: vec![SideData {
+                    id: 1,
+                    bytes: vec![4, 5, 6, 7],
+                }],
+            },
+            Packet {
+                pts: 1,
+                dts: 1,
+                duration: 1,
+                key: false,
+                bytes: vec![8, 9],
+                additional: Vec::new(),
+            },
+        ];
+        let (header, payload) = pack_packets(&packets);
+        assert_eq!(payload, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(
+            header[0],
+            json!({ "pts": 0, "dts": 0, "duration": 1, "key": true, "bytes": 3,
+                    "additional": [{ "id": 1, "bytes": 4 }] })
+        );
+        assert!(header[1].get("additional").is_none());
+        assert_eq!(unpack_packets(&header, &payload).unwrap(), packets);
+        assert!(matches!(
+            unpack_packets(&header, &payload[..8]),
+            Err(MediaError::Codec(message)) if message.starts_with("malformed")
+        ));
+    }
+
+    #[test]
+    fn new_error_codes_round_trip() {
+        let invalid = MediaError::InvalidSettings {
+            key: "crf".into(),
+            message: "must be at most 51".into(),
+        };
+        assert_eq!(invalid.to_string(), "crf: must be at most 51");
+        assert!(matches!(
+            decode_error(&encode_error(&invalid)),
+            MediaError::InvalidSettings { key, message }
+                if key == "crf" && message == "must be at most 51"
+        ));
+        let unavailable = MediaError::ComponentUnavailable {
+            component: "x264".into(),
+            reason: "this FFmpeg build has no libx264".into(),
+        };
+        assert_eq!(
+            unavailable.to_string(),
+            "x264 is unavailable: this FFmpeg build has no libx264"
+        );
+        assert!(matches!(
+            decode_error(&encode_error(&unavailable)),
+            MediaError::ComponentUnavailable { component, reason }
+                if component == "x264" && reason == "this FFmpeg build has no libx264"
+        ));
+    }
+
+    #[test]
+    fn an_abort_reaches_whichever_kind_owns_the_session() {
+        let mut fake = Components::new(1);
+        let settings = Settings::new();
+        let color = Color::bt709_limited();
+        let video = VideoEncoderRequest {
+            component: "x264",
+            settings: &settings,
+            width: 4,
+            height: 2,
+            frame_rate: Rational::new(30, 1),
+            timescale: 30,
+            offered: &[PixelFormat::Yuv420p],
+            color: &color,
+        };
+        let audio = AudioEncoderRequest {
+            component: "aac",
+            settings: &settings,
+            sample_rate: 48_000,
+            channels: 2,
+        };
+        let answers = serve_all(
+            &mut fake,
+            &[
+                hello(),
+                open_video_request(&video).unwrap(),
+                open_audio_request(&audio).unwrap(),
+                abort_encoder_request(SessionId(2)),
+            ],
+        );
+        assert_eq!(
+            decode_video_encoder_opened(&answers[1]).unwrap().session,
+            SessionId(1)
+        );
+        assert_eq!(
+            decode_audio_encoder_opened(&answers[2]).unwrap().session,
+            SessionId(2)
+        );
+        assert_eq!(answers[3].kind(), "encoderAborted");
+        assert!(fake.audio_sessions.is_empty());
+        assert_eq!(fake.video_sessions, [SessionId(1)]);
     }
 }
