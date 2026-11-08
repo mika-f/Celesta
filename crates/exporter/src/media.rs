@@ -38,6 +38,12 @@ pub fn use_installed_media() {
     use_media(&InstalledPlugins::find_reporting(&[], &[]));
 }
 
+/// The registry exports write through: the one chosen, or an empty one,
+/// whose exports then find no muxer.
+pub(crate) fn current() -> Arc<MediaRegistry> {
+    registry().unwrap_or_else(|| Arc::new(MediaRegistry::new(Vec::new())))
+}
+
 /// [`use_media`], unless a registry was chosen already: by the application,
 /// or by a test that runs a plugin in its own process.
 pub(crate) fn ensure_media(plugins: &InstalledPlugins) {

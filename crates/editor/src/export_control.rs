@@ -4,7 +4,7 @@ use crate::helpers::{ExportLoudness, export_output, export_range_for, export_sug
 use crate::inline_text_view::EditEvent;
 use crate::problems::{Source, error_chain};
 use crate::view::EditorView;
-use celesta_exporter::{ExportCancellation, ExportProgress, VideoFormat};
+use celesta_exporter::{ExportCancellation, ExportProgress};
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
 use gpui_kit::{ClickEvent, Context, Window};
 use std::path::{Path, PathBuf};
@@ -78,8 +78,7 @@ impl EditorView {
                     cx.notify();
                     return;
                 };
-                let (output, format) = export_output(selected_path);
-                this.start_export(output, format);
+                this.start_export(export_output(selected_path));
                 cx.notify();
             })
             .ok();
@@ -88,7 +87,7 @@ impl EditorView {
         cx.notify();
     }
 
-    pub(crate) fn start_export(&mut self, output: PathBuf, format: VideoFormat) {
+    pub(crate) fn start_export(&mut self, output: PathBuf) {
         let cancellation = ExportCancellation::default();
         let (source, range) = match &self.react_preview {
             Some(react) => {
@@ -117,7 +116,6 @@ impl EditorView {
             source,
             asset_root: self.document.asset_root().to_owned(),
             output: output.clone(),
-            format,
             range,
             loudness: self.export_loudness.target(),
             cancellation: cancellation.clone(),

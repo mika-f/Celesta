@@ -1,21 +1,32 @@
-use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, ExportedFile};
+use crate::control::{
+    AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile,
+};
+use crate::encode::{ExportSession, ExportedTracks, published_files};
 use crate::error::ExportError;
 use crate::loudness::finish_mix;
 use crate::options::ExportOptions;
 use crate::output;
 use crate::range::{ExportWindow, resolve_window, shifted_audio_graph};
 use crate::render::{
-    ensure_encoders, ensure_not_cancelled, frame_count, validate_dimensions, validate_output,
+    ensure_not_cancelled, frame_count, open_video_output, validate_dimensions, validate_output,
 };
 use crate::subtitles;
 use celesta_composition::Time;
 use celesta_evaluator::Evaluator;
-use celesta_media::{AudioMixError, MediaBackend, mix_audio_graph_unclipped_cancellable};
+use celesta_media::{
+    AudioBuffer, AudioMixError, MediaBackend, mix_audio_graph_unclipped_cancellable,
+};
 use celesta_plugin_host::InstalledPlugins;
 use celesta_project::Project;
-use std::path::Path;
+use celesta_remote::StagedFile;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{fs, thread};
+use std::sync::mpsc::{self, TryRecvError};
+use std::thread;
+
+/// A mix and its loudness, with the warnings finishing it gave, or why it
+/// could not be made.
+type Mixed = Result<(AudioBuffer, AudioLoudness, Vec<String>), AudioMixError>;
 
 pub struct Exporter {
     pub(crate) options: ExportOptions,
@@ -97,12 +108,65 @@ impl Exporter {
         let asset_root = asset_root.as_ref();
         let output_path = output_path.as_ref();
         ensure_not_cancelled(cancellation)?;
-        validate_output(
+        validate_output(output_path, self.options.overwrite)?;
+        let mut session = ExportSession::start(crate::media::current(), cancellation);
+        let mut staged = None;
+        let (window, loudness) = match self.encode_project(
+            project,
+            asset_root,
             output_path,
-            self.options.video_format,
-            self.options.overwrite,
-        )?;
-        ensure_encoders(self.options.video_format, cancellation)?;
+            &mut session,
+            &mut staged,
+            cancellation,
+            &mut progress,
+        ) {
+            Ok(encoded) => encoded,
+            Err(error) => {
+                // The staged output goes after the muxer stopped writing it.
+                session.abort();
+                return Err(cancellation.settle(error));
+            }
+        };
+        progress(ExportProgress::Muxing);
+        let tracks = session
+            .finish()
+            .map_err(|error| cancellation.settle(error))?;
+        let staged = staged.expect("an encoded export has its staged output");
+        let files = self.publish_video(staged, output_path, tracks.files.clone(), cancellation)?;
+        progress(ExportProgress::Wrote(video_file(
+            output_path,
+            u64::try_from(window.start_frame).map_err(|_| ExportError::TimelineTooLong)?,
+            window.frames,
+            tracks,
+            files,
+            loudness,
+        )));
+        if !self.options.subtitles.is_empty() {
+            let window = subtitles::Window::new(window.start, window.duration)?;
+            let cues = subtitles::project_cues(project, window).map_err(ExportError::Time)?;
+            self.write_subtitles(&cues, &mut progress)?;
+        }
+        Ok(())
+    }
+
+    /// Chooses the components, renders and encodes `project` into a file
+    /// staged beside `output_path` (left in `staged`), and encodes its mix,
+    /// which runs on its own thread beside the render: the span exported
+    /// and the mix's loudness, when there is a mix.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_project(
+        &self,
+        project: &Project,
+        asset_root: &Path,
+        output_path: &Path,
+        session: &mut ExportSession,
+        staged: &mut Option<StagedFile>,
+        cancellation: &ExportCancellation,
+        progress: &mut impl FnMut(ExportProgress),
+    ) -> Result<(ExportWindow, Option<AudioLoudness>), ExportError> {
+        progress(ExportProgress::Output(
+            session.resolve(&self.options.output, output_path)?,
+        ));
         subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
         let duration = project.effective_duration().map_err(ExportError::Time)?;
         let full_frame_count = frame_count(duration, project.settings.frame_rate)?;
@@ -118,26 +182,32 @@ impl Exporter {
         }
         let window = self.project_window(project, duration, full_frame_count)?;
 
-        let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(parent).map_err(|source| ExportError::Io {
-            operation: "create output directory",
-            source,
-        })?;
-        let temporary = tempfile::Builder::new()
-            .prefix(".celesta-export-")
-            .tempdir_in(parent)
-            .map_err(|source| ExportError::Io {
-                operation: "create export workspace",
-                source,
-            })?;
-        let video_path = temporary
-            .path()
-            .join(format!("video.{}", self.options.video_format.as_str()));
-        let final_file = output::stage(
-            output_path,
-            &format!(".{}", self.options.video_format.as_str()),
-            "create temporary output",
+        let frame_rate = project.settings.frame_rate;
+        let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation)?;
+        let file = staged.insert(stage_beside(output_path)?);
+        open_video_output(
+            session,
+            &mut renderer,
+            project.settings.width,
+            project.settings.height,
+            frame_rate,
+            file.path(),
         )?;
+
+        if !session.encodes_audio() {
+            session.no_audio()?;
+            self.render_video(
+                project,
+                window,
+                &mut renderer,
+                session,
+                cancellation,
+                progress,
+                &mut |_| Ok(()),
+            )?;
+            ensure_not_cancelled(cancellation)?;
+            return Ok((window, None));
+        }
 
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         let graph = evaluator.audio_graph().map_err(ExportError::Evaluation)?;
@@ -152,76 +222,94 @@ impl Exporter {
 
         // The audio mixdown does not depend on the rendered video, so it runs
         // on its own thread while the frames render instead of after them.
+        // Its mix is encoded after the first frame that ends once it is
+        // done, so the muxer opens then and the frames stop waiting for it.
         // `abandon_audio` stops it early when rendering fails.
         let abandon_audio = AtomicBool::new(false);
-        let (video, audio) = thread::scope(|scope| {
-            let audio = scope.spawn(|| {
+        let looping = self.options.looping;
+        thread::scope(|scope| {
+            let (sender, mixed) = mpsc::channel::<Mixed>();
+            let (graph, abandon_audio) = (&graph, &abandon_audio);
+            // The sender moves into the thread, so a panic there disconnects
+            // the channel rather than leaving the wait below hanging.
+            let mixing = scope.spawn(move || {
                 let abandoned =
                     || cancellation.is_cancelled() || abandon_audio.load(Ordering::Acquire);
                 let mut audio_decoder =
                     MediaBackend::new().with_kill_switch(cancellation.plugins());
-                let mut mix = mix_audio_graph_unclipped_cancellable(
-                    &graph,
+                let result = mix_audio_graph_unclipped_cancellable(
+                    graph,
                     asset_root,
                     audio_duration,
                     &mut audio_decoder,
                     abandoned,
-                )?;
-                let (loudness, warnings) =
-                    finish_mix(&mut mix, self.options.loudness.as_ref(), abandoned)?;
-                Ok((mix, loudness, warnings))
+                )
+                .and_then(|mut mix| {
+                    let (loudness, warnings) =
+                        finish_mix(&mut mix, self.options.loudness.as_ref(), abandoned)?;
+                    Ok((mix, loudness, warnings))
+                });
+                let _ = sender.send(result);
             });
-            let video = self.render_video(
+            let mut encoded = None;
+            let rendered = self.render_video(
                 project,
-                asset_root,
                 window,
-                &video_path,
+                &mut renderer,
+                session,
                 cancellation,
-                &mut progress,
+                progress,
+                &mut |session| match mixed.try_recv() {
+                    Ok(result) => {
+                        encoded = Some(encode_mix(session, result, looping, cancellation)?);
+                        Ok(())
+                    }
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => Ok(()),
+                },
             );
-            if video.is_err() {
+            if rendered.is_err() {
                 abandon_audio.store(true, Ordering::Release);
             }
-            (video, audio.join())
-        });
-        video?;
-        ensure_not_cancelled(cancellation)?;
-        progress(ExportProgress::MixingAudio);
-        let (audio, loudness, warnings) = audio
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-            .map_err(|error| match error {
-                AudioMixError::Cancelled => ExportError::Cancelled,
-                error => cancellation.settle(ExportError::Audio(error)),
-            })?;
-        for warning in warnings {
-            progress(ExportProgress::Warning(warning));
-        }
+            rendered?;
+            ensure_not_cancelled(cancellation)?;
+            progress(ExportProgress::MixingAudio);
+            let (loudness, warnings) = match encoded {
+                Some(encoded) => encoded,
+                None => match mixed.recv() {
+                    Ok(result) => encode_mix(session, result, looping, cancellation)?,
+                    // The mix thread panicked: the scope re-raises it.
+                    Err(_) => match mixing.join() {
+                        Err(panic) => std::panic::resume_unwind(panic),
+                        Ok(()) => unreachable!("the mix thread always sends its mix"),
+                    },
+                },
+            };
+            for warning in warnings {
+                progress(ExportProgress::Warning(warning));
+            }
+            ensure_not_cancelled(cancellation)?;
+            Ok((window, Some(loudness)))
+        })
+    }
 
+    /// Publishes the staged video at `output_path`: `files`, the muxer's,
+    /// with the staged output named by its published path.
+    pub(crate) fn publish_video(
+        &self,
+        staged: StagedFile,
+        output_path: &Path,
+        files: Vec<PathBuf>,
+        cancellation: &ExportCancellation,
+    ) -> Result<Vec<PathBuf>, ExportError> {
         ensure_not_cancelled(cancellation)?;
-        progress(ExportProgress::Muxing);
-        self.mux_audio(&video_path, final_file.path(), &audio, cancellation)?;
-        ensure_not_cancelled(cancellation)?;
+        let staged_path = staged.path().to_owned();
         output::publish(
-            final_file,
+            staged,
             output_path,
             self.options.overwrite,
             "publish exported video",
         )?;
-        progress(ExportProgress::Wrote(ExportedFile::Video {
-            path: output_path.to_owned(),
-            first_frame: u64::try_from(window.start_frame)
-                .map_err(|_| ExportError::TimelineTooLong)?,
-            frames: window.frames,
-            audio: true,
-            loudness: Some(loudness),
-            format: self.options.video_format,
-        }));
-        if !self.options.subtitles.is_empty() {
-            let window = subtitles::Window::new(window.start, window.duration)?;
-            let cues = subtitles::project_cues(project, window).map_err(ExportError::Time)?;
-            self.write_subtitles(&cues, &mut progress)?;
-        }
-        Ok(())
+        Ok(published_files(files, &staged_path, output_path))
     }
 
     /// Reports the project's size, rate, and length, as an export does
@@ -323,6 +411,53 @@ impl Exporter {
             }
         }
         Ok(())
+    }
+}
+
+/// Stages the file a muxer writes beside `output`, with its extension.
+pub(crate) fn stage_beside(output: &Path) -> Result<StagedFile, ExportError> {
+    let suffix = output
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()))
+        .unwrap_or_default();
+    output::stage(output, &suffix, "create temporary output")
+}
+
+/// Encodes the finished mix, or fails with why it could not be made: its
+/// loudness and the warnings finishing it gave.
+fn encode_mix(
+    session: &mut ExportSession,
+    mixed: Mixed,
+    looping: bool,
+    cancellation: &ExportCancellation,
+) -> Result<(AudioLoudness, Vec<String>), ExportError> {
+    let (mix, loudness, warnings) = mixed.map_err(|error| match error {
+        AudioMixError::Cancelled => ExportError::Cancelled,
+        error => cancellation.settle(ExportError::Audio(error)),
+    })?;
+    session.encode_audio(&mix, looping)?;
+    Ok((loudness, warnings))
+}
+
+/// The video an export wrote at `path`, as its components answered.
+pub(crate) fn video_file(
+    path: &Path,
+    first_frame: u64,
+    frames: u64,
+    tracks: ExportedTracks,
+    files: Vec<PathBuf>,
+    loudness: Option<AudioLoudness>,
+) -> ExportedFile {
+    ExportedFile::Video {
+        path: path.to_owned(),
+        first_frame,
+        frames,
+        muxer: tracks.muxer,
+        video: tracks.video,
+        audio: tracks.audio,
+        alpha: tracks.alpha,
+        files,
+        loudness,
     }
 }
 

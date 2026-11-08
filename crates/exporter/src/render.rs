@@ -1,34 +1,35 @@
 use crate::control::{ExportCancellation, ExportProgress};
+use crate::encode::{ExportSession, readback_of};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
-use crate::options::{BitDepth, ColorConversion, VideoEncoding, VideoFormat};
 use crate::project::{absolutize_fonts, absolutize_layers};
 use crate::range::ExportWindow;
 use crate::react::ReactVideoRequest;
 use celesta_composition::{Rational, Time, TimeError};
 use celesta_evaluator::{EvaluationError, Evaluator};
-use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, NoticeLevel, ReadbackFormat};
-use celesta_media::{
-    EncoderId, EncoderSettings, MediaBackend, MediaError, MuxRequest, PixelFormat,
-};
+use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, NoticeLevel};
+use celesta_media::MediaBackend;
 use celesta_project::Project;
 use celesta_react_bridge::{ProjectFrame, ReactBridge};
 use std::collections::{BTreeMap, HashSet};
-use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc;
-use std::{fs, io, thread};
-use strum::VariantArray;
+use std::thread;
 
 impl Exporter {
+    /// Renders `window`'s frames of `project` with `renderer` and encodes
+    /// each through `session`, calling `after_frame` once each frame is
+    /// submitted (the project's mix is polled there).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_video(
         &self,
         project: &Project,
-        asset_root: &Path,
         window: ExportWindow,
-        output: &Path,
+        renderer: &mut GpuRenderer,
+        session: &mut ExportSession,
         cancellation: &ExportCancellation,
         progress: &mut impl FnMut(ExportProgress),
+        after_frame: &mut dyn FnMut(&mut ExportSession) -> Result<(), ExportError>,
     ) -> Result<(), ExportError> {
         let ExportWindow {
             start_frame,
@@ -36,72 +37,54 @@ impl Exporter {
             ..
         } = window;
         let frame_rate = project.settings.frame_rate;
-        let mut renderer = self.export_renderer(
-            asset_root,
-            frame_rate,
-            self.options.video_format,
-            self.options.video.color_conversion,
-            self.options.video.bit_depth,
-            cancellation,
-        )?;
-        let mut writer = open_video_writer(
-            project.settings.width,
-            project.settings.height,
-            frame_rate,
-            self.options.video_format,
-            self.options.video,
-            renderer.readback_format(),
-            output,
-            cancellation,
-        )?;
-
         let mut reported_warnings = ReportedWarnings::default();
-        let result = (|| {
-            let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
-            for frame_index in 0..frame_count {
-                ensure_not_cancelled(cancellation)?;
-                progress(ExportProgress::Rendering {
-                    frame: frame_index + 1,
-                    total: frame_count,
-                });
-                let frame_index = i64::try_from(frame_index)
-                    .ok()
-                    .and_then(|offset: i64| offset.checked_add(start_frame))
-                    .ok_or(ExportError::TimelineTooLong)?;
-                let at_frame = |error: ExportError| error.at_frame(frame_index as u64);
-                let time = Time::frames(frame_index, frame_rate)
-                    .map_err(ExportError::Time)
-                    .map_err(at_frame)?;
-                let scene = evaluator
-                    .scene_at(time)
-                    .map_err(ExportError::Evaluation)
-                    .map_err(at_frame)?;
-                // `submit` keeps a few frames in flight on the GPU rather
-                // than blocking on this frame's readback immediately, so the
-                // wait (when there is one) overlaps with evaluating and
-                // encoding other frames instead of stalling every frame. A
-                // failure is this frame's: preparing its scene is what fails.
-                if let Some(frame) = renderer
-                    .submit(&scene)
-                    .map_err(ExportError::Render)
-                    .map_err(at_frame)?
-                {
-                    write_frame(&mut writer, frame)?;
-                }
-                report_render_warnings(&renderer, &mut reported_warnings, progress);
+        let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
+        for frame_index in 0..frame_count {
+            ensure_not_cancelled(cancellation)?;
+            progress(ExportProgress::Rendering {
+                frame: frame_index + 1,
+                total: frame_count,
+            });
+            let frame_index = i64::try_from(frame_index)
+                .ok()
+                .and_then(|offset: i64| offset.checked_add(start_frame))
+                .ok_or(ExportError::TimelineTooLong)?;
+            let at_frame = |error: ExportError| error.at_frame(frame_index as u64);
+            let time = Time::frames(frame_index, frame_rate)
+                .map_err(ExportError::Time)
+                .map_err(at_frame)?;
+            let scene = evaluator
+                .scene_at(time)
+                .map_err(ExportError::Evaluation)
+                .map_err(at_frame)?;
+            // `submit` keeps a few frames in flight on the GPU rather than
+            // blocking on this frame's readback immediately, so the wait
+            // (when there is one) overlaps with evaluating and encoding
+            // other frames instead of stalling every frame. A failure is
+            // this frame's: preparing its scene is what fails.
+            if let Some(frame) = renderer
+                .submit(&scene)
+                .map_err(ExportError::Render)
+                .map_err(at_frame)?
+            {
+                session.encode_frame(frame)?;
             }
-            for frame in renderer.drain().map_err(ExportError::Render)? {
-                write_frame(&mut writer, frame)?;
-            }
-            Ok(())
-        })();
-        finish_encode(writer, result, cancellation)
+            report_render_warnings(renderer, &mut reported_warnings, progress);
+            after_frame(session)?;
+        }
+        for frame in renderer.drain().map_err(ExportError::Render)? {
+            session.encode_frame(frame)?;
+        }
+        Ok(())
     }
 
+    /// Renders a React entry's frames with `renderer` and encodes each
+    /// through `session`.
     pub(crate) fn render_react_video(
         &self,
         request: ReactVideoRequest<'_>,
-        output: &Path,
+        renderer: &mut GpuRenderer,
+        session: &mut ExportSession,
         cancellation: &ExportCancellation,
         progress: &mut impl FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
@@ -110,7 +93,6 @@ impl Exporter {
             metadata,
             start_frame,
             frame_count,
-            asset_root,
             project,
             audio: react_audio,
             subtitles: react_subtitles,
@@ -133,31 +115,6 @@ impl Exporter {
             .transpose()
             .map_err(ExportError::Evaluation)?
             .unwrap_or_default();
-
-        // The video decoder is attached unconditionally: the React entry's
-        // own <Video> elements need decoding just as much as a companion
-        // project's Video content does, and the React entry's asset_root
-        // stays the renderer's single asset_root either way (see
-        // absolutize_layers/absolutize_fonts below for how a project's own,
-        // differently-rooted assets still resolve).
-        let mut renderer = self.export_renderer(
-            asset_root,
-            metadata.frame_rate,
-            self.options.video_format,
-            self.options.video.color_conversion,
-            self.options.video.bit_depth,
-            cancellation,
-        )?;
-        let mut writer = open_video_writer(
-            metadata.width,
-            metadata.height,
-            metadata.frame_rate,
-            self.options.video_format,
-            self.options.video,
-            renderer.readback_format(),
-            output,
-            cancellation,
-        )?;
 
         // Asks Node for a frame, after evaluating the project layers its
         // entry embeds. The scene is collected later (see the evaluator
@@ -203,7 +160,7 @@ impl Exporter {
         };
 
         let mut reported_warnings = ReportedWarnings::default();
-        let result = thread::scope(|scope| {
+        thread::scope(|scope| {
             // Node evaluates (and this side parses) the next frame on its own
             // thread while this one prepares and submits the current frame;
             // both take milliseconds of CPU per frame and would otherwise
@@ -267,276 +224,85 @@ impl Exporter {
                     .map_err(ExportError::Render)
                     .map_err(|error| error.at_frame(start_frame + offset))?
                 {
-                    write_frame(&mut writer, frame)?;
+                    session.encode_frame(frame)?;
                 }
-                report_render_warnings(&renderer, &mut reported_warnings, progress);
+                report_render_warnings(renderer, &mut reported_warnings, progress);
             }
             for frame in renderer.drain().map_err(ExportError::Render)? {
-                write_frame(&mut writer, frame)?;
+                session.encode_frame(frame)?;
             }
             Ok(())
-        });
-        finish_encode(writer, result, cancellation)
-    }
-
-    /// Muxes the encoded, audio-less `video` with the mixed `audio` (staged as
-    /// a raw `f32le` PCM sidecar file) into `output` through the codec,
-    /// which copies the video and encodes the format's audio codec: AAC 192k
-    /// for MP4, 24-bit PCM for MOV, and Opus 192k at 48 kHz for WebM. A
-    /// looping MP4 encodes [`loop_lead_in`] ahead of the mix.
-    pub(crate) fn mux_audio(
-        &self,
-        video: &Path,
-        output: &Path,
-        audio: &celesta_media::AudioBuffer,
-        cancellation: &ExportCancellation,
-    ) -> Result<(), ExportError> {
-        ensure_not_cancelled(cancellation)?;
-        let pcm_path = video.with_extension("pcm");
-        let mut pcm =
-            io::BufWriter::new(
-                fs::File::create(&pcm_path).map_err(|source| ExportError::Io {
-                    operation: "create mixed audio sidecar",
-                    source,
-                })?,
-            );
-        // A looping MP4's AAC encoder first takes the end of the mix, which
-        // the edit list then hides as it hides the encoder's own priming.
-        let lead_in = if self.options.looping && self.options.video_format == VideoFormat::Mp4 {
-            loop_lead_in(audio)
-        } else {
-            Vec::new()
-        };
-        for sample in lead_in.iter().chain(&audio.samples) {
-            pcm.write_all(&sample.to_le_bytes())
-                .map_err(|source| ExportError::Io {
-                    operation: "stage mixed audio",
-                    source,
-                })?;
-        }
-        pcm.into_inner()
-            .map_err(|error| ExportError::Io {
-                operation: "flush mixed audio",
-                source: error.into_error(),
-            })?
-            .sync_all()
-            .map_err(|source| ExportError::Io {
-                operation: "flush mixed audio",
-                source,
-            })?;
-        ensure_not_cancelled(cancellation)?;
-
-        let result = MediaBackend::new()
-            .with_kill_switch(cancellation.plugins())
-            .mux_audio(&MuxRequest {
-                video: video.to_owned(),
-                audio: pcm_path.clone(),
-                sample_rate: audio.sample_rate,
-                channels: audio.channels,
-                output: output.to_owned(),
-                container: self.options.video_format.container(),
-                lead_in_frames: lead_in.len() / usize::from(audio.channels),
-            })
-            .map_err(|source| {
-                cancellation.settle(ExportError::Codec {
-                    stage: "audio muxing",
-                    source,
-                })
-            });
-        let _ = fs::remove_file(&pcm_path);
-        result
-    }
-}
-
-/// Sample frames of the mix's end a looping MP4 encodes ahead of its start:
-/// sixteen AAC frames. The encoder settles its bit allocation over its first
-/// frames: after four, a loud first hit still came out worse than with no
-/// lead-in at all, and from sixteen on as cleanly as the same hit later.
-pub(crate) const LOOP_LEAD_IN_FRAMES: usize = 16 * 1024;
-
-/// The [`LOOP_LEAD_IN_FRAMES`] sample frames that precede the mix's start
-/// when it plays in a loop: its end, repeated as many times as a short mix
-/// needs.
-pub(crate) fn loop_lead_in(audio: &celesta_media::AudioBuffer) -> Vec<f32> {
-    let channels = usize::from(audio.channels);
-    let frames = audio.frame_count();
-    if frames == 0 {
-        return Vec::new();
-    }
-    (0..LOOP_LEAD_IN_FRAMES)
-        .flat_map(|frame| {
-            let source = (frames - LOOP_LEAD_IN_FRAMES % frames + frame) % frames * channels;
-            audio.samples[source..source + channels].iter().copied()
         })
-        .collect()
+    }
 }
 
-pub(crate) fn validate_output(
-    output: &Path,
-    format: VideoFormat,
-    overwrite: bool,
-) -> Result<(), ExportError> {
-    if VideoFormat::from_extension(output) != Some(format) {
-        return Err(ExportError::UnsupportedOutput {
-            path: output.to_owned(),
-            extensions: VideoFormat::VARIANTS
-                .iter()
-                .map(|format| format.as_str().to_owned())
-                .collect(),
-        });
-    }
+/// Fails when `output` exists and is not to be replaced.
+pub(crate) fn validate_output(output: &Path, overwrite: bool) -> Result<(), ExportError> {
     if !overwrite && output.exists() {
         return Err(ExportError::OutputExists(output.to_owned()));
     }
     Ok(())
 }
 
-/// Fails when the codec cannot write `format` (an FFmpeg build without one
-/// of its encoders), or there is no codec, before any frame is rendered.
-/// `cancellation` kills the codec's process.
-pub(crate) fn ensure_encoders(
-    format: VideoFormat,
-    cancellation: &ExportCancellation,
-) -> Result<(), ExportError> {
-    MediaBackend::new()
-        .with_kill_switch(cancellation.plugins())
-        .check_encoder(format.container())
-        .map_err(|source| match source {
-            MediaError::EncoderUnavailable { encoder } => {
-                ExportError::EncoderUnavailable { format, encoder }
-            }
-            source => cancellation.settle(ExportError::Codec {
-                stage: "encoder check",
-                source,
-            }),
-        })
-}
-
 impl Exporter {
     /// The renderer an export draws its frames with, at the options' render
     /// quality, on their driver, with their plugins, whose processes (and
-    /// its video decoder's) `cancellation` kills. For an alpha `format`
-    /// it clears to transparent and reads back straight-alpha 16-bit RGBA,
-    /// which the encoder converts; for MP4 it clears to the default opaque
-    /// background and reads back yuv420p (or yuv420p10le for `bit_depth` 10)
-    /// when `color_conversion` puts that conversion on the GPU, else RGBA of
-    /// enough bits for `bit_depth`.
+    /// its video decoder's) `cancellation` kills. It clears to the default
+    /// opaque background and reads back RGBA8 until [`open_video_output`]
+    /// sets what the encoder takes.
     pub(crate) fn export_renderer(
         &self,
         asset_root: &Path,
         frame_rate: Rational,
-        format: VideoFormat,
-        color_conversion: ColorConversion,
-        bit_depth: BitDepth,
         cancellation: &ExportCancellation,
     ) -> Result<GpuRenderer, ExportError> {
-        let background = if format.has_alpha() {
-            Color::TRANSPARENT
-        } else {
-            GpuRenderOptions::default().background
-        };
         let driver = self.options.driver;
-        let renderer = GpuRenderer::new(GpuRenderOptions { background, driver })
-            .map_err(ExportError::Render)?
-            .with_render_quality(self.options.render_quality)
-            .with_asset_root(asset_root)
-            .with_video_decoder(
-                MediaBackend::new()
-                    .with_sequential_video(frame_rate)
-                    .with_kill_switch(cancellation.plugins()),
-            )
-            // Plugin content comes from the plugins' own processes.
-            .with_content_provider(
-                self.plugins()
-                    .host()
-                    .with_kill_switch(cancellation.plugins()),
-            );
-        with_readback(renderer, format, color_conversion, bit_depth)
+        let renderer = GpuRenderer::new(GpuRenderOptions {
+            driver,
+            ..GpuRenderOptions::default()
+        })
+        .map_err(ExportError::Render)?
+        .with_render_quality(self.options.render_quality)
+        .with_asset_root(asset_root)
+        .with_video_decoder(
+            MediaBackend::new()
+                .with_sequential_video(frame_rate)
+                .with_kill_switch(cancellation.plugins()),
+        )
+        // Plugin content comes from the plugins' own processes.
+        .with_content_provider(
+            self.plugins()
+                .host()
+                .with_kill_switch(cancellation.plugins()),
+        );
+        Ok(renderer)
     }
 }
 
-/// `renderer` reading back what an export of `format` encodes (see
-/// [`Exporter::export_renderer`]).
-fn with_readback(
-    mut renderer: GpuRenderer,
-    format: VideoFormat,
-    color_conversion: ColorConversion,
-    bit_depth: BitDepth,
-) -> Result<GpuRenderer, ExportError> {
-    let readback = if format.has_alpha() {
-        ReadbackFormat::Rgba16Straight
-    } else {
-        let on_gpu = match color_conversion {
-            ColorConversion::Auto => {
-                renderer.supports_yuv420p_readback() && !renderer.is_software()
-            }
-            ColorConversion::Gpu => true,
-            ColorConversion::Encoder => false,
-        };
-        match (on_gpu, bit_depth) {
-            (true, BitDepth::Eight) => ReadbackFormat::Yuv420p,
-            (true, BitDepth::Ten) => ReadbackFormat::Yuv420p10,
-            (false, BitDepth::Eight) => ReadbackFormat::Rgba8,
-            (false, BitDepth::Ten) => ReadbackFormat::Rgba16,
-        }
-    };
-    renderer
-        .set_readback_format(readback)
-        .map_err(ExportError::Render)?;
-    Ok(renderer)
-}
-
-/// An encoder the codec runs for an export, fed frames as they are read
-/// back.
-pub(crate) struct VideoWriter {
-    codec: MediaBackend,
-    encoder: EncoderId,
-}
-
-/// Opens a constant-frame-rate encoder for pushed frames in `input` layout:
-/// H.264 (`encoding`'s preset, CRF, and bit depth) for `Mp4`, ProRes 4444
-/// for `Mov`, VP9 with alpha for `Webm`, each converted from RGB with the
-/// BT.709 matrix in limited range where the input is not YUV already. The
-/// alpha formats take straight-alpha 16-bit RGBA. `cancellation` kills the
-/// codec's process.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn open_video_writer(
+/// Opens `session`'s video encoder for `width`x`height` frames at
+/// `frame_rate`, offering what `renderer` can read back, and sets the
+/// renderer to the encoder's answer: its input format, and a transparent
+/// background when the encoder keeps alpha, else the default opaque one.
+/// The muxer writes `staged`.
+pub(crate) fn open_video_output(
+    session: &mut ExportSession,
+    renderer: &mut GpuRenderer,
     width: u32,
     height: u32,
     frame_rate: Rational,
-    format: VideoFormat,
-    encoding: VideoEncoding,
-    input: ReadbackFormat,
-    output: &Path,
-    cancellation: &ExportCancellation,
-) -> Result<VideoWriter, ExportError> {
-    if format == VideoFormat::Mp4 && encoding.crf > VideoEncoding::MAX_CRF {
-        return Err(ExportError::InvalidCrf(encoding.crf));
-    }
-    let settings = EncoderSettings {
-        output: output.to_owned(),
-        width,
-        height,
-        frame_rate,
-        input: match input {
-            ReadbackFormat::Rgba8 => PixelFormat::Rgba8,
-            ReadbackFormat::Rgba16 | ReadbackFormat::Rgba16Straight => PixelFormat::Rgba16,
-            ReadbackFormat::Yuv420p => PixelFormat::Yuv420p,
-            ReadbackFormat::Yuv420p10 => PixelFormat::Yuv420p10,
-        },
-        container: format.container(),
-        preset: encoding.preset.as_str().to_owned(),
-        crf: encoding.crf,
-        bit_depth: encoding.bit_depth.bits(),
-    };
-    let mut codec = MediaBackend::new().with_kill_switch(cancellation.plugins());
-    let encoder = codec.open_encoder(&settings).map_err(|source| {
-        cancellation.settle(ExportError::Codec {
-            stage: "video encoding",
-            source,
-        })
-    })?;
-    Ok(VideoWriter { codec, encoder })
+    staged: &Path,
+) -> Result<(), ExportError> {
+    let offered = ExportSession::offered_formats(renderer);
+    let opened = session.open_video(width, height, frame_rate, &offered, staged)?;
+    renderer
+        .set_readback_format(readback_of(opened.input)?)
+        .map_err(ExportError::Render)?;
+    renderer.set_background(if opened.alpha {
+        Color::TRANSPARENT
+    } else {
+        GpuRenderOptions::default().background
+    });
+    Ok(())
 }
 
 /// The render warnings an export has already reported, so a warning that
@@ -602,47 +368,6 @@ pub(crate) fn report_render_warnings(
             });
         }
     }
-}
-
-/// Writes the frame's pixel buffer to the codec plugin's process, which
-/// copies it across the process boundary once (the buffer itself is moved,
-/// not copied first).
-pub(crate) fn write_frame(
-    writer: &mut VideoWriter,
-    frame: celesta_gpu_renderer::GpuFrame,
-) -> Result<(), ExportError> {
-    writer
-        .codec
-        .encode_frame(writer.encoder, frame.into_pixels())
-        .map_err(|source| ExportError::Codec {
-            stage: "video encoding",
-            source,
-        })
-}
-
-/// Finalizes an encode: finishes the file on success (its container
-/// trailer), aborts the encoder on any earlier failure. Once `cancellation`
-/// was cancelled, any failure is [`ExportError::Cancelled`]: cancelling
-/// killed the processes whose requests then failed.
-pub(crate) fn finish_encode(
-    mut writer: VideoWriter,
-    result: Result<(), ExportError>,
-    cancellation: &ExportCancellation,
-) -> Result<(), ExportError> {
-    match result {
-        Ok(()) => writer
-            .codec
-            .finish_encoder(writer.encoder)
-            .map_err(|source| ExportError::Codec {
-                stage: "video encoding",
-                source,
-            }),
-        Err(error) => {
-            writer.codec.abort_encoder(writer.encoder);
-            Err(error)
-        }
-    }
-    .map_err(|error| cancellation.settle(error))
 }
 
 pub(crate) fn ensure_not_cancelled(cancellation: &ExportCancellation) -> Result<(), ExportError> {

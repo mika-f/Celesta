@@ -61,7 +61,8 @@ use celesta_composition::{
 };
 use celesta_editor_core::ClipSummary;
 use celesta_exporter::{
-    AudioLoudness, ExportCancellation, ExportProgress, LoudnessTarget, VideoFormat,
+    AudioLoudness, EncoderPlan, ExportCancellation, ExportProgress, LoudnessTarget, OutputChoice,
+    OutputPlan,
 };
 use celesta_media::{AudioBuffer, AudioDecoder};
 use celesta_project::{Project, TrackKind};
@@ -103,7 +104,6 @@ fn export_worker_reports_cancellation_without_creating_output() {
             )),
             asset_root: PathBuf::from("examples"),
             output: output.clone(),
-            format: VideoFormat::Mp4,
             range: None,
             loudness: None,
             cancellation,
@@ -130,7 +130,6 @@ fn export_options_carry_the_chosen_loudness() {
         source: ExportSource::Project(Box::new(Project::from_json(EDITOR_DEMO_PROJECT).unwrap())),
         asset_root: PathBuf::from("examples"),
         output: PathBuf::from("out.mov"),
-        format: VideoFormat::Mov,
         range: None,
         loudness: loudness.target(),
         cancellation: ExportCancellation::default(),
@@ -143,7 +142,8 @@ fn export_options_carry_the_chosen_loudness() {
     assert!(off.overwrite);
     // The export draws with the preview's plugins rather than finding its own.
     assert_eq!(off.plugins, Some(Default::default()));
-    assert_eq!(off.video_format, VideoFormat::Mov);
+    // The extension picks the muxer, with its default encoders.
+    assert_eq!(off.output, OutputChoice::default());
     assert_eq!(
         export_options(&request(ExportLoudness::Streaming)).loudness,
         Some(LoudnessTarget::STREAMING)
@@ -251,11 +251,30 @@ fn the_finished_export_names_its_loudness() {
 #[test]
 fn export_output_keeps_video_extensions() {
     let case = |path: &str| export_output(PathBuf::from(path));
-    assert_eq!(case("a.mov"), (PathBuf::from("a.mov"), VideoFormat::Mov));
-    assert_eq!(case("a.WebM"), (PathBuf::from("a.WebM"), VideoFormat::Webm));
-    assert_eq!(case("a.mp4"), (PathBuf::from("a.mp4"), VideoFormat::Mp4));
-    assert_eq!(case("a"), (PathBuf::from("a.mp4"), VideoFormat::Mp4));
-    assert_eq!(case("a.gif"), (PathBuf::from("a.mp4"), VideoFormat::Mp4));
+    assert_eq!(case("a.mov"), PathBuf::from("a.mov"));
+    assert_eq!(case("a.WebM"), PathBuf::from("a.WebM"));
+    assert_eq!(case("a.mp4"), PathBuf::from("a.mp4"));
+    assert_eq!(case("a"), PathBuf::from("a.mp4"));
+    assert_eq!(case("a.gif"), PathBuf::from("a.mp4"));
+}
+
+#[test]
+fn chosen_components_keep_the_starting_label() {
+    let encoder = EncoderPlan {
+        component: "ffmpeg/libx264".parse().unwrap(),
+        name: "H.264 (x264)".to_owned(),
+        settings: Vec::new(),
+    };
+    let plan = OutputPlan {
+        muxer: "ffmpeg/mp4".parse().unwrap(),
+        muxer_name: "MP4".to_owned(),
+        video: encoder,
+        audio: None,
+    };
+    assert_eq!(
+        export_progress_label(&ExportProgress::Output(plan)),
+        "Starting export…"
+    );
 }
 
 #[test]

@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use clap::error::ErrorKind;
 use clap::parser::ValueSource;
-use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use clap::{CommandFactory, FromArgMatches, Parser};
 
 mod inspect;
 mod json;
@@ -12,10 +12,9 @@ mod progress;
 
 use celesta_composition::Time;
 use celesta_exporter::{
-    AudioLoudness, BitDepth, ColorConversion, ContactSheet, EncoderPreset, ExportCancellation,
-    ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
-    LoudnessTarget, PeakHandling, ReactRuntimeOptions, RenderQuality, StillExport, StillFormat,
-    VideoEncoding, VideoFormat, parse_timecode,
+    AudioLoudness, ContactSheet, ExportCancellation, ExportJob, ExportOptions, ExportProgress,
+    ExportRange, ExportedFile, FrameSelection, GpuDriver, LoudnessTarget, OutputChoice,
+    PeakHandling, ReactRuntimeOptions, RenderQuality, StillExport, StillFormat, parse_timecode,
 };
 use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{PropsFileChoice, resolve_props_file};
@@ -52,15 +51,17 @@ defineProjectProperties(). Highest precedence first: --props, --props-file,
 the --project file's properties, the declared defaults. Every value is
 checked against the declaration before anything renders.
 
-A .mov output is ProRes 4444 with 24-bit PCM audio and a .webm output VP9
+The output's extension picks the muxer that writes it, with that muxer's
+default encoders: with Celesta's media plugin, a .mp4 output is H.264 with
+AAC, a .mov output ProRes 4444 with 24-bit PCM audio and a .webm output VP9
 with Opus; both keep transparency where nothing is drawn (straight alpha,
-BT.709). --preset, --crf, --bit-depth and --color-conversion apply to MP4 only.
+BT.709).
 
 --loop is for a video played in a loop, as Shorts and TikTok play one: the
-MP4's AAC encoder starts from the end of the soundtrack instead of silence,
-so the first hit is not smeared on every pass. The decoded sound is still
-exactly as long as the video. It applies to MP4 only; a .mov's PCM already
-runs from its end into its start unchanged.
+audio encoder starts from the end of the soundtrack instead of silence, so
+the first hit is not smeared on every pass. The decoded sound is still
+exactly as long as the video. Muxers that hide leading audio (MP4 and MOV)
+use it; others (WebM) are written as without it.
 
 --loudness brings the whole mix to an integrated loudness (ITU-R BS.1770,
 as FFmpeg's ebur128 filter measures it): a number of LUFS from -70 to -5,
@@ -109,9 +110,8 @@ struct Cli {
         requires = "react",
         conflicts_with_all = [
             "output", "project", "overwrite", "from", "to", "frames", "every",
-            "contact_sheet", "columns", "tile_width", "output_format", "quality", "preset",
-            "crf", "color_conversion", "bit_depth", "render_quality", "driver", "no_ui",
-            "json", "debug_guides", "subtitles", "looping", "loudness", "true_peak",
+            "contact_sheet", "columns", "tile_width", "quality", "render_quality", "driver",
+            "no_ui", "json", "debug_guides", "subtitles", "looping", "loudness", "true_peak",
             "peak_handling", "info", "stdin_cancel",
         ]
     )]
@@ -122,8 +122,7 @@ struct Cli {
         long,
         conflicts_with_all = [
             "output", "overwrite", "from", "to", "frames", "every", "contact_sheet",
-            "columns", "tile_width", "output_format", "quality", "preset", "crf",
-            "color_conversion", "bit_depth", "render_quality", "driver", "debug_guides",
+            "columns", "tile_width", "quality", "render_quality", "driver", "debug_guides",
             "subtitles", "looping", "loudness", "true_peak", "peak_handling",
         ]
     )]
@@ -216,42 +215,7 @@ struct Cli {
         default_value_t = non_zero(ContactSheet::DEFAULT_TILE_WIDTH)
     )]
     tile_width: NonZeroU32,
-    /// Output format; the output's extension implies it, and must match it when
-    /// it is a known one. A still format requires a frame selection.
-    #[arg(long, value_enum)]
-    output_format: Option<OutputFormat>,
-    /// libx264 preset: faster presets encode faster but produce larger files.
-    #[arg(
-        long,
-        default_value_t = EncoderPreset::default(),
-        value_enum
-    )]
-    preset: EncoderPreset,
-    /// Constant rate factor, 0-51; lower is higher quality.
-    #[arg(
-        long,
-        default_value_t = VideoEncoding::default().crf,
-        value_parser = clap::value_parser!(u8).range(..=i64::from(VideoEncoding::MAX_CRF))
-    )]
-    crf: u8,
-    /// Where RGB frames become YUV: auto uses the GPU unless it is a software renderer.
-    #[arg(
-        long,
-        value_name = "WHERE",
-        default_value_t = ColorConversion::default(),
-        value_enum
-    )]
-    color_conversion: ColorConversion,
-    /// Bits per sample of the MP4: 10 encodes yuv420p10le (H.264 High 10),
-    /// which keeps dark gradients smooth but plays on fewer devices.
-    #[arg(
-        long,
-        value_name = "BITS",
-        default_value_t = BitDepth::default(),
-        value_enum
-    )]
-    bit_depth: BitDepth,
-    /// The MP4 plays in a loop: encode its sound to run from its end into
+    /// The video plays in a loop: encode its sound to run from its end into
     /// its start.
     #[arg(long = "loop")]
     looping: bool,
@@ -322,47 +286,6 @@ impl Cli {
             peak_handling: self.peak_handling.unwrap_or(target.peak_handling),
             ..target
         })
-    }
-
-    fn video(&self) -> VideoEncoding {
-        VideoEncoding {
-            preset: self.preset,
-            crf: self.crf,
-            color_conversion: self.color_conversion,
-            bit_depth: self.bit_depth,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum OutputFormat {
-    Png,
-    Jpeg,
-    Webp,
-    Mp4,
-    Mov,
-    Webm,
-}
-
-impl OutputFormat {
-    /// The video format this names, or `None` for a still format.
-    fn video(self) -> Option<VideoFormat> {
-        match self {
-            Self::Png | Self::Jpeg | Self::Webp => None,
-            Self::Mp4 => Some(VideoFormat::Mp4),
-            Self::Mov => Some(VideoFormat::Mov),
-            Self::Webm => Some(VideoFormat::Webm),
-        }
-    }
-
-    /// The still format this names, or `None` for a video format.
-    fn still(self) -> Option<StillFormat> {
-        match self {
-            Self::Png => Some(StillFormat::Png),
-            Self::Jpeg => Some(StillFormat::Jpeg),
-            Self::Webp => Some(StillFormat::Webp),
-            Self::Mp4 | Self::Mov | Self::Webm => None,
-        }
     }
 }
 
@@ -439,12 +362,12 @@ fn main() -> ExitCode {
         return info(&cli, props_file);
     }
     let explicit = |id: &str| matches.value_source(id) == Some(ValueSource::CommandLine);
-    let format = output_choice(&cli, &explicit)
+    let kind = output_kind(&cli, &explicit)
         .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ArgumentConflict, &error));
     let range = export_range(cli.from, cli.to)
         .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ValueValidation, &error));
     let export = |on_progress: &mut dyn FnMut(ExportProgress)| {
-        job(&cli, format, range).run(&cancellation, on_progress)
+        job(&cli, &kind, range).run(&cancellation, on_progress)
     };
     if cli.json {
         return if json::run(&cli.source, props_file, cli.json_progress, export) {
@@ -453,17 +376,15 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         };
     }
-    let result = match (cli.output(), format) {
-        (Some(output), OutputChoice::Video(_) | OutputChoice::Stills) => {
+    let result = match (cli.output(), &kind) {
+        (Some(output), OutputKind::Video(_) | OutputKind::Stills) => {
             let settings = progress::Settings {
                 source: &cli.source,
                 output,
                 react: cli.react,
-                still: (format == OutputChoice::Stills)
+                still: (kind == OutputKind::Stills)
                     .then(|| StillFormat::from_extension(output).unwrap_or_default()),
                 still_quality: cli.quality.unwrap_or(StillExport::DEFAULT_QUALITY),
-                format: format.video().unwrap_or_default(),
-                video: cli.video(),
                 render_quality: cli.render_quality,
                 props: props_file.as_ref().map(props_label),
             };
@@ -509,7 +430,7 @@ fn main() -> ExitCode {
 
 /// `--info`: reports the composition, as JSON with `--json`.
 fn info(cli: &Cli, props_file: Option<PropsFileChoice>) -> ExitCode {
-    let job = job(cli, OutputChoice::SubtitlesOnly, None);
+    let job = job(cli, &OutputKind::SubtitlesOnly, None);
     if cli.json {
         let ok = json::run(&cli.source, props_file, cli.json_progress, |on_progress| {
             job.describe(on_progress)
@@ -641,40 +562,28 @@ fn usage_error(json: bool, kind: ErrorKind, message: &str) -> ! {
 }
 
 /// What an export writes besides any subtitle files.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OutputChoice {
-    Video(VideoFormat),
+#[derive(Clone, Debug, PartialEq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "there is one, made once from the command line"
+)]
+enum OutputKind {
+    /// A video, with these components.
+    Video(OutputChoice),
     Stills,
     /// Nothing: only the subtitle files.
     SubtitlesOnly,
 }
 
-impl OutputChoice {
-    const fn video(self) -> Option<VideoFormat> {
-        match self {
-            Self::Video(format) => Some(format),
-            Self::Stills | Self::SubtitlesOnly => None,
-        }
-    }
-}
-
-/// What `cli` exports, checking the combinations of selection, format and
-/// encoder flags clap cannot express. `explicit` tells whether the argument
-/// with that id was given on the command line.
-fn output_choice(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputChoice, String> {
+/// What `cli` exports, checking the combinations of selection and output
+/// flags clap cannot express. `explicit` tells whether the argument with
+/// that id was given on the command line.
+fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind, String> {
     let Some(output) = cli.output() else {
         return subtitles_only_choice(explicit);
     };
     let selected = !cli.frames.is_empty() || cli.every.is_some();
-    let named = cli.output_format.and_then(OutputFormat::video);
-    let named_still = cli.output_format.and_then(OutputFormat::still);
-    if (selected || cli.contact_sheet) && named.is_some() {
-        return Err(
-            "--frame/--frames/--every/--contact-sheet require still output (PNG, JPEG or WebP)"
-                .into(),
-        );
-    }
-    let stills = selected || cli.contact_sheet || named_still.is_some();
+    let stills = selected || cli.contact_sheet;
     if stills && !selected {
         return Err("still output requires --frame, --frames or --every".into());
     }
@@ -682,11 +591,8 @@ fn output_choice(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputCho
         if !cli.subtitles.is_empty() {
             return Err("--subtitles applies to video output, not still frames".into());
         }
-        if cli.bit_depth != BitDepth::Eight {
-            return Err("--bit-depth applies to MP4 output; stills are 8-bit".into());
-        }
         if cli.looping {
-            return Err("--loop applies to MP4 output, not still frames".into());
+            return Err("--loop applies to video output, not still frames".into());
         }
         if cli.loudness.is_some() {
             return Err("--loudness applies to video output, not still frames".into());
@@ -694,19 +600,10 @@ fn output_choice(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputCho
         // An output with no still extension is left to the exporter, which
         // reports it as `invalid_selection`.
         let format = StillFormat::from_extension(output);
-        if let (Some(named), Some(format)) = (named_still, format)
-            && named != format
-        {
-            let extension = output.extension().unwrap_or_default();
-            return Err(format!(
-                "--output-format {named} does not match the .{} output",
-                extension.to_string_lossy()
-            ));
-        }
         if cli.quality.is_some() && format == Some(StillFormat::Png) {
             return Err("--quality applies to JPEG and WebP output; PNG is lossless".into());
         }
-        return Ok(OutputChoice::Stills);
+        return Ok(OutputKind::Stills);
     }
     if cli.quality.is_some() {
         return Err("--quality applies to JPEG and WebP stills, not video".into());
@@ -716,57 +613,21 @@ fn output_choice(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputCho
             "--debug-guides applies to still output; video exports never draw debug guides".into(),
         );
     }
-    // An output with no video extension is left to the exporter, which reports
-    // it as `unsupported_output`; only a video extension that contradicts
-    // `--output-format` is a usage error.
-    let format = match VideoFormat::from_extension(output) {
-        Some(format) => {
-            if let Some(named) = named.filter(|&named| named != format) {
-                return Err(format!(
-                    "--output-format {named} does not match the .{format} output"
-                ));
-            }
-            format
-        }
-        None => named.unwrap_or_default(),
-    };
-    if format.has_alpha() {
-        if cli.looping {
-            return Err(format!(
-                "--loop applies to MP4 (AAC) output; .{format} output does not use it"
-            ));
-        }
-        for (id, flag) in [
-            ("preset", "--preset"),
-            ("crf", "--crf"),
-            ("bit_depth", "--bit-depth"),
-            ("color_conversion", "--color-conversion"),
-        ] {
-            if explicit(id) {
-                return Err(format!(
-                    "{flag} applies to H.264 (MP4) output; .{format} output does not use it"
-                ));
-            }
-        }
-    }
-    Ok(OutputChoice::Video(format))
+    // The exporter picks the muxer by the output's extension, and reports
+    // one no muxer writes as `unsupported_output`.
+    Ok(OutputKind::Video(OutputChoice::default()))
 }
 
 /// Checks a command line with no <OUTPUT>, which clap allows only with
 /// --subtitles: flags about rendering or encoding a picture have nothing to
 /// apply to.
-fn subtitles_only_choice(explicit: &dyn Fn(&str) -> bool) -> Result<OutputChoice, String> {
+fn subtitles_only_choice(explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind, String> {
     for (id, flag) in [
         ("frames", "--frame"),
         ("every", "--every"),
         ("contact_sheet", "--contact-sheet"),
         ("debug_guides", "--debug-guides"),
-        ("output_format", "--output-format"),
         ("quality", "--quality"),
-        ("preset", "--preset"),
-        ("crf", "--crf"),
-        ("bit_depth", "--bit-depth"),
-        ("color_conversion", "--color-conversion"),
         ("looping", "--loop"),
         ("loudness", "--loudness"),
         ("render_quality", "--render-quality"),
@@ -778,11 +639,11 @@ fn subtitles_only_choice(explicit: &dyn Fn(&str) -> bool) -> Result<OutputChoice
             ));
         }
     }
-    Ok(OutputChoice::SubtitlesOnly)
+    Ok(OutputKind::SubtitlesOnly)
 }
 
 /// The export `cli` describes.
-fn job(cli: &Cli, format: OutputChoice, range: Option<ExportRange>) -> ExportJob {
+fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
     ExportJob {
         source: cli.source.clone(),
         react: cli.react,
@@ -791,7 +652,7 @@ fn job(cli: &Cli, format: OutputChoice, range: Option<ExportRange>) -> ExportJob
         props_file: cli.props_file.clone(),
         props: cli.props.clone(),
         output: cli.output.clone(),
-        stills: (format == OutputChoice::Stills).then(|| StillExport {
+        stills: (*kind == OutputKind::Stills).then(|| StillExport {
             frames: match cli.every {
                 Some(step) => FrameSelection::Every(step.get()),
                 None => FrameSelection::Frames(cli.frames.clone()),
@@ -806,8 +667,10 @@ fn job(cli: &Cli, format: OutputChoice, range: Option<ExportRange>) -> ExportJob
         options: ExportOptions {
             overwrite: cli.overwrite,
             range,
-            video_format: format.video().unwrap_or_default(),
-            video: cli.video(),
+            output: match kind {
+                OutputKind::Video(choice) => choice.clone(),
+                OutputKind::Stills | OutputKind::SubtitlesOnly => OutputChoice::default(),
+            },
             render_quality: cli.render_quality,
             driver: cli.driver,
             subtitles: cli.subtitles.clone(),
@@ -859,6 +722,7 @@ fn export_range(start: Option<Time>, end: Option<Time>) -> Result<Option<ExportR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::ValueEnum;
 
     /// `--help` lists, and clap accepts, the names the library parses.
     #[test]
@@ -869,15 +733,12 @@ mod tests {
                 assert_eq!(name.get_name(), (*value).into());
             }
         }
-        names_match::<EncoderPreset>();
-        names_match::<ColorConversion>();
-        names_match::<BitDepth>();
         names_match::<PeakHandling>();
         names_match::<RenderQuality>();
         names_match::<GpuDriver>();
     }
 
-    fn choice(args: &[&str]) -> Result<OutputChoice, String> {
+    fn choice(args: &[&str]) -> Result<OutputKind, String> {
         let matches = Cli::command()
             .try_get_matches_from(
                 ["celesta-exporter", "project.celesta.json"]
@@ -886,7 +747,7 @@ mod tests {
             )
             .unwrap();
         let cli = Cli::from_arg_matches(&matches).unwrap();
-        output_choice(&cli, &|id| {
+        output_kind(&cli, &|id| {
             matches.value_source(id) == Some(ValueSource::CommandLine)
         })
     }
@@ -895,96 +756,37 @@ mod tests {
         choice(args).expect_err("the arguments should be rejected")
     }
 
-    #[test]
-    fn the_output_extension_selects_the_video_format() {
-        assert_eq!(
-            choice(&["out.mov"]),
-            Ok(OutputChoice::Video(VideoFormat::Mov))
-        );
-        assert_eq!(
-            choice(&["out.WEBM"]),
-            Ok(OutputChoice::Video(VideoFormat::Webm))
-        );
-        assert_eq!(
-            choice(&["out.mp4"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
-        assert_eq!(
-            choice(&["--output-format", "webm", "out.webm"]),
-            Ok(OutputChoice::Video(VideoFormat::Webm))
-        );
+    fn video() -> Result<OutputKind, String> {
+        Ok(OutputKind::Video(OutputChoice::default()))
     }
 
     #[test]
-    fn an_output_format_must_match_the_extension() {
-        assert!(error(&["--output-format", "mp4", "out.mov"]).contains("does not match"));
-    }
-
-    #[test]
-    fn an_unknown_extension_is_left_to_the_exporter() {
-        // The library reports it as `unsupported_output`, with its PNG hint.
-        assert_eq!(
-            choice(&["out.gif"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
-        assert_eq!(
-            choice(&["out.png"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
-        assert_eq!(
-            choice(&["--output-format", "webm", "out.gif"]),
-            Ok(OutputChoice::Video(VideoFormat::Webm))
-        );
-    }
-
-    #[test]
-    fn h264_flags_are_rejected_for_alpha_formats() {
-        for (args, flag) in [
-            (["out.mov", "--crf", "20"], "--crf"),
-            (["out.webm", "--preset", "fast"], "--preset"),
-            (["out.mov", "--bit-depth", "10"], "--bit-depth"),
-            (
-                ["out.webm", "--color-conversion", "gpu"],
-                "--color-conversion",
-            ),
-        ] {
-            let message = error(&args);
-            assert!(message.contains(flag), "{message}");
-            assert!(message.contains("H.264"), "{message}");
+    fn every_video_takes_the_default_components() {
+        // The exporter picks the muxer by the extension, and reports one no
+        // muxer writes as `unsupported_output`, with its PNG hint.
+        for output in ["out.mov", "out.WEBM", "out.mp4", "out.gif", "out.png"] {
+            assert_eq!(choice(&[output]), video(), "{output}");
         }
-        assert_eq!(
-            choice(&["out.mp4", "--crf", "20"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
     }
 
     #[test]
-    fn video_formats_conflict_with_frame_selections() {
-        for args in [
-            ["--output-format", "webm", "--frame", "0", "out.png"].as_slice(),
-            &[
-                "--output-format",
-                "mov",
-                "--contact-sheet",
-                "--every",
-                "5",
-                "out.png",
-            ],
+    fn the_removed_encoder_flags_are_unknown() {
+        for flags in [
+            ["--output-format", "mp4"].as_slice(),
+            &["--crf", "20"],
+            &["--preset", "fast"],
+            &["--bit-depth", "10"],
+            &["--color-conversion", "gpu"],
         ] {
-            assert!(error(args).contains("require still output"));
+            let args = [&["project.celesta.json", "out.mp4"][..], flags].concat();
+            assert!(!parses(&args), "{flags:?}");
         }
     }
 
     #[test]
     fn still_selections_keep_their_rules() {
-        assert_eq!(
-            choice(&["--frame", "0", "out.png"]),
-            Ok(OutputChoice::Stills)
-        );
-        assert!(error(&["--output-format", "png", "out.png"]).contains("requires --frame"));
-        assert!(error(&["--output-format", "jpeg", "out.jpg"]).contains("requires --frame"));
-        assert!(error(&["--frame", "0", "--bit-depth", "10", "out.png"]).contains("--bit-depth"));
-        assert!(error(&["--frame", "0", "--bit-depth", "10", "out.jpg"]).contains("--bit-depth"));
+        assert_eq!(choice(&["--frame", "0", "out.png"]), Ok(OutputKind::Stills));
+        assert!(error(&["--contact-sheet", "out.png"]).contains("requires --frame"));
     }
 
     #[test]
@@ -992,39 +794,27 @@ mod tests {
         for output in ["out.jpg", "out.JPEG", "out.webp"] {
             assert_eq!(
                 choice(&["--frame", "0", output]),
-                Ok(OutputChoice::Stills),
+                Ok(OutputKind::Stills),
                 "{output}"
             );
         }
         assert_eq!(
-            choice(&["--output-format", "jpeg", "--frame", "0", "out.jpg"]),
-            Ok(OutputChoice::Stills)
-        );
-        assert_eq!(
-            choice(&["--output-format", "webp", "--every", "2", "out.WebP"]),
-            Ok(OutputChoice::Stills)
-        );
-        let message = error(&["--output-format", "png", "--frame", "0", "out.webp"]);
-        assert!(
-            message.contains("--output-format png does not match the .webp output"),
-            "{message}"
+            choice(&["--every", "2", "out.WebP"]),
+            Ok(OutputKind::Stills)
         );
         // An unknown extension is left to the exporter, as for video.
-        assert_eq!(
-            choice(&["--frame", "0", "out.gif"]),
-            Ok(OutputChoice::Stills)
-        );
+        assert_eq!(choice(&["--frame", "0", "out.gif"]), Ok(OutputKind::Stills));
     }
 
     #[test]
     fn quality_applies_to_jpeg_and_webp_stills_only() {
         assert_eq!(
             choice(&["--frame", "0", "--quality", "70", "out.jpg"]),
-            Ok(OutputChoice::Stills)
+            Ok(OutputKind::Stills)
         );
         assert_eq!(
             choice(&["--every", "3", "--quality", "1", "out.webp"]),
-            Ok(OutputChoice::Stills)
+            Ok(OutputKind::Stills)
         );
         let message = error(&["--frame", "0", "--quality", "70", "out.png"]);
         assert!(message.contains("PNG is lossless"), "{message}");
@@ -1038,15 +828,13 @@ mod tests {
     }
 
     #[test]
-    fn loop_applies_to_mp4_only() {
-        assert_eq!(
-            choice(&["out.mp4", "--loop"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
+    fn loop_applies_to_every_video() {
+        // A muxer that does not hide leading audio writes it as without.
+        for output in ["out.mp4", "out.mov", "out.webm"] {
+            assert_eq!(choice(&[output, "--loop"]), video(), "{output}");
+        }
         for args in [
-            ["out.mov", "--loop"].as_slice(),
-            &["out.webm", "--loop"],
-            &["--frame", "0", "--loop", "out.png"],
+            ["--frame", "0", "--loop", "out.png"].as_slice(),
             &["--subtitles", "a.srt", "--loop"],
         ] {
             let message = error(args);
@@ -1097,10 +885,7 @@ mod tests {
 
     #[test]
     fn loudness_applies_to_video_only() {
-        assert_eq!(
-            choice(&["out.webm", "--loudness", "-14"]),
-            Ok(OutputChoice::Video(VideoFormat::Webm))
-        );
+        assert_eq!(choice(&["out.webm", "--loudness", "-14"]), video());
         for args in [
             ["--frame", "0", "--loudness", "-14", "out.png"].as_slice(),
             &["--subtitles", "a.srt", "--loudness", "-14"],
@@ -1112,10 +897,7 @@ mod tests {
 
     #[test]
     fn subtitles_go_with_video_only() {
-        assert_eq!(
-            choice(&["out.mp4", "--subtitles", "out.srt"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
+        assert_eq!(choice(&["out.mp4", "--subtitles", "out.srt"]), video());
         assert!(
             error(&["--frame", "0", "--subtitles", "out.srt", "out.png"]).contains("--subtitles")
         );
@@ -1144,10 +926,10 @@ mod tests {
         assert_eq!(cli.output, None);
         assert_eq!(
             choice(&["--subtitles", "film.srt", "--from", "1"]),
-            Ok(OutputChoice::SubtitlesOnly)
+            Ok(OutputKind::SubtitlesOnly)
         );
         for (args, flag) in [
-            (["--subtitles", "a.srt", "--crf", "20"], "--crf"),
+            (["--subtitles", "a.srt", "--quality", "70"], "--quality"),
             (["--subtitles", "a.srt", "--every", "5"], "--every"),
             (["--subtitles", "a.srt", "--driver", "metal"], "--driver"),
         ] {
@@ -1183,7 +965,7 @@ mod tests {
         assert!(parses(&["project.celesta.json", "--info", "--json"]));
         for args in [
             ["film.tsx", "--info", "out.mp4"].as_slice(),
-            &["film.tsx", "--info", "--crf", "20"],
+            &["film.tsx", "--info", "--quality", "70"],
             &["film.tsx", "--info", "--frame", "0"],
             &["film.tsx", "--info", "--subtitles", "film.srt"],
             &["film.tsx", "--info", "--loop"],

@@ -1,4 +1,3 @@
-use crate::options::{VideoEncoding, VideoFormat};
 use celesta_composition::TimeError;
 use celesta_evaluator::EvaluationError;
 use celesta_gpu_renderer::GpuRenderError;
@@ -30,8 +29,8 @@ pub enum ExportError {
         operation: &'static str,
         source: io::Error,
     },
-    /// The media plugin that encodes could not check, encode, or mux: there
-    /// is none, it stopped answering, or it failed.
+    /// A media plugin's encoder or muxer could not encode or mux: it
+    /// stopped answering, refused, or failed.
     #[error("{stage} failed: {source}")]
     Codec {
         stage: &'static str,
@@ -94,18 +93,8 @@ pub enum ExportError {
     /// An export with neither a video nor a subtitle file to write.
     #[error("an export needs a video output or a subtitle file to write")]
     NoOutput,
-    /// The media plugin lacks an encoder `format` needs, as an FFmpeg build
-    /// without it does.
-    #[error("the media plugin has no {encoder} encoder, which {format} export needs")]
-    EncoderUnavailable {
-        format: VideoFormat,
-        encoder: String,
-    },
     #[error("video export requires non-zero even dimensions, got {width}x{height}")]
     UnsupportedDimensions { width: u32, height: u32 },
-    /// [`VideoEncoding::crf`] is above [`VideoEncoding::MAX_CRF`].
-    #[error("H.264 CRF must be between 0 and {max}, got {0}", max = VideoEncoding::MAX_CRF)]
-    InvalidCrf(u8),
     #[error("cannot export an empty timeline")]
     EmptyTimeline,
     /// The requested export range, once clamped to the composition and

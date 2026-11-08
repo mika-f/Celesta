@@ -88,6 +88,7 @@ impl Interleaver {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn with_spill_limit(mut self, bytes: usize) -> Self {
         self.limit = bytes;
         self
@@ -176,10 +177,12 @@ impl Interleaver {
         Ok(ready)
     }
 
+    #[cfg(test)]
     pub(crate) fn spilled(&self) -> bool {
         self.spill.is_some()
     }
 
+    #[cfg(test)]
     pub(crate) fn staged_bytes(&self) -> usize {
         self.staged_bytes
     }

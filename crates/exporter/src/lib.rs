@@ -1,9 +1,9 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
 mod control;
+mod encode;
 mod error;
 mod exporter;
-#[allow(dead_code)] // the export loop uses it from the next task on
 mod interleave;
 mod job;
 mod loudness;
@@ -24,17 +24,13 @@ mod timecode;
 
 pub use celesta_media::{LoudnessTarget, PeakHandling};
 pub use control::{
-    AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile,
+    AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile, TrackInfo,
 };
 pub use error::{ExportError, FrameFailure};
 pub use exporter::Exporter;
 pub use job::ExportJob;
 pub use media::{media_registry, use_installed_media, use_media};
-pub use options::{
-    AudioChoice, BitDepth, ColorConversion, EncoderChoice, EncoderPreset, ExportOptions,
-    OutputChoice, SettingInput, UnknownBitDepth, UnknownColorConversion, UnknownEncoderPreset,
-    UnknownVideoFormat, VideoEncoding, VideoFormat,
-};
+pub use options::{AudioChoice, EncoderChoice, ExportOptions, OutputChoice, SettingInput};
 pub use range::ExportRange;
 pub use react::{CompanionProject, ReactRuntimeOptions};
 pub use resolve::{

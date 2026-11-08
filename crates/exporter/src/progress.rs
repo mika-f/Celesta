@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use celesta_exporter::{
-    ExportError, ExportProgress, RenderQuality, StillFormat, VideoEncoding, VideoFormat,
+    ExportError, ExportProgress, OutputPlan, RenderQuality, StillFormat, encoding_label,
 };
 use ratatui::{
     Frame, Terminal, TerminalOptions, Viewport,
@@ -39,8 +39,6 @@ pub struct Settings<'a> {
     pub still: Option<StillFormat>,
     /// The JPEG or WebP quality a still export uses.
     pub still_quality: u8,
-    pub format: VideoFormat,
-    pub video: VideoEncoding,
     pub render_quality: RenderQuality,
     /// The property file in effect: `props.json (auto)` or the `--props-file` name.
     pub props: Option<String>,
@@ -115,6 +113,8 @@ pub(crate) struct State {
     /// How many of `diagnostics` are already printed.
     printed: usize,
     error: Option<String>,
+    /// The components a video is written with, once they are chosen.
+    output: Option<OutputPlan>,
 }
 
 impl State {
@@ -138,6 +138,7 @@ impl State {
             diagnostics: Vec::new(),
             printed: 0,
             error: None,
+            output: None,
         }
     }
 
@@ -158,9 +159,46 @@ impl State {
                 self.diagnostics.push(Diagnostic::Warning(warning));
             }
             ExportProgress::Note(note) => self.diagnostics.push(Diagnostic::Note(note)),
+            ExportProgress::Output(plan) => self.output = Some(plan),
             ExportProgress::Composition(_)
             | ExportProgress::ReactCompositions { .. }
             | ExportProgress::Wrote(_) => {}
+        }
+    }
+
+    /// The video's format line: `resolving…` until the components are
+    /// chosen, then "{muxer} · {video encoder and settings} · {audio …}".
+    fn format_line(&self) -> String {
+        let Some(plan) = &self.output else {
+            return "resolving…".to_owned();
+        };
+        let audio = plan
+            .audio
+            .as_ref()
+            .map_or_else(|| "no audio".to_owned(), encoding_label);
+        format!(
+            "{} · {} · {audio}",
+            plan.muxer_name,
+            encoding_label(&plan.video)
+        )
+    }
+
+    /// The video's encoder line, `resolving…` until it is chosen.
+    fn video_line(&self) -> String {
+        self.output.as_ref().map_or_else(
+            || "resolving…".to_owned(),
+            |plan| encoding_label(&plan.video),
+        )
+    }
+
+    /// The audio's encoder line: `no audio` without an audio track.
+    fn audio_line(&self) -> String {
+        match &self.output {
+            None => "resolving…".to_owned(),
+            Some(plan) => plan
+                .audio
+                .as_ref()
+                .map_or_else(|| "no audio".to_owned(), encoding_label),
         }
     }
 
@@ -432,12 +470,7 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
                         Some(StillFormat::Webp) => {
                             format!("WEBP / QUALITY {}", settings.still_quality)
                         }
-                        None => match settings.format {
-                            VideoFormat::Mp4 => "MP4 / H.264 + AAC",
-                            VideoFormat::Mov => "MOV / ProRes 4444 + PCM",
-                            VideoFormat::Webm => "WEBM / VP9 alpha + Opus",
-                        }
-                        .to_owned(),
+                        None => state.format_line(),
                     },
                     Style::new().fg(MUTED),
                 ),
@@ -536,11 +569,7 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         Some(StillFormat::Png) => "Lossless RGBA".into(),
         Some(StillFormat::Jpeg) => format!("JPEG quality {}", settings.still_quality),
         Some(StillFormat::Webp) => format!("WebP quality {}", settings.still_quality),
-        None => match settings.format {
-            VideoFormat::Mp4 => format!("{} / CRF {}", settings.video.preset, settings.video.crf),
-            VideoFormat::Mov => "ProRes 4444".into(),
-            VideoFormat::Webm => "VP9 CRF 20".into(),
-        },
+        None => state.video_line(),
     };
     let mut profile = vec![
         Line::from(format!(
@@ -556,13 +585,8 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         Line::from(if settings.still.is_some() {
             // Stills are drawn over the opaque export background.
             " Alpha    opaque background".into()
-        } else if settings.format.has_alpha() {
-            " Alpha    straight, BT.709".into()
         } else {
-            format!(
-                " Color    {}, {}-bit",
-                settings.video.color_conversion, settings.video.bit_depth
-            )
+            format!(" Audio    {}", state.audio_line())
         }),
     ];
     if let Some(props) = &settings.props {
@@ -732,17 +756,7 @@ fn render_compact(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
             StillFormat::Webp => format!("WebP stills  •  quality {}", settings.still_quality),
         }
     } else {
-        match settings.format {
-            VideoFormat::Mp4 => format!(
-                "H.264 / AAC  •  {}  •  CRF {}  •  color {}  •  {}-bit",
-                settings.video.preset,
-                settings.video.crf,
-                settings.video.color_conversion,
-                settings.video.bit_depth
-            ),
-            VideoFormat::Mov => "ProRes 4444 / PCM  •  straight alpha, BT.709".to_owned(),
-            VideoFormat::Webm => "VP9 alpha / Opus  •  straight alpha, BT.709".to_owned(),
-        }
+        state.format_line()
     };
     frame.render_widget(
         Paragraph::new(vec![
@@ -841,6 +855,10 @@ impl PlainProgress {
                 self.state.update(event);
                 eprintln!("muxing");
             }
+            ExportProgress::Output(_) => {
+                self.state.update(event);
+                eprintln!("format: {}", self.state.format_line());
+            }
             ExportProgress::Composition(_)
             | ExportProgress::ReactCompositions { .. }
             | ExportProgress::Wrote(_) => {}
@@ -874,6 +892,7 @@ fn clock(duration: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use celesta_exporter::EncoderPlan;
     use ratatui::backend::TestBackend;
 
     fn settings() -> Settings<'static> {
@@ -883,8 +902,6 @@ mod tests {
             react: true,
             still: None,
             still_quality: 90,
-            format: VideoFormat::Mp4,
-            video: VideoEncoding::default(),
             render_quality: RenderQuality::default(),
             props: Some("props.json (auto)".to_owned()),
         }
@@ -904,32 +921,64 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn alpha_formats_name_their_codecs_and_alpha() {
-        for (format, header, encode) in [
-            (VideoFormat::Mov, "MOV / ProRes 4444 + PCM", "ProRes 4444"),
-            (VideoFormat::Webm, "WEBM / VP9 alpha + Opus", "VP9 CRF 20"),
-        ] {
-            let settings = Settings {
-                format,
-                ..settings()
-            };
-            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-            terminal
-                .draw(|frame| render(frame, &settings, &State::new()))
-                .unwrap();
-            let text: String = terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect();
-            assert!(text.contains(header), "{text}");
-            assert!(text.contains(encode), "{text}");
-            assert!(text.contains("Alpha    straight, BT.709"), "{text}");
-            assert!(!text.contains("H.264"), "{text}");
+    fn screen_with(settings: &Settings<'_>, state: &State, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render(frame, settings, state))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    fn plan(audio: bool) -> OutputPlan {
+        let encoder = |component: &str, name: &str, settings: &[&str]| EncoderPlan {
+            component: component.parse().unwrap(),
+            name: name.to_owned(),
+            settings: settings.iter().map(|&setting| setting.to_owned()).collect(),
+        };
+        OutputPlan {
+            muxer: "ffmpeg/mp4".parse().unwrap(),
+            muxer_name: "MP4".to_owned(),
+            video: encoder("ffmpeg/libx264", "H.264 (x264)", &["Slow", "CRF 20"]),
+            audio: audio.then(|| encoder("ffmpeg/aac", "AAC", &[])),
         }
+    }
+
+    #[test]
+    fn a_video_names_its_components_once_they_are_chosen() {
+        let mut state = State::new();
+        assert_eq!(state.format_line(), "resolving…");
+        for (width, height) in [(100, 30), (60, 14)] {
+            let text = screen_with(&settings(), &state, width, height);
+            assert!(text.contains("resolving…"), "{text}");
+        }
+        state.update(ExportProgress::Output(plan(true)));
+        assert_eq!(
+            state.format_line(),
+            "MP4 · H.264 (x264) · Slow · CRF 20 · AAC"
+        );
+        let text = screen_with(&settings(), &state, 100, 30);
+        assert!(
+            text.contains("Encode   H.264 (x264) · Slow · CRF 20"),
+            "{text}"
+        );
+        assert!(text.contains("Audio    AAC"), "{text}");
+        let text = screen_with(&settings(), &state, 120, 14);
+        assert!(
+            text.contains("MP4 · H.264 (x264) · Slow · CRF 20 · AAC"),
+            "{text}"
+        );
+
+        state.update(ExportProgress::Output(plan(false)));
+        assert_eq!(
+            state.format_line(),
+            "MP4 · H.264 (x264) · Slow · CRF 20 · no audio"
+        );
     }
 
     #[test]

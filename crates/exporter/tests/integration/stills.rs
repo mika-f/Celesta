@@ -3,7 +3,7 @@ use std::process::Command;
 
 use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
 use celesta_composition::{Rational, Time, TimeRange};
-use celesta_exporter::{ExportOptions, ExportProgress, ReactRuntimeOptions, VideoFormat};
+use celesta_exporter::{ExportOptions, ExportProgress, ReactRuntimeOptions};
 use celesta_project::{
     Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
 };
@@ -74,7 +74,6 @@ fn json_cli_exports_first_last_and_rejects_overwrite_and_invalid_frames() {
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("frame 4 is out of range"));
     assert!(!invoke("-1", &[]).status.success());
     assert!(!invoke("0", &["--from", "0"]).status.success());
-    assert!(!invoke("0", &["--output-format", "mp4"]).status.success());
 }
 
 #[test]
@@ -542,10 +541,6 @@ fn rejects_conflicting_and_oversized_png_selections() {
         "invalid value '0' for '--columns <N>'",
     );
     fails(
-        &["--every", "2", "--output-format", "mp4"],
-        "require still output",
-    );
-    fails(
         &["--every", "2", "--from", "3"],
         "does not cover any frames",
     );
@@ -724,11 +719,6 @@ fn rejects_quality_where_it_does_not_apply() {
         &["--frame", "0", "--quality", "101"],
         "check.jpg",
         "invalid value '101' for '--quality <1-100>'",
-    );
-    fails(
-        &["--frame", "0", "--output-format", "webp"],
-        "check.jpg",
-        "--output-format webp does not match the .jpg output",
     );
     fails(
         &["--frame", "0"],
@@ -934,7 +924,11 @@ fn react_export(entry: &Path, args: &[&str], output: &Path) -> std::process::Out
     let mut command = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"));
     command.env_remove(PLUGIN_PATH_ENV);
     // Kept until the child exits: `output` waits for it.
-    let plugin = VideoFormat::from_extension(output).map(|_| TestCodecPlugin::new());
+    let video = output
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| ["mp4", "mov", "webm"].contains(&extension));
+    let plugin = video.then(TestCodecPlugin::new);
     if let Some(plugin) = &plugin {
         command.arg("--plugin-dir").arg(plugin.folder());
     }
@@ -1069,6 +1063,6 @@ fn separate_stills_and_videos_name_the_frame_that_failed() {
     let result = react_export(&entry, &["--to", "1"], &film);
     assert!(result.status.success(), "{}", stderr(&result));
     let media = celesta_codec_test::read(&film).unwrap();
-    assert_eq!(media.container, Some(celesta_media::Container::Mp4));
+    assert_eq!(media.extension.as_deref(), Some("mp4"));
     assert_eq!(media.video.unwrap().frames.len(), 4);
 }

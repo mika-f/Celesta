@@ -2,7 +2,7 @@ use crate::preview::{CpuPreviewFrame, PreviewPresentation};
 use crate::view::EditorView;
 use celesta_composition::{Rational, Time};
 use celesta_editor_core::ClipKind;
-use celesta_exporter::{AudioLoudness, ExportProgress, ExportRange, LoudnessTarget, VideoFormat};
+use celesta_exporter::{AudioLoudness, ExportProgress, ExportRange, LoudnessTarget};
 use celesta_gpu_renderer::PreviewFrame as GpuPreviewFrame;
 use celesta_react_bridge::import_path;
 use gpui_kit::{App, Context, PathPromptOptions, RenderImage};
@@ -60,6 +60,7 @@ pub(crate) fn export_progress_label(progress: &ExportProgress) -> String {
     match progress {
         ExportProgress::Rendering { frame: 0, total: 0 }
         | ExportProgress::Composition(_)
+        | ExportProgress::Output(_)
         | ExportProgress::ReactCompositions { .. } => "Starting export…".to_owned(),
         ExportProgress::Rendering { frame, total } => {
             format!("Exporting frame {frame}/{total}")
@@ -163,14 +164,26 @@ pub(crate) fn export_suggested_name(path: Option<&Path>, project_name: &str) -> 
     format!("{stem}.mp4")
 }
 
-/// The file to export to and its format: `.mp4`, `.mov` and `.webm` choices
-/// are kept, anything else becomes an `.mp4`.
-pub(crate) fn export_output(mut path: PathBuf) -> (PathBuf, VideoFormat) {
-    let Some(format) = VideoFormat::from_extension(&path) else {
+/// The extensions the save panel offers, which Celesta's media plugin
+/// writes.
+const EXPORT_EXTENSIONS: [&str; 3] = ["mp4", "mov", "webm"];
+
+/// The file to export to: `.mp4`, `.mov` and `.webm` choices are kept
+/// (ignoring case), anything else becomes an `.mp4`. Its extension picks the
+/// muxer.
+pub(crate) fn export_output(mut path: PathBuf) -> PathBuf {
+    let offered = path
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| {
+            EXPORT_EXTENSIONS
+                .iter()
+                .any(|offered| offered.eq_ignore_ascii_case(extension))
+        });
+    if !offered {
         path.set_extension("mp4");
-        return (path, VideoFormat::Mp4);
-    };
-    (path, format)
+    }
+    path
 }
 
 /// `path` with its `.` and `..` components taken out, without reading the

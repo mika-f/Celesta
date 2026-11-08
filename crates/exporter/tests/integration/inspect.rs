@@ -269,7 +269,6 @@ fn inspect_flags_do_not_mix_with_export_flags() {
         &["--frame", "0"],
         &["--every", "1"],
         &["--contact-sheet"],
-        &["--crf", "18"],
         &["--driver", "auto"],
     ] {
         let result = run(&[&["--inspect", "--react", "scene.tsx"][..], flags].concat());

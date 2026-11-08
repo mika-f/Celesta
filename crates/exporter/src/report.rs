@@ -13,8 +13,8 @@ use celesta_react_bridge::{PropsFileChoice, ReactBridgeError};
 use serde::Serialize;
 
 use crate::{
-    AudioLoudness, CompositionInfo, ExportError, ExportProgress, ExportedFile, StillFormat,
-    X264_PRESETS,
+    AudioLoudness, CompositionInfo, EncoderPlan, ExportError, ExportProgress, ExportedFile,
+    OutputPlan, StillFormat, TrackInfo, X264_PRESETS,
 };
 
 /// Whose options an error's hint names: `Celesta-export`'s flags or the MCP
@@ -126,12 +126,18 @@ pub enum Output {
         frames: u64,
         start: f64,
         duration: f64,
-        audio: bool,
+        /// The muxer that wrote it, `<plugin>/<component>`.
+        muxer: String,
+        video: Encoded,
+        /// `null` when the video has no audio track.
+        audio: Option<Encoded>,
         /// The mix's loudness, when the video has sound.
         #[serde(skip_serializing_if = "Option::is_none")]
         loudness: Option<Loudness>,
-        format: &'static str,
+        /// Whether the video keeps the composition's alpha.
         alpha: bool,
+        /// Every file the muxer wrote: the video's path for one file.
+        files: Vec<PathBuf>,
     },
     Frame {
         path: PathBuf,
@@ -152,6 +158,43 @@ pub enum Output {
         /// Tile frames in reading order, left to right and top to bottom.
         frames: Vec<u64>,
     },
+}
+
+/// A track's encoder and the codec string it wrote.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Encoded {
+    component: String,
+    codec: String,
+}
+
+impl From<TrackInfo> for Encoded {
+    fn from(track: TrackInfo) -> Self {
+        Self {
+            component: track.component.to_string(),
+            codec: track.codec,
+        }
+    }
+}
+
+/// An encoder as the `output` progress event names it: its reference,
+/// name, and the settings that differ from their defaults, as labels.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Encoder {
+    component: String,
+    name: String,
+    settings: Vec<String>,
+}
+
+impl From<EncoderPlan> for Encoder {
+    fn from(plan: EncoderPlan) -> Self {
+        Self {
+            component: plan.component.to_string(),
+            name: plan.name,
+            settings: plan.settings,
+        }
+    }
 }
 
 /// An exported mix's loudness, rounded to 0.01. `null` loudness is a silent
@@ -265,6 +308,15 @@ pub enum Event {
     Composition {
         composition: Composition,
     },
+    /// The muxer and encoders the video is written with, once they are
+    /// chosen and before any frame renders.
+    Output {
+        muxer: String,
+        muxer_name: String,
+        video: Encoder,
+        /// `null` when the video has no audio track.
+        audio: Option<Encoder>,
+    },
     /// The report's `compositionId` and `compositions`.
     Compositions {
         composition_id: String,
@@ -309,6 +361,7 @@ impl Events {
                 composition_id: selected.clone(),
                 compositions: compositions.clone(),
             },
+            ExportProgress::Output(plan) => output_event(plan.clone()),
             &ExportProgress::Rendering { frame, total } => Event::Rendering { frame, total },
             ExportProgress::MixingAudio => Event::MixingAudio,
             ExportProgress::Muxing => Event::Muxing,
@@ -320,6 +373,15 @@ impl Events {
                 output: output(file.clone(), self.frame_rate),
             },
         }
+    }
+}
+
+fn output_event(plan: OutputPlan) -> Event {
+    Event::Output {
+        muxer: plan.muxer.to_string(),
+        muxer_name: plan.muxer_name,
+        video: plan.video.into(),
+        audio: plan.audio.map(Encoder::from),
     }
 }
 
@@ -434,19 +496,24 @@ fn output(file: ExportedFile, frame_rate: Option<Rational>) -> Output {
             path,
             first_frame,
             frames,
+            muxer,
+            video,
             audio,
+            alpha,
+            files,
             loudness,
-            format,
         } => Output::Video {
             path: absolute(&path),
             first_frame,
             frames,
             start: seconds(first_frame, rate),
             duration: seconds(frames, rate),
-            audio,
+            muxer: muxer.to_string(),
+            video: video.into(),
+            audio: audio.map(Encoded::from),
             loudness: loudness.map(Loudness::from),
-            format: format.as_str(),
-            alpha: format.has_alpha(),
+            alpha,
+            files: files.iter().map(|file| absolute(file)).collect(),
         },
         ExportedFile::Frame { path, frame } => Output::Frame {
             path: absolute(&path),
@@ -577,10 +644,6 @@ pub(crate) fn classify(
             source: MediaError::Unsupported { .. },
             ..
         } => ("unsupported_media", None),
-        ExportError::Render(GpuRenderError::Media(MediaError::NoCodec))
-        | ExportError::Audio(AudioMixError::Media(MediaError::NoCodec)) => {
-            ("no_codec", fixed(NO_DECODER_HINT))
-        }
         ExportError::Render(_) => ("render", None),
         ExportError::Audio(_) => ("audio", None),
         ExportError::React(ReactBridgeError::InvalidProperties(invalid)) => {
@@ -600,10 +663,6 @@ pub(crate) fn classify(
         ExportError::Properties(_) => ("invalid_properties", None),
         ExportError::Time(_) => ("time", None),
         ExportError::Io { .. } => ("io", None),
-        ExportError::Codec {
-            source: MediaError::NoCodec,
-            ..
-        } => ("no_codec", fixed(NO_DECODER_HINT)),
         ExportError::Codec { .. } => ("codec", None),
         ExportError::OutputExists(_) => (
             "output_exists",
@@ -632,14 +691,12 @@ pub(crate) fn classify(
                 "give output, or subtitles to write only subtitle files"
             }),
         ),
-        ExportError::EncoderUnavailable { .. } => ("encoder_unavailable", None),
         ExportError::UnsupportedDimensions { .. } => (
             "unsupported_dimensions",
             fixed(
                 "make the composition width and height even; still frame exports accept odd sizes",
             ),
         ),
-        ExportError::InvalidCrf(_) => ("invalid_crf", None),
         ExportError::EmptyTimeline => ("empty_timeline", None),
         ExportError::EmptyRange => (
             "empty_range",
@@ -714,7 +771,29 @@ fn round(value: f64, scale: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::VideoFormat;
+    use crate::EncoderPlan;
+
+    fn reference(text: &str) -> celesta_media::ComponentRef {
+        text.parse().unwrap()
+    }
+
+    /// A video the test codec wrote to `path`, with no audio track.
+    fn test_codec_video(path: &str, loudness: Option<AudioLoudness>) -> ExportedFile {
+        ExportedFile::Video {
+            path: PathBuf::from(path),
+            first_frame: 0,
+            frames: 30,
+            muxer: reference("celesta-test-codec/file"),
+            video: TrackInfo {
+                component: reference("celesta-test-codec/video"),
+                codec: "ctst".to_owned(),
+            },
+            audio: None,
+            alpha: false,
+            files: vec![PathBuf::from(path)],
+            loudness,
+        }
+    }
 
     fn report(
         export: impl FnOnce(&mut dyn FnMut(ExportProgress)) -> Result<(), ExportError>,
@@ -736,14 +815,17 @@ mod tests {
                 path: PathBuf::from("/tmp/check-000090.png"),
                 frame: 90,
             }));
-            progress(ExportProgress::Wrote(ExportedFile::Video {
-                path: PathBuf::from("/tmp/check.mp4"),
-                first_frame: 30,
-                frames: 60,
-                audio: false,
-                loudness: None,
-                format: VideoFormat::Mov,
-            }));
+            let mut video = test_codec_video("/tmp/check.mp4", None);
+            if let ExportedFile::Video {
+                first_frame,
+                frames,
+                alpha,
+                ..
+            } = &mut video
+            {
+                (*first_frame, *frames, *alpha) = (30, 60, true);
+            }
+            progress(ExportProgress::Wrote(video));
             Ok(())
         });
         assert_eq!(value["status"], "ok");
@@ -760,8 +842,11 @@ mod tests {
                 { "type": "frame", "path": absolute(Path::new("/tmp/check-000090.png")), "frame": 90, "time": 3.003 },
                 {
                     "type": "video", "path": absolute(Path::new("/tmp/check.mp4")), "firstFrame": 30, "frames": 60,
-                    "start": 1.001, "duration": 2.002, "audio": false,
-                    "format": "mov", "alpha": true
+                    "start": 1.001, "duration": 2.002,
+                    "muxer": "celesta-test-codec/file",
+                    "video": { "component": "celesta-test-codec/video", "codec": "ctst" },
+                    "audio": null, "alpha": true,
+                    "files": [absolute(Path::new("/tmp/check.mp4"))]
                 }
             ])
         );
@@ -769,16 +854,8 @@ mod tests {
 
     #[test]
     fn a_video_reports_its_loudness() {
-        let video = |loudness| {
-            ExportProgress::Wrote(ExportedFile::Video {
-                path: PathBuf::from("/tmp/film.mp4"),
-                first_frame: 0,
-                frames: 30,
-                audio: true,
-                loudness: Some(loudness),
-                format: VideoFormat::Mp4,
-            })
-        };
+        let video =
+            |loudness| ExportProgress::Wrote(test_codec_video("/tmp/film.mp4", Some(loudness)));
         let value = report(|progress| {
             progress(video(AudioLoudness {
                 integrated_lufs: Some(-14.004),
@@ -1204,22 +1281,52 @@ mod tests {
     }
 
     #[test]
-    fn missing_encoders_are_reported_by_name() {
-        let value = serde_json::to_value(
-            build(Path::new("/tmp/film.tsx"), None, HintStyle::Cli, |_| {
-                Err(ExportError::EncoderUnavailable {
-                    format: VideoFormat::Webm,
-                    encoder: "libvpx-vp9".into(),
-                })
+    fn a_video_output_names_its_components() {
+        let value = report(|progress| {
+            progress(ExportProgress::Wrote(test_codec_video(
+                "/tmp/film.mp4",
+                None,
+            )));
+            Ok(())
+        });
+        let output = &value["outputs"][0];
+        assert_eq!(
+            *output,
+            serde_json::json!({
+                "type": "video", "path": absolute(Path::new("/tmp/film.mp4")),
+                "firstFrame": 0, "frames": 30, "start": 0.0, "duration": 30.0,
+                "muxer": "celesta-test-codec/file",
+                "video": { "component": "celesta-test-codec/video", "codec": "ctst" },
+                "audio": null, "alpha": false,
+                "files": [absolute(Path::new("/tmp/film.mp4"))]
             })
-            .0,
-        )
-        .unwrap();
-        assert_eq!(value["error"]["code"], "encoder_unavailable");
-        let message = value["error"]["message"].as_str().unwrap();
-        assert!(
-            message.contains("libvpx-vp9") && message.contains("webm"),
-            "{message}"
+        );
+        assert!(output.get("format").is_none());
+
+        let mut events = Events::default();
+        let plan = OutputPlan {
+            muxer: reference("ffmpeg/mp4"),
+            muxer_name: "MP4".to_owned(),
+            video: EncoderPlan {
+                component: reference("ffmpeg/libx264"),
+                name: "H.264 (x264)".to_owned(),
+                settings: vec!["Slow".to_owned(), "CRF 20".to_owned()],
+            },
+            audio: None,
+        };
+        assert_eq!(
+            serde_json::to_value(events.event(&ExportProgress::Output(plan))).unwrap(),
+            serde_json::json!({
+                "event": "output",
+                "muxer": "ffmpeg/mp4",
+                "muxerName": "MP4",
+                "video": {
+                    "component": "ffmpeg/libx264",
+                    "name": "H.264 (x264)",
+                    "settings": ["Slow", "CRF 20"]
+                },
+                "audio": null
+            })
         );
     }
 
