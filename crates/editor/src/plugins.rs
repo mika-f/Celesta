@@ -124,7 +124,7 @@ impl FoundPlugins {
 
     /// Why there is no decoder to read media with: a media plugin has no
     /// program for this computer, one waits for approval, one is turned off,
-    /// or none was found.
+    /// those that run declare no decoder, or none was found.
     fn missing_decoder_detail(&self) -> String {
         let is_media = |entry: &PluginEntry| entry.has_role(PluginRole::Media);
         let consequence = "so video and audio files cannot be shown or exported";
@@ -152,6 +152,19 @@ impl FoundPlugins {
             format!(
                 "The media plugin {} is turned off, {consequence}. Turn it on in the Plugins tab.",
                 disabled.manifest.id
+            )
+        } else if self.installed.plugins.iter().any(is_media) {
+            let ids: Vec<&str> = self
+                .installed
+                .plugins
+                .iter()
+                .filter(|entry| is_media(entry))
+                .map(|entry| entry.manifest.id.as_str())
+                .collect();
+            format!(
+                "Media plugins were found, but none declares a decoder Celesta can use, \
+                 {consequence}: {}.",
+                ids.join(", ")
             )
         } else {
             format!(
@@ -893,6 +906,28 @@ mod tests {
                 .starts_with("The media plugin ffmpeg waits for your approval"),
             "{}",
             problem.detail
+        );
+    }
+
+    #[test]
+    fn media_plugins_without_decoders_are_named() {
+        let found = FoundPlugins {
+            missing_decoder: true,
+            installed: InstalledPlugins {
+                plugins: vec![
+                    entry_with_role(PluginRole::Media),
+                    entry_with_role(PluginRole::Content),
+                ],
+                ..Default::default()
+            },
+            ..FoundPlugins::default()
+        };
+        let problem = found.problem().unwrap();
+        assert_eq!(problem.title, "No media decoder can run");
+        assert_eq!(
+            problem.detail,
+            "Media plugins were found, but none declares a decoder Celesta can use, so video \
+             and audio files cannot be shown or exported: ffmpeg."
         );
     }
 
