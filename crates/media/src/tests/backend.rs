@@ -63,6 +63,9 @@ enum Answer {
     NotFound,
     /// Reads the file, but fails to decode its frames.
     ReadsButNotItsFrames,
+    /// Reads the file, but answers that its frames are not ones it reads,
+    /// which a decoder should only say to a probe.
+    ReadsButNotItsFramesUnsupported,
     /// No process starts: the factory fails.
     CannotStart,
 }
@@ -95,9 +98,10 @@ impl MediaProvider for Fake {
         self.journal
             .push(format!("probe {}/{decoder}", self.plugin));
         match self.answer {
-            Answer::Reads | Answer::ReadsAudioAt(_) | Answer::ReadsButNotItsFrames => {
-                Ok(probe_of(&self.plugin))
-            }
+            Answer::Reads
+            | Answer::ReadsAudioAt(_)
+            | Answer::ReadsButNotItsFrames
+            | Answer::ReadsButNotItsFramesUnsupported => Ok(probe_of(&self.plugin)),
             Answer::Unsupported => Err(MediaError::Unsupported {
                 path: path.to_owned(),
                 tried: Vec::new(),
@@ -125,6 +129,12 @@ impl MediaProvider for Fake {
         ));
         if self.answer == Answer::ReadsButNotItsFrames {
             return Err(MediaError::Codec("bad frame".into()));
+        }
+        if self.answer == Answer::ReadsButNotItsFramesUnsupported {
+            return Err(MediaError::Unsupported {
+                path: request.path.to_owned(),
+                tried: Vec::new(),
+            });
         }
         Ok(VideoFrame {
             width: 2,
@@ -600,6 +610,29 @@ fn a_pinned_decoder_s_errors_do_not_fall_back() {
 }
 
 #[test]
+fn a_pinned_decoder_answering_unsupported_is_named() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "clip.mp4");
+    let journal = Journal::default();
+    let registry = three(
+        &journal,
+        Answer::Unsupported,
+        Answer::ReadsButNotItsFramesUnsupported,
+        Answer::Reads,
+    );
+    let mut backend = MediaBackend::with_registry(registry);
+    backend.probe(&path).unwrap();
+    journal.clear();
+    let error = backend.decode_frame(&path, 0.0).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        format!("no decoder could read {} (tried b/dec)", path.display())
+    );
+    // Still pinned: the project decoder that reads it is not asked.
+    assert_eq!(journal.entries(), strings(&["video b/dec None"]));
+}
+
+#[test]
 fn a_decoder_whose_process_cannot_start_falls_through() {
     let directory = tempfile::tempdir().unwrap();
     let path = file(&directory, "clip.mp4");
@@ -731,7 +764,7 @@ fn settings() -> EncoderSettings {
 }
 
 #[test]
-fn encoding_uses_the_first_plugin() {
+fn encoding_without_a_bundled_plugin_uses_the_first() {
     let journal = Journal::default();
     let registry = Arc::new(MediaRegistry::new(vec![
         with_decoders(
@@ -758,6 +791,37 @@ fn encoding_uses_the_first_plugin() {
         backend.open_encoder(&settings()),
         Err(MediaError::NoCodec)
     ));
+}
+
+#[test]
+fn encoding_prefers_the_first_bundled_plugin() {
+    let journal = Journal::default();
+    let registry = Arc::new(MediaRegistry::new(vec![
+        plugin(&journal, "u", MediaOrigin::User, &["mp4"], Answer::Reads),
+        plugin(&journal, "p", MediaOrigin::Project, &["mp4"], Answer::Reads),
+        plugin(&journal, "b", MediaOrigin::Bundled, &["mp4"], Answer::Reads),
+        plugin(
+            &journal,
+            "b2",
+            MediaOrigin::Bundled,
+            &["mp4"],
+            Answer::Reads,
+        ),
+    ]));
+    assert_eq!(registry.legacy_encoder(), Some(2));
+    let mut backend = MediaBackend::with_registry(registry);
+    backend.open_encoder(&settings()).unwrap();
+    assert_eq!(journal.entries(), strings(&["start b", "open b"]));
+
+    // Without a bundled plugin, the first in search order encodes.
+    let user_only = MediaRegistry::new(vec![plugin(
+        &journal,
+        "u",
+        MediaOrigin::User,
+        &["mp4"],
+        Answer::Reads,
+    )]);
+    assert_eq!(user_only.legacy_encoder(), Some(0));
 }
 
 #[test]

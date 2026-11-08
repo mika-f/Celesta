@@ -164,9 +164,15 @@ impl MediaRegistry {
     }
 
     /// The plugin that encodes and muxes exports until exports choose
-    /// their components: the first in search order, whatever its decoders.
+    /// their components: the first bundled one in search order, so a
+    /// decoder-only plugin the user or a project installs cannot take over
+    /// exports, or the first in search order when none is bundled, whatever
+    /// its decoders.
     pub fn legacy_encoder(&self) -> Option<usize> {
-        (!self.plugins.is_empty()).then_some(0)
+        self.plugins
+            .iter()
+            .position(|plugin| plugin.origin == MediaOrigin::Bundled)
+            .or_else(|| (!self.plugins.is_empty()).then_some(0))
     }
 
     /// The plugin at `index`, as [`Self::decoder_candidates`] and

@@ -158,7 +158,9 @@ impl MediaBackend {
 
     /// Runs `request` on the decoder `path` is routed to, routing it first.
     /// An error, even [`MediaError::Unsupported`], is the decoder's answer:
-    /// a pinned path does not move to another decoder.
+    /// a pinned path does not move to another decoder. An `Unsupported`
+    /// names that decoder as the one tried, since a plugin's answer names
+    /// none.
     fn decoding<T>(
         &mut self,
         path: &Path,
@@ -167,9 +169,19 @@ impl MediaBackend {
         self.route(path)?;
         let registry = self.registry.as_deref().expect("routing found a registry");
         let (plugin, decoder) = self.routes.get(path).expect("routed above");
-        self.processes.retrying(registry, *plugin, |provider| {
-            request(provider, &decoder.component)
-        })
+        self.processes
+            .retrying(registry, *plugin, |provider| {
+                request(provider, &decoder.component)
+            })
+            .map_err(|error| match error {
+                MediaError::Unsupported { path, tried } if tried.is_empty() => {
+                    MediaError::Unsupported {
+                        path,
+                        tried: vec![decoder.to_string()],
+                    }
+                }
+                error => error,
+            })
     }
 
     /// The index of the plugin that encodes.
