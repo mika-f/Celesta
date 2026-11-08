@@ -684,7 +684,9 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
 
 /// The plugins under `paths`, in order: each is an absolute path to a
 /// plugin directory or a directory of them. The first plugin found with an
-/// id wins. Relative paths, folders and manifests that cannot be read,
+/// id wins, except that a project's plugin with the id of a media plugin in
+/// the bundled folder is skipped and reported, so the bundled one is used
+/// (see [`discover_in_with`]). Relative paths, folders and manifests that cannot be read,
 /// manifests that name a bad id or a file outside their directory or give
 /// no `celesta` range, plugins whose range leaves this Celesta out
 /// ([`DiscoveryError::Incompatible`]), and, from a checked source, a folder
@@ -700,30 +702,29 @@ pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryErro
 /// [`discover_in`], where a plugin `turned_off` names is listed but, like a
 /// skipped one, takes no id: a later plugin with its id is found too, to be
 /// used in its place. One found after a plugin that took its id is not.
+///
+/// One exception to search order: a project's plugin with the id of a media
+/// plugin Celesta bundles is skipped and reported, so a project cannot
+/// replace the plugin that reads and writes media, although project folders
+/// are searched before the bundled one.
 pub(crate) fn discover_in_with(
     paths: &[SearchPath],
     turned_off: impl Fn(&PluginEntry) -> bool,
 ) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
-    let mut found: Vec<PluginEntry> = Vec::new();
-    let mut taken: HashSet<String> = HashSet::new();
-    let mut errors = Vec::new();
-    let mut add = |entry: Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError>,
-                   found: &mut Vec<PluginEntry>| match entry {
-        Ok(Some((entry, skipped))) if !taken.contains(&entry.manifest.id) => {
-            if !turned_off(&entry) {
-                taken.insert(entry.manifest.id.clone());
-            }
-            found.push(entry);
-            errors.extend(skipped);
-        }
-        Ok(_) => {}
-        Err(error) => errors.push(error),
+    // Every plugin read and every error, in search order; which plugin
+    // takes an id is settled once the bundled ones are known.
+    let mut read: Vec<PluginRead> = Vec::new();
+    let add = |entry: Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError>,
+               read: &mut Vec<PluginRead>| match entry {
+        Ok(Some(entry)) => read.push(Ok(entry)),
+        Ok(None) => {}
+        Err(error) => read.push(Err(error)),
     };
     for SearchPath { path, source } in paths {
         if !path.is_absolute() {
             add(
                 Err(DiscoveryError::RelativePath { path: path.clone() }),
-                &mut found,
+                &mut read,
             );
             continue;
         }
@@ -737,7 +738,7 @@ pub(crate) fn discover_in_with(
                             "the folder does not exist",
                         ),
                     }),
-                    &mut found,
+                    &mut read,
                 );
             }
             continue;
@@ -750,12 +751,12 @@ pub(crate) fn discover_in_with(
                     path: path.clone(),
                     reason,
                 }),
-                &mut found,
+                &mut read,
             );
             continue;
         }
         if path.join(MANIFEST).is_file() {
-            add(read_manifest(path, *source), &mut found);
+            add(read_manifest(path, *source), &mut read);
             continue;
         }
         let children = match std::fs::read_dir(path) {
@@ -766,7 +767,7 @@ pub(crate) fn discover_in_with(
                         path: path.clone(),
                         source,
                     }),
-                    &mut found,
+                    &mut read,
                 );
                 continue;
             }
@@ -777,11 +778,51 @@ pub(crate) fn discover_in_with(
             .collect();
         children.sort();
         for child in children {
-            add(read_manifest(&child, *source), &mut found);
+            add(read_manifest(&child, *source), &mut read);
+        }
+    }
+    let bundled_media: HashSet<String> = read
+        .iter()
+        .filter_map(|read| read.as_ref().ok())
+        .filter(|(entry, _)| {
+            entry.source == PluginSource::Bundled && entry.has_role(PluginRole::Media)
+        })
+        .map(|(entry, _)| entry.manifest.id.clone())
+        .collect();
+    let mut found: Vec<PluginEntry> = Vec::new();
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut errors = Vec::new();
+    for read in read {
+        match read {
+            Ok((entry, _))
+                if entry.source == PluginSource::Project
+                    && bundled_media.contains(&entry.manifest.id) =>
+            {
+                errors.push(DiscoveryError::Invalid {
+                    path: entry.directory.join(MANIFEST),
+                    reason: format!(
+                        "a project plugin cannot replace Celesta's bundled media plugin {}",
+                        entry.manifest.id
+                    ),
+                });
+            }
+            Ok((entry, skipped)) if !taken.contains(&entry.manifest.id) => {
+                if !turned_off(&entry) {
+                    taken.insert(entry.manifest.id.clone());
+                }
+                found.push(entry);
+                errors.extend(skipped);
+            }
+            Ok(_) => {}
+            Err(error) => errors.push(error),
         }
     }
     (found, errors)
 }
+
+/// A plugin discovery read, with the problems of its components it left
+/// out, or why it skipped one.
+type PluginRead = Result<(PluginEntry, Vec<DiscoveryError>), DiscoveryError>;
 
 /// The plugins found in every location Celesta searches ([`search_paths`]
 /// with `explicit` first), as one set every part of Celesta shares: the

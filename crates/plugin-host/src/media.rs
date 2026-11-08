@@ -314,8 +314,10 @@ impl InstalledPlugins {
     /// next one with its id is listed instead), then the FFmpeg media
     /// plugin's program beside the running one ([`CODEC_PROGRAM`]) when that
     /// is an installed program rather than a source build in a Cargo build
-    /// folder and none of these has the id it prints. Ordering decoders by
-    /// [`MediaOrigin`] is the caller's.
+    /// folder and none of these but a project's has the id it prints. A
+    /// project's plugin cannot replace it, as discovery keeps one in the
+    /// bundled folder: the project's is left out (said on stderr). Ordering
+    /// decoders by [`MediaOrigin`] is the caller's.
     pub fn media(&self) -> Vec<MediaPlugin> {
         let executable = std::env::current_exe()
             .ok()
@@ -333,8 +335,22 @@ impl InstalledPlugins {
             .filter_map(media_plugin)
             .collect();
         if let Some(sibling) = executable.and_then(sibling_media)
-            && !media.iter().any(|plugin| plugin.id == sibling.id)
+            && !media
+                .iter()
+                .any(|plugin| plugin.id == sibling.id && plugin.origin != MediaOrigin::Project)
         {
+            media.retain(|plugin| {
+                let replaces = plugin.id == sibling.id;
+                if replaces {
+                    eprintln!(
+                        "celesta: skipped the media plugin {}: a project plugin cannot replace \
+                         Celesta's bundled media plugin {}",
+                        plugin.directory.display(),
+                        plugin.id
+                    );
+                }
+                !replaces
+            });
             media.push(sibling);
         }
         media
@@ -647,6 +663,103 @@ mod tests {
         );
     }
 
+    /// A search of `folders`, each a folder of plugins from its source.
+    fn search(folders: &[(&Path, PluginSource)]) -> Vec<SearchPath> {
+        folders
+            .iter()
+            .map(|&(path, source)| SearchPath {
+                path: path.to_path_buf(),
+                source,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_project_plugin_cannot_replace_a_bundled_media_plugin() {
+        let (project, user, bundled) = (
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+        );
+        for folder in [&project, &bundled] {
+            write_manifest(
+                &folder.path().join("ffmpeg"),
+                media_manifest("ffmpeg", serde_json::json!([])),
+            );
+        }
+        let rejected = |errors: &[DiscoveryError]| {
+            assert!(
+                matches!(
+                    errors,
+                    [DiscoveryError::Invalid { path, reason }]
+                        if *path == project.path().join("ffmpeg").join(MANIFEST)
+                            && reason == "a project plugin cannot replace Celesta's bundled media plugin ffmpeg"
+                ),
+                "{errors:?}"
+            );
+        };
+        let (plugins, errors) = discover_in(&search(&[
+            (project.path(), PluginSource::Project),
+            (bundled.path(), PluginSource::Bundled),
+        ]));
+        rejected(&errors);
+        let media = installed(plugins).media_with_sibling(None);
+        assert_eq!(ids(&media), ["ffmpeg"]);
+        assert_eq!(media[0].directory, bundled.path().join("ffmpeg"));
+        assert_eq!(media[0].origin, MediaOrigin::Bundled);
+
+        // The user's own plugin of that id still comes first, as the
+        // project's takes no id.
+        write_manifest(
+            &user.path().join("ffmpeg"),
+            media_manifest("ffmpeg", serde_json::json!([])),
+        );
+        let (plugins, errors) = discover_in(&search(&[
+            (project.path(), PluginSource::Project),
+            (user.path(), PluginSource::User),
+            (bundled.path(), PluginSource::Bundled),
+        ]));
+        rejected(&errors);
+        let media = installed(plugins).media_with_sibling(None);
+        assert_eq!(ids(&media), ["ffmpeg"]);
+        assert_eq!(media[0].directory, user.path().join("ffmpeg"));
+
+        // Nor can a project's content plugin take the media plugin's id.
+        std::fs::remove_dir_all(project.path().join("ffmpeg")).unwrap();
+        write_manifest(
+            &project.path().join("ffmpeg"),
+            serde_json::json!({ "id": "ffmpeg", "version": "1", "protocol": 1, "celesta": COMPATIBLE, "module": "js/index.js" }),
+        );
+        let (plugins, errors) = discover_in(&search(&[
+            (project.path(), PluginSource::Project),
+            (bundled.path(), PluginSource::Bundled),
+        ]));
+        rejected(&errors);
+        assert_eq!(
+            ids(&installed(plugins).media_with_sibling(None)),
+            ["ffmpeg"]
+        );
+    }
+
+    #[test]
+    fn a_project_content_plugin_still_comes_first() {
+        let (project, bundled) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        for folder in [&project, &bundled] {
+            write_manifest(
+                &folder.path().join("shapes"),
+                serde_json::json!({ "id": "shapes", "version": "1", "protocol": 1, "celesta": COMPATIBLE, "module": "js/index.js" }),
+            );
+        }
+        let (plugins, errors) = discover_in(&search(&[
+            (project.path(), PluginSource::Project),
+            (bundled.path(), PluginSource::Bundled),
+        ]));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].directory, project.path().join("shapes"));
+        assert_eq!(plugins[0].source, PluginSource::Project);
+    }
+
     #[cfg(unix)]
     mod sibling {
         use super::*;
@@ -713,6 +826,26 @@ mod tests {
             assert_eq!(ids(&listed), ["ffmpeg", "other"]);
             assert_eq!(listed[0].directory, plugins.join("ffmpeg"));
             assert_eq!(listed[0].origin, MediaOrigin::User);
+        }
+
+        #[test]
+        fn a_project_plugin_cannot_replace_the_sibling() {
+            let root = tempfile::tempdir().unwrap();
+            let (program, executable) = printing_its_manifest(root.path());
+            let project = root.path().join("project-plugins");
+            write_manifest(
+                &project.join("ffmpeg"),
+                media_manifest("ffmpeg", serde_json::json!([])),
+            );
+            let (found, errors) = discover_in(&[SearchPath {
+                path: project.clone(),
+                source: PluginSource::Project,
+            }]);
+            assert!(errors.is_empty(), "{errors:?}");
+            let listed = installed(found).media_with_sibling(Some(&executable));
+            assert_eq!(ids(&listed), ["ffmpeg"]);
+            assert_eq!(listed[0].executable, program);
+            assert_eq!(listed[0].origin, MediaOrigin::Bundled);
         }
 
         #[test]
