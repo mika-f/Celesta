@@ -425,9 +425,7 @@ muxing
 Warnings (missing fonts, missing glyphs) are printed as `warning: …` lines;
 a plugin's informational notice is printed as a `note: …` line. A failure is
 printed as `Celesta export: <message>`, then `hint: …` when the error has a
-hint (the same one `--json` reports).
-A failure prints `Celesta export: <message>` and
-exits non-zero; see [errors.md](errors.md). The rendering count can reach
+hint (the same one `--json` reports), and the exporter exits non-zero; see [errors.md](errors.md). The rendering count can reach
 the total while audio mixing and muxing are still running; wait for the
 process to exit.
 
