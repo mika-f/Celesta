@@ -944,7 +944,7 @@ mod tests {
         assert!(
             host.ring(RingLayout {
                 slots: 2,
-                slot_bytes: usize::MAX / 2 & !7
+                slot_bytes: (usize::MAX / 2) & !7
             })
             .is_err(),
             "the product wraps"
