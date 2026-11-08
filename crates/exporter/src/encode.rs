@@ -4,7 +4,7 @@
 
 use crate::control::{ExportCancellation, TrackInfo};
 use crate::error::ExportError;
-use crate::interleave::Interleaver;
+use crate::interleave::{Interleaver, WRITE_BATCH_BYTES};
 use crate::options::OutputChoice;
 use crate::resolve::{OutputPlan, ResolvedOutput, resolve_output};
 use celesta_composition::Rational;
@@ -169,6 +169,8 @@ pub(crate) struct ExportSession {
     leading_audio: u64,
     staged: Option<PathBuf>,
     interleaver: Option<Interleaver>,
+    /// Packet bytes written to the muxer per request at most.
+    batch_bytes: usize,
     muxer: Option<SessionId>,
 }
 
@@ -229,6 +231,7 @@ impl ExportSession {
             leading_audio: 0,
             staged: None,
             interleaver: None,
+            batch_bytes: WRITE_BATCH_BYTES,
             muxer: None,
         }
     }
@@ -627,25 +630,28 @@ impl ExportSession {
         Ok(())
     }
 
-    /// Writes every packet the interleaver has ready, in one request. A
-    /// spill file that cannot be read back fails the export: the packets
-    /// taken so far are lost with it.
+    /// Writes every packet the interleaver has ready, a batch of at most
+    /// [`WRITE_BATCH_BYTES`] per request, so a staged backlog is never all
+    /// in memory at once. A spill file that cannot be read back fails the
+    /// export: the packets taken in that batch are lost with it.
     fn flush(&mut self) -> Result<(), ExportError> {
         let Some(session) = self.muxer else {
             return Ok(());
         };
-        let Some(interleaver) = self.interleaver.as_mut() else {
-            return Ok(());
-        };
-        let ready = match interleaver.take_ready() {
-            Ok(ready) => ready,
-            Err(error) => return Err(self.cancellation.settle(error)),
-        };
-        if ready.is_empty() {
-            return Ok(());
+        loop {
+            let Some(interleaver) = self.interleaver.as_mut() else {
+                return Ok(());
+            };
+            let ready = match interleaver.take_ready(self.batch_bytes) {
+                Ok(ready) => ready,
+                Err(error) => return Err(self.cancellation.settle(error)),
+            };
+            if ready.is_empty() {
+                return Ok(());
+            }
+            self.write_packets(session, &ready)
+                .map_err(|source| self.error(MUXER_STAGE, source))?;
         }
-        self.write_packets(session, &ready)
-            .map_err(|source| self.error(MUXER_STAGE, source))
     }
 
     fn write_packets(
@@ -1399,5 +1405,63 @@ mod tests {
             files,
             [PathBuf::from("/out/film.mp4"), PathBuf::from("/out/other")]
         );
+    }
+
+    #[test]
+    fn a_staged_backlog_is_written_in_bounded_batches() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut session, log) = fake_session(Answers::default());
+        session
+            .open_video(
+                2,
+                2,
+                RATE,
+                &[PixelFormat::Rgba8],
+                &directory.path().join("staged.fake"),
+            )
+            .unwrap();
+        // Two frames in memory, the rest spilled, written 40 bytes at most at
+        // a time once the audio is decided.
+        session.interleaver = Some(session.interleaver.take().unwrap().with_spill_limit(32));
+        session.batch_bytes = 40;
+        frames(&mut session, 10);
+        assert_eq!(files_in(directory.path()).len(), 1, "a spill file");
+        session.no_audio().unwrap();
+        let tracks = session.finish().unwrap();
+        assert_eq!(tracks.audio, None);
+
+        let batches: Vec<Vec<TrackPacket>> = log_of(&log)
+            .into_iter()
+            .filter_map(|asked| match asked {
+                Asked::WritePackets(packets) => Some(packets),
+                _ => None,
+            })
+            .collect();
+        assert!(batches.len() >= 4, "{} batches", batches.len());
+        assert!(
+            batches
+                .iter()
+                .all(|batch| { batch.iter().map(|p| p.packet.bytes.len()).sum::<usize>() <= 40 })
+        );
+        let video: Vec<Vec<u8>> = batches
+            .into_iter()
+            .flatten()
+            .map(|packet| packet.packet.bytes)
+            .collect();
+        assert_eq!(
+            video,
+            (0..10).map(|index| vec![index; 16]).collect::<Vec<_>>()
+        );
+        assert!(
+            files_in(directory.path()).is_empty(),
+            "the spill file is gone"
+        );
+    }
+
+    fn files_in(directory: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect()
     }
 }

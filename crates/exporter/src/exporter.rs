@@ -195,6 +195,9 @@ impl Exporter {
         )?;
 
         if !session.encodes_audio() {
+            if self.options.loudness.is_some() {
+                progress(ExportProgress::Warning(NO_AUDIO_TRACK_LOUDNESS.to_owned()));
+            }
             session.no_audio()?;
             self.render_video(
                 project,
@@ -413,6 +416,10 @@ impl Exporter {
         Ok(())
     }
 }
+
+/// The warning for a loudness target on an output without an audio track.
+pub(crate) const NO_AUDIO_TRACK_LOUDNESS: &str =
+    "the output has no audio track, so there is no loudness to bring to the target";
 
 /// Stages the file a muxer writes beside `output`, with its extension.
 pub(crate) fn stage_beside(output: &Path) -> Result<StagedFile, ExportError> {

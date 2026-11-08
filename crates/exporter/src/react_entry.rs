@@ -1,7 +1,7 @@
 use crate::control::{AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress};
 use crate::encode::ExportSession;
 use crate::error::ExportError;
-use crate::exporter::{Exporter, stage_beside, video_file};
+use crate::exporter::{Exporter, NO_AUDIO_TRACK_LOUDNESS, stage_beside, video_file};
 use crate::loudness::finish_mix;
 use crate::project::build_audio_graph;
 use crate::range::{resolve_window, shifted_audio_graph};
@@ -277,11 +277,13 @@ impl Exporter {
         let graph = build_audio_graph(&react_audio, asset_root, project_refs)?;
         let mut loudness = None;
         if graph.clips.is_empty() || !session.encodes_audio() {
-            if graph.clips.is_empty() && self.options.loudness.is_some() {
-                progress(ExportProgress::Warning(
+            if self.options.loudness.is_some() {
+                progress(ExportProgress::Warning(if graph.clips.is_empty() {
                     "the composition has no sound, so there is no loudness to bring to the target"
-                        .to_owned(),
-                ));
+                        .to_owned()
+                } else {
+                    NO_AUDIO_TRACK_LOUDNESS.to_owned()
+                }));
             }
             session.no_audio()?;
         } else {

@@ -5,9 +5,9 @@ use celesta_codec_test::{
 };
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{
-    AudioLoudness, EncoderChoice, ExportCancellation, ExportError, ExportJob, ExportOptions,
-    ExportProgress, ExportRange, ExportedFile, Exporter, LoudnessTarget, OutputChoice,
-    ReactRuntimeOptions, SettingInput,
+    AudioChoice, AudioLoudness, EncoderChoice, ExportCancellation, ExportError, ExportJob,
+    ExportOptions, ExportProgress, ExportRange, ExportedFile, Exporter, LoudnessTarget,
+    OutputChoice, ReactRuntimeOptions, SettingInput,
 };
 use celesta_gpu_renderer::GpuRenderError;
 use celesta_media::{Decoder, MediaError, PixelFormat, measure_loudness};
@@ -1010,6 +1010,35 @@ fn a_silent_mix_reports_no_loudness_and_is_left_alone() {
     );
 }
 
+/// With no audio track there is no mix to bring to a loudness target, which
+/// the export says rather than ignoring the target.
+#[test]
+fn a_loudness_target_without_an_audio_track_is_a_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = transparent_project(directory.path());
+    let Some((output, measured, warnings)) = export_reporting(
+        &project,
+        directory.path(),
+        ExportOptions {
+            output: OutputChoice {
+                audio: AudioChoice::None,
+                ..OutputChoice::default()
+            },
+            loudness: Some(LoudnessTarget::STREAMING),
+            ..ExportOptions::default()
+        },
+        "silent.mp4",
+    ) else {
+        return;
+    };
+    assert_eq!(measured, None);
+    assert_eq!(
+        warnings,
+        ["the output has no audio track, so there is no loudness to bring to the target"]
+    );
+    assert!(read(&output).audio.is_none());
+}
+
 #[test]
 fn exports_a_silent_react_entry_to_webm() {
     let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
@@ -1580,9 +1609,9 @@ fn hanging_media_folder() -> PathBuf {
 
 /// Writes the media plugin `hang` and registers it: a video encoder
 /// `video` writing `ctst`, which the test codec's muxer takes, whose
-/// program answers `hello`, `describe` and `openVideoEncoder`, then never
-/// answers `encodeVideoFrame`. The program writes its process id to `pid`
-/// once it has answered.
+/// program answers `hello`, `describe` and `openVideoEncoder`, each once it
+/// is asked, then never answers `encodeVideoFrame`. The program writes its
+/// process id to `pid` once it has read that first `encodeVideoFrame`.
 #[cfg(unix)]
 pub fn hanging_media_plugin() -> celesta_media::RegisteredPlugin {
     use celesta_media::{ComponentDescription, ComponentKind};
@@ -1615,26 +1644,46 @@ pub fn hanging_media_plugin() -> celesta_media::RegisteredPlugin {
         transports: vec!["pipe".to_owned()],
         ..ComponentDescription::unavailable(ComponentKind::VideoEncoder, "video", "")
     };
-    let mut answers = Vec::new();
-    for answer in [
-        serde_json::json!({ "type": "hello", "protocol": 2, "roles": ["media"] }),
-        serde_json::json!({ "type": "described", "components": [video] }),
-        serde_json::json!({
-            "type": "videoEncoderOpened", "session": 1, "input": "rgba8", "alpha": false,
-        }),
-    ] {
-        write_message(&mut answers, &Message::new(answer)).unwrap();
-    }
-    std::fs::write(directory.join("answers"), answers).unwrap();
-    let program = directory.join("bin/p");
-    std::fs::write(
-        &program,
-        format!(
-            "#!/bin/sh\ncat answers\necho $$ > '{}'\nexec sleep 60\n",
-            directory.join("pid").display()
+    // Each answer waits for its request. A message is a header and a
+    // payload, each after its length as a little-endian u32; `dd bs=1` reads
+    // exactly the bytes asked for, so nothing past the request is taken.
+    let answers = [
+        (
+            "hello",
+            serde_json::json!({ "type": "hello", "protocol": 2, "roles": ["media"] }),
         ),
-    )
-    .unwrap();
+        (
+            "described",
+            serde_json::json!({ "type": "described", "components": [video] }),
+        ),
+        (
+            "opened",
+            serde_json::json!({
+                "type": "videoEncoderOpened", "session": 1, "input": "rgba8", "alpha": false,
+            }),
+        ),
+    ];
+    let mut script = String::from(
+        "#!/bin/sh\n\
+         part() {\n\
+         \x20 n=$(dd bs=1 count=4 2>/dev/null | od -An -tu4 | tr -d ' ')\n\
+         \x20 if [ \"${n:-0}\" -gt 0 ]; then dd bs=1 count=\"$n\" of=/dev/null 2>/dev/null; fi\n\
+         }\n",
+    );
+    for (name, answer) in answers {
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &Message::new(answer)).unwrap();
+        std::fs::write(directory.join(name), bytes).unwrap();
+        script.push_str(&format!("part; part; cat {name}\n"));
+    }
+    // The pid appears once the first `encodeVideoFrame`'s header is read:
+    // from then on a frame waits on the plugin.
+    script.push_str(&format!(
+        "part; echo $$ > '{}'\nexec sleep 60\n",
+        directory.join("pid").display()
+    ));
+    let program = directory.join("bin/p");
+    std::fs::write(&program, script).unwrap();
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let (plugins, errors) = celesta_plugin_host::discover(&[directory]);
@@ -1664,6 +1713,7 @@ fn cancel_ends_a_frame_waiting_on_a_media_plugin_that_hangs(project: &Project, a
         let cancellation = cancellation.clone();
         let pid = pid.clone();
         std::thread::spawn(move || {
+            // Once the plugin has read the frame, the export waits on it.
             let deadline = Instant::now() + Duration::from_secs(60);
             while !pid.exists() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
