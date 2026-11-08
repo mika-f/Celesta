@@ -394,7 +394,7 @@ mod tests {
     fn installed(plugins: Vec<PluginEntry>) -> InstalledPlugins {
         InstalledPlugins {
             plugins,
-            waiting: Vec::new(),
+            ..InstalledPlugins::default()
         }
     }
 

@@ -29,7 +29,9 @@ fn the_folder_is_a_media_plugin_for_this_platform() {
 
     // Named explicitly, it is the first media plugin, ahead of any other
     // installed (such as one on CELESTA_PLUGIN_PATH), with its one decoder.
-    let media = InstalledPlugins::find(&[folder.to_path_buf()], &[]).0.media();
+    let media = InstalledPlugins::find(&[folder.to_path_buf()], &[])
+        .0
+        .media();
     let Some(plugin) = media.first() else {
         panic!("no media plugin in the folder");
     };
