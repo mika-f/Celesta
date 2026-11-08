@@ -2,7 +2,7 @@
 
 use crate::codec::protocol::{self, ROLES, SharedFrames, decode_error};
 use crate::codec::{
-    CodecFactory, Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, VideoRequest,
+    Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, ProviderFactory, VideoRequest,
 };
 use crate::error::MediaError;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
@@ -131,8 +131,8 @@ impl MediaProcess {
         Ok(Self { child, frames })
     }
 
-    /// Makes a [`CodecFactory`] that starts `executable` for each backend.
-    pub fn factory(executable: PathBuf, directory: PathBuf) -> CodecFactory {
+    /// Makes a [`ProviderFactory`] that starts `executable` for each backend.
+    pub fn factory(executable: PathBuf, directory: PathBuf) -> ProviderFactory {
         Arc::new(move |kill| {
             Ok(
                 Box::new(MediaProcess::start(&executable, &directory, kill)?)

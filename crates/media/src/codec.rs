@@ -3,10 +3,11 @@
 //! Celesta links no codec library. Probing, decoding, encoding, and muxing
 //! go through a [`MediaProvider`]: a media plugin's process
 //! ([`MediaProcess`], speaking [`protocol`]), or, in tests, a provider in
-//! the same process. The application chooses the codec once with
-//! [`set_codec`]; each [`MediaBackend`](crate::MediaBackend) opens its own
-//! instance of the codec chosen when it first needs one. See
-//! `docs/handoff/2026-11-05-codec-plugin.md`.
+//! the same process. The application lists the media plugins once with
+//! [`set_registry`](crate::set_registry); each
+//! [`MediaBackend`](crate::MediaBackend) starts its own instance of a plugin
+//! when it first needs one, and routes each file to one of the plugins'
+//! decoders. See `docs/handoff/2026-11-05-codec-plugin.md`.
 
 mod process;
 pub mod protocol;
@@ -19,7 +20,7 @@ use celesta_composition::Rational;
 use celesta_plugin_host::PluginKillSwitch;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// What a media plugin does, asked one request at a time. Every path is
 /// absolute and local. `decoder` is the id of the plugin's decoder component
@@ -162,30 +163,10 @@ pub struct MuxRequest {
     pub lead_in_frames: usize,
 }
 
-/// Makes a codec instance, each time a [`crate::MediaBackend`] needs one. A
-/// codec that runs in a process of its own registers it with the switch it
-/// is given, before it says `hello`, so killing the switch also ends a slow
-/// start; a codec in this process ignores it.
-pub type CodecFactory =
+/// Starts an instance of a media plugin, each time a [`crate::MediaBackend`]
+/// first needs that plugin. A plugin that runs in a process of its own
+/// registers it with the switch it is given, before it says `hello`, so
+/// killing the switch also ends a slow start; a provider in this process
+/// ignores it.
+pub type ProviderFactory =
     Arc<dyn Fn(&PluginKillSwitch) -> Result<Box<dyn MediaProvider>, MediaError> + Send + Sync>;
-
-static CODEC: RwLock<Option<CodecFactory>> = RwLock::new(None);
-
-/// Chooses the codec [`crate::MediaBackend::new`]'s backends open: each opens the
-/// one chosen when it first needs one, so a backend made earlier that has
-/// not opened one yet gets this choice, and one already open keeps its own.
-/// `None` leaves none, so reading or writing media fails with
-/// [`MediaError::NoCodec`].
-pub fn set_codec(factory: Option<CodecFactory>) {
-    *CODEC
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = factory;
-}
-
-/// The codec [`set_codec`] chose.
-pub fn codec() -> Option<CodecFactory> {
-    CODEC
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-}

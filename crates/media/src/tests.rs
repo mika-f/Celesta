@@ -15,6 +15,7 @@ use celesta_composition::{
 };
 use std::collections::HashMap;
 
+mod backend;
 mod loudness;
 
 #[test]

@@ -1,5 +1,5 @@
 //! Media for Celesta: probing, video frames, audio decoding, and encoding
-//! and muxing exports through a media plugin (see [`set_codec`]), and the
+//! and muxing exports through media plugins (see [`set_registry`]), and the
 //! audio mix, ducking, time stretching, and loudness Celesta does itself. No
 //! codec library is linked.
 
@@ -11,6 +11,7 @@ mod duck;
 mod error;
 mod loudness;
 mod mix;
+mod registry;
 mod stretch;
 #[cfg(test)]
 mod tests;
@@ -18,9 +19,9 @@ mod types;
 
 pub use backend::MediaBackend;
 pub use codec::{
-    CodecFactory, Container, EncoderId, EncoderSettings, FrameTransport, MediaProcess,
-    MediaProvider, MuxRequest, PixelFormat, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE, Sequential,
-    VideoRequest, set_codec, timestamps_match,
+    Container, EncoderId, EncoderSettings, FrameTransport, MediaProcess, MediaProvider, MuxRequest,
+    PixelFormat, ProviderFactory, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE, Sequential,
+    VideoRequest, timestamps_match,
 };
 pub use color::{DynamicRange, VideoColor};
 pub use decoder::{AudioDecoder, VideoFrameDecoder};
@@ -33,5 +34,9 @@ pub use loudness::{
 pub use mix::{
     frame_byte_len, mix_audio_graph, mix_audio_graph_cancellable,
     mix_audio_graph_unclipped_cancellable, mix_audio_graph_with_ducks_cancellable, video_seconds,
+};
+pub use registry::{
+    ComponentRef, DecoderUse, InvalidComponentRef, MediaRegistry, RegisteredPlugin, registry,
+    set_registry,
 };
 pub use types::{AudioBuffer, AudioStream, MediaProbe, VideoFrame, VideoStream};

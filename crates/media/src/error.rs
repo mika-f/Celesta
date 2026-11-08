@@ -9,10 +9,10 @@ pub enum MediaError {
     /// what it answered that does not fit the request.
     #[error("{0}")]
     Codec(String),
-    /// No media plugin is installed to encode with (see [`crate::set_codec`]).
+    /// No media plugin is installed to encode with (see [`crate::set_registry`]).
     #[error("no codec plugin is installed, so video and audio files cannot be read or written")]
     NoCodec,
-    /// No media decoder is installed (see [`crate::set_codec`]).
+    /// No media decoder is installed (see [`crate::set_registry`]).
     #[error("no media decoder is installed, so video and audio files cannot be read")]
     NoDecoder,
     /// No decoder reads `path`: the decoders `tried` (by id, in order) each
