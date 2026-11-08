@@ -707,8 +707,10 @@ mod tests {
         MediaRegistry::new(plugins)
     }
 
+    /// `u`, `b`, `p`, in the order discovery finds them: the user's
+    /// plugins first, so bundled-before-user ranking has to sort.
     fn all() -> MediaRegistry {
-        registry(vec![bundled(), user(), project()])
+        registry(vec![user(), bundled(), project()])
     }
 
     fn resolve(
@@ -766,7 +768,7 @@ mod tests {
         let registry = all();
         let resolved = resolve(&registry, &OutputChoice::default(), "film.MP4").unwrap();
         assert_eq!(resolved.muxer.reference, reference("b/mp4"));
-        assert_eq!(resolved.muxer.plugin, 0);
+        assert_eq!(resolved.muxer.plugin, 1);
         assert_eq!(resolved.muxer.entry, mp4());
         assert_eq!(resolved.video.reference, reference("b/x264"));
         assert_eq!(resolved.video.name, "H.264 (x264)");
@@ -795,12 +797,29 @@ mod tests {
         };
         let resolved = resolve(&registry, &choice, "film.mp4").unwrap();
         assert_eq!(resolved.muxer.reference, reference("u/mp4"));
-        assert_eq!(resolved.muxer.plugin, 1);
+        assert_eq!(resolved.muxer.plugin, 0);
         assert_eq!(resolved.video.reference, reference("u/h264"));
         // `u` has no audio encoder, so a bundled one is next.
         assert_eq!(
             resolved.audio.map(|audio| audio.reference),
             Some(reference("b/aac"))
+        );
+    }
+
+    #[test]
+    fn a_named_project_muxer_brings_its_own_encoders() {
+        let registry = all();
+        let choice = OutputChoice {
+            muxer: Some(reference("p/mp4")),
+            ..OutputChoice::default()
+        };
+        let resolved = resolve(&registry, &choice, "film.mp4").unwrap();
+        assert_eq!(resolved.muxer.reference, reference("p/mp4"));
+        assert_eq!(resolved.muxer.plugin, 2);
+        assert_eq!(resolved.video.reference, reference("p/h264"));
+        assert_eq!(
+            resolved.audio.map(|audio| audio.reference),
+            Some(reference("p/aac"))
         );
     }
 
@@ -967,7 +986,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(asked, [0]);
+        assert_eq!(asked, [1]);
     }
 
     #[test]
