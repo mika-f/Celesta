@@ -10,7 +10,7 @@ fn main() {
         println!("{}", printed_manifest());
         return;
     }
-    if let Err(error) = celesta_media::codec::protocol::serve(
+    if let Err(error) = celesta_media::protocol::serve(
         &mut FfmpegCodec::new(),
         PLUGIN_ID,
         env!("CARGO_PKG_VERSION"),

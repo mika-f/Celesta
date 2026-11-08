@@ -1,35 +1,41 @@
 //! Celesta's FFmpeg media plugin: probing, decoding, encoding, and muxing
-//! through the linked FFmpeg libraries (`ez-ffmpeg`).
+//! through the linked FFmpeg libraries (`ez-ffmpeg` for decoding,
+//! libavcodec through `ffmpeg-sys-next` for encoding).
 //!
 //! The `celesta-codec-ffmpeg` program serves [`FfmpegCodec`] over the media
-//! role of the plugin protocol (`celesta_media::codec::protocol`), so
-//! Celesta itself links no FFmpeg: an FFmpeg build with GPL components (such
-//! as libx264) makes only this program GPL licensed. Its one decoder,
-//! [`DECODER_ID`], reads whatever FFmpeg does. Tests and tools may also use
+//! role of the plugin protocol (`celesta_media::protocol`), so Celesta
+//! itself links no FFmpeg: an FFmpeg build with GPL components (such as
+//! libx264) makes only this program GPL licensed. Its one decoder,
+//! [`DECODER_ID`], reads whatever FFmpeg does; its video encoders are
+//! `libx264`, `prores`, and `vp9`. Tests and tools may also use
 //! [`FfmpegCodec`] in their own process, through [`install`].
 
 mod color;
+mod components;
 mod converted;
 mod decoder;
-mod encoder;
+mod ffi;
+mod h264;
 mod probe;
 mod sequential;
 #[cfg(test)]
 mod tests;
+mod video_encoder;
 
 pub use decoder::FfmpegBackend;
 
 use celesta_media::{
-    AudioBuffer, AudioDecoder, Container, EncoderId, EncoderSettings, MediaError, MediaProbe,
-    MediaProvider, MediaRegistry, MuxRequest, ProviderFactory, RegisteredPlugin, VideoFrame,
-    VideoRequest,
+    AudioBuffer, AudioDecoder, ComponentDescription, Decoder, Encoded, MediaError, MediaProbe,
+    MediaProvider, MediaRegistry, ProviderFactory, RegisteredPlugin, SessionId, VideoEncoder,
+    VideoEncoderOpened, VideoEncoderRequest, VideoFrame, VideoRequest,
 };
-use celesta_plugin_host::{MediaDecoderEntry, MediaOrigin};
-use ez_ffmpeg::VideoWriter;
+use celesta_plugin_host::{MediaManifest, MediaOrigin};
+use components::VideoCodec;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use video_encoder::VideoSession;
 
 /// The id the plugin's manifest and `hello` give.
 pub const PLUGIN_ID: &str = "ffmpeg";
@@ -37,15 +43,16 @@ pub const PLUGIN_ID: &str = "ffmpeg";
 /// The id of the plugin's one decoder, which reads whatever FFmpeg does.
 pub const DECODER_ID: &str = "ffmpeg";
 
-/// The plugin's manifest source, which declares its decoder.
+/// The plugin's manifest source, which declares its components.
 const PLUGIN_JSON: &str = include_str!("../plugin.json");
 
 /// A [`MediaProvider`] on the linked FFmpeg libraries.
 #[derive(Default)]
 pub struct FfmpegCodec {
     decoder: FfmpegBackend,
-    encoders: HashMap<EncoderId, VideoWriter>,
-    next: u64,
+    video: HashMap<SessionId, VideoSession>,
+    /// The last session number given, one count for every kind.
+    last: u64,
 }
 
 impl FfmpegCodec {
@@ -53,16 +60,26 @@ impl FfmpegCodec {
         Self::default()
     }
 
-    /// A [`ProviderFactory`] making an [`FfmpegCodec`] in this process.
+    /// A [`ProviderFactory`] making an [`FfmpegCodec`] in this process,
+    /// whatever it is for.
     pub fn factory() -> ProviderFactory {
-        Arc::new(|_| Ok(Box::new(Self::new()) as Box<dyn MediaProvider>))
+        Arc::new(|_kill, _use| Ok(Box::new(Self::new()) as Box<dyn MediaProvider>))
     }
 
-    fn encoder(&mut self, encoder: EncoderId) -> Result<&mut VideoWriter, MediaError> {
-        self.encoders
-            .get_mut(&encoder)
-            .ok_or_else(|| MediaError::Codec(format!("no open encoder {}", encoder.0)))
+    fn next_session(&mut self) -> SessionId {
+        self.last += 1;
+        SessionId(self.last)
     }
+
+    fn video_session(&mut self, session: SessionId) -> Result<&mut VideoSession, MediaError> {
+        self.video
+            .get_mut(&session)
+            .ok_or_else(|| no_session(session))
+    }
+}
+
+fn no_session(session: SessionId) -> MediaError {
+    MediaError::Codec(format!("no open video encoder {}", session.0))
 }
 
 /// `plugin.json`, parsed.
@@ -84,19 +101,23 @@ pub fn printed_manifest() -> String {
     .to_string()
 }
 
-/// The decoders `plugin.json` declares.
-fn decoders() -> Vec<MediaDecoderEntry> {
-    serde_json::from_value(plugin_json()["media"]["decoders"].clone())
-        .expect("plugin.json declares its decoders")
+/// The components `plugin.json` declares.
+fn manifest() -> MediaManifest {
+    let (manifest, problems) = MediaManifest::from_json(plugin_json()["media"].clone());
+    assert!(problems.is_empty(), "plugin.json is valid: {problems:?}");
+    manifest
 }
 
 /// The plugin as a media plugin made in this process: bundled, with the
-/// decoders its manifest declares.
+/// components its manifest declares.
 pub fn registered() -> RegisteredPlugin {
     RegisteredPlugin {
         id: PLUGIN_ID.to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
         origin: MediaOrigin::Bundled,
-        decoders: decoders(),
+        directory: PathBuf::new(),
+        executable: None,
+        media: manifest(),
         factory: FfmpegCodec::factory(),
     }
 }
@@ -132,6 +153,20 @@ fn decoded<T>(result: Result<T, MediaError>) -> Result<T, MediaError> {
 }
 
 impl MediaProvider for FfmpegCodec {
+    fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+        Ok(components::describe())
+    }
+
+    fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+        Some(self)
+    }
+
+    fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
+        Some(self)
+    }
+}
+
+impl Decoder for FfmpegCodec {
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
         check_decoder(decoder)?;
         self.decoder.probe(path).cloned()
@@ -164,39 +199,48 @@ impl MediaProvider for FfmpegCodec {
         check_decoder(decoder)?;
         decoded(self.decoder.decode_audio(path, sample_rate, channels))
     }
+}
 
-    fn check_encoder(&mut self, container: Container) -> Result<(), MediaError> {
-        encoder::check_encoder(container)
+impl VideoEncoder for FfmpegCodec {
+    fn open_video(
+        &mut self,
+        request: &VideoEncoderRequest<'_>,
+    ) -> Result<VideoEncoderOpened, MediaError> {
+        let codec = VideoCodec::from_id(request.component).ok_or_else(|| {
+            MediaError::Codec(format!(
+                "no video encoder {:?} in {PLUGIN_ID}",
+                request.component
+            ))
+        })?;
+        let opened = video_encoder::open(codec, request)?;
+        let session = self.next_session();
+        self.video.insert(session, opened.session);
+        Ok(VideoEncoderOpened {
+            session,
+            input: opened.input,
+            alpha: opened.alpha,
+        })
     }
 
-    fn open_encoder(&mut self, settings: &EncoderSettings) -> Result<EncoderId, MediaError> {
-        let writer = encoder::open_video_writer(settings)?;
-        self.next += 1;
-        let id = EncoderId(self.next);
-        self.encoders.insert(id, writer);
-        Ok(id)
+    fn encode_video(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        frame: Vec<u8>,
+    ) -> Result<Encoded, MediaError> {
+        self.video_session(session)?.encode(pts, &frame)
     }
 
-    fn encode_frame(&mut self, encoder: EncoderId, pixels: Vec<u8>) -> Result<(), MediaError> {
-        encoder::write_frame(self.encoder(encoder)?, pixels)
+    fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+        let mut state = self
+            .video
+            .remove(&session)
+            .ok_or_else(|| no_session(session))?;
+        state.finish()
     }
 
-    fn finish_encoder(&mut self, encoder: EncoderId) -> Result<(), MediaError> {
-        let writer = self
-            .encoders
-            .remove(&encoder)
-            .ok_or_else(|| MediaError::Codec(format!("no open encoder {}", encoder.0)))?;
-        encoder::finish(writer)
-    }
-
-    fn abort_encoder(&mut self, encoder: EncoderId) {
-        if let Some(writer) = self.encoders.remove(&encoder) {
-            writer.abort();
-        }
-    }
-
-    fn mux_audio(&mut self, request: &MuxRequest) -> Result<(), MediaError> {
-        encoder::mux_audio(request)
+    fn abort_video(&mut self, session: SessionId) {
+        self.video.remove(&session);
     }
 }
 

@@ -21,8 +21,7 @@
 
 use celesta_composition::Rational;
 use celesta_media::{
-    Container, EncoderSettings, MediaBackend, MediaProcess, MediaRegistry, PixelFormat,
-    ProviderFactory, RegisteredPlugin, VideoFrameDecoder,
+    MediaBackend, MediaProcess, MediaRegistry, ProviderFactory, RegisteredPlugin, VideoFrameDecoder,
 };
 use std::env;
 use std::path::{Path, PathBuf};
@@ -160,63 +159,6 @@ fn decode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
 /// the encoder's own work hides less of the transport) after one frame that
 /// opens the encoder, and the encoder finished. The host's CPU time covers
 /// the whole run, the encoder's threads in this process included.
-fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
-    let opened = cpu();
-    let mut backend = backend(factory);
-    let probe = backend.probe(video).expect("the video probes").clone();
-    let stream = probe.video.expect("the file has a video stream");
-    let (width, height) = (stream.width, stream.height);
-    let output = tempfile::Builder::new()
-        .suffix(".mp4")
-        .tempfile()
-        .expect("a temporary file");
-    let encoder = backend
-        .open_encoder(&EncoderSettings {
-            output: output.path().to_owned(),
-            width,
-            height,
-            frame_rate: Rational::new(30, 1),
-            input: PixelFormat::Rgba8,
-            container: Container::Mp4,
-            preset: "ultrafast".to_owned(),
-            crf: 23,
-            bit_depth: 8,
-        })
-        .expect("the encoder opens");
-    let frame = |index: u32| -> Vec<u8> {
-        let mut pixels = vec![0u8; width as usize * height as usize * 4];
-        for (offset, pixel) in pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-            let value = (offset as u32).wrapping_add(index * 7) as u8;
-            *pixel = [value, value / 2, 255 - value, 255];
-        }
-        pixels
-    };
-    let pixels: Vec<Vec<u8>> = (0..4).map(frame).collect();
-    backend
-        .encode_frame(encoder, pixels[0].clone())
-        .expect("a frame encodes");
-    // The whole loop is timed, copying each frame (as the renderer's
-    // readback makes one) included: an encoder in this process goes on
-    // encoding on its own threads while the next frame is copied, so timing
-    // only `encode_frame` would leave its work out.
-    let started = Instant::now();
-    let before = cpu();
-    for index in 1..=frames {
-        let frame = pixels[index as usize % pixels.len()].clone();
-        backend
-            .encode_frame(encoder, frame)
-            .expect("a frame encodes");
-    }
-    backend
-        .finish_encoder(encoder)
-        .expect("the encoder finishes");
-    let wall = started.elapsed();
-    let host = since(before, |(own, _)| own);
-    drop(backend);
-    Timing {
-        size: (width, height),
-        wall,
-        host,
-        plugin: since(opened, |(_, children)| children),
-    }
+fn encode(_factory: ProviderFactory, _video: &Path, _frames: u32) -> Timing {
+    unimplemented!("ported in Task 13")
 }
