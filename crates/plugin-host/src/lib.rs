@@ -22,7 +22,7 @@ pub mod stderr;
 pub use approval::{
     Allowed, PendingPlugin, fingerprint, from_the_internet, zone_is_internet, zone_text,
 };
-pub use child::{HELLO_TIMEOUT, PluginChild, RequestError};
+pub use child::{DeadlineFrom, HELLO_TIMEOUT, PluginChild, RequestError};
 pub use console::without_console_window;
 pub use host::PluginHost;
 pub use kill::{PluginKillHandle, PluginKillSwitch, kill_every_plugin};
