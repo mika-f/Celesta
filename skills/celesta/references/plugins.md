@@ -119,10 +119,13 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   its extension; the hint says how to install the plugin), and a still
   export with `no_decoder`; a file no decoder reads fails with
   `unsupported_media` (see [export.md](export.md)).
-- Decoded frames come through memory shared with the plugin's process when
-  the plugin accepts it (the `ffmpeg` plugin does), else through its pipe.
-  `CELESTA_CODEC_SHARED_MEMORY=0` keeps every frame in the pipe, for a media
-  plugin that misbehaves with it.
+- Video frames, decoded or sent to an export's video encoder (up to three
+  ahead, so rendering and encoding overlap), cross memory shared with the
+  plugin's process when the plugin accepts it (the `ffmpeg` plugin does);
+  otherwise, and for frames too large (decoded over 4096×2560, exported over
+  256 MiB a frame), they go through its pipe.
+  `CELESTA_CODEC_SHARED_MEMORY=0` keeps every frame, decoded or exported, in
+  the pipe, for a media plugin that misbehaves with it.
 
 ## The VRM plugin
 

@@ -103,7 +103,7 @@ compositions: no package a composition imports depends on them, though
 | `celesta-composition` | Renderer-independent scene types, exact rational time, transforms, animation, text styles, and audio graph types. |
 | `celesta-project` | Project loading and semantic validation. |
 | `celesta-evaluator` | Deterministic project-to-`Scene` and project-to-`AudioGraph` evaluation. |
-| `celesta-media` | Media through plugins: probing, exact-time video frames, and audio decoding (`MediaBackend`, decoder routing), the component model (`MediaRegistry` with its `describe` cache, `MediaProvider` and the `Decoder`, `VideoEncoder`, `AudioEncoder`, and `Muxer` traits, `MediaProcess`, plugin protocol 2's messages), the settings schema and its validation, and audio resampling; plus the audio mix, ducking, time stretching, and loudness. Links no codec library. |
+| `celesta-media` | Media through plugins: probing, exact-time video frames, and audio decoding (`MediaBackend`, decoder routing), the component model (`MediaRegistry` with its `describe` cache, `MediaProvider` and the `Decoder`, `VideoEncoder`, `AudioEncoder`, and `Muxer` traits, `MediaProcess`, plugin protocol 2's messages), pipelined export requests (`Pipeline`, `PIPE_WINDOW`, and the ring of frame slots an export process gets, `ProviderUse::Export { ring }` sized by `ring_layout`), the settings schema and its validation, and audio resampling; plus the audio mix, ducking, time stretching, and loudness. Links no codec library. |
 | `celesta-codec-ffmpeg` | `plugins/ffmpeg`, the FFmpeg media plugin: a program serving protocol 2 (its decoder `ffmpeg/ffmpeg`, with HDR tone mapping; video encoders `libx264`, `prores`, `vp9`; audio encoders `aac`, `opus`, `pcm`; muxers `mp4`, `mov`, `webm`, on libavcodec and libavformat) and answering `--manifest` for the `cargo install` sibling, and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. A member of the plugins workspace, `plugins/Cargo.toml`, with Celesta's version; built into a plugin directory by `scripts/plugins/build.mts`. |
 | `celesta-codec-test` | The lossless test media plugin the core's tests read and write media with, in-process (`install`) or as the program `celesta-codec-test` in a temporary plugin folder (`TestCodecPlugin`): a decoder, `celesta-test-codec/test`, which lists no extensions and reads test codec and WAV files of any name, a lossless video encoder, a PCM audio encoder, and its own muxer; not published. |
 | `celesta-budoux` | Japanese phrase segmentation for text line breaking. |
@@ -118,8 +118,8 @@ compositions: no package a composition imports depends on them, though
 | `celesta-source-edit` | Locates JSX elements in user TSX source and applies byte-span edits for the editor's write-back. |
 | `celesta-remote` | Asset path resolution, remote download cache, and stylesheet font discovery. |
 | `celesta-react-bridge` | Long-lived Node process and frame/component requests over stdin/stdout. |
-| `celesta-plugin` | Content plugins' 2D meshes and 3D scenes, the `ContentProvider` interface, and the plugin protocol's framing and `hello` (`serve_requests`, which media plugins use too, and `protocol_for_roles`: 1 for content, 2 for media); depends on no Celesta crate (serde, serde_json, thiserror, and libc). See [`docs/handoff/2026-11-01-plugin-system.md`](docs/handoff/2026-11-01-plugin-system.md) and [`docs/handoff/2026-11-03-plugin-scene-content.md`](docs/handoff/2026-11-03-plugin-scene-content.md). |
-| `celesta-plugin-host` | Finds plugin directories, decides which may run (the user's settings: trusted projects, allowed plugins), runs each content plugin in its own process for the renderer, and lists the media plugins and their components (`InstalledPlugins::media`, with `MediaOrigin`). |
+| `celesta-plugin` | Content plugins' 2D meshes and 3D scenes, the `ContentProvider` interface, and the plugin protocol's framing and `hello` (`serve_requests`, which media plugins use too, and `protocol_for_roles`: 1 for content, 2 for media), and the memory a media process shares with Celesta (`shared::SharedMemory`: one slot for decoding, or a `Ring` of slots for an export's frames, laid out by `RingLayout`); depends on no Celesta crate (serde, serde_json, thiserror, and libc). See [`docs/handoff/2026-11-01-plugin-system.md`](docs/handoff/2026-11-01-plugin-system.md) and [`docs/handoff/2026-11-03-plugin-scene-content.md`](docs/handoff/2026-11-03-plugin-scene-content.md). |
+| `celesta-plugin-host` | Finds plugin directories, decides which may run (the user's settings: trusted projects, allowed plugins), runs each content plugin in its own process for the renderer (`PluginChild`, which media processes use too; its send window keeps several requests in flight, answered in order, each with its own deadline, and `request` is the window of one), and lists the media plugins and their components (`InstalledPlugins::media`, with `MediaOrigin`). |
 | `celesta-plugin-flag` | `examples/plugins/flag`, a sample plugin program; with `beep-voice` beside it, built by `scripts/plugins/build.mts`. |
 | `celesta-plugin-turntable` | `examples/plugins/turntable`, a sample plugin program that returns a 3D scene; built by `scripts/plugins/build.mts`. |
 | `celesta-plugin-vrm` | `plugins/vrm`, the VRM avatar plugin's program, with `<Vrm>` in `plugins/vrm/js` (`celesta-plugin-vrm-js`). A member of the first-party plugins' workspace, `plugins/Cargo.toml`, which the root workspace excludes; built into a plugin directory by `scripts/plugins/build.mts`. See [`docs/handoff/2026-11-03-plugin-vrm.md`](docs/handoff/2026-11-03-plugin-vrm.md). |
@@ -369,6 +369,18 @@ media plugin beside an executable in a Cargo build folder such as
 exports video give it the test codec's program instead, so they need
 `celesta-codec-test` built, which `cargo test --workspace` does; otherwise
 run `cargo build -p celesta-codec-test` first.
+
+To see how long an export's audio mix takes next to its render, set
+`CELESTA_EXPORT_TIMING=1`; the export then prints one line on stderr:
+
+```text
+celesta: timing: render 4.50 s for 300 frames; mix 1.25 s, done at frame 87; staged peak 12.0 MB; spilled no
+```
+
+That is the render's and the mix's times, how many frames the render had sent
+when it took the mix (`done after the render` when it had sent every frame
+first; `mix none` without a mix), the most packet bytes the interleaver held
+at once, and whether it spilled them to a file.
 
 An existing checkout from before the codec moved to `plugins/ffmpeg` may
 still have `celesta-codec-ffmpeg` in `target/<profile>`. Celesta ignores it
