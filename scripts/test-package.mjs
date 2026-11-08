@@ -68,9 +68,10 @@ export default function Root() {
   // Celesta links no FFmpeg: the MP4 below is written by the bundled codec
   // plugin, which carries the GPL its libx264 needs.
   const codec = join(packageDirectory, mac ? 'Contents/PlugIns/ffmpeg' : 'plugins/ffmpeg');
-  assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the codec plugin');
+  assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the media plugin');
   const codecManifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
-  assert.ok(codecManifest.roles?.includes('codec'), 'The codec plugin must have the codec role');
+  assert.ok(codecManifest.roles?.includes('media'), 'The media plugin must have the media role');
+  assert.ok(codecManifest.media?.decoders?.length > 0, 'The media plugin must offer at least one decoder');
   const programs = Object.values(codecManifest.executable ?? {});
   assert.equal(programs.length, 1, 'The codec plugin must name exactly one executable');
   assert.ok(existsSync(join(codec, programs[0])), `The codec plugin's program ${programs[0]} must exist`);

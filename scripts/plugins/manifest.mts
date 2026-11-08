@@ -19,6 +19,8 @@ export interface PluginSource {
   /** Files, relative to the plugin's folder, copied by name into licenses/. */
   licenses?: string[];
   components?: object[];
+  /** What a media plugin offers: its decoders, copied as they are. */
+  media?: object;
 }
 
 /** What the build made. */
@@ -38,7 +40,8 @@ export interface Built {
 export interface PluginManifest {
   id: string;
   version: string;
-  protocol: 1;
+  /** 2 for a plugin with the `media` role, 1 for the rest. */
+  protocol: 1 | 2;
   /** The Celesta versions it works with: {@link celestaRange} of the one it was built against. */
   celesta: string;
   roles?: string[];
@@ -46,10 +49,11 @@ export interface PluginManifest {
   module?: 'js/index.js';
   types?: 'js/index.d.ts';
   components?: object[];
+  media?: object;
 }
 
 /** The keys plugin.json may have, as PluginSource lists them. */
-const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components'];
+const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components', 'media'];
 
 /**
  * Celesta's rule for a plugin id (`is_valid_id` in
@@ -85,6 +89,12 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
       `${sourcePath}: id ${JSON.stringify(id)} may have only lowercase ASCII letters, digits, -, _, and ., starting with a letter or digit`,
     );
   }
+  if (id === 'builtin') {
+    throw new Error(`${sourcePath}: the id "builtin" is reserved for the components Celesta has built in`);
+  }
+  if (source.roles?.includes('content') && source.roles.includes('media')) {
+    throw new Error(`${sourcePath}: a plugin is either content or media`);
+  }
   const components: unknown = source.components;
   if (
     components !== undefined &&
@@ -114,12 +124,13 @@ export function pluginManifest(
   return {
     id: source.id,
     version: pluginVersion(source, cargoVersion, sourcePath),
-    protocol: 1,
+    protocol: source.roles?.includes('media') ? 2 : 1,
     celesta: celestaRange(celestaVersion),
     ...(source.roles ? { roles: source.roles } : {}),
     ...(executable ? { executable } : {}),
     ...(source.module !== undefined ? { module: 'js/index.js', types: 'js/index.d.ts' } : {}),
     ...(source.components ? { components: source.components } : {}),
+    ...(source.media ? { media: source.media } : {}),
   };
 }
 
