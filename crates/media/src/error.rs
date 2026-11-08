@@ -9,9 +9,6 @@ pub enum MediaError {
     /// what it answered that does not fit the request.
     #[error("{0}")]
     Codec(String),
-    /// No media plugin is installed to encode with (see [`crate::set_registry`]).
-    #[error("no codec plugin is installed, so video and audio files cannot be read or written")]
-    NoCodec,
     /// No media decoder is installed (see [`crate::set_registry`]).
     #[error("no media decoder is installed, so video and audio files cannot be read")]
     NoDecoder,
@@ -21,18 +18,14 @@ pub enum MediaError {
     Unsupported { path: PathBuf, tried: Vec<String> },
     /// The media plugin's process could not be started, went away, or fell
     /// out of step with its requests.
-    #[error("the codec plugin is unavailable: {0}")]
+    #[error("the media plugin is unavailable: {0}")]
     CodecUnavailable(String),
     /// The media plugin's process was stopped on purpose: it missed a
     /// request's deadline, or its kill switch was killed (an export's
     /// Cancel). Unlike [`Self::CodecUnavailable`], the request is not sent
     /// again to a new process; a later request starts one.
-    #[error("the codec plugin was stopped: {0}")]
+    #[error("the media plugin was stopped: {0}")]
     CodecStopped(String),
-    /// The codec plugin cannot write a format, as an FFmpeg build without
-    /// one of its encoders cannot.
-    #[error("the codec plugin has no {encoder} encoder")]
-    EncoderUnavailable { encoder: String },
     #[error("media file {0} was not found")]
     NotFound(PathBuf),
     #[error("{0} has no video stream")]

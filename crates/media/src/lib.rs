@@ -14,6 +14,7 @@ mod process;
 pub mod protocol;
 mod provider;
 mod registry;
+mod resample;
 pub mod settings;
 mod stretch;
 #[cfg(test)]
@@ -36,15 +37,16 @@ pub use mix::{
 pub use process::{FrameTransport, MediaProcess, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE};
 pub use provider::{
     AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription,
-    ComponentKind, Container, Decoder, Encoded, EncoderId, EncoderSettings, MediaProvider,
-    MuxRequest, Muxer, MuxerRequest, Packet, PixelFormat, ProviderFactory, ProviderUse,
-    SampleRates, Sequential, SessionId, SideData, Track, TrackConfig, TrackPacket, VideoEncoder,
-    VideoEncoderOpened, VideoEncoderRequest, VideoRequest, timestamps_match,
+    ComponentKind, Decoder, Encoded, MediaProvider, Muxer, MuxerRequest, Packet, PixelFormat,
+    ProviderFactory, ProviderUse, SampleRates, Sequential, SessionId, SideData, Track, TrackConfig,
+    TrackPacket, VideoEncoder, VideoEncoderOpened, VideoEncoderRequest, VideoRequest,
+    timestamps_match,
 };
 pub use registry::{
     ComponentEntry, ComponentRef, DecoderUse, InvalidComponentRef, MediaComponentInfo,
     MediaRegistry, PluginDescription, RegisteredPlugin, registry, set_registry,
 };
+pub use resample::resample_audio;
 pub use settings::{
     InvalidSetting, SelectOption, SettingField, SettingKind, SettingValue, Settings,
 };

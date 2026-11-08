@@ -5,10 +5,7 @@
 use crate::backend::MediaBackend;
 use crate::decoder::{AudioDecoder, VideoFrameDecoder};
 use crate::error::MediaError;
-use crate::provider::{
-    ComponentDescription, Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest,
-    PixelFormat, VideoRequest,
-};
+use crate::provider::{ComponentDescription, Decoder, MediaProvider, VideoRequest};
 use crate::registry::{
     ComponentRef, DecoderUse, MediaRegistry, RegisteredPlugin, registry, set_registry,
 };
@@ -69,6 +66,8 @@ enum Answer {
     ReadsButNotItsFramesUnsupported,
     /// No process starts: the factory fails.
     CannotStart,
+    /// A process whose provider has no decoder.
+    NoDecoder,
 }
 
 struct Fake {
@@ -99,6 +98,16 @@ impl MediaProvider for Fake {
         Ok(Vec::new())
     }
 
+    fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+        if self.answer == Answer::NoDecoder {
+            None
+        } else {
+            Some(self)
+        }
+    }
+}
+
+impl Decoder for Fake {
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
         self.journal
             .push(format!("probe {}/{decoder}", self.plugin));
@@ -118,7 +127,7 @@ impl MediaProvider for Fake {
             Answer::Broken => Err(MediaError::Codec("broken".into())),
             Answer::NoVideoStream => Err(MediaError::NoVideoStream(path.to_owned())),
             Answer::NotFound => Err(MediaError::NotFound(path.to_owned())),
-            Answer::CannotStart => unreachable!("never started"),
+            Answer::CannotStart | Answer::NoDecoder => unreachable!("never decodes"),
         }
     }
 
@@ -166,29 +175,6 @@ impl MediaProvider for Fake {
             channels,
             samples: Vec::new(),
         })
-    }
-
-    fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
-        Ok(())
-    }
-
-    fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
-        self.journal.push(format!("open {}", self.plugin));
-        Ok(EncoderId(1))
-    }
-
-    fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
-        Ok(())
-    }
-
-    fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
-        Ok(())
-    }
-
-    fn abort_encoder(&mut self, _: EncoderId) {}
-
-    fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
-        Ok(())
     }
 }
 
@@ -760,98 +746,23 @@ fn project_uses_are_recorded() {
     }
 }
 
-fn settings() -> EncoderSettings {
-    EncoderSettings {
-        output: "/out/video.mp4".into(),
-        width: 2,
-        height: 1,
-        frame_rate: Rational::new(30, 1),
-        input: PixelFormat::Yuv420p,
-        container: Container::Mp4,
-        preset: "medium".into(),
-        crf: 18,
-        bit_depth: 8,
-    }
-}
-
 #[test]
-fn encoding_without_a_bundled_plugin_uses_the_first_that_is_not_a_projects() {
+fn a_provider_without_a_decoder_cannot_route() {
     let journal = Journal::default();
-    let registry = Arc::new(MediaRegistry::new(vec![
-        plugin(&journal, "p", MediaOrigin::Project, &["mp4"], Answer::Reads),
-        with_decoders(&journal, "u", MediaOrigin::User, Vec::new(), Answer::Reads),
-        plugin(&journal, "u2", MediaOrigin::User, &["mp4"], Answer::Reads),
-    ]));
-    assert_eq!(registry.legacy_encoder(), Some(1));
-    let mut backend = MediaBackend::with_registry(registry);
-    backend.check_encoder(Container::Mp4).unwrap();
-    let encoder = backend.open_encoder(&settings()).unwrap();
-    backend.encode_frame(encoder, vec![0; 3]).unwrap();
-    backend.finish_encoder(encoder).unwrap();
-    assert_eq!(journal.entries(), strings(&["start u", "open u"]));
-
-    // A project's plugin never encodes, even when it is the only one.
-    let project_only = Arc::new(MediaRegistry::new(vec![
-        plugin(&journal, "p", MediaOrigin::Project, &["mp4"], Answer::Reads),
-        plugin(
-            &journal,
-            "p2",
-            MediaOrigin::Project,
-            &["mp4"],
-            Answer::Reads,
-        ),
-    ]));
-    assert_eq!(project_only.legacy_encoder(), None);
-    let mut backend = MediaBackend::with_registry(project_only);
-    assert!(matches!(
-        backend.check_encoder(Container::Mp4),
-        Err(MediaError::NoCodec)
-    ));
-    assert!(matches!(
-        backend.open_encoder(&settings()),
-        Err(MediaError::NoCodec)
-    ));
-    assert_eq!(journal.entries(), strings(&["start u", "open u"]));
-
-    let empty = MediaRegistry::new(Vec::new());
-    assert_eq!(empty.legacy_encoder(), None);
-    let mut backend = MediaBackend::with_registry(Arc::new(empty));
-    assert!(matches!(
-        backend.open_encoder(&settings()),
-        Err(MediaError::NoCodec)
-    ));
-}
-
-#[test]
-fn encoding_prefers_the_first_bundled_plugin() {
-    let journal = Journal::default();
-    let registry = Arc::new(MediaRegistry::new(vec![
-        plugin(&journal, "u", MediaOrigin::User, &["mp4"], Answer::Reads),
-        plugin(&journal, "p", MediaOrigin::Project, &["mp4"], Answer::Reads),
-        plugin(&journal, "b", MediaOrigin::Bundled, &["mp4"], Answer::Reads),
-        plugin(
-            &journal,
-            "b2",
-            MediaOrigin::Bundled,
-            &["mp4"],
-            Answer::Reads,
-        ),
-    ]));
-    assert_eq!(registry.legacy_encoder(), Some(2));
-    let mut backend = MediaBackend::with_registry(registry);
-    backend.open_encoder(&settings()).unwrap();
-    assert_eq!(journal.entries(), strings(&["start b", "open b"]));
-
-    // Without a bundled plugin, the first in search order encodes, a
-    // project's aside.
-    let user_only = MediaRegistry::new(vec![plugin(
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "clip.mp4");
+    let registry = Arc::new(MediaRegistry::new(vec![plugin(
         &journal,
-        "u",
-        MediaOrigin::User,
+        "p",
+        MediaOrigin::Bundled,
         &["mp4"],
-        Answer::Reads,
-    )]);
-    assert_eq!(user_only.legacy_encoder(), Some(0));
+        Answer::NoDecoder,
+    )]));
+    let mut backend = MediaBackend::with_registry(registry);
+    let Err(MediaError::Codec(message)) = backend.probe(&path) else {
+        panic!("a plugin without a decoder routed a file");
+    };
+    assert!(message.contains("has no decoder"), "{message}");
 }
 
 #[test]

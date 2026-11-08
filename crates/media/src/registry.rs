@@ -452,25 +452,7 @@ impl MediaRegistry {
             .collect()
     }
 
-    /// The plugin that encodes and muxes exports until exports choose
-    /// their components: the first bundled one in search order, so a
-    /// decoder-only plugin the user installs cannot take over exports;
-    /// when none is bundled, the first in search order that is not a
-    /// project's, whatever its decoders. A project's plugin never encodes,
-    /// so with only project plugins there is none (`NoCodec`).
-    pub fn legacy_encoder(&self) -> Option<usize> {
-        self.plugins
-            .iter()
-            .position(|plugin| plugin.origin == MediaOrigin::Bundled)
-            .or_else(|| {
-                self.plugins
-                    .iter()
-                    .position(|plugin| plugin.origin != MediaOrigin::Project)
-            })
-    }
-
-    /// The plugin at `index`, as [`Self::decoder_candidates`] and
-    /// [`Self::legacy_encoder`] give it.
+    /// The plugin at `index`, as [`Self::decoder_candidates`] gives it.
     pub fn plugin(&self, index: usize) -> &RegisteredPlugin {
         &self.plugins[index]
     }
@@ -530,8 +512,7 @@ static REGISTRY: RwLock<Option<Arc<MediaRegistry>>> = RwLock::new(None);
 /// each takes the registry chosen when it first needs one, so a backend made
 /// earlier that has not needed one yet gets this choice, and one that has
 /// keeps its own. `None` leaves none, so reading media fails with
-/// [`crate::MediaError::NoDecoder`] and writing it with
-/// [`crate::MediaError::NoCodec`].
+/// [`crate::MediaError::NoDecoder`].
 pub fn set_registry(registry: Option<Arc<MediaRegistry>>) {
     *REGISTRY.write().unwrap_or_else(PoisonError::into_inner) = registry;
 }
@@ -550,8 +531,8 @@ mod tests {
     use crate::backend::MediaBackend;
     use crate::error::MediaError;
     use crate::provider::{
-        ComponentDescription, Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest,
-        PixelFormat, ProviderUse, SampleRates, VideoRequest,
+        ComponentDescription, Decoder, MediaProvider, PixelFormat, ProviderUse, SampleRates,
+        VideoRequest,
     };
     use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
     use celesta_plugin_host::{
@@ -574,6 +555,12 @@ mod tests {
             self.described.clone().map_err(MediaError::Codec)
         }
 
+        fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+            Some(self)
+        }
+    }
+
+    impl Decoder for Fake {
         fn probe(&mut self, _: &str, _: &Path) -> Result<MediaProbe, MediaError> {
             Ok(MediaProbe {
                 duration: None,
@@ -598,28 +585,6 @@ mod tests {
             _: u16,
         ) -> Result<AudioBuffer, MediaError> {
             unreachable!("never decodes")
-        }
-
-        fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
-            Ok(())
-        }
-
-        fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
-            unreachable!("never encodes")
-        }
-
-        fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
-            unreachable!("never encodes")
-        }
-
-        fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
-            unreachable!("never encodes")
-        }
-
-        fn abort_encoder(&mut self, _: EncoderId) {}
-
-        fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
-            unreachable!("never muxes")
         }
     }
 
@@ -834,7 +799,7 @@ mod tests {
             ..fake(one_of_each(), None, &Starts::default(), |_| Ok(Vec::new()))
         }]);
         let described = registry.describe(0, &PluginKillSwitch::default());
-        let reason = "the codec plugin is unavailable: no program";
+        let reason = "the media plugin is unavailable: no program";
         assert_eq!(
             described.components[0],
             ComponentDescription::unavailable(ComponentKind::Decoder, "d", reason)

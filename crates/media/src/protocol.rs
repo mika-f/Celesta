@@ -13,10 +13,9 @@
 use crate::error::MediaError;
 use crate::mix::frame_byte_len;
 use crate::provider::{
-    AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription, Container,
-    Encoded, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Muxer, MuxerRequest, Packet,
-    PixelFormat, Sequential, SessionId, SideData, Track, TrackPacket, VideoEncoder,
-    VideoEncoderOpened, VideoEncoderRequest, VideoRequest,
+    AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription, Encoded,
+    MediaProvider, Muxer, MuxerRequest, Packet, PixelFormat, Sequential, SessionId, SideData,
+    Track, TrackPacket, VideoEncoder, VideoEncoderOpened, VideoEncoderRequest, VideoRequest,
 };
 use crate::settings::Settings;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
@@ -137,7 +136,7 @@ fn accept_frames(hello: &Message, frames: &RefCell<Option<SharedFrames>>) -> Map
 }
 
 fn malformed(message: impl std::fmt::Display) -> MediaError {
-    MediaError::Codec(format!("malformed codec message: {message}"))
+    MediaError::Codec(format!("malformed media message: {message}"))
 }
 
 /// The header's `key`, as `T`.
@@ -163,7 +162,10 @@ fn answer(
             "probe" => {
                 let decoder: String = field(request, "decoder")?;
                 let path: PathBuf = field(request, "path")?;
-                let probe = provider.probe(&decoder, &path)?;
+                let probe = provider
+                    .decoder()
+                    .ok_or_else(|| lacks("decoder"))?
+                    .probe(&decoder, &path)?;
                 Message::new(json!({ "type": "probed", "probe": probe }))
             }
             "decodeVideo" => {
@@ -171,17 +173,20 @@ fn answer(
                 let path: PathBuf = field(request, "path")?;
                 let time: f64 = field(request, "time")?;
                 let sequential: Option<WireSequential> = field(request, "sequential")?;
-                let frame = provider.decode_video(
-                    &decoder,
-                    &VideoRequest {
-                        path: &path,
-                        time,
-                        sequential: sequential.as_ref().map(|sequential| Sequential {
-                            session: &sequential.session,
-                            frame_rate: sequential.frame_rate,
-                        }),
-                    },
-                )?;
+                let frame = provider
+                    .decoder()
+                    .ok_or_else(|| lacks("decoder"))?
+                    .decode_video(
+                        &decoder,
+                        &VideoRequest {
+                            path: &path,
+                            time,
+                            sequential: sequential.as_ref().map(|sequential| Sequential {
+                                session: &sequential.session,
+                                frame_rate: sequential.frame_rate,
+                            }),
+                        },
+                    )?;
                 // Into the shared slot when there is one and the frame fits:
                 // Celesta reads it from there before it sends another
                 // request, so nothing else writes the slot meanwhile.
@@ -217,12 +222,15 @@ fn answer(
             "decodeAudio" => {
                 let decoder: String = field(request, "decoder")?;
                 let path: PathBuf = field(request, "path")?;
-                let audio = provider.decode_audio(
-                    &decoder,
-                    &path,
-                    field(request, "sampleRate")?,
-                    field(request, "channels")?,
-                )?;
+                let audio = provider
+                    .decoder()
+                    .ok_or_else(|| lacks("decoder"))?
+                    .decode_audio(
+                        &decoder,
+                        &path,
+                        field(request, "sampleRate")?,
+                        field(request, "channels")?,
+                    )?;
                 Message {
                     header: json!({
                         "type": "audio",
@@ -235,36 +243,6 @@ fn answer(
                         .flat_map(|sample| sample.to_le_bytes())
                         .collect(),
                 }
-            }
-            "checkEncoder" => {
-                provider.check_encoder(field(request, "container")?)?;
-                Message::new(json!({ "type": "encoderReady" }))
-            }
-            "openEncoder" => {
-                let settings: EncoderSettings = field(request, "settings")?;
-                let encoder = provider.open_encoder(&settings)?;
-                Message::new(json!({ "type": "encoderOpened", "encoder": encoder }))
-            }
-            "encodeFrame" => {
-                provider.encode_frame(
-                    field(request, "encoder")?,
-                    std::mem::take(&mut request.payload),
-                )?;
-                Message::new(json!({ "type": "frameEncoded" }))
-            }
-            "finishEncoder" => {
-                provider.finish_encoder(field(request, "encoder")?)?;
-                Message::new(json!({ "type": "encoderFinished" }))
-            }
-            // Protocol 1's names an `encoder`, protocol 2's a `session`.
-            "abortEncoder" if request.header["session"].is_null() => {
-                provider.abort_encoder(field(request, "encoder")?);
-                Message::new(json!({ "type": "encoderAborted" }))
-            }
-            "muxAudio" => {
-                let mux: MuxRequest = field(request, "request")?;
-                provider.mux_audio(&mux)?;
-                Message::new(json!({ "type": "muxed" }))
             }
             "describe" => {
                 let components = provider.describe()?;
@@ -493,9 +471,6 @@ pub fn encode_error(error: &MediaError) -> Message {
             "samples": samples,
             "channels": channels,
         }),
-        MediaError::EncoderUnavailable { encoder } => {
-            json!({ "code": "encoderUnavailable", "encoder": encoder })
-        }
         // The spec's `key` and `message`: the message without the key, in
         // place of the error's text.
         MediaError::InvalidSettings { key, message } => {
@@ -505,7 +480,6 @@ pub fn encode_error(error: &MediaError) -> Message {
             json!({ "code": "componentUnavailable", "component": component, "reason": reason })
         }
         MediaError::Codec(_)
-        | MediaError::NoCodec
         | MediaError::NoDecoder
         | MediaError::CodecUnavailable(_)
         | MediaError::CodecStopped(_) => json!({}),
@@ -559,13 +533,6 @@ pub fn decode_error(answer: &Message) -> MediaError {
         Some("invalidAudioSampleCount") => usize_of("samples")
             .zip(u16::deserialize(get("channels")).ok())
             .map(|(samples, channels)| MediaError::InvalidAudioSampleCount { samples, channels }),
-        Some("encoderUnavailable") => {
-            header["encoder"]
-                .as_str()
-                .map(|encoder| MediaError::EncoderUnavailable {
-                    encoder: encoder.to_owned(),
-                })
-        }
         Some("invalidSettings") => header["key"]
             .as_str()
             .map(|key| MediaError::InvalidSettings {
@@ -710,42 +677,6 @@ pub(crate) fn decode_audio_buffer(answer: &Message) -> Result<AudioBuffer, Media
         channels: field(answer, "channels")?,
         samples: samples.iter().copied().map(f32::from_le_bytes).collect(),
     })
-}
-
-pub(crate) fn check_encoder_request(container: Container) -> Message {
-    Message::new(json!({ "type": "checkEncoder", "container": container }))
-}
-
-pub(crate) fn open_encoder_request(settings: &EncoderSettings) -> Result<Message, MediaError> {
-    Ok(Message::new(
-        json!({ "type": "openEncoder", "settings": sendable(settings)? }),
-    ))
-}
-
-pub(crate) fn decode_encoder(answer: &Message) -> Result<EncoderId, MediaError> {
-    field(answer, "encoder")
-}
-
-pub(crate) fn encode_frame_request(encoder: EncoderId, pixels: Vec<u8>) -> Message {
-    Message {
-        header: json!({ "type": "encodeFrame", "encoder": encoder }),
-        payload: pixels,
-    }
-}
-
-pub(crate) fn finish_encoder_request(encoder: EncoderId) -> Message {
-    Message::new(json!({ "type": "finishEncoder", "encoder": encoder }))
-}
-
-/// Protocol 1's `abortEncoder`, by `encoder` rather than `session`.
-pub(crate) fn legacy_abort_encoder_request(encoder: EncoderId) -> Message {
-    Message::new(json!({ "type": "abortEncoder", "encoder": encoder }))
-}
-
-pub(crate) fn mux_audio_request(request: &MuxRequest) -> Result<Message, MediaError> {
-    Ok(Message::new(
-        json!({ "type": "muxAudio", "request": sendable(request)? }),
-    ))
 }
 
 pub(crate) fn describe_request() -> Message {
@@ -1059,6 +990,12 @@ mod tests {
             Ok(Vec::new())
         }
 
+        fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+            Some(self)
+        }
+    }
+
+    impl Decoder for Fake {
         fn probe(&mut self, _: &str, path: &Path) -> Result<MediaProbe, MediaError> {
             self.asked.push(format!("probe {}", path.display()));
             if path == Path::new("/missing") {
@@ -1098,43 +1035,6 @@ mod tests {
                 samples: vec![0.5, -0.25],
             })
         }
-
-        fn check_encoder(&mut self, container: Container) -> Result<(), MediaError> {
-            match container {
-                Container::Webm => Err(MediaError::EncoderUnavailable {
-                    encoder: "libvpx-vp9".into(),
-                }),
-                _ => Ok(()),
-            }
-        }
-
-        fn open_encoder(&mut self, settings: &EncoderSettings) -> Result<EncoderId, MediaError> {
-            self.asked.push(format!("open {:?}", settings.input));
-            Ok(EncoderId(7))
-        }
-
-        fn encode_frame(&mut self, encoder: EncoderId, pixels: Vec<u8>) -> Result<(), MediaError> {
-            self.asked.push(format!("frame {} {:?}", encoder.0, pixels));
-            Ok(())
-        }
-
-        fn finish_encoder(&mut self, encoder: EncoderId) -> Result<(), MediaError> {
-            self.asked.push(format!("finish {}", encoder.0));
-            Ok(())
-        }
-
-        fn abort_encoder(&mut self, encoder: EncoderId) {
-            self.asked.push(format!("abort {}", encoder.0));
-        }
-
-        fn mux_audio(&mut self, request: &MuxRequest) -> Result<(), MediaError> {
-            self.asked.push(format!(
-                "mux {} {}",
-                request.lead_in_frames,
-                request.output.display()
-            ));
-            Ok(())
-        }
     }
 
     /// Serves `requests` with `codec`, returning its answers.
@@ -1152,17 +1052,6 @@ mod tests {
     #[test]
     fn serves_every_request_of_the_media_role() {
         let mut codec = Fake::default();
-        let settings = EncoderSettings {
-            output: "/out/video.mp4".into(),
-            width: 2,
-            height: 1,
-            frame_rate: Rational::new(30, 1),
-            input: PixelFormat::Yuv420p10,
-            container: Container::Mp4,
-            preset: "medium".into(),
-            crf: 18,
-            bit_depth: 10,
-        };
         let answers = serve_all(
             &mut codec,
             &[
@@ -1182,20 +1071,6 @@ mod tests {
                 )
                 .unwrap(),
                 decode_audio_request("ffmpeg", Path::new("/a.mp4"), 48_000, 2).unwrap(),
-                check_encoder_request(Container::Webm),
-                open_encoder_request(&settings).unwrap(),
-                encode_frame_request(EncoderId(7), vec![9, 9]),
-                finish_encoder_request(EncoderId(7)),
-                mux_audio_request(&MuxRequest {
-                    video: "/out/video.mp4".into(),
-                    audio: "/out/mix.pcm".into(),
-                    sample_rate: 48_000,
-                    channels: 2,
-                    output: "/out/film.mp4".into(),
-                    container: Container::Mp4,
-                    lead_in_frames: 16,
-                })
-                .unwrap(),
                 Message::new(json!({ "type": "draw" })),
             ],
         );
@@ -1211,25 +1086,13 @@ mod tests {
         let audio = decode_audio_buffer(&answers[4]).unwrap();
         assert_eq!((audio.sample_rate, audio.channels), (48_000, 2));
         assert_eq!(audio.samples, [0.5, -0.25]);
-        assert!(matches!(
-            decode_error(&answers[5]),
-            MediaError::EncoderUnavailable { encoder } if encoder == "libvpx-vp9"
-        ));
-        assert_eq!(decode_encoder(&answers[6]).unwrap(), EncoderId(7));
-        assert_eq!(answers[7].kind(), "frameEncoded");
-        assert_eq!(answers[8].kind(), "encoderFinished");
-        assert_eq!(answers[9].kind(), "muxed");
-        assert_eq!(answers[10].kind(), "error");
+        assert_eq!(answers[5].kind(), "error");
         assert_eq!(
             codec.asked,
             [
                 "probe /a.mp4",
                 "probe /missing",
                 "video /a.mp4 0.5 Some(\"layer\")",
-                "open Yuv420p10",
-                "frame 7 [9, 9]",
-                "finish 7",
-                "mux 16 /out/film.mp4",
             ]
         );
     }
@@ -1245,6 +1108,12 @@ mod tests {
             Ok(Vec::new())
         }
 
+        fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+            Some(self)
+        }
+    }
+
+    impl Decoder for Keeper {
         fn probe(&mut self, _: &str, _: &Path) -> Result<MediaProbe, MediaError> {
             Ok(probe())
         }
@@ -1268,28 +1137,6 @@ mod tests {
             _: u32,
             _: u16,
         ) -> Result<AudioBuffer, MediaError> {
-            unreachable!()
-        }
-
-        fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
-            unreachable!()
-        }
-
-        fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
-            unreachable!()
-        }
-
-        fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
-            unreachable!()
-        }
-
-        fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
-            unreachable!()
-        }
-
-        fn abort_encoder(&mut self, _: EncoderId) {}
-
-        fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
             unreachable!()
         }
     }
@@ -1351,9 +1198,6 @@ mod tests {
             MediaError::InvalidAudioSampleCount {
                 samples: 3,
                 channels: 2,
-            },
-            MediaError::EncoderUnavailable {
-                encoder: "aac".into(),
             },
             MediaError::Codec("FFmpeg operation failed: oops".into()),
         ];
@@ -1577,6 +1421,12 @@ mod tests {
             Ok(Vec::new())
         }
 
+        fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+            Some(self)
+        }
+    }
+
+    impl Decoder for Recorder {
         fn probe(&mut self, decoder: &str, _: &Path) -> Result<MediaProbe, MediaError> {
             self.decoders.push(decoder.to_owned());
             Ok(probe())
@@ -1608,28 +1458,6 @@ mod tests {
                 channels,
                 samples: Vec::new(),
             })
-        }
-
-        fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
-            unreachable!()
-        }
-
-        fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
-            unreachable!()
-        }
-
-        fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
-            unreachable!()
-        }
-
-        fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
-            unreachable!()
-        }
-
-        fn abort_encoder(&mut self, _: EncoderId) {}
-
-        fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
-            unreachable!()
         }
     }
 
@@ -1934,50 +1762,6 @@ mod tests {
 
         fn muxer(&mut self) -> Option<&mut dyn Muxer> {
             if self.has_muxer { Some(self) } else { None }
-        }
-
-        fn probe(&mut self, _: &str, _: &Path) -> Result<MediaProbe, MediaError> {
-            unreachable!()
-        }
-
-        fn decode_video(
-            &mut self,
-            _: &str,
-            _: &VideoRequest<'_>,
-        ) -> Result<VideoFrame, MediaError> {
-            unreachable!()
-        }
-
-        fn decode_audio(
-            &mut self,
-            _: &str,
-            _: &Path,
-            _: u32,
-            _: u16,
-        ) -> Result<AudioBuffer, MediaError> {
-            unreachable!()
-        }
-
-        fn check_encoder(&mut self, _: Container) -> Result<(), MediaError> {
-            unreachable!()
-        }
-
-        fn open_encoder(&mut self, _: &EncoderSettings) -> Result<EncoderId, MediaError> {
-            unreachable!()
-        }
-
-        fn encode_frame(&mut self, _: EncoderId, _: Vec<u8>) -> Result<(), MediaError> {
-            unreachable!()
-        }
-
-        fn finish_encoder(&mut self, _: EncoderId) -> Result<(), MediaError> {
-            unreachable!()
-        }
-
-        fn abort_encoder(&mut self, _: EncoderId) {}
-
-        fn mux_audio(&mut self, _: &MuxRequest) -> Result<(), MediaError> {
-            unreachable!()
         }
     }
 
@@ -2334,5 +2118,25 @@ mod tests {
         assert_eq!(answers[3].kind(), "encoderAborted");
         assert!(fake.audio_sessions.is_empty());
         assert_eq!(fake.video_sessions, [SessionId(1)]);
+    }
+
+    #[test]
+    fn renamed_errors_say_media() {
+        assert_eq!(
+            MediaError::CodecUnavailable("x".into()).to_string(),
+            "the media plugin is unavailable: x"
+        );
+        assert_eq!(
+            MediaError::CodecStopped("x".into()).to_string(),
+            "the media plugin was stopped: x"
+        );
+        let entries = [json!({ "pts": 0, "dts": 0, "duration": 1, "key": true, "size": 3 })];
+        let Err(MediaError::Codec(message)) = unpack_packets(&entries, &[]) else {
+            panic!("a packet without its payload was accepted");
+        };
+        assert!(
+            message.starts_with("malformed media message: "),
+            "{message}"
+        );
     }
 }

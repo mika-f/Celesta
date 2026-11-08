@@ -1,10 +1,7 @@
 use crate::decoder::{AudioDecoder, VideoFrameDecoder};
 use crate::error::MediaError;
 use crate::mix::video_seconds;
-use crate::provider::{
-    Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, ProviderUse, Sequential,
-    VideoRequest,
-};
+use crate::provider::{Decoder, MediaProvider, ProviderUse, Sequential, VideoRequest};
 use crate::registry::{ComponentRef, MediaRegistry, registry};
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
@@ -14,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Media files through the plugins of a [`MediaRegistry`] (see
-/// [`crate::set_registry`]): probes, cached by path, video frames, decoded
-/// audio, and encoding.
+/// [`crate::set_registry`]): probes, cached by path, video frames, and decoded
+/// audio.
 ///
 /// The first request for a file routes it: each of the registry's
 /// candidate decoders is asked to probe it in turn, and the first that
@@ -126,7 +123,7 @@ impl MediaBackend {
         let mut kept = None;
         for (plugin, decoder) in &candidates {
             let probe = self.processes.retrying(registry, *plugin, |provider| {
-                provider.probe(&decoder.component, path)
+                decoder_in(provider, &registry.plugin(*plugin).id)?.probe(&decoder.component, path)
             });
             match probe {
                 Ok(probe) => {
@@ -165,14 +162,17 @@ impl MediaBackend {
     fn decoding<T>(
         &mut self,
         path: &Path,
-        mut request: impl FnMut(&mut dyn MediaProvider, &str) -> Result<T, MediaError>,
+        mut request: impl FnMut(&mut dyn Decoder, &str) -> Result<T, MediaError>,
     ) -> Result<T, MediaError> {
         self.route(path)?;
         let registry = self.registry.as_deref().expect("routing found a registry");
         let (plugin, decoder) = self.routes.get(path).expect("routed above");
         self.processes
             .retrying(registry, *plugin, |provider| {
-                request(provider, &decoder.component)
+                request(
+                    decoder_in(provider, &registry.plugin(*plugin).id)?,
+                    &decoder.component,
+                )
             })
             .map_err(|error| match error {
                 MediaError::Unsupported { path, tried } if tried.is_empty() => {
@@ -184,67 +184,17 @@ impl MediaBackend {
                 error => error,
             })
     }
+}
 
-    /// The index of the plugin that encodes.
-    fn encoder(&mut self) -> Result<usize, MediaError> {
-        self.registry()
-            .and_then(MediaRegistry::legacy_encoder)
-            .ok_or(MediaError::NoCodec)
-    }
-
-    /// Fails with [`MediaError::EncoderUnavailable`] when the encoding
-    /// plugin cannot write `container`, before anything is rendered.
-    pub fn check_encoder(&mut self, container: Container) -> Result<(), MediaError> {
-        self.encoding(|provider| provider.check_encoder(container))
-    }
-
-    pub fn open_encoder(&mut self, settings: &EncoderSettings) -> Result<EncoderId, MediaError> {
-        self.encoding(|provider| provider.open_encoder(settings))
-    }
-
-    pub fn encode_frame(&mut self, encoder: EncoderId, pixels: Vec<u8>) -> Result<(), MediaError> {
-        self.encoder_process()?.encode_frame(encoder, pixels)
-    }
-
-    pub fn finish_encoder(&mut self, encoder: EncoderId) -> Result<(), MediaError> {
-        self.encoder_process()?.finish_encoder(encoder)
-    }
-
-    pub fn abort_encoder(&mut self, encoder: EncoderId) {
-        let Some(plugin) = self
-            .registry
-            .as_deref()
-            .and_then(MediaRegistry::legacy_encoder)
-        else {
-            return;
-        };
-        if let Some(provider) = self.processes.open.get_mut(&plugin) {
-            provider.abort_encoder(encoder);
-        }
-    }
-
-    pub fn mux_audio(&mut self, request: &MuxRequest) -> Result<(), MediaError> {
-        self.encoding(|provider| provider.mux_audio(request))
-    }
-
-    /// Runs a request that keeps nothing open on the encoding plugin (see
-    /// [`Processes::retrying`]).
-    fn encoding<T>(
-        &mut self,
-        request: impl FnMut(&mut dyn MediaProvider) -> Result<T, MediaError>,
-    ) -> Result<T, MediaError> {
-        let plugin = self.encoder()?;
-        let registry = self.registry.as_deref().expect("the encoder is in it");
-        self.processes.retrying(registry, plugin, request)
-    }
-
-    /// The encoding plugin's instance, which an encoder opened on it keeps
-    /// open.
-    fn encoder_process(&mut self) -> Result<&mut dyn MediaProvider, MediaError> {
-        let plugin = self.encoder()?;
-        let registry = self.registry.as_deref().expect("the encoder is in it");
-        self.processes.get(registry, plugin)
-    }
+/// `provider`'s decoder, or [`MediaError::Codec`] when plugin `plugin` has
+/// none to route a decode request to.
+fn decoder_in<'a>(
+    provider: &'a mut dyn MediaProvider,
+    plugin: &str,
+) -> Result<&'a mut dyn Decoder, MediaError> {
+    provider
+        .decoder()
+        .ok_or_else(|| MediaError::Codec(format!("{plugin} has no decoder")))
 }
 
 /// How much an error a candidate decoder answered says about the file,

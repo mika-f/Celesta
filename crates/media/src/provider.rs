@@ -24,10 +24,7 @@ use std::sync::Arc;
 ///
 /// A plugin answers [`Self::describe`], and serves each kind of component
 /// it has through the accessor of that kind ([`Self::video_encoder`], …);
-/// the others stay `None`. The methods after the accessors are protocol 1's
-/// decoding and encoding, which [`Decoder`] and the encoder and muxer
-/// traits replace. `decoder` is the id of the plugin's decoder component
-/// that is to serve a `probe` or decode request.
+/// the others stay `None`.
 pub trait MediaProvider: Send {
     /// Every component the plugin has, whether it is available, and its
     /// settings.
@@ -48,48 +45,6 @@ pub trait MediaProvider: Send {
     fn muxer(&mut self) -> Option<&mut dyn Muxer> {
         None
     }
-
-    fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError>;
-
-    /// The video frame shown at `request.time` seconds into the file, as
-    /// tightly packed straight-alpha RGBA8 at the probed (displayed) size.
-    fn decode_video(
-        &mut self,
-        decoder: &str,
-        request: &VideoRequest<'_>,
-    ) -> Result<VideoFrame, MediaError>;
-
-    /// The file's first audio stream, whole, as interleaved `f32` samples
-    /// at `sample_rate` with `channels` channels (1 or 2); no samples when
-    /// it has no audio.
-    fn decode_audio(
-        &mut self,
-        decoder: &str,
-        path: &Path,
-        sample_rate: u32,
-        channels: u16,
-    ) -> Result<AudioBuffer, MediaError>;
-
-    /// Fails with [`MediaError::EncoderUnavailable`] when the codec cannot
-    /// write `container`'s video or audio.
-    fn check_encoder(&mut self, container: Container) -> Result<(), MediaError>;
-
-    /// Starts writing a video-only file that frames are then pushed to.
-    fn open_encoder(&mut self, settings: &EncoderSettings) -> Result<EncoderId, MediaError>;
-
-    /// Encodes the next frame: one frame of the encoder's input format.
-    fn encode_frame(&mut self, encoder: EncoderId, pixels: Vec<u8>) -> Result<(), MediaError>;
-
-    /// Flushes the encoder and finishes its file.
-    fn finish_encoder(&mut self, encoder: EncoderId) -> Result<(), MediaError>;
-
-    /// Stops the encoder, leaving whatever it wrote for the caller to
-    /// remove.
-    fn abort_encoder(&mut self, encoder: EncoderId);
-
-    /// Writes `request.output`: the video of `request.video`, copied, with
-    /// the PCM of `request.audio` encoded in the container's audio codec.
-    fn mux_audio(&mut self, request: &MuxRequest) -> Result<(), MediaError>;
 }
 
 /// A plugin's decoder components: `decoder` is the id of the one that is to
@@ -221,21 +176,6 @@ pub struct Sequential<'a> {
     /// The spacing expected between requests until the session has shown
     /// its own.
     pub frame_rate: Rational,
-}
-
-/// An encoder the codec opened, by the codec's own number.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EncoderId(pub u64);
-
-/// The container an export writes, and with it the codecs: H.264 and AAC
-/// in MP4, ProRes 4444 and 24-bit PCM in MOV, VP9 with alpha and Opus in
-/// WebM.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Container {
-    Mp4,
-    Mov,
-    Webm,
 }
 
 /// The layout of the frames pushed to an encoder. On the wire, and through
@@ -541,42 +481,6 @@ impl ComponentDescription {
             channels: Vec::new(),
         }
     }
-}
-
-/// What an encoder writes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EncoderSettings {
-    pub output: PathBuf,
-    pub width: u32,
-    pub height: u32,
-    pub frame_rate: Rational,
-    pub input: PixelFormat,
-    pub container: Container,
-    /// libx264's `-preset` name; MP4 only.
-    pub preset: String,
-    /// H.264's constant rate factor; MP4 only.
-    pub crf: u8,
-    /// 8, or 10 for High 10; MP4 only.
-    pub bit_depth: u8,
-}
-
-/// What [`MediaProvider::mux_audio`] writes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MuxRequest {
-    /// The encoded, audio-less video.
-    pub video: PathBuf,
-    /// Raw interleaved `f32` little-endian PCM.
-    pub audio: PathBuf,
-    pub sample_rate: u32,
-    pub channels: u16,
-    pub output: PathBuf,
-    pub container: Container,
-    /// Sample frames at the start of `audio` that play before the video's
-    /// start, as a looping MP4's lead-in does: the muxer hides them with an
-    /// edit list.
-    pub lead_in_frames: usize,
 }
 
 /// What an instance of a media plugin is started for.

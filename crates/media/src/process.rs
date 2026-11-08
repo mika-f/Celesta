@@ -3,10 +3,9 @@
 use crate::error::MediaError;
 use crate::protocol::{self, ROLES, SharedFrames, decode_error};
 use crate::provider::{
-    AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, ComponentDescription, Container,
-    Encoded, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Muxer, MuxerRequest,
-    ProviderFactory, ProviderUse, SessionId, TrackPacket, VideoEncoder, VideoEncoderOpened,
-    VideoEncoderRequest, VideoRequest,
+    AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, ComponentDescription, Decoder, Encoded,
+    MediaProvider, Muxer, MuxerRequest, ProviderFactory, ProviderUse, SessionId, TrackPacket,
+    VideoEncoder, VideoEncoderOpened, VideoEncoderRequest, VideoRequest,
 };
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_plugin::MEDIA_PROTOCOL_VERSION;
@@ -25,10 +24,8 @@ use std::time::Duration;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 const DECODE_VIDEO_TIMEOUT: Duration = Duration::from_secs(60);
 const DECODE_AUDIO_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const ENCODER_TIMEOUT: Duration = Duration::from_secs(60);
 /// Also protocol 2's `finishVideoEncoder` and `finishAudioEncoder`.
 const FINISH_ENCODER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const MUX_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// Protocol 2's deadlines for describing, encoding, and muxing (the spec's
 /// table). A missed one stops the process; an abort's is short, as the
@@ -227,6 +224,10 @@ impl MediaProvider for MediaProcess {
         protocol::decode_described(&answer)
     }
 
+    fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+        Some(self)
+    }
+
     fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
         Some(self)
     }
@@ -238,7 +239,9 @@ impl MediaProvider for MediaProcess {
     fn muxer(&mut self) -> Option<&mut dyn Muxer> {
         Some(self)
     }
+}
 
+impl Decoder for MediaProcess {
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
         let request = protocol::probe_request(decoder, &absolute(path))?;
         named(
@@ -282,49 +285,6 @@ impl MediaProvider for MediaProcess {
             self.request(request, "audio", DECODE_AUDIO_TIMEOUT)
                 .and_then(|answer| protocol::decode_audio_buffer(&answer)),
         )
-    }
-
-    fn check_encoder(&mut self, container: Container) -> Result<(), MediaError> {
-        let request = protocol::check_encoder_request(container);
-        self.request(request, "encoderReady", ENCODER_TIMEOUT)
-            .map(drop)
-    }
-
-    fn open_encoder(&mut self, settings: &EncoderSettings) -> Result<EncoderId, MediaError> {
-        let settings = EncoderSettings {
-            output: absolute(&settings.output),
-            ..settings.clone()
-        };
-        let request = protocol::open_encoder_request(&settings)?;
-        protocol::decode_encoder(&self.request(request, "encoderOpened", ENCODER_TIMEOUT)?)
-    }
-
-    fn encode_frame(&mut self, encoder: EncoderId, pixels: Vec<u8>) -> Result<(), MediaError> {
-        let request = protocol::encode_frame_request(encoder, pixels);
-        self.request(request, "frameEncoded", ENCODER_TIMEOUT)
-            .map(drop)
-    }
-
-    fn finish_encoder(&mut self, encoder: EncoderId) -> Result<(), MediaError> {
-        let request = protocol::finish_encoder_request(encoder);
-        self.request(request, "encoderFinished", FINISH_ENCODER_TIMEOUT)
-            .map(drop)
-    }
-
-    fn abort_encoder(&mut self, encoder: EncoderId) {
-        let request = protocol::legacy_abort_encoder_request(encoder);
-        let _ = self.request(request, "encoderAborted", ENCODER_TIMEOUT);
-    }
-
-    fn mux_audio(&mut self, request: &MuxRequest) -> Result<(), MediaError> {
-        let request = MuxRequest {
-            video: absolute(&request.video),
-            audio: absolute(&request.audio),
-            output: absolute(&request.output),
-            ..request.clone()
-        };
-        self.request(protocol::mux_audio_request(&request)?, "muxed", MUX_TIMEOUT)
-            .map(drop)
     }
 }
 
