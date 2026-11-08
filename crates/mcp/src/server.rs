@@ -22,8 +22,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::args::{
-    ContactSheetArgs, DescribeComponentArgs, ExportVideoArgs, ListComponentsArgs,
-    RenderFramesArgs,
+    ContactSheetArgs, DescribeComponentArgs, ExportVideoArgs, ListComponentsArgs, RenderFramesArgs,
 };
 use crate::docs;
 use crate::export::{self, Run};

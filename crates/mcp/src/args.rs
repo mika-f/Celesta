@@ -224,7 +224,10 @@ fn check_preset_file(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("cannot read presetFile {}: {error}", path.display()))?;
     match serde_json::from_str::<Value>(&text) {
         Ok(Value::Object(_)) => Ok(()),
-        Ok(_) => Err(format!("presetFile {} is not a JSON object", path.display())),
+        Ok(_) => Err(format!(
+            "presetFile {} is not a JSON object",
+            path.display()
+        )),
         Err(error) => Err(format!(
             "presetFile {} is not valid JSON: {error}",
             path.display()
@@ -244,9 +247,11 @@ impl EncoderArg {
         for (key, value) in self.options.iter().flatten() {
             let value = match value {
                 Value::String(text) => SettingValue::String(text.clone()),
-                Value::Number(number) => SettingValue::Number(number.as_f64().ok_or_else(|| {
-                    format!("{field}.options.{key} is not a finite number")
-                })?),
+                Value::Number(number) => SettingValue::Number(
+                    number
+                        .as_f64()
+                        .ok_or_else(|| format!("{field}.options.{key} is not a finite number"))?,
+                ),
                 Value::Bool(flag) => SettingValue::Boolean(*flag),
                 _ => {
                     return Err(format!(
@@ -920,8 +925,8 @@ mod tests {
     #[test]
     fn loop_applies_to_every_video() {
         for output in ["a.mp4", "a.mov", "a.webm"] {
-            let job = video_job(json!({ "source": "a.tsx", "output": output, "loop": true }))
-                .unwrap();
+            let job =
+                video_job(json!({ "source": "a.tsx", "output": output, "loop": true })).unwrap();
             assert!(job.options.looping, "{output}");
         }
     }
@@ -940,7 +945,10 @@ mod tests {
         assert!(job(&write("ok.json", "{}")).is_ok());
         rejects(job(&write("list.json", "[]")), "not a JSON object");
         rejects(job(&write("bad.json", "{")), "not valid JSON");
-        rejects(job(&dir.path().join("missing.json")), "cannot read presetFile");
+        rejects(
+            job(&dir.path().join("missing.json")),
+            "cannot read presetFile",
+        );
     }
 
     #[test]

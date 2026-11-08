@@ -160,13 +160,19 @@ async fn list_components_returns_the_test_codec() {
     let (client, _) = crate::common::client_with_test_codec(&plugin).await;
     let result = call(&client, "list_components", json!({})).await;
     assert!(!is_error(&result), "{}", text(&result));
-    let components = structured(&result)["components"].as_array().unwrap().clone();
+    let components = structured(&result)["components"]
+        .as_array()
+        .unwrap()
+        .clone();
     let has = |id: &str, kind: &str| {
         components
             .iter()
             .any(|c| c["id"] == id && c["kind"] == kind)
     };
-    assert!(has("celesta-test-codec/video", "videoEncoder"), "{components:?}");
+    assert!(
+        has("celesta-test-codec/video", "videoEncoder"),
+        "{components:?}"
+    );
     assert!(has("celesta-test-codec/file", "muxer"), "{components:?}");
 }
 
@@ -174,7 +180,12 @@ async fn list_components_returns_the_test_codec() {
 async fn describe_component_describes_and_rejects() {
     let plugin = TestCodecPlugin::new();
     let (client, _) = crate::common::client_with_test_codec(&plugin).await;
-    let result = call(&client, "describe_component", json!({ "component": "celesta-test-codec/video" })).await;
+    let result = call(
+        &client,
+        "describe_component",
+        json!({ "component": "celesta-test-codec/video" }),
+    )
+    .await;
     assert!(!is_error(&result), "{}", text(&result));
     let described = structured(&result);
     assert_eq!(described["id"], "celesta-test-codec/video");
@@ -182,11 +193,24 @@ async fn describe_component_describes_and_rejects() {
     assert_eq!(described["available"], true);
     assert!(described["settings"].is_array());
 
-    let unknown = call(&client, "describe_component", json!({ "component": "celesta-test-codec/nope" })).await;
+    let unknown = call(
+        &client,
+        "describe_component",
+        json!({ "component": "celesta-test-codec/nope" }),
+    )
+    .await;
     assert!(is_error(&unknown));
-    assert_eq!(structured(&unknown)["error"]["code"], "component_unavailable");
+    assert_eq!(
+        structured(&unknown)["error"]["code"],
+        "component_unavailable"
+    );
 
-    let malformed = call(&client, "describe_component", json!({ "component": "video" })).await;
+    let malformed = call(
+        &client,
+        "describe_component",
+        json!({ "component": "video" }),
+    )
+    .await;
     assert!(is_error(&malformed));
     assert_eq!(structured(&malformed)["error"]["code"], "usage");
 }
