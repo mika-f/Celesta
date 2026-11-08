@@ -133,7 +133,7 @@ node <skill>/scripts/inspect.mjs scene.tsx --every 15 --native "/Applications/Ce
 
 In a source checkout, build the exporter once
 (`cargo build -p celesta-exporter --release`) and `inspect.mjs` picks it up.
-For entries with video or audio, also build the codec plugin and point
+For entries with video or audio, also build the media plugin and point
 `CELESTA_PLUGIN_PATH` at it, from the repository root:
 
 ```sh

@@ -30,8 +30,8 @@ pub enum ExportError {
         operation: &'static str,
         source: io::Error,
     },
-    /// The codec plugin could not check, encode, or mux: there is none, it
-    /// stopped answering, or it failed.
+    /// The media plugin that encodes could not check, encode, or mux: there
+    /// is none, it stopped answering, or it failed.
     #[error("{stage} failed: {source}")]
     Codec {
         stage: &'static str,
@@ -63,7 +63,7 @@ pub enum ExportError {
     /// An export with neither a video nor a subtitle file to write.
     #[error("an export needs a video output or a subtitle file to write")]
     NoOutput,
-    /// The codec plugin lacks an encoder `format` needs, as an FFmpeg build
+    /// The media plugin lacks an encoder `format` needs, as an FFmpeg build
     /// without it does.
     #[error("the codec plugin has no {encoder} encoder, which {format} export needs")]
     EncoderUnavailable {

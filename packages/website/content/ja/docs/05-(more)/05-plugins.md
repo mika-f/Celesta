@@ -21,7 +21,7 @@ Celesta は次の順にプラグインを探し、同じ id のプラグイン�
 5. デスクトップアプリの [Plugins タブ](#plugins-タブ)で追加したフォルダー
 6. Celesta に同梱のプラグインフォルダー（Windows は実行ファイルの隣の `plugins`、macOS のアプリは `Contents/PlugIns`、それ以外は実行ファイルのフォルダーから見た `../lib/celesta/plugins`）
 
-プラグインは、どのバージョンの Celesta で動くかを示します。別のバージョン向けに作られたプラグインや、それを示していないプラグインは読み飛ばされ、その理由が Problems タブ、[Plugins タブ](#plugins-タブ)、`celesta-exporter` と MCP サーバーの出力に表示されます。お使いの Celesta 向けに作られたリリースを入れてください。読み飛ばされたプラグインは、この順で後に見つかる同じ id のプラグインを隠しません。たとえば、リストの後ろにお使いの Celesta 向けのコーデックプラグインがあれば、そちらが使われます。[Plugins タブ](#plugins-タブ)でオフにしたプラグインも同じく、後のプラグインを隠しません。
+プラグインは、どのバージョンの Celesta で動くかを示します。別のバージョン向けに作られたプラグインや、それを示していないプラグインは読み飛ばされ、その理由が Problems タブ、[Plugins タブ](#plugins-タブ)、`celesta-exporter` と MCP サーバーの出力に表示されます。お使いの Celesta 向けに作られたリリースを入れてください。読み飛ばされたプラグインは、この順で後に見つかる同じ id のプラグインを隠しません。たとえば、リストの後ろにお使いの Celesta 向けのメディアプラグインがあれば、そちらが使われます。[Plugins タブ](#plugins-タブ)でオフにしたプラグインも同じく、後のプラグインを隠しません。
 
 1・2・3・5 で指定するフォルダーはプラグインそのものでも、複数のプラグインを入れたフォルダーでもかまいません。`CELESTA_PLUGIN_PATH` には絶対パスを指定してください。相対パスは、Celesta を起動した場所によって指すフォルダーが変わるため読み飛ばされます。
 
@@ -109,15 +109,57 @@ export default function Root() {
 
 デスクトップアプリでは、プラグインのコンポーネントを **Add** メニューから追加することもできます。メニューでは Celesta 本体の要素の後に並びます。選ぶと Image や Rect と同じように追加できます。ファイルを受け取るコンポーネントは先にファイルを尋ね、そのあとドラッグで置く場所を決めます。VRM アバターのようにモデルファイルを受け取るコンポーネントは、指定された種類のファイルだけを受け付け（`Choose a .vrm file`）、レイヤーの縦横比で枠を描きます。アプリは要素を書き込むとき、`import { Flag } from '@celesta-plugin/flag'` のようなプラグインの import も追加します。
 
-## コーデックプラグイン
+## メディアプラグイン
 
-Celesta は動画・音声ファイルの読み書きにコーデックライブラリを自分でリンクせず、コーデックプラグインを通して行います。macOS と Windows のパッケージには、Celesta に同梱のプラグインフォルダーに `ffmpeg` プラグインが入っていて、FFmpeg でメディアの情報の取得、デコード、エンコード、多重化をします。この FFmpeg は GPL ライセンスの libx264 を含むため、GPL で配布されるのはこのコーデックプラグインだけです。アプリ、`celesta-exporter`、`Celesta-mcp` は MIT または Apache-2.0 です。
+Celesta は動画・音声ファイルの読み書きにコーデックライブラリを自分でリンクせず、メディアプラグインを通して行います。macOS と Windows のパッケージには、Celesta に同梱のプラグインフォルダーに `ffmpeg` プラグインが入っていて、FFmpeg でメディアの情報の取得、デコード、エンコード、多重化をします。この FFmpeg は GPL ライセンスの libx264 を含むため、GPL で配布されるのはこのメディアプラグインだけです。アプリ、`celesta-exporter`、`Celesta-mcp` は MIT または Apache-2.0 です。
 
-コーデックプラグインのマニフェストには `"roles": ["codec"]` があります。Celesta は実行してよいプラグインのうち、上の順で最初に見つかったコーデックを使います。ひとつもないときは、`cargo install` で置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` を使います。ただし、実行ファイルが `target/release` のような Cargo のビルドフォルダーにあるときは使いません。ソースビルドでは、自分でビルドしたコーデックプラグインを使います（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。`cargo install` で Celesta を入れる場合は、コーデックも入れてアプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもコーデックは入りません。`celesta-codec-ffmpeg` が crates.io に公開されるまでは、`cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` でリポジトリから入れます（[ソースからのビルド](/ja/docs/build-from-source/)と同じく FFmpeg 8.1.x の開発ライブラリが必要です）。コーデックがないと動画と音声は表示も書き出しもできません。アプリは Problems にそう表示し、書き出しはエラーコード `no_codec` で失敗します。
+メディアプラグインのマニフェストには `"roles": ["media"]` と `"protocol": 2` があり、プラグインが持つデコーダーを `media.decoders` に並べます。デコーダーごとに `id`、表示する名前の `name`、読めるファイルの種類を `extensions`（ドットなし）に書きます。
 
-デコードした動画のフレームは、コーデックプラグインが対応していれば（`ffmpeg` プラグインは Celesta 0.10 から対応しています）、プラグインの出力のパイプではなく、Celesta とプラグインのプロセスが共有するメモリーを通って届きます。このメモリーはほかのプロセスやユーザーからは開けません。対応していないプラグインと、4096×2560 より大きなフレームはパイプを通ります。コーデックプラグインがこの共有メモリーでうまく動かないときは、Celesta を起動する環境で環境変数 `CELESTA_CODEC_SHARED_MEMORY=0` を設定すると、すべてのフレームがパイプを通ります。
+```json
+{
+  "id": "ffmpeg",
+  "version": "0.9.0",
+  "celesta": ">=0.9.0, <0.10.0",
+  "protocol": 2,
+  "roles": ["media"],
+  "executable": { "macos-aarch64": "bin/celesta-codec-ffmpeg" },
+  "media": {
+    "decoders": [
+      { "id": "ffmpeg", "name": "FFmpeg", "extensions": ["mp4", "mov", "webm", "mp3", "wav"] }
+    ]
+  }
+}
+```
 
-LGPL のみの FFmpeg など別の FFmpeg を使うには、その FFmpeg の `lib/pkgconfig` を `PKG_CONFIG_PATH` に指定し（Windows では、その FFmpeg をインストールした vcpkg のチェックアウト先を `VCPKG_ROOT` に設定し）、リポジトリのルートで `node scripts/plugins/build.mts plugins/ffmpeg --out <ユーザーのプラグインフォルダー>` を実行します。このコマンドは、その FFmpeg をリンクしてコーデックをビルドし、指定したフォルダーに `ffmpeg` プラグインとして置きます。ユーザーのプラグインフォルダーは、Celesta に同梱のプラグインフォルダーより先に探されます。ほかのプラグインと同じく、アプリは実行する前に確認します。`licenses/` には 4 つのファイルが入ります。`LICENSE-MIT` と `LICENSE-APACHE` は Celesta のコードのライセンス文、`LICENSE-GPL-2.0` と `GPL-SOURCE-OFFER.md` は公式の GPL ビルド向けの GPL とソースコードの提供の申し出です。プラグインを配布するときは、GPL の文書とソースコードの提供の申し出だけを、お使いの FFmpeg ビルドの条件に合わせて差し替えてください。MIT と Apache のライセンス文はそのまま残します。
+デコーダーの `id` はプラグインの id と同じ決まりに従い（[プラグインを作る](#プラグインを作る)を参照）、同じプラグインのほかのデコーダーと重なってはいけません。これに反するデコーダーは理由を示したうえで読み飛ばされ、そのプラグインのほかのデコーダーは使われます。プラグインはメディアプラグインかコンテンツプラグインのどちらかで、両方の役割を持つマニフェストは読み飛ばされます。以前の `"roles": ["codec"]` 向けに作られたプラグインは無視され、Celesta はそれでメディアを読みません。お使いの Celesta 向けのリリースを入れるか、ソースビルドでは `plugins/ffmpeg` をビルドし直してください。
+
+### ファイルを読むデコーダー
+
+Celesta は、最初のひとつだけでなく、実行してよいメディアプラグインをすべて使います。ファイルを読むときは、そのファイルの拡張子を挙げたデコーダーに、次の順で尋ねます。
+
+1. 自分で入れたプラグインのデコーダー（`--plugin-dir`、`CELESTA_PLUGIN_PATH`、ユーザーのプラグインフォルダー、追加したフォルダーのもの）
+2. Celesta に同梱のプラグインのデコーダー
+3. プロジェクトのプラグインのデコーダー（プロジェクトを信頼し、プラグインを許可したあと）
+
+それぞれの中では上の検索順にプラグインを並べ、ひとつのプラグインのデコーダーはマニフェストに書いた順に並べます。どのデコーダーも挙げていない拡張子のファイルや、拡張子のないファイルは、この順ですべてのデコーダーに渡します。プロジェクトのプラグインを最後にするのは、Celesta がもともと読めるファイルの読み込みをプロジェクトが奪えないようにするためです。
+
+デコーダーが自分の読むファイルではないと答えたとき、読めなかったとき、そのプログラムが起動しないときは、次のデコーダーに尋ねます。最初にファイルを読めたデコーダーがそのファイルを受け持ち、以後のフレームと音声はそのデコーダーから届きます。そこで後からエラーになっても、ほかのデコーダーには移りません。存在しないファイルは、プラグインを起動する前に失敗します。どのデコーダーも読めなかったときは、なるべく詳しいエラーになります。ファイルが見つからない、動画のストリームがない、デコーダーが返した最初のほかのエラー、の順です。どのデコーダーも自分の読むファイルではないと答えただけのときは、`no decoder could read <file> (tried ffmpeg/ffmpeg)` のように試したデコーダーを挙げ、書き出しはエラーコード `unsupported_media` で失敗します。
+
+プロジェクトのプラグインがファイルをデコードすると、デスクトップアプリはそれを知らせます。Problems タブに `my-decoder decodes 2 files in this project` のようなお知らせ（問題ではなく情報）がファイルの一覧と一緒に表示され、[Plugins タブ](#plugins-タブ)のそのプラグインの行には、デコードしているファイルの数が表示されます。
+
+### `cargo install` の場合
+
+見つかったプラグインに `ffmpeg` がないときは、`cargo install` で置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` も、Celesta に同梱のプラグインとして使います。このプログラムには `celesta-codec-ffmpeg --manifest` でマニフェストを尋ねます。ただし、実行ファイルが `target/release` のような Cargo のビルドフォルダーにあるときは使いません。ソースビルドでは、自分でビルドしたメディアプラグインを使います（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。`cargo install` で Celesta を入れる場合は、メディアプラグインも入れてアプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもメディアプラグインは入りません。`celesta-codec-ffmpeg` が crates.io に公開されるまでは、`cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` でリポジトリから入れます（[ソースからのビルド](/ja/docs/build-from-source/)と同じく FFmpeg 8.1.x の開発ライブラリが必要です）。
+
+### デコーダーがないとき
+
+メディアのデコーダーがひとつもないと、動画と音声は表示も書き出しもできません。Problems タブには **No media decoder can run** が表示され、その理由（メディアプラグインにこのコンピューター向けのプログラムがない、承認を待っている、オフになっている、見つからない）を示します。動画の書き出しは最初にエンコーダーを確かめるので、メディアプラグインがひとつもないとすぐにエラーコード `no_codec` で失敗します。静止画の書き出しや、メディアプラグインにデコーダーがない動画の書き出しは、動画や音声のファイルを読むときに `no_decoder` で失敗します。書き出しでエンコーダーを選べるようになるまでは、検索順で最初のメディアプラグインでエンコードと多重化をします。
+
+### 共有メモリーと別の FFmpeg ビルド
+
+デコードした動画のフレームは、メディアプラグインが対応していれば（`ffmpeg` プラグインは Celesta 0.10 から対応しています）、プラグインの出力のパイプではなく、Celesta とプラグインのプロセスが共有するメモリーを通って届きます。このメモリーはほかのプロセスやユーザーからは開けません。対応していないプラグインと、4096×2560 より大きなフレームはパイプを通ります。メディアプラグインがこの共有メモリーでうまく動かないときは、Celesta を起動する環境で環境変数 `CELESTA_CODEC_SHARED_MEMORY=0` を設定すると、すべてのフレームがパイプを通ります。
+
+LGPL のみの FFmpeg など別の FFmpeg を使うには、その FFmpeg の `lib/pkgconfig` を `PKG_CONFIG_PATH` に指定し（Windows では、その FFmpeg をインストールした vcpkg のチェックアウト先を `VCPKG_ROOT` に設定し）、リポジトリのルートで `node scripts/plugins/build.mts plugins/ffmpeg --out <ユーザーのプラグインフォルダー>` を実行します。このコマンドは、その FFmpeg をリンクしてメディアプラグインをビルドし、指定したフォルダーに `ffmpeg` プラグインとして置きます。ユーザーのプラグインフォルダーは、Celesta に同梱のプラグインフォルダーより先に探されます。ほかのプラグインと同じく、アプリは実行する前に確認します。`licenses/` には 4 つのファイルが入ります。`LICENSE-MIT` と `LICENSE-APACHE` は Celesta のコードのライセンス文、`LICENSE-GPL-2.0` と `GPL-SOURCE-OFFER.md` は公式の GPL ビルド向けの GPL とソースコードの提供の申し出です。プラグインを配布するときは、GPL の文書とソースコードの提供の申し出だけを、お使いの FFmpeg ビルドの条件に合わせて差し替えてください。MIT と Apache のライセンス文はそのまま残します。
 
 ## サンプル
 
@@ -132,12 +174,12 @@ LGPL のみの FFmpeg など別の FFmpeg を使うには、その FFmpeg の `l
 ```sh
 pnpm install && pnpm run build:runtime       # 最初に一度、リポジトリのルートで
 node scripts/plugins/build.mts examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
-node scripts/plugins/build.mts plugins/ffmpeg   # MP4 を書き出すコーデックプラグイン
+node scripts/plugins/build.mts plugins/ffmpeg   # MP4 を書き出すメディアプラグイン
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 ```
 
-2 つ目の `--plugin-dir` で、エクスポーターにコーデックプラグインを渡します。コーデックプラグインのビルドには FFmpeg の開発ライブラリが必要です（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。
+2 つ目の `--plugin-dir` で、エクスポーターにメディアプラグインを渡します。メディアプラグインのビルドには FFmpeg の開発ライブラリが必要です（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。
 
 ## VRM プラグイン
 
@@ -148,7 +190,7 @@ pnpm install && pnpm run build:runtime       # 最初に一度、リポジトリ
 node scripts/plugins/build.mts plugins/vrm   # plugins/dist/vrm に書き出します
 ```
 
-`plugins/dist/vrm` をユーザーのプラグインフォルダーにコピーするか、書き出しのときに `--plugin-dir` で `plugins/dist` を指定します。ビルドには、Celesta 本体のビルドと同じく Rust と Node.js が必要です。ソースからビルドしたエクスポーターで動画を書き出すときは、`node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg` でコーデックプラグインも同じフォルダーにビルドしてください。こうすると `--plugin-dir plugins/dist` で両方をエクスポーターに渡せます。コーデックのビルドには FFmpeg の開発ライブラリが必要です。
+`plugins/dist/vrm` をユーザーのプラグインフォルダーにコピーするか、書き出しのときに `--plugin-dir` で `plugins/dist` を指定します。ビルドには、Celesta 本体のビルドと同じく Rust と Node.js が必要です。ソースからビルドしたエクスポーターで動画を書き出すときは、`node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg` でメディアプラグインも同じフォルダーにビルドしてください。こうすると `--plugin-dir plugins/dist` で両方をエクスポーターに渡せます。メディアプラグインのビルドには FFmpeg の開発ライブラリが必要です。
 
 ```tsx
 import { Composition } from '@celesta.studio/react';
@@ -251,8 +293,8 @@ export default function Root() {
 
 `name` はモジュールが export するコンポーネント名で、英大文字で始まり、英字・数字・`_` が続きます。`label` はメニューに表示する名前です（省略すると `name`）。`src`（`"image"` または `"video"`）があると Image と同じように追加され、アプリはファイルを尋ねて `src`・`x`・`y`・`width` を書きます。`"src": "model"` は、3D モデルのようにプラグインが自分で読むファイルのためのものです。受け取るファイルの種類を `extensions` に（英小文字と数字、ドットなし、重複なし。`["glb"]` など）、レイヤーの幅÷高さを `aspect` に（1/16384〜16384。省略できません）書くと、アプリはその縦横比で枠を描きます。アプリはその種類のファイルだけを受け付け、Image と同じく `src`・`x`・`y`・`width` を書きます。`height` は書かないので、コンポーネント自身の既定の縦横比を `aspect` と同じにしてください。違うと、描いた枠とレイヤーが一致しません。`src` がなければ四角形として描かれ、`x`・`y`・`width`・`height` を書きます。`props` はそのあとに書かれる props です。名前には英字・数字・`_` を使い、値は文字列・数値・真偽値のいずれかで、描いた範囲から書く props と同じ名前は使えません。`components` を持つマニフェストには `module` も必要です。
 
-マニフェストには必ず `celesta` を書き、プラグインが動く Celesta のバージョンを `">=0.9.0, <0.10.0"` のような Cargo のバージョン範囲で示します。この範囲は、プログラムがプロトコルの上に頼る機能（`protocol` はメッセージの形式だけを表し、3D シーンのような機能が加わっても `1` のままです）と、モジュールが使う `react` や `@celesta.studio/*` の API の両方を表します。これらの API は Celesta と同じバージョンで同梱されます。`0.10.0-beta.1` のような Celesta のプレリリースは、範囲の端が同じバージョンのプレリリースを指すとき（`">=0.10.0-beta.1, <0.11.0"` など）だけ範囲に入ります。リポジトリの `scripts/plugins/build.mts` は、ビルドに使った Celesta から、その次のマイナーリリース（1.0 より前）またはメジャーリリースの手前までの範囲を自動で書きます。
+マニフェストには必ず `celesta` を書き、プラグインが動く Celesta のバージョンを `">=0.9.0, <0.10.0"` のような Cargo のバージョン範囲で示します。この範囲は、プログラムがプロトコルの上に頼る機能（`protocol` はメッセージの形式だけを表します。コンテンツプラグインは `1` で、3D シーンのような機能が加わっても `1` のままです。[メディアプラグイン](#メディアプラグイン)は `2` です）と、モジュールが使う `react` や `@celesta.studio/*` の API の両方を表します。これらの API は Celesta と同じバージョンで同梱されます。`0.10.0-beta.1` のような Celesta のプレリリースは、範囲の端が同じバージョンのプレリリースを指すとき（`">=0.10.0-beta.1, <0.11.0"` など）だけ範囲に入ります。リポジトリの `scripts/plugins/build.mts` は、ビルドに使った Celesta から、その次のマイナーリリース（1.0 より前）またはメジャーリリースの手前までの範囲を自動で書きます。
 
-プラグインの id には英小文字・数字・`-`・`_`・`.` を使い、先頭は英小文字か数字にします。マニフェストで指定するファイルはすべて、プラグインのフォルダー内を指す相対パスにします。`..` を含むパスや、フォルダーの外へ向かうリンクは使えません。これに反するプラグイン、`celesta` の範囲がないか動いている Celesta を含まないプラグイン、`protocol` が `1` 以外のプラグイン、上の決まりに反するコンポーネントを持つプラグインは、理由を示したうえで読み飛ばされます。
+プラグインの id には英小文字・数字・`-`・`_`・`.` を使い、先頭は英小文字か数字にします。`builtin` は Celesta に組み込みのもののために予約されています。マニフェストで指定するファイルはすべて、プラグインのフォルダー内を指す相対パスにします。`..` を含むパスや、フォルダーの外へ向かうリンクは使えません。これに反するプラグイン、`celesta` の範囲がないか動いている Celesta を含まないプラグイン、`protocol` が役割のものと違うプラグイン、コンテンツとメディアの両方の役割を持つプラグイン、上の決まりに反するコンポーネントを持つプラグインは、理由を示したうえで読み飛ばされます。
 
 両方の部分の作り方はサンプルの README で説明しています。マニフェストとプロトコルはリポジトリの `docs/handoff/2026-11-01-plugin-system.md` で、その後の変更（`components` など）は `docs/handoff/2026-11-02-plugin-*.md` で、3D のシーンとお知らせは `docs/handoff/2026-11-03-plugin-scene-content.md` で、プラグインが持ち込むマテリアル（WGSL）・ライト・描画順・アウトラインは `docs/handoff/2026-11-03-plugin-scene-materials.md` で、VRM プラグインとモデルファイルを受け取るコンポーネントは `docs/handoff/2026-11-03-plugin-vrm.md` で説明しています。

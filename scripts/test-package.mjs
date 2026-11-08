@@ -13,8 +13,8 @@ const mcp = join(packageDirectory, mac ? 'Contents/MacOS/Celesta-mcp' : 'Celesta
 const directory = mkdtempSync(join(tmpdir(), 'Celesta package 日本語 '));
 const entry = join(directory, 'test.tsx');
 const env = { ...process.env, PATH: mac ? '/usr/bin:/bin' : join(process.env.SystemRoot, 'System32') };
-// Plugin folders searched before the bundled one would let another codec
-// write the MP4 below: CELESTA_PLUGIN_PATH, and the user's plugin folder and
+// Plugin folders searched before the bundled one would let another media
+// plugin write the MP4 below: CELESTA_PLUGIN_PATH, and the user's plugin folder and
 // settings (which can add folders), found from these. Windows names
 // variables in any case.
 const userFolders = ['APPDATA', 'HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME'];
@@ -65,7 +65,7 @@ export default function Root() {
   const messages = protocol.trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.ok(messages[0].config);
   assert.ok(messages[1].scene);
-  // Celesta links no FFmpeg: the MP4 below is written by the bundled codec
+  // Celesta links no FFmpeg: the MP4 below is written by the bundled media
   // plugin, which carries the GPL its libx264 needs.
   const codec = join(packageDirectory, mac ? 'Contents/PlugIns/ffmpeg' : 'plugins/ffmpeg');
   assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the media plugin');
@@ -73,10 +73,10 @@ export default function Root() {
   assert.ok(codecManifest.roles?.includes('media'), 'The media plugin must have the media role');
   assert.ok(codecManifest.media?.decoders?.length > 0, 'The media plugin must offer at least one decoder');
   const programs = Object.values(codecManifest.executable ?? {});
-  assert.equal(programs.length, 1, 'The codec plugin must name exactly one executable');
-  assert.ok(existsSync(join(codec, programs[0])), `The codec plugin's program ${programs[0]} must exist`);
+  assert.equal(programs.length, 1, 'The media plugin must name exactly one executable');
+  assert.ok(existsSync(join(codec, programs[0])), `The media plugin's program ${programs[0]} must exist`);
   for (const license of ['LICENSE-GPL-2.0', 'GPL-SOURCE-OFFER.md']) {
-    assert.ok(existsSync(join(codec, 'licenses', license)), `The codec plugin must carry ${license}`);
+    assert.ok(existsSync(join(codec, 'licenses', license)), `The media plugin must carry ${license}`);
   }
   // The build script copies the files plugin.json lists, by name, and
   // nothing else.
@@ -84,11 +84,11 @@ export default function Root() {
   assert.deepEqual(
     readdirSync(join(codec, 'licenses')).sort(),
     codecSource.licenses.map((license) => basename(license)).sort(),
-    "The codec plugin's licenses/ must hold exactly the files plugins/ffmpeg/plugin.json lists",
+    "The media plugin's licenses/ must hold exactly the files plugins/ffmpeg/plugin.json lists",
   );
-  // The codec's crates are in the plugins workspace, whose licenses the
-  // package collects with the root's: the codec's alone, not those of the
-  // plugins it does not bundle.
+  // The media plugin's crates are in the plugins workspace, whose licenses
+  // the package collects with the root's: the media plugin's alone, not
+  // those of the plugins it does not bundle.
   const licenses = join(packageDirectory, mac ? 'Contents/Resources/licenses' : 'licenses');
   const rustPackages = JSON.parse(readFileSync(join(licenses, 'rust-packages.json'), 'utf8').replace(/^\u{FEFF}/u, ''))
     .map((crate) => crate.name);

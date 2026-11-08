@@ -326,6 +326,11 @@ Every other error keeps protocol 1's behavior: an unknown code is
   - A `describe` that fails (the process cannot start, a missed deadline, a bad answer) is not cached. Its components count as unavailable, with the failure as their reason.
 - **Mismatch.** Celesta ignores components that `describe` returns but the manifest lacks (and warns once, on stderr). Components the manifest has but `describe` leaves out count as unavailable, with the reason "the plugin did not describe it".
 
+Deviations in P1 (`docs/handoff/2026-11-08-media-decoders.md`):
+
+- **`describe` and its cache move to P2a** (deviation 1). Nothing consumes them in P1: decoders route by `probe`, and the export dialog and `--list-components` arrive later. P1's `MediaRegistry` holds the listing and the process factories only.
+- **P1's manifest parses `media.decoders` only** (deviation 3). The encoder and muxer keys arrive with P2a; serde already ignores keys it does not know, so a manifest that has them still loads. `InstalledPlugins::media()` returns `MediaPlugin { id, version, executable, directory, origin, decoders }`, one per plugin rather than one `MediaComponentInfo` per component, and the built-in components arrive with P4.
+
 ## Settings schema
 
 `SettingField`, in the shape of `registerComponent()`'s fields
@@ -525,6 +530,14 @@ The editor, the exporter, the MCP server, and the React bridge's probes
 each hold one registry, replaced on plugin discovery. Requests can then go
 to different plugins, which resolves #782's problem 9.
 
+Deviation in P1 (deviation 2): **a process-wide registry stays.**
+`celesta_media::set_registry` and `registry` replace `set_codec` and
+`codec`, and `MediaBackend::new()` reads the registry lazily, on first use,
+as it read the codec. A backend made before discovery (the editor's
+long-lived audio worker) must get the registry chosen later.
+`MediaBackend::with_registry` is the explicit form. Requests still go to
+different plugins, since the registry holds them all.
+
 The in-process provider trait splits along the component kinds, with
 `MediaProvider` advertising which a provider has:
 
@@ -554,7 +567,11 @@ program registers. In-process implementations (tests, benches, and
   - `probe` goes to each candidate in turn. An `unsupported` error moves on to the next. Any other error, or a candidate whose process cannot start, also moves on, but is remembered.
   - The first successful probe wins, and the path is pinned to that decoder in `MediaBackend`'s probe cache. A `decodeVideo` or `decodeAudio` for a path not pinned yet routes it first, with a probe. Its later `decodeVideo` and `decodeAudio` go there, and errors after a successful probe do not fall back.
   - When every candidate fails, the error is the most specific one remembered: `notFound`, or `noVideoStream` from a decoder that read the file. Otherwise it is `MediaError::Unsupported { path, tried }`. With no decoder installed at all, it is `MediaError::NoDecoder`.
+    - As built in P1, the ranking is `NotFound` > `NoVideoStream` > the first other error > `Unsupported { tried }`, and a candidate stopped on purpose (`CodecStopped`: a missed deadline, or the kill switch) ends routing.
+    - Deviation in P1 (deviation 4): **a path that does not exist fails with `NotFound` before any plugin is started.** Paths are absolute and local ([Components](#components)).
+    - Deviation in P1 (deviation 5): **the exporter reports `MediaError::Unsupported` with its own code, `unsupported_media`**, beside `no_decoder` (with the install hint). `no_codec` stays for encoding with no media plugin.
 - **Processes.** Each `MediaBackend` has one process per decoder plugin, started on first use and reopened once on `CodecUnavailable` as today. The process gets #775's single shared slot. It is not shared with encoding (an export's components) or with content plugins.
+  - Deviation in P1 (deviation 6): until P2a, a backend's legacy encoder (the registry's first plugin in search order) may share its process with that plugin's decoder. Today's callers use separate backends for encoding and decoding; P2a's per-export components separate them.
 - **Visibility.** `MediaBackend` records which decoder served each path. When a project plugin's decoder serves any file, the editor's Plugins panel shows "<plugin> decodes <n> files in this project" with the files. Problems gets a matching info entry.
 - **Editor problem.** "No codec plugin can run" becomes "No media decoder can run", with the same reasons as today.
 
@@ -719,8 +736,8 @@ working.
 
 | Phase | Contents |
 | --- | --- |
-| P1: Protocol 2 and decoders | The manifest's `media` and `roles: ["media"]`, the component listing (with the sibling's `--manifest`), `MediaRegistry`, the `describe` cache, decoder routing and fallback, the decoder half of protocol 2, the project-decoder notice, and "No media decoder can run". FFmpeg's and the test codec's decoders are ported. Also everything that writes or checks today's `codec` manifest and protocol 1, or a packaged build after P1 would ship a plugin Celesta ignores: `plugins/ffmpeg/plugin.json`; `scripts/plugins/manifest.mts` (the `media` key, `protocol` per role) and its tests; `scripts/test-package.mjs`; the test codec's manifest (`crates/codec-test/src/plugin.rs`); and the protocol check in `celesta-plugin` (`PROTOCOL_VERSION`: the serve loop's `hello`, `PluginChild::hello_with`, and discovery), which becomes per role. Until P2a replaces them, protocol 2 temporarily keeps protocol 1's `checkEncoder`, `openEncoder`, `encodeFrame`, `finishEncoder`, `abortEncoder`, and `muxAudio` messages unchanged, sent to the first runnable media plugin as `InstalledPlugins::codec()` chooses today, so exports keep working. |
-| P2a: Encoders and muxers | The settings schema and validation; the encoder and muxer halves of protocol 2 through the pipe only (`transports: ["pipe"]`, a window of one); negotiation; the interleaver and its spill; audio streaming, delay, and pre-roll; `resolve_output`; FFmpeg's and the test codec's encoders and muxers; the exporter's options, CLI, JSON report, and progress labels; MCP and `@celesta.studio/exporter`; and removal of the old types and protocol 1's encoder messages. The FFmpeg plugin moves from ez-ffmpeg's file-writing pipeline (`VideoWriter`, `FfmpegContext`) to packet-level libavcodec / libavformat through `ffmpeg-sys-next` (already a dependency), since ez-ffmpeg's packet sink takes only avcC H.264 and raw AAC. Checked against `main` by decoding: video frames and audio samples identical. Files are not byte-identical (packet-level muxing, edit lists from negative `pts`). |
+| P1: Protocol 2 and decoders | The manifest's `media` and `roles: ["media"]`, the component listing (with the sibling's `--manifest`), `MediaRegistry`, decoder routing and fallback, the decoder half of protocol 2, the project-decoder notice, and "No media decoder can run". FFmpeg's and the test codec's decoders are ported. Also everything that writes or checks today's `codec` manifest and protocol 1, or a packaged build after P1 would ship a plugin Celesta ignores: `plugins/ffmpeg/plugin.json`; `scripts/plugins/manifest.mts` (the `media` key, `protocol` per role) and its tests; `scripts/test-package.mjs`; the test codec's manifest (`crates/codec-test/src/plugin.rs`); and the protocol check in `celesta-plugin` (`PROTOCOL_VERSION`: the serve loop's `hello`, `PluginChild::hello_with`, and discovery), which becomes per role. Until P2a replaces them, protocol 2 temporarily keeps protocol 1's `checkEncoder`, `openEncoder`, `encodeFrame`, `finishEncoder`, `abortEncoder`, and `muxAudio` messages unchanged, sent to the first runnable media plugin as `InstalledPlugins::codec()` chooses today, so exports keep working. As built (`docs/handoff/2026-11-08-media-decoders.md`): `describe` and its cache moved to P2a (deviation 1), the manifest parses `media.decoders` only (deviation 3), the process-wide registry stays (deviation 2), and the legacy encoder may share a decoder's process (deviation 6); see [Capability discovery](#capability-discovery), [Registry and routing](#registry-and-routing), and [Decoders](#decoders). |
+| P2a: Encoders and muxers | `describe` and its cache, moved from P1, and the manifest's encoder and muxer keys; the settings schema and validation; the encoder and muxer halves of protocol 2 through the pipe only (`transports: ["pipe"]`, a window of one); negotiation; the interleaver and its spill; audio streaming, delay, and pre-roll; `resolve_output`; FFmpeg's and the test codec's encoders and muxers; the exporter's options, CLI, JSON report, and progress labels; MCP and `@celesta.studio/exporter`; and removal of the old types and protocol 1's encoder messages. The FFmpeg plugin moves from ez-ffmpeg's file-writing pipeline (`VideoWriter`, `FfmpegContext`) to packet-level libavcodec / libavformat through `ffmpeg-sys-next` (already a dependency), since ez-ffmpeg's packet sink takes only avcC H.264 and raw AAC. Checked against `main` by decoding: video frames and audio samples identical. Files are not byte-identical (packet-level muxing, edit lists from negative `pts`). |
 | P2b: Shared memory and pipelining | The ring, the send window, `inputFormats` in the manifest, and the deadlines; the mix-against-render measurement; and the performance comparison against `main`. Checked byte-identical against P2a's output. |
 | P2c: BT.709 | The GPU conversion to BT.709, `nv12` and `p010`, and color tags in every container, with before/after screenshots of the same scene (AGENTS.md). Its own PR, so P2a and P2b are checked without a color change. |
 | P3: Export dialog and presets | The editor's export dialog; user and project `export-presets.json`, the project's `default`, and the presets in the CLI, MCP, and TS (`--preset`, `--preset-file`). |

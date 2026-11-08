@@ -6,12 +6,14 @@ On macOS, copy the complete app into Applications before launching it. For a por
 :::
 :::toggle[A source build cannot find FFmpeg]
 
-Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set `PKG_CONFIG_PATH` in the same shell where you build the codec plugin. On Windows, check `VCPKG_ROOT` and the MSVC build tools. On Linux, point `PKG_CONFIG_PATH` at the FFmpeg you built, such as `/opt/ffmpeg8/lib/pkgconfig`. See [source-build setup](/en/docs/build-from-source/).
+Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set `PKG_CONFIG_PATH` in the same shell where you build the media plugin. On Windows, check `VCPKG_ROOT` and the MSVC build tools. On Linux, point `PKG_CONFIG_PATH` at the FFmpeg you built, such as `/opt/ffmpeg8/lib/pkgconfig`. See [source-build setup](/en/docs/build-from-source/).
 
 :::
-:::toggle[Video and audio do not show, or an export fails with no_codec]
+:::toggle[Video and audio do not show, or an export fails with no_codec or no_decoder]
 
-Celesta reads and writes media through its codec plugin. In a package, check that the `ffmpeg` plugin is still in the plugin folder that comes with Celesta (`plugins\ffmpeg` beside `Celesta.exe`, or `Contents/PlugIns/ffmpeg` in the macOS app), or install the package again. In a source build, run `node scripts/plugins/build.mts plugins/ffmpeg` from the repository root, and set `CELESTA_PLUGIN_PATH` to the absolute path of `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`) in the shell where you run Celesta. See [The codec plugin](/en/docs/plugins/#the-codec-plugin).
+Celesta reads and writes video and audio through its media plugin, and the Problems tab says **No media decoder can run** when it has none. In a package, check that the `ffmpeg` plugin is still in the plugin folder that comes with Celesta (`plugins\ffmpeg` beside `Celesta.exe`, or `Contents/PlugIns/ffmpeg` in the macOS app), or install the package again. In a source build, run `node scripts/plugins/build.mts plugins/ffmpeg` from the repository root, and set `CELESTA_PLUGIN_PATH` to the absolute path of `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`) in the shell where you run Celesta. A `plugins/dist/ffmpeg` built from an older checkout may have `"roles": ["codec"]` in its `celesta-plugin.json`, which Celesta ignores: build it again. A video export with no media plugin fails with `no_codec`, since it checks its encoder first; a still export fails with `no_decoder` when it reads a video or audio file. See [Media plugins](/en/docs/plugins/#media-plugins).
+
+An export that fails with `unsupported_media` found decoders, but none of them reads that file: convert it to a format the `ffmpeg` plugin reads, such as MP4 or WAV, or install a plugin whose decoder reads it.
 
 :::
 :::toggle[My media is missing]

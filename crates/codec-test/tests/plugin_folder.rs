@@ -27,11 +27,11 @@ fn the_folder_is_a_media_plugin_for_this_platform() {
         executable.display()
     );
 
-    // Named explicitly, it is the media plugin chosen over any other
-    // installed, with its one decoder.
+    // Named explicitly, it is the first media plugin, ahead of any other
+    // installed (such as one on CELESTA_PLUGIN_PATH), with its one decoder.
     let media = InstalledPlugins::find(&[folder.to_path_buf()], &[]).0.media();
-    let [plugin] = media.as_slice() else {
-        panic!("one media plugin in the folder, not {media:?}");
+    let Some(plugin) = media.first() else {
+        panic!("no media plugin in the folder");
     };
     assert_eq!(plugin.id, PLUGIN_ID);
     assert_eq!(plugin.executable, executable);

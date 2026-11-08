@@ -7,7 +7,7 @@
 
 > [!NOTE]
 > **Celesta の実行に必要なものを同梱**
-> macOS と Windows のパッケージには React ランタイム、Node.js、動画と音声を読み書きする FFmpeg コーデックプラグインが含まれています。動画の作成と書き出しのために Rust、Node.js、pnpm、FFmpeg を別途インストールする必要はありません。
+> macOS と Windows のパッケージには React ランタイム、Node.js、動画と音声を読み書きする FFmpeg メディアプラグインが含まれています。動画の作成と書き出しのために Rust、Node.js、pnpm、FFmpeg を別途インストールする必要はありません。
 
 ## 1. アプリをインストール
 

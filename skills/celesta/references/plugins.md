@@ -74,22 +74,40 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   type-checking, refreshed with the rest of `.celesta/` (in the app, a
   trusted project's own plugins and plugins waiting for approval too).
 
-## The codec plugin
+## Media plugins
 
 - Celesta links no codec: video and audio files are probed, decoded,
-  encoded, and muxed by a codec plugin (`"roles": ["codec"]` in its
-  manifest). The app's packages bundle `ffmpeg`. A source build makes it
-  with `node scripts/plugins/build.mts plugins/ffmpeg` and points
+  encoded, and muxed by media plugins (`"roles": ["media"]` and
+  `"protocol": 2` in the manifest, with their decoders in
+  `media.decoders`: `id`, `name`, and `extensions`). The app's packages
+  bundle `ffmpeg`. A source build makes it with
+  `node scripts/plugins/build.mts plugins/ffmpeg` and points
   `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
   (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root).
-  `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables;
-  that lookup is skipped in a Cargo build folder such as `target/release`.
-- It is not imported and has no components. Without one, video and audio
-  layers fail to decode and exports fail with `no_codec` (see
-  [export.md](export.md)).
+  `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables
+  (it answers `--manifest`) when no plugin folder has `ffmpeg`; that lookup
+  is skipped in a Cargo build folder such as `target/release`.
+- A plugin with the older `"roles": ["codec"]` is ignored: rebuild
+  `plugins/ffmpeg`, or have the user install a release for their Celesta.
+- They are not imported and have no components. Every media plugin that
+  may run is used: a file goes to the decoders listing its extension (all
+  decoders when none does), the user's plugins first (`--plugin-dir`,
+  `CELESTA_PLUGIN_PATH`, the user plugin folder, added folders), then
+  bundled ones, then a project's own. A decoder that does not read the
+  file, fails, or does not start passes it to the next; the first that
+  reads it keeps it. Exports encode through the first media plugin in
+  search order.
+- In the app, a project plugin that decodes files shows as an information
+  entry in Problems (`<plugin> decodes <n> files in this project`) and on
+  its Plugins tab row; it is not an error.
+- Without a decoder, the app shows **No media decoder can run** in
+  Problems and video and audio layers fail to decode. With no media plugin
+  at all, a video export fails with `no_codec` (it checks its encoder
+  first), and a still export with `no_decoder`; a file no decoder reads
+  fails with `unsupported_media` (see [export.md](export.md)).
 - Decoded frames come through memory shared with the plugin's process when
   the plugin accepts it (the `ffmpeg` plugin does), else through its pipe.
-  `CELESTA_CODEC_SHARED_MEMORY=0` keeps every frame in the pipe, for a codec
+  `CELESTA_CODEC_SHARED_MEMORY=0` keeps every frame in the pipe, for a media
   plugin that misbehaves with it.
 
 ## The VRM plugin
@@ -99,7 +117,7 @@ The Celesta repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) as a
 `node scripts/plugins/build.mts plugins/vrm` (after `pnpm install && pnpm
 run build:runtime` at the repository root); it writes `plugins/dist/vrm`,
 which the user copies into a plugin folder, or name `plugins/dist` with
-`--plugin-dir`. To export video from a source checkout, build the codec
+`--plugin-dir`. To export video from a source checkout, build the media
 plugin with it (`node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg`),
 so `--plugin-dir plugins/dist` names both.
 
@@ -233,9 +251,10 @@ import { Vrm } from '@celesta-plugin/vrm';
 | `plugin "<id>" waits for your approval in the Celesta app, and does not run until you allow it (<folder>): …` | `Celesta-export` or MCP found the plugin, but the user has not allowed it in the app, or it changed since. Ask the user to allow it in the app's Plugins tab. Only when the user asks you to run it without approval: with `Celesta-export`, pass `--allow-plugin <id>` or `--plugin-dir <folder>`; for MCP, which takes neither, the user puts the folder in the server's `CELESTA_PLUGIN_PATH`. |
 | `--allow-plugin <id> names no plugin that can run: …` | No usable plugin has that id. Read the skipped-plugin lines printed before it (an incompatible `celesta` range, a bad manifest, a folder others can write): a plugin skipped there must be fixed or replaced. If none names the id, check it against the plugin's manifest. |
 | `…; <folder> was skipped: <reason>` | That folder's manifest has a bad id or names a file outside the folder (`..`, an absolute path, a link out). The plugin must be fixed; do not work around it. |
-| `<folder>/celesta-plugin.json was skipped: the plugin <id> works with Celesta <range>, and this is Celesta <version>` | The plugin was made for other Celesta versions. Have the user install a release of it made for their Celesta; do not edit its manifest's `celesta` range. A later plugin with the same id, such as another codec plugin, is used in its place. |
+| `<folder>/celesta-plugin.json was skipped: the plugin <id> works with Celesta <range>, and this is Celesta <version>` | The plugin was made for other Celesta versions. Have the user install a release of it made for their Celesta; do not edit its manifest's `celesta` range. A later plugin with the same id, such as another release of a media plugin, is used in its place. |
 | `<folder>/celesta-plugin.json was skipped: it does not say which Celesta versions it works with: …`, or `… its "celesta" range "<range>" is not a version range: …` | The manifest has no `celesta` range (a plugin built before ranges were required) or one that is not a Cargo version range. Rebuild it with Celesta's `scripts/plugins/build.mts`, which writes the range, or get a newer release. |
-| `<folder>/celesta-plugin.json was skipped: it speaks plugin protocol <n>, and this Celesta speaks protocol 1` | The plugin speaks another version of the plugin protocol than this Celesta. Have the user install a release of it that speaks protocol 1; do not edit its manifest's `protocol`. |
+| `<folder>/celesta-plugin.json was skipped: it speaks plugin protocol <n>, and this Celesta speaks protocol <m> with content plugins` (or `media plugins`) | The plugin speaks another version of the plugin protocol than this Celesta does for its role (content plugins 1, media plugins 2). Have the user install a release of it made for their Celesta; do not edit its manifest's `protocol`. |
+| `<folder>/celesta-plugin.json: a media component was skipped: media.decoders[<i>]…` | That decoder's entry is malformed, has a bad `id`, or repeats another decoder's `id`; the plugin's other decoders still work. The plugin must be fixed. |
 | `plugin "<id>" has no JavaScript module` | The plugin has only a program; its layers come from another package. |
 | `… has no executable for this platform` | The plugin was not built for this OS and CPU. |
 | `plugin "<id>": …` | The plugin's own error, such as a missing asset. |

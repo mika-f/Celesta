@@ -14,7 +14,7 @@ export interface PluginSource {
   cargoPackage?: string;
   /** The component module's entry, relative to the plugin's folder. */
   module?: string;
-  /** What the plugin is to Celesta (`content` when absent, `codec`). */
+  /** What the plugin is to Celesta (`content` when absent, or `media`). */
   roles?: string[];
   /** Files, relative to the plugin's folder, copied by name into licenses/. */
   licenses?: string[];

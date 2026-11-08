@@ -104,13 +104,14 @@ Celesta-export --json --react scene.tsx overlay.mov
 - The MCP `export_video` tool takes the same three extensions in `output`;
   `preset`, `crf`, `bitDepth`, and `loop` are rejected with `.mov` and
   `.webm`.
-- Celesta encodes through its codec plugin (`ffmpeg`, bundled with the app).
+- Celesta encodes through its media plugin (`ffmpeg`, bundled with the app).
   A source build makes it with `node scripts/plugins/build.mts plugins/ffmpeg`
   and finds it once `CELESTA_PLUGIN_PATH` is the absolute path of
   `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the
   repository root). A plugin
   whose FFmpeg lacks the needed encoder fails with `encoder_unavailable`; no
-  codec plugin at all fails with `no_codec`.
+  media plugin at all fails with `no_codec` (a still export, which encodes
+  nothing, fails with `no_decoder` once it reads a video or audio file).
 
 ## Looping video
 
@@ -283,8 +284,10 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `invalid_selection` | A frame is out of range or repeated, the selection or contact sheet is too large, or a still output is not `.png`, `.jpg`, `.jpeg`, or `.webp`. |
 | `empty_range` | `--from`/`--to` cover no frames of the composition. |
 | `unsupported_output` | The output is not a `.mp4`, `.mov`, or `.webm` path and no frame selection (`--frame`, `--frames`, `--every`) makes it a still export. |
-| `encoder_unavailable` | The codec plugin's FFmpeg lacks an encoder the format needs (video: H.264, ProRes, or VP9; audio: AAC, PCM, or Opus). |
-| `no_codec` | No codec plugin was found, so no video or audio could be decoded or encoded. Reinstall the app, or in a source build run `node scripts/plugins/build.mts plugins/ffmpeg` and `export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root, in the shell that runs Celesta. |
+| `encoder_unavailable` | The media plugin's FFmpeg lacks an encoder the format needs (video: H.264, ProRes, or VP9; audio: AAC, PCM, or Opus). |
+| `no_decoder` | No media decoder was found, so the entry's video and audio files could not be read (still exports; a video export with no media plugin fails with `no_codec` first). Reinstall the app, or in a source build run `node scripts/plugins/build.mts plugins/ffmpeg` and `export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root, in the shell that runs Celesta. A `plugins/dist/ffmpeg` with `"roles": ["codec"]` is from an older checkout and is ignored: build it again. |
+| `no_codec` | No media plugin was found to encode with; a video export checks this before it reads any file. Fix it as for `no_decoder`. |
+| `unsupported_media` | Media plugins were found, but none of their decoders reads a file the entry uses (`message` names the file and the decoders tried). Convert it to a format the `ffmpeg` plugin reads, such as MP4 or WAV. |
 | `unsupported_dimensions` | Video needs non-zero even width and height. |
 | `unsupported_subtitles` | The `--subtitles` path is not a `.srt` or `.vtt` file. |
 | `mixed_subtitle_languages` | Subtitles in several languages would share a `--subtitles` path without `{lang}`; see [subtitles.md](subtitles.md#several-languages). |
@@ -292,7 +295,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `project_validation` | The project is invalid; `error.issues` lists each `{path, message}`. |
 | `react` | The React entry failed to load or render; read `message` and look it up in [errors.md](errors.md). |
 | `frames_failed` | A contact sheet was written, but the frames in `error.failedFrames` failed and show as `FAILED` tiles. |
-| `evaluation`, `render`, `audio`, `codec`, `io`, `time` | The export failed at that stage (`codec`: the codec plugin failed while checking encoders, encoding, or muxing); read `message`. |
+| `evaluation`, `render`, `audio`, `codec`, `io`, `time` | The export failed at that stage (`codec`: the media plugin failed while checking encoders, encoding, or muxing); read `message`. |
 | `cancelled` | The export was cancelled (`--stdin-cancel`); what it was writing was removed. |
 
 The exit status is 0 on success, 1 when the export fails (a contact sheet
