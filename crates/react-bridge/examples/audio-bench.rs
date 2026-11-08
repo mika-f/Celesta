@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .map(|plugin| RegisteredPlugin {
                 id: plugin.id,
                 origin: plugin.origin,
-                decoders: plugin.decoders,
+                decoders: plugin.media.decoders,
                 factory: MediaProcess::factory(plugin.executable, plugin.directory),
             })
             .collect(),

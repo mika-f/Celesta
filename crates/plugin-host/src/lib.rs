@@ -36,8 +36,9 @@ pub use manifest::{
     platform, plugin_paths,
 };
 pub use media::{
-    CODEC_PROGRAM, MANIFEST_FLAG, MediaDecoderEntry, MediaManifest, MediaOrigin, MediaPlugin,
-    RESERVED_PLUGIN_ID,
+    CODEC_PROGRAM, MANIFEST_FLAG, MediaAudioEncoderEntry, MediaDecoderEntry, MediaManifest,
+    MediaMuxerEntry, MediaOrigin, MediaPlugin, MediaVideoEncoderEntry, RESERVED_PLUGIN_ID,
+    codec_family,
 };
 pub use project::{
     PROJECT_CONFIG, ProjectConfigError, has_project_config, mark_project_root,

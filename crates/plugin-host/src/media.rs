@@ -4,8 +4,9 @@
 use crate::console::without_console_window;
 use crate::locations::PluginSource;
 use crate::manifest::{InstalledPlugins, PluginEntry, PluginRole, is_valid_id};
-use serde::{Deserialize, Deserializer};
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,9 @@ const MANIFEST_OUTPUT_LIMIT: u64 = 1 << 20;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MediaManifest {
     pub decoders: Vec<MediaDecoderEntry>,
+    pub video_encoders: Vec<MediaVideoEncoderEntry>,
+    pub audio_encoders: Vec<MediaAudioEncoderEntry>,
+    pub muxers: Vec<MediaMuxerEntry>,
 }
 
 /// A decoder, as a manifest's `media.decoders` declares it.
@@ -53,6 +57,80 @@ pub struct MediaDecoderEntry {
     /// way in the manifest).
     #[serde(default)]
     pub extensions: Vec<String>,
+}
+
+/// A video encoder, as a manifest's `media.videoEncoders` declares it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaVideoEncoderEntry {
+    /// Unique among the plugin's video encoders: the encoder's reference is
+    /// `<plugin id>/<id>`.
+    pub id: String,
+    /// English display text.
+    pub name: String,
+    /// The codec families it writes ([`codec_family`]).
+    #[serde(default)]
+    pub codecs: Vec<String>,
+    /// The upper bound of the pixel formats it takes, as the manifest names
+    /// them. None when any format Celesta produces is possible.
+    #[serde(default)]
+    pub input_formats: Option<Vec<String>>,
+}
+
+/// An audio encoder, as a manifest's `media.audioEncoders` declares it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaAudioEncoderEntry {
+    /// Unique among the plugin's audio encoders.
+    pub id: String,
+    /// English display text.
+    pub name: String,
+    /// The codec families it writes ([`codec_family`]).
+    #[serde(default)]
+    pub codecs: Vec<String>,
+}
+
+/// A muxer, as a manifest's `media.muxers` declares it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaMuxerEntry {
+    /// Unique among the plugin's muxers.
+    pub id: String,
+    /// English display text.
+    pub name: String,
+    /// The file types it writes: lowercase, without the dot.
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    /// The video codec families it takes.
+    #[serde(default)]
+    pub video: Vec<String>,
+    /// The audio codec families it takes; None when it takes no audio track.
+    #[serde(default)]
+    pub audio: Option<Vec<String>>,
+    /// One of `video`.
+    #[serde(default)]
+    pub default_video: Option<String>,
+    /// One of `audio`.
+    #[serde(default)]
+    pub default_audio: Option<String>,
+    /// Whether it wants the leading audio (`leadingAudio`) to trim.
+    #[serde(default)]
+    pub trims_leading_audio: bool,
+    /// Whether it writes several files from one pattern.
+    #[serde(default)]
+    pub sequence: bool,
+}
+
+/// The codec family of a codec string: the part before its first `.`, with
+/// `avc3` read as `avc1` and `hev1` as `hvc1`.
+pub fn codec_family(codec: &str) -> String {
+    let family = codec.split('.').next().unwrap_or(codec);
+    match family {
+        "avc3" => "avc1",
+        "hev1" => "hvc1",
+        other => other,
+    }
+    .to_owned()
 }
 
 /// Where a media plugin comes from, in the order its decoders are tried:
@@ -90,63 +168,177 @@ pub struct MediaPlugin {
     /// Where it runs.
     pub directory: PathBuf,
     pub origin: MediaOrigin,
-    /// In manifest order.
-    pub decoders: Vec<MediaDecoderEntry>,
+    /// What its manifest declares, each list in manifest order.
+    pub media: MediaManifest,
 }
 
 /// A manifest's `media` as far as it can be read, and why each part that
-/// could not was skipped. A malformed decoder is left out without the
-/// others.
+/// could not was skipped. A malformed entry is left out without the others.
 pub(crate) fn parse_media(value: Value) -> (Option<MediaManifest>, Vec<String>) {
-    let mut media = match value {
-        Value::Null => return (None, Vec::new()),
-        Value::Object(media) => media,
-        _ => return (None, vec!["its \"media\" is not an object".into()]),
-    };
-    let mut problems = Vec::new();
-    let entries = match media.remove("decoders") {
-        None | Some(Value::Null) => Vec::new(),
+    match value {
+        Value::Null => (None, Vec::new()),
+        Value::Object(_) => {
+            let (media, problems) = MediaManifest::from_json(value);
+            (Some(media), problems)
+        }
+        _ => (None, vec!["its \"media\" is not an object".into()]),
+    }
+}
+
+impl MediaManifest {
+    /// The `media` object `value` as far as it can be read, and why each
+    /// entry that could not was skipped: an id that is not valid or repeats
+    /// an earlier one of the same kind, an encoder with no `codecs`, a muxer
+    /// with no `extensions` or `video`, or a default that is not among the
+    /// codecs it takes. Codecs are kept as families ([`codec_family`]),
+    /// extensions lowercase without the dot.
+    pub fn from_json(value: Value) -> (Self, Vec<String>) {
+        let mut problems = Vec::new();
+        let Value::Object(mut media) = value else {
+            problems.push("its \"media\" is not an object".into());
+            return (Self::default(), problems);
+        };
+        let manifest = Self {
+            decoders: read_entries(
+                &mut media,
+                "decoders",
+                &mut problems,
+                |decoder: &MediaDecoderEntry| &decoder.id,
+                |decoder| {
+                    normalize_extensions(&mut decoder.extensions);
+                    Ok(())
+                },
+            ),
+            video_encoders: read_entries(
+                &mut media,
+                "videoEncoders",
+                &mut problems,
+                |encoder: &MediaVideoEncoderEntry| &encoder.id,
+                |encoder| normalize_codecs(&mut encoder.codecs),
+            ),
+            audio_encoders: read_entries(
+                &mut media,
+                "audioEncoders",
+                &mut problems,
+                |encoder: &MediaAudioEncoderEntry| &encoder.id,
+                |encoder| normalize_codecs(&mut encoder.codecs),
+            ),
+            muxers: read_entries(
+                &mut media,
+                "muxers",
+                &mut problems,
+                |muxer: &MediaMuxerEntry| &muxer.id,
+                normalize_muxer,
+            ),
+        };
+        (manifest, problems)
+    }
+}
+
+/// The families of `codecs`, which must not be empty.
+fn normalize_codecs(codecs: &mut [String]) -> Result<(), String> {
+    if codecs.is_empty() {
+        return Err("it has no \"codecs\"".into());
+    }
+    for codec in codecs {
+        *codec = codec_family(codec);
+    }
+    Ok(())
+}
+
+fn normalize_extensions(extensions: &mut [String]) {
+    for extension in extensions {
+        *extension = extension
+            .strip_prefix('.')
+            .unwrap_or(extension)
+            .to_lowercase();
+    }
+}
+
+fn normalize_muxer(muxer: &mut MediaMuxerEntry) -> Result<(), String> {
+    if muxer.extensions.is_empty() {
+        return Err("it has no \"extensions\"".into());
+    }
+    if muxer.video.is_empty() {
+        return Err("it has no \"video\" codecs".into());
+    }
+    normalize_extensions(&mut muxer.extensions);
+    normalize_codecs(&mut muxer.video)?;
+    for codec in muxer.audio.iter_mut().flatten() {
+        *codec = codec_family(codec);
+    }
+    for (key, default, list) in [
+        ("defaultVideo", &mut muxer.default_video, Some(&muxer.video)),
+        (
+            "defaultAudio",
+            &mut muxer.default_audio,
+            muxer.audio.as_ref(),
+        ),
+    ] {
+        if let Some(default) = default {
+            *default = codec_family(default);
+            if !list.is_some_and(|list| list.contains(default)) {
+                return Err(format!(
+                    "its \"{key}\" {default:?} is not among the codecs it takes"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The list `media[key]` read entry by entry: each from its own value, so
+/// one that cannot be read, has an id that is not valid or taken by an
+/// earlier entry, or that `normalize` refuses is left out with its reason in
+/// `problems`.
+fn read_entries<T: DeserializeOwned>(
+    media: &mut Map<String, Value>,
+    key: &str,
+    problems: &mut Vec<String>,
+    id: fn(&T) -> &str,
+    normalize: fn(&mut T) -> Result<(), String>,
+) -> Vec<T> {
+    let entries = match media.remove(key) {
+        None | Some(Value::Null) => return Vec::new(),
         Some(Value::Array(entries)) => entries,
         Some(_) => {
-            problems.push("its \"media.decoders\" is not a list".into());
-            Vec::new()
+            problems.push(format!("its \"media.{key}\" is not a list"));
+            return Vec::new();
         }
     };
-    let mut decoders: Vec<MediaDecoderEntry> = Vec::new();
+    let mut kept: Vec<T> = Vec::new();
     for (index, entry) in entries.into_iter().enumerate() {
-        let mut decoder = match serde_json::from_value::<MediaDecoderEntry>(entry) {
-            Ok(decoder) => decoder,
+        let mut entry = match serde_json::from_value::<T>(entry) {
+            Ok(entry) => entry,
             Err(error) => {
-                problems.push(format!("media.decoders[{index}] cannot be read: {error}"));
+                problems.push(format!("media.{key}[{index}] cannot be read: {error}"));
                 continue;
             }
         };
-        // The decoder's reference is `<plugin id>/<id>`, so its id is one
-        // segment, as a plugin's is, and names one decoder.
-        if !is_valid_id(&decoder.id) {
+        // A component's reference is `<plugin id>/<id>`, so its id is one
+        // segment, as a plugin's is, and names one component of its kind.
+        if !is_valid_id(id(&entry)) {
             problems.push(format!(
-                "media.decoders[{index}]'s id {:?} may use only lowercase letters, digits, \
+                "media.{key}[{index}]'s id {:?} may use only lowercase letters, digits, \
                  '-', '_', and '.', and must start with a letter or digit",
-                decoder.id
+                id(&entry)
             ));
             continue;
         }
-        if decoders.iter().any(|earlier| earlier.id == decoder.id) {
+        if kept.iter().any(|earlier| id(earlier) == id(&entry)) {
             problems.push(format!(
-                "media.decoders[{index}]'s id {:?} is taken by an earlier decoder",
-                decoder.id
+                "media.{key}[{index}]'s id {:?} is taken by an earlier entry",
+                id(&entry)
             ));
             continue;
         }
-        for extension in &mut decoder.extensions {
-            *extension = extension
-                .strip_prefix('.')
-                .unwrap_or(extension)
-                .to_lowercase();
+        if let Err(reason) = normalize(&mut entry) {
+            problems.push(format!("media.{key}[{index}]: {reason}"));
+            continue;
         }
-        decoders.push(decoder);
+        kept.push(entry);
     }
-    (Some(MediaManifest { decoders }), problems)
+    kept
 }
 
 /// [`crate::Manifest::media`] read leniently, leaving out what
@@ -303,7 +495,7 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
             .expect("the program is in a folder")
             .to_path_buf(),
         origin: MediaOrigin::Bundled,
-        decoders: media.unwrap_or_default().decoders,
+        media: media.unwrap_or_default(),
     })
 }
 
@@ -365,12 +557,7 @@ fn media_plugin(entry: &PluginEntry) -> Option<MediaPlugin> {
         executable: entry.executable()?,
         directory: entry.directory.clone(),
         origin: entry.source.into(),
-        decoders: entry
-            .manifest
-            .media
-            .as_ref()
-            .map(|media| media.decoders.clone())
-            .unwrap_or_default(),
+        media: entry.manifest.media.clone().unwrap_or_default(),
     })
 }
 
@@ -434,7 +621,10 @@ mod tests {
                 executable: directory.join("bin").join("media"),
                 directory: directory.clone(),
                 origin: MediaOrigin::User,
-                decoders: vec![decoder("ffmpeg", "FFmpeg", &["mp4", "mov", "m4v"])],
+                media: MediaManifest {
+                    decoders: vec![decoder("ffmpeg", "FFmpeg", &["mp4", "mov", "m4v"])],
+                    ..Default::default()
+                },
             }]
         );
     }
@@ -547,7 +737,7 @@ mod tests {
         );
         let media = installed(plugins).media_with_sibling(None);
         assert_eq!(ids(&media), ["p"]);
-        assert_eq!(media[0].decoders, [decoder("ok", "OK", &[])]);
+        assert_eq!(media[0].media.decoders, [decoder("ok", "OK", &[])]);
     }
 
     #[test]
@@ -586,11 +776,11 @@ mod tests {
         );
         assert_eq!(
             reasons[2],
-            "media.decoders[3]'s id \"ok\" is taken by an earlier decoder"
+            "media.decoders[3]'s id \"ok\" is taken by an earlier entry"
         );
         let media = installed(plugins).media_with_sibling(None);
         assert_eq!(
-            media[0].decoders,
+            media[0].media.decoders,
             [decoder("ok", "OK", &[]), decoder("next", "Next", &[])]
         );
     }
@@ -760,6 +950,167 @@ mod tests {
         assert_eq!(plugins[0].source, PluginSource::Project);
     }
 
+    /// The `media` object of the design spec's manifest example.
+    fn spec_media() -> serde_json::Value {
+        serde_json::json!({
+            "decoders": [{ "id": "ffmpeg", "name": "FFmpeg", "extensions": ["mp4", "m4v", "mov"] }],
+            "videoEncoders": [
+                { "id": "libx264", "name": "H.264 (x264)", "codecs": ["avc1"],
+                  "inputFormats": ["yuv420p", "yuv420p10", "nv12", "p010", "rgba8", "rgba16"] },
+                { "id": "prores", "name": "ProRes (prores_ks)", "codecs": ["ap4h", "apch"] },
+                { "id": "vp9", "name": "VP9 (libvpx)", "codecs": ["vp09"] }
+            ],
+            "audioEncoders": [
+                { "id": "aac", "name": "AAC", "codecs": ["mp4a"] },
+                { "id": "opus", "name": "Opus", "codecs": ["opus"] },
+                { "id": "pcm", "name": "PCM", "codecs": ["lpcm"] }
+            ],
+            "muxers": [
+                { "id": "mp4", "name": "MP4", "extensions": ["mp4", "m4v"],
+                  "video": ["avc1", "hvc1", "av01"], "audio": ["mp4a", "opus"],
+                  "defaultVideo": "avc1", "defaultAudio": "mp4a", "trimsLeadingAudio": true },
+                { "id": "mov", "name": "QuickTime", "extensions": ["mov"],
+                  "video": ["avc1", "hvc1", "ap4h", "apch"], "audio": ["mp4a", "lpcm"],
+                  "defaultVideo": "ap4h", "defaultAudio": "lpcm", "trimsLeadingAudio": true },
+                { "id": "webm", "name": "WebM", "extensions": ["webm"],
+                  "video": ["vp09", "av01"], "audio": ["opus"],
+                  "defaultVideo": "vp09", "defaultAudio": "opus" }
+            ]
+        })
+    }
+
+    /// The media plugin `p` that `media` declares, discovered, with the
+    /// reasons its parts were skipped.
+    fn discovered(media: serde_json::Value) -> (MediaManifest, Vec<String>) {
+        let root = tempfile::tempdir().unwrap();
+        let mut manifest = media_manifest("p", serde_json::json!([]));
+        manifest["media"] = media;
+        write_manifest(&root.path().join("p"), manifest);
+        let (plugins, errors) = discover(&[root.path().to_path_buf()]);
+        let reasons = errors
+            .iter()
+            .map(|error| match error {
+                DiscoveryError::BadComponent { reason, .. } => reason.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        let media = installed(plugins).media_with_sibling(None);
+        (media.into_iter().next().unwrap().media, reasons)
+    }
+
+    #[test]
+    fn reads_encoders_and_muxers() {
+        let (media, reasons) = discovered(spec_media());
+        assert!(reasons.is_empty(), "{reasons:?}");
+        assert_eq!(media.decoders.len(), 1);
+        assert_eq!(media.video_encoders.len(), 3);
+        assert_eq!(media.audio_encoders.len(), 3);
+        assert_eq!(media.muxers.len(), 3);
+        assert_eq!(
+            media.video_encoders[0]
+                .input_formats
+                .as_deref()
+                .map(<[_]>::len),
+            Some(6)
+        );
+        assert_eq!(media.video_encoders[1].input_formats, None);
+        assert_eq!(media.video_encoders[1].codecs, ["ap4h", "apch"]);
+        let mp4 = &media.muxers[0];
+        assert_eq!(mp4.extensions, ["mp4", "m4v"]);
+        assert_eq!(mp4.default_video.as_deref(), Some("avc1"));
+        assert_eq!(mp4.default_audio.as_deref(), Some("mp4a"));
+        assert!(mp4.trims_leading_audio);
+        assert!(!media.muxers[2].trims_leading_audio);
+        assert!(!media.muxers[2].sequence);
+    }
+
+    #[test]
+    fn codec_families_are_normalized() {
+        let (media, reasons) = discovered(serde_json::json!({
+            "videoEncoders": [{ "id": "e", "name": "E", "codecs": ["avc3", "hev1.1.6.L93"] }],
+            "muxers": [{ "id": "m", "name": "M", "extensions": [".MP4"], "video": ["avc3"],
+                         "audio": ["mp4a.40.2"], "defaultVideo": "avc3", "defaultAudio": "mp4a" }],
+        }));
+        assert!(reasons.is_empty(), "{reasons:?}");
+        assert_eq!(media.video_encoders[0].codecs, ["avc1", "hvc1"]);
+        assert_eq!(codec_family("mp4a.40.2"), "mp4a");
+        let muxer = &media.muxers[0];
+        assert_eq!(muxer.extensions, ["mp4"]);
+        assert_eq!(muxer.video, ["avc1"]);
+        assert_eq!(muxer.audio.as_deref(), Some(&["mp4a".to_owned()][..]));
+        assert_eq!(muxer.default_video.as_deref(), Some("avc1"));
+    }
+
+    #[test]
+    fn entries_serialize_in_camel_case() {
+        let (media, reasons) = discovered(spec_media());
+        assert!(reasons.is_empty(), "{reasons:?}");
+        let muxer = serde_json::to_value(&media.muxers[0]).unwrap();
+        assert_eq!(muxer["defaultVideo"], "avc1");
+        assert_eq!(muxer["trimsLeadingAudio"], true);
+        let encoder = serde_json::to_value(&media.video_encoders[0]).unwrap();
+        assert_eq!(encoder["inputFormats"][0], "yuv420p");
+
+        let (from_json, problems) = MediaManifest::from_json(spec_media());
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(from_json, media);
+        let (parsed, problems) = parse_media(spec_media());
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(parsed, Some(media));
+    }
+
+    #[test]
+    fn a_bad_encoder_is_skipped_alone() {
+        let (media, reasons) = discovered(serde_json::json!({
+            "videoEncoders": [
+                { "id": "ok", "name": "OK", "codecs": ["avc1"] },
+                { "id": "none", "name": "No codecs", "codecs": [] },
+            ],
+        }));
+        assert_eq!(media.video_encoders.len(), 1);
+        assert_eq!(media.video_encoders[0].id, "ok");
+        assert!(
+            matches!(&reasons[..], [reason] if reason.contains("codecs")),
+            "{reasons:?}"
+        );
+    }
+
+    #[test]
+    fn a_muxer_default_must_be_accepted() {
+        let (media, reasons) = discovered(serde_json::json!({
+            "muxers": [
+                { "id": "m", "name": "M", "extensions": ["x"], "video": ["avc1"], "defaultVideo": "vp09" },
+                { "id": "a", "name": "A", "extensions": ["x"], "video": ["avc1"], "defaultAudio": "mp4a" },
+                { "id": "no-ext", "name": "N", "extensions": [], "video": ["avc1"] },
+                { "id": "no-video", "name": "N", "extensions": ["x"], "video": [] },
+            ],
+        }));
+        assert!(media.muxers.is_empty(), "{media:?}");
+        assert_eq!(reasons.len(), 4, "{reasons:?}");
+        assert!(reasons[0].contains("defaultVideo"), "{reasons:?}");
+        assert!(reasons[1].contains("defaultAudio"), "{reasons:?}");
+        assert!(reasons[2].contains("extensions"), "{reasons:?}");
+        assert!(reasons[3].contains("video"), "{reasons:?}");
+    }
+
+    #[test]
+    fn ids_are_unique_per_kind() {
+        let (media, reasons) = discovered(serde_json::json!({
+            "decoders": [{ "id": "ffmpeg", "name": "D" }],
+            "videoEncoders": [{ "id": "ffmpeg", "name": "V", "codecs": ["avc1"] }],
+            "muxers": [
+                { "id": "mp4", "name": "First", "extensions": ["mp4"], "video": ["avc1"] },
+                { "id": "mp4", "name": "Second", "extensions": ["mp4"], "video": ["avc1"] },
+                { "id": "Bad Id", "name": "Bad", "extensions": ["mp4"], "video": ["avc1"] },
+            ],
+        }));
+        assert_eq!(media.decoders.len(), 1);
+        assert_eq!(media.video_encoders.len(), 1);
+        assert_eq!(media.muxers.len(), 1);
+        assert_eq!(media.muxers[0].name, "First");
+        assert_eq!(reasons.len(), 2, "{reasons:?}");
+    }
+
     #[cfg(unix)]
     mod sibling {
         use super::*;
@@ -787,6 +1138,21 @@ mod tests {
         }
 
         #[test]
+        fn the_sibling_prints_every_kind() {
+            let root = tempfile::tempdir().unwrap();
+            let printed = serde_json::json!({
+                "id": "ffmpeg", "version": "0.10.0", "roles": ["media"], "media": spec_media(),
+            });
+            let (_, executable) = fake_sibling(root.path(), &format!("printf '%s\\n' '{printed}'"));
+            let listed = InstalledPlugins::default().media_with_sibling(Some(&executable));
+            assert_eq!(ids(&listed), ["ffmpeg"]);
+            assert_eq!(listed[0].media, MediaManifest::from_json(spec_media()).0);
+            assert_eq!(listed[0].media.video_encoders.len(), 3);
+            assert_eq!(listed[0].media.audio_encoders.len(), 3);
+            assert_eq!(listed[0].media.muxers.len(), 3);
+        }
+
+        #[test]
         fn the_sibling_is_listed_once() {
             let root = tempfile::tempdir().unwrap();
             let (program, executable) = printing_its_manifest(root.path());
@@ -796,7 +1162,10 @@ mod tests {
                 executable: program,
                 directory: root.path().to_path_buf(),
                 origin: MediaOrigin::Bundled,
-                decoders: vec![decoder("ffmpeg", "FFmpeg", &["mp4", "mov"])],
+                media: MediaManifest {
+                    decoders: vec![decoder("ffmpeg", "FFmpeg", &["mp4", "mov"])],
+                    ..Default::default()
+                },
             };
             assert_eq!(
                 InstalledPlugins::default().media_with_sibling(Some(&executable)),

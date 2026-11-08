@@ -14,7 +14,7 @@ pub fn media_registry(plugins: &InstalledPlugins) -> Arc<MediaRegistry> {
         .map(|plugin| RegisteredPlugin {
             id: plugin.id,
             origin: plugin.origin,
-            decoders: plugin.decoders,
+            decoders: plugin.media.decoders,
             factory: MediaProcess::factory(plugin.executable, plugin.directory),
         })
         .collect();
