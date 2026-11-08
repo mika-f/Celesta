@@ -152,9 +152,9 @@ impl SharedMemory {
                 ),
             ));
         }
-        let fits = layout
-            .slots
-            .checked_mul(layout.stride())
+        let fits = SLOT_HEADER
+            .checked_add(layout.slot_bytes)
+            .and_then(|stride| stride.checked_mul(layout.slots))
             .is_some_and(|bytes| bytes <= self.len);
         if !fits {
             return Err(io::Error::new(
@@ -269,7 +269,9 @@ impl SharedMemory {
 }
 
 /// How a segment divides into slots: `slots` of them, each a
-/// [`SLOT_HEADER`] and `slot_bytes` of data, one after another.
+/// [`SLOT_HEADER`] and `slot_bytes` of data, one after another. With more
+/// than one slot, `slot_bytes` must be a multiple of 8, so every slot's
+/// header stays aligned ([`SharedMemory::ring`] refuses it otherwise).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RingLayout {
@@ -926,5 +928,26 @@ mod tests {
             "an odd generation is a write"
         );
         assert_eq!(ring.read_slot(0, 4, 2), Some(vec![9; 4]));
+    }
+
+    #[test]
+    fn a_ring_whose_size_overflows_is_refused() {
+        let host = SharedMemory::create(SLOT_HEADER + 1024).unwrap();
+        assert!(
+            host.ring(RingLayout {
+                slots: 1,
+                slot_bytes: usize::MAX - 10
+            })
+            .is_err(),
+            "the stride wraps"
+        );
+        assert!(
+            host.ring(RingLayout {
+                slots: 2,
+                slot_bytes: usize::MAX / 2 & !7
+            })
+            .is_err(),
+            "the product wraps"
+        );
     }
 }
