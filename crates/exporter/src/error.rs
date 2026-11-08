@@ -65,7 +65,7 @@ pub enum ExportError {
     NoOutput,
     /// The media plugin lacks an encoder `format` needs, as an FFmpeg build
     /// without it does.
-    #[error("the codec plugin has no {encoder} encoder, which {format} export needs")]
+    #[error("the media plugin has no {encoder} encoder, which {format} export needs")]
     EncoderUnavailable {
         format: VideoFormat,
         encoder: String,
