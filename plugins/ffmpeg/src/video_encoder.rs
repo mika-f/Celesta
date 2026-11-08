@@ -18,12 +18,11 @@ use celesta_media::{
 };
 use ffmpeg_sys_next::{
     AV_CODEC_FLAG_GLOBAL_HEADER, AV_NOPTS_VALUE, AV_PKT_FLAG_KEY, AVColorPrimaries, AVColorRange,
-    AVColorSpace, AVColorTransferCharacteristic, AVDictionary, AVERROR, AVERROR_EOF,
-    AVPacketSideDataType, AVPixelFormat, AVRational, EAGAIN, SWS_CS_ITU709, SwsFlags,
-    av_dict_count, av_dict_free, av_dict_set, av_frame_make_writable, av_image_copy,
-    av_image_fill_arrays, av_image_get_buffer_size, av_packet_get_side_data, av_packet_unref,
-    av_rescale_q, avcodec_find_encoder_by_name, avcodec_open2, avcodec_receive_packet,
-    avcodec_send_frame, sws_getCoefficients, sws_scale, sws_setColorspaceDetails,
+    AVColorSpace, AVColorTransferCharacteristic, AVDictionary, AVERROR, AVERROR_EOF, AVFrame,
+    AVPacketSideDataType, AVPixelFormat, AVRational, EAGAIN, SwsFlags, av_dict_count, av_dict_free,
+    av_dict_set, av_frame_is_writable, av_image_copy, av_image_fill_arrays,
+    av_image_get_buffer_size, av_packet_get_side_data, av_packet_unref, av_rescale_q,
+    avcodec_find_encoder_by_name, avcodec_open2, avcodec_receive_packet, avcodec_send_frame,
 };
 use std::ffi::{CString, c_int};
 use std::ptr::{null, null_mut};
@@ -31,8 +30,13 @@ use std::ptr::{null, null_mut};
 /// An open video encoder.
 pub(crate) struct VideoSession {
     context: CodecContext,
-    /// The frame handed to the encoder, in the encoder's pixel format.
-    frame: Frame,
+    /// The frames handed to the encoder, in the encoder's pixel format: one
+    /// more whenever the encoder still holds every one (a frame-threaded
+    /// encoder such as `prores_ks` keeps those it has not finished), each
+    /// reused once it lets go, as libavfilter's pool reused them for
+    /// `main`'s encoders.
+    frames: Vec<Frame>,
+    format: AVPixelFormat,
     packet: PacketBuf,
     /// Converts RGBA input to the encoder's format; none for YUV input,
     /// which is the encoder's format already.
@@ -345,15 +349,7 @@ pub(crate) fn open(
             SwsFlags::SWS_BICUBIC as c_int,
         )?;
         if plan.bt709 {
-            // SAFETY: the coefficient tables are libswscale's own statics.
-            let result = unsafe {
-                let bt709 = sws_getCoefficients(SWS_CS_ITU709);
-                // RGB input is full range; the output limited.
-                sws_setColorspaceDetails(scaler.as_ptr(), bt709, 1, bt709, 0, 0, 1 << 16, 1 << 16)
-            };
-            if result < 0 {
-                return Err(av_error(result, "set the BT.709 conversion"));
-            }
+            scaler.bt709_limited()?;
         }
         Some(scaler)
     } else {
@@ -366,7 +362,8 @@ pub(crate) fn open(
     Ok(Opened {
         session: VideoSession {
             context,
-            frame: Frame::video(plan.format, request.width, request.height)?,
+            frames: vec![Frame::video(plan.format, request.width, request.height)?],
+            format: plan.format,
             packet: PacketBuf::new()?,
             scaler,
             input,
@@ -401,53 +398,38 @@ impl VideoSession {
                 pixels.len()
             )));
         }
-        let frame = self.frame.as_ptr();
+        let frame = self.writable_frame()?;
         // SAFETY: `pixels` holds a whole frame of `self.input` (checked
-        // above), and the frame is made writable before it is written; the
+        // above), and nothing else references the frame's buffers; the
         // encoder takes its own reference to what it keeps.
         unsafe {
-            let result = av_frame_make_writable(frame);
-            if result < 0 {
-                return Err(av_error(result, "reuse the encoder's frame"));
-            }
-            let mut source = [null_mut::<u8>(); 4];
-            let mut strides = [0 as c_int; 4];
-            let result = av_image_fill_arrays(
-                source.as_mut_ptr(),
-                strides.as_mut_ptr(),
-                pixels.as_ptr(),
-                self.input,
-                self.width,
-                self.height,
-                1,
-            );
-            if result < 0 {
-                return Err(av_error(result, "read the frame"));
-            }
             match &self.scaler {
-                Some(scaler) => {
-                    let result = sws_scale(
-                        scaler.as_ptr(),
-                        source.as_ptr().cast(),
-                        strides.as_ptr(),
-                        0,
+                Some(scaler) => scaler.convert(frame, pixels)?,
+                None => {
+                    let mut source = [null_mut::<u8>(); 4];
+                    let mut strides = [0 as c_int; 4];
+                    let result = av_image_fill_arrays(
+                        source.as_mut_ptr(),
+                        strides.as_mut_ptr(),
+                        pixels.as_ptr(),
+                        self.input,
+                        self.width,
                         self.height,
-                        (*frame).data.as_ptr(),
-                        (*frame).linesize.as_ptr(),
+                        1,
                     );
                     if result < 0 {
-                        return Err(av_error(result, "convert the frame"));
+                        return Err(av_error(result, "read the frame"));
                     }
+                    av_image_copy(
+                        (*frame).data.as_mut_ptr(),
+                        (*frame).linesize.as_ptr(),
+                        source.as_ptr().cast(),
+                        strides.as_ptr(),
+                        self.input,
+                        self.width,
+                        self.height,
+                    );
                 }
-                None => av_image_copy(
-                    (*frame).data.as_mut_ptr(),
-                    (*frame).linesize.as_ptr(),
-                    source.as_ptr().cast(),
-                    strides.as_ptr(),
-                    self.input,
-                    self.width,
-                    self.height,
-                ),
             }
             (*frame).pts = av_rescale_q(pts, self.track_base, self.frame_base);
             (*frame).duration = 1;
@@ -463,6 +445,23 @@ impl VideoSession {
             }
         }
         self.receive()
+    }
+
+    /// A frame of the session's whose buffers the encoder no longer holds,
+    /// a new one if it holds them all.
+    fn writable_frame(&mut self) -> Result<*mut AVFrame, MediaError> {
+        // SAFETY: each frame has its buffers, allocated by `Frame::video`.
+        let free = self
+            .frames
+            .iter()
+            .find(|frame| unsafe { av_frame_is_writable(frame.as_ptr()) } != 0);
+        if let Some(frame) = free {
+            return Ok(frame.as_ptr());
+        }
+        let frame = Frame::video(self.format, self.width as u32, self.height as u32)?;
+        let raw = frame.as_ptr();
+        self.frames.push(frame);
+        Ok(raw)
     }
 
     /// Drains the encoder: its last packets.
@@ -603,5 +602,39 @@ mod tests {
             assert_eq!(packet.duration, 1001);
             assert_eq!(packet.dts % 1001, 0, "{packet:?}");
         }
+        // libx264 copies each frame in, so one frame serves them all.
+        assert_eq!(opened.session.frames.len(), 1);
+    }
+
+    #[test]
+    fn a_frame_threaded_encoders_frames_are_reused() {
+        let settings = Settings::new();
+        let color = Color::bt709_limited();
+        let mut opened = open(
+            VideoCodec::ProRes,
+            &VideoEncoderRequest {
+                component: "prores",
+                settings: &settings,
+                width: 64,
+                height: 32,
+                frame_rate: Rational::new(30, 1),
+                timescale: 30,
+                offered: &[PixelFormat::Rgba16],
+                color: &color,
+            },
+        )
+        .unwrap();
+        let frame = vec![0x80; 64 * 32 * 8];
+        let mut packets = 0;
+        for index in 0..60 {
+            packets += opened.session.encode(index, &frame).unwrap().packets.len();
+        }
+        packets += opened.session.finish().unwrap().packets.len();
+        assert_eq!(packets, 60);
+        // prores_ks holds the frames its threads have not finished, so the
+        // session keeps a few, but reuses them rather than adding one per
+        // frame.
+        let kept = opened.session.frames.len();
+        assert!((1..60).contains(&kept), "{kept} frames for 60");
     }
 }

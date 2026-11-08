@@ -140,8 +140,9 @@ identical to `main`'s on every path checked (see Checks).
     timescale (R19); a zero packet duration becomes one frame (R17). avcC
     is built from libx264's Annex B extradata with the High-profile fields
     libavformat writes (R16), and packets become length-prefixed. RGBA
-    input is converted with `sws_scale` (`SWS_BICUBIC`; BT.601 for
-    libx264, BT.709 for ProRes and VP9, as `main`, deviation 8). An
+    input is converted by libswscale on its own threads (`SWS_BICUBIC`;
+    BT.601 for libx264, BT.709 for ProRes and VP9, as `main`, deviation
+    8), into frames the session reuses once the encoder lets go of them. An
     encoder missing from the linked FFmpeg is described unavailable ("this
     FFmpeg build has no libx264"). FFmpeg's log level is `AV_LOG_ERROR`
     (R18).
@@ -360,70 +361,99 @@ which needs lavapipe or WARP (CI); Linux and Windows; the editor by hand.
 
 ### Performance
 
-Release builds of both, the same machine, medians of three interleaved
-runs (the order alternating between runs), with `main`'s range beside
-each. The machine had an IDE, a browser, and another project's `esbuild`
-watcher open (about 10% of a core each); the 1-minute load average read
-about 7 before the first round (falling after the builds) and up to 40 at
-its end, mostly the encoders' own threads.
+Release builds of `main` (`14d0c5ab`, built in a temporary `git worktree`)
+and of this branch before and after the fix below, the same machine,
+medians of six interleaved runs (two rounds of three, the order rotating
+between runs), with each one's range beside it. The machine had an IDE,
+browsers, and another project's `esbuild` watcher open; the 1-minute load
+average read 17–37 at the rounds' starts and up to 102, mostly the
+encoders' own threads, so every figure is higher and wider than on an idle
+machine.
 
 `codec-bench` (`plugins/ffmpeg/examples/codec-bench.rs`, 120 frames of a
 `testsrc2` H.264 file; ms per frame):
 
-| | `main` | P2a |
-| --- | --- | --- |
-| decode in process, 1080p | 0.57 (0.55–0.58) | 0.60 (0.54–0.62) |
-| decode through the plugin, 1080p | 0.88 (0.87–0.88) | 0.89 (0.85–0.89) |
-| decode in process, 2160p | 2.43 (2.41–2.67) | 2.44 (2.18–2.64) |
-| decode through the plugin, 2160p | 3.73 (3.63–4.10) | 3.67 (3.65–4.05) |
-| encode in process, 1080p | 1.66 (1.54–1.74) | **2.72** (2.46–2.86) |
-| encode through the plugin, 1080p | 2.69 (2.67–2.76) | **3.83** (3.69–3.97) |
-| encode in process, 2160p | 7.09 (6.39–7.09) | **11.65** (9.95–11.89) |
-| encode through the plugin, 2160p | 12.24 (11.76–14.94) | **16.87** (16.28–18.19) |
+| | `main` | P2a before | P2a |
+| --- | --- | --- | --- |
+| decode in process, 1080p | 0.72 (0.61–0.80) | 0.77 (0.59–0.90) | 0.78 (0.60–1.34) |
+| decode through the plugin, 1080p | 1.25 (0.87–1.58) | 1.24 (1.00–1.65) | 1.22 (0.95–1.89) |
+| decode in process, 2160p | 3.31 (2.74–3.86) | 3.74 (3.27–3.84) | 3.49 (2.86–3.70) |
+| decode through the plugin, 2160p | 5.05 (4.79–6.18) | 5.06 (4.88–5.65) | 5.22 (4.63–5.32) |
+| encode in process, 1080p | 2.52 (2.10–3.80) | 3.91 (2.62–4.67) | 2.53 (1.71–4.08) |
+| encode through the plugin, 1080p | 4.46 (2.66–6.34) | 4.93 (3.94–5.87) | 4.03 (2.72–4.37) |
+| encode in process, 2160p | 11.00 (9.86–14.51) | 15.26 (13.37–18.76) | 11.30 (9.03–12.64) |
+| encode through the plugin, 2160p | 19.77 (15.16–23.83) | 22.17 (19.16–31.69) | 16.87 (14.67–17.34) |
 
-A second round gave the same picture (encode in process 1.63 against 2.82
-at 1080p and 8.64 against 11.79 at 2160p; through the plugin 2.84 against
-3.95 and 14.88 against 17.21). The bench's encode differs in one
-parameter: `main`'s used CRF 23 and P2a's leaves the default 18. A scratch
-build of P2a's bench at CRF 23 measured the same (3.00, 3.89, 11.74, and
-17.47), so the CRF does not explain the gap.
+The bench's encode differs in one parameter: `main`'s used CRF 23 and
+P2a's leaves the default 18; a build of P2a's bench at CRF 23 measured the
+same as at 18 before the fix.
 
 Exports of a React entry of 300 frames (24 moving rectangles and a text
 over a full-frame background; seconds of wall time, including start-up):
 
-| | `main` | P2a |
-| --- | --- | --- |
-| 1920×1080 MP4, x264 `ultrafast` | 0.753 (0.748–0.809) | 0.722 (0.712–0.778) |
-| 1920×1080 MP4, x264 `medium` | 2.244 (1.967–2.330) | 2.293 (1.970–2.310) |
-| 3840×2160 MP4, x264 `ultrafast` | 2.266 (2.140–2.300) | 2.258 (2.155–2.461) |
-| 3840×2160 MP4, x264 `medium` | 6.746 (6.395–7.220) | 6.919 (6.443–8.098) |
-| 3840×2160 MOV, ProRes 4444 | 19.30 (18.04–19.73) | **24.14** (23.66–25.23) |
+| | `main` | P2a before | P2a |
+| --- | --- | --- | --- |
+| 1920×1080 MP4, x264 `ultrafast` | 0.996 (0.922–1.098) | 0.948 (0.852–1.732) | 0.995 (0.854–1.785) |
+| 1920×1080 MP4, x264 `medium` | 3.397 (2.901–4.080) | 3.354 (2.680–3.970) | 3.382 (2.790–3.668) |
+| 3840×2160 MP4, x264 `ultrafast` | 3.778 (2.694–5.481) | 3.571 (3.024–5.120) | 3.399 (2.986–4.078) |
+| 3840×2160 MP4, x264 `medium` | 11.215 (9.135–13.615) | 10.184 (9.139–15.790) | 11.241 (9.399–12.168) |
+| 3840×2160 MOV, ProRes 4444 | 26.62 (24.13–29.18) | 32.52 (30.42–35.62) | 26.76 (25.07–29.01) |
 
 (`main`: `--preset ultrafast`; P2a: `--video-option preset=ultrafast`.)
-A second round of the MOV export gave 20.16 (17.83–20.19) against 24.93
-(24.31–26.53), with less CPU time on P2a's side (user 102–125 s against
-`main`'s 145–169 s).
+The MOV export's user CPU time is 199–217 s for `main`, 151–170 s before
+the fix, and 192–219 s after it. A separate run of the MOV export alone,
+six interleaved pairs, gave `main` 26.59 (21.74–29.96) against 25.26
+(21.58–31.22).
 
-**P2a is slower than `main` beyond `main`'s spread wherever the encoder
-converts RGBA**: the bench's encode (it offers `rgba8` only), 36–64%
-slower, and the ProRes 4444 export at 4K (`rgba16`), about 25% slower.
-The MP4 exports, which the GPU converts to `yuv420p`, and decoding are at
-`main`'s speed. This breaks the spec's "the new path must not be slower"
-on those paths. The likely cause, not investigated further in this task:
-`main`'s ez-ffmpeg pipeline ran the `scale` filter and the encoder on
-their own threads, so converting one frame overlapped encoding the last,
-and the plugin answered once ez-ffmpeg had queued the frame; P2a converts with
-`sws_scale` on the request's thread, then encodes, and answers with the
-packets, one request at a time, so the conversion, the encoder, and the
-renderer take turns (the lower CPU time fits). P2b's send window lets the
-renderer overlap the plugin; the conversion itself would need threads in
-the plugin (sliced `sws_scale`, or a converting thread ahead of the
-encoder).
+**Every encode path is at `main`'s speed**: inside `main`'s range, with
+medians at most 3% above `main`'s or below them. Before the fix, wherever
+the encoder converted RGBA (the bench's encode, which offers `rgba8` only,
+and the ProRes 4444 export, `rgba16`), P2a was slower than `main` beyond
+its range: 10–55% here (36–64% and 25% in an earlier, quieter
+measurement). The MP4 exports, which the GPU converts to `yuv420p`, and
+decoding do not go through the changed code.
+
+The cause, profiled in the bench: P2a converted with a single-threaded
+`sws_scale` on the request's thread (2.1 of 2.7 ms per frame at 1080p, 9.3
+of 11.6 ms at 2160p, against 0.3 and 1.1 ms for the encode), where
+`main`'s `scale` filter ran on libswscale's threads (libavfilter gives a
+graph's filters its automatic thread count, which ez-ffmpeg leaves at 0).
+And for a frame-threaded encoder (`prores_ks`), the encoder still held the
+session's one frame at the next request, so `av_frame_make_writable` copied
+the whole 4K frame first (7.6 ms per frame, 39 of 40 frames), where
+`main`'s frames came from libavfilter's pool. The fix
+(`plugins/ffmpeg/src/ffi.rs`, `video_encoder.rs`): the `Scaler` is set up
+with `sws_alloc_context`, an automatic thread count, and `sws_init_context`,
+and converts with `sws_scale_frame` from a frame borrowing the request's
+pixels; the session keeps a list of frames and takes one the encoder has
+let go of, adding one only when it holds them all (libx264 copies each
+frame in and keeps one; `prores_ks` settles at about eleven at 4K, as many
+as `av_frame_make_writable` had kept alive). The conversion still runs on
+the request's thread, before the encode; a converting thread ahead of the
+encoder was not needed to reach `main`'s speed.
+
+The output is unchanged. A unit test
+(`threaded_conversions_equal_single_threaded_ones`) checks that every
+conversion the encoders make gives the same bytes on threads as
+`sws_getContext` and `sws_scale` give at 642×362. Against `main`'s
+ez-ffmpeg `VideoWriter` in the same process (a scratch test, 40 frames
+of noisy content, at 320×240, 642×362, and 1920×1080): RGBA8 to libx264
+8-bit (`medium`, CRF 18) and RGBA16 to ProRes 4444 and VP9 with alpha give
+identical packets at every size, as YUV input to libx264 does. RGBA16 and
+`yuv420p10` to 10-bit libx264 are identical at 320×240 only: above it,
+10-bit libx264 differs from run to run in `main`'s pipeline too (0 of 40
+packets equal between two runs of the same input), so those packets cannot
+be compared. End to end, this branch's `<Video>` + `<Audio>` entry as MOV
+and as WebM and the 4K ProRes export above have the same encoded video
+packets as `main`'s (`-c copy -f hash`) and decode to the SHA-256 values
+in the table under Checks.
 
 ## Not done
 
-- **Slower RGBA-input encoding** (see Performance), against the spec's
-  requirement; to fix before the PR or in P2b.
+- **10-bit H.264 is not comparable packet for packet**: libx264 at 10
+  bits differs between runs of the same input above 320×240 on `main` too
+  (see Performance), so only 8-bit H.264, ProRes, and VP9 packets were
+  checked identical at larger sizes.
 - **The shared-memory ring and the send window** (P2b): every frame
   crosses the pipe, one request at a time, and `Export` processes get no
   shared memory.

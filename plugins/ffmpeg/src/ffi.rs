@@ -4,13 +4,14 @@
 
 use celesta_media::MediaError;
 use ffmpeg_sys_next::{
-    AV_LOG_ERROR, AVAudioFifo, AVCodec, AVCodecContext, AVFrame, AVPacket, AVPixelFormat,
-    AVSampleFormat, SwsContext, av_audio_fifo_alloc, av_audio_fifo_free, av_channel_layout_default,
-    av_frame_alloc, av_frame_free, av_frame_get_buffer, av_log_set_level, av_packet_alloc,
-    av_packet_free, av_strerror, avcodec_alloc_context3, avcodec_free_context, sws_freeContext,
-    sws_getContext,
+    AV_BUFFER_FLAG_READONLY, AV_LOG_ERROR, AVAudioFifo, AVCodec, AVCodecContext, AVFrame, AVPacket,
+    AVPixelFormat, AVSampleFormat, SWS_CS_ITU709, SwsContext, av_audio_fifo_alloc,
+    av_audio_fifo_free, av_buffer_create, av_channel_layout_default, av_frame_alloc, av_frame_free,
+    av_frame_get_buffer, av_image_fill_arrays, av_log_set_level, av_packet_alloc, av_packet_free,
+    av_strerror, avcodec_alloc_context3, avcodec_free_context, sws_alloc_context, sws_freeContext,
+    sws_getCoefficients, sws_init_context, sws_scale_frame, sws_setColorspaceDetails,
 };
-use std::ffi::{CStr, c_char, c_int};
+use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use std::ptr::null_mut;
 use std::sync::Once;
 
@@ -227,9 +228,18 @@ pub(crate) unsafe fn extradata(context: *const AVCodecContext) -> Vec<u8> {
     }
 }
 
-/// A libswscale context converting frames of one size between two formats,
-/// freed when dropped.
-pub(crate) struct Scaler(*mut SwsContext);
+/// A libswscale context converting frames of one size between two formats
+/// on libswscale's own threads, freed when dropped.
+///
+/// The threads are what `main`'s `scale` filter had (libavfilter gives it
+/// the graph's automatic thread count): each converts a band of the frame's
+/// rows with the same filters, so the output is the single-threaded one.
+pub(crate) struct Scaler {
+    context: *mut SwsContext,
+    source: AVPixelFormat,
+    width: c_int,
+    height: c_int,
+}
 
 // SAFETY: as for `CodecContext`.
 unsafe impl Send for Scaler {}
@@ -245,39 +255,131 @@ impl Scaler {
         flags: c_int,
     ) -> Result<Self, MediaError> {
         let (width, height) = (dimension(width)?, dimension(height)?);
-        // SAFETY: no filters and no parameters, which libswscale allows.
-        let context = unsafe {
-            sws_getContext(
-                width,
-                height,
+        // SAFETY: a context from `sws_alloc_context`, its fields set as
+        // `sws_getContext` sets them (and its thread count automatic)
+        // before `sws_init_context`, with no filters; it is freed on
+        // failure.
+        unsafe {
+            let context = sws_alloc_context();
+            if context.is_null() {
+                return Err(MediaError::Codec(
+                    "FFmpeg could not allocate a scaler".to_owned(),
+                ));
+            }
+            let scaler = Self {
+                context,
                 source,
                 width,
                 height,
-                destination,
-                flags,
-                null_mut(),
-                null_mut(),
-                std::ptr::null(),
-            )
-        };
-        if context.is_null() {
-            Err(MediaError::Codec(format!(
-                "FFmpeg cannot convert {source:?} to {destination:?}"
-            )))
-        } else {
-            Ok(Self(context))
+            };
+            (*context).src_w = width;
+            (*context).src_h = height;
+            (*context).src_format = source as c_int;
+            (*context).dst_w = width;
+            (*context).dst_h = height;
+            (*context).dst_format = destination as c_int;
+            (*context).flags = flags as c_uint;
+            (*context).threads = 0;
+            if sws_init_context(context, null_mut(), null_mut()) < 0 {
+                return Err(MediaError::Codec(format!(
+                    "FFmpeg cannot convert {source:?} to {destination:?}"
+                )));
+            }
+            Ok(scaler)
         }
     }
 
-    pub(crate) fn as_ptr(&self) -> *mut SwsContext {
-        self.0
+    /// Converts with the BT.709 matrix from full-range RGB to limited-range
+    /// YUV, rather than libswscale's default BT.601.
+    pub(crate) fn bt709_limited(&self) -> Result<(), MediaError> {
+        // SAFETY: the coefficient tables are libswscale's own statics; the
+        // details reach the context's per-thread contexts too.
+        let result = unsafe {
+            let bt709 = sws_getCoefficients(SWS_CS_ITU709);
+            // RGB input is full range; the output limited.
+            sws_setColorspaceDetails(self.context, bt709, 1, bt709, 0, 0, 1 << 16, 1 << 16)
+        };
+        if result < 0 {
+            Err(av_error(result, "set the BT.709 conversion"))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Converts `pixels`, a tightly packed frame of the source format,
+    /// into `destination`.
+    ///
+    /// # Safety
+    ///
+    /// `destination` is a writable frame of the destination format and
+    /// size, and `pixels` holds a whole frame of the source.
+    pub(crate) unsafe fn convert(
+        &self,
+        destination: *mut AVFrame,
+        pixels: &[u8],
+    ) -> Result<(), MediaError> {
+        /// Leaves the pixels to their owner: the buffer only lends them.
+        unsafe extern "C" fn lent(_: *mut c_void, _: *mut u8) {}
+        // SAFETY: the source frame borrows `pixels` through a read-only
+        // buffer whose free does nothing; libswscale drops its references
+        // to both frames before `sws_scale_frame` returns, and the frame's
+        // own is dropped with it here, while `pixels` is still borrowed.
+        unsafe {
+            let source = Self::frame()?;
+            let raw = source.as_ptr();
+            (*raw).format = self.source as c_int;
+            (*raw).width = self.width;
+            (*raw).height = self.height;
+            let result = av_image_fill_arrays(
+                (*raw).data.as_mut_ptr(),
+                (*raw).linesize.as_mut_ptr(),
+                pixels.as_ptr(),
+                self.source,
+                self.width,
+                self.height,
+                1,
+            );
+            if result < 0 {
+                return Err(av_error(result, "read the frame"));
+            }
+            (*raw).buf[0] = av_buffer_create(
+                pixels.as_ptr().cast_mut(),
+                pixels.len(),
+                Some(lent),
+                null_mut(),
+                AV_BUFFER_FLAG_READONLY,
+            );
+            if (*raw).buf[0].is_null() {
+                return Err(MediaError::Codec(
+                    "FFmpeg could not allocate a frame".to_owned(),
+                ));
+            }
+            let result = sws_scale_frame(self.context, destination, raw);
+            if result < 0 {
+                return Err(av_error(result, "convert the frame"));
+            }
+        }
+        Ok(())
+    }
+
+    /// An empty frame.
+    fn frame() -> Result<Frame, MediaError> {
+        // SAFETY: allocates an empty frame.
+        let frame = Frame(unsafe { av_frame_alloc() });
+        if frame.0.is_null() {
+            Err(MediaError::Codec(
+                "FFmpeg could not allocate a frame".to_owned(),
+            ))
+        } else {
+            Ok(frame)
+        }
     }
 }
 
 impl Drop for Scaler {
     fn drop(&mut self) {
-        // SAFETY: the context was allocated by `sws_getContext`.
-        unsafe { sws_freeContext(self.0) }
+        // SAFETY: the context was allocated by `sws_alloc_context`.
+        unsafe { sws_freeContext(self.context) }
     }
 }
 
@@ -285,4 +387,125 @@ impl Drop for Scaler {
 pub(crate) fn dimension(value: u32) -> Result<c_int, MediaError> {
     c_int::try_from(value)
         .map_err(|_| MediaError::Codec(format!("a frame dimension of {value} is too large")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ffmpeg_sys_next::{
+        SwsFlags, av_image_copy_to_buffer, av_image_get_buffer_size, sws_getContext, sws_scale,
+    };
+
+    /// `frame`'s pixels, tightly packed.
+    fn packed(frame: &Frame, format: AVPixelFormat, width: c_int, height: c_int) -> Vec<u8> {
+        // SAFETY: `frame` holds `width`x`height` pixels of `format`, and the
+        // buffer is sized for them.
+        unsafe {
+            let size = av_image_get_buffer_size(format, width, height, 1);
+            let mut bytes = vec![0; usize::try_from(size).unwrap()];
+            let raw = frame.as_ptr();
+            let written = av_image_copy_to_buffer(
+                bytes.as_mut_ptr(),
+                size,
+                (*raw).data.as_ptr().cast(),
+                (*raw).linesize.as_ptr(),
+                format,
+                width,
+                height,
+                1,
+            );
+            assert_eq!(written, size);
+            bytes
+        }
+    }
+
+    /// The conversion on libswscale's threads gives the bytes one thread
+    /// gives (`sws_getContext` and `sws_scale`, as before the threads), for
+    /// every conversion the video encoders make, at a height that splits
+    /// into uneven bands.
+    #[test]
+    fn threaded_conversions_equal_single_threaded_ones() {
+        use AVPixelFormat::*;
+        const WIDTH: u32 = 642;
+        const HEIGHT: u32 = 362;
+        let (width, height) = (WIDTH as c_int, HEIGHT as c_int);
+        for (source, destination, bt709) in [
+            (AV_PIX_FMT_RGBA, AV_PIX_FMT_YUV420P, false),
+            (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUV420P10LE, false),
+            (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUV422P10LE, true),
+            (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUVA444P10LE, true),
+            (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUVA420P, true),
+            (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUV420P, true),
+        ] {
+            // SAFETY: a size query on a valid format and dimensions.
+            let bytes = unsafe { av_image_get_buffer_size(source, width, height, 1) };
+            let mut seed = 7u32;
+            let pixels: Vec<u8> = (0..bytes)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    (seed >> 24) as u8
+                })
+                .collect();
+            let flags = SwsFlags::SWS_BICUBIC as c_int;
+            let scaler = Scaler::new(WIDTH, HEIGHT, source, destination, flags).unwrap();
+            if bt709 {
+                scaler.bt709_limited().unwrap();
+            }
+            let threaded = Frame::video(destination, WIDTH, HEIGHT).unwrap();
+            // SAFETY: the frame is the conversion's destination, and the
+            // pixels a whole source frame.
+            unsafe { scaler.convert(threaded.as_ptr(), &pixels) }.unwrap();
+
+            let one = Frame::video(destination, WIDTH, HEIGHT).unwrap();
+            // SAFETY: a single-threaded context for the same conversion,
+            // fed the same tightly packed frame.
+            unsafe {
+                let context = sws_getContext(
+                    width,
+                    height,
+                    source,
+                    width,
+                    height,
+                    destination,
+                    flags,
+                    null_mut(),
+                    null_mut(),
+                    std::ptr::null(),
+                );
+                assert!(!context.is_null());
+                if bt709 {
+                    let table = sws_getCoefficients(SWS_CS_ITU709);
+                    sws_setColorspaceDetails(context, table, 1, table, 0, 0, 1 << 16, 1 << 16);
+                }
+                let mut data = [null_mut::<u8>(); 4];
+                let mut strides = [0 as c_int; 4];
+                av_image_fill_arrays(
+                    data.as_mut_ptr(),
+                    strides.as_mut_ptr(),
+                    pixels.as_ptr(),
+                    source,
+                    width,
+                    height,
+                    1,
+                );
+                let raw = one.as_ptr();
+                let rows = sws_scale(
+                    context,
+                    data.as_ptr().cast(),
+                    strides.as_ptr(),
+                    0,
+                    height,
+                    (*raw).data.as_ptr(),
+                    (*raw).linesize.as_ptr(),
+                );
+                assert_eq!(rows, height);
+                sws_freeContext(context);
+            }
+            assert!(
+                packed(&threaded, destination, width, height)
+                    == packed(&one, destination, width, height),
+                "{source:?} to {destination:?} differs on threads"
+            );
+        }
+    }
 }
