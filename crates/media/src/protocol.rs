@@ -1996,6 +1996,27 @@ mod tests {
     }
 
     #[test]
+    fn a_full_write_packets_batch_fits_the_header_limit() {
+        // The exporter's `WRITE_BATCH_PACKETS` (16 × 1024) packets of the
+        // widest header there is: every time at its longest, empty bytes.
+        let packet = TrackPacket {
+            track: 1,
+            packet: Packet {
+                pts: i64::MIN,
+                dts: i64::MIN,
+                duration: i64::MIN,
+                key: false,
+                bytes: Vec::new(),
+                additional: Vec::new(),
+            },
+        };
+        let write = write_packets_request(SessionId(u64::MAX), &vec![packet; 16 * 1024]);
+        let header = serde_json::to_vec(&write.header).unwrap();
+        assert!(header.len() < 4 << 20, "{} header bytes", header.len());
+        write_message(&mut Vec::new(), &write).unwrap();
+    }
+
+    #[test]
     fn a_provider_without_the_kind_refuses() {
         let mut fake = Components::new(1);
         fake.has_muxer = false;

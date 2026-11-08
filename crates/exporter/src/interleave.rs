@@ -18,6 +18,11 @@ pub(crate) const SPILL_BYTES: usize = 256 << 20;
 /// the muxer at most, so a staged backlog is read back and written a batch
 /// at a time rather than all at once.
 pub(crate) const WRITE_BATCH_BYTES: usize = 32 << 20;
+/// Packets one [`Interleaver::take_ready`] gives the muxer at most: each
+/// costs `writePackets` about 75 bytes of JSON header, and the header is
+/// capped at 16 MiB, so a batch of tiny packets must stop well before its
+/// bytes reach [`WRITE_BATCH_BYTES`].
+pub(crate) const WRITE_BATCH_PACKETS: usize = 16 * 1024;
 pub(crate) const VIDEO_TRACK: usize = 0;
 pub(crate) const AUDIO_TRACK: usize = 1;
 
@@ -151,7 +156,7 @@ impl Interleaver {
     }
 
     /// The packets that are ready, in decode order: at most `budget` bytes
-    /// of them, but always one when any is ready. Call it again until it
+    /// and [`WRITE_BATCH_PACKETS`] of them, but always one when any is ready. Call it again until it
     /// gives none. A spilled packet that cannot be read back fails it, and
     /// the packets taken before it are lost.
     pub(crate) fn take_ready(&mut self, budget: usize) -> Result<Vec<TrackPacket>, ExportError> {
@@ -176,7 +181,9 @@ impl Interleaver {
             } else {
                 self.audio.front().map_or(0, packet_bytes)
             };
-            if !ready.is_empty() && taken.saturating_add(bytes) > budget {
+            if ready.len() >= WRITE_BATCH_PACKETS
+                || (!ready.is_empty() && taken.saturating_add(bytes) > budget)
+            {
                 break;
             }
             taken = taken.saturating_add(bytes);
@@ -463,5 +470,21 @@ mod tests {
             assert_eq!(all.len(), 12);
         }
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_batch_of_tiny_packets_stops_at_the_packet_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut il = interleaver(dir.path());
+        let count = 20_000;
+        il.push_video((0..count).map(|n| packet(n * 1001, 1)).collect())
+            .unwrap();
+        il.finish_audio();
+        let first = il.take_ready(WRITE_BATCH_BYTES).unwrap();
+        assert_eq!(first.len(), WRITE_BATCH_PACKETS);
+        let rest = il.take_ready(WRITE_BATCH_BYTES).unwrap();
+        assert_eq!(rest.len(), count as usize - WRITE_BATCH_PACKETS);
+        assert_eq!(rest[0].packet.dts, WRITE_BATCH_PACKETS as i64 * 1001);
+        assert!(il.take_ready(WRITE_BATCH_BYTES).unwrap().is_empty());
     }
 }
