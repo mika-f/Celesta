@@ -15,13 +15,13 @@ use celesta_media::{
     TrackConfig, VideoEncoderRequest, settings::validate,
 };
 use ffmpeg_sys_next::{
-    AV_CODEC_FLAG_GLOBAL_HEADER, AV_PKT_FLAG_KEY, AVColorPrimaries, AVColorRange, AVColorSpace,
-    AVColorTransferCharacteristic, AVDictionary, AVERROR, AVERROR_EOF, AVPacketSideDataType,
-    AVPixelFormat, AVRational, EAGAIN, SWS_CS_ITU709, SwsFlags, av_dict_count, av_dict_free,
-    av_dict_set, av_frame_make_writable, av_image_copy, av_image_fill_arrays,
-    av_image_get_buffer_size, av_packet_get_side_data, av_packet_unref,
-    avcodec_find_encoder_by_name, avcodec_open2, avcodec_receive_packet, avcodec_send_frame,
-    sws_getCoefficients, sws_scale, sws_setColorspaceDetails,
+    AV_CODEC_FLAG_GLOBAL_HEADER, AV_NOPTS_VALUE, AV_PKT_FLAG_KEY, AVColorPrimaries, AVColorRange,
+    AVColorSpace, AVColorTransferCharacteristic, AVDictionary, AVERROR, AVERROR_EOF,
+    AVPacketSideDataType, AVPixelFormat, AVRational, EAGAIN, SWS_CS_ITU709, SwsFlags,
+    av_dict_count, av_dict_free, av_dict_set, av_frame_make_writable, av_image_copy,
+    av_image_fill_arrays, av_image_get_buffer_size, av_packet_get_side_data, av_packet_unref,
+    av_rescale_q, avcodec_find_encoder_by_name, avcodec_open2, avcodec_receive_packet,
+    avcodec_send_frame, sws_getCoefficients, sws_scale, sws_setColorspaceDetails,
 };
 use std::ffi::{CString, c_int};
 use std::ptr::{null, null_mut};
@@ -39,8 +39,12 @@ pub(crate) struct VideoSession {
     input_bytes: usize,
     width: c_int,
     height: c_int,
-    /// A frame's duration in the timescale.
-    frame_duration: i64,
+    /// The encoder's time base, one frame (the frame rate inverted), as
+    /// `main`'s encoders had it: libx264 writes it into the SPS's timing.
+    frame_base: AVRational,
+    /// The track's time base, one over its timescale, which frames come in
+    /// and packets go out in.
+    track_base: AVRational,
     /// Whether frames are tagged BT.709 limited.
     bt709: bool,
     /// Whether packets are H.264 Annex B, which is answered length-prefixed.
@@ -257,6 +261,10 @@ pub(crate) fn open(
             rate.numerator, rate.denominator, request.timescale
         )));
     }
+    let frame_base = AVRational {
+        num: denominator,
+        den: numerator,
+    };
     let name = CString::new(codec.encoder()).expect("encoder names have no NUL");
     // SAFETY: `name` is NUL-terminated and outlives the call.
     let encoder = unsafe { avcodec_find_encoder_by_name(name.as_ptr()) };
@@ -278,10 +286,7 @@ pub(crate) fn open(
         (*raw).width = width;
         (*raw).height = height;
         (*raw).pix_fmt = plan.format;
-        (*raw).time_base = AVRational {
-            num: 1,
-            den: timescale,
-        };
+        (*raw).time_base = frame_base;
         (*raw).framerate = AVRational {
             num: numerator,
             den: denominator,
@@ -376,7 +381,11 @@ pub(crate) fn open(
             input_bytes,
             width,
             height,
-            frame_duration: i64::from(timescale) * i64::from(denominator) / i64::from(numerator),
+            frame_base,
+            track_base: AVRational {
+                num: 1,
+                den: timescale,
+            },
             bt709: plan.bt709,
             annexb: codec == VideoCodec::X264,
             config: Some(config),
@@ -448,8 +457,8 @@ impl VideoSession {
                     self.height,
                 ),
             }
-            (*frame).pts = pts;
-            (*frame).duration = self.frame_duration;
+            (*frame).pts = av_rescale_q(pts, self.track_base, self.frame_base);
+            (*frame).duration = 1;
             if self.bt709 {
                 (*frame).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
                 (*frame).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
@@ -541,18 +550,66 @@ impl VideoSession {
                     bytes: rest.to_vec(),
                 });
             }
+            let track_time = |time: i64| match time {
+                AV_NOPTS_VALUE => time,
+                time => av_rescale_q(time, self.frame_base, self.track_base),
+            };
             Ok(Packet {
-                pts: (*packet).pts,
-                dts: (*packet).dts,
+                pts: track_time((*packet).pts),
+                dts: track_time((*packet).dts),
                 // libx264 and libvpx give none; each packet is a frame.
-                duration: match (*packet).duration {
-                    0 => self.frame_duration,
+                duration: track_time(match (*packet).duration {
+                    0 => 1,
                     duration => duration,
-                },
+                }),
                 key: (*packet).flags & AV_PKT_FLAG_KEY != 0,
                 bytes,
                 additional,
             })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use celesta_composition::Rational;
+    use celesta_media::Color;
+
+    #[test]
+    fn ntsc_packets_are_timed_in_the_frame_rates_numerator() {
+        let settings: Settings = [("preset".to_owned(), SettingValue::String("medium".into()))]
+            .into_iter()
+            .collect();
+        let color = Color::bt709_limited();
+        let mut opened = open(
+            VideoCodec::X264,
+            &VideoEncoderRequest {
+                component: "libx264",
+                settings: &settings,
+                width: 32,
+                height: 16,
+                frame_rate: Rational::new(30_000, 1001),
+                timescale: 30_000,
+                offered: &[PixelFormat::Yuv420p],
+                color: &color,
+            },
+        )
+        .unwrap();
+        let frame = vec![128; 32 * 16 * 3 / 2];
+        let mut packets = Vec::new();
+        for index in 0..10 {
+            let encoded = opened.session.encode(index * 1001, &frame).unwrap();
+            packets.extend(encoded.packets);
+        }
+        packets.extend(opened.session.finish().unwrap().packets);
+        assert_eq!(packets.len(), 10);
+        let mut times: Vec<i64> = packets.iter().map(|packet| packet.pts).collect();
+        times.sort_unstable();
+        assert_eq!(times, (0..10).map(|index| index * 1001).collect::<Vec<_>>());
+        for packet in &packets {
+            assert_eq!(packet.duration, 1001);
+            assert_eq!(packet.dts % 1001, 0, "{packet:?}");
         }
     }
 }
