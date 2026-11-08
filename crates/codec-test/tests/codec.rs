@@ -763,7 +763,7 @@ fn describe_lists_four_available_components() {
         ]
     );
     let video = &described[1];
-    assert_eq!(video.transports, ["pipe"]);
+    assert_eq!(video.transports, ["sharedMemory", "pipe"]);
     assert_eq!(video.input_formats.len(), 6);
     let keys: Vec<_> = video.settings.iter().map(|field| &field.key[..]).collect();
     assert_eq!(keys, ["input", "alpha"]);
@@ -1027,4 +1027,28 @@ fn names_files_it_cannot_read() {
             assert!(message.contains(&name), "{message}");
         }
     }
+}
+
+#[test]
+fn describe_offers_shared_memory() {
+    let described = TestCodec::new().describe().unwrap();
+    let video = described
+        .iter()
+        .find(|component| component.kind == ComponentKind::VideoEncoder)
+        .unwrap();
+    assert_eq!(video.transports, ["sharedMemory", "pipe"]);
+}
+
+#[test]
+fn a_frame_of_the_wrong_length_is_refused() {
+    let mut codec = TestCodec::new();
+    let opened = open_video(&mut codec, &Settings::new(), 4, 2, &[PixelFormat::Rgba8]).unwrap();
+    let message = codec_message(codec.encode_video(opened.session, 0, frame(31, 1)));
+    assert_eq!(message, "a 4x2 rgba8 frame has 32 bytes, not 31");
+    let message = codec_message(codec.encode_video(opened.session, 0, frame(33, 1)));
+    assert_eq!(message, "a 4x2 rgba8 frame has 32 bytes, not 33");
+    // The session stays open for a frame of the right length.
+    let answered = codec.encode_video(opened.session, 1, frame(32, 2)).unwrap();
+    assert_eq!(answered.packets.len(), 1);
+    assert_eq!(answered.packets[0].pts, 1);
 }

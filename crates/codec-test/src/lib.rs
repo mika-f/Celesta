@@ -487,7 +487,7 @@ impl VideoEncoder for TestCodec {
                 ..
             } = state.video;
             return Err(MediaError::Codec(format!(
-                "a {width}x{height} {format:?} frame is {} bytes, not {}",
+                "a {width}x{height} {format} frame has {} bytes, not {}",
                 state.frame_len,
                 frame.len()
             )));

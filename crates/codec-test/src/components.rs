@@ -198,7 +198,7 @@ pub(crate) fn describe() -> Vec<ComponentDescription> {
         ComponentDescription {
             settings: video_settings(),
             input_formats: INPUT_FORMATS.to_vec(),
-            transports: vec!["pipe".to_owned()],
+            transports: vec!["sharedMemory".to_owned(), "pipe".to_owned()],
             ..component(ComponentKind::VideoEncoder, VIDEO_ENCODER_ID)
         },
         ComponentDescription {
