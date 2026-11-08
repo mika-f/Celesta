@@ -607,6 +607,44 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_the_encoder_still_holds_is_not_reused() {
+        let settings = Settings::new();
+        let color = Color::bt709_limited();
+        let mut opened = open(
+            VideoCodec::ProRes,
+            &VideoEncoderRequest {
+                component: "prores",
+                settings: &settings,
+                width: 64,
+                height: 32,
+                frame_rate: Rational::new(30, 1),
+                timescale: 30,
+                offered: &[PixelFormat::Rgba16],
+                color: &color,
+            },
+        )
+        .unwrap();
+        let session = &mut opened.session;
+        let first = session.frames[0].as_ptr();
+        // A reference such as an encoder's worker takes to a frame it has
+        // not finished.
+        let held = Frame::video(session.format, 64, 32).unwrap();
+        // SAFETY: both frames are valid; `held` is unreferenced before it
+        // is dropped.
+        unsafe {
+            ffmpeg_sys_next::av_frame_unref(held.as_ptr());
+            assert_eq!(ffmpeg_sys_next::av_frame_ref(held.as_ptr(), first), 0);
+        }
+        let other = session.writable_frame().unwrap();
+        assert_ne!(other, first);
+        assert_eq!(session.frames.len(), 2);
+        // SAFETY: as above.
+        unsafe { ffmpeg_sys_next::av_frame_unref(held.as_ptr()) };
+        assert_eq!(session.writable_frame().unwrap(), first);
+        assert_eq!(session.frames.len(), 2);
+    }
+
+    #[test]
     fn a_frame_threaded_encoders_frames_are_reused() {
         let settings = Settings::new();
         let color = Color::bt709_limited();

@@ -280,6 +280,10 @@ impl Scaler {
             (*context).dst_format = destination as c_int;
             (*context).flags = flags as c_uint;
             (*context).threads = 0;
+            // The explicitly initialized path, which FFmpeg 8 keeps for
+            // compatibility, on purpose: it converts as `sws_getContext`
+            // did, whose bytes were checked against `main`'s; a context
+            // left uninitialized takes FFmpeg 8's dynamic path instead.
             if sws_init_context(context, null_mut(), null_mut()) < 0 {
                 return Err(MediaError::Codec(format!(
                     "FFmpeg cannot convert {source:?} to {destination:?}"

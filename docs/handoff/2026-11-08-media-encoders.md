@@ -366,9 +366,10 @@ and of this branch before and after the fix below, the same machine,
 medians of six interleaved runs (two rounds of three, the order rotating
 between runs), with each one's range beside it. The machine had an IDE,
 browsers, and another project's `esbuild` watcher open; the 1-minute load
-average read 17–37 at the rounds' starts and up to 102, mostly the
-encoders' own threads, so every figure is higher and wider than on an idle
-machine.
+average read 17 at the first round's start, 102 at the second's, and 37
+at the end, so every figure is higher and wider than on an idle machine,
+and differences under about 10% are within its noise (the decode rows,
+which run no changed code, differ from `main`'s by up to 8%).
 
 `codec-bench` (`plugins/ffmpeg/examples/codec-bench.rs`, 120 frames of a
 `testsrc2` H.264 file; ms per frame):
@@ -405,13 +406,15 @@ the fix, and 192–219 s after it. A separate run of the MOV export alone,
 six interleaved pairs, gave `main` 26.59 (21.74–29.96) against 25.26
 (21.58–31.22).
 
-**Every encode path is at `main`'s speed**: inside `main`'s range, with
-medians at most 3% above `main`'s or below them. Before the fix, wherever
-the encoder converted RGBA (the bench's encode, which offers `rgba8` only,
-and the ProRes 4444 export, `rgba16`), P2a was slower than `main` beyond
-its range: 10–55% here (36–64% and 25% in an earlier, quieter
-measurement). The MP4 exports, which the GPU converts to `yuv420p`, and
-decoding do not go through the changed code.
+**After the fix, every row's median is within `main`'s measured range.**
+Before it, wherever the encoder converted RGBA (the bench's encode, which
+offers `rgba8` only, and the ProRes 4444 export, `rgba16`), P2a was slower:
+beyond `main`'s range in process (55% at 1080p, 39% at 2160p) and for the
+ProRes export (22%); through the plugin its medians (10% and 12% slower)
+fell inside `main`'s wide range here. An earlier, quieter measurement had
+the bench's encode 38–64% slower and the ProRes export 25%. The MP4
+exports, which the GPU converts to `yuv420p`, and decoding do not go
+through the changed code.
 
 The cause, profiled in the bench: P2a converted with a single-threaded
 `sws_scale` on the request's thread (2.1 of 2.7 ms per frame at 1080p, 9.3
@@ -428,7 +431,8 @@ and converts with `sws_scale_frame` from a frame borrowing the request's
 pixels; the session keeps a list of frames and takes one the encoder has
 let go of, adding one only when it holds them all (libx264 copies each
 frame in and keeps one; `prores_ks` settles at about eleven at 4K, as many
-as `av_frame_make_writable` had kept alive). The conversion still runs on
+as `av_frame_make_writable` had kept alive, which stay allocated until the
+session ends; see Not done). The conversion still runs on
 the request's thread, before the encode; a converting thread ahead of the
 encoder was not needed to reach `main`'s speed.
 
@@ -450,6 +454,16 @@ in the table under Checks.
 
 ## Not done
 
+- **A performance re-run on a quiet machine**: the measurement above ran
+  at load averages of 17–102, so it shows parity with `main` only within
+  about 10%.
+- **The frame pool is not capped**: a frame-threaded encoder keeps as
+  many frames as it has in flight, and the session keeps them until it
+  ends. For ProRes 4444 at 4K that is about eleven `yuva444p10le` frames
+  of 66 MB, about 0.7 GB resident for the export: the peak the old
+  `av_frame_make_writable` path reached too, but no longer freed between
+  frames. The encoder's thread count bounds it (`thread_count` 0
+  is the CPU count).
 - **10-bit H.264 is not comparable packet for packet**: libx264 at 10
   bits differs between runs of the same input above 320×240 on `main` too
   (see Performance), so only 8-bit H.264, ProRes, and VP9 packets were
