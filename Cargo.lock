@@ -1084,6 +1084,8 @@ dependencies = [
  "celesta-codec-test",
  "celesta-composition",
  "celesta-exporter",
+ "celesta-media",
+ "celesta-plugin-host",
  "celesta-react-bridge",
  "celesta-renderer",
  "image",

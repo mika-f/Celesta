@@ -3,14 +3,14 @@
 use std::path::{Path, PathBuf};
 
 use celesta_exporter::{
-    BitDepth, ContactSheet, EncoderPreset, ExportJob, ExportOptions, ExportRange, FrameSelection,
-    LoudnessTarget, PeakHandling, StillExport, StillFormat, VideoEncoding, VideoFormat,
-    parse_timecode,
+    AudioChoice, ContactSheet, EncoderChoice, ExportJob, ExportOptions, ExportRange,
+    FrameSelection, LoudnessTarget, OutputChoice, PeakHandling, SettingInput, StillExport,
+    StillFormat, parse_timecode,
 };
+use celesta_media::{ComponentRef, SettingValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use strum::VariantArray;
 
 use crate::frames::OutputDirs;
 
@@ -126,22 +126,31 @@ impl From<ImageFormat> for StillFormat {
 pub struct ExportVideoArgs {
     #[serde(flatten)]
     source: SourceArgs,
-    /// The .mp4, .mov (ProRes 4444 with alpha) or .webm (VP9 with alpha) to
-    /// write. Leave it out to write only the `subtitles` files, which
+    /// The video to write: its extension picks the muxer (`.mp4` H.264/AAC,
+    /// `.mov` ProRes 4444 with alpha, `.webm` VP9 with alpha) unless `muxer`
+    /// names one. Leave it out to write only the `subtitles` files, which
     /// evaluates the frames without rendering or encoding them.
     output: Option<PathBuf>,
     /// Replace `output` if it exists.
     overwrite: Option<bool>,
-    /// libx264 preset, `ultrafast` to `veryslow`; default `medium`.
+    /// A preset's name. Presets are not available yet: any name is an
+    /// `unknown_preset` error.
     preset: Option<String>,
-    /// Constant rate factor, 0–51; lower is higher quality. Default 18.
-    crf: Option<u8>,
-    /// 8 (default, plays everywhere) or 10 (smoother gradients, fewer
-    /// hardware decoders).
-    bit_depth: Option<u8>,
-    /// The MP4 plays in a loop (Shorts, TikTok): encode its AAC sound to
-    /// run from its end into its start, so the first hit is not smeared on
-    /// every pass. MP4 only; a .mov's PCM loops unchanged.
+    /// An export-presets.json to look `preset` up in first.
+    preset_file: Option<PathBuf>,
+    /// The muxer that writes the file, as `<plugin>/<component>` (see
+    /// `list_components`), instead of the one the output's extension names.
+    muxer: Option<String>,
+    /// The video encoder, instead of the muxer's default: its component
+    /// `id` and its `options` by key (see `describe_component`).
+    video_encoder: Option<EncoderArg>,
+    /// The audio encoder like `videoEncoder`, or `"none"` for a video
+    /// without audio.
+    audio_encoder: Option<AudioEncoderArg>,
+    /// The video plays in a loop (Shorts, TikTok): encode its sound to run
+    /// from its end into its start, so the first hit is not smeared on
+    /// every pass. It changes nothing for a muxer that has no leading audio
+    /// to trim.
     #[serde(rename = "loop")]
     looping: Option<bool>,
     /// Bring the whole mix to this integrated loudness before encoding:
@@ -165,6 +174,75 @@ pub struct ExportVideoArgs {
     #[serde(flatten)]
     #[schemars(skip)]
     unknown: Map<String, Value>,
+}
+
+/// An encoder: its component, or the muxer's default when `id` is left
+/// out, and the options given for it.
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EncoderArg {
+    /// `<plugin>/<component>`, such as `ffmpeg/libx264`.
+    id: Option<String>,
+    /// Settings by key, as `describe_component` lists them: strings,
+    /// numbers, and booleans.
+    options: Option<Map<String, Value>>,
+}
+
+/// The word that leaves audio out.
+#[derive(Deserialize, JsonSchema)]
+pub enum NoneWord {
+    #[serde(rename = "none")]
+    None,
+}
+
+/// `"none"`, or an audio encoder.
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AudioEncoderArg {
+    None(NoneWord),
+    Encode(EncoderArg),
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListComponentsArgs {
+    /// Also ask each plugin whether its components are available here.
+    pub check: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DescribeComponentArgs {
+    /// `<plugin>/<component>`, from `list_components`.
+    pub component: String,
+}
+
+fn component_ref(text: &str) -> Result<ComponentRef, String> {
+    text.parse()
+        .map_err(|error: celesta_media::InvalidComponentRef| error.to_string())
+}
+
+impl EncoderArg {
+    fn choice(&self, field: &str) -> Result<EncoderChoice, String> {
+        let component = self.id.as_deref().map(component_ref).transpose()?;
+        let mut options = std::collections::BTreeMap::new();
+        for (key, value) in self.options.iter().flatten() {
+            let value = match value {
+                Value::String(text) => SettingValue::String(text.clone()),
+                Value::Number(number) => SettingValue::Number(number.as_f64().ok_or_else(|| {
+                    format!("{field}.options.{key} is not a finite number")
+                })?),
+                Value::Bool(flag) => SettingValue::Boolean(*flag),
+                _ => {
+                    return Err(format!(
+                        "{field}.options.{key} must be a string, number, or boolean"
+                    ));
+                }
+            };
+            options.insert(key.clone(), SettingInput::Value(value));
+        }
+        Ok(EncoderChoice { component, options })
+    }
 }
 
 /// A loudness target: LUFS or a preset's name.
@@ -437,8 +515,10 @@ impl ExportVideoArgs {
             }
             let given = [
                 ("preset", self.preset.is_some()),
-                ("crf", self.crf.is_some()),
-                ("bitDepth", self.bit_depth.is_some()),
+                ("presetFile", self.preset_file.is_some()),
+                ("muxer", self.muxer.is_some()),
+                ("videoEncoder", self.video_encoder.is_some()),
+                ("audioEncoder", self.audio_encoder.is_some()),
                 ("loop", self.looping.is_some()),
                 ("loudness", self.loudness.is_some()),
             ];
@@ -455,53 +535,34 @@ impl ExportVideoArgs {
             };
             return Ok(job(source, None, None, options));
         };
-        let Some(video_format) = VideoFormat::from_extension(output) else {
+        if StillFormat::from_extension(output).is_some() {
             return Err(format!(
-                "output must be a .mp4, .mov or .webm file, not {}; use render_frames for still images",
+                "output must be a video file, not {}; use render_frames for still images",
                 output.display()
             ));
-        };
-        if video_format.has_alpha() {
-            let given = [
-                ("preset", self.preset.is_some()),
-                ("crf", self.crf.is_some()),
-                ("bitDepth", self.bit_depth.is_some()),
-                ("loop", self.looping.is_some()),
-            ];
-            if let Some((field, _)) = given.into_iter().find(|(_, given)| *given) {
-                return Err(format!("{field} applies to MP4 output only"));
-            }
         }
-        let defaults = VideoEncoding::default();
-        let preset = match &self.preset {
-            Some(name) => name.parse::<EncoderPreset>().map_err(|_| {
-                format!(
-                    "unknown preset {name:?}; use one of {}",
-                    EncoderPreset::VARIANTS
-                        .iter()
-                        .map(|preset| preset.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })?,
-            None => defaults.preset,
-        };
-        let bit_depth = match self.bit_depth {
-            None | Some(8) => BitDepth::Eight,
-            Some(10) => BitDepth::Ten,
-            Some(other) => return Err(format!("bitDepth must be 8 or 10, not {other}")),
+        let choice = OutputChoice {
+            preset: self.preset.clone(),
+            muxer: self.muxer.as_deref().map(component_ref).transpose()?,
+            video: self
+                .video_encoder
+                .as_ref()
+                .map(|encoder| encoder.choice("videoEncoder"))
+                .transpose()?
+                .unwrap_or_default(),
+            audio: match &self.audio_encoder {
+                None => AudioChoice::default(),
+                Some(AudioEncoderArg::None(_)) => AudioChoice::None,
+                Some(AudioEncoderArg::Encode(encoder)) => {
+                    AudioChoice::Encode(encoder.choice("audioEncoder")?)
+                }
+            },
         };
         let loudness = self.loudness()?;
         let options = ExportOptions {
             overwrite: self.overwrite.unwrap_or(false),
             range: source.range,
-            video_format,
-            video: VideoEncoding {
-                preset,
-                crf: self.crf.unwrap_or(defaults.crf),
-                bit_depth,
-                ..defaults
-            },
+            output: choice,
             subtitles,
             looping: self.looping.unwrap_or(false),
             loudness,
@@ -664,7 +725,7 @@ mod tests {
         );
         rejects(
             video_job(json!({ "source": "a.tsx", "output": "a.png" })),
-            ".mp4, .mov or .webm",
+            "render_frames",
         );
     }
 
@@ -769,32 +830,92 @@ mod tests {
     }
 
     #[test]
-    fn transparent_formats_follow_the_extension() {
-        let format = |output: &str| {
-            video_job(json!({ "source": "a.tsx", "output": output }))
-                .unwrap()
-                .options
-                .video_format
+    fn component_arguments_build_the_choice() {
+        let job = video_job(json!({
+            "source": "a.tsx", "output": "a.mp4", "muxer": "ffmpeg/mp4",
+            "videoEncoder": { "id": "ffmpeg/libx264", "options": { "crf": 20, "preset": "slow" } },
+            "audioEncoder": "none",
+        }))
+        .unwrap();
+        let reference = |plugin: &str, component: &str| ComponentRef {
+            plugin: plugin.into(),
+            component: component.into(),
         };
-        assert_eq!(format("a.mp4"), VideoFormat::Mp4);
-        assert_eq!(format("a.mov"), VideoFormat::Mov);
-        assert_eq!(format("a.WEBM"), VideoFormat::Webm);
+        assert_eq!(
+            job.options.output,
+            OutputChoice {
+                preset: None,
+                muxer: Some(reference("ffmpeg", "mp4")),
+                video: EncoderChoice {
+                    component: Some(reference("ffmpeg", "libx264")),
+                    options: [
+                        (
+                            "crf".to_owned(),
+                            SettingInput::Value(SettingValue::Number(20.0))
+                        ),
+                        (
+                            "preset".to_owned(),
+                            SettingInput::Value(SettingValue::String("slow".into()))
+                        ),
+                    ]
+                    .into(),
+                },
+                audio: AudioChoice::None,
+            }
+        );
+        let plain = video_job(json!({ "source": "a.tsx", "output": "a.mp4" })).unwrap();
+        assert_eq!(plain.options.output, OutputChoice::default());
+    }
+
+    #[test]
+    fn option_values_must_be_scalars() {
         rejects(
-            video_job(json!({ "source": "a.tsx", "output": "a.mov", "crf": 20 })),
-            "crf applies to MP4",
+            video_job(json!({
+                "source": "a.tsx", "output": "a.mp4",
+                "videoEncoder": { "options": { "crf": [1] } }
+            })),
+            "crf",
         );
         rejects(
-            video_job(json!({ "source": "a.tsx", "output": "a.webm", "preset": "fast" })),
-            "preset applies to MP4",
+            video_job(json!({
+                "source": "a.tsx", "output": "a.mp4",
+                "audioEncoder": { "options": { "bitrate": null } }
+            })),
+            "bitrate",
+        );
+    }
+
+    #[test]
+    fn a_bad_reference_is_a_usage_error() {
+        rejects(
+            video_job(json!({ "source": "a.tsx", "output": "a.mp4", "muxer": "mp4" })),
+            "`mp4` is not a component reference",
         );
         rejects(
-            video_job(json!({ "source": "a.tsx", "output": "a.mov", "bitDepth": 10 })),
-            "bitDepth applies to MP4",
+            video_job(json!({
+                "source": "a.tsx", "output": "a.mp4", "videoEncoder": { "id": "x264" }
+            })),
+            "`x264` is not a component reference",
         );
-        rejects(
-            video_job(json!({ "source": "a.tsx", "output": "a.webm", "loop": true })),
-            "loop applies to MP4",
-        );
+    }
+
+    #[test]
+    fn loop_applies_to_every_video() {
+        for output in ["a.mp4", "a.mov", "a.webm"] {
+            let job = video_job(json!({ "source": "a.tsx", "output": output, "loop": true }))
+                .unwrap();
+            assert!(job.options.looping, "{output}");
+        }
+    }
+
+    #[test]
+    fn old_fields_are_unknown() {
+        for field in ["crf", "bitDepth"] {
+            rejects(
+                video_job(json!({ "source": "a.tsx", "output": "a.mp4", field: 20 })),
+                field,
+            );
+        }
     }
 
     #[test]
@@ -857,7 +978,7 @@ mod tests {
     }
 
     #[test]
-    fn a_looping_mp4_is_asked_for_with_loop() {
+    fn a_looping_video_is_asked_for_with_loop() {
         let looping = |args: Value| video_job(args).unwrap().options.looping;
         assert!(looping(
             json!({ "source": "a.tsx", "output": "a.mp4", "loop": true })
@@ -870,21 +991,8 @@ mod tests {
     }
 
     #[test]
-    fn encoder_settings_are_checked() {
-        rejects(
-            video_job(json!({ "source": "a.tsx", "output": "a.mp4", "preset": "warp" })),
-            "preset",
-        );
-        rejects(
-            video_job(json!({ "source": "a.tsx", "output": "a.mp4", "bitDepth": 12 })),
-            "bitDepth",
-        );
-        let job = video_job(json!({
-            "source": "a.tsx", "output": "a.mp4", "preset": "fast", "crf": 20, "bitDepth": 10
-        }))
-        .unwrap();
-        assert_eq!(job.options.video.crf, 20);
-        assert_eq!(job.options.video.bit_depth, BitDepth::Ten);
+    fn subtitles_ride_along_with_a_video() {
+        let job = video_job(json!({ "source": "a.tsx", "output": "a.mp4" })).unwrap();
         assert!(job.stills.is_none());
         assert!(job.options.subtitles.is_empty());
         let job = video_job(json!({
@@ -908,8 +1016,8 @@ mod tests {
         assert!(job.options.subtitles[1].ends_with("a.{lang}.vtt"));
         rejects(video_job(json!({ "source": "a.tsx" })), "subtitles");
         rejects(
-            video_job(json!({ "source": "a.tsx", "subtitles": "a.srt", "crf": 20 })),
-            "crf",
+            video_job(json!({ "source": "a.tsx", "subtitles": "a.srt", "muxer": "a/b" })),
+            "muxer",
         );
     }
 
