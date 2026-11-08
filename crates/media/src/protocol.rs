@@ -768,14 +768,11 @@ pub(crate) fn decode_video_encoder_opened(
 }
 
 /// Where an `encodeVideoFrame`'s frame is.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum FrameLocation {
     /// In the message's payload.
     Payload(Vec<u8>),
     /// In slot `index` of the ring, written under `generation`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the export path uses it from the next change")
-    )]
     Slot {
         index: usize,
         generation: u64,

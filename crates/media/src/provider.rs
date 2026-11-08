@@ -16,6 +16,7 @@ use crate::error::MediaError;
 use crate::settings::{SettingField, Settings};
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
+use celesta_plugin::shared::RingLayout;
 use celesta_plugin_host::PluginKillSwitch;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -47,6 +48,73 @@ pub trait MediaProvider: Send {
     fn muxer(&mut self) -> Option<&mut dyn Muxer> {
         None
     }
+
+    /// Its encoders and muxers with several requests in flight, when it can
+    /// take them so; `None` asks one request at a time.
+    fn pipeline(&mut self) -> Option<&mut dyn Pipeline> {
+        None
+    }
+}
+
+/// How deep a [`Pipeline`] without a ring of frame slots goes: frames then
+/// travel in each request's payload.
+pub const PIPE_WINDOW: usize = 3;
+
+/// A provider's encode and write requests sent without waiting, each
+/// answered by [`Self::receive`] in the order sent (the oldest first).
+///
+/// A caller keeps at most [`Self::depth`] requests in flight, and drains
+/// them all before anything else is asked of the provider (`describe`, an
+/// `open`, a `finish`, an `abort`, or one of the encoders' and muxers'
+/// one-at-a-time methods), which is refused while any is in flight.
+pub trait Pipeline {
+    /// How many requests may be in flight: the ring's slots, or
+    /// [`PIPE_WINDOW`] without a ring.
+    fn depth(&self) -> usize;
+
+    /// How many requests are sent and not yet received.
+    fn in_flight(&self) -> usize;
+
+    /// Sends [`VideoEncoder::encode_video`]'s request; its answer is an
+    /// [`Answered::VideoFrame`].
+    fn send_video_frame(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        frame: Vec<u8>,
+    ) -> Result<(), MediaError>;
+
+    /// Sends [`AudioEncoder::encode_audio`]'s request; its answer is an
+    /// [`Answered::Audio`].
+    fn send_audio(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        samples: &[f32],
+    ) -> Result<(), MediaError>;
+
+    /// Sends [`Muxer::write_packets`]'s request; its answer is
+    /// [`Answered::Packets`].
+    fn send_packets(
+        &mut self,
+        session: SessionId,
+        packets: &[TrackPacket],
+    ) -> Result<(), MediaError>;
+
+    /// Waits for the answer to the oldest request in flight;
+    /// `MediaError::Codec("no request is in flight")` when there is none.
+    fn receive(&mut self) -> Result<Answered, MediaError>;
+}
+
+/// The answer to a request a [`Pipeline`] sent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Answered {
+    /// To [`Pipeline::send_video_frame`].
+    VideoFrame(Encoded),
+    /// To [`Pipeline::send_audio`].
+    Audio(Encoded),
+    /// To [`Pipeline::send_packets`].
+    Packets,
 }
 
 /// A plugin's decoder components: `decoder` is the id of the one that is to
@@ -510,15 +578,17 @@ impl ComponentDescription {
 }
 
 /// What an instance of a media plugin is started for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderUse {
     /// A [`crate::MediaBackend`]'s probes and decodes.
     Decode,
     /// Only to answer `describe`, then stopped
     /// ([`crate::MediaRegistry::describe`]).
     Describe,
-    /// An export's encoders and muxers.
-    Export,
+    /// An export's encoders and muxers, with the ring of slots its video
+    /// frames are to go through ([`crate::ring_layout`]); `None` sends them
+    /// in each request's payload.
+    Export { ring: Option<RingLayout> },
 }
 
 /// Starts an instance of a media plugin for a [`ProviderUse`]: each time a

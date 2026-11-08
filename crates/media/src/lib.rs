@@ -37,11 +37,11 @@ pub use mix::{
 };
 pub use process::{FrameTransport, MediaProcess, SHARED_FRAME_BYTES, SHARED_MEMORY_VARIABLE};
 pub use provider::{
-    AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription,
-    ComponentKind, Decoder, Encoded, MediaProvider, Muxer, MuxerRequest, Packet, PixelFormat,
-    ProviderFactory, ProviderUse, SampleRates, Sequential, SessionId, SideData, Track, TrackConfig,
-    TrackPacket, VideoEncoder, VideoEncoderOpened, VideoEncoderRequest, VideoRequest,
-    timestamps_match,
+    Answered, AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription,
+    ComponentKind, Decoder, Encoded, MediaProvider, Muxer, MuxerRequest, PIPE_WINDOW, Packet,
+    Pipeline, PixelFormat, ProviderFactory, ProviderUse, SampleRates, Sequential, SessionId,
+    SideData, Track, TrackConfig, TrackPacket, VideoEncoder, VideoEncoderOpened,
+    VideoEncoderRequest, VideoRequest, timestamps_match,
 };
 pub use registry::{
     ComponentEntry, ComponentRef, DecoderUse, InvalidComponentRef, MediaComponentInfo,
