@@ -27,7 +27,7 @@ async fn main() {
 
 async fn run() -> anyhow::Result<()> {
     // Inspection, renders, and exports read and write media through it.
-    celesta_exporter::use_installed_codec();
+    celesta_exporter::use_installed_media();
     let service = server::CelestaServer::new()?
         .serve(rmcp::transport::stdio())
         .await?;

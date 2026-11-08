@@ -142,7 +142,9 @@ mod tests {
     fn writes_mono_samples_and_removes_them_once_read() {
         let wav =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets/voices/001.wav");
-        let mut media = MediaBackend::with_codec(celesta_codec_test::TestCodec::factory());
+        let mut media = MediaBackend::with_registry(std::sync::Arc::new(
+            celesta_media::MediaRegistry::new(vec![celesta_codec_test::registered()]),
+        ));
         let mut files = DecodedAudioFiles::default();
         let response = decode_audio_response(&mut media, &mut files, wav.to_str().unwrap());
         let audio = response.audio.expect("decodes the WAV");
@@ -179,7 +181,9 @@ mod tests {
 
     #[test]
     fn reports_a_file_it_cannot_decode() {
-        let mut media = MediaBackend::with_codec(celesta_codec_test::TestCodec::factory());
+        let mut media = MediaBackend::with_registry(std::sync::Arc::new(
+            celesta_media::MediaRegistry::new(vec![celesta_codec_test::registered()]),
+        ));
         let mut files = DecodedAudioFiles::default();
         let response = decode_audio_response(&mut media, &mut files, "missing.wav");
         assert!(response.audio.is_none());

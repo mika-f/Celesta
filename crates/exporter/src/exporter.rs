@@ -24,12 +24,12 @@ pub struct Exporter {
 impl Exporter {
     /// An exporter with `options`. Without `options.plugins`, the plugins
     /// are discovered here, once, in every location Celesta searches. When
-    /// no codec has been chosen yet ([`crate::use_codec`]), theirs is.
+    /// no media registry has been chosen yet ([`crate::use_media`]), theirs is.
     pub fn new(mut options: ExportOptions) -> Self {
         let plugins = options
             .plugins
             .get_or_insert_with(|| InstalledPlugins::find_reporting(&[], &[]));
-        crate::codec::ensure_codec(plugins);
+        crate::media::ensure_media(plugins);
         Self { options }
     }
 

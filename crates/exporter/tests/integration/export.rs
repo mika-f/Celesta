@@ -10,7 +10,7 @@ use celesta_exporter::{
     ReactRuntimeOptions, VideoEncoding, VideoFormat,
 };
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{CodecProvider, Container, PixelFormat, measure_loudness};
+use celesta_media::{Container, MediaProvider, PixelFormat, measure_loudness};
 use celesta_project::{
     Animatable, AnimatablePoint, Asset, AssetSource, DuckGroups, Project, ProjectDuck,
     TimelineContent, TimelineItem, Track, TrackKind, Transform,
@@ -529,7 +529,7 @@ fn sine(frequency: f64, sample_rate: u32, seconds: f64) -> Vec<f32> {
 /// `path`'s sound from the video's start, decoded to mono at `sample_rate`.
 fn decoded_audio(path: &Path, sample_rate: u32) -> Vec<f32> {
     TestCodec::new()
-        .decode_audio(path, sample_rate, 1)
+        .decode_audio(celesta_codec_test::DECODER_ID, path, sample_rate, 1)
         .unwrap()
         .samples
 }
@@ -923,7 +923,11 @@ fn brings_the_mix_to_a_loudness_target() {
     };
     assert!(warnings.is_empty(), "{warnings:?}");
     let reported = reported.expect("a video with sound reports its loudness");
-    let decode = |path: &Path| TestCodec::new().decode_audio(path, 48_000, 2).unwrap();
+    let decode = |path: &Path| {
+        TestCodec::new()
+            .decode_audio(celesta_codec_test::DECODER_ID, path, 48_000, 2)
+            .unwrap()
+    };
     let decoded = decode(&first);
     let measured = measure_loudness(&decoded);
 

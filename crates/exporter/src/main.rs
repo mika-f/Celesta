@@ -577,8 +577,8 @@ fn cancel_on_stdin(cancellation: ExportCancellation) {
 
 fn inspect(cli: &Cli) -> ExitCode {
     let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir, &cli.allow_plugin);
-    // The React runtime's media probes go through the codec.
-    celesta_exporter::use_codec(&plugins);
+    // The React runtime's media probes go through the media plugins.
+    celesta_exporter::use_media(&plugins);
     let result = match ReactRuntimeOptions::for_entry(
         &cli.source,
         cli.props_file.as_deref(),

@@ -500,7 +500,7 @@ fn error_report(error: &ExportError, hints: HintStyle) -> ErrorReport {
     }
 }
 
-const NO_CODEC_HINT: &str = "install Celesta's codec plugin (celesta-codec-ffmpeg) beside an \
+const NO_DECODER_HINT: &str = "install Celesta's media plugin (celesta-codec-ffmpeg) beside an \
      installed Celesta or in a plugin folder; in a source checkout, build it with node scripts/plugins/build.mts \
      plugins/ffmpeg and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH";
 
@@ -535,9 +535,21 @@ fn classify(
         }
         ExportError::Evaluation(_) => ("evaluation", None),
         // A video frame or audio file nothing could decode: say why.
+        ExportError::Render(GpuRenderError::Media(MediaError::NoDecoder))
+        | ExportError::Audio(AudioMixError::Media(MediaError::NoDecoder))
+        | ExportError::Codec {
+            source: MediaError::NoDecoder,
+            ..
+        } => ("no_decoder", Some(NO_DECODER_HINT)),
+        ExportError::Render(GpuRenderError::Media(MediaError::Unsupported { .. }))
+        | ExportError::Audio(AudioMixError::Media(MediaError::Unsupported { .. }))
+        | ExportError::Codec {
+            source: MediaError::Unsupported { .. },
+            ..
+        } => ("unsupported_media", None),
         ExportError::Render(GpuRenderError::Media(MediaError::NoCodec))
         | ExportError::Audio(AudioMixError::Media(MediaError::NoCodec)) => {
-            ("no_codec", Some(NO_CODEC_HINT))
+            ("no_codec", Some(NO_DECODER_HINT))
         }
         ExportError::Render(_) => ("render", None),
         ExportError::Audio(_) => ("audio", None),
@@ -561,7 +573,7 @@ fn classify(
         ExportError::Codec {
             source: MediaError::NoCodec,
             ..
-        } => ("no_codec", Some(NO_CODEC_HINT)),
+        } => ("no_codec", Some(NO_DECODER_HINT)),
         ExportError::Codec { .. } => ("codec", None),
         ExportError::OutputExists(_) => (
             "output_exists",
@@ -970,15 +982,15 @@ mod tests {
     }
 
     #[test]
-    fn media_nothing_could_decode_is_reported_as_no_codec() {
+    fn media_nothing_could_decode_is_reported_as_no_decoder() {
         let errors = [
             ExportError::Codec {
                 stage: "encoder check",
-                source: MediaError::NoCodec,
+                source: MediaError::NoDecoder,
             },
-            ExportError::Render(GpuRenderError::Media(MediaError::NoCodec)),
-            ExportError::Audio(AudioMixError::Media(MediaError::NoCodec)),
-            ExportError::Render(GpuRenderError::Media(MediaError::NoCodec)).at_frame(3),
+            ExportError::Render(GpuRenderError::Media(MediaError::NoDecoder)),
+            ExportError::Audio(AudioMixError::Media(MediaError::NoDecoder)),
+            ExportError::Render(GpuRenderError::Media(MediaError::NoDecoder)).at_frame(3),
         ];
         for error in errors {
             let value = serde_json::to_value(
@@ -988,12 +1000,13 @@ mod tests {
                 .0,
             )
             .unwrap();
-            assert_eq!(value["error"]["code"], "no_codec", "{value}");
+            assert_eq!(value["error"]["code"], "no_decoder", "{value}");
             let hint = value["error"]["hint"].as_str().unwrap_or_default();
-            // A source checkout has no codec until it builds one into
+            // A source checkout has no media plugin until it builds one into
             // plugins/dist, which CELESTA_PLUGIN_PATH reaches only as an
             // absolute path.
             for expected in [
+                "media plugin",
                 "celesta-codec-ffmpeg",
                 "node scripts/plugins/build.mts plugins/ffmpeg",
                 "absolute path of plugins/dist",
@@ -1001,6 +1014,33 @@ mod tests {
             ] {
                 assert!(hint.contains(expected), "{expected}: {value}");
             }
+        }
+    }
+
+    #[test]
+    fn an_unreadable_file_is_unsupported_media() {
+        let unsupported = || MediaError::Unsupported {
+            path: PathBuf::from("/tmp/clip.xyz"),
+            tried: vec!["ffmpeg/main".to_owned()],
+        };
+        let errors = [
+            ExportError::Render(GpuRenderError::Media(unsupported())),
+            ExportError::Audio(AudioMixError::Media(unsupported())),
+            ExportError::Render(GpuRenderError::Media(unsupported())).at_frame(3),
+        ];
+        for error in errors {
+            let value = serde_json::to_value(
+                build(Path::new("/tmp/film.tsx"), None, HintStyle::Cli, |_| {
+                    Err(error)
+                })
+                .0,
+            )
+            .unwrap();
+            assert_eq!(value["error"]["code"], "unsupported_media", "{value}");
+            assert!(
+                value["error"].get("hint").is_none_or(|hint| hint.is_null()),
+                "{value}"
+            );
         }
     }
 

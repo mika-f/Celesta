@@ -267,6 +267,7 @@ pub(crate) mod tests {
                 types: Some("js/index.d.ts".into()),
                 components: Vec::new(),
                 roles: vec![celesta_plugin_host::PluginRole::Content],
+                media: None,
             },
             directory: plugin,
             source: celesta_plugin_host::PluginSource::Explicit,

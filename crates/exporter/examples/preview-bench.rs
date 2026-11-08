@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use celesta_composition::Time;
 use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
-use celesta_media::{CodecProcess, MediaBackend};
+use celesta_media::MediaBackend;
 use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::ReactBridge;
 
@@ -30,17 +30,15 @@ fn main() {
     let frames: i64 = args
         .next()
         .map_or(30, |value| value.parse().expect("frames must be a number"));
-    let Some(codec) = InstalledPlugins::find_reporting(&[], &[]).codec() else {
+    let plugins = InstalledPlugins::find_reporting(&[], &[]);
+    if plugins.media().is_empty() {
         eprintln!(
-            "no codec plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
+            "no media plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
              and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH"
         );
         process::exit(1);
-    };
-    celesta_media::set_codec(Some(CodecProcess::factory(
-        codec.executable,
-        codec.directory,
-    )));
+    }
+    celesta_exporter::use_media(&plugins);
     let sequential = env::var("SEQUENTIAL").is_ok();
 
     let cli_script =

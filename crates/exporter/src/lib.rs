@@ -1,11 +1,11 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
-mod codec;
 mod control;
 mod error;
 mod exporter;
 mod job;
 mod loudness;
+mod media;
 mod options;
 mod output;
 mod project;
@@ -20,13 +20,13 @@ mod tests;
 mod timecode;
 
 pub use celesta_media::{LoudnessTarget, PeakHandling};
-pub use codec::{use_codec, use_installed_codec};
 pub use control::{
     AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile,
 };
 pub use error::{ExportError, FrameFailure};
 pub use exporter::Exporter;
 pub use job::ExportJob;
+pub use media::{media_registry, use_installed_media, use_media};
 pub use options::{
     BitDepth, ColorConversion, EncoderPreset, ExportOptions, UnknownBitDepth,
     UnknownColorConversion, UnknownEncoderPreset, UnknownVideoFormat, VideoEncoding, VideoFormat,
