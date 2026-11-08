@@ -1,5 +1,5 @@
 use crate::control::{AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress};
-use crate::encode::ExportSession;
+use crate::encode::{ExportSession, ExportTiming, report_timing};
 use crate::error::ExportError;
 use crate::exporter::{Exporter, NO_AUDIO_TRACK_LOUDNESS, stage_beside, video_file};
 use crate::loudness::finish_mix;
@@ -17,6 +17,7 @@ use celesta_react_bridge::{ReactCompositionMetadata, ReactSubtitleDescriptor};
 use celesta_remote::StagedFile;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 impl Exporter {
     /// Exports a React composition entry to a video with
@@ -157,9 +158,11 @@ impl Exporter {
             }
         };
         progress(ExportProgress::Muxing);
+        let timing = encoded.timing.with(session.timing());
         let tracks = session
             .finish()
             .map_err(|error| cancellation.settle(error))?;
+        report_timing(&timing);
         let staged = staged.expect("an encoded export has its staged output");
         let files = self.publish_video(staged, output_path, tracks.files.clone(), cancellation)?;
         progress(ExportProgress::Wrote(video_file(
@@ -180,9 +183,10 @@ impl Exporter {
         Ok(())
     }
 
-    /// Chooses the components, renders and encodes the entry into a file
-    /// staged beside `output_path` (left in `staged`), then mixes and
-    /// encodes the audio its frames declared, or decides it has none.
+    /// Chooses the components once the entry says its frame size, renders
+    /// and encodes the entry into a file staged beside `output_path` (left
+    /// in `staged`), then mixes and encodes the audio its frames declared,
+    /// or decides it has none.
     #[allow(clippy::too_many_arguments)]
     fn encode_react_entry(
         &self,
@@ -195,9 +199,6 @@ impl Exporter {
         cancellation: &ExportCancellation,
         progress: &mut impl FnMut(ExportProgress),
     ) -> Result<EncodedReactEntry, ExportError> {
-        progress(ExportProgress::Output(
-            session.resolve(&self.options.output, output_path)?,
-        ));
         subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
 
         // Absolutize the asset roots up front: `absolutize_layers` and
@@ -219,6 +220,12 @@ impl Exporter {
         )?;
         let metadata = bridge.metadata().clone();
         report_composition(&metadata, progress);
+        // The video encoder's ring is sized for the entry's frames.
+        progress(ExportProgress::Output(session.resolve(
+            &self.options.output,
+            output_path,
+            (metadata.width, metadata.height),
+        )?));
         validate_dimensions(metadata.width, metadata.height)?;
         if metadata.duration_in_frames == 0 {
             return Err(ExportError::EmptyTimeline);
@@ -252,6 +259,7 @@ impl Exporter {
         let project_refs = project
             .as_ref()
             .map(|(project, root)| (*project, root.as_path()));
+        let render_started = Instant::now();
         self.render_react_video(
             ReactVideoRequest {
                 bridge: &mut bridge,
@@ -267,6 +275,11 @@ impl Exporter {
             cancellation,
             progress,
         )?;
+        let mut timing = ExportTiming {
+            render: render_started.elapsed(),
+            frames: session.frames_sent(),
+            ..ExportTiming::default()
+        };
         ensure_not_cancelled(cancellation)?;
 
         let duration = Time::frames(
@@ -288,6 +301,7 @@ impl Exporter {
             session.no_audio()?;
         } else {
             progress(ExportProgress::MixingAudio);
+            let mix_started = Instant::now();
             let graph = shifted_audio_graph(&graph, window_start).map_err(ExportError::Time)?;
             let mut audio_decoder = MediaBackend::new().with_kill_switch(cancellation.plugins());
             let audio_error = |error| match error {
@@ -307,6 +321,8 @@ impl Exporter {
             })
             .map_err(audio_error)?;
             loudness = Some(measured);
+            timing.mix = Some(mix_started.elapsed());
+            timing.mix_done_at_frame = Some(session.frames_sent());
             for warning in warnings {
                 progress(ExportProgress::Warning(warning));
             }
@@ -321,6 +337,7 @@ impl Exporter {
             duration,
             loudness,
             subtitles: react_subtitles,
+            timing,
         })
     }
 
@@ -449,6 +466,7 @@ struct EncodedReactEntry {
     duration: Time,
     loudness: Option<AudioLoudness>,
     subtitles: Vec<ReactSubtitleDescriptor>,
+    timing: ExportTiming,
 }
 
 /// The companion project with its asset root made absolute (see

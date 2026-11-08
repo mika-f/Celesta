@@ -1751,3 +1751,90 @@ fn cancel_ends_a_frame_waiting_on_a_media_plugin_that_hangs(project: &Project, a
     assert_eq!(files_in(directory.path()), Vec::<String>::new());
     let _ = std::fs::remove_dir_all(hanging_media_folder());
 }
+
+/// A React entry playing a `<Video>` and an `<Audio>` exported by the
+/// `celesta-exporter` program with the test codec's program as its media
+/// plugin writes the same file whether its frames go through the program's
+/// ring of shared slots or through the pipe.
+#[test]
+fn an_export_through_the_programs_ring_is_byte_identical_to_the_pipe() {
+    use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
+    use celesta_media::SHARED_MEMORY_VARIABLE;
+    use std::process::Command;
+
+    let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
+    if !runtime_path.exists() {
+        eprintln!("skipping the ring export test: build packages/cli first");
+        return;
+    }
+    let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
+    let colors: [[u8; 4]; 4] = [
+        [255, 0, 0, 255],
+        [0, 255, 0, 255],
+        [0, 0, 255, 255],
+        [255, 255, 0, 255],
+    ];
+    let frames: Vec<Vec<u8>> = colors.iter().map(|color| color.repeat(64 * 64)).collect();
+    write_rgba_video(
+        &directory.path().join("clip.ctc"),
+        64,
+        64,
+        Rational::new(2, 1),
+        &frames,
+    )
+    .unwrap();
+    write_audio(
+        &directory.path().join("tone.ctc"),
+        48_000,
+        1,
+        &sine(440.0, 48_000, 2.0),
+    )
+    .unwrap();
+    let entry = directory.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        r##"
+import { Composition, Video, Audio } from '@celesta.studio/react';
+export default function Root() {
+  return <Composition width={64} height={64} fps={2} durationInFrames={4}>
+    <Video src="./clip.ctc" width={64} height={64} />
+    <Audio src="./tone.ctc" />
+  </Composition>;
+}
+"##,
+    )
+    .unwrap();
+
+    let plugin = TestCodecPlugin::new();
+    let export = |shared: &str| {
+        let output = directory.path().join(format!("film-{shared}.mp4"));
+        let result = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
+            .env_remove(PLUGIN_PATH_ENV)
+            .env(SHARED_MEMORY_VARIABLE, shared)
+            .arg("--plugin-dir")
+            .arg(plugin.folder())
+            .arg("--react")
+            .arg(&entry)
+            .arg(&output)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&result.stderr).into_owned();
+        (result.status.success(), stderr, output)
+    };
+    let (ok, stderr, through_ring) = export("1");
+    if !ok && stderr.contains("adapter") {
+        skip_without_gpu(&stderr);
+        return;
+    }
+    assert!(ok, "through the ring: {stderr}");
+    let (ok, stderr, through_pipe) = export("0");
+    assert!(ok, "through the pipe: {stderr}");
+
+    let media = read(&through_ring);
+    assert_eq!(stored_video(&media).frames.len(), 4);
+    assert!(media.audio.is_some(), "the export has the tone");
+    assert!(
+        std::fs::read(&through_ring).unwrap() == std::fs::read(&through_pipe).unwrap(),
+        "the files differ"
+    );
+}

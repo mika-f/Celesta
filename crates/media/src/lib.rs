@@ -23,6 +23,7 @@ mod tests;
 mod types;
 
 pub use backend::MediaBackend;
+pub use celesta_plugin::shared::RingLayout;
 pub use color::{DynamicRange, VideoColor};
 pub use decoder::{AudioDecoder, VideoFrameDecoder};
 pub use duck::{DuckCurves, audible_end};

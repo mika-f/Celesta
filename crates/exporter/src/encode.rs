@@ -4,26 +4,40 @@
 
 use crate::control::{ExportCancellation, TrackInfo};
 use crate::error::ExportError;
-use crate::interleave::{Interleaver, WRITE_BATCH_BYTES};
+use crate::interleave::{Interleaver, WRITE_REQUEST_BYTES, WRITE_REQUEST_PACKETS, packet_bytes};
 use crate::options::OutputChoice;
 use crate::resolve::{OutputPlan, ResolvedOutput, resolve_output};
 use celesta_composition::Rational;
 use celesta_gpu_renderer::{GpuFrame, GpuRenderer, ReadbackFormat};
 use celesta_media::{
-    AudioBuffer, AudioEncoderRequest, Color as MediaColor, ComponentDescription, ComponentRef,
-    Encoded, MediaError, MediaProvider, MediaRegistry, MuxerRequest, PixelFormat, ProviderUse,
-    SessionId, Track, TrackConfig, TrackPacket, VideoEncoderOpened, VideoEncoderRequest,
-    resample_audio,
+    Answered, AudioBuffer, AudioEncoderOpened, AudioEncoderRequest, Color as MediaColor,
+    ComponentDescription, ComponentRef, Encoded, MediaError, MediaProvider, MediaRegistry,
+    MuxerRequest, Packet, PixelFormat, ProviderUse, RingLayout, SessionId, Track, TrackConfig,
+    TrackPacket, VideoEncoderOpened, VideoEncoderRequest, resample_audio, ring_layout,
 };
-use celesta_plugin_host::PluginKillSwitch;
+use celesta_plugin_host::{MediaManifest, PluginKillSwitch};
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Sample frames of audio sent to an encoder at a time.
 pub(crate) const AUDIO_CHUNK_FRAMES: usize = 1024 * 16;
+
+/// Ready packets that make a `writePackets` request: the muxer is asked
+/// once per this many (or [`WRITE_BATCH_BYTES`]), and for the rest when the
+/// export finishes, so a plugin's window carries mostly frames.
+pub(crate) const WRITE_BATCH_PACKETS: usize = 8;
+
+/// Ready packet bytes that make a `writePackets` request, however few the
+/// packets.
+pub(crate) const WRITE_BATCH_BYTES: usize = 4 << 20;
+
+/// The environment variable that, set to `1`, has an export print how long
+/// its render and its mix took on stderr ([`timing_line`]).
+pub(crate) const TIMING_VARIABLE: &str = "CELESTA_EXPORT_TIMING";
 
 /// Sample frames of the mix's end a looping export encodes ahead of its
 /// start, for a muxer that trims leading audio: sixteen AAC frames. The
@@ -130,6 +144,68 @@ pub(crate) struct ExportedTracks {
     pub files: Vec<PathBuf>,
 }
 
+/// What a session measured of its staged video: the interleaver's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SessionTiming {
+    pub peak_staged_bytes: usize,
+    pub spilled: bool,
+}
+
+/// How long an export's render and mix took, and how much video waited
+/// for the mix ([`TIMING_VARIABLE`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ExportTiming {
+    /// The render loop, from its first frame to its last encoded.
+    pub render: Duration,
+    /// The frames the render sent to the encoder.
+    pub frames: u64,
+    /// The mix, from its start to its samples; `None` without one.
+    pub mix: Option<Duration>,
+    /// The frames sent when the render took the mix.
+    pub mix_done_at_frame: Option<u64>,
+    pub peak_staged_bytes: usize,
+    pub spilled: bool,
+}
+
+impl ExportTiming {
+    /// `self` with what `session` measured.
+    pub(crate) fn with(self, session: SessionTiming) -> Self {
+        Self {
+            peak_staged_bytes: session.peak_staged_bytes,
+            spilled: session.spilled,
+            ..self
+        }
+    }
+}
+
+/// `timing` as the one line the export prints on stderr.
+pub(crate) fn timing_line(timing: &ExportTiming) -> String {
+    let mix = match (timing.mix, timing.mix_done_at_frame) {
+        (None, _) => "mix none".to_owned(),
+        (Some(mix), Some(frame)) if frame == timing.frames => {
+            format!("mix {:.2} s, done after the render", mix.as_secs_f64())
+        }
+        (Some(mix), Some(frame)) => {
+            format!("mix {:.2} s, done at frame {frame}", mix.as_secs_f64())
+        }
+        (Some(mix), None) => format!("mix {:.2} s", mix.as_secs_f64()),
+    };
+    format!(
+        "celesta: timing: render {:.2} s for {} frames; {mix}; staged peak {:.1} MB; spilled {}",
+        timing.render.as_secs_f64(),
+        timing.frames,
+        timing.peak_staged_bytes as f64 / f64::from(1u32 << 20),
+        if timing.spilled { "yes" } else { "no" },
+    )
+}
+
+/// Prints [`timing_line`] on stderr when [`TIMING_VARIABLE`] is `1`.
+pub(crate) fn report_timing(timing: &ExportTiming) {
+    if std::env::var_os(TIMING_VARIABLE).is_some_and(|value| value == "1") {
+        eprintln!("{}", timing_line(timing));
+    }
+}
+
 /// The video track: its encoder session until it is finished, and what the
 /// muxer's track needs.
 struct VideoTrack {
@@ -154,59 +230,214 @@ enum AudioTrack {
     },
 }
 
+/// A plugin's process for the export, whose encode and write requests go
+/// several at a time through its [`Pipeline`](celesta_media::Pipeline). A
+/// provider without one (in this process) answers each as it is sent, and
+/// its answers wait in `ready` until they are received, so the session
+/// treats both alike.
+struct Plugin {
+    provider: Box<dyn MediaProvider>,
+    ready: VecDeque<Answered>,
+    /// The stage of each request in flight, oldest first, which names the
+    /// stage of its answer's error.
+    stages: VecDeque<&'static str>,
+}
+
+impl Plugin {
+    fn new(provider: Box<dyn MediaProvider>) -> Self {
+        Self {
+            provider,
+            ready: VecDeque::new(),
+            stages: VecDeque::new(),
+        }
+    }
+
+    /// How many requests may be in flight: the pipeline's depth, or one.
+    fn depth(&mut self) -> usize {
+        self.provider
+            .pipeline()
+            .map_or(1, |pipeline| pipeline.depth())
+    }
+
+    /// How many requests are sent and not yet received.
+    fn in_flight(&mut self) -> usize {
+        match self.provider.pipeline() {
+            Some(pipeline) => pipeline.in_flight(),
+            None => self.ready.len(),
+        }
+    }
+
+    fn send_video_frame(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        frame: Vec<u8>,
+    ) -> Result<(), MediaError> {
+        match self.provider.pipeline() {
+            Some(pipeline) => pipeline.send_video_frame(session, pts, frame)?,
+            None => {
+                let encoded = self
+                    .provider
+                    .video_encoder()
+                    .ok_or_else(|| serves_none("video encoder"))?
+                    .encode_video(session, pts, frame)?;
+                self.ready.push_back(Answered::VideoFrame(encoded));
+            }
+        }
+        self.stages.push_back(VIDEO_STAGE);
+        Ok(())
+    }
+
+    fn send_audio(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        samples: &[f32],
+    ) -> Result<(), MediaError> {
+        match self.provider.pipeline() {
+            Some(pipeline) => pipeline.send_audio(session, pts, samples)?,
+            None => {
+                let encoded = self
+                    .provider
+                    .audio_encoder()
+                    .ok_or_else(|| serves_none("audio encoder"))?
+                    .encode_audio(session, pts, samples)?;
+                self.ready.push_back(Answered::Audio(encoded));
+            }
+        }
+        self.stages.push_back(AUDIO_STAGE);
+        Ok(())
+    }
+
+    fn send_packets(
+        &mut self,
+        session: SessionId,
+        packets: &[TrackPacket],
+    ) -> Result<(), MediaError> {
+        match self.provider.pipeline() {
+            Some(pipeline) => pipeline.send_packets(session, packets)?,
+            None => {
+                self.provider
+                    .muxer()
+                    .ok_or_else(|| serves_none("muxer"))?
+                    .write_packets(session, packets)?;
+                self.ready.push_back(Answered::Packets);
+            }
+        }
+        self.stages.push_back(MUXER_STAGE);
+        Ok(())
+    }
+
+    /// The oldest request's answer, and the stage it was sent for.
+    fn receive(&mut self) -> (&'static str, Result<Answered, MediaError>) {
+        let answer = match self.provider.pipeline() {
+            Some(pipeline) => pipeline.receive(),
+            None => self
+                .ready
+                .pop_front()
+                .ok_or_else(|| MediaError::Codec("no request is in flight".to_owned())),
+        };
+        (self.stages.pop_front().unwrap_or(VIDEO_STAGE), answer)
+    }
+}
+
+fn serves_none(kind: &str) -> MediaError {
+    MediaError::Codec(format!("the plugin serves no {kind}"))
+}
+
 /// One export's encoders and muxer, through the processes it starts for
 /// their plugins ([`ProviderUse::Export`]), one per plugin, kept until the
 /// session ends. The video encoder opens before the first frame; the muxer
 /// opens once the video's config is known and the audio is decided, and
 /// until then the video packets wait in the [`Interleaver`].
+///
+/// Frames, audio chunks, and batches of packets go up to each process's
+/// depth at a time, answered in the order sent; every other request to a
+/// process waits until its answers are all in.
 pub(crate) struct ExportSession {
     registry: Arc<MediaRegistry>,
     cancellation: ExportCancellation,
     kill: PluginKillSwitch,
-    processes: HashMap<usize, Box<dyn MediaProvider>>,
+    processes: HashMap<usize, Plugin>,
+    /// The frame size the video encoder's ring is sized for.
+    frame: (u32, u32),
     resolved: Option<ResolvedOutput>,
     video: Option<VideoTrack>,
     audio: AudioTrack,
     /// The audio encoder's session while the mix is being encoded.
     audio_session: Option<SessionId>,
+    /// The audio encoder's packets and first config, as they are received.
+    audio_packets: Vec<Packet>,
+    audio_config: Option<TrackConfig>,
     /// Sample frames of the loop pre-roll the muxer hides.
     leading_audio: u64,
     staged: Option<PathBuf>,
     interleaver: Option<Interleaver>,
     /// Packet bytes written to the muxer per request at most.
-    batch_bytes: usize,
+    request_bytes: usize,
+    /// Ready packets not yet written, and their bytes.
+    pending_write: Vec<TrackPacket>,
+    pending_bytes: usize,
     muxer: Option<SessionId>,
 }
 
-/// The process of plugin `plugin`, started for the export when it is first
-/// needed.
+/// The process of plugin `plugin`, started for the export with `ring` when
+/// it is first needed.
 fn process<'a>(
-    processes: &'a mut HashMap<usize, Box<dyn MediaProvider>>,
+    processes: &'a mut HashMap<usize, Plugin>,
     registry: &MediaRegistry,
     kill: &PluginKillSwitch,
     plugin: usize,
-) -> Result<&'a mut Box<dyn MediaProvider>, MediaError> {
+    ring: Option<RingLayout>,
+) -> Result<&'a mut Plugin, MediaError> {
     Ok(match processes.entry(plugin) {
         Entry::Occupied(entry) => entry.into_mut(),
-        Entry::Vacant(entry) => entry.insert((registry.plugin(plugin).factory)(
+        Entry::Vacant(entry) => entry.insert(Plugin::new((registry.plugin(plugin).factory)(
             kill,
-            ProviderUse::Export,
-        )?),
+            ProviderUse::Export { ring },
+        )?)),
     })
+}
+
+/// The formats a plugin's manifest says its video encoders take, which
+/// size the ring of a process started to describe it: `None` without a
+/// video encoder, and none when one does not say (an RGBA16 frame then
+/// sizes it). Names Celesta does not know are left out.
+fn manifest_formats(media: &MediaManifest) -> Option<Vec<PixelFormat>> {
+    if media.video_encoders.is_empty() {
+        return None;
+    }
+    let mut formats = Vec::new();
+    for encoder in &media.video_encoders {
+        let Some(names) = &encoder.input_formats else {
+            return Some(Vec::new());
+        };
+        formats.extend(
+            names
+                .iter()
+                .filter_map(|name| name.parse::<PixelFormat>().ok()),
+        );
+    }
+    Some(formats)
 }
 
 /// A plugin's process as a provider that starts only when it is asked to
 /// describe, so a cached description starts nothing.
 struct Lazy<'a> {
-    processes: &'a mut HashMap<usize, Box<dyn MediaProvider>>,
+    processes: &'a mut HashMap<usize, Plugin>,
     registry: &'a MediaRegistry,
     kill: &'a PluginKillSwitch,
     plugin: usize,
+    frame: (u32, u32),
 }
 
 impl MediaProvider for Lazy<'_> {
     fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
-        process(self.processes, self.registry, self.kill, self.plugin)?.describe()
+        let formats = manifest_formats(&self.registry.plugin(self.plugin).media);
+        let ring = ExportSession::ring_for(formats.as_deref(), self.frame);
+        process(self.processes, self.registry, self.kill, self.plugin, ring)?
+            .provider
+            .describe()
     }
 }
 
@@ -228,26 +459,34 @@ impl ExportSession {
             cancellation: cancellation.clone(),
             kill: cancellation.plugins(),
             processes: HashMap::new(),
+            frame: (0, 0),
             resolved: None,
             video: None,
             audio: AudioTrack::Undecided,
             audio_session: None,
+            audio_packets: Vec::new(),
+            audio_config: None,
             leading_audio: 0,
             staged: None,
             interleaver: None,
-            batch_bytes: WRITE_BATCH_BYTES,
+            request_bytes: WRITE_REQUEST_BYTES,
+            pending_write: Vec::new(),
+            pending_bytes: 0,
             muxer: None,
         }
     }
 
     /// Chooses the components `choice` names for `output`
     /// ([`resolve_output`]), describing each plugin through the process
-    /// this session keeps for it. Processes of plugins left unused stop.
+    /// this session keeps for it, whose ring is sized for `frame`-sized
+    /// frames. Processes of plugins left unused stop.
     pub(crate) fn resolve(
         &mut self,
         choice: &OutputChoice,
         output: &Path,
+        frame: (u32, u32),
     ) -> Result<OutputPlan, ExportError> {
+        self.frame = frame;
         let registry = self.registry.clone();
         let kill = &self.kill;
         let processes = &mut self.processes;
@@ -259,6 +498,7 @@ impl ExportSession {
                     registry: &registry,
                     kill,
                     plugin,
+                    frame,
                 },
             )
         })
@@ -275,11 +515,32 @@ impl ExportSession {
         Ok(plan)
     }
 
+    /// The ring for `frame`-sized frames of an encoder taking `formats`
+    /// ([`ring_layout`]); none for a process that encodes no video.
+    fn ring_for(formats: Option<&[PixelFormat]>, frame: (u32, u32)) -> Option<RingLayout> {
+        formats.and_then(|formats| ring_layout(formats, frame.0, frame.1))
+    }
+
     /// Whether the resolved output has an audio track to encode.
     pub(crate) fn encodes_audio(&self) -> bool {
         self.resolved
             .as_ref()
             .is_some_and(|resolved| resolved.audio.is_some())
+    }
+
+    /// The frames sent to the video encoder so far.
+    pub(crate) fn frames_sent(&self) -> u64 {
+        self.video.as_ref().map_or(0, |video| video.frames_sent)
+    }
+
+    /// What the session measured of its staged video so far.
+    pub(crate) fn timing(&self) -> SessionTiming {
+        self.interleaver
+            .as_ref()
+            .map_or_else(SessionTiming::default, |interleaver| SessionTiming {
+                peak_staged_bytes: interleaver.peak_staged_bytes(),
+                spilled: interleaver.spilled(),
+            })
     }
 
     /// The formats `renderer` can read back, best first: the YUV formats
@@ -305,9 +566,60 @@ impl ExportSession {
             .ok_or_else(|| not_ready("no components chosen yet"))
     }
 
-    /// The process of plugin `plugin`, started if it is not running.
-    fn provider(&mut self, plugin: usize) -> Result<&mut Box<dyn MediaProvider>, MediaError> {
-        process(&mut self.processes, &self.registry, &self.kill, plugin)
+    /// The process of plugin `plugin`, started if it is not running: the
+    /// video encoder's with a ring sized from the formats it described.
+    fn plugin(&mut self, plugin: usize) -> Result<&mut Plugin, MediaError> {
+        let ring = match &self.resolved {
+            Some(resolved) if resolved.video.plugin == plugin => {
+                Self::ring_for(Some(&resolved.video.input_formats), self.frame)
+            }
+            _ => None,
+        };
+        process(
+            &mut self.processes,
+            &self.registry,
+            &self.kill,
+            plugin,
+            ring,
+        )
+    }
+
+    /// Receives answers from plugin `plugin` until another request fits its
+    /// window.
+    fn make_room(&mut self, plugin: usize) -> Result<(), ExportError> {
+        while let Some(process) = self.processes.get_mut(&plugin)
+            && process.in_flight() >= process.depth()
+        {
+            self.drain_one(plugin)?;
+        }
+        Ok(())
+    }
+
+    /// Receives every answer plugin `plugin` owes, as a one-at-a-time
+    /// request to it needs.
+    fn drain(&mut self, plugin: usize) -> Result<(), ExportError> {
+        while let Some(process) = self.processes.get_mut(&plugin)
+            && process.in_flight() > 0
+        {
+            self.drain_one(plugin)?;
+        }
+        Ok(())
+    }
+
+    /// Receives plugin `plugin`'s oldest answer: a frame's packets go to the
+    /// interleaver, an audio chunk's wait for the rest of the mix, and each
+    /// track keeps its first config.
+    fn drain_one(&mut self, plugin: usize) -> Result<(), ExportError> {
+        let Some(process) = self.processes.get_mut(&plugin) else {
+            return Ok(());
+        };
+        let (stage, answer) = process.receive();
+        match answer.map_err(|source| self.error(stage, source))? {
+            Answered::VideoFrame(encoded) => self.take_video(encoded)?,
+            Answered::Audio(encoded) => self.take_audio(encoded),
+            Answered::Packets => {}
+        }
+        Ok(())
     }
 
     /// Opens the video encoder for `width`x`height` frames at `frame_rate`,
@@ -359,7 +671,8 @@ impl ExportSession {
         };
         let registry = self.registry.clone();
         let opened = self
-            .provider(plugin)?
+            .plugin(plugin)?
+            .provider
             .video_encoder()
             .ok_or_else(|| missing(&registry, plugin, "video encoder"))?
             .open_video(&request)?;
@@ -396,18 +709,25 @@ impl ExportSession {
         self.encode_pixels(frame.into_pixels())
     }
 
-    /// Encodes the next frame's pixels, shown at `frames_sent ×
-    /// denominator`, and writes what the muxer can take.
+    /// Sends the next frame's pixels, shown at `frames_sent × denominator`,
+    /// once the encoder's window has room, and writes what the muxer can
+    /// take.
     fn encode_pixels(&mut self, pixels: Vec<u8>) -> Result<(), ExportError> {
-        let encoded = self
-            .try_encode_pixels(pixels)
+        let (plugin, session, pts) = self
+            .next_frame()
             .map_err(|source| self.error(VIDEO_STAGE, source))?;
-        self.take_video(encoded)?;
-        self.try_open_muxer()?;
-        self.flush()
+        self.make_room(plugin)?;
+        self.plugin(plugin)
+            .and_then(|process| process.send_video_frame(session, pts, pixels))
+            .map_err(|source| self.error(VIDEO_STAGE, source))?;
+        if let Some(video) = self.video.as_mut() {
+            video.frames_sent += 1;
+        }
+        self.flush(false)
     }
 
-    fn try_encode_pixels(&mut self, pixels: Vec<u8>) -> Result<Encoded, MediaError> {
+    /// The video encoder's plugin and session, and the next frame's pts.
+    fn next_frame(&self) -> Result<(usize, SessionId, i64), MediaError> {
         let plugin = self.resolved()?.video.plugin;
         let video = self
             .video
@@ -421,16 +741,7 @@ impl ExportSession {
             .checked_mul(u64::from(video.frame_rate.denominator))
             .and_then(|pts| i64::try_from(pts).ok())
             .ok_or_else(|| MediaError::Codec("the video is too long".to_owned()))?;
-        let registry = self.registry.clone();
-        let encoded = self
-            .provider(plugin)?
-            .video_encoder()
-            .ok_or_else(|| missing(&registry, plugin, "video encoder"))?
-            .encode_video(session, pts, pixels)?;
-        if let Some(video) = self.video.as_mut() {
-            video.frames_sent += 1;
-        }
-        Ok(encoded)
+        Ok((plugin, session, pts))
     }
 
     /// Keeps the video's first config and stages its packets.
@@ -443,6 +754,15 @@ impl ExportSession {
         match self.interleaver.as_mut() {
             Some(interleaver) => interleaver.push_video(encoded.packets),
             None => Err(self.error(VIDEO_STAGE, not_ready("no open video encoder"))),
+        }
+    }
+
+    /// Keeps the audio's first config and its packets until the mix is
+    /// encoded.
+    fn take_audio(&mut self, encoded: Encoded) {
+        self.audio_packets.extend(encoded.packets);
+        if self.audio_config.is_none() {
+            self.audio_config = encoded.config;
         }
     }
 
@@ -459,51 +779,40 @@ impl ExportSession {
         if !self.encodes_audio() {
             return self.no_audio();
         }
-        self.try_encode_audio(mix, looping)
-            .map_err(|source| self.error(AUDIO_STAGE, source))?;
-        self.try_open_muxer()?;
-        self.flush()
+        self.try_encode_audio(mix, looping)?;
+        self.flush(false)
     }
 
-    fn try_encode_audio(&mut self, mix: &AudioBuffer, looping: bool) -> Result<(), MediaError> {
-        if !matches!(self.audio, AudioTrack::Undecided) {
-            return Err(not_ready("its audio already"));
-        }
-        if self.interleaver.is_none() {
-            return Err(not_ready("no open video encoder"));
-        }
-        let resolved = self.resolved()?;
-        let audio = resolved
-            .audio
-            .as_ref()
-            .ok_or_else(|| not_ready("no audio encoder"))?;
-        let (plugin, component, settings) = (
-            audio.plugin,
-            audio.reference.component.clone(),
-            audio.settings.clone(),
-        );
-        let trims = resolved.muxer.entry.trims_leading_audio;
+    fn try_encode_audio(&mut self, mix: &AudioBuffer, looping: bool) -> Result<(), ExportError> {
+        let audio_error = |session: &Self, source| session.error(AUDIO_STAGE, source);
+        let (plugin, component, settings, trims) = self
+            .audio_encoder()
+            .map_err(|source| audio_error(self, source))?;
+        // The open waits for the answers the plugin owes, which a process
+        // that also encodes the video may.
+        self.drain(plugin)?;
         let request = AudioEncoderRequest {
             component: &component,
             settings: &settings,
             sample_rate: mix.sample_rate,
             channels: mix.channels,
         };
-        let registry = self.registry.clone();
-        let encoder = process(&mut self.processes, &self.registry, &self.kill, plugin)?
-            .audio_encoder()
-            .ok_or_else(|| missing(&registry, plugin, "audio encoder"))?;
-        let opened = encoder.open_audio(&request)?;
+        let opened = self
+            .open_audio(plugin, &request)
+            .map_err(|source| audio_error(self, source))?;
         // Opened: an abort from here on ends the session.
         self.audio_session = Some(opened.session);
         if !(1..=2).contains(&opened.channels) {
-            return Err(MediaError::InvalidSettings {
-                key: "channels".to_owned(),
-                message: format!(
-                    "the encoder chose {} channels; Celesta sends 1 or 2",
-                    opened.channels
-                ),
-            });
+            return Err(audio_error(
+                self,
+                MediaError::InvalidSettings {
+                    key: "channels".to_owned(),
+                    message: format!(
+                        "the encoder chose {} channels; Celesta sends 1 or 2",
+                        opened.channels
+                    ),
+                },
+            ));
         }
 
         let mix = if opened.channels == mix.channels {
@@ -514,7 +823,7 @@ impl ExportSession {
         let mix = if opened.sample_rate == mix.sample_rate {
             mix
         } else {
-            Cow::Owned(resample_audio(&mix, opened.sample_rate)?)
+            Cow::Owned(resample_audio(&mix, opened.sample_rate).map_err(|e| audio_error(self, e))?)
         };
         let lead_in = if looping && trims {
             loop_lead_in(&mix)
@@ -525,25 +834,28 @@ impl ExportSession {
         let lead_frames = lead_in.len() / channels;
         let chunk = AUDIO_CHUNK_FRAMES * channels;
 
-        let mut packets = Vec::new();
-        let mut config = None;
-        let mut collect = |encoded: Encoded| {
-            packets.extend(encoded.packets);
-            if config.is_none() {
-                config = encoded.config;
-            }
-        };
         let mut pts = -(lead_frames as i64);
         for samples in lead_in.chunks(chunk).chain(mix.samples.chunks(chunk)) {
-            collect(encoder.encode_audio(opened.session, pts, samples)?);
+            self.make_room(plugin)?;
+            self.plugin(plugin)
+                .and_then(|process| process.send_audio(opened.session, pts, samples))
+                .map_err(|source| audio_error(self, source))?;
             pts += (samples.len() / channels) as i64;
         }
-        collect(encoder.finish_audio(opened.session)?);
+        self.drain(plugin)?;
+        let finished = self
+            .finish_audio(plugin, opened.session)
+            .map_err(|source| audio_error(self, source))?;
+        self.take_audio(finished);
         self.audio_session = None;
-        let config = config.ok_or_else(|| {
-            MediaError::Codec("the audio encoder produced no configuration".to_owned())
+        let config = self.audio_config.take().ok_or_else(|| {
+            audio_error(
+                self,
+                MediaError::Codec("the audio encoder produced no configuration".to_owned()),
+            )
         })?;
 
+        let packets = std::mem::take(&mut self.audio_packets);
         let interleaver = self
             .interleaver
             .as_mut()
@@ -561,7 +873,55 @@ impl ExportSession {
         Ok(())
     }
 
-    /// Decides that the export has no audio track.
+    /// The audio encoder's plugin, component, and settings, and whether the
+    /// muxer trims leading audio, once the audio may be encoded.
+    fn audio_encoder(&self) -> Result<(usize, String, celesta_media::Settings, bool), MediaError> {
+        if !matches!(self.audio, AudioTrack::Undecided) {
+            return Err(not_ready("its audio already"));
+        }
+        if self.interleaver.is_none() {
+            return Err(not_ready("no open video encoder"));
+        }
+        let resolved = self.resolved()?;
+        let audio = resolved
+            .audio
+            .as_ref()
+            .ok_or_else(|| not_ready("no audio encoder"))?;
+        Ok((
+            audio.plugin,
+            audio.reference.component.clone(),
+            audio.settings.clone(),
+            resolved.muxer.entry.trims_leading_audio,
+        ))
+    }
+
+    fn open_audio(
+        &mut self,
+        plugin: usize,
+        request: &AudioEncoderRequest<'_>,
+    ) -> Result<AudioEncoderOpened, MediaError> {
+        let registry = self.registry.clone();
+        self.plugin(plugin)?
+            .provider
+            .audio_encoder()
+            .ok_or_else(|| missing(&registry, plugin, "audio encoder"))?
+            .open_audio(request)
+    }
+
+    fn finish_audio(&mut self, plugin: usize, session: SessionId) -> Result<Encoded, MediaError> {
+        let registry = self.registry.clone();
+        self.plugin(plugin)?
+            .provider
+            .audio_encoder()
+            .ok_or_else(|| missing(&registry, plugin, "audio encoder"))?
+            .finish_audio(session)
+    }
+
+    /// Decides that the export has no audio track. The answers the video
+    /// encoder owes are received, so the muxer can open on the video's
+    /// config now: before the first frame (a project's export) there are
+    /// none, and after the last (a React entry's) the finish waits for them
+    /// anyway.
     pub(crate) fn no_audio(&mut self) -> Result<(), ExportError> {
         if matches!(self.audio, AudioTrack::Undecided) {
             let Some(interleaver) = self.interleaver.as_mut() else {
@@ -570,13 +930,29 @@ impl ExportSession {
             interleaver.finish_audio();
             self.audio = AudioTrack::None;
         }
-        self.try_open_muxer()?;
-        self.flush()
+        if let Some(resolved) = &self.resolved {
+            self.drain(resolved.video.plugin)?;
+        }
+        self.flush(false)
     }
 
     /// Opens the muxer, once the video's config is known and the audio is
-    /// decided (none, or its config known).
+    /// decided (none, or its config known). The open waits for the answers
+    /// the muxer's plugin owes, which a process that also encodes may.
     fn try_open_muxer(&mut self) -> Result<(), ExportError> {
+        let due = self.muxer.is_none()
+            && self
+                .video
+                .as_ref()
+                .is_some_and(|video| video.config.is_some())
+            && !matches!(self.audio, AudioTrack::Undecided);
+        let Some(plugin) = self.resolved.as_ref().map(|resolved| resolved.muxer.plugin) else {
+            return Ok(());
+        };
+        if !due {
+            return Ok(());
+        }
+        self.drain(plugin)?;
         self.try_open_muxer_inner()
             .map_err(|source| self.error(MUXER_STAGE, source))
     }
@@ -636,7 +1012,8 @@ impl ExportSession {
         };
         let registry = self.registry.clone();
         let session = self
-            .provider(plugin)?
+            .plugin(plugin)?
+            .provider
             .muxer()
             .ok_or_else(|| missing(&registry, plugin, "muxer"))?
             .open_muxer(&request)?;
@@ -644,41 +1021,62 @@ impl ExportSession {
         Ok(())
     }
 
-    /// Writes every packet the interleaver has ready, a batch of at most
-    /// [`WRITE_BATCH_BYTES`] per request, so a staged backlog is never all
-    /// in memory at once. A spill file that cannot be read back fails the
-    /// export: the packets taken in that batch are lost with it.
-    fn flush(&mut self) -> Result<(), ExportError> {
+    /// Opens the muxer when it can, and sends what the interleaver has
+    /// ready as `writePackets` requests: one per [`WRITE_BATCH_PACKETS`]
+    /// packets or [`WRITE_BATCH_BYTES`] bytes, never more than
+    /// `request_bytes` (but one packet, however large) or
+    /// [`WRITE_REQUEST_PACKETS`] in one, and the rest too when `force`. Packets are taken from a staged backlog a request
+    /// at a time, so it is never all in memory at once; a spill file that
+    /// cannot be read back fails the export, and the packets taken with it
+    /// are lost.
+    fn flush(&mut self, force: bool) -> Result<(), ExportError> {
+        self.try_open_muxer()?;
         let Some(session) = self.muxer else {
             return Ok(());
         };
-        loop {
-            let Some(interleaver) = self.interleaver.as_mut() else {
-                return Ok(());
-            };
-            let ready = match interleaver.take_ready(self.batch_bytes) {
+        while let Some(interleaver) = self.interleaver.as_mut() {
+            let ready = match interleaver.take_ready(self.request_bytes) {
                 Ok(ready) => ready,
                 Err(error) => return Err(self.cancellation.settle(error)),
             };
             if ready.is_empty() {
-                return Ok(());
+                break;
             }
-            self.write_packets(session, &ready)
-                .map_err(|source| self.error(MUXER_STAGE, source))?;
+            let bytes: usize = ready.iter().map(|ready| packet_bytes(&ready.packet)).sum();
+            if !self.pending_write.is_empty()
+                && (self.pending_bytes.saturating_add(bytes) > self.request_bytes
+                    || self.pending_write.len() + ready.len() > WRITE_REQUEST_PACKETS)
+            {
+                self.write_pending(session)?;
+            }
+            self.pending_write.extend(ready);
+            self.pending_bytes = self.pending_bytes.saturating_add(bytes);
+            if self.pending_write.len() >= WRITE_BATCH_PACKETS
+                || self.pending_bytes >= WRITE_BATCH_BYTES
+            {
+                self.write_pending(session)?;
+            }
         }
+        if force && !self.pending_write.is_empty() {
+            self.write_pending(session)?;
+        }
+        Ok(())
     }
 
-    fn write_packets(
-        &mut self,
-        session: SessionId,
-        ready: &[TrackPacket],
-    ) -> Result<(), MediaError> {
-        let plugin = self.resolved()?.muxer.plugin;
-        let registry = self.registry.clone();
-        self.provider(plugin)?
-            .muxer()
-            .ok_or_else(|| missing(&registry, plugin, "muxer"))?
-            .write_packets(session, ready)
+    /// Sends the packets waiting to be written as one `writePackets`, once
+    /// the muxer's window has room.
+    fn write_pending(&mut self, session: SessionId) -> Result<(), ExportError> {
+        let plugin = self
+            .resolved()
+            .map_err(|source| self.error(MUXER_STAGE, source))?
+            .muxer
+            .plugin;
+        self.make_room(plugin)?;
+        let packets = std::mem::take(&mut self.pending_write);
+        self.pending_bytes = 0;
+        self.plugin(plugin)
+            .and_then(|process| process.send_packets(session, &packets))
+            .map_err(|source| self.error(MUXER_STAGE, source))
     }
 
     /// Flushes the video encoder, writes what is left, and finishes the
@@ -696,7 +1094,8 @@ impl ExportSession {
     fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
         let plugin = self.resolved()?.video.plugin;
         let registry = self.registry.clone();
-        self.provider(plugin)?
+        self.plugin(plugin)?
+            .provider
             .video_encoder()
             .ok_or_else(|| missing(&registry, plugin, "video encoder"))?
             .finish_video(session)
@@ -705,13 +1104,19 @@ impl ExportSession {
     fn finish_muxer(&mut self, session: SessionId) -> Result<Vec<PathBuf>, MediaError> {
         let plugin = self.resolved()?.muxer.plugin;
         let registry = self.registry.clone();
-        self.provider(plugin)?
+        self.plugin(plugin)?
+            .provider
             .muxer()
             .ok_or_else(|| missing(&registry, plugin, "muxer"))?
             .finish_muxer(session)
     }
 
     fn try_finish(&mut self) -> Result<ExportedTracks, ExportError> {
+        let mut plugins: Vec<usize> = self.processes.keys().copied().collect();
+        plugins.sort_unstable();
+        for plugin in plugins {
+            self.drain(plugin)?;
+        }
         if let Some(session) = self.video.as_mut().and_then(|video| video.session.take()) {
             let encoded = self
                 .finish_video(session)
@@ -734,11 +1139,16 @@ impl ExportSession {
         if matches!(self.audio, AudioTrack::Undecided) {
             return Err(self.error(MUXER_STAGE, not_ready("no audio decided")));
         }
-        self.try_open_muxer()?;
-        self.flush()?;
+        self.flush(true)?;
         let Some(session) = self.muxer else {
             return Err(self.error(MUXER_STAGE, not_ready("no open muxer")));
         };
+        let muxer_plugin = self
+            .resolved()
+            .map_err(|source| self.error(MUXER_STAGE, source))?
+            .muxer
+            .plugin;
+        self.drain(muxer_plugin)?;
         let files = self
             .finish_muxer(session)
             .map_err(|source| self.error(MUXER_STAGE, source))?;
@@ -767,16 +1177,25 @@ impl ExportSession {
 
     /// Ends every session still open (`abortEncoder`, `abortMuxer`) and
     /// stops the processes. A process that does not answer within the
-    /// abort's deadline is killed. Nothing is started to abort.
+    /// abort's deadline is killed. A process with requests in flight is
+    /// stopped without waiting on them, its sessions with it; the staged
+    /// output and the spill file are the export's own and go either way.
+    /// Nothing is started to abort.
     pub(crate) fn abort(mut self) {
         let Some(resolved) = self.resolved.take() else {
             return;
         };
+        self.processes.retain(|_, process| {
+            // An in-process provider's answers are already in.
+            process.ready.clear();
+            process.stages.clear();
+            process.in_flight() == 0
+        });
         if let Some(session) = self.video.as_mut().and_then(|video| video.session.take())
             && let Some(encoder) = self
                 .processes
                 .get_mut(&resolved.video.plugin)
-                .and_then(|provider| provider.video_encoder())
+                .and_then(|process| process.provider.video_encoder())
         {
             encoder.abort_video(session);
         }
@@ -784,7 +1203,7 @@ impl ExportSession {
             && let Some(encoder) = self
                 .processes
                 .get_mut(&audio.plugin)
-                .and_then(|provider| provider.audio_encoder())
+                .and_then(|process| process.provider.audio_encoder())
         {
             encoder.abort_audio(session);
         }
@@ -792,7 +1211,7 @@ impl ExportSession {
             && let Some(muxer) = self
                 .processes
                 .get_mut(&resolved.muxer.plugin)
-                .and_then(|provider| provider.muxer())
+                .and_then(|process| process.provider.muxer())
         {
             // The staged output goes with its file, whatever the muxer left.
             muxer.abort_muxer(session);
@@ -805,13 +1224,13 @@ mod tests {
     use super::*;
     use crate::interleave::{AUDIO_TRACK, VIDEO_TRACK};
     use celesta_media::{
-        AudioEncoder, AudioEncoderOpened, ComponentKind, Muxer, Packet, RegisteredPlugin,
-        VideoEncoder,
+        AudioEncoder, ComponentKind, Muxer, Pipeline, RegisteredPlugin, VideoEncoder,
     };
     use celesta_plugin_host::{
-        MediaAudioEncoderEntry, MediaManifest, MediaMuxerEntry, MediaOrigin, MediaVideoEncoderEntry,
+        MediaAudioEncoderEntry, MediaMuxerEntry, MediaOrigin, MediaVideoEncoderEntry,
     };
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
     /// What the fake plugin was asked, in order.
     #[derive(Clone, Debug, PartialEq)]
@@ -839,6 +1258,8 @@ mod tests {
         WritePackets(Vec<TrackPacket>),
         FinishMuxer,
         AbortMuxer(SessionId),
+        /// A pipelined request's answer was waited for.
+        Received,
     }
 
     /// How the fake answers.
@@ -856,6 +1277,7 @@ mod tests {
 
     struct Fake {
         answers: Answers,
+        described: Vec<ComponentDescription>,
         log: Arc<Mutex<Vec<Asked>>>,
         last: u64,
         video_config_due: bool,
@@ -883,16 +1305,7 @@ mod tests {
 
     impl MediaProvider for Fake {
         fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
-            let available = |kind, id: &str| ComponentDescription {
-                available: true,
-                reason: None,
-                ..ComponentDescription::unavailable(kind, id, "")
-            };
-            Ok(vec![
-                available(ComponentKind::VideoEncoder, "video"),
-                available(ComponentKind::AudioEncoder, "pcm"),
-                available(ComponentKind::Muxer, "file"),
-            ])
+            Ok(self.described.clone())
         }
 
         fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
@@ -1036,57 +1449,109 @@ mod tests {
         }
     }
 
-    /// A session through the fake plugin, resolved for `out.fake`, and what
-    /// the plugin is asked.
-    fn fake_session(answers: Answers) -> (ExportSession, Arc<Mutex<Vec<Asked>>>) {
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let factory_log = log.clone();
-        let plugin = RegisteredPlugin {
-            id: "fake".to_owned(),
+    fn available(kind: ComponentKind, id: &str) -> ComponentDescription {
+        ComponentDescription {
+            available: true,
+            reason: None,
+            ..ComponentDescription::unavailable(kind, id, "")
+        }
+    }
+
+    fn video_entry(input_formats: Option<&[&str]>) -> MediaVideoEncoderEntry {
+        MediaVideoEncoderEntry {
+            id: "video".to_owned(),
+            name: "Video".to_owned(),
+            codecs: vec!["fake".to_owned()],
+            input_formats: input_formats
+                .map(|formats| formats.iter().map(|&format| format.to_owned()).collect()),
+        }
+    }
+
+    fn audio_entry() -> MediaAudioEncoderEntry {
+        MediaAudioEncoderEntry {
+            id: "pcm".to_owned(),
+            name: "PCM".to_owned(),
+            codecs: vec!["lpcm".to_owned()],
+        }
+    }
+
+    /// The muxer `file`, writing `.fake` with `fake` video and, when
+    /// `audio`, `lpcm` audio.
+    fn muxer_entry(audio: bool, trims: bool) -> MediaMuxerEntry {
+        MediaMuxerEntry {
+            id: "file".to_owned(),
+            name: "File".to_owned(),
+            extensions: vec!["fake".to_owned()],
+            video: vec!["fake".to_owned()],
+            audio: audio.then(|| vec!["lpcm".to_owned()]),
+            default_video: Some("fake".to_owned()),
+            default_audio: audio.then(|| "lpcm".to_owned()),
+            trims_leading_audio: trims,
+            sequence: false,
+        }
+    }
+
+    /// The uses each plugin's factory was started for, by plugin id.
+    type Uses = Arc<Mutex<Vec<(String, ProviderUse)>>>;
+
+    /// A bundled plugin `id` declaring `media`, each instance of it a
+    /// [`Fake`] describing `described`, noting its starts in `uses`.
+    fn fake_plugin(
+        id: &str,
+        media: MediaManifest,
+        described: Vec<ComponentDescription>,
+        answers: Answers,
+        log: &Arc<Mutex<Vec<Asked>>>,
+        uses: &Uses,
+    ) -> RegisteredPlugin {
+        let (log, uses, name) = (log.clone(), uses.clone(), id.to_owned());
+        RegisteredPlugin {
+            id: id.to_owned(),
             version: "1.0.0".to_owned(),
             origin: MediaOrigin::Bundled,
             directory: PathBuf::new(),
             executable: None,
-            media: MediaManifest {
-                decoders: Vec::new(),
-                video_encoders: vec![MediaVideoEncoderEntry {
-                    id: "video".to_owned(),
-                    name: "Video".to_owned(),
-                    codecs: vec!["fake".to_owned()],
-                    input_formats: None,
-                }],
-                audio_encoders: vec![MediaAudioEncoderEntry {
-                    id: "pcm".to_owned(),
-                    name: "PCM".to_owned(),
-                    codecs: vec!["lpcm".to_owned()],
-                }],
-                muxers: vec![MediaMuxerEntry {
-                    id: "file".to_owned(),
-                    name: "File".to_owned(),
-                    extensions: vec!["fake".to_owned()],
-                    video: vec!["fake".to_owned()],
-                    audio: Some(vec!["lpcm".to_owned()]),
-                    default_video: Some("fake".to_owned()),
-                    default_audio: Some("lpcm".to_owned()),
-                    trims_leading_audio: answers.trims,
-                    sequence: false,
-                }],
-            },
-            factory: Arc::new(move |_, _| {
+            media,
+            factory: Arc::new(move |_, purpose| {
+                uses.lock().unwrap().push((name.clone(), purpose));
                 Ok(Box::new(Fake {
                     answers,
-                    log: factory_log.clone(),
+                    described: described.clone(),
+                    log: log.clone(),
                     last: 0,
                     video_config_due: true,
                     audio_channels: 1,
                     audio_config_due: true,
                 }) as Box<dyn MediaProvider>)
             }),
-        };
+        }
+    }
+
+    /// A session through the fake plugin, resolved for `out.fake`, and what
+    /// the plugin is asked.
+    fn fake_session(answers: Answers) -> (ExportSession, Arc<Mutex<Vec<Asked>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let plugin = fake_plugin(
+            "fake",
+            MediaManifest {
+                decoders: Vec::new(),
+                video_encoders: vec![video_entry(None)],
+                audio_encoders: vec![audio_entry()],
+                muxers: vec![muxer_entry(true, answers.trims)],
+            },
+            vec![
+                available(ComponentKind::VideoEncoder, "video"),
+                available(ComponentKind::AudioEncoder, "pcm"),
+                available(ComponentKind::Muxer, "file"),
+            ],
+            answers,
+            &log,
+            &Uses::default(),
+        );
         let registry = Arc::new(MediaRegistry::new(vec![plugin]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), Path::new("out.fake"))
+            .resolve(&OutputChoice::default(), Path::new("out.fake"), (2, 2))
             .unwrap();
         (session, log)
     }
@@ -1474,7 +1939,7 @@ mod tests {
         // Two frames in memory, the rest spilled, written 40 bytes at most at
         // a time once the audio is decided.
         session.interleaver = Some(session.interleaver.take().unwrap().with_spill_limit(32));
-        session.batch_bytes = 40;
+        session.request_bytes = 40;
         frames(&mut session, 10);
         assert_eq!(files_in(directory.path()).len(), 1, "a spill file");
         session.no_audio().unwrap();
@@ -1514,5 +1979,506 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .collect()
+    }
+
+    /// How the pipelined fake answers `receive`.
+    #[derive(Clone, Copy, Default, PartialEq)]
+    enum Receiving {
+        /// Each request's answer, in order.
+        #[default]
+        Answers,
+        /// The second receive is `Err(MediaError::Codec("boom"))`.
+        FailsSecond,
+        /// Any receive panics.
+        Panics,
+    }
+
+    /// A video encoder whose provider pipelines three frames deep, as a
+    /// plugin's process does: it notes each frame sent
+    /// (`Asked::EncodeVideo`) and each answer received (`Asked::Received`),
+    /// answers a frame with one 100-byte packet (and the config on the
+    /// first), and refuses a one-at-a-time request while any is in flight.
+    struct Piped {
+        log: Arc<Mutex<Vec<Asked>>>,
+        receiving: Receiving,
+        answers: VecDeque<Answered>,
+        received: usize,
+        config_due: bool,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Piped {
+        fn ask(&self, asked: Asked) {
+            self.log.lock().unwrap().push(asked);
+        }
+
+        fn idle(&self) -> Result<(), MediaError> {
+            if self.answers.is_empty() {
+                Ok(())
+            } else {
+                Err(MediaError::Codec("requests are in flight".to_owned()))
+            }
+        }
+    }
+
+    impl Drop for Piped {
+        fn drop(&mut self) {
+            self.dropped.store(true, AtomicOrdering::SeqCst);
+        }
+    }
+
+    impl MediaProvider for Piped {
+        fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+            self.idle()?;
+            Ok(vec![available(ComponentKind::VideoEncoder, "video")])
+        }
+
+        fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
+            Some(self)
+        }
+
+        fn pipeline(&mut self) -> Option<&mut dyn Pipeline> {
+            Some(self)
+        }
+    }
+
+    impl VideoEncoder for Piped {
+        fn open_video(
+            &mut self,
+            request: &VideoEncoderRequest<'_>,
+        ) -> Result<VideoEncoderOpened, MediaError> {
+            self.idle()?;
+            self.ask(Asked::OpenVideo);
+            Ok(VideoEncoderOpened {
+                session: SessionId(1),
+                input: request.offered[0],
+                alpha: false,
+            })
+        }
+
+        fn encode_video(
+            &mut self,
+            _: SessionId,
+            _: i64,
+            _: Vec<u8>,
+        ) -> Result<Encoded, MediaError> {
+            unreachable!("frames go through the pipeline")
+        }
+
+        fn finish_video(&mut self, _: SessionId) -> Result<Encoded, MediaError> {
+            self.idle()?;
+            self.ask(Asked::FinishVideo);
+            Ok(Encoded::default())
+        }
+
+        fn abort_video(&mut self, session: SessionId) {
+            self.ask(Asked::AbortVideo(session));
+        }
+    }
+
+    impl Pipeline for Piped {
+        fn depth(&self) -> usize {
+            3
+        }
+
+        fn in_flight(&self) -> usize {
+            self.answers.len()
+        }
+
+        fn send_video_frame(
+            &mut self,
+            _: SessionId,
+            pts: i64,
+            _: Vec<u8>,
+        ) -> Result<(), MediaError> {
+            self.ask(Asked::EncodeVideo { pts });
+            let config = std::mem::take(&mut self.config_due).then(|| config("fake"));
+            self.answers.push_back(Answered::VideoFrame(Encoded {
+                packets: vec![Packet {
+                    pts,
+                    dts: pts,
+                    duration: 1,
+                    key: true,
+                    bytes: vec![pts as u8; 100],
+                    additional: Vec::new(),
+                }],
+                config,
+            }));
+            Ok(())
+        }
+
+        fn send_audio(&mut self, _: SessionId, _: i64, _: &[f32]) -> Result<(), MediaError> {
+            unreachable!("the fake encodes no audio")
+        }
+
+        fn send_packets(&mut self, _: SessionId, _: &[TrackPacket]) -> Result<(), MediaError> {
+            unreachable!("the fake muxes nothing")
+        }
+
+        fn receive(&mut self) -> Result<Answered, MediaError> {
+            assert!(
+                self.receiving != Receiving::Panics,
+                "the fake was waited on"
+            );
+            self.ask(Asked::Received);
+            self.received += 1;
+            let answer = self
+                .answers
+                .pop_front()
+                .ok_or_else(|| MediaError::Codec("no request is in flight".to_owned()))?;
+            if self.receiving == Receiving::FailsSecond && self.received == 2 {
+                return Err(MediaError::Codec("boom".to_owned()));
+            }
+            Ok(answer)
+        }
+    }
+
+    /// A session whose video encoder is [`Piped`], in plugin `v`, and whose
+    /// muxer is a [`Fake`] in plugin `m`: what both are asked, and whether
+    /// the encoder's provider was dropped.
+    fn piped_session(
+        receiving: Receiving,
+    ) -> (ExportSession, Arc<Mutex<Vec<Asked>>>, Arc<AtomicBool>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (encoder_log, encoder_dropped) = (log.clone(), dropped.clone());
+        let encoder = RegisteredPlugin {
+            id: "v".to_owned(),
+            version: "1.0.0".to_owned(),
+            origin: MediaOrigin::Bundled,
+            directory: PathBuf::new(),
+            executable: None,
+            media: MediaManifest {
+                video_encoders: vec![video_entry(None)],
+                ..MediaManifest::default()
+            },
+            factory: Arc::new(move |_, _| {
+                Ok(Box::new(Piped {
+                    log: encoder_log.clone(),
+                    receiving,
+                    answers: VecDeque::new(),
+                    received: 0,
+                    config_due: true,
+                    dropped: encoder_dropped.clone(),
+                }) as Box<dyn MediaProvider>)
+            }),
+        };
+        let muxer = fake_plugin(
+            "m",
+            MediaManifest {
+                muxers: vec![muxer_entry(false, false)],
+                ..MediaManifest::default()
+            },
+            vec![available(ComponentKind::Muxer, "file")],
+            Answers::default(),
+            &log,
+            &Uses::default(),
+        );
+        let registry = Arc::new(MediaRegistry::new(vec![encoder, muxer]));
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        session
+            .resolve(&OutputChoice::default(), Path::new("out.fake"), (2, 2))
+            .unwrap();
+        (session, log, dropped)
+    }
+
+    fn count(log: &Mutex<Vec<Asked>>, which: impl Fn(&Asked) -> bool) -> usize {
+        log_of(log).iter().filter(|asked| which(asked)).count()
+    }
+
+    fn sends(log: &Mutex<Vec<Asked>>) -> usize {
+        count(log, |asked| matches!(asked, Asked::EncodeVideo { .. }))
+    }
+
+    fn receives(log: &Mutex<Vec<Asked>>) -> usize {
+        count(log, |asked| *asked == Asked::Received)
+    }
+
+    #[test]
+    fn frames_are_sent_up_to_the_depth_before_waiting() {
+        let (mut session, log, _) = piped_session(Receiving::Answers);
+        open(&mut session);
+        frames(&mut session, 3);
+        assert_eq!((sends(&log), receives(&log)), (3, 0), "{:?}", log_of(&log));
+        session.encode_pixels(vec![3; 16]).unwrap();
+        let asked = log_of(&log);
+        assert_eq!(
+            asked[asked.len() - 2..],
+            [Asked::Received, Asked::EncodeVideo { pts: 3 }],
+            "{asked:?}"
+        );
+        assert_eq!(session.frames_sent(), 4);
+    }
+
+    #[test]
+    fn write_packets_are_batched() {
+        let (mut session, log, _) = piped_session(Receiving::Answers);
+        open(&mut session);
+        session.no_audio().unwrap();
+        frames(&mut session, 20);
+        session.finish().unwrap();
+        let batches: Vec<Vec<TrackPacket>> = log_of(&log)
+            .into_iter()
+            .filter_map(|asked| match asked {
+                Asked::WritePackets(packets) => Some(packets),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            batches.len() <= 20 / WRITE_BATCH_PACKETS + 2,
+            "{} requests",
+            batches.len()
+        );
+        let dts: Vec<i64> = batches
+            .iter()
+            .flatten()
+            .map(|packet| packet.packet.dts)
+            .collect();
+        assert_eq!(dts, (0..20).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn finish_drains_the_window_first() {
+        let (mut session, log, _) = piped_session(Receiving::Answers);
+        open(&mut session);
+        session.no_audio().unwrap();
+        frames(&mut session, 2);
+        assert_eq!(receives(&log), 0);
+        session.finish().unwrap();
+        let asked = log_of(&log);
+        let finished = asked
+            .iter()
+            .position(|asked| *asked == Asked::FinishVideo)
+            .expect("the encoder finished");
+        let received = asked[..finished]
+            .iter()
+            .filter(|asked| **asked == Asked::Received)
+            .count();
+        assert_eq!(received, 2, "{asked:?}");
+    }
+
+    #[test]
+    fn abort_with_frames_in_flight_does_not_wait() {
+        let (mut session, log, dropped) = piped_session(Receiving::Panics);
+        open(&mut session);
+        frames(&mut session, 2);
+        session.abort();
+        assert!(
+            dropped.load(AtomicOrdering::SeqCst),
+            "the encoder was dropped"
+        );
+        assert_eq!(receives(&log), 0);
+        assert!(
+            !log_of(&log)
+                .iter()
+                .any(|asked| matches!(asked, Asked::AbortVideo(_))),
+            "nothing is sent behind the frames in flight"
+        );
+    }
+
+    #[test]
+    fn a_refused_frame_fails_the_export() {
+        let (mut session, _, _) = piped_session(Receiving::FailsSecond);
+        open(&mut session);
+        // Three frames fill the window; the fourth waits on the first's
+        // answer, and the fifth on the second's, the refused one.
+        frames(&mut session, 4);
+        let result = session.encode_pixels(vec![4; 16]);
+        assert!(
+            matches!(
+                &result,
+                Err(ExportError::Codec { stage: VIDEO_STAGE, source })
+                    if source.to_string().contains("boom")
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// The `Export` uses plugin `id` was started for.
+    fn exports_of(uses: &Uses, id: &str) -> Vec<ProviderUse> {
+        uses.lock()
+            .unwrap()
+            .iter()
+            .filter(|(plugin, purpose)| plugin == id && *purpose != ProviderUse::Describe)
+            .map(|(_, purpose)| *purpose)
+            .collect()
+    }
+
+    fn ring(slots: usize, slot_bytes: usize) -> ProviderUse {
+        ProviderUse::Export {
+            ring: Some(RingLayout { slots, slot_bytes }),
+        }
+    }
+
+    /// A video encoder and a muxer `file` (writing no audio) in plugin `id`,
+    /// with `inputFormats` `manifest` in its manifest and `described` in
+    /// its description.
+    fn encoder_plugin(
+        id: &str,
+        manifest: Option<&[&str]>,
+        described: &[PixelFormat],
+        log: &Arc<Mutex<Vec<Asked>>>,
+        uses: &Uses,
+    ) -> RegisteredPlugin {
+        fake_plugin(
+            id,
+            MediaManifest {
+                video_encoders: vec![video_entry(manifest)],
+                muxers: vec![muxer_entry(false, false)],
+                ..MediaManifest::default()
+            },
+            vec![
+                ComponentDescription {
+                    input_formats: described.to_vec(),
+                    ..available(ComponentKind::VideoEncoder, "video")
+                },
+                available(ComponentKind::Muxer, "file"),
+            ],
+            Answers::default(),
+            log,
+            uses,
+        )
+    }
+
+    #[test]
+    fn the_ring_is_sized_from_the_plugins_formats() {
+        let (log, uses) = (Arc::new(Mutex::new(Vec::new())), Uses::default());
+        // The description, not the manifest (which would size for rgba16),
+        // sizes the video encoder's ring.
+        let video = fake_plugin(
+            "v",
+            MediaManifest {
+                video_encoders: vec![video_entry(None)],
+                muxers: vec![muxer_entry(true, false)],
+                ..MediaManifest::default()
+            },
+            vec![
+                ComponentDescription {
+                    input_formats: vec![PixelFormat::Yuv420p, PixelFormat::Rgba8],
+                    ..available(ComponentKind::VideoEncoder, "video")
+                },
+                available(ComponentKind::Muxer, "file"),
+            ],
+            Answers::default(),
+            &log,
+            &uses,
+        );
+        let audio = fake_plugin(
+            "a",
+            MediaManifest {
+                audio_encoders: vec![audio_entry()],
+                ..MediaManifest::default()
+            },
+            vec![available(ComponentKind::AudioEncoder, "pcm")],
+            Answers::default(),
+            &log,
+            &uses,
+        );
+        let registry = Arc::new(MediaRegistry::new(vec![video, audio]));
+        for plugin in 0..2 {
+            registry.describe(plugin, &PluginKillSwitch::default());
+        }
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        session
+            .resolve(&OutputChoice::default(), Path::new("out.fake"), (64, 48))
+            .unwrap();
+        assert_eq!(
+            exports_of(&uses, "v"),
+            [],
+            "a cached describe starts nothing"
+        );
+        session
+            .open_video(
+                64,
+                48,
+                RATE,
+                &[PixelFormat::Rgba8],
+                Path::new("staged.fake"),
+            )
+            .unwrap();
+        assert_eq!(exports_of(&uses, "v"), [ring(3, 12_288)]);
+        session.encode_audio(&mix(48_000, 100), false).unwrap();
+        assert_eq!(exports_of(&uses, "a"), [ProviderUse::Export { ring: None }]);
+    }
+
+    #[test]
+    fn an_uncached_describe_sizes_the_ring_from_the_manifest() {
+        for (manifest, expected) in [
+            (Some(&["yuv420p"][..]), ring(3, 4_608)),
+            (None, ring(3, 24_576)),
+        ] {
+            let (log, uses) = (Arc::new(Mutex::new(Vec::new())), Uses::default());
+            // The description would size for rgba8.
+            let plugin = encoder_plugin("v", manifest, &[PixelFormat::Rgba8], &log, &uses);
+            let registry = Arc::new(MediaRegistry::new(vec![plugin]));
+            let mut session = ExportSession::start(registry, &ExportCancellation::default());
+            session
+                .resolve(&OutputChoice::default(), Path::new("out.fake"), (64, 48))
+                .unwrap();
+            assert_eq!(exports_of(&uses, "v"), [expected], "{manifest:?}");
+        }
+    }
+
+    #[test]
+    fn no_ring_when_the_layout_is_none() {
+        let (log, uses) = (Arc::new(Mutex::new(Vec::new())), Uses::default());
+        let plugin = encoder_plugin("v", Some(&["rgba16"]), &[PixelFormat::Rgba16], &log, &uses);
+        let registry = Arc::new(MediaRegistry::new(vec![plugin]));
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        session
+            .resolve(
+                &OutputChoice::default(),
+                Path::new("out.fake"),
+                (8192, 4320),
+            )
+            .unwrap();
+        assert_eq!(exports_of(&uses, "v"), [ProviderUse::Export { ring: None }]);
+        session
+            .open_video(
+                8192,
+                4320,
+                RATE,
+                &[PixelFormat::Rgba16],
+                Path::new("staged.fake"),
+            )
+            .unwrap();
+        frames(&mut session, 2);
+        session.no_audio().unwrap();
+        session.finish().unwrap();
+    }
+
+    #[test]
+    fn timing_line_formats_the_measurement() {
+        let timing = ExportTiming {
+            render: Duration::from_millis(4_500),
+            frames: 300,
+            mix: Some(Duration::from_millis(1_250)),
+            mix_done_at_frame: Some(87),
+            peak_staged_bytes: 12_582_912,
+            spilled: false,
+        };
+        assert_eq!(
+            timing_line(&timing),
+            "celesta: timing: render 4.50 s for 300 frames; mix 1.25 s, done at frame 87; \
+             staged peak 12.0 MB; spilled no"
+        );
+        assert_eq!(
+            timing_line(&ExportTiming {
+                mix_done_at_frame: Some(300),
+                spilled: true,
+                ..timing
+            }),
+            "celesta: timing: render 4.50 s for 300 frames; mix 1.25 s, done after the render; \
+             staged peak 12.0 MB; spilled yes"
+        );
+        assert_eq!(
+            timing_line(&ExportTiming {
+                mix: None,
+                mix_done_at_frame: None,
+                ..timing
+            }),
+            "celesta: timing: render 4.50 s for 300 frames; mix none; staged peak 12.0 MB; \
+             spilled no"
+        );
     }
 }

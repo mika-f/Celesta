@@ -15,14 +15,16 @@ use crate::ExportError;
 /// Video packets kept in memory before the rest go to the spill file.
 pub(crate) const SPILL_BYTES: usize = 256 << 20;
 /// Packet bytes (side data included) one [`Interleaver::take_ready`] gives
-/// the muxer at most, so a staged backlog is read back and written a batch
-/// at a time rather than all at once.
-pub(crate) const WRITE_BATCH_BYTES: usize = 32 << 20;
-/// Packets one [`Interleaver::take_ready`] gives the muxer at most: each
-/// costs `writePackets` about 75 bytes of JSON header, and the header is
-/// capped at 16 MiB, so a batch of tiny packets must stop well before its
-/// bytes reach [`WRITE_BATCH_BYTES`].
-pub(crate) const WRITE_BATCH_PACKETS: usize = 16 * 1024;
+/// the muxer at most, and one `writePackets` request carries at most, so a
+/// staged backlog is read back and written a batch at a time rather than
+/// all at once.
+pub(crate) const WRITE_REQUEST_BYTES: usize = 32 << 20;
+/// Packets one [`Interleaver::take_ready`] gives the muxer at most, and one
+/// `writePackets` request carries at most: each costs `writePackets` about
+/// 75 bytes of JSON header, and the header is capped at 16 MiB, so a batch
+/// of tiny packets must stop well before its bytes reach
+/// [`WRITE_REQUEST_BYTES`].
+pub(crate) const WRITE_REQUEST_PACKETS: usize = 16 * 1024;
 pub(crate) const VIDEO_TRACK: usize = 0;
 pub(crate) const AUDIO_TRACK: usize = 1;
 
@@ -83,10 +85,13 @@ pub(crate) struct Interleaver {
     audio_started: bool,
     audio_finished: bool,
     staged_bytes: usize,
+    /// The most bytes staged in memory at once.
+    peak_staged_bytes: usize,
     spill: Option<SpillFile>,
 }
 
-fn packet_bytes(packet: &Packet) -> usize {
+/// A packet's bytes, side data included.
+pub(crate) fn packet_bytes(packet: &Packet) -> usize {
     packet.bytes.len()
         + packet
             .additional
@@ -108,6 +113,7 @@ impl Interleaver {
             audio_started: false,
             audio_finished: false,
             staged_bytes: 0,
+            peak_staged_bytes: 0,
             spill: None,
         }
     }
@@ -134,6 +140,7 @@ impl Interleaver {
                 self.video.push_back(Staged::Spilled(staged));
             } else {
                 self.staged_bytes += size;
+                self.peak_staged_bytes = self.peak_staged_bytes.max(self.staged_bytes);
                 self.video.push_back(Staged::Memory(packet));
             }
         }
@@ -156,7 +163,7 @@ impl Interleaver {
     }
 
     /// The packets that are ready, in decode order: at most `budget` bytes
-    /// and [`WRITE_BATCH_PACKETS`] of them, but always one when any is ready. Call it again until it
+    /// and [`WRITE_REQUEST_PACKETS`] of them, but always one when any is ready. Call it again until it
     /// gives none. A spilled packet that cannot be read back fails it, and
     /// the packets taken before it are lost.
     pub(crate) fn take_ready(&mut self, budget: usize) -> Result<Vec<TrackPacket>, ExportError> {
@@ -181,7 +188,7 @@ impl Interleaver {
             } else {
                 self.audio.front().map_or(0, packet_bytes)
             };
-            if ready.len() >= WRITE_BATCH_PACKETS
+            if ready.len() >= WRITE_REQUEST_PACKETS
                 || (!ready.is_empty() && taken.saturating_add(bytes) > budget)
             {
                 break;
@@ -217,9 +224,14 @@ impl Interleaver {
         Ok(ready)
     }
 
-    #[cfg(test)]
+    /// Whether video packets went to the spill file.
     pub(crate) fn spilled(&self) -> bool {
         self.spill.is_some()
+    }
+
+    /// The most video packet bytes staged in memory at once.
+    pub(crate) fn peak_staged_bytes(&self) -> usize {
+        self.peak_staged_bytes
     }
 
     #[cfg(test)]
@@ -397,6 +409,7 @@ mod tests {
             let got: Vec<Packet> = ready.into_iter().map(|p| p.packet).collect();
             assert_eq!(got, pushed);
             assert_eq!(il.staged_bytes(), 0);
+            assert_eq!(il.peak_staged_bytes(), 900, "the peak stays");
         }
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
@@ -480,11 +493,11 @@ mod tests {
         il.push_video((0..count).map(|n| packet(n * 1001, 1)).collect())
             .unwrap();
         il.finish_audio();
-        let first = il.take_ready(WRITE_BATCH_BYTES).unwrap();
-        assert_eq!(first.len(), WRITE_BATCH_PACKETS);
-        let rest = il.take_ready(WRITE_BATCH_BYTES).unwrap();
-        assert_eq!(rest.len(), count as usize - WRITE_BATCH_PACKETS);
-        assert_eq!(rest[0].packet.dts, WRITE_BATCH_PACKETS as i64 * 1001);
-        assert!(il.take_ready(WRITE_BATCH_BYTES).unwrap().is_empty());
+        let first = il.take_ready(WRITE_REQUEST_BYTES).unwrap();
+        assert_eq!(first.len(), WRITE_REQUEST_PACKETS);
+        let rest = il.take_ready(WRITE_REQUEST_BYTES).unwrap();
+        assert_eq!(rest.len(), count as usize - WRITE_REQUEST_PACKETS);
+        assert_eq!(rest[0].packet.dts, WRITE_REQUEST_PACKETS as i64 * 1001);
+        assert!(il.take_ready(WRITE_REQUEST_BYTES).unwrap().is_empty());
     }
 }

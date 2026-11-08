@@ -6,8 +6,8 @@ use crate::options::{AudioChoice, EncoderChoice, OutputChoice, SettingInput};
 use celesta_media::settings::{differences, parse_setting, validate};
 use celesta_media::{
     ComponentDescription, ComponentEntry, ComponentKind, ComponentRef, InvalidSetting,
-    MediaComponentInfo, MediaRegistry, PluginDescription, SettingField, SettingKind, SettingValue,
-    Settings,
+    MediaComponentInfo, MediaRegistry, PixelFormat, PluginDescription, SettingField, SettingKind,
+    SettingValue, Settings,
 };
 use celesta_plugin_host::{MediaMuxerEntry, MediaOrigin, codec_family};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -31,7 +31,9 @@ pub const X264_PRESETS: [&str; 10] = [
 
 /// A chosen video or audio encoder: its plugin's index in the registry,
 /// the codec families it writes, its validated settings (defaults filled
-/// in, hidden fields left out), and the schema they were checked against.
+/// in, hidden fields left out), the schema they were checked against, and
+/// the formats it described taking (a video encoder's; they size its
+/// process's ring of frame slots).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedEncoder {
     pub plugin: usize,
@@ -40,6 +42,7 @@ pub struct ResolvedEncoder {
     pub codecs: Vec<String>,
     pub settings: Settings,
     pub schema: Vec<SettingField>,
+    pub input_formats: Vec<PixelFormat>,
 }
 
 /// The chosen muxer, as [`ResolvedEncoder`] is an encoder, with its
@@ -471,6 +474,7 @@ fn resolved_encoder(
         codecs: codecs(component).to_vec(),
         settings: settings(component, &description, &choice.options)?,
         schema: description.settings,
+        input_formats: description.input_formats,
     })
 }
 

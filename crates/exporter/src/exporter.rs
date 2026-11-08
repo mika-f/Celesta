@@ -1,7 +1,7 @@
 use crate::control::{
     AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile,
 };
-use crate::encode::{ExportSession, ExportedTracks, published_files};
+use crate::encode::{ExportSession, ExportTiming, ExportedTracks, published_files, report_timing};
 use crate::error::ExportError;
 use crate::loudness::finish_mix;
 use crate::options::ExportOptions;
@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
+use std::time::{Duration, Instant};
 
 /// A mix and its loudness, with the warnings finishing it gave, or why it
 /// could not be made.
@@ -111,7 +112,7 @@ impl Exporter {
         validate_output(output_path, self.options.overwrite)?;
         let mut session = ExportSession::start(crate::media::current(), cancellation);
         let mut staged = None;
-        let (window, loudness) = match self.encode_project(
+        let (window, loudness, timing) = match self.encode_project(
             project,
             asset_root,
             output_path,
@@ -128,9 +129,11 @@ impl Exporter {
             }
         };
         progress(ExportProgress::Muxing);
+        let timing = timing.with(session.timing());
         let tracks = session
             .finish()
             .map_err(|error| cancellation.settle(error))?;
+        report_timing(&timing);
         let staged = staged.expect("an encoded export has its staged output");
         let files = self.publish_video(staged, output_path, tracks.files.clone(), cancellation)?;
         progress(ExportProgress::Wrote(video_file(
@@ -151,8 +154,9 @@ impl Exporter {
 
     /// Chooses the components, renders and encodes `project` into a file
     /// staged beside `output_path` (left in `staged`), and encodes its mix,
-    /// which runs on its own thread beside the render: the span exported
-    /// and the mix's loudness, when there is a mix.
+    /// which runs on its own thread beside the render: the span exported,
+    /// the mix's loudness, when there is a mix, and how long the render and
+    /// the mix took.
     #[allow(clippy::too_many_arguments)]
     fn encode_project(
         &self,
@@ -163,10 +167,12 @@ impl Exporter {
         staged: &mut Option<StagedFile>,
         cancellation: &ExportCancellation,
         progress: &mut impl FnMut(ExportProgress),
-    ) -> Result<(ExportWindow, Option<AudioLoudness>), ExportError> {
-        progress(ExportProgress::Output(
-            session.resolve(&self.options.output, output_path)?,
-        ));
+    ) -> Result<(ExportWindow, Option<AudioLoudness>, ExportTiming), ExportError> {
+        progress(ExportProgress::Output(session.resolve(
+            &self.options.output,
+            output_path,
+            (project.settings.width, project.settings.height),
+        )?));
         subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
         let duration = project.effective_duration().map_err(ExportError::Time)?;
         let full_frame_count = frame_count(duration, project.settings.frame_rate)?;
@@ -199,6 +205,7 @@ impl Exporter {
                 progress(ExportProgress::Warning(NO_AUDIO_TRACK_LOUDNESS.to_owned()));
             }
             session.no_audio()?;
+            let render_started = Instant::now();
             self.render_video(
                 project,
                 window,
@@ -208,8 +215,13 @@ impl Exporter {
                 progress,
                 &mut |_| Ok(()),
             )?;
+            let timing = ExportTiming {
+                render: render_started.elapsed(),
+                frames: session.frames_sent(),
+                ..ExportTiming::default()
+            };
             ensure_not_cancelled(cancellation)?;
-            return Ok((window, None));
+            return Ok((window, None, timing));
         }
 
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
@@ -231,11 +243,13 @@ impl Exporter {
         let abandon_audio = AtomicBool::new(false);
         let looping = self.options.looping;
         thread::scope(|scope| {
-            let (sender, mixed) = mpsc::channel::<Mixed>();
+            // Each mix comes with how long it took.
+            let (sender, mixed) = mpsc::channel::<(Mixed, Duration)>();
             let (graph, abandon_audio) = (&graph, &abandon_audio);
             // The sender moves into the thread, so a panic there disconnects
             // the channel rather than leaving the wait below hanging.
             let mixing = scope.spawn(move || {
+                let started = Instant::now();
                 let abandoned =
                     || cancellation.is_cancelled() || abandon_audio.load(Ordering::Acquire);
                 let mut audio_decoder =
@@ -252,9 +266,12 @@ impl Exporter {
                         finish_mix(&mut mix, self.options.loudness.as_ref(), abandoned)?;
                     Ok((mix, loudness, warnings))
                 });
-                let _ = sender.send(result);
+                let _ = sender.send((result, started.elapsed()));
             });
             let mut encoded = None;
+            // How long the mix took, and the frames sent when it was taken.
+            let mut mix_timing = None;
+            let render_started = Instant::now();
             let rendered = self.render_video(
                 project,
                 window,
@@ -263,7 +280,8 @@ impl Exporter {
                 cancellation,
                 progress,
                 &mut |session| match mixed.try_recv() {
-                    Ok(result) => {
+                    Ok((result, took)) => {
+                        mix_timing = Some((took, session.frames_sent()));
                         encoded = Some(encode_mix(session, result, looping, cancellation)?);
                         Ok(())
                     }
@@ -274,12 +292,17 @@ impl Exporter {
                 abandon_audio.store(true, Ordering::Release);
             }
             rendered?;
+            let render = render_started.elapsed();
+            let frames = session.frames_sent();
             ensure_not_cancelled(cancellation)?;
             progress(ExportProgress::MixingAudio);
             let (loudness, warnings) = match encoded {
                 Some(encoded) => encoded,
                 None => match mixed.recv() {
-                    Ok(result) => encode_mix(session, result, looping, cancellation)?,
+                    Ok((result, took)) => {
+                        mix_timing = Some((took, session.frames_sent()));
+                        encode_mix(session, result, looping, cancellation)?
+                    }
                     // The mix thread panicked: the scope re-raises it.
                     Err(_) => match mixing.join() {
                         Err(panic) => std::panic::resume_unwind(panic),
@@ -291,7 +314,14 @@ impl Exporter {
                 progress(ExportProgress::Warning(warning));
             }
             ensure_not_cancelled(cancellation)?;
-            Ok((window, Some(loudness)))
+            let timing = ExportTiming {
+                render,
+                frames,
+                mix: mix_timing.map(|(took, _)| took),
+                mix_done_at_frame: mix_timing.map(|(_, frame)| frame),
+                ..ExportTiming::default()
+            };
+            Ok((window, Some(loudness), timing))
         })
     }
 

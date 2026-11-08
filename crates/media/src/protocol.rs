@@ -2266,7 +2266,7 @@ mod tests {
 
     #[test]
     fn a_full_write_packets_batch_fits_the_header_limit() {
-        // The exporter's `WRITE_BATCH_PACKETS` (16 × 1024) packets of the
+        // The exporter's `WRITE_REQUEST_PACKETS` (16 × 1024) packets of the
         // widest header there is: every time at its longest, empty bytes.
         let packet = TrackPacket {
             track: 1,
