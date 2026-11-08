@@ -193,9 +193,18 @@ fn effective(schema: &[SettingField], settings: &Settings) -> Settings {
 /// key holds one of its listed values. A key absent from `settings` matches
 /// nothing.
 pub fn is_visible(field: &SettingField, settings: &Settings) -> bool {
-    field.visible_when.iter().all(|(key, values)| {
-        settings
-            .get(key)
+    unmet_condition(field, settings).is_none()
+}
+
+/// The first `visibleWhen` key of `field` (and its values) that `settings`
+/// does not hold, if any: what hides the field.
+fn unmet_condition<'a>(
+    field: &'a SettingField,
+    settings: &Settings,
+) -> Option<(&'a String, &'a Vec<SettingValue>)> {
+    field.visible_when.iter().find(|(key, values)| {
+        !settings
+            .get(*key)
             .is_some_and(|value| values.contains(value))
     })
 }
@@ -242,24 +251,23 @@ fn check_value(field: &SettingField, value: &SettingValue) -> Result<(), Invalid
 
 /// Checks `given` against `schema` and returns the full map: given values
 /// checked, missing visible keys filled with their defaults, hidden fields
-/// left out. Visibility is judged on the given values and defaults together.
+/// left out. Visibility is judged on the given values and defaults together,
+/// after every given value's type and range, so a wrong value is reported
+/// rather than the fields it hides.
 pub fn validate(schema: &[SettingField], given: &Settings) -> Result<Settings, InvalidSetting> {
-    let values = effective(schema, given);
     for (key, value) in given {
+        check_value(find(schema, key)?, value)?;
+    }
+    let values = effective(schema, given);
+    for key in given.keys() {
         let field = find(schema, key)?;
-        if !is_visible(field, &values) {
-            let (when_key, when_values) = field
-                .visible_when
-                .iter()
-                .find(|(k, vs)| !values.get(*k).is_some_and(|value| vs.contains(value)))
-                .expect("a hidden field has an unmet condition");
+        if let Some((when_key, when_values)) = unmet_condition(field, &values) {
             let shown: Vec<String> = when_values.iter().map(ToString::to_string).collect();
             return Err(InvalidSetting::new(
                 key,
                 format!("applies only when {when_key} is {}", shown.join(" or ")),
             ));
         }
-        check_value(field, value)?;
     }
     Ok(schema
         .iter()
@@ -388,6 +396,14 @@ mod tests {
                 "bitrate".into(),
                 "applies only when rateControl is vbr".into()
             )
+        );
+    }
+
+    #[test]
+    fn a_wrong_value_is_reported_before_the_fields_it_hides() {
+        assert_eq!(
+            invalid(&schema(), json!({ "rateControl": "abr", "crf": 18 })),
+            ("rateControl".into(), "must be one of crf, vbr".into())
         );
     }
 
