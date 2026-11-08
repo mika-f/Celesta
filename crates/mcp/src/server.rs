@@ -64,17 +64,21 @@ impl SharedMedia {
     /// The registry, after discovering the plugins again: the one held while
     /// they are the same plugins, else a new one, which exports then use too.
     fn current(&self) -> Arc<MediaRegistry> {
-        let (registry, replaced) =
-            self.update(media_registry(&InstalledPlugins::find_reporting(&[])));
-        if replaced {
+        let found = media_registry(&InstalledPlugins::find_reporting(&[]));
+        let (registry, _) = self.update(found, |registry| {
             celesta_media::set_registry(Some(registry.clone()));
-        }
+        });
         registry
     }
 
     /// The held registry, unless `found` lists other plugins: then `found`,
-    /// which replaces it (and `true`).
-    fn update(&self, found: Arc<MediaRegistry>) -> (Arc<MediaRegistry>, bool) {
+    /// which replaces it (and `true`) and is handed to `publish` while the
+    /// lock is held, so concurrent calls publish in the order they replace.
+    fn update(
+        &self,
+        found: Arc<MediaRegistry>,
+        publish: impl FnOnce(&Arc<MediaRegistry>),
+    ) -> (Arc<MediaRegistry>, bool) {
         let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let same = held.plugins().len() == found.plugins().len()
             && held
@@ -86,6 +90,7 @@ impl SharedMedia {
             return (held.clone(), false);
         }
         *held = found.clone();
+        publish(&found);
         (found, true)
     }
 }
@@ -401,7 +406,8 @@ mod tests {
         let held = registry(vec![celesta_codec_test::registered()]);
         let media = SharedMedia::new(held.clone());
         let described = held.describe(0, &PluginKillSwitch::new());
-        let (current, replaced) = media.update(registry(vec![celesta_codec_test::registered()]));
+        let (current, replaced) =
+            media.update(registry(vec![celesta_codec_test::registered()]), |_| {});
         assert!(!replaced);
         assert!(Arc::ptr_eq(&current, &held));
         assert!(Arc::ptr_eq(
@@ -414,12 +420,12 @@ mod tests {
     fn other_plugins_replace_the_registry() {
         let media = SharedMedia::new(registry(vec![celesta_codec_test::registered()]));
         let found = registry(Vec::new());
-        let (current, replaced) = media.update(found.clone());
+        let (current, replaced) = media.update(found.clone(), |_| {});
         assert!(replaced);
         assert!(Arc::ptr_eq(&current, &found));
         let mut renamed = celesta_codec_test::registered();
         renamed.version.push_str("-next");
-        let (current, replaced) = media.update(registry(vec![renamed]));
+        let (current, replaced) = media.update(registry(vec![renamed]), |_| {});
         assert!(replaced);
         assert_eq!(
             current.plugins()[0].version,
