@@ -1,5 +1,6 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
+pub mod components;
 mod control;
 mod encode;
 mod error;

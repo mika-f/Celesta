@@ -46,7 +46,7 @@ pub struct MediaManifest {
 }
 
 /// A decoder, as a manifest's `media.decoders` declares it.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MediaDecoderEntry {
     /// Unique among the plugin's decoders: the decoder's reference is
     /// `<plugin id>/<id>`.
@@ -73,7 +73,7 @@ pub struct MediaVideoEncoderEntry {
     pub codecs: Vec<String>,
     /// The upper bound of the pixel formats it takes, as the manifest names
     /// them. None when any format Celesta produces is possible.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_formats: Option<Vec<String>>,
 }
 
@@ -105,13 +105,13 @@ pub struct MediaMuxerEntry {
     #[serde(default)]
     pub video: Vec<String>,
     /// The audio codec families it takes; None when it takes no audio track.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<Vec<String>>,
     /// One of `video`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_video: Option<String>,
     /// One of `audio`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_audio: Option<String>,
     /// Whether it wants the leading audio (`leadingAudio`) to trim.
     #[serde(default)]
@@ -576,6 +576,38 @@ mod tests {
             "roles": ["media"], "executable": { platform().0: "bin/media" },
             "media": { "decoders": decoders },
         })
+    }
+
+    #[test]
+    fn entries_serialize_without_their_unset_fields() {
+        let video = MediaVideoEncoderEntry {
+            id: "video".into(),
+            name: "Video".into(),
+            codecs: vec!["avc1".into()],
+            input_formats: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&video).unwrap(),
+            serde_json::json!({ "id": "video", "name": "Video", "codecs": ["avc1"] })
+        );
+        let muxer = MediaMuxerEntry {
+            id: "mux".into(),
+            name: "Mux".into(),
+            extensions: vec!["mp4".into()],
+            video: vec!["avc1".into()],
+            audio: None,
+            default_video: None,
+            default_audio: None,
+            trims_leading_audio: true,
+            sequence: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&muxer).unwrap(),
+            serde_json::json!({
+                "id": "mux", "name": "Mux", "extensions": ["mp4"], "video": ["avc1"],
+                "trimsLeadingAudio": true, "sequence": false,
+            })
+        );
     }
 
     fn installed(plugins: Vec<PluginEntry>) -> InstalledPlugins {
