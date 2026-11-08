@@ -1,9 +1,11 @@
-//! Owners of the libavcodec and libswscale objects the encoders use, each
-//! freed when dropped, and FFmpeg's error codes as [`MediaError`]s.
+//! Owners of the libavcodec, libavutil, and libswscale objects the encoders
+//! use, each freed when dropped, and FFmpeg's error codes as
+//! [`MediaError`]s.
 
 use celesta_media::MediaError;
 use ffmpeg_sys_next::{
-    AV_LOG_ERROR, AVCodec, AVCodecContext, AVFrame, AVPacket, AVPixelFormat, SwsContext,
+    AV_LOG_ERROR, AVAudioFifo, AVCodec, AVCodecContext, AVFrame, AVPacket, AVPixelFormat,
+    AVSampleFormat, SwsContext, av_audio_fifo_alloc, av_audio_fifo_free, av_channel_layout_default,
     av_frame_alloc, av_frame_free, av_frame_get_buffer, av_log_set_level, av_packet_alloc,
     av_packet_free, av_strerror, avcodec_alloc_context3, avcodec_free_context, sws_freeContext,
     sws_getContext,
@@ -103,6 +105,36 @@ impl Frame {
         }
     }
 
+    /// A frame with buffers for `samples` sample frames of `format` in
+    /// `channels` channels (FFmpeg's default layout for the count) at
+    /// `sample_rate`.
+    pub(crate) fn audio(
+        format: AVSampleFormat,
+        channels: u16,
+        sample_rate: c_int,
+        samples: c_int,
+    ) -> Result<Self, MediaError> {
+        // SAFETY: as for `Frame::video`; the layout is a native one, which
+        // owns no memory.
+        unsafe {
+            let frame = Self(av_frame_alloc());
+            if frame.0.is_null() {
+                return Err(MediaError::Codec(
+                    "FFmpeg could not allocate a frame".to_owned(),
+                ));
+            }
+            (*frame.0).format = format as c_int;
+            av_channel_layout_default(&mut (*frame.0).ch_layout, c_int::from(channels));
+            (*frame.0).sample_rate = sample_rate;
+            (*frame.0).nb_samples = samples;
+            let result = av_frame_get_buffer(frame.0, 0);
+            if result < 0 {
+                return Err(av_error(result, "allocate a frame's buffers"));
+            }
+            Ok(frame)
+        }
+    }
+
     pub(crate) fn as_ptr(&self) -> *mut AVFrame {
         self.0
     }
@@ -143,6 +175,55 @@ impl Drop for PacketBuf {
     fn drop(&mut self) {
         // SAFETY: the packet was allocated by `av_packet_alloc`.
         unsafe { av_packet_free(&mut self.0) }
+    }
+}
+
+/// An `AVAudioFifo`, freed when dropped.
+pub(crate) struct AudioFifo(*mut AVAudioFifo);
+
+// SAFETY: as for `CodecContext`.
+unsafe impl Send for AudioFifo {}
+
+impl AudioFifo {
+    pub(crate) fn new(format: AVSampleFormat, channels: u16) -> Result<Self, MediaError> {
+        // SAFETY: allocates an empty FIFO, which grows as it is written.
+        let fifo = unsafe { av_audio_fifo_alloc(format, c_int::from(channels), 1) };
+        if fifo.is_null() {
+            Err(MediaError::Codec(
+                "FFmpeg could not allocate an audio buffer".to_owned(),
+            ))
+        } else {
+            Ok(Self(fifo))
+        }
+    }
+
+    pub(crate) fn as_ptr(&self) -> *mut AVAudioFifo {
+        self.0
+    }
+}
+
+impl Drop for AudioFifo {
+    fn drop(&mut self) {
+        // SAFETY: the FIFO was allocated by `av_audio_fifo_alloc`.
+        unsafe { av_audio_fifo_free(self.0) }
+    }
+}
+
+/// An opened encoder's extradata, empty when it has none.
+///
+/// # Safety
+///
+/// `context` is an opened `AVCodecContext`.
+pub(crate) unsafe fn extradata(context: *const AVCodecContext) -> Vec<u8> {
+    // SAFETY: an opened encoder's extradata is `extradata_size` bytes, or
+    // null.
+    unsafe {
+        match usize::try_from((*context).extradata_size) {
+            Ok(size) if !(*context).extradata.is_null() => {
+                std::slice::from_raw_parts((*context).extradata, size).to_vec()
+            }
+            _ => Vec::new(),
+        }
     }
 }
 

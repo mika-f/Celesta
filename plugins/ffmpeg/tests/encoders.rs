@@ -1,12 +1,14 @@
-//! The FFmpeg plugin's video encoders, in this process: the input each
-//! chooses of those offered, the packets and track config it answers, and
-//! what `describe` says of every component.
+//! The FFmpeg plugin's encoders and muxers, in this process: the input each
+//! video encoder chooses of those offered, the rate and delay each audio
+//! encoder answers, the packets and track config they give, and what
+//! `describe` says of every component.
 
 use celesta_codec_ffmpeg::FfmpegCodec;
 use celesta_composition::Rational;
 use celesta_media::{
-    Color, ComponentKind, Encoded, MediaError, MediaProvider, Packet, PixelFormat, SettingValue,
-    Settings, TrackConfig, VideoEncoderOpened, VideoEncoderRequest,
+    AudioEncoderOpened, AudioEncoderRequest, Color, ComponentKind, Encoded, MediaError,
+    MediaProvider, MuxerRequest, Packet, PixelFormat, SampleRates, SettingValue, Settings, Track,
+    TrackConfig, VideoEncoderOpened, VideoEncoderRequest,
 };
 use ffmpeg_sys_next::{
     AVCodecID, AVERROR, AVERROR_EOF, EAGAIN, av_frame_alloc, av_frame_free, av_malloc,
@@ -304,7 +306,25 @@ fn sessions_are_unique_across_kinds() {
     )
     .unwrap();
     let second = open(&mut codec, "prores", &Settings::new(), &offered).unwrap();
-    assert_ne!(first.session, second.session);
+    let audio = open_audio(&mut codec, "aac", &Settings::new(), 48_000, 2).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("film.mp4");
+    let muxer = codec
+        .muxer()
+        .unwrap()
+        .open_muxer(&MuxerRequest {
+            component: "mp4",
+            settings: &Settings::new(),
+            output: &output,
+            tracks: &[aac_track()],
+            leading_audio: 0,
+        })
+        .unwrap();
+    let sessions: BTreeSet<u64> = [first.session, second.session, audio.session, muxer]
+        .iter()
+        .map(|session| session.0)
+        .collect();
+    assert_eq!(sessions.len(), 4, "{sessions:?}");
     let encoder = codec.video_encoder().unwrap();
     encoder.abort_video(first.session);
     encoder.abort_video(second.session);
@@ -314,6 +334,214 @@ fn sessions_are_unique_across_kinds() {
             .encode_video(first.session, 0, frame(PixelFormat::Rgba8, 0))
             .is_err()
     );
+    let audio_encoder = codec.audio_encoder().unwrap();
+    audio_encoder.abort_audio(audio.session);
+    assert!(
+        audio_encoder
+            .encode_audio(audio.session, 0, &[0.0; 2])
+            .is_err()
+    );
+    // An aborted muxer leaves its file for Celesta to remove.
+    assert_eq!(codec.muxer().unwrap().abort_muxer(muxer), [output]);
+    assert!(codec.muxer().unwrap().write_packets(muxer, &[]).is_err());
+}
+
+/// The key and message of the refusal `result` holds.
+fn refused<T: std::fmt::Debug>(result: Result<T, MediaError>) -> (String, String) {
+    match result {
+        Err(MediaError::InvalidSettings { key, message }) => (key, message),
+        other => panic!("expected invalid settings, got {other:?}"),
+    }
+}
+
+/// Opens audio encoder `component` for a mix at `sample_rate`.
+fn open_audio(
+    codec: &mut FfmpegCodec,
+    component: &str,
+    given: &Settings,
+    sample_rate: u32,
+    channels: u16,
+) -> Result<AudioEncoderOpened, MediaError> {
+    codec
+        .audio_encoder()
+        .expect("the plugin has audio encoders")
+        .open_audio(&AudioEncoderRequest {
+            component,
+            settings: given,
+            sample_rate,
+            channels,
+        })
+}
+
+/// A stereo 48 kHz AAC track, as `aac` describes it.
+fn aac_track() -> Track {
+    Track::Audio {
+        config: TrackConfig {
+            codec: "mp4a.40.2".to_owned(),
+            description: Some(vec![0x11, 0x90]),
+        },
+        timescale: 48_000,
+        sample_rate: 48_000,
+        channels: 2,
+        delay: 1024,
+    }
+}
+
+/// `frames` sample frames of a quiet stereo tone through `opened`, in the
+/// exporter's chunks, then the finish: every packet and the config.
+fn encode_audio(
+    codec: &mut FfmpegCodec,
+    opened: &AudioEncoderOpened,
+    frames: usize,
+) -> (Vec<Packet>, TrackConfig) {
+    let channels = usize::from(opened.channels);
+    let samples: Vec<f32> = (0..frames * channels)
+        .map(|index| ((index / channels) as f32 * 0.05).sin() * 0.25)
+        .collect();
+    let encoder = codec.audio_encoder().unwrap();
+    let mut packets = Vec::new();
+    let mut config = None;
+    let mut pts = 0;
+    for chunk in samples.chunks(1024 * 16 * channels) {
+        let answer = encoder.encode_audio(opened.session, pts, chunk).unwrap();
+        pts += (chunk.len() / channels) as i64;
+        if config.is_none() && !answer.packets.is_empty() {
+            config = Some(
+                answer
+                    .config
+                    .expect("the first packets come with the config"),
+            );
+        }
+        packets.extend(answer.packets);
+    }
+    let answer = encoder.finish_audio(opened.session).unwrap();
+    config = config.or(answer.config);
+    packets.extend(answer.packets);
+    (packets, config.expect("the encoder gave its config"))
+}
+
+#[test]
+fn aac_takes_the_mixs_rate_when_it_can() {
+    let mut codec = FfmpegCodec::new();
+    for (asked, answered) in [(8_000, 8_000), (44_100, 44_100), (12_345, 48_000)] {
+        let opened = open_audio(&mut codec, "aac", &Settings::new(), asked, 1).unwrap();
+        assert_eq!(
+            (opened.sample_rate, opened.channels, opened.delay),
+            (answered, 1, 1024),
+            "{asked} Hz"
+        );
+        codec.audio_encoder().unwrap().abort_audio(opened.session);
+    }
+    let opened = open_audio(&mut codec, "aac", &Settings::new(), 48_000, 2).unwrap();
+    let (packets, config) = encode_audio(&mut codec, &opened, 48_000);
+    assert_eq!(config.codec, "mp4a.40.2");
+    // AudioSpecificConfig: AAC-LC (2), 48 kHz (index 3), two channels.
+    let description = config.description.unwrap();
+    assert_eq!(description[..2], [0x11, 0x90]);
+    // The first packet starts at the delay before 0; each lasts a frame,
+    // the last only the samples left.
+    assert_eq!(packets[0].pts, -1024);
+    assert!(packets.iter().all(|packet| packet.key));
+    let total: i64 = packets.iter().map(|packet| packet.duration).sum();
+    assert_eq!(total, 48_000 + 1024);
+}
+
+#[test]
+fn opus_always_takes_48_khz() {
+    let mut codec = FfmpegCodec::new();
+    let opened = open_audio(&mut codec, "opus", &Settings::new(), 44_100, 2).unwrap();
+    assert_eq!((opened.sample_rate, opened.channels), (48_000, 2));
+    assert!(opened.delay > 0, "libopus primes its output");
+    let (packets, config) = encode_audio(&mut codec, &opened, 48_000);
+    assert_eq!(config.codec, "opus");
+    assert_eq!(&config.description.unwrap()[..8], b"OpusHead");
+    assert_eq!(packets[0].pts, -(opened.delay as i64));
+    let total: i64 = packets.iter().map(|packet| packet.duration).sum();
+    assert_eq!(total, 48_000 + opened.delay as i64);
+}
+
+#[test]
+fn pcm_packs_each_chunk_as_one_packet() {
+    let mut codec = FfmpegCodec::new();
+    for (format, bytes) in [("s16le", 2), ("s24le", 3), ("f32le", 4)] {
+        let opened = open_audio(
+            &mut codec,
+            "pcm",
+            &settings(&[("format", text(format))]),
+            22_050,
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            (opened.sample_rate, opened.channels, opened.delay),
+            (22_050, 2, 0)
+        );
+        let (packets, config) = encode_audio(&mut codec, &opened, 20_000);
+        assert_eq!(config.codec, format!("lpcm.{format}"));
+        assert_eq!(config.description, None);
+        let times: Vec<(i64, i64)> = packets
+            .iter()
+            .map(|packet| (packet.pts, packet.duration))
+            .collect();
+        assert_eq!(times, [(0, 16_384), (16_384, 3_616)]);
+        assert_eq!(packets[1].bytes.len(), 3_616 * 2 * bytes);
+    }
+}
+
+#[test]
+fn audio_and_muxer_settings_are_checked() {
+    let mut codec = FfmpegCodec::new();
+    let low = settings(&[("bitrate", SettingValue::Number(1_000.0))]);
+    assert_eq!(
+        refused(open_audio(&mut codec, "aac", &low, 48_000, 2)).0,
+        "bitrate"
+    );
+    let unknown = settings(&[("format", text("s32le"))]);
+    assert_eq!(
+        refused(open_audio(&mut codec, "pcm", &unknown, 48_000, 2)).0,
+        "format"
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("clip.webm");
+    let request = |given| MuxerRequest {
+        component: "webm",
+        settings: given,
+        output: &output,
+        tracks: &[],
+        leading_audio: 0,
+    };
+    let faststart = settings(&[("faststart", SettingValue::Boolean(true))]);
+    assert_eq!(
+        refused(codec.muxer().unwrap().open_muxer(&request(&faststart))).0,
+        "faststart"
+    );
+    // A codec the muxer has no mapping for is refused before any file is
+    // made.
+    let theora = Track::Video {
+        config: TrackConfig {
+            codec: "theora".to_owned(),
+            description: None,
+        },
+        timescale: 10,
+        width: 2,
+        height: 2,
+        frame_rate: Rational::new(10, 1),
+        color: Color::bt709_limited(),
+        alpha: false,
+    };
+    let error = codec
+        .muxer()
+        .unwrap()
+        .open_muxer(&MuxerRequest {
+            tracks: &[theora],
+            ..request(&Settings::new())
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        MediaError::Codec("webm does not take theora".into()).to_string()
+    );
+    assert!(!output.exists());
 }
 
 #[test]
@@ -432,10 +660,43 @@ fn describe_names_every_manifest_component() {
             "tune"
         ]
     );
-    let aac = described
-        .iter()
-        .find(|component| component.kind == ComponentKind::AudioEncoder)
-        .unwrap();
-    assert!(!aac.available);
-    assert_eq!(aac.reason.as_deref(), Some("arrives with the muxers"));
+    let audio = |id: &str| {
+        described
+            .iter()
+            .find(|component| component.kind == ComponentKind::AudioEncoder && component.id == id)
+            .unwrap()
+    };
+    for id in ["aac", "opus", "pcm"] {
+        assert!(audio(id).available, "{id}: {:?}", audio(id).reason);
+        assert_eq!(audio(id).channels, [1, 2], "{id}");
+    }
+    assert_eq!(
+        audio("opus").sample_rates,
+        Some(SampleRates::Only(vec![48_000]))
+    );
+    assert_eq!(audio("pcm").sample_rates, Some(SampleRates::Any));
+    let Some(SampleRates::Only(rates)) = &audio("aac").sample_rates else {
+        panic!("aac lists its rates");
+    };
+    assert!(
+        rates.contains(&44_100) && rates.contains(&8_000),
+        "{rates:?}"
+    );
+    let muxer = |id: &str| {
+        described
+            .iter()
+            .find(|component| component.kind == ComponentKind::Muxer && component.id == id)
+            .unwrap()
+    };
+    for id in ["mp4", "mov"] {
+        assert!(muxer(id).available, "{id}");
+        let keys: Vec<&str> = muxer(id)
+            .settings
+            .iter()
+            .map(|field| field.key.as_str())
+            .collect();
+        assert_eq!(keys, ["faststart"], "{id}");
+    }
+    assert!(muxer("webm").available);
+    assert!(muxer("webm").settings.is_empty());
 }

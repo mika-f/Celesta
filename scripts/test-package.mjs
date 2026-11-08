@@ -72,6 +72,9 @@ export default function Root() {
   const codecManifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
   assert.ok(codecManifest.roles?.includes('media'), 'The media plugin must have the media role');
   assert.ok(codecManifest.media?.decoders?.length > 0, 'The media plugin must offer at least one decoder');
+  for (kind of ['videoEncoders', 'audioEncoders', 'muxers']) {
+    assert.ok(codecManifest.media?.[kind]?.length > 0, `The media plugin must offer at least one of ${kind}`);
+  }
   const programs = Object.values(codecManifest.executable ?? {});
   assert.equal(programs.length, 1, 'The media plugin must name exactly one executable');
   assert.ok(existsSync(join(codec, programs[0])), `The media plugin's program ${programs[0]} must exist`);

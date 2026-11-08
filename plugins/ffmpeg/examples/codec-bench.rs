@@ -19,9 +19,11 @@
 //! plugin accepts it; `CELESTA_CODEC_SHARED_MEMORY=0` keeps them in the
 //! pipe, to compare the two.
 
+use celesta_codec_ffmpeg::DECODER_ID;
 use celesta_composition::Rational;
 use celesta_media::{
-    MediaBackend, MediaProcess, MediaRegistry, ProviderFactory, RegisteredPlugin, VideoFrameDecoder,
+    Color, MediaBackend, MediaProcess, MediaRegistry, PixelFormat, ProviderFactory, ProviderUse,
+    RegisteredPlugin, SettingValue, Settings, VideoEncoderRequest, VideoFrameDecoder,
 };
 use std::env;
 use std::path::{Path, PathBuf};
@@ -157,8 +159,76 @@ fn decode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
 
 /// `frames` RGBA frames of `video`'s size encoded to H.264 (`ultrafast`, so
 /// the encoder's own work hides less of the transport) after one frame that
-/// opens the encoder, and the encoder finished. The host's CPU time covers
-/// the whole run, the encoder's threads in this process included.
-fn encode(_factory: ProviderFactory, _video: &Path, _frames: u32) -> Timing {
-    unimplemented!("ported in Task 13")
+/// opens the encoder, and the encoder finished; the packets are dropped.
+/// The host's CPU time covers the whole run, the encoder's threads in this
+/// process included.
+fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
+    let opened = cpu();
+    let mut provider =
+        factory(&Default::default(), ProviderUse::Export).expect("the plugin starts");
+    let probe = provider
+        .decoder()
+        .expect("the plugin decodes")
+        .probe(DECODER_ID, video)
+        .expect("the video probes");
+    let stream = probe.video.expect("the file has a video stream");
+    let (width, height) = (stream.width, stream.height);
+    let settings: Settings = [(
+        "preset".to_owned(),
+        SettingValue::String("ultrafast".to_owned()),
+    )]
+    .into_iter()
+    .collect();
+    let color = Color::bt709_limited();
+    let encoder = provider.video_encoder().expect("the plugin encodes video");
+    let session = encoder
+        .open_video(&VideoEncoderRequest {
+            component: "libx264",
+            settings: &settings,
+            width,
+            height,
+            frame_rate: Rational::new(30, 1),
+            timescale: 30,
+            offered: &[PixelFormat::Rgba8],
+            color: &color,
+        })
+        .expect("the encoder opens")
+        .session;
+    let frame = |index: u32| -> Vec<u8> {
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        for (offset, pixel) in pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let value = (offset as u32).wrapping_add(index * 7) as u8;
+            *pixel = [value, value / 2, 255 - value, 255];
+        }
+        pixels
+    };
+    let pixels: Vec<Vec<u8>> = (0..4).map(frame).collect();
+    encoder
+        .encode_video(session, 0, pixels[0].clone())
+        .expect("a frame encodes");
+    // The whole loop is timed, copying each frame (as the renderer's
+    // readback makes one) included: an encoder in this process goes on
+    // encoding on its own threads while the next frame is copied, so timing
+    // only `encode_video` would leave its work out.
+    let started = Instant::now();
+    let before = cpu();
+    for index in 1..=frames {
+        let frame = pixels[index as usize % pixels.len()].clone();
+        let encoded = encoder
+            .encode_video(session, i64::from(index), frame)
+            .expect("a frame encodes");
+        std::hint::black_box(encoded.packets.len());
+    }
+    let finished = encoder.finish_video(session).expect("the encoder finishes");
+    std::hint::black_box(finished.packets.len());
+    let wall = started.elapsed();
+    let host = since(before, |(own, _)| own);
+    // Stops the plugin, which is waited for.
+    drop(provider);
+    Timing {
+        size: (width, height),
+        wall,
+        host,
+        plugin: since(opened, |(_, children)| children),
+    }
 }

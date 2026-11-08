@@ -8,7 +8,9 @@
 //! ProRes and VP9 convert with BT.709 in limited range and are tagged so.
 
 use crate::components::{VideoCodec, availability};
-use crate::ffi::{CodecContext, Frame, PacketBuf, Scaler, av_error, dimension, quiet_logs};
+use crate::ffi::{
+    CodecContext, Frame, PacketBuf, Scaler, av_error, dimension, extradata, quiet_logs,
+};
 use crate::h264::{annexb_to_avc, avcc_codec_string, avcc_from_annexb};
 use celesta_media::{
     Encoded, InvalidSetting, MediaError, Packet, PixelFormat, SettingValue, Settings, SideData,
@@ -326,18 +328,8 @@ pub(crate) fn open(
             description: None,
         },
         None => {
-            // SAFETY: an opened encoder's extradata is `extradata_size`
-            // bytes, or null.
-            let extradata = unsafe {
-                let raw = context.as_ptr();
-                match usize::try_from((*raw).extradata_size) {
-                    Ok(size) if !(*raw).extradata.is_null() => {
-                        std::slice::from_raw_parts((*raw).extradata, size).to_vec()
-                    }
-                    _ => Vec::new(),
-                }
-            };
-            let avcc = avcc_from_annexb(&extradata)?;
+            // SAFETY: the context was opened above.
+            let avcc = avcc_from_annexb(&unsafe { extradata(context.as_ptr()) })?;
             TrackConfig {
                 codec: avcc_codec_string(&avcc),
                 description: Some(avcc),

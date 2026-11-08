@@ -1,21 +1,25 @@
 //! Celesta's FFmpeg media plugin: probing, decoding, encoding, and muxing
 //! through the linked FFmpeg libraries (`ez-ffmpeg` for decoding,
-//! libavcodec through `ffmpeg-sys-next` for encoding).
+//! libavcodec and libavformat through `ffmpeg-sys-next` for encoding and
+//! muxing).
 //!
 //! The `celesta-codec-ffmpeg` program serves [`FfmpegCodec`] over the media
 //! role of the plugin protocol (`celesta_media::protocol`), so Celesta
 //! itself links no FFmpeg: an FFmpeg build with GPL components (such as
 //! libx264) makes only this program GPL licensed. Its one decoder,
 //! [`DECODER_ID`], reads whatever FFmpeg does; its video encoders are
-//! `libx264`, `prores`, and `vp9`. Tests and tools may also use
-//! [`FfmpegCodec`] in their own process, through [`install`].
+//! `libx264`, `prores`, and `vp9`, its audio encoders `aac`, `opus`, and
+//! `pcm`, and its muxers `mp4`, `mov`, and `webm`. Tests and tools may also
+//! use [`FfmpegCodec`] in their own process, through [`install`].
 
+mod audio_encoder;
 mod color;
 mod components;
 mod converted;
 mod decoder;
 mod ffi;
 mod h264;
+mod muxer;
 mod probe;
 mod sequential;
 #[cfg(test)]
@@ -24,13 +28,16 @@ mod video_encoder;
 
 pub use decoder::FfmpegBackend;
 
+use audio_encoder::AudioSession;
 use celesta_media::{
-    AudioBuffer, AudioDecoder, ComponentDescription, Decoder, Encoded, MediaError, MediaProbe,
-    MediaProvider, MediaRegistry, ProviderFactory, RegisteredPlugin, SessionId, VideoEncoder,
+    AudioBuffer, AudioDecoder, AudioEncoder, AudioEncoderOpened, AudioEncoderRequest,
+    ComponentDescription, Decoder, Encoded, MediaError, MediaProbe, MediaProvider, MediaRegistry,
+    Muxer, MuxerRequest, ProviderFactory, RegisteredPlugin, SessionId, TrackPacket, VideoEncoder,
     VideoEncoderOpened, VideoEncoderRequest, VideoFrame, VideoRequest,
 };
 use celesta_plugin_host::{MediaManifest, MediaOrigin};
-use components::VideoCodec;
+use components::{AudioCodec, MuxerFormat, VideoCodec};
+use muxer::MuxerSession;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -51,6 +58,8 @@ const PLUGIN_JSON: &str = include_str!("../plugin.json");
 pub struct FfmpegCodec {
     decoder: FfmpegBackend,
     video: HashMap<SessionId, VideoSession>,
+    audio: HashMap<SessionId, AudioSession>,
+    muxers: HashMap<SessionId, MuxerSession>,
     /// The last session number given, one count for every kind.
     last: u64,
 }
@@ -74,12 +83,18 @@ impl FfmpegCodec {
     fn video_session(&mut self, session: SessionId) -> Result<&mut VideoSession, MediaError> {
         self.video
             .get_mut(&session)
-            .ok_or_else(|| no_session(session))
+            .ok_or_else(|| no_session("video encoder", session))
     }
 }
 
-fn no_session(session: SessionId) -> MediaError {
-    MediaError::Codec(format!("no open video encoder {}", session.0))
+/// The error for a request to a session of `kind` that is not open.
+fn no_session(kind: &str, session: SessionId) -> MediaError {
+    MediaError::Codec(format!("no open {kind} {}", session.0))
+}
+
+/// The error for a component the plugin has no `kind` of.
+fn no_component(kind: &str, component: &str) -> MediaError {
+    MediaError::Codec(format!("no {kind} {component:?} in {PLUGIN_ID}"))
 }
 
 /// `plugin.json`, parsed.
@@ -164,6 +179,14 @@ impl MediaProvider for FfmpegCodec {
     fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
         Some(self)
     }
+
+    fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
+        Some(self)
+    }
+
+    fn muxer(&mut self) -> Option<&mut dyn Muxer> {
+        Some(self)
+    }
 }
 
 impl Decoder for FfmpegCodec {
@@ -206,12 +229,8 @@ impl VideoEncoder for FfmpegCodec {
         &mut self,
         request: &VideoEncoderRequest<'_>,
     ) -> Result<VideoEncoderOpened, MediaError> {
-        let codec = VideoCodec::from_id(request.component).ok_or_else(|| {
-            MediaError::Codec(format!(
-                "no video encoder {:?} in {PLUGIN_ID}",
-                request.component
-            ))
-        })?;
+        let codec = VideoCodec::from_id(request.component)
+            .ok_or_else(|| no_component("video encoder", request.component))?;
         let opened = video_encoder::open(codec, request)?;
         let session = self.next_session();
         self.video.insert(session, opened.session);
@@ -235,12 +254,89 @@ impl VideoEncoder for FfmpegCodec {
         let mut state = self
             .video
             .remove(&session)
-            .ok_or_else(|| no_session(session))?;
+            .ok_or_else(|| no_session("video encoder", session))?;
         state.finish()
     }
 
     fn abort_video(&mut self, session: SessionId) {
         self.video.remove(&session);
+    }
+}
+
+impl AudioEncoder for FfmpegCodec {
+    fn open_audio(
+        &mut self,
+        request: &AudioEncoderRequest<'_>,
+    ) -> Result<AudioEncoderOpened, MediaError> {
+        let codec = AudioCodec::from_id(request.component)
+            .ok_or_else(|| no_component("audio encoder", request.component))?;
+        let opened = audio_encoder::open(codec, request)?;
+        let session = self.next_session();
+        self.audio.insert(session, opened.session);
+        Ok(AudioEncoderOpened {
+            session,
+            sample_rate: opened.sample_rate,
+            channels: opened.channels,
+            delay: opened.delay,
+        })
+    }
+
+    fn encode_audio(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        samples: &[f32],
+    ) -> Result<Encoded, MediaError> {
+        self.audio
+            .get_mut(&session)
+            .ok_or_else(|| no_session("audio encoder", session))?
+            .encode(pts, samples)
+    }
+
+    fn finish_audio(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+        self.audio
+            .remove(&session)
+            .ok_or_else(|| no_session("audio encoder", session))?
+            .finish()
+    }
+
+    fn abort_audio(&mut self, session: SessionId) {
+        self.audio.remove(&session);
+    }
+}
+
+impl Muxer for FfmpegCodec {
+    fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
+        let format = MuxerFormat::from_id(request.component)
+            .ok_or_else(|| no_component("muxer", request.component))?;
+        let opened = muxer::open(format, request)?;
+        let session = self.next_session();
+        self.muxers.insert(session, opened);
+        Ok(session)
+    }
+
+    fn write_packets(
+        &mut self,
+        session: SessionId,
+        packets: &[TrackPacket],
+    ) -> Result<(), MediaError> {
+        self.muxers
+            .get_mut(&session)
+            .ok_or_else(|| no_session("muxer", session))?
+            .write(packets)
+    }
+
+    fn finish_muxer(&mut self, session: SessionId) -> Result<Vec<PathBuf>, MediaError> {
+        self.muxers
+            .remove(&session)
+            .ok_or_else(|| no_session("muxer", session))?
+            .finish()
+    }
+
+    fn abort_muxer(&mut self, session: SessionId) -> Vec<PathBuf> {
+        self.muxers
+            .remove(&session)
+            .map_or_else(Vec::new, MuxerSession::abort)
     }
 }
 

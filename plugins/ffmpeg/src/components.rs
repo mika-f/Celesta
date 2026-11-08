@@ -4,21 +4,14 @@
 
 use crate::DECODER_ID;
 use celesta_media::{
-    ComponentDescription, ComponentKind, PixelFormat, SelectOption, SettingField, SettingKind,
-    SettingValue,
+    ComponentDescription, ComponentKind, PixelFormat, SampleRates, SelectOption, SettingField,
+    SettingKind, SettingValue,
 };
-use ffmpeg_sys_next::avcodec_find_encoder_by_name;
-use std::ffi::CString;
-
-/// Why the audio encoders and the muxers are unavailable until they are
-/// ported to libavformat.
-const NOT_YET: &str = "arrives with the muxers";
-
-/// The audio encoders the manifest declares.
-const AUDIO_ENCODERS: [&str; 3] = ["aac", "opus", "pcm"];
-
-/// The muxers the manifest declares.
-const MUXERS: [&str; 3] = ["mp4", "mov", "webm"];
+use ffmpeg_sys_next::{
+    AVCodecConfig, av_guess_format, avcodec_find_encoder_by_name, avcodec_get_supported_config,
+};
+use std::ffi::{CString, c_int, c_void};
+use std::ptr::{null, null_mut};
 
 /// The x264 presets, fastest first.
 const X264_PRESETS: [&str; 9] = [
@@ -106,6 +99,169 @@ impl VideoCodec {
     }
 }
 
+/// An audio encoder component.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AudioCodec {
+    /// AAC-LC through FFmpeg's own `aac` encoder.
+    Aac,
+    /// Opus through libopus.
+    Opus,
+    /// Uncompressed PCM, packed by the plugin itself.
+    Pcm,
+}
+
+impl AudioCodec {
+    pub(crate) const ALL: [Self; 3] = [Self::Aac, Self::Opus, Self::Pcm];
+
+    /// The component's id.
+    pub(crate) const fn id(self) -> &'static str {
+        match self {
+            Self::Aac => "aac",
+            Self::Opus => "opus",
+            Self::Pcm => "pcm",
+        }
+    }
+
+    pub(crate) fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|codec| codec.id() == id)
+    }
+
+    /// The libavcodec encoder it runs; none for PCM.
+    pub(crate) const fn encoder(self) -> Option<&'static str> {
+        match self {
+            Self::Aac => Some("aac"),
+            Self::Opus => Some("libopus"),
+            Self::Pcm => None,
+        }
+    }
+
+    /// `Ok` when the linked FFmpeg has its encoder, else why not.
+    pub(crate) fn availability(self) -> Result<(), String> {
+        self.encoder().map_or(Ok(()), availability)
+    }
+
+    /// The sample rates it takes.
+    pub(crate) fn sample_rates(self) -> SampleRates {
+        match self {
+            Self::Aac => SampleRates::Only(supported_sample_rates("aac")),
+            Self::Opus => SampleRates::Only(vec![48_000]),
+            Self::Pcm => SampleRates::Any,
+        }
+    }
+
+    /// Its settings schema.
+    pub(crate) fn settings(self) -> Vec<SettingField> {
+        match self {
+            Self::Aac | Self::Opus => vec![field(
+                "bitrate",
+                "Bitrate",
+                SettingValue::Number(192_000.0),
+                SettingKind::Number {
+                    min: Some(32_000.0),
+                    max: Some(512_000.0),
+                    step: None,
+                    integer: true,
+                    unit: Some("bit/s".to_owned()),
+                },
+            )],
+            Self::Pcm => vec![select(
+                "format",
+                "Sample format",
+                &[
+                    ("s16le", "16-bit integer"),
+                    ("s24le", "24-bit integer"),
+                    ("f32le", "32-bit float"),
+                ],
+                "s24le",
+            )],
+        }
+    }
+}
+
+/// A muxer component.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MuxerFormat {
+    Mp4,
+    Mov,
+    Webm,
+}
+
+impl MuxerFormat {
+    pub(crate) const ALL: [Self; 3] = [Self::Mp4, Self::Mov, Self::Webm];
+
+    /// The component's id, which is also libavformat's name for it.
+    pub(crate) const fn id(self) -> &'static str {
+        match self {
+            Self::Mp4 => "mp4",
+            Self::Mov => "mov",
+            Self::Webm => "webm",
+        }
+    }
+
+    pub(crate) fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|format| format.id() == id)
+    }
+
+    /// `Ok` when the linked FFmpeg has its muxer, else why not.
+    pub(crate) fn availability(self) -> Result<(), String> {
+        let name = CString::new(self.id()).expect("muxer names have no NUL");
+        // SAFETY: `name` is NUL-terminated and outlives the call.
+        if unsafe { av_guess_format(name.as_ptr(), null(), null()) }.is_null() {
+            Err(format!("this FFmpeg build has no {} muxer", self.id()))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Its settings schema.
+    pub(crate) fn settings(self) -> Vec<SettingField> {
+        match self {
+            Self::Mp4 | Self::Mov => vec![field(
+                "faststart",
+                "Fast start",
+                SettingValue::Boolean(true),
+                SettingKind::Boolean,
+            )],
+            Self::Webm => Vec::new(),
+        }
+    }
+}
+
+/// The sample rates the linked FFmpeg's `encoder` takes; none when it does
+/// not list them.
+fn supported_sample_rates(encoder: &str) -> Vec<u32> {
+    let Ok(name) = CString::new(encoder) else {
+        return Vec::new();
+    };
+    // SAFETY: `name` outlives the call; the list libavcodec answers is
+    // static, ends with 0, and has `count` rates before it.
+    unsafe {
+        let codec = avcodec_find_encoder_by_name(name.as_ptr());
+        if codec.is_null() {
+            return Vec::new();
+        }
+        let mut rates: *const c_void = null();
+        let mut count: c_int = 0;
+        let result = avcodec_get_supported_config(
+            null_mut(),
+            codec,
+            AVCodecConfig::AV_CODEC_CONFIG_SAMPLE_RATE,
+            0,
+            &mut rates,
+            &mut count,
+        );
+        match usize::try_from(count) {
+            Ok(count) if result >= 0 && !rates.is_null() => {
+                std::slice::from_raw_parts(rates.cast::<c_int>(), count)
+                    .iter()
+                    .filter_map(|&rate| u32::try_from(rate).ok())
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// `Ok` when the linked FFmpeg has `encoder`, else why not.
 pub(crate) fn availability(encoder: &str) -> Result<(), String> {
     let missing = || format!("this FFmpeg build has no {encoder}");
@@ -140,13 +296,28 @@ pub(crate) fn describe() -> Vec<ComponentDescription> {
             }
         }),
     );
-    components.extend(
-        AUDIO_ENCODERS
-            .map(|id| ComponentDescription::unavailable(ComponentKind::AudioEncoder, id, NOT_YET)),
-    );
-    components.extend(
-        MUXERS.map(|id| ComponentDescription::unavailable(ComponentKind::Muxer, id, NOT_YET)),
-    );
+    components.extend(AudioCodec::ALL.map(|codec| match codec.availability() {
+        Ok(()) => ComponentDescription {
+            available: true,
+            reason: None,
+            settings: codec.settings(),
+            sample_rates: Some(codec.sample_rates()),
+            channels: vec![1, 2],
+            ..ComponentDescription::unavailable(ComponentKind::AudioEncoder, codec.id(), "")
+        },
+        Err(reason) => {
+            ComponentDescription::unavailable(ComponentKind::AudioEncoder, codec.id(), reason)
+        }
+    }));
+    components.extend(MuxerFormat::ALL.map(|format| match format.availability() {
+        Ok(()) => ComponentDescription {
+            available: true,
+            reason: None,
+            settings: format.settings(),
+            ..ComponentDescription::unavailable(ComponentKind::Muxer, format.id(), "")
+        },
+        Err(reason) => ComponentDescription::unavailable(ComponentKind::Muxer, format.id(), reason),
+    }));
     components
 }
 
@@ -294,6 +465,24 @@ mod tests {
             Err("this FFmpeg build has no no_such_encoder".to_owned())
         );
         assert_eq!(availability("libx264"), Ok(()));
+    }
+
+    #[test]
+    fn aac_lists_the_rates_it_takes() {
+        let SampleRates::Only(rates) = AudioCodec::Aac.sample_rates() else {
+            panic!("aac lists its rates");
+        };
+        for rate in [8_000, 44_100, 48_000, 96_000] {
+            assert!(rates.contains(&rate), "{rates:?}");
+        }
+        assert!(!rates.contains(&12_345));
+    }
+
+    #[test]
+    fn every_muxer_is_linked() {
+        for format in MuxerFormat::ALL {
+            assert_eq!(format.availability(), Ok(()), "{format:?}");
+        }
     }
 
     #[test]

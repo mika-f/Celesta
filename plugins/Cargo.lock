@@ -328,7 +328,6 @@ dependencies = [
  "png",
  "rayon",
  "serde_json",
- "strum",
  "tempfile",
 ]
 
