@@ -436,9 +436,10 @@ fn the_muxer_refuses_what_does_not_fit_its_tracks() {
     };
     let message = codec_message(codec.write_packets(muxer, &packets_for(0, vec![wrong])));
     assert!(message.contains("16"), "{message}");
-    // Bytes that are not LZ4 data.
+    // Bytes that are not LZ4 data, behind a small size prefix (a large one
+    // would make lz4 allocate it before failing).
     let garbage = Packet {
-        bytes: vec![0xff; 5],
+        bytes: vec![16, 0, 0, 0, 0xff],
         ..packets[0].clone()
     };
     codec_message(codec.write_packets(muxer, &packets_for(0, vec![garbage])));
@@ -599,6 +600,42 @@ fn an_aborted_mux_leaves_no_file() {
     // Aborting again, or a session that is not a muxer's, is harmless.
     assert!(codec.abort_muxer(muxer).is_empty());
     assert!(codec.abort_muxer(SessionId(99)).is_empty());
+}
+
+#[test]
+fn a_failed_finish_can_still_be_aborted() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("short.ctst");
+    let mut codec = TestCodec::new();
+    let track = Track::Audio {
+        config: TrackConfig {
+            codec: AUDIO_CODEC.to_owned(),
+            description: None,
+        },
+        timescale: 48_000,
+        sample_rate: 48_000,
+        channels: 1,
+        delay: 0,
+    };
+    // A lead-in longer than the one sample frame written.
+    let muxer = open_muxer(&mut codec, &output, &[track], 2).unwrap();
+    let packet = Packet {
+        pts: 0,
+        dts: 0,
+        duration: 1,
+        key: true,
+        bytes: 0.5f32.to_le_bytes().to_vec(),
+        additional: Vec::new(),
+    };
+    codec
+        .write_packets(muxer, &packets_for(0, vec![packet]))
+        .unwrap();
+    let message = codec_message(codec.finish_muxer(muxer));
+    assert!(message.contains("fewer than its lead-in"), "{message}");
+    assert!(output.exists());
+
+    codec.abort_muxer(muxer);
+    assert!(!output.exists());
 }
 
 #[test]

@@ -246,13 +246,14 @@ impl Writer {
     }
 
     /// Writes the end and makes the file durable.
-    fn finish(mut self) -> Result<(), MediaError> {
+    fn finish(&mut self) -> Result<(), MediaError> {
         self.chunk(END, &[])?;
-        let file = self
-            .file
-            .into_inner()
-            .map_err(|error| write_error(&self.path, error.into_error()))?;
-        file.sync_all()
+        self.file
+            .flush()
+            .map_err(|error| write_error(&self.path, error))?;
+        self.file
+            .get_ref()
+            .sync_all()
             .map_err(|error| write_error(&self.path, error))
     }
 }
@@ -493,9 +494,10 @@ impl MuxWriter {
         }
     }
 
-    /// Writes the audio in `pts` order and the end.
-    pub(crate) fn finish(mut self) -> Result<PathBuf, MediaError> {
-        if let Some(audio) = self.audio {
+    /// Writes the audio in `pts` order and the end. On failure the writer is left as it
+    /// was, so [`Self::abort`] can still remove the file.
+    pub(crate) fn finish(&mut self) -> Result<PathBuf, MediaError> {
+        if let Some(audio) = &self.audio {
             // Stable, so packets at one time stay in the order they came.
             self.audio_packets.sort_by_key(|(pts, _)| *pts);
             let pcm: Vec<u8> = self

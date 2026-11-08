@@ -663,11 +663,15 @@ impl Muxer for TestCodec {
     }
 
     fn finish_muxer(&mut self, session: SessionId) -> Result<Vec<PathBuf>, MediaError> {
-        let writer = self
+        // The session stays until finishing succeeds, so a failed finish
+        // can still be aborted and its partial file removed.
+        let output = self
             .muxers
-            .remove(&session)
-            .ok_or_else(|| no_session(session))?;
-        writer.finish().map(|output| vec![output])
+            .get_mut(&session)
+            .ok_or_else(|| no_session(session))?
+            .finish()?;
+        self.muxers.remove(&session);
+        Ok(vec![output])
     }
 
     fn abort_muxer(&mut self, session: SessionId) -> Vec<PathBuf> {
