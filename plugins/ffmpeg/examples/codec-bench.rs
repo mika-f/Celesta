@@ -52,14 +52,19 @@ fn main() {
         .map_or(120, |value| value.parse().expect("frames must be a number"));
     let codecs: [(&str, ProviderFactory); 2] = [
         ("in process", celesta_codec_ffmpeg::FfmpegCodec::factory()),
-        ("plugin", MediaProcess::factory(program, plugin)),
+        (
+            "plugin",
+            MediaProcess::factory(program.clone(), plugin.clone()),
+        ),
     ];
+    let plugin_program = (program, plugin);
     for (name, factory) in &codecs {
         let timing = decode(factory.clone(), &video, frames);
         timing.print("decode", name, frames);
     }
     for (name, factory) in &codecs {
-        let timing = encode(factory.clone(), &video, frames);
+        let program = (*name == "plugin").then_some(&plugin_program);
+        let timing = encode(factory.clone(), program, &video, frames);
         timing.print("encode", name, frames);
         if let Some(how) = &timing.how {
             println!("  ({how})");
@@ -171,8 +176,12 @@ fn decode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
 /// opens the encoder, and the encoder finished; the packets are dropped.
 /// The host's CPU time covers the whole run, the encoder's threads in this
 /// process included.
-fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
-    let opened = cpu();
+fn encode(
+    factory: ProviderFactory,
+    program: Option<&(PathBuf, PathBuf)>,
+    video: &Path,
+    frames: u32,
+) -> Timing {
     // The size comes from a plugin that decodes, before the export's own
     // starts with a ring for it.
     let (width, height) = {
@@ -186,9 +195,31 @@ fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
         let stream = probe.video.expect("the file has a video stream");
         (stream.width, stream.height)
     };
+    // Taken once the probing plugin has exited, so that the plugin's CPU
+    // time is the export process's alone.
+    let opened = cpu();
     let ring = ring_layout(&[PixelFormat::Rgba8], width, height);
-    let mut provider =
-        factory(&Default::default(), ProviderUse::Export { ring }).expect("the plugin starts");
+    let export = ProviderUse::Export { ring };
+    // The plugin's process is started here to ask it whether it accepted
+    // the ring; the in-process codec has no such question.
+    let (mut provider, shared): (Box<dyn MediaProvider>, bool) = match program {
+        Some((executable, directory)) => {
+            let process = MediaProcess::start_with(
+                executable,
+                directory,
+                &Default::default(),
+                FrameTransport::from_environment(),
+                export,
+            )
+            .expect("the plugin starts");
+            let shared = process.shares_frames();
+            (Box::new(process), shared)
+        }
+        None => (
+            factory(&Default::default(), export).expect("the codec starts"),
+            false,
+        ),
+    };
     let settings: Settings = [(
         "preset".to_owned(),
         SettingValue::String("ultrafast".to_owned()),
@@ -226,11 +257,6 @@ fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
     let how = match depth {
         None => "in process".to_owned(),
         Some(depth) => {
-            let shared = ring.is_some()
-                && matches!(
-                    FrameTransport::from_environment(),
-                    FrameTransport::SharedMemory
-                );
             format!("{}, {depth} deep", if shared { "ring" } else { "pipe" })
         }
     };
