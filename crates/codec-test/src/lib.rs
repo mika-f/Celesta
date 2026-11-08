@@ -2,7 +2,7 @@
 //! frames an encoder is given (in their [`PixelFormat`], with no conversion)
 //! and the audio muxed in, compressed with LZ4, and reads them back; it also
 //! reads 16-bit PCM WAV, so tests keep the checked-in voices. It honours the
-//! [`CodecProvider`] contract the exporter relies on: containers,
+//! [`MediaProvider`] contract the exporter relies on: containers,
 //! `check_encoder`, the lead-in, and errors for what it does not support.
 //!
 //! Tests use it in their own process ([`install`]), or, for a child process
@@ -20,10 +20,11 @@ pub use plugin::{TestCodecPlugin, profile_dir};
 
 use celesta_composition::Time;
 use celesta_media::{
-    AudioBuffer, AudioStream, CodecFactory, CodecProvider, Container, EncoderId, EncoderSettings,
-    MediaError, MediaProbe, MuxRequest, PixelFormat, VideoFrame, VideoRequest, VideoStream,
-    timestamps_match,
+    AudioBuffer, AudioStream, Container, EncoderId, EncoderSettings, MediaError, MediaProbe,
+    MediaProvider, MediaRegistry, MuxRequest, PixelFormat, ProviderFactory, RegisteredPlugin,
+    VideoFrame, VideoRequest, VideoStream, timestamps_match,
 };
+use celesta_plugin_host::{MediaDecoderEntry, MediaOrigin};
 use format::{AudioHeader, Kind, Scanned, VideoHeader, VideoWriter, invalid};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -32,6 +33,13 @@ use std::sync::Arc;
 
 /// The id the codec's plugin manifest and `hello` give.
 pub const PLUGIN_ID: &str = "celesta-test-codec";
+
+/// The id of the codec's one decoder, which reads a test codec or WAV file of
+/// any extension.
+pub const DECODER_ID: &str = "test";
+
+/// The decoder's display name.
+pub const DECODER_NAME: &str = "Test codec";
 
 /// The name of the program that serves the codec.
 pub const PROGRAM: &str = "celesta-codec-test";
@@ -58,16 +66,42 @@ impl TestCodec {
         Self::default()
     }
 
-    /// A [`CodecFactory`] making a [`TestCodec`] in this process.
-    pub fn factory() -> CodecFactory {
-        Arc::new(|_| Ok(Box::new(Self::new()) as Box<dyn CodecProvider>))
+    /// A [`ProviderFactory`] making a [`TestCodec`] in this process.
+    pub fn factory() -> ProviderFactory {
+        Arc::new(|_| Ok(Box::new(Self::new()) as Box<dyn MediaProvider>))
     }
 }
 
-/// Makes [`TestCodec`], in this process, the codec every
+/// The codec as a media plugin made in this process: bundled, with its one
+/// decoder.
+pub fn registered() -> RegisteredPlugin {
+    RegisteredPlugin {
+        id: PLUGIN_ID.to_owned(),
+        origin: MediaOrigin::Bundled,
+        decoders: vec![MediaDecoderEntry {
+            id: DECODER_ID.to_owned(),
+            name: DECODER_NAME.to_owned(),
+            extensions: Vec::new(),
+        }],
+        factory: TestCodec::factory(),
+    }
+}
+
+/// Makes [`TestCodec`], in this process, the media plugin every
 /// `celesta_media::MediaBackend` uses.
 pub fn install() {
-    celesta_media::set_codec(Some(TestCodec::factory()));
+    celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(vec![registered()]))));
+}
+
+/// The decoder the request names, which only [`DECODER_ID`] is.
+fn check_decoder(decoder: &str) -> Result<(), MediaError> {
+    if decoder == DECODER_ID {
+        Ok(())
+    } else {
+        Err(MediaError::Codec(format!(
+            "no decoder {decoder:?} in {PLUGIN_ID}"
+        )))
+    }
 }
 
 fn no_encoder(encoder: EncoderId) -> MediaError {
@@ -85,6 +119,18 @@ impl Source {
         Ok(match format::sniff(path)? {
             (Kind::Test, file) => Self::Test(Scanned::new(path, file)?),
             (Kind::Wav, file) => Self::Wav(wav::read(path, file)?),
+        })
+    }
+
+    /// [`Self::open`] for a decode: `unsupported` answers only a probe, so a
+    /// file the codec does not read is a plain error there.
+    fn open_to_decode(path: &Path) -> Result<Self, MediaError> {
+        Self::open(path).map_err(|error| match error {
+            MediaError::Unsupported { path, .. } => MediaError::Codec(format!(
+                "{} is neither a test codec file nor a WAV file, the only files the test codec reads",
+                path.display()
+            )),
+            error => error,
         })
     }
 
@@ -194,8 +240,9 @@ fn rgba8(path: &Path, format: PixelFormat, frame: Vec<u8>) -> Result<Vec<u8>, Me
     }
 }
 
-impl CodecProvider for TestCodec {
-    fn probe(&mut self, path: &Path) -> Result<MediaProbe, MediaError> {
+impl MediaProvider for TestCodec {
+    fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
+        check_decoder(decoder)?;
         match Source::open(path)? {
             Source::Test(mut scanned) => {
                 let video = scanned.header.video.map(|video| VideoStream {
@@ -239,9 +286,14 @@ impl CodecProvider for TestCodec {
         }
     }
 
-    fn decode_video(&mut self, request: &VideoRequest<'_>) -> Result<VideoFrame, MediaError> {
+    fn decode_video(
+        &mut self,
+        decoder: &str,
+        request: &VideoRequest<'_>,
+    ) -> Result<VideoFrame, MediaError> {
+        check_decoder(decoder)?;
         let path = request.path;
-        let Source::Test(mut scanned) = Source::open(path)? else {
+        let Source::Test(mut scanned) = Source::open_to_decode(path)? else {
             return Err(MediaError::NoVideoStream(path.to_owned()));
         };
         let Some(video) = scanned.header.video else {
@@ -267,17 +319,19 @@ impl CodecProvider for TestCodec {
 
     fn decode_audio(
         &mut self,
+        decoder: &str,
         path: &Path,
         sample_rate: u32,
         channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
+        check_decoder(decoder)?;
         if sample_rate == 0 || channels == 0 {
             return Err(MediaError::InvalidAudioFormat {
                 sample_rate,
                 channels,
             });
         }
-        let samples = match Source::open(path)?.played_audio()? {
+        let samples = match Source::open_to_decode(path)?.played_audio()? {
             None => Vec::new(),
             Some((stored_rate, _, _)) if stored_rate != sample_rate => {
                 return Err(MediaError::Codec(format!(

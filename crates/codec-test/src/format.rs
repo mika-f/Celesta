@@ -126,8 +126,8 @@ pub(crate) enum Kind {
     Wav,
 }
 
-/// Opens `path` and tells what it is, refusing what the codec does not
-/// read.
+/// Opens `path` and tells what it is: a test codec file or a WAV file, and
+/// [`MediaError::Unsupported`] for any other.
 pub(crate) fn sniff(path: &Path) -> Result<(Kind, File), MediaError> {
     let mut file = open(path)?;
     let mut head = Vec::with_capacity(12);
@@ -142,10 +142,10 @@ pub(crate) fn sniff(path: &Path) -> Result<(Kind, File), MediaError> {
     } else if head.len() == 12 && &head[..4] == b"RIFF" && &head[8..] == b"WAVE" {
         Kind::Wav
     } else {
-        return Err(invalid(
-            path,
-            "is neither a test codec file nor a WAV file, the only files the test codec reads",
-        ));
+        return Err(MediaError::Unsupported {
+            path: path.to_owned(),
+            tried: Vec::new(),
+        });
     };
     Ok((kind, file))
 }

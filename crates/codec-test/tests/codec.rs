@@ -2,11 +2,11 @@
 //! and it refuses what the FFmpeg codec would.
 
 use celesta_codec_test::{
-    StoredAudio, StoredVideo, TestCodec, TestMedia, read, write_audio, write_rgba_video,
+    DECODER_ID, StoredAudio, StoredVideo, TestCodec, TestMedia, read, write_audio, write_rgba_video,
 };
 use celesta_composition::{Rational, Time};
 use celesta_media::{
-    CodecProvider, Container, EncoderId, EncoderSettings, MediaError, MuxRequest, PixelFormat,
+    Container, EncoderId, EncoderSettings, MediaError, MediaProvider, MuxRequest, PixelFormat,
     Sequential, VideoFrame, VideoRequest,
 };
 use std::path::{Path, PathBuf};
@@ -58,11 +58,14 @@ fn codec_message<T: std::fmt::Debug>(result: Result<T, MediaError>) -> String {
 }
 
 fn frame_at(codec: &mut TestCodec, path: &Path, time: f64) -> Result<VideoFrame, MediaError> {
-    codec.decode_video(&VideoRequest {
-        path,
-        time,
-        sequential: None,
-    })
+    codec.decode_video(
+        DECODER_ID,
+        &VideoRequest {
+            path,
+            time,
+            sequential: None,
+        },
+    )
 }
 
 fn write_pcm(path: &Path, samples: &[f32]) {
@@ -111,7 +114,7 @@ fn stores_every_pixel_format_byte_for_byte() {
             },
             "{format:?}"
         );
-        let probe = codec.probe(&output).unwrap();
+        let probe = codec.probe(DECODER_ID, &output).unwrap();
         let video = probe.video.expect("a video stream");
         assert_eq!((video.width, video.height), (6, 4));
         assert_eq!(video.frame_rate, Some(Rational::new(25, 1)));
@@ -205,7 +208,7 @@ fn an_aborted_encode_is_unfinished() {
     codec.abort_encoder(encoder);
 
     assert!(output.exists());
-    let probed = codec.probe(&output).unwrap_err().to_string();
+    let probed = codec.probe(DECODER_ID, &output).unwrap_err().to_string();
     assert!(probed.contains("unfinished"), "{probed}");
     let read = read(&output).unwrap_err().to_string();
     assert!(read.contains("unfinished"), "{read}");
@@ -238,7 +241,7 @@ fn every_cut_of_a_file_and_an_extra_byte_are_refused() {
         })
         .unwrap();
     read(&muxed).unwrap();
-    codec.probe(&muxed).unwrap();
+    codec.probe(DECODER_ID, &muxed).unwrap();
     let bytes = std::fs::read(&muxed).unwrap();
 
     // The magic, `CLSTTEST`: a file cut within it is not a test codec file
@@ -248,7 +251,7 @@ fn every_cut_of_a_file_and_an_extra_byte_are_refused() {
         let cut = directory.path().join(format!("cut-{len}.ctc"));
         std::fs::write(&cut, &bytes[..len]).unwrap();
         let read = read(&cut).unwrap_err().to_string();
-        let probed = codec.probe(&cut).unwrap_err().to_string();
+        let probed = codec.probe(DECODER_ID, &cut).unwrap_err().to_string();
         if len >= magic {
             assert!(read.contains("unfinished"), "{len} bytes: {read}");
             assert!(probed.contains("unfinished"), "{len} bytes: {probed}");
@@ -259,7 +262,7 @@ fn every_cut_of_a_file_and_an_extra_byte_are_refused() {
     std::fs::write(&longer, [&bytes[..], &[0]].concat()).unwrap();
     for message in [
         read(&longer).unwrap_err().to_string(),
-        codec.probe(&longer).unwrap_err().to_string(),
+        codec.probe(DECODER_ID, &longer).unwrap_err().to_string(),
     ] {
         assert!(message.contains("after its end chunk"), "{message}");
     }
@@ -290,14 +293,17 @@ fn decodes_rgba_frames_at_their_times() {
         assert_eq!(*decoded.pixels, *expected, "at {time}");
     }
     let sequential = codec
-        .decode_video(&VideoRequest {
-            path: &path,
-            time: 0.5,
-            sequential: Some(Sequential {
-                session: "layer",
-                frame_rate: Rational::new(2, 1),
-            }),
-        })
+        .decode_video(
+            DECODER_ID,
+            &VideoRequest {
+                path: &path,
+                time: 0.5,
+                sequential: Some(Sequential {
+                    session: "layer",
+                    frame_rate: Rational::new(2, 1),
+                }),
+            },
+        )
         .unwrap();
     assert_eq!(*sequential.pixels, b);
     assert!(matches!(
@@ -386,11 +392,11 @@ fn muxes_audio_with_its_lead_in() {
     assert_eq!(audio.lead_in(), &samples[..8]);
     assert_eq!(audio.played(), &samples[8..]);
 
-    let decoded = codec.decode_audio(&output, 48_000, 2).unwrap();
+    let decoded = codec.decode_audio(DECODER_ID, &output, 48_000, 2).unwrap();
     assert_eq!((decoded.sample_rate, decoded.channels), (48_000, 2));
     assert_eq!(decoded.samples, &samples[8..]);
 
-    let probe = codec.probe(&output).unwrap();
+    let probe = codec.probe(DECODER_ID, &output).unwrap();
     assert_eq!(probe.audio.len(), 1);
     let stream = &probe.audio[0];
     assert_eq!(stream.codec.as_deref(), Some("pcm_f32le"));
@@ -431,17 +437,17 @@ fn converts_channels_but_never_resamples() {
 
     let mono = directory.path().join("mono.ctc");
     write_audio(&mono, 48_000, 1, &[0.5, -0.25]).unwrap();
-    let stereo = codec.decode_audio(&mono, 48_000, 2).unwrap();
+    let stereo = codec.decode_audio(DECODER_ID, &mono, 48_000, 2).unwrap();
     assert_eq!((stereo.sample_rate, stereo.channels), (48_000, 2));
     assert_eq!(stereo.samples, [0.5, 0.5, -0.25, -0.25]);
 
     let both = directory.path().join("stereo.ctc");
     write_audio(&both, 48_000, 2, &[1.0, 0.0]).unwrap();
-    let down = codec.decode_audio(&both, 48_000, 1).unwrap();
+    let down = codec.decode_audio(DECODER_ID, &both, 48_000, 1).unwrap();
     assert_eq!(down.channels, 1);
     assert_eq!(down.samples, [0.5]);
 
-    let message = codec_message(codec.decode_audio(&mono, 44_100, 1));
+    let message = codec_message(codec.decode_audio(DECODER_ID, &mono, 44_100, 1));
     assert!(
         message.contains("48000") && message.contains("44100"),
         "{message}"
@@ -449,7 +455,7 @@ fn converts_channels_but_never_resamples() {
 
     let silent = directory.path().join("silent.ctc");
     write_rgba_video(&silent, 1, 1, Rational::new(30, 1), &[vec![0; 4]]).unwrap();
-    let none = codec.decode_audio(&silent, 48_000, 2).unwrap();
+    let none = codec.decode_audio(DECODER_ID, &silent, 48_000, 2).unwrap();
     assert_eq!((none.sample_rate, none.channels), (48_000, 2));
     assert!(none.samples.is_empty());
 }
@@ -460,7 +466,7 @@ fn reads_the_checked_in_voices() {
     let voice = assets.join("voices/001.wav");
     let mut codec = TestCodec::new();
 
-    let probe = codec.probe(&voice).unwrap();
+    let probe = codec.probe(DECODER_ID, &voice).unwrap();
     assert_eq!(probe.video, None);
     assert_eq!(probe.audio.len(), 1);
     let stream = &probe.audio[0];
@@ -470,13 +476,13 @@ fn reads_the_checked_in_voices() {
     assert_eq!(stream.duration, Some(Time::new(84_022, 44_100)));
     assert_eq!(probe.duration, Some(Time::new(84_022, 44_100)));
 
-    let decoded = codec.decode_audio(&voice, 44_100, 1).unwrap();
+    let decoded = codec.decode_audio(DECODER_ID, &voice, 44_100, 1).unwrap();
     assert_eq!(decoded.samples.len(), 84_022);
     assert_eq!(decoded.samples[..2], [-11.0 / 32768.0, -15.0 / 32768.0]);
 
     // Its fmt chunk is followed by an FLLR chunk before the data.
     let padded = codec
-        .probe(&assets.join("voice-folder/shizuku/voice-1.wav"))
+        .probe(DECODER_ID, &assets.join("voice-folder/shizuku/voice-1.wav"))
         .unwrap();
     assert_eq!(padded.audio.len(), 1);
     assert_eq!(padded.audio[0].sample_rate, Some(16_000));
@@ -489,13 +495,15 @@ fn names_files_it_cannot_read() {
     let mut codec = TestCodec::new();
 
     let missing = directory.path().join("missing.wav");
-    assert!(matches!(codec.probe(&missing), Err(MediaError::NotFound(path)) if path == missing));
+    assert!(
+        matches!(codec.probe(DECODER_ID, &missing), Err(MediaError::NotFound(path)) if path == missing)
+    );
     assert!(matches!(
         frame_at(&mut codec, &missing, 0.0),
         Err(MediaError::NotFound(path)) if path == missing
     ));
     assert!(matches!(
-        codec.decode_audio(&missing, 48_000, 2),
+        codec.decode_audio(DECODER_ID, &missing, 48_000, 2),
         Err(MediaError::NotFound(path)) if path == missing
     ));
 
@@ -532,9 +540,12 @@ fn names_files_it_cannot_read() {
     for path in [&random, &float] {
         let name = path.display().to_string();
         for message in [
-            codec.probe(path).unwrap_err().to_string(),
+            codec.probe(DECODER_ID, path).unwrap_err().to_string(),
             frame_at(&mut codec, path, 0.0).unwrap_err().to_string(),
-            codec.decode_audio(path, 48_000, 1).unwrap_err().to_string(),
+            codec
+                .decode_audio(DECODER_ID, path, 48_000, 1)
+                .unwrap_err()
+                .to_string(),
         ] {
             assert!(message.contains(&name), "{message}");
         }

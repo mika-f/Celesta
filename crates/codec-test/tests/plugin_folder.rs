@@ -1,13 +1,13 @@
 //! The temporary plugin folder a test gives a child process, so the child
 //! reads and writes media with the test codec's program.
 
-use celesta_codec_test::{PLUGIN_ID, PROGRAM, TestCodecPlugin, profile_dir};
-use celesta_media::CodecProcess;
+use celesta_codec_test::{DECODER_ID, PLUGIN_ID, PROGRAM, TestCodecPlugin, profile_dir};
+use celesta_media::MediaProcess;
 use celesta_plugin_host::{InstalledPlugins, PluginRole, discover};
 use std::path::Path;
 
 #[test]
-fn the_folder_is_a_codec_plugin_for_this_platform() {
+fn the_folder_is_a_media_plugin_for_this_platform() {
     let plugin = TestCodecPlugin::new();
     let folder = plugin.folder();
 
@@ -18,7 +18,7 @@ fn the_folder_is_a_codec_plugin_for_this_platform() {
         panic!("one plugin in the folder, not {entries:?}");
     };
     assert_eq!(entry.manifest.id, PLUGIN_ID);
-    assert!(entry.has_role(PluginRole::Codec));
+    assert!(entry.has_role(PluginRole::Media));
     let executable = entry.executable().expect("a program for this platform");
     assert!(executable.starts_with(folder), "{}", executable.display());
     assert!(
@@ -27,15 +27,22 @@ fn the_folder_is_a_codec_plugin_for_this_platform() {
         executable.display()
     );
 
-    // Named explicitly, it is the codec chosen over any other installed.
-    let codec = InstalledPlugins::find(&[folder.to_path_buf()], &[])
-        .0
-        .codec()
-        .expect("the folder's codec");
-    assert_eq!(codec.id, PLUGIN_ID);
-    assert_eq!(codec.executable, executable);
-    // The program in the folder runs and answers as a codec.
-    CodecProcess::start(&codec.executable, &codec.directory, &Default::default()).unwrap();
+    // Named explicitly, it is the media plugin chosen over any other
+    // installed, with its one decoder.
+    let media = InstalledPlugins::find(&[folder.to_path_buf()], &[]).0.media();
+    let [plugin] = media.as_slice() else {
+        panic!("one media plugin in the folder, not {media:?}");
+    };
+    assert_eq!(plugin.id, PLUGIN_ID);
+    assert_eq!(plugin.executable, executable);
+    let [decoder] = plugin.decoders.as_slice() else {
+        panic!("one decoder, not {:?}", plugin.decoders);
+    };
+    assert_eq!(decoder.id, DECODER_ID);
+    assert_eq!(decoder.name, "Test codec");
+    assert!(decoder.extensions.is_empty());
+    // The program in the folder runs and answers as a media plugin.
+    MediaProcess::start(&plugin.executable, &plugin.directory, &Default::default()).unwrap();
 }
 
 #[test]
