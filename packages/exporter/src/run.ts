@@ -12,13 +12,15 @@ export const CANCEL_TIMEOUT_MS = 10_000;
 const STDERR_LIMIT = 64 * 1024;
 
 /** Flags this package passes that older exporters reject. */
-const NEWER_FLAGS = /'--(info|json-progress|stdin-cancel)'/;
+const NEWER_FLAGS = /'--(info|json-progress|stdin-cancel|list-components|describe|muxer|video-encoder|audio-encoder)'/;
 
 /**
  * Runs the exporter with `args` (which include `--json`) and resolves with
- * its report when it succeeded. Progress lines go to `onProgress`.
+ * its report when it succeeded. Progress lines go to `onProgress`. The
+ * component listings print their result without a `status`; only an error
+ * report has `status: 'error'`.
  */
-export function runExporter(args: string[], options: RunOptions): Promise<ExportReport> {
+export function runExporter<T = ExportReport>(args: string[], options: RunOptions): Promise<T> {
   const exporter = resolveExporter({ exporter: options.exporter, env: options.env });
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
@@ -31,7 +33,7 @@ export function runExporter(args: string[], options: RunOptions): Promise<Export
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
-    let report: ExportReport | undefined;
+    let report: (ExportReport & Record<string, unknown>) | undefined;
     let callbackError: unknown;
     let stderr = '';
     let killTimer: NodeJS.Timeout | undefined;
@@ -64,7 +66,7 @@ export function runExporter(args: string[], options: RunOptions): Promise<Export
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on('line', (line) => {
       if (!line.trim()) return;
-      let message: (ProgressEvent | ExportReport) & { event?: string };
+      let message: (ProgressEvent | ExportReport | Record<string, unknown>) & { event?: string };
       try {
         message = JSON.parse(line);
       } catch {
@@ -72,7 +74,7 @@ export function runExporter(args: string[], options: RunOptions): Promise<Export
         return;
       }
       if (message.event === undefined) {
-        report = message as ExportReport;
+        report = message as ExportReport & Record<string, unknown>;
         return;
       }
       if (callbackError !== undefined) return;
@@ -105,10 +107,10 @@ export function runExporter(args: string[], options: RunOptions): Promise<Export
       finish(() => {
         if (callbackError !== undefined) {
           reject(callbackError);
-        } else if (report?.status === 'ok') {
-          resolve(report);
         } else if (report?.error) {
           reject(reportError(report));
+        } else if (report !== undefined && report.status !== 'error') {
+          resolve(report as T);
         } else if (options.signal?.aborted) {
           reject(cancelled());
         } else {

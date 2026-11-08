@@ -38,6 +38,8 @@ install the folder (`npm install <celesta>/packages/exporter`).
 | `exportVideo(options)` | Writes an `.mp4`, `.mov` or `.webm`, and any `subtitles` beside it. With `subtitles` and no `output`, writes only the subtitle files. | `ExportResult` |
 | `exportStills(options)` | Writes `frames` (or every `every`-th frame) as `.png`, `.jpg`/`.jpeg` or `.webp`, or one `contactSheet`. | `ExportResult` |
 | `getComposition(options)` | Reads the composition's size, frame rate and length, and a React entry's roots, without rendering (`--info`). | `CompositionInfo` |
+| `listComponents(options?)` | Lists the installed media components: decoders, video and audio encoders, and muxers (`--list-components`). With `check: true`, each plugin is started and entries say whether they are `available`. Takes no source. | `ComponentInfo[]` |
+| `describeComponent(id, options?)` | Asks one component (`<plugin>/<id>`) for its `settings` and capabilities (`--describe`). Takes no source. | `ComponentDescription` |
 
 Every function takes the source options:
 
@@ -52,14 +54,27 @@ and the run options: `exporter` (see [Finding the exporter](#finding-the-exporte
 `signal`, `onProgress`, `cwd` and `env`.
 
 The rest mirror the exporter's flags, camelCased: `overwrite`,
-`renderQuality`, `driver`, `format`, `from`/`to`, `preset`, `crf`,
-`bitDepth`, `colorConversion`, `loudness` (LUFS, `'streaming'` or
+`renderQuality`, `driver`, `from`/`to`, `loudness` (LUFS, `'streaming'` or
 `'broadcast'`), `truePeak`, `peakHandling` for video; `frames`, `every`, `quality`,
 `contactSheet` (`true` or `{ columns, tileWidth }`), `debugGuides` for
-stills. `from` and `to` are seconds (rounded to milliseconds) or timecode
+stills. The output's extension picks the video or still format; to choose
+the components, a video takes:
+
+- `muxer`: a muxer, such as `'ffmpeg/mp4'`.
+- `videoEncoder`: `{ id: 'ffmpeg/libx264', options: { crf: 20, preset: 'slow' } }`;
+  each option becomes `--video-option key=value` and is checked against the
+  component's settings (see `describeComponent`).
+- `audioEncoder`: the same shape for audio, or `'none'` for a silent video.
+- `preset`, `presetFile`: a named bundle of the above (`--preset`,
+  `--preset-file`).
+
+`from` and `to` are seconds (rounded to milliseconds) or timecode
 strings such as `"01:30.5"`. The types in `dist/index.d.ts` document each
 option, and [the exporter reference](../../skills/celesta/references/export.md)
 explains what they do.
+
+A video output reports its `muxer`, its `video` track (`component`, `codec`),
+its `audio` track or `null`, `alpha`, and every file it wrote in `files`.
 
 `ExportResult` is the exporter's `--json` result without `status`: the
 `composition`, every written file in `outputs` with its absolute path and
@@ -76,6 +91,7 @@ than working out file names.
 | --- | --- |
 | `compositions` | `compositionId`, `compositions` (React entries) |
 | `composition` | `composition` (`width`, `height`, `fps`, `frames`, `duration`) |
+| `output` | `muxer`, `muxerName`, `video` and `audio` (`component`, `name`, `settings` labels, or `audio: null`), sent before rendering |
 | `rendering` | `frame` (counting from 1) of `total` |
 | `mixingAudio`, `muxing` | none |
 | `warning` | `message` |

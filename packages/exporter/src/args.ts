@@ -1,5 +1,13 @@
 import { usage } from './errors.js';
-import type { CompositionOptions, SourceOptions, StillsOptions, Timecode, VideoOptions } from './types.js';
+import type {
+  CompositionOptions,
+  EncoderOptions,
+  RunOptions,
+  SourceOptions,
+  StillsOptions,
+  Timecode,
+  VideoOptions,
+} from './types.js';
 
 /** Whether `options.source` is a React entry: anything but a `.json` file, unless `react` says. */
 export function isReactSource(options: SourceOptions): boolean {
@@ -15,14 +23,14 @@ export function videoArgs(options: VideoOptions): string[] {
   const flags = [
     ...sourceFlags(options),
     ...renderFlags(options),
-    ...value('output-format', options.format),
     ...value('from', timecode('from', options.from)),
     ...value('to', timecode('to', options.to)),
     ...subtitles.flatMap((file) => value('subtitles', file)),
     ...value('preset', options.preset),
-    ...value('crf', options.crf),
-    ...value('bit-depth', options.bitDepth),
-    ...value('color-conversion', options.colorConversion),
+    ...value('preset-file', options.presetFile),
+    ...value('muxer', options.muxer),
+    ...encoderFlags('video', options.videoEncoder),
+    ...(options.audioEncoder === 'none' ? ['--audio-encoder=none'] : encoderFlags('audio', options.audioEncoder)),
     ...value('loudness', options.loudness),
     ...value('true-peak', options.truePeak),
     ...value('peak-handling', options.peakHandling),
@@ -47,7 +55,6 @@ export function stillsArgs(options: StillsOptions): string[] {
     ...value('every', options.every),
     ...value('from', timecode('from', options.from)),
     ...value('to', timecode('to', options.to)),
-    ...value('output-format', options.format),
     ...value('quality', options.quality),
     ...(sheet ? ['--contact-sheet'] : []),
     ...(typeof sheet === 'object' ? [...value('columns', sheet.columns), ...value('tile-width', sheet.tileWidth)] : []),
@@ -59,6 +66,16 @@ export function stillsArgs(options: StillsOptions): string[] {
 /** The exporter arguments for `--info`. */
 export function compositionArgs(options: CompositionOptions): string[] {
   return command(['--info', ...sourceFlags(options)], options);
+}
+
+/** The exporter arguments for `--list-components`. */
+export function componentsArgs(options: Omit<RunOptions, 'onProgress'> & { check?: boolean } = {}): string[] {
+  return ['--json', '--list-components', ...(options.check ? ['--check'] : [])];
+}
+
+/** The exporter arguments for `--describe`. */
+export function describeArgs(id: string): string[] {
+  return ['--json', '--describe', id];
 }
 
 function command(flags: string[], options: SourceOptions & { onProgress?: unknown }, output?: string): string[] {
@@ -74,6 +91,15 @@ function sourceFlags(options: SourceOptions): string[] {
     ...value('project', options.project),
     ...value('props', options.props === undefined ? undefined : JSON.stringify(options.props)),
     ...value('props-file', options.propsFile),
+  ];
+}
+
+/** `--<kind>-encoder=id` and one `--<kind>-option=key=value` per setting. */
+function encoderFlags(kind: 'video' | 'audio', encoder: EncoderOptions | undefined): string[] {
+  if (encoder === undefined) return [];
+  return [
+    ...value(`${kind}-encoder`, encoder.id),
+    ...Object.entries(encoder.options ?? {}).flatMap(([key, setting]) => value(`${kind}-option`, `${key}=${setting}`)),
   ];
 }
 

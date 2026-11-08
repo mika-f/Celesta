@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
-import { compositionArgs, stillsArgs, videoArgs } from '../src/args.js';
+import { componentsArgs, compositionArgs, describeArgs, stillsArgs, videoArgs } from '../src/args.js';
 
 test('a video export passes its options as --name=value flags', () => {
   assert.deepEqual(
@@ -12,8 +12,7 @@ test('a video export passes its options as --name=value flags', () => {
       props: { title: 'Hi' },
       from: 1.5,
       to: '00:10',
-      crf: 20,
-      bitDepth: 10,
+      preset: 'web',
       subtitles: 'film.{lang}.vtt',
       overwrite: true,
       onProgress() {},
@@ -29,13 +28,47 @@ test('a video export passes its options as --name=value flags', () => {
       '--from=1.5',
       '--to=00:10',
       '--subtitles=film.{lang}.vtt',
-      '--crf=20',
-      '--bit-depth=10',
+      '--preset=web',
       '--',
       'film.tsx',
       'film.mp4',
     ],
   );
+});
+
+test('a video export passes its component flags', () => {
+  const flags = videoArgs({
+    source: 'film.tsx',
+    output: 'film.mp4',
+    muxer: 'ffmpeg/mp4',
+    videoEncoder: { id: 'ffmpeg/libx264', options: { crf: 20, preset: 'slow' } },
+    audioEncoder: 'none',
+  }).filter((arg) => /^--(muxer|video-|audio-)/.test(arg));
+  assert.deepEqual(flags, [
+    '--muxer=ffmpeg/mp4',
+    '--video-encoder=ffmpeg/libx264',
+    '--video-option=crf=20',
+    '--video-option=preset=slow',
+    '--audio-encoder=none',
+  ]);
+  const audio = videoArgs({
+    source: 'film.tsx',
+    output: 'film.webm',
+    presetFile: 'p.json',
+    audioEncoder: { id: 'ffmpeg/opus', options: { bitrate: 96, vbr: true } },
+  });
+  assert.ok(audio.includes('--preset-file=p.json'));
+  assert.deepEqual(audio.filter((arg) => arg.startsWith('--audio-')), [
+    '--audio-encoder=ffmpeg/opus',
+    '--audio-option=bitrate=96',
+    '--audio-option=vbr=true',
+  ]);
+});
+
+test('listComponents and describeComponent build their commands', () => {
+  assert.deepEqual(componentsArgs({ check: true }), ['--json', '--list-components', '--check']);
+  assert.deepEqual(componentsArgs(), ['--json', '--list-components']);
+  assert.deepEqual(describeArgs('ffmpeg/libx264'), ['--json', '--describe', 'ffmpeg/libx264']);
 });
 
 test('a loudness target passes LUFS or a preset, with its peak options', () => {
