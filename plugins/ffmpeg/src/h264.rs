@@ -112,8 +112,10 @@ impl Bits {
 }
 
 /// An SPS's `chroma_format_idc` and luma and chroma bit depths, less 8:
-/// 4:2:0 and 8 bits for the profiles that do not give them.
-fn chroma_format_and_depths(sps: &[u8]) -> Option<(u32, u32, u32)> {
+/// 4:2:0 and 8 bits for the profiles that do not give them. None for an
+/// SPS it cannot read, or one whose values are out of H.264's ranges
+/// (`chroma_format_idc` 0 to 3, depths 8 to 14 bits).
+fn chroma_format_and_depths(sps: &[u8]) -> Option<(u8, u8, u8)> {
     // Past the NAL header, the profile, the constraints, and the level.
     let mut bits = Bits {
         bytes: unescaped(sps.get(4..)?),
@@ -123,11 +125,12 @@ fn chroma_format_and_depths(sps: &[u8]) -> Option<(u32, u32, u32)> {
     if !PROFILES_WITH_CHROMA_FORMAT.contains(&sps[1]) {
         return Some((1, 0, 0));
     }
-    let chroma_format = bits.ue()?;
+    let chroma_format = u8::try_from(bits.ue()?).ok().filter(|idc| *idc <= 3)?;
     if chroma_format == 3 {
         bits.bit()?; // separate_colour_plane_flag
     }
-    Some((chroma_format, bits.ue()?, bits.ue()?))
+    let mut depth = || u8::try_from(bits.ue()?).ok().filter(|less_8| *less_8 <= 6);
+    Some((chroma_format, depth()?, depth()?))
 }
 
 /// libx264's Annex B extradata as an `avcC` box's contents, as libavformat
@@ -156,12 +159,7 @@ pub(crate) fn avcc_from_annexb(extradata: &[u8]) -> Result<Vec<u8>, MediaError> 
             MediaError::Codec("libx264 gave a sequence parameter set it cannot read".to_owned())
         })?;
         // Reserved bits set, and no SPS extensions.
-        avcc.extend_from_slice(&[
-            0xFC | chroma_format as u8,
-            0xF8 | luma as u8,
-            0xF8 | chroma as u8,
-            0,
-        ]);
+        avcc.extend_from_slice(&[0xFC | chroma_format, 0xF8 | luma, 0xF8 | chroma, 0]);
     }
     Ok(avcc)
 }
@@ -218,5 +216,55 @@ mod tests {
         assert_eq!(codec_string(&sps), "avc1.64000A");
         assert_eq!(avcc_codec_string(&avcc), "avc1.64000A");
         assert!(avcc_from_annexb(&[0, 0, 1, 0x68, 1]).is_err());
+    }
+
+    #[test]
+    fn libx264s_high_10_and_high_4_4_4_spss_are_read() {
+        // From libx264 (FFmpeg 8) for 64x64 yuv420p10le and yuv444p10le;
+        // both hold emulation prevention bytes in their VUI.
+        let high_10 = [
+            0x67, 0x6E, 0x00, 0x0A, 0xA6, 0xCD, 0x94, 0x42, 0x6C, 0x04, 0x40, 0x00, 0x00, 0x03,
+            0x00, 0x40, 0x00, 0x00, 0x03, 0x00, 0x83, 0xC4, 0x89, 0x65, 0x80,
+        ];
+        assert_eq!(chroma_format_and_depths(&high_10), Some((1, 2, 2)));
+        let high_4_4_4 = [
+            0x67, 0xF4, 0x00, 0x0A, 0x90, 0xD9, 0xB2, 0x88, 0x4D, 0x80, 0x88, 0x00, 0x00, 0x03,
+            0x00, 0x08, 0x00, 0x00, 0x03, 0x00, 0x10, 0x78, 0x91, 0x2C, 0xB0,
+        ];
+        assert_eq!(chroma_format_and_depths(&high_4_4_4), Some((3, 2, 2)));
+        let mut annexb = vec![0, 0, 0, 1];
+        annexb.extend_from_slice(&high_10);
+        annexb.extend_from_slice(&[0, 0, 0, 1, 0x68, 0xEB, 0xE3]);
+        let avcc = avcc_from_annexb(&annexb).unwrap();
+        assert_eq!(avcc[avcc.len() - 4..], [0xFD, 0xFA, 0xFA, 0]);
+        assert_eq!(avcc_codec_string(&avcc), "avc1.6E000A");
+    }
+
+    #[test]
+    fn emulation_prevention_bytes_are_skipped_before_reading() {
+        // seq_parameter_set_id 2^23 - 1 (23 zero bits first), then 4:2:0
+        // and 10 bits: `00 00 01 00 00 00 9B 80`, escaped.
+        let sps = [
+            0x67, 0x6E, 0x00, 0x1E, 0x00, 0x00, 0x03, 0x01, 0x00, 0x00, 0x03, 0x00, 0x9B, 0x80,
+        ];
+        assert_eq!(
+            unescaped(&sps[4..]),
+            [0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x9B, 0x80]
+        );
+        assert_eq!(chroma_format_and_depths(&sps), Some((1, 2, 2)));
+    }
+
+    #[test]
+    fn out_of_range_sps_values_are_refused() {
+        // chroma_format_idc 4 (`00101`), then depths 0.
+        let chroma = [0x67, 0x64, 0x00, 0x0A, 0b1001_0111, 0b1000_0000];
+        assert_eq!(chroma_format_and_depths(&chroma), None);
+        // 4:2:0 (`010`), then a luma depth less 8 of 7 (`0001000`).
+        let depth = [0x67, 0x64, 0x00, 0x0A, 0b1010_0001, 0b0001_0000];
+        assert_eq!(chroma_format_and_depths(&depth), None);
+        let mut annexb = vec![0, 0, 0, 1];
+        annexb.extend_from_slice(&chroma);
+        annexb.extend_from_slice(&[0, 0, 0, 1, 0x68, 0xEB, 0xE3]);
+        assert!(avcc_from_annexb(&annexb).is_err());
     }
 }

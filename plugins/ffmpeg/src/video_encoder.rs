@@ -154,7 +154,10 @@ fn plan(
             }
             match text(settings, "tune") {
                 "" => {}
-                tune => options.push(("tune", tune.to_owned())),
+                tune => {
+                    check_tune(tune)?;
+                    options.push(("tune", tune.to_owned()));
+                }
             }
             Plan {
                 input,
@@ -236,6 +239,37 @@ fn is_rgba(format: PixelFormat) -> bool {
     matches!(format, PixelFormat::Rgba8 | PixelFormat::Rgba16)
 }
 
+/// x264's tunes that change its psychovisual settings, of which a tune
+/// takes at most one, and those it may add to one.
+const X264_PSY_TUNES: [&str; 6] = ["film", "animation", "grain", "stillimage", "psnr", "ssim"];
+const X264_OTHER_TUNES: [&str; 2] = ["fastdecode", "zerolatency"];
+
+/// Refuses a `tune` libx264 would, naming the key: x264's tunes, several
+/// joined by `,` (or `.`, `/`, `+`, as x264 reads them) with at most one
+/// psychovisual tune.
+fn check_tune(tune: &str) -> Result<(), MediaError> {
+    let parts: Vec<&str> = tune.split([',', '.', '/', '+']).collect();
+    let known = parts
+        .iter()
+        .all(|part| X264_PSY_TUNES.contains(part) || X264_OTHER_TUNES.contains(part));
+    let psy = parts
+        .iter()
+        .filter(|part| X264_PSY_TUNES.contains(part))
+        .count();
+    if known && psy <= 1 {
+        Ok(())
+    } else {
+        Err(invalid(
+            "tune",
+            &format!(
+                "must be one of {}, optionally with {}, joined by commas",
+                X264_PSY_TUNES.join(", "),
+                X264_OTHER_TUNES.join(" or "),
+            ),
+        ))
+    }
+}
+
 /// Opens `codec` for `request`.
 pub(crate) fn open(
     codec: VideoCodec,
@@ -311,7 +345,11 @@ pub(crate) fn open(
         }
         let mut dictionary: *mut AVDictionary = null_mut();
         for (key, value) in &options {
-            av_dict_set(&mut dictionary, key.as_ptr(), value.as_ptr(), 0);
+            let result = av_dict_set(&mut dictionary, key.as_ptr(), value.as_ptr(), 0);
+            if result < 0 {
+                av_dict_free(&mut dictionary);
+                return Err(av_error(result, "set an encoder option"));
+            }
         }
         let result = avcodec_open2(raw, encoder, &mut dictionary);
         let unused = av_dict_count(dictionary);
@@ -604,6 +642,42 @@ mod tests {
         }
         // libx264 copies each frame in, so one frame serves them all.
         assert_eq!(opened.session.frames.len(), 1);
+    }
+
+    #[test]
+    fn an_unknown_tune_names_the_key() {
+        for tune in ["film", "animation,fastdecode", "zerolatency+fastdecode"] {
+            assert!(check_tune(tune).is_ok(), "{tune}");
+        }
+        for tune in ["cinema", "film,grain", "film,", "Film"] {
+            let Err(MediaError::InvalidSettings { key, message }) = check_tune(tune) else {
+                panic!("{tune} was taken");
+            };
+            assert_eq!(key, "tune");
+            assert!(message.contains("film"), "{message}");
+        }
+        let settings: Settings = [("tune".to_owned(), SettingValue::String("cinema".into()))]
+            .into_iter()
+            .collect();
+        let color = Color::bt709_limited();
+        let result = open(
+            VideoCodec::X264,
+            &VideoEncoderRequest {
+                component: "libx264",
+                settings: &settings,
+                width: 32,
+                height: 16,
+                frame_rate: Rational::new(30, 1),
+                timescale: 30,
+                offered: &[PixelFormat::Yuv420p],
+                color: &color,
+            },
+        );
+        assert!(
+            matches!(&result, Err(MediaError::InvalidSettings { key, .. }) if key == "tune"),
+            "{:?}",
+            result.err()
+        );
     }
 
     #[test]
