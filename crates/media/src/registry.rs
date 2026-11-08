@@ -92,8 +92,20 @@ struct ProjectUses {
 }
 
 impl MediaRegistry {
-    /// A registry of `plugins`, in search order.
-    pub fn new(plugins: Vec<RegisteredPlugin>) -> Self {
+    /// A registry of `plugins`, in search order. Decoder extensions are
+    /// matched lower-case and without a leading dot, as a manifest's are
+    /// read, however a registered plugin spells them.
+    pub fn new(mut plugins: Vec<RegisteredPlugin>) -> Self {
+        for extension in plugins
+            .iter_mut()
+            .flat_map(|plugin| &mut plugin.decoders)
+            .flat_map(|decoder| &mut decoder.extensions)
+        {
+            *extension = extension
+                .strip_prefix('.')
+                .unwrap_or(extension)
+                .to_lowercase();
+        }
         let mut decoders: Vec<(usize, usize)> = plugins
             .iter()
             .enumerate()

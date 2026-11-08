@@ -57,6 +57,14 @@ enum Answer {
     /// The first process answers as one that died would; later ones read.
     UnavailableOnce,
     Broken,
+    /// Reads the file and finds no video in it.
+    NoVideoStream,
+    /// Finds no file at the path.
+    NotFound,
+    /// Reads the file, but fails to decode its frames.
+    ReadsButNotItsFrames,
+    /// No process starts: the factory fails.
+    CannotStart,
 }
 
 struct Fake {
@@ -87,7 +95,9 @@ impl MediaProvider for Fake {
         self.journal
             .push(format!("probe {}/{decoder}", self.plugin));
         match self.answer {
-            Answer::Reads | Answer::ReadsAudioAt(_) => Ok(probe_of(&self.plugin)),
+            Answer::Reads | Answer::ReadsAudioAt(_) | Answer::ReadsButNotItsFrames => {
+                Ok(probe_of(&self.plugin))
+            }
             Answer::Unsupported => Err(MediaError::Unsupported {
                 path: path.to_owned(),
                 tried: Vec::new(),
@@ -97,6 +107,9 @@ impl MediaProvider for Fake {
                 Err(MediaError::CodecUnavailable("exited".into()))
             }
             Answer::Broken => Err(MediaError::Codec("broken".into())),
+            Answer::NoVideoStream => Err(MediaError::NoVideoStream(path.to_owned())),
+            Answer::NotFound => Err(MediaError::NotFound(path.to_owned())),
+            Answer::CannotStart => unreachable!("never started"),
         }
     }
 
@@ -110,6 +123,9 @@ impl MediaProvider for Fake {
             self.plugin,
             request.sequential.map(|sequential| sequential.session)
         ));
+        if self.answer == Answer::ReadsButNotItsFrames {
+            return Err(MediaError::Codec("bad frame".into()));
+        }
         Ok(VideoFrame {
             width: 2,
             height: 1,
@@ -193,6 +209,9 @@ fn with_decoders(
     let plugin = id.to_owned();
     let factory: ProviderFactory = Arc::new(move |_| {
         journal.push(format!("start {plugin}"));
+        if answer == Answer::CannotStart {
+            return Err(MediaError::CodecUnavailable("cannot start".into()));
+        }
         let answer = match answer {
             Answer::UnavailableOnce if started.fetch_add(1, Ordering::SeqCst) > 0 => Answer::Reads,
             answer => answer,
@@ -520,6 +539,111 @@ fn a_real_error_beats_unsupported() {
         Err(MediaError::Codec(message)) if message == "broken"
     ));
     assert_eq!(journal.count("probe p/dec"), 1, "every decoder was tried");
+}
+
+#[test]
+fn a_file_without_video_beats_another_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "clip.mp4");
+    let journal = Journal::default();
+    let registry = three(
+        &journal,
+        Answer::Broken,
+        Answer::NoVideoStream,
+        Answer::Unsupported,
+    );
+    let mut backend = MediaBackend::with_registry(registry);
+    assert!(matches!(
+        backend.probe(&path),
+        Err(MediaError::NoVideoStream(named)) if named == path
+    ));
+}
+
+#[test]
+fn a_missing_file_beats_every_other_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "clip.mp4");
+    let journal = Journal::default();
+    let registry = three(
+        &journal,
+        Answer::Broken,
+        Answer::NoVideoStream,
+        Answer::NotFound,
+    );
+    let mut backend = MediaBackend::with_registry(registry);
+    assert!(matches!(
+        backend.probe(&path),
+        Err(MediaError::NotFound(named)) if named == path
+    ));
+}
+
+#[test]
+fn a_pinned_decoder_s_errors_do_not_fall_back() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "clip.mp4");
+    let journal = Journal::default();
+    let registry = three(
+        &journal,
+        Answer::Unsupported,
+        Answer::ReadsButNotItsFrames,
+        Answer::Reads,
+    );
+    let mut backend = MediaBackend::with_registry(registry);
+    backend.probe(&path).unwrap();
+    journal.clear();
+    assert!(matches!(
+        backend.decode_frame(&path, 0.0),
+        Err(MediaError::Codec(message)) if message == "bad frame"
+    ));
+    assert_eq!(journal.entries(), strings(&["video b/dec None"]));
+    assert_eq!(backend.decoder_of(&path), Some(&component("b/dec")));
+}
+
+#[test]
+fn a_decoder_whose_process_cannot_start_falls_through() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "clip.mp4");
+    let journal = Journal::default();
+    let registry = three(&journal, Answer::CannotStart, Answer::Reads, Answer::Reads);
+    let mut backend = MediaBackend::with_registry(registry);
+    assert_eq!(backend.probe(&path).unwrap(), &probe_of("b"));
+    assert_eq!(
+        journal.entries(),
+        strings(&["start u", "start b", "probe b/dec"])
+    );
+}
+
+#[test]
+fn hand_written_extensions_are_normalized() {
+    let journal = Journal::default();
+    let registry = MediaRegistry::new(vec![
+        plugin(
+            &journal,
+            "upper",
+            MediaOrigin::User,
+            &["MP4"],
+            Answer::Reads,
+        ),
+        plugin(
+            &journal,
+            "dotted",
+            MediaOrigin::User,
+            &[".mp4"],
+            Answer::Reads,
+        ),
+        plugin(
+            &journal,
+            "other",
+            MediaOrigin::User,
+            &["wav"],
+            Answer::Reads,
+        ),
+    ]);
+    assert_eq!(
+        registry.decoder_candidates(Path::new("/clip.mp4")),
+        [(0, component("upper/dec")), (1, component("dotted/dec"))]
+    );
+    assert_eq!(registry.plugin(1).decoders[0].extensions, ["mp4"]);
 }
 
 #[test]

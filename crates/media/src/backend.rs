@@ -105,8 +105,8 @@ impl MediaBackend {
     /// on to the next, as does one with any other error, which is kept; but
     /// [`MediaError::CodecStopped`] (a deadline missed, or the kill switch)
     /// ends routing. When no candidate reads the file, the error is the
-    /// first one kept, or else [`MediaError::Unsupported`] naming every
-    /// candidate.
+    /// most specific one kept (see [`specificity`]), the first among equals,
+    /// or else [`MediaError::Unsupported`] naming every candidate.
     fn route(&mut self, path: &Path) -> Result<(), MediaError> {
         if self.routes.contains_key(path) {
             return Ok(());
@@ -138,7 +138,12 @@ impl MediaBackend {
                 Err(MediaError::Unsupported { .. }) => {}
                 Err(stopped @ MediaError::CodecStopped(_)) => return Err(stopped),
                 Err(error) => {
-                    kept.get_or_insert(error);
+                    if kept
+                        .as_ref()
+                        .is_none_or(|kept| specificity(&error) < specificity(kept))
+                    {
+                        kept = Some(error);
+                    }
                 }
             }
         }
@@ -226,6 +231,17 @@ impl MediaBackend {
         let plugin = self.encoder()?;
         let registry = self.registry.as_deref().expect("the encoder is in it");
         self.processes.get(registry, plugin)
+    }
+}
+
+/// How much an error a candidate decoder answered says about the file,
+/// most first: that it is not there, then that a decoder read it and found
+/// no video, then anything else.
+fn specificity(error: &MediaError) -> u8 {
+    match error {
+        MediaError::NotFound(_) => 0,
+        MediaError::NoVideoStream(_) => 1,
+        _ => 2,
     }
 }
 
