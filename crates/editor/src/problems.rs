@@ -16,6 +16,7 @@ pub(crate) const HISTORY_LIMIT: usize = 500;
 pub(crate) enum Source {
     Project,
     Media,
+    MediaDecoders,
     Audio,
     Preview,
     Schemas,
@@ -29,6 +30,7 @@ impl Source {
         match self {
             Self::Project => "Project",
             Self::Media => "Media",
+            Self::MediaDecoders => "Project decoders",
             Self::Audio => "Audio",
             Self::Preview => "Preview",
             Self::Schemas => "Schemas",
@@ -40,9 +42,11 @@ impl Source {
 
     /// Audio, TypeScript, and plugin problems (plugins waiting or skipped,
     /// plugin settings not saved) leave the editor usable, so they are
-    /// warnings; the rest block what the user asked for.
+    /// warnings; the project decoders notice is not a problem at all; the
+    /// rest block what the user asked for.
     pub(crate) fn severity(self) -> Severity {
         match self {
+            Self::MediaDecoders => Severity::Info,
             Self::Audio | Self::TypeScript | Self::Plugins => Severity::Warning,
             _ => Severity::Error,
         }
@@ -59,6 +63,7 @@ impl Source {
         match self {
             Self::Project => "Couldn’t open project",
             Self::Media => "Media probe failed",
+            Self::MediaDecoders => "Project decoders in use",
             Self::Audio => "Audio unavailable",
             Self::Preview => "Preview unavailable",
             Self::Schemas => "Couldn’t load component schemas",

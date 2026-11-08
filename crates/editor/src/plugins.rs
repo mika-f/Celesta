@@ -13,6 +13,7 @@
 use crate::problems::{Problem, Source, error_chain};
 use crate::source::PropertyArgs;
 use crate::view::EditorView;
+use celesta_media::{DecoderUse, MediaRegistry};
 use celesta_plugin_host::{
     InstalledPlugins, PendingPlugin, PluginEntry, PluginRole, SettingsError, UserSettings,
     from_the_internet, has_project_config, project_plugin_paths, project_root,
@@ -23,7 +24,7 @@ use gpui_kit::component::{ActiveTheme as _, WindowExt as _, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Pixels, Window, div, px};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// Wide enough for a plugin's folder on one or two lines.
 const PLUGIN_DIALOG_WIDTH: Pixels = px(560.);
@@ -41,19 +42,23 @@ pub(crate) struct FoundPlugins {
     pub(crate) folders: Vec<PathBuf>,
     /// Why each skipped plugin or folder was skipped.
     pub(crate) skipped: Vec<String>,
-    /// No codec plugin was found, so video and audio files cannot be read
-    /// or exported.
-    pub(crate) missing_codec: bool,
+    /// No media decoder can run, so video and audio files cannot be read.
+    pub(crate) missing_decoder: bool,
+    /// The media plugins that may run, which record the files a project's
+    /// decoders read; none until [`Self::find`] makes it.
+    pub(crate) registry: Option<Arc<MediaRegistry>>,
 }
 
 impl FoundPlugins {
     /// Reads every plugin location, with the trusted project at `project`'s
     /// own folders; blocking, so off the UI thread. Media is read and
-    /// written with the codec plugin among what may run from now on.
+    /// written with the media plugins among what may run from now on.
     pub(crate) fn find(project: Option<&Path>) -> Self {
         let (settings, settings_error) = UserSettings::current();
         let mut found = Self::find_with(project, &settings, settings_error);
-        found.missing_codec = celesta_exporter::use_codec(&found.installed).is_none();
+        let registry = celesta_exporter::use_media(&found.installed);
+        found.missing_decoder = !registry.has_decoders();
+        found.registry = Some(registry);
         found
     }
 
@@ -86,7 +91,8 @@ impl FoundPlugins {
             disabled: allowed.disabled,
             folders: settings.plugin_folders.clone(),
             skipped,
-            missing_codec: false,
+            missing_decoder: false,
+            registry: None,
         }
     }
 
@@ -99,14 +105,14 @@ impl FoundPlugins {
                 pending.entry.directory.display()
             )
         });
-        let codec = self.missing_codec.then(|| self.missing_codec_detail());
-        let detail: Vec<String> = codec
+        let decoder = self.missing_decoder.then(|| self.missing_decoder_detail());
+        let detail: Vec<String> = decoder
             .into_iter()
             .chain(waiting)
             .chain(self.skipped.iter().cloned())
             .collect();
         let title = match (self.pending.len(), self.skipped.len()) {
-            (0, 0) if self.missing_codec => "No codec plugin can run".to_owned(),
+            (0, 0) if self.missing_decoder => "No media decoder can run".to_owned(),
             (0, 0) => return None,
             (0, 1) => "A plugin was skipped".to_owned(),
             (0, skipped) => format!("{skipped} plugins were skipped"),
@@ -116,11 +122,11 @@ impl FoundPlugins {
         Some(Problem::new(title, detail.join("\n")))
     }
 
-    /// Why there is no codec to read and write media with: one has no
+    /// Why there is no decoder to read media with: a media plugin has no
     /// program for this computer, one waits for approval, one is turned off,
     /// or none was found.
-    fn missing_codec_detail(&self) -> String {
-        let is_codec = |entry: &PluginEntry| entry.has_role(PluginRole::Codec);
+    fn missing_decoder_detail(&self) -> String {
+        let is_media = |entry: &PluginEntry| entry.has_role(PluginRole::Media);
         let consequence = "so video and audio files cannot be shown or exported";
         let found = || {
             self.installed
@@ -128,28 +134,28 @@ impl FoundPlugins {
                 .iter()
                 .chain(self.pending.iter().map(|pending| &pending.entry))
                 .chain(&self.disabled)
-                .filter(|entry| is_codec(entry))
+                .filter(|entry| is_media(entry))
         };
         if let Some(unbuilt) = found().find(|entry| entry.executable().is_none()) {
             let (os, arch) = celesta_plugin_host::platform();
             format!(
-                "The codec plugin {} has no program for this computer ({os}-{arch}), \
+                "The media plugin {} has no program for this computer ({os}-{arch}), \
                  {consequence}. Install a build of it for this computer.",
                 unbuilt.manifest.id
             )
-        } else if let Some(pending) = self.pending.iter().find(|pending| is_codec(&pending.entry)) {
+        } else if let Some(pending) = self.pending.iter().find(|pending| is_media(&pending.entry)) {
             format!(
-                "The codec plugin {} waits for your approval, {consequence} until you allow it.",
+                "The media plugin {} waits for your approval, {consequence} until you allow it.",
                 pending.entry.manifest.id
             )
-        } else if let Some(disabled) = self.disabled.iter().find(|entry| is_codec(entry)) {
+        } else if let Some(disabled) = self.disabled.iter().find(|entry| is_media(entry)) {
             format!(
-                "The codec plugin {} is turned off, {consequence}. Turn it on in the Plugins tab.",
+                "The media plugin {} is turned off, {consequence}. Turn it on in the Plugins tab.",
                 disabled.manifest.id
             )
         } else {
             format!(
-                "No codec plugin was found, {consequence}. Install Celesta's {} plugin, or \
+                "No media plugin was found, {consequence}. Install Celesta's {} plugin, or \
                  reinstall Celesta. In a source checkout, build it with node \
                  scripts/plugins/build.mts plugins/ffmpeg and add the absolute path of \
                  plugins/dist to CELESTA_PLUGIN_PATH before starting Celesta.",
@@ -188,6 +194,66 @@ impl FoundPlugins {
              nothing and calling their functions fails: {}.",
             ids.join(", ")
         ))
+    }
+}
+
+/// The Problems entry for the files a project's own decoders read, so a
+/// project cannot decode files unnoticed: one line per plugin, then its
+/// files, shown relative to `root` when inside it. `None` without any.
+pub(crate) fn decoder_notice(uses: &[DecoderUse], root: Option<&Path>) -> Option<Problem> {
+    let mut plugins: Vec<(&str, Vec<String>)> = Vec::new();
+    for used in uses {
+        let shown = root
+            .and_then(|root| used.path.strip_prefix(root).ok())
+            .unwrap_or(&used.path)
+            .display()
+            .to_string();
+        let plugin = used.decoder.plugin.as_str();
+        match plugins.iter_mut().find(|(id, _)| *id == plugin) {
+            Some((_, files)) => files.push(shown),
+            None => plugins.push((plugin, vec![shown])),
+        }
+    }
+    let count = |files: usize| match files {
+        1 => "1 file".to_owned(),
+        files => format!("{files} files"),
+    };
+    let title = match plugins.as_slice() {
+        [] => return None,
+        [(plugin, files)] => format!("{plugin} decodes {} in this project", count(files.len())),
+        _ => format!(
+            "{} project plugins decode {} in this project",
+            plugins.len(),
+            count(uses.len())
+        ),
+    };
+    let detail: Vec<String> = plugins
+        .iter()
+        .flat_map(|(plugin, files)| {
+            std::iter::once(format!("{plugin} decodes {}:", count(files.len())))
+                .chain(files.iter().map(|file| format!("  {file}")))
+        })
+        .collect();
+    Some(Problem::new(title, detail.join("\n")))
+}
+
+impl EditorView {
+    /// Shows the files this project's own decoders read in Problems. The
+    /// list is read only when it changed since last shown.
+    pub(crate) fn sync_decoder_notice(&mut self) {
+        let Some(registry) = self.found_plugins.registry.clone() else {
+            return;
+        };
+        let (generation, uses) = registry.project_decoder_uses();
+        if self.decoder_notice_generation == Some(generation) {
+            return;
+        }
+        self.decoder_notice_generation = Some(generation);
+        let root = self.source_path.as_deref().map(project_root);
+        self.problems.set(
+            Source::MediaDecoders,
+            decoder_notice(&uses, root.as_deref()),
+        );
     }
 }
 
@@ -292,6 +358,8 @@ impl EditorView {
         self.problems.set(Source::Plugins, found.problem());
         self.plugins = found.installed.clone();
         self.found_plugins = found;
+        // A new registry starts its own list.
+        self.decoder_notice_generation = None;
     }
 
     /// Asks whether to trust the project `request` opens; trusting saves
@@ -560,13 +628,13 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_codec_is_a_problem() {
+    fn a_missing_decoder_is_a_problem() {
         let missing = FoundPlugins {
-            missing_codec: true,
+            missing_decoder: true,
             ..FoundPlugins::default()
         };
         let problem = missing.problem().unwrap();
-        assert_eq!(problem.title, "No codec plugin can run");
+        assert_eq!(problem.title, "No media decoder can run");
         for expected in [
             "celesta-codec-ffmpeg",
             "node scripts/plugins/build.mts plugins/ffmpeg",
@@ -587,44 +655,45 @@ mod tests {
         let problem = skipped.problem().unwrap();
         assert_eq!(problem.title, "A plugin was skipped");
         assert!(
-            problem.detail.starts_with("No codec plugin"),
+            problem.detail.starts_with("No media plugin"),
             "{}",
             problem.detail
         );
 
-        // A codec that was found says why it does not run.
+        // A media plugin that was found says why it does not run.
         let (os, arch) = celesta_plugin_host::platform();
-        let codec = PluginEntry {
+        let media = PluginEntry {
             manifest: celesta_plugin_host::Manifest {
                 id: "ffmpeg".into(),
                 version: "1.0.0".into(),
-                protocol: 1,
+                protocol: 2,
                 celesta: Some("*".into()),
                 executable: [(format!("{os}-{arch}"), "bin/p".to_owned())].into(),
                 module: None,
                 types: None,
                 components: Vec::new(),
-                roles: vec![PluginRole::Codec],
+                roles: vec![PluginRole::Media],
+                media: None,
             },
             directory: PathBuf::from("plugins/ffmpeg"),
             source: celesta_plugin_host::PluginSource::User,
         };
         let disabled = FoundPlugins {
-            disabled: vec![codec.clone()],
+            disabled: vec![media.clone()],
             ..missing.clone()
         };
         let problem = disabled.problem().unwrap();
-        assert_eq!(problem.title, "No codec plugin can run");
+        assert_eq!(problem.title, "No media decoder can run");
         assert!(
             problem
                 .detail
-                .starts_with("The codec plugin ffmpeg is turned off"),
+                .starts_with("The media plugin ffmpeg is turned off"),
             "{}",
             problem.detail
         );
-        // Allowing or turning on a codec built for another computer would
+        // Allowing or turning on a media plugin built for another computer would
         // not help.
-        let mut elsewhere = codec.clone();
+        let mut elsewhere = media.clone();
         elsewhere.manifest.executable = [("plan9-mips".to_owned(), "bin/p".to_owned())].into();
         let unbuilt = FoundPlugins {
             disabled: vec![elsewhere],
@@ -635,11 +704,11 @@ mod tests {
                 .problem()
                 .unwrap()
                 .detail
-                .starts_with("The codec plugin ffmpeg has no program for this computer"),
+                .starts_with("The media plugin ffmpeg has no program for this computer"),
         );
         let waiting = FoundPlugins {
             pending: vec![PendingPlugin {
-                entry: codec,
+                entry: media,
                 fingerprint: String::new(),
                 changed: false,
                 from_the_internet: false,
@@ -651,10 +720,104 @@ mod tests {
         assert!(
             problem
                 .detail
-                .starts_with("The codec plugin ffmpeg waits for your approval"),
+                .starts_with("The media plugin ffmpeg waits for your approval"),
             "{}",
             problem.detail
         );
+    }
+
+    fn used(plugin: &str, path: &str) -> DecoderUse {
+        DecoderUse {
+            decoder: format!("{plugin}/dec").parse().unwrap(),
+            origin: celesta_plugin_host::MediaOrigin::Project,
+            path: PathBuf::from(path),
+        }
+    }
+
+    #[test]
+    fn decoder_notice_counts_files() {
+        let uses = [used("proj", "/p/a.mov"), used("proj", "/elsewhere/b.mov")];
+        let problem = decoder_notice(&uses, Some(Path::new("/p"))).unwrap();
+        assert_eq!(problem.title, "proj decodes 2 files in this project");
+        assert_eq!(
+            problem.detail,
+            "proj decodes 2 files:\n  a.mov\n  /elsewhere/b.mov"
+        );
+        let one = decoder_notice(&uses[..1], None).unwrap();
+        assert_eq!(one.title, "proj decodes 1 file in this project");
+        let two = decoder_notice(&[used("a", "/x"), used("b", "/y")], None).unwrap();
+        assert_eq!(
+            two.title,
+            "2 project plugins decode 2 files in this project"
+        );
+    }
+
+    #[test]
+    fn decoder_notice_is_none_without_uses() {
+        assert_eq!(decoder_notice(&[], None), None);
+    }
+
+    #[test]
+    fn an_old_codec_plugin_is_not_a_reason() {
+        let mut old = entry_with_role(PluginRole::Unknown);
+        old.manifest.roles = vec![PluginRole::Unknown];
+        let found = FoundPlugins {
+            missing_decoder: true,
+            installed: InstalledPlugins {
+                plugins: vec![old],
+                ..Default::default()
+            },
+            ..FoundPlugins::default()
+        };
+        let problem = found.problem().unwrap();
+        assert_eq!(problem.title, "No media decoder can run");
+        assert!(
+            problem.detail.contains("No media plugin was found"),
+            "{}",
+            problem.detail
+        );
+    }
+
+    #[test]
+    fn a_waiting_media_plugin_is_the_reason() {
+        let found = FoundPlugins {
+            missing_decoder: true,
+            pending: vec![PendingPlugin {
+                entry: entry_with_role(PluginRole::Media),
+                fingerprint: String::new(),
+                changed: false,
+                from_the_internet: false,
+            }],
+            ..FoundPlugins::default()
+        };
+        let problem = found.problem().unwrap();
+        assert!(
+            problem
+                .detail
+                .starts_with("The media plugin ffmpeg waits for your approval"),
+            "{}",
+            problem.detail
+        );
+    }
+
+    fn entry_with_role(role: PluginRole) -> PluginEntry {
+        let (os, arch) = celesta_plugin_host::platform();
+        PluginEntry {
+            manifest: celesta_plugin_host::Manifest {
+                id: "ffmpeg".into(),
+                version: "1.0.0".into(),
+                protocol: 2,
+                celesta: Some("*".into()),
+                executable: [(format!("{os}-{arch}"), "bin/p".to_owned())].into(),
+                module: None,
+                types: None,
+                components: Vec::new(),
+                roles: vec![role],
+                media: None,
+            },
+            directory: PathBuf::from("plugins/ffmpeg"),
+            source: celesta_plugin_host::PluginSource::User,
+        }
     }
 
     /// A scratch project with `celesta.config.json` listing `plugins/`, which

@@ -1,6 +1,6 @@
 //! A plugin's process, as Celesta runs every plugin: content plugins for the
-//! renderer ([`crate::PluginHost`]) and the codec plugin for media
-//! (`celesta_media::CodecProcess`).
+//! renderer ([`crate::PluginHost`]) and media plugins for media
+//! (`celesta_media::MediaProvider`).
 //!
 //! - On Windows it starts without a console window of its own, which a
 //!   console program started by the GUI editor would otherwise get.

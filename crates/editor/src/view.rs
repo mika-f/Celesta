@@ -404,6 +404,9 @@ pub(crate) struct EditorView {
     /// about in this window, so "Not Now" is not asked again until they
     /// change.
     pub(crate) asked_plugins: HashSet<(PathBuf, String)>,
+    /// The generation of the registry's project-decoder list last shown in
+    /// Problems; `None` until the current registry's list is shown.
+    pub(crate) decoder_notice_generation: Option<u64>,
 }
 
 impl EditorView {
@@ -615,6 +618,7 @@ impl EditorView {
             add: AddState::default(),
             plugins: InstalledPlugins::default(),
             found_plugins: FoundPlugins::default(),
+            decoder_notice_generation: None,
             asked_plugins: HashSet::new(),
         };
         editor.set_plugins(plugins);
