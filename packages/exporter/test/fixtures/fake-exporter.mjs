@@ -30,6 +30,13 @@ const video = {
 };
 
 switch (process.env.FAKE_MODE) {
+  case 'hang':
+    setInterval(() => {}, 1000);
+    break;
+  case 'component-error':
+    line(error('component_unavailable', 'no such component: ffmpeg/nope'));
+    process.exitCode = 1;
+    break;
   case 'video':
     line({
       event: 'output',

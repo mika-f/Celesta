@@ -12,7 +12,7 @@ export const CANCEL_TIMEOUT_MS = 10_000;
 const STDERR_LIMIT = 64 * 1024;
 
 /** Flags this package passes that older exporters reject. */
-const NEWER_FLAGS = /'--(info|json-progress|stdin-cancel|list-components|describe|muxer|video-encoder|audio-encoder)'/;
+const NEWER_FLAGS = /'--(info|json-progress|stdin-cancel|list-components|describe|check|muxer|video-encoder|video-option|audio-encoder|audio-option|preset-file)'/;
 
 /**
  * Runs the exporter with `args` (which include `--json`) and resolves with
@@ -41,6 +41,12 @@ export function runExporter<T = ExportReport>(args: string[], options: RunOption
 
     const cancel = () => {
       if (child.exitCode !== null || child.signalCode !== null) return;
+      // Without `--stdin-cancel` nothing reads stdin, and what runs (a
+      // listing or a description) is read-only: stop it at once.
+      if (!args.includes('--stdin-cancel')) {
+        child.kill();
+        return;
+      }
       // `--stdin-cancel`: the exporter stops at the next frame and removes
       // what it was writing. Stills it already wrote stay.
       child.stdin.end('cancel\n');

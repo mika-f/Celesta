@@ -114,3 +114,19 @@ test('a missing exporter is exporter_not_found', async () => {
     code: 'exporter_not_found',
   });
 });
+
+test('aborting a listing kills the exporter at once', { skip }, async () => {
+  const controller = new AbortController();
+  const started = Date.now();
+  const listing = listComponents({ ...run('hang'), signal: controller.signal });
+  setTimeout(() => controller.abort(), 100);
+  await assert.rejects(listing, { code: 'cancelled' });
+  assert.ok(Date.now() - started < 5000);
+  const describing = describeComponent('ffmpeg/libx264', { ...run('hang'), signal: AbortSignal.timeout(100) });
+  await assert.rejects(describing, { code: 'cancelled' });
+});
+
+test('a component error report rejects', { skip }, async () => {
+  await assert.rejects(listComponents(run('component-error')), { code: 'component_unavailable' });
+  await assert.rejects(describeComponent('ffmpeg/nope', run('component-error')), { code: 'component_unavailable' });
+});
