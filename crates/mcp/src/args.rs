@@ -217,6 +217,21 @@ pub struct DescribeComponentArgs {
     pub component: String,
 }
 
+/// `presetFile`: a readable JSON object, as the CLI's `--preset-file`.
+/// Presets arrive with P3, so nothing reads names from it yet.
+fn check_preset_file(path: &Path) -> Result<(), String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read presetFile {}: {error}", path.display()))?;
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(_)) => Ok(()),
+        Ok(_) => Err(format!("presetFile {} is not a JSON object", path.display())),
+        Err(error) => Err(format!(
+            "presetFile {} is not valid JSON: {error}",
+            path.display()
+        )),
+    }
+}
+
 fn component_ref(text: &str) -> Result<ComponentRef, String> {
     text.parse()
         .map_err(|error: celesta_media::InvalidComponentRef| error.to_string())
@@ -540,6 +555,9 @@ impl ExportVideoArgs {
                 "output must be a video file, not {}; use render_frames for still images",
                 output.display()
             ));
+        }
+        if let Some(file) = &self.preset_file {
+            check_preset_file(&absolute(file))?;
         }
         let choice = OutputChoice {
             preset: self.preset.clone(),
@@ -906,6 +924,23 @@ mod tests {
                 .unwrap();
             assert!(job.options.looping, "{output}");
         }
+    }
+
+    #[test]
+    fn a_preset_file_must_be_a_json_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, text: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, text).unwrap();
+            path
+        };
+        let job = |path: &Path| {
+            video_job(json!({ "source": "a.tsx", "output": "a.mp4", "presetFile": path }))
+        };
+        assert!(job(&write("ok.json", "{}")).is_ok());
+        rejects(job(&write("list.json", "[]")), "not a JSON object");
+        rejects(job(&write("bad.json", "{")), "not valid JSON");
+        rejects(job(&dir.path().join("missing.json")), "cannot read presetFile");
     }
 
     #[test]
