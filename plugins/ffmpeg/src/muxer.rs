@@ -349,17 +349,20 @@ pub(crate) fn open(
             &format!("create {}", request.output.display()),
         ));
     }
-    if let Err(error) = write_header(raw, faststart) {
-        let _ = context.close();
-        let _ = std::fs::remove_file(request.output);
-        return Err(error);
+    let started = write_header(raw, faststart).and_then(|()| PacketBuf::new());
+    match started {
+        Ok(packet) => Ok(MuxerSession {
+            output: request.output.to_owned(),
+            context,
+            streams,
+            packet,
+        }),
+        Err(error) => {
+            let _ = context.close();
+            let _ = std::fs::remove_file(request.output);
+            Err(error)
+        }
     }
-    Ok(MuxerSession {
-        output: request.output.to_owned(),
-        context,
-        streams,
-        packet: PacketBuf::new()?,
-    })
 }
 
 /// Writes `context`'s header, with `+faststart` when asked.

@@ -247,18 +247,25 @@ fn exports_frame_exact_mp4_with_silent_audio() {
     assert!(!cancelled_output.exists());
 }
 
-/// The FFmpeg plugin as a renderer that reads back no YUV sees it: every
-/// video encoder is offered only the RGBA formats, so libx264 converts them
-/// itself.
-struct RgbaOnly(FfmpegCodec);
+/// What a video encoder was offered and what it chose.
+type Opened = Arc<Mutex<Vec<(Vec<PixelFormat>, PixelFormat)>>>;
 
-impl MediaProvider for RgbaOnly {
+/// The FFmpeg plugin, noting in `opened` what each video encoder was offered
+/// and chose. With `rgba_only`, it sees what a renderer that reads back no
+/// YUV offers: only the RGBA formats, so libx264 converts them itself.
+struct Watched {
+    codec: FfmpegCodec,
+    rgba_only: bool,
+    opened: Opened,
+}
+
+impl MediaProvider for Watched {
     fn describe(&mut self) -> Result<Vec<celesta_media::ComponentDescription>, MediaError> {
-        self.0.describe()
+        self.codec.describe()
     }
 
     fn decoder(&mut self) -> Option<&mut dyn Decoder> {
-        self.0.decoder()
+        self.codec.decoder()
     }
 
     fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
@@ -266,15 +273,15 @@ impl MediaProvider for RgbaOnly {
     }
 
     fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
-        self.0.audio_encoder()
+        self.codec.audio_encoder()
     }
 
     fn muxer(&mut self) -> Option<&mut dyn Muxer> {
-        self.0.muxer()
+        self.codec.muxer()
     }
 }
 
-impl VideoEncoder for RgbaOnly {
+impl VideoEncoder for Watched {
     fn open_video(
         &mut self,
         request: &VideoEncoderRequest<'_>,
@@ -283,12 +290,19 @@ impl VideoEncoder for RgbaOnly {
             .offered
             .iter()
             .copied()
-            .filter(|format| matches!(format, PixelFormat::Rgba8 | PixelFormat::Rgba16))
+            .filter(|format| {
+                !self.rgba_only || matches!(format, PixelFormat::Rgba8 | PixelFormat::Rgba16)
+            })
             .collect();
-        self.0.open_video(&VideoEncoderRequest {
+        let opened = self.codec.open_video(&VideoEncoderRequest {
             offered: &offered,
             ..*request
-        })
+        })?;
+        self.opened
+            .lock()
+            .unwrap()
+            .push((request.offered.to_vec(), opened.input));
+        Ok(opened)
     }
 
     fn encode_video(
@@ -297,16 +311,31 @@ impl VideoEncoder for RgbaOnly {
         pts: i64,
         frame: Vec<u8>,
     ) -> Result<Encoded, MediaError> {
-        self.0.encode_video(session, pts, frame)
+        self.codec.encode_video(session, pts, frame)
     }
 
     fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
-        self.0.finish_video(session)
+        self.codec.finish_video(session)
     }
 
     fn abort_video(&mut self, session: SessionId) {
-        self.0.abort_video(session);
+        self.codec.abort_video(session);
     }
+}
+
+/// Makes a [`Watched`] FFmpeg plugin the media plugin of every export.
+fn watch(rgba_only: bool, opened: &Opened) {
+    let opened = opened.clone();
+    celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(vec![RegisteredPlugin {
+        factory: Arc::new(move |_, _| {
+            Ok(Box::new(Watched {
+                codec: FfmpegCodec::new(),
+                rgba_only,
+                opened: opened.clone(),
+            }) as Box<_>)
+        }),
+        ..celesta_codec_ffmpeg::registered()
+    }]))));
 }
 
 #[test]
@@ -384,31 +413,43 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
         .map(|()| output)
     };
     // The GPU's conversion when the renderer offers YUV; libswscale's of
-    // RGBA when it is not offered.
-    let on_gpu = |bit_depth: &str, name: &str| {
-        celesta_codec_ffmpeg::install();
-        export(bit_depth, name)
-    };
-    let in_encoder = |bit_depth: &str, name: &str| {
-        celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(vec![RegisteredPlugin {
-            factory: Arc::new(|_, _| Ok(Box::new(RgbaOnly(FfmpegCodec::new())) as Box<_>)),
-            ..celesta_codec_ffmpeg::registered()
-        }]))));
+    // RGBA when it is not offered. Each export answers the input libx264
+    // chose and what it was offered.
+    let watched = |rgba_only: bool, bit_depth: &str, name: &str| {
+        let opened = Opened::default();
+        watch(rgba_only, &opened);
         let result = export(bit_depth, name);
         celesta_codec_ffmpeg::install();
-        result
+        let mut opened = opened.lock().unwrap();
+        assert!(opened.len() <= 1, "{opened:?}");
+        result.map(|output| (output, opened.pop().expect("libx264 was opened")))
     };
     let mut pixel_formats: Vec<i32> = Vec::new();
-    for bit_depth in ["8", "10"] {
-        let on_gpu = match on_gpu(bit_depth, &format!("gpu-{bit_depth}.mp4")) {
-            Ok(output) => output,
-            Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
-                skip_without_gpu(&error);
-                return;
-            }
-            Err(error) => panic!("GPU conversion export failed: {error}"),
-        };
-        let in_encoder = in_encoder(bit_depth, &format!("encoder-{bit_depth}.mp4")).unwrap();
+    for (bit_depth, yuv, rgba) in [
+        ("8", PixelFormat::Yuv420p, PixelFormat::Rgba8),
+        ("10", PixelFormat::Yuv420p10, PixelFormat::Rgba16),
+    ] {
+        let (on_gpu, (offered, input)) =
+            match watched(false, bit_depth, &format!("gpu-{bit_depth}.mp4")) {
+                Ok(exported) => exported,
+                Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+                    skip_without_gpu(&error);
+                    return;
+                }
+                Err(error) => panic!("GPU conversion export failed: {error}"),
+            };
+        if !offered.contains(&yuv) {
+            // A software renderer, such as CI's lavapipe, reads back no YUV
+            // (deviation 18): there is no GPU conversion to compare.
+            eprintln!(
+                "skipping GPU color conversion test: the renderer offers no YUV ({offered:?})"
+            );
+            return;
+        }
+        assert_eq!(input, yuv, "{bit_depth}-bit on the GPU");
+        let (in_encoder, (_, input)) =
+            watched(true, bit_depth, &format!("encoder-{bit_depth}.mp4")).unwrap();
+        assert_eq!(input, rgba, "{bit_depth}-bit in the encoder");
 
         let mut decoder = FfmpegBackend::new();
         for time in [0.0, 0.5] {
