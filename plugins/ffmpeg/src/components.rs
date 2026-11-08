@@ -288,7 +288,7 @@ pub(crate) fn describe() -> Vec<ComponentDescription> {
                 reason: None,
                 settings: codec.settings(),
                 input_formats: codec.input_formats(),
-                transports: vec!["pipe".to_owned()],
+                transports: vec!["sharedMemory".to_owned(), "pipe".to_owned()],
                 ..ComponentDescription::unavailable(ComponentKind::VideoEncoder, codec.id(), "")
             },
             Err(reason) => {

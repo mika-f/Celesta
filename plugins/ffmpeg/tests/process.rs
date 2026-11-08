@@ -6,10 +6,11 @@
 use celesta_codec_ffmpeg::{DECODER_ID, FfmpegCodec, registered};
 use celesta_composition::Rational;
 use celesta_media::{
-    AudioDecoder, AudioEncoderRequest, Color, ComponentKind, Decoder, Encoded, MediaBackend,
-    MediaError, MediaProcess, MediaProvider, MediaRegistry, MuxerRequest, Packet, PixelFormat,
-    ProviderFactory, ProviderUse, RegisteredPlugin, SettingValue, Settings, Track, TrackConfig,
-    TrackPacket, VideoEncoderOpened, VideoEncoderRequest, VideoFrameDecoder,
+    Answered, AudioDecoder, AudioEncoderRequest, Color, ComponentKind, Decoder, Encoded,
+    FrameTransport, MediaBackend, MediaError, MediaProcess, MediaProvider, MediaRegistry,
+    MuxerRequest, Packet, PixelFormat, ProviderFactory, ProviderUse, RegisteredPlugin,
+    SettingValue, Settings, Track, TrackConfig, TrackPacket, VideoEncoderOpened,
+    VideoEncoderRequest, VideoFrameDecoder, ring_layout,
 };
 use ez_ffmpeg::{FfmpegContext, Input, Output};
 use std::path::{Path, PathBuf};
@@ -29,6 +30,20 @@ fn started(purpose: ProviderUse) -> Box<dyn MediaProvider> {
 /// The program, started to decode.
 fn provider() -> Box<dyn MediaProvider> {
     started(ProviderUse::Decode)
+}
+
+/// The program started with `transport` for `purpose`.
+fn program_with(transport: FrameTransport, purpose: ProviderUse) -> MediaProcess {
+    let executable = executable();
+    let directory = executable.parent().unwrap().to_path_buf();
+    MediaProcess::start_with(
+        &executable,
+        &directory,
+        &Default::default(),
+        transport,
+        purpose,
+    )
+    .unwrap()
 }
 
 fn settings(pairs: &[(&str, SettingValue)]) -> Settings {
@@ -216,7 +231,7 @@ fn the_program_answers_as_the_codec_in_process_does() {
 fn writes_an_export_through_the_program() {
     let directory = tempfile::tempdir().unwrap();
     let (width, height) = (32, 16);
-    let mut program = started(ProviderUse::Export);
+    let mut program = started(ProviderUse::Export { ring: None });
     let described = program.describe().unwrap();
     let libx264 = described
         .iter()
@@ -300,7 +315,7 @@ fn refused<T: std::fmt::Debug>(result: Result<T, MediaError>) -> String {
 
 #[test]
 fn settings_libx264_cannot_write_are_refused() {
-    let mut program = started(ProviderUse::Export);
+    let mut program = started(ProviderUse::Export { ring: None });
     let program = program.as_mut();
     let crf = settings(&[("crf", SettingValue::Number(99.0))]);
     assert_eq!(refused(open_x264(program, &crf, (2, 2))), "crf");
@@ -348,7 +363,7 @@ fn reads_and_writes_paths_relative_to_celestas_working_directory() {
         codec.probe(&missing),
         Err(MediaError::NotFound(path)) if path == missing
     ));
-    let mut program = started(ProviderUse::Export);
+    let mut program = started(ProviderUse::Export { ring: None });
     let encoded = encode_video(program.as_mut(), (4, 4), 1);
     mux_mp4(program.as_mut(), &relative.join("out.mp4"), vec![encoded]);
     assert!(directory.path().join("out.mp4").is_file());
@@ -451,4 +466,86 @@ fn the_manifest_lists_every_kind() {
         assert_eq!(listed, ids(&source, key), "{key}");
     }
     assert_eq!(printed["media"]["muxers"][0]["id"], "mp4");
+}
+
+/// Encodes `frames` (ten of them at 10 fps) through `program`'s pipeline,
+/// receiving before each send so that fewer than `depth` requests are in
+/// flight, and muxes them to `output`.
+fn export_pipelined(program: &mut MediaProcess, output: &Path, size: (u32, u32), frames: u8) {
+    let opened = open_x264(program, &settings(&[("preset", text("ultrafast"))]), size).unwrap();
+    let mut answers: Vec<Encoded> = Vec::new();
+    let pipeline = program.pipeline().expect("a pipeline");
+    assert_eq!(pipeline.depth(), 3);
+    for frame in 0..frames {
+        while pipeline.in_flight() >= pipeline.depth() {
+            match pipeline.receive().unwrap() {
+                Answered::VideoFrame(encoded) => answers.push(encoded),
+                other => panic!("expected a video frame answer, got {other:?}"),
+            }
+        }
+        let pixels =
+            [frame * 20, frame * 3, 255 - frame * 20, 255].repeat((size.0 * size.1) as usize);
+        pipeline
+            .send_video_frame(opened.session, i64::from(frame), pixels)
+            .unwrap();
+    }
+    while pipeline.in_flight() > 0 {
+        match pipeline.receive().unwrap() {
+            Answered::VideoFrame(encoded) => answers.push(encoded),
+            other => panic!("expected a video frame answer, got {other:?}"),
+        }
+    }
+    answers.push(
+        program
+            .video_encoder()
+            .unwrap()
+            .finish_video(opened.session)
+            .unwrap(),
+    );
+    let (packets, config) = gathered(answers);
+    let track = Track::Video {
+        config,
+        timescale: 10,
+        width: size.0,
+        height: size.1,
+        frame_rate: Rational::new(10, 1),
+        color: Color::bt709_limited(),
+        alpha: false,
+    };
+    mux_mp4(program, output, vec![(track, packets)]);
+}
+
+#[test]
+fn frames_reach_the_encoder_through_the_ring() {
+    let directory = tempfile::tempdir().unwrap();
+    let size = (32, 16);
+    let export = ProviderUse::Export {
+        ring: ring_layout(&[PixelFormat::Rgba8], size.0, size.1),
+    };
+
+    let mut shared = program_with(FrameTransport::SharedMemory, export);
+    if cfg!(any(unix, windows)) {
+        assert!(shared.shares_frames(), "the program declined the ring");
+    }
+    let through_ring = directory.path().join("ring.mp4");
+    export_pipelined(&mut shared, &through_ring, size, 10);
+    drop(shared);
+
+    let mut piped = program_with(FrameTransport::Pipe, export);
+    assert!(!piped.shares_frames());
+    let through_pipe = directory.path().join("pipe.mp4");
+    export_pipelined(&mut piped, &through_pipe, size, 10);
+    drop(piped);
+
+    assert_eq!(
+        std::fs::read(&through_ring).unwrap(),
+        std::fs::read(&through_pipe).unwrap()
+    );
+    let mut reader = program_backend().with_sequential_video(Rational::new(10, 1));
+    for frame in 0..10 {
+        let decoded = reader
+            .decode_frame(&through_ring, f64::from(frame) / 10.0)
+            .unwrap();
+        assert_eq!((decoded.width, decoded.height), size, "{frame}");
+    }
 }

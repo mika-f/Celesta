@@ -665,7 +665,17 @@ fn describe_names_every_manifest_component() {
         })
         .unwrap();
     assert!(libx264.available, "{:?}", libx264.reason);
-    assert_eq!(libx264.transports, ["pipe"]);
+    for encoder in described
+        .iter()
+        .filter(|component| component.kind == ComponentKind::VideoEncoder && component.available)
+    {
+        assert_eq!(
+            encoder.transports,
+            ["sharedMemory", "pipe"],
+            "{}",
+            encoder.id
+        );
+    }
     assert_eq!(
         libx264.input_formats,
         [

@@ -17,13 +17,16 @@
 //! changes less than the wall clock. The plugin's includes opening it and
 //! its first frame. Decoded frames come through shared memory when the
 //! plugin accepts it; `CELESTA_CODEC_SHARED_MEMORY=0` keeps them in the
-//! pipe, to compare the two.
+//! pipe, to compare the two. Encoded frames go the same way, through the
+//! export ring and pipelined three deep; the same variable compares the
+//! pipe, pipelined.
 
 use celesta_codec_ffmpeg::DECODER_ID;
 use celesta_composition::Rational;
 use celesta_media::{
-    Color, MediaBackend, MediaProcess, MediaRegistry, PixelFormat, ProviderFactory, ProviderUse,
-    RegisteredPlugin, SettingValue, Settings, VideoEncoderRequest, VideoFrameDecoder,
+    Answered, Color, FrameTransport, MediaBackend, MediaProcess, MediaProvider, MediaRegistry,
+    Pipeline, PixelFormat, ProviderFactory, ProviderUse, RegisteredPlugin, SessionId, SettingValue,
+    Settings, VideoEncoderRequest, VideoFrameDecoder, ring_layout,
 };
 use std::env;
 use std::path::{Path, PathBuf};
@@ -58,12 +61,17 @@ fn main() {
     for (name, factory) in &codecs {
         let timing = encode(factory.clone(), &video, frames);
         timing.print("encode", name, frames);
+        if let Some(how) = &timing.how {
+            println!("  ({how})");
+        }
     }
 }
 
 /// What a run of frames took.
 struct Timing {
     size: (u32, u32),
+    /// How frames reached the encoder, for an encode run.
+    how: Option<String>,
     wall: Duration,
     /// This process's CPU time during the frames.
     host: Option<Duration>,
@@ -151,6 +159,7 @@ fn decode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
     drop(backend);
     Timing {
         size: (first.width, first.height),
+        how: None,
         wall,
         host,
         plugin: since(opened, |(_, children)| children),
@@ -164,15 +173,22 @@ fn decode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
 /// process included.
 fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
     let opened = cpu();
+    // The size comes from a plugin that decodes, before the export's own
+    // starts with a ring for it.
+    let (width, height) = {
+        let mut probing =
+            factory(&Default::default(), ProviderUse::Decode).expect("the plugin starts");
+        let probe = probing
+            .decoder()
+            .expect("the plugin decodes")
+            .probe(DECODER_ID, video)
+            .expect("the video probe");
+        let stream = probe.video.expect("the file has a video stream");
+        (stream.width, stream.height)
+    };
+    let ring = ring_layout(&[PixelFormat::Rgba8], width, height);
     let mut provider =
-        factory(&Default::default(), ProviderUse::Export).expect("the plugin starts");
-    let probe = provider
-        .decoder()
-        .expect("the plugin decodes")
-        .probe(DECODER_ID, video)
-        .expect("the video probes");
-    let stream = probe.video.expect("the file has a video stream");
-    let (width, height) = (stream.width, stream.height);
+        factory(&Default::default(), ProviderUse::Export { ring }).expect("the plugin starts");
     let settings: Settings = [(
         "preset".to_owned(),
         SettingValue::String("ultrafast".to_owned()),
@@ -180,8 +196,9 @@ fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
     .into_iter()
     .collect();
     let color = Color::bt709_limited();
-    let encoder = provider.video_encoder().expect("the plugin encodes video");
-    let session = encoder
+    let session = provider
+        .video_encoder()
+        .expect("the plugin encodes video")
         .open_video(&VideoEncoderRequest {
             component: "libx264",
             settings: &settings,
@@ -203,9 +220,29 @@ fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
         pixels
     };
     let pixels: Vec<Vec<u8>> = (0..4).map(frame).collect();
-    encoder
-        .encode_video(session, 0, pixels[0].clone())
-        .expect("a frame encodes");
+    // A plugin pipelines when it has a pipeline; an encoder in this process
+    // has none, and takes one frame at a time.
+    let depth = provider.pipeline().map(|pipeline| pipeline.depth());
+    let how = match depth {
+        None => "in process".to_owned(),
+        Some(depth) => {
+            let shared = ring.is_some()
+                && matches!(
+                    FrameTransport::from_environment(),
+                    FrameTransport::SharedMemory
+                );
+            format!("{}, {depth} deep", if shared { "ring" } else { "pipe" })
+        }
+    };
+    let mut packets = 0;
+    send(
+        provider.as_mut(),
+        session,
+        0,
+        pixels[0].clone(),
+        &mut packets,
+    );
+    drain(provider.as_mut(), &mut packets);
     // The whole loop is timed, copying each frame (as the renderer's
     // readback makes one) included: an encoder in this process goes on
     // encoding on its own threads while the next frame is copied, so timing
@@ -214,21 +251,72 @@ fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
     let before = cpu();
     for index in 1..=frames {
         let frame = pixels[index as usize % pixels.len()].clone();
-        let encoded = encoder
-            .encode_video(session, i64::from(index), frame)
-            .expect("a frame encodes");
-        std::hint::black_box(encoded.packets.len());
+        send(
+            provider.as_mut(),
+            session,
+            i64::from(index),
+            frame,
+            &mut packets,
+        );
     }
-    let finished = encoder.finish_video(session).expect("the encoder finishes");
-    std::hint::black_box(finished.packets.len());
+    drain(provider.as_mut(), &mut packets);
+    let finished = provider
+        .video_encoder()
+        .expect("the plugin encodes video")
+        .finish_video(session)
+        .expect("the encoder finishes");
+    std::hint::black_box(finished.packets.len() + packets);
     let wall = started.elapsed();
     let host = since(before, |(own, _)| own);
     // Stops the plugin, which is waited for.
     drop(provider);
     Timing {
         size: (width, height),
+        how: Some(how),
         wall,
         host,
         plugin: since(opened, |(_, children)| children),
+    }
+}
+
+/// Encodes one frame: through the pipeline, after receiving an answer when
+/// its window is full, when `provider` has one, else on the spot.
+fn send(
+    provider: &mut dyn MediaProvider,
+    session: SessionId,
+    pts: i64,
+    frame: Vec<u8>,
+    packets: &mut usize,
+) {
+    if let Some(pipeline) = provider.pipeline() {
+        while pipeline.in_flight() >= pipeline.depth() {
+            receive(pipeline, packets);
+        }
+        pipeline
+            .send_video_frame(session, pts, frame)
+            .expect("a frame is sent");
+    } else {
+        let encoded = provider
+            .video_encoder()
+            .expect("the plugin encodes video")
+            .encode_video(session, pts, frame)
+            .expect("a frame encodes");
+        *packets += encoded.packets.len();
+    }
+}
+
+/// Receives every answer still in flight.
+fn drain(provider: &mut dyn MediaProvider, packets: &mut usize) {
+    if let Some(pipeline) = provider.pipeline() {
+        while pipeline.in_flight() > 0 {
+            receive(pipeline, packets);
+        }
+    }
+}
+
+fn receive(pipeline: &mut dyn Pipeline, packets: &mut usize) {
+    match pipeline.receive().expect("a frame encodes") {
+        Answered::VideoFrame(encoded) => *packets += encoded.packets.len(),
+        other => panic!("expected a video frame answer, got {other:?}"),
     }
 }
