@@ -2,7 +2,8 @@ use crate::decoder::{AudioDecoder, VideoFrameDecoder};
 use crate::error::MediaError;
 use crate::mix::video_seconds;
 use crate::provider::{
-    Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Sequential, VideoRequest,
+    Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, ProviderUse, Sequential,
+    VideoRequest,
 };
 use crate::registry::{ComponentRef, MediaRegistry, registry};
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
@@ -287,7 +288,7 @@ impl Processes {
             // a provider in this process has no process to kill and starts
             // as usual.
             let kill = self.kill.clone().unwrap_or_default();
-            let provider = (registry.plugin(plugin).factory)(&kill)?;
+            let provider = (registry.plugin(plugin).factory)(&kill, ProviderUse::Decode)?;
             self.open.insert(plugin, provider);
         }
         Ok(self.open.get_mut(&plugin).expect("started above").as_mut())

@@ -37,13 +37,13 @@ pub use process::{FrameTransport, MediaProcess, SHARED_FRAME_BYTES, SHARED_MEMOR
 pub use provider::{
     AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription,
     ComponentKind, Container, Decoder, Encoded, EncoderId, EncoderSettings, MediaProvider,
-    MuxRequest, Muxer, MuxerRequest, Packet, PixelFormat, ProviderFactory, SampleRates, Sequential,
-    SessionId, SideData, Track, TrackConfig, TrackPacket, VideoEncoder, VideoEncoderOpened,
-    VideoEncoderRequest, VideoRequest, timestamps_match,
+    MuxRequest, Muxer, MuxerRequest, Packet, PixelFormat, ProviderFactory, ProviderUse,
+    SampleRates, Sequential, SessionId, SideData, Track, TrackConfig, TrackPacket, VideoEncoder,
+    VideoEncoderOpened, VideoEncoderRequest, VideoRequest, timestamps_match,
 };
 pub use registry::{
-    ComponentRef, DecoderUse, InvalidComponentRef, MediaRegistry, RegisteredPlugin, registry,
-    set_registry,
+    ComponentEntry, ComponentRef, DecoderUse, InvalidComponentRef, MediaComponentInfo,
+    MediaRegistry, PluginDescription, RegisteredPlugin, registry, set_registry,
 };
 pub use settings::{
     InvalidSetting, SelectOption, SettingField, SettingKind, SettingValue, Settings,

@@ -526,6 +526,23 @@ pub struct ComponentDescription {
     pub channels: Vec<u16>,
 }
 
+impl ComponentDescription {
+    /// `kind` `id` as unavailable for `reason`, with nothing else.
+    pub fn unavailable(kind: ComponentKind, id: &str, reason: impl Into<String>) -> Self {
+        Self {
+            kind,
+            id: id.to_owned(),
+            available: false,
+            reason: Some(reason.into()),
+            settings: Vec::new(),
+            input_formats: Vec::new(),
+            transports: Vec::new(),
+            sample_rates: None,
+            channels: Vec::new(),
+        }
+    }
+}
+
 /// What an encoder writes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -562,10 +579,25 @@ pub struct MuxRequest {
     pub lead_in_frames: usize,
 }
 
-/// Starts an instance of a media plugin, each time a [`crate::MediaBackend`]
-/// first needs that plugin. A plugin that runs in a process of its own
-/// registers it with the switch it is given, before it says `hello`, so
-/// killing the switch also ends a slow start; a provider in this process
-/// ignores it.
-pub type ProviderFactory =
-    Arc<dyn Fn(&PluginKillSwitch) -> Result<Box<dyn MediaProvider>, MediaError> + Send + Sync>;
+/// What an instance of a media plugin is started for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ProviderUse {
+    /// A [`crate::MediaBackend`]'s probes and decodes.
+    Decode,
+    /// Only to answer `describe`, then stopped
+    /// ([`crate::MediaRegistry::describe`]).
+    Describe,
+    /// An export's encoders and muxers.
+    Export,
+}
+
+/// Starts an instance of a media plugin for a [`ProviderUse`]: each time a
+/// [`crate::MediaBackend`] first needs that plugin, to describe it, or for
+/// an export. A plugin that runs in a process of its own registers it with
+/// the switch it is given, before it says `hello`, so killing the switch
+/// also ends a slow start; a provider in this process ignores it.
+pub type ProviderFactory = Arc<
+    dyn Fn(&PluginKillSwitch, ProviderUse) -> Result<Box<dyn MediaProvider>, MediaError>
+        + Send
+        + Sync,
+>;

@@ -15,7 +15,7 @@ use crate::registry::{
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame, VideoStream};
 use crate::{ProviderFactory, VideoColor};
 use celesta_composition::{Rational, Time};
-use celesta_plugin_host::{MediaDecoderEntry, MediaOrigin, PluginKillSwitch};
+use celesta_plugin_host::{MediaDecoderEntry, MediaManifest, MediaOrigin, PluginKillSwitch};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -222,7 +222,7 @@ fn with_decoders(
     let started = AtomicUsize::new(0);
     let journal = journal.clone();
     let plugin = id.to_owned();
-    let factory: ProviderFactory = Arc::new(move |_| {
+    let factory: ProviderFactory = Arc::new(move |_, _| {
         journal.push(format!("start {plugin}"));
         if answer == Answer::CannotStart {
             return Err(MediaError::CodecUnavailable("cannot start".into()));
@@ -239,8 +239,14 @@ fn with_decoders(
     });
     RegisteredPlugin {
         id: id.to_owned(),
+        version: "1.0.0".into(),
         origin,
-        decoders,
+        directory: PathBuf::from("/plugins").join(id),
+        executable: None,
+        media: MediaManifest {
+            decoders,
+            ..MediaManifest::default()
+        },
         factory,
     }
 }
@@ -681,7 +687,7 @@ fn hand_written_extensions_are_normalized() {
         registry.decoder_candidates(Path::new("/clip.mp4")),
         [(0, component("upper/dec")), (1, component("dotted/dec"))]
     );
-    assert_eq!(registry.plugin(1).decoders[0].extensions, ["mp4"]);
+    assert_eq!(registry.plugin(1).media.decoders[0].extensions, ["mp4"]);
 }
 
 #[test]
@@ -874,14 +880,14 @@ fn a_backend_made_before_set_registry_uses_it() {
 /// A registry of one plugin, `fake`, reading `mp4` with `factory`.
 fn single(factory: ProviderFactory) -> Arc<MediaRegistry> {
     Arc::new(MediaRegistry::new(vec![RegisteredPlugin {
-        id: "fake".into(),
-        origin: MediaOrigin::Bundled,
-        decoders: vec![MediaDecoderEntry {
-            id: "dec".into(),
-            name: "Decoder".into(),
-            extensions: vec!["mp4".into()],
-        }],
         factory,
+        ..plugin(
+            &Journal::default(),
+            "fake",
+            MediaOrigin::Bundled,
+            &["mp4"],
+            Answer::Reads,
+        )
     }]))
 }
 
@@ -917,9 +923,9 @@ fn a_backend_gives_its_plugins_its_kill_switch() {
     let given = Arc::new(Mutex::new(None));
     let seen = given.clone();
     let inner = reads(&Journal::default());
-    let factory: ProviderFactory = Arc::new(move |kill| {
+    let factory: ProviderFactory = Arc::new(move |kill, purpose| {
         *seen.lock().unwrap() = Some(kill.clone());
-        inner(kill)
+        inner(kill, purpose)
     });
     let mut backend = MediaBackend::with_registry(single(factory)).with_kill_switch(kill.clone());
     let _ = backend.decode_audio(&path, 48_000, 1);

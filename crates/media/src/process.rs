@@ -5,8 +5,8 @@ use crate::protocol::{self, ROLES, SharedFrames, decode_error};
 use crate::provider::{
     AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, ComponentDescription, Container,
     Encoded, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Muxer, MuxerRequest,
-    ProviderFactory, SessionId, TrackPacket, VideoEncoder, VideoEncoderOpened, VideoEncoderRequest,
-    VideoRequest,
+    ProviderFactory, ProviderUse, SessionId, TrackPacket, VideoEncoder, VideoEncoderOpened,
+    VideoEncoderRequest, VideoRequest,
 };
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_plugin::MEDIA_PROTOCOL_VERSION;
@@ -152,13 +152,22 @@ impl MediaProcess {
         })
     }
 
-    /// Makes a [`ProviderFactory`] that starts `executable` for each backend.
+    /// Makes a [`ProviderFactory`] that starts `executable` in `directory`.
+    /// Only a process that decodes is offered shared memory (as
+    /// [`Self::start`] offers it); one that describes or exports gets the
+    /// pipe.
     pub fn factory(executable: PathBuf, directory: PathBuf) -> ProviderFactory {
-        Arc::new(move |kill| {
-            Ok(
-                Box::new(MediaProcess::start(&executable, &directory, kill)?)
-                    as Box<dyn MediaProvider>,
-            )
+        Arc::new(move |kill, purpose| {
+            let transport = match purpose {
+                ProviderUse::Decode => FrameTransport::from_environment(),
+                ProviderUse::Describe | ProviderUse::Export => FrameTransport::Pipe,
+            };
+            Ok(Box::new(MediaProcess::start_with(
+                &executable,
+                &directory,
+                kill,
+                transport,
+            )?) as Box<dyn MediaProvider>)
         })
     }
 

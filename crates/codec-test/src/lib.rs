@@ -24,11 +24,11 @@ use celesta_media::{
     EncoderSettings, MediaError, MediaProbe, MediaProvider, MediaRegistry, MuxRequest, PixelFormat,
     ProviderFactory, RegisteredPlugin, VideoFrame, VideoRequest, VideoStream, timestamps_match,
 };
-use celesta_plugin_host::{MediaDecoderEntry, MediaOrigin};
+use celesta_plugin_host::{MediaDecoderEntry, MediaManifest, MediaOrigin};
 use format::{AudioHeader, Kind, Scanned, VideoHeader, VideoWriter, invalid};
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// The id the codec's plugin manifest and `hello` give.
@@ -68,7 +68,7 @@ impl TestCodec {
 
     /// A [`ProviderFactory`] making a [`TestCodec`] in this process.
     pub fn factory() -> ProviderFactory {
-        Arc::new(|_| Ok(Box::new(Self::new()) as Box<dyn MediaProvider>))
+        Arc::new(|_, _| Ok(Box::new(Self::new()) as Box<dyn MediaProvider>))
     }
 }
 
@@ -77,12 +77,18 @@ impl TestCodec {
 pub fn registered() -> RegisteredPlugin {
     RegisteredPlugin {
         id: PLUGIN_ID.to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
         origin: MediaOrigin::Bundled,
-        decoders: vec![MediaDecoderEntry {
-            id: DECODER_ID.to_owned(),
-            name: DECODER_NAME.to_owned(),
-            extensions: Vec::new(),
-        }],
+        directory: PathBuf::new(),
+        executable: None,
+        media: MediaManifest {
+            decoders: vec![MediaDecoderEntry {
+                id: DECODER_ID.to_owned(),
+                name: DECODER_NAME.to_owned(),
+                extensions: Vec::new(),
+            }],
+            ..MediaManifest::default()
+        },
         factory: TestCodec::factory(),
     }
 }

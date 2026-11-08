@@ -37,8 +37,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             .into_iter()
             .map(|plugin| RegisteredPlugin {
                 id: plugin.id,
+                version: plugin.version,
                 origin: plugin.origin,
-                decoders: plugin.media.decoders,
+                directory: plugin.directory.clone(),
+                executable: Some(plugin.executable.clone()),
+                media: plugin.media,
                 factory: MediaProcess::factory(plugin.executable, plugin.directory),
             })
             .collect(),
