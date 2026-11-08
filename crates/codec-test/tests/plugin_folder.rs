@@ -1,7 +1,7 @@
 //! The temporary plugin folder a test gives a child process, so the child
 //! reads and writes media with the test codec's program.
 
-use celesta_codec_test::{DECODER_ID, PLUGIN_ID, PROGRAM, TestCodecPlugin, profile_dir};
+use celesta_codec_test::{DECODER_ID, MUXER_ID, PLUGIN_ID, PROGRAM, TestCodecPlugin, profile_dir};
 use celesta_media::MediaProcess;
 use celesta_plugin_host::{InstalledPlugins, PluginRole, discover};
 use std::path::Path;
@@ -28,7 +28,7 @@ fn the_folder_is_a_media_plugin_for_this_platform() {
     );
 
     // Named explicitly, it is the first media plugin, ahead of any other
-    // installed (such as one on CELESTA_PLUGIN_PATH), with its one decoder.
+    // installed (such as one on CELESTA_PLUGIN_PATH), with its four components.
     let media = InstalledPlugins::find(&[folder.to_path_buf()], &[])
         .0
         .media();
@@ -37,12 +37,22 @@ fn the_folder_is_a_media_plugin_for_this_platform() {
     };
     assert_eq!(plugin.id, PLUGIN_ID);
     assert_eq!(plugin.executable, executable);
-    let [decoder] = plugin.decoders.as_slice() else {
-        panic!("one decoder, not {:?}", plugin.decoders);
+    let [decoder] = plugin.media.decoders.as_slice() else {
+        panic!("one decoder, not {:?}", plugin.media.decoders);
     };
     assert_eq!(decoder.id, DECODER_ID);
     assert_eq!(decoder.name, "Test codec");
     assert!(decoder.extensions.is_empty());
+    assert_eq!(plugin.media.video_encoders.len(), 1);
+    assert_eq!(plugin.media.audio_encoders.len(), 1);
+    let [muxer] = plugin.media.muxers.as_slice() else {
+        panic!("one muxer, not {:?}", plugin.media.muxers);
+    };
+    assert_eq!(muxer.id, MUXER_ID);
+    assert!(muxer.trims_leading_audio);
+    assert_eq!(muxer.extensions, ["mp4", "mov", "webm", "ctst"]);
+    assert_eq!(muxer.default_video.as_deref(), Some("ctst"));
+    assert_eq!(muxer.default_audio.as_deref(), Some("lpcm"));
     // The program in the folder runs and answers as a media plugin.
     MediaProcess::start(&plugin.executable, &plugin.directory, &Default::default()).unwrap();
 }

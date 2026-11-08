@@ -1,31 +1,42 @@
-//! A lossless codec for Celesta's tests. [`TestCodec`] stores exactly the
-//! frames an encoder is given (in their [`PixelFormat`], with no conversion)
-//! and the audio muxed in, compressed with LZ4, and reads them back; it also
-//! reads 16-bit PCM WAV, so tests keep the checked-in voices. It honours the
-//! [`MediaProvider`] contract the exporter relies on: containers,
-//! `check_encoder`, the lead-in, and errors for what it does not support.
+//! A lossless codec for Celesta's tests. [`TestCodec`] is a media plugin with
+//! all four kinds of component: a video encoder that stores the frames it is
+//! given (in their [`PixelFormat`], with no conversion), an audio encoder that
+//! stores `f32` samples, a muxer that writes both into one file, and a decoder
+//! that reads that file back; it also reads 16-bit PCM WAV, so tests keep the
+//! checked-in voices. Encoded video is LZ4-compressed. It honours the
+//! [`MediaProvider`] contract the exporter relies on: settings validation,
+//! the audio delay and leading audio, and errors for what it does not
+//! support.
 //!
 //! Tests use it in their own process ([`install`]), or, for a child process
 //! such as `celesta-exporter`, as the [`PROGRAM`] in a temporary plugin
 //! folder ([`TestCodecPlugin`]). `src/format.rs` describes the file it
 //! writes; [`read`] gives a file's contents to compare byte for byte.
 
+mod components;
 mod format;
 mod plugin;
 mod wav;
 
 pub use celesta_plugin_host::PLUGIN_PATH_ENV;
+pub use components::{
+    AUDIO_CODEC, AUDIO_ENCODER_ID, DECODER_ID, DECODER_NAME, MUXER_ID, VIDEO_CODEC,
+    VIDEO_ENCODER_ID,
+};
 pub use format::{StoredAudio, StoredVideo, TestMedia, read, write_audio, write_rgba_video};
 pub use plugin::{TestCodecPlugin, profile_dir};
 
 use celesta_composition::Time;
 use celesta_media::{
-    AudioBuffer, AudioStream, ComponentDescription, ComponentKind, Container, EncoderId,
-    EncoderSettings, MediaError, MediaProbe, MediaProvider, MediaRegistry, MuxRequest, PixelFormat,
-    ProviderFactory, RegisteredPlugin, VideoFrame, VideoRequest, VideoStream, timestamps_match,
+    AudioBuffer, AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, AudioStream,
+    ComponentDescription, Decoder, Encoded, InvalidSetting, MediaError, MediaProbe, MediaProvider,
+    MediaRegistry, Muxer, MuxerRequest, Packet, PixelFormat, ProviderFactory, RegisteredPlugin,
+    SessionId, SettingValue, Settings, TrackConfig, TrackPacket, VideoEncoder, VideoEncoderOpened,
+    VideoEncoderRequest, VideoFrame, VideoRequest, VideoStream, settings::validate,
+    timestamps_match,
 };
-use celesta_plugin_host::{MediaDecoderEntry, MediaManifest, MediaOrigin};
-use format::{AudioHeader, Kind, Scanned, VideoHeader, VideoWriter, invalid};
+use celesta_plugin_host::MediaOrigin;
+use format::{Kind, MuxWriter, Scanned, VideoHeader, invalid};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -34,31 +45,34 @@ use std::sync::Arc;
 /// The id the codec's plugin manifest and `hello` give.
 pub const PLUGIN_ID: &str = "celesta-test-codec";
 
-/// The id of the codec's one decoder, which reads a test codec or WAV file of
-/// any extension.
-pub const DECODER_ID: &str = "test";
-
-/// The decoder's display name.
-pub const DECODER_NAME: &str = "Test codec";
-
 /// The name of the program that serves the codec.
 pub const PROGRAM: &str = "celesta-codec-test";
 
-/// The probe's codec name for a test codec file's video.
-const VIDEO_CODEC: &str = "celesta-test";
+/// An open video encoder.
+struct VideoSession {
+    video: VideoHeader,
+    frame_len: usize,
+    /// Whether the track's config has not been answered yet.
+    config_due: bool,
+}
 
-/// The probe's codec name for a test codec file's audio.
-const AUDIO_CODEC: &str = "pcm_f32le";
-
-/// The largest H.264 constant rate factor, which the FFmpeg codec refuses
-/// to go past.
-const MAX_CRF: u8 = 51;
+/// An open audio encoder.
+struct AudioSession {
+    channels: u16,
+    delay: u64,
+    /// Whether no samples have come yet, so the delay's silence is due.
+    first: bool,
+    config_due: bool,
+}
 
 /// The lossless test codec.
 #[derive(Default)]
 pub struct TestCodec {
-    encoders: HashMap<EncoderId, VideoWriter>,
-    next: u64,
+    video: HashMap<SessionId, VideoSession>,
+    audio: HashMap<SessionId, AudioSession>,
+    muxers: HashMap<SessionId, MuxWriter>,
+    /// The last session number given, one count for every kind.
+    last: u64,
 }
 
 impl TestCodec {
@@ -70,10 +84,15 @@ impl TestCodec {
     pub fn factory() -> ProviderFactory {
         Arc::new(|_, _| Ok(Box::new(Self::new()) as Box<dyn MediaProvider>))
     }
+
+    fn next_session(&mut self) -> SessionId {
+        self.last += 1;
+        SessionId(self.last)
+    }
 }
 
-/// The codec as a media plugin made in this process: bundled, with its one
-/// decoder.
+/// The codec as a media plugin made in this process: bundled, with its four
+/// components.
 pub fn registered() -> RegisteredPlugin {
     RegisteredPlugin {
         id: PLUGIN_ID.to_owned(),
@@ -81,14 +100,7 @@ pub fn registered() -> RegisteredPlugin {
         origin: MediaOrigin::Bundled,
         directory: PathBuf::new(),
         executable: None,
-        media: MediaManifest {
-            decoders: vec![MediaDecoderEntry {
-                id: DECODER_ID.to_owned(),
-                name: DECODER_NAME.to_owned(),
-                extensions: Vec::new(),
-            }],
-            ..MediaManifest::default()
-        },
+        media: components::manifest(),
         factory: TestCodec::factory(),
     }
 }
@@ -110,8 +122,35 @@ fn check_decoder(decoder: &str) -> Result<(), MediaError> {
     }
 }
 
-fn no_encoder(encoder: EncoderId) -> MediaError {
-    MediaError::Codec(format!("no open encoder {}", encoder.0))
+/// `component` as the one of its kind the plugin has.
+fn check_component(kind: &str, component: &str, id: &str) -> Result<(), MediaError> {
+    if component == id {
+        Ok(())
+    } else {
+        Err(MediaError::Codec(format!(
+            "no {kind} {component:?} in {PLUGIN_ID}"
+        )))
+    }
+}
+
+fn no_session(session: SessionId) -> MediaError {
+    MediaError::Codec(format!("no open session {}", session.0))
+}
+
+/// `given` checked against `schema`, with the defaults filled in.
+fn settings_for(
+    schema: &[celesta_media::SettingField],
+    given: &Settings,
+) -> Result<Settings, MediaError> {
+    validate(schema, given)
+        .map_err(|InvalidSetting { key, message }| MediaError::InvalidSettings { key, message })
+}
+
+fn invalid_setting(key: &str, message: impl Into<String>) -> MediaError {
+    MediaError::InvalidSettings {
+        key: key.to_owned(),
+        message: message.into(),
+    }
 }
 
 /// A file the codec reads.
@@ -249,21 +288,28 @@ fn rgba8(path: &Path, format: PixelFormat, frame: Vec<u8>) -> Result<Vec<u8>, Me
 }
 
 impl MediaProvider for TestCodec {
-    /// Its one decoder, available.
     fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
-        Ok(vec![ComponentDescription {
-            kind: ComponentKind::Decoder,
-            id: DECODER_ID.to_owned(),
-            available: true,
-            reason: None,
-            settings: Vec::new(),
-            input_formats: Vec::new(),
-            transports: Vec::new(),
-            sample_rates: None,
-            channels: Vec::new(),
-        }])
+        Ok(components::describe())
     }
 
+    fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+        Some(self)
+    }
+
+    fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
+        Some(self)
+    }
+
+    fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
+        Some(self)
+    }
+
+    fn muxer(&mut self) -> Option<&mut dyn Muxer> {
+        Some(self)
+    }
+}
+
+impl Decoder for TestCodec {
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
         check_decoder(decoder)?;
         match Source::open(path)? {
@@ -372,72 +418,262 @@ impl MediaProvider for TestCodec {
             samples,
         })
     }
+}
 
-    fn check_encoder(&mut self, _container: Container) -> Result<(), MediaError> {
-        Ok(())
-    }
-
-    fn open_encoder(&mut self, settings: &EncoderSettings) -> Result<EncoderId, MediaError> {
-        if settings.container == Container::Mp4 {
-            if settings.crf > MAX_CRF {
-                return Err(MediaError::Codec(format!(
-                    "H.264 CRF must be between 0 and {MAX_CRF}, got {}",
-                    settings.crf
-                )));
-            }
-            if !matches!(settings.bit_depth, 8 | 10) {
-                return Err(MediaError::Codec(format!(
-                    "H.264 is written at a bit depth of 8 or 10, not {}",
-                    settings.bit_depth
-                )));
-            }
+impl VideoEncoder for TestCodec {
+    fn open_video(
+        &mut self,
+        request: &VideoEncoderRequest<'_>,
+    ) -> Result<VideoEncoderOpened, MediaError> {
+        check_component("video encoder", request.component, VIDEO_ENCODER_ID)?;
+        let settings = settings_for(&components::video_settings(), request.settings)?;
+        let input = match settings.get("input") {
+            Some(SettingValue::String(text)) if text != "auto" => text
+                .parse::<PixelFormat>()
+                .map_err(|_| invalid_setting("input", format!("{text:?} is not a pixel format")))?,
+            _ => *request
+                .offered
+                .first()
+                .ok_or_else(|| invalid_setting("input", "no pixel format is offered"))?,
+        };
+        if !request.offered.contains(&input) {
+            return Err(invalid_setting(
+                "input",
+                format!("{input} is not among the formats offered"),
+            ));
         }
-        let writer = VideoWriter::create(
-            &settings.output,
-            Some(settings.container),
-            VideoHeader {
-                width: settings.width,
-                height: settings.height,
-                frame_rate: settings.frame_rate,
-                format: settings.input,
+        let alpha = settings.get("alpha") == Some(&SettingValue::Boolean(true));
+        if alpha && input != PixelFormat::Rgba16 {
+            return Err(invalid_setting("alpha", "needs rgba16 as the input"));
+        }
+        let video = VideoHeader {
+            width: request.width,
+            height: request.height,
+            frame_rate: request.frame_rate,
+            format: input,
+        };
+        let frame_len = format::checked_video(Path::new("the video"), &video)?;
+        let session = self.next_session();
+        self.video.insert(
+            session,
+            VideoSession {
+                video,
+                frame_len,
+                config_due: true,
             },
-        )?;
-        self.next += 1;
-        let id = EncoderId(self.next);
-        self.encoders.insert(id, writer);
-        Ok(id)
+        );
+        Ok(VideoEncoderOpened {
+            session,
+            input,
+            alpha,
+        })
     }
 
-    fn encode_frame(&mut self, encoder: EncoderId, pixels: Vec<u8>) -> Result<(), MediaError> {
-        self.encoders
-            .get_mut(&encoder)
-            .ok_or_else(|| no_encoder(encoder))?
-            .push(&pixels)
+    fn encode_video(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        frame: Vec<u8>,
+    ) -> Result<Encoded, MediaError> {
+        let state = self
+            .video
+            .get_mut(&session)
+            .ok_or_else(|| no_session(session))?;
+        if frame.len() != state.frame_len {
+            let VideoHeader {
+                width,
+                height,
+                format,
+                ..
+            } = state.video;
+            return Err(MediaError::Codec(format!(
+                "a {width}x{height} {format:?} frame is {} bytes, not {}",
+                state.frame_len,
+                frame.len()
+            )));
+        }
+        let packet = Packet {
+            pts,
+            dts: pts,
+            duration: i64::from(state.video.frame_rate.denominator),
+            key: true,
+            bytes: lz4_flex::block::compress_prepend_size(&frame),
+            additional: Vec::new(),
+        };
+        Ok(Encoded {
+            packets: vec![packet],
+            config: video_config(state),
+        })
     }
 
-    fn finish_encoder(&mut self, encoder: EncoderId) -> Result<(), MediaError> {
-        self.encoders
-            .remove(&encoder)
-            .ok_or_else(|| no_encoder(encoder))?
-            .finish()
+    fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+        let mut state = self
+            .video
+            .remove(&session)
+            .ok_or_else(|| no_session(session))?;
+        Ok(Encoded {
+            packets: Vec::new(),
+            config: video_config(&mut state),
+        })
     }
 
-    fn abort_encoder(&mut self, encoder: EncoderId) {
-        // Dropped at once, so the caller can remove what it wrote.
-        self.encoders.remove(&encoder);
+    fn abort_video(&mut self, session: SessionId) {
+        self.video.remove(&session);
     }
+}
 
-    fn mux_audio(&mut self, request: &MuxRequest) -> Result<(), MediaError> {
-        format::mux(
-            &request.video,
-            &request.audio,
-            &request.output,
-            request.container,
-            AudioHeader {
+/// The video track's config, the first time it is asked for: its
+/// description is the name of the pixel format.
+fn video_config(state: &mut VideoSession) -> Option<TrackConfig> {
+    std::mem::take(&mut state.config_due).then(|| TrackConfig {
+        codec: VIDEO_CODEC.to_owned(),
+        description: Some(state.video.format.to_string().into_bytes()),
+    })
+}
+
+fn audio_config(state: &mut AudioSession) -> Option<TrackConfig> {
+    std::mem::take(&mut state.config_due).then(|| TrackConfig {
+        codec: AUDIO_CODEC.to_owned(),
+        description: None,
+    })
+}
+
+impl AudioEncoder for TestCodec {
+    fn open_audio(
+        &mut self,
+        request: &AudioEncoderRequest<'_>,
+    ) -> Result<AudioEncoderOpened, MediaError> {
+        check_component("audio encoder", request.component, AUDIO_ENCODER_ID)?;
+        let settings = settings_for(&components::audio_settings(), request.settings)?;
+        if request.sample_rate == 0 || request.channels == 0 {
+            return Err(MediaError::InvalidAudioFormat {
                 sample_rate: request.sample_rate,
                 channels: request.channels,
-                lead_in_frames: request.lead_in_frames,
+            });
+        }
+        let delay = match settings.get("delay") {
+            Some(SettingValue::Number(delay)) => *delay as u64,
+            _ => 0,
+        };
+        let sample_rate = match settings.get("sampleRate") {
+            Some(SettingValue::String(rate)) if rate != "any" => rate
+                .parse()
+                .map_err(|_| invalid_setting("sampleRate", format!("{rate:?} is not a rate")))?,
+            _ => request.sample_rate,
+        };
+        let session = self.next_session();
+        self.audio.insert(
+            session,
+            AudioSession {
+                channels: request.channels,
+                delay,
+                first: true,
+                config_due: true,
             },
-        )
+        );
+        Ok(AudioEncoderOpened {
+            session,
+            sample_rate,
+            channels: request.channels,
+            delay,
+        })
+    }
+
+    fn encode_audio(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        samples: &[f32],
+    ) -> Result<Encoded, MediaError> {
+        let state = self
+            .audio
+            .get_mut(&session)
+            .ok_or_else(|| no_session(session))?;
+        let channels = usize::from(state.channels);
+        if !samples.len().is_multiple_of(channels) {
+            return Err(MediaError::InvalidAudioSampleCount {
+                samples: samples.len(),
+                channels: state.channels,
+            });
+        }
+        let delay = i64::try_from(state.delay).expect("a delay is at most 65536");
+        let mut packets = Vec::new();
+        // The encoder's priming silence goes out first, ahead of the first
+        // samples, which the muxer hides with the delay.
+        if std::mem::take(&mut state.first) && state.delay > 0 {
+            packets.push(Packet {
+                pts: pts - delay,
+                dts: pts - delay,
+                duration: delay,
+                key: true,
+                bytes: vec![0; state.delay as usize * channels * 4],
+                additional: Vec::new(),
+            });
+        }
+        packets.push(Packet {
+            pts: pts - delay,
+            dts: pts - delay,
+            duration: (samples.len() / channels) as i64,
+            key: true,
+            bytes: format::samples_bytes(samples),
+            additional: Vec::new(),
+        });
+        Ok(Encoded {
+            packets,
+            config: audio_config(state),
+        })
+    }
+
+    fn finish_audio(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+        let mut state = self
+            .audio
+            .remove(&session)
+            .ok_or_else(|| no_session(session))?;
+        Ok(Encoded {
+            packets: Vec::new(),
+            config: audio_config(&mut state),
+        })
+    }
+
+    fn abort_audio(&mut self, session: SessionId) {
+        self.audio.remove(&session);
+    }
+}
+
+impl Muxer for TestCodec {
+    fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
+        check_component("muxer", request.component, MUXER_ID)?;
+        settings_for(&[], request.settings)?;
+        let writer = MuxWriter::create(request.output, request.tracks, request.leading_audio)?;
+        let session = self.next_session();
+        self.muxers.insert(session, writer);
+        Ok(session)
+    }
+
+    fn write_packets(
+        &mut self,
+        session: SessionId,
+        packets: &[TrackPacket],
+    ) -> Result<(), MediaError> {
+        let writer = self
+            .muxers
+            .get_mut(&session)
+            .ok_or_else(|| no_session(session))?;
+        packets.iter().try_for_each(|packet| writer.write(packet))
+    }
+
+    fn finish_muxer(&mut self, session: SessionId) -> Result<Vec<PathBuf>, MediaError> {
+        let writer = self
+            .muxers
+            .remove(&session)
+            .ok_or_else(|| no_session(session))?;
+        writer.finish().map(|output| vec![output])
+    }
+
+    fn abort_muxer(&mut self, session: SessionId) -> Vec<PathBuf> {
+        if let Some(writer) = self.muxers.remove(&session) {
+            writer.abort();
+        }
+        Vec::new()
     }
 }

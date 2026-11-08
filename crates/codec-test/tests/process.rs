@@ -2,19 +2,21 @@
 //! protocol, answering as [`TestCodec`] does in this process.
 
 use celesta_codec_test::{
-    DECODER_ID, StoredAudio, StoredVideo, TestCodec, TestMedia, read, write_rgba_video,
+    AUDIO_ENCODER_ID, DECODER_ID, MUXER_ID, StoredAudio, StoredVideo, TestCodec, TestMedia,
+    VIDEO_ENCODER_ID, read, write_rgba_video,
 };
 use celesta_composition::Rational;
 use celesta_media::{
-    Container, EncoderSettings, FrameTransport, MediaError, MediaProcess, MediaProvider,
-    MuxRequest, PixelFormat, Sequential, VideoRequest,
+    AudioEncoderRequest, Color, ComponentKind, Decoder, FrameTransport, MediaError, MediaProcess,
+    MediaProvider, MuxerRequest, PixelFormat, ProviderUse, Sequential, SettingValue, Settings,
+    Track, TrackPacket, VideoEncoderRequest, VideoRequest,
 };
 use std::path::{Path, PathBuf};
 
 fn program() -> Box<dyn MediaProvider> {
     let executable = PathBuf::from(env!("CARGO_BIN_EXE_celesta-codec-test"));
     let folder = executable.parent().unwrap().to_path_buf();
-    MediaProcess::factory(executable, folder)(&Default::default()).unwrap()
+    MediaProcess::factory(executable, folder)(&Default::default(), ProviderUse::Export).unwrap()
 }
 
 /// A codec program that never answers `hello`, as one that hangs while it
@@ -148,10 +150,11 @@ fn frames_through_shared_memory_are_the_frames_through_the_pipe() {
 }
 
 #[test]
-fn the_program_answers_as_the_codec_in_process_does() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut process = program();
+fn the_program_answers_decoding_as_the_codec_in_process_does() {
+    let mut provider = program();
+    let process = provider.decoder().expect("a decoder");
     let mut local = TestCodec::new();
+    let directory = tempfile::tempdir().unwrap();
 
     let video = directory.path().join("video.ctc");
     let frames = vec![
@@ -181,50 +184,141 @@ fn the_program_answers_as_the_codec_in_process_does() {
         local.decode_audio(DECODER_ID, &voice, 44_100, 1).unwrap()
     );
 
-    let encoded = directory.path().join("encoded.ctc");
-    let encoder = process
-        .open_encoder(&EncoderSettings {
-            output: encoded.clone(),
+    let missing = directory.path().join("missing.mp4");
+    assert!(matches!(
+        process.probe(DECODER_ID, &missing),
+        Err(MediaError::NotFound(path)) if path == missing
+    ));
+}
+
+#[test]
+fn the_program_describes_and_exports() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut provider = program();
+
+    let described = provider.describe().unwrap();
+    assert_eq!(described, TestCodec::new().describe().unwrap());
+    let kinds: Vec<_> = described.iter().map(|component| component.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            ComponentKind::Decoder,
+            ComponentKind::VideoEncoder,
+            ComponentKind::AudioEncoder,
+            ComponentKind::Muxer,
+        ]
+    );
+
+    // Video: two frames in the first format offered.
+    let frames = vec![
+        vec![1, 2, 3, 4, 5, 6, 7, 8],
+        vec![9, 10, 11, 12, 13, 14, 15, 16],
+    ];
+    let color = Color::bt709_limited();
+    let encoder = provider.video_encoder().expect("a video encoder");
+    let opened = encoder
+        .open_video(&VideoEncoderRequest {
+            component: VIDEO_ENCODER_ID,
+            settings: &Settings::new(),
             width: 2,
             height: 1,
             frame_rate: Rational::new(30, 1),
-            input: PixelFormat::Rgba8,
-            container: Container::Mp4,
-            preset: "medium".into(),
-            crf: 18,
-            bit_depth: 8,
+            timescale: 30,
+            offered: &[PixelFormat::Rgba8],
+            color: &color,
         })
         .unwrap();
-    for frame in &frames {
-        process.encode_frame(encoder, frame.clone()).unwrap();
+    assert_eq!(opened.input, PixelFormat::Rgba8);
+    let mut video_packets = Vec::new();
+    let mut video_config = None;
+    for (index, frame) in frames.iter().enumerate() {
+        let answer = encoder
+            .encode_video(opened.session, index as i64, frame.clone())
+            .unwrap();
+        video_packets.extend(answer.packets);
+        video_config = video_config.or(answer.config);
     }
-    process.finish_encoder(encoder).unwrap();
-    let pcm = directory.path().join("audio.pcm");
-    let samples = [0.25f32, -0.5, 0.75, -1.0];
-    std::fs::write(
-        &pcm,
-        samples
-            .iter()
-            .flat_map(|sample| sample.to_le_bytes())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
-    let output = directory.path().join("muxed.ctc");
-    process
-        .mux_audio(&MuxRequest {
-            video: encoded,
-            audio: pcm,
+    let finished = encoder.finish_video(opened.session).unwrap();
+    video_packets.extend(finished.packets);
+    video_config = video_config.or(finished.config);
+    assert_eq!(video_packets.len(), 2);
+
+    // Audio: 100 stereo frames, one of them the encoder's delay.
+    let samples: Vec<f32> = (0..200).map(|index| index as f32 / 200.0 - 0.5).collect();
+    let encoder = provider.audio_encoder().expect("an audio encoder");
+    let delay = Settings::from([("delay".to_owned(), SettingValue::Number(1.0))]);
+    let opened_audio = encoder
+        .open_audio(&AudioEncoderRequest {
+            component: AUDIO_ENCODER_ID,
+            settings: &delay,
             sample_rate: 48_000,
             channels: 2,
-            output: output.clone(),
-            container: Container::Mp4,
-            lead_in_frames: 1,
         })
         .unwrap();
+    assert_eq!(opened_audio.delay, 1);
+    assert_ne!(opened_audio.session, opened.session);
+    let answer = encoder
+        .encode_audio(opened_audio.session, 0, &samples)
+        .unwrap();
+    let mut audio_packets = answer.packets;
+    let audio_config = answer
+        .config
+        .expect("the config comes with the first packets");
+    audio_packets.extend(encoder.finish_audio(opened_audio.session).unwrap().packets);
+    assert_eq!(audio_packets.len(), 2, "the delay's silence and the chunk");
+
+    // The muxer writes both, with the encoder's one frame of delay and one
+    // frame of leading audio hidden.
+    let output = directory.path().join("exported.ctst");
+    let tracks = [
+        Track::Video {
+            config: video_config.expect("a video config"),
+            timescale: 30,
+            width: 2,
+            height: 1,
+            frame_rate: Rational::new(30, 1),
+            color,
+            alpha: false,
+        },
+        Track::Audio {
+            config: audio_config,
+            timescale: 48_000,
+            sample_rate: 48_000,
+            channels: 2,
+            delay: 1,
+        },
+    ];
+    let muxer = provider.muxer().expect("a muxer");
+    let session = muxer
+        .open_muxer(&MuxerRequest {
+            component: MUXER_ID,
+            settings: &Settings::new(),
+            output: &output,
+            tracks: &tracks,
+            leading_audio: 1,
+        })
+        .unwrap();
+    let packets: Vec<TrackPacket> = video_packets
+        .into_iter()
+        .map(|packet| TrackPacket { track: 0, packet })
+        .chain(
+            audio_packets
+                .into_iter()
+                .map(|packet| TrackPacket { track: 1, packet }),
+        )
+        .collect();
+    muxer.write_packets(session, &packets).unwrap();
+    assert_eq!(
+        muxer.finish_muxer(session).unwrap(),
+        std::slice::from_ref(&output)
+    );
+
+    let mut all = vec![0.0; 2];
+    all.extend(&samples);
     assert_eq!(
         read(&output).unwrap(),
         TestMedia {
-            container: Some(Container::Mp4),
+            extension: Some("ctst".to_owned()),
             video: Some(StoredVideo {
                 width: 2,
                 height: 1,
@@ -235,17 +329,27 @@ fn the_program_answers_as_the_codec_in_process_does() {
             audio: Some(StoredAudio {
                 sample_rate: 48_000,
                 channels: 2,
-                lead_in_frames: 1,
-                samples: samples.to_vec(),
+                lead_in_frames: 2,
+                samples: all,
             }),
         }
     );
 
-    let missing = directory.path().join("missing.mp4");
-    assert!(matches!(
-        process.probe(DECODER_ID, &missing),
-        Err(MediaError::NotFound(path)) if path == missing
-    ));
+    // An aborted mux removes its file, and the program says there is none
+    // left to remove.
+    let aborted = directory.path().join("aborted.ctst");
+    let session = muxer
+        .open_muxer(&MuxerRequest {
+            component: MUXER_ID,
+            settings: &Settings::new(),
+            output: &aborted,
+            tracks: &tracks[..1],
+            leading_audio: 0,
+        })
+        .unwrap();
+    assert!(aborted.exists());
+    assert!(muxer.abort_muxer(session).is_empty());
+    assert!(!aborted.exists());
 }
 
 #[test]
@@ -261,7 +365,8 @@ fn a_foreign_file_is_unsupported() {
 
     // The wire code "unsupported" comes back as `Unsupported` naming the
     // file, as the codec in this process answers.
-    let mut process = program();
+    let mut provider = program();
+    let process = provider.decoder().unwrap();
     assert!(matches!(
         process.probe(DECODER_ID, &png),
         Err(MediaError::Unsupported { path, .. }) if path == png
@@ -276,7 +381,7 @@ fn a_foreign_file_is_unsupported() {
 fn another_decoder_is_not_the_test_codec() {
     let directory = tempfile::tempdir().unwrap();
     let missing = directory.path().join("any.ctc");
-    let message = match program().probe("ffmpeg", &missing) {
+    let message = match program().decoder().unwrap().probe("ffmpeg", &missing) {
         Err(MediaError::Codec(message)) => message,
         other => panic!("expected a codec error, got {other:?}"),
     };
