@@ -197,6 +197,15 @@ impl MediaRegistry {
         project.generation += 1;
     }
 
+    /// The generation [`Self::project_decoder_uses`] would return, without
+    /// copying the list.
+    pub fn project_decoder_generation(&self) -> u64 {
+        self.uses
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .generation
+    }
+
     /// The files project plugins' decoders read, in the order first read,
     /// and the list's generation, which changes whenever the list does.
     pub fn project_decoder_uses(&self) -> (u64, Vec<DecoderUse>) {
@@ -223,4 +232,23 @@ pub fn registry() -> Option<Arc<MediaRegistry>> {
         .read()
         .unwrap_or_else(PoisonError::into_inner)
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_generation_changes_with_each_new_project_use_only() {
+        let registry = MediaRegistry::new(Vec::new());
+        let decoder: ComponentRef = "proj/dec".parse().unwrap();
+        assert_eq!(registry.project_decoder_generation(), 0);
+        registry.record_use(&decoder, MediaOrigin::Project, Path::new("/a"));
+        assert_eq!(registry.project_decoder_generation(), 1);
+        // Again, and from a user plugin: nothing new.
+        registry.record_use(&decoder, MediaOrigin::Project, Path::new("/a"));
+        registry.record_use(&decoder, MediaOrigin::User, Path::new("/b"));
+        assert_eq!(registry.project_decoder_generation(), 1);
+        assert_eq!(registry.project_decoder_uses().0, 1);
+    }
 }

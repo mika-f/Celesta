@@ -53,9 +53,10 @@ impl Source {
     }
 
     /// Whether this source's problems get a toast. The preview error panel
-    /// already shows a preview error in place, for as long as it persists.
+    /// already shows a preview error in place, for as long as it persists,
+    /// and the project decoders list grows as a preview decodes files.
     fn toasts_problems(self) -> bool {
-        self != Self::Preview
+        !matches!(self, Self::Preview | Self::MediaDecoders)
     }
 
     /// The title for a failure that has no more specific one.
@@ -738,6 +739,18 @@ mod tests {
         let announced = problems.take_unannounced();
         assert_eq!(announced.len(), HISTORY_LIMIT);
         assert_eq!(announced.first().unwrap().problem.detail, "10");
+    }
+
+    #[test]
+    fn the_project_decoders_notice_is_logged_without_a_toast() {
+        let mut problems = Problems::default();
+        problems.report(Source::MediaDecoders, "proj decodes 1 file", "a");
+        assert!(problems.take_unannounced().is_empty());
+        let entry = problems.history().next().unwrap();
+        assert_eq!(entry.severity, Severity::Info);
+        assert!(!entry.toast);
+        problems.report(Source::Plugins, "A plugin was skipped", "a");
+        assert!(problems.take_unannounced().pop().unwrap().toast);
     }
 
     #[test]

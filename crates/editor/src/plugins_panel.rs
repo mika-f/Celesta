@@ -148,12 +148,6 @@ impl EditorView {
     pub(crate) fn plugins_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let rows = PluginRow::all(&self.found_plugins);
-        let uses = self
-            .found_plugins
-            .registry
-            .as_ref()
-            .map(|registry| registry.project_decoder_uses().1)
-            .unwrap_or_default();
         // As discovery read them, not from disk on every frame.
         let folders = self.found_plugins.folders.clone();
         let skipped = self.found_plugins.skipped.clone();
@@ -204,7 +198,7 @@ impl EditorView {
                 ))
             })
             .children(rows.into_iter().enumerate().map(|(index, row)| {
-                let decoder_uses = row.decoder_uses(&uses);
+                let decoder_uses = row.decoder_uses(self.decoder_notice.uses());
                 self.plugin_row(index, row, decoder_uses, cx)
             }))
             .child(heading("Added folders", cx))

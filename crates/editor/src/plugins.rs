@@ -10,7 +10,7 @@
 //! preview's renderer, every React runtime the editor starts, and exports.
 //! What waits for approval and what was skipped show in Problems.
 
-use crate::problems::{Problem, Source, error_chain};
+use crate::problems::{Problem, Problems, Source, error_chain};
 use crate::source::PropertyArgs;
 use crate::view::EditorView;
 use celesta_media::{DecoderUse, MediaRegistry};
@@ -237,23 +237,54 @@ pub(crate) fn decoder_notice(uses: &[DecoderUse], root: Option<&Path>) -> Option
     Some(Problem::new(title, detail.join("\n")))
 }
 
+/// The project-decoder notice as last shown, and the uses it was made from.
+#[derive(Debug, Default)]
+pub(crate) struct DecoderNotice {
+    /// The registry's list generation last read; `None` until the current
+    /// registry's list is read.
+    generation: Option<u64>,
+    uses: Vec<DecoderUse>,
+}
+
+impl DecoderNotice {
+    /// The files read, as of the last [`Self::sync`].
+    pub(crate) fn uses(&self) -> &[DecoderUse] {
+        &self.uses
+    }
+
+    /// Forgets what was read, for a new registry.
+    pub(crate) fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Sets Problems' decoder notice from `registry`'s list, which is read
+    /// only when its generation changed since the last call.
+    pub(crate) fn sync(
+        &mut self,
+        registry: &MediaRegistry,
+        root: Option<&Path>,
+        problems: &mut Problems,
+    ) {
+        let generation = registry.project_decoder_generation();
+        if self.generation == Some(generation) {
+            return;
+        }
+        let (generation, uses) = registry.project_decoder_uses();
+        self.generation = Some(generation);
+        self.uses = uses;
+        problems.set(Source::MediaDecoders, decoder_notice(&self.uses, root));
+    }
+}
+
 impl EditorView {
-    /// Shows the files this project's own decoders read in Problems. The
-    /// list is read only when it changed since last shown.
+    /// Shows the files this project's own decoders read in Problems.
     pub(crate) fn sync_decoder_notice(&mut self) {
         let Some(registry) = self.found_plugins.registry.clone() else {
             return;
         };
-        let (generation, uses) = registry.project_decoder_uses();
-        if self.decoder_notice_generation == Some(generation) {
-            return;
-        }
-        self.decoder_notice_generation = Some(generation);
         let root = self.source_path.as_deref().map(project_root);
-        self.problems.set(
-            Source::MediaDecoders,
-            decoder_notice(&uses, root.as_deref()),
-        );
+        self.decoder_notice
+            .sync(&registry, root.as_deref(), &mut self.problems);
     }
 }
 
@@ -359,7 +390,7 @@ impl EditorView {
         self.plugins = found.installed.clone();
         self.found_plugins = found;
         // A new registry starts its own list.
-        self.decoder_notice_generation = None;
+        self.decoder_notice.reset();
     }
 
     /// Asks whether to trust the project `request` opens; trusting saves
@@ -759,8 +790,18 @@ mod tests {
 
     #[test]
     fn an_old_codec_plugin_is_not_a_reason() {
-        let mut old = entry_with_role(PluginRole::Unknown);
-        old.manifest.roles = vec![PluginRole::Unknown];
+        let (os, arch) = celesta_plugin_host::platform();
+        let manifest: celesta_plugin_host::Manifest = serde_json::from_value(serde_json::json!({
+            "id": "old", "version": "1.0.0", "protocol": 1, "celesta": "*",
+            "roles": ["codec"], "executable": { format!("{os}-{arch}"): "bin/p" },
+        }))
+        .unwrap();
+        assert_eq!(manifest.roles, [PluginRole::Unknown]);
+        let old = PluginEntry {
+            manifest,
+            directory: PathBuf::from("plugins/old"),
+            source: celesta_plugin_host::PluginSource::User,
+        };
         let found = FoundPlugins {
             missing_decoder: true,
             installed: InstalledPlugins {
@@ -776,6 +817,49 @@ mod tests {
             "{}",
             problem.detail
         );
+    }
+
+    #[test]
+    fn the_decoder_notice_is_read_only_when_its_list_changes() {
+        let registry = MediaRegistry::new(Vec::new());
+        let decoder: celesta_media::ComponentRef = "proj/dec".parse().unwrap();
+        let project = celesta_plugin_host::MediaOrigin::Project;
+        let mut problems = Problems::default();
+        let mut notice = DecoderNotice::default();
+        let title = |problems: &Problems| {
+            problems
+                .active(Source::MediaDecoders)
+                .map(|active| active.problem.title.clone())
+        };
+
+        notice.sync(&registry, None, &mut problems);
+        assert_eq!(title(&problems), None);
+
+        registry.record_use(&decoder, project, Path::new("/a"));
+        notice.sync(&registry, None, &mut problems);
+        assert_eq!(
+            title(&problems).as_deref(),
+            Some("proj decodes 1 file in this project")
+        );
+        assert_eq!(notice.uses().len(), 1);
+
+        // Cleared by hand, an unchanged list is not read again.
+        problems.clear(Source::MediaDecoders);
+        notice.sync(&registry, None, &mut problems);
+        assert_eq!(title(&problems), None);
+
+        registry.record_use(&decoder, project, Path::new("/b"));
+        notice.sync(&registry, None, &mut problems);
+        assert_eq!(
+            title(&problems).as_deref(),
+            Some("proj decodes 2 files in this project")
+        );
+
+        // A new registry (set_plugins) is read afresh, even at generation 0.
+        notice.reset();
+        assert!(notice.uses().is_empty());
+        notice.sync(&MediaRegistry::new(Vec::new()), None, &mut problems);
+        assert_eq!(title(&problems), None);
     }
 
     #[test]
