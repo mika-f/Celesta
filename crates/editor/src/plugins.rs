@@ -257,12 +257,13 @@ impl DecoderNotice {
         *self = Self::default();
     }
 
-    /// Sets Problems' decoder notice from `registry`'s list, which is read
-    /// only when its generation changed since the last call.
+    /// Sets Problems' decoder notice from `registry`'s list, which is read,
+    /// and `root` resolved, only when its generation changed since the last
+    /// call.
     pub(crate) fn sync(
         &mut self,
         registry: &MediaRegistry,
-        root: Option<&Path>,
+        root: impl FnOnce() -> Option<PathBuf>,
         problems: &mut Problems,
     ) {
         let generation = registry.project_decoder_generation();
@@ -272,7 +273,10 @@ impl DecoderNotice {
         let (generation, uses) = registry.project_decoder_uses();
         self.generation = Some(generation);
         self.uses = uses;
-        problems.set(Source::MediaDecoders, decoder_notice(&self.uses, root));
+        problems.set(
+            Source::MediaDecoders,
+            decoder_notice(&self.uses, root().as_deref()),
+        );
     }
 }
 
@@ -282,9 +286,12 @@ impl EditorView {
         let Some(registry) = self.found_plugins.registry.clone() else {
             return;
         };
-        let root = self.source_path.as_deref().map(project_root);
-        self.decoder_notice
-            .sync(&registry, root.as_deref(), &mut self.problems);
+        let source_path = self.source_path.as_deref();
+        self.decoder_notice.sync(
+            &registry,
+            || source_path.map(project_root),
+            &mut self.problems,
+        );
     }
 }
 
@@ -832,24 +839,29 @@ mod tests {
                 .map(|active| active.problem.title.clone())
         };
 
-        notice.sync(&registry, None, &mut problems);
+        notice.sync(&registry, || None, &mut problems);
         assert_eq!(title(&problems), None);
 
         registry.record_use(&decoder, project, Path::new("/a"));
-        notice.sync(&registry, None, &mut problems);
+        notice.sync(&registry, || None, &mut problems);
         assert_eq!(
             title(&problems).as_deref(),
             Some("proj decodes 1 file in this project")
         );
         assert_eq!(notice.uses().len(), 1);
 
-        // Cleared by hand, an unchanged list is not read again.
+        // Cleared by hand, an unchanged list is not read again, nor the
+        // root resolved.
         problems.clear(Source::MediaDecoders);
-        notice.sync(&registry, None, &mut problems);
+        notice.sync(
+            &registry,
+            || panic!("the root is resolved for an unchanged list"),
+            &mut problems,
+        );
         assert_eq!(title(&problems), None);
 
         registry.record_use(&decoder, project, Path::new("/b"));
-        notice.sync(&registry, None, &mut problems);
+        notice.sync(&registry, || None, &mut problems);
         assert_eq!(
             title(&problems).as_deref(),
             Some("proj decodes 2 files in this project")
@@ -858,7 +870,7 @@ mod tests {
         // A new registry (set_plugins) is read afresh, even at generation 0.
         notice.reset();
         assert!(notice.uses().is_empty());
-        notice.sync(&MediaRegistry::new(Vec::new()), None, &mut problems);
+        notice.sync(&MediaRegistry::new(Vec::new()), || None, &mut problems);
         assert_eq!(title(&problems), None);
     }
 
