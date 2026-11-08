@@ -12,6 +12,7 @@ mod error;
 mod loudness;
 mod mix;
 mod registry;
+pub mod settings;
 mod stretch;
 #[cfg(test)]
 mod tests;
@@ -38,5 +39,8 @@ pub use mix::{
 pub use registry::{
     ComponentRef, DecoderUse, InvalidComponentRef, MediaRegistry, RegisteredPlugin, registry,
     set_registry,
+};
+pub use settings::{
+    InvalidSetting, SelectOption, SettingField, SettingKind, SettingValue, Settings,
 };
 pub use types::{AudioBuffer, AudioStream, MediaProbe, VideoFrame, VideoStream};
