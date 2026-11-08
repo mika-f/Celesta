@@ -454,9 +454,14 @@ in the table under Checks.
 
 ## Not done
 
-- **A performance re-run on a quiet machine**: the measurement above ran
-  at load averages of 17–102, so it shows parity with `main` only within
-  about 10%.
+- **A performance re-run on a quiet machine** (ruling R25): the
+  measurement above ran at load averages of 17–102, so it shows parity
+  with `main` only within about 10%, while the spec asks for "not slower".
+  It waits until the P2b session stops building on this machine, and is
+  owed before #786 leaves draft: the five export rows and the two encode
+  bench rows, release, six interleaved runs, replacing or added beside the
+  table above. Until then parity stands as "within `main`'s range under
+  load".
 - **The frame pool is not capped**: a frame-threaded encoder keeps as
   many frames as it has in flight, and the session keeps them until it
   ends. For ProRes 4444 at 4K that is about eleven `yuva444p10le` frames
@@ -482,8 +487,97 @@ in the table under Checks.
   puts FFmpeg first among bundled plugins; bundled plugins are ranked by
   their path, which happens to put `ffmpeg` first today but would put a
   P5 `avfoundation` plugin before it. P5 has to order them.
-- Plain-text errors (without `--json`) do not print the error's hint, so
-  `--preset ultrafast` and the no-plugin error lose theirs there.
-- MCP's `list_components` and `describe_component` make a registry per
-  call, so their `describe` is never cached.
 - Runtime type names still say "codec" where deviation 14 keeps them.
+
+## Review follow-ups
+
+Each task's review, and the whole-branch review after Task 16, changed
+the following. The rulings are the executor's, numbered in the session's
+ledger; only those with an effect on the code are listed.
+
+Rulings:
+
+- R2: `validate` and `differences` judge `visibleWhen` on the given
+  values over the schema's defaults, so a missing key's default decides
+  visibility.
+- R4, R5, R6: a default encoder is the first *available* candidate in
+  rank order; a named project muxer's own plugin ranks first for its
+  encoders (tested); a muxer without `defaultVideo`/`defaultAudio` takes
+  its first codec, and a muxer taking audio with no audio encoder
+  installed needs `--audio-encoder none` rather than dropping the audio.
+- R7: a named muxer is not checked against the output's extension.
+- R8: `resample_audio` trims no output delay: rubato's sinc output is
+  already lined up with its input (now pinned by a test, below).
+- R9, R10: `finish_mix` stays on the mix thread; with no audio encoder no
+  mix is made and the report has no loudness (warned when a loudness
+  target was given).
+- R12: `--loop` is accepted for every output from Task 9 (deviation 17).
+- R13: `flush` writes the staged backlog in batches of at most 32 MiB,
+  so the 256 MB memory limit holds; the final review added a packet cap
+  (below).
+- R15: `--preset-file` must be a readable JSON object; nothing reads it
+  until P3.
+- R16, R17, R19: the avcC carries the High-profile fields beyond
+  Baseline/Main/Extended; a zero packet duration becomes the frame
+  duration; the encoder's time base is one frame, as `main`'s, with
+  packets rescaled to the track timescale, so NTSC rates stay identical.
+- R18: FFmpeg's log level is `AV_LOG_ERROR`, so libx264's statistics do
+  not flood the plugin's stderr.
+- R20: WebM's Opus trailing padding comes from the last packet's
+  shortened duration (deviation 26).
+- R21, R22: video streams are marked progressive and ProRes with alpha has
+  depth 32, and AAC's description is FFmpeg's full extradata, as `main`'s
+  files have them.
+- R23: the GPU colour test skips, with a `skipping` line, where the
+  renderer offers no YUV even under `CELESTA_REQUIRE_GPU=1` (lavapipe).
+- R24: the RGBA-path regression became Task 16 (swscale on threads, frame
+  reuse; see Performance).
+
+Fixed in the task reviews: the R5 test and fixture order (Task 5); the
+batched flush, a warning for a loudness target with no audio, and the
+cancel test (Task 9); the MCP tool listing and behavioural tests (Task
+11); `test-package.mjs`'s loop, a GPU colour test that fails when forced
+through RGBA, and a partial file left when a packet allocation failed
+(Task 13); `listComponents` and `describeComponent` aborts that waited
+ten seconds (Task 14); the spec's Phases rows (Task 15); and a test that a frame is
+reused only once the encoder lets go of it (Task 16).
+
+Fixed after the whole-branch review:
+
+- A `writePackets` batch stops at 16 × 1024 packets as well as 32 MiB:
+  each packet costs about 75 bytes of JSON header, and the header is
+  capped at 16 MiB, so a staged backlog of tiny packets could fail the
+  export at its end.
+- Errors without `--json` print their hint on a `hint:` line, so
+  `--preset fast` shows `use --video-option preset=fast` and an export
+  with no media plugin shows how to install one. An unknown `--describe`
+  under `--json`, and MCP's `describe_component` errors, go through the
+  shared error report.
+- `validate` checks every given value before visibility, so
+  `{"rateControl":"abr","crf":18}` reports `rateControl`.
+- `resample_audio` of no frames returns no frames; a test pins R8. It
+  found that upsampling by a large ratio trails by just under one input
+  frame (5 output frames from 8 to 48 kHz, 0.1 ms); 44.1 ↔ 48 kHz and
+  downsampling are within one output frame.
+- The test codec keeps a muxer's session until finishing succeeds, so a
+  failed finish can still be aborted and its file removed; its
+  garbage-packet test no longer makes lz4 allocate about 4 GiB.
+- MCP holds one `MediaRegistry` (the one its exports use), so `describe`
+  answers are cached across tool calls; a listing that discovers other
+  plugins replaces it, for exports too.
+- The FFmpeg plugin checks `av_dict_set`, refuses a `tune` x264 does not
+  know as an invalid `tune` setting, and range-checks the SPS fields the
+  avcC takes; tests read libx264's own High 10 and High 4:4:4 SPSs and one
+  with an emulation prevention byte inside the fields read.
+- An audio encoder answering other than 1 or 2 channels is refused as an
+  invalid `channels` setting, and a muxer answering `files: []` reports
+  the output path.
+
+Left open from the whole-branch review: `--loop` on MOV (a PCM lead-in
+hidden by an edit list, new behaviour) has no test; `describe`'s
+`inputFormats` is read strictly, so a format Celesta does not know fails
+the whole answer; a muxer may refuse a codec string the resolve matched
+by family (`lpcm` against `lpcm.s24le`); one load-dependent run of
+`a_plugins_refusal_is_an_invalid_option` saw the test codec's process
+exit; resolving may start candidate processes it then stops; and
+`--list-components --check` and MCP pass a kill switch nothing kills.

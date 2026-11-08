@@ -132,7 +132,8 @@ Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.
   (`crf` with `rateControl=vbr`) fails with `invalid_option` before
   anything renders.
 - `--preset` no longer means x264's preset: `--preset ultrafast` fails with
-  `unknown_preset`, and the `--json` hint says
+  `unknown_preset`, and its hint (the `--json` report's `hint`, or a
+  `hint:` line after the message without `--json`) says
   `use --video-option preset=ultrafast`.
 - The renderer converts RGB to YUV on the GPU when the encoder takes YUV
   and the renderer is not a software one; otherwise the encoder converts.
@@ -422,7 +423,9 @@ muxing
 ```
 
 Warnings (missing fonts, missing glyphs) are printed as `warning: …` lines;
-a plugin's informational notice is printed as a `note: …` line.
+a plugin's informational notice is printed as a `note: …` line. A failure is
+printed as `Celesta export: <message>`, then `hint: …` when the error has a
+hint (the same one `--json` reports).
 A failure prints `Celesta export: <message>` and
 exits non-zero; see [errors.md](errors.md). The rendering count can reach
 the total while audio mixing and muxing are still running; wait for the
