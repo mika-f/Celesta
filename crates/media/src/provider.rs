@@ -214,6 +214,30 @@ pub enum PixelFormat {
     P010,
 }
 
+impl PixelFormat {
+    /// The formats Celesta can produce today, which size an export's ring.
+    /// Nv12 and P010 join them when a renderer offers them.
+    pub const OFFERABLE: [PixelFormat; 4] = [
+        PixelFormat::Yuv420p,
+        PixelFormat::Yuv420p10,
+        PixelFormat::Rgba16,
+        PixelFormat::Rgba8,
+    ];
+
+    /// The bytes of a `width` x `height` frame in this format: the planes
+    /// back to back, chroma rounded up to whole samples.
+    pub fn frame_bytes(self, width: u32, height: u32) -> usize {
+        let luma = width as usize * height as usize;
+        let chroma = 2 * (width as usize).div_ceil(2) * (height as usize).div_ceil(2);
+        match self {
+            Self::Rgba8 => luma * 4,
+            Self::Rgba16 => luma * 8,
+            Self::Yuv420p | Self::Nv12 => luma + chroma,
+            Self::Yuv420p10 | Self::P010 => 2 * (luma + chroma),
+        }
+    }
+}
+
 /// An open encoder or muxer, by the plugin's own number: unique within its
 /// process across every kind (see [`VideoEncoder`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

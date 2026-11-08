@@ -1,7 +1,7 @@
 //! A media plugin's process, behind the [`MediaProvider`] interface.
 
 use crate::error::MediaError;
-use crate::protocol::{self, ROLES, SharedFrames, decode_error};
+use crate::protocol::{self, FrameLocation, ROLES, SharedSegment, decode_error};
 use crate::provider::{
     AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, ComponentDescription, Decoder, Encoded,
     MediaProvider, Muxer, MuxerRequest, ProviderFactory, ProviderUse, SessionId, TrackPacket,
@@ -73,7 +73,7 @@ impl FrameTransport {
 pub struct MediaProcess {
     child: PluginChild,
     /// The slot decoded frames arrive in, when the plugin accepted it.
-    frames: Option<SharedFrames>,
+    frames: Option<SharedSegment>,
     /// The channels of each open audio encoder session, which its
     /// `encodeAudio` counts frames by.
     audio_channels: HashMap<SessionId, u16>,
@@ -138,9 +138,10 @@ impl MediaProcess {
         }
         let frames = memory
             .filter(|_| handle.is_some() && protocol::accepted_shared_frames(&hello))
-            .map(|memory| SharedFrames {
+            .map(|memory| SharedSegment {
                 memory,
                 generation: 0,
+                ring: None,
             });
         Ok(Self {
             child,
@@ -293,7 +294,7 @@ impl VideoEncoder for MediaProcess {
         &mut self,
         request: &VideoEncoderRequest<'_>,
     ) -> Result<VideoEncoderOpened, MediaError> {
-        let request = protocol::open_video_request(request)?;
+        let request = protocol::open_video_request(request, None)?;
         let answer = self.request(request, "videoEncoderOpened", OPEN_TIMEOUT)?;
         protocol::decode_video_encoder_opened(&answer)
     }
@@ -304,7 +305,7 @@ impl VideoEncoder for MediaProcess {
         pts: i64,
         frame: Vec<u8>,
     ) -> Result<Encoded, MediaError> {
-        let request = protocol::encode_video_request(session, pts, frame);
+        let request = protocol::encode_video_request(session, pts, FrameLocation::Payload(frame));
         let answer = self.request(request, "videoFrameAccepted", ENCODE_TIMEOUT)?;
         protocol::decode_encoded(&answer)
     }

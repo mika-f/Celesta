@@ -23,7 +23,7 @@ use celesta_composition::Rational;
 use celesta_plugin::protocol::{
     Answer, Message, ProtocolError, serve_requests_with_hello, serve_requests_with_hello_on,
 };
-use celesta_plugin::shared::SharedMemory;
+use celesta_plugin::shared::{RingLayout, SharedMemory};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -74,11 +74,15 @@ pub fn serve(
     )
 }
 
-/// The decoded frames' slot in memory shared with Celesta, on either side,
-/// and the generation of the frame last written to it.
-pub(crate) struct SharedFrames {
+/// The memory shared with Celesta, on either side: the decoded frames' one
+/// slot and the generation of the frame last written to it, or, in an
+/// export, the ring of slots the frames to encode are read from.
+pub(crate) struct SharedSegment {
     pub(crate) memory: SharedMemory,
     pub(crate) generation: u64,
+    /// The ring `openVideoEncoder` declared, on the serving side; kept for
+    /// the process's life.
+    pub(crate) ring: Option<RingLayout>,
 }
 
 /// What Celesta's `hello` offers of shared memory for decoded frames: the
@@ -108,7 +112,7 @@ pub(crate) fn accepted_shared_frames(hello: &Message) -> bool {
 /// Maps the shared memory `hello` offers into `frames`, and says so in the
 /// answer's fields; an offer that cannot be mapped is declined (said on
 /// stderr), and the frames go through the pipe.
-fn accept_frames(hello: &Message, frames: &RefCell<Option<SharedFrames>>) -> Map<String, Value> {
+fn accept_frames(hello: &Message, frames: &RefCell<Option<SharedSegment>>) -> Map<String, Value> {
     let offer = &hello.header["frames"]["sharedMemory"];
     if offer.is_null() {
         return Map::new();
@@ -120,9 +124,10 @@ fn accept_frames(hello: &Message, frames: &RefCell<Option<SharedFrames>>) -> Map
         });
     match opened {
         Ok(memory) => {
-            *frames.borrow_mut() = Some(SharedFrames {
+            *frames.borrow_mut() = Some(SharedSegment {
                 memory,
                 generation: 0,
+                ring: None,
             });
             Map::from_iter([("frames".to_owned(), json!("sharedMemory"))])
         }
@@ -154,7 +159,7 @@ struct WireSequential {
 fn answer(
     provider: &mut impl MediaProvider,
     mut request: Message,
-    frames: &mut Option<SharedFrames>,
+    frames: &mut Option<SharedSegment>,
 ) -> Answer {
     let answer = (|| -> Result<Answer, MediaError> {
         let request = &mut request;
@@ -252,7 +257,7 @@ fn answer(
                 let encoder = provider
                     .video_encoder()
                     .ok_or_else(|| lacks("video encoder"))?;
-                answer_video(encoder, request)?
+                answer_video(encoder, request, frames.as_mut())?
             }
             "openAudioEncoder" | "encodeAudio" | "finishAudioEncoder" => {
                 let encoder = provider
@@ -291,9 +296,28 @@ fn lacks(kind: &str) -> MediaError {
 fn answer_video(
     encoder: &mut dyn VideoEncoder,
     request: &mut Message,
+    segment: Option<&mut SharedSegment>,
 ) -> Result<Message, MediaError> {
     Ok(match request.kind() {
         "openVideoEncoder" => {
+            let ring: Option<RingLayout> = field(request, "ring")?;
+            if let Some(layout) = ring {
+                let Some(segment) = segment.as_deref() else {
+                    return Err(MediaError::Codec(
+                        "a ring was declared but no shared memory was accepted".to_owned(),
+                    ));
+                };
+                // The layout came over the wire: its arithmetic is checked
+                // only by `ring`.
+                if segment.memory.ring(layout).is_err() {
+                    return Err(MediaError::Codec(format!(
+                        "the ring of {} slots of {} bytes does not fit the shared segment of {} bytes",
+                        layout.slots,
+                        layout.slot_bytes,
+                        segment.memory.len()
+                    )));
+                }
+            }
             let component: String = field(request, "component")?;
             let settings: Settings = field(request, "settings")?;
             let offered: Vec<PixelFormat> = field(request, "offered")?;
@@ -308,14 +332,33 @@ fn answer_video(
                 offered: &offered,
                 color: &color,
             })?;
+            if let (Some(layout), Some(segment)) = (ring, segment) {
+                segment.ring = Some(layout);
+            }
             opened_answer("videoEncoderOpened", &opened)?
         }
         "encodeVideoFrame" => {
-            let encoded = encoder.encode_video(
-                field(request, "session")?,
-                field(request, "pts")?,
-                std::mem::take(&mut request.payload),
-            )?;
+            let slot: Option<WireFrameSlot> = field(request, "slot")?;
+            let frame = match slot {
+                None => std::mem::take(&mut request.payload),
+                Some(slot) => {
+                    let ring = segment
+                        .and_then(|segment| Some((segment.ring?, &segment.memory)))
+                        .and_then(|(layout, memory)| memory.ring(layout).ok())
+                        .ok_or_else(|| {
+                            MediaError::Codec("a slot was named but no ring was opened".to_owned())
+                        })?;
+                    ring.read_slot(slot.index, slot.bytes, slot.generation)
+                        .ok_or_else(|| {
+                            MediaError::Codec(format!(
+                                "slot {} does not hold the frame under generation {}",
+                                slot.index, slot.generation
+                            ))
+                        })?
+                }
+            };
+            let encoded =
+                encoder.encode_video(field(request, "session")?, field(request, "pts")?, frame)?;
             encoded_answer("videoFrameAccepted", &encoded)?
         }
         _ => {
@@ -590,6 +633,14 @@ pub(crate) fn decode_video_request(
     })))
 }
 
+/// Where an `encodeVideoFrame` request left its pixels in the ring.
+#[derive(Deserialize)]
+struct WireFrameSlot {
+    index: usize,
+    generation: u64,
+    bytes: usize,
+}
+
 /// Where a `videoFrame` answer left its pixels in shared memory.
 #[derive(Deserialize)]
 struct WireSlot {
@@ -604,7 +655,7 @@ struct WireSlot {
 /// one is started.
 pub(crate) fn decode_video_frame(
     answer: Message,
-    frames: Option<&mut SharedFrames>,
+    frames: Option<&mut SharedSegment>,
 ) -> Result<VideoFrame, MediaError> {
     let width = field(&answer, "width")?;
     let height = field(&answer, "height")?;
@@ -687,8 +738,13 @@ pub(crate) fn decode_described(answer: &Message) -> Result<Vec<ComponentDescript
     field(answer, "components")
 }
 
-pub(crate) fn open_video_request(request: &VideoEncoderRequest<'_>) -> Result<Message, MediaError> {
-    Ok(Message::new(json!({
+/// An `openVideoEncoder`, declaring `ring` as the slots frames will come
+/// through when there is one.
+pub(crate) fn open_video_request(
+    request: &VideoEncoderRequest<'_>,
+    ring: Option<RingLayout>,
+) -> Result<Message, MediaError> {
+    let mut message = Message::new(json!({
         "type": "openVideoEncoder",
         "component": request.component,
         "settings": sendable(request.settings)?,
@@ -698,7 +754,11 @@ pub(crate) fn open_video_request(request: &VideoEncoderRequest<'_>) -> Result<Me
         "timescale": request.timescale,
         "offered": request.offered,
         "color": request.color,
-    })))
+    }));
+    if let Some(ring) = ring {
+        message.header["ring"] = json!(ring);
+    }
+    Ok(message)
 }
 
 pub(crate) fn decode_video_encoder_opened(
@@ -707,11 +767,37 @@ pub(crate) fn decode_video_encoder_opened(
     VideoEncoderOpened::deserialize(&answer.header).map_err(malformed)
 }
 
-/// An `encodeVideoFrame` with the frame as its payload.
-pub(crate) fn encode_video_request(session: SessionId, pts: i64, frame: Vec<u8>) -> Message {
-    Message {
-        header: json!({ "type": "encodeVideoFrame", "session": session, "pts": pts }),
-        payload: frame,
+/// Where an `encodeVideoFrame`'s frame is.
+pub(crate) enum FrameLocation {
+    /// In the message's payload.
+    Payload(Vec<u8>),
+    /// In slot `index` of the ring, written under `generation`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the export path uses it from the next change")
+    )]
+    Slot {
+        index: usize,
+        generation: u64,
+        bytes: usize,
+    },
+}
+
+/// An `encodeVideoFrame` with the frame in its payload or in a ring slot.
+pub(crate) fn encode_video_request(session: SessionId, pts: i64, frame: FrameLocation) -> Message {
+    let header = json!({ "type": "encodeVideoFrame", "session": session, "pts": pts });
+    match frame {
+        FrameLocation::Payload(payload) => Message { header, payload },
+        FrameLocation::Slot {
+            index,
+            generation,
+            bytes,
+        } => {
+            let mut message = Message::new(header);
+            message.header["slot"] =
+                json!({ "index": index, "generation": generation, "bytes": bytes });
+            message
+        }
     }
 }
 
@@ -1290,9 +1376,10 @@ mod tests {
                 "the pixels went through the pipe"
             );
         }
-        let mut frames = SharedFrames {
+        let mut frames = SharedSegment {
             memory,
             generation: 0,
+            ring: None,
         };
         assert!(
             matches!(
@@ -1316,9 +1403,10 @@ mod tests {
         );
         assert!(accepted_shared_frames(&answers[0]));
         assert!(answers[1].header["slot"].is_null());
-        let mut frames = SharedFrames {
+        let mut frames = SharedSegment {
             memory,
             generation: 0,
+            ring: None,
         };
         let frame = decode_video_frame(answers[1].clone(), Some(&mut frames)).unwrap();
         assert_eq!(*frame.pixels, [1, 2, 3, 4, 5, 6, 7, 8]);
@@ -1358,9 +1446,10 @@ mod tests {
                 "slot": { "generation": generation, "bytes": bytes },
             }))
         };
-        let mut frames = SharedFrames {
+        let mut frames = SharedSegment {
             memory,
             generation: 0,
+            ring: None,
         };
         let unavailable = |result: Result<VideoFrame, MediaError>| {
             matches!(result, Err(MediaError::CodecUnavailable(_)))
@@ -1813,6 +1902,189 @@ mod tests {
     }
 
     #[test]
+    fn open_video_carries_the_ring() {
+        let settings = Settings::new();
+        let color = Color::bt709_limited();
+        let request = VideoEncoderRequest {
+            component: "x264",
+            settings: &settings,
+            width: 4,
+            height: 2,
+            frame_rate: Rational::new(30, 1),
+            timescale: 30,
+            offered: &[PixelFormat::Yuv420p],
+            color: &color,
+        };
+        let layout = RingLayout {
+            slots: 3,
+            slot_bytes: 64,
+        };
+        let with = open_video_request(&request, Some(layout)).unwrap();
+        assert_eq!(with.header["ring"], json!({ "slots": 3, "slotBytes": 64 }));
+        let without = open_video_request(&request, None).unwrap();
+        assert!(without.header.get("ring").is_none());
+    }
+
+    fn open_with_ring(ring: Option<RingLayout>) -> Message {
+        let mut open = open_video_request(
+            &VideoEncoderRequest {
+                component: "x264",
+                settings: &Settings::new(),
+                width: 4,
+                height: 2,
+                frame_rate: Rational::new(30, 1),
+                timescale: 30,
+                offered: &[PixelFormat::Yuv420p],
+                color: &Color::bt709_limited(),
+            },
+            None,
+        )
+        .unwrap();
+        if let Some(ring) = ring {
+            open.header["ring"] = json!(ring);
+        }
+        open
+    }
+
+    const TWO_SLOTS: RingLayout = RingLayout {
+        slots: 2,
+        slot_bytes: 64,
+    };
+
+    /// A segment of `TWO_SLOTS`, `A` in slot 0 and `B` in slot 1 under
+    /// generation 2.
+    fn ring_with_frames() -> (SharedMemory, Vec<u8>, Vec<u8>) {
+        let memory = SharedMemory::create(TWO_SLOTS.segment_bytes()).unwrap();
+        let (a, b) = (vec![0xA; 64], vec![0xB; 48]);
+        let ring = memory.ring(TWO_SLOTS).unwrap();
+        ring.write_slot(0, &a, 2).unwrap();
+        ring.write_slot(1, &b, 2).unwrap();
+        (memory, a, b)
+    }
+
+    fn slot(index: usize, generation: u64, bytes: usize) -> FrameLocation {
+        FrameLocation::Slot {
+            index,
+            generation,
+            bytes,
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn encoded_frames_come_out_of_ring_slots() {
+        let (memory, a, b) = ring_with_frames();
+        let mut fake = Components::new(7);
+        let answers = serve_all(
+            &mut fake,
+            &[
+                offering_hello(&memory),
+                open_with_ring(Some(TWO_SLOTS)),
+                encode_video_request(SessionId(7), 0, slot(0, 2, 64)),
+                encode_video_request(SessionId(7), 1001, slot(1, 2, 48)),
+            ],
+        );
+        assert_eq!(answers[1].kind(), "videoEncoderOpened");
+        assert_eq!(fake.frames, [(0, a), (1001, b)]);
+        assert_eq!(answers[2].kind(), "videoFrameAccepted");
+        assert_eq!(answers[3].kind(), "videoFrameAccepted");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_payload_frame_still_works_with_a_ring() {
+        let (memory, a, _) = ring_with_frames();
+        let mut fake = Components::new(7);
+        let answers = serve_all(
+            &mut fake,
+            &[
+                offering_hello(&memory),
+                open_with_ring(Some(TWO_SLOTS)),
+                encode_video_request(SessionId(7), 0, slot(0, 2, 64)),
+                encode_video_request(SessionId(7), 2002, FrameLocation::Payload(vec![0xC; 5])),
+            ],
+        );
+        assert_eq!(fake.frames, [(0, a), (2002, vec![0xC; 5])]);
+        assert_eq!(answers[3].kind(), "videoFrameAccepted");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_ring_that_does_not_fit_is_refused_at_open() {
+        let (memory, _, _) = ring_with_frames();
+        let answers = serve_all(
+            &mut Components::new(7),
+            &[
+                offering_hello(&memory),
+                open_with_ring(Some(RingLayout {
+                    slots: 3,
+                    slot_bytes: 64,
+                })),
+            ],
+        );
+        assert_eq!(answers[1].kind(), "error");
+        assert!(
+            answers[1].header["message"]
+                .to_string()
+                .contains("does not fit")
+        );
+    }
+
+    #[test]
+    fn a_ring_without_a_segment_is_refused() {
+        let answers = serve_all(
+            &mut Components::new(7),
+            &[hello(), open_with_ring(Some(TWO_SLOTS))],
+        );
+        assert_eq!(answers[1].kind(), "error");
+        assert!(
+            answers[1].header["message"]
+                .to_string()
+                .contains("no shared memory was accepted")
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_slot_without_a_ring_is_refused() {
+        let (memory, _, _) = ring_with_frames();
+        let mut fake = Components::new(7);
+        let answers = serve_all(
+            &mut fake,
+            &[
+                offering_hello(&memory),
+                open_with_ring(None),
+                encode_video_request(SessionId(7), 0, slot(0, 2, 64)),
+            ],
+        );
+        assert_eq!(answers[2].kind(), "error");
+        assert!(
+            answers[2].header["message"]
+                .to_string()
+                .contains("no ring was opened")
+        );
+        assert!(fake.frames.is_empty());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_stale_slot_is_refused() {
+        let (memory, _, _) = ring_with_frames();
+        let mut fake = Components::new(7);
+        let answers = serve_all(
+            &mut fake,
+            &[
+                offering_hello(&memory),
+                open_with_ring(Some(TWO_SLOTS)),
+                encode_video_request(SessionId(7), 0, slot(0, 4, 64)),
+            ],
+        );
+        assert_eq!(answers[2].kind(), "error");
+        assert!(answers[2].header["message"].to_string().contains("slot 0"));
+        assert!(fake.frames.is_empty());
+    }
+
+    #[test]
     fn video_encoding_round_trips() {
         let mut fake = Components::new(7);
         let settings: Settings = [("crf".to_owned(), SettingValue::Number(18.0))].into();
@@ -1827,7 +2099,7 @@ mod tests {
             offered: &[PixelFormat::Yuv420p, PixelFormat::Rgba8],
             color: &color,
         };
-        let open = open_video_request(&request).unwrap();
+        let open = open_video_request(&request, None).unwrap();
         assert_eq!(open.header["offered"], json!(["yuv420p", "rgba8"]));
         assert_eq!(open.header["color"]["matrix"], "bt709");
         assert_eq!(open.header["settings"], json!({ "crf": 18 }));
@@ -1837,7 +2109,7 @@ mod tests {
             &[
                 hello(),
                 open,
-                encode_video_request(SessionId(7), 3003, frame.clone()),
+                encode_video_request(SessionId(7), 3003, FrameLocation::Payload(frame.clone())),
                 finish_video_request(SessionId(7)),
             ],
         );
@@ -2123,7 +2395,7 @@ mod tests {
             &mut fake,
             &[
                 hello(),
-                open_video_request(&video).unwrap(),
+                open_video_request(&video, None).unwrap(),
                 open_audio_request(&audio).unwrap(),
                 abort_encoder_request(SessionId(2)),
             ],
