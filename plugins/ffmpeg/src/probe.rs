@@ -3,6 +3,7 @@ use crate::ffmpeg_error;
 use crate::sequential::ffmpeg_path;
 use celesta_composition::{Rational, Time};
 use celesta_media::{AudioStream, MediaError, MediaProbe, VideoStream};
+use ez_ffmpeg::error::{Error, OpenInputError};
 use ez_ffmpeg::stream_info::{StreamInfo, find_all_stream_infos};
 use ez_ffmpeg::{AVRational, container_info};
 use std::path::Path;
@@ -19,7 +20,15 @@ pub(crate) fn ensure_exists(path: &Path) -> Result<(), MediaError> {
 pub(crate) fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
     ensure_exists(path)?;
     let url = ffmpeg_path(path);
-    let streams = find_all_stream_infos(url.as_str()).map_err(ffmpeg_error)?;
+    let streams = find_all_stream_infos(url.as_str()).map_err(|error| match error {
+        // FFmpeg found no container it knows in the file: not a file this
+        // decoder reads, so another may.
+        Error::OpenInputStream(OpenInputError::InvalidData) => MediaError::Unsupported {
+            path: path.to_owned(),
+            tried: Vec::new(),
+        },
+        error => ffmpeg_error(error),
+    })?;
     let duration = container_info::get_duration_us(url.as_str())
         .ok()
         .filter(|micros| *micros > 0)

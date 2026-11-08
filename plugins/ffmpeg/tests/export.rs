@@ -14,7 +14,7 @@ use celesta_exporter::{
     VideoFormat,
 };
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{AudioDecoder, CodecProvider, VideoFrameDecoder, measure_loudness};
+use celesta_media::{AudioDecoder, MediaProvider, VideoFrameDecoder, measure_loudness};
 use celesta_project::{
     Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
 };

@@ -1,7 +1,7 @@
 //! Times what crossing the codec plugin's pipe costs: decoding a video's
 //! frames in order, as preview playback and export do, and encoding RGBA
 //! frames to H.264, once with FFmpeg in this process (`FfmpegCodec`) and
-//! once through the codec plugin's program (`CodecProcess`), whose frames
+//! once through the codec plugin's program (`MediaProcess`), whose frames
 //! cross its stdin or stdout. The difference is the transport.
 //!
 //! ```text
@@ -21,11 +21,12 @@
 
 use celesta_composition::Rational;
 use celesta_media::{
-    CodecFactory, CodecProcess, Container, EncoderSettings, MediaBackend, PixelFormat,
-    VideoFrameDecoder,
+    Container, EncoderSettings, MediaBackend, MediaProcess, MediaRegistry, PixelFormat,
+    ProviderFactory, RegisteredPlugin, VideoFrameDecoder,
 };
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn main() {
@@ -45,9 +46,9 @@ fn main() {
     let frames: u32 = args
         .next()
         .map_or(120, |value| value.parse().expect("frames must be a number"));
-    let codecs: [(&str, CodecFactory); 2] = [
+    let codecs: [(&str, ProviderFactory); 2] = [
         ("in process", celesta_codec_ffmpeg::FfmpegCodec::factory()),
-        ("plugin", CodecProcess::factory(program, plugin)),
+        ("plugin", MediaProcess::factory(program, plugin)),
     ];
     for (name, factory) in &codecs {
         let timing = decode(factory.clone(), &video, frames);
@@ -118,12 +119,20 @@ fn since(
     Some(pick(cpu()?) - pick(start?))
 }
 
+/// A backend on the FFmpeg plugin made by `factory`.
+fn backend(factory: ProviderFactory) -> MediaBackend {
+    MediaBackend::with_registry(Arc::new(MediaRegistry::new(vec![RegisteredPlugin {
+        factory,
+        ..celesta_codec_ffmpeg::registered()
+    }])))
+}
+
 /// `frames` frames of `video` from its start, in order, after a first frame
 /// that opens the codec and the decode run.
-fn decode(factory: CodecFactory, video: &Path, frames: u32) -> Timing {
+fn decode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
     let opened = cpu();
     let frame_rate = Rational::new(30, 1);
-    let mut backend = MediaBackend::with_codec(factory).with_sequential_video(frame_rate);
+    let mut backend = backend(factory).with_sequential_video(frame_rate);
     let first = backend
         .decode_frame_for("bench", video, 0.0)
         .expect("the first frame decodes");
@@ -151,9 +160,9 @@ fn decode(factory: CodecFactory, video: &Path, frames: u32) -> Timing {
 /// the encoder's own work hides less of the transport) after one frame that
 /// opens the encoder, and the encoder finished. The host's CPU time covers
 /// the whole run, the encoder's threads in this process included.
-fn encode(factory: CodecFactory, video: &Path, frames: u32) -> Timing {
+fn encode(factory: ProviderFactory, video: &Path, frames: u32) -> Timing {
     let opened = cpu();
-    let mut backend = MediaBackend::with_codec(factory);
+    let mut backend = backend(factory);
     let probe = backend.probe(video).expect("the video probes").clone();
     let stream = probe.video.expect("the file has a video stream");
     let (width, height) = (stream.width, stream.height);
