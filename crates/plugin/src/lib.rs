@@ -25,3 +25,4 @@ pub use scene::{
     MorphTarget, OutlinePass, Projection, Sampler, SceneFrame, SceneModel, SceneShader,
     SceneTexture, ShaderTexture, Skin, TextureRef, TextureTransform, UnlitMaterial, Wrap,
 };
+pub use shared::{Ring, RingLayout};

@@ -27,6 +27,8 @@
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering, fence};
 
+use serde::{Deserialize, Serialize};
+
 /// The bytes a slot's header takes before its data: its generation (an
 /// atomic `u64`) and its length, padded to a cache line.
 pub const SLOT_HEADER: usize = 64;
@@ -114,34 +116,7 @@ impl SharedMemory {
     /// one written. Fails, writing nothing, when they do not fit or
     /// `generation` is not even.
     pub fn write_slot(&self, bytes: &[u8], generation: u64) -> io::Result<()> {
-        if generation == 0 || !generation.is_multiple_of(2) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("a slot's generation is even and not 0, not {generation}"),
-            ));
-        }
-        if bytes.len() > self.slot_bytes() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "{} bytes do not fit a slot of {}",
-                    bytes.len(),
-                    self.slot_bytes()
-                ),
-            ));
-        }
-        self.slot_generation()
-            .store(generation - 1, Ordering::Relaxed);
-        fence(Ordering::Release);
-        // SAFETY: the data starts after the header, and `bytes` fits it,
-        // checked above; nothing in this process references the mapping.
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(SLOT_HEADER), bytes.len());
-        }
-        self.slot_length()
-            .store(bytes.len() as u64, Ordering::Relaxed);
-        self.slot_generation().store(generation, Ordering::Release);
-        Ok(())
+        self.write_at(0, self.slot_bytes(), bytes, generation)
     }
 
     /// The slot's first `len` data bytes, copied out, as a seqlock's reader:
@@ -153,38 +128,217 @@ impl SharedMemory {
     /// size are the caller's and this value's own: the length in the shared
     /// header is only compared with `len`.
     pub fn read_slot(&self, len: usize, generation: u64) -> Option<Vec<u8>> {
-        if generation % 2 == 1 || len > self.slot_bytes() {
+        self.read_at(0, self.slot_bytes(), len, generation)
+    }
+
+    /// The segment as a ring of `layout.slots` slots. Fails when the layout
+    /// has no slots or no bytes in them, or its segment is longer than this
+    /// one.
+    pub fn ring(&self, layout: RingLayout) -> io::Result<Ring<'_>> {
+        if layout.slots == 0 || layout.slot_bytes == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a ring has at least one slot of at least one byte",
+            ));
+        }
+        if layout.slots > 1 && !layout.slot_bytes.is_multiple_of(8) {
+            // Each slot's generation is an atomic `u64`, which must be
+            // aligned: the stride must keep every slot's header 8-aligned.
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "slots of {} bytes would misalign the next slot's header",
+                    layout.slot_bytes
+                ),
+            ));
+        }
+        let fits = layout
+            .slots
+            .checked_mul(layout.stride())
+            .is_some_and(|bytes| bytes <= self.len);
+        if !fits {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "a ring of {} slots of {} bytes does not fit a segment of {}",
+                    layout.slots, layout.slot_bytes, self.len
+                ),
+            ));
+        }
+        Ok(Ring {
+            memory: self,
+            layout,
+        })
+    }
+
+    /// The seqlock writer for the slot at `offset`, whose data holds
+    /// `capacity` bytes; see [`Self::write_slot`].
+    fn write_at(
+        &self,
+        offset: usize,
+        capacity: usize,
+        bytes: &[u8],
+        generation: u64,
+    ) -> io::Result<()> {
+        if generation == 0 || !generation.is_multiple_of(2) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("a slot's generation is even and not 0, not {generation}"),
+            ));
+        }
+        if bytes.len() > capacity {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} bytes do not fit a slot of {capacity}", bytes.len()),
+            ));
+        }
+        self.generation_at(offset)
+            .store(generation - 1, Ordering::Relaxed);
+        fence(Ordering::Release);
+        // SAFETY: the slot at `offset` lies within the mapping (its callers
+        // check), its data starts after the header, and `bytes` fits it,
+        // checked above; nothing in this process references the mapping.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                self.ptr.add(offset + SLOT_HEADER),
+                bytes.len(),
+            );
+        }
+        self.length_at(offset)
+            .store(bytes.len() as u64, Ordering::Relaxed);
+        self.generation_at(offset)
+            .store(generation, Ordering::Release);
+        Ok(())
+    }
+
+    /// The seqlock reader for the slot at `offset`, whose data holds
+    /// `capacity` bytes; see [`Self::read_slot`].
+    fn read_at(
+        &self,
+        offset: usize,
+        capacity: usize,
+        len: usize,
+        generation: u64,
+    ) -> Option<Vec<u8>> {
+        if generation % 2 == 1 || len > capacity {
             return None;
         }
-        if self.slot_generation().load(Ordering::Acquire) != generation
-            || self.slot_length().load(Ordering::Relaxed) != len as u64
+        if self.generation_at(offset).load(Ordering::Acquire) != generation
+            || self.length_at(offset).load(Ordering::Relaxed) != len as u64
         {
             return None;
         }
         let mut bytes = Vec::with_capacity(len);
-        // SAFETY: the data starts after the header and holds `len` bytes,
-        // checked above; `bytes` has room for them. A writer breaking the
-        // protocol could be changing them meanwhile, which the second load
-        // below catches; they are copied through raw pointers, never read
-        // through a reference.
+        // SAFETY: the slot at `offset` lies within the mapping (its callers
+        // check) and its data, after the header, holds `len` bytes, checked
+        // above; `bytes` has room for them. A writer breaking the protocol
+        // could be changing them meanwhile, which the second load below
+        // catches; they are copied through raw pointers, never read through
+        // a reference.
         unsafe {
-            std::ptr::copy_nonoverlapping(self.ptr.add(SLOT_HEADER), bytes.as_mut_ptr(), len);
+            std::ptr::copy_nonoverlapping(
+                self.ptr.add(offset + SLOT_HEADER),
+                bytes.as_mut_ptr(),
+                len,
+            );
             bytes.set_len(len);
         }
         fence(Ordering::Acquire);
-        (self.slot_generation().load(Ordering::Relaxed) == generation).then_some(bytes)
+        (self.generation_at(offset).load(Ordering::Relaxed) == generation).then_some(bytes)
     }
 
-    fn slot_generation(&self) -> &AtomicU64 {
-        // SAFETY: the mapping is page-aligned and at least a header long, so
-        // its first 8 bytes are an aligned `u64` that lives as long as
+    fn generation_at(&self, offset: usize) -> &AtomicU64 {
+        // SAFETY: `offset` is a slot's, within the mapping and 8-aligned
+        // (the mapping is page-aligned, and `ring` refuses strides that
+        // are not a multiple of 8 for more than one slot), so the first 8
+        // bytes of its header are an aligned `u64` that lives as long as
         // `self`; both processes only touch it atomically.
-        unsafe { AtomicU64::from_ptr(self.ptr.cast()) }
+        unsafe { AtomicU64::from_ptr(self.ptr.add(offset).cast()) }
     }
 
-    fn slot_length(&self) -> &AtomicU64 {
-        // SAFETY: as `slot_generation`, 8 bytes further.
-        unsafe { AtomicU64::from_ptr(self.ptr.add(8).cast()) }
+    fn length_at(&self, offset: usize) -> &AtomicU64 {
+        // SAFETY: as `generation_at`, 8 bytes further.
+        unsafe { AtomicU64::from_ptr(self.ptr.add(offset + 8).cast()) }
+    }
+
+    #[cfg(test)]
+    fn slot_generation(&self) -> &AtomicU64 {
+        self.generation_at(0)
+    }
+}
+
+/// How a segment divides into slots: `slots` of them, each a
+/// [`SLOT_HEADER`] and `slot_bytes` of data, one after another.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RingLayout {
+    pub slots: usize,
+    pub slot_bytes: usize,
+}
+
+impl RingLayout {
+    /// The bytes one slot takes, header and data.
+    pub const fn stride(&self) -> usize {
+        SLOT_HEADER + self.slot_bytes
+    }
+
+    /// The bytes the whole ring takes.
+    pub const fn segment_bytes(&self) -> usize {
+        self.slots * self.stride()
+    }
+
+    /// Where slot `slot` starts in the segment.
+    pub const fn offset(&self, slot: usize) -> usize {
+        slot * self.stride()
+    }
+}
+
+/// A segment seen as a [`RingLayout`]'s slots, each its own seqlock.
+pub struct Ring<'a> {
+    memory: &'a SharedMemory,
+    layout: RingLayout,
+}
+
+impl Ring<'_> {
+    pub fn layout(&self) -> RingLayout {
+        self.layout
+    }
+
+    /// [`SharedMemory::write_slot`] for slot `slot`; fails, writing nothing,
+    /// when there is no such slot.
+    pub fn write_slot(&self, slot: usize, bytes: &[u8], generation: u64) -> io::Result<()> {
+        if slot >= self.layout.slots {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("slot {slot} of a ring of {}", self.layout.slots),
+            ));
+        }
+        self.memory.write_at(
+            self.layout.offset(slot),
+            self.layout.slot_bytes,
+            bytes,
+            generation,
+        )
+    }
+
+    /// [`SharedMemory::read_slot`] for slot `slot`; `None` when there is no
+    /// such slot.
+    pub fn read_slot(&self, slot: usize, len: usize, generation: u64) -> Option<Vec<u8>> {
+        if slot >= self.layout.slots {
+            return None;
+        }
+        self.memory.read_at(
+            self.layout.offset(slot),
+            self.layout.slot_bytes,
+            len,
+            generation,
+        )
+    }
+
+    #[cfg(test)]
+    fn slot_generation(&self, slot: usize) -> &AtomicU64 {
+        self.memory.generation_at(self.layout.offset(slot))
     }
 }
 
@@ -651,5 +805,126 @@ mod tests {
     fn a_segment_starts_zeroed() {
         let host = SharedMemory::create(SLOT_HEADER + 8).unwrap();
         assert_eq!(host.read_slot(0, 0), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_layout_measures_its_segment() {
+        let layout = RingLayout {
+            slots: 3,
+            slot_bytes: 100,
+        };
+        assert_eq!(layout.stride(), 164);
+        assert_eq!(layout.segment_bytes(), 492);
+        assert_eq!(layout.offset(2), 328);
+    }
+
+    #[test]
+    fn ring_slots_are_independent() {
+        let layout = RingLayout {
+            slots: 3,
+            slot_bytes: 16,
+        };
+        let host = SharedMemory::create(layout.segment_bytes()).unwrap();
+        let plugin = SharedMemory::open(host.duplicate_handle().unwrap(), host.len()).unwrap();
+        let writer = plugin.ring(layout).unwrap();
+        writer.write_slot(1, &[1; 8], 2).unwrap();
+        writer.write_slot(2, &[2; 12], 4).unwrap();
+        let reader = host.ring(layout).unwrap();
+        assert_eq!(reader.read_slot(1, 8, 2), Some(vec![1; 8]));
+        assert_eq!(reader.read_slot(2, 12, 4), Some(vec![2; 12]));
+        assert_eq!(reader.read_slot(0, 8, 2), None);
+        assert_eq!(reader.read_slot(1, 8, 4), None);
+    }
+
+    #[test]
+    fn a_ring_larger_than_the_segment_is_refused() {
+        let host = SharedMemory::create(SLOT_HEADER + 1024).unwrap();
+        assert!(
+            host.ring(RingLayout {
+                slots: 2,
+                slot_bytes: 1024
+            })
+            .is_err()
+        );
+        assert!(
+            host.ring(RingLayout {
+                slots: 0,
+                slot_bytes: 1
+            })
+            .is_err()
+        );
+        assert!(
+            host.ring(RingLayout {
+                slots: 1,
+                slot_bytes: 0
+            })
+            .is_err()
+        );
+        let misaligned = SharedMemory::create(3 * (SLOT_HEADER + 5)).unwrap();
+        assert!(
+            misaligned
+                .ring(RingLayout {
+                    slots: 3,
+                    slot_bytes: 5
+                })
+                .is_err(),
+            "the second header would not be aligned"
+        );
+        assert!(
+            host.ring(RingLayout {
+                slots: 1,
+                slot_bytes: 1024
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_slot_past_the_ring_is_refused() {
+        let layout = RingLayout {
+            slots: 3,
+            slot_bytes: 8,
+        };
+        let host = SharedMemory::create(layout.segment_bytes()).unwrap();
+        let ring = host.ring(layout).unwrap();
+        assert!(ring.write_slot(3, &[1], 2).is_err());
+        assert_eq!(ring.read_slot(3, 1, 2), None);
+    }
+
+    #[test]
+    fn the_one_slot_ring_is_the_old_slot() {
+        let host = SharedMemory::create(SLOT_HEADER + 64).unwrap();
+        let layout = RingLayout {
+            slots: 1,
+            slot_bytes: host.slot_bytes(),
+        };
+        let bytes: Vec<u8> = (0..40u8).collect();
+        host.write_slot(&bytes, 8).unwrap();
+        let ring = host.ring(layout).unwrap();
+        assert_eq!(ring.read_slot(0, bytes.len(), 8), Some(bytes.clone()));
+        let other: Vec<u8> = (50..70u8).collect();
+        ring.write_slot(0, &other, 10).unwrap();
+        assert_eq!(host.read_slot(other.len(), 10), Some(other));
+    }
+
+    #[test]
+    fn a_slot_being_written_is_not_read_in_a_ring() {
+        let layout = RingLayout {
+            slots: 3,
+            slot_bytes: 8,
+        };
+        let host = SharedMemory::create(layout.segment_bytes()).unwrap();
+        let ring = host.ring(layout).unwrap();
+        ring.write_slot(0, &[9; 4], 2).unwrap();
+        ring.write_slot(1, &[1, 2, 3, 4], 2).unwrap();
+        // What a writer leaves in slot 1 while it copies the next frame in.
+        ring.slot_generation(1).store(3, Ordering::Relaxed);
+        assert_eq!(ring.read_slot(1, 4, 2), None, "the generation moved on");
+        assert_eq!(
+            ring.read_slot(1, 4, 3),
+            None,
+            "an odd generation is a write"
+        );
+        assert_eq!(ring.read_slot(0, 4, 2), Some(vec![9; 4]));
     }
 }
