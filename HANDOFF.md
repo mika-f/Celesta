@@ -367,10 +367,11 @@ run `cargo build -p celesta-codec-test` first.
 
 An existing checkout from before the codec moved to `plugins/ffmpeg` may
 still have `celesta-codec-ffmpeg` in `target/<profile>`. Celesta ignores it
-there, so video and audio fail with `no_decoder` and its hint until you build
-`plugins/dist` (`node scripts/plugins/build.mts plugins/ffmpeg`) and set
-`CELESTA_PLUGIN_PATH` to its absolute path, as above. The old program can
-be deleted.
+there, so video and audio fail with `no_codec` or `no_decoder` and their
+hint until you build `plugins/dist` (`node scripts/plugins/build.mts
+plugins/ffmpeg`) and set `CELESTA_PLUGIN_PATH` to its absolute path, as
+above. The old program can be deleted.
+
 A `plugins/dist/ffmpeg` staged before the `media` role (its manifest says
 `"roles": ["codec"]`) is ignored too; build it again.
 

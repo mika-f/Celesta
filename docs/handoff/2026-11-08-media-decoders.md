@@ -6,9 +6,9 @@ plan `docs/superpowers/plans/2026-11-08-media-components-p1.md`). The
 single `codec` role (`2026-11-05-codec-plugin.md`) becomes the `media`
 role: a media plugin declares its decoders in its manifest, Celesta uses
 every media plugin that may run, and each file is routed to a decoder.
-Encoding is unchanged: until P2a, exports encode and mux through the first
-media plugin with protocol 1's encoder messages, so exports are
-byte-identical to `main`'s.
+Encoding is unchanged: until P2a, exports encode and mux through one media
+plugin (the first bundled one) with protocol 1's encoder messages, so
+exports are byte-identical to `main`'s.
 
 ## Specification
 
@@ -33,13 +33,27 @@ byte-identical to `main`'s.
   may run (search order, approval, disabled list) with the `media` role and
   a program for this platform. `MediaOrigin` is `User` (`Explicit`, `User`,
   `Folder` sources), `Bundled` (`Bundled`), or `Project` (`Project`).
-- **The `cargo install` sibling.** When no listed plugin has its id,
+- **A project cannot replace a bundled media plugin.** Plugin ids are
+  otherwise settled by search order, the earlier winning, and project
+  folders are searched before the bundled one. `discover_in_with` reads
+  every location first, then skips a `Project`-source plugin whose id a
+  media plugin in the bundled folder has, reporting
+  `DiscoveryError::Invalid` (`<manifest> was skipped: a project plugin
+  cannot replace Celesta's bundled media plugin <id>`), which the editor
+  lists among the skipped plugins in Problems. The skipped plugin takes no
+  id, so a user plugin with that id still comes before the bundled one.
+  This holds for a project plugin of any role with that id; between other
+  ids, content plugins included, the earlier in search order still wins.
+- **The `cargo install` sibling.** When no listed plugin other than a
+  project's has its id,
   `celesta-codec-ffmpeg` beside Celesta's executable (links resolved, never
   in a Cargo build folder) is listed as `Bundled`, from what it prints for
   `--manifest` (`MANIFEST_FLAG`: id, version, roles, media; 5 s deadline,
   1 MiB limit, no protocol started). The answer is cached by the program's
   path, size, and modification time; a program that fails, times out, or
-  is not a media plugin is left out and said on stderr.
+  is not a media plugin is left out and said on stderr. A project media
+  plugin with its id is left out in its favour, said on stderr too, as
+  discovery does for one in the bundled folder.
 - **Registry.** `celesta_media::MediaRegistry` holds the plugins in search
   order, each with a process factory (`RegisteredPlugin`). Its decoders are
   ordered by origin (user, then bundled, then project), then search order,
@@ -61,8 +75,9 @@ byte-identical to `main`'s.
      deadline, or the kill switch) ends routing with that error.
   4. The first probe that succeeds pins the path to that decoder, with the
      probe cached; its `decodeVideo` and `decodeAudio` go there, and their
-     errors do not fall back. A decode that answers `unsupported` is a
-     plain `Codec` error.
+     errors do not fall back. A decode that answers `unsupported` (which a
+     plugin should only answer to a probe) is passed on as
+     `MediaError::Unsupported` naming that decoder in `tried`.
   5. When every candidate fails, the error kept is ranked `NotFound` >
      `NoVideoStream` > the first other error; with only `unsupported`
      answers it is `MediaError::Unsupported { path, tried }` (`no decoder
@@ -77,7 +92,9 @@ byte-identical to `main`'s.
   `CELESTA_CODEC_SHARED_MEMORY=0` are unchanged. The encoder messages
   (`checkEncoder`, `openEncoder`, `encodeFrame`, `finishEncoder`,
   `abortEncoder`, `muxAudio`) stay as protocol 1 had them, sent to the
-  registry's first plugin (`MediaRegistry::legacy_encoder`); with none,
+  registry's first `Bundled` plugin, or its first plugin when none is
+  bundled (`MediaRegistry::legacy_encoder`), so a decoder-only plugin the
+  user or a project installs cannot take over exports; with none,
   `MediaError::NoCodec`.
 - **Exporter codes.** `no_decoder` (`MediaError::NoDecoder`, with the hint)
   and `unsupported_media` (`MediaError::Unsupported`, no hint) beside
@@ -89,7 +106,8 @@ byte-identical to `main`'s.
   - **No media decoder can run** replaces "No codec plugin can run" in
     Problems, with the same reasons (no program for this computer, waiting
     for approval, turned off, none found), when the registry has no
-    decoder.
+    decoder. When media plugins run but none declares a decoder, it says
+    so and names them.
   - The registry records the files each project plugin's decoder read
     (`record_use`, project origin only, once per decoder and path; a
     generation counter changes with each new use). The editor checks the
@@ -119,9 +137,14 @@ Decoders, and Phases sections:
    started.
 5. New exporter code `unsupported_media` for `MediaError::Unsupported`,
    beside `no_decoder`.
-6. A backend's legacy encoder (the registry's first plugin) may share a
-   process with that plugin's decoder; P2a's per-export components separate
-   them. Today's callers use separate backends for encoding and decoding.
+6. A backend's legacy encoder (the registry's first bundled plugin) may
+   share a process with that plugin's decoder; P2a's per-export components
+   separate them. Today's callers use separate backends for encoding and
+   decoding.
+7. A project's plugin cannot replace a bundled media plugin (or the
+   `cargo install` sibling) of the same id, although the Components
+   section's rule is "the earlier in search order wins": the Decoders
+   section's "project plugins come last" is the intent.
 
 ## Docs
 
@@ -198,17 +221,37 @@ staged by `build.mts` on `CELESTA_PLUGIN_PATH`:
 
 - **Runtime messages still say "codec plugin"**: `MediaError::NoCodec`,
   `CodecUnavailable`, `CodecStopped`, and `EncoderUnavailable`
-  (`celesta-media`), `ExportError::EncoderUnavailable` (`celesta-exporter`),
-  and some doc comments, crate descriptions, packaging scripts, and the
+  (`celesta-media`), and some doc comments, crate descriptions, packaging scripts, and the
   `preview-bench` example. They are renamed with P2a's encoder messages.
-- **A decoder-only plugin found first gets the encoder requests.** Exports
-  encode through the registry's first plugin in search order, whatever it
-  declares, so a user-installed plugin with only decoders ahead of the
-  bundled `ffmpeg` would fail exports. No such plugin exists yet; P2a's
-  component selection removes it.
 - **A plugin that cannot start** is tried again for each newly routed path
   (allowed by the spec; worth caching in P2a).
 - The editor's manual check (project decoder notice in Problems and the
   Plugins tab) is done separately from this note's checks.
-- The brief expected `no_decoder` from a video export with no plugin; it
-  is `no_codec`, because the encoder check comes first. The docs say so.
+- A video export with no media plugin reports `no_codec`, not
+  `no_decoder`, because the encoder check comes first. The docs say so.
+
+## Review follow-ups
+
+The whole-branch review found one Important issue and several minor ones,
+now fixed:
+
+- **A project plugin could replace the bundled FFmpeg.** Discovery let the
+  earlier plugin of an id win, and project folders come before the bundled
+  one, so an approved project plugin with the id `ffmpeg` hid the bundled
+  plugin (or, with `cargo install`, the sibling) and decoded every file,
+  against the guide's "project plugins come last". It is now skipped and
+  reported, as above (deviation 7).
+- **The legacy encoder followed search order.** A decoder-only plugin the
+  user installed, or a project's, ahead of the bundled `ffmpeg` would have
+  taken the encoder requests and failed exports; it is now the first
+  bundled plugin.
+- A pinned decoder answering `unsupported` to a decode read `no decoder
+  could read <path> (tried )`; it now names that decoder.
+- **No media decoder can run** said "No media plugin was found" when media
+  plugins ran without a decoder; it now names them.
+- `ExportError::EncoderUnavailable` says "media plugin".
+- Docs: HANDOFF.md's stale-program note (`no_codec` or `no_decoder`), and
+  the spec's `set_codec` and `InstalledPlugins::codec()` wording.
+
+The end-to-end SHA-256 values above are as the run recorded them,
+shortened; the full values were not kept.

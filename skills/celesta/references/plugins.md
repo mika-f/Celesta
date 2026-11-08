@@ -85,8 +85,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
   (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root).
   `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables
-  (it answers `--manifest`) when no plugin folder has `ffmpeg`; that lookup
-  is skipped in a Cargo build folder such as `target/release`.
+  (it answers `--manifest`) when no plugin folder other than a project's
+  has `ffmpeg`; that lookup is skipped in a Cargo build folder such as
+  `target/release`.
 - A plugin with the older `"roles": ["codec"]` is ignored: rebuild
   `plugins/ffmpeg`, or have the user install a release for their Celesta.
 - They are not imported and have no components. Every media plugin that
@@ -95,8 +96,13 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `CELESTA_PLUGIN_PATH`, the user plugin folder, added folders), then
   bundled ones, then a project's own. A decoder that does not read the
   file, fails, or does not start passes it to the next; the first that
-  reads it keeps it. Exports encode through the first media plugin in
-  search order.
+  reads it keeps it. Exports encode through the first bundled media
+  plugin (the first media plugin in search order when none is bundled).
+- Between plugins with the same id, the earlier in search order wins, with
+  one exception: a project's plugin cannot replace a media plugin bundled
+  with Celesta (or the `cargo install` sibling), although project folders
+  are searched first. It is skipped and reported, and the bundled one is
+  used. Rename a project's media plugin rather than reusing `ffmpeg`.
 - In the app, a project plugin that decodes files shows as an information
   entry in Problems (`<plugin> decodes <n> files in this project`) and on
   its Plugins tab row; it is not an error.
@@ -254,6 +260,7 @@ import { Vrm } from '@celesta-plugin/vrm';
 | `<folder>/celesta-plugin.json was skipped: the plugin <id> works with Celesta <range>, and this is Celesta <version>` | The plugin was made for other Celesta versions. Have the user install a release of it made for their Celesta; do not edit its manifest's `celesta` range. A later plugin with the same id, such as another release of a media plugin, is used in its place. |
 | `<folder>/celesta-plugin.json was skipped: it does not say which Celesta versions it works with: …`, or `… its "celesta" range "<range>" is not a version range: …` | The manifest has no `celesta` range (a plugin built before ranges were required) or one that is not a Cargo version range. Rebuild it with Celesta's `scripts/plugins/build.mts`, which writes the range, or get a newer release. |
 | `<folder>/celesta-plugin.json was skipped: it speaks plugin protocol <n>, and this Celesta speaks protocol <m> with content plugins` (or `media plugins`) | The plugin speaks another version of the plugin protocol than this Celesta does for its role (content plugins 1, media plugins 2). Have the user install a release of it made for their Celesta; do not edit its manifest's `protocol`. |
+| `<folder>/celesta-plugin.json was skipped: a project plugin cannot replace Celesta's bundled media plugin <id>` | A project's own plugin uses the id of a media plugin that comes with Celesta, which it may not replace. Give the project's plugin another id. |
 | `<folder>/celesta-plugin.json: a media component was skipped: media.decoders[<i>]…` | That decoder's entry is malformed, has a bad `id`, or repeats another decoder's `id`; the plugin's other decoders still work. The plugin must be fixed. |
 | `plugin "<id>" has no JavaScript module` | The plugin has only a program; its layers come from another package. |
 | `… has no executable for this platform` | The plugin was not built for this OS and CPU. |
