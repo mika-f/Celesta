@@ -1,6 +1,6 @@
 [package]
 name = "celesta-media"
-description = "Media probing, frame and audio decoding through a Celesta codec plugin, and the audio mix."
+description = "Media probing, frame and audio decoding through a Celesta media plugin, and the audio mix."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

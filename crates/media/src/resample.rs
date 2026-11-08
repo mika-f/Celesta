@@ -34,6 +34,13 @@ pub fn resample_audio(audio: &AudioBuffer, sample_rate: u32) -> Result<AudioBuff
         });
     }
     let frames = audio.frame_count();
+    if frames == 0 {
+        return Ok(AudioBuffer {
+            sample_rate,
+            channels: audio.channels,
+            samples: Vec::new(),
+        });
+    }
     let wanted =
         (frames as f64 * f64::from(sample_rate) / f64::from(audio.sample_rate)).round() as usize;
     let failed = |error: &dyn std::fmt::Display| {
@@ -157,6 +164,62 @@ mod tests {
             .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
             .count();
         assert!(crossings.abs_diff(880) <= 2, "{crossings} zero crossings");
+    }
+
+    #[test]
+    fn no_frames_resample_to_no_frames() {
+        let empty = AudioBuffer {
+            sample_rate: 44_100,
+            channels: 2,
+            samples: Vec::new(),
+        };
+        let resampled = resample_audio(&empty, 48_000).unwrap();
+        assert_eq!(resampled.sample_rate, 48_000);
+        assert_eq!(resampled.channels, 2);
+        assert!(resampled.samples.is_empty());
+    }
+
+    /// Ruling R8: rubato's output is already lined up with its input, so
+    /// nothing is cut from the front. An impulse at input frame `n` peaks
+    /// within a frame of `n × to / from`: an output frame between 44.1 and
+    /// 48 kHz and when downsampling, an input frame when upsampling by more,
+    /// which trails by just under one (5 output frames from 8 to 48 kHz,
+    /// 0.1 ms).
+    #[test]
+    fn an_impulse_stays_where_it_was() {
+        let rates = [
+            (44_100, 48_000),
+            (48_000, 44_100),
+            (96_000, 48_000),
+            (48_000, 8_000),
+            (16_000, 48_000),
+            (8_000, 48_000),
+        ];
+        for (from, to) in rates {
+            for n in [3_000usize, 5_001] {
+                let mut samples = vec![0.0; from as usize];
+                samples[n] = 1.0;
+                let audio = AudioBuffer {
+                    sample_rate: from,
+                    channels: 1,
+                    samples,
+                };
+                let resampled = resample_audio(&audio, to).unwrap();
+                let peak = resampled
+                    .samples
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.total_cmp(b.1))
+                    .map(|(frame, _)| frame)
+                    .unwrap();
+                let ratio = f64::from(to) / f64::from(from);
+                let expected = n as f64 * ratio;
+                assert!(
+                    (peak as f64 - expected).abs() <= ratio.max(1.0),
+                    "{from} -> {to}: impulse at {n} peaks at {peak}, expected {expected}"
+                );
+            }
+        }
     }
 
     #[test]

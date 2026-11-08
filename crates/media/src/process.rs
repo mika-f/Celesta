@@ -426,7 +426,7 @@ mod tests {
             FrameTransport::Pipe,
         );
         let Err(MediaError::CodecUnavailable(message)) = result else {
-            panic!("a codec plugin was accepted as a media plugin");
+            panic!("a plugin with the retired codec role was accepted as a media plugin");
         };
         assert!(message.contains("is not a media plugin"), "{message}");
     }
