@@ -15,9 +15,10 @@ use celesta_exporter::components::{
     ListedComponent, describe_component, description_json, kind_label, list_components,
     listing_json, origin_label,
 };
+use celesta_exporter::report::{self, HintStyle};
 use celesta_exporter::{
-    AudioChoice, AudioLoudness, ContactSheet, EncoderChoice, ExportCancellation, ExportJob,
-    ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
+    AudioChoice, AudioLoudness, ContactSheet, EncoderChoice, ExportCancellation, ExportError,
+    ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
     LoudnessTarget, OutputChoice, PeakHandling, ReactRuntimeOptions, RenderQuality, SettingInput,
     StillExport, StillFormat, parse_timecode,
 };
@@ -539,7 +540,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Celesta export: {error}");
+            print_error("Celesta export", &error);
             ExitCode::FAILURE
         }
     }
@@ -580,14 +581,11 @@ fn components(cli: &Cli) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(error) if cli.json => {
-                print_json(&serde_json::json!({
-                    "status": "error",
-                    "error": { "code": "component_unavailable", "message": error.to_string() },
-                }));
+                json::failure(&error);
                 ExitCode::FAILURE
             }
             Err(error) => {
-                eprintln!("Celesta export: {error}");
+                print_error("Celesta export", &error);
                 ExitCode::FAILURE
             }
         };
@@ -599,6 +597,15 @@ fn components(cli: &Cli) -> ExitCode {
         print!("{}", listing_text(&listed));
     }
     ExitCode::SUCCESS
+}
+
+/// `<context>: <error>` on stderr, then what to change, as `--json`'s
+/// report would hint it.
+fn print_error(context: &str, error: &ExportError) {
+    eprintln!("{context}: {error}");
+    if let Some(hint) = report::hint(error, HintStyle::Cli) {
+        eprintln!("hint: {hint}");
+    }
 }
 
 fn print_json(value: &serde_json::Value) {
@@ -749,7 +756,7 @@ fn info(cli: &Cli, props_file: Option<PropsFileChoice>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Celesta export: {error}");
+            print_error("Celesta export", &error);
             ExitCode::FAILURE
         }
     }

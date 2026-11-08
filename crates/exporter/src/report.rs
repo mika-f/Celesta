@@ -456,16 +456,30 @@ impl Timing {
 
 /// The report for arguments rejected before anything ran.
 pub fn usage(message: &str) -> Report {
+    error_only(ErrorReport {
+        code: "usage",
+        message: message.trim().trim_start_matches("error: ").to_owned(),
+        hint: None,
+        issues: Vec::new(),
+        frame: None,
+        failed_frames: Vec::new(),
+    })
+}
+
+/// The report for an error outside an export, such as `--describe`'s.
+pub fn failure(error: &ExportError, hints: HintStyle) -> Report {
+    error_only(error_report(error, hints))
+}
+
+/// What to change to get past `error`, when there is something to say.
+pub fn hint(error: &ExportError, hints: HintStyle) -> Option<Cow<'static, str>> {
+    classify(error, hints, &mut Vec::new()).1
+}
+
+fn error_only(error: ErrorReport) -> Report {
     Report {
         status: Status::Error,
-        error: Some(ErrorReport {
-            code: "usage",
-            message: message.trim().trim_start_matches("error: ").to_owned(),
-            hint: None,
-            issues: Vec::new(),
-            frame: None,
-            failed_frames: Vec::new(),
-        }),
+        error: Some(error),
         source: None,
         props_file: None,
         props_file_auto: None,

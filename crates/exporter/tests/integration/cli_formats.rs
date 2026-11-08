@@ -153,6 +153,53 @@ fn an_x264_preset_fails_with_the_hint() {
     assert!(hint.contains("--video-option preset=ultrafast"), "{hint}");
 }
 
+/// Runs the exporter without `--json` on the minimal example, with only
+/// `plugin_dir`'s plugins and an empty home (so no user plugin folder), and
+/// returns its stderr.
+fn plain_failure(plugin_dir: &std::path::Path, args: &[&str]) -> String {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
+        .env_remove(PLUGIN_PATH_ENV)
+        .env("HOME", home.path())
+        .env("XDG_DATA_HOME", home.path())
+        .env("APPDATA", home.path())
+        .arg("--plugin-dir")
+        .arg(plugin_dir)
+        .arg("--no-ui")
+        .arg(workspace.join("examples/minimal.celesta.json"))
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    String::from_utf8(output.stderr).unwrap()
+}
+
+#[test]
+fn a_plain_error_prints_its_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("out.mp4");
+    let plugin = TestCodecPlugin::new();
+    let stderr = plain_failure(
+        plugin.folder(),
+        &[output.to_str().unwrap(), "--preset", "fast"],
+    );
+    assert!(stderr.contains("unknown preset"), "{stderr}");
+    assert!(
+        stderr.contains("hint: use --video-option preset=fast"),
+        "{stderr}"
+    );
+
+    // With no media plugin at all, how to install one.
+    let empty = tempfile::tempdir().unwrap();
+    let stderr = plain_failure(empty.path(), &[output.to_str().unwrap()]);
+    assert!(
+        stderr.contains("hint: install Celesta's media plugin"),
+        "{stderr}"
+    );
+    assert!(!output.exists());
+}
+
 #[test]
 fn a_plugins_refusal_is_an_invalid_option() {
     let dir = tempfile::tempdir().unwrap();
