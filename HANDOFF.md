@@ -24,8 +24,9 @@ Per-task specifications, implementation details, and validation results live in
   and the VRM plugin link no FFmpeg. Celesta's own crates
   read and write media through the plugin's process, and their tests use the
   lossless test codec (`celesta-codec-test`) instead (see
-  [`docs/handoff/2026-11-05-codec-plugin.md`](docs/handoff/2026-11-05-codec-plugin.md)
-  and [`docs/handoff/2026-11-08-media-decoders.md`](docs/handoff/2026-11-08-media-decoders.md)).
+  [`docs/handoff/2026-11-05-codec-plugin.md`](docs/handoff/2026-11-05-codec-plugin.md),
+  [`docs/handoff/2026-11-08-media-decoders.md`](docs/handoff/2026-11-08-media-decoders.md),
+  and [`docs/handoff/2026-11-08-media-encoders.md`](docs/handoff/2026-11-08-media-encoders.md)).
   The `ffmpeg`/`ffprobe` binaries are not used at runtime.
 - Windows: `vcpkg install ffmpeg[x264,vpx,opus]:x64-windows-static-md`, with
   `VCPKG_ROOT` set. Non-macOS builds enable `ez-ffmpeg`'s `static` feature.
@@ -102,14 +103,14 @@ compositions: no package a composition imports depends on them, though
 | `celesta-composition` | Renderer-independent scene types, exact rational time, transforms, animation, text styles, and audio graph types. |
 | `celesta-project` | Project loading and semantic validation. |
 | `celesta-evaluator` | Deterministic project-to-`Scene` and project-to-`AudioGraph` evaluation. |
-| `celesta-media` | Probing, exact-time video frames, and audio decoding through media plugins (`MediaBackend`, `MediaRegistry` and its decoder routing, `MediaProvider`, plugin protocol 2's media messages), plus the audio mix, ducking, time stretching, and loudness. Links no codec library. |
-| `celesta-codec-ffmpeg` | `plugins/ffmpeg`, the FFmpeg media plugin: a program serving protocol 2's media messages (its decoder `ffmpeg/ffmpeg`, and until P2a the encoder and muxing messages; HDR tone mapping) and answering `--manifest` for the `cargo install` sibling, and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. A member of the plugins workspace, `plugins/Cargo.toml`, with Celesta's version; built into a plugin directory by `scripts/plugins/build.mts`. |
-| `celesta-codec-test` | The lossless test media plugin the core's tests read and write media with, in-process (`install`) or as the program `celesta-codec-test` in a temporary plugin folder (`TestCodecPlugin`), with one decoder, `celesta-test-codec/test`, which lists no extensions and reads test codec and WAV files of any name; not published. |
+| `celesta-media` | Media through plugins: probing, exact-time video frames, and audio decoding (`MediaBackend`, decoder routing), the component model (`MediaRegistry` with its `describe` cache, `MediaProvider` and the `Decoder`, `VideoEncoder`, `AudioEncoder`, and `Muxer` traits, `MediaProcess`, plugin protocol 2's messages), the settings schema and its validation, and audio resampling; plus the audio mix, ducking, time stretching, and loudness. Links no codec library. |
+| `celesta-codec-ffmpeg` | `plugins/ffmpeg`, the FFmpeg media plugin: a program serving protocol 2 (its decoder `ffmpeg/ffmpeg`, with HDR tone mapping; video encoders `libx264`, `prores`, `vp9`; audio encoders `aac`, `opus`, `pcm`; muxers `mp4`, `mov`, `webm`, on libavcodec and libavformat) and answering `--manifest` for the `cargo install` sibling, and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. A member of the plugins workspace, `plugins/Cargo.toml`, with Celesta's version; built into a plugin directory by `scripts/plugins/build.mts`. |
+| `celesta-codec-test` | The lossless test media plugin the core's tests read and write media with, in-process (`install`) or as the program `celesta-codec-test` in a temporary plugin folder (`TestCodecPlugin`): a decoder, `celesta-test-codec/test`, which lists no extensions and reads test codec and WAV files of any name, a lossless video encoder, a PCM audio encoder, and its own muxer; not published. |
 | `celesta-budoux` | Japanese phrase segmentation for text line breaking. |
 | `celesta-renderer` | CPU reference renderer, PNG output, and shared text/path rasterization. |
 | `celesta-gpu-renderer` | wgpu rendering, compositing, readback, and native preview bridge. |
 | `celesta-bench` | GPU export benchmarks driven by `scripts/bench.py`; not published. |
-| `celesta-exporter` | Frame-exact H.264/AAC MP4 export, including React entries. |
+| `celesta-exporter` | Frame-exact export through media components (MP4, MOV, WebM, and whatever muxers plugins add), including React entries: `resolve_output`, the interleaver, `--list-components` and `--describe`. |
 | `celesta-mcp` | `Celesta-mcp`, the MCP server agents use to inspect, render, and export. |
 | `celesta-editor-core` | Read-only document, summaries, scene/audio evaluation, and timeline clock. |
 | `celesta-editor-theme` | Shared desktop theme. |
@@ -118,7 +119,7 @@ compositions: no package a composition imports depends on them, though
 | `celesta-remote` | Asset path resolution, remote download cache, and stylesheet font discovery. |
 | `celesta-react-bridge` | Long-lived Node process and frame/component requests over stdin/stdout. |
 | `celesta-plugin` | Content plugins' 2D meshes and 3D scenes, the `ContentProvider` interface, and the plugin protocol's framing and `hello` (`serve_requests`, which media plugins use too, and `protocol_for_roles`: 1 for content, 2 for media); depends on no Celesta crate (serde, serde_json, thiserror, and libc). See [`docs/handoff/2026-11-01-plugin-system.md`](docs/handoff/2026-11-01-plugin-system.md) and [`docs/handoff/2026-11-03-plugin-scene-content.md`](docs/handoff/2026-11-03-plugin-scene-content.md). |
-| `celesta-plugin-host` | Finds plugin directories, decides which may run (the user's settings: trusted projects, allowed plugins), runs each content plugin in its own process for the renderer, and lists the media plugins and their decoders (`InstalledPlugins::media`, with `MediaOrigin`). |
+| `celesta-plugin-host` | Finds plugin directories, decides which may run (the user's settings: trusted projects, allowed plugins), runs each content plugin in its own process for the renderer, and lists the media plugins and their components (`InstalledPlugins::media`, with `MediaOrigin`). |
 | `celesta-plugin-flag` | `examples/plugins/flag`, a sample plugin program; with `beep-voice` beside it, built by `scripts/plugins/build.mts`. |
 | `celesta-plugin-turntable` | `examples/plugins/turntable`, a sample plugin program that returns a 3D scene; built by `scripts/plugins/build.mts`. |
 | `celesta-plugin-vrm` | `plugins/vrm`, the VRM avatar plugin's program, with `<Vrm>` in `plugins/vrm/js` (`celesta-plugin-vrm-js`). A member of the first-party plugins' workspace, `plugins/Cargo.toml`, which the root workspace excludes; built into a plugin directory by `scripts/plugins/build.mts`. See [`docs/handoff/2026-11-03-plugin-vrm.md`](docs/handoff/2026-11-03-plugin-vrm.md). |
@@ -139,7 +140,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/voicevox` (`@celesta.studio/voicevox`) | VOICEVOX AudioQuery lip sync. |
 | `packages/aivis-speech` (`@celesta.studio/aivis-speech`) | AivisSpeech AudioQuery and WAV lip sync. |
 | `packages/cli` (`@celesta.studio/cli`) | Entry CLI the bridge spawns; depends on every package it serves. |
-| `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts; not part of the runtime. |
+| `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts (`exportVideo` with `muxer`, `videoEncoder`, `audioEncoder`; `listComponents`, `describeComponent`); not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
 | `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mts`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mts`, `cargo.mts`, `manifest.mts`, and `licenses.mts`; `bump-version.mts`, with its helper `version.mts`, which bumps Celesta's version and the plugins that follow it; `affected.mts`, with its helpers `inputs.mts` and `lockfile.mts`, which lists the first-party plugins a change affects, from `plugins/Cargo.lock` or a plugin's own lockfile, the pnpm graph, and `turbo.json`, for CI's `Plugins (<OS>)` jobs; and `libtest.mts`, which finds the skipped tests in a `cargo test -- --show-output` log for `scripts/report-skipped-tests.mts`. They are TypeScript, which Node runs as it is, stripping the types; not published. |
@@ -288,12 +289,16 @@ covered by the dated handoff notes.
   H.264 yuv420p output requires non-zero even dimensions.
 - `--from`/`--to` export a clamped, frame-snapped composition span. Output starts
   at its own zero time, with the audio graph shifted by the window start.
-- `--preset` and `--crf` control libx264 encoding (defaults: `medium`, 18).
-  `--bit-depth 10` encodes yuv420p10le (High 10): the GPU converts to 10-bit
-  planes (`ReadbackFormat::Yuv420p10`), or reads back 16-bit RGBA
-  (`ReadbackFormat::Rgba16`, rgba64le) for the encoder to convert.
-  `--color-conversion auto|gpu|encoder` chooses yuv420p conversion; auto uses
-  GPU conversion unless the renderer is software. GPU readback returns I420
+- Exports write through media components (`resolve_output`): the output's
+  extension picks the muxer, its default codecs the encoders, and
+  `--muxer`, `--video-encoder`, `--audio-encoder`, `--video-option`, and
+  `--audio-option` override them (`--preset` names an export preset, and
+  fails with `unknown_preset` until presets land). libx264's `preset` and
+  `crf` default to `medium` and 18; `bitDepth=10` encodes yuv420p10le
+  (High 10). Celesta offers the encoder `yuv420p` and `yuv420p10`, which the
+  GPU converts (`ReadbackFormat::Yuv420p10` for 10-bit), unless the renderer
+  is software, then `rgba16` (`ReadbackFormat::Rgba16`, rgba64le) and
+  `rgba8`, which the encoder converts. GPU readback returns I420
   at 1.5 bytes/pixel and uses BT.601 limited range. Its 2x2 chroma averaging
   can differ from the encoder's filtering at hard color edges.
 - GPU canvases are `Rgba16Float` where the adapter can render and blend it
@@ -367,8 +372,8 @@ run `cargo build -p celesta-codec-test` first.
 
 An existing checkout from before the codec moved to `plugins/ffmpeg` may
 still have `celesta-codec-ffmpeg` in `target/<profile>`. Celesta ignores it
-there, so video and audio fail with `no_codec` or `no_decoder` and their
-hint until you build `plugins/dist` (`node scripts/plugins/build.mts
+there, so video and audio fail with `unsupported_output` or `no_decoder`
+and their hint until you build `plugins/dist` (`node scripts/plugins/build.mts
 plugins/ffmpeg`) and set `CELESTA_PLUGIN_PATH` to its absolute path, as
 above. The old program can be deleted.
 

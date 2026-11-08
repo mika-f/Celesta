@@ -25,7 +25,8 @@ with tempfile.TemporaryDirectory(prefix='.render-', dir=HERE) as temporary:
         result = subprocess.run([
             args.exporter, '--react', str(HERE / 'film.tsx'),
             '--from', str(second), '--to', str(second + 1),
-            '--preset', 'medium', '--crf', '17', str(destination),
+            '--video-option', 'preset=medium', '--video-option', 'crf=17',
+            str(destination),
         ], capture_output=True, text=True)
         if result.returncode:
             raise RuntimeError(f'Second {second}: {result.stderr}')

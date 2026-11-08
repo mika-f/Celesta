@@ -9,9 +9,9 @@ macOS ではアプリ全体を Applications にコピーしてから起動しま
 実行ファイルだけでなく、8.1.x の開発ライブラリが入っているか確認します。macOS ではメディアプラグインをビルドするシェルで `PKG_CONFIG_PATH` を設定します。Windows は `VCPKG_ROOT` と MSVC ビルドツールを確認し、Linux は `PKG_CONFIG_PATH` に `/opt/ffmpeg8/lib/pkgconfig` などのビルド済み FFmpeg を指定します。[ソースビルドの準備](/ja/docs/build-from-source/)をご覧ください。
 
 :::
-:::toggle[動画や音声が表示されない、書き出しが no_codec や no_decoder で失敗する]
+:::toggle[動画や音声が表示されない、書き出しが unsupported_output や no_decoder で失敗する]
 
-Celesta は動画と音声をメディアプラグインで読み書きします。プラグインがないと、Problems タブに **No media decoder can run** と表示されます。パッケージでは、Celesta に同梱のプラグインフォルダー（`Celesta.exe` の隣の `plugins\ffmpeg`、macOS アプリでは `Contents/PlugIns/ffmpeg`）に `ffmpeg` プラグインが残っているか確認するか、パッケージを入れ直してください。ソースビルドでは、リポジトリのルートで `node scripts/plugins/build.mts plugins/ffmpeg` を実行し、Celesta を実行するシェルで `CELESTA_PLUGIN_PATH` に `plugins/dist` の絶対パスを設定します（`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`）。古いチェックアウトでビルドした `plugins/dist/ffmpeg` は、`celesta-plugin.json` に `"roles": ["codec"]` があることがあり、Celesta はそれを無視します。ビルドし直してください。メディアプラグインがないと、動画の書き出しは最初にエンコーダーを確かめるので `no_codec` で失敗し、静止画の書き出しは動画や音声のファイルを読むときに `no_decoder` で失敗します。[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)をご覧ください。
+Celesta は動画と音声をメディアプラグインで読み書きします。プラグインがないと、Problems タブに **No media decoder can run** と表示されます。パッケージでは、Celesta に同梱のプラグインフォルダー（`Celesta.exe` の隣の `plugins\ffmpeg`、macOS アプリでは `Contents/PlugIns/ffmpeg`）に `ffmpeg` プラグインが残っているか確認するか、パッケージを入れ直してください。ソースビルドでは、リポジトリのルートで `node scripts/plugins/build.mts plugins/ffmpeg` を実行し、Celesta を実行するシェルで `CELESTA_PLUGIN_PATH` に `plugins/dist` の絶対パスを設定します（`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`）。古いチェックアウトでビルドした `plugins/dist/ffmpeg` は、`celesta-plugin.json` に `"roles": ["codec"]` があることがあり、Celesta はそれを無視します。ビルドし直してください。メディアプラグインがないと、動画の書き出しはその拡張子を書けるマルチプレクサーがないので `unsupported_output` で失敗し、そのヒントがプラグインの入れ方を伝えます。静止画の書き出しは動画や音声のファイルを読むときに `no_decoder` で失敗します。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがないとき（libx264 のない LGPL ビルドなど）、書き出しは `component_unavailable` で理由とともに失敗します。`Celesta-export --list-components --check` で、どのコンポーネントが使えるかを確認できます。[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)をご覧ください。
 
 書き出しが `unsupported_media` で失敗したときは、デコーダーは見つかったものの、どれもそのファイルを読めませんでした。MP4 や WAV のような `ffmpeg` プラグインが読める形式に変換するか、そのファイルを読めるデコーダーを持つプラグインを入れてください。
 

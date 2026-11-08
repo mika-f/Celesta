@@ -60,7 +60,7 @@ of this note specifies them.
 | # | Question | Decision |
 | --- | --- | --- |
 | 1 | Granularity | Four component kinds: decoder, video encoder, audio encoder, muxer. Encoders return compressed packets (WebCodecs-style codec strings and decoder configuration); Celesta interleaves them and hands them to the muxer. |
-| 2 | Capability discovery | Two layers. The manifest declares components statically, which is enough to list them and route files without starting a plugin. A runtime `describe` is authoritative: availability with a reason, the settings schema, and accepted formats. `describe` is called on demand only (when the export dialog opens, when an export starts, `--list-components --check`). It is cached in memory, keyed by plugin folder and approval fingerprint, and the cache is dropped on Reload Plugins. |
+| 2 | Capability discovery | Two layers. The manifest declares components statically, which is enough to list them and route files without starting a plugin. A runtime `describe` is authoritative: availability with a reason, the settings schema, and accepted formats. `describe` is called on demand only (when the export dialog opens, when an export starts, `--list-components --check`). It is cached in memory, keyed by the plugin folder, the manifest's `version`, and the executable's size and modification time ([Capability discovery](#capability-discovery)), and the cache is dropped on Reload Plugins. |
 | 3 | Settings schema | A small custom vocabulary shaped like `registerComponent()`'s: `select` / `number` / `boolean` / `string`, with `group`, `advanced`, and `visibleWhen`. Celesta validates settings before `open`. No codec-neutral quality/speed setting, and no plugin presets. Presets go in `export-presets.json`, in the user settings folder and, optionally, at the project root, so a project's export settings travel with its repository and CI. |
 | 4 | Selection | Components are named `<plugin>/<component>`. By default the muxer comes from the output's extension, and its default codecs are served by encoders from the muxer's own plugin first, then bundled plugins, then the search order. Components from project plugins are never chosen by default. A preset name is looked up in `--preset-file`, then the project's presets, then the user's; a project may name a default preset. The editor has an export dialog. The CLI takes `--preset`, `--preset-file`, `--muxer`, `--video-encoder`, `--video-option`, `--audio-encoder`, `--audio-option`, `--list-components`, and `--describe`. |
 | 5 | Transport | Raw frames go through a shared-memory ring of N slots, sized at export start. Requests are pipelined in order, with up to N in flight, and answers come back in order, with no request IDs. Packets and audio go through the pipe. Decoding keeps #775's single slot. |
@@ -332,6 +332,11 @@ Deviations in P1 (`docs/handoff/2026-11-08-media-decoders.md`):
 - **`describe` and its cache move to P2a** (deviation 1). Nothing consumes them in P1: decoders route by `probe`, and the export dialog and `--list-components` arrive later. P1's `MediaRegistry` holds the listing and the process factories only.
 - **P1's manifest parses `media.decoders` only** (deviation 3). The encoder and muxer keys arrive with P2a; serde already ignores keys it does not know, so a manifest that has them still loads. `InstalledPlugins::media()` returns `MediaPlugin { id, version, executable, directory, origin, decoders }`, one per plugin rather than one `MediaComponentInfo` per component, and the built-in components arrive with P4.
 
+Deviations in P2a (`docs/handoff/2026-11-08-media-encoders.md`):
+
+- **A `describe` from the export reuses the export's process** (deviation 10). `resolve_output` takes a `describe` callback; the export's `ExportSession` answers it from the process it starts for that plugin, and keeps that process for the `open`s. `MediaRegistry::describe` (start, `hello`, `describe`, stop) serves `--list-components --check`, `--describe`, and MCP. Both write the same cache, which lives in the `MediaRegistry` and is dropped with it on Reload Plugins.
+- **`InstalledPlugins::media()` stays one `MediaPlugin` per plugin** (deviation 15; P1's deviation 3, kept), now with the whole `media` manifest (decoders, video and audio encoders, muxers). `MediaRegistry::components()` gives the spec's one `MediaComponentInfo` per component.
+
 ## Settings schema
 
 `SettingField`, in the shape of `registerComponent()`'s fields
@@ -473,6 +478,8 @@ output.
 - `--loop` stays and means the loop pre-roll ([Audio](#audio)).
 - Stills keep `--frame` and their other flags. Their format comes from the extension, routed to the built-in image components (P4).
 
+Deviation in P2a (`docs/handoff/2026-11-08-media-encoders.md`): **`--loop` is accepted for every video output** (deviation 17). It changes nothing for a muxer without `trimsLeadingAudio` (FFmpeg's WebM), as [Audio](#audio) says, instead of today's usage error outside MP4. MCP's `loop` and `@celesta.studio/exporter`'s follow.
+
 ### MCP and `@celesta.studio/exporter`
 
 Both mirror the CLI: `{ preset?, presetFile?, muxer?, videoEncoder?: { id?, options? },
@@ -517,6 +524,11 @@ pub enum SettingValue { String(String), Number(f64), Boolean(bool) }
 - **Error codes** (`report.rs`): `component_unavailable`, `incompatible_components`, `invalid_option`, `unknown_preset`, and `no_decoder` (which replaces `no_codec` for reading). They replace `invalid_crf`, `encoder_unavailable`, and `no_codec`. `unsupported_output` stays, with the new meaning.
 - **Progress dashboard** (`progress.rs`): labels come from component names and the settings that differ from their defaults ("H.264 (x264) · CRF 20 · slow"). This replaces the hard-coded "VP9 CRF 20" and "ProRes 4444".
 
+Deviations in P2a (`docs/handoff/2026-11-08-media-encoders.md`):
+
+- **Progress labels come from an `ExportProgress::Output` event** (deviation 12), sent once `resolve_output` succeeds and before rendering, since the dashboard starts before any plugin has been described. `--json-progress` gains the event `output` (`muxer`, `muxerName`, and `video` and `audio` as `{ component, name, settings }`, or `audio: null`).
+- **`EncoderChoice.options` holds `SettingInput { Text, Value }`** (deviation 24), not `BTreeMap<String, SettingValue>`. The CLI's `key=value` text can only be typed against the component's schema, which arrives with `describe` at resolve, so it stays `Text` until then; MCP and TypeScript give typed values (`Value`).
+
 ## Registry and routing
 
 `celesta_media::MediaRegistry` replaces the one codec plugin `set_codec` chose. It is made
@@ -550,6 +562,11 @@ The in-process provider trait splits along the component kinds, with
 Their exact signatures are settled in the implementation plan of the phase
 that introduces them (P1 for `Decoder`, P2 for the others), following the
 messages above one to one.
+
+Deviations in P2a (`docs/handoff/2026-11-08-media-encoders.md`):
+
+- **`MediaError`'s variant names stay** (deviation 14): `Codec`, `CodecUnavailable`, and `CodecStopped` keep their names, and only their messages say "media plugin". Renaming them would touch every crate for no change in behavior.
+- **Export processes are started by the same factory as decoding ones** (deviation 16), told their purpose by a `ProviderUse`: `Describe` and `Export` processes are offered no shared memory in P2a (P2b gives `Export` the ring), and `Decode` keeps #775's slot.
 
 `celesta_media::protocol::serve` dispatches protocol 2 to whichever the
 program registers. In-process implementations (tests, benches, and
@@ -645,6 +662,11 @@ program registers. In-process implementations (tests, benches, and
   - **Output change:** MP4 colors change from untagged BT.601 to tagged BT.709. That fixes a color shift in players that take untagged HD as BT.709, and the file is no longer byte-identical to `main`'s.
 - **HDR is reserved.** `transfer` may later be `pq` or `hlg`, and `Color` may carry `masteringDisplay` and `contentLightLevel`. Celesta renders SDR only and never sends them yet.
 
+Deviations in P2a (`docs/handoff/2026-11-08-media-encoders.md`), until P2c:
+
+- **P2a's encoders do not apply `Color`** (deviation 8). `openVideoEncoder` and every video `Track` carry the BT.709 limited `Color`, but FFmpeg's libx264 converts RGBA input with libswscale's default (BT.601, untagged), its ProRes and VP9 keep today's BT.709 conversion and tags, and the GPU's `yuv420p` stays BT.601. The muxers tag MOV and WebM streams BT.709 from `Track.color` for ProRes (`ap4h`, `apch`) and VP9 (`vp09`) only, as `main` does; H.264 (`avc1`) and HEVC (`hvc1`) streams stay untagged. P2c switches the conversion and the tags everywhere at once, so P2a's output decodes as `main`'s does.
+- **A software renderer is offered no YUV format** (deviation 18). The offered list above has the YUV formats whenever `supports_yuv420p_readback()`; P2a keeps today's `ColorConversion::Auto` rule and leaves them out when `is_software()`, since lavapipe and WARP convert slower than libswscale. That keeps `main`'s output on CI's software renderers. `nv12` and `p010` exist in `PixelFormat` but are never offered (P2c).
+
 ## Audio
 
 - **Format.** Interleaved `f32` LE, 1 or 2 channels. Layout names (`mono`, `stereo`, `5.1`) are reserved for more.
@@ -672,6 +694,13 @@ program registers. In-process implementations (tests, benches, and
   - P5's AVAssetWriter muxers declare it and set `kCMSampleBufferAttachmentKey_TrimDurationAtStart` on the leading sample buffers.
   - Whether Media Foundation's MP4 sink writes edit lists at all, for the encoder's own delay included, is verified in P6. Until then its muxers do not declare it.
 - **No audio.** There is no audio track with `audio: None`, with a muxer without an `audio` list, or, as today, for a React entry whose audio graph has no clips. A project always gets the track of its mix, silent or not, as today.
+
+Deviations in P2a (`docs/handoff/2026-11-08-media-encoders.md`):
+
+- **Audio sample-rate conversion uses `rubato`** (deviation 9). The shared resampler named above (`docs/handoff/2026-11-07-shared-resampling.md`) resamples images, not audio. `celesta_media::resample_audio` wraps `rubato`'s sinc resampler for the rare mix whose rate the encoder refuses (Opus takes 48 kHz only). A channel count the encoder refuses is converted too: mono to stereo by copying the channel, stereo to mono by averaging.
+- **The mix is encoded in one pass once it is done** (deviation 11). Its chunks of `1024 × 16` sample frames go out back to back after the frame during which the mix arrived (a project) or after the render (a React entry), rather than interleaved with later frames, and the muxer opens right after. Without an audio encoder (`--audio-encoder none`, or a muxer that takes no audio) no mix is made at all, and a loudness target warns that it has nothing to apply to.
+- **`lpcm` codec strings name the sample format** (deviation 13): `lpcm.s16le`, `lpcm.s24le`, `lpcm.f32le`, so a muxer from another plugin knows the layout. The family stays `lpcm`.
+- **The WebM muxer derives Opus's trailing padding from the last packet** (deviation 26). `Packet` has no skip-samples field, so FFmpeg's WebM muxer compares the last Opus packet's `duration`, which its encoder shortens to the samples left, with the sample count its TOC gives, and writes the difference as that block's discard padding, as `main`'s file has it. Another plugin's Opus encoder gets the same trailing trim only by shortening its last packet's `duration` likewise.
 
 ## Stills and sequences (P4)
 
@@ -739,7 +768,7 @@ working.
 | Phase | Contents |
 | --- | --- |
 | P1: Protocol 2 and decoders | The manifest's `media` and `roles: ["media"]`, the component listing (with the sibling's `--manifest`), `MediaRegistry`, decoder routing and fallback, the decoder half of protocol 2, the project-decoder notice, and "No media decoder can run". FFmpeg's and the test codec's decoders are ported. Also everything that writes or checks today's `codec` manifest and protocol 1, or a packaged build after P1 would ship a plugin Celesta ignores: `plugins/ffmpeg/plugin.json`; `scripts/plugins/manifest.mts` (the `media` key, `protocol` per role) and its tests; `scripts/test-package.mjs`; the test codec's manifest (`crates/codec-test/src/plugin.rs`); and the protocol check in `celesta-plugin` (`PROTOCOL_VERSION`: the serve loop's `hello`, `PluginChild::hello_with`, and discovery), which becomes per role. Until P2a replaces them, protocol 2 temporarily keeps protocol 1's `checkEncoder`, `openEncoder`, `encodeFrame`, `finishEncoder`, `abortEncoder`, and `muxAudio` messages unchanged, sent to one media plugin (as built, the first bundled one, else the first in search order that is not a project's, else none), so exports keep working. As built (`docs/handoff/2026-11-08-media-decoders.md`): `describe` and its cache moved to P2a (deviation 1), the manifest parses `media.decoders` only (deviation 3), the process-wide registry stays (deviation 2), the legacy encoder may share a decoder's process (deviation 6), and a project's plugin cannot replace a bundled media plugin (deviation 7); see [Capability discovery](#capability-discovery), [Registry and routing](#registry-and-routing), and [Decoders](#decoders). |
-| P2a: Encoders and muxers | `describe` and its cache, moved from P1, and the manifest's encoder and muxer keys; the settings schema and validation; the encoder and muxer halves of protocol 2 through the pipe only (`transports: ["pipe"]`, a window of one); negotiation; the interleaver and its spill; audio streaming, delay, and pre-roll; `resolve_output`; FFmpeg's and the test codec's encoders and muxers; the exporter's options, CLI, JSON report, and progress labels; MCP and `@celesta.studio/exporter`; and removal of the old types and protocol 1's encoder messages. The FFmpeg plugin moves from ez-ffmpeg's file-writing pipeline (`VideoWriter`, `FfmpegContext`) to packet-level libavcodec / libavformat through `ffmpeg-sys-next` (already a dependency), since ez-ffmpeg's packet sink takes only avcC H.264 and raw AAC. Checked against `main` by decoding: video frames and audio samples identical. Files are not byte-identical (packet-level muxing, edit lists from negative `pts`). |
+| P2a: Encoders and muxers | `describe` and its cache, moved from P1, and the manifest's encoder and muxer keys; the settings schema and validation; the encoder and muxer halves of protocol 2 through the pipe only (`transports: ["pipe"]`, a window of one); negotiation; the interleaver and its spill; audio streaming, delay, and pre-roll; `resolve_output`; FFmpeg's and the test codec's encoders and muxers; the exporter's options, CLI, JSON report, and progress labels; MCP and `@celesta.studio/exporter`; and removal of the old types and protocol 1's encoder messages. The FFmpeg plugin moves from ez-ffmpeg's file-writing pipeline (`VideoWriter`, `FfmpegContext`) to packet-level libavcodec / libavformat through `ffmpeg-sys-next` (already a dependency), since ez-ffmpeg's packet sink takes only avcC H.264 and raw AAC. Checked against `main` by decoding: video frames and audio samples identical. Files are not byte-identical (packet-level muxing, edit lists from negative `pts`). As built (`docs/handoff/2026-11-08-media-encoders.md`): the deadlines and the manifest's `inputFormats` land here rather than in P2b, and deviations 8–18, 24, and 26 are recorded in [Capability discovery](#capability-discovery), [Exporter API](#exporter-api), [Registry and routing](#registry-and-routing), [CLI](#cli-celesta-exporter), [Pixel formats and color](#pixel-formats-and-color), and [Audio](#audio). Deviation 25: **decoded frames on the RGBA-input paths may differ from `main`'s by at most 1 code value** (16-bit codes for MOV and WebM): MOV, WebM, and MP4 on a software renderer. P2a converts with libswscale's `sws_scale` where `main`'s filter graph used the `scale` filter with the same flags, and the two entry points can round differently in ways P2a cannot match exactly; the GPU `yuv420p` path and every audio path stay identical. The end-to-end check found no difference on any path. |
 | P2b: Shared memory and pipelining | The ring, the send window, `inputFormats` in the manifest, and the deadlines; the mix-against-render measurement; and the performance comparison against `main`. Checked byte-identical against P2a's output. |
 | P2c: BT.709 | The GPU conversion to BT.709, `nv12` and `p010`, and color tags in every container, with before/after screenshots of the same scene (AGENTS.md). Its own PR, so P2a and P2b are checked without a color change. |
 | P3: Export dialog and presets | The editor's export dialog; user and project `export-presets.json`, the project's `default`, and the presets in the CLI, MCP, and TS (`--preset`, `--preset-file`). |

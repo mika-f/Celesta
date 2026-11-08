@@ -44,7 +44,7 @@ From the repository root, with the Celesta exporter and React runtime built:
 python3 examples/afterimage/make-score.py
 node skills/celesta/scripts/inspect.mjs examples/afterimage/film.tsx \
   --frames 0,90,225,315,390,480,630,719
-target/release/celesta-exporter --overwrite --preset medium --crf 17 \
+target/release/celesta-exporter --overwrite --video-option crf=17 \
   --react examples/afterimage/film.tsx examples/afterimage/afterimage.mp4
 ```
 

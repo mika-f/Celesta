@@ -275,7 +275,7 @@ Celesta-export --json --react film.tsx --subtitles 'film.{lang}.vtt'
 
 - `--from`/`--to`, `--props`, `--props-file`, `--project`, `--composition`,
   and `--overwrite` work as with a video. Options about pictures or encoding
-  (`--frame`, `--crf`, `--preset`, `--render-quality`, …) are usage errors.
+  (`--frame`, `--video-option`, `--preset`, `--render-quality`, …) are usage errors.
 - Progress counts the evaluated frames; the JSON result has `composition`
   and the subtitle files in `outputs`, and no video.
 - A JSON project writes its dialogue items without evaluating anything.

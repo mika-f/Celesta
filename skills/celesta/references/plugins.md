@@ -78,8 +78,12 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 - Celesta links no codec: video and audio files are probed, decoded,
   encoded, and muxed by media plugins (`"roles": ["media"]` and
-  `"protocol": 2` in the manifest, with their decoders in
-  `media.decoders`: `id`, `name`, and `extensions`). The app's packages
+  `"protocol": 2` in the manifest, with their components under `media`:
+  `decoders` (`id`, `name`, `extensions`), `videoEncoders` and
+  `audioEncoders` (`id`, `name`, `codecs`, and a video encoder's
+  `inputFormats`), and `muxers` (`id`, `name`, `extensions`, `video`,
+  `audio`, `defaultVideo`, `defaultAudio`, `trimsLeadingAudio`); a
+  component is `<plugin>/<id>`, such as `ffmpeg/libx264`). The app's packages
   bundle `ffmpeg`. A source build makes it with
   `node scripts/plugins/build.mts plugins/ffmpeg` and points
   `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
@@ -90,16 +94,17 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `target/release`.
 - A plugin with the older `"roles": ["codec"]` is ignored: rebuild
   `plugins/ffmpeg`, or have the user install a release for their Celesta.
-- They are not imported and have no components. Every media plugin that
+- They are not imported and have no content components. Every media plugin that
   may run is used: a file goes to the decoders listing its extension (all
   decoders when none does), the user's plugins first (`--plugin-dir`,
   `CELESTA_PLUGIN_PATH`, the user plugin folder, added folders), then
   bundled ones, then a project's own. A decoder that does not read the
   file, fails, or does not start passes it to the next; the first that
-  reads it keeps it. Exports encode through the first bundled media
-  plugin (when none is bundled, the first in search order that is not a
-  project's; a project's never encodes, so with only those a video export
-  is `no_codec`).
+  reads it keeps it. An export takes its muxer from the output's
+  extension (bundled plugins first, then the user's) and its encoders from
+  the muxer's default codecs (the muxer's plugin first, then bundled, then
+  the user's); a project's components only when named. `--list-components`
+  and `--describe` show them ([export.md](export.md#encoders-and-settings)).
 - Between plugins with the same id, the earlier in search order wins, with
   one exception: a project's plugin cannot replace a media plugin bundled
   with Celesta (or the `cargo install` sibling), although project folders
@@ -110,9 +115,10 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   its Plugins tab row; it is not an error.
 - Without a decoder, the app shows **No media decoder can run** in
   Problems and video and audio layers fail to decode. With no media plugin
-  at all, a video export fails with `no_codec` (it checks its encoder
-  first), and a still export with `no_decoder`; a file no decoder reads
-  fails with `unsupported_media` (see [export.md](export.md)).
+  at all, a video export fails with `unsupported_output` (no muxer writes
+  its extension; the hint says how to install the plugin), and a still
+  export with `no_decoder`; a file no decoder reads fails with
+  `unsupported_media` (see [export.md](export.md)).
 - Decoded frames come through memory shared with the plugin's process when
   the plugin accepts it (the `ffmpeg` plugin does), else through its pipe.
   `CELESTA_CODEC_SHARED_MEMORY=0` keeps every frame in the pipe, for a media

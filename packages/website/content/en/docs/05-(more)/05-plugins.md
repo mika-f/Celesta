@@ -113,7 +113,11 @@ In the desktop app, a plugin can also offer its components in the **Add** menu, 
 
 Celesta reads and writes video and audio files through media plugins rather than linking a codec library itself. The macOS and Windows packages come with one, `ffmpeg`, in the plugin folder that comes with Celesta: it probes, decodes, encodes, and muxes with FFmpeg. That FFmpeg build includes libx264, which is GPL licensed, so the media plugin alone is distributed under the GPL; the app, `celesta-exporter`, and `Celesta-mcp` are MIT or Apache-2.0.
 
-A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and lists the decoders the plugin offers in `media.decoders`: each with an `id`, a `name` to show, and the file types it reads in `extensions` (without the dot):
+A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and lists the components the plugin offers under `media`, each with an `id` and a `name` to show:
+
+- `decoders` read files. Each lists the file types it reads in `extensions` (without the dot).
+- `videoEncoders` and `audioEncoders` compress pictures and sound. Each lists the codecs it writes in `codecs`, as the part of a WebCodecs codec string before its first dot (`avc1` for H.264, `mp4a` for AAC), and a video encoder may list the pixel formats it takes in `inputFormats`.
+- `muxers` write files. Each lists the `extensions` it writes, the codecs it takes in `video` and `audio` (a muxer without `audio` writes no sound), the codecs it writes by default in `defaultVideo` and `defaultAudio`, and `"trimsLeadingAudio": true` when it can hide sound placed before the start, which `--loop` uses.
 
 ```json
 {
@@ -126,12 +130,22 @@ A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and list
   "media": {
     "decoders": [
       { "id": "ffmpeg", "name": "FFmpeg", "extensions": ["mp4", "mov", "webm", "mp3", "wav"] }
+    ],
+    "videoEncoders": [
+      { "id": "libx264", "name": "H.264 (x264)", "codecs": ["avc1"], "inputFormats": ["yuv420p", "rgba8"] }
+    ],
+    "audioEncoders": [
+      { "id": "aac", "name": "AAC", "codecs": ["mp4a"] }
+    ],
+    "muxers": [
+      { "id": "mp4", "name": "MP4", "extensions": ["mp4"], "video": ["avc1"], "audio": ["mp4a"],
+        "defaultVideo": "avc1", "defaultAudio": "mp4a", "trimsLeadingAudio": true }
     ]
   }
 }
 ```
 
-A decoder's `id` follows the rules for a plugin's id (see [Write a plugin](#write-a-plugin)) and is not used by another decoder of the same plugin; Celesta skips a decoder that breaks this, says why, and keeps the plugin's other decoders. A plugin is either a media plugin or a content plugin: a manifest with both roles is skipped. A plugin made for the older `"roles": ["codec"]` is ignored, and Celesta reads no media through it: install a release of it made for your Celesta, or, in a source build, build `plugins/ffmpeg` again.
+A component's `id` follows the rules for a plugin's id (see [Write a plugin](#write-a-plugin)) and is not used by another component of the same kind in the same plugin; Celesta skips a component that breaks this, says why, and keeps the plugin's other components. Components are named `<plugin>/<component>`, such as `ffmpeg/libx264`. When a plugin runs, Celesta asks it to describe its components: whether each works on this computer (an FFmpeg built without libx264 says so, with the reason) and its settings. A plugin is either a media plugin or a content plugin: a manifest with both roles is skipped. A plugin made for the older `"roles": ["codec"]` is ignored, and Celesta reads no media through it: install a release of it made for your Celesta, or, in a source build, build `plugins/ffmpeg` again.
 
 ### Which decoder reads a file
 
@@ -147,13 +161,17 @@ When a decoder says the file is not one it reads, fails to read it, or its progr
 
 When a project's own plugin decodes files, the desktop app tells you: the Problems tab lists it as information, such as `my-decoder decodes 2 files in this project`, with the files, and the plugin's row in the [Plugins tab](#the-plugins-tab) says how many files it decodes.
 
+### Which components write a video
+
+An export takes its muxer from the output's extension, unless you name one with `--muxer`: the first muxer listing that extension among the plugins that come with Celesta, then among the plugins you installed, in the search order above. Its `defaultVideo` and `defaultAudio` codecs then pick the encoders, unless you name them with `--video-encoder` and `--audio-encoder`: the first encoder that writes that codec and works on this computer, from the muxer's own plugin, then the plugins that come with Celesta, then the plugins you installed. A project's own components are used only when you name them (or, for its encoders, when you name its muxer). `--list-components` lists every installed component, and `--describe <plugin/id>` one component's settings; see [Choosing encoders and settings](/en/docs/export/#choosing-encoders-and-settings).
+
 ### With `cargo install`
 
 When none of the plugins Celesta found is `ffmpeg`, other than a project's own, it also uses a `celesta-codec-ffmpeg` program beside its own executable, where `cargo install` leaves it, and counts it among the plugins that come with Celesta, so a project's `ffmpeg` cannot replace it either; it asks that program for its manifest with `celesta-codec-ffmpeg --manifest`. It does not when that executable is in a Cargo build folder such as `target/release`: a source build uses the media plugin you build (see [Build from source](/en/docs/build-from-source/)). If you install Celesta with `cargo install`, install the media plugin too, so it lands beside the app; installing only `celesta-editor` or `celesta-exporter` leaves none. Until `celesta-codec-ffmpeg` is published to crates.io, install it from the repository with `cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` (FFmpeg 8.1.x development libraries are needed, as in [Build from source](/en/docs/build-from-source/)).
 
 ### Without a decoder
 
-Without any media decoder, video and audio cannot be shown or exported. The Problems tab shows **No media decoder can run** and says why: a media plugin has no program for this computer, waits for your approval, or is turned off, the media plugins found declare no decoder, or none was found. A video export checks its encoder first, so with no media plugin at all it fails at once with the error code `no_codec`; a still export, or a video export whose media plugins have no decoder, fails with `no_decoder` when it reads a video or audio file. Until exports let you choose their encoders, they encode and mux through the first media plugin that comes with Celesta, or, when none does, the first media plugin in the search order that is not a project's. A project's media plugin never encodes: when it is the only one, a video export fails with `no_codec`.
+Without any media decoder, video and audio cannot be shown or exported. The Problems tab shows **No media decoder can run** and says why: a media plugin has no program for this computer, waits for your approval, or is turned off, the media plugins found declare no decoder, or none was found. With no media plugin at all, no muxer writes a video, so a video export fails at once with the error code `unsupported_output` and a hint to install the media plugin; a still export, or a video export whose media plugins have no decoder, fails with `no_decoder` when it reads a video or audio file.
 
 ### Shared memory and other FFmpeg builds
 
