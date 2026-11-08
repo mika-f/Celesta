@@ -239,24 +239,34 @@ fn is_rgba(format: PixelFormat) -> bool {
     matches!(format, PixelFormat::Rgba8 | PixelFormat::Rgba16)
 }
 
-/// x264's tunes that change its psychovisual settings, of which a tune
-/// takes at most one, and those it may add to one.
-const X264_PSY_TUNES: [&str; 6] = ["film", "animation", "grain", "stillimage", "psnr", "ssim"];
+/// x264's tunes: those that change its psychovisual settings (x264 applies
+/// the first of them and ignores the rest, with a warning) and those it adds
+/// to any.
+const X264_PSY_TUNES: [&str; 7] = [
+    "film",
+    "animation",
+    "grain",
+    "stillimage",
+    "psnr",
+    "ssim",
+    "touhou",
+];
 const X264_OTHER_TUNES: [&str; 2] = ["fastdecode", "zerolatency"];
 
-/// Refuses a `tune` libx264 would, naming the key: x264's tunes, several
-/// joined by `,` (or `.`, `/`, `+`, as x264 reads them) with at most one
-/// psychovisual tune.
+/// Refuses a `tune` libx264 would, naming the key. It reads tunes as x264
+/// does: separated by `,`, `.`, `/`, `-`, or `+`, case-insensitively, with
+/// empty parts skipped.
 fn check_tune(tune: &str) -> Result<(), MediaError> {
-    let parts: Vec<&str> = tune.split([',', '.', '/', '+']).collect();
-    let known = parts
-        .iter()
-        .all(|part| X264_PSY_TUNES.contains(part) || X264_OTHER_TUNES.contains(part));
-    let psy = parts
-        .iter()
-        .filter(|part| X264_PSY_TUNES.contains(part))
-        .count();
-    if known && psy <= 1 {
+    let known = tune
+        .split([',', '.', '/', '-', '+'])
+        .filter(|part| !part.is_empty())
+        .all(|part| {
+            X264_PSY_TUNES
+                .iter()
+                .chain(&X264_OTHER_TUNES)
+                .any(|name| name.eq_ignore_ascii_case(part))
+        });
+    if known {
         Ok(())
     } else {
         Err(invalid(
@@ -646,10 +656,21 @@ mod tests {
 
     #[test]
     fn an_unknown_tune_names_the_key() {
-        for tune in ["film", "animation,fastdecode", "zerolatency+fastdecode"] {
+        // As libx264 reads them: `touhou`, any case, `-` as a separator,
+        // empty parts, and a second psychovisual tune (which x264 ignores).
+        for tune in [
+            "film",
+            "animation,fastdecode",
+            "zerolatency+fastdecode",
+            "touhou",
+            "Film",
+            "film-fastdecode",
+            "film,",
+            "film,grain",
+        ] {
             assert!(check_tune(tune).is_ok(), "{tune}");
         }
-        for tune in ["cinema", "film,grain", "film,", "Film"] {
+        for tune in ["cinema", "film,cinema"] {
             let Err(MediaError::InvalidSettings { key, message }) = check_tune(tune) else {
                 panic!("{tune} was taken");
             };
