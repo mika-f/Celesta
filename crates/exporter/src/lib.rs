@@ -3,6 +3,8 @@
 mod control;
 mod error;
 mod exporter;
+#[allow(dead_code)] // the export loop uses it from the next task on
+mod interleave;
 mod job;
 mod loudness;
 mod media;
