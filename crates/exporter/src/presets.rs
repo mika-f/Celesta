@@ -68,6 +68,8 @@ pub struct PresetEncoder {
     pub component: Option<String>,
     #[serde(default)]
     pub options: Settings,
+    #[serde(flatten)]
+    pub other: Extra,
 }
 
 /// The audio of a preset: an encoder, or `"none"` for no audio.
@@ -360,14 +362,26 @@ mod tests {
         let path = dir.path().join(PRESETS_FILE);
         write(
             &path,
-            r#"{"version":1,"future":1,"presets":[{"name":"a","note":"x"}]}"#,
+            r#"{"version":1,"future":1,"presets":[
+                {"name":"a","note":"x",
+                 "video":{"component":"b/x264","options":{},"pass":2},
+                 "audio":{"component":"b/aac","channels":"stereo"}},
+                {"name":"b","audio":"none"}]}"#,
         );
         PresetsFile::load(&path).unwrap().save(&path).unwrap();
         let value: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["future"], 1);
         assert_eq!(value["presets"][0]["note"], "x");
-        assert_eq!(PresetsFile::load(&path).unwrap().presets[0].name, "a");
+        assert_eq!(value["presets"][0]["video"]["pass"], 2);
+        assert_eq!(value["presets"][0]["audio"]["channels"], "stereo");
+        assert_eq!(value["presets"][1]["audio"], "none");
+        let file = PresetsFile::load(&path).unwrap();
+        assert_eq!(file.presets[0].name, "a");
+        assert_eq!(
+            file.presets[1].output.audio,
+            Some(PresetAudio::None(NoAudio::None))
+        );
     }
 
     #[test]

@@ -51,8 +51,10 @@ pub struct ExportOptions {
     pub plugins: Option<InstalledPlugins>,
     /// The files [`OutputChoice::preset`] and a project's `default` preset
     /// are looked up in. The default reads none, so a library caller is not
-    /// changed by a file in the user's home; the CLI, MCP, and the editor
-    /// set it from the export's source ([`PresetLookup::for_source`]).
+    /// changed by a file in the user's home; the CLI and MCP set it from
+    /// the export's source ([`PresetLookup::for_source`]). The editor
+    /// leaves it empty: its dialog resolves the presets and exports an
+    /// explicit choice.
     pub presets: PresetLookup,
 }
 

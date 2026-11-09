@@ -368,19 +368,25 @@ pub fn resolve_preset_output(
                     check_writes(audio, muxer, accepted)?;
                     Some(audio)
                 }
-                (None, Some(text)) => {
-                    let found = match accepted_audio {
-                        None => Err(format!("{} takes no audio", muxer.reference)),
-                        Some(accepted) => preset_component(
+                (None, Some(text)) => match accepted_audio {
+                    None => {
+                        warnings.push(format!(
+                            "preset `{name}`: {text} is unavailable ({} takes no audio); the audio is left out",
+                            muxer.reference
+                        ));
+                        None
+                    }
+                    Some(accepted) => {
+                        let found = preset_component(
                             &components,
                             text,
                             ComponentKind::AudioEncoder,
                             Some((muxer, accepted)),
                             &mut descriptions,
-                        ),
-                    };
-                    fallback(&mut warnings, name, text, found)
-                }
+                        );
+                        fallback(&mut warnings, name, text, found)
+                    }
+                },
                 (None, None) => None,
             };
             let audio = match (chosen, accepted_audio) {
@@ -1684,6 +1690,17 @@ mod tests {
         assert_eq!(
             resolved.warnings,
             ["preset `stale`: b/x264 is unavailable (not a muxer); using the default instead"]
+        );
+
+        // Audio against a muxer that takes none is left out, not defaulted.
+        let (_dir, presets) = user_presets(json!([{ "name": "stale", "muxer": "b/ivf",
+            "audio": { "component": "b/aac" } }]));
+        let resolved =
+            resolve_with(&registry, &named_preset("stale"), "film.ivf", &presets).unwrap();
+        assert_eq!(resolved.audio, None);
+        assert_eq!(
+            resolved.warnings,
+            ["preset `stale`: b/aac is unavailable (b/ivf takes no audio); the audio is left out"]
         );
     }
 
