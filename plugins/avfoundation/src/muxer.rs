@@ -619,6 +619,7 @@ impl MuxerSession {
     /// Queues `packets` for their tracks' inputs in the order given, and
     /// appends what the inputs are ready for.
     pub(crate) fn write(&mut self, packets: &[TrackPacket]) -> Result<(), MediaError> {
+        self.check_writing()?;
         for given in packets {
             let count = self.inputs.len();
             let input = self.inputs.get_mut(given.track).ok_or_else(|| {
@@ -632,9 +633,22 @@ impl MuxerSession {
         Ok(())
     }
 
+    /// `Ok` while the writer is writing; its error once it has failed (an
+    /// input of a failed writer is never ready again, so what is queued for
+    /// it would only pile up).
+    fn check_writing(&self) -> Result<(), MediaError> {
+        // SAFETY: reading a writer's status is always allowed.
+        if unsafe { self.writer.status() } == AVAssetWriterStatus::Writing {
+            Ok(())
+        } else {
+            Err(writer_error(&self.writer, "write the file"))
+        }
+    }
+
     /// Appends to every input what it is ready for, until none takes more:
-    /// whether any took a buffer.
+    /// whether any took a buffer; the writer's error once it has failed.
     fn append_ready(&mut self) -> Result<bool, MediaError> {
+        self.check_writing()?;
         let mut took = false;
         loop {
             let mut again = false;
@@ -653,10 +667,6 @@ impl MuxerSession {
     pub(crate) fn finish(mut self) -> Result<Vec<PathBuf>, MediaError> {
         let mut last = Instant::now();
         loop {
-            // SAFETY: reading a writer's status is always allowed.
-            if unsafe { self.writer.status() } == AVAssetWriterStatus::Failed {
-                return Err(writer_error(&self.writer, "write the file"));
-            }
             if self.append_ready()? {
                 last = Instant::now();
             }

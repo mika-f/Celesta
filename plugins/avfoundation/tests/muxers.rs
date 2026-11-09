@@ -571,16 +571,47 @@ fn aac_delay_and_preroll_are_hidden_for_every_reader() {
             ("FFmpeg", ffmpeg_audio(&output)),
             ("AVFoundation", avfoundation_audio(&output)),
         ] {
+            // The last packet covers 960 frames and is trimmed by 64 at its
+            // end: exactly the second the click track is.
             let frames = decoded.len() / 2;
-            assert!(
-                frames.abs_diff(AUDIO_RATE as usize) <= 1_024,
-                "{component}, {reader}: {frames} frames"
-            );
+            assert_eq!(frames, AUDIO_RATE as usize, "{component}, {reader}");
             assert_eq!(peak(&decoded), CLICK, "{component}, {reader}");
             let early = loudest(&decoded, 4_000);
             assert!(
                 early < 0.1,
                 "{component}, {reader}: {early} before the click"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_aac_track_without_delay_is_written() {
+    // AAC from an encoder that says it has no delay: packets from 0, so no
+    // buffer has anything to trim at its start.
+    let (mut audio, track) = aac(0, &click());
+    for packet in &mut audio {
+        packet.pts += AAC_DELAY as i64;
+        packet.dts = packet.pts;
+    }
+    let Track::Audio { config, .. } = track else {
+        unreachable!("an audio track");
+    };
+    let tracks = [audio_track(config, 0)];
+    let directory = tempfile::tempdir().unwrap();
+    for component in ["mp4", "mov"] {
+        let output = directory.path().join(format!("undelayed.{component}"));
+        mux(component, &output, &tracks, 0, &[on_track(0, &audio)]);
+        assert_eq!(packet_counts(&output), [audio.len()], "{component}");
+        for (reader, decoded) in [
+            ("FFmpeg", ffmpeg_audio(&output)),
+            ("AVFoundation", avfoundation_audio(&output)),
+        ] {
+            // The encoder's priming now plays: the click is that much late.
+            assert_eq!(
+                peak(&decoded),
+                CLICK + AAC_DELAY as usize,
+                "{component}, {reader}"
             );
         }
     }
@@ -728,6 +759,51 @@ fn an_unknown_codec_is_refused() {
         Err(MediaError::Codec(message)) => assert_eq!(message, "mp4 does not take opus"),
         other => panic!("opened opus in mp4: {other:?}"),
     }
+}
+
+#[test]
+fn a_failed_writer_takes_no_more_packets() {
+    let (video, track) = h264(10);
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("failed.mp4");
+    let mut codec = AvfCodec::default();
+    let muxer = codec.muxer().unwrap();
+    let tracks = [track];
+    let session = muxer
+        .open_muxer(&request("mp4", &output, &tracks, 0))
+        .unwrap();
+    muxer
+        .write_packets(session, &on_track(0, &video[..5]))
+        .unwrap();
+    // A decode time before the last one written: AVAssetWriter takes the
+    // buffer, then fails on its own thread.
+    muxer
+        .write_packets(session, &on_track(0, &video[1..2]))
+        .unwrap();
+    let started = Instant::now();
+    let error = loop {
+        match muxer.write_packets(session, &[]) {
+            Err(error) => break error,
+            Ok(()) => {
+                assert!(
+                    started.elapsed() < Duration::from_secs(10),
+                    "the failed writer still takes packets"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    };
+    assert!(
+        matches!(&error, MediaError::Codec(message) if message.starts_with("AVAssetWriter could not write the file")),
+        "{error:?}"
+    );
+    // The rest is refused, not queued.
+    assert!(
+        muxer
+            .write_packets(session, &on_track(0, &video[5..]))
+            .is_err()
+    );
+    assert!(muxer.finish_muxer(session).is_err());
 }
 
 #[test]
