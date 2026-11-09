@@ -164,8 +164,9 @@ impl Interleaver {
 
     /// The packets that are ready, in decode order: at most `budget` bytes
     /// and [`WRITE_REQUEST_PACKETS`] of them, but always one when any is
-    /// ready. Call it again until it gives none. A spilled packet that cannot be read back fails it, and
-    /// the packets taken before it are lost.
+    /// ready. Call it again until it gives none. A spilled packet that
+    /// cannot be read back fails it, and the packets taken before it are
+    /// lost.
     pub(crate) fn take_ready(&mut self, budget: usize) -> Result<Vec<TrackPacket>, ExportError> {
         let mut ready = Vec::new();
         if !self.audio_started {
