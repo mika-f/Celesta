@@ -107,10 +107,13 @@ every still export P3 wrote is byte-identical (see Checks).
   writes .png files as png, and builtin/webp writes webp").
   `StillOutput::open` resolves through `resolve_preset_output` with no base
   (no presets file is ever read), describes the built-in in process and a
-  named plugin through one lazily started export process, stages the
-  output, opens the encoder offering `[rgba16, rgba8]` (separate files) or
-  `[rgba8]` (a contact sheet), and checks the answer with the video path's
-  `check_opened`. The renderer is set from the answer as video's is
+  named plugin through one lazily started export process, opens the
+  encoder offering `[rgba16, rgba8]` (separate files) or `[rgba8]` (a
+  contact sheet), checks the answer with the video path's `check_opened`,
+  and only then stages the output, so a refusal at open (WebP too large,
+  `depth=16` on a contact sheet) creates no folder. Errors from a still's
+  encoder are filed under the stage `image encoding` (`IMAGE_STAGE`), the
+  muxer's under `muxing`. The renderer is set from the answer as video's is
   (`render::configure_renderer`): `readback_for(opened)` and a transparent
   background when `alpha`, else the default background.
 - **Staging and publishing.** One file is staged beside the output as
@@ -122,11 +125,22 @@ every still export P3 wrote is byte-identical (see Checks).
   `ExportProgress::Wrote` events follow the packets. Every final name is
   still checked for overwrite before the export. A failure or cancel ends
   the sessions, keeps the frames already published, and removes the staged
-  folder; a one-file still writes nothing.
+  folder; a one-file still writes nothing. A flush or write whose packets
+  carry several frames publishes them one at a time and reports each one
+  published (`Wrote`) even when a later one fails. A hard kill (SIGKILL,
+  or SIGTERM without `--stdin-cancel`) can leave an empty or partial
+  `.celesta-*/` staging folder beside a sequence, as a killed video export
+  leaves its staged file. A selection like `--frames 3,0` sends the frames'
+  `pts` in selection order, so a sequence muxer must not require increasing
+  `pts`.
 - **Straight `rgba8`.** An encoder answering `alpha: true` with `rgba8`
   gets straight alpha: the renderer reads back `Rgba16Straight` and
-  `encoder_pixels` narrows each channel to 8 bits, rounding to nearest
-  (`(v * 255 + 32767) / 65535`), in the still path and in `ExportSession`.
+  `encoder_pixels` narrows each channel to 8 bits with the same 8x8 ordered
+  dither the renderer's 8-bit readback uses (`narrow_rgba16`, a CPU copy of
+  `dither.wgsl`'s `dither` and `code`: every channel, alpha too, gets the
+  Bayer offset at the pixel's position in the frame, and a value within
+  1/8 of a code keeps that code), in the still path and in `ExportSession`,
+  so a transparent gradient does not band.
   Opaque frames keep `render()`'s RGBA8 readback, so their bytes are P3's.
   A contact sheet places straight tiles over its checkerboard as before.
 - **Front ends.** CLI stills accept `--muxer`, `--video-encoder`, and
@@ -277,8 +291,10 @@ From the session's ledger; each with what it costs if it is wrong.
    documented intent ("a failed or cancelled export leaves no partial
    file"). If wrong, the file must be published before the cancel check.
 6. **Straight `rgba8` is narrowed on the CPU**: an encoder keeping alpha in
-   `rgba8` gets frames read back as `Rgba16Straight` and narrowed (round to
-   nearest), in the still and video paths alike, because the renderer's
+   `rgba8` gets frames read back as `Rgba16Straight` and narrowed with the
+   8-bit readback's ordered dither (same matrix, offset, tolerance, and
+   rounding as `dither.wgsl`, by pixel position), in the still and video
+   paths alike, because the renderer's
    8-bit readback is premultiplied only. The GPU code and opaque output are
    untouched. If wrong, a GPU straight 8-bit readback replaces the
    narrowing later, saving some CPU.
@@ -418,8 +434,13 @@ the crate's 14 tests (`default_png_is_todays_png`,
 `a_sequence_publishes_each_frame_as_it_is_written`,
 `an_aborted_sequence_keeps_published_frames_and_no_staging`,
 `a_sequence_frame_never_clobbers_unless_asked`,
-`a_held_back_frame_is_published_under_its_own_name`); straight `rgba8`
-(`straight_rgba16_narrows_to_rgba8_rounding_to_nearest`,
+`a_held_back_frame_is_published_under_its_own_name`,
+`a_refusal_at_open_creates_no_folder`,
+`a_still_encoder_error_names_image_encoding`,
+`a_flush_failing_partway_keeps_the_frames_it_published`); straight `rgba8`
+(`straight_rgba16_narrows_to_rgba8_keeping_whole_codes`,
+`narrowing_uses_the_renderers_8x8_bayer_dither`,
+`a_narrowed_ramp_does_not_band`,
 `an_rgba8_encoder_keeping_alpha_gets_straight_8_bit_frames`); the live
 stills (`a_project_default_preset_never_reaches_stills`,
 `transparent_png_and_webp_keep_alpha`, `sixteen_bit_png`,
@@ -436,8 +457,6 @@ TS package's stills arguments).
   `readback_of` nor `PixelFormat::OFFERABLE`, so expect conflicts only in
   docs and the spec's deviation lists.
 - **The built-in crate.**
-  - Both muxers `sync_all` every file, an fsync per frame P3's stills did
-    not do.
   - `imageSequence`'s frame is `pts / duration`, truncating; that `pts` is
     a multiple of the frame rate's denominator is assumed, not documented.
   - A sequence frame is recorded as written before its write succeeds.
@@ -445,17 +464,12 @@ TS package's stills arguments).
     frame.
 - **Ranking.** `decoder_order` and `default_rank` repeat the origin and
   FFmpeg-id match; no editor model test pins the new rank order.
-- **Video refusals.** `stills_need_no_media_plugin`'s skip guard looks
-  beside the executable, while bundled plugins live in
-  `<exe>/../lib/celesta/plugins`, so it never proves "no other plugin";
-  `built_ins_are_listed_without_a_folder` checks the JSON listing only, not
-  the text line; no unit test for the preset-chosen still-muxer refusal.
+- **Video refusals.** `built_ins_are_listed_without_a_folder` checks the
+  JSON listing only, not the text line; no unit test for the preset-chosen
+  still-muxer refusal.
 - **Stills.**
   - A named plugin muxer's process may first start at the first write,
     after rendering, when its `describe` is cached.
-  - Open-time refusals create the output's directories (the staging)
-    before the encoder refuses; opening the encoder before staging would
-    avoid that.
   - One-file publish and finish errors no longer carry `.at_frame(frame)`;
     the one-file finish reports frame 0 when nothing was muxed
     (unreachable), and a negative `pts` maps to frame 0 in `mux`.
@@ -464,16 +478,14 @@ TS package's stills arguments).
   - The test `rejects_empty_duplicate_and_non_png_selections` no longer
     tests a non-PNG output.
   - `--frames 3,0` sends decreasing `pts` to the encoder and muxer; the
-    built-ins accept it, a plugin's may not. Document or check it.
+    built-ins accept it, and the spec (deviation 53) now tells a plugin's
+    sequence muxer to; nothing checks a plugin does.
   - The one-file staged name `.celesta-XXXX.png` matches `*.png` globs
     during the render (`staged.rs` documents `.tmp` for that reason).
-  - "renderer read back no frame" is filed under the video stage's `codec`
+  - "renderer read back no frame" is filed under the image stage's `codec`
     rather than `render`.
   - The video-path alpha test calls `encode_readback`, not `encode_frame`.
-- **Front ends.** `COMPONENT_FLAGS` lost its doc comment to
-  `STILL_COMPONENT_FLAGS`; the `--muxer`, `--video-encoder`, and
-  `--video-option` help still says "video";
-  `component_flags_need_a_video_output` narrows by string munging; no test
+- **Front ends.** `component_flags_need_a_video_output` narrows by string munging; no test
   for `--quality` with `--video-encoder` on a `.png`, MCP's named-encoder
   PNG relaxation, or `--preset-file` for stills; MCP repeats
   `encoder.id.is_some()` in both still jobs.
