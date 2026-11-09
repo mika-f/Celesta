@@ -99,7 +99,7 @@ impl MediaBackend {
     /// candidate whose probe reads it, with that probe cached.
     ///
     /// A missing file fails with [`MediaError::NotFound`] before any plugin
-    /// starts. A candidate that answers [`MediaError::Unsupported`] moves
+    /// starts; one that cannot be checked is left to the decoders. A candidate that answers [`MediaError::Unsupported`] moves
     /// on to the next, as does one with any other error, which is kept; but
     /// [`MediaError::CodecStopped`] (a deadline missed, or the kill switch)
     /// ends routing. When no candidate reads the file, the error is the
@@ -109,7 +109,10 @@ impl MediaBackend {
         if self.routes.contains_key(path) {
             return Ok(());
         }
-        if !path.exists() {
+        // Only a file known to be missing; one whose existence cannot be
+        // checked (a folder it cannot search) goes to the decoders, whose
+        // error says why.
+        if let Ok(false) = path.try_exists() {
             return Err(MediaError::NotFound(path.to_owned()));
         }
         // Borrowed from the field, not through `Self::registry`, so the

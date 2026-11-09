@@ -452,6 +452,36 @@ fn missing_file_starts_no_process() {
     );
 }
 
+/// A file whose existence cannot be checked (here, one in a folder that
+/// cannot be searched) goes to the decoders, whose error says why, rather
+/// than being reported as not found.
+#[cfg(unix)]
+#[test]
+fn a_file_that_cannot_be_checked_is_not_reported_missing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let locked = directory.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    let path = locked.join("clip.mp4");
+    std::fs::write(&path, b"").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if path.try_exists().is_ok() {
+        // Root searches any folder; there is nothing to check here.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let journal = Journal::default();
+    let registry = three(&journal, Answer::Broken, Answer::Broken, Answer::Broken);
+    let mut backend = MediaBackend::with_registry(registry);
+    let result = backend.probe(&path).map(|_| ());
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        matches!(result, Err(MediaError::Codec(ref message)) if message == "broken"),
+        "{result:?}"
+    );
+}
+
 #[test]
 fn a_stopped_decoder_ends_routing() {
     let directory = tempfile::tempdir().unwrap();
