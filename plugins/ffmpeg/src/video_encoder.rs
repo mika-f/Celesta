@@ -307,6 +307,11 @@ pub(crate) fn open(
         .map_err(|InvalidSetting { key, message }| MediaError::InvalidSettings { key, message })?;
     let plan = plan(codec, &settings, request.offered)?;
     let color = AvColor::from_color(request.color)?;
+    if is_rgba(plan.input) {
+        // Refuses a matrix libswscale cannot convert RGB to before the
+        // codec opens.
+        color.sws_coefficients()?;
+    }
     let (width, height) = (dimension(request.width)?, dimension(request.height)?);
     let rate = request.frame_rate;
     let (Ok(timescale), Ok(numerator), Ok(denominator)) = (

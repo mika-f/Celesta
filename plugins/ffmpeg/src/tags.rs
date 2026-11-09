@@ -25,21 +25,108 @@ fn unknown(field: &str, name: &str) -> MediaError {
     MediaError::Codec(format!("unknown color {field} `{name}`"))
 }
 
-/// The value libavutil names `name`, through its `from_name` lookup and
-/// back through `to_name`: the lookup takes any name that starts with one
-/// of its own (`bt709x` as `bt709`), so a name is taken only when it is
-/// libavutil's exactly.
-fn lookup(
+/// The enumerator of a bindgen enum whose value libavutil returned, or none
+/// for one the bindings lack (a libavutil newer than their headers), so no
+/// integer is ever reinterpreted as an enum it may not be.
+macro_rules! enumerator {
+    ($function:ident, $enum:ident { $($variant:ident),* $(,)? }) => {
+        fn $function(value: c_int) -> Option<$enum> {
+            [$($enum::$variant),*]
+                .into_iter()
+                .find(|known| *known as c_int == value)
+        }
+    };
+}
+
+enumerator!(
+    primaries,
+    AVColorPrimaries {
+        AVCOL_PRI_RESERVED0,
+        AVCOL_PRI_BT709,
+        AVCOL_PRI_UNSPECIFIED,
+        AVCOL_PRI_RESERVED,
+        AVCOL_PRI_BT470M,
+        AVCOL_PRI_BT470BG,
+        AVCOL_PRI_SMPTE170M,
+        AVCOL_PRI_SMPTE240M,
+        AVCOL_PRI_FILM,
+        AVCOL_PRI_BT2020,
+        AVCOL_PRI_SMPTE428,
+        AVCOL_PRI_SMPTE431,
+        AVCOL_PRI_SMPTE432,
+        AVCOL_PRI_EBU3213,
+        AVCOL_PRI_EXT_BASE,
+    }
+);
+
+enumerator!(
+    transfer,
+    AVColorTransferCharacteristic {
+        AVCOL_TRC_RESERVED0,
+        AVCOL_TRC_BT709,
+        AVCOL_TRC_UNSPECIFIED,
+        AVCOL_TRC_RESERVED,
+        AVCOL_TRC_GAMMA22,
+        AVCOL_TRC_GAMMA28,
+        AVCOL_TRC_SMPTE170M,
+        AVCOL_TRC_SMPTE240M,
+        AVCOL_TRC_LINEAR,
+        AVCOL_TRC_LOG,
+        AVCOL_TRC_LOG_SQRT,
+        AVCOL_TRC_IEC61966_2_4,
+        AVCOL_TRC_BT1361_ECG,
+        AVCOL_TRC_IEC61966_2_1,
+        AVCOL_TRC_BT2020_10,
+        AVCOL_TRC_BT2020_12,
+        AVCOL_TRC_SMPTE2084,
+        AVCOL_TRC_SMPTE428,
+        AVCOL_TRC_ARIB_STD_B67,
+        AVCOL_TRC_EXT_BASE,
+    }
+);
+
+enumerator!(
+    matrix,
+    AVColorSpace {
+        AVCOL_SPC_RGB,
+        AVCOL_SPC_BT709,
+        AVCOL_SPC_UNSPECIFIED,
+        AVCOL_SPC_RESERVED,
+        AVCOL_SPC_FCC,
+        AVCOL_SPC_BT470BG,
+        AVCOL_SPC_SMPTE170M,
+        AVCOL_SPC_SMPTE240M,
+        AVCOL_SPC_YCGCO,
+        AVCOL_SPC_BT2020_NCL,
+        AVCOL_SPC_BT2020_CL,
+        AVCOL_SPC_SMPTE2085,
+        AVCOL_SPC_CHROMA_DERIVED_NCL,
+        AVCOL_SPC_CHROMA_DERIVED_CL,
+        AVCOL_SPC_ICTCP,
+        AVCOL_SPC_IPT_C2,
+        AVCOL_SPC_YCGCO_RE,
+        AVCOL_SPC_YCGCO_RO,
+    }
+);
+
+/// The value libavutil names `name`, through its `from_name` lookup, the
+/// bindings' enumerator of the integer it returns, and back through
+/// `to_name`. FFmpeg 8's lookup is exact already; the round trip is a
+/// defensive check that a name is taken only when it is libavutil's own
+/// spelling exactly, whatever lookup the linked libavutil has.
+fn lookup<T: Copy>(
     field: &str,
     name: &str,
     from_name: unsafe extern "C" fn(*const c_char) -> c_int,
-    to_name: impl Fn(u32) -> *const c_char,
-) -> Result<u32, MediaError> {
+    enumerator: fn(c_int) -> Option<T>,
+    to_name: unsafe extern "C" fn(T) -> *const c_char,
+) -> Result<T, MediaError> {
     let text = CString::new(name).map_err(|_| unknown(field, name))?;
     // SAFETY: `text` is NUL-terminated and outlives the call.
     let value = unsafe { from_name(text.as_ptr()) };
-    let value = u32::try_from(value).map_err(|_| unknown(field, name))?;
-    let canonical = to_name(value);
+    let value = enumerator(value).ok_or_else(|| unknown(field, name))?;
+    // SAFETY: `value` is an enumerator of the enum `to_name` takes.
+    let canonical = unsafe { to_name(value) };
     // SAFETY: libavutil's names are static NUL-terminated strings, or null.
     if canonical.is_null() || unsafe { CStr::from_ptr(canonical) } != text.as_c_str() {
         return Err(unknown(field, name));
@@ -51,47 +138,38 @@ impl AvColor {
     /// `color`'s names as libavutil knows them; a name it does not know is
     /// refused, naming the field, rather than left unspecified.
     pub(crate) fn from_color(color: &Color) -> Result<Self, MediaError> {
-        // SAFETY (each transmute): libavutil's `from_name` lookups return
-        // only the index of a name in their tables, each of which is an
-        // enumerator of the `#[repr(u32)]` enum.
         let primaries = lookup(
             "primaries",
             &color.primaries,
             av_color_primaries_from_name,
-            |value| unsafe {
-                av_color_primaries_name(std::mem::transmute::<u32, AVColorPrimaries>(value))
-            },
+            primaries,
+            av_color_primaries_name,
         )?;
         let transfer = lookup(
             "transfer",
             &color.transfer,
             av_color_transfer_from_name,
-            |value| unsafe {
-                av_color_transfer_name(std::mem::transmute::<u32, AVColorTransferCharacteristic>(
-                    value,
-                ))
-            },
+            transfer,
+            av_color_transfer_name,
         )?;
         let matrix = lookup(
             "matrix",
             &color.matrix,
             av_color_space_from_name,
-            |value| unsafe { av_color_space_name(std::mem::transmute::<u32, AVColorSpace>(value)) },
+            matrix,
+            av_color_space_name,
         )?;
         let range = match color.range.as_str() {
             "limited" | "tv" | "mpeg" => AVColorRange::AVCOL_RANGE_MPEG,
             "full" | "pc" | "jpeg" => AVColorRange::AVCOL_RANGE_JPEG,
             other => return Err(unknown("range", other)),
         };
-        // SAFETY: as above; `lookup` checked each value names an enumerator.
-        unsafe {
-            Ok(Self {
-                primaries: std::mem::transmute::<u32, AVColorPrimaries>(primaries),
-                transfer: std::mem::transmute::<u32, AVColorTransferCharacteristic>(transfer),
-                matrix: std::mem::transmute::<u32, AVColorSpace>(matrix),
-                range,
-            })
-        }
+        Ok(Self {
+            primaries,
+            transfer,
+            matrix,
+            range,
+        })
     }
 
     /// Tags an encoder, before `avcodec_open2`, which writes the tags into
@@ -143,15 +221,26 @@ impl AvColor {
 
     /// libswscale's coefficient table for the matrix and the destination
     /// range `sws_setColorspaceDetails` takes (1 for full, 0 for limited).
-    /// A matrix libswscale has no table for is refused.
+    /// A matrix libswscale has no table for is refused by its name.
     pub(crate) fn sws_coefficients(&self) -> Result<(*const c_int, c_int), MediaError> {
         let table = match self.matrix {
             AVColorSpace::AVCOL_SPC_BT709 => SWS_CS_ITU709,
             AVColorSpace::AVCOL_SPC_BT470BG | AVColorSpace::AVCOL_SPC_SMPTE170M => SWS_CS_ITU601,
             AVColorSpace::AVCOL_SPC_BT2020_NCL => SWS_CS_BT2020,
             other => {
+                // SAFETY: returns one of libavutil's static names, or null.
+                let name = unsafe { av_color_space_name(other) };
+                // The name `from_color` was given, which round-trips exactly.
+                let name = if name.is_null() {
+                    format!("{other:?}")
+                } else {
+                    // SAFETY: a static NUL-terminated string.
+                    unsafe { CStr::from_ptr(name) }
+                        .to_string_lossy()
+                        .into_owned()
+                };
                 return Err(MediaError::Codec(format!(
-                    "libswscale cannot convert RGB to the {other:?} matrix"
+                    "libswscale cannot convert RGB to the `{name}` matrix"
                 )));
             }
         };
@@ -217,8 +306,7 @@ mod tests {
                 color("bt709", "srgb", "bt709", "limited"),
                 "unknown color transfer `srgb`",
             ),
-            // libavutil's lookup alone takes a name starting with one of
-            // its own.
+            // Starts with libavutil's `bt709` but is not its name.
             (
                 color("bt709", "bt709", "bt709x", "limited"),
                 "unknown color matrix `bt709x`",
@@ -251,7 +339,13 @@ mod tests {
         let full = AvColor::from_color(&color("bt709", "bt709", "smpte170m", "full")).unwrap();
         assert_eq!(full.sws_coefficients().unwrap(), (table(SWS_CS_ITU601), 1));
         let ycgco = AvColor::from_color(&color("bt709", "bt709", "ycgco", "limited")).unwrap();
-        assert!(ycgco.sws_coefficients().is_err());
+        let Err(MediaError::Codec(refusal)) = ycgco.sws_coefficients() else {
+            panic!("libswscale took ycgco");
+        };
+        assert_eq!(
+            refusal,
+            "libswscale cannot convert RGB to the `ycgco` matrix"
+        );
     }
 
     #[test]
