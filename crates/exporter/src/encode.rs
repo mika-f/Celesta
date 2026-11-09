@@ -2750,7 +2750,12 @@ mod tests {
         let registry = Arc::new(MediaRegistry::new(vec![plugin]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), Path::new("out.fake"), (2, 2))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (2, 2),
+            )
             .unwrap();
         (session, log)
     }
@@ -2855,7 +2860,12 @@ mod tests {
         let registry = Arc::new(MediaRegistry::new(vec![plugin]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), output, (4, 4))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                output,
+                (4, 4),
+            )
             .unwrap();
         session
             .open_video(4, 4, RATE, &[PixelFormat::Rgba8], output)

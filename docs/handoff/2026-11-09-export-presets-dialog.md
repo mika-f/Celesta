@@ -435,6 +435,24 @@ outside `i64`). The rebased branch passed `cargo test --workspace` (2,688
 passed, 0 failed), clippy with `-D warnings`, and `cargo fmt --check`
 before Task 5; the counts above are from the rebased branch with Task 5.
 
+**Second rebase.** After the final fix wave, P3 was rebased onto
+`claude/media-components-p2b` `621910e6` (P2a's Windows test fix and
+review fixes: `--audio-encoder none` now refuses `--audio-option`, and
+`@celesta.studio/exporter`'s options are `KEY=VALUE` text read by each
+field's type). The conflicts were in documentation (`--preset` and
+`--preset-file` help, the export guide in en and ja, and the skill's
+`export.md`), merged to keep both sides, and two of P2b's new tests in
+`encode.rs` were given the `PresetLookup` argument `ExportSession::resolve`
+now takes. On the rebased branch: `cargo test --workspace --no-fail-fast`
+2,711 passed, 0 failed, 1 ignored (`json_describes_the_test_video_encoder`
+failed once in an earlier full run under load and passed alone and in the
+rerun; P2a's handoff records the same load-dependent test-codec exit);
+`cargo clippy --workspace --all-targets --locked -- -D warnings` and
+`cargo fmt --all -- --check` clean; the plugins workspace 468 passed and
+its clippy clean; `pnpm run test:runtime` (17 packages; `@celesta.studio/cli`
+119), `pnpm --dir packages/exporter test` 24, and `pnpm --dir
+packages/website test` 52 passed; `git diff --check` clean.
+
 **Final fix wave** (the final review's findings, on `6b992b2b`): `cargo
 build -p celesta-codec-test`, then `cargo test --workspace` (2,703 passed,
 0 failed, 1 ignored), `cargo clippy --workspace --all-targets --locked --
