@@ -200,25 +200,20 @@ fn encode(
     let opened = cpu();
     let ring = ring_layout(&[PixelFormat::Rgba8], width, height);
     let export = ProviderUse::Export { ring };
-    // The plugin's process is started here to ask it whether it accepted
-    // the ring; the in-process codec has no such question.
-    let (mut provider, shared): (Box<dyn MediaProvider>, bool) = match program {
-        Some((executable, directory)) => {
-            let process = MediaProcess::start_with(
+    // The plugin's process is started here, so that its pipeline says,
+    // once the encoder is open, whether frames go through the ring.
+    let mut provider: Box<dyn MediaProvider> = match program {
+        Some((executable, directory)) => Box::new(
+            MediaProcess::start_with(
                 executable,
                 directory,
                 &Default::default(),
                 FrameTransport::from_environment(),
                 export,
             )
-            .expect("the plugin starts");
-            let shared = process.shares_frames();
-            (Box::new(process), shared)
-        }
-        None => (
-            factory(&Default::default(), export).expect("the codec starts"),
-            false,
+            .expect("the plugin starts"),
         ),
+        None => factory(&Default::default(), export).expect("the codec starts"),
     };
     let settings: Settings = [(
         "preset".to_owned(),
@@ -253,12 +248,17 @@ fn encode(
     let pixels: Vec<Vec<u8>> = (0..4).map(frame).collect();
     // A plugin pipelines when it has a pipeline; an encoder in this process
     // has none, and takes one frame at a time.
-    let depth = provider.pipeline().map(|pipeline| pipeline.depth());
-    let how = match depth {
+    let how = match provider.pipeline() {
         None => "in process".to_owned(),
-        Some(depth) => {
-            format!("{}, {depth} deep", if shared { "ring" } else { "pipe" })
-        }
+        Some(pipeline) => format!(
+            "{}, {} deep",
+            if pipeline.frames_in_ring() {
+                "ring"
+            } else {
+                "pipe"
+            },
+            pipeline.depth()
+        ),
     };
     let mut packets = 0;
     send(

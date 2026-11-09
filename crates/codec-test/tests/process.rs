@@ -655,6 +655,92 @@ fn an_error_in_the_window_leaves_the_rest_in_flight() {
     );
 }
 
+/// A program that runs the real one with every byte Celesta sends it
+/// copied to `log` on the way.
+#[cfg(unix)]
+fn logged_program(directory: &Path) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let program = directory.join("codec.sh");
+    let log = directory.join("requests");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\ntee '{}' | exec '{}' \"$@\"\n",
+            log.display(),
+            env!("CARGO_BIN_EXE_celesta-codec-test")
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (program, log)
+}
+
+/// The headers of the messages in `bytes`, framed as the protocol frames
+/// them: a header and a payload, each after its 4-byte length. A message
+/// cut short ends the list.
+#[cfg(unix)]
+fn headers(mut bytes: &[u8]) -> Vec<serde_json::Value> {
+    fn part<'a>(bytes: &mut &'a [u8]) -> Option<&'a [u8]> {
+        let length = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
+        let part = bytes.get(4..4 + length)?;
+        *bytes = &bytes[4 + length..];
+        Some(part)
+    }
+    let mut headers = Vec::new();
+    while let Some(header) = part(&mut bytes) {
+        headers.push(serde_json::from_slice(header).unwrap());
+        if part(&mut bytes).is_none() {
+            break;
+        }
+    }
+    headers
+}
+
+/// A ring the plugin accepted is declared at `openVideoEncoder`, and its
+/// frames go in slots, unless the pipeline declined it (the encoder does not
+/// describe `sharedMemory`): then no ring is declared and every frame goes
+/// in its request's payload.
+#[cfg(unix)]
+#[test]
+fn a_declined_ring_is_not_declared_and_frames_go_as_payloads() {
+    for decline in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let (program, log) = logged_program(directory.path());
+        let mut process = MediaProcess::start_with(
+            &program,
+            directory.path(),
+            &Default::default(),
+            FrameTransport::SharedMemory,
+            rgba_export(),
+        )
+        .unwrap();
+        assert!(process.ring().is_some(), "the program declined the ring");
+        if decline {
+            process.pipeline().unwrap().decline_ring();
+        }
+        let size = (RING_WIDTH, RING_HEIGHT);
+        let frames = rgba_frames(4, size.0, size.1);
+        export_frames(&mut process, directory.path(), "out.ctst", &frames, size);
+        assert_eq!(process.pipeline().unwrap().frames_in_ring(), !decline);
+        drop(process);
+
+        let headers = headers(&std::fs::read(&log).unwrap());
+        let opened = headers
+            .iter()
+            .find(|header| header["type"] == "openVideoEncoder")
+            .expect("an openVideoEncoder request");
+        assert_eq!(opened.get("ring").is_some(), !decline, "{opened}");
+        let encodes: Vec<&serde_json::Value> = headers
+            .iter()
+            .filter(|header| header["type"] == "encodeVideoFrame")
+            .collect();
+        assert_eq!(encodes.len(), frames.len());
+        for encode in encodes {
+            assert_eq!(encode.get("slot").is_some(), !decline, "{encode}");
+        }
+    }
+}
+
 /// A program that runs the real one, having written its process id to
 /// `pid` first (`exec` keeps it), so that a test can stop it after `hello`.
 #[cfg(unix)]

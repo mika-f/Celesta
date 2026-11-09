@@ -46,6 +46,10 @@ pub(crate) const TIMING_VARIABLE: &str = "CELESTA_EXPORT_TIMING";
 /// sixteen on as cleanly as the same hit later.
 pub(crate) const LOOP_LEAD_IN_FRAMES: usize = 16 * 1024;
 
+/// The transport a video encoder describes to take its frames through a
+/// ring of shared memory.
+const SHARED_MEMORY_TRANSPORT: &str = "sharedMemory";
+
 const VIDEO_STAGE: &str = "video encoding";
 const AUDIO_STAGE: &str = "audio encoding";
 const MUXER_STAGE: &str = "muxing";
@@ -658,6 +662,12 @@ impl ExportSession {
             video.reference.component.clone(),
             video.settings.clone(),
         );
+        // A ring its process accepted carries frames only to an encoder
+        // that describes taking them so.
+        let shared = video
+            .transports
+            .iter()
+            .any(|transport| transport == SHARED_MEMORY_TRANSPORT);
         let color = MediaColor::bt709_limited();
         let request = VideoEncoderRequest {
             component: &component,
@@ -670,8 +680,11 @@ impl ExportSession {
             color: &color,
         };
         let registry = self.registry.clone();
-        let opened = self
-            .plugin(plugin)?
+        let process = self.plugin(plugin)?;
+        if !shared && let Some(pipeline) = process.provider.pipeline() {
+            pipeline.decline_ring();
+        }
+        let opened = process
             .provider
             .video_encoder()
             .ok_or_else(|| missing(&registry, plugin, "video encoder"))?
@@ -1260,6 +1273,8 @@ mod tests {
         AbortMuxer(SessionId),
         /// A pipelined request's answer was waited for.
         Received,
+        /// The pipeline was told to send frames in payloads.
+        DeclineRing,
     }
 
     /// How the fake answers.
@@ -2001,6 +2016,10 @@ mod tests {
     struct Piped {
         log: Arc<Mutex<Vec<Asked>>>,
         receiving: Receiving,
+        /// The transports its video encoder describes.
+        transports: Vec<String>,
+        /// Whether it was told to send frames in payloads.
+        declined: bool,
         answers: VecDeque<Answered>,
         received: usize,
         config_due: bool,
@@ -2030,7 +2049,10 @@ mod tests {
     impl MediaProvider for Piped {
         fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
             self.idle()?;
-            Ok(vec![available(ComponentKind::VideoEncoder, "video")])
+            Ok(vec![ComponentDescription {
+                transports: self.transports.clone(),
+                ..available(ComponentKind::VideoEncoder, "video")
+            }])
         }
 
         fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
@@ -2083,6 +2105,15 @@ mod tests {
 
         fn in_flight(&self) -> usize {
             self.answers.len()
+        }
+
+        fn decline_ring(&mut self) {
+            self.ask(Asked::DeclineRing);
+            self.declined = true;
+        }
+
+        fn frames_in_ring(&self) -> bool {
+            !self.declined
         }
 
         fn send_video_frame(
@@ -2139,6 +2170,15 @@ mod tests {
     fn piped_session(
         receiving: Receiving,
     ) -> (ExportSession, Arc<Mutex<Vec<Asked>>>, Arc<AtomicBool>) {
+        piped_session_with(receiving, &["sharedMemory", "pipe"])
+    }
+
+    /// [`piped_session`] with a video encoder describing `transports`.
+    fn piped_session_with(
+        receiving: Receiving,
+        transports: &[&str],
+    ) -> (ExportSession, Arc<Mutex<Vec<Asked>>>, Arc<AtomicBool>) {
+        let transports: Vec<String> = transports.iter().map(|&name| name.to_owned()).collect();
         let log = Arc::new(Mutex::new(Vec::new()));
         let dropped = Arc::new(AtomicBool::new(false));
         let (encoder_log, encoder_dropped) = (log.clone(), dropped.clone());
@@ -2156,6 +2196,8 @@ mod tests {
                 Ok(Box::new(Piped {
                     log: encoder_log.clone(),
                     receiving,
+                    transports: transports.clone(),
+                    declined: false,
                     answers: VecDeque::new(),
                     received: 0,
                     config_due: true,
@@ -2208,6 +2250,25 @@ mod tests {
             "{asked:?}"
         );
         assert_eq!(session.frames_sent(), 4);
+    }
+
+    #[test]
+    fn an_encoder_without_shared_memory_gets_no_ring() {
+        for (transports, declined) in [
+            (&["sharedMemory", "pipe"][..], false),
+            (&["pipe"][..], true),
+            (&[][..], true),
+        ] {
+            let (mut session, log, _) = piped_session_with(Receiving::Answers, transports);
+            open(&mut session);
+            let asked = log_of(&log);
+            let expected: &[Asked] = if declined {
+                &[Asked::DeclineRing, Asked::OpenVideo]
+            } else {
+                &[Asked::OpenVideo]
+            };
+            assert_eq!(asked, expected, "{transports:?}");
+        }
     }
 
     #[test]

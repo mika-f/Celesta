@@ -80,6 +80,12 @@ pub struct MediaProcess {
     /// The slots video frames to encode go through, when the plugin
     /// accepted them.
     ring: Option<FrameRing>,
+    /// The ring is not to be declared: the video encoder to open does not
+    /// describe the `sharedMemory` transport ([`Pipeline::decline_ring`]).
+    ring_declined: bool,
+    /// The ring was declared when the video encoder opened, so frames go
+    /// in its slots.
+    ring_open: bool,
     /// The [`Pipeline`]'s requests in flight, oldest first, in step with
     /// the child's window.
     pending: VecDeque<Pending>,
@@ -267,6 +273,8 @@ impl MediaProcess {
             child,
             frames,
             ring,
+            ring_declined: false,
+            ring_open: false,
             pending: VecDeque::new(),
             audio_channels: HashMap::new(),
         })
@@ -293,8 +301,9 @@ impl MediaProcess {
         self.frames.is_some() || self.ring.is_some()
     }
 
-    /// The ring of slots video frames to encode go through, when the plugin
-    /// accepted one.
+    /// The ring of slots the plugin accepted for video frames to encode;
+    /// frames go through it once [`VideoEncoder::open_video`] declared it
+    /// ([`Pipeline::frames_in_ring`]).
     pub fn ring(&self) -> Option<RingLayout> {
         self.ring.as_ref().map(FrameRing::layout)
     }
@@ -365,25 +374,38 @@ fn out_of_step() -> MediaError {
 }
 
 impl Pipeline for MediaProcess {
+    /// The ring's slots once it is declared; [`PIPE_WINDOW`] otherwise.
     fn depth(&self) -> usize {
-        self.ring
-            .as_ref()
-            .map_or(PIPE_WINDOW, |ring| ring.layout().slots)
+        match &self.ring {
+            Some(ring) if self.ring_open => ring.layout().slots,
+            _ => PIPE_WINDOW,
+        }
     }
 
     fn in_flight(&self) -> usize {
         self.pending.len()
     }
 
+    fn decline_ring(&mut self) {
+        self.ring_declined = true;
+    }
+
+    fn frames_in_ring(&self) -> bool {
+        self.ring_open
+    }
+
     /// The frame goes in a free slot of the ring, or in the payload when
-    /// there is no ring, no slot is free, or it does not fit one.
+    /// no ring was declared, no slot is free, or it does not fit one.
     fn send_video_frame(
         &mut self,
         session: SessionId,
         pts: i64,
         frame: Vec<u8>,
     ) -> Result<(), MediaError> {
-        let placed = self.ring.as_mut().and_then(|ring| ring.place(&frame));
+        let placed = match self.ring.as_mut() {
+            Some(ring) if self.ring_open => ring.place(&frame),
+            _ => None,
+        };
         let slot = match placed {
             Some(FrameLocation::Slot { index, .. }) => Some(index),
             _ => None,
@@ -540,13 +562,19 @@ impl Decoder for MediaProcess {
 }
 
 impl VideoEncoder for MediaProcess {
+    /// Declares the ring the plugin accepted, unless it was declined
+    /// ([`Pipeline::decline_ring`]).
     fn open_video(
         &mut self,
         request: &VideoEncoderRequest<'_>,
     ) -> Result<VideoEncoderOpened, MediaError> {
-        let request = protocol::open_video_request(request, self.ring())?;
-        let answer = self.request(request, "videoEncoderOpened", OPEN_TIMEOUT)?;
-        protocol::decode_video_encoder_opened(&answer)
+        let ring = self.ring().filter(|_| !self.ring_declined);
+        self.ring_open = false;
+        let message = protocol::open_video_request(request, ring)?;
+        let answer = self.request(message, "videoEncoderOpened", OPEN_TIMEOUT)?;
+        let opened = protocol::decode_video_encoder_opened(&answer)?;
+        self.ring_open = ring.is_some();
+        Ok(opened)
     }
 
     /// [`Pipeline::send_video_frame`], then its answer; refused while

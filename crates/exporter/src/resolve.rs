@@ -32,8 +32,9 @@ pub const X264_PRESETS: [&str; 10] = [
 /// A chosen video or audio encoder: its plugin's index in the registry,
 /// the codec families it writes, its validated settings (defaults filled
 /// in, hidden fields left out), the schema they were checked against, and
-/// the formats it described taking (a video encoder's; they size its
-/// process's ring of frame slots).
+/// the formats and transports it described taking (a video encoder's: the
+/// formats size its process's ring of frame slots, which is used only when
+/// the transports list `sharedMemory`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedEncoder {
     pub plugin: usize,
@@ -43,6 +44,7 @@ pub struct ResolvedEncoder {
     pub settings: Settings,
     pub schema: Vec<SettingField>,
     pub input_formats: Vec<PixelFormat>,
+    pub transports: Vec<String>,
 }
 
 /// The chosen muxer, as [`ResolvedEncoder`] is an encoder, with its
@@ -475,6 +477,7 @@ fn resolved_encoder(
         settings: settings(component, &description, &choice.options)?,
         schema: description.settings,
         input_formats: description.input_formats,
+        transports: description.transports,
     })
 }
 

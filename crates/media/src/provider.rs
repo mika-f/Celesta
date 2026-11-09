@@ -75,6 +75,19 @@ pub trait Pipeline {
     /// How many requests are sent and not yet received.
     fn in_flight(&self) -> usize;
 
+    /// Sends every video frame in its request's payload, never through the
+    /// ring of shared memory: the video encoder about to open does not
+    /// describe the `sharedMemory` transport. Asked before
+    /// [`VideoEncoder::open_video`], which then declares no ring; a
+    /// pipeline without a ring has nothing to decline.
+    fn decline_ring(&mut self) {}
+
+    /// Whether video frames go through a ring of shared memory: the plugin
+    /// accepted one and [`VideoEncoder::open_video`] declared it.
+    fn frames_in_ring(&self) -> bool {
+        false
+    }
+
     /// Sends [`VideoEncoder::encode_video`]'s request; its answer is an
     /// [`Answered::VideoFrame`].
     fn send_video_frame(
