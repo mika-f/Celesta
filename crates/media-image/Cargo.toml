@@ -1,0 +1,19 @@
+[package]
+name = "celesta-media-image"
+description = "Celesta's built-in image components: PNG, JPEG and WebP encoders and the image and image-sequence muxers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+celesta-media.workspace = true
+celesta-plugin-host.workspace = true
+image = { version = "0.25.8", default-features = false, features = ["jpeg"] }
+png = "0.18.1"
+webp = { version = "0.3.1", default-features = false }
+
+[dev-dependencies]
+celesta-composition.workspace = true
+tempfile = "3.23.0"
