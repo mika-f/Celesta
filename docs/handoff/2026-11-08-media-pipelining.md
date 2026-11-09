@@ -216,8 +216,9 @@ timing line, and P2b's Phases row.
 
 On macOS 26.6.2, Apple M4 (10 cores, 32 GB), Metal, with `PKG_CONFIG_PATH`
 at Homebrew's `ffmpeg@8` and this branch's FFmpeg plugin, staged by
-`build.mts`, on `CELESTA_PLUGIN_PATH`, at `3ef62b51` plus this note's
-commit:
+`build.mts`, on `CELESTA_PLUGIN_PATH`, at this branch as it was when
+measured, plus this note's commit (the commits were since rebased, so
+the hashes recorded then no longer exist):
 
 - `cargo build -p celesta-codec-test`, then `cargo test --workspace
   --no-fail-fast` (2,637 passed, 1 ignored as before; no flake this time),
@@ -249,8 +250,9 @@ ring and pipe, byte-identical. The integration test
 
 ### Byte-identical to P2a
 
-P2a's tip (`ca7eda6b`) was built in a temporary `git worktree`, and this
-branch (`3ef62b51`) in its own checkout. Release `celesta-exporter` and the
+P2a's tip then (since rebased; P2a's tip is now `1247585b`) was built in a
+temporary `git worktree`, and this branch at the time of measurement in
+its own checkout. Release `celesta-exporter` and the
 FFmpeg plugin (`node scripts/plugins/build.mts plugins/ffmpeg --out …`) of
 each were staged alone: each exporter in its
 own folder with the same React runtime (`runtime/node`, `runtime/react`),
@@ -319,8 +321,9 @@ no mix and no spill.
 
 ### Performance
 
-Release builds of `main` (`14d0c5ab`) and P2a's tip (`ca7eda6b`), each in a
-temporary `git worktree`, and of this branch (`3ef62b51`), each exporter
+Release builds of `main` (`14d0c5ab`) and P2a's tip then (now `1247585b`
+after a rebase), each in a temporary `git worktree`, and of this branch at
+the time of measurement, each exporter
 staged alone as above and each `codec-bench` against its own plugin
 (`main`'s drives protocol 1). Interleaved: six rounds, the order of the
 builds rotating each round (`main`, P2a, P2b, P2b with
@@ -522,3 +525,32 @@ kills, and `ExportTiming::render`; the guide and the Agent Skill say fewer
 frames go ahead for very large frames and give the pipe's threshold. The
 spec's new deviations were numbered 24 and 25, which P2a's use; they are 27
 and 28.
+
+Fixed after the second PR review:
+
+- A unit test (`one_pipelined_process_muxes_what_one_at_a_time_does`)
+  runs a project-shaped export through one fake process serving the video
+  encoder, the audio encoder, and the muxer three deep (the FFmpeg
+  plugin's shape): the mix arrives after twenty frames, and its packets
+  and the frames' are written while frames are in flight. The muxer gets
+  exactly the packets, in the order, that the one-at-a-time fake gets;
+  an `error` answering an `encodeAudio` or a `writePackets` is reported as
+  "audio encoding" or "muxing" (`a_refused_answer_names_its_stage`).
+  `the_test_codecs_program_writes_what_it_writes_in_process` runs the same
+  flow through the test codec's program (three deep, through the ring
+  where shared memory is available) and through the test codec in
+  Celesta's process (one at a time), and the two files are byte-identical.
+  It drives `ExportSession` directly, without the GPU, so it is a unit
+  test; the exporter binary has no depth-1 setting for a plugin process
+  short of a frame over half of `MAX_RING_BYTES`.
+- The FFmpeg plugin's and the test codec's ring tests assert
+  `frames_in_ring()` after the open; the docs say a declared ring carries
+  the frames only when the opened input's frame fits a slot.
+- A frame's `error` answer names the frame (`frame N: …`, N from 0), since
+  it arrives requests after the frame was sent (R4).
+- A shared segment the host cannot create or hand over is reported once
+  per run on stderr (`celesta: frames go through the pipe: …`), for the
+  export ring and the decode slot alike.
+- `RingLayout::segment_bytes()` is checked (`Option<usize>`) and replaces
+  the three hand-written checked sizes; `PluginChild::request`
+  debug-asserts that nothing is in flight.

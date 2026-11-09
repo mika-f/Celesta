@@ -175,8 +175,10 @@ pub(crate) struct SessionTiming {
 /// for the mix ([`TIMING_VARIABLE`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ExportTiming {
-    /// The render loop, from its first frame to the last one it sent to
-    /// the encoder (answers still in flight are received by `finish`).
+    /// The render, from setting up its evaluator to the last frame it sent
+    /// to the encoder (answers still in flight are received by `finish`),
+    /// including, for a project, encoding the mix when it arrives
+    /// mid-render.
     pub render: Duration,
     /// The frames the render sent to the encoder.
     pub frames: u64,

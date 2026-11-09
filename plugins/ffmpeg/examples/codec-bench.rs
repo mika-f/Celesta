@@ -1,8 +1,9 @@
-//! Times what crossing the codec plugin's pipe costs: decoding a video's
-//! frames in order, as preview playback and export do, and encoding RGBA
-//! frames to H.264, once with FFmpeg in this process (`FfmpegCodec`) and
-//! once through the codec plugin's program (`MediaProcess`), whose frames
-//! cross its stdin or stdout. The difference is the transport.
+//! Times what crossing to the codec plugin's process costs: decoding a
+//! video's frames in order, as preview playback and export do, and
+//! encoding RGBA frames to H.264, once with FFmpeg in this process
+//! (`FfmpegCodec`) and once through the codec plugin's program
+//! (`MediaProcess`), whose frames cross shared memory when it accepts it
+//! and its stdin or stdout otherwise. The difference is the transport.
 //!
 //! ```text
 //! node scripts/plugins/build.mts plugins/ffmpeg
