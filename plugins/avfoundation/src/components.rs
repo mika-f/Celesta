@@ -152,9 +152,14 @@ pub(crate) fn prores_hq(settings: &Settings) -> bool {
 }
 
 /// What `codec` takes of `offered` (best first) at `width` x `height`, and
-/// whether it keeps alpha: 4:2:0 YUV of the bit depth when both dimensions
-/// are even, else `rgba16`, which VideoToolbox converts with the session's
-/// matrix; ProRes always takes `rgba16`, and 4444 alone keeps its alpha.
+/// whether it keeps alpha: 4:2:0 YUV of the bit depth when it is offered,
+/// else `rgba16` (a software renderer's offer), which VideoToolbox converts
+/// with the session's matrix; ProRes always takes `rgba16`, and 4444 alone
+/// keeps its alpha.
+///
+/// H.264 and HEVC refuse an odd width or height: VideoToolbox encodes them
+/// 4:2:0 whatever the input, and crops such a frame to even dimensions
+/// without an error, so the stream would not match its track.
 pub(crate) fn choose_input(
     codec: VideoCodec,
     settings: &Settings,
@@ -162,18 +167,19 @@ pub(crate) fn choose_input(
     height: u32,
     offered: &[PixelFormat],
 ) -> Result<(PixelFormat, bool), MediaError> {
-    let even = width.is_multiple_of(2) && height.is_multiple_of(2);
     let yuv = match codec {
         VideoCodec::H264 => Some(PixelFormat::Nv12),
         VideoCodec::Hevc if text(settings, "bitDepth") == "10" => Some(PixelFormat::P010),
         VideoCodec::Hevc => Some(PixelFormat::Nv12),
         VideoCodec::ProRes => None,
     };
-    let wanted: Vec<PixelFormat> = yuv
-        .filter(|_| even)
-        .into_iter()
-        .chain([PixelFormat::Rgba16])
-        .collect();
+    if yuv.is_some() && !(width.is_multiple_of(2) && height.is_multiple_of(2)) {
+        return Err(MediaError::Codec(format!(
+            "{} needs even dimensions, not {width}x{height}",
+            codec.display_name()
+        )));
+    }
+    let wanted: Vec<PixelFormat> = yuv.into_iter().chain([PixelFormat::Rgba16]).collect();
     let input = wanted
         .iter()
         .copied()
@@ -216,8 +222,12 @@ pub(crate) fn vt_settings(
     if let Some(interval) = whole(&settings, "keyframeInterval") {
         properties.push(VtSetting::MaxKeyFrameInterval(interval as i32));
     }
+    // Baseline has no B-frames: VideoToolbox never reorders it, and its SPS
+    // does not say so, so allowing reordering would only shift its decode
+    // times by the unknown depth.
     properties.push(VtSetting::AllowFrameReordering(
-        settings.get("bFrames") != Some(&SettingValue::Boolean(false)),
+        profile != "H264_Baseline_AutoLevel"
+            && settings.get("bFrames") != Some(&SettingValue::Boolean(false)),
     ));
     Ok(properties)
 }
@@ -793,14 +803,29 @@ mod tests {
         let choose = |codec, given: &Settings, width, height, offered: &[PixelFormat]| {
             choose_input(codec, given, width, height, offered).unwrap()
         };
-        for codec in [VideoCodec::H264, VideoCodec::Hevc] {
+        let refusal =
+            |codec, given: &Settings, width, height, offered: &[PixelFormat]| match choose_input(
+                codec, given, width, height, offered,
+            ) {
+                Err(MediaError::Codec(message)) => message,
+                other => panic!("{codec:?} took {width}x{height}: {other:?}"),
+            };
+        for (codec, name) in [(VideoCodec::H264, "H.264"), (VideoCodec::Hevc, "HEVC")] {
             assert_eq!(choose(codec, &none, 64, 36, &offerable), (Nv12, false));
-            assert_eq!(choose(codec, &none, 63, 35, &offerable), (Rgba16, false));
-            assert_eq!(choose(codec, &none, 64, 35, &offerable), (Rgba16, false));
             assert_eq!(
                 choose(codec, &none, 64, 36, &[Rgba16, Rgba8]),
                 (Rgba16, false)
             );
+            // VideoToolbox crops 4:2:0 to even dimensions, whatever the
+            // input, so an odd size is refused rather than shrunk.
+            for (width, height) in [(63, 35), (64, 35), (63, 36)] {
+                for offered in [&offerable[..], &[Rgba16, Rgba8]] {
+                    assert_eq!(
+                        refusal(codec, &none, width, height, offered),
+                        format!("{name} needs even dimensions, not {width}x{height}")
+                    );
+                }
+            }
         }
         let ten = settings(&[("bitDepth", text("10"))]);
         assert_eq!(
@@ -808,8 +833,8 @@ mod tests {
             (P010, false)
         );
         assert_eq!(
-            choose(VideoCodec::Hevc, &ten, 63, 36, &offerable),
-            (Rgba16, false)
+            refusal(VideoCodec::Hevc, &ten, 63, 36, &offerable),
+            "HEVC needs even dimensions, not 63x36"
         );
         assert_eq!(
             choose(VideoCodec::Hevc, &ten, 64, 36, &[Rgba16, Rgba8]),
@@ -833,16 +858,19 @@ mod tests {
             choose(VideoCodec::ProRes, &prores("hq"), 64, 36, &offerable),
             (Rgba16, false)
         );
-        for codec in VideoCodec::ALL {
-            for (width, height) in [(64, 36), (63, 35)] {
-                assert!(
-                    matches!(
-                        choose_input(codec, &none, width, height, &[Rgba8]),
-                        Err(MediaError::InvalidSettings { key, .. }) if key == "input"
-                    ),
-                    "{codec:?} {width}x{height}"
-                );
-            }
+        for (codec, width, height) in [
+            (VideoCodec::H264, 64, 36),
+            (VideoCodec::Hevc, 64, 36),
+            (VideoCodec::ProRes, 64, 36),
+            (VideoCodec::ProRes, 63, 35),
+        ] {
+            assert!(
+                matches!(
+                    choose_input(codec, &none, width, height, &[Rgba8]),
+                    Err(MediaError::InvalidSettings { key, .. }) if key == "input"
+                ),
+                "{codec:?} {width}x{height}"
+            );
         }
     }
 
@@ -875,6 +903,23 @@ mod tests {
                 ProfileLevel(level)
             );
         }
+        // Baseline has no B-frames, whatever `bFrames` says, so its decode
+        // times are not shifted.
+        for b_frames in [true, false] {
+            let given = settings(&[
+                ("profile", text("baseline")),
+                ("bFrames", SettingValue::Boolean(b_frames)),
+            ]);
+            assert_eq!(
+                vt_settings(VideoCodec::H264, &given).unwrap().last(),
+                Some(&AllowFrameReordering(false))
+            );
+        }
+        let main = settings(&[("profile", text("main"))]);
+        assert_eq!(
+            vt_settings(VideoCodec::H264, &main).unwrap().last(),
+            Some(&AllowFrameReordering(true))
+        );
         let given = settings(&[
             ("rateControl", text("bitrate")),
             ("bitrate", SettingValue::Number(5_000_000.0)),

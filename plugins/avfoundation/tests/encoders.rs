@@ -75,14 +75,25 @@ fn open(
     given: &Settings,
     offered: &[PixelFormat],
 ) -> Result<VideoEncoderOpened, MediaError> {
+    open_sized(codec, component, given, offered, (WIDTH, HEIGHT))
+}
+
+/// [`open`] at `width` x `height`.
+fn open_sized(
+    codec: &mut AvfCodec,
+    component: &str,
+    given: &Settings,
+    offered: &[PixelFormat],
+    (width, height): (u32, u32),
+) -> Result<VideoEncoderOpened, MediaError> {
     codec
         .video_encoder()
         .expect("the plugin has video encoders")
         .open_video(&VideoEncoderRequest {
             component,
             settings: given,
-            width: WIDTH,
-            height: HEIGHT,
+            width,
+            height,
             frame_rate: RATE,
             timescale: TIMESCALE,
             offered,
@@ -650,4 +661,92 @@ fn a_frame_of_the_wrong_size_is_refused() {
     assert_eq!(packets.len(), 1);
     assert!(packets[0].key);
     assert!(encoder.finish_video(opened.session).is_err());
+}
+
+#[test]
+fn odd_sizes_are_refused() {
+    let mut codec = AvfCodec::default();
+    let offers: [&[PixelFormat]; 2] = [
+        &PixelFormat::OFFERABLE,
+        &[PixelFormat::Rgba16, PixelFormat::Rgba8],
+    ];
+    for component in ["h264", "hevc"] {
+        if !available(&mut codec, component, "odd_sizes_are_refused") {
+            continue;
+        }
+        for offered in offers {
+            match open_sized(&mut codec, component, &Settings::new(), offered, (63, 35)) {
+                Err(MediaError::Codec(message)) => {
+                    assert!(message.contains("even dimensions"), "{message}");
+                }
+                other => panic!("{component} opened 63x35: {:?}", other.map(|_| ())),
+            }
+        }
+    }
+    if !available(&mut codec, "prores", "odd_sizes_are_refused") {
+        return;
+    }
+    // ProRes keeps an odd size: the frame decodes at 63x35.
+    for (profile, alpha) in [("4444", true), ("hq", false)] {
+        let given = settings(&[("profile", text(profile))]);
+        let opened = open_sized(
+            &mut codec,
+            "prores",
+            &given,
+            &[PixelFormat::Rgba16],
+            (63, 35),
+        )
+        .unwrap();
+        let red = little_endian([65_535, 0, 0, 65_535].repeat(63 * 35));
+        let (packets, config) =
+            packets_and_config(encode_frames(&mut codec, opened.session, [red]));
+        // A ProRes frame: its size, `icpf`, then the frame header, whose
+        // width and height (big-endian) follow its size, version, and
+        // creator.
+        let bytes = &packets[0].bytes;
+        assert_eq!(&bytes[4..8], b"icpf");
+        let dimension = |at: usize| u16::from_be_bytes([bytes[at], bytes[at + 1]]);
+        assert_eq!((dimension(16), dimension(18)), (63, 35), "ProRes {profile}");
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("odd.mov");
+        let mut ffmpeg = FfmpegCodec::new();
+        let muxer = ffmpeg.muxer().unwrap();
+        let track = Track::Video {
+            config,
+            timescale: TIMESCALE,
+            width: 63,
+            height: 35,
+            frame_rate: RATE,
+            color: Color::bt709_limited(),
+            alpha,
+        };
+        let session = muxer
+            .open_muxer(&MuxerRequest {
+                component: "mov",
+                settings: &Settings::new(),
+                output: &output,
+                tracks: &[track],
+                leading_audio: 0,
+            })
+            .unwrap();
+        let packets: Vec<TrackPacket> = packets
+            .into_iter()
+            .map(|packet| TrackPacket { track: 0, packet })
+            .collect();
+        muxer.write_packets(session, &packets).unwrap();
+        muxer.finish_muxer(session).unwrap();
+        let frame = ffmpeg
+            .decoder()
+            .unwrap()
+            .decode_video(
+                celesta_codec_ffmpeg::DECODER_ID,
+                &VideoRequest {
+                    path: &output,
+                    time: 0.0,
+                    sequential: None,
+                },
+            )
+            .unwrap();
+        assert_eq!((frame.width, frame.height), (63, 35), "ProRes {profile}");
+    }
 }
