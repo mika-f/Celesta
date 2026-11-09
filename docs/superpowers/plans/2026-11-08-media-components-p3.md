@@ -128,6 +128,17 @@ Numbered from 40 (P2a used 8–18 and 24–26, P2b 19–23, 27, 28, P2c 30–31)
     `default` naming a preset found in no file says so ("the default preset
     `x` of <path> is in no presets file"), with the same code
     `unknown_preset`.
+44. **A project's `default` preset counts as naming its components**
+    (review of mika-f/Celesta#783). Decision 4 says a project plugin's
+    components are never chosen by default; a project `default` naming one
+    is used (the plugin must still be approved, or it is not installed and
+    the preset falls back as stale), and the export warns
+    `the project's default preset `{name}` uses {reference}, from the project's plugin {plugin}`,
+    once per such component (muxer, video, audio), on stderr and in the
+    JSON report's `warnings`. An explicit `--preset` (or MCP/TS `preset`)
+    naming one does not warn: the user named it. The editor's dialog marks
+    such components "(project)" as it does any project component. The
+    spec's Decision 4 and the Selection ranking text say so (Task 6).
 
 ## Decisions the spec left to this plan
 
@@ -343,7 +354,10 @@ The tests that pin each of these are in the task named.
   component given (Decisions), `presets.project_default()?` → its name
   found the same way, or `UnknownPreset { name, default_in: Some(project path) }`.
   The found preset's `warnings` come first in `ResolvedOutput.warnings`.
-  Then `resolve_preset_output`.
+  Then `resolve_preset_output`. When the base was the project's `default`
+  (not `choice.preset`), `resolve_output` appends deviation 44's warning
+  for each resolved component (muxer, video, audio) whose plugin's origin
+  is `MediaOrigin::Project`.
 - `resolve_preset_output`, per step, over P2a's code:
   - Muxer: `choice.muxer`, else the base's `muxer` parsed and found as a
     muxer (`named`), else the default by extension. A base muxer that does
@@ -380,6 +394,7 @@ The tests that pin each of these are in the task named.
   - `a_gone_preset_component_falls_back`: preset video `b/gone` → `b/x264` and a warning containing `b/gone is unavailable (not installed)`; preset video `nonsense` → reason `not a component reference`; a preset video described unavailable falls back with that reason; the preset's options are not applied to the fallback.
   - `a_preset_muxer_against_another_extension_warns`: `{preset: "web"}` for `film.mov` warns `b/mp4 does not write .mov files; the file is written as MP4 anyway`; for `film.mp4` no warning.
   - `the_project_default_applies_without_components`: project file `default: "web"`; `OutputChoice::default()` → `web`'s settings; with only `--video-option crf=22` → `web` with `crf 22`; with `--audio-encoder none` (`AudioChoice::None`) → no preset (x264 defaults).
+  - `a_project_default_naming_a_project_component_warns`: project file `default: "local"` with `local` = `{muxer: "p/mp4", video: {component: "p/h264"}, audio: {component: "p/aac"}}`; `OutputChoice::default()` for `film.mp4` resolves to `p/mp4`, `p/h264`, `p/aac` and `warnings` holds exactly three lines, one containing `uses p/h264, from the project's plugin p`; the same preset given as `{preset: "local"}` resolves the same with no such warning.
   - `a_missing_default_is_unknown_preset`: `default: "gone"` → `UnknownPreset { name: "gone", default_in: Some(project path) }`.
   - `an_unknown_name_is_still_unknown_preset`: `{preset: "ultrafast"}` with an empty lookup → `UnknownPreset { name: "ultrafast", default_in: None }` (P2a's hint test keeps passing).
   - `the_shadow_warning_reaches_the_resolved_output`: `x` in project and user files → its warning is `warnings[0]`.
@@ -553,7 +568,7 @@ Guides in full before this task; check every gpui-kit API used against the
 ### Task 6: Docs, the spec's deviations, and full verification
 
 **Files:**
-- Modify: `packages/website/content/en/docs/02-(guides)/09-export.md` and its `ja` twin (presets: the file, where it lives, the project `default`, lookup order, stale presets; the editor's export dialog), `packages/website/content/en/docs/05-(more)/04-troubleshooting.md` and `ja` (`invalid_presets`, `unknown_preset`), `skills/celesta/references/export.md` and `errors.md` (replace "Presets are not available yet"; `--preset`, `--preset-file`, the project `default`, MCP's `preset`), `skills/celesta/SKILL.md` if it lists export flags, `HANDOFF.md` (the exporter row: presets; the editor row: the export dialog), `docs/superpowers/specs/2026-11-08-media-components-design.md` (deviations 40–43 under Presets, Resolving an output, and Exporter API; the Phases row for P3 "As built"), `crates/exporter/src/{resolve.rs,options.rs}` doc comments still saying "presets arrive with P3"
+- Modify: `packages/website/content/en/docs/02-(guides)/09-export.md` and its `ja` twin (presets: the file, where it lives, the project `default`, lookup order, stale presets; the editor's export dialog), `packages/website/content/en/docs/05-(more)/04-troubleshooting.md` and `ja` (`invalid_presets`, `unknown_preset`), `skills/celesta/references/export.md` and `errors.md` (replace "Presets are not available yet"; `--preset`, `--preset-file`, the project `default`, MCP's `preset`), `skills/celesta/SKILL.md` if it lists export flags, `HANDOFF.md` (the exporter row: presets; the editor row: the export dialog), `docs/superpowers/specs/2026-11-08-media-components-design.md` (deviations 40–44 under Presets, Resolving an output, and Exporter API; Decision 4 and the Selection → Ranking paragraph gain "a project's `default` preset counts as naming its components, with a warning" (deviation 44); the Phases row for P3 "As built"), `crates/exporter/src/{resolve.rs,options.rs}` doc comments still saying "presets arrive with P3"
 - Create: `docs/handoff/2026-11-09-export-presets-dialog.md` (specification, deviations, decisions, docs, checks, not done)
 - Test: `pnpm --dir packages/website test`
 
