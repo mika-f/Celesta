@@ -25,6 +25,24 @@ pub const DECODER_ID: &str = "avfoundation";
 )]
 mod components;
 
+// Platform-independent: read on every system, tests included.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the VideoToolbox and AudioToolbox components call them in later tasks"
+    )
+)]
+mod esds;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the VideoToolbox components call them in later tasks"
+    )
+)]
+mod params;
+
 #[cfg(target_os = "macos")]
 mod apple;
 #[cfg(target_os = "macos")]
