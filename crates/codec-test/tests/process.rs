@@ -630,6 +630,37 @@ fn frames_too_large_for_the_ring_go_through_the_pipe() {
         &frames,
         (64, 32),
     );
+    // Opened at the larger size, the frames are payloads: no ring, and the
+    // pipe's window.
+    let opened = open_rgba(&mut shared, 64, 32, &Color::bt709_limited());
+    let pipeline = shared.pipeline().unwrap();
+    assert!(!pipeline.frames_in_ring());
+    // 8192-byte frames leave the pipe's full window of three.
+    assert_eq!(pipeline.depth(), 3);
+    shared.video_encoder().unwrap().abort_video(opened.session);
+}
+
+/// A decoded frame fills a whole segment; into an export's ring it would
+/// span slots, so a process with a ring refuses to decode.
+#[test]
+fn a_process_with_a_ring_refuses_to_decode_video() {
+    let mut shared = program_with(FrameTransport::SharedMemory, rgba_export());
+    if !shared.shares_frames() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let result = shared.decode_video(
+        "ctst",
+        &VideoRequest {
+            path: &dir.path().join("x.ctst"),
+            time: 0.0,
+            sequential: None,
+        },
+    );
+    match result {
+        Err(MediaError::Codec(message)) => assert!(message.contains("ring"), "{message}"),
+        other => panic!("expected a codec error, got {other:?}"),
+    }
 }
 
 /// Without a ring, the window holds as many frames of the opened encoder's

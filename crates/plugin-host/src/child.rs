@@ -417,10 +417,30 @@ mod tests {
 
     /// A plugin made of a shell script.
     fn script(directory: &Path, body: &str) -> std::path::PathBuf {
+        // Written under another name and renamed into place once closed:
+        // a sibling test forking while the file is open for writing would
+        // inherit the descriptor, and exec of the script fails with ETXTBSY.
         let path = directory.join("plugin.sh");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let staging = directory.join("plugin.sh.new");
+        std::fs::write(&staging, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&staging, &path).unwrap();
         path
+    }
+
+    /// [`PluginChild::start`], tried again while the script is still open
+    /// for writing in a sibling test's forked child (ETXTBSY).
+    fn start_retrying(executable: &Path, directory: &Path) -> Result<PluginChild, String> {
+        let mut attempts = 0;
+        loop {
+            match PluginChild::start(executable, directory) {
+                Err(error) if attempts < 20 && error.contains("busy") => {
+                    attempts += 1;
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                other => return other,
+            }
+        }
     }
 
     /// Waits until the script has run as far as touching `marker`, as
@@ -453,7 +473,7 @@ mod tests {
             directory.path(),
             &format!("cat '{}'\nexec sleep 30", answer.display()),
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let error = child.hello_as(2, Map::new()).unwrap_err();
         let RequestError::Refused(refusal) = error else {
             panic!("{error:?}");
@@ -473,7 +493,7 @@ mod tests {
                 started.display()
             ),
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         wait_for(&started);
         let started = Instant::now();
         let error = child
@@ -504,7 +524,7 @@ mod tests {
                 started.display()
             ),
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let switch = crate::PluginKillSwitch::new();
         switch.register(child.kill_handle());
         wait_for(&started);
@@ -539,7 +559,7 @@ mod tests {
     fn a_switch_killed_already_kills_what_is_registered_later() {
         let directory = tempfile::tempdir().unwrap();
         let program = script(directory.path(), "exec sleep 30");
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let switch = crate::PluginKillSwitch::new();
         switch.kill();
         assert!(switch.is_killed());
@@ -555,7 +575,7 @@ mod tests {
     fn a_plugin_that_exits_says_what_it_printed() {
         let directory = tempfile::tempdir().unwrap();
         let program = script(directory.path(), "echo 'boom: no libavcodec' >&2\nexit 3");
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let error = child
             .request(hello(), "hello", Duration::from_secs(5))
             .unwrap_err();
@@ -575,7 +595,7 @@ mod tests {
             r#"printf '\014\000\000\000{"type":"x"}\000\000\000\000'
 exec cat >/dev/null"#,
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let error = child
             .request(hello(), "hello", Duration::from_secs(5))
             .unwrap_err();
@@ -594,7 +614,7 @@ exec cat >/dev/null"#,
             directory.path(),
             "printf '\\004\\000\\000\\000nope'\nexec sleep 30",
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let error = child
             .request(hello(), "hello", Duration::from_secs(5))
             .unwrap_err();
@@ -615,7 +635,7 @@ exec cat >/dev/null"#,
                 marker.display()
             ),
         );
-        let child = PluginChild::start(&program, directory.path()).unwrap();
+        let child = start_retrying(&program, directory.path()).unwrap();
         wait_for(&started);
         drop(child);
         assert!(
@@ -653,7 +673,7 @@ exec cat >/dev/null"#,
             directory.path(),
             &format!("cat '{}'\nexec cat >/dev/null", answers.display()),
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         for (request, expected) in [("a", "x"), ("b", "y"), ("c", "z")] {
             child
                 .send(kind(request), expected, LONG, DeadlineFrom::Sent)
@@ -674,7 +694,7 @@ exec cat >/dev/null"#,
             directory.path(),
             &format!("cat '{}'\nexec cat >/dev/null", answers.display()),
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         for (request, expected) in [("a", "x"), ("b", "y"), ("c", "w")] {
             child
                 .send(kind(request), expected, LONG, DeadlineFrom::Sent)
@@ -713,7 +733,7 @@ exec cat >/dev/null"#,
     fn a_deadline_from_the_previous_answer_waits_for_the_queue() {
         let directory = tempfile::tempdir().unwrap();
         let program = slow_pair(directory.path());
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let begun = Instant::now();
         child
             .send(kind("a"), "x", LONG, DeadlineFrom::Sent)
@@ -738,7 +758,7 @@ exec cat >/dev/null"#,
     fn a_deadline_from_send_counts_the_queue() {
         let directory = tempfile::tempdir().unwrap();
         let program = slow_pair(directory.path());
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         child
             .send(kind("a"), "x", LONG, DeadlineFrom::Sent)
             .unwrap();
@@ -770,7 +790,7 @@ exec cat >/dev/null"#,
             directory.path(),
             &format!("cat '{}'\nexec cat >/dev/null", answers.display()),
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         child
             .send(kind("a"), "x", LONG, DeadlineFrom::Sent)
             .unwrap();
@@ -790,7 +810,7 @@ exec cat >/dev/null"#,
     fn receive_without_a_request_in_flight_is_an_error_not_a_kill() {
         let directory = tempfile::tempdir().unwrap();
         let program = script(directory.path(), "exec cat >/dev/null");
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let RequestError::Unavailable(message) = child.receive().unwrap_err() else {
             panic!("expected Unavailable");
         };
@@ -806,7 +826,7 @@ exec cat >/dev/null"#,
             directory.path(),
             &format!("touch '{}'\nexec sleep 30", started.display()),
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let switch = crate::PluginKillSwitch::new();
         switch.register(child.kill_handle());
         wait_for(&started);

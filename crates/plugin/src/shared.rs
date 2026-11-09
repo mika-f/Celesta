@@ -280,6 +280,8 @@ pub struct RingLayout {
 }
 
 impl RingLayout {
+    // `stride`, `segment_bytes` and `offset` are unchecked: they are valid only
+    // for a layout `SharedMemory::ring` accepted (no overflow, slot in range).
     /// The bytes one slot takes, header and data.
     pub const fn stride(&self) -> usize {
         SLOT_HEADER + self.slot_bytes

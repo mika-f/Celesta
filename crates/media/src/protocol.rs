@@ -133,7 +133,7 @@ fn accept_frames(hello: &Message, frames: &RefCell<Option<SharedSegment>>) -> Ma
         }
         Err(error) => {
             eprintln!(
-                "decoded frames go through the pipe: the shared memory offered could not be mapped ({error})"
+                "frames go through the pipe: the shared memory offered could not be mapped ({error})"
             );
             Map::new()
         }

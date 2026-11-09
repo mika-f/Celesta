@@ -536,6 +536,13 @@ impl Decoder for MediaProcess {
         decoder: &str,
         request: &VideoRequest<'_>,
     ) -> Result<VideoFrame, MediaError> {
+        // A decoded frame is written as one whole-segment slot; into an
+        // export's ring it would span several slots.
+        if self.ring.is_some() {
+            return Err(MediaError::Codec(
+                "decodeVideo is not available on a process started for an export's ring".to_owned(),
+            ));
+        }
         let path = absolute(request.path);
         let message = protocol::decode_video_request(
             decoder,
@@ -581,7 +588,11 @@ impl VideoEncoder for MediaProcess {
         let message = protocol::open_video_request(request, ring)?;
         let answer = self.request(message, "videoEncoderOpened", OPEN_TIMEOUT)?;
         let opened = protocol::decode_video_encoder_opened(&answer)?;
-        self.ring_open = ring.is_some();
+        // The ring is in use only when the opened input's frame fits a slot;
+        // larger frames go through the pipe, with the pipe's window.
+        self.ring_open = ring.is_some_and(|ring| {
+            opened.input.frame_bytes(request.width, request.height) <= ring.slot_bytes
+        });
         self.pipe_depth = pipe_depth(opened.input.frame_bytes(request.width, request.height));
         Ok(opened)
     }
