@@ -274,18 +274,39 @@ fn configure(
     for (name, key, value) in colors {
         set_property(session, name, key, value)?;
     }
-    set_property(
+    set_hint(
         session,
         "RealTime",
         unsafe { kVTCompressionPropertyKey_RealTime },
         CFBoolean::new(false),
     )?;
-    set_property(
+    set_hint(
         session,
         "ExpectedFrameRate",
         unsafe { kVTCompressionPropertyKey_ExpectedFrameRate },
         &CFNumber::new_f64(rate),
     )
+}
+
+/// `kVTPropertyNotSupportedErr`: the encoder has no such property.
+const PROPERTY_NOT_SUPPORTED: i32 = -12900;
+
+/// [`set_property`] for a property that only helps the encoder plan, which
+/// an encoder without it does without: VideoToolbox's software ProRes
+/// encoder (on a Mac with no media engine, such as a CI machine) has no
+/// `ExpectedFrameRate`.
+fn set_hint(
+    session: &VTCompressionSession,
+    name: &str,
+    key: &CFString,
+    value: &CFType,
+) -> Result<(), MediaError> {
+    // SAFETY: as in `set_property`.
+    let status = unsafe { VTSessionSetProperty(session, key, Some(value)) };
+    if status == PROPERTY_NOT_SUPPORTED {
+        return Ok(());
+    }
+    check(&format!("VTSessionSetProperty({name})"), status)
 }
 
 /// The `atom` (`avcC` or `hvcC`) of `sample`'s format description's

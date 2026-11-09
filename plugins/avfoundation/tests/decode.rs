@@ -636,11 +636,14 @@ fn rotated_video_is_displayed_upright() {
     assert_eq!(frame.pixels.len(), (WIDTH * HEIGHT * 4) as usize);
     // Turned a quarter clockwise, the source's bottom left is the top left,
     // its top left the top right, and its bottom right the bottom left.
+    // Within 40 per channel: AVAssetWriter converts the fixture itself, and
+    // VideoToolbox's software H.264 encoder (a CI machine's) bleeds blue
+    // into (25, 30, 247); the four quadrants stay far apart.
     let close = |actual: [u8; 3], expected: [u8; 3]| {
         actual
             .iter()
             .zip(expected)
-            .all(|(actual, expected)| actual.abs_diff(expected) <= 24)
+            .all(|(actual, expected)| actual.abs_diff(expected) <= 40)
     };
     for ((column, row), quadrant) in [
         ((2, 2), 2),

@@ -432,8 +432,11 @@ fn hevc_10_bit_from_p010_is_main10() {
     let hvcc = config.description.as_deref().expect("an hvcC");
     let decoded = decode("hevc", Some(hvcc), &packets);
     assert_eq!(decoded.len(), 10);
+    // Within 8 10-bit codes (2 8-bit ones): the media engine keeps a flat
+    // red within 4, VideoToolbox's software HEVC encoder (a CI machine's)
+    // within 5.
     for frame in &decoded {
-        frame.assert_codes(RED_10, 4);
+        frame.assert_codes(RED_10, 8);
         frame.assert_bt709_limited();
     }
 }
