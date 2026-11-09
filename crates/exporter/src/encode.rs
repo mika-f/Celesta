@@ -150,12 +150,25 @@ pub(crate) struct ExportedTracks {
     pub timing: SessionTiming,
 }
 
+/// How the video encoder's process takes the frames, and how many go at a
+/// time: through the ring of shared memory it accepted and was declared at
+/// the open, in each request's payload through the pipe, or in Celesta's
+/// own process, one at a time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FramePath {
+    Ring(usize),
+    Pipe(usize),
+    #[default]
+    InProcess,
+}
+
 /// What a session measured of its staged video: the interleaver's, over
-/// the whole export (finish's packets included).
+/// the whole export (finish's packets included), and how its frames went.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SessionTiming {
     pub peak_staged_bytes: usize,
     pub spilled: bool,
+    pub frame_path: FramePath,
 }
 
 /// How long an export's render and mix took, and how much video waited
@@ -172,6 +185,7 @@ pub(crate) struct ExportTiming {
     pub mix_done_at_frame: Option<u64>,
     pub peak_staged_bytes: usize,
     pub spilled: bool,
+    pub frame_path: FramePath,
 }
 
 impl ExportTiming {
@@ -180,6 +194,7 @@ impl ExportTiming {
         Self {
             peak_staged_bytes: session.peak_staged_bytes,
             spilled: session.spilled,
+            frame_path: session.frame_path,
             ..self
         }
     }
@@ -197,8 +212,14 @@ pub(crate) fn timing_line(timing: &ExportTiming) -> String {
         }
         (Some(mix), None) => format!("mix {:.2} s", mix.as_secs_f64()),
     };
+    let (frames, depth) = match timing.frame_path {
+        FramePath::Ring(depth) => ("ring", depth),
+        FramePath::Pipe(depth) => ("pipe", depth),
+        FramePath::InProcess => ("in process", 1),
+    };
     format!(
-        "celesta: timing: render {:.2} s for {} frames; {mix}; staged peak {:.1} MB; spilled {}",
+        "celesta: timing: render {:.2} s for {} frames; {mix}; staged peak {:.1} MB; spilled {}; \
+         frames {frames} {depth} deep",
         timing.render.as_secs_f64(),
         timing.frames,
         timing.peak_staged_bytes as f64 / f64::from(1u32 << 20),
@@ -386,6 +407,8 @@ pub(crate) struct ExportSession {
     pending_write: Vec<TrackPacket>,
     pending_bytes: usize,
     muxer: Option<SessionId>,
+    /// How the video encoder's process takes the frames, once it opened.
+    frame_path: FramePath,
 }
 
 /// The process of plugin `plugin`, started for the export with `ring` when
@@ -480,6 +503,7 @@ impl ExportSession {
             pending_write: Vec::new(),
             pending_bytes: 0,
             muxer: None,
+            frame_path: FramePath::default(),
         }
     }
 
@@ -548,6 +572,7 @@ impl ExportSession {
             .map_or_else(SessionTiming::default, |interleaver| SessionTiming {
                 peak_staged_bytes: interleaver.peak_staged_bytes(),
                 spilled: interleaver.spilled(),
+                frame_path: self.frame_path,
             })
     }
 
@@ -693,6 +718,11 @@ impl ExportSession {
             .video_encoder()
             .ok_or_else(|| missing(&registry, plugin, "video encoder"))?
             .open_video(&request)?;
+        self.frame_path = match process.provider.pipeline() {
+            Some(pipeline) if pipeline.frames_in_ring() => FramePath::Ring(pipeline.depth()),
+            Some(pipeline) => FramePath::Pipe(pipeline.depth()),
+            None => FramePath::InProcess,
+        };
         // Opened: an abort from here on ends the session.
         self.video = Some(VideoTrack {
             session: Some(opened.session),
@@ -2277,6 +2307,27 @@ mod tests {
     }
 
     #[test]
+    fn the_timing_names_how_the_frames_went() {
+        for (transports, path) in [
+            (&["sharedMemory", "pipe"][..], FramePath::Ring(3)),
+            (&["pipe"][..], FramePath::Pipe(3)),
+        ] {
+            let (mut session, _, _) = piped_session_with(Receiving::Answers, transports);
+            open(&mut session);
+            session.no_audio().unwrap();
+            frames(&mut session, 2);
+            let timing = session.finish().unwrap().timing;
+            assert_eq!(timing.frame_path, path, "{transports:?}");
+        }
+        let (mut session, _) = fake_session(Answers::default());
+        open(&mut session);
+        session.no_audio().unwrap();
+        frames(&mut session, 2);
+        let timing = session.finish().unwrap().timing;
+        assert_eq!(timing.frame_path, FramePath::InProcess);
+    }
+
+    #[test]
     fn write_packets_are_batched() {
         let (mut session, log, _) = piped_session(Receiving::Answers);
         open(&mut session);
@@ -2534,29 +2585,32 @@ mod tests {
             mix_done_at_frame: Some(87),
             peak_staged_bytes: 12_582_912,
             spilled: false,
+            frame_path: FramePath::Ring(3),
         };
         assert_eq!(
             timing_line(&timing),
             "celesta: timing: render 4.50 s for 300 frames; mix 1.25 s, done at frame 87; \
-             staged peak 12.0 MB; spilled no"
+             staged peak 12.0 MB; spilled no; frames ring 3 deep"
         );
         assert_eq!(
             timing_line(&ExportTiming {
                 mix_done_at_frame: Some(300),
                 spilled: true,
+                frame_path: FramePath::Pipe(1),
                 ..timing
             }),
             "celesta: timing: render 4.50 s for 300 frames; mix 1.25 s, done after the render; \
-             staged peak 12.0 MB; spilled yes"
+             staged peak 12.0 MB; spilled yes; frames pipe 1 deep"
         );
         assert_eq!(
             timing_line(&ExportTiming {
                 mix: None,
                 mix_done_at_frame: None,
+                frame_path: FramePath::InProcess,
                 ..timing
             }),
             "celesta: timing: render 4.50 s for 300 frames; mix none; staged peak 12.0 MB; \
-             spilled no"
+             spilled no; frames in process 1 deep"
         );
     }
 }

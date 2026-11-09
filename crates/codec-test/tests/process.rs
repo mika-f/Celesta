@@ -616,6 +616,11 @@ fn a_describing_or_ringless_export_process_gets_no_segment() {
 fn frames_too_large_for_the_ring_go_through_the_pipe() {
     let directory = tempfile::tempdir().unwrap();
     let mut shared = program_with(FrameTransport::SharedMemory, rgba_export());
+    if cfg!(any(unix, windows)) {
+        assert!(shared.shares_frames(), "the program declined the ring");
+        let ring = shared.ring().expect("a ring");
+        assert_eq!((ring.slots, ring.slot_bytes), (3, 2048));
+    }
     // 8192-byte frames do not fit the 2048-byte slots.
     let frames = rgba_frames(4, 64, 32);
     export_frames(

@@ -1755,7 +1755,8 @@ fn cancel_ends_a_frame_waiting_on_a_media_plugin_that_hangs(project: &Project, a
 /// A React entry playing a `<Video>` and an `<Audio>` exported by the
 /// `celesta-exporter` program with the test codec's program as its media
 /// plugin writes the same file whether its frames go through the program's
-/// ring of shared slots or through the pipe.
+/// ring of shared slots or through the pipe, and the timing line says which
+/// they went through.
 #[test]
 fn an_export_through_the_programs_ring_is_byte_identical_to_the_pipe() {
     use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
@@ -1811,6 +1812,7 @@ export default function Root() {
         let result = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
             .env_remove(PLUGIN_PATH_ENV)
             .env(SHARED_MEMORY_VARIABLE, shared)
+            .env("CELESTA_EXPORT_TIMING", "1")
             .arg("--plugin-dir")
             .arg(plugin.folder())
             .arg("--react")
@@ -1827,8 +1829,12 @@ export default function Root() {
         return;
     }
     assert!(ok, "through the ring: {stderr}");
+    if cfg!(any(unix, windows)) {
+        assert!(stderr.contains("; frames ring 3 deep"), "{stderr}");
+    }
     let (ok, stderr, through_pipe) = export("0");
     assert!(ok, "through the pipe: {stderr}");
+    assert!(stderr.contains("; frames pipe 3 deep"), "{stderr}");
 
     let media = read(&through_ring);
     assert_eq!(stored_video(&media).frames.len(), 4);
