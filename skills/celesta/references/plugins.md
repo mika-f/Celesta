@@ -99,8 +99,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   decoders when none does), the user's plugins first (`--plugin-dir`,
   `CELESTA_PLUGIN_PATH`, the user plugin folder, added folders), then
   bundled ones, then a project's own. A decoder that does not read the
-  file, fails, or does not start passes it to the next; the first that
-  reads it keeps it. An export takes its muxer from the output's
+  file, fails, or does not start passes it to the next; one that misses
+  its deadline, or is stopped by a cancelled export, ends the search with
+  that error. The first that reads it keeps it. An export takes its muxer from the output's
   extension (bundled plugins first, then the user's) and its encoders from
   the muxer's default codecs (the muxer's plugin first, then bundled, then
   the user's); a project's components only when named. `--list-components`
