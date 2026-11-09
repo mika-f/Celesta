@@ -79,10 +79,10 @@ main through PR #113), build the React package, then:
 node scripts/plugins/build.mts plugins/ffmpeg
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"
 cargo build --release --locked -p celesta-exporter --bin celesta-exporter
-target/release/celesta-exporter --react <path-to-nebula.tsx> target/nebula.mp4 --preset medium --crf 18 --overwrite --no-ui
+target/release/celesta-exporter --react <path-to-nebula.tsx> target/nebula.mp4 --video-option preset=medium --video-option crf=18 --overwrite --no-ui
 ```
 
-The export encodes through the codec plugin, which `build.mts` builds.
+The export encodes through the media plugin, which `build.mts` builds.
 Building it needs FFmpeg 8's development files where pkg-config finds them:
 `PKG_CONFIG_PATH` pointing at its `lib/pkgconfig` (with Homebrew,
 `$(brew --prefix ffmpeg@8)/lib/pkgconfig`), or, on Windows, `VCPKG_ROOT`. See

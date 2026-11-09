@@ -5,10 +5,10 @@
 //! `decodeAudio` name the decoder component of the plugin that is to serve
 //! them, and the encoding and muxing requests go to the provider's
 //! [`VideoEncoder`], [`AudioEncoder`], or [`Muxer`]. A media plugin's
-//! program runs [`serve`]. See `docs/handoff/2026-11-05-codec-plugin.md`
-//! and the spec's Protocol 2
-//! (`docs/superpowers/specs/2026-11-08-media-components-design.md`) for the
-//! requests.
+//! program runs [`serve`]. See the spec's Protocol 2
+//! (`docs/superpowers/specs/2026-11-08-media-components-design.md`) and
+//! `docs/handoff/2026-11-08-media-decoders.md` and
+//! `docs/handoff/2026-11-08-media-encoders.md` for the requests.
 
 use crate::error::MediaError;
 use crate::mix::frame_byte_len;
