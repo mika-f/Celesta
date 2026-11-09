@@ -105,12 +105,8 @@ pub(crate) fn readback_of(format: PixelFormat) -> Result<ReadbackFormat, ExportE
         PixelFormat::Rgba16 => Ok(ReadbackFormat::Rgba16Straight),
         PixelFormat::Yuv420p => Ok(ReadbackFormat::Yuv420p),
         PixelFormat::Yuv420p10 => Ok(ReadbackFormat::Yuv420p10),
-        PixelFormat::Nv12 | PixelFormat::P010 => Err(ExportError::Codec {
-            stage: VIDEO_STAGE,
-            source: MediaError::Codec(format!(
-                "the video encoder chose {format}, which Celesta does not produce yet"
-            )),
-        }),
+        PixelFormat::Nv12 => Ok(ReadbackFormat::Nv12),
+        PixelFormat::P010 => Ok(ReadbackFormat::P010),
     }
 }
 
@@ -614,12 +610,17 @@ impl ExportSession {
     }
 
     /// The formats `renderer` can read back, best first: the YUV formats
-    /// when it converts on a hardware GPU, then straight-alpha 16-bit and
-    /// 8-bit RGBA.
+    /// when it converts on a hardware GPU (planar, then interleaved), then
+    /// straight-alpha 16-bit and 8-bit RGBA.
     pub(crate) fn offered_formats(renderer: &GpuRenderer) -> Vec<PixelFormat> {
-        let mut offered = Vec::with_capacity(4);
+        let mut offered = Vec::with_capacity(6);
         if renderer.supports_yuv420p_readback() && !renderer.is_software() {
-            offered.extend([PixelFormat::Yuv420p, PixelFormat::Yuv420p10]);
+            offered.extend([
+                PixelFormat::Yuv420p,
+                PixelFormat::Yuv420p10,
+                PixelFormat::Nv12,
+                PixelFormat::P010,
+            ]);
         }
         offered.extend([PixelFormat::Rgba16, PixelFormat::Rgba8]);
         offered
@@ -1330,6 +1331,8 @@ mod tests {
     #[derive(Clone, Debug, PartialEq)]
     enum Asked {
         OpenVideo,
+        /// The `Color` the video encoder was asked to open with.
+        VideoColor(MediaColor),
         EncodeVideo {
             pts: i64,
         },
@@ -1439,6 +1442,7 @@ mod tests {
             request: &VideoEncoderRequest<'_>,
         ) -> Result<VideoEncoderOpened, MediaError> {
             self.ask(Asked::OpenVideo);
+            self.ask(Asked::VideoColor(request.color.clone()));
             Ok(VideoEncoderOpened {
                 session: self.session(),
                 input: self.answers.input.unwrap_or(request.offered[0]),
@@ -1716,6 +1720,25 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn the_video_track_carries_bt709_color() {
+        let (mut session, log) = fake_session(Answers::default());
+        open(&mut session);
+        frames(&mut session, 3);
+        session.encode_audio(&mix(48_000, 100), false).unwrap();
+
+        let encoder_color = log_of(&log).into_iter().find_map(|asked| match asked {
+            Asked::VideoColor(color) => Some(color),
+            _ => None,
+        });
+        assert_eq!(encoder_color, Some(MediaColor::bt709_limited()));
+        let (tracks, _) = opened_muxer(&log).expect("the muxer opened");
+        let Some(Track::Video { color, .. }) = tracks.first() else {
+            panic!("{tracks:?}");
+        };
+        assert_eq!(*color, MediaColor::bt709_limited());
     }
 
     #[test]

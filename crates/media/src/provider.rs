@@ -288,26 +288,25 @@ pub enum PixelFormat {
     Rgba8,
     /// RGBA, 16-bit little-endian channels.
     Rgba16,
-    /// Planar BT.601 limited-range Y, U, V with chroma halved both ways,
-    /// although the session's [`Color`] says BT.709: P2a's encoders do not
-    /// apply it (deviation 8 of the media components spec).
+    /// Planar BT.709 limited-range Y, U, V with chroma halved both ways.
     Yuv420p,
     /// [`PixelFormat::Yuv420p`] with 10 bits in 16-bit little-endian samples.
     Yuv420p10,
     /// A Y plane, then U and V interleaved in one plane, chroma halved both
-    /// ways. Celesta does not offer it yet.
+    /// ways.
     Nv12,
     /// [`PixelFormat::Nv12`] with 10 bits in the high bits of 16-bit
-    /// little-endian samples. Celesta does not offer it yet.
+    /// little-endian samples.
     P010,
 }
 
 impl PixelFormat {
-    /// The formats Celesta can produce today, which size an export's ring.
-    /// Nv12 and P010 join them when a renderer offers them.
-    pub const OFFERABLE: [PixelFormat; 4] = [
+    /// The formats Celesta can produce, which size an export's ring.
+    pub const OFFERABLE: [PixelFormat; 6] = [
         PixelFormat::Yuv420p,
         PixelFormat::Yuv420p10,
+        PixelFormat::Nv12,
+        PixelFormat::P010,
         PixelFormat::Rgba16,
         PixelFormat::Rgba8,
     ];
