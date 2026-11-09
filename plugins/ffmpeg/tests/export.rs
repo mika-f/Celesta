@@ -1058,6 +1058,62 @@ fn a_looping_webm_is_written_as_without_loop() {
     assert!(decode(&once).samples == decode(&looped).samples);
 }
 
+#[test]
+fn a_looping_mov_decodes_as_without_loop() {
+    let _gpu = gpu();
+    let directory = tempfile::tempdir().unwrap();
+    let project = hits_project(directory.path());
+    let export = |looping, name| {
+        export_with(
+            &project,
+            directory.path(),
+            name,
+            ExportOptions {
+                looping,
+                ..ExportOptions::default()
+            },
+        )
+    };
+    let (Some(once), Some(looped)) = (export(false, "once.mov"), export(true, "looped.mov")) else {
+        return;
+    };
+    assert_eq!(
+        audio_stream(&looped.to_string_lossy()),
+        ("pcm_s24le".to_owned(), 48_000)
+    );
+    // The edit list hides the PCM lead-in: the sound still starts at 0 and
+    // lasts exactly the video's second.
+    let Some(StreamInfo::Audio {
+        start_time,
+        duration,
+        time_base,
+        ..
+    }) = find_audio_stream_info(looped.to_string_lossy().into_owned()).unwrap()
+    else {
+        panic!("the looping export has no audio stream");
+    };
+    assert_eq!(start_time, 0);
+    assert_eq!(
+        duration * i64::from(time_base.num),
+        i64::from(time_base.den),
+        "the sound lasts {duration} x {}/{} s",
+        time_base.num,
+        time_base.den
+    );
+    // The looping file holds the lead-in, ...
+    assert_ne!(
+        std::fs::read(&once).unwrap(),
+        std::fs::read(&looped).unwrap(),
+        "the looping MOV has no lead-in"
+    );
+    // ... which decodes to nothing: PCM has no priming to smear, so the
+    // rest is the same samples.
+    let decode = |path: &Path| FfmpegBackend::new().decode_audio(path, 48_000, 2).unwrap();
+    let (once, looped) = (decode(&once), decode(&looped));
+    assert_eq!(looped.frame_count(), once.frame_count());
+    assert!(looped.samples == once.samples);
+}
+
 /// The sample frames of the mix of `project`'s one sound: its source,
 /// decoded at the project's rate in stereo, as the mixer reads it.
 fn mix_frames(dir: &Path, name: &str, sample_rate: u32) -> celesta_media::AudioBuffer {
