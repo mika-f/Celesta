@@ -65,6 +65,16 @@ mod tests {
     }
 
     #[test]
+    fn an_absurd_frame_saturates_and_gets_no_ring() {
+        for format in PixelFormat::OFFERABLE {
+            assert_eq!(format.frame_bytes(u32::MAX, u32::MAX), usize::MAX);
+        }
+        assert_eq!(ring_layout(&[Rgba16], u32::MAX, u32::MAX), None);
+        assert_eq!(ring_layout(&[], u32::MAX, u32::MAX), None);
+        assert_eq!(pipe_depth(Rgba16.frame_bytes(u32::MAX, u32::MAX)), 1);
+    }
+
+    #[test]
     fn ring_layout_takes_the_largest_offerable_format() {
         assert_eq!(
             ring_layout(&[Yuv420p, Rgba8], 1920, 1080),

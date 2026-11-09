@@ -308,15 +308,22 @@ impl PixelFormat {
     ];
 
     /// The bytes of a `width` x `height` frame in this format: the planes
-    /// back to back, chroma rounded up to whole samples.
+    /// back to back, chroma rounded up to whole samples. `usize::MAX` when
+    /// they do not fit a `usize` (a size no ring or window can hold): the
+    /// arithmetic saturates, as the size may come from a project before
+    /// its dimensions are validated.
     pub fn frame_bytes(self, width: u32, height: u32) -> usize {
-        let luma = width as usize * height as usize;
-        let chroma = 2 * (width as usize).div_ceil(2) * (height as usize).div_ceil(2);
+        let (width, height) = (width as usize, height as usize);
+        let luma = width.saturating_mul(height);
+        let chroma = width
+            .div_ceil(2)
+            .saturating_mul(height.div_ceil(2))
+            .saturating_mul(2);
         match self {
-            Self::Rgba8 => luma * 4,
-            Self::Rgba16 => luma * 8,
-            Self::Yuv420p | Self::Nv12 => luma + chroma,
-            Self::Yuv420p10 | Self::P010 => 2 * (luma + chroma),
+            Self::Rgba8 => luma.saturating_mul(4),
+            Self::Rgba16 => luma.saturating_mul(8),
+            Self::Yuv420p | Self::Nv12 => luma.saturating_add(chroma),
+            Self::Yuv420p10 | Self::P010 => luma.saturating_add(chroma).saturating_mul(2),
         }
     }
 }
