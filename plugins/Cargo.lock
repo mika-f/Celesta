@@ -358,20 +358,18 @@ dependencies = [
  "celesta-evaluator",
  "celesta-gpu-renderer",
  "celesta-media",
+ "celesta-media-image",
  "celesta-plugin-host",
  "celesta-project",
  "celesta-react-bridge",
  "celesta-remote",
  "clap",
- "image",
- "png",
  "ratatui",
  "serde",
  "serde_json",
  "strum",
  "tempfile",
  "thiserror 2.0.21",
- "webp",
 ]
 
 [[package]]
@@ -424,6 +422,17 @@ dependencies = [
  "signalsmith-stretch",
  "strum",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "celesta-media-image"
+version = "0.9.0"
+dependencies = [
+ "celesta-media",
+ "celesta-plugin-host",
+ "image",
+ "png",
+ "webp",
 ]
 
 [[package]]
