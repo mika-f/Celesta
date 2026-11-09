@@ -120,10 +120,14 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   export with `no_decoder`; a file no decoder reads fails with
   `unsupported_media` (see [export.md](export.md)).
 - Video frames, decoded or sent to an export's video encoder (up to three
-  ahead, so rendering and encoding overlap), cross memory shared with the
-  plugin's process when the plugin accepts it (the `ffmpeg` plugin does);
-  otherwise, and for frames too large (decoded over 4096×2560, exported over
-  256 MiB a frame), they go through its pipe.
+  ahead, so rendering and encoding overlap; fewer for very large frames
+  such as 8K, keeping the frames in flight within 256 MiB), cross memory
+  shared with the plugin's process when the plugin and its video encoder
+  accept it (the `ffmpeg` plugin's do); otherwise, and for frames too large
+  (decoded over 4096×2560; exported over about 33 megapixels, such as
+  8192×4320, as the memory holds a frame in the largest format the encoder
+  accepts, 16-bit RGBA for FFmpeg's, within 256 MiB), they go through its
+  pipe.
   `CELESTA_CODEC_SHARED_MEMORY=0` keeps every frame, decoded or exported, in
   the pipe, for a media plugin that misbehaves with it.
 
