@@ -288,7 +288,9 @@ pub enum PixelFormat {
     Rgba8,
     /// RGBA, 16-bit little-endian channels.
     Rgba16,
-    /// Planar BT.601 limited-range Y, U, V with chroma halved both ways.
+    /// Planar BT.601 limited-range Y, U, V with chroma halved both ways,
+    /// although the session's [`Color`] says BT.709: P2a's encoders do not
+    /// apply it (deviation 8 of the media components spec).
     Yuv420p,
     /// [`PixelFormat::Yuv420p`] with 10 bits in 16-bit little-endian samples.
     Yuv420p10,
@@ -349,7 +351,8 @@ pub struct Color {
 
 impl Color {
     /// BT.709 primaries, transfer, and matrix in limited range: what every
-    /// export says today.
+    /// export says today, although P2a's encoders do not convert or tag by
+    /// it yet (deviation 8 of the media components spec).
     pub fn bt709_limited() -> Self {
         Self {
             primaries: "bt709".to_owned(),

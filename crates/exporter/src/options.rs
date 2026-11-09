@@ -19,7 +19,7 @@ pub struct ExportOptions {
     pub output: OutputChoice,
     /// How carefully scaled and rotated layers are drawn. Exports default to
     /// [`RenderQuality::Final`]; this is independent of the encoders'
-    /// settings, which only trade encoding speed against file size.
+    /// settings.
     pub render_quality: RenderQuality,
     /// The graphics API frames are rendered through.
     pub driver: GpuDriver,

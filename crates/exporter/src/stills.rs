@@ -118,7 +118,7 @@ pub enum StillFormat {
 }
 
 impl StillFormat {
-    /// The name `--output-format` takes.
+    /// Its lowercase name, such as `jpeg`, which is also its extension.
     pub fn as_str(self) -> &'static str {
         self.into()
     }

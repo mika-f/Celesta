@@ -228,10 +228,12 @@ struct Cli {
         default_value_t = non_zero(ContactSheet::DEFAULT_TILE_WIDTH)
     )]
     tile_width: NonZeroU32,
-    /// A preset from --preset-file, the project, or the user's presets.
+    /// A preset's name. Presets are not available yet: every name fails
+    /// with unknown_preset.
     #[arg(long, value_name = "NAME")]
     preset: Option<String>,
-    /// An export-presets.json to look --preset up in first.
+    /// An export-presets.json, checked to be a JSON object; nothing is
+    /// looked up in it yet.
     #[arg(long, value_name = "PATH")]
     preset_file: Option<PathBuf>,
     /// The muxer that writes the video, instead of the output's extension's.
