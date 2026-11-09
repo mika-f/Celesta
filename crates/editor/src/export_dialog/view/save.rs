@@ -3,8 +3,9 @@
 
 use super::super::model::SaveTarget;
 use super::choice::Choice;
-use super::{ExportDialog, problem_line, section_label};
+use super::{ExportDialog, blocked_line, problem_line, section_label};
 use celesta_exporter::{Preset, PresetSource, update_presets};
+use celesta_plugin_host::create_private_dir_all;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -76,12 +77,15 @@ impl ExportDialog {
         cx.notify();
     }
 
-    /// The save form's name (trimmed) and target, when it can be saved.
-    fn save_request(&self, cx: &App) -> Option<(String, SaveTarget)> {
+    /// The save form's name (trimmed) and target, when it can be saved:
+    /// a name, a file that can be written, and a choice `Export…` could
+    /// export.
+    pub(super) fn save_request(&self, cx: &App) -> Option<(String, SaveTarget)> {
         let save = self.save.as_ref()?;
         let name = save.name.read(cx).value().trim().to_owned();
         let target = *save.target.read(cx).selected_value()?;
-        (!name.is_empty() && self.model.can_save(target).is_ok()).then_some((name, target))
+        (!name.is_empty() && self.model.can_save(target).is_ok() && self.export_blocked().is_none())
+            .then_some((name, target))
     }
 
     /// `Save`/`Replace`: writes the choice under the name to the chosen
@@ -98,9 +102,12 @@ impl ExportDialog {
             return;
         };
         let output = self.model.saved_output();
-        let written = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
+        // The settings folder may not exist yet; a project's root does.
+        let folder = match (target, path.parent()) {
+            (SaveTarget::User, Some(folder)) => create_private_dir_all(folder),
+            _ => Ok(()),
+        };
+        let written = folder
             .map_err(|error| format!("{} cannot be written: {error}", path.display()))
             .and_then(|()| {
                 update_presets(&path, |file| {
@@ -144,6 +151,9 @@ pub(super) fn save_section(dialog: &Entity<ExportDialog>, cx: &App) -> Option<im
     let this = dialog.read(cx);
     let save = this.save.as_ref()?;
     let request = this.save_request(cx);
+    // `Save` is disabled for what disables `Export…`, said here as the
+    // footer does not while the form is open.
+    let blocked = this.export_blocked();
     let replaces = request
         .as_ref()
         .is_some_and(|(name, target)| this.model.replaces(*target, name));
@@ -201,6 +211,7 @@ pub(super) fn save_section(dialog: &Entity<ExportDialog>, cx: &App) -> Option<im
                             }),
                     ),
             )
+            .children(blocked.map(|reason| blocked_line(reason, cx)))
             .children(
                 save.error
                     .clone()

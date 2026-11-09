@@ -3,7 +3,7 @@ use crate::export_dialog::view::{ExportDialog, ExportDialogEvent, open_export_di
 use crate::export_worker::{ExportRequest, ExportSource};
 use crate::helpers::{ExportLoudness, export_output, export_range_for, export_suggested_name};
 use crate::inline_text_view::EditEvent;
-use crate::problems::{Source, error_chain};
+use crate::problems::{Problems, Source, error_chain};
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
 use celesta_exporter::{
@@ -11,7 +11,7 @@ use celesta_exporter::{
     user_presets_path,
 };
 use celesta_media::{ComponentEntry, ComponentKind, MediaRegistry};
-use celesta_plugin_host::project_root;
+use celesta_plugin_host::{create_private_dir_all, project_root};
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{AppContext as _, ClickEvent, Context, Entity, SharedString, Window};
@@ -131,7 +131,7 @@ impl EditorView {
                 extension,
                 last,
             } => {
-                self.remember_last(last.clone());
+                remember_last(&mut self.problems, user_presets_path().as_deref(), last);
                 self.choose_export_path(choice.clone(), extension, window, cx);
             }
             ExportDialogEvent::Loudness(loudness) => self.set_export_loudness(*loudness, cx),
@@ -139,30 +139,6 @@ impl EditorView {
                 self.clear_export_range(cx);
                 dialog.update(cx, |dialog, cx| dialog.set_range(None, cx));
             }
-        }
-    }
-
-    /// Saves the dialog's choice as the user file's `last`; a failure is
-    /// reported, and the export goes on.
-    fn remember_last(&mut self, last: PresetOutput) {
-        let Some(path) = user_presets_path() else {
-            return;
-        };
-        let saved = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .map_err(anyhow::Error::from)
-            .and_then(|()| {
-                update_presets(&path, |file| file.last = Some(last))
-                    .map(drop)
-                    .map_err(anyhow::Error::from)
-            });
-        if let Err(error) = saved {
-            self.problems.report(
-                Source::Export,
-                "Couldn’t remember the export settings",
-                error_chain(error.as_ref()),
-            );
         }
     }
 
@@ -366,5 +342,33 @@ impl EditorView {
             self.export_cancelling = true;
             cx.notify();
         }
+    }
+}
+
+/// Saves the dialog's choice as `last` in the user presets file at `path`
+/// (none on a platform without a settings folder), creating its folder
+/// readable by the user alone. A failure is reported under
+/// [`Source::ExportPresets`], which the export that goes on does not
+/// clear; a success clears an earlier one.
+pub(crate) fn remember_last(problems: &mut Problems, path: Option<&Path>, last: &PresetOutput) {
+    let Some(path) = path else {
+        return;
+    };
+    let saved = path
+        .parent()
+        .map_or(Ok(()), create_private_dir_all)
+        .map_err(anyhow::Error::from)
+        .and_then(|()| {
+            update_presets(path, |file| file.last = Some(last.clone()))
+                .map(drop)
+                .map_err(anyhow::Error::from)
+        });
+    match saved {
+        Ok(()) => problems.clear(Source::ExportPresets),
+        Err(error) => problems.report(
+            Source::ExportPresets,
+            "Couldn’t remember the export settings",
+            error_chain(error.as_ref()),
+        ),
     }
 }

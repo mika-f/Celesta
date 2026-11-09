@@ -17,6 +17,7 @@ use crate::element_rows::{
     moved_off_keyframe, parse_row_value, removable, row_field, row_kind, row_label, row_text,
     scrub_takes_focus, scrub_value, set_at_text, typed_text, written_text,
 };
+use crate::export_control::remember_last;
 use crate::export_worker::{
     ExportEvent, ExportRequest, ExportSource, export_options, spawn_export,
 };
@@ -31,6 +32,7 @@ use crate::layer_select::{
     source_position,
 };
 use crate::playback::in_text_field;
+use crate::problems::{Problems, Source};
 use crate::property_controls::ControlKind;
 use crate::react_audio::{react_audio_clip_id, react_tracks};
 use crate::refresh::{LookupFate, SelectionKeep};
@@ -62,7 +64,7 @@ use celesta_composition::{
 use celesta_editor_core::ClipSummary;
 use celesta_exporter::{
     AudioChoice, AudioLoudness, EncoderChoice, EncoderPlan, ExportCancellation, ExportProgress,
-    LoudnessTarget, OutputChoice, OutputPlan, SettingInput,
+    LoudnessTarget, OutputChoice, OutputPlan, PresetOutput, PresetsFile, SettingInput,
 };
 use celesta_media::{AudioBuffer, AudioDecoder, SettingValue};
 use celesta_project::{Project, TrackKind};
@@ -269,6 +271,49 @@ fn the_suggested_name_takes_the_muxers_extension() {
         export_output(PathBuf::from("a/film.MOV"), &["mov"]),
         PathBuf::from("a/film.MOV")
     );
+}
+
+#[test]
+fn a_failed_last_survives_the_export_it_goes_on_with() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("celesta-editor-last-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    let last = PresetOutput {
+        muxer: Some("b/mp4".into()),
+        ..PresetOutput::default()
+    };
+    let mut problems = Problems::default();
+
+    // The settings folder's parent is a file: the folder cannot be made.
+    fs::write(root.join("file"), "").unwrap();
+    let blocked = root.join("file/Celesta/export-presets.json");
+    remember_last(&mut problems, Some(&blocked), &last);
+    // `start_export` clears the export's own problems, not this one.
+    problems.clear(Source::Export);
+    let problem = problems.active(Source::ExportPresets).expect("reported");
+    assert_eq!(
+        problem.problem.title,
+        "Couldn’t remember the export settings"
+    );
+
+    // A later save clears it, and creates the folder for the user alone.
+    let path = root.join("Celesta/export-presets.json");
+    remember_last(&mut problems, Some(&path), &last);
+    assert!(problems.active(Source::ExportPresets).is_none());
+    assert_eq!(PresetsFile::load(&path).unwrap().last, Some(last));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = fs::metadata(root.join("Celesta"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

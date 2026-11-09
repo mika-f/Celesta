@@ -119,6 +119,43 @@ pub(crate) enum InitialBase {
     None,
 }
 
+/// What a resolve the model applies was asked for, which says which of
+/// its encoders count as chosen: a container change keeps only those.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Asked {
+    /// A preset: the encoders it names count as chosen, as does leaving
+    /// the audio out.
+    Preset(Box<PresetOutput>),
+    /// The user file's `last`, or the defaults: nothing counts as chosen
+    /// but audio left out where the muxer takes audio.
+    Defaults,
+    /// A container change, from [`ExportDialogModel::container_choice`].
+    Container,
+}
+
+/// Which encoders were chosen in the dialog or named by the applied
+/// preset, rather than left to the muxer's defaults.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Chosen {
+    /// The choice's video encoder was chosen.
+    video: bool,
+    audio: ChosenAudio,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+enum ChosenAudio {
+    /// Left to the muxer's default.
+    #[default]
+    Default,
+    /// "None" was chosen, or the preset leaves the audio out.
+    None,
+    /// The choice's audio encoder was chosen.
+    Encoder,
+    /// The audio encoder chosen, with its settings, set aside while the
+    /// muxer takes no audio.
+    SetAside(EncoderPick),
+}
+
 /// The file "Save as preset…" writes to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SaveTarget {
@@ -134,6 +171,7 @@ pub(crate) struct ExportDialogModel {
     components: Vec<MediaComponentInfo>,
     described: HashMap<usize, Described>,
     choice: Option<DialogChoice>,
+    chosen: Chosen,
     pub(crate) project: PresetFileState,
     pub(crate) user: PresetFileState,
     /// The preset the choice came from; `None` ("None" in the list) once
@@ -166,6 +204,7 @@ impl ExportDialogModel {
             components,
             described,
             choice: None,
+            chosen: Chosen::default(),
             project,
             user,
             selected: None,
@@ -181,12 +220,14 @@ impl ExportDialogModel {
     /// What the dialog first resolves: the project's default preset,
     /// looked up in the project file and then the user's as an export
     /// looks it up, else the user's `last`, else the defaults; and the
-    /// warnings to show with it: a project file that could not be read, or
-    /// a `default` naming a preset found in no file (an export's
-    /// `unknown_preset`), which falls back to `last`.
+    /// warnings to show with it: a project or user file that could not be
+    /// read (whose presets the list then leaves out), or a `default`
+    /// naming a preset found in no file (an export's `unknown_preset`),
+    /// which falls back to `last`.
     pub(crate) fn initial_base(&self) -> (InitialBase, Vec<String>) {
         let mut warnings = Vec::new();
         let project = read(&self.project, &mut warnings);
+        let user = read(&self.user, &mut warnings);
         if let Some(name) = project.and_then(|file| file.default.as_deref()) {
             if let Some(preset) = project.and_then(|file| file.find(name)) {
                 return (
@@ -198,7 +239,7 @@ impl ExportDialogModel {
                     warnings,
                 );
             }
-            if let Some(preset) = read(&self.user, &mut warnings).and_then(|file| file.find(name)) {
+            if let Some(preset) = user.and_then(|file| file.find(name)) {
                 return (
                     InitialBase::Preset(PresetSource::User, name.to_owned(), preset.output.clone()),
                     warnings,
@@ -212,7 +253,7 @@ impl ExportDialogModel {
                 .to_string(),
             );
         }
-        let base = match loaded(&self.user).and_then(|file| file.last.clone()) {
+        let base = match user.and_then(|file| file.last.clone()) {
             Some(last) => InitialBase::Last(last),
             None => InitialBase::None,
         };
@@ -263,16 +304,78 @@ impl ExportDialogModel {
 
     /// Takes a resolve's components, and the settings it chose that are
     /// not their defaults, as the choice; `selected` is the preset it was
-    /// resolved from.
+    /// resolved from, and `asked` what the resolve was asked for.
     pub(crate) fn apply(
         &mut self,
         resolved: &ResolvedOutput,
         selected: Option<(PresetSource, String)>,
+        asked: Asked,
     ) {
+        let video = pick(&resolved.video);
+        let audio = resolved.audio.as_ref().map(pick);
+        let takes_audio = resolved
+            .muxer
+            .entry
+            .audio
+            .as_ref()
+            .is_some_and(|accepted| !accepted.is_empty());
+        let names = |text: Option<&str>, component: &ComponentRef| {
+            text.and_then(|text| text.parse::<ComponentRef>().ok())
+                .is_some_and(|named| named == *component)
+        };
+        let previous = self.choice.take();
+        self.chosen = match asked {
+            Asked::Preset(base) => Chosen {
+                video: names(
+                    base.video
+                        .as_ref()
+                        .and_then(|video| video.component.as_deref()),
+                    &video.component,
+                ),
+                audio: match (&base.audio, &audio) {
+                    (Some(PresetAudio::None(_)), _) => ChosenAudio::None,
+                    (_, None) if takes_audio => ChosenAudio::None,
+                    (Some(PresetAudio::Encode(named)), Some(audio))
+                        if names(named.component.as_deref(), &audio.component) =>
+                    {
+                        ChosenAudio::Encoder
+                    }
+                    _ => ChosenAudio::Default,
+                },
+            },
+            Asked::Defaults => Chosen {
+                video: false,
+                audio: if audio.is_none() && takes_audio {
+                    ChosenAudio::None
+                } else {
+                    ChosenAudio::Default
+                },
+            },
+            Asked::Container => {
+                let video_kept = previous
+                    .as_ref()
+                    .is_some_and(|previous| previous.video.component == video.component);
+                let audio = match std::mem::take(&mut self.chosen.audio) {
+                    ChosenAudio::Encoder => kept_audio(
+                        previous.and_then(|previous| previous.audio),
+                        audio.as_ref(),
+                        takes_audio,
+                    ),
+                    ChosenAudio::SetAside(pick) => {
+                        kept_audio(Some(pick), audio.as_ref(), takes_audio)
+                    }
+                    other => other,
+                };
+                Chosen {
+                    video: self.chosen.video && video_kept,
+                    audio,
+                }
+            }
+        };
         self.choice = Some(DialogChoice {
             muxer: resolved.muxer.reference.clone(),
-            video: pick(&resolved.video),
-            audio: resolved.audio.as_ref().map(pick),
+            video,
+            audio,
         });
         self.selected = selected;
         self.warnings = resolved.warnings.clone();
@@ -309,9 +412,11 @@ impl ExportDialogModel {
             .collect()
     }
 
-    /// What a container change to `muxer` resolves: each chosen encoder
-    /// with its settings when `muxer` takes a codec it writes, else the
-    /// muxer's default; audio left out stays out.
+    /// What a container change to `muxer` resolves: each encoder chosen
+    /// in the dialog or named by the applied preset, with its settings,
+    /// when `muxer` takes a codec it writes; else the muxer's default, as
+    /// for an encoder that was a default. Audio chosen out stays out;
+    /// audio a muxer took none of comes back.
     pub(crate) fn container_choice(&self, muxer: &ComponentRef) -> OutputChoice {
         let entry = self.muxer(muxer);
         let kept = |pick: &EncoderPick, track: Track| {
@@ -330,10 +435,17 @@ impl ExportDialogModel {
         };
         let (video, audio) = match &self.choice {
             Some(choice) => (
-                kept(&choice.video, Track::Video),
-                match &choice.audio {
-                    Some(audio) => AudioChoice::Encode(kept(audio, Track::Audio)),
-                    None => AudioChoice::None,
+                if self.chosen.video {
+                    kept(&choice.video, Track::Video)
+                } else {
+                    EncoderChoice::default()
+                },
+                match (&self.chosen.audio, &choice.audio) {
+                    (ChosenAudio::None, _) => AudioChoice::None,
+                    (ChosenAudio::Encoder, Some(audio)) | (ChosenAudio::SetAside(audio), _) => {
+                        AudioChoice::Encode(kept(audio, Track::Audio))
+                    }
+                    _ => AudioChoice::default(),
                 },
             ),
             None => Default::default(),
@@ -357,9 +469,18 @@ impl ExportDialogModel {
             settings: Settings::new(),
         });
         match (track, pick) {
-            (Track::Video, Some(pick)) => choice.video = pick,
+            (Track::Video, Some(pick)) => {
+                choice.video = pick;
+                self.chosen.video = true;
+            }
             (Track::Video, None) => return,
-            (Track::Audio, pick) => choice.audio = pick,
+            (Track::Audio, pick) => {
+                self.chosen.audio = match pick {
+                    Some(_) => ChosenAudio::Encoder,
+                    None => ChosenAudio::None,
+                };
+                choice.audio = pick;
+            }
         }
         self.selected = None;
     }
@@ -488,6 +609,7 @@ impl ExportDialogModel {
                     .collect(),
                 None => pick.settings.clone(),
             },
+            other: Default::default(),
         };
         PresetOutput {
             muxer: Some(choice.muxer.to_string()),
@@ -685,6 +807,23 @@ fn inputs(settings: &Settings) -> BTreeMap<String, SettingInput> {
         .iter()
         .map(|(key, value)| (key.clone(), SettingInput::Value(value.clone())))
         .collect()
+}
+
+/// What a container change leaves of an audio encoder chosen before it
+/// (`chosen`): set aside while the new muxer takes no audio, still chosen
+/// when the resolve kept it, else the muxer's default.
+fn kept_audio(
+    chosen: Option<EncoderPick>,
+    resolved: Option<&EncoderPick>,
+    takes_audio: bool,
+) -> ChosenAudio {
+    match (chosen, resolved) {
+        (Some(chosen), None) if !takes_audio => ChosenAudio::SetAside(chosen),
+        (Some(chosen), Some(resolved)) if chosen.component == resolved.component => {
+            ChosenAudio::Encoder
+        }
+        _ => ChosenAudio::Default,
+    }
 }
 
 /// A resolved encoder as the dialog holds it: its settings that differ
@@ -906,6 +1045,7 @@ mod tests {
         model.apply(
             &resolve(registry, &OutputChoice::default(), None, output),
             None,
+            Asked::Defaults,
         );
         model
     }
@@ -947,6 +1087,7 @@ mod tests {
         model.apply(
             &resolve(&registry, &OutputChoice::default(), None, "export.mp4"),
             None,
+            Asked::Defaults,
         );
         let every = [
             model.muxer_options(),
@@ -977,7 +1118,11 @@ mod tests {
             muxer: Some(reference("b/ivf")),
             ..OutputChoice::default()
         };
-        model.apply(&resolve(&registry, &ivf, None, "export.ivf"), None);
+        model.apply(
+            &resolve(&registry, &ivf, None, "export.ivf"),
+            None,
+            Asked::Container,
+        );
         assert_eq!(
             state(&model.encoder_options(Track::Video), "b/vp9"),
             Some(OptionState::Unavailable("no libvpx".into()))
@@ -1076,7 +1221,11 @@ mod tests {
             "export.mp4",
         );
         assert_eq!(resolved.warnings.len(), 1);
-        model.apply(&resolved, Some((PresetSource::Project, "web".into())));
+        model.apply(
+            &resolved,
+            Some((PresetSource::Project, "web".into())),
+            Asked::Preset(Box::new(web)),
+        );
         assert_eq!(model.selected, Some((PresetSource::Project, "web".into())));
 
         model.set_setting(Track::Video, "preset", string("slow"));
@@ -1091,6 +1240,7 @@ mod tests {
         model.apply(
             &resolve(&registry, &OutputChoice::default(), None, "export.mp4"),
             Some((PresetSource::User, "web".into())),
+            Asked::Defaults,
         );
         model.set_setting(Track::Video, "crf", number(20.0));
         model.choose_encoder(Track::Video, Some(reference("p/h264")));
@@ -1110,9 +1260,12 @@ mod tests {
     fn a_container_change_keeps_the_encoders_it_takes() {
         let registry = registry();
         let mut model = resolved_model(&registry, "export.mp4");
+        model.choose_encoder(Track::Video, Some(reference("b/x264")));
+        model.choose_encoder(Track::Audio, Some(reference("b/aac")));
         model.set_setting(Track::Video, "crf", number(20.0));
 
-        // The project's MP4 takes x264 and AAC: both are kept, with the CRF.
+        // The project's MP4 takes the x264 and AAC chosen: both are kept,
+        // with the CRF.
         let same = model.container_choice(&reference("p/mp4"));
         assert_eq!(same.preset, None);
         assert_eq!(same.muxer, Some(reference("p/mp4")));
@@ -1137,6 +1290,150 @@ mod tests {
             model.container_choice(&reference("p/mp4")).audio,
             AudioChoice::None
         );
+    }
+
+    /// `b` with a QuickTime muxer whose default video is ProRes, as
+    /// FFmpeg's manifest has it, though it also takes H.264.
+    fn registry_with_mov() -> MediaRegistry {
+        let mut b = bundled();
+        b.media
+            .video_encoders
+            .push(video_encoder("prores", "ProRes", "ap4h"));
+        b.media.muxers.push(MediaMuxerEntry {
+            id: "mov".into(),
+            name: "QuickTime".into(),
+            extensions: vec!["mov".into()],
+            video: vec!["avc1".into(), "ap4h".into()],
+            audio: Some(vec!["mp4a".into()]),
+            default_video: Some("ap4h".into()),
+            default_audio: Some("mp4a".into()),
+            trims_leading_audio: true,
+            sequence: false,
+        });
+        MediaRegistry::new(vec![project(), b])
+    }
+
+    /// Changes `model`'s container to `muxer` as the view does: resolves
+    /// what [`ExportDialogModel::container_choice`] asks and applies it.
+    fn change_container(registry: &MediaRegistry, model: &mut ExportDialogModel, muxer: &str) {
+        let muxer = reference(muxer);
+        let output = format!("export.{}", model.extension_of(&muxer).unwrap());
+        let choice = model.container_choice(&muxer);
+        model.apply(
+            &resolve(registry, &choice, None, &output),
+            None,
+            Asked::Container,
+        );
+    }
+
+    #[test]
+    fn a_container_change_takes_the_muxers_default_encoders() {
+        let registry = registry_with_mov();
+        let mut model = resolved_model(&registry, "export.mp4");
+        assert_eq!(model.choice().unwrap().video.component, reference("b/x264"));
+
+        // x264 was the default, not a choice: QuickTime's default is ProRes.
+        change_container(&registry, &mut model, "b/mov");
+        assert_eq!(
+            model.choice().unwrap().video.component,
+            reference("b/prores")
+        );
+
+        // An encoder chosen in the dialog stays, with its settings, where
+        // the new muxer takes it.
+        change_container(&registry, &mut model, "b/mp4");
+        model.choose_encoder(Track::Video, Some(reference("b/x264")));
+        model.set_setting(Track::Video, "crf", number(20.0));
+        change_container(&registry, &mut model, "b/mov");
+        let video = &model.choice().unwrap().video;
+        assert_eq!(video.component, reference("b/x264"));
+        assert_eq!(
+            video.settings,
+            Settings::from([("crf".to_owned(), number(20.0))])
+        );
+    }
+
+    #[test]
+    fn audio_left_out_by_a_container_comes_back() {
+        let registry = registry();
+        let mut model = resolved_model(&registry, "export.mp4");
+        change_container(&registry, &mut model, "b/ivf");
+        assert_eq!(model.choice().unwrap().audio, None);
+        change_container(&registry, &mut model, "b/mp4");
+        assert_eq!(
+            model
+                .choice()
+                .unwrap()
+                .audio
+                .as_ref()
+                .map(|audio| &audio.component),
+            Some(&reference("b/aac"))
+        );
+
+        // "None" chosen stays none through the same round trip.
+        model.choose_encoder(Track::Audio, None);
+        change_container(&registry, &mut model, "b/ivf");
+        change_container(&registry, &mut model, "b/mp4");
+        assert_eq!(model.choice().unwrap().audio, None);
+
+        // And an encoder chosen comes back as chosen.
+        model.choose_encoder(Track::Audio, Some(reference("b/aac")));
+        change_container(&registry, &mut model, "b/ivf");
+        assert_eq!(
+            model.container_choice(&reference("b/mp4")).audio,
+            AudioChoice::Encode(EncoderChoice {
+                component: Some(reference("b/aac")),
+                options: BTreeMap::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_preset_names_what_a_container_change_keeps() {
+        let registry = registry_with_mov();
+        let mut model = model(&registry);
+        for plugin in 0..registry.plugins().len() {
+            model.described(plugin, description(&registry, plugin, &[]));
+        }
+        let web: PresetOutput = serde_json::from_value(json!({
+            "muxer": "b/mp4", "video": { "component": "b/x264" }, "audio": "none"
+        }))
+        .unwrap();
+        model.apply(
+            &resolve(
+                &registry,
+                &OutputChoice::default(),
+                Some(("web", &web)),
+                "export.mp4",
+            ),
+            Some((PresetSource::User, "web".into())),
+            Asked::Preset(Box::new(web)),
+        );
+        change_container(&registry, &mut model, "b/mov");
+        let choice = model.choice().unwrap();
+        assert_eq!(choice.video.component, reference("b/x264"));
+        assert_eq!(choice.audio, None);
+
+        // `last` names components too, but none counts as chosen: only its
+        // audio left out where the muxer takes audio.
+        let last: PresetOutput = serde_json::from_value(json!({
+            "muxer": "b/mp4", "video": { "component": "b/x264" }, "audio": "none"
+        }))
+        .unwrap();
+        model.apply(
+            &resolve(
+                &registry,
+                &OutputChoice::default(),
+                Some(("last", &last)),
+                "export.mp4",
+            ),
+            None,
+            Asked::Defaults,
+        );
+        change_container(&registry, &mut model, "b/mov");
+        let choice = model.choice().unwrap();
+        assert_eq!(choice.video.component, reference("b/prores"));
+        assert_eq!(choice.audio, None);
     }
 
     fn output(muxer: &str) -> PresetOutput {
@@ -1223,6 +1520,34 @@ mod tests {
     }
 
     #[test]
+    fn a_broken_user_file_warns_when_the_dialog_opens() {
+        let registry = registry();
+        let message = "/home/export-presets.json is not valid JSON: expected value";
+        let broken = PresetFileState {
+            path: Some(PathBuf::from("/home/export-presets.json")),
+            file: Err(message.to_owned()),
+        };
+        // With no project default, `last` is looked for in the user file.
+        assert_eq!(
+            ExportDialogModel::new(&registry, no_files().0, broken.clone()).initial_base(),
+            (InitialBase::None, vec![message.to_owned()])
+        );
+        // The project default found in the project file still says so.
+        let project = file(
+            Some("/project/export-presets.json"),
+            Some(json!({ "version": 1, "default": "web",
+                "presets": [ { "name": "web", "muxer": "b/mp4" } ] })),
+        );
+        assert_eq!(
+            ExportDialogModel::new(&registry, project, broken).initial_base(),
+            (
+                InitialBase::Preset(PresetSource::Project, "web".into(), output("b/mp4")),
+                vec![message.to_owned()]
+            )
+        );
+    }
+
+    #[test]
     fn the_initial_output_takes_the_bases_muxer_or_the_mp4_one() {
         let dialog = model(&registry());
         assert_eq!(dialog.initial_output(None), PathBuf::from("export.mp4"));
@@ -1290,6 +1615,7 @@ mod tests {
             Some(PresetAudio::Encode(PresetEncoder {
                 component: Some("b/aac".into()),
                 options: Settings::new(),
+                other: Default::default(),
             }))
         );
     }

@@ -21,6 +21,9 @@ pub(crate) enum Source {
     Preview,
     Schemas,
     Export,
+    /// The export dialog's choice could not be remembered; unlike
+    /// [`Source::Export`], starting an export does not clear it.
+    ExportPresets,
     TypeScript,
     Plugins,
 }
@@ -35,19 +38,23 @@ impl Source {
             Self::Preview => "Preview",
             Self::Schemas => "Schemas",
             Self::Export => "Export",
+            Self::ExportPresets => "Export presets",
             Self::TypeScript => "TypeScript",
             Self::Plugins => "Plugins",
         }
     }
 
-    /// Audio, TypeScript, and plugin problems (plugins waiting or skipped,
-    /// plugin settings not saved) leave the editor usable, so they are
+    /// Audio, export presets, TypeScript, and plugin problems (plugins
+    /// waiting or skipped, plugin settings not saved) leave the editor
+    /// usable, so they are
     /// warnings; the project decoders notice is not a problem at all; the
     /// rest block what the user asked for.
     pub(crate) fn severity(self) -> Severity {
         match self {
             Self::MediaDecoders => Severity::Info,
-            Self::Audio | Self::TypeScript | Self::Plugins => Severity::Warning,
+            Self::Audio | Self::ExportPresets | Self::TypeScript | Self::Plugins => {
+                Severity::Warning
+            }
             _ => Severity::Error,
         }
     }
@@ -69,6 +76,7 @@ impl Source {
             Self::Preview => "Preview unavailable",
             Self::Schemas => "Couldn’t load component schemas",
             Self::Export => "Export failed",
+            Self::ExportPresets => "Couldn’t save export presets",
             Self::TypeScript => "TypeScript setup failed",
             Self::Plugins => "Some plugins were skipped",
         }

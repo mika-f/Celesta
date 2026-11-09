@@ -8,7 +8,7 @@
 //! edit is [`ExportDialogModel`]'s. A preset or container change is resolved
 //! on the background executor, each plugin's `describe` too.
 
-use super::model::{CHECKING, ExportDialogModel, InitialBase, PresetFileState, Track};
+use super::model::{Asked, CHECKING, ExportDialogModel, InitialBase, PresetFileState, Track};
 use crate::helpers::ExportLoudness;
 use celesta_exporter::{
     OutputChoice, Preset, PresetOutput, PresetSource, PresetsFile, resolve_preset_output,
@@ -239,12 +239,14 @@ impl ExportDialog {
             _subscriptions: subscriptions,
         };
         let (base, warnings) = this.model.initial_base();
-        let (selected, base) = match base {
-            InitialBase::Preset(source, name, output) => {
-                (Some((source, name.clone())), Some((name, output)))
-            }
-            InitialBase::Last(output) => (None, Some(("last".to_owned(), output))),
-            InitialBase::None => (None, None),
+        let (selected, base, asked) = match base {
+            InitialBase::Preset(source, name, output) => (
+                Some((source, name.clone())),
+                Some((name, output.clone())),
+                Asked::Preset(Box::new(output)),
+            ),
+            InitialBase::Last(output) => (None, Some(("last".to_owned(), output)), Asked::Defaults),
+            InitialBase::None => (None, None, Asked::Defaults),
         };
         let output = this
             .model
@@ -253,7 +255,7 @@ impl ExportDialog {
             OutputChoice::default(),
             base,
             output,
-            selected,
+            (selected, asked),
             Section::Preset,
             warnings,
             window,
@@ -277,16 +279,17 @@ impl ExportDialog {
     }
 
     /// Resolves `choice` over `base` (its name for warnings, and the
-    /// preset) for `output` in the background, and applies the result with
-    /// `selected` and `warnings` added; a failure is shown under `section`
-    /// and keeps the previous choice.
+    /// preset) for `output` in the background, and applies the result as
+    /// `applied` says (the preset selected, and what was asked) with
+    /// `warnings` added; a failure is shown under `section` and keeps the
+    /// previous choice.
     #[allow(clippy::too_many_arguments)]
     fn resolve(
         &mut self,
         choice: OutputChoice,
         base: Option<(String, PresetOutput)>,
         output: PathBuf,
-        selected: Option<(PresetSource, String)>,
+        (selected, asked): (Option<(PresetSource, String)>, Asked),
         section: Section,
         warnings: Vec<String>,
         window: &mut Window,
@@ -305,7 +308,7 @@ impl ExportDialog {
                 this.resolving = None;
                 match resolved {
                     Ok(resolved) => {
-                        this.model.apply(&resolved, selected);
+                        this.model.apply(&resolved, selected, asked);
                         // `apply` replaces the warnings with the resolve's.
                         this.model.warnings.extend(warnings);
                         this.warned = section;
@@ -340,11 +343,15 @@ impl ExportDialog {
             .model
             .initial_output(base.as_ref().map(|(_, output)| output));
         let selected = key.filter(|_| base.is_some());
+        let asked = match &base {
+            Some((_, output)) => Asked::Preset(Box::new(output.clone())),
+            None => Asked::Defaults,
+        };
         self.resolve(
             OutputChoice::default(),
             base,
             output,
-            selected,
+            (selected, asked),
             Section::Preset,
             Vec::new(),
             window,
@@ -372,7 +379,7 @@ impl ExportDialog {
             choice,
             None,
             output,
-            None,
+            (None, Asked::Container),
             Section::Container,
             Vec::new(),
             window,
@@ -529,6 +536,31 @@ fn problem_line(text: impl Into<SharedString>, color: Hsla) -> impl IntoElement 
         .child(div().min_w_0().child(text.into()))
 }
 
+/// Why `Export…` (and `Save`) cannot run: "Checking…" muted, anything
+/// else as an error.
+fn blocked_line(reason: String, cx: &App) -> impl IntoElement {
+    if reason.ends_with(CHECKING) {
+        muted_line(reason, cx).into_any_element()
+    } else {
+        problem_line(reason, cx.theme().danger).into_any_element()
+    }
+}
+
+/// A resolve's warning or error as the dialog shows it: the exporter's
+/// `code` quoting (the CLI's) becomes typographic quotes.
+fn plain(text: &str) -> String {
+    let mut open = false;
+    text.chars()
+        .map(|character| match character {
+            '`' => {
+                open = !open;
+                if open { '“' } else { '”' }
+            }
+            other => other,
+        })
+        .collect()
+}
+
 fn muted_line(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
     div()
         .text_xs()
@@ -557,7 +589,7 @@ fn section_label(label: &'static str, cx: &App) -> impl IntoElement {
 impl ExportDialog {
     fn failure_under(&self, section: Section, cx: &App) -> Option<impl IntoElement> {
         let (failed, message) = self.failure.as_ref()?;
-        (*failed == section).then(|| problem_line(message.clone(), cx.theme().danger))
+        (*failed == section).then(|| problem_line(plain(message), cx.theme().danger))
     }
 
     fn warnings_under(&self, section: Section, cx: &App) -> Vec<impl IntoElement> {
@@ -567,7 +599,7 @@ impl ExportDialog {
         self.model
             .warnings
             .iter()
-            .map(|warning| problem_line(warning.clone(), cx.theme().warning))
+            .map(|warning| problem_line(plain(warning), cx.theme().warning))
             .collect()
     }
 
@@ -718,14 +750,10 @@ fn footer(dialog: &Entity<ExportDialog>, cx: &App) -> impl IntoElement {
     let blocked = this.export_blocked();
     let disabled = blocked.is_some();
     let saving = this.save.is_some();
-    let reason = blocked.map(|reason| {
-        let checking = reason.ends_with(CHECKING);
-        h_flex().justify_end().child(if checking {
-            muted_line(reason, cx).into_any_element()
-        } else {
-            problem_line(reason, cx.theme().danger).into_any_element()
-        })
-    });
+    // The open form says it above its `Save`, which it disables too.
+    let reason = blocked
+        .filter(|_| !saving)
+        .map(|reason| h_flex().justify_end().child(blocked_line(reason, cx)));
     let open_save = dialog.downgrade();
     v_flex()
         .w_full()
@@ -813,17 +841,124 @@ mod tests {
         cx: &mut TestAppContext,
         plugins: Vec<celesta_media::RegisteredPlugin>,
     ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
+        window_with_user_file(cx, plugins, None)
+    }
+
+    /// [`window_with_dialog`] with the user presets file at `user_file`.
+    fn window_with_user_file(
+        cx: &mut TestAppContext,
+        plugins: Vec<celesta_media::RegisteredPlugin>,
+        user_file: Option<PathBuf>,
+    ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
         cx.update(gpui_kit::init);
         let registry = Arc::new(MediaRegistry::new(plugins));
         let mut dialog = None;
         let handle = cx.open_window(size(px(800.), px(1000.)), |window, cx| {
             dialog = Some(cx.new(|cx| {
-                ExportDialog::new(registry, None, None, ExportLoudness::Off, window, cx)
+                ExportDialog::new(registry, None, user_file, ExportLoudness::Off, window, cx)
             }));
             let blank = cx.new(|_| Blank);
             Root::new(blank, window, cx)
         });
         (handle, dialog.unwrap())
+    }
+
+    /// A folder of its own under the system's temporary folder.
+    fn scratch(name: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let folder = std::env::temp_dir().join(format!("celesta-export-dialog-{name}-{unique}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    #[test]
+    fn warnings_quote_without_code_marks() {
+        assert_eq!(
+            plain("preset `Web`: b/x264 has no setting `speed`; it is left out"),
+            "preset “Web”: b/x264 has no setting “speed”; it is left out"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_broken_user_file_shows_under_preset(cx: &mut TestAppContext) {
+        let folder = scratch("broken");
+        let user_file = folder.join("export-presets.json");
+        std::fs::write(&user_file, "{").unwrap();
+        let (handle, dialog) = window_with_user_file(
+            cx,
+            vec![celesta_codec_test::registered()],
+            Some(user_file.clone()),
+        );
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(dialog.warned, Section::Preset);
+            let [warning] = dialog.model.warnings.as_slice() else {
+                panic!("one warning: {:?}", dialog.model.warnings);
+            };
+            assert!(
+                warning.starts_with(&user_file.display().to_string())
+                    && warning.contains("is not valid JSON"),
+                "{warning}"
+            );
+            // The first choice is still made, from the defaults.
+            assert_eq!(dialog.export_blocked(), None);
+        });
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn save_as_preset_waits_for_what_blocks_export(cx: &mut TestAppContext) {
+        let folder = scratch("save");
+        let (handle, dialog) = window_with_user_file(
+            cx,
+            vec![celesta_codec_test::registered()],
+            Some(folder.join("export-presets.json")),
+        );
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.update(|window, cx| {
+            open_export_dialog(&dialog, window, cx);
+            dialog.update(cx, |dialog, cx| {
+                dialog.open_save(window, cx);
+                let name = dialog.save.as_ref().unwrap().name.clone();
+                name.update(cx, |name, cx| name.set_value("Web", window, cx));
+                // The first choice is still being resolved.
+                assert_eq!(dialog.export_blocked().as_deref(), Some(CHECKING));
+                assert_eq!(dialog.save_request(cx), None);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(dialog.read(cx).save_request(cx).is_some());
+            dialog.update(cx, |dialog, cx| {
+                dialog.advanced[Track::Audio as usize] = true;
+                cx.notify();
+            });
+            let delay = dialog
+                .read(cx)
+                .fields
+                .iter()
+                .find_map(|control| match &control.widget {
+                    Widget::Text { input, .. } if control.key == "delay" => Some(input.clone()),
+                    _ => None,
+                })
+                .expect("the audio encoder's delay field");
+            delay.update(cx, |input, cx| input.focus(window, cx));
+        });
+        cx.simulate_input("1x");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert_eq!(dialog.read(cx).save_request(cx), None);
+            // `Save` does nothing while the typo stands.
+            dialog.update(cx, |dialog, cx| dialog.save_preset(window, cx));
+            assert!(dialog.read(cx).save.is_some());
+            assert!(!folder.join("export-presets.json").exists());
+        });
+        std::fs::remove_dir_all(folder).unwrap();
     }
 
     #[gpui_kit::test]
