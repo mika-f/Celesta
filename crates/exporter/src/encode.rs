@@ -1339,6 +1339,22 @@ mod tests {
     }
 
     impl Fake {
+        fn new(
+            answers: Answers,
+            described: Vec<ComponentDescription>,
+            log: &Arc<Mutex<Vec<Asked>>>,
+        ) -> Self {
+            Self {
+                answers,
+                described,
+                log: log.clone(),
+                last: 0,
+                video_config_due: true,
+                audio_channels: 1,
+                audio_config_due: true,
+            }
+        }
+
         fn ask(&self, asked: Asked) {
             self.log.lock().unwrap().push(asked);
         }
@@ -1567,40 +1583,35 @@ mod tests {
             media,
             factory: Arc::new(move |_, purpose| {
                 uses.lock().unwrap().push((name.clone(), purpose));
-                Ok(Box::new(Fake {
-                    answers,
-                    described: described.clone(),
-                    log: log.clone(),
-                    last: 0,
-                    video_config_due: true,
-                    audio_channels: 1,
-                    audio_config_due: true,
-                }) as Box<dyn MediaProvider>)
+                Ok(Box::new(Fake::new(answers, described.clone(), &log)) as Box<dyn MediaProvider>)
             }),
         }
     }
 
-    /// A session through the fake plugin, resolved for `out.fake`, and what
-    /// the plugin is asked.
-    fn fake_session(answers: Answers) -> (ExportSession, Arc<Mutex<Vec<Asked>>>) {
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let plugin = fake_plugin(
-            "fake",
+    /// A plugin with a video encoder, an audio encoder, and a muxer that
+    /// trims leading audio when `trims`: its manifest and its description.
+    fn all_in_one(trims: bool) -> (MediaManifest, Vec<ComponentDescription>) {
+        (
             MediaManifest {
                 decoders: Vec::new(),
                 video_encoders: vec![video_entry(None)],
                 audio_encoders: vec![audio_entry()],
-                muxers: vec![muxer_entry(true, answers.trims)],
+                muxers: vec![muxer_entry(true, trims)],
             },
             vec![
                 available(ComponentKind::VideoEncoder, "video"),
                 available(ComponentKind::AudioEncoder, "pcm"),
                 available(ComponentKind::Muxer, "file"),
             ],
-            answers,
-            &log,
-            &Uses::default(),
-        );
+        )
+    }
+
+    /// A session through the fake plugin, resolved for `out.fake`, and what
+    /// the plugin is asked.
+    fn fake_session(answers: Answers) -> (ExportSession, Arc<Mutex<Vec<Asked>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (manifest, described) = all_in_one(answers.trims);
+        let plugin = fake_plugin("fake", manifest, described, answers, &log, &Uses::default());
         let registry = Arc::new(MediaRegistry::new(vec![plugin]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
@@ -2424,6 +2435,320 @@ mod tests {
             ),
             "{result:?}"
         );
+    }
+
+    /// Which answer the [`Joint`] fake refuses.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Refuses {
+        Nothing,
+        /// The first `encodeAudio`'s, with `Err(MediaError::Codec("boom"))`.
+        Audio,
+        /// The first `writePackets`'s, likewise.
+        Packets,
+    }
+
+    /// The FFmpeg plugin's shape: one process serving the video encoder,
+    /// the audio encoder, and the muxer, pipelined three deep. A [`Fake`]
+    /// answers each request as it is sent (and notes it), and the answer
+    /// waits until it is received; a one-at-a-time request is refused while
+    /// any is in flight, as a process refuses it.
+    struct Joint {
+        fake: Fake,
+        refuses: Refuses,
+        answers: VecDeque<Result<Answered, MediaError>>,
+    }
+
+    impl Joint {
+        fn idle(&self) -> Result<(), MediaError> {
+            if self.answers.is_empty() {
+                Ok(())
+            } else {
+                Err(MediaError::Codec("requests are in flight".to_owned()))
+            }
+        }
+
+        /// `answer`, unless it is the first of the kind the fake refuses.
+        fn queue(&mut self, refused: Refuses, answer: Result<Answered, MediaError>) {
+            let answer = if self.refuses == refused {
+                self.refuses = Refuses::Nothing;
+                Err(MediaError::Codec("boom".to_owned()))
+            } else {
+                answer
+            };
+            self.answers.push_back(answer);
+        }
+    }
+
+    impl MediaProvider for Joint {
+        fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+            self.idle()?;
+            self.fake.describe()
+        }
+
+        fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
+            Some(self)
+        }
+
+        fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
+            Some(self)
+        }
+
+        fn muxer(&mut self) -> Option<&mut dyn Muxer> {
+            Some(self)
+        }
+
+        fn pipeline(&mut self) -> Option<&mut dyn Pipeline> {
+            Some(self)
+        }
+    }
+
+    impl VideoEncoder for Joint {
+        fn open_video(
+            &mut self,
+            request: &VideoEncoderRequest<'_>,
+        ) -> Result<VideoEncoderOpened, MediaError> {
+            self.idle()?;
+            self.fake.open_video(request)
+        }
+
+        fn encode_video(
+            &mut self,
+            _: SessionId,
+            _: i64,
+            _: Vec<u8>,
+        ) -> Result<Encoded, MediaError> {
+            unreachable!("frames go through the pipeline")
+        }
+
+        fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+            self.idle()?;
+            self.fake.finish_video(session)
+        }
+
+        fn abort_video(&mut self, session: SessionId) {
+            self.fake.abort_video(session);
+        }
+    }
+
+    impl AudioEncoder for Joint {
+        fn open_audio(
+            &mut self,
+            request: &AudioEncoderRequest<'_>,
+        ) -> Result<AudioEncoderOpened, MediaError> {
+            self.idle()?;
+            self.fake.open_audio(request)
+        }
+
+        fn encode_audio(&mut self, _: SessionId, _: i64, _: &[f32]) -> Result<Encoded, MediaError> {
+            unreachable!("audio goes through the pipeline")
+        }
+
+        fn finish_audio(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+            self.idle()?;
+            self.fake.finish_audio(session)
+        }
+
+        fn abort_audio(&mut self, session: SessionId) {
+            self.fake.abort_audio(session);
+        }
+    }
+
+    impl Muxer for Joint {
+        fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
+            self.idle()?;
+            self.fake.open_muxer(request)
+        }
+
+        fn write_packets(&mut self, _: SessionId, _: &[TrackPacket]) -> Result<(), MediaError> {
+            unreachable!("packets go through the pipeline")
+        }
+
+        fn finish_muxer(&mut self, session: SessionId) -> Result<Vec<PathBuf>, MediaError> {
+            self.idle()?;
+            self.fake.finish_muxer(session)
+        }
+
+        fn abort_muxer(&mut self, session: SessionId) -> Vec<PathBuf> {
+            self.fake.abort_muxer(session)
+        }
+    }
+
+    impl Pipeline for Joint {
+        fn depth(&self) -> usize {
+            3
+        }
+
+        fn in_flight(&self) -> usize {
+            self.answers.len()
+        }
+
+        fn send_video_frame(
+            &mut self,
+            session: SessionId,
+            pts: i64,
+            frame: Vec<u8>,
+        ) -> Result<(), MediaError> {
+            let answer = self
+                .fake
+                .encode_video(session, pts, frame)
+                .map(Answered::VideoFrame);
+            self.answers.push_back(answer);
+            Ok(())
+        }
+
+        fn send_audio(
+            &mut self,
+            session: SessionId,
+            pts: i64,
+            samples: &[f32],
+        ) -> Result<(), MediaError> {
+            let answer = self
+                .fake
+                .encode_audio(session, pts, samples)
+                .map(Answered::Audio);
+            self.queue(Refuses::Audio, answer);
+            Ok(())
+        }
+
+        fn send_packets(
+            &mut self,
+            session: SessionId,
+            packets: &[TrackPacket],
+        ) -> Result<(), MediaError> {
+            let answer = self
+                .fake
+                .write_packets(session, packets)
+                .map(|()| Answered::Packets);
+            self.queue(Refuses::Packets, answer);
+            Ok(())
+        }
+
+        fn receive(&mut self) -> Result<Answered, MediaError> {
+            self.answers
+                .pop_front()
+                .unwrap_or_else(|| Err(MediaError::Codec("no request is in flight".to_owned())))
+        }
+    }
+
+    /// [`fake_session`] with its plugin's process a [`Joint`] refusing
+    /// `refuses`.
+    fn joint_session(refuses: Refuses) -> (ExportSession, Arc<Mutex<Vec<Asked>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (manifest, described) = all_in_one(false);
+        let joint_log = log.clone();
+        let plugin = RegisteredPlugin {
+            id: "joint".to_owned(),
+            version: "1.0.0".to_owned(),
+            origin: MediaOrigin::Bundled,
+            directory: PathBuf::new(),
+            executable: None,
+            media: manifest,
+            factory: Arc::new(move |_, _| {
+                Ok(Box::new(Joint {
+                    fake: Fake::new(Answers::default(), described.clone(), &joint_log),
+                    refuses,
+                    answers: VecDeque::new(),
+                }) as Box<dyn MediaProvider>)
+            }),
+        };
+        let registry = Arc::new(MediaRegistry::new(vec![plugin]));
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        session
+            .resolve(&OutputChoice::default(), Path::new("out.fake"), (2, 2))
+            .unwrap();
+        (session, log)
+    }
+
+    /// A project's export: twenty frames, then the two-second mix, which
+    /// opens the muxer, then fifty more frames, whose packets and the
+    /// mix's are written while frames are in flight, and the finish. A
+    /// failure aborts the session, as the export does.
+    fn project_export(mut session: ExportSession) -> Result<ExportedTracks, ExportError> {
+        let rendered = (|| {
+            open(&mut session);
+            for index in 0..20 {
+                session.encode_pixels(vec![index; 16])?;
+            }
+            session.encode_audio(&mix(48_000, 96_000), false)?;
+            for index in 20..70 {
+                session.encode_pixels(vec![index; 16])?;
+            }
+            Ok(())
+        })();
+        match rendered {
+            Ok(()) => session.finish(),
+            Err(error) => {
+                session.abort();
+                Err(error)
+            }
+        }
+    }
+
+    /// Every packet the muxer was asked to write, in order.
+    fn written(log: &Mutex<Vec<Asked>>) -> Vec<TrackPacket> {
+        log_of(log)
+            .into_iter()
+            .filter_map(|asked| match asked {
+                Asked::WritePackets(packets) => Some(packets),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn one_pipelined_process_muxes_what_one_at_a_time_does() {
+        let (session, joint) = joint_session(Refuses::Nothing);
+        let tracks = project_export(session).unwrap();
+        assert_eq!(tracks.timing.frame_path, FramePath::Pipe(3));
+        let (session, one_at_a_time) = fake_session(Answers::default());
+        project_export(session).unwrap();
+
+        let packets = written(&joint);
+        assert_eq!(packets, written(&one_at_a_time));
+        assert_eq!(
+            packets
+                .iter()
+                .filter(|packet| packet.track == VIDEO_TRACK)
+                .count(),
+            70
+        );
+        assert!(packets.iter().any(|packet| packet.track == AUDIO_TRACK));
+        // The writes shared the window with the frames after the mix.
+        let asked = log_of(&joint);
+        let first_write = asked
+            .iter()
+            .position(|asked| matches!(asked, Asked::WritePackets(_)))
+            .expect("packets were written");
+        let last_frame = asked
+            .iter()
+            .rposition(|asked| matches!(asked, Asked::EncodeVideo { .. }))
+            .unwrap();
+        assert!(first_write < last_frame, "{asked:?}");
+        assert_eq!(asked.last(), Some(&Asked::FinishMuxer));
+    }
+
+    #[test]
+    fn a_refused_answer_names_its_stage() {
+        for (refuses, stage) in [
+            (Refuses::Audio, AUDIO_STAGE),
+            (Refuses::Packets, MUXER_STAGE),
+        ] {
+            let (session, log) = joint_session(refuses);
+            let result = project_export(session);
+            assert!(
+                matches!(
+                    &result,
+                    Err(ExportError::Codec { stage: failed, source })
+                        if *failed == stage && source.to_string() == "boom"
+                ),
+                "{refuses:?}: {result:?}"
+            );
+            assert!(
+                !log_of(&log).contains(&Asked::FinishMuxer),
+                "{refuses:?}: the export did not finish"
+            );
+        }
     }
 
     /// The `Export` uses plugin `id` was started for.
