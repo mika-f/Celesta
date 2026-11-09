@@ -54,9 +54,9 @@ pub(crate) const LOOP_LEAD_IN_FRAMES: usize = 16 * 1024;
 /// ring of shared memory.
 const SHARED_MEMORY_TRANSPORT: &str = "sharedMemory";
 
-const VIDEO_STAGE: &str = "video encoding";
+pub(crate) const VIDEO_STAGE: &str = "video encoding";
 const AUDIO_STAGE: &str = "audio encoding";
-const MUXER_STAGE: &str = "muxing";
+pub(crate) const MUXER_STAGE: &str = "muxing";
 
 /// The [`LOOP_LEAD_IN_FRAMES`] sample frames that precede the mix's start
 /// when it plays in a loop: its end, repeated as many times as a short mix

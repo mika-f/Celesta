@@ -3,7 +3,10 @@ use std::process::Command;
 
 use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
 use celesta_composition::{Rational, Time, TimeRange};
-use celesta_exporter::{ExportOptions, ExportProgress, ReactRuntimeOptions};
+use celesta_exporter::{
+    ExportCancellation, ExportError, ExportOptions, ExportProgress, FrameSelection, OutputChoice,
+    ReactRuntimeOptions, SettingInput, StillExport,
+};
 use celesta_project::{
     Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
 };
@@ -1065,4 +1068,263 @@ fn separate_stills_and_videos_name_the_frame_that_failed() {
     let media = celesta_codec_test::read(&film).unwrap();
     assert_eq!(media.extension.as_deref(), Some("mp4"));
     assert_eq!(media.video.unwrap().frames.len(), 4);
+}
+
+#[test]
+fn a_project_default_preset_never_reaches_stills() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = tiny_project(dir.path());
+    std::fs::write(
+        dir.path().join("export-presets.json"),
+        serde_json::json!({
+            "version": 1,
+            "presets": [{ "name": "v", "muxer": "celesta-test-codec/file" }],
+            "default": "v",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let output = dir.path().join("out.png");
+    let result = export(&source, &["--json", "--frame", "0"], &output);
+    assert!(result.status.success(), "{}", stderr(&result));
+    let report = json(&result);
+    assert_eq!(report["status"], "ok", "{report}");
+    assert!(
+        report["warnings"]
+            .as_array()
+            .is_none_or(|warnings| warnings.is_empty()),
+        "{report}"
+    );
+    assert_eq!(pixels(&output).len(), 36);
+}
+
+/// A 64x36, 4 fps, one-second project whose only layer, a red 64x36 image,
+/// covers the frame's top-left quadrant (images are centered on the canvas
+/// origin); nothing covers the rest.
+fn half_covered_project(dir: &Path) -> PathBuf {
+    let mut project = Project::load(root().join("examples/minimal.celesta.json")).unwrap();
+    project.settings.width = 64;
+    project.settings.height = 36;
+    project.settings.duration = Some(Time::new(1, 1));
+    project.settings.frame_rate = Rational::new(4, 1);
+    let file = std::fs::File::create(dir.join("red.png")).unwrap();
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 64, 36);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().unwrap();
+    writer
+        .write_image_data(&[255, 0, 0].repeat(64 * 36))
+        .unwrap();
+    writer.finish().unwrap();
+    project.assets.insert(
+        "red.png".to_owned(),
+        Asset::Image {
+            name: None,
+            source: AssetSource::File {
+                path: "red.png".to_owned(),
+            },
+        },
+    );
+    project.tracks.push(Track {
+        id: "images".to_owned(),
+        name: "Images".to_owned(),
+        kind: TrackKind::Video,
+        enabled: None,
+        locked: None,
+        muted: None,
+        solo: None,
+        items: vec![TimelineItem {
+            id: "red".to_owned(),
+            name: None,
+            range: TimeRange {
+                start: Time::ZERO,
+                duration: Time::new(1, 1),
+            },
+            content: TimelineContent::Image {
+                asset: "red.png".to_owned(),
+                width: None,
+                height: None,
+                fit: None,
+            },
+            enabled: None,
+            transform: None,
+            opacity: None,
+            blend_mode: None,
+            effects: None,
+        }],
+    });
+    let source = dir.join("project.celesta.json");
+    std::fs::write(&source, serde_json::to_vec(&project).unwrap()).unwrap();
+    source
+}
+
+/// Exports frame 0 of `source` to `output` in this process, with these
+/// `--video-option`s.
+fn export_still_with(source: &Path, output: &Path, options: &[(&str, &str)]) {
+    let project = Project::load(source).unwrap();
+    let mut choice = OutputChoice::default();
+    for (key, value) in options {
+        choice
+            .video
+            .options
+            .insert((*key).to_owned(), SettingInput::Text((*value).to_owned()));
+    }
+    crate::exporter(ExportOptions {
+        output: choice,
+        ..ExportOptions::default()
+    })
+    .export_project_stills(&project, source.parent().unwrap(), &[0], output, |_| {})
+    .unwrap();
+}
+
+#[test]
+fn transparent_png_and_webp_keep_alpha() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = half_covered_project(dir.path());
+    let at = |pixels: &[u8], channels: usize, x: usize, y: usize| {
+        pixels[(y * 64 + x) * channels..][..channels].to_vec()
+    };
+
+    let transparent = dir.path().join("transparent.png");
+    export_still_with(&source, &transparent, &[("transparent", "true")]);
+    let (width, height, pixels) = decode(&transparent);
+    assert_eq!((width, height), (64, 36));
+    assert_eq!(at(&pixels, 4, 8, 4), [255, 0, 0, 255]);
+    assert_eq!(at(&pixels, 4, 56, 30)[3], 0);
+    assert_eq!(at(&pixels, 4, 8, 30)[3], 0);
+
+    let opaque = dir.path().join("opaque.png");
+    export_still_with(&source, &opaque, &[]);
+    let (_, _, pixels) = decode(&opaque);
+    assert!(pixels.chunks(4).all(|pixel| pixel[3] == 255));
+    assert_eq!(at(&pixels, 4, 8, 4), [255, 0, 0, 255]);
+
+    let transparent = dir.path().join("transparent.webp");
+    export_still_with(
+        &source,
+        &transparent,
+        &[("lossless", "true"), ("transparent", "true")],
+    );
+    let (width, height, channels, pixels) = decode_webp(&transparent);
+    assert_eq!((width, height, channels), (64, 36, 4));
+    assert_eq!(at(&pixels, 4, 8, 4), [255, 0, 0, 255]);
+    assert_eq!(at(&pixels, 4, 56, 30)[3], 0);
+
+    let opaque = dir.path().join("opaque.webp");
+    export_still_with(&source, &opaque, &[("lossless", "true")]);
+    let (_, _, channels, pixels) = decode_webp(&opaque);
+    assert!(channels == 3 || pixels.chunks(4).all(|pixel| pixel[3] == 255));
+    assert_eq!(&at(&pixels, channels, 8, 4)[..3], [255, 0, 0]);
+}
+
+#[test]
+fn sixteen_bit_png() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = half_covered_project(dir.path());
+    let eight = dir.path().join("eight.png");
+    export_still_with(&source, &eight, &[]);
+    let (_, _, eight) = decode(&eight);
+
+    let sixteen = dir.path().join("sixteen.png");
+    export_still_with(&source, &sixteen, &[("depth", "16")]);
+    let mut reader = png::Decoder::new(std::io::BufReader::new(
+        std::fs::File::open(&sixteen).unwrap(),
+    ))
+    .read_info()
+    .unwrap();
+    assert_eq!(reader.info().color_type, png::ColorType::Rgba);
+    assert_eq!(reader.info().bit_depth, png::BitDepth::Sixteen);
+    assert_eq!((reader.info().width, reader.info().height), (64, 36));
+    let mut samples = vec![0; reader.output_buffer_size().unwrap()];
+    reader.next_frame(&mut samples).unwrap();
+    // PNG stores 16-bit samples big-endian: each sample's first byte is
+    // its high byte.
+    let high: Vec<u8> = samples.chunks(2).map(|sample| sample[0]).collect();
+    assert_eq!(high.len(), eight.len());
+    assert!(near(&high, &eight, 1));
+}
+
+/// The names in `dir` that start with `.celesta-`: staged files and folders.
+fn staging_in(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".celesta-"))
+        .collect()
+}
+
+#[test]
+fn a_failed_sequence_keeps_written_files_and_no_staging() {
+    if !root().join("packages/cli/dist/cli.js").exists() {
+        eprintln!("skipping React sequence failure test: build packages/cli first");
+        return;
+    }
+    let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
+    let entry = entry_with_a_bad_frame(dir.path());
+    let result = react_export(
+        &entry,
+        &["--frames", "0,6,7"],
+        &dir.path().join("check.png"),
+    );
+    assert!(!result.status.success());
+    assert!(dir.path().join("check-000000.png").exists());
+    assert!(!dir.path().join("check-000006.png").exists());
+    assert!(!dir.path().join("check-000007.png").exists());
+    assert_eq!(staging_in(dir.path()), Vec::<String>::new());
+}
+
+#[test]
+fn a_cancelled_sequence_leaves_later_names_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = tiny_project(dir.path());
+    let project = Project::load(&source).unwrap();
+    std::fs::write(dir.path().join("out-000000.png"), "old").unwrap();
+    std::fs::write(dir.path().join("out-000002.png"), "keep").unwrap();
+    let cancellation = ExportCancellation::default();
+    let error = crate::exporter(ExportOptions {
+        overwrite: true,
+        ..ExportOptions::default()
+    })
+    .export_project_stills_with(
+        &project,
+        dir.path(),
+        &StillExport {
+            frames: FrameSelection::Frames(vec![0, 1, 2]),
+            contact_sheet: None,
+            debug_guides: false,
+            quality: None,
+        },
+        &dir.path().join("out.png"),
+        &cancellation,
+        |event| {
+            if matches!(event, ExportProgress::Wrote(_)) {
+                cancellation.cancel();
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(error, ExportError::Cancelled), "{error}");
+    assert_eq!(pixels(&dir.path().join("out-000000.png")).len(), 36);
+    assert!(!dir.path().join("out-000001.png").exists());
+    assert_eq!(
+        std::fs::read(dir.path().join("out-000002.png")).unwrap(),
+        b"keep"
+    );
+    assert_eq!(staging_in(dir.path()), Vec::<String>::new());
+}
+
+#[test]
+fn percent_signs_in_the_output_name_are_literal() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = tiny_project(dir.path());
+    let folder = dir.path().join("50%d");
+    let result = export(&source, &["--frames", "0,1"], &folder.join("c%06d.png"));
+    assert!(result.status.success(), "{}", stderr(&result));
+    let mut names: Vec<String> = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["c%06d-000000.png", "c%06d-000001.png"]);
+    assert_eq!(pixels(&folder.join("c%06d-000001.png")).len(), 36);
 }

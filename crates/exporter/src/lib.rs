@@ -47,6 +47,7 @@ pub use subtitles::SubtitleFormat;
 pub use timecode::{TimecodeError, parse_timecode};
 
 mod contact_sheet;
+mod still_output;
 mod stills;
 
 pub use celesta_gpu_renderer::{GpuDriver, RenderQuality, UnknownGpuDriver, UnknownRenderQuality};

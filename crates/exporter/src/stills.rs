@@ -1,23 +1,28 @@
 use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, ExportedFile};
+use crate::encode::VIDEO_STAGE;
 use crate::error::{ExportError, FrameFailure};
 use crate::exporter::Exporter;
-use crate::output;
+use crate::media::with_builtin;
+use crate::options::OutputChoice;
 use crate::project::{absolutize_fonts, absolutize_layers};
 use crate::range::{ExportRange, resolve_window};
 use crate::react::{CompanionProject, ReactRuntimeOptions};
-use crate::render::{ReportedWarnings, ensure_not_cancelled, frame_count, report_render_warnings};
+use crate::render::{
+    ReportedWarnings, configure_renderer, ensure_not_cancelled, frame_count, report_render_warnings,
+};
+use crate::still_output::{StillFiles, StillOutput};
 use celesta_composition::{Rational, Scene, Time};
 use celesta_evaluator::{EvaluationError, Evaluator};
-use celesta_gpu_renderer::{Color, GpuFrame, GpuRenderOptions, GpuRenderer};
+use celesta_gpu_renderer::{GpuFrame, GpuRenderer};
+use celesta_media::{MediaError, MediaRegistry, PixelFormat};
+use celesta_plugin_host::RESERVED_PLUGIN_ID;
 use celesta_project::Project;
 use celesta_react_bridge::ProjectFrame;
-use image::codecs::jpeg::JpegEncoder;
-use image::{ExtendedColorType, ImageEncoder};
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsStr;
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::{fs, io};
+use std::sync::Arc;
 use strum::VariantArray;
 
 use crate::contact_sheet::Sheet;
@@ -67,11 +72,13 @@ impl Default for ContactSheet {
 }
 
 /// What a still export renders and how it is written. The output's extension
-/// picks the image format (see [`StillFormat`]).
+/// picks the image format (see [`StillFormat`]): the built-in image encoder
+/// for it, unless [`ExportOptions::output`](crate::ExportOptions::output)
+/// names another, with that choice's options.
 ///
 /// Stills are drawn over the same opaque background as an MP4 export, so a
-/// frame has no transparent pixels; a JPEG, which has no alpha channel, is
-/// flattened onto that background all the same.
+/// frame has no transparent pixels, unless the encoder keeps alpha (PNG and
+/// WebP with `transparent`); a JPEG has no alpha channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StillExport {
     pub frames: FrameSelection,
@@ -81,8 +88,12 @@ pub struct StillExport {
     /// `useDebugGuides()`) into the frames, which otherwise only the editor
     /// preview shows. A JSON project has none to draw.
     pub debug_guides: bool,
-    /// JPEG or WebP quality, 1 to 100; higher is sharper and larger. `None`
-    /// uses [`Self::DEFAULT_QUALITY`]. PNG is lossless and takes none.
+    /// JPEG or WebP quality, 1 to 100; higher is sharper and larger: the
+    /// encoder's `quality` option, which the output choice must not also
+    /// give. `None` leaves it to the choice, or the encoder's default,
+    /// [`Self::DEFAULT_QUALITY`] for the built-ins. PNG is lossless and
+    /// takes none: a quality for it, or one out of range, is
+    /// [`ExportError::InvalidOption`] before anything renders.
     pub quality: Option<u8>,
 }
 
@@ -142,15 +153,12 @@ fn invalid(message: impl Into<String>) -> ExportError {
     ExportError::InvalidSelection(message.into())
 }
 
-/// Checks the selection and output name shared by every still layout.
-fn validate(frames: &[u64], total: u64, output: &Path) -> Result<(), ExportError> {
+/// Checks the selection shared by every still layout. The output's
+/// extension is checked once the components are named
+/// ([`crate::still_output::still_choice`]).
+fn validate(frames: &[u64], total: u64) -> Result<(), ExportError> {
     if frames.is_empty() {
         return Err(invalid("select at least one frame"));
-    }
-    if StillFormat::from_extension(output).is_none() {
-        return Err(invalid(
-            "still output must use the .png, .jpg, .jpeg or .webp extension",
-        ));
     }
     let mut seen = HashSet::new();
     for &frame in frames {
@@ -259,42 +267,78 @@ fn select(
     }
 }
 
-/// Where rendered frames go, and the format they are written in.
+/// Where rendered frames go, and the components that write them.
 struct Destination {
-    encoder: Encoder,
+    output: StillOutput,
     layout: Layout,
 }
 
 /// One image per frame, or tiles of one contact sheet.
 enum Layout {
-    Files(Vec<PathBuf>),
+    Files,
     Sheet(Box<Sheet>),
 }
 
+/// Where and how a still export writes: the registry its components come
+/// from, the export's output, its choice of components and quality,
+/// whether a file there may be replaced, and its cancellation.
+struct Target<'a> {
+    registry: Arc<MediaRegistry>,
+    output: &'a Path,
+    choice: &'a OutputChoice,
+    quality: Option<u8>,
+    overwrite: bool,
+    cancellation: &'a ExportCancellation,
+}
+
 impl Destination {
-    /// Validates the selection, its size limit, the quality, and every output
-    /// path before anything renders.
-    #[allow(clippy::too_many_arguments)]
+    /// Validates the selection, its size limit, and every output path, then
+    /// opens the components that write them ([`StillOutput::open`]): all
+    /// before anything renders. Returns the resolution's warnings too.
     fn prepare(
         frames: &[u64],
         total: u64,
         contact_sheet: Option<ContactSheet>,
         (width, height): (u32, u32),
         frame_rate: Rational,
-        output: &Path,
-        quality: Option<u8>,
-        overwrite: bool,
-    ) -> Result<Self, ExportError> {
-        let encoder = Encoder::new(output, quality)?;
-        let Some(contact_sheet) = contact_sheet else {
-            encoder.check_size(width, height)?;
-            let paths = outputs(frames, total, output, overwrite)?;
-            return Ok(Self {
-                encoder,
-                layout: Layout::Files(paths),
-            });
+        target: Target<'_>,
+    ) -> Result<(Self, Vec<String>), ExportError> {
+        let Target {
+            registry,
+            output,
+            choice,
+            quality,
+            overwrite,
+            cancellation,
+        } = target;
+        let open = |files, sheet, size| {
+            StillOutput::open(
+                registry,
+                choice,
+                quality,
+                files,
+                output,
+                sheet,
+                size,
+                frame_rate,
+                overwrite,
+                cancellation,
+            )
         };
-        validate(frames, total, output)?;
+        let Some(contact_sheet) = contact_sheet else {
+            let paths = outputs(frames, total, output, overwrite)?;
+            let files = match paths.as_slice() {
+                [path] => StillFiles::One(path.clone()),
+                _ => StillFiles::Sequence(frames.iter().copied().zip(paths).collect()),
+            };
+            let (still, warnings) = open(files, false, (width, height))?;
+            let destination = Self {
+                output: still,
+                layout: Layout::Files,
+            };
+            return Ok((destination, warnings));
+        };
+        validate(frames, total)?;
         if contact_sheet.columns == 0 || contact_sheet.tile_width == 0 {
             return Err(invalid(
                 "contact sheet columns and tile width must be at least 1",
@@ -313,35 +357,28 @@ impl Destination {
             frame_rate,
         )
         .map_err(invalid)?;
-        encoder.check_size(sheet.width(), sheet.height())?;
-        Ok(Self {
-            encoder,
+        let size = (sheet.width(), sheet.height());
+        let (still, warnings) = open(StillFiles::One(output.to_owned()), true, size)?;
+        let destination = Self {
+            output: still,
             layout: Layout::Sheet(Box::new(sheet)),
-        })
+        };
+        Ok((destination, warnings))
     }
 
-    /// Writes or places the rendered `frame`; returns the file it wrote, if any.
+    /// Writes or places the rendered `frame`; returns the file it wrote, if
+    /// any (one file is written by [`Self::finish`]).
     fn accept(
         &mut self,
         index: usize,
         frame: u64,
-        rendered: &GpuFrame,
-        overwrite: bool,
+        rendered: GpuFrame,
     ) -> Result<Option<ExportedFile>, ExportError> {
         match &mut self.layout {
-            Layout::Files(paths) => {
-                self.encoder.write(
-                    rendered.width(),
-                    rendered.height(),
-                    rendered.pixels(),
-                    &paths[index],
-                    overwrite,
-                )?;
-                Ok(Some(ExportedFile::Frame {
-                    path: paths[index].clone(),
-                    frame,
-                }))
-            }
+            Layout::Files => Ok(self
+                .output
+                .write(frame, rendered.into_pixels())?
+                .map(|path| ExportedFile::Frame { path, frame })),
             Layout::Sheet(sheet) => sheet
                 .place(
                     index,
@@ -358,7 +395,7 @@ impl Destination {
     /// contact sheet has a place for it; separate files return false.
     fn place_failed(&mut self, index: usize, frame: u64) -> bool {
         match &mut self.layout {
-            Layout::Files(_) => false,
+            Layout::Files => false,
             Layout::Sheet(sheet) => {
                 sheet.place_failed(index, frame);
                 true
@@ -366,30 +403,39 @@ impl Destination {
         }
     }
 
-    /// Writes the contact sheet of `frames`; returns the file it wrote, if any.
-    fn finish(
-        self,
-        frames: &[u64],
-        output: &Path,
-        overwrite: bool,
-    ) -> Result<Option<ExportedFile>, ExportError> {
-        match self.layout {
-            Layout::Files(_) => Ok(None),
+    /// Writes the contact sheet of `frames`, or the one file of one frame,
+    /// and finishes the components; returns the file it wrote, if any. A
+    /// failure aborts them.
+    fn finish(mut self, frames: &[u64]) -> Result<Option<ExportedFile>, ExportError> {
+        let columns = match &self.layout {
+            Layout::Files => None,
             Layout::Sheet(sheet) => {
-                self.encoder.write(
-                    sheet.width(),
-                    sheet.height(),
-                    sheet.pixels(),
-                    output,
-                    overwrite,
-                )?;
-                Ok(Some(ExportedFile::ContactSheet {
-                    path: output.to_owned(),
-                    frames: frames.to_vec(),
-                    columns: sheet.columns(),
-                }))
+                if let Err(error) = self.output.write(0, sheet.pixels().to_vec()) {
+                    self.output.abort();
+                    return Err(error);
+                }
+                Some(sheet.columns())
             }
-        }
+        };
+        let Some(path) = self.output.finish()? else {
+            return Ok(None);
+        };
+        Ok(Some(match columns {
+            Some(columns) => ExportedFile::ContactSheet {
+                path,
+                frames: frames.to_vec(),
+                columns,
+            },
+            None => ExportedFile::Frame {
+                path,
+                frame: frames[0],
+            },
+        }))
+    }
+
+    /// Ends the components; files already published stay.
+    fn abort(self) {
+        self.output.abort();
     }
 }
 
@@ -400,7 +446,7 @@ fn outputs(
     output: &Path,
     overwrite: bool,
 ) -> Result<Vec<PathBuf>, ExportError> {
-    validate(frames, total, output)?;
+    validate(frames, total)?;
     let mut paths = Vec::new();
     for &frame in frames {
         let path = if frames.len() == 1 {
@@ -422,180 +468,36 @@ fn outputs(
     Ok(paths)
 }
 
-/// Encodes frames in the output's [`StillFormat`].
-#[derive(Debug)]
-struct Encoder {
-    format: StillFormat,
-    /// JPEG or WebP quality; PNG ignores it.
-    quality: u8,
-}
-
-impl Encoder {
-    /// WebP stores each side in 14 bits.
-    const MAX_WEBP_SIDE: u32 = 16_383;
-
-    /// The encoder for `output`'s extension, checking `quality` against it.
-    fn new(output: &Path, quality: Option<u8>) -> Result<Self, ExportError> {
-        let format = StillFormat::from_extension(output).ok_or_else(|| {
-            invalid("still output must use the .png, .jpg, .jpeg or .webp extension")
-        })?;
-        let quality = match quality {
-            Some(_) if !format.is_lossy() => {
-                return Err(invalid(
-                    "quality applies to JPEG and WebP output; PNG is lossless",
-                ));
-            }
-            Some(quality) if !(1..=StillExport::MAX_QUALITY).contains(&quality) => {
-                return Err(invalid(format!(
-                    "quality must be 1 to {}, not {quality}",
-                    StillExport::MAX_QUALITY
-                )));
-            }
-            quality => quality.unwrap_or(StillExport::DEFAULT_QUALITY),
-        };
-        Ok(Self { format, quality })
-    }
-
-    /// Fails before rendering when the format cannot hold a `width`×`height` image.
-    fn check_size(&self, width: u32, height: u32) -> Result<(), ExportError> {
-        let max = Self::MAX_WEBP_SIDE;
-        if self.format == StillFormat::Webp && (width > max || height > max) {
-            return Err(invalid(format!(
-                "a {width}x{height} image is too large for WebP, which holds at most \
-                 {max} pixels on each side (write PNG or JPEG, or make the contact sheet smaller)"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Writes straight-alpha RGBA `pixels` to `path` through a temporary
-    /// file beside it, so a failed export never leaves a partial image.
-    fn write(
-        &self,
-        width: u32,
-        height: u32,
-        pixels: &[u8],
-        path: &Path,
-        overwrite: bool,
-    ) -> Result<(), ExportError> {
-        let mut file = output::stage(path, ".tmp", "create temporary image")?;
-        self.encode(file.as_file_mut(), width, height, pixels)?;
-        output::publish(file, path, overwrite, "publish image")
-    }
-
-    fn encode(
-        &self,
-        file: &mut fs::File,
-        width: u32,
-        height: u32,
-        pixels: &[u8],
-    ) -> Result<(), ExportError> {
-        let failed = |operation: &'static str| {
-            move |error: Box<dyn std::error::Error + Send + Sync>| ExportError::Io {
-                operation,
-                source: io::Error::other(error),
-            }
-        };
-        match self.format {
-            StillFormat::Png => {
-                let mut encoder = png::Encoder::new(file, width, height);
-                encoder.set_color(png::ColorType::Rgba);
-                encoder.set_depth(png::BitDepth::Eight);
-                let mut writer = encoder
-                    .write_header()
-                    .map_err(|e| failed("encode PNG")(e.into()))?;
-                writer
-                    .write_image_data(pixels)
-                    .map_err(|e| failed("encode PNG")(e.into()))?;
-                writer.finish().map_err(|e| failed("finish PNG")(e.into()))
-            }
-            StillFormat::Jpeg => {
-                let rgb = flatten(pixels, GpuRenderOptions::default().background);
-                let mut writer = io::BufWriter::new(file);
-                JpegEncoder::new_with_quality(&mut writer, self.quality)
-                    .write_image(&rgb, width, height, ExtendedColorType::Rgb8)
-                    .map_err(|e| failed("encode JPEG")(e.into()))?;
-                writer.flush().map_err(|source| ExportError::Io {
-                    operation: "write JPEG",
-                    source,
-                })
-            }
-            StillFormat::Webp => {
-                let encoded = webp::Encoder::from_rgba(pixels, width, height)
-                    .encode_simple(false, f32::from(self.quality))
-                    .map_err(|e| failed("encode WebP")(format!("{e:?}").into()))?;
-                file.write_all(&encoded).map_err(|source| ExportError::Io {
-                    operation: "write WebP",
-                    source,
-                })
-            }
-        }
-    }
-}
-
-/// Straight-alpha RGBA `pixels` composited over `background`, as RGB.
-fn flatten(pixels: &[u8], background: Color) -> Vec<u8> {
-    let behind = [background.red, background.green, background.blue];
-    pixels
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .flat_map(|pixel| {
-            let alpha = u16::from(pixel[3]);
-            std::array::from_fn::<u8, 3, _>(|channel| {
-                ((u16::from(pixel[channel]) * alpha
-                    + u16::from(behind[channel]) * (255 - alpha)
-                    + 127)
-                    / 255) as u8
-            })
-        })
-        .collect()
-}
-
 /// Renders the scene `scene_at` builds for each of `frames` into
 /// `destination`, then finishes it. Every failure names its frame. A contact
 /// sheet carries on past a frame that cannot be evaluated or rendered, with a
 /// failed tile in its place, and once the sheet is written fails with
 /// [`ExportError::FramesFailed`] listing each one; separate files stop at the
-/// first failure.
-#[allow(clippy::too_many_arguments)]
+/// first failure, keeping the files written before it.
 fn render_stills(
     frames: &[u64],
     mut destination: Destination,
     renderer: &mut GpuRenderer,
     output: &Path,
-    overwrite: bool,
     cancellation: &ExportCancellation,
     progress: &mut impl FnMut(ExportProgress),
-    mut scene_at: impl FnMut(u64) -> Result<Scene, ExportError>,
+    scene_at: impl FnMut(u64) -> Result<Scene, ExportError>,
 ) -> Result<(), ExportError> {
-    let mut reported_warnings = ReportedWarnings::default();
-    let mut failures = Vec::new();
-    for (index, &frame) in frames.iter().enumerate() {
-        ensure_not_cancelled(cancellation)?;
-        progress(ExportProgress::Rendering {
-            frame: index as u64 + 1,
-            total: frames.len() as u64,
-        });
-        let rendered =
-            scene_at(frame).and_then(|scene| renderer.render(&scene).map_err(ExportError::Render));
-        report_render_warnings(renderer, &mut reported_warnings, progress);
-        let file = match rendered {
-            Ok(rendered) => destination.accept(index, frame, &rendered, overwrite),
-            Err(error) if error.is_frame_scoped() && destination.place_failed(index, frame) => {
-                failures.push(FrameFailure { frame, error });
-                Ok(None)
-            }
-            Err(error) => Err(error),
+    let failures = match render_frames(
+        frames,
+        &mut destination,
+        renderer,
+        cancellation,
+        progress,
+        scene_at,
+    ) {
+        Ok(failures) => failures,
+        Err(error) => {
+            destination.abort();
+            return Err(error);
         }
-        .map_err(|error| cancellation.settle(error).at_frame(frame))?;
-        if let Some(file) = file {
-            progress(ExportProgress::Wrote(file));
-        }
-    }
-    // A frame a cancel killed failed as frame-scoped; write no sheet of it.
-    ensure_not_cancelled(cancellation)?;
-    if let Some(file) = destination.finish(frames, output, overwrite)? {
+    };
+    if let Some(file) = destination.finish(frames)? {
         progress(ExportProgress::Wrote(file));
     }
     if failures.is_empty() {
@@ -609,7 +511,128 @@ fn render_stills(
     }
 }
 
+/// [`render_stills`]' frames, up to writing the contact sheet: the frames
+/// a sheet shows as failed tiles.
+fn render_frames(
+    frames: &[u64],
+    destination: &mut Destination,
+    renderer: &mut GpuRenderer,
+    cancellation: &ExportCancellation,
+    progress: &mut impl FnMut(ExportProgress),
+    mut scene_at: impl FnMut(u64) -> Result<Scene, ExportError>,
+) -> Result<Vec<FrameFailure>, ExportError> {
+    let mut reported_warnings = ReportedWarnings::default();
+    let mut failures = Vec::new();
+    let input = destination.output.opened().input;
+    for (index, &frame) in frames.iter().enumerate() {
+        ensure_not_cancelled(cancellation)?;
+        progress(ExportProgress::Rendering {
+            frame: index as u64 + 1,
+            total: frames.len() as u64,
+        });
+        let rendered = scene_at(frame).and_then(|scene| render_frame(renderer, &scene, input));
+        report_render_warnings(renderer, &mut reported_warnings, progress);
+        let file = match rendered {
+            Ok(rendered) => destination.accept(index, frame, rendered),
+            Err(error) if error.is_frame_scoped() && destination.place_failed(index, frame) => {
+                failures.push(FrameFailure { frame, error });
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+        .map_err(|error| cancellation.settle(error).at_frame(frame))?;
+        if let Some(file) = file {
+            progress(ExportProgress::Wrote(file));
+        }
+    }
+    // A frame a cancel killed failed as frame-scoped; write no sheet of it.
+    ensure_not_cancelled(cancellation)?;
+    Ok(failures)
+}
+
+/// Renders `scene` read back as `input`: `rgba8` as stills have always
+/// been rendered, any other format through the renderer's export readback.
+fn render_frame(
+    renderer: &mut GpuRenderer,
+    scene: &Scene,
+    input: PixelFormat,
+) -> Result<GpuFrame, ExportError> {
+    if input == PixelFormat::Rgba8 {
+        return renderer.render(scene).map_err(ExportError::Render);
+    }
+    // Nothing else is in flight, so the frame is the one `drain` returns.
+    let submitted = renderer.submit(scene).map_err(ExportError::Render)?;
+    let mut frames = renderer.drain().map_err(ExportError::Render)?;
+    submitted
+        .or_else(|| frames.pop())
+        .ok_or_else(|| ExportError::Codec {
+            stage: VIDEO_STAGE,
+            source: MediaError::Codec("the renderer read back no frame".to_owned()),
+        })
+}
+
 impl Exporter {
+    /// The registry stills write through: the export's, with the built-in
+    /// components added when it has none (a test's own registry).
+    fn still_registry(&self) -> Arc<MediaRegistry> {
+        crate::media::ensure_media(self.plugins());
+        let registry = crate::media::current();
+        if registry.plugin_index(RESERVED_PLUGIN_ID).is_some() {
+            registry
+        } else {
+            with_builtin(registry.plugins().to_vec())
+        }
+    }
+
+    /// Validates the selection and opens the components ([`Destination::prepare`]),
+    /// reporting the resolution's warnings.
+    #[allow(clippy::too_many_arguments)]
+    fn still_destination(
+        &self,
+        frames: &[u64],
+        total: u64,
+        request: &StillExport,
+        size: (u32, u32),
+        frame_rate: Rational,
+        output: &Path,
+        cancellation: &ExportCancellation,
+        progress: &mut impl FnMut(ExportProgress),
+    ) -> Result<Destination, ExportError> {
+        let (destination, warnings) = Destination::prepare(
+            frames,
+            total,
+            request.contact_sheet,
+            size,
+            frame_rate,
+            Target {
+                registry: self.still_registry(),
+                output,
+                choice: &self.options.output,
+                quality: request.quality,
+                overwrite: self.options.overwrite,
+                cancellation,
+            },
+        )?;
+        for warning in warnings {
+            progress(ExportProgress::Warning(warning));
+        }
+        Ok(destination)
+    }
+
+    /// The renderer stills draw with, set to what `destination`'s encoder
+    /// takes.
+    fn still_renderer(
+        &self,
+        asset_root: &Path,
+        frame_rate: Rational,
+        destination: &Destination,
+        cancellation: &ExportCancellation,
+    ) -> Result<GpuRenderer, ExportError> {
+        let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation)?;
+        configure_renderer(&mut renderer, destination.output.opened())?;
+        Ok(renderer)
+    }
+
     /// Exports exact zero-based project frames without video encoding or audio mixing.
     /// Multiple selections append `-000090` style frame numbers to the output stem.
     pub fn export_project_stills(
@@ -664,26 +687,35 @@ impl Exporter {
             frame_rate,
             request.contact_sheet,
         )?;
-        let destination = Destination::prepare(
+        let destination = self.still_destination(
             &frames,
             total,
-            request.contact_sheet,
+            request,
             (project.settings.width, project.settings.height),
             frame_rate,
             output,
-            request.quality,
-            self.options.overwrite,
+            cancellation,
+            &mut progress,
         )?;
-        let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
-        // Stills keep an MP4 export's opaque background, read back as
-        // 8-bit RGBA.
-        let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation)?;
+        let prepared = Evaluator::new(project)
+            .map_err(ExportError::Evaluation)
+            .and_then(|evaluator| {
+                let renderer =
+                    self.still_renderer(asset_root, frame_rate, &destination, cancellation)?;
+                Ok((evaluator, renderer))
+            });
+        let (evaluator, mut renderer) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                destination.abort();
+                return Err(error);
+            }
+        };
         render_stills(
             &frames,
             destination,
             &mut renderer,
             output,
-            self.options.overwrite,
             cancellation,
             &mut progress,
             |frame| {
@@ -771,43 +803,50 @@ impl Exporter {
             metadata.frame_rate,
             request.contact_sheet,
         )?;
-        let destination = Destination::prepare(
+        let destination = self.still_destination(
             &frames,
             metadata.duration_in_frames,
-            request.contact_sheet,
+            request,
             (metadata.width, metadata.height),
             metadata.frame_rate,
             output,
-            request.quality,
-            self.options.overwrite,
+            cancellation,
+            &mut progress,
         )?;
-        let project_evaluator = project
-            .map(|(project, _)| Evaluator::new(project))
-            .transpose()
-            .map_err(ExportError::Evaluation)?;
+        let prepared = (|| {
+            let project_evaluator = project
+                .map(|(project, _)| Evaluator::new(project))
+                .transpose()
+                .map_err(ExportError::Evaluation)?;
+            let project_fonts = project_evaluator
+                .as_ref()
+                .map(|evaluator| -> Result<_, EvaluationError> {
+                    let mut fonts = evaluator.scene_at(Time::ZERO)?.fonts;
+                    if let Some((_, asset_root)) = project {
+                        absolutize_fonts(&mut fonts, asset_root);
+                    }
+                    Ok(fonts)
+                })
+                .transpose()
+                .map_err(ExportError::Evaluation)?
+                .unwrap_or_default();
+            let renderer =
+                self.still_renderer(asset_root, metadata.frame_rate, &destination, cancellation)?;
+            Ok((project_evaluator, project_fonts, renderer))
+        })();
+        let (project_evaluator, project_fonts, mut renderer) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                destination.abort();
+                return Err(error);
+            }
+        };
         let project_asset_root = project.map(|(_, asset_root)| asset_root);
-        let project_fonts = project_evaluator
-            .as_ref()
-            .map(|evaluator| -> Result<_, EvaluationError> {
-                let mut fonts = evaluator.scene_at(Time::ZERO)?.fonts;
-                if let Some(asset_root) = project_asset_root {
-                    absolutize_fonts(&mut fonts, asset_root);
-                }
-                Ok(fonts)
-            })
-            .transpose()
-            .map_err(ExportError::Evaluation)?
-            .unwrap_or_default();
-
-        // Stills keep an MP4 export's opaque background, read back as
-        // 8-bit RGBA.
-        let mut renderer = self.export_renderer(asset_root, metadata.frame_rate, cancellation)?;
         render_stills(
             &frames,
             destination,
             &mut renderer,
             output,
-            self.options.overwrite,
             cancellation,
             &mut progress,
             |frame| {
@@ -878,7 +917,8 @@ mod tests {
         for frames in [&[][..], &[1, 1][..]] {
             assert!(outputs(frames, 90, Path::new("check.png"), false).is_err());
         }
-        assert!(outputs(&[0], 90, Path::new("check.mp4"), false).is_err());
+        // The extension is checked when the components are named
+        // (still_output's `names_the_built_ins_by_extension`).
     }
 
     #[test]
@@ -1030,112 +1070,6 @@ mod tests {
                 PathBuf::from("thumb-000004.WEBP")
             ]
         );
-        let error = outputs(&[0], 90, Path::new("check.gif"), false).unwrap_err();
-        assert!(
-            error.to_string().contains(".png, .jpg, .jpeg or .webp"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn quality_applies_to_jpeg_and_webp_only() {
-        let encoder = |name: &str, quality| Encoder::new(Path::new(name), quality);
-        assert_eq!(
-            encoder("a.jpg", None).unwrap().quality,
-            StillExport::DEFAULT_QUALITY
-        );
-        assert_eq!(encoder("a.webp", Some(40)).unwrap().quality, 40);
-        assert!(encoder("a.jpg", Some(1)).is_ok());
-        assert!(encoder("a.jpg", Some(100)).is_ok());
-        for quality in [0, 101] {
-            let error = encoder("a.jpg", Some(quality)).unwrap_err();
-            assert!(error.to_string().contains("1 to 100"), "{error}");
-        }
-        let error = encoder("a.png", Some(80)).unwrap_err();
-        assert!(error.to_string().contains("PNG is lossless"), "{error}");
-        assert!(encoder("a.png", None).is_ok());
-    }
-
-    #[test]
-    fn webp_rejects_images_wider_than_it_can_hold() {
-        let encoder = |name: &str| Encoder::new(Path::new(name), None).unwrap();
-        assert!(encoder("a.webp").check_size(16_383, 16_383).is_ok());
-        let error = encoder("a.webp").check_size(16_384, 9).unwrap_err();
-        assert!(error.to_string().contains("too large for WebP"), "{error}");
-        assert!(encoder("a.jpg").check_size(16_384, 9).is_ok());
-        assert!(encoder("a.png").check_size(16_384, 9).is_ok());
-    }
-
-    #[test]
-    fn jpeg_flattens_transparency_onto_the_export_background() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a.jpg");
-        // An opaque red pixel and a fully transparent white one, 8x8 each so
-        // chroma subsampling keeps them apart.
-        let mut pixels = Vec::new();
-        for _ in 0..8 {
-            for x in 0..16 {
-                pixels.extend_from_slice(if x < 8 {
-                    &[255, 0, 0, 255]
-                } else {
-                    &[255, 255, 255, 0]
-                });
-            }
-        }
-        Encoder::new(&path, Some(100))
-            .unwrap()
-            .write(16, 8, &pixels, &path, false)
-            .unwrap();
-        let decoded = image::load_from_memory(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(decoded.color(), image::ColorType::Rgb8);
-        let decoded = decoded.to_rgb8();
-        let near = |pixel: &image::Rgb<u8>, expected: [u8; 3]| {
-            pixel
-                .0
-                .iter()
-                .zip(expected)
-                .all(|(&value, expected)| value.abs_diff(expected) <= 4)
-        };
-        let background = GpuRenderOptions::default().background;
-        assert!(near(decoded.get_pixel(2, 4), [255, 0, 0]));
-        assert!(
-            near(
-                decoded.get_pixel(13, 4),
-                [background.red, background.green, background.blue]
-            ),
-            "{:?}",
-            decoded.get_pixel(13, 4)
-        );
-    }
-
-    #[test]
-    fn webp_is_lossy_at_the_requested_quality() {
-        let dir = tempfile::tempdir().unwrap();
-        // A noisy frame, so lower quality visibly saves bytes.
-        let pixels: Vec<u8> = (0u32..64 * 64)
-            .flat_map(|index| {
-                let value = (index.wrapping_mul(2_654_435_761) >> 24) as u8;
-                [value, value.wrapping_mul(3), 255 - value, 255]
-            })
-            .collect();
-        let write = |quality| {
-            let path = dir.path().join(format!("q{quality}.webp"));
-            Encoder::new(&path, Some(quality))
-                .unwrap()
-                .write(64, 64, &pixels, &path, false)
-                .unwrap();
-            fs::read(path).unwrap()
-        };
-        let (low, high) = (write(10), write(100));
-        for bytes in [&low, &high] {
-            assert_eq!(&bytes[..4], b"RIFF");
-            assert_eq!(&bytes[8..12], b"WEBP");
-            let image = webp::Decoder::new(bytes).decode().unwrap();
-            assert_eq!((image.width(), image.height()), (64, 64));
-        }
-        // VP8 (lossy), not VP8L (lossless).
-        assert_eq!(&high[12..16], b"VP8 ");
-        assert!(low.len() < high.len(), "{} >= {}", low.len(), high.len());
     }
 
     #[test]
