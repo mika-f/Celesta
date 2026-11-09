@@ -30,6 +30,14 @@ mod element_edit;
 mod element_rows;
 mod element_rows_view;
 mod export_control;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "used by the export dialog view in the next commit"
+    )
+)]
+mod export_dialog;
 mod export_worker;
 mod helpers;
 mod impact;
