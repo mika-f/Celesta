@@ -6,6 +6,7 @@ use crate::control::{ExportCancellation, TrackInfo};
 use crate::error::ExportError;
 use crate::interleave::{Interleaver, WRITE_REQUEST_BYTES, WRITE_REQUEST_PACKETS, packet_bytes};
 use crate::options::OutputChoice;
+use crate::presets::PresetLookup;
 use crate::resolve::{OutputPlan, ResolvedOutput, resolve_output};
 use celesta_composition::Rational;
 use celesta_gpu_renderer::{GpuFrame, GpuRenderer, ReadbackFormat};
@@ -534,21 +535,23 @@ impl ExportSession {
         }
     }
 
-    /// Chooses the components `choice` names for `output`
-    /// ([`resolve_output`]), describing each plugin through the process
-    /// this session keeps for it, whose ring is sized for `frame`-sized
-    /// frames. Processes of plugins left unused stop.
+    /// Chooses the components `choice` names for `output`, with presets
+    /// looked up in `presets` ([`resolve_output`]), describing each plugin
+    /// through the process this session keeps for it, whose ring is sized
+    /// for `frame`-sized frames. Processes of plugins left unused stop.
+    /// Returns the plan and the resolution's warnings.
     pub(crate) fn resolve(
         &mut self,
         choice: &OutputChoice,
+        presets: &PresetLookup,
         output: &Path,
         frame: (u32, u32),
-    ) -> Result<OutputPlan, ExportError> {
+    ) -> Result<(OutputPlan, Vec<String>), ExportError> {
         self.frame = frame;
         let registry = self.registry.clone();
         let kill = &self.kill;
         let processes = &mut self.processes;
-        let resolved = resolve_output(choice, output, &registry, &mut |plugin| {
+        let mut resolved = resolve_output(choice, output, &registry, presets, &mut |plugin| {
             registry.describe_with(
                 plugin,
                 &mut Lazy {
@@ -568,9 +571,10 @@ impl ExportSession {
         ];
         self.processes
             .retain(|plugin, _| used.contains(&Some(*plugin)));
+        let warnings = std::mem::take(&mut resolved.warnings);
         let plan = resolved.plan();
         self.resolved = Some(resolved);
-        Ok(plan)
+        Ok((plan, warnings))
     }
 
     /// The ring for `frame`-sized frames of an encoder taking `formats`
@@ -1318,6 +1322,7 @@ impl ExportSession {
 mod tests {
     use super::*;
     use crate::interleave::{AUDIO_TRACK, VIDEO_TRACK};
+    use crate::presets::PresetsFile;
     use celesta_media::{
         AudioEncoder, ComponentKind, Muxer, Pipeline, RegisteredPlugin, VideoEncoder,
     };
@@ -1662,7 +1667,12 @@ mod tests {
         let registry = Arc::new(MediaRegistry::new(vec![plugin]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), Path::new("out.fake"), (2, 2))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (2, 2),
+            )
             .unwrap();
         (session, log)
     }
@@ -2334,7 +2344,12 @@ mod tests {
         let registry = Arc::new(MediaRegistry::new(vec![encoder, muxer]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), Path::new("out.fake"), (2, 2))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (2, 2),
+            )
             .unwrap();
         (session, log, dropped)
     }
@@ -2976,7 +2991,12 @@ mod tests {
         }
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), Path::new("out.fake"), (64, 48))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (64, 48),
+            )
             .unwrap();
         assert_eq!(
             exports_of(&uses, "v"),
@@ -2998,6 +3018,38 @@ mod tests {
     }
 
     #[test]
+    fn resolve_warnings_reach_the_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("presets.json");
+        let mut file = PresetsFile::new();
+        file.put(
+            serde_json::from_value(serde_json::json!({ "name": "stale",
+                "video": { "component": "celesta-test-codec/video",
+                           "options": { "speed": 1 } } }))
+            .unwrap(),
+        );
+        file.save(&path).unwrap();
+        let presets = PresetLookup {
+            file: Some(path),
+            ..PresetLookup::default()
+        };
+        let registry = Arc::new(MediaRegistry::new(vec![celesta_codec_test::registered()]));
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        let choice = OutputChoice {
+            preset: Some("stale".into()),
+            ..OutputChoice::default()
+        };
+        let (plan, warnings) = session
+            .resolve(&choice, &presets, Path::new("out.ctst"), (2, 2))
+            .unwrap();
+        assert_eq!(plan.video.component.to_string(), "celesta-test-codec/video");
+        assert_eq!(
+            warnings,
+            ["preset `stale`: celesta-test-codec/video has no setting `speed`; it is left out"]
+        );
+    }
+
+    #[test]
     fn an_uncached_describe_sizes_the_ring_from_the_manifest() {
         for (manifest, expected) in [
             (Some(&["yuv420p"][..]), ring(3, 4_608)),
@@ -3009,7 +3061,12 @@ mod tests {
             let registry = Arc::new(MediaRegistry::new(vec![plugin]));
             let mut session = ExportSession::start(registry, &ExportCancellation::default());
             session
-                .resolve(&OutputChoice::default(), Path::new("out.fake"), (64, 48))
+                .resolve(
+                    &OutputChoice::default(),
+                    &PresetLookup::default(),
+                    Path::new("out.fake"),
+                    (64, 48),
+                )
                 .unwrap();
             assert_eq!(exports_of(&uses, "v"), [expected], "{manifest:?}");
         }
@@ -3024,6 +3081,7 @@ mod tests {
         session
             .resolve(
                 &OutputChoice::default(),
+                &PresetLookup::default(),
                 Path::new("out.fake"),
                 (8192, 4320),
             )

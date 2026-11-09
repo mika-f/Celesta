@@ -3,7 +3,8 @@
 
 use crate::error::ExportError;
 use crate::options::{AudioChoice, EncoderChoice, OutputChoice, SettingInput};
-use celesta_media::settings::{differences, parse_setting, validate};
+use crate::presets::{FoundPreset, PresetAudio, PresetEncoder, PresetLookup, PresetOutput};
+use celesta_media::settings::{differences, layer, parse_setting, sanitize, validate};
 use celesta_media::{
     ComponentDescription, ComponentEntry, ComponentKind, ComponentRef, InvalidSetting,
     MediaComponentInfo, MediaRegistry, PixelFormat, PluginDescription, SettingField, SettingKind,
@@ -11,7 +12,7 @@ use celesta_media::{
 };
 use celesta_plugin_host::{MediaMuxerEntry, MediaOrigin, codec_family};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// The x264 preset names the FFmpeg plugin's `preset` offers, fastest
@@ -66,6 +67,10 @@ pub struct ResolvedOutput {
     pub muxer: ResolvedMuxer,
     pub video: ResolvedEncoder,
     pub audio: Option<ResolvedEncoder>,
+    /// What the export is told before it starts: a preset's stale values
+    /// and components, left out or replaced by defaults, and choices that
+    /// work but may surprise (a muxer named for another extension).
+    pub warnings: Vec<String>,
 }
 
 /// An encoder as the progress display names it: the settings that differ
@@ -145,55 +150,180 @@ pub fn encoding_label(plan: &EncoderPlan) -> String {
 /// The components `choice` names for writing `output`, with their options
 /// validated, as the spec's "Resolving an output" lays out:
 ///
-/// 1. a preset is [`ExportError::UnknownPreset`] (presets arrive with P3);
+/// 1. the base is the preset `choice` names, looked up in `presets`, or,
+///    when `choice` names no preset and no component (an
+///    [`AudioChoice::None`] is one), the project file's `default`; a name
+///    found in no file is [`ExportError::UnknownPreset`];
 /// 2. the muxer is the named one, which may be any installed, or else the
-///    first bundled, then user, muxer writing `output`'s extension;
+///    base's, or else the first bundled, then user, muxer writing
+///    `output`'s extension;
 /// 3. the video encoder is the named one, which must write a codec the
-///    muxer takes, or else the first available one writing the muxer's
-///    default video codec, from the muxer's plugin, then bundled, then
-///    user plugins;
+///    muxer takes, or else the base's, or else the first available one
+///    writing the muxer's default video codec, from the muxer's plugin,
+///    then bundled, then user plugins;
 /// 4. the audio encoder likewise, against the default audio codec, or none
-///    for [`AudioChoice::None`] or a muxer that takes no audio;
+///    for [`AudioChoice::None`], a base leaving the audio out, or a muxer
+///    that takes no audio;
 /// 5. each chosen component must be described as available;
 /// 6. options are read by each field's type and validated against the
-///    schema the description brought; the muxer takes its defaults.
+///    schema the description brought, over the base's options for its own
+///    encoder; the muxer takes its defaults.
+///
+/// A base's component that cannot be used falls back to the default, and
+/// a base's value the schema does not take is left out, each with a
+/// warning in [`ResolvedOutput::warnings`]; the choice's own values stay
+/// strict. The preset's lookup warnings come first, and a project
+/// `default` naming a project plugin's component warns that it does.
 ///
 /// `describe` answers what plugin `plugin` (an index into `registry`) says
 /// of its components; it is asked at most once per plugin. A project
-/// plugin's components are chosen only when named, or as the encoders of
-/// a named project muxer.
+/// plugin's components are chosen only when named (a preset names them),
+/// or as the encoders of a named project muxer.
 pub fn resolve_output(
     choice: &OutputChoice,
     output: &Path,
     registry: &MediaRegistry,
+    presets: &PresetLookup,
     describe: &mut dyn FnMut(usize) -> Arc<PluginDescription>,
 ) -> Result<ResolvedOutput, ExportError> {
-    if let Some(name) = &choice.preset {
-        return Err(ExportError::UnknownPreset {
-            name: name.clone(),
-            default_in: None,
-        });
+    let find = |name: &str, default_in: Option<PathBuf>| {
+        presets
+            .find(name)?
+            .ok_or_else(|| ExportError::UnknownPreset {
+                name: name.to_owned(),
+                default_in,
+            })
+    };
+    let (found, by_default) = match &choice.preset {
+        Some(name) => (Some(find(name, None)?), false),
+        None if names_no_component(choice) => match presets.project_default()? {
+            Some(name) => (Some(find(&name, presets.project.clone())?), true),
+            None => (None, false),
+        },
+        None => (None, false),
+    };
+    let Some(FoundPreset {
+        preset,
+        mut warnings,
+        ..
+    }) = found
+    else {
+        return resolve_preset_output(choice, None, output, registry, describe);
+    };
+    let name = preset.name.as_str();
+    let mut resolved = resolve_preset_output(
+        choice,
+        Some((name, &preset.output)),
+        output,
+        registry,
+        describe,
+    )?;
+    warnings.append(&mut resolved.warnings);
+    if by_default {
+        let used = [
+            Some((resolved.muxer.plugin, &resolved.muxer.reference)),
+            Some((resolved.video.plugin, &resolved.video.reference)),
+            resolved
+                .audio
+                .as_ref()
+                .map(|audio| (audio.plugin, &audio.reference)),
+        ];
+        for (plugin, reference) in used.into_iter().flatten() {
+            if registry.plugin(plugin).origin == MediaOrigin::Project {
+                warnings.push(format!(
+                    "the project's default preset `{name}` uses {reference}, from the project's plugin {}",
+                    reference.plugin
+                ));
+            }
+        }
     }
+    resolved.warnings = warnings;
+    Ok(resolved)
+}
+
+/// Whether `choice` leaves every component to the defaults, so a project's
+/// `default` preset applies.
+fn names_no_component(choice: &OutputChoice) -> bool {
+    choice.muxer.is_none()
+        && choice.video.component.is_none()
+        && matches!(&choice.audio, AudioChoice::Encode(audio) if audio.component.is_none())
+}
+
+/// [`resolve_output`] with the base already found: `base` is (the name
+/// warnings use, the preset), and `choice.preset` is not read. Steps 2–6
+/// are [`resolve_output`]'s.
+pub fn resolve_preset_output(
+    choice: &OutputChoice,
+    base: Option<(&str, &PresetOutput)>,
+    output: &Path,
+    registry: &MediaRegistry,
+    describe: &mut dyn FnMut(usize) -> Arc<PluginDescription>,
+) -> Result<ResolvedOutput, ExportError> {
+    let (name, base) = match base {
+        Some((name, base)) => (name, Some(base)),
+        None => ("", None),
+    };
     let components = registry.components();
     let mut descriptions = Descriptions {
         describe,
         asked: HashMap::new(),
     };
+    let mut warnings = Vec::new();
 
-    let muxer = match &choice.muxer {
-        Some(reference) => named(&components, reference, ComponentKind::Muxer)?,
+    let muxer = match (&choice.muxer, base.and_then(|base| base.muxer.as_deref())) {
+        (Some(reference), _) => Some(named(&components, reference, ComponentKind::Muxer)?),
+        (None, Some(text)) => fallback(
+            &mut warnings,
+            name,
+            text,
+            preset_component(
+                &components,
+                text,
+                ComponentKind::Muxer,
+                None,
+                &mut descriptions,
+            ),
+        ),
+        (None, None) => None,
+    };
+    let named_muxer = muxer.is_some();
+    let muxer = match muxer {
+        Some(muxer) => muxer,
         None => default_muxer(&components, output)?,
     };
     let ComponentEntry::Muxer(entry) = &muxer.entry else {
         unreachable!("a muxer's entry is a muxer's");
     };
+    if named_muxer {
+        warnings.extend(extension_warning(muxer, entry, output));
+    }
 
-    let video = match &choice.video.component {
-        Some(reference) => {
+    let base_video = base.and_then(|base| base.video.as_ref());
+    let video = match (
+        &choice.video.component,
+        base_video.and_then(|video| video.component.as_deref()),
+    ) {
+        (Some(reference), _) => {
             let video = named(&components, reference, ComponentKind::VideoEncoder)?;
             check_writes(video, muxer, &entry.video)?;
-            video
+            Some(video)
         }
+        (None, Some(text)) => fallback(
+            &mut warnings,
+            name,
+            text,
+            preset_component(
+                &components,
+                text,
+                ComponentKind::VideoEncoder,
+                Some((muxer, &entry.video)),
+                &mut descriptions,
+            ),
+        ),
+        (None, None) => None,
+    };
+    let video = match video {
+        Some(video) => video,
         None => {
             let codec = entry.default_video.as_ref().or(entry.video.first());
             default_encoder(
@@ -207,10 +337,54 @@ pub fn resolve_output(
     };
 
     let accepted_audio = entry.audio.as_ref().filter(|audio| !audio.is_empty());
-    let audio = match (&choice.audio, accepted_audio) {
-        (AudioChoice::None, _) => None,
-        (AudioChoice::Encode(encoder), accepted) => {
-            let audio = match (&encoder.component, accepted) {
+    let base_audio = base.and_then(|base| base.audio.as_ref());
+    let audio = match &choice.audio {
+        AudioChoice::None => None,
+        AudioChoice::Encode(encoder)
+            if encoder.component.is_none() && matches!(base_audio, Some(PresetAudio::None(_))) =>
+        {
+            if !encoder.options.is_empty() {
+                warnings.push(format!(
+                    "audio options are ignored: preset `{name}` leaves the audio out"
+                ));
+            }
+            None
+        }
+        AudioChoice::Encode(encoder) => {
+            let preset_text = match base_audio {
+                Some(PresetAudio::Encode(audio)) => audio.component.as_deref(),
+                _ => None,
+            };
+            let chosen = match (&encoder.component, preset_text) {
+                (Some(reference), _) => {
+                    let audio = named(&components, reference, ComponentKind::AudioEncoder)?;
+                    let Some(accepted) = accepted_audio else {
+                        return Err(ExportError::IncompatibleComponents {
+                            component: audio.reference.clone(),
+                            muxer: muxer.reference.clone(),
+                            reason: format!("{} takes no audio", muxer.reference),
+                        });
+                    };
+                    check_writes(audio, muxer, accepted)?;
+                    Some(audio)
+                }
+                (None, Some(text)) => {
+                    let found = match accepted_audio {
+                        None => Err(format!("{} takes no audio", muxer.reference)),
+                        Some(accepted) => preset_component(
+                            &components,
+                            text,
+                            ComponentKind::AudioEncoder,
+                            Some((muxer, accepted)),
+                            &mut descriptions,
+                        ),
+                    };
+                    fallback(&mut warnings, name, text, found)
+                }
+                (None, None) => None,
+            };
+            let audio = match (chosen, accepted_audio) {
+                (Some(audio), _) => Some(audio),
                 // Options for an encoder the output does not have would be
                 // dropped unchecked, typos and all.
                 (None, None) => match encoder.options.keys().next() {
@@ -226,19 +400,6 @@ pub fn resolve_output(
                     }
                     None => None,
                 },
-                (Some(reference), None) => {
-                    let audio = named(&components, reference, ComponentKind::AudioEncoder)?;
-                    return Err(ExportError::IncompatibleComponents {
-                        component: audio.reference.clone(),
-                        muxer: muxer.reference.clone(),
-                        reason: format!("{} takes no audio", muxer.reference),
-                    });
-                }
-                (Some(reference), Some(accepted)) => {
-                    let audio = named(&components, reference, ComponentKind::AudioEncoder)?;
-                    check_writes(audio, muxer, accepted)?;
-                    Some(audio)
-                }
                 (None, Some(accepted)) => {
                     let codec = entry.default_audio.as_ref().or(accepted.first());
                     Some(default_encoder(
@@ -266,18 +427,122 @@ pub fn resolve_output(
         reference: muxer.reference.clone(),
         name: muxer.name.clone(),
         entry: entry.clone(),
-        settings: settings(muxer, &muxer_description, &BTreeMap::new())?,
+        settings: settings(
+            muxer,
+            &muxer_description,
+            &BTreeMap::new(),
+            None,
+            &mut warnings,
+        )?,
         schema: muxer_description.settings,
     };
-    let video = resolved_encoder(video, video_description, &choice.video)?;
+    let video_base = preset_options(base_video, &choice.video, video).map(|base| (name, base));
+    let video = resolved_encoder(
+        video,
+        video_description,
+        &choice.video,
+        video_base,
+        &mut warnings,
+    )?;
+    let base_audio = match base_audio {
+        Some(PresetAudio::Encode(audio)) => Some(audio),
+        _ => None,
+    };
     let audio = audio
-        .map(|(audio, encoder, description)| resolved_encoder(audio, description, encoder))
+        .map(|(audio, encoder, description)| {
+            let base = preset_options(base_audio, encoder, audio).map(|base| (name, base));
+            resolved_encoder(audio, description, encoder, base, &mut warnings)
+        })
         .transpose()?;
     Ok(ResolvedOutput {
         muxer,
         video,
         audio,
+        warnings,
     })
+}
+
+/// The `kind` component a preset names as `text`, or why it cannot be
+/// used: not a reference, not installed, not of that kind, not writing a
+/// codec `accepted`'s muxer takes, or described unavailable.
+fn preset_component<'a>(
+    components: &'a [MediaComponentInfo],
+    text: &str,
+    kind: ComponentKind,
+    accepted: Option<(&MediaComponentInfo, &[String])>,
+    descriptions: &mut Descriptions<'_>,
+) -> Result<&'a MediaComponentInfo, String> {
+    let reason = |error: ExportError| match error {
+        ExportError::ComponentUnavailable { reason, .. }
+        | ExportError::IncompatibleComponents { reason, .. } => reason,
+        other => other.to_string(),
+    };
+    let reference: ComponentRef = text
+        .parse()
+        .map_err(|_| "not a component reference".to_owned())?;
+    let component = named(components, &reference, kind).map_err(reason)?;
+    if let Some((muxer, accepted)) = accepted {
+        check_writes(component, muxer, accepted).map_err(reason)?;
+    }
+    descriptions.available(component).map_err(reason)?;
+    Ok(component)
+}
+
+/// `found`, or `None` with the warning that preset `name`'s `text` falls
+/// back to the default.
+fn fallback<'a>(
+    warnings: &mut Vec<String>,
+    name: &str,
+    text: &str,
+    found: Result<&'a MediaComponentInfo, String>,
+) -> Option<&'a MediaComponentInfo> {
+    match found {
+        Ok(component) => Some(component),
+        Err(reason) => {
+            warnings.push(format!(
+                "preset `{name}`: {text} is unavailable ({reason}); using the default instead"
+            ));
+            None
+        }
+    }
+}
+
+/// The warning for a named or preset `muxer` that does not list `output`'s
+/// extension; `None` when it does or `output` has none.
+fn extension_warning(
+    muxer: &MediaComponentInfo,
+    entry: &MediaMuxerEntry,
+    output: &Path,
+) -> Option<String> {
+    let extension = output.extension()?.to_str()?;
+    let writes = entry
+        .extensions
+        .iter()
+        .any(|written| written.eq_ignore_ascii_case(extension));
+    (!writes).then(|| {
+        format!(
+            "{} does not write .{extension} files; the file is written as {} anyway",
+            muxer.reference, muxer.name
+        )
+    })
+}
+
+/// The base's options that apply to `component`: its own encoder's, when
+/// `component` is the one the base names, or when neither the base nor the
+/// choice names one.
+fn preset_options<'a>(
+    base: Option<&'a PresetEncoder>,
+    choice: &EncoderChoice,
+    component: &MediaComponentInfo,
+) -> Option<&'a Settings> {
+    let base = base?;
+    let applies = match &base.component {
+        Some(text) => text
+            .parse::<ComponentRef>()
+            .is_ok_and(|reference| reference == component.reference),
+        None => choice.component.is_none(),
+    };
+    applies.then_some(&base.options)
 }
 
 /// Each plugin's description, asked of `describe` once.
@@ -485,13 +750,15 @@ fn resolved_encoder(
     component: &MediaComponentInfo,
     description: ComponentDescription,
     choice: &EncoderChoice,
+    base: Option<(&str, &Settings)>,
+    warnings: &mut Vec<String>,
 ) -> Result<ResolvedEncoder, ExportError> {
     Ok(ResolvedEncoder {
         plugin: component.plugin,
         reference: component.reference.clone(),
         name: component.name.clone(),
         codecs: codecs(component).to_vec(),
-        settings: settings(component, &description, &choice.options)?,
+        settings: settings(component, &description, &choice.options, base, warnings)?,
         schema: description.settings,
         input_formats: description.input_formats,
         transports: description.transports,
@@ -499,11 +766,15 @@ fn resolved_encoder(
 }
 
 /// `options` read by each field's type (text) or as given (values), then
-/// validated against `description`'s schema.
+/// validated against `description`'s schema: alone, or layered over
+/// `base`'s options (the preset's name, its options) once those the schema
+/// does not take are left out, each with a warning.
 fn settings(
     component: &MediaComponentInfo,
     description: &ComponentDescription,
     options: &BTreeMap<String, SettingInput>,
+    base: Option<(&str, &Settings)>,
+    warnings: &mut Vec<String>,
 ) -> Result<Settings, ExportError> {
     let schema = &description.settings;
     let invalid = |error: InvalidSetting| ExportError::InvalidOption {
@@ -521,12 +792,25 @@ fn settings(
             Ok((key.clone(), value))
         })
         .collect::<Result<Settings, ExportError>>()?;
-    validate(schema, &given).map_err(invalid)
+    let Some((name, base)) = base else {
+        return validate(schema, &given).map_err(invalid);
+    };
+    let (kept, dropped) = sanitize(schema, base);
+    let reference = &component.reference;
+    for InvalidSetting { key, message } in dropped {
+        warnings.push(if schema.iter().any(|field| field.key == key) {
+            format!("preset `{name}`: {reference} {key} {message}; using its default")
+        } else {
+            format!("preset `{name}`: {reference} has no setting `{key}`; it is left out")
+        });
+    }
+    layer(schema, &kept, &given).map_err(invalid)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::presets::{PresetLookup, PresetsFile};
     use crate::report::{self, HintStyle};
     use celesta_media::{MediaError, RegisteredPlugin, SelectOption};
     use celesta_plugin_host::{MediaAudioEncoderEntry, MediaManifest, MediaVideoEncoderEntry};
@@ -742,10 +1026,20 @@ mod tests {
         choice: &OutputChoice,
         output: &str,
     ) -> Result<ResolvedOutput, ExportError> {
+        resolve_with(registry, choice, output, &PresetLookup::default())
+    }
+
+    fn resolve_with(
+        registry: &MediaRegistry,
+        choice: &OutputChoice,
+        output: &str,
+        presets: &PresetLookup,
+    ) -> Result<ResolvedOutput, ExportError> {
         resolve_output(
             choice,
             Path::new(output),
             registry,
+            presets,
             &mut describer(registry, &[]),
         )
     }
@@ -977,6 +1271,7 @@ mod tests {
                 &choice,
                 Path::new("film.mp4"),
                 &bundled_only,
+                &PresetLookup::default(),
                 &mut describer(&bundled_only, &[("b/x264", reason)]),
             )
             .unwrap_err();
@@ -993,6 +1288,7 @@ mod tests {
             &OutputChoice::default(),
             Path::new("film.mp4"),
             &registry,
+            &PresetLookup::default(),
             &mut describer(&registry, &[("b/x264", reason)]),
         )
         .unwrap();
@@ -1003,6 +1299,7 @@ mod tests {
             &OutputChoice::default(),
             Path::new("film.mp4"),
             &registry,
+            &PresetLookup::default(),
             &mut describer(&registry, &[("b/mp4", "broken")]),
         )
         .unwrap_err();
@@ -1022,6 +1319,7 @@ mod tests {
             &OutputChoice::default(),
             Path::new("film.mp4"),
             &registry,
+            &PresetLookup::default(),
             &mut |plugin| {
                 asked.push(plugin);
                 inner(plugin)
@@ -1168,6 +1466,388 @@ mod tests {
                 "Tune film",
                 "No Fast start"
             ]
+        );
+    }
+
+    /// A presets file holding `presets` (JSON), and `default` when given.
+    fn presets_file(presets: serde_json::Value, default: Option<&str>) -> PresetsFile {
+        let mut file: PresetsFile =
+            serde_json::from_value(json!({ "version": 1, "presets": presets })).unwrap();
+        file.default = default.map(str::to_owned);
+        file
+    }
+
+    /// The project and user files, written into a new folder, as a lookup.
+    fn lookup(
+        project: Option<PresetsFile>,
+        user: Option<PresetsFile>,
+    ) -> (tempfile::TempDir, PresetLookup) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut lookup = PresetLookup::default();
+        for (file, name, slot) in [
+            (project, "project.json", &mut lookup.project),
+            (user, "user.json", &mut lookup.user),
+        ] {
+            let path = dir.path().join(name);
+            if let Some(file) = file {
+                file.save(&path).unwrap();
+            }
+            *slot = Some(path);
+        }
+        (dir, lookup)
+    }
+
+    /// A user file holding `presets`.
+    fn user_presets(presets: serde_json::Value) -> (tempfile::TempDir, PresetLookup) {
+        lookup(None, Some(presets_file(presets, None)))
+    }
+
+    /// `web`: `b/mp4`, `b/x264` at CRF 20 and `slow`, no audio.
+    fn web() -> serde_json::Value {
+        json!({ "name": "web", "muxer": "b/mp4",
+            "video": { "component": "b/x264", "options": { "crf": 20, "preset": "slow" } },
+            "audio": "none" })
+    }
+
+    fn named_preset(name: &str) -> OutputChoice {
+        OutputChoice {
+            preset: Some(name.into()),
+            ..OutputChoice::default()
+        }
+    }
+
+    fn num(value: f64) -> SettingValue {
+        SettingValue::Number(value)
+    }
+
+    fn string(value: &str) -> SettingValue {
+        SettingValue::String(value.into())
+    }
+
+    #[test]
+    fn a_named_preset_is_the_base() {
+        let registry = all();
+        let (_dir, presets) = user_presets(json!([web()]));
+        let resolved = resolve_with(&registry, &named_preset("web"), "film.mov", &presets).unwrap();
+        assert_eq!(resolved.muxer.reference, reference("b/mp4"));
+        assert_eq!(resolved.video.reference, reference("b/x264"));
+        assert_eq!(resolved.video.settings["crf"], num(20.0));
+        assert_eq!(resolved.video.settings["preset"], string("slow"));
+        assert_eq!(resolved.audio, None);
+    }
+
+    #[test]
+    fn explicit_choices_layer_over_the_preset() {
+        let registry = all();
+        let (_dir, presets) = user_presets(json!([web()]));
+        let mut choice = with_video_options(&[("crf", text("22"))]);
+        choice.preset = Some("web".into());
+        let resolved = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.settings["crf"], num(22.0));
+        assert_eq!(resolved.video.settings["preset"], string("slow"));
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+
+        // Another encoder drops the preset's options without a warning.
+        let mut choice = with_video("u/h264");
+        choice.preset = Some("web".into());
+        let resolved = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.reference, reference("u/h264"));
+        assert!(resolved.video.settings.is_empty());
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+
+        // An explicit audio encoder replaces the preset's "none".
+        let mut choice = with_audio("b/aac");
+        choice.preset = Some("web".into());
+        let resolved = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap();
+        assert_eq!(
+            resolved.audio.map(|audio| audio.reference),
+            Some(reference("b/aac"))
+        );
+    }
+
+    #[test]
+    fn a_presets_options_without_a_component_go_to_the_default_encoder() {
+        let registry = all();
+        let (_dir, presets) =
+            user_presets(json!([{ "name": "crf", "video": { "options": { "crf": 20 } } }]));
+        let resolved = resolve_with(&registry, &named_preset("crf"), "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.reference, reference("b/x264"));
+        assert_eq!(resolved.video.settings["crf"], num(20.0));
+
+        // Not to an encoder the choice names.
+        let mut choice = with_video("u/h264");
+        choice.preset = Some("crf".into());
+        let resolved = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap();
+        assert!(resolved.video.settings.is_empty());
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+    }
+
+    #[test]
+    fn stale_preset_values_warn_and_reset() {
+        let registry = all();
+        let (_dir, presets) = user_presets(json!([{ "name": "old",
+            "video": { "component": "b/x264", "options": { "crf": 99, "speed": 1 } } }]));
+        let resolved = resolve_with(&registry, &named_preset("old"), "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.settings["crf"], num(18.0));
+        assert_eq!(
+            resolved.warnings,
+            [
+                "preset `old`: b/x264 crf must be at most 51; using its default",
+                "preset `old`: b/x264 has no setting `speed`; it is left out",
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_values_stay_strict_over_a_preset() {
+        let registry = all();
+        let (_dir, presets) = user_presets(json!([web()]));
+        let mut choice = with_video_options(&[("crf", text("99"))]);
+        choice.preset = Some("web".into());
+        let error = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap_err();
+        assert!(
+            matches!(&error, ExportError::InvalidOption { component, key, .. }
+                if *component == reference("b/x264") && key == "crf"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_gone_preset_component_falls_back() {
+        let registry = all();
+        let stale = |video: &str| {
+            json!({ "name": "stale",
+                "video": { "component": video, "options": { "crf": 20 } } })
+        };
+        let (_dir, presets) = user_presets(json!([stale("b/gone")]));
+        let resolved =
+            resolve_with(&registry, &named_preset("stale"), "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.reference, reference("b/x264"));
+        // The preset's options went with its encoder.
+        assert_eq!(resolved.video.settings["crf"], num(18.0));
+        assert_eq!(
+            resolved.warnings,
+            ["preset `stale`: b/gone is unavailable (not installed); using the default instead"]
+        );
+
+        let (_dir, presets) = user_presets(json!([stale("nonsense")]));
+        let resolved =
+            resolve_with(&registry, &named_preset("stale"), "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.reference, reference("b/x264"));
+        assert_eq!(
+            resolved.warnings,
+            [
+                "preset `stale`: nonsense is unavailable (not a component reference); using the default instead"
+            ]
+        );
+
+        let (_dir, presets) = user_presets(json!([stale("b/vp9")]));
+        let resolved =
+            resolve_with(&registry, &named_preset("stale"), "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.reference, reference("b/x264"));
+        assert_eq!(
+            resolved.warnings,
+            [
+                "preset `stale`: b/vp9 is unavailable (it writes vp09, and b/mp4 takes avc1); using the default instead"
+            ]
+        );
+
+        let (_dir, presets) = user_presets(json!([stale("b/x264")]));
+        let reason = "this FFmpeg build has no libx264";
+        let resolved = resolve_output(
+            &named_preset("stale"),
+            Path::new("film.mp4"),
+            &registry,
+            &presets,
+            &mut describer(&registry, &[("b/x264", reason)]),
+        )
+        .unwrap();
+        assert_eq!(resolved.video.reference, reference("u/h264"));
+        assert!(resolved.video.settings.is_empty());
+        assert_eq!(
+            resolved.warnings,
+            [format!(
+                "preset `stale`: b/x264 is unavailable ({reason}); using the default instead"
+            )]
+        );
+
+        // A muxer too.
+        let (_dir, presets) = user_presets(json!([{ "name": "stale", "muxer": "b/x264" }]));
+        let resolved =
+            resolve_with(&registry, &named_preset("stale"), "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.muxer.reference, reference("b/mp4"));
+        assert_eq!(
+            resolved.warnings,
+            ["preset `stale`: b/x264 is unavailable (not a muxer); using the default instead"]
+        );
+    }
+
+    #[test]
+    fn a_preset_muxer_against_another_extension_warns() {
+        let registry = all();
+        let (_dir, presets) = user_presets(json!([web()]));
+        let resolved = resolve_with(&registry, &named_preset("web"), "film.mov", &presets).unwrap();
+        assert_eq!(
+            resolved.warnings,
+            ["b/mp4 does not write .mov files; the file is written as MP4 anyway"]
+        );
+        let resolved = resolve_with(&registry, &named_preset("web"), "film.mp4", &presets).unwrap();
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+
+        // A named muxer warns the same; one chosen by the extension never does.
+        let choice = OutputChoice {
+            muxer: Some(reference("b/mp4")),
+            ..OutputChoice::default()
+        };
+        let resolved = resolve(&registry, &choice, "film.MOV").unwrap();
+        assert_eq!(
+            resolved.warnings,
+            ["b/mp4 does not write .MOV files; the file is written as MP4 anyway"]
+        );
+        let resolved = resolve(&registry, &OutputChoice::default(), "film.mp4").unwrap();
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+    }
+
+    #[test]
+    fn the_project_default_applies_without_components() {
+        let registry = all();
+        let (_dir, presets) = lookup(Some(presets_file(json!([web()]), Some("web"))), None);
+        let resolved =
+            resolve_with(&registry, &OutputChoice::default(), "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.settings["crf"], num(20.0));
+        assert_eq!(resolved.video.settings["preset"], string("slow"));
+        assert_eq!(resolved.audio, None);
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+
+        let resolved = resolve_with(
+            &registry,
+            &with_video_options(&[("crf", text("22"))]),
+            "film.mp4",
+            &presets,
+        )
+        .unwrap();
+        assert_eq!(resolved.video.settings["crf"], num(22.0));
+        assert_eq!(resolved.video.settings["preset"], string("slow"));
+        assert_eq!(resolved.audio, None);
+
+        // `--audio-encoder none` names a component: no default preset.
+        let choice = OutputChoice {
+            audio: AudioChoice::None,
+            ..OutputChoice::default()
+        };
+        let resolved = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.settings["crf"], num(18.0));
+        assert_eq!(resolved.video.settings["preset"], string("medium"));
+        for choice in [
+            with_video("b/x264"),
+            with_audio("b/aac"),
+            OutputChoice {
+                muxer: Some(reference("b/mp4")),
+                ..OutputChoice::default()
+            },
+        ] {
+            let resolved = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap();
+            assert_eq!(resolved.video.settings["crf"], num(18.0), "{choice:?}");
+        }
+    }
+
+    #[test]
+    fn a_project_default_naming_a_project_component_warns() {
+        let registry = all();
+        let local = json!([{ "name": "local", "muxer": "p/mp4",
+            "video": { "component": "p/h264" }, "audio": { "component": "p/aac" } }]);
+        let (_dir, presets) = lookup(Some(presets_file(local, Some("local"))), None);
+        let components = |resolved: &ResolvedOutput| {
+            (
+                resolved.muxer.reference.clone(),
+                resolved.video.reference.clone(),
+                resolved.audio.as_ref().map(|audio| audio.reference.clone()),
+            )
+        };
+        let expected = (
+            reference("p/mp4"),
+            reference("p/h264"),
+            Some(reference("p/aac")),
+        );
+        let resolved =
+            resolve_with(&registry, &OutputChoice::default(), "film.mp4", &presets).unwrap();
+        assert_eq!(components(&resolved), expected);
+        assert_eq!(
+            resolved.warnings,
+            [
+                "the project's default preset `local` uses p/mp4, from the project's plugin p",
+                "the project's default preset `local` uses p/h264, from the project's plugin p",
+                "the project's default preset `local` uses p/aac, from the project's plugin p",
+            ]
+        );
+
+        let resolved =
+            resolve_with(&registry, &named_preset("local"), "film.mp4", &presets).unwrap();
+        assert_eq!(components(&resolved), expected);
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+    }
+
+    #[test]
+    fn a_missing_default_is_unknown_preset() {
+        let registry = all();
+        let (dir, presets) = lookup(Some(presets_file(json!([]), Some("gone"))), None);
+        let error =
+            resolve_with(&registry, &OutputChoice::default(), "film.mp4", &presets).unwrap_err();
+        let project = dir.path().join("project.json");
+        assert!(
+            matches!(&error, ExportError::UnknownPreset { name, default_in: Some(path) }
+                if name == "gone" && *path == project),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_name_is_still_unknown_preset() {
+        let registry = all();
+        let (_dir, with_files) = user_presets(json!([web()]));
+        for presets in [PresetLookup::default(), with_files] {
+            let error = resolve_with(&registry, &named_preset("ultrafast"), "film.mp4", &presets)
+                .unwrap_err();
+            assert!(
+                matches!(&error, ExportError::UnknownPreset { name, default_in: None }
+                    if name == "ultrafast"),
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shadow_warning_reaches_the_resolved_output() {
+        let registry = all();
+        let x = || json!([{ "name": "x", "muxer": "b/mp4" }]);
+        let (_dir, presets) = lookup(Some(presets_file(x(), None)), Some(presets_file(x(), None)));
+        let resolved = resolve_with(&registry, &named_preset("x"), "film.mov", &presets).unwrap();
+        assert_eq!(
+            resolved.warnings,
+            [
+                "the project's preset `x` hides the user preset of the same name",
+                "b/mp4 does not write .mov files; the file is written as MP4 anyway",
+            ]
+        );
+    }
+
+    #[test]
+    fn audio_options_without_audio_are_ignored() {
+        let registry = all();
+        let (_dir, presets) = user_presets(json!([web()]));
+        let choice = OutputChoice {
+            preset: Some("web".into()),
+            audio: AudioChoice::Encode(EncoderChoice {
+                component: None,
+                options: [("bitrate".to_owned(), text("1"))].into(),
+            }),
+            ..OutputChoice::default()
+        };
+        let resolved = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.audio, None);
+        assert_eq!(
+            resolved.warnings,
+            ["audio options are ignored: preset `web` leaves the audio out"]
         );
     }
 }

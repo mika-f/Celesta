@@ -19,8 +19,8 @@ use celesta_exporter::report::{self, HintStyle};
 use celesta_exporter::{
     AudioChoice, AudioLoudness, ContactSheet, EncoderChoice, ExportCancellation, ExportError,
     ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
-    LoudnessTarget, OutputChoice, PeakHandling, ReactRuntimeOptions, RenderQuality, SettingInput,
-    StillExport, StillFormat, parse_timecode,
+    LoudnessTarget, OutputChoice, PeakHandling, PresetLookup, ReactRuntimeOptions, RenderQuality,
+    SettingInput, StillExport, StillFormat, parse_timecode,
 };
 use celesta_media::{ComponentRef, SettingKind, SettingValue};
 use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
@@ -985,6 +985,7 @@ fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
                 &cli.plugin_dir,
                 &cli.allow_plugin,
             )),
+            presets: PresetLookup::default(),
         },
     }
 }

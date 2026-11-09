@@ -1,3 +1,4 @@
+use crate::presets::PresetLookup;
 use crate::range::ExportRange;
 use crate::{GpuDriver, RenderQuality};
 use celesta_media::{ComponentRef, LoudnessTarget, SettingValue};
@@ -48,6 +49,11 @@ pub struct ExportOptions {
     /// [`InstalledPlugins::find`]); a caller that already discovered them,
     /// as the editor and `--plugin-dir` do, passes its set.
     pub plugins: Option<InstalledPlugins>,
+    /// The files [`OutputChoice::preset`] and a project's `default` preset
+    /// are looked up in. The default reads none, so a library caller is not
+    /// changed by a file in the user's home; the CLI, MCP, and the editor
+    /// set it from the export's source ([`PresetLookup::for_source`]).
+    pub presets: PresetLookup,
 }
 
 /// What an export writes its video with, before
@@ -57,7 +63,9 @@ pub struct ExportOptions {
 /// muxer's default encoders, with their default settings.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OutputChoice {
-    /// A preset's name. Presets arrive with P3: in P2a every name is
+    /// A preset's name, looked up in [`ExportOptions::presets`]: its
+    /// components and options are the base the rest of the choice goes
+    /// over. A name found in no file is
     /// [`ExportError::UnknownPreset`](crate::ExportError::UnknownPreset).
     pub preset: Option<String>,
     pub muxer: Option<ComponentRef>,
