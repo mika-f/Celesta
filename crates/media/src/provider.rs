@@ -350,8 +350,7 @@ pub struct Color {
 
 impl Color {
     /// BT.709 primaries, transfer, and matrix in limited range: what every
-    /// export says today, although P2a's encoders do not convert or tag by
-    /// it yet (deviation 8 of the media components spec).
+    /// export converts with and tags.
     pub fn bt709_limited() -> Self {
         Self {
             primaries: "bt709".to_owned(),
