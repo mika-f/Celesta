@@ -221,7 +221,8 @@ encoding process uses it as a ring ([Transport](#transport)).
 | `{"type":"decodeVideo","decoder","path","time","sequential"}` | `{"type":"videoFrame","width","height","slot"?}` + RGBA8 payload when not in the slot |
 | `{"type":"decodeAudio","decoder","path","sampleRate","channels"}` | `{"type":"audio","sampleRate","channels"}` + `f32` LE payload |
 
-The answers are those of protocol 1, plus `decoder`, the component's ID. A
+The requests gain `decoder`, the component's ID; the answers are those of
+protocol 1. A
 `probe` error with code `unsupported` means "not a file this decoder reads"
 and moves routing to the next candidate. Other errors keep today's codes
 (`notFound`, `noVideoStream`, `invalidTimestamp`, …).
@@ -481,6 +482,12 @@ it is chosen only by name or preset.
 `--json` gives `--list-components` and `--describe` machine-readable
 output.
 
+`--describe <plugin/id>` names no kind, while IDs are unique only per kind
+within a plugin ([Components](#components)). As built
+(`celesta_exporter::describe_component`), it looks the reference up as a
+muxer, then a video encoder, then an audio encoder, then a decoder, and
+the first match wins.
+
 - Removed: `--output-format` (the extension and `--muxer` decide), `--preset <x264 name>`, `--crf`, `--bit-depth`, and `--color-conversion` ([Pixel formats](#pixel-formats-and-color)).
 - `--loop` stays and means the loop pre-roll ([Audio](#audio)).
 - Stills keep `--frame` and their other flags. Their format comes from the extension, routed to the built-in image components (P4).
@@ -493,7 +500,10 @@ Both mirror the CLI: `{ preset?, presetFile?, muxer?, videoEncoder?: { id?, opti
 audioEncoder?: { id?, options? } | "none" }`, replacing `preset` / `crf` /
 `bitDepth` / `colorConversion` / `format`. They gain a
 `listComponents({ check? })` and a `describeComponent(id)`; MCP gets them as
-tools.
+tools. `describeComponent(id)` and MCP's `describe_component` carry no kind
+either and resolve `id` as `--describe` does (they run the same
+`describe_component`): muxer, video encoder, audio encoder, decoder, the
+first match winning.
 
 With no codec-neutral quality setting, a non-default export has to know the
 chosen encoder's own keys. Agents call `describeComponent` first. The Agent
@@ -605,6 +615,7 @@ program registers. In-process implementations (tests, benches, and
 
 - **Processes.** For an export, Celesta starts one process per plugin among the chosen components. FFmpeg's encoder, audio encoder, and muxer share one. An AVFoundation video encoder with FFmpeg's audio and muxer makes two.
 - **The ring.** Before starting the process that serves the video encoder, Celesta knows the frame size and the formats in the intersection of the encoder's `inputFormats` (from `describe`) and what the renderer can produce.
+  - As built, which `inputFormats` size it depends on the `describe` cache ([Capability discovery](#capability-discovery)): when the plugin's `describe` is not cached, the export's own process is started to describe it, before the encoder is chosen, so its ring is sized from the manifest's `inputFormats` (of all the plugin's video encoders); when it is cached, the process starts at the open, and the ring is sized from the chosen encoder's described `inputFormats`.
   - It creates a segment of `slots × slotBytes`, where `slotBytes` is the largest of those formats at the frame size, plus the header. `slots` is 3 by default.
   - It offers the segment at `hello` (#775's mechanism: inherited at spawn on Unix, `DuplicateHandle` on Windows) and declares the layout in `openVideoEncoder`'s `ring`.
   - Each slot is a seqlock region exactly as #775's slot: a generation, then the bytes. Offsets and capacities are Celesta's.
@@ -643,7 +654,7 @@ Deviations in P2b (`docs/handoff/2026-11-08-media-pipelining.md`):
 
   | Format | Layout |
   | --- | --- |
-  | `rgba8` | 8-bit RGBA; straight alpha, or opaque |
+  | `rgba8` | 8-bit RGBA, opaque (see Alpha; P4 may revisit this for 8-bit PNG and WebP with transparency) |
   | `rgba16` | 16-bit LE RGBA, straight alpha (today's `Rgba16Straight`) |
   | `yuv420p` | planar I420 |
   | `yuv420p10` | planar, 10 bits in 16-bit LE |
