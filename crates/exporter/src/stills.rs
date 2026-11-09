@@ -1,5 +1,5 @@
 use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, ExportedFile};
-use crate::encode::VIDEO_STAGE;
+use crate::encode::{VIDEO_STAGE, encoder_pixels, readback_for};
 use crate::error::{ExportError, FrameFailure};
 use crate::exporter::Exporter;
 use crate::media::with_builtin;
@@ -13,8 +13,8 @@ use crate::render::{
 use crate::still_output::{StillFiles, StillOutput};
 use celesta_composition::{Rational, Scene, Time};
 use celesta_evaluator::{EvaluationError, Evaluator};
-use celesta_gpu_renderer::{GpuFrame, GpuRenderer};
-use celesta_media::{MediaError, MediaRegistry, PixelFormat};
+use celesta_gpu_renderer::{GpuFrame, GpuRenderer, ReadbackFormat};
+use celesta_media::{MediaError, MediaRegistry, VideoEncoderOpened};
 use celesta_plugin_host::RESERVED_PLUGIN_ID;
 use celesta_project::Project;
 use celesta_react_bridge::ProjectFrame;
@@ -373,20 +373,18 @@ impl Destination {
         index: usize,
         frame: u64,
         rendered: GpuFrame,
-    ) -> Result<Option<ExportedFile>, ExportError> {
+    ) -> Result<Vec<ExportedFile>, ExportError> {
+        let size = (rendered.width(), rendered.height());
+        let pixels = encoder_pixels(
+            rendered.format(),
+            rendered.into_pixels(),
+            self.output.opened().input,
+        );
         match &mut self.layout {
-            Layout::Files => Ok(self
-                .output
-                .write(frame, rendered.into_pixels())?
-                .map(|path| ExportedFile::Frame { path, frame })),
+            Layout::Files => Ok(frame_files(self.output.write(frame, pixels)?)),
             Layout::Sheet(sheet) => sheet
-                .place(
-                    index,
-                    frame,
-                    rendered.pixels(),
-                    (rendered.width(), rendered.height()),
-                )
-                .map(|()| None)
+                .place(index, frame, &pixels, size)
+                .map(|()| Vec::new())
                 .map_err(invalid),
         }
     }
@@ -406,7 +404,7 @@ impl Destination {
     /// Writes the contact sheet of `frames`, or the one file of one frame,
     /// and finishes the components; returns the file it wrote, if any. A
     /// failure aborts them.
-    fn finish(mut self, frames: &[u64]) -> Result<Option<ExportedFile>, ExportError> {
+    fn finish(mut self, frames: &[u64]) -> Result<Vec<ExportedFile>, ExportError> {
         let columns = match &self.layout {
             Layout::Files => None,
             Layout::Sheet(sheet) => {
@@ -417,26 +415,32 @@ impl Destination {
                 Some(sheet.columns())
             }
         };
-        let Some(path) = self.output.finish()? else {
-            return Ok(None);
-        };
-        Ok(Some(match columns {
-            Some(columns) => ExportedFile::ContactSheet {
-                path,
-                frames: frames.to_vec(),
-                columns,
-            },
-            None => ExportedFile::Frame {
-                path,
-                frame: frames[0],
-            },
-        }))
+        let published = self.output.finish()?;
+        Ok(match columns {
+            Some(columns) => published
+                .into_iter()
+                .map(|(_, path)| ExportedFile::ContactSheet {
+                    path,
+                    frames: frames.to_vec(),
+                    columns,
+                })
+                .collect(),
+            None => frame_files(published),
+        })
     }
 
     /// Ends the components; files already published stay.
     fn abort(self) {
         self.output.abort();
     }
+}
+
+/// Published frame files as the files an export reports.
+fn frame_files(published: Vec<(u64, PathBuf)>) -> Vec<ExportedFile> {
+    published
+        .into_iter()
+        .map(|(frame, path)| ExportedFile::Frame { path, frame })
+        .collect()
 }
 
 /// Resolves deterministic image paths and validates all selections before rendering.
@@ -497,7 +501,7 @@ fn render_stills(
             return Err(error);
         }
     };
-    if let Some(file) = destination.finish(frames)? {
+    for file in destination.finish(frames)? {
         progress(ExportProgress::Wrote(file));
     }
     if failures.is_empty() {
@@ -523,25 +527,25 @@ fn render_frames(
 ) -> Result<Vec<FrameFailure>, ExportError> {
     let mut reported_warnings = ReportedWarnings::default();
     let mut failures = Vec::new();
-    let input = destination.output.opened().input;
+    let opened = *destination.output.opened();
     for (index, &frame) in frames.iter().enumerate() {
         ensure_not_cancelled(cancellation)?;
         progress(ExportProgress::Rendering {
             frame: index as u64 + 1,
             total: frames.len() as u64,
         });
-        let rendered = scene_at(frame).and_then(|scene| render_frame(renderer, &scene, input));
+        let rendered = scene_at(frame).and_then(|scene| render_frame(renderer, &scene, &opened));
         report_render_warnings(renderer, &mut reported_warnings, progress);
-        let file = match rendered {
+        let files = match rendered {
             Ok(rendered) => destination.accept(index, frame, rendered),
             Err(error) if error.is_frame_scoped() && destination.place_failed(index, frame) => {
                 failures.push(FrameFailure { frame, error });
-                Ok(None)
+                Ok(Vec::new())
             }
             Err(error) => Err(error),
         }
         .map_err(|error| cancellation.settle(error).at_frame(frame))?;
-        if let Some(file) = file {
+        for file in files {
             progress(ExportProgress::Wrote(file));
         }
     }
@@ -550,14 +554,15 @@ fn render_frames(
     Ok(failures)
 }
 
-/// Renders `scene` read back as `input`: `rgba8` as stills have always
-/// been rendered, any other format through the renderer's export readback.
+/// Renders `scene` in the readback the encoder's answer `opened` needs
+/// ([`readback_for`]): an opaque `rgba8` as stills have always been
+/// rendered, any other through the renderer's export readback.
 fn render_frame(
     renderer: &mut GpuRenderer,
     scene: &Scene,
-    input: PixelFormat,
+    opened: &VideoEncoderOpened,
 ) -> Result<GpuFrame, ExportError> {
-    if input == PixelFormat::Rgba8 {
+    if readback_for(opened)? == ReadbackFormat::Rgba8 {
         return renderer.render(scene).map_err(ExportError::Render);
     }
     // Nothing else is in flight, so the frame is the one `drain` returns.

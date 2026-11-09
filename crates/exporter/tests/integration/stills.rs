@@ -1098,9 +1098,10 @@ fn a_project_default_preset_never_reaches_stills() {
     assert_eq!(pixels(&output).len(), 36);
 }
 
-/// A 64x36, 4 fps, one-second project whose only layer, a red 64x36 image,
-/// covers the frame's top-left quadrant (images are centered on the canvas
-/// origin); nothing covers the rest.
+/// A 64x36, 4 fps, one-second project with a red 64x36 image covering the
+/// frame's top-left quadrant (images are centered on the canvas origin), and
+/// the same image at half opacity over its bottom-right quadrant; nothing
+/// covers the other two.
 fn half_covered_project(dir: &Path) -> PathBuf {
     let mut project = Project::load(root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.width = 64;
@@ -1153,9 +1154,32 @@ fn half_covered_project(dir: &Path) -> PathBuf {
             effects: None,
         }],
     });
+    project.tracks.push(
+        serde_json::from_value(serde_json::json!({
+            "id": "half",
+            "name": "Half",
+            "kind": "video",
+            "items": [{
+                "id": "half-red",
+                "range": {
+                    "start": { "value": 0, "timescale": 1 },
+                    "duration": { "value": 1, "timescale": 1 },
+                },
+                "content": { "type": "image", "asset": "red.png" },
+                "transform": { "position": { "x": 64, "y": 36 } },
+                "opacity": 0.5,
+            }],
+        }))
+        .unwrap(),
+    );
     let source = dir.join("project.celesta.json");
     std::fs::write(&source, serde_json::to_vec(&project).unwrap()).unwrap();
     source
+}
+
+/// Whether `pixel`, straight RGBA, is the half-opaque red.
+fn half_red(pixel: &[u8]) -> bool {
+    near(&pixel[..3], &[255, 0, 0], 1) && (127..=129).contains(&pixel[3])
 }
 
 /// Exports frame 0 of `source` to `output` in this process, with these
@@ -1190,8 +1214,12 @@ fn transparent_png_and_webp_keep_alpha() {
     let (width, height, pixels) = decode(&transparent);
     assert_eq!((width, height), (64, 36));
     assert_eq!(at(&pixels, 4, 8, 4), [255, 0, 0, 255]);
-    assert_eq!(at(&pixels, 4, 56, 30)[3], 0);
+    assert_eq!(at(&pixels, 4, 56, 4)[3], 0);
     assert_eq!(at(&pixels, 4, 8, 30)[3], 0);
+    // Partly transparent pixels keep their colour: straight, not
+    // premultiplied, alpha.
+    let half = at(&pixels, 4, 56, 30);
+    assert!(half_red(&half), "{half:?}");
 
     let opaque = dir.path().join("opaque.png");
     export_still_with(&source, &opaque, &[]);
@@ -1208,7 +1236,9 @@ fn transparent_png_and_webp_keep_alpha() {
     let (width, height, channels, pixels) = decode_webp(&transparent);
     assert_eq!((width, height, channels), (64, 36, 4));
     assert_eq!(at(&pixels, 4, 8, 4), [255, 0, 0, 255]);
-    assert_eq!(at(&pixels, 4, 56, 30)[3], 0);
+    assert_eq!(at(&pixels, 4, 56, 4)[3], 0);
+    let half = at(&pixels, 4, 56, 30);
+    assert!(half_red(&half), "{half:?}");
 
     let opaque = dir.path().join("opaque.webp");
     export_still_with(&source, &opaque, &[("lossless", "true")]);

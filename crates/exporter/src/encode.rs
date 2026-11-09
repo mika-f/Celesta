@@ -114,6 +114,45 @@ pub(crate) const fn readback_of(format: PixelFormat) -> ReadbackFormat {
     }
 }
 
+/// The renderer's readback for an encoder that answered `opened`: the one
+/// producing its input format, except that `rgba8` kept with alpha is read
+/// back as straight `rgba16` and narrowed ([`encoder_pixels`]), since the
+/// renderer's 8-bit readback is premultiplied and `rgba8` with alpha is
+/// straight.
+pub(crate) fn readback_for(opened: &VideoEncoderOpened) -> Result<ReadbackFormat, ExportError> {
+    if opened.alpha && opened.input == PixelFormat::Rgba8 {
+        Ok(ReadbackFormat::Rgba16Straight)
+    } else {
+        Ok(readback_of(opened.input))
+    }
+}
+
+/// A frame read back as `format`, as the `input` an encoder takes: straight
+/// `rgba16` narrowed to `rgba8` ([`narrow_rgba16`]) for one taking `rgba8`
+/// ([`readback_for`]); any other frame as it is.
+pub(crate) fn encoder_pixels(
+    format: ReadbackFormat,
+    pixels: Vec<u8>,
+    input: PixelFormat,
+) -> Vec<u8> {
+    if format == ReadbackFormat::Rgba16Straight && input == PixelFormat::Rgba8 {
+        narrow_rgba16(&pixels)
+    } else {
+        pixels
+    }
+}
+
+/// Little-endian 16-bit samples narrowed to 8 bits each, rounding to
+/// nearest.
+pub(crate) fn narrow_rgba16(pixels: &[u8]) -> Vec<u8> {
+    pixels
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&sample| ((u32::from(u16::from_le_bytes(sample)) * 255 + 32_767) / 65_535) as u8)
+        .collect()
+}
+
 /// `files` as they are once the staged output is published at `output`.
 /// A muxer that lists none wrote the output alone.
 pub(crate) fn published_files(files: Vec<PathBuf>, staged: &Path, output: &Path) -> Vec<PathBuf> {
@@ -245,6 +284,8 @@ struct VideoTrack {
     width: u32,
     height: u32,
     frame_rate: Rational,
+    /// The input format the encoder chose.
+    input: PixelFormat,
     alpha: bool,
     config: Option<TrackConfig>,
     frames_sent: u64,
@@ -825,6 +866,7 @@ impl ExportSession {
             width,
             height,
             frame_rate,
+            input: opened.input,
             alpha: opened.alpha,
             config: None,
             frames_sent: 0,
@@ -835,7 +877,22 @@ impl ExportSession {
 
     /// Encodes the next frame, read back in the encoder's input format.
     pub(crate) fn encode_frame(&mut self, frame: GpuFrame) -> Result<(), ExportError> {
-        self.encode_pixels(frame.into_pixels())
+        self.encode_readback(frame.format(), frame.into_pixels())
+    }
+
+    /// Encodes the next frame from `pixels` read back as `format`, as the
+    /// encoder's input ([`encoder_pixels`]).
+    fn encode_readback(
+        &mut self,
+        format: ReadbackFormat,
+        pixels: Vec<u8>,
+    ) -> Result<(), ExportError> {
+        let input = self.video.as_ref().map(|video| video.input);
+        let pixels = match input {
+            Some(input) => encoder_pixels(format, pixels, input),
+            None => pixels,
+        };
+        self.encode_pixels(pixels)
     }
 
     /// Sends the next frame's pixels, shown at `frames_sent × denominator`,
@@ -2058,6 +2115,86 @@ mod tests {
             ),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn straight_rgba16_narrows_to_rgba8_rounding_to_nearest() {
+        let samples: Vec<u8> = [0u16, 65_535, 32_896, 25_700, 128, 129, 65_150]
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        assert_eq!(narrow_rgba16(&samples), [0, 255, 128, 100, 0, 1, 254]);
+        // Only straight rgba16 for an rgba8 encoder is narrowed.
+        assert_eq!(
+            encoder_pixels(
+                ReadbackFormat::Rgba16Straight,
+                samples.clone(),
+                PixelFormat::Rgba8
+            ),
+            [0, 255, 128, 100, 0, 1, 254]
+        );
+        for (format, input) in [
+            (ReadbackFormat::Rgba8, PixelFormat::Rgba8),
+            (ReadbackFormat::Rgba16Straight, PixelFormat::Rgba16),
+        ] {
+            assert_eq!(encoder_pixels(format, samples.clone(), input), samples);
+        }
+        let opened = |input, alpha| VideoEncoderOpened {
+            session: SessionId(1),
+            input,
+            alpha,
+        };
+        assert_eq!(
+            readback_for(&opened(PixelFormat::Rgba8, true)).unwrap(),
+            ReadbackFormat::Rgba16Straight
+        );
+        assert_eq!(
+            readback_for(&opened(PixelFormat::Rgba8, false)).unwrap(),
+            ReadbackFormat::Rgba8
+        );
+        assert_eq!(
+            readback_for(&opened(PixelFormat::Rgba16, true)).unwrap(),
+            ReadbackFormat::Rgba16Straight
+        );
+        assert_eq!(
+            readback_for(&opened(PixelFormat::Yuv420p, false)).unwrap(),
+            ReadbackFormat::Yuv420p
+        );
+    }
+
+    #[test]
+    fn an_rgba8_encoder_keeping_alpha_gets_straight_8_bit_frames() {
+        let (mut session, log) = fake_session(Answers {
+            input: Some(PixelFormat::Rgba8),
+            alpha: true,
+            ..Answers::default()
+        });
+        let opened = open(&mut session);
+        assert_eq!(
+            readback_for(&opened).unwrap(),
+            ReadbackFormat::Rgba16Straight
+        );
+        // A 2x2 frame of half-transparent red, read back as straight rgba16.
+        let frame: Vec<u8> = [65_535u16, 0, 0, 32_896]
+            .repeat(4)
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        session
+            .encode_readback(ReadbackFormat::Rgba16Straight, frame)
+            .unwrap();
+        session.no_audio().unwrap();
+        session.finish().unwrap();
+        let written: Vec<Vec<u8>> = log_of(&log)
+            .into_iter()
+            .filter_map(|asked| match asked {
+                Asked::WritePackets(packets) => Some(packets),
+                _ => None,
+            })
+            .flatten()
+            .map(|packet| packet.packet.bytes)
+            .collect();
+        assert_eq!(written, [[255, 0, 0, 128].repeat(4)]);
     }
 
     #[test]

@@ -81,6 +81,8 @@ pub(crate) struct StillOutput {
     encoder: Option<SessionId>,
     muxer: Option<SessionId>,
     config: Option<TrackConfig>,
+    /// The last composition frame written to one file.
+    written: Option<u64>,
     size: (u32, u32),
     frame_rate: Rational,
     overwrite: bool,
@@ -326,6 +328,7 @@ impl StillOutput {
             encoder: Some(opened.session),
             muxer: None,
             config: None,
+            written: None,
             size,
             frame_rate,
             overwrite,
@@ -357,13 +360,16 @@ impl StillOutput {
 
     /// Encodes composition frame `frame` (shown at `frame` × the frame
     /// rate's denominator) from `pixels` in the encoder's input format and
-    /// writes it. A sequence's file is published now and returned; one file
-    /// stays staged until [`Self::finish`].
+    /// writes the packets the encoder gave for it. A sequence publishes the
+    /// file of each frame those packets carry, which an encoder that holds
+    /// frames back may make an earlier frame's, or none: the files
+    /// published, by composition frame, in packet order. One file stays
+    /// staged until [`Self::finish`].
     pub(crate) fn write(
         &mut self,
         frame: u64,
         pixels: Vec<u8>,
-    ) -> Result<Option<PathBuf>, ExportError> {
+    ) -> Result<Vec<(u64, PathBuf)>, ExportError> {
         let pts = i64::try_from(frame)
             .ok()
             .and_then(|frame| frame.checked_mul(i64::from(self.frame_rate.denominator)))
@@ -385,21 +391,25 @@ impl StillOutput {
                     .encode_video(session, pts, pixels)
             })
             .map_err(|source| self.error(VIDEO_STAGE, source))?;
-        self.mux(encoded)?;
-        match &self.staging {
-            Staging::One { .. } => Ok(None),
-            Staging::Sequence { .. } => self.publish_frame(frame).map(Some),
-        }
+        let frames = self.mux(encoded)?;
+        self.publish(frames)
     }
 
-    /// Writes `encoded`'s packets, opening the muxer with the first config.
-    fn mux(&mut self, encoded: Encoded) -> Result<(), ExportError> {
+    /// Writes `encoded`'s packets, opening the muxer with the first config:
+    /// the composition frames they carry, in packet order.
+    fn mux(&mut self, encoded: Encoded) -> Result<Vec<u64>, ExportError> {
         if self.config.is_none() {
             self.config = encoded.config;
         }
         if encoded.packets.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
+        let denominator = u64::from(self.frame_rate.denominator.max(1));
+        let frames: Vec<u64> = encoded
+            .packets
+            .iter()
+            .map(|packet| u64::try_from(packet.pts).unwrap_or(0) / denominator)
+            .collect();
         let session = match self.muxer {
             Some(session) => session,
             None => self.open_muxer()?,
@@ -418,7 +428,23 @@ impl StillOutput {
                     .ok_or_else(|| missing(&registry, plugin, "muxer"))?
                     .write_packets(session, &packets)
             })
-            .map_err(|source| self.error(MUXER_STAGE, source))
+            .map_err(|source| self.error(MUXER_STAGE, source))?;
+        Ok(frames)
+    }
+
+    /// Publishes the sequence's files of `frames`, just written, in order:
+    /// the files published. One file only notes the last frame written.
+    fn publish(&mut self, frames: Vec<u64>) -> Result<Vec<(u64, PathBuf)>, ExportError> {
+        if matches!(self.staging, Staging::One { .. }) {
+            if let Some(&last) = frames.last() {
+                self.written = Some(last);
+            }
+            return Ok(Vec::new());
+        }
+        frames
+            .into_iter()
+            .map(|frame| Ok((frame, self.publish_frame(frame)?)))
+            .collect()
     }
 
     fn open_muxer(&mut self) -> Result<SessionId, ExportError> {
@@ -503,27 +529,29 @@ impl StillOutput {
         Ok(name.clone())
     }
 
-    /// Flushes the encoder, finishes the muxer, and publishes one file,
-    /// which it returns; a sequence's files are all published already. A
-    /// failure aborts what is still open.
-    pub(crate) fn finish(mut self) -> Result<Option<PathBuf>, ExportError> {
-        match self.try_finish() {
-            Ok(()) => {}
+    /// Flushes the encoder, finishes the muxer, and publishes what is left:
+    /// one file, under the frame written to it, or the sequence's files of
+    /// the frames the flush gave, in packet order. A failure aborts what is
+    /// still open.
+    pub(crate) fn finish(mut self) -> Result<Vec<(u64, PathBuf)>, ExportError> {
+        let published = match self.try_finish() {
+            Ok(published) => published,
             Err(error) => {
                 self.abort();
                 return Err(error);
             }
-        }
+        };
         match self.staging {
             Staging::One { file, path } => {
                 output::publish(file, &path, self.overwrite, "publish image")?;
-                Ok(Some(path))
+                Ok(vec![(self.written.unwrap_or(0), path)])
             }
-            Staging::Sequence { .. } => Ok(None),
+            Staging::Sequence { .. } => Ok(published),
         }
     }
 
-    fn try_finish(&mut self) -> Result<(), ExportError> {
+    fn try_finish(&mut self) -> Result<Vec<(u64, PathBuf)>, ExportError> {
+        let mut published = Vec::new();
         if let Some(session) = self.encoder.take() {
             let plugin = self.resolved.video.plugin;
             let registry = self.registry.clone();
@@ -536,18 +564,8 @@ impl StillOutput {
                         .finish_video(session)
                 })
                 .map_err(|source| self.error(VIDEO_STAGE, source))?;
-            let frames: Vec<u64> = encoded
-                .packets
-                .iter()
-                .filter_map(|packet| u64::try_from(packet.pts).ok())
-                .map(|pts| pts / u64::from(self.frame_rate.denominator.max(1)))
-                .collect();
-            self.mux(encoded)?;
-            if matches!(self.staging, Staging::Sequence { .. }) {
-                for frame in frames {
-                    self.publish_frame(frame)?;
-                }
-            }
+            let frames = self.mux(encoded)?;
+            published = self.publish(frames)?;
         }
         let Some(session) = self.muxer.take() else {
             return Err(self.error(
@@ -564,8 +582,8 @@ impl StillOutput {
                     .ok_or_else(|| missing(&registry, plugin, "muxer"))?
                     .finish_muxer(session)
             })
-            .map(drop)
-            .map_err(|source| self.error(MUXER_STAGE, source))
+            .map_err(|source| self.error(MUXER_STAGE, source))?;
+        Ok(published)
     }
 
     /// Ends the sessions still open; staged files go, published ones stay.
@@ -639,6 +657,7 @@ mod tests {
     use crate::options::{AudioChoice, EncoderChoice, SettingInput};
     use crate::report::{HintStyle, classify};
     use crate::stills::StillExport;
+    use celesta_media::{Packet, VideoEncoder};
     use std::fs;
 
     fn registry() -> Arc<MediaRegistry> {
@@ -1062,9 +1081,9 @@ mod tests {
         // JPEG has no alpha: the renderer clears to the opaque background.
         assert!(!still.opened().alpha);
         assert_eq!(still.opened().input, PixelFormat::Rgba8);
-        assert_eq!(still.write(3, opaque(16, 8, [255, 0, 0])).unwrap(), None);
+        assert_eq!(still.write(3, opaque(16, 8, [255, 0, 0])).unwrap(), []);
         assert!(!output.exists());
-        assert_eq!(still.finish().unwrap(), Some(output.clone()));
+        assert_eq!(still.finish().unwrap(), [(3, output.clone())]);
         let decoded = image::load_from_memory(&fs::read(&output).unwrap()).unwrap();
         assert_eq!(decoded.color(), image::ColorType::Rgb8);
         let pixel = decoded.to_rgb8().get_pixel(4, 4).0;
@@ -1158,15 +1177,15 @@ mod tests {
         );
         assert_eq!(
             still.write(0, opaque(8, 8, [0, 255, 0])).unwrap(),
-            Some(first.clone())
+            [(0, first.clone())]
         );
         let bytes = fs::read(&first).unwrap();
         assert_eq!(&bytes[8..12], b"WEBP");
         assert_eq!(
             still.write(1, opaque(8, 8, [0, 0, 255])).unwrap(),
-            Some(second)
+            [(1, second)]
         );
-        assert_eq!(still.finish().unwrap(), None);
+        assert_eq!(still.finish().unwrap(), []);
         assert_eq!(names(&nested), ["c%06d-000000.WEBP", "c%06d-000001.WEBP"]);
     }
 
@@ -1229,5 +1248,157 @@ mod tests {
         still.finish().unwrap();
         assert_eq!(&fs::read(&taken).unwrap()[1..4], b"PNG");
         assert_eq!(names(dir.path()), ["c-000000.png", "c-000001.png"]);
+    }
+
+    /// A video encoder writing `png` that holds each frame back by one: a
+    /// frame's packet comes with the next frame's call, the last with
+    /// `finish`. Each packet's bytes are the frame's pixels.
+    #[derive(Default)]
+    struct Delayed {
+        held: Option<Packet>,
+        config_due: bool,
+    }
+
+    impl MediaProvider for Delayed {
+        fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+            Ok(vec![ComponentDescription {
+                kind: ComponentKind::VideoEncoder,
+                id: "delayed".to_owned(),
+                available: true,
+                reason: None,
+                settings: Vec::new(),
+                input_formats: vec![PixelFormat::Rgba8],
+                transports: Vec::new(),
+                sample_rates: None,
+                channels: Vec::new(),
+            }])
+        }
+
+        fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
+            Some(self)
+        }
+    }
+
+    impl VideoEncoder for Delayed {
+        fn open_video(
+            &mut self,
+            _: &VideoEncoderRequest<'_>,
+        ) -> Result<VideoEncoderOpened, MediaError> {
+            self.config_due = true;
+            Ok(VideoEncoderOpened {
+                session: SessionId(1),
+                input: PixelFormat::Rgba8,
+                alpha: false,
+            })
+        }
+
+        fn encode_video(
+            &mut self,
+            _: SessionId,
+            pts: i64,
+            frame: Vec<u8>,
+        ) -> Result<Encoded, MediaError> {
+            let packet = Packet {
+                pts,
+                dts: pts,
+                duration: 1,
+                key: true,
+                bytes: frame,
+                additional: Vec::new(),
+            };
+            Ok(Encoded {
+                packets: self.held.replace(packet).into_iter().collect(),
+                config: std::mem::take(&mut self.config_due).then(|| TrackConfig {
+                    codec: "png".to_owned(),
+                    description: None,
+                }),
+            })
+        }
+
+        fn finish_video(&mut self, _: SessionId) -> Result<Encoded, MediaError> {
+            Ok(Encoded {
+                packets: self.held.take().into_iter().collect(),
+                config: None,
+            })
+        }
+
+        fn abort_video(&mut self, _: SessionId) {}
+    }
+
+    fn delayed_plugin() -> celesta_media::RegisteredPlugin {
+        celesta_media::RegisteredPlugin {
+            id: "fake".to_owned(),
+            version: "1.0.0".to_owned(),
+            origin: MediaOrigin::User,
+            directory: PathBuf::new(),
+            executable: None,
+            media: celesta_plugin_host::MediaManifest {
+                decoders: Vec::new(),
+                video_encoders: vec![celesta_plugin_host::MediaVideoEncoderEntry {
+                    id: "delayed".to_owned(),
+                    name: "Delayed".to_owned(),
+                    codecs: vec!["png".to_owned()],
+                    input_formats: Some(vec!["rgba8".to_owned()]),
+                }],
+                audio_encoders: Vec::new(),
+                muxers: Vec::new(),
+            },
+            factory: Arc::new(|_, _| Ok(Box::new(Delayed::default()) as Box<dyn MediaProvider>)),
+        }
+    }
+
+    #[test]
+    fn a_held_back_frame_is_published_under_its_own_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("c.png");
+        let named = |frame: u64| dir.path().join(format!("c-{frame:06}.png"));
+        let files = StillFiles::Sequence([4, 0, 9].map(|frame| (frame, named(frame))).to_vec());
+        let choice = OutputChoice {
+            video: EncoderChoice {
+                component: Some(reference("fake/delayed")),
+                options: Default::default(),
+            },
+            ..OutputChoice::default()
+        };
+        let (mut still, _) = StillOutput::open(
+            with_builtin(vec![delayed_plugin()]),
+            &choice,
+            None,
+            files,
+            &output,
+            false,
+            (1, 1),
+            Rational::new(30_000, 1_001),
+            false,
+            &ExportCancellation::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            still.resolved.muxer.reference,
+            reference("builtin/imageSequence")
+        );
+        let pixel = |frame: u8| vec![frame, frame, frame, 255];
+        assert_eq!(still.write(4, pixel(4)).unwrap(), []);
+        assert_eq!(
+            names(dir.path())
+                .iter()
+                .filter(|n| n.starts_with('c'))
+                .count(),
+            0
+        );
+        assert_eq!(still.write(0, pixel(0)).unwrap(), [(4, named(4))]);
+        assert_eq!(still.write(9, pixel(9)).unwrap(), [(0, named(0))]);
+        assert_eq!(still.finish().unwrap(), [(9, named(9))]);
+        for frame in [4, 0, 9] {
+            assert_eq!(
+                fs::read(named(frame)).unwrap(),
+                pixel(frame as u8),
+                "{frame}"
+            );
+        }
+        assert_eq!(
+            names(dir.path()),
+            ["c-000000.png", "c-000004.png", "c-000009.png"]
+        );
     }
 }

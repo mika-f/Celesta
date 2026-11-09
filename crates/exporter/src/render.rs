@@ -1,5 +1,5 @@
 use crate::control::{ExportCancellation, ExportProgress};
-use crate::encode::{ExportSession, readback_of};
+use crate::encode::{ExportSession, readback_for};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
 use crate::project::{absolutize_fonts, absolutize_layers};
@@ -300,15 +300,15 @@ pub(crate) fn open_video_output(
     configure_renderer(renderer, &opened)
 }
 
-/// Sets `renderer` to the encoder's answer `opened`: its input format as
-/// the readback, and a transparent background when it keeps alpha, else
-/// the default opaque one.
+/// Sets `renderer` to the encoder's answer `opened`: the readback for its
+/// input format ([`readback_for`]), and a transparent background when it
+/// keeps alpha, else the default opaque one.
 pub(crate) fn configure_renderer(
     renderer: &mut GpuRenderer,
     opened: &VideoEncoderOpened,
 ) -> Result<(), ExportError> {
     renderer
-        .set_readback_format(readback_of(opened.input))
+        .set_readback_format(readback_for(opened)?)
         .map_err(ExportError::Render)?;
     renderer.set_background(if opened.alpha {
         Color::TRANSPARENT
