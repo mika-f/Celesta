@@ -297,8 +297,9 @@ covered by the dated handoff notes.
   `crf` default to `medium` and 18; `bitDepth=10` encodes yuv420p10le
   (High 10). Celesta offers the encoder `yuv420p` and `yuv420p10`, which the
   GPU converts (`ReadbackFormat::Yuv420p10` for 10-bit), unless the renderer
-  is software, then `rgba16` (`ReadbackFormat::Rgba16`, rgba64le) and
-  `rgba8`, which the encoder converts. GPU readback returns I420
+  is software, then `rgba16` (`ReadbackFormat::Rgba16Straight`,
+  straight-alpha rgba64le) and `rgba8`, which the encoder converts. GPU
+  readback returns I420
   at 1.5 bytes/pixel and uses BT.601 limited range. Its 2x2 chroma averaging
   can differ from the encoder's filtering at hard color edges.
 - GPU canvases are `Rgba16Float` where the adapter can render and blend it
