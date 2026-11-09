@@ -751,7 +751,6 @@ fn a_looping_avfoundation_mp4_starts_its_sound_from_its_end() {
 }
 
 #[test]
-#[ignore = "needs P4's FFmpeg-first ranking (deviation 58)"]
 fn ffmpeg_stays_the_default_beside_avfoundation() {
     let _gpu = gpu();
     install();

@@ -3,7 +3,9 @@
 Phase P5 of the media components design
 (`docs/superpowers/specs/2026-11-08-media-components-design.md`; plan
 `docs/superpowers/plans/2026-11-08-media-components-p5.md`), cut from P2c
-(`docs/handoff/2026-11-08-media-bt709.md`) and to be rebased onto P4. A
+(`docs/handoff/2026-11-08-media-bt709.md`) and rebased onto P4
+(`docs/handoff/2026-11-09-media-stills.md`), whose FFmpeg-first ranking
+(deviation 58) keeps FFmpeg the default beside it. A
 second first-party media plugin, `plugins/avfoundation`
 (`celesta-codec-avfoundation`), encodes with VideoToolbox and AudioToolbox,
 muxes with AVAssetWriter, and decodes with AVAssetReader, on macOS only,
@@ -378,6 +380,23 @@ After the whole-branch review, on the same Mac:
   --dir packages/website test` (52) passed. The root workspace was not
   rebuilt: these fixes change no root crate.
 
+### After the rebase onto P4
+
+Rebased onto `claude/media-components-p4` (`afc05b0a`, itself on P3 and
+P2c); only the docs commit conflicted (the spec's Phases rows, both
+plugins pages, and the skill's `plugins.md`, each keeping P3's and P4's
+text). `ffmpeg_stays_the_default_beside_avfoundation` is no longer
+ignored and passes: with `avfoundation` registered before `ffmpeg`, an
+`.mp4` export with no choices reports `ffmpeg/mp4`, `ffmpeg/libx264`, and
+`ffmpeg/aac`. Then: `cargo build -p celesta-codec-test` and `cargo test
+--workspace` (2,769 passed, 1 ignored), `cargo clippy --workspace
+--all-targets --locked -- -D warnings`, `cargo fmt --all -- --check`;
+`cargo test --manifest-path plugins/Cargo.toml --workspace --locked` (559
+passed, none ignored, no `skipping`), its Clippy and `cargo fmt --check`;
+`pnpm run test:runtime`, `pnpm --dir scripts/plugins test` (222), `pnpm
+--dir packages/website test` (52), `python3 -m unittest
+scripts/test_package_macos.py` (8), and `git diff --check`: all passed.
+
 ### Measurements
 
 Release builds of `celesta-exporter` and of both plugins (`node
@@ -434,22 +453,6 @@ until `TURBO_FORCE=1 pnpm run build:runtime` rebuilt them.
 
 ## Not done
 
-- **FFmpeg-first ranking.** This branch is cut from P2c, where bundled
-  plugins keep search order and `avfoundation`'s folder sorts before
-  `ffmpeg`'s. Until it is rebased onto P4, whose Task 1 ranks FFmpeg first
-  among bundled plugins by id (deviation 58), a choice-free `.mp4` export
-  with both plugins installed takes `avfoundation/mp4`,
-  `avfoundation/h264`, and `avfoundation/aac`, and AVFoundation's decoder
-  reads `mp4`, `mov`, and `m4a` before FFmpeg's. The user guide and the
-  skill describe the behaviour after the rebase (FFmpeg the default,
-  AVFoundation by name or preset). `ffmpeg_stays_the_default_beside_avfoundation`
-  (`plugins/avfoundation/tests/export.rs`) pins it and is
-  `#[ignore = "needs P4's FFmpeg-first ranking (deviation 58)"]`; run once
-  with `--ignored` it fails today, having picked
-  `["avfoundation/mp4", "avfoundation/h264", "avfoundation/aac"]`. Remove
-  the `#[ignore]` after the rebase. Presets are P3's as well: this
-  branch's guide still says `--preset` fails with `unknown_preset`, while
-  the new section names presets as one way to choose the components.
 - **The macOS package build was not run end to end** (Task 9): `mbx`'s
   disk garbage collector deleted the root `target` mid-build on this Mac
   (under its 45 GiB free-space minimum). `test_package_macos.py` passes,
