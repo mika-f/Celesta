@@ -268,9 +268,18 @@ enum AudioTrack {
 struct Plugin {
     provider: Box<dyn MediaProvider>,
     ready: VecDeque<Answered>,
-    /// The stage of each request in flight, oldest first, which names the
-    /// stage of its answer's error.
-    stages: VecDeque<&'static str>,
+    /// What each request in flight was sent for, oldest first, which names
+    /// its answer's error.
+    stages: VecDeque<Sent>,
+}
+
+/// What a request in flight was sent for: its stage, and a video frame's
+/// index (counted from 0), which an error the plugin answers it with
+/// names, as it arrives requests later.
+#[derive(Clone, Copy, Debug)]
+struct Sent {
+    stage: &'static str,
+    frame: Option<u64>,
 }
 
 impl Plugin {
@@ -297,9 +306,11 @@ impl Plugin {
         }
     }
 
+    /// Sends frame `index`, shown at `pts`.
     fn send_video_frame(
         &mut self,
         session: SessionId,
+        index: u64,
         pts: i64,
         frame: Vec<u8>,
     ) -> Result<(), MediaError> {
@@ -314,7 +325,10 @@ impl Plugin {
                 self.ready.push_back(Answered::VideoFrame(encoded));
             }
         }
-        self.stages.push_back(VIDEO_STAGE);
+        self.stages.push_back(Sent {
+            stage: VIDEO_STAGE,
+            frame: Some(index),
+        });
         Ok(())
     }
 
@@ -335,7 +349,10 @@ impl Plugin {
                 self.ready.push_back(Answered::Audio(encoded));
             }
         }
-        self.stages.push_back(AUDIO_STAGE);
+        self.stages.push_back(Sent {
+            stage: AUDIO_STAGE,
+            frame: None,
+        });
         Ok(())
     }
 
@@ -354,11 +371,15 @@ impl Plugin {
                 self.ready.push_back(Answered::Packets);
             }
         }
-        self.stages.push_back(MUXER_STAGE);
+        self.stages.push_back(Sent {
+            stage: MUXER_STAGE,
+            frame: None,
+        });
         Ok(())
     }
 
-    /// The oldest request's answer, and the stage it was sent for.
+    /// The oldest request's answer, and the stage it was sent for. The
+    /// plugin's own error for a video frame names the frame.
     fn receive(&mut self) -> (&'static str, Result<Answered, MediaError>) {
         let answer = match self.provider.pipeline() {
             Some(pipeline) => pipeline.receive(),
@@ -367,7 +388,17 @@ impl Plugin {
                 .pop_front()
                 .ok_or_else(|| MediaError::Codec("no request is in flight".to_owned())),
         };
-        (self.stages.pop_front().unwrap_or(VIDEO_STAGE), answer)
+        let sent = self.stages.pop_front().unwrap_or(Sent {
+            stage: VIDEO_STAGE,
+            frame: None,
+        });
+        let answer = match (answer, sent.frame) {
+            (Err(MediaError::Codec(message)), Some(index)) => {
+                Err(MediaError::Codec(format!("frame {index}: {message}")))
+            }
+            (answer, _) => answer,
+        };
+        (sent.stage, answer)
     }
 }
 
@@ -762,12 +793,12 @@ impl ExportSession {
     /// once the encoder's window has room, and writes what the muxer can
     /// take.
     fn encode_pixels(&mut self, pixels: Vec<u8>) -> Result<(), ExportError> {
-        let (plugin, session, pts) = self
+        let (plugin, session, index, pts) = self
             .next_frame()
             .map_err(|source| self.error(VIDEO_STAGE, source))?;
         self.make_room(plugin)?;
         self.plugin(plugin)
-            .and_then(|process| process.send_video_frame(session, pts, pixels))
+            .and_then(|process| process.send_video_frame(session, index, pts, pixels))
             .map_err(|source| self.error(VIDEO_STAGE, source))?;
         if let Some(video) = self.video.as_mut() {
             video.frames_sent += 1;
@@ -775,8 +806,9 @@ impl ExportSession {
         self.flush(false)
     }
 
-    /// The video encoder's plugin and session, and the next frame's pts.
-    fn next_frame(&self) -> Result<(usize, SessionId, i64), MediaError> {
+    /// The video encoder's plugin and session, and the next frame's index
+    /// and pts.
+    fn next_frame(&self) -> Result<(usize, SessionId, u64, i64), MediaError> {
         let plugin = self.resolved()?.video.plugin;
         let video = self
             .video
@@ -790,7 +822,7 @@ impl ExportSession {
             .checked_mul(u64::from(video.frame_rate.denominator))
             .and_then(|pts| i64::try_from(pts).ok())
             .ok_or_else(|| MediaError::Codec("the video is too long".to_owned()))?;
-        Ok((plugin, session, pts))
+        Ok((plugin, session, video.frames_sent, pts))
     }
 
     /// Keeps the video's first config and stages its packets.
@@ -2431,7 +2463,7 @@ mod tests {
             matches!(
                 &result,
                 Err(ExportError::Codec { stage: VIDEO_STAGE, source })
-                    if source.to_string().contains("boom")
+                    if source.to_string() == "frame 1: boom"
             ),
             "{result:?}"
         );
