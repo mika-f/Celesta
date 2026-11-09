@@ -87,8 +87,10 @@ impl Default for AudioChoice {
     }
 }
 
-/// One option as given: command-line text, read as the field's type once
-/// the component's schema is known, or a typed value (MCP, TS, presets).
+/// One option as given: text, read as the field's type once the
+/// component's schema is known (the command line, and
+/// `@celesta.studio/exporter`, which passes its options to the command line
+/// as `--video-option KEY=VALUE`), or a typed value (MCP, presets).
 #[derive(Clone, Debug, PartialEq)]
 pub enum SettingInput {
     Text(String),

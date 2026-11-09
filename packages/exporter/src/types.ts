@@ -37,7 +37,11 @@ export type SettingValue = string | number | boolean;
 export interface EncoderOptions {
   /** `<plugin>/<id>`; the muxer's default or the preset's when left out. */
   id?: string;
-  /** Setting values by key; each is checked against the component's settings. */
+  /**
+   * Setting values by key; each is checked against the component's settings.
+   * They reach the exporter as `--video-option KEY=VALUE` text, read by the
+   * setting's type as on the command line, so `'18'` sets a number setting to 18.
+   */
   options?: Record<string, SettingValue>;
 }
 

@@ -149,7 +149,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 :::
 ::::
 
-MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選択を `muxer`、`videoEncoder`（`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`）、`audioEncoder`（同じ形、または `"none"`）で受け取ります。MCP の `list_components` と `describe_component` ツール、パッケージの `listComponents()` と `describeComponent()` で、コンポーネントを一覧にしたり、その設定を確認したりできます。
+MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選択を `muxer`、`videoEncoder`（`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`）、`audioEncoder`（同じ形、または `"none"`）で受け取ります。MCP は各オプションの型を確かめるので、`crf` は数値で渡します。パッケージはオプションを `--video-option` と `--audio-option` のテキストとして書き出しツールに渡し、コマンドラインと同じく各設定の型で読むので、`"18"` でも受け付けます。MCP の `list_components` と `describe_component` ツール、パッケージの `listComponents()` と `describeComponent()` で、コンポーネントを一覧にしたり、その設定を確認したりできます。
 
 ## 繰り返し再生する動画
 

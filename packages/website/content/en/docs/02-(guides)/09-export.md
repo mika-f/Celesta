@@ -149,7 +149,7 @@ Faster x264 presets such as `veryfast` reduce encoding time but usually make lar
 :::
 ::::
 
-The MCP `export_video` tool and `@celesta.studio/exporter` take the same choices as `muxer`, `videoEncoder` (`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`), and `audioEncoder` (the same shape, or `"none"`). MCP's `list_components` and `describe_component` tools, and the package's `listComponents()` and `describeComponent()`, list and describe the components.
+The MCP `export_video` tool and `@celesta.studio/exporter` take the same choices as `muxer`, `videoEncoder` (`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`), and `audioEncoder` (the same shape, or `"none"`). MCP checks each option's type, so `crf` must be a number there; the package passes its options to the exporter as `--video-option` and `--audio-option` text, which is read by each setting's type as on the command line, so `"18"` works there too. MCP's `list_components` and `describe_component` tools, and the package's `listComponents()` and `describeComponent()`, list and describe the components.
 
 ## Videos that play on repeat
 

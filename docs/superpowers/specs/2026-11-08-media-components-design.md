@@ -544,7 +544,7 @@ pub enum SettingValue { String(String), Number(f64), Boolean(bool) }
 Deviations in P2a (`docs/handoff/2026-11-08-media-encoders.md`):
 
 - **Progress labels come from an `ExportProgress::Output` event** (deviation 12), sent once `resolve_output` succeeds and before rendering, since the dashboard starts before any plugin has been described. `--json-progress` gains the event `output` (`muxer`, `muxerName`, and `video` and `audio` as `{ component, name, settings }`, or `audio: null`).
-- **`EncoderChoice.options` holds `SettingInput { Text, Value }`** (deviation 24), not `BTreeMap<String, SettingValue>`. The CLI's `key=value` text can only be typed against the component's schema, which arrives with `describe` at resolve, so it stays `Text` until then; MCP and TypeScript give typed values (`Value`).
+- **`EncoderChoice.options` holds `SettingInput { Text, Value }`** (deviation 24), not `BTreeMap<String, SettingValue>`. The CLI's `key=value` text can only be typed against the component's schema, which arrives with `describe` at resolve, so it stays `Text` until then; MCP gives typed values (`Value`). `@celesta.studio/exporter` runs the CLI and passes its options as `--video-option`/`--audio-option` text, so they arrive as `Text` too: the package reads `crf: '18'` as 18, where MCP refuses a string for a number.
 
 ## Registry and routing
 

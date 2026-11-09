@@ -89,7 +89,9 @@ identical to `main`'s on every path checked (see Checks).
   5. Each chosen component must be described as available
      (`component_unavailable` with the reason).
   6. Options are read by each field's type (`SettingInput::Text` from the
-     CLI, `Value` from MCP and TypeScript; deviation 24) and validated
+     CLI and from TypeScript, which passes them to the CLI as
+     `--video-option`/`--audio-option` text; `Value` from MCP; deviation
+     24) and validated
      (`invalid_option`). Muxers take their defaults.
 
   `describe` is asked at most once per plugin per resolve.

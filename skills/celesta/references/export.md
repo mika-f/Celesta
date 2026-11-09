@@ -145,8 +145,10 @@ Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.
   `list_components` (`check`) and `describe_component` (`component`) tools
   answer as `--list-components` and `--describe` do.
   `@celesta.studio/exporter` takes the same `muxer`, `videoEncoder`, and
-  `audioEncoder` in `exportVideo`, and has `listComponents({ check })` and
-  `describeComponent(id)`.
+  `audioEncoder` in `exportVideo` (its option values go to the CLI as
+  `--video-option`/`--audio-option` text, read by each setting's type, so
+  it takes `"18"` where MCP wants `18`), and has
+  `listComponents({ check })` and `describeComponent(id)`.
 
 ## Transparent video
 
