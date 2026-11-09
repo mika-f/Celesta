@@ -24,10 +24,13 @@ back; an explicit value stays strict.
   `celesta.config.json`, else the entry's folder). `PresetsFile { version,
   presets: Vec<Preset>, last, default, other }`; `Preset { name, output:
   PresetOutput }` with `PresetOutput { muxer, video: PresetEncoder { component,
-  options }, audio: PresetAudio::{Encode, None("none")}, other }`; component
-  references are `<plugin>/<component>` strings. `last` is kept in the user
-  file only, `default` in the project file only. Unknown top-level and
-  per-preset keys survive a rewrite (`other`).
+  options, other }, audio: PresetAudio::{Encode, None("none")}, other }`;
+  component references are `<plugin>/<component>` strings. `last` is kept
+  in the user file only, `default` in the project file only. Unknown
+  top-level, per-preset, and per-encoder (`video`, `audio`) keys survive a
+  rewrite (`other`), which matters because every Export… in the app
+  rewrites the user file; `"audio": "none"` still reads as
+  `PresetAudio::None` (the untagged enum tries it first).
 - **Reading and writing.** `PresetsFile::load` checks `version` on the raw
   JSON before the shape, so a version-2 file of another shape still says
   `unsupported version 2; this Celesta reads version 1`; other failures are
@@ -69,8 +72,9 @@ back; an explicit value stays strict.
     cannot be used falls back to P2a's default with ``preset `{name}`:
     {text} is unavailable ({reason}); using the default instead``, and its
     options are dropped with it. A preset's audio encoder against a muxer
-    that takes no audio gives the reason `{muxer} takes no audio` and no
-    audio. A preset with `"audio": "none"` and no explicit audio encoder has
+    that takes no audio leaves the audio out, with ``preset `{name}`:
+    {text} is unavailable ({muxer} takes no audio); the audio is left
+    out``. A preset with `"audio": "none"` and no explicit audio encoder has
     no audio, and `--audio-option`s then warn ``audio options are ignored:
     preset `{name}` leaves the audio out``.
   - **Options**: a preset's options apply to the resolved encoder only when
@@ -110,9 +114,12 @@ back; an explicit value stays strict.
   `describe` lands. Component labels `"{name} · {plugin}"`, plus
   ` (project)`; `OptionState::{Checking, Available, Unavailable(reason)}`.
   `encoder_options(track)` lists the encoders whose codecs the chosen muxer
-  takes (none for audio when it takes no audio). `apply(resolved, …)` sets
-  the choice from a resolve, keeping each encoder's
-  `settings::differences`; `choose_encoder` resets that encoder's settings;
+  takes (none for audio when it takes no audio). `apply(resolved, selected,
+  asked)` sets the choice from a resolve, keeping each encoder's
+  `settings::differences`, and records which encoders count as chosen
+  from `asked: Asked::{Preset(output), Defaults, Container}` (see the
+  container rule below); `choose_encoder` resets that encoder's settings
+  and marks it chosen (`None` audio as chosen "None");
   `set_setting` drops values the new one hides; editing clears the
   selected preset but keeps its warnings. `fields(track, advanced)` gives
   the visible fields, ungrouped first, then groups in schema order, each
@@ -122,11 +129,29 @@ back; an explicit value stays strict.
   `"{label} — {reason}"`, `"{label}: {field} {message}"`).
   `saved_output()` writes the muxer, components, and differences, and
   `"none"` for no audio. `initial_base()` returns `InitialBase::{Preset(source,
-  name, output), Last(output), None}` and warnings (ruling 3);
+  name, output), Last(output), None}` and warnings (ruling 3): the project
+  file's and the user file's read errors (always, since the list then
+  leaves that file's presets out and nothing else would say so), and a
+  `default` naming no preset;
   `initial_output(base)` is `export.<ext>` from the base's muxer when
   installed, else the `.mp4` muxer, else the first ranked non-project
-  muxer (rulings 2, 4). `container_choice(muxer)` keeps each encoder and
-  its settings when the new muxer takes it. `can_save(target)` is "Save the
+  muxer (rulings 2, 4). `container_choice(muxer)` follows the container
+  rule (ruling 9):
+  - The video encoder is kept, with its settings, only when it counts as
+    chosen (picked with `choose_encoder`, or named by the applied preset,
+    not by `last`) and the new muxer takes its codec; otherwise the choice
+    names none and the resolve takes the new muxer's default, so MP4
+    (x264, AAC) → QuickTime gives ProRes 4444 and PCM, as `.mov` did before
+    P3. An encoder's settings are dropped with it.
+  - Audio chosen as "None" (or a preset's `"none"`, or `last`'s/defaults'
+    no audio where the muxer takes audio) stays `AudioChoice::None`. An
+    audio encoder that counts as chosen is kept when the new muxer takes
+    it; when the new muxer takes no audio at all, it is set aside with its
+    settings (`ChosenAudio::SetAside`) and comes back with the next muxer
+    that takes it. Audio that was the default, or that a muxer without
+    audio dropped, resolves the new muxer's default
+    (`AudioChoice::Encode(default)`), so MP4 → IVF → MP4 has AAC again.
+  `can_save(target)` is "Save the
   project first" for an untitled document, the file's read error, or "This
   system has no settings folder to save presets in"; `replaces(target,
   name)` compares the trimmed name case-sensitively.
@@ -146,18 +171,28 @@ back; an explicit value stays strict.
   is made; unavailable components are disabled items with their reason.
   The first resolve and every preset or container change run
   `resolve_preset_output` in the background; warnings show under the
-  section that resolved, with the `TriangleAlert` icon. Number fields read
+  section that resolved, with the `TriangleAlert` icon; the view shows the
+  exporter's `code` quoting as typographic quotes (“Web”), the CLI keeps
+  the backticks. Number fields read
   through `parse_number_input`, and a typo blocks Export… ("Delay: Enter a
   number") until the field is fixed or reset.
 - **Save as preset…** opens an inline form above the footer: a Name
   `Input`, a "Save to" `Select` (This project / My presets; This project
   disabled with `can_save`'s reason), a `Save` button that reads `Replace`
-  for an existing name, and a close (X) icon. Saving runs
-  `update_presets(.., put)`, takes the written file into the model, and
-  selects the preset.
+  for an existing name, and a close (X) icon. `Save` is disabled while
+  `Export…` is (a resolve running, an invalid field, a typed number that is
+  not one), and the form shows that reason above the footer's buttons in
+  place of the footer's own line. Saving creates the user settings folder
+  with `celesta_plugin_host::create_private_dir_all` (0700; a project's
+  root already exists), runs `update_presets(.., put)`, takes the written
+  file into the model, and selects the preset.
 - **Export…** emits `ExportDialogEvent::Export`; `EditorView` writes
-  `last` (`update_presets` on the user file, creating its folder; a failure
-  goes to Problems → Export and the export goes ahead), then opens the save
+  `last` with `export_control::remember_last` (`update_presets` on the user
+  file, creating its folder with `create_private_dir_all`). A failure goes
+  to Problems under the new `Source::ExportPresets` ("Export presets", a
+  warning, "Couldn’t remember the export settings"), which `start_export`'s
+  `clear(Source::Export)` does not touch, and the next successful write
+  clears; the export goes ahead. It then opens the save
   panel with `export_suggested_name(path, name, first extension)` and
   passes the chosen path through `export_output(path, the muxer's
   extensions)`, which keeps a path with one of them and otherwise sets the
@@ -235,7 +270,8 @@ The spec left these to the plan:
   project file, then the user file); else the user file's `last`; else the
   default muxer for `.mp4` (or the first ranked non-project muxer) with its
   default encoders. A `default` naming no preset, or an unreadable project
-  file, warns under Preset and falls back to `last`.
+  file, warns under Preset and falls back to `last`; an unreadable user
+  file warns under Preset too.
 - **Save as preset…** is an inline section, not a second dialog; `Replace`
   for an existing name in the chosen file, replaced in place; "This
   project" disabled with "Save the project first" for an untitled
@@ -285,7 +321,20 @@ From the session's ledger; each with what it costs if it is wrong.
 8. `last` is saved when Export… is pressed, before the save panel, so
    cancelling the panel still updates it: the spec says the choice is
    remembered, not only on a finished export. If wrong, one call moves
-   after the panel.
+   after the panel. A failure is kept under its own Problems source
+   (`ExportPresets`) rather than by moving the call after `start_export`,
+   so this ruling holds.
+9. **A container change keeps only encoders chosen explicitly** (final
+   review): one picked in the dialog or named by the applied preset, and
+   only when the new muxer takes its codec; everything else takes the new
+   muxer's defaults. `last` counts as naming nothing (else every user who
+   ever exported would keep H.264 in QuickTime). Audio the user (or a
+   preset) left out stays out; audio a muxer without audio dropped comes
+   back. This matches `.mov` → ProRes before P3 and the guide's
+   transparent-video path. If wrong, users who switch containers lose an
+   encoder (and its settings) they did not choose explicitly.
+10. **Final review minors deferred** to Not done below: none produces wrong
+    output; the cost is small UX rough edges.
 
 ## Docs
 
@@ -302,8 +351,13 @@ From the session's ledger; each with what it costs if it is wrong.
   `preset`/`presetFile`, with a macOS/Windows example; the loudness and
   transparent-video paragraphs point to the dialog; the JSON paragraph
   lists `invalid_presets`. The plugins page (en and ja) says a project's
-  own components are also used when its default preset names them, marked
-  "(project)" in the dialog. Troubleshooting (en and ja) gains "An export
+  own components are used only in the app (the CLI and MCP never load a
+  project's plugins): when chosen in the dialog, marked "(project)", or
+  when the project's default preset names them. The final fix wave added
+  to "From the app": the container rule (MP4 → QuickTime gives ProRes 4444
+  and PCM; None stays off; audio a container dropped comes back), an
+  unreadable presets file named under Preset, `last` failures under
+  Problems → Export presets, and `Save` blocked like `Export…`. Troubleshooting (en and ja) gains "An export
   fails with unknown_preset or invalid_presets". The website's content
   test counts the new tab group and toggle.
 - The Agent Skill: `references/export.md` (the `--preset` and
@@ -381,6 +435,24 @@ outside `i64`). The rebased branch passed `cargo test --workspace` (2,688
 passed, 0 failed), clippy with `-D warnings`, and `cargo fmt --check`
 before Task 5; the counts above are from the rebased branch with Task 5.
 
+**Final fix wave** (the final review's findings, on `6b992b2b`): `cargo
+build -p celesta-codec-test`, then `cargo test --workspace` (2,703 passed,
+0 failed, 1 ignored), `cargo clippy --workspace --all-targets --locked --
+-D warnings`, `cargo fmt --all -- --check`, `pnpm --dir packages/website
+test` (52 passed), and `git diff --check`. New tests, each seen failing on
+the old code first: `unknown_keys_survive_a_rewrite` (keys inside `video`
+and `audio`, and `"audio": "none"` still read as none),
+`a_gone_preset_component_falls_back` (the audio-left-out warning), the
+model's `a_container_change_takes_the_muxers_default_encoders`,
+`audio_left_out_by_a_container_comes_back`,
+`a_preset_names_what_a_container_change_keeps`, and
+`a_broken_user_file_warns_when_the_dialog_opens`, the dialog's
+`a_broken_user_file_shows_under_preset`,
+`save_as_preset_waits_for_what_blocks_export`, and
+`warnings_quote_without_code_marks`, and the editor's
+`a_failed_last_survives_the_export_it_goes_on_with` (which also checks the
+settings folder is created 0700).
+
 **In the app.** The FFmpeg plugin was staged with `node
 scripts/plugins/build.mts plugins/ffmpeg` (into `plugins/dist`) and
 `target/debug/celesta-editor examples/greenscreen/composite.tsx` run with
@@ -406,9 +478,24 @@ PR, not committed:
 - `export-dialog-4-save-as-preset.png`: the inline form above the footer,
   with the name "Web", "This project", `Replace`, and the close icon.
 
-Range and Loudness, at the bottom of the scrolled body, are in no
-screenshot. This is not a rendering change, so there is no before/after
-pair; the only UI removed is the title bar's loudness button.
+The final fix wave added three, with the same kind of local patch (it
+opened the dialog shortly after start in `examples/editor-demo.celesta.json`,
+set in- and out-points at frames 24 and 72, and switched the container
+to QuickTime; the window left the screen after about two seconds in that
+session, so the patch's timers were short and frames were captured in a
+burst):
+
+- `export-dialog-5-range-loudness.png`: QuickTime, with the whole body
+  in view: Range "00:00:00:24 – 00:00:01:12" with `Clear`, and Loudness
+  "Off".
+- `export-dialog-6-quicktime.png`: MP4 · ffmpeg (x264, AAC) changed to
+  QuickTime · ffmpeg gives ProRes (prores_ks) with Profile 4444 and PCM at
+  24-bit integer.
+- `title-bar-after.png`: the title bar with `Create New Project…`,
+  `Open…`, and `Export…`, without the loudness button.
+
+This is not a rendering change, so there is no before/after pair; the
+only UI removed is the title bar's loudness button.
 
 **One real export** from the dialog, with the "Web" project default and
 `HOME` set to a scratch folder: `export-out.mp4` is H.264 1280×720 with
@@ -426,9 +513,6 @@ components in the dialog.
   rebased onto it (never merged) and the PR's base changed; nothing here
   touches color.
 - **Presets files.**
-  - Unknown keys inside a preset's `video`/`audio` are dropped on rewrite
-    (`PresetEncoder` has no `other`); top-level and per-preset keys are
-    kept.
   - Saved files are created `0600` (`NamedTempFile`'s mode), so a
     project's `export-presets.json` written by the app loses group and
     other read; keeping the existing file's mode, or the umask default,
@@ -437,13 +521,14 @@ components in the dialog.
   - A missing `--preset-file` is skipped silently by `PresetLookup`; the
     CLI and MCP check it first (usage error), but a library caller is not
     told.
+  - `PresetsFile::load`'s shape errors ("is not an export presets file")
+    carry serde's message without a line and column, since the shape is
+    read from an already-parsed `serde_json::Value`.
 - **Resolving.**
   - `layer` drops a base value hidden by another base value silently, so a
     plugin that adds a `visibleWhen` hides a stale value without a
     warning; its doc comment says "hidden by the layered values", and no
     test covers its repeated drops.
-  - A preset's audio encoder against a muxer that takes no audio warns
-    "using the default instead" while the result is no audio.
   - A preset-muxer fallback warning is lost when the extension's default
     then fails.
   - `resolve_preset_output` names its base `""` when it has none (never
@@ -456,14 +541,29 @@ components in the dialog.
   `cli_formats.rs` and MCP's `export.rs`. The usage messages rely on
   `PresetsFile::load`'s text starting with the path, and the CLI passes a
   relative `--preset-file` as given.
-- **The dialog's model.** An unreadable user file is ignored silently when
-  `last` is read for the first choice. `choose_encoder` accepts any
+- **The dialog's model.**
+  - A container change drops the settings of an encoder that was not
+    chosen explicitly even when the new muxer's default is that same
+    encoder (MP4 · ffmpeg → another MP4 muxer loses a CRF edited on the
+    default x264); choosing the encoder in the list first keeps them.
+  - A preset naming an audio encoder for a muxer that takes no audio does
+    not set that encoder aside: a later container with audio takes its
+    default, not the preset's encoder.
+  - `choose_encoder` accepts any
   reference, and `Some` audio for a muxer without audio; `(Video, None)`
   does nothing. Untested: `output_choice`'s error for an unavailable
   component, and `set_setting`'s drop of a hidden value.
 - **The dialog.**
-  - A failure writing `last` is cleared from Problems by the export's own
-    `clear(Source::Export)` (the log entry stays).
+  - Reopening the dialog does not re-read the presets files: a file edited
+    by hand, or by another window, shows after Reload Plugins or another
+    project.
+  - `set_plugins` drops the dialog even while it is open; the open overlay
+    then shows an empty dialog until it is closed.
+  - The section "Preset" (the export preset) and the x264 field "Preset"
+    share a label.
+  - The dialog tests' `gpui = { package = "gpui-pre", version = "=0.3.11" }`
+    dev-dependency pins gpui-pre exactly (ruling 7) and needs a bump with
+    gpui-kit.
   - A plugin can be described twice at once on first open (the initial
     resolve and the per-plugin task; the registry's cache has no
     single-flight).
@@ -476,7 +576,7 @@ components in the dialog.
   - `#[allow(clippy::too_many_arguments)]` and `#[expect]` are mixed in
     `view.rs`.
   - Every keystroke rebuilds all the `Select`s through `sync`.
-  - Stale-preset warnings show the CLI's text, backticks included.
-  - No view test for the save flow, the preset warnings, a container
-    change, Escape keeping state, or a click on Export… (the gpui-kit
+  - No view test for a whole save (writing the file), a stale preset's
+    warnings, a container change in the window (the model covers the
+    rule), Escape keeping state, or a click on Export… (the gpui-kit
     test-support conflict, ruling 7).
