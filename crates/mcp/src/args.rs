@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use celesta_exporter::{
     AudioChoice, ContactSheet, EncoderChoice, ExportJob, ExportOptions, ExportRange,
-    FrameSelection, LoudnessTarget, OutputChoice, PeakHandling, SettingInput, StillExport,
-    StillFormat, parse_timecode,
+    FrameSelection, LoudnessTarget, OutputChoice, PeakHandling, PresetLookup, PresetsFile,
+    SettingInput, StillExport, StillFormat, parse_timecode,
 };
 use celesta_media::{ComponentRef, SettingValue};
 use schemars::JsonSchema;
@@ -133,8 +133,9 @@ pub struct ExportVideoArgs {
     output: Option<PathBuf>,
     /// Replace `output` if it exists.
     overwrite: Option<bool>,
-    /// A preset's name. Presets are not available yet: any name is an
-    /// `unknown_preset` error.
+    /// An export preset's name, looked up in presetFile, then the project's
+    /// export-presets.json, then the user's. Without it, the project's
+    /// default preset applies when no component is chosen.
     preset: Option<String>,
     /// An export-presets.json to look `preset` up in first.
     preset_file: Option<PathBuf>,
@@ -217,22 +218,12 @@ pub struct DescribeComponentArgs {
     pub component: String,
 }
 
-/// `presetFile`: a readable JSON object, as the CLI's `--preset-file`.
-/// Presets arrive with P3, so nothing reads names from it yet.
+/// `presetFile`: an export-presets.json that exists and parses, as the
+/// CLI's `--preset-file`.
 fn check_preset_file(path: &Path) -> Result<(), String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("cannot read presetFile {}: {error}", path.display()))?;
-    match serde_json::from_str::<Value>(&text) {
-        Ok(Value::Object(_)) => Ok(()),
-        Ok(_) => Err(format!(
-            "presetFile {} is not a JSON object",
-            path.display()
-        )),
-        Err(error) => Err(format!(
-            "presetFile {} is not valid JSON: {error}",
-            path.display()
-        )),
-    }
+    PresetsFile::load(path)
+        .map(drop)
+        .map_err(|error| format!("presetFile {error}"))
 }
 
 fn component_ref(text: &str) -> Result<ComponentRef, String> {
@@ -561,8 +552,9 @@ impl ExportVideoArgs {
                 output.display()
             ));
         }
-        if let Some(file) = &self.preset_file {
-            check_preset_file(&absolute(file))?;
+        let preset_file = self.preset_file.as_deref().map(absolute);
+        if let Some(file) = &preset_file {
+            check_preset_file(file)?;
         }
         let choice = OutputChoice {
             preset: self.preset.clone(),
@@ -589,6 +581,7 @@ impl ExportVideoArgs {
             subtitles,
             looping: self.looping.unwrap_or(false),
             loudness,
+            presets: PresetLookup::for_source(&source.path, preset_file),
             ..ExportOptions::default()
         };
         Ok(job(source, Some(absolute(output)), None, options))
@@ -932,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn a_preset_file_must_be_a_json_object() {
+    fn a_preset_file_must_be_a_presets_file() {
         let dir = tempfile::tempdir().unwrap();
         let write = |name: &str, text: &str| {
             let path = dir.path().join(name);
@@ -942,12 +935,20 @@ mod tests {
         let job = |path: &Path| {
             video_job(json!({ "source": "a.tsx", "output": "a.mp4", "presetFile": path }))
         };
-        assert!(job(&write("ok.json", "{}")).is_ok());
-        rejects(job(&write("list.json", "[]")), "not a JSON object");
-        rejects(job(&write("bad.json", "{")), "not valid JSON");
+        rejects(job(&write("none.json", "{}")), "presetFile");
         rejects(
-            job(&dir.path().join("missing.json")),
-            "cannot read presetFile",
+            job(&write("future.json", r#"{"version": 2}"#)),
+            "unsupported version 2",
+        );
+        rejects(job(&write("bad.json", "{")), "not valid JSON");
+        rejects(job(&dir.path().join("missing.json")), "presetFile");
+
+        let ok = write("ok.json", r#"{"version": 1, "presets": []}"#);
+        let job = job(&ok).unwrap();
+        assert_eq!(job.options.presets.file.as_deref(), Some(ok.as_path()));
+        assert_eq!(
+            job.options.presets.project,
+            Some(celesta_plugin_host::project_root(&job.source).join("export-presets.json"))
         );
     }
 

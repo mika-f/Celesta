@@ -19,8 +19,8 @@ use celesta_exporter::report::{self, HintStyle};
 use celesta_exporter::{
     AudioChoice, AudioLoudness, ContactSheet, EncoderChoice, ExportCancellation, ExportError,
     ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
-    LoudnessTarget, OutputChoice, PeakHandling, PresetLookup, ReactRuntimeOptions, RenderQuality,
-    SettingInput, StillExport, StillFormat, parse_timecode,
+    LoudnessTarget, OutputChoice, PeakHandling, PresetLookup, PresetsFile, ReactRuntimeOptions,
+    RenderQuality, SettingInput, StillExport, StillFormat, parse_timecode,
 };
 use celesta_media::{ComponentRef, SettingKind, SettingValue};
 use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
@@ -228,12 +228,10 @@ struct Cli {
         default_value_t = non_zero(ContactSheet::DEFAULT_TILE_WIDTH)
     )]
     tile_width: NonZeroU32,
-    /// A preset's name. Presets are not available yet: every name fails
-    /// with unknown_preset.
+    /// An export preset: looked up in --preset-file, then the project's export-presets.json, then yours.
     #[arg(long, value_name = "NAME")]
     preset: Option<String>,
-    /// An export-presets.json, checked to be a JSON object; nothing is
-    /// looked up in it yet.
+    /// An export-presets.json to look --preset up in first.
     #[arg(long, value_name = "PATH")]
     preset_file: Option<PathBuf>,
     /// The muxer that writes the video, instead of the output's extension's.
@@ -548,22 +546,11 @@ fn main() -> ExitCode {
     }
 }
 
-/// `--preset-file`: a readable JSON object. Presets arrive with P3, so
-/// nothing reads names from it yet.
+/// `--preset-file`: an export-presets.json that exists and parses.
 fn read_preset_file(path: &Path) -> Result<(), String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("cannot read --preset-file {}: {error}", path.display()))?;
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(serde_json::Value::Object(_)) => Ok(()),
-        Ok(_) => Err(format!(
-            "--preset-file {} is not a JSON object",
-            path.display()
-        )),
-        Err(error) => Err(format!(
-            "--preset-file {} is not valid JSON: {error}",
-            path.display()
-        )),
-    }
+    PresetsFile::load(path)
+        .map(drop)
+        .map_err(|error| format!("--preset-file {error}"))
 }
 
 /// `--list-components` and `--describe`: what is installed, from the
@@ -985,7 +972,12 @@ fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
                 &cli.plugin_dir,
                 &cli.allow_plugin,
             )),
-            presets: PresetLookup::default(),
+            presets: match kind {
+                OutputKind::Video(_) => {
+                    PresetLookup::for_source(cli.source(), cli.preset_file.clone())
+                }
+                OutputKind::Stills | OutputKind::SubtitlesOnly => PresetLookup::default(),
+            },
         },
     }
 }

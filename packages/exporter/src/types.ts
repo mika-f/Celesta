@@ -72,9 +72,13 @@ export interface VideoOptions extends SourceOptions, RunOptions, RenderOptions {
   to?: Timecode;
   /** `.srt` or `.vtt` files to write beside the video; `{lang}` writes one per language. */
   subtitles?: string | string[];
-  /** A named bundle of component choices and settings (`--preset`). */
+  /**
+   * An export preset's name (`--preset`), looked up in `presetFile`, then the
+   * project's `export-presets.json`, then the user's. Without it, the
+   * project's default preset applies when no component is chosen.
+   */
   preset?: string;
-  /** A JSON file of presets (`--preset-file`). */
+  /** An `export-presets.json` to look `preset` up in first (`--preset-file`). */
   presetFile?: string;
   /** The muxer component, `<plugin>/<id>`; the output's extension picks one when left out. */
   muxer?: string;
