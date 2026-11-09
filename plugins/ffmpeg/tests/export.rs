@@ -1002,17 +1002,16 @@ fn brings_the_mix_to_a_loudness_target() {
 }
 
 #[test]
-fn mov_and_webm_stay_tagged_bt709_and_mp4_untagged() {
+fn mp4_mov_and_webm_are_tagged_bt709() {
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
-    // AVCOL_SPC_BT709, AVCOL_PRI_BT709 and AVCOL_TRC_BT709 are all 1; the
-    // unspecified values (AVCOL_SPC_UNSPECIFIED, AVCOL_PRI_UNSPECIFIED,
-    // AVCOL_TRC_UNSPECIFIED) all 2 (deviation 8).
+    // AVCOL_SPC_BT709, AVCOL_PRI_BT709 and AVCOL_TRC_BT709 are all 1. The
+    // MP4's come from libx264's VUI, which the stream info reads.
     for (name, colors) in [
         ("clip.mov", (1, 1, 1)),
         ("clip.webm", (1, 1, 1)),
-        ("clip.mp4", (2, 2, 2)),
+        ("clip.mp4", (1, 1, 1)),
     ] {
         let Some(output) = export_as(&project, directory.path(), name) else {
             return;
