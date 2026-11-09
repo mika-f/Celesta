@@ -488,6 +488,30 @@ in the table under Checks.
   their path, which happens to put `ffmpeg` first today but would put a
   P5 `avfoundation` plugin before it. P5 has to order them.
 - Runtime type names still say "codec" where deviation 14 keeps them.
+- **The audio of the whole mix is held in memory, unbounded.**
+  `encode_audio` (`crates/exporter/src/encode.rs`) collects every chunk's
+  packets before any reaches the interleaver. The spec accepted this for
+  AAC (about 14 MB per 10 minutes), but `ffmpeg/pcm` at s24, 48 kHz
+  stereo is about 1 MB/s, some 170 MB for a 10-minute MOV, and
+  `convert_channels` and `resample_audio` copy the mix on top, while the
+  video side is capped at 256 MB.
+- **The spill file survives a hard kill.** The interleaver's spill is a
+  `NamedTempFile` beside the output (`crates/exporter/src/interleave.rs`),
+  so a SIGKILL or crash leaves a `.tmpXXXX` file there, as it leaves the
+  staged `.celesta-*` output. Cancel and error paths remove both
+  (`cancel_during_encoding_leaves_no_files`).
+- **WebM's timestamps are shifted by the Opus delay.** `ff_webm_muxer`
+  has no `AVFMT_TS_NEGATIVE` and the muxer leaves `avoid_negative_ts` at
+  its default, so libavformat shifts both streams by the audio's first
+  dts (−312 samples): video starts at +6.5 ms. `main` did the same
+  through ez-ffmpeg, so parity holds;
+  `opus_webm_declares_its_codec_delay` checks only the decoded length,
+  within 960 frames, not the first video packet's time.
+- **The `describe` cache key can miss a rebuild.** It is the plugin's
+  folder, manifest `version`, and executable size and modification time
+  (`MediaRegistry`), so a plugin rebuilt within the same second at the
+  same size, on a filesystem with 1 s modification times, keeps its old
+  answer until Celesta restarts. Recorded as a deviation; low impact.
 
 ## Review follow-ups
 
@@ -573,11 +597,27 @@ Fixed after the whole-branch review:
   invalid `channels` setting, and a muxer answering `files: []` reports
   the output path.
 
-Left open from the whole-branch review: `--loop` on MOV (a PCM lead-in
-hidden by an edit list, new behaviour) has no test; `describe`'s
+Left open from the whole-branch review: `describe`'s
 `inputFormats` is read strictly, so a format Celesta does not know fails
 the whole answer; a muxer may refuse a codec string the resolve matched
 by family (`lpcm` against `lpcm.s24le`); one load-dependent run of
 `a_plugins_refusal_is_an_invalid_option` saw the test codec's process
 exit; resolving may start candidate processes it then stops; and
 `--list-components --check` and MCP pass a kill switch nothing kills.
+
+Fixed after the PR review (#786):
+
+- The FFmpeg plugin keeps a muxer's session until finishing succeeds, as
+  the test codec does, so `abortMuxer` after a failed `av_write_trailer`
+  still names the file to remove (tested by failing a `+faststart`
+  trailer).
+- `validate` refuses an `integer` value outside i64's range (below -2^63,
+  or from 2^63 on), naming the key (`invalid_option`), so a whole `1e300`
+  for `bitrate`, which has no `max`, no longer saturates through `as i64`.
+  `step` stays a hint for the editor and is not checked.
+- `--loop` on MOV has a decode-and-compare test: the looping export's
+  sound starts at 0 and lasts the video's second, and it decodes to the
+  same samples as the export without `--loop`.
+- `docs/performance/path-rasterization.md` uses `--video-option
+  preset=medium --video-option crf=18`, and the media crate's module docs
+  point at the spec and the P1 and P2a handoffs.
