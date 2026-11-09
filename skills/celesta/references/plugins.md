@@ -84,8 +84,13 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `inputFormats`), and `muxers` (`id`, `name`, `extensions`, `video`,
   `audio`, `defaultVideo`, `defaultAudio`, `trimsLeadingAudio`); a
   component is `<plugin>/<id>`, such as `ffmpeg/libx264`). The app's packages
-  bundle `ffmpeg`. A source build makes it with
-  `node scripts/plugins/build.mts plugins/ffmpeg` and points
+  bundle `ffmpeg`; the macOS app also bundles `avfoundation` (VideoToolbox,
+  AudioToolbox, and AVFoundation; MIT/Apache-2.0, system frameworks only),
+  whose components are used only when named, since `ffmpeg` ranks first
+  among bundled plugins ([export.md](export.md#avfoundation-components-macos)).
+  A source build makes them with
+  `node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation` (off
+  macOS it prints `avfoundation: skipped, it is built for macos only`) and points
   `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
   (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root).
   `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables
@@ -98,7 +103,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   may run is used: a file goes to the decoders listing its extension (all
   decoders when none does), the user's plugins first (`--plugin-dir`,
   `CELESTA_PLUGIN_PATH`, the user plugin folder, added folders), then
-  bundled ones, then a project's own. A decoder that does not read the
+  bundled ones (`ffmpeg` first), then a project's own. A decoder that does not read the
   file, fails, or does not start passes it to the next; one that misses
   its deadline, or is stopped by a cancelled export, ends the search with
   that error. The first that reads it keeps it. An export takes its muxer from the output's
@@ -300,7 +305,9 @@ whose range leaves out the running Celesta, is skipped, as is one whose
 and the `react`/`@celesta.studio/*` APIs the module uses. A pre-release
 Celesta (`0.10.0-beta.1`) matches only a range naming a pre-release of
 that version. `scripts/plugins/build.mts` writes the range from the Celesta
-it builds against.
+it builds against. A repository plugin's `plugin.json` may list `os`
+(`["macos"]`): `build.mts` then builds it on those systems only and skips
+it elsewhere.
 
 The manifest's optional `components` puts a component in the app's Add
 menu: `{ "name": "Flag", "label": "Flag", "src": "image", "props": {
