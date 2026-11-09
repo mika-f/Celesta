@@ -132,6 +132,18 @@ fn format_property<T: Copy>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::VideoCodec;
+
+    /// AudioToolbox's AAC encoder and VideoToolbox's H.264 encoder have
+    /// software implementations on every macOS, so their absence is a bug in
+    /// how the lists are read, never a Mac without them.
+    #[test]
+    fn every_mac_lists_the_aac_and_h264_encoders() {
+        let audio = audio_encoder_formats();
+        assert!(audio.contains(&AAC_FORMAT), "{audio:x?}");
+        let video = video_encoder_types();
+        assert!(video.contains(&VideoCodec::H264.codec_type()), "{video:x?}");
+    }
 
     #[test]
     fn aac_lists_the_rates_it_takes() {
