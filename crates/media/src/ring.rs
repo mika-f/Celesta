@@ -1,7 +1,7 @@
 //! How big an export's ring of frame slots is (see
 //! `celesta_plugin::shared::RingLayout`).
 
-use crate::provider::PixelFormat;
+use crate::provider::{PIPE_WINDOW, PixelFormat};
 use celesta_plugin::shared::{RingLayout, SLOT_HEADER};
 
 /// The slots a ring has when it fits.
@@ -29,6 +29,13 @@ pub fn ring_layout(formats: &[PixelFormat], width: u32, height: u32) -> Option<R
         let bytes = slots.checked_mul(slot_bytes.checked_add(SLOT_HEADER)?)?;
         (bytes <= MAX_RING_BYTES).then_some(RingLayout { slots, slot_bytes })
     })
+}
+
+/// How many `frame_bytes`-byte frames a pipeline without a ring keeps in
+/// flight: [`PIPE_WINDOW`], fewer when that many frames would exceed
+/// [`MAX_RING_BYTES`] (the bound a ring has), and at least one.
+pub fn pipe_depth(frame_bytes: usize) -> usize {
+    (MAX_RING_BYTES / frame_bytes.max(1)).clamp(1, PIPE_WINDOW)
 }
 
 #[cfg(test)]
@@ -74,6 +81,19 @@ mod tests {
     #[test]
     fn ring_layout_rounds_a_slot_up_to_a_multiple_of_8() {
         assert_eq!(ring_layout(&[Yuv420p], 33, 17), layout(3, 872));
+    }
+
+    #[test]
+    fn the_pipes_depth_is_bounded_by_the_rings_ceiling() {
+        assert_eq!(pipe_depth(Rgba8.frame_bytes(1920, 1080)), 3);
+        assert_eq!(pipe_depth(Rgba16.frame_bytes(3840, 2160)), 3);
+        assert_eq!(pipe_depth(Rgba16.frame_bytes(7680, 4320)), 1);
+        assert_eq!(pipe_depth(Rgba8.frame_bytes(7680, 4320)), 2);
+        assert_eq!(pipe_depth(Rgba16.frame_bytes(8192, 4320)), 1);
+        assert_eq!(pipe_depth(MAX_RING_BYTES / 2), 2);
+        assert_eq!(pipe_depth(MAX_RING_BYTES / 3), 3);
+        assert_eq!(pipe_depth(0), 3);
+        assert_eq!(pipe_depth(usize::MAX), 1);
     }
 
     #[test]

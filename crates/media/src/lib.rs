@@ -49,7 +49,7 @@ pub use registry::{
     MediaRegistry, PluginDescription, RegisteredPlugin, registry, set_registry,
 };
 pub use resample::resample_audio;
-pub use ring::{MAX_RING_BYTES, RING_SLOTS, ring_layout};
+pub use ring::{MAX_RING_BYTES, RING_SLOTS, pipe_depth, ring_layout};
 pub use settings::{
     InvalidSetting, SelectOption, SettingField, SettingKind, SettingValue, Settings,
 };

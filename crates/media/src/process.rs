@@ -8,6 +8,7 @@ use crate::provider::{
     ProviderUse, SessionId, TrackPacket, VideoEncoder, VideoEncoderOpened, VideoEncoderRequest,
     VideoRequest,
 };
+use crate::ring::pipe_depth;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_plugin::MEDIA_PROTOCOL_VERSION;
 use celesta_plugin::protocol::Message;
@@ -86,6 +87,9 @@ pub struct MediaProcess {
     /// The ring was declared when the video encoder opened, so frames go
     /// in its slots.
     ring_open: bool,
+    /// The window without a ring: [`PIPE_WINDOW`], or fewer for the opened
+    /// video encoder's frames ([`pipe_depth`]).
+    pipe_depth: usize,
     /// The [`Pipeline`]'s requests in flight, oldest first, in step with
     /// the child's window.
     pending: VecDeque<Pending>,
@@ -275,6 +279,7 @@ impl MediaProcess {
             ring,
             ring_declined: false,
             ring_open: false,
+            pipe_depth: PIPE_WINDOW,
             pending: VecDeque::new(),
             audio_channels: HashMap::new(),
         })
@@ -374,11 +379,13 @@ fn out_of_step() -> MediaError {
 }
 
 impl Pipeline for MediaProcess {
-    /// The ring's slots once it is declared; [`PIPE_WINDOW`] otherwise.
+    /// The ring's slots once it is declared; otherwise [`PIPE_WINDOW`],
+    /// or fewer once a video encoder opened for frames so large that the
+    /// window would hold more than [`crate::MAX_RING_BYTES`] of them.
     fn depth(&self) -> usize {
         match &self.ring {
             Some(ring) if self.ring_open => ring.layout().slots,
-            _ => PIPE_WINDOW,
+            _ => self.pipe_depth,
         }
     }
 
@@ -563,7 +570,8 @@ impl Decoder for MediaProcess {
 
 impl VideoEncoder for MediaProcess {
     /// Declares the ring the plugin accepted, unless it was declined
-    /// ([`Pipeline::decline_ring`]).
+    /// ([`Pipeline::decline_ring`]); without one, bounds the window by the
+    /// size of the frames the encoder chose ([`pipe_depth`]).
     fn open_video(
         &mut self,
         request: &VideoEncoderRequest<'_>,
@@ -574,6 +582,7 @@ impl VideoEncoder for MediaProcess {
         let answer = self.request(message, "videoEncoderOpened", OPEN_TIMEOUT)?;
         let opened = protocol::decode_video_encoder_opened(&answer)?;
         self.ring_open = ring.is_some();
+        self.pipe_depth = pipe_depth(opened.input.frame_bytes(request.width, request.height));
         Ok(opened)
     }
 

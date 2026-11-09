@@ -627,6 +627,23 @@ fn frames_too_large_for_the_ring_go_through_the_pipe() {
     );
 }
 
+/// Without a ring, the window holds as many frames of the opened encoder's
+/// input at the opened size as fit the ring's ceiling, up to three.
+#[test]
+fn the_pipes_window_shrinks_for_large_frames() {
+    let mut process = program_with(FrameTransport::Pipe, ProviderUse::Export { ring: None });
+    let color = Color::bt709_limited();
+    for ((width, height), depth) in [((8192, 4320), 1), ((RING_WIDTH, RING_HEIGHT), 3)] {
+        let opened = open_rgba(&mut process, width, height, &color);
+        assert_eq!(
+            process.pipeline().unwrap().depth(),
+            depth,
+            "{width}x{height}"
+        );
+        process.video_encoder().unwrap().abort_video(opened.session);
+    }
+}
+
 #[test]
 fn an_error_in_the_window_leaves_the_rest_in_flight() {
     let mut process = program_with(FrameTransport::SharedMemory, rgba_export());

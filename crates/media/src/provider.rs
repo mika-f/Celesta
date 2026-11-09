@@ -57,7 +57,8 @@ pub trait MediaProvider: Send {
 }
 
 /// How deep a [`Pipeline`] without a ring of frame slots goes: frames then
-/// travel in each request's payload.
+/// travel in each request's payload. Fewer for frames so large that this
+/// many would exceed the ring's ceiling ([`crate::pipe_depth`]).
 pub const PIPE_WINDOW: usize = 3;
 
 /// A provider's encode and write requests sent without waiting, each
@@ -69,7 +70,8 @@ pub const PIPE_WINDOW: usize = 3;
 /// one-at-a-time methods), which is refused while any is in flight.
 pub trait Pipeline {
     /// How many requests may be in flight: the ring's slots, or
-    /// [`PIPE_WINDOW`] without a ring.
+    /// [`PIPE_WINDOW`] without a ring ([`crate::pipe_depth`] for large
+    /// frames).
     fn depth(&self) -> usize;
 
     /// How many requests are sent and not yet received.
