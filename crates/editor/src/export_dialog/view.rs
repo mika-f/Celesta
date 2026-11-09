@@ -891,6 +891,60 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn a_typo_left_behind_is_replaced_by_the_fields_value(cx: &mut TestAppContext) {
+        let (handle, dialog) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.update(|window, cx| {
+            open_export_dialog(&dialog, window, cx);
+            dialog.update(cx, |dialog, cx| {
+                dialog.advanced[Track::Audio as usize] = true;
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        let delay = cx.update(|window, cx| {
+            let delay = dialog
+                .read(cx)
+                .fields
+                .iter()
+                .find_map(|control| match &control.widget {
+                    Widget::Text { input, .. } if control.key == "delay" => Some(input.clone()),
+                    _ => None,
+                })
+                .expect("the audio encoder's delay field");
+            delay.update(cx, |input, cx| input.focus(window, cx));
+            delay
+        });
+        cx.simulate_input("1x");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert_eq!(
+                dialog.read(cx).export_blocked().as_deref(),
+                Some("Delay: Enter a number")
+            );
+            // The field loses the focus, and another field's change syncs
+            // every control to the model.
+            window.blur(cx);
+            dialog.update(cx, |dialog, cx| {
+                dialog.set_setting(
+                    Track::Video,
+                    "input",
+                    SettingValue::String("rgba8".to_owned()),
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            // "1" was a number and was taken; "1x" was not.
+            assert_eq!(delay.read(cx).value().as_ref(), "1");
+            assert_eq!(dialog.read(cx).export_blocked(), None);
+        });
+    }
+
+    #[gpui_kit::test]
     fn export_dialog_emits_the_chosen_output(cx: &mut TestAppContext) {
         let (handle, dialog) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
         let exported = Rc::new(RefCell::new(Vec::new()));

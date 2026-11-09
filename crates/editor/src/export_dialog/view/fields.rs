@@ -99,11 +99,11 @@ impl ExportDialog {
                         && control.key == row.field.key
                         && control.component == component
                 });
-                let control = match position {
+                let mut control = match position {
                     Some(position) => self.fields.swap_remove(position),
                     None => self.field_control(track, &component, &row, window, cx),
                 };
-                show_value(&control, &row.value, window, cx);
+                show_value(&mut control, &row.value, window, cx);
                 kept.push(control);
             }
         }
@@ -271,15 +271,23 @@ impl ExportDialog {
     }
 }
 
-/// Shows `value` in `control`, unless its text has the focus.
-fn show_value(control: &FieldControl, value: &SettingValue, window: &mut Window, cx: &mut App) {
-    match (&control.widget, value) {
+/// Shows `value` in `control`, unless its text has the focus. Replacing
+/// the text drops what was wrong with the text it replaces.
+fn show_value(control: &mut FieldControl, value: &SettingValue, window: &mut Window, cx: &mut App) {
+    match (&mut control.widget, value) {
         (Widget::Select(select), SettingValue::String(value)) => {
             if select.read(cx).selected_value() != Some(value) {
                 select.update(cx, |state, cx| state.set_selected_value(value, window, cx));
             }
         }
-        (Widget::Text { input, number, .. }, value) => {
+        (
+            Widget::Text {
+                input,
+                number,
+                typo,
+            },
+            value,
+        ) => {
             if input.focus_handle(cx).is_focused(window) {
                 return;
             }
@@ -294,6 +302,7 @@ fn show_value(control: &FieldControl, value: &SettingValue, window: &mut Window,
                     other => other.to_string(),
                 };
                 input.update(cx, |input, cx| input.set_value(text, window, cx));
+                *typo = None;
             }
         }
         _ => {}
