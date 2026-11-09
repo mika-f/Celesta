@@ -6,25 +6,26 @@
 //! delay and the loop pre-roll alike, so `leadingAudio` needs nothing more),
 //! and WebM's `CodecDelay` from the stream's `initial_padding`; an Opus
 //! packet shorter than the samples it holds gets the padding to discard, as
-//! libopus marked it on `main`. ProRes and VP9 streams
-//! are tagged with the track's color; H.264 and HEVC stay untagged in P2a
-//! (deviation 8), as `main` left them.
+//! libopus marked it on `main`. Every video stream is tagged
+//! with the track's color (`AvColor`), so MP4 gets `colr` `nclx`, MOV `nclc`,
+//! and WebM `Colour`; a color name libavutil does not know is refused at open.
 
 use crate::components::MuxerFormat;
 use crate::ffi::{PacketBuf, av_error, quiet_logs};
+use crate::tags::AvColor;
 use celesta_media::{
-    Color, InvalidSetting, MediaError, MuxerRequest, SettingValue, Track, TrackConfig, TrackPacket,
+    InvalidSetting, MediaError, MuxerRequest, SettingValue, Track, TrackConfig, TrackPacket,
     settings::validate,
 };
 use celesta_plugin_host::codec_family;
 use ffmpeg_sys_next::{
-    AV_INPUT_BUFFER_PADDING_SIZE, AV_PKT_FLAG_KEY, AVCodecID, AVCodecParameters, AVColorPrimaries,
-    AVColorRange, AVColorSpace, AVColorTransferCharacteristic, AVDictionary, AVFMT_NOFILE,
-    AVFieldOrder, AVFormatContext, AVIO_FLAG_WRITE, AVMediaType, AVPacketSideDataType,
-    AVPixelFormat, AVRational, av_channel_layout_default, av_dict_count, av_dict_free, av_dict_set,
-    av_interleaved_write_frame, av_mallocz, av_new_packet, av_packet_new_side_data,
-    av_packet_rescale_ts, av_packet_unref, av_write_trailer, avformat_alloc_output_context2,
-    avformat_free_context, avformat_new_stream, avformat_write_header, avio_closep, avio_open,
+    AV_INPUT_BUFFER_PADDING_SIZE, AV_PKT_FLAG_KEY, AVCodecID, AVCodecParameters, AVDictionary,
+    AVFMT_NOFILE, AVFieldOrder, AVFormatContext, AVIO_FLAG_WRITE, AVMediaType,
+    AVPacketSideDataType, AVPixelFormat, AVRational, av_channel_layout_default, av_dict_count,
+    av_dict_free, av_dict_set, av_interleaved_write_frame, av_mallocz, av_new_packet,
+    av_packet_new_side_data, av_packet_rescale_ts, av_packet_unref, av_write_trailer,
+    avformat_alloc_output_context2, avformat_free_context, avformat_new_stream,
+    avformat_write_header, avio_closep, avio_open,
 };
 use std::ffi::{CString, c_int};
 use std::path::PathBuf;
@@ -125,31 +126,6 @@ fn pcm_bits(id: AVCodecID) -> Option<c_int> {
 fn int(value: u32, what: &str) -> Result<c_int, MediaError> {
     c_int::try_from(value)
         .map_err(|_| MediaError::Codec(format!("a {what} of {value} is too large")))
-}
-
-/// Tags `parameters` with `color` where libavformat knows its names.
-///
-/// # Safety
-///
-/// `parameters` is a stream's codec parameters.
-unsafe fn tag_color(parameters: *mut AVCodecParameters, color: &Color) {
-    // SAFETY: the caller's parameters are writable.
-    unsafe {
-        if color.primaries == "bt709" {
-            (*parameters).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
-        }
-        if color.transfer == "bt709" {
-            (*parameters).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
-        }
-        if color.matrix == "bt709" {
-            (*parameters).color_space = AVColorSpace::AVCOL_SPC_BT709;
-        }
-        (*parameters).color_range = match color.range.as_str() {
-            "limited" => AVColorRange::AVCOL_RANGE_MPEG,
-            "full" => AVColorRange::AVCOL_RANGE_JPEG,
-            _ => AVColorRange::AVCOL_RANGE_UNSPECIFIED,
-        };
-    }
 }
 
 /// Copies `bytes` into `parameters`' extradata, padded as libavformat
@@ -255,9 +231,9 @@ unsafe fn add_stream(
                     // alpha, as `prores_ks` declared it on `main`.
                     (*parameters).bits_per_coded_sample = 32;
                 }
-                if matches!(family.as_str(), "ap4h" | "apch" | "vp09") {
-                    tag_color(parameters, color);
-                }
+                // libavformat writes MP4's `colr` (`nclx`, with the range),
+                // MOV's (`nclc`), and WebM's `Colour` from these.
+                AvColor::from_color(color)?.apply_to_codecpar(parameters);
             }
             Track::Audio {
                 sample_rate,

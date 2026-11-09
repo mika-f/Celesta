@@ -131,10 +131,6 @@ impl AvColor {
     /// # Safety
     ///
     /// `parameters` is a stream's writable `AVCodecParameters`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the muxers tag their streams with it next")
-    )]
     pub(crate) unsafe fn apply_to_codecpar(&self, parameters: *mut AVCodecParameters) {
         // SAFETY: the caller's parameters are writable.
         unsafe {

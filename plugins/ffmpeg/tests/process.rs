@@ -290,6 +290,7 @@ fn writes_an_export_through_the_program() {
     mux_mp4(program.as_mut(), &output, vec![video, (audio, packets)]);
     drop(program);
 
+    assert_eq!(stream_color(&output), (1, 1, 1, 1));
     let mut reader = program_backend();
     let probe = reader.probe(&output).unwrap().clone();
     let stream = probe.video.unwrap();
@@ -303,6 +304,42 @@ fn writes_an_export_through_the_program() {
     assert!(red > 160 && blue < 90 && alpha == 255, "{red} {blue}");
     let decoded = reader.decode_audio(&output, 48_000, 2).unwrap();
     assert!((decoded.frame_count() as i64 - 48_000).abs() < 2_048);
+}
+
+/// The video stream's `(color_primaries, color_trc, color_space,
+/// color_range)` as libavformat reads them from the container.
+fn stream_color(path: &Path) -> (i32, i32, i32, i32) {
+    use ffmpeg_sys_next as ff;
+    let url = std::ffi::CString::new(path.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: the context is opened, read, and closed here; the stream
+    // pointers are valid while it is open.
+    unsafe {
+        let mut context = std::ptr::null_mut();
+        assert!(
+            ff::avformat_open_input(
+                &mut context,
+                url.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null_mut()
+            ) >= 0
+        );
+        assert!(ff::avformat_find_stream_info(context, std::ptr::null_mut()) >= 0);
+        let streams =
+            std::slice::from_raw_parts((*context).streams, (*context).nb_streams as usize);
+        let parameters = streams
+            .iter()
+            .map(|&stream| (*stream).codecpar)
+            .find(|&parameters| (*parameters).codec_type == ff::AVMediaType::AVMEDIA_TYPE_VIDEO)
+            .expect("a video stream");
+        let colors = (
+            (*parameters).color_primaries as i32,
+            (*parameters).color_trc as i32,
+            (*parameters).color_space as i32,
+            (*parameters).color_range as i32,
+        );
+        ff::avformat_close_input(&mut context);
+        colors
+    }
 }
 
 /// The key and message of an [`MediaError::InvalidSettings`].
