@@ -36,10 +36,10 @@ pub const AUDIO_CODEC: &str = "lpcm.f32le";
 pub(crate) const INPUT_FORMATS: [PixelFormat; 6] = [
     PixelFormat::Yuv420p,
     PixelFormat::Yuv420p10,
-    PixelFormat::Rgba16,
-    PixelFormat::Rgba8,
     PixelFormat::Nv12,
     PixelFormat::P010,
+    PixelFormat::Rgba16,
+    PixelFormat::Rgba8,
 ];
 
 /// The largest priming delay the audio encoder adds, in sample frames.
