@@ -12,8 +12,9 @@ pub enum MediaError {
     /// No media decoder is installed (see [`crate::set_registry`]).
     #[error("no media decoder is installed, so video and audio files cannot be read")]
     NoDecoder,
-    /// No decoder reads `path`: the decoders `tried` (by id, in order) each
-    /// answered that it is not a file they read.
+    /// No decoder reads `path`: the decoders `tried` (as `<plugin>/<decoder>`
+    /// references, in order) each answered that it is not a file they read.
+    /// A plugin's answer names none; routing fills them in.
     #[error("no decoder could read {path} (tried {tried})", path = path.display(), tried = tried.join(", "))]
     Unsupported { path: PathBuf, tried: Vec<String> },
     /// The media plugin's process could not be started, went away, or fell

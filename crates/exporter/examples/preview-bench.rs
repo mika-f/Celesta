@@ -1,11 +1,11 @@
 //! Times the editor preview's per-frame cost for a standalone React entry,
 //! split into the Node round-trip and the GPU render, with and without the
-//! sequential video decoder. Frames are decoded by the codec plugin's
+//! sequential video decoder. Frames are decoded by a media plugin's
 //! process, as in the editor, so the times include sending them across it:
-//! the first codec plugin found, as Celesta finds it. Without one it exits
-//! with "no codec plugin found". In a source checkout, build the codec into
-//! `plugins/dist` and pass that folder's absolute path. The entry runs on
-//! `packages/cli/dist/cli.js`, so build the runtime first:
+//! the media plugins found, as Celesta finds them. Without one it exits
+//! with "no media plugin found". In a source checkout, build the FFmpeg
+//! plugin into `plugins/dist` and pass that folder's absolute path. The
+//! entry runs on `packages/cli/dist/cli.js`, so build the runtime first:
 //!
 //! ```text
 //! pnpm install && pnpm run build:runtime

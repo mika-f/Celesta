@@ -645,7 +645,9 @@ pub(crate) fn classify(
             ("project_validation", None)
         }
         ExportError::Evaluation(_) => ("evaluation", None),
-        // A video frame or audio file nothing could decode: say why.
+        // A video frame or audio file no decoder could read: say why. The
+        // `Codec` arms are an encoder or muxer that answered so, which
+        // decoding does not reach.
         ExportError::Render(GpuRenderError::Media(MediaError::NoDecoder))
         | ExportError::Audio(AudioMixError::Media(MediaError::NoDecoder))
         | ExportError::Codec {
@@ -1178,6 +1180,10 @@ mod tests {
             ExportError::Render(GpuRenderError::Media(unsupported())),
             ExportError::Audio(AudioMixError::Media(unsupported())),
             ExportError::Render(GpuRenderError::Media(unsupported())).at_frame(3),
+            ExportError::Codec {
+                stage: "video encoding",
+                source: unsupported(),
+            },
         ];
         for error in errors {
             let value = serde_json::to_value(

@@ -66,11 +66,13 @@ const PLUGIN_ID = /^[a-z0-9][a-z0-9._-]*$/;
 /**
  * Checks that the plugin `source` (read from `sourcePath`, which errors name)
  * has only the keys PluginSource lists, so a misspelt one is not skipped
- * without a word, has an `id` Celesta accepts (see {@link PLUGIN_ID}), has
- * `components`, if any, as a list of objects, and has something to build: a
- * module, a Cargo package, or both, and a module for any components, since
- * Celesta skips a plugin listing components it cannot import (an empty
- * `components` list, which Celesta accepts, needs none).
+ * without a word, has an `id` Celesta accepts (see {@link PLUGIN_ID}) other
+ * than `builtin`, which Celesta keeps for its built-in components, does not
+ * take both the `content` and `media` roles, has `components`, if any, as a
+ * list of objects, and has something to build: a module, a Cargo package, or
+ * both, and a module for any components, since Celesta skips a plugin
+ * listing components it cannot import (an empty `components` list, which
+ * Celesta accepts, needs none).
  */
 export function checkPluginSource(source: PluginSource, sourcePath: string): void {
   const unknown = Object.keys(source).filter((key) => !PLUGIN_SOURCE_KEYS.includes(key));
