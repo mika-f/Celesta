@@ -437,6 +437,16 @@ test-codec tests), and the editor by hand.
 
 ## Not done
 
+- **An abort with requests in flight** drops the muxer's process without
+  reading `abortMuxer`'s files. Harmless today: Celesta's own staged output
+  and spill file go with their guards. A `sequence: true` muxer (P4) must
+  remove the names Celesta chose, as the spec says, or drain `writePackets`
+  with a short deadline before aborting.
+- **The React path resolves the output after the bridge is up** (the ring
+  needs the frame size), so output errors (`unsupported_output`,
+  `invalid_option`, `component_unavailable`, ...) arrive only after Node
+  starts and the entry loads, and the `output` progress event follows
+  `composition`.
 - **Encoding straight from the mapping** (deviation 19): the plugin copies
   each frame out of its slot, and Celesta copies each into one. An
   `AVBufferRef` over the shared memory would save the plugin's copy;
@@ -483,6 +493,12 @@ The rulings that shaped the code, from the session's ledger:
   `transports` gate the ring (deviation 27); the payload window is bounded
   by bytes (deviation 28); the timing line says how the frames went, and
   the tests that pin the ring assert it was used.
+
+Fixed after PR review: `open_video` marks the ring in use only when the
+opened input's frame fits a slot (`frame_bytes <= slot_bytes`); a larger
+frame goes as a payload with the pipe's window, and the timing line says
+`frames pipe N deep`. `decodeVideo` is refused on a process that has a
+ring, so a decoded frame is never written across ring slots.
 
 Fixed after the final review as well: `PixelFormat::frame_bytes`
 saturates, since `resolve` runs before the dimensions are validated; the
