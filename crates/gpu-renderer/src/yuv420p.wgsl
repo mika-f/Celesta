@@ -3,6 +3,9 @@
 // planes (`chroma`, one render target each), ready to hand to an H.264
 // encoder without a CPU-side color conversion. `luma10` and `chroma10` write
 // yuv420p10le's 10-bit codes instead, into 16-bit integer planes.
+// `chroma_nv12` writes NV12's interleaved UV plane (one two-channel target),
+// and `luma_p010` and `chroma_p010` write P010's planes: the 10-bit codes
+// shifted left by 6 in 16-bit integers.
 //
 // The matrix is BT.709 with limited ("TV") range: the matrix players assume
 // for HD video and the one every Celesta export is tagged with. Its 10-bit
@@ -91,4 +94,26 @@ fn chroma10(@builtin(position) position: vec4<f32>) -> Chroma10 {
     let values = chroma_values(block);
     let offset = dither(block);
     return Chroma10(code10(values.x, offset), code10(values.y, offset));
+}
+
+@fragment
+fn chroma_nv12(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32> {
+    let block = vec2<u32>(position.xy);
+    let values = chroma_values(block);
+    let offset = dither(block);
+    return vec2<f32>(code(values.x, offset), code(values.y, offset));
+}
+
+@fragment
+fn luma_p010(@builtin(position) position: vec4<f32>) -> @location(0) u32 {
+    let pixel = vec2<u32>(position.xy);
+    return code10(luma_value(pixel), dither(pixel)) << 6u;
+}
+
+@fragment
+fn chroma_p010(@builtin(position) position: vec4<f32>) -> @location(0) vec2<u32> {
+    let block = vec2<u32>(position.xy);
+    let values = chroma_values(block);
+    let offset = dither(block);
+    return vec2<u32>(code10(values.x, offset), code10(values.y, offset)) << vec2<u32>(6u);
 }

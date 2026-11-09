@@ -509,9 +509,10 @@ impl GpuRenderer {
         &self.adapter_info
     }
 
-    /// Whether this GPU can convert frames to [`ReadbackFormat::Yuv420p`]
-    /// and [`ReadbackFormat::Yuv420p10`]
-    /// (it renders the U and V planes as two render targets at once).
+    /// Whether this GPU can convert frames to [`ReadbackFormat::Yuv420p`],
+    /// [`ReadbackFormat::Yuv420p10`], [`ReadbackFormat::Nv12`], and
+    /// [`ReadbackFormat::P010`] (it renders the planar formats' U and V
+    /// planes as two render targets at once).
     pub fn supports_yuv420p_readback(&self) -> bool {
         self.device.limits().max_color_attachments >= 2
     }
@@ -535,7 +536,7 @@ impl GpuRenderer {
             if !self.supports_yuv420p_readback() {
                 return Err(GpuRenderError::UnsupportedReadbackFormat(format));
             }
-            let converter = YuvConverter::new(&self.device, format == ReadbackFormat::Yuv420p10);
+            let converter = YuvConverter::new(&self.device, format);
             self.yuv_converters.insert(format, converter);
         }
         let output = match format {

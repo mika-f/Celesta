@@ -113,8 +113,8 @@ pub(crate) struct RgbaReadback {
 pub(crate) struct YuvReadback {
     /// Samples the slot's canvas.
     pub(crate) bind_group: wgpu::BindGroup,
-    /// Y, U, and V, in the order they are packed.
-    pub(crate) planes: [YuvPlane; 3],
+    /// Y, then U and V, or the interleaved UV, in the order they are packed.
+    pub(crate) planes: Vec<YuvPlane>,
 }
 
 pub(crate) struct YuvPlane {
@@ -127,9 +127,9 @@ pub(crate) struct YuvPlane {
 }
 
 impl YuvReadback {
-    /// Total size of the three padded planes.
+    /// Total size of the padded planes.
     pub(crate) fn buffer_size(&self) -> u64 {
-        let last = &self.planes[2];
+        let last = self.planes.last().expect("a slot has planes");
         last.offset + last.layout.buffer_size
     }
 }
