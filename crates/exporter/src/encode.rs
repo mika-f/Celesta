@@ -57,6 +57,8 @@ const SHARED_MEMORY_TRANSPORT: &str = "sharedMemory";
 pub(crate) const VIDEO_STAGE: &str = "video encoding";
 const AUDIO_STAGE: &str = "audio encoding";
 pub(crate) const MUXER_STAGE: &str = "muxing";
+/// A still's encoder: opening it, encoding a frame, or flushing it.
+pub(crate) const IMAGE_STAGE: &str = "image encoding";
 
 /// The [`LOOP_LEAD_IN_FRAMES`] sample frames that precede the mix's start
 /// when it plays in a loop: its end, repeated as many times as a short mix
@@ -127,30 +129,73 @@ pub(crate) fn readback_for(opened: &VideoEncoderOpened) -> Result<ReadbackFormat
     }
 }
 
-/// A frame read back as `format`, as the `input` an encoder takes: straight
-/// `rgba16` narrowed to `rgba8` ([`narrow_rgba16`]) for one taking `rgba8`
-/// ([`readback_for`]); any other frame as it is.
+/// A frame `width` pixels wide read back as `format`, as the `input` an
+/// encoder takes: straight `rgba16` narrowed to `rgba8` ([`narrow_rgba16`])
+/// for one taking `rgba8` ([`readback_for`]); any other frame as it is.
 pub(crate) fn encoder_pixels(
     format: ReadbackFormat,
     pixels: Vec<u8>,
+    width: u32,
     input: PixelFormat,
 ) -> Vec<u8> {
     if format == ReadbackFormat::Rgba16Straight && input == PixelFormat::Rgba8 {
-        narrow_rgba16(&pixels)
+        narrow_rgba16(&pixels, width)
     } else {
         pixels
     }
 }
 
-/// Little-endian 16-bit samples narrowed to 8 bits each, rounding to
-/// nearest.
-pub(crate) fn narrow_rgba16(pixels: &[u8]) -> Vec<u8> {
-    pixels
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|&sample| ((u32::from(u16::from_le_bytes(sample)) * 255 + 32_767) / 65_535) as u8)
-        .collect()
+/// A frame `width` pixels wide of little-endian 16-bit RGBA samples narrowed
+/// to 8 bits each the way the renderer's own 8-bit readback rounds
+/// (`dither.wgsl` in `celesta-gpu-renderer`): every channel, alpha too, is
+/// rounded to a whole code after adding the 8x8 ordered dither at the
+/// pixel's position ([`dither`]), so a gentle gradient does not band, and a
+/// value within [`WHOLE_CODE_TOLERANCE`] of a whole code keeps that code.
+pub(crate) fn narrow_rgba16(pixels: &[u8], width: u32) -> Vec<u8> {
+    let width = width.max(1) as usize;
+    let samples = pixels.as_chunks::<2>().0;
+    let mut narrowed = Vec::with_capacity(samples.len());
+    for (index, pixel) in samples.chunks(4).enumerate() {
+        let offset = dither((index % width) as u32, (index / width) as u32);
+        narrowed.extend(pixel.iter().map(|&sample| {
+            let value = f32::from(u16::from_le_bytes(sample)) / 65_535.0 * 255.0;
+            dithered_code(value, offset)
+        }));
+    }
+    narrowed
+}
+
+/// The renderer's ordered dither offset at pixel (`x`, `y`), in codes: the
+/// 8x8 Bayer matrix's 64 thresholds, evenly spaced around 0 within half a
+/// code (`dither` in `dither.wgsl`).
+fn dither(x: u32, y: u32) -> f32 {
+    let y = y & 7;
+    let v = (x & 7) ^ y;
+    // The bits of `v` and `y` interleaved, lowest first.
+    let index = ((v & 1) << 5)
+        | ((y & 1) << 4)
+        | ((v & 2) << 2)
+        | ((y & 2) << 1)
+        | ((v & 4) >> 1)
+        | ((y & 4) >> 2);
+    (index as f32 + 0.5) / 64.0 - 0.5
+}
+
+/// How far from a whole code a value can be and still be taken for it
+/// (`WHOLE_CODE_TOLERANCE` in `dither.wgsl`).
+const WHOLE_CODE_TOLERANCE: f32 = 0.125;
+
+/// `value`, in code values, rounded to a whole code after adding `offset`,
+/// or to the nearest code when it is within [`WHOLE_CODE_TOLERANCE`] of one
+/// (`code` in `dither.wgsl`).
+fn dithered_code(value: f32, offset: f32) -> u8 {
+    let nearest = (value + 0.5).floor();
+    let rounded = if (value - nearest).abs() < WHOLE_CODE_TOLERANCE {
+        nearest
+    } else {
+        (value + 0.5 + offset).floor()
+    };
+    rounded.clamp(0.0, 255.0) as u8
 }
 
 /// `files` as they are once the staged output is published at `output`.
@@ -877,19 +922,21 @@ impl ExportSession {
 
     /// Encodes the next frame, read back in the encoder's input format.
     pub(crate) fn encode_frame(&mut self, frame: GpuFrame) -> Result<(), ExportError> {
-        self.encode_readback(frame.format(), frame.into_pixels())
+        let width = frame.width();
+        self.encode_readback(frame.format(), frame.into_pixels(), width)
     }
 
-    /// Encodes the next frame from `pixels` read back as `format`, as the
-    /// encoder's input ([`encoder_pixels`]).
+    /// Encodes the next frame, `width` pixels wide, from `pixels` read back
+    /// as `format`, as the encoder's input ([`encoder_pixels`]).
     fn encode_readback(
         &mut self,
         format: ReadbackFormat,
         pixels: Vec<u8>,
+        width: u32,
     ) -> Result<(), ExportError> {
         let input = self.video.as_ref().map(|video| video.input);
         let pixels = match input {
-            Some(input) => encoder_pixels(format, pixels, input),
+            Some(input) => encoder_pixels(format, pixels, width, input),
             None => pixels,
         };
         self.encode_pixels(pixels)
@@ -2117,28 +2164,85 @@ mod tests {
         );
     }
 
-    #[test]
-    fn straight_rgba16_narrows_to_rgba8_rounding_to_nearest() {
-        let samples: Vec<u8> = [0u16, 65_535, 32_896, 25_700, 128, 129, 65_150]
+    fn le_samples(samples: &[u16]) -> Vec<u8> {
+        samples
             .iter()
             .flat_map(|sample| sample.to_le_bytes())
-            .collect();
-        assert_eq!(narrow_rgba16(&samples), [0, 255, 128, 100, 0, 1, 254]);
+            .collect()
+    }
+
+    #[test]
+    fn straight_rgba16_narrows_to_rgba8_keeping_whole_codes() {
+        // Whole codes (n × 257), and values within the tolerance of one,
+        // keep that code wherever they are.
+        let samples = le_samples(&[0, 65_535, 32_896, 25_700, 25_730, 51_370, 257, 65_535]);
+        assert_eq!(
+            narrow_rgba16(&samples, 2),
+            [0, 255, 128, 100, 100, 200, 1, 255]
+        );
         // Only straight rgba16 for an rgba8 encoder is narrowed.
         assert_eq!(
             encoder_pixels(
                 ReadbackFormat::Rgba16Straight,
                 samples.clone(),
+                2,
                 PixelFormat::Rgba8
             ),
-            [0, 255, 128, 100, 0, 1, 254]
+            [0, 255, 128, 100, 100, 200, 1, 255]
         );
         for (format, input) in [
             (ReadbackFormat::Rgba8, PixelFormat::Rgba8),
             (ReadbackFormat::Rgba16Straight, PixelFormat::Rgba16),
         ] {
-            assert_eq!(encoder_pixels(format, samples.clone(), input), samples);
+            assert_eq!(encoder_pixels(format, samples.clone(), 2, input), samples);
         }
+    }
+
+    #[test]
+    fn narrowing_uses_the_renderers_8x8_bayer_dither() {
+        // The first two rows of the 8x8 Bayer matrix `dither.wgsl` indexes.
+        let index = |x, y| ((dither(x, y) + 0.5) * 64.0 - 0.5).round() as u32;
+        let rows: Vec<Vec<u32>> = (0..2)
+            .map(|y| (0..8).map(|x| index(x, y)).collect())
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                [0, 32, 8, 40, 2, 34, 10, 42],
+                [48, 16, 56, 24, 50, 18, 58, 26]
+            ]
+        );
+        // A flat gray halfway between codes 127 and 128 (32768 is 127.502
+        // codes): `floor(127.502 + 0.5 + dither)` is 127 where the offset is
+        // below 0 (index under 32) and 128 elsewhere, on every channel.
+        let frame = le_samples(&[32_768; 4 * 64]);
+        let narrowed = narrow_rgba16(&frame, 8);
+        let at = |x: usize, y: usize| &narrowed[(y * 8 + x) * 4..][..4];
+        assert_eq!(at(0, 0), [127; 4]); // index 0
+        assert_eq!(at(1, 0), [128; 4]); // index 32
+        assert_eq!(at(0, 1), [128; 4]); // index 48
+        assert_eq!(at(1, 1), [127; 4]); // index 16
+        assert_eq!(at(7, 7), [127; 4]); // index 21
+        let high = narrowed.iter().filter(|&&code| code == 128).count();
+        assert_eq!(high, 4 * 32, "half the pattern rounds up");
+    }
+
+    #[test]
+    fn a_narrowed_ramp_does_not_band() {
+        // Codes 100 to 104 across 256 pixels: rounded alone, each code is a
+        // flat 64-pixel band.
+        let width = 256;
+        let ramp: Vec<u16> = (0..width)
+            .flat_map(|x| {
+                let code = 100.0 + 4.0 * f64::from(x) / f64::from(width - 1);
+                [(code * 257.0).round() as u16; 4]
+            })
+            .collect();
+        let narrowed = narrow_rgba16(&le_samples(&ramp), width);
+        let red: Vec<u8> = narrowed.iter().step_by(4).copied().collect();
+        let longest = red.chunk_by(|a, b| a == b).map(<[u8]>::len).max().unwrap();
+        assert!(longest < 40, "a run of {longest} identical codes: {red:?}");
+        assert_eq!((red[0], red[255]), (100, 104));
         let opened = |input, alpha| VideoEncoderOpened {
             session: SessionId(1),
             input,
@@ -2181,7 +2285,7 @@ mod tests {
             .flat_map(|sample| sample.to_le_bytes())
             .collect();
         session
-            .encode_readback(ReadbackFormat::Rgba16Straight, frame)
+            .encode_readback(ReadbackFormat::Rgba16Straight, frame, 2)
             .unwrap();
         session.no_audio().unwrap();
         session.finish().unwrap();

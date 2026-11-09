@@ -1,5 +1,5 @@
 use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, ExportedFile};
-use crate::encode::{VIDEO_STAGE, encoder_pixels, readback_for};
+use crate::encode::{IMAGE_STAGE, encoder_pixels, readback_for};
 use crate::error::{ExportError, FrameFailure};
 use crate::exporter::Exporter;
 use crate::media::with_builtin;
@@ -366,26 +366,31 @@ impl Destination {
         Ok((destination, warnings))
     }
 
-    /// Writes or places the rendered `frame`; returns the file it wrote, if
-    /// any (one file is written by [`Self::finish`]).
+    /// Writes or places the rendered `frame`, adding the files it wrote to
+    /// `files`, even when it then fails (one file is written by
+    /// [`Self::finish`]).
     fn accept(
         &mut self,
         index: usize,
         frame: u64,
         rendered: GpuFrame,
-    ) -> Result<Vec<ExportedFile>, ExportError> {
+        files: &mut Vec<ExportedFile>,
+    ) -> Result<(), ExportError> {
         let size = (rendered.width(), rendered.height());
         let pixels = encoder_pixels(
             rendered.format(),
             rendered.into_pixels(),
+            size.0,
             self.output.opened().input,
         );
         match &mut self.layout {
-            Layout::Files => Ok(frame_files(self.output.write(frame, pixels)?)),
-            Layout::Sheet(sheet) => sheet
-                .place(index, frame, &pixels, size)
-                .map(|()| Vec::new())
-                .map_err(invalid),
+            Layout::Files => {
+                let mut published = Vec::new();
+                let written = self.output.write(frame, pixels, &mut published);
+                files.extend(frame_files(published));
+                written
+            }
+            Layout::Sheet(sheet) => sheet.place(index, frame, &pixels, size).map_err(invalid),
         }
     }
 
@@ -402,21 +407,25 @@ impl Destination {
     }
 
     /// Writes the contact sheet of `frames`, or the one file of one frame,
-    /// and finishes the components; returns the file it wrote, if any. A
-    /// failure aborts them.
-    fn finish(mut self, frames: &[u64]) -> Result<Vec<ExportedFile>, ExportError> {
+    /// and finishes the components, adding the files it wrote to `files`,
+    /// even when it then fails. A failure aborts them.
+    fn finish(mut self, frames: &[u64], files: &mut Vec<ExportedFile>) -> Result<(), ExportError> {
+        let mut published = Vec::new();
         let columns = match &self.layout {
             Layout::Files => None,
             Layout::Sheet(sheet) => {
-                if let Err(error) = self.output.write(0, sheet.pixels().to_vec()) {
+                if let Err(error) = self
+                    .output
+                    .write(0, sheet.pixels().to_vec(), &mut published)
+                {
                     self.output.abort();
                     return Err(error);
                 }
                 Some(sheet.columns())
             }
         };
-        let published = self.output.finish()?;
-        Ok(match columns {
+        let finished = self.output.finish(&mut published);
+        files.extend(match columns {
             Some(columns) => published
                 .into_iter()
                 .map(|(_, path)| ExportedFile::ContactSheet {
@@ -426,7 +435,8 @@ impl Destination {
                 })
                 .collect(),
             None => frame_files(published),
-        })
+        });
+        finished
     }
 
     /// Ends the components; files already published stay.
@@ -501,9 +511,12 @@ fn render_stills(
             return Err(error);
         }
     };
-    for file in destination.finish(frames)? {
+    let mut files = Vec::new();
+    let finished = destination.finish(frames, &mut files);
+    for file in files {
         progress(ExportProgress::Wrote(file));
     }
+    finished?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -536,18 +549,20 @@ fn render_frames(
         });
         let rendered = scene_at(frame).and_then(|scene| render_frame(renderer, &scene, &opened));
         report_render_warnings(renderer, &mut reported_warnings, progress);
-        let files = match rendered {
-            Ok(rendered) => destination.accept(index, frame, rendered),
+        let mut files = Vec::new();
+        let accepted = match rendered {
+            Ok(rendered) => destination.accept(index, frame, rendered, &mut files),
             Err(error) if error.is_frame_scoped() && destination.place_failed(index, frame) => {
                 failures.push(FrameFailure { frame, error });
-                Ok(Vec::new())
+                Ok(())
             }
             Err(error) => Err(error),
-        }
-        .map_err(|error| cancellation.settle(error).at_frame(frame))?;
+        };
+        // Files published before a failure are reported too.
         for file in files {
             progress(ExportProgress::Wrote(file));
         }
+        accepted.map_err(|error| cancellation.settle(error).at_frame(frame))?;
     }
     // A frame a cancel killed failed as frame-scoped; write no sheet of it.
     ensure_not_cancelled(cancellation)?;
@@ -571,7 +586,7 @@ fn render_frame(
     submitted
         .or_else(|| frames.pop())
         .ok_or_else(|| ExportError::Codec {
-            stage: VIDEO_STAGE,
+            stage: IMAGE_STAGE,
             source: MediaError::Codec("the renderer read back no frame".to_owned()),
         })
 }

@@ -9,7 +9,7 @@
 //! failed or cancelled export keeps the frames written before it.
 
 use crate::control::ExportCancellation;
-use crate::encode::{MUXER_STAGE, VIDEO_STAGE, check_opened};
+use crate::encode::{IMAGE_STAGE, MUXER_STAGE, check_opened};
 use crate::error::ExportError;
 use crate::options::{AudioChoice, OutputChoice, SettingInput};
 use crate::output;
@@ -247,11 +247,11 @@ fn missing(registry: &MediaRegistry, plugin: usize, kind: &str) -> MediaError {
 impl StillOutput {
     /// Names the components ([`still_choice`]), resolves them through
     /// `registry`, starts their providers ([`ProviderUse::Export`] with no
-    /// ring; the built-ins in this process), stages `files` beside
-    /// `output`, and opens the encoder for `size` frames at `frame_rate`,
-    /// offering `rgba16` and `rgba8`, or only `rgba8` for a contact
-    /// `sheet`. All before anything renders. Returns the resolution's
-    /// warnings too.
+    /// ring; the built-ins in this process), opens the encoder for `size`
+    /// frames at `frame_rate`, offering `rgba16` and `rgba8`, or only
+    /// `rgba8` for a contact `sheet`, and only once it accepted stages
+    /// `files` beside `output`, so a refusal leaves no folder behind. All
+    /// before anything renders. Returns the resolution's warnings too.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn open(
         registry: Arc<MediaRegistry>,
@@ -287,7 +287,6 @@ impl StillOutput {
         let used = [resolved.muxer.plugin, resolved.video.plugin];
         providers.retain(|plugin, _| used.contains(plugin));
         let warnings = std::mem::take(&mut resolved.warnings);
-        let staging = stage(files, output)?;
         let offered: &[PixelFormat] = if sheet {
             &[PixelFormat::Rgba8]
         } else {
@@ -315,10 +314,30 @@ impl StillOutput {
             });
         let opened = opened.map_err(|source| {
             cancellation.settle(ExportError::Codec {
-                stage: VIDEO_STAGE,
+                stage: IMAGE_STAGE,
                 source,
             })
         })?;
+        let staged = check_opened(offered, &opened)
+            .map_err(|source| {
+                cancellation.settle(ExportError::Codec {
+                    stage: IMAGE_STAGE,
+                    source,
+                })
+            })
+            .and_then(|()| stage(files, output));
+        let staging = match staged {
+            Ok(staging) => staging,
+            Err(error) => {
+                if let Some(encoder) = providers
+                    .get_mut(&video.plugin)
+                    .and_then(|provider| provider.video_encoder())
+                {
+                    encoder.abort_video(opened.session);
+                }
+                return Err(error);
+            }
+        };
         let still = Self {
             registry,
             cancellation: cancellation.clone(),
@@ -334,11 +353,6 @@ impl StillOutput {
             overwrite,
             staging,
         };
-        if let Err(source) = check_opened(offered, &opened) {
-            let error = still.error(VIDEO_STAGE, source);
-            still.abort();
-            return Err(error);
-        }
         Ok((still, warnings))
     }
 
@@ -362,21 +376,23 @@ impl StillOutput {
     /// rate's denominator) from `pixels` in the encoder's input format and
     /// writes the packets the encoder gave for it. A sequence publishes the
     /// file of each frame those packets carry, which an encoder that holds
-    /// frames back may make an earlier frame's, or none: the files
-    /// published, by composition frame, in packet order. One file stays
+    /// frames back may make an earlier frame's, or none, adding each to
+    /// `published` (by composition frame, in packet order) as it goes, so
+    /// the files published before a failure are there too. One file stays
     /// staged until [`Self::finish`].
     pub(crate) fn write(
         &mut self,
         frame: u64,
         pixels: Vec<u8>,
-    ) -> Result<Vec<(u64, PathBuf)>, ExportError> {
+        published: &mut Vec<(u64, PathBuf)>,
+    ) -> Result<(), ExportError> {
         let pts = i64::try_from(frame)
             .ok()
             .and_then(|frame| frame.checked_mul(i64::from(self.frame_rate.denominator)))
             .ok_or(ExportError::TimelineTooLong)?;
         let session = self.encoder.ok_or_else(|| {
             self.error(
-                VIDEO_STAGE,
+                IMAGE_STAGE,
                 MediaError::Codec("the encoder is finished".to_owned()),
             )
         })?;
@@ -390,9 +406,9 @@ impl StillOutput {
                     .ok_or_else(|| missing(&registry, plugin, "video encoder"))?
                     .encode_video(session, pts, pixels)
             })
-            .map_err(|source| self.error(VIDEO_STAGE, source))?;
+            .map_err(|source| self.error(IMAGE_STAGE, source))?;
         let frames = self.mux(encoded)?;
-        self.publish(frames)
+        self.publish(frames, published)
     }
 
     /// Writes `encoded`'s packets, opening the muxer with the first config:
@@ -432,25 +448,30 @@ impl StillOutput {
         Ok(frames)
     }
 
-    /// Publishes the sequence's files of `frames`, just written, in order:
-    /// the files published. One file only notes the last frame written.
-    fn publish(&mut self, frames: Vec<u64>) -> Result<Vec<(u64, PathBuf)>, ExportError> {
+    /// Publishes the sequence's files of `frames`, just written, in order,
+    /// adding each to `published` once it is, so a failure partway keeps
+    /// the ones before it. One file only notes the last frame written.
+    fn publish(
+        &mut self,
+        frames: Vec<u64>,
+        published: &mut Vec<(u64, PathBuf)>,
+    ) -> Result<(), ExportError> {
         if matches!(self.staging, Staging::One { .. }) {
             if let Some(&last) = frames.last() {
                 self.written = Some(last);
             }
-            return Ok(Vec::new());
+            return Ok(());
         }
-        frames
-            .into_iter()
-            .map(|frame| Ok((frame, self.publish_frame(frame)?)))
-            .collect()
+        for frame in frames {
+            published.push((frame, self.publish_frame(frame)?));
+        }
+        Ok(())
     }
 
     fn open_muxer(&mut self) -> Result<SessionId, ExportError> {
         let Some(config) = self.config.clone() else {
             return Err(self.error(
-                VIDEO_STAGE,
+                IMAGE_STAGE,
                 MediaError::Codec("the encoder produced no configuration".to_owned()),
             ));
         };
@@ -529,29 +550,23 @@ impl StillOutput {
         Ok(name.clone())
     }
 
-    /// Flushes the encoder, finishes the muxer, and publishes what is left:
-    /// one file, under the frame written to it, or the sequence's files of
-    /// the frames the flush gave, in packet order. A failure aborts what is
-    /// still open.
-    pub(crate) fn finish(mut self) -> Result<Vec<(u64, PathBuf)>, ExportError> {
-        let published = match self.try_finish() {
-            Ok(published) => published,
-            Err(error) => {
-                self.abort();
-                return Err(error);
-            }
-        };
-        match self.staging {
-            Staging::One { file, path } => {
-                output::publish(file, &path, self.overwrite, "publish image")?;
-                Ok(vec![(self.written.unwrap_or(0), path)])
-            }
-            Staging::Sequence { .. } => Ok(published),
+    /// Flushes the encoder, finishes the muxer, and publishes what is left,
+    /// adding it to `published`: one file, under the frame written to it,
+    /// or the sequence's files of the frames the flush gave, in packet
+    /// order, each as it is published. A failure aborts what is still open.
+    pub(crate) fn finish(mut self, published: &mut Vec<(u64, PathBuf)>) -> Result<(), ExportError> {
+        if let Err(error) = self.try_finish(published) {
+            self.abort();
+            return Err(error);
         }
+        if let Staging::One { file, path } = self.staging {
+            output::publish(file, &path, self.overwrite, "publish image")?;
+            published.push((self.written.unwrap_or(0), path));
+        }
+        Ok(())
     }
 
-    fn try_finish(&mut self) -> Result<Vec<(u64, PathBuf)>, ExportError> {
-        let mut published = Vec::new();
+    fn try_finish(&mut self, published: &mut Vec<(u64, PathBuf)>) -> Result<(), ExportError> {
         if let Some(session) = self.encoder.take() {
             let plugin = self.resolved.video.plugin;
             let registry = self.registry.clone();
@@ -563,9 +578,9 @@ impl StillOutput {
                         .ok_or_else(|| missing(&registry, plugin, "video encoder"))?
                         .finish_video(session)
                 })
-                .map_err(|source| self.error(VIDEO_STAGE, source))?;
+                .map_err(|source| self.error(IMAGE_STAGE, source))?;
             let frames = self.mux(encoded)?;
-            published = self.publish(frames)?;
+            self.publish(frames, published)?;
         }
         let Some(session) = self.muxer.take() else {
             return Err(self.error(
@@ -583,7 +598,7 @@ impl StillOutput {
                     .finish_muxer(session)
             })
             .map_err(|source| self.error(MUXER_STAGE, source))?;
-        Ok(published)
+        Ok(())
     }
 
     /// Ends the sessions still open; staged files go, published ones stay.
@@ -735,6 +750,24 @@ mod tests {
     /// An opaque `width`x`height` RGBA8 frame of `color`.
     fn opaque(width: u32, height: u32, color: [u8; 3]) -> Vec<u8> {
         [color[0], color[1], color[2], 255].repeat((width * height) as usize)
+    }
+
+    /// [`StillOutput::write`]: the files it published.
+    fn write(
+        still: &mut StillOutput,
+        frame: u64,
+        pixels: Vec<u8>,
+    ) -> Result<Vec<(u64, PathBuf)>, ExportError> {
+        let mut published = Vec::new();
+        still
+            .write(frame, pixels, &mut published)
+            .map(|()| published)
+    }
+
+    /// [`StillOutput::finish`]: the files it published.
+    fn finish(still: StillOutput) -> Result<Vec<(u64, PathBuf)>, ExportError> {
+        let mut published = Vec::new();
+        still.finish(&mut published).map(|()| published)
     }
 
     fn names(directory: &Path) -> Vec<String> {
@@ -1066,6 +1099,59 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_at_open_creates_no_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        // A contact sheet refusing 16 bits, and WebP refusing a size, each
+        // into a folder that does not exist yet.
+        let sheet = dir.path().join("new1/s.png");
+        let choice = with_video_options(&[("depth", "16")]);
+        let error = open(&sheet, &choice, None, one(&sheet), true, (8, 8))
+            .err()
+            .unwrap();
+        assert_eq!(code(&error), "invalid_option", "{error}");
+        let webp = dir.path().join("new2/a.webp");
+        let error = open(
+            &webp,
+            &OutputChoice::default(),
+            None,
+            one(&webp),
+            true,
+            (16_384, 9),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(code(&error), "invalid_option", "{error}");
+        let sequence = dir.path().join("new3/c.webp");
+        let error = open(
+            &sequence,
+            &OutputChoice::default(),
+            None,
+            two(&sequence),
+            false,
+            (16_384, 9),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(code(&error), "invalid_option", "{error}");
+        assert!(names(dir.path()).is_empty(), "{:?}", names(dir.path()));
+    }
+
+    #[test]
+    fn a_still_encoder_error_names_image_encoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("a.png");
+        let choice = with_video_options(&[("depth", "16")]);
+        let error = open(&output, &choice, None, one(&output), true, (8, 8))
+            .err()
+            .unwrap();
+        assert!(
+            matches!(&error, ExportError::Codec { stage, .. } if *stage == IMAGE_STAGE),
+            "{error:?}"
+        );
+        assert!(error.to_string().starts_with("image encoding"), "{error}");
+    }
+
+    #[test]
     fn jpeg_stills_are_opaque() {
         let dir = tempfile::tempdir().unwrap();
         let output = dir.path().join("a.jpg");
@@ -1081,9 +1167,12 @@ mod tests {
         // JPEG has no alpha: the renderer clears to the opaque background.
         assert!(!still.opened().alpha);
         assert_eq!(still.opened().input, PixelFormat::Rgba8);
-        assert_eq!(still.write(3, opaque(16, 8, [255, 0, 0])).unwrap(), []);
+        assert_eq!(
+            write(&mut still, 3, opaque(16, 8, [255, 0, 0])).unwrap(),
+            []
+        );
         assert!(!output.exists());
-        assert_eq!(still.finish().unwrap(), [(3, output.clone())]);
+        assert_eq!(finish(still).unwrap(), [(3, output.clone())]);
         let decoded = image::load_from_memory(&fs::read(&output).unwrap()).unwrap();
         assert_eq!(decoded.color(), image::ColorType::Rgb8);
         let pixel = decoded.to_rgb8().get_pixel(4, 4).0;
@@ -1131,8 +1220,8 @@ mod tests {
                 (64, 64),
             )
             .unwrap();
-            still.write(0, pixels.clone()).unwrap();
-            still.finish().unwrap();
+            write(&mut still, 0, pixels.clone()).unwrap();
+            finish(still).unwrap();
             fs::read(path).unwrap()
         };
         let (low, high) = (write(10), write(100));
@@ -1176,16 +1265,16 @@ mod tests {
             names(&nested)
         );
         assert_eq!(
-            still.write(0, opaque(8, 8, [0, 255, 0])).unwrap(),
+            write(&mut still, 0, opaque(8, 8, [0, 255, 0])).unwrap(),
             [(0, first.clone())]
         );
         let bytes = fs::read(&first).unwrap();
         assert_eq!(&bytes[8..12], b"WEBP");
         assert_eq!(
-            still.write(1, opaque(8, 8, [0, 0, 255])).unwrap(),
+            write(&mut still, 1, opaque(8, 8, [0, 0, 255])).unwrap(),
             [(1, second)]
         );
-        assert_eq!(still.finish().unwrap(), []);
+        assert_eq!(finish(still).unwrap(), []);
         assert_eq!(names(&nested), ["c%06d-000000.WEBP", "c%06d-000001.WEBP"]);
     }
 
@@ -1203,7 +1292,7 @@ mod tests {
             (8, 8),
         )
         .unwrap();
-        still.write(0, opaque(8, 8, [0, 255, 0])).unwrap();
+        write(&mut still, 0, opaque(8, 8, [0, 255, 0])).unwrap();
         still.abort();
         assert_eq!(names(dir.path()), ["c-000000.png"]);
     }
@@ -1232,8 +1321,8 @@ mod tests {
         // Taken after the checks before rendering.
         let mut still = open_with(false);
         fs::write(&taken, b"keep").unwrap();
-        still.write(0, opaque(8, 8, [0, 255, 0])).unwrap();
-        let error = still.write(1, opaque(8, 8, [0, 255, 0])).unwrap_err();
+        write(&mut still, 0, opaque(8, 8, [0, 255, 0])).unwrap();
+        let error = write(&mut still, 1, opaque(8, 8, [0, 255, 0])).unwrap_err();
         assert!(
             matches!(&error, ExportError::OutputExists(path) if *path == taken),
             "{error}"
@@ -1243,9 +1332,9 @@ mod tests {
         assert_eq!(names(dir.path()), ["c-000000.png", "c-000001.png"]);
 
         let mut still = open_with(true);
-        still.write(0, opaque(8, 8, [0, 255, 0])).unwrap();
-        still.write(1, opaque(8, 8, [0, 255, 0])).unwrap();
-        still.finish().unwrap();
+        write(&mut still, 0, opaque(8, 8, [0, 255, 0])).unwrap();
+        write(&mut still, 1, opaque(8, 8, [0, 255, 0])).unwrap();
+        finish(still).unwrap();
         assert_eq!(&fs::read(&taken).unwrap()[1..4], b"PNG");
         assert_eq!(names(dir.path()), ["c-000000.png", "c-000001.png"]);
     }
@@ -1257,6 +1346,9 @@ mod tests {
     struct Delayed {
         held: Option<Packet>,
         config_due: bool,
+        /// Holds every frame back until `finish`, which gives them all.
+        hold_all: bool,
+        all: Vec<Packet>,
     }
 
     impl MediaProvider for Delayed {
@@ -1306,8 +1398,14 @@ mod tests {
                 bytes: frame,
                 additional: Vec::new(),
             };
+            let packets = if self.hold_all {
+                self.all.push(packet);
+                Vec::new()
+            } else {
+                self.held.replace(packet).into_iter().collect()
+            };
             Ok(Encoded {
-                packets: self.held.replace(packet).into_iter().collect(),
+                packets,
                 config: std::mem::take(&mut self.config_due).then(|| TrackConfig {
                     codec: "png".to_owned(),
                     description: None,
@@ -1316,8 +1414,10 @@ mod tests {
         }
 
         fn finish_video(&mut self, _: SessionId) -> Result<Encoded, MediaError> {
+            let mut packets = std::mem::take(&mut self.all);
+            packets.extend(self.held.take());
             Ok(Encoded {
-                packets: self.held.take().into_iter().collect(),
+                packets,
                 config: None,
             })
         }
@@ -1326,6 +1426,10 @@ mod tests {
     }
 
     fn delayed_plugin() -> celesta_media::RegisteredPlugin {
+        delayed_plugin_holding(false)
+    }
+
+    fn delayed_plugin_holding(hold_all: bool) -> celesta_media::RegisteredPlugin {
         celesta_media::RegisteredPlugin {
             id: "fake".to_owned(),
             version: "1.0.0".to_owned(),
@@ -1343,7 +1447,12 @@ mod tests {
                 audio_encoders: Vec::new(),
                 muxers: Vec::new(),
             },
-            factory: Arc::new(|_, _| Ok(Box::new(Delayed::default()) as Box<dyn MediaProvider>)),
+            factory: Arc::new(move |_, _| {
+                Ok(Box::new(Delayed {
+                    hold_all,
+                    ..Delayed::default()
+                }) as Box<dyn MediaProvider>)
+            }),
         }
     }
 
@@ -1378,7 +1487,7 @@ mod tests {
             reference("builtin/imageSequence")
         );
         let pixel = |frame: u8| vec![frame, frame, frame, 255];
-        assert_eq!(still.write(4, pixel(4)).unwrap(), []);
+        assert_eq!(write(&mut still, 4, pixel(4)).unwrap(), []);
         assert_eq!(
             names(dir.path())
                 .iter()
@@ -1386,9 +1495,9 @@ mod tests {
                 .count(),
             0
         );
-        assert_eq!(still.write(0, pixel(0)).unwrap(), [(4, named(4))]);
-        assert_eq!(still.write(9, pixel(9)).unwrap(), [(0, named(0))]);
-        assert_eq!(still.finish().unwrap(), [(9, named(9))]);
+        assert_eq!(write(&mut still, 0, pixel(0)).unwrap(), [(4, named(4))]);
+        assert_eq!(write(&mut still, 9, pixel(9)).unwrap(), [(0, named(0))]);
+        assert_eq!(finish(still).unwrap(), [(9, named(9))]);
         for frame in [4, 0, 9] {
             assert_eq!(
                 fs::read(named(frame)).unwrap(),
@@ -1400,5 +1509,50 @@ mod tests {
             names(dir.path()),
             ["c-000000.png", "c-000004.png", "c-000009.png"]
         );
+    }
+
+    #[test]
+    fn a_flush_failing_partway_keeps_the_frames_it_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("c.png");
+        let named = |frame: u64| dir.path().join(format!("c-{frame:06}.png"));
+        let files = StillFiles::Sequence([0, 1, 2].map(|frame| (frame, named(frame))).to_vec());
+        let choice = OutputChoice {
+            video: EncoderChoice {
+                component: Some(reference("fake/delayed")),
+                options: Default::default(),
+            },
+            ..OutputChoice::default()
+        };
+        let (mut still, _) = StillOutput::open(
+            with_builtin(vec![delayed_plugin_holding(true)]),
+            &choice,
+            None,
+            files,
+            &output,
+            false,
+            (1, 1),
+            Rational::new(4, 1),
+            false,
+            &ExportCancellation::default(),
+        )
+        .unwrap();
+        let pixel = |frame: u8| vec![frame, frame, frame, 255];
+        for frame in 0..3 {
+            assert_eq!(write(&mut still, frame, pixel(frame as u8)).unwrap(), []);
+        }
+        // Frame 1's name is taken once rendering started: the flush gives all
+        // three frames and publishes frame 0 before it fails on frame 1.
+        fs::write(named(1), b"keep").unwrap();
+        let mut published = Vec::new();
+        let error = still.finish(&mut published).unwrap_err();
+        assert!(
+            matches!(&error, ExportError::OutputExists(path) if *path == named(1)),
+            "{error}"
+        );
+        assert_eq!(published, [(0, named(0))]);
+        assert_eq!(fs::read(named(0)).unwrap(), pixel(0));
+        assert_eq!(fs::read(named(1)).unwrap(), b"keep");
+        assert_eq!(names(dir.path()), ["c-000000.png", "c-000001.png"]);
     }
 }
