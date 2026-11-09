@@ -14,9 +14,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
-/// libx264's preset names, fastest first: `--preset` once named these,
-/// and an [`ExportError::UnknownPreset`] of one hints at the encoder option.
-pub const X264_PRESETS: [&str; 10] = [
+/// The x264 preset names the FFmpeg plugin's `preset` offers, fastest
+/// first: `--preset` once named these, and an
+/// [`ExportError::UnknownPreset`] of one hints at the encoder option.
+pub const X264_PRESETS: [&str; 9] = [
     "ultrafast",
     "superfast",
     "veryfast",
@@ -26,7 +27,6 @@ pub const X264_PRESETS: [&str; 10] = [
     "slow",
     "slower",
     "veryslow",
-    "placebo",
 ];
 
 /// A chosen video or audio encoder: its plugin's index in the registry,
@@ -1079,11 +1079,16 @@ mod tests {
             )
         );
 
-        let error = resolve(&registry, &preset("YouTube"), "film.mp4").unwrap_err();
-        assert_eq!(
-            report::classify(&error, HintStyle::Cli, &mut issues),
-            ("unknown_preset", None)
-        );
+        // Not `placebo`, which the FFmpeg plugin's `preset` does not offer,
+        // so the hint would only lead to an `invalid_option`.
+        for name in ["YouTube", "placebo"] {
+            let error = resolve(&registry, &preset(name), "film.mp4").unwrap_err();
+            assert_eq!(
+                report::classify(&error, HintStyle::Cli, &mut issues),
+                ("unknown_preset", None),
+                "{name}"
+            );
+        }
     }
 
     #[test]
