@@ -18,6 +18,7 @@ use celesta_media::{
     VideoEncoderRequest, VideoFrame, VideoRequest,
 };
 use celesta_plugin_host::{MediaManifest, MediaOrigin};
+use objc2::rc::autoreleasepool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -68,6 +69,14 @@ fn check_decoder(decoder: &str) -> Result<(), MediaError> {
     }
 }
 
+/// Runs `call` in an autorelease pool of its own. The program serves on a
+/// plain thread, which has no pool, and the frameworks autorelease objects
+/// (convenience constructors, `localizedDescription`, their own internals):
+/// without one they would live as long as the process.
+fn pooled<T>(call: impl FnOnce() -> T) -> T {
+    autoreleasepool(|_| call())
+}
+
 /// The components `plugin.json` declares.
 fn manifest() -> MediaManifest {
     let plugin: serde_json::Value = serde_json::from_str(PLUGIN_JSON).expect("plugin.json is JSON");
@@ -99,11 +108,13 @@ pub fn install() {
 
 impl MediaProvider for AvfCodec {
     fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
-        Ok(components::describe_from(
-            &apple::video_encoder_types(),
-            &apple::audio_encoder_formats(),
-            &apple::aac_sample_rates(),
-        ))
+        Ok(pooled(|| {
+            components::describe_from(
+                &apple::video_encoder_types(),
+                &apple::audio_encoder_formats(),
+                &apple::aac_sample_rates(),
+            )
+        }))
     }
 
     fn decoder(&mut self) -> Option<&mut dyn Decoder> {
@@ -126,7 +137,7 @@ impl MediaProvider for AvfCodec {
 impl Decoder for AvfCodec {
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
         check_decoder(decoder)?;
-        self.decoder.probe(path)
+        pooled(|| self.decoder.probe(path))
     }
 
     fn decode_video(
@@ -135,7 +146,7 @@ impl Decoder for AvfCodec {
         request: &VideoRequest<'_>,
     ) -> Result<VideoFrame, MediaError> {
         check_decoder(decoder)?;
-        self.decoder.decode(request)
+        pooled(|| self.decoder.decode(request))
     }
 
     fn decode_audio(
@@ -146,7 +157,7 @@ impl Decoder for AvfCodec {
         channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
         check_decoder(decoder)?;
-        self.decoder.decode_audio(path, sample_rate, channels)
+        pooled(|| self.decoder.decode_audio(path, sample_rate, channels))
     }
 }
 
@@ -157,7 +168,7 @@ impl VideoEncoder for AvfCodec {
     ) -> Result<VideoEncoderOpened, MediaError> {
         let codec = VideoCodec::from_id(request.component)
             .ok_or_else(|| no_component("video encoder", request.component))?;
-        let (opened, input, alpha) = video::open(codec, request)?;
+        let (opened, input, alpha) = pooled(|| video::open(codec, request))?;
         let session = self.next_session();
         self.video.insert(session, opened);
         Ok(VideoEncoderOpened {
@@ -173,24 +184,26 @@ impl VideoEncoder for AvfCodec {
         pts: i64,
         frame: Vec<u8>,
     ) -> Result<Encoded, MediaError> {
-        self.video
+        let opened = self
+            .video
             .get_mut(&session)
-            .ok_or_else(|| no_session("video encoder", session))?
-            .encode(pts, &frame)
+            .ok_or_else(|| no_session("video encoder", session))?;
+        pooled(|| opened.encode(pts, &frame))
     }
 
     fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
-        self.video
+        let opened = self
+            .video
             .remove(&session)
-            .ok_or_else(|| no_session("video encoder", session))?
-            .finish()
+            .ok_or_else(|| no_session("video encoder", session))?;
+        pooled(|| opened.finish())
     }
 
     /// Ends a video encoder session without completing its frames (dropping
     /// it invalidates the `VTCompressionSession`); a session of another
     /// kind is left alone.
     fn abort_video(&mut self, session: SessionId) {
-        self.video.remove(&session);
+        pooled(|| drop(self.video.remove(&session)));
     }
 }
 
@@ -202,7 +215,7 @@ impl AudioEncoder for AvfCodec {
         AudioCodec::from_id(request.component)
             .ok_or_else(|| no_component("audio encoder", request.component))?;
         let (opened, sample_rate, channels, delay) =
-            audio::open(request, &apple::aac_sample_rates())?;
+            pooled(|| audio::open(request, &apple::aac_sample_rates()))?;
         let session = self.next_session();
         self.audio.insert(session, opened);
         Ok(AudioEncoderOpened {
@@ -219,24 +232,26 @@ impl AudioEncoder for AvfCodec {
         pts: i64,
         samples: &[f32],
     ) -> Result<Encoded, MediaError> {
-        self.audio
+        let opened = self
+            .audio
             .get_mut(&session)
-            .ok_or_else(|| no_session("audio encoder", session))?
-            .encode(pts, samples)
+            .ok_or_else(|| no_session("audio encoder", session))?;
+        pooled(|| opened.encode(pts, samples))
     }
 
     fn finish_audio(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
-        self.audio
+        let opened = self
+            .audio
             .remove(&session)
-            .ok_or_else(|| no_session("audio encoder", session))?
-            .finish()
+            .ok_or_else(|| no_session("audio encoder", session))?;
+        pooled(|| opened.finish())
     }
 
     /// Ends an audio encoder session without flushing it (dropping it
     /// disposes of the `AudioConverter`); a session of another kind is left
     /// alone.
     fn abort_audio(&mut self, session: SessionId) {
-        self.audio.remove(&session);
+        pooled(|| drop(self.audio.remove(&session)));
     }
 }
 
@@ -244,7 +259,7 @@ impl Muxer for AvfCodec {
     fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
         let format = MuxerFormat::from_id(request.component)
             .ok_or_else(|| no_component("muxer", request.component))?;
-        let opened = muxer::open(format, request)?;
+        let opened = pooled(|| muxer::open(format, request))?;
         let session = self.next_session();
         self.muxers.insert(session, opened);
         Ok(session)
@@ -255,26 +270,30 @@ impl Muxer for AvfCodec {
         session: SessionId,
         packets: &[TrackPacket],
     ) -> Result<(), MediaError> {
-        self.muxers
+        let opened = self
+            .muxers
             .get_mut(&session)
-            .ok_or_else(|| no_session("muxer", session))?
-            .write(packets)
+            .ok_or_else(|| no_session("muxer", session))?;
+        pooled(|| opened.write(packets))
     }
 
     fn finish_muxer(&mut self, session: SessionId) -> Result<Vec<PathBuf>, MediaError> {
-        self.muxers
+        let opened = self
+            .muxers
             .remove(&session)
-            .ok_or_else(|| no_session("muxer", session))?
-            .finish()
+            .ok_or_else(|| no_session("muxer", session))?;
+        pooled(|| opened.finish())
     }
 
     /// Cancels a muxer session's writing: the file it leaves, for Celesta
     /// to remove; nothing for a session that is not open.
     fn abort_muxer(&mut self, session: SessionId) -> Vec<PathBuf> {
-        self.muxers
-            .remove(&session)
-            .map(MuxerSession::abort)
-            .unwrap_or_default()
+        pooled(|| {
+            self.muxers
+                .remove(&session)
+                .map(MuxerSession::abort)
+                .unwrap_or_default()
+        })
     }
 }
 

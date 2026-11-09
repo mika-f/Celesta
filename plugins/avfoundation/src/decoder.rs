@@ -24,7 +24,7 @@ use celesta_media::{
     AudioBuffer, AudioStream, MediaError, MediaProbe, VideoColor, VideoFrame, VideoRequest,
     VideoStream, timestamps_match, video_seconds,
 };
-use objc2::rc::Retained;
+use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
 use objc2_av_foundation::{
     AVAssetReader, AVAssetReaderAudioMixOutput, AVAssetReaderStatus, AVAssetReaderTrackOutput,
@@ -927,9 +927,13 @@ impl AvfDecoder {
             if !reader.startReading() {
                 return Err(reader_error("start reading", &reader));
             }
-            while let Some(sample) = output.copyNextSampleBuffer() {
+            // A pool for each buffer: the whole file is read in one call.
+            let mut next = || -> Result<bool, MediaError> {
+                let Some(sample) = output.copyNextSampleBuffer() else {
+                    return Ok(false);
+                };
                 let Some(data) = sample.data_buffer() else {
-                    continue;
+                    return Ok(true);
                 };
                 let length = data.data_length();
                 let mut bytes = vec![0_u8; length];
@@ -949,7 +953,9 @@ impl AvfDecoder {
                         .iter()
                         .map(|&bytes| f32::from_le_bytes(bytes)),
                 );
-            }
+                Ok(true)
+            };
+            while autoreleasepool(|_| next())? {}
             if reader.status() != AVAssetReaderStatus::Completed {
                 return Err(reader_error("decode the audio", &reader));
             }
