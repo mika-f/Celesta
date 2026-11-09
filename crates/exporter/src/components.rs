@@ -4,10 +4,12 @@
 use crate::error::ExportError;
 use celesta_media::{
     ComponentDescription, ComponentEntry, ComponentKind, ComponentRef, MediaComponentInfo,
-    MediaRegistry,
+    MediaRegistry, PluginDescription,
 };
 use celesta_plugin_host::{MediaOrigin, PluginKillSwitch};
 use serde_json::{Map, Value, json};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A component from its plugin's manifest, and with `check` whether its
 /// plugin describes it as available.
@@ -19,18 +21,25 @@ pub struct ListedComponent {
 }
 
 /// Every installed component, from the manifests. With `check`, each
-/// plugin is also asked to describe itself (once), and every component
+/// plugin is also asked to describe itself (once per listing, even when
+/// that fails, which the registry does not cache), and every component
 /// says whether it is available.
 pub fn list_components(
     registry: &MediaRegistry,
     check: bool,
     kill: &PluginKillSwitch,
 ) -> Vec<ListedComponent> {
+    let mut plugins: HashMap<usize, Arc<PluginDescription>> = HashMap::new();
     registry
         .components()
         .into_iter()
         .map(|info| {
-            let described = check.then(|| description_of(registry, &info, kill));
+            let described = check.then(|| {
+                let plugin = plugins
+                    .entry(info.plugin)
+                    .or_insert_with(|| registry.describe(info.plugin, kill));
+                description_in(plugin, &info)
+            });
             ListedComponent {
                 available: described.as_ref().map(|described| described.available),
                 reason: described.and_then(|described| described.reason),
@@ -59,17 +68,13 @@ pub fn describe_component(
         component: reference.clone(),
         reason: "not installed".to_owned(),
     })?;
-    let description = description_of(registry, &info, kill);
+    let description = description_in(&registry.describe(info.plugin, kill), &info);
     Ok((info, description))
 }
 
-fn description_of(
-    registry: &MediaRegistry,
-    info: &MediaComponentInfo,
-    kill: &PluginKillSwitch,
-) -> ComponentDescription {
-    registry
-        .describe(info.plugin, kill)
+/// What `plugin`, the description of `info`'s plugin, says of `info`.
+fn description_in(plugin: &PluginDescription, info: &MediaComponentInfo) -> ComponentDescription {
+    plugin
         .components
         .iter()
         .find(|described| described.kind == info.kind && described.id == info.reference.component)
@@ -187,6 +192,11 @@ mod tests {
     use std::sync::Arc;
 
     fn registry() -> MediaRegistry {
+        registry_counting(Arc::default())
+    }
+
+    /// [`registry`], counting in `starts` the times its plugin is started.
+    fn registry_counting(starts: Arc<std::sync::atomic::AtomicUsize>) -> MediaRegistry {
         let media = MediaManifest {
             video_encoders: vec![MediaVideoEncoderEntry {
                 id: "video".into(),
@@ -214,7 +224,8 @@ mod tests {
             directory: PathBuf::from("plug"),
             executable: None,
             media,
-            factory: Arc::new(|_, _| {
+            factory: Arc::new(move |_, _| {
+                starts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 Err(celesta_media::MediaError::CodecUnavailable(
                     "no process".into(),
                 ))
@@ -248,6 +259,17 @@ mod tests {
         let listed = list_components(&registry, true, &PluginKillSwitch::new());
         assert!(listed.iter().all(|listed| listed.available == Some(false)));
         assert!(listed[0].reason.as_deref().unwrap().contains("no process"));
+    }
+
+    /// A failed `describe` is not cached in the registry, but one listing
+    /// still starts each plugin once, not once per component.
+    #[test]
+    fn a_check_starts_a_failing_plugin_once() {
+        let starts = Arc::<std::sync::atomic::AtomicUsize>::default();
+        let registry = registry_counting(starts.clone());
+        let listed = list_components(&registry, true, &PluginKillSwitch::new());
+        assert_eq!(listed.len(), 2);
+        assert_eq!(starts.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 
     #[test]
