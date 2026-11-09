@@ -865,9 +865,13 @@ mod tests {
         );
         let job = sheet_job(json!({
             "source": "a.tsx", "every": 5, "muxer": "builtin/image",
-            "videoEncoder": { "id": "builtin/png", "options": { "depth": 16 } }
+            "videoEncoder": { "id": "builtin/png", "options": { "depth": "16" } }
         }))
         .unwrap();
+        assert_eq!(
+            job.options.output.video.options["depth"],
+            SettingInput::Value(SettingValue::String("16".into()))
+        );
         assert_eq!(
             job.options.output.muxer,
             Some(reference("builtin", "image"))

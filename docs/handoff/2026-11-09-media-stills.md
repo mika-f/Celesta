@@ -377,17 +377,16 @@ returned early.
   on a partly built `packages/cli/dist`, passes with the runtime built.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` and
   `cargo fmt --all -- --check`: clean.
-- **The plugins workspace fails under `--locked`**: `cargo test
-  --manifest-path plugins/Cargo.toml --workspace --locked` and its clippy
-  stop with "cannot update the lock file plugins/Cargo.lock because
-  --locked was passed". `plugins/ffmpeg` depends on `celesta-exporter` by
-  path, and `plugins/Cargo.lock` still lists the exporter's old `image`,
-  `png`, and `webp` dependencies and lacks `celesta-media-image` (Tasks 2
-  and 4 updated only the root `Cargo.lock`). With the lock regenerated
-  offline (`cargo metadata --offline`; the diff is those 15 lines, then
-  restored, not committed), `cargo test --manifest-path plugins/Cargo.toml
-  --workspace --offline` passed 468, 0 failed, and its clippy with `-D
-  warnings` was clean.
+- `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`
+  (468 passed, 0 failed) and `cargo clippy --manifest-path
+  plugins/Cargo.toml --all-targets --locked -- -D warnings` (clean). The
+  first run failed under `--locked`: `plugins/ffmpeg` depends on
+  `celesta-exporter` by path, and `plugins/Cargo.lock` still listed the
+  exporter's old `image`, `png`, and `webp` dependencies and lacked
+  `celesta-media-image` (Tasks 2 and 4 updated only the root
+  `Cargo.lock`). The fix round regenerated it offline (`cargo metadata
+  --manifest-path plugins/Cargo.toml --offline`, a 15-line diff) and
+  committed it.
 - `pnpm run test:runtime` (17 packages, 1,046 tests, all passed;
   `@celesta.studio/cli` 119, `@celesta.studio/components` 179),
   `pnpm --dir packages/exporter test` (25 passed), `pnpm --dir
@@ -432,9 +431,6 @@ TS package's stills arguments).
 
 ## Not done
 
-- **`plugins/Cargo.lock` is stale** (see Checks): it needs regenerating
-  for `celesta-media-image` and the exporter's moved dependencies, or the
-  plugins workspace's `--locked` builds and CI fail.
 - **P2c's rebase.** When P2c (BT.709) lands in the stack, P3 and then this
   branch are rebased onto it (never merged); P4 touches neither
   `readback_of` nor `PixelFormat::OFFERABLE`, so expect conflicts only in
@@ -480,8 +476,6 @@ TS package's stills arguments).
   `component_flags_need_a_video_output` narrows by string munging; no test
   for `--quality` with `--video-encoder` on a `.png`, MCP's named-encoder
   PNG relaxation, or `--preset-file` for stills; MCP repeats
-  `encoder.id.is_some()` in both still jobs. MCP's
-  `still_tools_take_components` passes `"depth": 16` (a number) and checks
-  parsing only; the select takes the string `"16"`, as the skill says.
+  `encoder.id.is_some()` in both still jobs.
 - **Not built:** image sequences of a whole video (deviation 50), and a GPU
   straight 8-bit readback (ruling 6).
