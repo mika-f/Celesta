@@ -2783,6 +2783,62 @@ mod tests {
         }
     }
 
+    /// A project's export of 4x4 RGBA8 frames to `output` through the
+    /// test codec in `plugin` (video encoder, audio encoder, and muxer in
+    /// one): twenty frames, the two-second mix, fifty more, and the finish.
+    /// The file written, and how the frames went.
+    fn test_codec_export(plugin: RegisteredPlugin, output: &Path) -> (Vec<u8>, FramePath) {
+        let registry = Arc::new(MediaRegistry::new(vec![plugin]));
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        session
+            .resolve(&OutputChoice::default(), output, (4, 4))
+            .unwrap();
+        session
+            .open_video(4, 4, RATE, &[PixelFormat::Rgba8], output)
+            .unwrap();
+        for index in 0..20 {
+            session.encode_pixels(vec![index; 64]).unwrap();
+        }
+        session.encode_audio(&mix(48_000, 96_000), false).unwrap();
+        for index in 20..70 {
+            session.encode_pixels(vec![index; 64]).unwrap();
+        }
+        let tracks = session.finish().unwrap();
+        assert_eq!(tracks.files, [output.to_owned()]);
+        (std::fs::read(output).unwrap(), tracks.timing.frame_path)
+    }
+
+    #[test]
+    fn the_test_codecs_program_writes_what_it_writes_in_process() {
+        let directory = tempfile::tempdir().unwrap();
+        let program = celesta_codec_test::TestCodecPlugin::new();
+        let executable = program.folder().join(format!(
+            "{}{}",
+            celesta_codec_test::PROGRAM,
+            std::env::consts::EXE_SUFFIX
+        ));
+        let in_process = celesta_codec_test::registered();
+        let process = RegisteredPlugin {
+            origin: MediaOrigin::User,
+            directory: program.folder().to_owned(),
+            executable: Some(executable.clone()),
+            factory: celesta_media::MediaProcess::factory(executable, program.folder().to_owned()),
+            ..celesta_codec_test::registered()
+        };
+
+        let (pipelined, path) = test_codec_export(process, &directory.path().join("p.ctst"));
+        assert!(
+            matches!(path, FramePath::Ring(3) | FramePath::Pipe(3)),
+            "{path:?}"
+        );
+        let (one_at_a_time, path) = test_codec_export(in_process, &directory.path().join("o.ctst"));
+        assert_eq!(path, FramePath::InProcess);
+        assert!(pipelined == one_at_a_time, "the files differ");
+        let media = celesta_codec_test::read(&directory.path().join("p.ctst")).unwrap();
+        assert_eq!(media.video.unwrap().frames.len(), 70);
+        assert!(media.audio.is_some());
+    }
+
     /// The `Export` uses plugin `id` was started for.
     fn exports_of(uses: &Uses, id: &str) -> Vec<ProviderUse> {
         uses.lock()
