@@ -19,11 +19,12 @@
 //! (deviation 61), and a short last AAC packet is trimmed at its end.
 
 use crate::components::MuxerFormat;
-use crate::formats::{AAC_FRAMES, Pcm, audio_format, int, video_format};
+use crate::formats::{AAC_FRAMES, AAC_LC, Pcm, audio_format, int, video_format};
 use block2::RcBlock;
 use celesta_media::settings::{InvalidSetting, validate};
 use celesta_media::{MediaError, MuxerRequest, Packet, SettingValue, Track, TrackPacket};
 use celesta_plugin_host::codec_family;
+use objc2::exception;
 use objc2::rc::Retained;
 use objc2_av_foundation::{
     AVAssetWriter, AVAssetWriterInput, AVAssetWriterStatus, AVFileTypeMPEG4,
@@ -42,6 +43,7 @@ use objc2_core_media::{
 use objc2_foundation::{NSString, NSURL};
 use std::collections::VecDeque;
 use std::ffi::c_void;
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::ptr::{NonNull, null, null_mut};
 use std::sync::mpsc;
@@ -113,7 +115,7 @@ unsafe impl Send for MuxerSession {}
 
 impl MuxerFormat {
     /// Whether the format stores `track`'s codec: H.264 and HEVC everywhere,
-    /// ProRes in QuickTime; AAC everywhere, packed PCM in QuickTime.
+    /// ProRes in QuickTime; AAC-LC everywhere, packed PCM in QuickTime.
     fn takes(self, track: &Track) -> bool {
         match track {
             Track::Video { config, .. } => match codec_family(&config.codec).as_str() {
@@ -121,8 +123,10 @@ impl MuxerFormat {
                 "ap4h" | "apch" => self == Self::Mov,
                 _ => false,
             },
+            // AAC-LC only: the audio format is described as 1024-frame
+            // AAC-LC packets, which HE-AAC's 2048 are not.
             Track::Audio { config, .. } => {
-                codec_family(&config.codec) == "mp4a"
+                config.codec == AAC_LC
                     || (self == Self::Mov && Pcm::from_codec(&config.codec).is_some())
             }
         }
@@ -139,6 +143,19 @@ fn writer_error(writer: &AVAssetWriter, doing: &str) -> MediaError {
         |error| error.localizedDescription().to_string(),
     );
     MediaError::Codec(format!("AVAssetWriter could not {doing}: {reason}"))
+}
+
+/// Calls `call`, a method of the writer or an input that may raise an
+/// Objective-C exception (`appendSampleBuffer` of a writer that failed on
+/// its own thread since its status was read, say): an exception, which
+/// would otherwise abort the process, is the error for `doing`.
+fn catching<R>(doing: &str, call: impl FnOnce() -> R) -> Result<R, MediaError> {
+    exception::catch(AssertUnwindSafe(call)).map_err(|raised| {
+        let reason = raised.map_or_else(|| "nil".to_owned(), |raised| raised.to_string());
+        MediaError::Codec(format!(
+            "AVAssetWriter raised an exception as it tried to {doing}: {reason}"
+        ))
+    })
 }
 
 /// Celesta stages its output as an empty file before the muxer opens, and
@@ -620,7 +637,7 @@ impl Input {
                 if !self.input.isReadyForMoreMediaData() {
                     break;
                 }
-                if !self.input.appendSampleBuffer(sample) {
+                if !catching("append a sample", || self.input.appendSampleBuffer(sample))? {
                     return Err(writer_error(writer, "append a sample"));
                 }
                 self.pending_bytes -= bytes;
@@ -739,7 +756,7 @@ impl MuxerSession {
                 if input.pending.is_empty() && !input.finished {
                     // SAFETY: writing has started; nothing is appended to
                     // the input after this.
-                    unsafe { input.input.markAsFinished() };
+                    catching("finish a track", || unsafe { input.input.markAsFinished() })?;
                     input.finished = true;
                 }
             }
@@ -757,7 +774,9 @@ impl MuxerSession {
         });
         // SAFETY: every input is finished; the handler only sends on a
         // channel, which may be done from any thread.
-        unsafe { self.writer.finishWritingWithCompletionHandler(&handler) };
+        catching("finish the file", || unsafe {
+            self.writer.finishWritingWithCompletionHandler(&handler);
+        })?;
         done.recv()
             .map_err(|_| MediaError::Codec("AVAssetWriter never said it finished".to_owned()))?;
         // SAFETY: reading a writer's status is always allowed.
@@ -836,6 +855,28 @@ mod tests {
     }
 
     #[test]
+    fn only_aac_lc_is_taken() {
+        let aac = |codec: &str| Track::Audio {
+            config: TrackConfig {
+                codec: codec.to_owned(),
+                description: Some(vec![0x11, 0x90]),
+            },
+            timescale: 48_000,
+            sample_rate: 48_000,
+            channels: 2,
+            delay: 2_112,
+        };
+        for format in [MuxerFormat::Mp4, MuxerFormat::Mov] {
+            assert!(format.takes(&aac("mp4a.40.2")));
+            for codec in ["mp4a", "mp4a.40.5", "mp4a.40.29", "mp4a.40.1", "mp4a.6B"] {
+                assert!(!format.takes(&aac(codec)), "{codec}");
+            }
+        }
+        assert!(MuxerFormat::Mov.takes(&pcm_track()));
+        assert!(!MuxerFormat::Mp4.takes(&pcm_track()));
+    }
+
+    #[test]
     fn a_busy_writer_holds_writes_back() {
         // A small cap, so a few batches fill it: 4 MiB batches of one
         // track (there is no other track to wait for), 64 MiB in all.
@@ -863,5 +904,41 @@ mod tests {
         println!("at most {most} bytes queued after a write");
         assert_eq!(session.finish().unwrap(), std::slice::from_ref(&output));
         assert!(std::fs::metadata(&output).unwrap().len() >= 64 << 20);
+    }
+
+    #[test]
+    fn an_exception_is_an_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("unstarted.mov");
+        let path = NSString::from_str(output.to_str().unwrap());
+        let mut input = input_for(MuxerFormat::Mov, &pcm_track(), 0).unwrap();
+        let sample = input.sample(&pcm_packet(0, 1024).packet).unwrap().unwrap();
+        // SAFETY: a file URL and a file type AVMediaFormat.h declares; the
+        // input is added before writing starts, which it never does here.
+        let writer = unsafe {
+            let writer = AVAssetWriter::assetWriterWithURL_fileType_error(
+                &NSURL::fileURLWithPath(&path),
+                AVFileTypeQuickTimeMovie.unwrap(),
+            )
+            .unwrap();
+            writer.addInput(&input.input);
+            writer
+        };
+        // Appending before the writer starts raises
+        // NSInternalInconsistencyException.
+        // SAFETY: the buffer is of the input's media type.
+        let appended = catching("append a sample", || unsafe {
+            input.input.appendSampleBuffer(&sample)
+        });
+        assert!(
+            matches!(
+                &appended,
+                Err(MediaError::Codec(message))
+                    if message.starts_with("AVAssetWriter raised an exception as it tried to append a sample: ")
+            ),
+            "{appended:?}"
+        );
+        drop(writer);
+        assert_eq!(catching("add", || 1 + 1).unwrap(), 2);
     }
 }

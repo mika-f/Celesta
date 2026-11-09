@@ -679,6 +679,26 @@ fn an_unknown_codec_is_refused() {
         Err(MediaError::Codec(message)) => assert_eq!(message, "mp4 does not take opus"),
         other => panic!("opened opus in mp4: {other:?}"),
     }
+    // AAC other than LC (HE-AAC here), whose packets are not 1024 frames.
+    let tracks = [audio_track(
+        TrackConfig {
+            codec: "mp4a.40.5".to_owned(),
+            description: Some(vec![0x2b, 0x92, 0x08, 0x00]),
+        },
+        2_112,
+    )];
+    for muxer in ["mp4", "mov"] {
+        match codec
+            .muxer()
+            .unwrap()
+            .open_muxer(&request(muxer, &output, &tracks, 0))
+        {
+            Err(MediaError::Codec(message)) => {
+                assert_eq!(message, format!("{muxer} does not take mp4a.40.5"));
+            }
+            other => panic!("opened HE-AAC in {muxer}: {other:?}"),
+        }
+    }
 }
 
 #[test]

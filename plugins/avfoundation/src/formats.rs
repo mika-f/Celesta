@@ -34,6 +34,10 @@ use std::ptr::{NonNull, null};
 /// The sample frames in each AAC-LC packet.
 pub(crate) const AAC_FRAMES: i64 = 1024;
 
+/// AAC-LC's codec string, the one AAC the muxers take: other object types
+/// (HE-AAC's 2048-frame packets, say) are not described as they are.
+pub(crate) const AAC_LC: &str = "mp4a.40.2";
+
 /// A packed little-endian PCM layout: its codec string's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Pcm {
@@ -183,7 +187,7 @@ pub(crate) fn video_format(
     created("CMVideoFormatDescriptionCreate", status, format)
 }
 
-/// The audio format description of `track`: AAC (`mp4a`) with the
+/// The audio format description of `track`: AAC-LC (`mp4a.40.2`) with the
 /// AudioToolbox magic cookie of its AudioSpecificConfig, or packed
 /// little-endian PCM.
 pub(crate) fn audio_format(
@@ -201,7 +205,7 @@ pub(crate) fn audio_format(
         ));
     };
     let channels_per_frame = u32::from(*channels);
-    let (description, cookie) = if codec_family(&config.codec) == "mp4a" {
+    let (description, cookie) = if config.codec == AAC_LC {
         let asc = config.description.as_deref().ok_or_else(|| {
             MediaError::Codec(format!(
                 "a {} track has no AudioSpecificConfig",
@@ -372,6 +376,12 @@ mod tests {
             (kAudioFormatMPEG4AAC, 1024, 2, 48_000.0)
         );
         assert!(audio_format(&audio(config("mp4a.40.2", None))).is_err());
+        // Not AAC-LC: HE-AAC's packets are 2048 frames.
+        assert!(matches!(
+            audio_format(&audio(config("mp4a.40.5", Some(vec![0x2b, 0x92, 0x08, 0x00])))),
+            Err(MediaError::Codec(message)) if message == "no sample description for mp4a.40.5"
+        ));
+        assert!(audio_format(&audio(config("mp4a", Some(vec![0x11, 0x90])))).is_err());
         for (codec, bits, flags) in [
             ("lpcm.s16le", 16, kAudioFormatFlagIsSignedInteger),
             ("lpcm.s24le", 24, kAudioFormatFlagIsSignedInteger),
