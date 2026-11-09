@@ -1186,6 +1186,30 @@ mod tests {
             let program = directory.join(CODEC_PROGRAM);
             std::fs::write(&program, format!("#!/bin/sh\n{body}\n")).unwrap();
             std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            // A sibling test that forked while the file was open for writing
+            // here holds it open until its child execs, and exec then fails
+            // with ETXTBSY, which the lookup would remember as a failure.
+            // Once one start succeeds, no process can hold it open any more.
+            for attempt in 0.. {
+                match std::process::Command::new(&program)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(mut started) => {
+                        let _ = started.kill();
+                        let _ = started.wait();
+                        break;
+                    }
+                    Err(error)
+                        if attempt < 40
+                            && error.kind() == std::io::ErrorKind::ExecutableFileBusy =>
+                    {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    Err(error) => panic!("{}: {error}", program.display()),
+                }
+            }
             (program, directory.join("celesta-exporter"))
         }
 
