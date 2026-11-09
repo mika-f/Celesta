@@ -272,6 +272,14 @@ impl AudioCodec {
     }
 }
 
+/// The bitrate (bit/s) AAC `given` settings ask for, checked against its
+/// schema; the default when none is given.
+pub(crate) fn aac_bitrate(given: &Settings) -> Result<u32, MediaError> {
+    let settings = validate(&AudioCodec::Aac.settings(), given)
+        .map_err(|InvalidSetting { key, message }| MediaError::InvalidSettings { key, message })?;
+    Ok(whole(&settings, "bitrate").map_or(192_000, |bitrate| bitrate as u32))
+}
+
 /// A muxer component, on `AVAssetWriter`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MuxerFormat {
@@ -1065,6 +1073,16 @@ mod tests {
             let given = settings(&[("bitrate", SettingValue::Number(bitrate))]);
             assert_eq!(validate(&aac, &given).is_ok(), valid, "{bitrate}");
         }
+
+        assert_eq!(aac_bitrate(&Settings::new()).unwrap(), 192_000);
+        assert_eq!(
+            aac_bitrate(&settings(&[("bitrate", SettingValue::Number(64_000.0))])).unwrap(),
+            64_000
+        );
+        assert!(matches!(
+            aac_bitrate(&settings(&[("bitrate", SettingValue::Number(16_000.0))])),
+            Err(MediaError::InvalidSettings { key, .. }) if key == "bitrate"
+        ));
 
         for format in MuxerFormat::ALL {
             let muxer = format.settings();

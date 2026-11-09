@@ -1,16 +1,16 @@
-//! The VideoToolbox encoders, in this process: the input each chooses, the
-//! packets and track config they give, their decode timestamps, and what
-//! FFmpeg decodes of them (libavcodec for the planes, the FFmpeg plugin's
-//! muxers and decoder for files).
+//! The VideoToolbox and AudioToolbox encoders, in this process: the input
+//! each chooses, the packets and track config they give, their timestamps,
+//! and what FFmpeg decodes of them (libavcodec for the planes, the FFmpeg
+//! plugin's muxers and decoder for files).
 #![cfg(target_os = "macos")]
 
 use celesta_codec_avfoundation::AvfCodec;
 use celesta_codec_ffmpeg::FfmpegCodec;
 use celesta_composition::Rational;
 use celesta_media::{
-    Color, ComponentKind, Encoded, MediaError, MediaProvider, MuxerRequest, Packet, PixelFormat,
-    SessionId, SettingValue, Settings, Track, TrackConfig, TrackPacket, VideoEncoderOpened,
-    VideoEncoderRequest, VideoRequest,
+    AudioEncoderOpened, AudioEncoderRequest, Color, ComponentKind, Encoded, MediaError,
+    MediaProvider, MuxerRequest, Packet, PixelFormat, SessionId, SettingValue, Settings, Track,
+    TrackConfig, TrackPacket, VideoEncoderOpened, VideoEncoderRequest, VideoRequest,
 };
 use ffmpeg_sys_next::{
     AVColorPrimaries, AVColorRange, AVColorSpace, AVColorTransferCharacteristic, AVERROR,
@@ -749,4 +749,194 @@ fn odd_sizes_are_refused() {
             .unwrap();
         assert_eq!((frame.width, frame.height), (63, 35), "ProRes {profile}");
     }
+}
+
+/// The AAC tests' rate: AudioToolbox takes it, so `aac` answers it.
+const AAC_RATE: u32 = 48_000;
+/// AudioToolbox's AAC-LC priming, in sample frames.
+const AAC_DELAY: u64 = 2_112;
+/// The frame of the click in [`click`].
+const CLICK: usize = 4_800;
+
+/// Opens `aac` for a mix at `sample_rate` with `channels`, after checking
+/// that AudioToolbox has it (every macOS has, so its absence fails).
+fn open_aac(
+    codec: &mut AvfCodec,
+    given: &Settings,
+    sample_rate: u32,
+    channels: u16,
+) -> Result<AudioEncoderOpened, MediaError> {
+    let described = codec.describe().unwrap();
+    let aac = described
+        .iter()
+        .find(|description| description.kind == ComponentKind::AudioEncoder)
+        .expect("the plugin has an audio encoder");
+    assert!(aac.available, "{:?}", aac.reason);
+    codec
+        .audio_encoder()
+        .expect("the plugin has audio encoders")
+        .open_audio(&AudioEncoderRequest {
+            component: "aac",
+            settings: given,
+            sample_rate,
+            channels,
+        })
+}
+
+/// A second of stereo silence at 48 kHz with a click (1.0) at [`CLICK`].
+fn click() -> Vec<f32> {
+    let mut samples = vec![0.0; AAC_RATE as usize * 2];
+    samples[CLICK * 2] = 1.0;
+    samples[CLICK * 2 + 1] = 1.0;
+    samples
+}
+
+/// Interleaved stereo `samples` through `session` from 0 in the exporter's
+/// chunks of 1024 × 16 frames, then its finish: every answer, the finish's
+/// last.
+fn encode_aac(codec: &mut AvfCodec, session: SessionId, samples: &[f32]) -> Vec<Encoded> {
+    let encoder = codec.audio_encoder().unwrap();
+    let mut answers: Vec<Encoded> = samples
+        .chunks(1024 * 16 * 2)
+        .scan(0, |pts, chunk| {
+            let answer = encoder.encode_audio(session, *pts, chunk).unwrap();
+            *pts += (chunk.len() / 2) as i64;
+            Some(answer)
+        })
+        .collect();
+    answers.push(encoder.finish_audio(session).unwrap());
+    answers
+}
+
+#[test]
+fn aac_opens_with_its_priming() {
+    let mut codec = AvfCodec::default();
+    for (asked, answered) in [
+        ((48_000, 2), (48_000, 2, AAC_DELAY)),
+        ((44_100, 1), (44_100, 1, AAC_DELAY)),
+        ((96_000, 2), (48_000, 2, AAC_DELAY)),
+    ] {
+        let opened = open_aac(&mut codec, &Settings::new(), asked.0, asked.1).unwrap();
+        assert_eq!(
+            (opened.sample_rate, opened.channels, opened.delay),
+            answered,
+            "{asked:?}"
+        );
+        codec.audio_encoder().unwrap().abort_audio(opened.session);
+    }
+}
+
+#[test]
+fn aac_packets_start_before_zero() {
+    let mut codec = AvfCodec::default();
+    let opened = open_aac(&mut codec, &Settings::new(), AAC_RATE, 2).unwrap();
+    let (packets, config) = packets_and_config(encode_aac(&mut codec, opened.session, &click()));
+    assert_eq!(
+        config,
+        TrackConfig {
+            codec: "mp4a.40.2".to_owned(),
+            description: Some(vec![0x11, 0x90]),
+        }
+    );
+    let pts: Vec<i64> = packets.iter().map(|packet| packet.pts).collect();
+    assert_eq!(pts[..4], [-2_112, -1_088, -64, 960]);
+    for (index, packet) in packets.iter().enumerate() {
+        assert_eq!(packet.pts, 1_024 * index as i64 - AAC_DELAY as i64);
+        assert_eq!(packet.dts, packet.pts);
+        assert!(packet.key);
+        assert!(!packet.bytes.is_empty());
+    }
+    let (last, rest) = packets.split_last().unwrap();
+    assert!(rest.iter().all(|packet| packet.duration == 1_024));
+    assert!((1..=1_024).contains(&last.duration), "{}", last.duration);
+    assert_eq!(last.pts + last.duration, 48_000);
+}
+
+#[test]
+fn aac_audio_must_follow_the_audio_before_it() {
+    let mut codec = AvfCodec::default();
+    let opened = open_aac(&mut codec, &Settings::new(), AAC_RATE, 2).unwrap();
+    let encoder = codec.audio_encoder().unwrap();
+    encoder
+        .encode_audio(opened.session, 0, &[0.0; 2 * 512])
+        .unwrap();
+    assert!(matches!(
+        encoder.encode_audio(opened.session, 1_024, &[0.0; 2 * 512]),
+        Err(MediaError::Codec(_))
+    ));
+    assert!(matches!(
+        encoder.encode_audio(opened.session, 512, &[0.0; 3]),
+        Err(MediaError::Codec(_))
+    ));
+    encoder
+        .encode_audio(opened.session, 512, &[0.0; 2 * 512])
+        .unwrap();
+    encoder.finish_audio(opened.session).unwrap();
+}
+
+#[test]
+fn aac_through_ffmpegs_mp4_is_aligned() {
+    let mut codec = AvfCodec::default();
+    let opened = open_aac(&mut codec, &Settings::new(), AAC_RATE, 2).unwrap();
+    let (packets, config) = packets_and_config(encode_aac(&mut codec, opened.session, &click()));
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("click.mp4");
+    let mut ffmpeg = FfmpegCodec::new();
+    let muxer = ffmpeg.muxer().unwrap();
+    let track = Track::Audio {
+        config,
+        timescale: AAC_RATE,
+        sample_rate: AAC_RATE,
+        channels: 2,
+        delay: opened.delay,
+    };
+    let session = muxer
+        .open_muxer(&MuxerRequest {
+            component: "mp4",
+            settings: &Settings::new(),
+            output: &output,
+            tracks: &[track],
+            leading_audio: 0,
+        })
+        .unwrap();
+    let packets: Vec<TrackPacket> = packets
+        .into_iter()
+        .map(|packet| TrackPacket { track: 0, packet })
+        .collect();
+    muxer.write_packets(session, &packets).unwrap();
+    muxer.finish_muxer(session).unwrap();
+    let decoded = ffmpeg
+        .decoder()
+        .unwrap()
+        .decode_audio(celesta_codec_ffmpeg::DECODER_ID, &output, AAC_RATE, 2)
+        .unwrap();
+    let frames = decoded.frame_count();
+    assert!(frames.abs_diff(48_000) <= 1_024, "{frames} frames");
+    let peak = decoded
+        .samples
+        .iter()
+        .step_by(2)
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.abs().total_cmp(&b.abs()))
+        .map(|(frame, _)| frame)
+        .unwrap();
+    assert_eq!(peak, CLICK);
+}
+
+#[test]
+fn aac_bitrate_follows_the_channel_count() {
+    let mut codec = AvfCodec::default();
+    let bitrate = |value: f64| settings(&[("bitrate", SettingValue::Number(value))]);
+    for (channels, value) in [(1, 320_000.0), (2, 32_000.0)] {
+        assert!(
+            matches!(
+                open_aac(&mut codec, &bitrate(value), AAC_RATE, channels),
+                Err(MediaError::InvalidSettings { key, .. }) if key == "bitrate"
+            ),
+            "{channels} channels at {value}"
+        );
+    }
+    let opened = open_aac(&mut codec, &bitrate(128_000.0), AAC_RATE, 2).unwrap();
+    let (packets, _) = packets_and_config(encode_aac(&mut codec, opened.session, &click()));
+    assert_eq!(packets[0].pts, -2_112);
 }

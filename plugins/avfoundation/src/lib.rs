@@ -36,10 +36,10 @@ mod color;
 
 // Platform-independent: read on every system, tests included.
 #[cfg_attr(
-    not(test),
+    not(any(target_os = "macos", test)),
     expect(
         dead_code,
-        reason = "the VideoToolbox and AudioToolbox components call them in later tasks"
+        reason = "only the macOS AAC encoder and muxers read and write cookies outside their tests"
     )
 )]
 mod esds;
@@ -54,6 +54,8 @@ mod params;
 
 #[cfg(target_os = "macos")]
 mod apple;
+#[cfg(target_os = "macos")]
+mod audio;
 #[cfg(target_os = "macos")]
 mod provider;
 #[cfg(target_os = "macos")]

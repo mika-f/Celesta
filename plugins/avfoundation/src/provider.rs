@@ -6,6 +6,7 @@
 //! [`MediaError::ComponentUnavailable`]. Its sessions, of every kind, are
 //! numbered from one counter.
 
+use crate::audio::{self, AudioSession};
 use crate::components::{self, AudioCodec, MuxerFormat, VideoCodec};
 use crate::video::{self, VideoSession};
 use crate::{DECODER_ID, PLUGIN_ID, apple};
@@ -30,6 +31,7 @@ const NOT_IMPLEMENTED: &str = "not implemented yet";
 #[derive(Default)]
 pub struct AvfCodec {
     video: HashMap<SessionId, VideoSession>,
+    audio: HashMap<SessionId, AudioSession>,
     /// The last session number given, one count for every kind.
     last: u64,
 }
@@ -203,27 +205,45 @@ impl AudioEncoder for AvfCodec {
         &mut self,
         request: &AudioEncoderRequest<'_>,
     ) -> Result<AudioEncoderOpened, MediaError> {
-        let codec = AudioCodec::from_id(request.component)
+        AudioCodec::from_id(request.component)
             .ok_or_else(|| no_component("audio encoder", request.component))?;
-        Err(not_implemented(codec.id()))
+        let (opened, sample_rate, channels, delay) =
+            audio::open(request, &apple::aac_sample_rates())?;
+        let session = self.next_session();
+        self.audio.insert(session, opened);
+        Ok(AudioEncoderOpened {
+            session,
+            sample_rate,
+            channels,
+            delay,
+        })
     }
 
     fn encode_audio(
         &mut self,
         session: SessionId,
-        _pts: i64,
-        _samples: &[f32],
+        pts: i64,
+        samples: &[f32],
     ) -> Result<Encoded, MediaError> {
-        Err(no_session("audio encoder", session))
+        self.audio
+            .get_mut(&session)
+            .ok_or_else(|| no_session("audio encoder", session))?
+            .encode(pts, samples)
     }
 
     fn finish_audio(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
-        Err(no_session("audio encoder", session))
+        self.audio
+            .remove(&session)
+            .ok_or_else(|| no_session("audio encoder", session))?
+            .finish()
     }
 
-    /// No audio encoder session is ever open, so there is none to abort; a
-    /// video encoder's session of the same number is left alone.
-    fn abort_audio(&mut self, _session: SessionId) {}
+    /// Ends an audio encoder session without flushing it (dropping it
+    /// disposes of the `AudioConverter`); a session of another kind is left
+    /// alone.
+    fn abort_audio(&mut self, session: SessionId) {
+        self.audio.remove(&session);
+    }
 }
 
 impl Muxer for AvfCodec {
@@ -291,6 +311,15 @@ mod tests {
         }
     }
 
+    fn audio_request<'a>(component: &'a str, settings: &'a Settings) -> AudioEncoderRequest<'a> {
+        AudioEncoderRequest {
+            component,
+            settings,
+            sample_rate: 48_000,
+            channels: 2,
+        }
+    }
+
     #[test]
     fn the_others_are_not_opened_yet() {
         let mut codec = AvfCodec::default();
@@ -300,19 +329,9 @@ mod tests {
             codec.open_video(&video_request("libx264", &settings, &color)),
             Err(MediaError::Codec(message)) if message == r#"no video encoder "libx264" in avfoundation"#
         ));
-        let audio = |component| AudioEncoderRequest {
-            component,
-            settings: &settings,
-            sample_rate: 48_000,
-            channels: 2,
-        };
-        assert_eq!(
-            unavailable(codec.open_audio(&audio("aac"))),
-            ("aac".to_owned(), NOT_IMPLEMENTED.to_owned())
-        );
         assert!(matches!(
-            codec.open_audio(&audio("opus")),
-            Err(MediaError::Codec(_))
+            codec.open_audio(&audio_request("opus", &settings)),
+            Err(MediaError::Codec(message)) if message == r#"no audio encoder "opus" in avfoundation"#
         ));
         let output = Path::new("/nonexistent/out.mp4");
         for format in ["mp4", "mov"] {
@@ -396,6 +415,47 @@ mod tests {
         assert!(codec.finish_video(second.session).is_err());
         codec.abort_video(third.session);
         codec.abort_video(third.session);
+    }
+
+    #[test]
+    fn audio_sessions_share_the_count_and_abort_alone() {
+        let mut codec = AvfCodec::default();
+        let settings = Settings::new();
+        let color = Color::bt709_limited();
+        let video = codec
+            .open_video(&video_request("h264", &settings, &color))
+            .unwrap();
+        let audio = codec.open_audio(&audio_request("aac", &settings)).unwrap();
+        assert_eq!((video.session, audio.session), (SessionId(1), SessionId(2)));
+        // A refused open takes no number.
+        let high = [(
+            "bitrate".to_owned(),
+            celesta_media::SettingValue::Number(400_000.0),
+        )]
+        .into();
+        assert!(matches!(
+            codec.open_audio(&audio_request("aac", &high)),
+            Err(MediaError::InvalidSettings { key, .. }) if key == "bitrate"
+        ));
+        let other = codec.open_audio(&audio_request("aac", &settings)).unwrap();
+        assert_eq!(other.session, SessionId(3));
+
+        // Each side of `abortEncoder` ends only its own kind's session.
+        codec.abort_video(audio.session);
+        codec.encode_audio(audio.session, 0, &[0.0; 2048]).unwrap();
+        codec.abort_audio(video.session);
+        let frame = vec![128; PixelFormat::Nv12.frame_bytes(64, 36)];
+        codec.encode_video(video.session, 0, frame).unwrap();
+        codec.abort_audio(audio.session);
+        assert!(matches!(
+            codec.encode_audio(audio.session, 1_024, &[0.0; 2048]),
+            Err(MediaError::Codec(message)) if message == "no open audio encoder 2"
+        ));
+        assert!(codec.finish_audio(audio.session).is_err());
+        let finished = codec.finish_audio(other.session).unwrap();
+        assert!(finished.config.is_some());
+        assert!(codec.finish_audio(other.session).is_err());
+        codec.abort_video(video.session);
     }
 
     #[test]
