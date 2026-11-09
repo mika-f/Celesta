@@ -838,10 +838,12 @@ fn libx264_writes_bt709_vui() {
 #[test]
 fn rgba_input_is_converted_with_bt709() {
     let mut codec = FfmpegCodec::new();
-    // libswscale's BT.709 limited-range codes of red, green, and blue. At
-    // 10 bits, from 16-bit RGB, its fixed point gives these: within 2 of
-    // the formula's (250, 409, 960), (691, 167, 105), (127, 960, 471), and
-    // far from BT.601's (red's Y would be about 326).
+    // libswscale's BT.709 limited-range codes of red, green, and blue, as
+    // measured on arm64 (Apple M4); every decoded sample is within 1 of
+    // them, since x86_64's SIMD paths may round differently. At 10 bits,
+    // from 16-bit RGB, its fixed point gives these: within 2 of the
+    // formula's (250, 409, 960), (691, 167, 105), (127, 960, 471), and far
+    // from BT.601's (red's Y would be about 326).
     for (format, depth, expected) in [
         (
             PixelFormat::Rgba8,
@@ -871,8 +873,14 @@ fn rgba_input_is_converted_with_bt709() {
         let decoded = decode_h264(&config, &packets);
         assert_eq!(decoded.len(), 3, "{format}");
         for (frame, codes) in decoded.iter().zip(expected) {
-            let codes: Vec<BTreeSet<u16>> = codes.iter().map(|&code| [code].into()).collect();
-            assert_eq!(frame.plane_values(), codes, "{format}");
+            let planes = frame.plane_values();
+            assert_eq!(planes.len(), codes.len(), "{format}");
+            for (values, code) in planes.iter().zip(codes) {
+                assert!(
+                    values.iter().all(|value| value.abs_diff(code) <= 1),
+                    "{format}: {values:?}, expected {code}"
+                );
+            }
         }
     }
 }
@@ -979,6 +987,39 @@ fn an_unknown_color_name_is_refused() {
             }
         }
     }
+}
+
+#[test]
+fn an_rgb_matrix_libswscale_cannot_convert_to_is_refused() {
+    let mut codec = FfmpegCodec::new();
+    let ycgco = Color {
+        matrix: "ycgco".into(),
+        ..Color::bt709_limited()
+    };
+    for (component, offered) in [
+        ("libx264", PixelFormat::Rgba8),
+        ("prores", PixelFormat::Rgba16),
+        ("vp9", PixelFormat::Rgba16),
+    ] {
+        let result = open_colored(&mut codec, component, &Settings::new(), &[offered], &ycgco);
+        match result {
+            Err(MediaError::Codec(message)) => assert_eq!(
+                message, "libswscale cannot convert RGB to the `ycgco` matrix",
+                "{component}"
+            ),
+            other => panic!("{component} took ycgco: {:?}", other.map(|_| ())),
+        }
+    }
+    // YUV input needs no conversion, so the matrix is only a tag.
+    let opened = open_colored(
+        &mut codec,
+        "libx264",
+        &Settings::new(),
+        &[PixelFormat::Yuv420p],
+        &ycgco,
+    )
+    .unwrap();
+    codec.video_encoder().unwrap().abort_video(opened.session);
 }
 
 #[test]

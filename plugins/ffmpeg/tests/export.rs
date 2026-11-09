@@ -338,6 +338,21 @@ fn watch(rgba_only: bool, opened: &Opened) {
     }]))));
 }
 
+/// Runs `export` with a [`Watched`] FFmpeg plugin, then restores the plain
+/// one: its result, with what libx264 was offered and the input it chose.
+fn watching<T>(
+    rgba_only: bool,
+    export: impl FnOnce() -> Result<T, ExportError>,
+) -> Result<(T, (Vec<PixelFormat>, PixelFormat)), ExportError> {
+    let opened = Opened::default();
+    watch(rgba_only, &opened);
+    let result = export();
+    celesta_codec_ffmpeg::install();
+    let mut opened = opened.lock().unwrap();
+    assert!(opened.len() <= 1, "{opened:?}");
+    result.map(|value| (value, opened.pop().expect("libx264 was opened")))
+}
+
 #[test]
 fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
     let _gpu = gpu();
@@ -416,13 +431,7 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
     // RGBA when it is not offered. Each export answers the input libx264
     // chose and what it was offered.
     let watched = |rgba_only: bool, bit_depth: &str, name: &str| {
-        let opened = Opened::default();
-        watch(rgba_only, &opened);
-        let result = export(bit_depth, name);
-        celesta_codec_ffmpeg::install();
-        let mut opened = opened.lock().unwrap();
-        assert!(opened.len() <= 1, "{opened:?}");
-        result.map(|output| (output, opened.pop().expect("libx264 was opened")))
+        watching(rgba_only, || export(bit_depth, name))
     };
     let mut pixel_formats: Vec<i32> = Vec::new();
     for (bit_depth, yuv, rgba) in [
@@ -1206,7 +1215,8 @@ fn mp4_mov_and_webm_are_tagged_bt709() {
 }
 
 /// The decoded `yuv420p` (or 10-bit) code values of a flat color through
-/// the GPU's conversion and a lossless encode.
+/// the GPU's conversion and a lossless encode. Every export is tagged
+/// BT.709; the code values are checked only where the GPU converted.
 #[test]
 fn mp4_colors_hold_bt709_code_values() {
     let _gpu = gpu();
@@ -1223,35 +1233,59 @@ fn mp4_colors_hold_bt709_code_values() {
             (2, 1),
         );
         let project = one_clip_project(directory.path());
-        for (bit_depth, pix_fmt, expected) in [
-            ("8", "yuv420p", [eight.0, eight.1, eight.2]),
-            ("10", "yuv420p10le", [ten.0, ten.1, ten.2]),
+        for (bit_depth, pix_fmt, yuv, expected) in [
+            (
+                "8",
+                "yuv420p",
+                PixelFormat::Yuv420p,
+                [eight.0, eight.1, eight.2],
+            ),
+            (
+                "10",
+                "yuv420p10le",
+                PixelFormat::Yuv420p10,
+                [ten.0, ten.1, ten.2],
+            ),
         ] {
             let output = directory.path().join(format!("{hex}-{bit_depth}.mp4"));
-            let exported = exporter(ExportOptions {
-                output: OutputChoice {
-                    video: EncoderChoice {
-                        component: Some(component("ffmpeg/libx264")),
-                        options: options(&[
-                            ("preset", "ultrafast"),
-                            ("crf", "0"),
-                            ("bitDepth", bit_depth),
-                        ]),
+            let exported = watching(false, || {
+                Exporter::new(ExportOptions {
+                    output: OutputChoice {
+                        video: EncoderChoice {
+                            component: Some(component("ffmpeg/libx264")),
+                            options: options(&[
+                                ("preset", "ultrafast"),
+                                ("crf", "0"),
+                                ("bitDepth", bit_depth),
+                            ]),
+                        },
+                        ..OutputChoice::default()
                     },
-                    ..OutputChoice::default()
-                },
-                ..ExportOptions::default()
-            })
-            .export_project(&project, directory.path(), &output);
-            match exported {
-                Ok(()) => {}
+                    ..ExportOptions::default()
+                })
+                .export_project(&project, directory.path(), &output)
+            });
+            let offered = match exported {
+                Ok(((), (offered, _))) => offered,
                 Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
                     skip_without_gpu(&error);
                     return;
                 }
                 Err(error) => panic!("{hex} {bit_depth}-bit export failed: {error}"),
-            }
+            };
             assert_eq!(stream_color(&output), (1, 1, 1, 1), "{hex} {bit_depth}");
+            if !offered.contains(&yuv) {
+                // A software renderer, such as CI's lavapipe, reads back no
+                // YUV (deviation 18), so libx264 converts RGBA with
+                // libswscale: its 10-bit codes differ from the formula by up
+                // to 2, and its bicubic chroma bleeds the background into
+                // the quadrant's last chroma row.
+                eprintln!(
+                    "skipping BT.709 code value check of {hex} {bit_depth}-bit: \
+                     the renderer offers no YUV ({offered:?})"
+                );
+                continue;
+            }
             let frames = decoded_planes(&output, pix_fmt);
             assert!(!frames.is_empty(), "{hex} {bit_depth}: no frames");
             // Video clips are centered on the canvas origin, as images are:
