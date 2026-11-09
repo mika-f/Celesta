@@ -912,6 +912,12 @@ fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind,
             "--debug-guides applies to still output; video exports never draw debug guides".into(),
         );
     }
+    // Options for no encoder would be dropped unchecked, typos and all.
+    if matches!(cli.audio_encoder, Some(AudioEncoderArg::None)) && !cli.audio_option.is_empty() {
+        return Err(
+            "--audio-option needs an audio encoder; --audio-encoder none writes no audio".into(),
+        );
+    }
     // The exporter picks the muxer by the output's extension, and reports
     // one no muxer writes as `unsupported_output`.
     Ok(OutputKind::Video(cli.output_choice()))
@@ -1193,6 +1199,20 @@ mod tests {
                 }),
                 ..OutputChoice::default()
             }))
+        );
+    }
+
+    #[test]
+    fn no_audio_takes_no_audio_options() {
+        assert_eq!(
+            error(&[
+                "out.mp4",
+                "--audio-encoder",
+                "none",
+                "--audio-option",
+                "bitrate=96000",
+            ]),
+            "--audio-option needs an audio encoder; --audio-encoder none writes no audio"
         );
     }
 

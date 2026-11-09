@@ -102,7 +102,7 @@ Celesta writes a video with three media components: a muxer, which writes the fi
 
 `--list-components` lists every installed component with its kind and plugin; add `--check` to ask each plugin whether its components work on this computer, which starts each plugin once. `--describe <plugin/id>` shows one component's settings: each key with its type, default, and choices or range. Both print JSON with `--json`, and neither takes a source or an output.
 
-`--video-encoder` and `--audio-encoder` choose an encoder other than the muxer's default, and `--muxer` a muxer other than the extension's. `--audio-encoder none` writes a video without audio. `--video-option key=value` and `--audio-option key=value` set the chosen encoder's settings, read by each setting's type; repeat them for more settings. A key the encoder does not have, or a value it does not take, fails before anything renders. The FFmpeg plugin that comes with Celesta has these settings in this release (`--describe` shows those of any installed component):
+`--video-encoder` and `--audio-encoder` choose an encoder other than the muxer's default, and `--muxer` a muxer other than the extension's. `--audio-encoder none` writes a video without audio, and cannot be given with `--audio-option`. `--video-option key=value` and `--audio-option key=value` set the chosen encoder's settings, read by each setting's type; repeat them for more settings. A key the encoder does not have, or a value it does not take, fails before anything renders. The FFmpeg plugin that comes with Celesta has these settings in this release (`--describe` shows those of any installed component):
 
 | Component | Key | Values (default) |
 | --- | --- | --- |
