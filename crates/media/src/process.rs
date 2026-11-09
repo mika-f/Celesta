@@ -84,8 +84,8 @@ pub struct MediaProcess {
     /// The ring is not to be declared: the video encoder to open does not
     /// describe the `sharedMemory` transport ([`Pipeline::decline_ring`]).
     ring_declined: bool,
-    /// The ring was declared when the video encoder opened, so frames go
-    /// in its slots.
+    /// The ring was declared when the video encoder opened and the opened
+    /// input's frame fits a slot, so frames go in its slots.
     ring_open: bool,
     /// The window without a ring: [`PIPE_WINDOW`], or fewer for the opened
     /// video encoder's frames ([`pipe_depth`]).
@@ -308,6 +308,7 @@ impl MediaProcess {
 
     /// The ring of slots the plugin accepted for video frames to encode;
     /// frames go through it once [`VideoEncoder::open_video`] declared it
+    /// and the opened input's frame fits a slot
     /// ([`Pipeline::frames_in_ring`]).
     pub fn ring(&self) -> Option<RingLayout> {
         self.ring.as_ref().map(FrameRing::layout)
@@ -379,9 +380,10 @@ fn out_of_step() -> MediaError {
 }
 
 impl Pipeline for MediaProcess {
-    /// The ring's slots once it is declared; otherwise [`PIPE_WINDOW`],
-    /// or fewer once a video encoder opened for frames so large that the
-    /// window would hold more than [`crate::MAX_RING_BYTES`] of them.
+    /// The ring's slots once frames go through it
+    /// ([`Pipeline::frames_in_ring`]); otherwise [`PIPE_WINDOW`], or fewer
+    /// once a video encoder opened for frames so large that the window
+    /// would hold more than [`crate::MAX_RING_BYTES`] of them.
     fn depth(&self) -> usize {
         match &self.ring {
             Some(ring) if self.ring_open => ring.layout().slots,
@@ -402,7 +404,8 @@ impl Pipeline for MediaProcess {
     }
 
     /// The frame goes in a free slot of the ring, or in the payload when
-    /// no ring was declared, no slot is free, or it does not fit one.
+    /// frames do not go through the ring ([`Pipeline::frames_in_ring`]),
+    /// no slot is free, or it does not fit one.
     fn send_video_frame(
         &mut self,
         session: SessionId,
@@ -577,8 +580,9 @@ impl Decoder for MediaProcess {
 
 impl VideoEncoder for MediaProcess {
     /// Declares the ring the plugin accepted, unless it was declined
-    /// ([`Pipeline::decline_ring`]); without one, bounds the window by the
-    /// size of the frames the encoder chose ([`pipe_depth`]).
+    /// ([`Pipeline::decline_ring`]). Frames go through it only when the
+    /// input the encoder chose fits a slot; otherwise the window is bounded
+    /// by the size of those frames ([`pipe_depth`]).
     fn open_video(
         &mut self,
         request: &VideoEncoderRequest<'_>,

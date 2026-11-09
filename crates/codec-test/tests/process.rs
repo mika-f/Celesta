@@ -544,12 +544,14 @@ fn export_frames(
 }
 
 /// Sends `count` frames to a fresh session without receiving, and checks
-/// the window's depth; drains and finishes the session.
-fn fill_window(provider: &mut dyn MediaProvider, depth: usize) {
+/// the window's depth and whether the frames go through the ring
+/// (`in_ring`); drains and finishes the session.
+fn fill_window(provider: &mut dyn MediaProvider, depth: usize, in_ring: bool) {
     let color = Color::bt709_limited();
     let opened = open_rgba(provider, RING_WIDTH, RING_HEIGHT, &color);
     let frames = rgba_frames(3, RING_WIDTH, RING_HEIGHT);
     let pipeline = provider.pipeline().expect("a pipeline");
+    assert_eq!(pipeline.frames_in_ring(), in_ring);
     assert_eq!(pipeline.depth(), depth);
     for frame in &frames {
         pipeline
@@ -580,12 +582,12 @@ fn pipelined_frames_through_the_ring_match_the_pipe_byte_for_byte() {
         let ring = shared.ring().expect("a ring");
         assert_eq!((ring.slots, ring.slot_bytes), (3, 2048));
     }
-    fill_window(&mut shared, 3);
+    fill_window(&mut shared, 3, cfg!(any(unix, windows)));
     let through_ring = export_frames(&mut shared, directory.path(), "ring.ctst", &frames, size);
 
     let mut piped = program_with(FrameTransport::Pipe, export);
     assert!(!piped.shares_frames());
-    fill_window(&mut piped, 3);
+    fill_window(&mut piped, 3, false);
     let through_pipe = export_frames(&mut piped, directory.path(), "pipe.ctst", &frames, size);
 
     let through_codec = export_frames(
@@ -646,6 +648,7 @@ fn frames_too_large_for_the_ring_go_through_the_pipe() {
 fn a_process_with_a_ring_refuses_to_decode_video() {
     let mut shared = program_with(FrameTransport::SharedMemory, rgba_export());
     if !shared.shares_frames() {
+        assert!(!cfg!(any(unix, windows)), "the program declined the ring");
         return;
     }
     let dir = tempfile::tempdir().unwrap();

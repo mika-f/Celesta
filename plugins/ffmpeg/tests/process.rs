@@ -470,11 +470,19 @@ fn the_manifest_lists_every_kind() {
 
 /// Encodes `frames` (ten of them at 10 fps) through `program`'s pipeline,
 /// receiving before each send so that fewer than `depth` requests are in
-/// flight, and muxes them to `output`.
-fn export_pipelined(program: &mut MediaProcess, output: &Path, size: (u32, u32), frames: u8) {
+/// flight, and muxes them to `output`. The frames go through the ring
+/// when `in_ring`, else in the payloads.
+fn export_pipelined(
+    program: &mut MediaProcess,
+    output: &Path,
+    size: (u32, u32),
+    frames: u8,
+    in_ring: bool,
+) {
     let opened = open_x264(program, &settings(&[("preset", text("ultrafast"))]), size).unwrap();
     let mut answers: Vec<Encoded> = Vec::new();
     let pipeline = program.pipeline().expect("a pipeline");
+    assert_eq!(pipeline.frames_in_ring(), in_ring);
     assert_eq!(pipeline.depth(), 3);
     for frame in 0..frames {
         while pipeline.in_flight() >= pipeline.depth() {
@@ -528,13 +536,19 @@ fn frames_reach_the_encoder_through_the_ring() {
         assert!(shared.shares_frames(), "the program declined the ring");
     }
     let through_ring = directory.path().join("ring.mp4");
-    export_pipelined(&mut shared, &through_ring, size, 10);
+    export_pipelined(
+        &mut shared,
+        &through_ring,
+        size,
+        10,
+        cfg!(any(unix, windows)),
+    );
     drop(shared);
 
     let mut piped = program_with(FrameTransport::Pipe, export);
     assert!(!piped.shares_frames());
     let through_pipe = directory.path().join("pipe.mp4");
-    export_pipelined(&mut piped, &through_pipe, size, 10);
+    export_pipelined(&mut piped, &through_pipe, size, 10, false);
     drop(piped);
 
     assert_eq!(

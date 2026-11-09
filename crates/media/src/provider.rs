@@ -87,7 +87,8 @@ pub trait Pipeline {
     fn decline_ring(&mut self) {}
 
     /// Whether video frames go through a ring of shared memory: the plugin
-    /// accepted one and [`VideoEncoder::open_video`] declared it.
+    /// accepted one, [`VideoEncoder::open_video`] declared it, and the
+    /// opened input's frame fits a slot.
     fn frames_in_ring(&self) -> bool {
         false
     }

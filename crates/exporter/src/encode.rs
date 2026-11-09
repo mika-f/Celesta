@@ -152,8 +152,8 @@ pub(crate) struct ExportedTracks {
 
 /// How the video encoder's process takes the frames, and how many go at a
 /// time: through the ring of shared memory it accepted and was declared at
-/// the open, in each request's payload through the pipe, or in Celesta's
-/// own process, one at a time.
+/// the open (when the opened input's frame fits a slot), in each request's
+/// payload through the pipe, or in Celesta's own process, one at a time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum FramePath {
     Ring(usize),

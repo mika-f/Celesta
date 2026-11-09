@@ -738,8 +738,9 @@ pub(crate) fn decode_described(answer: &Message) -> Result<Vec<ComponentDescript
     field(answer, "components")
 }
 
-/// An `openVideoEncoder`, declaring `ring` as the slots frames will come
-/// through when there is one.
+/// An `openVideoEncoder`, declaring `ring` as the slots frames may come
+/// through when there is one: those that fit a slot do, the rest come in
+/// their payloads.
 pub(crate) fn open_video_request(
     request: &VideoEncoderRequest<'_>,
     ring: Option<RingLayout>,
