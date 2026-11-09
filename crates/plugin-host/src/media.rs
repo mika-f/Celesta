@@ -963,6 +963,33 @@ mod tests {
         );
     }
 
+    /// A plugin with no role this Celesta knows, such as an old build of
+    /// the FFmpeg plugin with the `codec` role, runs nowhere, so it takes
+    /// no id: the bundled media plugin of that id is still used.
+    #[test]
+    fn a_plugin_with_no_known_role_takes_no_id() {
+        let (user, bundled) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_manifest(
+            &user.path().join("ffmpeg"),
+            serde_json::json!({
+                "id": "ffmpeg", "version": "0.9.0", "protocol": 1, "celesta": COMPATIBLE,
+                "roles": ["codec"], "executable": { platform().0: "bin/media" },
+            }),
+        );
+        write_manifest(
+            &bundled.path().join("ffmpeg"),
+            media_manifest("ffmpeg", serde_json::json!([])),
+        );
+        let (plugins, errors) = discover_in(&search(&[
+            (user.path(), PluginSource::User),
+            (bundled.path(), PluginSource::Bundled),
+        ]));
+        assert!(errors.is_empty(), "{errors:?}");
+        let media = installed(plugins).media_with_sibling(None);
+        assert_eq!(ids(&media), ["ffmpeg"]);
+        assert_eq!(media[0].directory, bundled.path().join("ffmpeg"));
+    }
+
     #[test]
     fn a_project_content_plugin_still_comes_first() {
         let (project, bundled) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());

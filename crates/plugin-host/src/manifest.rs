@@ -694,14 +694,16 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
 /// components of a listed plugin that cannot be read
 /// ([`DiscoveryError::BadComponent`]); a missing
 /// folder is skipped quietly. A plugin skipped this way takes no id, so a
-/// later one with the same id is found in its place.
+/// later one with the same id is found in its place; so does a plugin with
+/// no role this Celesta knows, such as `codec`, which is listed.
 pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
     discover_in_with(paths, |_| false)
 }
 
 /// [`discover_in`], where a plugin `turned_off` names is listed but, like a
 /// skipped one, takes no id: a later plugin with its id is found too, to be
-/// used in its place. One found after a plugin that took its id is not.
+/// used in its place. One found after a plugin that took its id is not. A
+/// plugin with no role this Celesta knows takes no id either.
 ///
 /// One exception to search order: a project's plugin with the id of a media
 /// plugin Celesta bundles is skipped and reported, so a project cannot
@@ -807,7 +809,15 @@ pub(crate) fn discover_in_with(
                 });
             }
             Ok((entry, skipped)) if !taken.contains(&entry.manifest.id) => {
-                if !turned_off(&entry) {
+                // A plugin with no role this Celesta knows (such as an old
+                // `codec` plugin) runs nowhere, so it does not hide a later
+                // one with its id either.
+                let runs = entry
+                    .manifest
+                    .roles
+                    .iter()
+                    .any(|role| role.name().is_some());
+                if runs && !turned_off(&entry) {
                     taken.insert(entry.manifest.id.clone());
                 }
                 found.push(entry);
