@@ -139,7 +139,11 @@ pub enum SettingKind {
             skip_serializing_if = "Option::is_none",
             serialize_with = "serialize_optional_number"
         )]
+        /// The editor's increment: a hint for its control only, which
+        /// [`validate`] does not check.
         step: Option<f64>,
+        /// A whole number that fits an `i64` (from -2^63 to 2^63 - 1), as
+        /// plugins read it.
         #[serde(default, skip_serializing_if = "is_false")]
         integer: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,6 +213,9 @@ fn unmet_condition<'a>(
     })
 }
 
+/// 2^63, the first whole number past `i64::MAX`, exactly as an `f64`.
+const I64_END: f64 = 9_223_372_036_854_775_808.0;
+
 fn check_value(field: &SettingField, value: &SettingValue) -> Result<(), InvalidSetting> {
     let fail = |message: String| Err(InvalidSetting::new(&field.key, message));
     match (&field.kind, value) {
@@ -239,6 +246,9 @@ fn check_value(field: &SettingField, value: &SettingValue) -> Result<(), Invalid
                 fail(format!("must be at least {}", min.unwrap_or_default()))
             } else if max.is_some_and(|max| *number > max) {
                 fail(format!("must be at most {}", max.unwrap_or_default()))
+            } else if *integer && !(-I64_END..I64_END).contains(number) {
+                // Past i64's range, `as i64` in a plugin would saturate.
+                fail(format!("must be from {} to {}", i64::MIN, i64::MAX))
             } else {
                 Ok(())
             }
@@ -433,6 +443,63 @@ mod tests {
             invalid(&schema, json!({ "rateControl": "vbr", "bitrate": 5 })).1,
             "must be at least 100000"
         );
+    }
+
+    #[test]
+    fn integers_stay_within_i64() {
+        // `bitrate` has no `max`: a whole 1e300 would saturate to i64::MAX.
+        let schema = schema();
+        assert_eq!(
+            invalid(&schema, json!({ "rateControl": "vbr", "bitrate": 1e300 })),
+            (
+                "bitrate".into(),
+                "must be from -9223372036854775808 to 9223372036854775807".into()
+            )
+        );
+        assert_eq!(
+            invalid(
+                &schema,
+                json!({ "rateControl": "vbr", "bitrate": 9_223_372_036_854_775_808.0_f64 })
+            )
+            .0,
+            "bitrate"
+        );
+        let largest =
+            given(json!({ "rateControl": "vbr", "bitrate": 9_223_372_036_854_774_784.0_f64 }));
+        assert!(validate(&schema, &largest).is_ok());
+        // Below i64's range too, for a field without `min`.
+        let unbounded: Vec<SettingField> = vec![
+            serde_json::from_value(json!({ "key": "offset", "type": "number",
+                "integer": true, "default": 0, "label": "Offset" }))
+            .unwrap(),
+        ];
+        assert_eq!(invalid(&unbounded, json!({ "offset": -1e19 })).0, "offset");
+        assert!(
+            validate(
+                &unbounded,
+                &given(json!({ "offset": -9_223_372_036_854_775_808.0_f64 }))
+            )
+            .is_ok()
+        );
+        // A number that is not `integer` may be as large as it likes.
+        let real: Vec<SettingField> = vec![
+            serde_json::from_value(json!({ "key": "gain", "type": "number",
+                "default": 0, "label": "Gain" }))
+            .unwrap(),
+        ];
+        assert!(validate(&real, &given(json!({ "gain": 1e300 }))).is_ok());
+    }
+
+    #[test]
+    fn step_is_only_a_hint() {
+        // A value off the step from `min` passes: the editor's control
+        // steps by it, and validation does not.
+        let stepped: Vec<SettingField> = vec![
+            serde_json::from_value(json!({ "key": "size", "type": "number",
+                "min": 0, "step": 16, "default": 0, "label": "Size" }))
+            .unwrap(),
+        ];
+        assert!(validate(&stepped, &given(json!({ "size": 17 }))).is_ok());
     }
 
     #[test]
