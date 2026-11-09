@@ -647,8 +647,9 @@ fn frames_too_large_for_the_ring_go_through_the_pipe() {
 #[test]
 fn a_process_with_a_ring_refuses_to_decode_video() {
     let mut shared = program_with(FrameTransport::SharedMemory, rgba_export());
-    if !shared.shares_frames() {
-        assert!(!cfg!(any(unix, windows)), "the program declined the ring");
+    if cfg!(any(unix, windows)) {
+        assert!(shared.shares_frames(), "the program declined the ring");
+    } else if !shared.shares_frames() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
