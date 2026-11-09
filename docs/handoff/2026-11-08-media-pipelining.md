@@ -491,6 +491,54 @@ test-codec tests), and the editor by hand.
   make them so; it would change the files, so it belongs with a change
   that is allowed to.
 
+From the second reviews of #785 (P1) and #786 (P2a), fixed on this
+branch where cheap (see Review follow-ups) and left here otherwise:
+
+- (#785) The sibling `--manifest` probe (`printed_manifest`) discards the
+  program's stderr and remembers a failure by path, size, and mtime until
+  Celesta restarts; its cache and its id check are untested.
+- (#785) A decoder that fails during routing is dropped without a trace
+  when a later one reads the file (as the spec says); a spawn `ENOENT` or
+  a protocol error there is never reported.
+- (#785) `MediaError::Unsupported` with an empty `tried` means "not yet
+  routed" and is remapped by hand; an encoder or muxer answering
+  `unsupported` with a path is reported as `unsupported_media` with
+  `(tried )`.
+- (#785) `DecoderUse.origin` is always `Project` (`record_use` keeps no
+  other), so the field says nothing.
+- (#785) Simplifications: the `MediaPlugin` to `RegisteredPlugin`
+  conversion and extension normalization are written twice; the `add`
+  closure in `discover_in_with` can be `.transpose()` and `extend`;
+  `plugin_row` can count `decoder_uses` itself; `printed_manifest`
+  re-derives the folder with `parent().expect()`.
+- (#786) FFmpeg's own reason (the libav log line) does not reach JSON,
+  MCP, or Node callers: `av_error` keeps only `av_strerror`'s text, such
+  as "Invalid argument". The CLI's stderr has it.
+- (#786) A plugin answering an input format or a channel count it was not
+  offered is reported as `invalid_option`, though it is a protocol
+  violation rather than the user's option.
+- (#786) A component's own setting definitions are not checked: `default`
+  against its type, `min <= max`, unique keys, `visibleWhen` keys;
+  `effective` copies defaults unchecked. This matters more with P3's
+  controls.
+- (#786) In `@celesta.studio/exporter`'s types, `ComponentInfo`'s index
+  signature makes manifest fields `unknown`, and `SettingField` is one
+  flat interface rather than a union on `type`.
+- (#786) In `--describe --json`, `inputFormats` is the manifest's bound
+  for an unavailable video encoder and the plugin's answer otherwise.
+- (#786) Untested: an FFmpeg video encoder sent a wrong-size frame; a
+  failing `finishMuxer` (the fakes always succeed); `resolve`'s "writes
+  ... by default" `ComponentUnavailable` branch; the refusal of an input
+  the encoder was not offered; the audio packet checks; the protocol's
+  `!rest.is_empty()` packet check.
+- (#786) Simplifications: the FFmpeg plugin's three `open` preambles, its
+  `avcodec_receive_packet` loop and `AVDictionary` handling; the plugin
+  lookups `ExportSession` repeats; the start, abort, finish, and publish
+  lifecycle in `exporter.rs` and `react_entry.rs`; the preset-file check
+  and component-reference parser in both `main.rs` and `mcp/args.rs`; a
+  `ComponentDescription::available` constructor and a `NO_REASON`
+  constant.
+
 ## Review follow-ups
 
 The rulings that shaped the code, from the session's ledger:
@@ -554,3 +602,27 @@ Fixed after the second PR review:
 - `RingLayout::segment_bytes()` is checked (`Option<usize>`) and replaces
   the three hand-written checked sizes; `PluginChild::request`
   debug-asserts that nothing is in flight.
+
+Fixed after the second reviews of #785 and #786, on this branch rather
+than restacking them:
+
+- (#785) `route` checks a file with `try_exists`, so one it cannot check
+  (a folder it cannot search) goes to the decoders rather than being
+  reported as not found.
+- (#785) A plugin with no role this Celesta knows (an old `codec` build of
+  `ffmpeg`) takes no id, so it no longer hides the bundled media plugin.
+- (#785) The guide and the Agent Skill say which files a project decoder
+  gets (only among those listing the extension) and that a decoder
+  stopped by its deadline or a cancel ends routing.
+- (#786) `@celesta.studio/exporter` passes options as `--video-option`
+  text, which the spec, the P2a handoff, and `SettingInput`'s doc now say,
+  rather than typed values: the CLI has no typed carrier for an option,
+  and adding one is new CLI surface. The guide and the Skill say MCP
+  checks each value's type while the package reads `"18"` as 18.
+- (#786) `--preset placebo` gets no `--video-option` hint (the plugin's
+  `preset` has no `placebo`); `--list-components --check` starts each
+  plugin once even when `describe` fails; `--audio-encoder none` refuses
+  `--audio-option`; HANDOFF.md names `ReadbackFormat::Rgba16Straight`.
+- Stale comments, help, and Skill rows from both reviews; a test of the
+  `Codec` `Unsupported` arm; the repository manifest test checks the
+  `ffmpeg` decoder; the fake sibling waits out `ETXTBSY`.
