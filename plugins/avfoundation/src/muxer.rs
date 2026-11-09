@@ -7,7 +7,9 @@
 //! others, so each keeps a queue of the sample buffers it was not ready
 //! for: [`MuxerSession::write`] appends what the inputs take and keeps the
 //! rest, and [`MuxerSession::finish`] drains every queue, marking an input
-//! finished as soon as its queue is empty so the others can go on.
+//! finished as soon as its queue is empty so the others can go on. While
+//! the writer is busy writing, `write` waits for the queues to fall back to
+//! [`MAX_PENDING_BYTES`] rather than hold a whole backlog in memory.
 //!
 //! The session starts at 0. AAC before 0 is trimmed with
 //! `TrimDurationAtStart`, up to the encoder's delay and `leadingAudio`;
@@ -45,13 +47,20 @@ use std::ptr::{NonNull, null, null_mut};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-/// How often [`MuxerSession::finish`] looks again at inputs that are not
-/// ready.
+/// How often [`MuxerSession::finish`], and [`MuxerSession::write`] with
+/// full queues, look again at inputs that are not ready.
 const POLL: Duration = Duration::from_millis(1);
 
-/// How long [`MuxerSession::finish`] waits for the writer to take any
-/// sample before it gives up on it.
+/// How long [`MuxerSession::finish`] and [`MuxerSession::write`] wait for
+/// the writer to take any sample before they give up on it.
 const STALL: Duration = Duration::from_secs(60);
+
+/// The packet bytes the inputs' queues hold at most once
+/// [`MuxerSession::write`] returns, while the writer is busy writing: the
+/// exporter streams a backlog in `writePackets` batches as fast as they are
+/// answered, and a disk-bound writer (ProRes 4444 at 4K is about 150 MB/s)
+/// would otherwise have the whole backlog queued here.
+const MAX_PENDING_BYTES: usize = 64 << 20;
 
 /// The attachment AVAssetReader's own passthrough AAC buffers carry beside
 /// `GradualDecoderRefresh`, which has no public constant (deviation 60).
@@ -74,13 +83,16 @@ enum Kind {
     },
 }
 
-/// A track's input, and the sample buffers it was not ready for yet.
+/// A track's input, and the sample buffers it was not ready for yet, each
+/// with the bytes of its packet.
 struct Input {
     input: Retained<AVAssetWriterInput>,
     format: CFRetained<CMFormatDescription>,
     kind: Kind,
     timescale: i32,
-    pending: VecDeque<CFRetained<CMSampleBuffer>>,
+    pending: VecDeque<(CFRetained<CMSampleBuffer>, usize)>,
+    /// The bytes of the packets in `pending`.
+    pending_bytes: usize,
     finished: bool,
 }
 
@@ -89,6 +101,8 @@ pub(crate) struct MuxerSession {
     output: PathBuf,
     writer: Retained<AVAssetWriter>,
     inputs: Vec<Input>,
+    /// [`MAX_PENDING_BYTES`], less in tests.
+    max_pending: usize,
 }
 
 // SAFETY: `AVAssetWriter`, its inputs, and the CoreMedia objects queued for
@@ -232,6 +246,7 @@ fn input_for(format: MuxerFormat, track: &Track, hidden: u64) -> Result<Input, M
         kind,
         timescale,
         pending: VecDeque::new(),
+        pending_bytes: 0,
         finished: false,
     })
 }
@@ -310,6 +325,7 @@ pub(crate) fn open(
         output: output.to_owned(),
         writer,
         inputs,
+        max_pending: MAX_PENDING_BYTES,
     };
     // SAFETY: the writer has its inputs; the session starts once, after
     // writing has started.
@@ -600,24 +616,42 @@ impl Input {
         // appended only while the input is ready for it, and each is of the
         // input's media type.
         unsafe {
-            while let Some(sample) = self.pending.front() {
+            while let Some((sample, bytes)) = self.pending.front() {
                 if !self.input.isReadyForMoreMediaData() {
                     break;
                 }
                 if !self.input.appendSampleBuffer(sample) {
                     return Err(writer_error(writer, "append a sample"));
                 }
+                self.pending_bytes -= bytes;
                 self.pending.pop_front();
                 took = true;
             }
         }
         Ok(took)
     }
+
+    /// Whether the writer would take a buffer for this input now: one that
+    /// is not finished and is ready.
+    fn wants_more(&self) -> bool {
+        // SAFETY: an input's readiness may always be read.
+        !self.finished && unsafe { self.input.isReadyForMoreMediaData() }
+    }
+}
+
+/// The error for a writer that took no sample for [`STALL`].
+fn stalled() -> MediaError {
+    MediaError::Codec(format!(
+        "AVAssetWriter took no sample for {} s",
+        STALL.as_secs()
+    ))
 }
 
 impl MuxerSession {
     /// Queues `packets` for their tracks' inputs in the order given, and
-    /// appends what the inputs are ready for.
+    /// appends what the inputs are ready for; then, while the queues hold
+    /// more than [`MAX_PENDING_BYTES`] and the writer is busy writing,
+    /// waits for it.
     pub(crate) fn write(&mut self, packets: &[TrackPacket]) -> Result<(), MediaError> {
         self.check_writing()?;
         for given in packets {
@@ -626,11 +660,42 @@ impl MuxerSession {
                 MediaError::Codec(format!("a packet for track {} of {count}", given.track))
             })?;
             if let Some(sample) = input.sample(&given.packet)? {
-                input.pending.push_back(sample);
+                let bytes = given.packet.bytes.len();
+                input.pending.push_back((sample, bytes));
+                input.pending_bytes += bytes;
             }
             self.append_ready()?;
         }
-        Ok(())
+        self.wait_while_full()
+    }
+
+    /// The bytes of the packets every input's queue holds.
+    fn pending_bytes(&self) -> usize {
+        self.inputs.iter().map(|input| input.pending_bytes).sum()
+    }
+
+    /// Appends what the inputs take, polling as `finish` does, while the
+    /// queues hold more than `max_pending` bytes and no input is ready: the
+    /// writer is then bound by its output. An input that is ready has an
+    /// empty queue (`append_ready` would have taken from it), so the writer
+    /// is waiting for that track's packets, which come only once `write`
+    /// returns; a long run of one track (all the video, then the audio) is
+    /// still queued whole.
+    fn wait_while_full(&mut self) -> Result<(), MediaError> {
+        let mut last = Instant::now();
+        loop {
+            if self.append_ready()? {
+                last = Instant::now();
+            }
+            if self.pending_bytes() <= self.max_pending || self.inputs.iter().any(Input::wants_more)
+            {
+                return Ok(());
+            }
+            if last.elapsed() > STALL {
+                return Err(stalled());
+            }
+            std::thread::sleep(POLL);
+        }
     }
 
     /// `Ok` while the writer is writing; its error once it has failed (an
@@ -682,10 +747,7 @@ impl MuxerSession {
                 break;
             }
             if last.elapsed() > STALL {
-                return Err(MediaError::Codec(format!(
-                    "AVAssetWriter took no sample for {} s",
-                    STALL.as_secs()
-                )));
+                return Err(stalled());
             }
             std::thread::sleep(POLL);
         }
@@ -721,5 +783,85 @@ impl Drop for MuxerSession {
                 self.writer.cancelWriting();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use celesta_media::{Settings, TrackConfig};
+
+    /// A 48 kHz stereo `lpcm.s16le` track.
+    fn pcm_track() -> Track {
+        Track::Audio {
+            config: TrackConfig {
+                codec: "lpcm.s16le".to_owned(),
+                description: None,
+            },
+            timescale: 48_000,
+            sample_rate: 48_000,
+            channels: 2,
+            delay: 0,
+        }
+    }
+
+    /// A `mov` session of `tracks` writing `output`.
+    fn open_mov(output: &Path, tracks: &[Track]) -> MuxerSession {
+        open(
+            MuxerFormat::Mov,
+            &MuxerRequest {
+                component: "mov",
+                settings: &Settings::new(),
+                output,
+                tracks,
+                leading_audio: 0,
+            },
+        )
+        .unwrap()
+    }
+
+    /// `frames` sample frames of 16-bit stereo PCM from `pts`.
+    fn pcm_packet(pts: i64, frames: usize) -> TrackPacket {
+        TrackPacket {
+            track: 0,
+            packet: Packet {
+                pts,
+                dts: pts,
+                duration: frames as i64,
+                key: true,
+                bytes: (0..frames * 4).map(|index| index as u8).collect(),
+                additional: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn a_busy_writer_holds_writes_back() {
+        // A small cap, so a few batches fill it: 4 MiB batches of one
+        // track (there is no other track to wait for), 64 MiB in all.
+        const CAP: usize = 1 << 20;
+        const FRAMES: usize = 1 << 20;
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("pcm.mov");
+        let tracks = [pcm_track()];
+        let mut session = open_mov(&output, &tracks);
+        session.max_pending = CAP;
+        let mut most = 0;
+        for batch in 0..16 {
+            let packets: Vec<TrackPacket> = (0..4)
+                .map(|index| pcm_packet((batch * 4 + index) * FRAMES as i64 / 4, FRAMES / 4))
+                .collect();
+            let batch_bytes: usize = packets.iter().map(|given| given.packet.bytes.len()).sum();
+            session.write(&packets).unwrap();
+            let pending = session.pending_bytes();
+            assert!(
+                pending <= CAP + batch_bytes,
+                "batch {batch}: {pending} bytes queued, over {CAP} and a batch of {batch_bytes}"
+            );
+            most = most.max(pending);
+        }
+        println!("at most {most} bytes queued after a write");
+        assert_eq!(session.finish().unwrap(), std::slice::from_ref(&output));
+        assert!(std::fs::metadata(&output).unwrap().len() >= 64 << 20);
     }
 }
