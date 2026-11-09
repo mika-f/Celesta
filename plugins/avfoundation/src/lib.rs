@@ -57,6 +57,10 @@ mod apple;
 #[cfg(target_os = "macos")]
 mod audio;
 #[cfg(target_os = "macos")]
+mod formats;
+#[cfg(target_os = "macos")]
+mod muxer;
+#[cfg(target_os = "macos")]
 mod provider;
 #[cfg(target_os = "macos")]
 mod video;

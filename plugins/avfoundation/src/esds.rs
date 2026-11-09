@@ -6,13 +6,6 @@ use celesta_media::MediaError;
 const ES_DESCRIPTOR: u8 = 3;
 const DECODER_CONFIG: u8 = 4;
 const DECODER_SPECIFIC_INFO: u8 = 5;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the AVFoundation muxers write cookies in a later task"
-    )
-)]
 const SL_CONFIG: u8 = 6;
 
 fn malformed() -> MediaError {
@@ -81,13 +74,6 @@ pub(crate) fn asc_from_cookie(cookie: &[u8]) -> Result<Vec<u8>, MediaError> {
 
 /// `tag`, `body`'s length as AudioToolbox writes it (four bytes, the first
 /// three with the high bit set), then `body`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the AVFoundation muxers write cookies in a later task"
-    )
-)]
 fn write(out: &mut Vec<u8>, tag: u8, body: &[u8]) {
     let length = body.len() as u32;
     out.push(tag);
@@ -103,13 +89,6 @@ fn write(out: &mut Vec<u8>, tag: u8, body: &[u8]) {
 /// An AAC magic cookie for `asc`: an `ES_Descriptor` with ES_ID 0, a
 /// `DecoderConfigDescriptor` (MPEG-4 audio, audio stream, `bitrate` as both
 /// maximum and average), the `DecoderSpecificInfo`, and an `SLConfig`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the AVFoundation muxers write cookies in a later task"
-    )
-)]
 pub(crate) fn cookie_from_asc(asc: &[u8], bitrate: u32) -> Vec<u8> {
     let mut info = Vec::new();
     write(&mut info, DECODER_SPECIFIC_INFO, asc);

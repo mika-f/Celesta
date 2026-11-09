@@ -8,6 +8,7 @@
 
 use crate::audio::{self, AudioSession};
 use crate::components::{self, AudioCodec, MuxerFormat, VideoCodec};
+use crate::muxer::{self, MuxerSession};
 use crate::video::{self, VideoSession};
 use crate::{DECODER_ID, PLUGIN_ID, apple};
 use celesta_media::{
@@ -32,6 +33,7 @@ const NOT_IMPLEMENTED: &str = "not implemented yet";
 pub struct AvfCodec {
     video: HashMap<SessionId, VideoSession>,
     audio: HashMap<SessionId, AudioSession>,
+    muxers: HashMap<SessionId, MuxerSession>,
     /// The last session number given, one count for every kind.
     last: u64,
 }
@@ -250,24 +252,37 @@ impl Muxer for AvfCodec {
     fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
         let format = MuxerFormat::from_id(request.component)
             .ok_or_else(|| no_component("muxer", request.component))?;
-        Err(not_implemented(format.id()))
+        let opened = muxer::open(format, request)?;
+        let session = self.next_session();
+        self.muxers.insert(session, opened);
+        Ok(session)
     }
 
     fn write_packets(
         &mut self,
         session: SessionId,
-        _packets: &[TrackPacket],
+        packets: &[TrackPacket],
     ) -> Result<(), MediaError> {
-        Err(no_session("muxer", session))
+        self.muxers
+            .get_mut(&session)
+            .ok_or_else(|| no_session("muxer", session))?
+            .write(packets)
     }
 
     fn finish_muxer(&mut self, session: SessionId) -> Result<Vec<PathBuf>, MediaError> {
-        Err(no_session("muxer", session))
+        self.muxers
+            .remove(&session)
+            .ok_or_else(|| no_session("muxer", session))?
+            .finish()
     }
 
-    /// No muxer session is ever open, so it leaves no files.
-    fn abort_muxer(&mut self, _session: SessionId) -> Vec<PathBuf> {
-        Vec::new()
+    /// Cancels a muxer session's writing: the file it leaves, for Celesta
+    /// to remove; nothing for a session that is not open.
+    fn abort_muxer(&mut self, session: SessionId) -> Vec<PathBuf> {
+        self.muxers
+            .remove(&session)
+            .map(MuxerSession::abort)
+            .unwrap_or_default()
     }
 }
 
@@ -275,7 +290,7 @@ impl Muxer for AvfCodec {
 mod tests {
     use super::*;
     use celesta_composition::Rational;
-    use celesta_media::{Color, PixelFormat, Settings};
+    use celesta_media::{Color, PixelFormat, Settings, Track, TrackConfig};
     use celesta_plugin_host::MediaManifest;
 
     fn unavailable<T: std::fmt::Debug>(result: Result<T, MediaError>) -> (String, String) {
@@ -333,20 +348,17 @@ mod tests {
             codec.open_audio(&audio_request("opus", &settings)),
             Err(MediaError::Codec(message)) if message == r#"no audio encoder "opus" in avfoundation"#
         ));
-        let output = Path::new("/nonexistent/out.mp4");
-        for format in ["mp4", "mov"] {
-            let request = MuxerRequest {
-                component: format,
-                settings: &settings,
-                output,
-                tracks: &[],
-                leading_audio: 0,
-            };
-            assert_eq!(
-                unavailable(codec.open_muxer(&request)),
-                (format.to_owned(), NOT_IMPLEMENTED.to_owned())
-            );
-        }
+        let request = MuxerRequest {
+            component: "webm",
+            settings: &settings,
+            output: Path::new("/nonexistent/out.webm"),
+            tracks: &[],
+            leading_audio: 0,
+        };
+        assert!(matches!(
+            codec.open_muxer(&request),
+            Err(MediaError::Codec(message)) if message == r#"no muxer "webm" in avfoundation"#
+        ));
         let path = Path::new("/nonexistent/clip.mp4");
         assert_eq!(
             unavailable(codec.probe(DECODER_ID, path)),
@@ -455,6 +467,56 @@ mod tests {
         let finished = codec.finish_audio(other.session).unwrap();
         assert!(finished.config.is_some());
         assert!(codec.finish_audio(other.session).is_err());
+        codec.abort_video(video.session);
+    }
+
+    #[test]
+    fn muxer_sessions_share_the_count_and_abort_alone() {
+        let mut codec = AvfCodec::default();
+        let settings = Settings::new();
+        let color = Color::bt709_limited();
+        let video = codec
+            .open_video(&video_request("h264", &settings, &color))
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("out.m4a");
+        let tracks = [Track::Audio {
+            config: TrackConfig {
+                codec: "mp4a.40.2".to_owned(),
+                description: Some(vec![0x11, 0x90]),
+            },
+            timescale: 48_000,
+            sample_rate: 48_000,
+            channels: 2,
+            delay: 2_112,
+        }];
+        let request = |component, output| MuxerRequest {
+            component,
+            settings: &settings,
+            output,
+            tracks: &tracks,
+            leading_audio: 0,
+        };
+        // A refused open takes no number.
+        assert!(matches!(
+            codec.open_muxer(&request("mov", Path::new("/nonexistent/out.mov"))),
+            Err(MediaError::Codec(_))
+        ));
+        let muxer = codec.open_muxer(&request("mp4", &output)).unwrap();
+        assert_eq!((video.session, muxer), (SessionId(1), SessionId(2)));
+
+        // `abortEncoder` leaves a muxer alone, and `abortMuxer` an encoder.
+        codec.abort_video(muxer);
+        codec.abort_audio(muxer);
+        assert!(codec.abort_muxer(video.session).is_empty());
+        let frame = vec![128; PixelFormat::Nv12.frame_bytes(64, 36)];
+        codec.encode_video(video.session, 0, frame).unwrap();
+        assert_eq!(codec.abort_muxer(muxer), [output]);
+        assert!(codec.abort_muxer(muxer).is_empty());
+        assert!(matches!(
+            codec.write_packets(muxer, &[]),
+            Err(MediaError::Codec(message)) if message == "no open muxer 2"
+        ));
         codec.abort_video(video.session);
     }
 
