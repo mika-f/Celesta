@@ -45,7 +45,7 @@ import { parseArgs } from 'node:util';
 
 import { cargoMetadata } from './cargo.mts';
 import { licenseFiles } from './licenses.mts';
-import { celestaRange, checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
+import { buildsOn, celestaRange, checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
 import type { Built, PluginManifest, PluginSource } from './manifest.mts';
 import { rustPlatform } from './platform.mts';
 import { workspaceVersion } from './version.mts';
@@ -108,11 +108,16 @@ const range = orFail(() => celestaRange(celestaVersion));
 
 // Every plugin.json, checked before anything is built, and with --skip-js the
 // module an earlier run built for the same range.
-const plugins = positionals.map((directory) => {
+const plugins = positionals.flatMap((directory) => {
   const source = resolve(directory);
   const sourcePath = join(source, 'plugin.json');
   const plugin: PluginSource = readJson(sourcePath);
   orFail(() => checkPluginSource(plugin, sourcePath));
+  const { os } = orFail(() => rustPlatform({ target: values.target, cwd: source }));
+  if (!buildsOn(plugin, os)) {
+    console.log(`${plugin.id}: skipped, it is built for ${plugin.os?.join(', ')} only`);
+    return [];
+  }
   orFail(() => pluginVersion({ version: plugin.version }, undefined, sourcePath));
   const licenses = orFail(() => licenseFiles(source, plugin, sourcePath));
   const out = join(values.out === undefined ? join(dirname(source), 'dist') : resolve(values.out), plugin.id);
@@ -130,7 +135,7 @@ const plugins = positionals.map((directory) => {
       );
     }
   }
-  return { source, sourcePath, plugin, licenses, out, manifestPath, previous };
+  return [{ source, sourcePath, plugin, licenses, out, manifestPath, previous }];
 });
 
 const runtime = join(root, 'packages', 'cli');

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { celestaRange, checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mts';
+import { buildsOn, celestaRange, checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mts';
 import type { PluginSource } from '../manifest.mts';
 
 const sourcePath = '/repo/plugins/vrm/plugin.json';
@@ -129,6 +129,21 @@ describe('pluginManifest', () => {
 });
 
 describe('checkPluginSource', () => {
+  it('os is a list of systems', () => {
+    const base = { id: 'a', version: '1.0.0', cargoPackage: 'a' };
+    expect(() => checkPluginSource({ ...base, os: ['macos'] }, 'p')).not.toThrow();
+    for (const os of ['macos', [], ['']]) {
+      expect(() => checkPluginSource({ ...base, os } as unknown as PluginSource, 'p')).toThrow(
+        'p: os must be a list of operating systems, such as ["macos"]',
+      );
+    }
+    expect(buildsOn({ id: 'a', os: ['macos'] }, 'linux')).toBe(false);
+    expect(buildsOn({ id: 'a', os: ['macos'] }, 'macos')).toBe(true);
+    expect(buildsOn({ id: 'a' }, 'linux')).toBe(true);
+    const manifest = pluginManifest({ ...base, os: ['macos'] }, { celestaVersion: '0.9.0', cargoVersion: '1.0.0' }, 'p');
+    expect(manifest).not.toHaveProperty('os');
+  });
+
   it('refuses components without a module', () => {
     expect(() =>
       checkPluginSource({ id: 'x', version: '0.1.0', cargoPackage: 'p', components: [component] }, sourcePath),

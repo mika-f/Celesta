@@ -21,6 +21,12 @@ export interface PluginSource {
   components?: object[];
   /** What a media plugin offers: its decoders, copied as they are. */
   media?: object;
+  /**
+   * The operating systems it builds for, as `std::env::consts::OS` names
+   * (such as `["macos"]`); on any other the build skips it. Absent, it builds
+   * everywhere. Not copied into the manifest.
+   */
+  os?: string[];
 }
 
 /** What the build made. */
@@ -53,7 +59,7 @@ export interface PluginManifest {
 }
 
 /** The keys plugin.json may have, as PluginSource lists them. */
-const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components', 'media'];
+const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components', 'media', 'os'];
 
 /**
  * Celesta's rule for a plugin id (`is_valid_id` in
@@ -104,6 +110,10 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
   ) {
     throw new Error(`${sourcePath}: components must be a list of objects`);
   }
+  const os: unknown = source.os;
+  if (os !== undefined && !(Array.isArray(os) && os.length > 0 && os.every((name) => typeof name === 'string' && name !== ''))) {
+    throw new Error(`${sourcePath}: os must be a list of operating systems, such as ["macos"]`);
+  }
   const noComponents = source.components === undefined || source.components.length === 0;
   if (source.module === undefined && !noComponents) {
     throw new Error(`${sourcePath}: components need a module to import them from`);
@@ -111,6 +121,11 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
   if (source.module === undefined && source.cargoPackage === undefined) {
     throw new Error(`${sourcePath}: it has neither a module nor a cargoPackage to build`);
   }
+}
+
+/** Whether `source` builds on the operating system `os` (`std::env::consts::OS`): it does without an `os` list. */
+export function buildsOn(source: PluginSource, os: string): boolean {
+  return source.os === undefined || source.os.includes(os);
 }
 
 /**
