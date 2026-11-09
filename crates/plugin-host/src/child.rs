@@ -8,8 +8,8 @@
 //!   request has a deadline, even one whose payload a hung plugin would never
 //!   read. A plugin that misses it is killed.
 //! - Another thread can kill it through a [`PluginKillHandle`] (or a
-//!   [`crate::PluginKillSwitch`] it is registered with): the request it was
-//!   waiting on returns at once.
+//!   [`crate::PluginKillSwitch`] it is registered with): every request in
+//!   flight fails at once.
 //! - Its stderr is passed through to Celesta's and its last lines kept, so an
 //!   error for a process that went away says what it last printed.
 //! - An answer must be of the kind its request expects: a plugin that falls

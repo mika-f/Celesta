@@ -22,8 +22,10 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// What a media plugin does, asked one request at a time. Every path is
-/// absolute and local.
+/// What a media plugin does. Each request is answered before the next is
+/// asked, except encode and write requests sent through its
+/// [`Self::pipeline`], several in flight at once. Every path is absolute
+/// and local.
 ///
 /// A plugin answers [`Self::describe`], and serves each kind of component
 /// it has through the accessor of that kind ([`Self::video_encoder`], …);

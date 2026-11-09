@@ -380,7 +380,7 @@ celesta: timing: render 4.50 s for 300 frames; mix 1.25 s, done at frame 87; sta
 That is the render's and the mix's times, how many frames the render had sent
 when it took the mix (`done after the render` when it had sent every frame
 first; `mix none` without a mix), the most packet bytes the interleaver held
-at once, whether it spilled them to a file, and how the video encoder's
+at once (in megabytes of 10^6 bytes), whether it spilled them to a file, and how the video encoder's
 process took the frames and how many at a time: through its ring of shared
 memory (`ring`), in each request's payload (`pipe`), or one at a time in
 Celesta's own process (`in process`).

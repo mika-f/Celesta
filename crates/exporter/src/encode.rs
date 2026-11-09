@@ -175,7 +175,8 @@ pub(crate) struct SessionTiming {
 /// for the mix ([`TIMING_VARIABLE`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ExportTiming {
-    /// The render loop, from its first frame to its last encoded.
+    /// The render loop, from its first frame to the last one it sent to
+    /// the encoder (answers still in flight are received by `finish`).
     pub render: Duration,
     /// The frames the render sent to the encoder.
     pub frames: u64,
@@ -200,7 +201,8 @@ impl ExportTiming {
     }
 }
 
-/// `timing` as the one line the export prints on stderr.
+/// `timing` as the one line the export prints on stderr; the staged peak
+/// is in decimal megabytes (10^6 bytes).
 pub(crate) fn timing_line(timing: &ExportTiming) -> String {
     let mix = match (timing.mix, timing.mix_done_at_frame) {
         (None, _) => "mix none".to_owned(),
@@ -222,7 +224,7 @@ pub(crate) fn timing_line(timing: &ExportTiming) -> String {
          frames {frames} {depth} deep",
         timing.render.as_secs_f64(),
         timing.frames,
-        timing.peak_staged_bytes as f64 / f64::from(1u32 << 20),
+        timing.peak_staged_bytes as f64 / 1e6,
         if timing.spilled { "yes" } else { "no" },
     )
 }
@@ -1072,8 +1074,9 @@ impl ExportSession {
     /// ready as `writePackets` requests: one per [`WRITE_BATCH_PACKETS`]
     /// packets or [`WRITE_BATCH_BYTES`] bytes, never more than
     /// `request_bytes` (but one packet, however large) or
-    /// [`WRITE_REQUEST_PACKETS`] in one, and the rest too when `force`. Packets are taken from a staged backlog a request
-    /// at a time, so it is never all in memory at once; a spill file that
+    /// [`WRITE_REQUEST_PACKETS`] in one, and the rest too when `force`.
+    /// Packets are taken from a staged backlog a request at a time, so it
+    /// is never all in memory at once; a spill file that
     /// cannot be read back fails the export, and the packets taken with it
     /// are lost.
     fn flush(&mut self, force: bool) -> Result<(), ExportError> {
@@ -2590,7 +2593,7 @@ mod tests {
         assert_eq!(
             timing_line(&timing),
             "celesta: timing: render 4.50 s for 300 frames; mix 1.25 s, done at frame 87; \
-             staged peak 12.0 MB; spilled no; frames ring 3 deep"
+             staged peak 12.6 MB; spilled no; frames ring 3 deep"
         );
         assert_eq!(
             timing_line(&ExportTiming {
@@ -2600,7 +2603,7 @@ mod tests {
                 ..timing
             }),
             "celesta: timing: render 4.50 s for 300 frames; mix 1.25 s, done after the render; \
-             staged peak 12.0 MB; spilled yes; frames pipe 1 deep"
+             staged peak 12.6 MB; spilled yes; frames pipe 1 deep"
         );
         assert_eq!(
             timing_line(&ExportTiming {
@@ -2609,7 +2612,7 @@ mod tests {
                 frame_path: FramePath::InProcess,
                 ..timing
             }),
-            "celesta: timing: render 4.50 s for 300 frames; mix none; staged peak 12.0 MB; \
+            "celesta: timing: render 4.50 s for 300 frames; mix none; staged peak 12.6 MB; \
              spilled no; frames in process 1 deep"
         );
     }
