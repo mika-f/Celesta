@@ -41,7 +41,7 @@ pub use range::ExportRange;
 pub use react::{CompanionProject, ReactRuntimeOptions};
 pub use resolve::{
     EncoderPlan, OutputPlan, ResolvedEncoder, ResolvedMuxer, ResolvedOutput, X264_PRESETS,
-    encoding_label, resolve_output, resolve_preset_output,
+    encoding_label, resolve_output, resolve_preset_output, writes_any_codec,
 };
 pub use subtitles::SubtitleFormat;
 pub use timecode::{TimecodeError, parse_timecode};

@@ -184,7 +184,7 @@ fn find<'a>(schema: &'a [SettingField], key: &str) -> Result<&'a SettingField, I
 }
 
 /// Every field's default, overridden by `settings`.
-fn effective(schema: &[SettingField], settings: &Settings) -> Settings {
+pub fn effective(schema: &[SettingField], settings: &Settings) -> Settings {
     let mut values: Settings = schema
         .iter()
         .map(|field| (field.key.clone(), field.default.clone()))

@@ -663,7 +663,10 @@ fn codecs(component: &MediaComponentInfo) -> &[String] {
     }
 }
 
-fn writes_any(component: &MediaComponentInfo, accepted: &[String]) -> bool {
+/// Whether `component` (a video or audio encoder) writes a codec of the
+/// same family (`codec_family`) as one of `accepted`, the codecs a muxer
+/// takes.
+pub fn writes_any_codec(component: &MediaComponentInfo, accepted: &[String]) -> bool {
     codecs(component).iter().any(|codec| {
         let family = codec_family(codec);
         accepted
@@ -679,7 +682,7 @@ fn check_writes(
     muxer: &MediaComponentInfo,
     accepted: &[String],
 ) -> Result<(), ExportError> {
-    if writes_any(encoder, accepted) {
+    if writes_any_codec(encoder, accepted) {
         return Ok(());
     }
     Err(ExportError::IncompatibleComponents {
@@ -719,7 +722,9 @@ fn default_encoder<'a>(
     let accepted: Vec<String> = codec.into_iter().cloned().collect();
     let mut candidates: Vec<&MediaComponentInfo> = components
         .iter()
-        .filter(|info| info.kind == kind && rank(info).is_some() && writes_any(info, &accepted))
+        .filter(|info| {
+            info.kind == kind && rank(info).is_some() && writes_any_codec(info, &accepted)
+        })
         .collect();
     candidates.sort_by_key(|info| rank(info));
     let mut first_reason = None;
