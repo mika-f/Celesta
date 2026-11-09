@@ -115,7 +115,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores`（ProRes 4444） | `ffmpeg/pcm`（24 bit PCM） |
 | `.webm` | `ffmpeg/webm` | `ffmpeg/vp9`（アルファ付き VP9） | `ffmpeg/opus`（Opus、48 kHz） |
 
-`--list-components` は、入っているコンポーネントを種類とプラグインとともに一覧にします。`--check` を加えると、各プラグインにそのコンポーネントがこのコンピューターで使えるかを尋ねます（プラグインを 1 回ずつ起動します）。`--describe <プラグイン/id>` は、ひとつのコンポーネントの設定を、キーごとに型、既定値、選択肢または範囲とともに表示します。どちらも `--json` で JSON を出力し、ソースも出力も取りません。
+`--list-components` は、入っているコンポーネントを種類とプラグインとともに一覧にします。Celesta に組み込みの画像コンポーネント（`builtin/png` など。`built-in` と表示されます）も含まれ、これらは静止画だけを書き出します（後述の「静止画とコンタクトシート」）。`--check` を加えると、各プラグインにそのコンポーネントがこのコンピューターで使えるかを尋ねます（プラグインを 1 回ずつ起動します）。`--describe <プラグイン/id>` は、ひとつのコンポーネントの設定を、キーごとに型、既定値、選択肢または範囲とともに表示します。どちらも `--json` で JSON を出力し、ソースも出力も取りません。
 
 `--video-encoder` と `--audio-encoder` はマルチプレクサーの既定とは別のエンコーダーを、`--muxer` は拡張子とは別のマルチプレクサーを選びます。そのマルチプレクサーが出力の拡張子を挙げていなくてもファイルは書き出され、`ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway` のような警告が出ます。`--audio-encoder none` は音声のない動画を書き出します。`--audio-option` とは一緒に指定できません。マルチプレクサーが音声を受け付けず、音声エンコーダーも指定していないときも、`--audio-option` は指定できません。`--video-option key=value` と `--audio-option key=value` は選んだエンコーダーの設定を指定し、値はその設定の型で読まれます。複数の設定は繰り返して指定します。エンコーダーにないキーや受け付けない値は、描画を始める前に失敗します。Celesta に同梱の FFmpeg プラグインには、このリリースでは次の設定があります（入っているコンポーネントの設定は `--describe` で確認できます）。
 
@@ -276,7 +276,23 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 
 --frame / --frames で、0 から始まるフレーム番号を指定します。複数指定すると check-000090.png のような名前で保存されます。--every N は --from/--to の範囲（省略時は全体）から N フレームごとと最後のフレームを選びます。--contact-sheet を加えると、番号付きの一覧画像を作れます。列数は --columns、各画像の幅は --tile-width で指定します。フレーム番号の直接指定は --every、--from、--to と併用できません。
 
-画像の形式は拡張子で決まります。`.png` は可逆圧縮の PNG、`.jpg` と `.jpeg` は JPEG、`.webp` は非可逆圧縮の WebP です。JPEG と WebP はファイルが小さく、サムネイルに向きます。`--quality` で品質を 1〜100（既定値 90）の範囲で指定でき、PNG には指定できません。フレームは MP4 と同じ不透明な背景の上に描くため、透過チャンネルを持たない JPEG でも失われるものはありません。WebP は一辺 16383 ピクセルまでのため、それより大きいコンタクトシートは描画前にエラーになります。
+画像の形式は拡張子で決まります。書き出すのは Celesta に組み込みの画像コンポーネントなので、静止画にはメディアプラグインは要りません。`.png` は可逆圧縮の PNG（`builtin/png`）、`.jpg` と `.jpeg` は JPEG（`builtin/jpeg`）、`.webp` は非可逆圧縮の WebP（`builtin/webp`）です。JPEG と WebP はファイルが小さく、サムネイルに向きます。`--quality` で品質を 1〜100（既定値 90）の範囲で指定でき、PNG には指定できません。フレームは MP4 と同じ不透明な背景の上に描くため、透過チャンネルを持たない JPEG でも失われるものはありません。WebP は一辺 16383 ピクセルまでのため、それより大きいコンタクトシートは描画前に `invalid_option` で失敗します。
+
+`--video-option key=value` で、動画のエンコーダーと同じように画像エンコーダーの設定を指定できます。設定は `--describe builtin/png` などで確認できます。
+
+| コンポーネント | キー | 値（既定値） |
+| --- | --- | --- |
+| `builtin/png` | `compression` | `none`、`fastest`、`fast`、`balanced`、`high`。どれも可逆圧縮で、小さいファイルほど書き出しに時間がかかります（`balanced`） |
+| | `depth` | `8`、または 16 bit の PNG の `16`（`8`）。コンタクトシートは 8 bit のみです |
+| | `transparent` | `true` で背景を透明のままにします（`false`） |
+| `builtin/jpeg` | `quality` | 1〜100、`--quality` と同じです（90） |
+| `builtin/webp` | `lossless` | `true` で可逆圧縮の WebP にします（`false`） |
+| | `quality` | 1〜100、`--quality` と同じです。可逆圧縮でないとき（90） |
+| | `transparent` | PNG と同じです（`false`） |
+
+品質は `--quality` か `--video-option quality=` のどちらか一方で指定します。`transparent=true` にすると、透過動画と同じように、何も描かれていない領域が透明のまま残ります。アルファはストレート（非乗算済み）で、フレーム全体を覆うレイヤーがあると画像は不透明になります。JPEG には透過チャンネルがないため、この設定はありません。コンタクトシートでは透明な領域がグレーの市松模様の上に表示され、シート自体は不透明です。
+
+メディアプラグインは、ほかの画像形式や、これらの形式を書く独自のコンポーネントを追加できます。Celesta がそれを使うのは、`--muxer` と `--video-encoder` で名前を指定したときだけです。`builtin/image` のように 1 枚の画像を書くマルチプレクサーは 1 フレームかコンタクトシートを、複数のフレームは `builtin/imageSequence` のような連番用のマルチプレクサーを使います。静止画には書き出しプリセットは使えません。`--preset`、`--preset-file`、プロジェクトの既定のプリセット、音声のオプションは動画にだけ適用されます。複数のフレームは 1 枚ずつ書き出すため、途中のフレームで失敗したり書き出しをキャンセルしたりしても、それまでに書き出したファイルは残ります。1 枚の画像は完成してから書き出すため、キャンセルすると何も残りません。MCP の `render_frames` と `contact_sheet` ツール、`@celesta.studio/exporter` の `exportStills` は、動画の書き出しと同じく `muxer` と `videoEncoder`（`{ "id": "builtin/webp", "options": { "lossless": true } }`）を受け取ります。
 
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]
@@ -293,6 +309,10 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 "/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --frame 90 --quality 85 first-scene.tsx thumbnail.jpg
 ```
 
+```sh title="背景が透明な PNG を書き出す"
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --frame 90 --video-option transparent=true first-scene.tsx overlay.png
+```
+
 :::
 :::tab[Windows]
 
@@ -306,6 +326,10 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 
 ```sh title="JPEG のサムネイルを書き出す"
 & "C:\path\to\Celesta\Celesta-export.exe" --react --frame 90 --quality 85 first-scene.tsx thumbnail.jpg
+```
+
+```sh title="背景が透明な PNG を書き出す"
+& "C:\path\to\Celesta\Celesta-export.exe" --react --frame 90 --video-option transparent=true first-scene.tsx overlay.png
 ```
 
 :::

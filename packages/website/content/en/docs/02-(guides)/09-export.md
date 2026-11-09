@@ -115,7 +115,7 @@ Celesta writes a video with three media components: a muxer, which writes the fi
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores` (ProRes 4444) | `ffmpeg/pcm` (24-bit PCM) |
 | `.webm` | `ffmpeg/webm` | `ffmpeg/vp9` (VP9 with alpha) | `ffmpeg/opus` (Opus, 48 kHz) |
 
-`--list-components` lists every installed component with its kind and plugin; add `--check` to ask each plugin whether its components work on this computer, which starts each plugin once. `--describe <plugin/id>` shows one component's settings: each key with its type, default, and choices or range. Both print JSON with `--json`, and neither takes a source or an output.
+`--list-components` lists every installed component with its kind and plugin, including Celesta's built-in image components (`builtin/png` and the others, shown as `built-in`), which write still frames only (see Still frames and contact sheets below); add `--check` to ask each plugin whether its components work on this computer, which starts each plugin once. `--describe <plugin/id>` shows one component's settings: each key with its type, default, and choices or range. Both print JSON with `--json`, and neither takes a source or an output.
 
 `--video-encoder` and `--audio-encoder` choose an encoder other than the muxer's default, and `--muxer` a muxer other than the extension's. When that muxer does not list the output's extension, it still writes the file, and the export warns, such as `ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway`. `--audio-encoder none` writes a video without audio, and cannot be given with `--audio-option`; nor can `--audio-option` be given when the muxer takes no audio and no audio encoder is named. `--video-option key=value` and `--audio-option key=value` set the chosen encoder's settings, read by each setting's type; repeat them for more settings. A key the encoder does not have, or a value it does not take, fails before anything renders. The FFmpeg plugin that comes with Celesta has these settings in this release (`--describe` shows those of any installed component):
 
@@ -276,7 +276,23 @@ Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If
 
 --frame / --frames selects zero-based frame numbers. Multiple frames create names such as check-000090.png. --every N selects every Nth frame of the --from/--to range (or the whole composition) and its last frame. Add --contact-sheet to place them in one labelled grid; --columns and --tile-width control its layout. Explicit frame numbers cannot be combined with --every, --from, or --to.
 
-The file extension picks the image format: `.png` is lossless PNG, `.jpg` or `.jpeg` is JPEG, and `.webp` is lossy WebP. JPEG and WebP are smaller, which suits thumbnails; `--quality` sets their quality from 1 to 100 (default 90), and PNG does not take it. Frames are drawn over the same opaque background as an MP4, so a JPEG, which has no alpha channel, loses nothing. WebP holds at most 16383 pixels on each side, so a larger contact sheet is rejected before rendering.
+The file extension picks the image format, which Celesta writes with its built-in image components, so stills need no media plugin: `.png` is lossless PNG (`builtin/png`), `.jpg` or `.jpeg` is JPEG (`builtin/jpeg`), and `.webp` is lossy WebP (`builtin/webp`). JPEG and WebP are smaller, which suits thumbnails; `--quality` sets their quality from 1 to 100 (default 90), and PNG does not take it. Frames are drawn over the same opaque background as an MP4, so a JPEG, which has no alpha channel, loses nothing. WebP holds at most 16383 pixels on each side, so a larger contact sheet fails with `invalid_option` before rendering.
+
+`--video-option key=value` sets the image encoder's settings, as it does a video encoder's. `--describe builtin/png` shows them:
+
+| Component | Key | Values (default) |
+| --- | --- | --- |
+| `builtin/png` | `compression` | `none`, `fastest`, `fast`, `balanced`, or `high`; every level is lossless, and a smaller file takes longer to write (`balanced`) |
+| | `depth` | `8`, or `16` for 16-bit PNG (`8`); a contact sheet is 8-bit only |
+| | `transparent` | `true` to leave the background transparent (`false`) |
+| `builtin/jpeg` | `quality` | 1–100, the same as `--quality` (90) |
+| `builtin/webp` | `lossless` | `true` for lossless WebP (`false`) |
+| | `quality` | 1–100, the same as `--quality`, when not lossless (90) |
+| | `transparent` | as for PNG (`false`) |
+
+Give the quality with `--quality` or `--video-option quality=`, not both. With `transparent=true`, areas nothing draws on stay transparent, as in a transparent video: the alpha is straight (unassociated), and a layer that fills the whole frame makes the image opaque. JPEG has no alpha channel, so it has no such setting. In a contact sheet, transparent areas show over a gray checkerboard, and the sheet itself is opaque.
+
+A media plugin can add other image formats, or its own writer for these, as components. Celesta uses them only when you name them, with `--muxer` and `--video-encoder`: a muxer that writes one image, such as `builtin/image`, takes one frame or a contact sheet, and several frames need a sequence muxer, such as `builtin/imageSequence`. Stills take no export preset: `--preset`, `--preset-file`, the project's default preset, and the audio flags apply to video only. Several frames are written one at a time, so when a frame fails or the export is cancelled, the files already written stay; a single image is written only once it is whole, so a cancelled export leaves none. The MCP `render_frames` and `contact_sheet` tools and `@celesta.studio/exporter`'s `exportStills` take `muxer` and `videoEncoder` (`{ "id": "builtin/webp", "options": { "lossless": true } }`), as a video export does.
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]
@@ -293,6 +309,10 @@ The file extension picks the image format: `.png` is lossless PNG, `.jpg` or `.j
 "/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --frame 90 --quality 85 first-scene.tsx thumbnail.jpg
 ```
 
+```sh title="Export a transparent PNG"
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --frame 90 --video-option transparent=true first-scene.tsx overlay.png
+```
+
 :::
 :::tab[Windows]
 
@@ -306,6 +326,10 @@ The file extension picks the image format: `.png` is lossless PNG, `.jpg` or `.j
 
 ```sh title="Export a JPEG thumbnail"
 & "C:\path\to\Celesta\Celesta-export.exe" --react --frame 90 --quality 85 first-scene.tsx thumbnail.jpg
+```
+
+```sh title="Export a transparent PNG"
+& "C:\path\to\Celesta\Celesta-export.exe" --react --frame 90 --video-option transparent=true first-scene.tsx overlay.png
 ```
 
 :::

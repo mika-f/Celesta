@@ -111,6 +111,12 @@ such as `avc1.640028` or `mp4a.40.2`, is the full form an encoder reports
 once it knows its configuration. Its family is the part before the first
 `.`.
 
+Deviation in P4 (`docs/handoff/2026-11-09-media-stills.md`): **the
+built-in plugin has no folder** (deviation 59). It is registered with an
+empty `directory` and no `executable`, and listings show its origin as
+`built-in` and no folder: `--list-components` text and JSON, and MCP's
+`list_components`.
+
 ## Manifest
 
 The manifest's `roles` gains `media`, which replaces `codec` (an old
@@ -277,6 +283,12 @@ one Celesta resampled to), so time counts sample frames; `delay` and
 - A `sequence: true` muxer gets `output` as a pattern Celesta chose (`name-%06d.ext`, today's naming in `stills.rs`), and the frame numbers come with the packets' `pts`.
   - Celesta knows every name in advance, so it checks each one for overwrite before the export.
   - On cancel, or when the process is killed, Celesta removes the files it named itself. It does not rely on `abortMuxer`'s `files`.
+
+Deviations in P4 (`docs/handoff/2026-11-09-media-stills.md`):
+
+- **A sequence's files are published one at a time, and a failure or cancel keeps those already published** (deviation 53). Celesta stages a sequence in a hidden folder beside the output (`.celesta-<random>/`, removed when the export ends) and gives the muxer the pattern `<staging>/frame-%06d.<ext>`, where `<ext>` is the output's extension as given; only the last path component is a template, so user text in the output path (`50%-check.png` in `run%d/`) is never parsed. A `sequence: true` muxer must have each frame's file whole when the `writePackets` carrying that frame's packet is answered, and Celesta publishes it to its final name (`name-000090.ext`) then, without replacing an existing file unless `overwrite`. The removal on cancel above would break the tested still behavior (separate files stop at the failed frame, keeping those before it), and under `--overwrite` could only be done by deleting files the export never wrote, so Celesta removes only its staged files. Names are still all checked for overwrite before the export.
+- **One file is staged as `.celesta-<random>.<ext>`** beside the output (ruling 4 of the handoff), keeping the output's extension rather than a `.tmp` suffix, since the built-in muxers refuse a codec that is not the extension's (below). It is published when the muxer finishes, after the last cancel check, so **a one-file still cancelled after its frame rendered writes nothing** (ruling 5); before P4 it wrote the file and then reported `cancelled`.
+- **Both built-in muxers refuse, at open, a video track whose codec family is not the output's extension's** (ruling 3), `builtin/imageSequence` too: `invalidSettings` with the key `tracks`. Before the open, the still path already reports the mismatch as `incompatible_components` ([Stills](#stills-and-sequences-p4)).
 
 ### Deadlines and the window
 
@@ -463,6 +475,12 @@ Deviations in P3 (`docs/handoff/2026-11-09-export-presets-dialog.md`):
 - **A project's `default` preset counts as naming its components** (deviation 44). Step 1's default applies when the choice has no `preset`, no muxer, no video component, and audio `Encode` with no component (`--audio-encoder none` counts as a component flag; options alone layer over the default). A default that names a project plugin's component uses it (the plugin must still be approved, or it is not installed and the preset falls back as stale), and the export warns "the project's default preset `{name}` uses {reference}, from the project's plugin {plugin}", once per such component. An explicit `preset` naming one does not warn. The CLI and MCP search no project plugin folders, so the warning is reached only through a registry that has them; the editor's dialog marks them "(project)".
 - **A named or preset muxer that does not list the output's extension** is used anyway (P2a's R7), now with the warning "{muxer} does not write .{ext} files; the file is written as {muxer name} anyway". A muxer chosen by the extension never warns.
 
+Deviations in P4 (`docs/handoff/2026-11-09-media-stills.md`):
+
+- **Built-in muxers and sequence muxers serve still exports only** (deviation 50). A video export's default muxer (step 2) is never one of the `builtin` plugin's and never a `sequence: true` muxer (`celesta_exporter::serves_video`), and a video export that names one, or whose preset does, fails before rendering with `component_unavailable` ("it writes still images; select frames to export stills"). The editor's dialog does not list them. `celesta-exporter p.json out.png` without `--frame` keeps P3's `unsupported_output` and its `--frame` hint, rather than rendering every frame into a one-frame muxer. Image sequences of a whole video are not built.
+- **Stills name their default components by extension, not by ranking** (deviation 51). A muxer has one `defaultVideo`, and `builtin/image` writes three formats, so the still path names `builtin/image` (one file: one frame or a contact sheet) or `builtin/imageSequence` (several files) and `builtin/<png|jpeg|webp>` for the output's extension (`jpg` → `jpeg`), then resolves them with `resolve_preset_output` and no base. A plugin's image muxer or encoder serves a still only when named (`--muxer`, `--video-encoder`), so [Stills](#stills-and-sequences-p4)' "ranks after `builtin/image`" holds by construction. A named muxer must match the file count (a `sequence: true` muxer for several files, any other for one), else `invalid_selection`. With no muxer named, an extension no built-in muxer lists keeps P3's `invalid_selection` "still output must use the .png, .jpg, .jpeg or .webp extension", and a named encoder whose codec is not the extension's is `incompatible_components` ("builtin/image writes .png files as png, and builtin/webp writes webp") before rendering. Stills never read a presets file: no `--preset`, no project `default`, no `last`.
+- **"FFmpeg first among bundled" is enforced by plugin id** (deviation 58): `celesta_plugin_host::FFMPEG_PLUGIN_ID = "ffmpeg"`, in `celesta_media::default_rank` (built-in 0, the bundled FFmpeg 1, other bundled 2, user 3, a project's none) and in the decoder order ([Decoders](#decoders)); other bundled plugins keep search order after it. For encoders, the muxer's own plugin still ranks first, then `default_rank`'s order, so built-in encoders rank before bundled ones; they write only `png`, `jpeg`, and `webp`, which no video muxer takes.
+
 ### Editor
 
 - Export opens a dialog that replaces today's save panel. From top to bottom:
@@ -506,6 +524,8 @@ the first match wins.
 - Stills keep `--frame` and their other flags. Their format comes from the extension, routed to the built-in image components (P4).
 
 Deviation in P2a (`docs/handoff/2026-11-08-media-encoders.md`): **`--loop` is accepted for every video output** (deviation 17). It changes nothing for a muxer without `trimsLeadingAudio` (FFmpeg's WebM), as [Audio](#audio) says, instead of today's usage error outside MP4. MCP's `loop` and `@celesta.studio/exporter`'s follow.
+
+Deviation in P4 (`docs/handoff/2026-11-09-media-stills.md`): **stills take `--muxer`, `--video-encoder`, and `--video-option`** (deviation 55), so the built-in settings are reachable; MCP's `render_frames` and `contact_sheet` and `@celesta.studio/exporter`'s `exportStills` take `muxer` and `videoEncoder`. `--quality` stays and sets the encoder's `quality` option; giving it with `--video-option quality=` (MCP: `videoEncoder.options.quality`) is a usage error. `--preset`, `--preset-file`, and the audio flags stay video-only.
 
 ### MCP and `@celesta.studio/exporter`
 
@@ -672,7 +692,7 @@ Deviations in P2b (`docs/handoff/2026-11-08-media-pipelining.md`):
 
   | Format | Layout |
   | --- | --- |
-  | `rgba8` | 8-bit RGBA, opaque (see Alpha; P4 may revisit this for 8-bit PNG and WebP with transparency) |
+  | `rgba8` | 8-bit RGBA, opaque unless the encoder keeps alpha, then straight alpha (see Alpha; deviation 52, P4) |
   | `rgba16` | 16-bit LE RGBA, straight alpha (today's `Rgba16Straight`) |
   | `yuv420p` | planar I420 |
   | `yuv420p10` | planar, 10 bits in 16-bit LE |
@@ -719,6 +739,11 @@ As built (P2c, `docs/handoff/2026-11-08-media-bt709.md`): the GPU converts with 
 - **The test codec stores no color** (deviation 30). `celesta-codec-test`'s file has no reader but Celesta's tests, so its components accept `Color` and `Track.color` and store nothing. The exporter's `encode.rs` tests pin the `Color` the muxer receives instead.
 - **The GPU reference is Celesta's formula, not libswscale's 10-bit output** (deviation 31). The "match a CPU reference conversion" and "BT.709 values hold for known colors" checks compare the readbacks with a CPU function of the BT.709 formula, within the dither's one code (exact on whole codes). Its 8-bit codes equal libswscale's for every color checked. libswscale's own 16-bit-RGB to 10-bit path, which an encoder converting `rgba16` itself takes, differs from the formula by up to 2 codes (blue's Cb 962 against 960, red's Y 251 against 250), so the encoder tests pin libswscale's codes (measured on arm64; each sample within 1 of them) and the GPU tests do not chase them.
 
+Deviations in P4 (`docs/handoff/2026-11-09-media-stills.md`):
+
+- **`rgba8` may carry straight alpha** (deviation 52; the question the table left to P4). An encoder answering `alpha: true` may have chosen `rgba8` or `rgba16`, and its frames are then cleared to transparent, as for `rgba16`; any other format with `alpha: true` stays `invalidSettings`. `builtin/png` and `builtin/webp` take `transparent` (default false); JPEG has no alpha. A contact sheet shows transparent pixels over its existing checkerboard and is itself opaque. Every other encoder's `rgba8` stays opaque, because it answers `alpha: false`.
+- **Straight `rgba8` is narrowed on the CPU** (ruling 6 of the handoff). The renderer's 8-bit readback is premultiplied only, so an encoder keeping alpha in `rgba8` gets frames read back as `Rgba16Straight` and narrowed to 8 bits per channel (rounded to nearest), in the still path and the video path (`ExportSession`) alike. Opaque frames and the GPU code are unchanged.
+
 ## Audio
 
 - **Format.** Interleaved `f32` LE, 1 or 2 channels. Layout names (`mono`, `stereo`, `5.1`) are reserved for more.
@@ -763,6 +788,13 @@ Deviations in P2a (`docs/handoff/2026-11-08-media-encoders.md`):
 - **No process or ring.** Frames go to them as borrowed slices in process, and `describe` is answered in process. A still costs no process start, and `cargo install celesta-exporter` keeps `--frame` working with nothing else installed, as today.
 - **`celesta-exporter`.** `--frame` and the other still options and the contact sheet's compositing stay. Their output goes through `resolve_output` with these components, and the WebP size limit becomes the encoder's `invalidSettings`.
 - **Plugins can add image formats** (GIF, APNG, AVIF, …) as ordinary components. A plugin muxer for `png` ranks after `builtin/image` by default and is used when named.
+
+Deviations in P4 (`docs/handoff/2026-11-09-media-stills.md`):
+
+- **Frames reach built-in encoders as an owned `Vec<u8>`** (deviation 54), as `VideoEncoder::encode_video` takes them, not as borrowed slices: one copy of each still, negligible next to encoding it.
+- **Library-level quality and size errors become `invalid_option`** (deviation 56). `StillExport.quality` out of range, or given for PNG, is validated against the encoder's schema, and WebP's 16,383-pixel limit is the encoder's `invalidSettings` at open (key `size`, with P3's message), both before rendering; they were `invalid_selection`. The CLI's and MCP's own checks of `--quality` and `quality` keep their usage messages.
+- **`builtin/png` also takes `depth`** (deviation 57): `"8"` or `"16"`, default `"8"`, since "`rgba16` for 16-bit PNG" needs a setting to choose it. A contact sheet is offered `rgba8` only, so `depth=16` there fails with `invalid_option` before rendering.
+- **As built**, the settings are: `builtin/png` `compression` (`none`, `fastest`, `fast`, `balanced`, `high`; default `balanced`, the `png` crate's default, so default files are P3's bytes), `depth`, and `transparent` (default false); `builtin/jpeg` `quality` (1–100, default 90); `builtin/webp` `lossless` (default false), `quality` (shown only when not lossless), and `transparent`. `inputFormats` are `[rgba16, rgba8]` for PNG and `[rgba8]` for JPEG and WebP; a separate-files still offers `[rgba16, rgba8]` and a contact sheet `[rgba8]`. JPEG drops alpha rather than flattening it: it answers `alpha: false`, so its frames are rendered opaque. `describe` answers every component available, in process, with no `transports`.
 
 ## OS-native plugins (P5, P6)
 
@@ -825,7 +857,7 @@ working.
 | P2b: Shared memory and pipelining | The ring and the send window (P2a already brought `inputFormats` in the manifest and the deadlines); the mix-against-render measurement; and the performance comparison against `main`. Checked byte-identical against P2a's output. As built (`docs/handoff/2026-11-08-media-pipelining.md`): the window is as deep as the ring's `slots`, or at most `PIPE_WINDOW = 3` without a ring, `writePackets` goes in batches (`WRITE_BATCH_PACKETS = 8` packets or `WRITE_BATCH_BYTES = 4 MiB`, and the rest at `finish`), and the FFmpeg and test-codec video encoders describe `transports: ["sharedMemory", "pipe"]`; deviations 19–23, 27, and 28 are recorded in [Transport](#transport) and [Deadlines and the window](#deadlines-and-the-window), and the measurement in [Audio](#audio). |
 | P2c: BT.709 | The GPU conversion to BT.709, `nv12` and `p010`, and color tags in every container, with before/after screenshots of the same scene (AGENTS.md). Its own PR, so P2a and P2b are checked without a color change. As built (`docs/handoff/2026-11-08-media-bt709.md`): BT.709 limited range on the GPU for all four YUV readbacks, six offered formats (`PixelFormat::OFFERABLE` too), every FFmpeg encoder applying `Color` and every muxer tagging from `Track.color`, libx264 taking `nv12` directly and `p010` through a repack; deviation 8 ends, 18 is kept, and 30 and 31 are recorded in [Pixel formats and color](#pixel-formats-and-color). MP4 output changes from untagged BT.601 to tagged BT.709; MOV and WebM decode identically to P2b. |
 | P3: Export dialog and presets | The editor's export dialog; user and project `export-presets.json`, the project's `default`, and the presets in the CLI, MCP, and TS (`--preset`, `--preset-file`). As built (`docs/handoff/2026-11-09-export-presets-dialog.md`): `presets.rs` holds `PresetsFile` (version 1, unknown top-level and preset keys kept on rewrite, atomic pretty-printed writes) and `PresetLookup`; `resolve_output` takes the lookup and returns warnings (deviation 40), `ExportOptions::default()` reads no file (deviation 41), a broken file the lookup reaches is `invalid_presets` (deviation 42), a missing `default` is `unknown_preset` with `default_in` (deviation 43), and a project's `default` counts as naming its components, with a warning (deviation 44); see [Presets](#presets), [Resolving an output](#resolving-an-output), and [Exporter API](#exporter-api). The plan's decisions: the project `default` applies with no preset and no muxer, video, or audio component (`--audio-encoder none` counts; options layer over it); a preset's options apply only to its own encoder; preset options are sanitized (each dropped key or value warned), explicit ones go over them, and the result is validated strictly; a named or preset muxer that does not list the output's extension warns; saved options are the visible settings that differ from their defaults (`differences`), for presets and `last` alike. In the editor, Export… opens the dialog (Preset, Container, Video encoder with Advanced collapsed, Audio encoder or None, Range, Loudness; `Save as preset…`, `Cancel`, `Export…`); loudness moves from the title bar into it; its first choice is the project's `default`, else `last`, else the `.mp4` defaults; "Save as preset…" is an inline section (This project or My presets, `Replace` for an existing name, "Save the project first" for an untitled document); `last` is saved when Export… is pressed, before the save panel; and the dialog's state is kept between openings until Reload Plugins. |
-| P4: Stills | `celesta-media-image`'s built-in components; stills, sequences, and contact sheets through them. |
+| P4: Stills | `celesta-media-image`'s built-in components; stills, sequences, and contact sheets through them. As built (`docs/handoff/2026-11-09-media-stills.md`): `MediaOrigin::BuiltIn` and `celesta_media::default_rank`, with FFmpeg first among bundled plugins by id (deviation 58); `crates/media-image` with the encoders `builtin/png`, `builtin/jpeg`, and `builtin/webp` and the muxers `builtin/image` and `builtin/imageSequence`, both refusing a codec that is not the output extension's; `celesta_exporter::with_builtin` registering them in every exporter registry, and `serves_video` keeping them, and every sequence muxer, out of video exports and the editor's dialog (deviation 50); `still_output.rs`, through which stills, sequences, and contact sheets resolve and write, naming their components by extension (deviation 51); straight-alpha `rgba8` for `transparent` PNG and WebP (deviation 52); sequences published frame by frame from a staging folder (deviation 53); owned frames (deviation 54); `--muxer`, `--video-encoder`, and `--video-option` for stills, and MCP's and the TS package's `muxer` and `videoEncoder` (deviation 55); quality and size errors as `invalid_option` (deviation 56); PNG's `depth` (deviation 57); and the built-in plugin listed without a folder (deviation 59); see [Components](#components), [Muxing](#muxing), [Resolving an output](#resolving-an-output), [CLI](#cli-celesta-exporter), [Pixel formats and color](#pixel-formats-and-color), and [Stills](#stills-and-sequences-p4). With default settings, every still export P3 wrote is byte-identical. |
 | P5: macOS native | `plugins/avfoundation`. |
 | P6: Windows native | `plugins/mediafoundation`, in its own session. |
 

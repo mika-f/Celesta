@@ -63,10 +63,10 @@ Celesta-export --json --react scene.tsx out.mp4
 | `--from <t>`, `--to <t>` | Export only this span (`--to` exclusive); the output starts at 00:00. Times are seconds, `MM:SS.mmm`, or `HH:MM:SS.mmm`. |
 | `--subtitles <file>` | Also write the video's subtitles (`<Subtitles>` cues, `<Dialogue>` lines, a project's dialogue items) as `.srt` or `.vtt`, timed like the video. Repeatable; `{lang}` in the path writes one file per language. Without an output video, writes only the subtitles, without rendering. See [subtitles.md](subtitles.md#write-the-subtitle-file-on-export). |
 | `--overwrite` | Replace an existing output file. |
-| `--video-option <key=value>` | A setting of the video encoder, read by its type; repeatable. For H.264: `preset=ultrafast` … `veryslow` (default `medium`; encoding speed against file size only, it does not change what is rendered), `crf=0`…`51` (default 18, lower is better quality), `bitDepth=10`. See [Encoders and settings](#encoders-and-settings). |
+| `--video-option <key=value>` | A setting of the video encoder, read by its type; repeatable. For H.264: `preset=ultrafast` … `veryslow` (default `medium`; encoding speed against file size only, it does not change what is rendered), `crf=0`…`51` (default 18, lower is better quality), `bitDepth=10`. See [Encoders and settings](#encoders-and-settings). For stills, the image encoder's, such as `transparent=true`; see [Still images](#still-images). |
 | `--audio-option <key=value>` | A setting of the audio encoder, such as `bitrate=128000`; repeatable. |
 | `--video-encoder <plugin/id>`, `--audio-encoder <plugin/id>` | An encoder other than the muxer's default; `--audio-encoder none` writes no audio and refuses `--audio-option`, as does a muxer that takes no audio. |
-| `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. One that does not list the output's extension still writes it, with a warning. |
+| `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. One that does not list the output's extension still writes it, with a warning. Stills take it too, with `--video-encoder` and `--video-option` (see [Still images](#still-images)); a video refuses a still muxer (`builtin/…`, or a sequence muxer) with `component_unavailable`. |
 | `--list-components [--check]`, `--describe <plugin/id>` | List the installed media components, or show one's settings; take no source or output. See [Encoders and settings](#encoders-and-settings). |
 | `--preset <name>` | An export preset from `export-presets.json`: looked up in `--preset-file`, then the project's file, then the user's. The other component and option flags go over it. x264's preset is `--video-option preset=<name>`. See [Export presets](#export-presets). |
 | `--preset-file <file>` | An `export-presets.json` to look `--preset` up in first; a missing or invalid one is a `usage` error. |
@@ -81,7 +81,7 @@ Celesta-export --json --react scene.tsx out.mp4
 | `--info` | Report the composition's size, frame rate, length, and a React entry's compositions without rendering; takes no output. With `--json`, the result has `outputs: []`. |
 | `--no-ui` | Plain text progress instead of the terminal dashboard (automatic when stderr is not a terminal). |
 | `--frame`, `--frames`, `--every`, `--contact-sheet`, `--columns`, `--tile-width`, `--debug-guides` | Still output; see [Still images](#still-images) and [verify.md](verify.md#look-at-real-frames). |
-| `--quality <n>` | 1–100, JPEG and WebP stills only (default 90). Higher is sharper and larger. |
+| `--quality <n>` | 1–100, JPEG and WebP stills only (default 90). Higher is sharper and larger. The same as `--video-option quality=<n>`; give one. |
 
 Video export needs non-zero, even `width` and `height`. The output's
 extension picks a video (`.mp4`, `.mov`, `.webm`) or, with a frame
@@ -331,34 +331,72 @@ Celesta-export --json --loudness -16 --true-peak -2 --react film.tsx film.mp4
 A frame selection (`--frame`, `--frames`, or `--every`) writes still images
 instead of a video. The output extension picks the image format:
 
-| Extension | Format | `--quality` |
+| Extension | Format | Built-in components | `--quality` |
+| --- | --- | --- | --- |
+| `.png` | Lossless RGBA, 8-bit (16-bit with `depth=16`) | `builtin/png` | not accepted |
+| `.jpg`, `.jpeg` | Baseline JPEG | `builtin/jpeg` | 1–100, default 90 |
+| `.webp` | Lossy WebP | `builtin/webp` | 1–100, default 90 |
+
+The built-in components run inside the exporter, so stills need no media
+plugin. One file (one frame or a contact sheet) is written by the muxer
+`builtin/image`, several by `builtin/imageSequence`. `--video-option`
+sets the encoder's settings; `--describe builtin/png` (or `builtin/jpeg`,
+`builtin/webp`, with `--json` for the schema) lists them:
+
+| Component | Key | Values (default) |
 | --- | --- | --- |
-| `.png` | Lossless 8-bit RGBA | not accepted |
-| `.jpg`, `.jpeg` | Baseline JPEG | 1–100, default 90 |
-| `.webp` | Lossy WebP | 1–100, default 90 |
+| `builtin/png` | `compression` | `none`, `fastest`, `fast`, `balanced`, `high`; all lossless, smaller is slower (`balanced`) |
+| | `depth` | `8` or `16` (16-bit PNG) (`8`); a contact sheet takes `8` only (`invalid_option`) |
+| | `transparent` | `true` keeps areas nothing draws on transparent (`false`) |
+| `builtin/jpeg` | `quality` | 1–100 (90), the same as `--quality` |
+| `builtin/webp` | `lossless` | `true` for lossless WebP (`false`) |
+| | `quality` | 1–100 (90), the same as `--quality`; only without `lossless=true` |
+| | `transparent` | as for PNG (`false`) |
 
 ```sh
 Celesta-export --json --react scene.tsx --frame 90 --quality 85 thumbnail.jpg
 Celesta-export --json --react scene.tsx --every 150 --contact-sheet sheet.webp
+Celesta-export --json --react scene.tsx --frame 90 --video-option transparent=true overlay.png
+Celesta-export --json --react scene.tsx --frame 90 --video-option depth=16 master.png
+Celesta-export --json --react scene.tsx --frames 0,90 --video-option lossless=true check.webp
 ```
 
 - Stills are drawn over the same opaque background as an MP4, so they have
   no transparent pixels; a JPEG, which has no alpha channel, loses nothing.
+  With `transparent=true` (PNG, WebP), areas nothing draws on stay
+  transparent, with straight alpha, as in a transparent video; a full-frame
+  background layer still makes the image opaque. A contact sheet shows them
+  over a gray checkerboard and is itself opaque.
 - Several frames are written as `thumbnail-000090.jpg` and so on, keeping
   the output's extension.
-- WebP holds at most 16383 pixels on each side; a larger contact sheet is
-  rejected before rendering.
+- WebP holds at most 16383 pixels on each side; a larger contact sheet
+  fails with `invalid_option` before rendering.
+- A plugin's image components (another format, or its own PNG writer) are
+  used only when named: `--muxer <plugin/id>` and `--video-encoder
+  <plugin/id>`. A muxer that writes one image takes one frame or a contact
+  sheet; several frames need a sequence muxer such as
+  `builtin/imageSequence` (otherwise `invalid_selection`). A named encoder
+  whose codec is not the extension's (`--video-encoder builtin/webp
+  out.png`) fails with `incompatible_components`.
+- Stills take no export preset: `--preset`, `--preset-file`, and the audio
+  flags are usage errors with a frame selection, and a project's `default`
+  preset never applies to them.
 - A contact sheet carries on past a frame that fails to evaluate or render:
   that tile is marked `FAILED`, the sheet is written, and the export then
   fails with `frames_failed`, listing each failed frame (see
   [JSON results](#json-results) and
   [verify.md](verify.md#contact-sheets)). Separate stills stop at the first
-  failed frame.
+  failed frame, keeping the files written before it; a cancelled sequence
+  keeps them too, and a cancelled single image writes nothing.
 - Check frames for yourself as PNG ([verify.md](verify.md)); JPEG and WebP
   compression can blur fine text and edges.
 - The MCP `render_frames` tool takes `format` (`png`, `jpeg`, or `webp`) and
-  `contact_sheet` takes the same extensions in `output`; both take `quality`
-  and return the images in the format they wrote. An image over 1568 pixels
+  `contact_sheet` takes the same extensions in `output`; both take `quality`,
+  `muxer`, and `videoEncoder` (`{"id": "builtin/png", "options":
+  {"transparent": true, "depth": "16"}}`; `id` may be left out for the
+  format's built-in encoder; `depth` is a string), and return the images in
+  the format they wrote. `@celesta.studio/exporter`'s `exportStills` takes
+  `quality`, `muxer`, and `videoEncoder` the same way. An image over 1568 pixels
   on a side comes back as a downscaled PNG; the file keeps its size and
   format.
 
