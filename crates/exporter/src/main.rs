@@ -238,13 +238,15 @@ struct Cli {
     /// An export-presets.json to look --preset up in first.
     #[arg(long, value_name = "PATH")]
     preset_file: Option<PathBuf>,
-    /// The muxer that writes the video, instead of the output's extension's.
+    /// The muxer that writes the output (a video, or a still's file or
+    /// sequence), instead of the output's extension's.
     #[arg(long, value_name = "PLUGIN/ID", value_parser = parse_component)]
     muxer: Option<ComponentRef>,
-    /// The video encoder, instead of the muxer's default.
+    /// The video encoder, or a still's image encoder, instead of the
+    /// muxer's default.
     #[arg(long, value_name = "PLUGIN/ID", value_parser = parse_component)]
     video_encoder: Option<ComponentRef>,
-    /// A video encoder setting; repeatable.
+    /// A video or image encoder setting; repeatable.
     #[arg(long, value_name = "KEY=VALUE", value_parser = parse_option)]
     video_option: Vec<(String, String)>,
     /// The audio encoder, instead of the muxer's default, or none for a
@@ -848,10 +850,11 @@ enum OutputKind {
     SubtitlesOnly,
 }
 
-/// The flags that choose a video's components, by argument id.
-/// The component flags a still takes: an image encoder and its settings.
+/// The component flags a still takes, by argument id: a muxer, and an image
+/// encoder and its settings.
 const STILL_COMPONENT_FLAGS: [&str; 3] = ["muxer", "video_encoder", "video_option"];
 
+/// The flags that choose a video's components, by argument id.
 const COMPONENT_FLAGS: [(&str, &str); 7] = [
     ("preset", "--preset"),
     ("preset_file", "--preset-file"),

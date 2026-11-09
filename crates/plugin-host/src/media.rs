@@ -137,9 +137,11 @@ pub fn codec_family(codec: &str) -> String {
     .to_owned()
 }
 
-/// Where a media plugin comes from, in the order its decoders are tried:
-/// the user's own plugins first, then those that come with Celesta, then a
-/// project's.
+/// Where a media plugin comes from: the user's own plugins, those that come
+/// with Celesta, a project's, or Celesta's built-in components. Ranking
+/// does not follow this type's derived `Ord`: defaults rank by
+/// `celesta_media::default_rank`, and decoders are tried in the registry's
+/// decoder order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MediaOrigin {
     /// `--plugin-dir`, `CELESTA_PLUGIN_PATH`, the user's plugin folder, or a

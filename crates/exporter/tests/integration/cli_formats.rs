@@ -465,14 +465,30 @@ fn stills_need_no_media_plugin() {
         eprintln!("skipped: celesta-codec-ffmpeg sits beside the test binary");
         return;
     }
+    // The folder Celesta's bundled plugins come from, beside this program
+    // (`bundled_plugin_dir` in celesta-plugin-host).
+    let bundled = [
+        folder.join("plugins"),
+        folder.join("../lib/celesta/plugins"),
+    ];
+    if bundled
+        .iter()
+        .any(|dir| std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()))
+    {
+        eprintln!("skipped: a bundled plugin folder sits beside the test binary");
+        return;
+    }
     let empty = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let output = Command::new(&exe)
-        .env(PLUGIN_PATH_ENV, empty.path())
-        .envs(home_env(home.path()))
-        .args(["--list-components", "--json"])
-        .output()
-        .unwrap();
+    let run = |args: &[&std::ffi::OsStr]| {
+        Command::new(&exe)
+            .env(PLUGIN_PATH_ENV, empty.path())
+            .envs(home_env(home.path()))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let output = run(&["--list-components".as_ref(), "--json".as_ref()]);
     assert!(output.status.success());
     let listed: serde_json::Value =
         serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
@@ -491,4 +507,38 @@ fn stills_need_no_media_plugin() {
     ] {
         assert!(ids.contains(&id), "{ids:?}");
     }
+    assert!(
+        ids.iter().all(|id| id.starts_with("builtin/")),
+        "only the built-in components are installed: {ids:?}"
+    );
+
+    // And a still exports through them alone.
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = workspace.join("examples/editor-demo.celesta.json");
+    let out = tempfile::tempdir().unwrap();
+    let png = out.path().join("out.png");
+    let output = run(&[
+        "--json".as_ref(),
+        source.as_os_str(),
+        png.as_os_str(),
+        "--frame".as_ref(),
+        "0".as_ref(),
+    ]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() && (stdout.contains("adapter") || stderr.contains("adapter")) {
+        assert!(
+            std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
+            "GPU tests require an adapter: {stdout}"
+        );
+        eprintln!("skipping the still export: no GPU adapter is available");
+        return;
+    }
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    let bytes = std::fs::read(&png).unwrap();
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "{stdout}");
+    assert_eq!(&bytes[12..16], b"IHDR");
+    let side = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+    assert!(side(16) > 0 && side(20) > 0, "{stdout}");
+    assert!(stdout.contains("out.png"), "{stdout}");
 }
