@@ -97,7 +97,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   bundled ones, then a project's own. A decoder that does not read the
   file, fails, or does not start passes it to the next; the first that
   reads it keeps it. Exports encode through the first bundled media
-  plugin (the first media plugin in search order when none is bundled).
+  plugin (when none is bundled, the first in search order that is not a
+  project's; a project's never encodes, so with only those a video export
+  is `no_codec`).
 - Between plugins with the same id, the earlier in search order wins, with
   one exception: a project's plugin cannot replace a media plugin bundled
   with Celesta (or the `cargo install` sibling), although project folders

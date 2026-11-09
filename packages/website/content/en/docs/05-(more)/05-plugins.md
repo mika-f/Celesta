@@ -153,7 +153,7 @@ When none of the plugins Celesta found is `ffmpeg`, other than a project's own, 
 
 ### Without a decoder
 
-Without any media decoder, video and audio cannot be shown or exported. The Problems tab shows **No media decoder can run** and says why: a media plugin has no program for this computer, waits for your approval, or is turned off, the media plugins found declare no decoder, or none was found. A video export checks its encoder first, so with no media plugin at all it fails at once with the error code `no_codec`; a still export, or a video export whose media plugins have no decoder, fails with `no_decoder` when it reads a video or audio file. Until exports let you choose their encoders, they encode and mux through the first media plugin that comes with Celesta, or, when none does, the first media plugin in the search order.
+Without any media decoder, video and audio cannot be shown or exported. The Problems tab shows **No media decoder can run** and says why: a media plugin has no program for this computer, waits for your approval, or is turned off, the media plugins found declare no decoder, or none was found. A video export checks its encoder first, so with no media plugin at all it fails at once with the error code `no_codec`; a still export, or a video export whose media plugins have no decoder, fails with `no_decoder` when it reads a video or audio file. Until exports let you choose their encoders, they encode and mux through the first media plugin that comes with Celesta, or, when none does, the first media plugin in the search order that is not a project's. A project's media plugin never encodes: when it is the only one, a video export fails with `no_codec`.
 
 ### Shared memory and other FFmpeg builds
 

@@ -764,25 +764,43 @@ fn settings() -> EncoderSettings {
 }
 
 #[test]
-fn encoding_without_a_bundled_plugin_uses_the_first() {
+fn encoding_without_a_bundled_plugin_uses_the_first_that_is_not_a_projects() {
     let journal = Journal::default();
     let registry = Arc::new(MediaRegistry::new(vec![
-        with_decoders(
-            &journal,
-            "e",
-            MediaOrigin::Project,
-            Vec::new(),
-            Answer::Reads,
-        ),
-        plugin(&journal, "u", MediaOrigin::User, &["mp4"], Answer::Reads),
+        plugin(&journal, "p", MediaOrigin::Project, &["mp4"], Answer::Reads),
+        with_decoders(&journal, "u", MediaOrigin::User, Vec::new(), Answer::Reads),
+        plugin(&journal, "u2", MediaOrigin::User, &["mp4"], Answer::Reads),
     ]));
-    assert_eq!(registry.legacy_encoder(), Some(0));
+    assert_eq!(registry.legacy_encoder(), Some(1));
     let mut backend = MediaBackend::with_registry(registry);
     backend.check_encoder(Container::Mp4).unwrap();
     let encoder = backend.open_encoder(&settings()).unwrap();
     backend.encode_frame(encoder, vec![0; 3]).unwrap();
     backend.finish_encoder(encoder).unwrap();
-    assert_eq!(journal.entries(), strings(&["start e", "open e"]));
+    assert_eq!(journal.entries(), strings(&["start u", "open u"]));
+
+    // A project's plugin never encodes, even when it is the only one.
+    let project_only = Arc::new(MediaRegistry::new(vec![
+        plugin(&journal, "p", MediaOrigin::Project, &["mp4"], Answer::Reads),
+        plugin(
+            &journal,
+            "p2",
+            MediaOrigin::Project,
+            &["mp4"],
+            Answer::Reads,
+        ),
+    ]));
+    assert_eq!(project_only.legacy_encoder(), None);
+    let mut backend = MediaBackend::with_registry(project_only);
+    assert!(matches!(
+        backend.check_encoder(Container::Mp4),
+        Err(MediaError::NoCodec)
+    ));
+    assert!(matches!(
+        backend.open_encoder(&settings()),
+        Err(MediaError::NoCodec)
+    ));
+    assert_eq!(journal.entries(), strings(&["start u", "open u"]));
 
     let empty = MediaRegistry::new(Vec::new());
     assert_eq!(empty.legacy_encoder(), None);
@@ -813,7 +831,8 @@ fn encoding_prefers_the_first_bundled_plugin() {
     backend.open_encoder(&settings()).unwrap();
     assert_eq!(journal.entries(), strings(&["start b", "open b"]));
 
-    // Without a bundled plugin, the first in search order encodes.
+    // Without a bundled plugin, the first in search order encodes, a
+    // project's aside.
     let user_only = MediaRegistry::new(vec![plugin(
         &journal,
         "u",

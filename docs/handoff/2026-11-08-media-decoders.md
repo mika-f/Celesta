@@ -7,8 +7,8 @@ single `codec` role (`2026-11-05-codec-plugin.md`) becomes the `media`
 role: a media plugin declares its decoders in its manifest, Celesta uses
 every media plugin that may run, and each file is routed to a decoder.
 Encoding is unchanged: until P2a, exports encode and mux through one media
-plugin (the first bundled one) with protocol 1's encoder messages, so
-exports are byte-identical to `main`'s.
+plugin (the first bundled one, never a project's) with protocol 1's
+encoder messages, so exports are byte-identical to `main`'s.
 
 ## Specification
 
@@ -92,10 +92,11 @@ exports are byte-identical to `main`'s.
   `CELESTA_CODEC_SHARED_MEMORY=0` are unchanged. The encoder messages
   (`checkEncoder`, `openEncoder`, `encodeFrame`, `finishEncoder`,
   `abortEncoder`, `muxAudio`) stay as protocol 1 had them, sent to the
-  registry's first `Bundled` plugin, or its first plugin when none is
-  bundled (`MediaRegistry::legacy_encoder`), so a decoder-only plugin the
-  user or a project installs cannot take over exports; with none,
-  `MediaError::NoCodec`.
+  registry's first `Bundled` plugin, else its first plugin whose origin is
+  not `Project`, else none (`MediaRegistry::legacy_encoder`), which is
+  `MediaError::NoCodec`. A decoder-only plugin the user installs cannot
+  take over exports while a bundled one is there, and a project's plugin
+  never encodes, even when it is the only media plugin.
 - **Exporter codes.** `no_decoder` (`MediaError::NoDecoder`, with the hint)
   and `unsupported_media` (`MediaError::Unsupported`, no hint) beside
   `no_codec`, which stays for encoding and reuses the same hint
@@ -137,8 +138,9 @@ Decoders, and Phases sections:
    started.
 5. New exporter code `unsupported_media` for `MediaError::Unsupported`,
    beside `no_decoder`.
-6. A backend's legacy encoder (the registry's first bundled plugin) may
-   share a process with that plugin's decoder; P2a's per-export components
+6. A backend's legacy encoder (the registry's first bundled plugin, else
+   its first plugin that is not a project's) may share a process with that
+   plugin's decoder; P2a's per-export components
    separate them. Today's callers use separate backends for encoding and
    decoding.
 7. A project's plugin cannot replace a bundled media plugin (or the
@@ -244,7 +246,11 @@ now fixed:
 - **The legacy encoder followed search order.** A decoder-only plugin the
   user installed, or a project's, ahead of the bundled `ffmpeg` would have
   taken the encoder requests and failed exports; it is now the first
-  bundled plugin.
+  bundled plugin. A second review found that, with no bundled plugin (a
+  user's own `ffmpeg` in the user plugin folder takes the id and drops the
+  bundled one), an approved project plugin, searched before the user
+  folder, still became the encoder; it is now the first plugin that is not
+  a project's, and with only project plugins there is none (`no_codec`).
 - A pinned decoder answering `unsupported` to a decode read `no decoder
   could read <path> (tried )`; it now names that decoder.
 - **No media decoder can run** said "No media plugin was found" when media
