@@ -6,8 +6,8 @@ use crate::provider::{
     ComponentDescription, ComponentKind, MediaProvider, ProviderFactory, ProviderUse,
 };
 use celesta_plugin_host::{
-    MediaAudioEncoderEntry, MediaDecoderEntry, MediaManifest, MediaMuxerEntry, MediaOrigin,
-    MediaVideoEncoderEntry, PluginKillSwitch,
+    FFMPEG_PLUGIN_ID, MediaAudioEncoderEntry, MediaDecoderEntry, MediaManifest, MediaMuxerEntry,
+    MediaOrigin, MediaVideoEncoderEntry, PluginKillSwitch,
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -54,6 +54,31 @@ impl FromStr for ComponentRef {
             }),
             _ => Err(InvalidComponentRef(text.to_owned())),
         }
+    }
+}
+
+/// Where `plugin`'s components rank among defaults, lowest first: built-in
+/// 0, the bundled FFmpeg 1, other bundled 2, user 3; `None` for a project's,
+/// which is never a default.
+pub fn default_rank(plugin: &RegisteredPlugin) -> Option<u8> {
+    match plugin.origin {
+        MediaOrigin::BuiltIn => Some(0),
+        MediaOrigin::Bundled if plugin.id == FFMPEG_PLUGIN_ID => Some(1),
+        MediaOrigin::Bundled => Some(2),
+        MediaOrigin::User => Some(3),
+        MediaOrigin::Project => None,
+    }
+}
+
+/// Where `plugin`'s decoders are tried: the user's, the bundled FFmpeg's,
+/// other bundled, then a project's.
+fn decoder_order(plugin: &RegisteredPlugin) -> u8 {
+    match plugin.origin {
+        MediaOrigin::User => 0,
+        MediaOrigin::Bundled if plugin.id == FFMPEG_PLUGIN_ID => 1,
+        MediaOrigin::Bundled => 2,
+        MediaOrigin::Project => 3,
+        MediaOrigin::BuiltIn => 4,
     }
 }
 
@@ -222,8 +247,9 @@ impl MediaRegistry {
                 (0..entry.media.decoders.len()).map(move |decoder| (plugin, decoder))
             })
             .collect();
-        // Stable, and already in search and manifest order.
-        decoders.sort_by_key(|&(plugin, _)| plugins[plugin].origin);
+        // Stable, and already in search and manifest order. Built-in
+        // plugins have no decoders.
+        decoders.sort_by_key(|&(plugin, _)| decoder_order(&plugins[plugin]));
         Self {
             plugins,
             decoders,
@@ -695,6 +721,51 @@ mod tests {
             available(ComponentKind::AudioEncoder, "a"),
             available(ComponentKind::Muxer, "m"),
         ]
+    }
+
+    /// Plugin `id` of `origin`, declaring decoder `d` for `.mp4` files when
+    /// `decodes`.
+    fn ranked(id: &str, origin: MediaOrigin, decodes: bool) -> RegisteredPlugin {
+        let decoders = if decodes {
+            vec![MediaDecoderEntry {
+                extensions: vec!["mp4".into()],
+                ..decoder("d")
+            }]
+        } else {
+            Vec::new()
+        };
+        RegisteredPlugin {
+            id: id.into(),
+            origin,
+            media: MediaManifest {
+                decoders,
+                video_encoders: Vec::new(),
+                audio_encoders: Vec::new(),
+                muxers: Vec::new(),
+            },
+            ..fake(one_of_each(), None, &Starts::default(), |_| Ok(Vec::new()))
+        }
+    }
+
+    #[test]
+    fn ffmpeg_ranks_first_among_bundled() {
+        let plugins = vec![
+            ranked("avfoundation", MediaOrigin::Bundled, true),
+            ranked("ffmpeg", MediaOrigin::Bundled, true),
+            ranked("u", MediaOrigin::User, true),
+            ranked("p", MediaOrigin::Project, true),
+            ranked("builtin", MediaOrigin::BuiltIn, false),
+        ];
+        let ranks: Vec<Option<u8>> = plugins.iter().map(default_rank).collect();
+        assert_eq!(ranks, [Some(2), Some(1), Some(3), None, Some(0)]);
+
+        let registry = MediaRegistry::new(plugins);
+        let order: Vec<String> = registry
+            .decoder_candidates(Path::new("a.mp4"))
+            .iter()
+            .map(|(_, reference)| reference.plugin.clone())
+            .collect();
+        assert_eq!(order, ["u", "ffmpeg", "avfoundation", "p"]);
     }
 
     #[test]

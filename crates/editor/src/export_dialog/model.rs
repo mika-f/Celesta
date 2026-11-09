@@ -17,7 +17,8 @@ use celesta_media::settings::{
 };
 use celesta_media::{
     ComponentDescription, ComponentEntry, ComponentKind, ComponentRef, MediaComponentInfo,
-    MediaRegistry, PluginDescription, SettingField, SettingValue, Settings,
+    MediaRegistry, PluginDescription, RegisteredPlugin, SettingField, SettingValue, Settings,
+    default_rank,
 };
 use celesta_plugin_host::{MediaMuxerEntry, MediaOrigin};
 use std::collections::{BTreeMap, HashMap};
@@ -197,7 +198,7 @@ impl ExportDialogModel {
             .filter(|info| info.kind != ComponentKind::Decoder)
             .collect();
         // Stable: search order, then manifest order, within an origin.
-        components.sort_by_key(|info| rank(info.origin));
+        components.sort_by_key(|info| rank(&registry.plugins()[info.plugin]));
         let described = components
             .iter()
             .map(|info| (info.plugin, Described::Checking))
@@ -803,13 +804,10 @@ fn source(target: SaveTarget) -> PresetSource {
     }
 }
 
-/// Bundled plugins' components first, then the user's, then a project's.
-fn rank(origin: MediaOrigin) -> u8 {
-    match origin {
-        MediaOrigin::Bundled => 0,
-        MediaOrigin::User => 1,
-        MediaOrigin::Project => 2,
-    }
+/// Components by [`default_rank`] (built-in, the bundled FFmpeg, other
+/// bundled, then the user's), a project's last.
+fn rank(plugin: &RegisteredPlugin) -> u8 {
+    default_rank(plugin).unwrap_or(4)
 }
 
 fn kind(track: Track) -> ComponentKind {

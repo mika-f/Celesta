@@ -94,6 +94,7 @@ pub fn origin_label(origin: MediaOrigin) -> &'static str {
         MediaOrigin::User => "user",
         MediaOrigin::Bundled => "bundled",
         MediaOrigin::Project => "project",
+        MediaOrigin::BuiltIn => "built-in",
     }
 }
 
@@ -231,6 +232,11 @@ mod tests {
                 ))
             }),
         }])
+    }
+
+    #[test]
+    fn the_built_in_origin_is_labelled() {
+        assert_eq!(origin_label(MediaOrigin::BuiltIn), "built-in");
     }
 
     #[test]

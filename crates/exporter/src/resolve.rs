@@ -8,7 +8,7 @@ use celesta_media::settings::{differences, layer, parse_setting, sanitize, valid
 use celesta_media::{
     ComponentDescription, ComponentEntry, ComponentKind, ComponentRef, InvalidSetting,
     MediaComponentInfo, MediaRegistry, PixelFormat, PluginDescription, SettingField, SettingKind,
-    SettingValue, Settings,
+    SettingValue, Settings, default_rank,
 };
 use celesta_plugin_host::{MediaMuxerEntry, MediaOrigin, codec_family};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -289,7 +289,7 @@ pub fn resolve_preset_output(
     let named_muxer = muxer.is_some();
     let muxer = match muxer {
         Some(muxer) => muxer,
-        None => default_muxer(&components, output)?,
+        None => default_muxer(registry, &components, output)?,
     };
     let ComponentEntry::Muxer(entry) = &muxer.entry else {
         unreachable!("a muxer's entry is a muxer's");
@@ -327,6 +327,7 @@ pub fn resolve_preset_output(
         None => {
             let codec = entry.default_video.as_ref().or(entry.video.first());
             default_encoder(
+                registry,
                 &components,
                 ComponentKind::VideoEncoder,
                 muxer,
@@ -409,6 +410,7 @@ pub fn resolve_preset_output(
                 (None, Some(accepted)) => {
                     let codec = entry.default_audio.as_ref().or(accepted.first());
                     Some(default_encoder(
+                        registry,
                         &components,
                         ComponentKind::AudioEncoder,
                         muxer,
@@ -617,17 +619,14 @@ fn named<'a>(
     })
 }
 
-/// The first muxer writing `output`'s extension (ignoring case): bundled
-/// plugins' first, then user plugins' in search order; never a project's.
+/// The first muxer writing `output`'s extension (ignoring case): by
+/// [`default_rank`], then in search order; never a project's.
 fn default_muxer<'a>(
+    registry: &MediaRegistry,
     components: &'a [MediaComponentInfo],
     output: &Path,
 ) -> Result<&'a MediaComponentInfo, ExportError> {
-    let rank = |info: &MediaComponentInfo| match info.origin {
-        MediaOrigin::Bundled => Some(0),
-        MediaOrigin::User => Some(1),
-        MediaOrigin::Project => None,
-    };
+    let rank = |info: &MediaComponentInfo| default_rank(registry.plugin(info.plugin));
     let mut candidates: Vec<(&MediaComponentInfo, &MediaMuxerEntry)> = components
         .iter()
         .filter(|info| rank(info).is_some())
@@ -636,7 +635,7 @@ fn default_muxer<'a>(
             _ => None,
         })
         .collect();
-    // Stable: search order, then manifest order, within an origin.
+    // Stable: search order, then manifest order, within a rank.
     candidates.sort_by_key(|(info, _)| rank(info));
     let extension = output.extension().and_then(|extension| extension.to_str());
     let writes = |entry: &MediaMuxerEntry| {
@@ -704,11 +703,12 @@ fn check_writes(
 }
 
 /// The first available `kind` encoder writing `codec`: the muxer's own
-/// plugin's first, then bundled plugins', then user plugins' in search
-/// order; a project's only when it is the muxer's. When none is
+/// plugin's first, then by [`default_rank`] and search order; a project's
+/// only when it is the muxer's. When none is
 /// available, the first candidate's reason; with none at all, the muxer
 /// is unavailable.
 fn default_encoder<'a>(
+    registry: &MediaRegistry,
     components: &'a [MediaComponentInfo],
     kind: ComponentKind,
     muxer: &MediaComponentInfo,
@@ -719,11 +719,7 @@ fn default_encoder<'a>(
         if info.plugin == muxer.plugin {
             return Some(0);
         }
-        match info.origin {
-            MediaOrigin::Bundled => Some(1),
-            MediaOrigin::User => Some(2),
-            MediaOrigin::Project => None,
-        }
+        default_rank(registry.plugin(info.plugin)).map(|rank| rank + 1)
     };
     let accepted: Vec<String> = codec.into_iter().cloned().collect();
     let mut candidates: Vec<&MediaComponentInfo> = components
@@ -1115,6 +1111,75 @@ mod tests {
             "{error:?}"
         );
         assert_eq!(error.to_string(), "no muxer writes .mkv files");
+    }
+
+    /// A plugin `id` whose muxer `m` writes `.ext` files taking `codec`,
+    /// with video encoder `enc` writing it.
+    fn writer(
+        id: &str,
+        origin: MediaOrigin,
+        muxer: &str,
+        ext: &str,
+        codec: &str,
+    ) -> RegisteredPlugin {
+        plugin(
+            id,
+            origin,
+            MediaManifest {
+                decoders: Vec::new(),
+                video_encoders: vec![video_encoder("enc", "Encoder", codec)],
+                audio_encoders: Vec::new(),
+                muxers: vec![MediaMuxerEntry {
+                    id: muxer.into(),
+                    name: muxer.into(),
+                    extensions: vec![ext.into()],
+                    video: vec![codec.into()],
+                    audio: None,
+                    default_video: Some(codec.into()),
+                    default_audio: None,
+                    trims_leading_audio: false,
+                    sequence: false,
+                }],
+            },
+        )
+    }
+
+    #[test]
+    fn ffmpeg_is_the_bundled_default() {
+        let registry = registry(vec![
+            writer("avfoundation", MediaOrigin::Bundled, "mp4", "mp4", "avc1"),
+            writer("ffmpeg", MediaOrigin::Bundled, "mp4", "mp4", "avc1"),
+        ]);
+        let resolved = resolve(&registry, &OutputChoice::default(), "film.mp4").unwrap();
+        assert_eq!(resolved.muxer.reference, reference("ffmpeg/mp4"));
+        assert_eq!(resolved.video.reference, reference("ffmpeg/enc"));
+
+        let choice = OutputChoice {
+            muxer: Some(reference("avfoundation/mp4")),
+            ..OutputChoice::default()
+        };
+        let resolved = resolve(&registry, &choice, "film.mp4").unwrap();
+        assert_eq!(resolved.muxer.reference, reference("avfoundation/mp4"));
+        assert_eq!(resolved.video.reference, reference("avfoundation/enc"));
+    }
+
+    #[test]
+    fn built_in_encoders_rank_before_bundled() {
+        let user_muxer = RegisteredPlugin {
+            media: MediaManifest {
+                video_encoders: Vec::new(),
+                ..writer("u", MediaOrigin::User, "img", "png", "png").media
+            },
+            ..writer("u", MediaOrigin::User, "img", "png", "png")
+        };
+        let registry = registry(vec![
+            user_muxer,
+            writer("b", MediaOrigin::Bundled, "other", "bmp", "png"),
+            writer("builtin", MediaOrigin::BuiltIn, "image", "jpg", "png"),
+        ]);
+        let resolved = resolve(&registry, &OutputChoice::default(), "pic.png").unwrap();
+        assert_eq!(resolved.muxer.reference, reference("u/img"));
+        assert_eq!(resolved.video.reference, reference("builtin/enc"));
     }
 
     #[test]

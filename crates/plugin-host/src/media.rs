@@ -14,6 +14,10 @@ use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
+/// The ID of the FFmpeg media plugin that comes with Celesta, which ranks
+/// first among the bundled plugins.
+pub const FFMPEG_PLUGIN_ID: &str = "ffmpeg";
+
 /// The plugin ID of the components Celesta has built in (`builtin/png`),
 /// which no plugin may take.
 pub const RESERVED_PLUGIN_ID: &str = "builtin";
@@ -146,6 +150,9 @@ pub enum MediaOrigin {
     Bundled,
     /// A folder the open project lists.
     Project,
+    /// Celesta's own, in its process (`builtin/png`). Appended: the derived
+    /// order is not used for ranking any more.
+    BuiltIn,
 }
 
 impl From<PluginSource> for MediaOrigin {

@@ -46,7 +46,7 @@ pub use provider::{
 };
 pub use registry::{
     ComponentEntry, ComponentRef, DecoderUse, InvalidComponentRef, MediaComponentInfo,
-    MediaRegistry, PluginDescription, RegisteredPlugin, registry, set_registry,
+    MediaRegistry, PluginDescription, RegisteredPlugin, default_rank, registry, set_registry,
 };
 pub use resample::resample_audio;
 pub use ring::{MAX_RING_BYTES, RING_SLOTS, pipe_depth, ring_layout};
