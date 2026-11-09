@@ -11,6 +11,7 @@ mod loudness;
 mod media;
 mod options;
 mod output;
+pub mod presets;
 mod project;
 mod range;
 mod react;
@@ -32,6 +33,10 @@ pub use exporter::Exporter;
 pub use job::ExportJob;
 pub use media::{media_registry, use_installed_media, use_media};
 pub use options::{AudioChoice, EncoderChoice, ExportOptions, OutputChoice, SettingInput};
+pub use presets::{
+    FoundPreset, NoAudio, PRESETS_FILE, PRESETS_VERSION, Preset, PresetAudio, PresetEncoder,
+    PresetLookup, PresetOutput, PresetSource, PresetsFile, update_presets, user_presets_path,
+};
 pub use range::ExportRange;
 pub use react::{CompanionProject, ReactRuntimeOptions};
 pub use resolve::{

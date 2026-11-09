@@ -169,7 +169,10 @@ pub fn resolve_output(
     describe: &mut dyn FnMut(usize) -> Arc<PluginDescription>,
 ) -> Result<ResolvedOutput, ExportError> {
     if let Some(name) = &choice.preset {
-        return Err(ExportError::UnknownPreset { name: name.clone() });
+        return Err(ExportError::UnknownPreset {
+            name: name.clone(),
+            default_in: None,
+        });
     }
     let components = registry.components();
     let mut descriptions = Descriptions {
@@ -1091,7 +1094,7 @@ mod tests {
         };
         let error = resolve(&registry, &preset("ultrafast"), "film.mp4").unwrap_err();
         assert!(
-            matches!(&error, ExportError::UnknownPreset { name } if name == "ultrafast"),
+            matches!(&error, ExportError::UnknownPreset { name, default_in: None } if name == "ultrafast"),
             "{error:?}"
         );
         assert_eq!(error.to_string(), "unknown preset `ultrafast`");
