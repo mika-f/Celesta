@@ -284,7 +284,8 @@ pub struct Sequential<'a> {
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum PixelFormat {
-    /// RGBA, 8 bits a channel.
+    /// RGBA, 8 bits a channel. Straight alpha when the encoder keeps alpha
+    /// (answers `alpha: true`); otherwise opaque.
     Rgba8,
     /// RGBA, 16-bit little-endian channels.
     Rgba16,

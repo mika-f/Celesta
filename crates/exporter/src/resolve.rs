@@ -10,7 +10,7 @@ use celesta_media::{
     MediaComponentInfo, MediaRegistry, PixelFormat, PluginDescription, SettingField, SettingKind,
     SettingValue, Settings, default_rank,
 };
-use celesta_plugin_host::{MediaMuxerEntry, MediaOrigin, codec_family};
+use celesta_plugin_host::{MediaMuxerEntry, MediaOrigin, RESERVED_PLUGIN_ID, codec_family};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -619,6 +619,25 @@ fn named<'a>(
     })
 }
 
+/// Whether a video export may write with `muxer`: not the built-in
+/// plugin's, not a sequence muxer (deviation 50 of the media components
+/// spec): those write still images. For a component that is not a muxer
+/// this is `true`: only muxers are ever refused.
+pub fn serves_video(muxer: &MediaComponentInfo) -> bool {
+    match &muxer.entry {
+        ComponentEntry::Muxer(entry) => muxer_serves_video(&muxer.reference.plugin, entry),
+        _ => true,
+    }
+}
+
+pub(crate) fn muxer_serves_video(plugin: &str, entry: &MediaMuxerEntry) -> bool {
+    plugin != RESERVED_PLUGIN_ID && !entry.sequence
+}
+
+/// The reason a video export refuses a muxer that is not [`serves_video`].
+pub(crate) const STILL_MUXER_REASON: &str =
+    "it writes still images; select frames to export stills";
+
 /// The first muxer writing `output`'s extension (ignoring case): by
 /// [`default_rank`], then in search order; never a project's.
 fn default_muxer<'a>(
@@ -629,7 +648,7 @@ fn default_muxer<'a>(
     let rank = |info: &MediaComponentInfo| default_rank(registry.plugin(info.plugin));
     let mut candidates: Vec<(&MediaComponentInfo, &MediaMuxerEntry)> = components
         .iter()
-        .filter(|info| rank(info).is_some())
+        .filter(|info| rank(info).is_some() && serves_video(info))
         .filter_map(|info| match &info.entry {
             ComponentEntry::Muxer(entry) => Some((info, entry)),
             _ => None,
@@ -1086,6 +1105,45 @@ mod tests {
 
     fn text(value: &str) -> SettingInput {
         SettingInput::Text(value.into())
+    }
+
+    #[test]
+    fn a_video_never_defaults_to_an_image_muxer() {
+        let mut sequence = user();
+        sequence.id = "seq".into();
+        sequence.media.muxers = vec![MediaMuxerEntry {
+            id: "tif".into(),
+            name: "TIFF sequence".into(),
+            extensions: vec!["tif".into()],
+            video: vec!["avc1".into()],
+            audio: None,
+            default_video: None,
+            default_audio: None,
+            trims_leading_audio: false,
+            sequence: true,
+        }];
+        let mut plugins = vec![sequence, bundled()];
+        let registry = crate::media::with_builtin(std::mem::take(&mut plugins));
+        for output in ["out.png", "out.tif"] {
+            let error = resolve(&registry, &OutputChoice::default(), output).unwrap_err();
+            assert!(
+                matches!(&error, ExportError::UnsupportedOutput { extensions, .. }
+                    if extensions == &["ivf", "mp4"]),
+                "{output}: {error:?}"
+            );
+        }
+        let image = registry
+            .components()
+            .into_iter()
+            .find(|info| info.reference == reference("builtin/image"))
+            .unwrap();
+        assert!(!serves_video(&image));
+        let mp4 = registry
+            .components()
+            .into_iter()
+            .find(|info| info.reference == reference("b/mp4"))
+            .unwrap();
+        assert!(serves_video(&mp4));
     }
 
     #[test]

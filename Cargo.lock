@@ -1102,6 +1102,7 @@ dependencies = [
  "celesta-evaluator",
  "celesta-gpu-renderer",
  "celesta-media",
+ "celesta-media-image",
  "celesta-plugin",
  "celesta-plugin-host",
  "celesta-project",

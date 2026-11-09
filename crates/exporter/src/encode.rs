@@ -7,14 +7,17 @@ use crate::error::ExportError;
 use crate::interleave::{Interleaver, WRITE_REQUEST_BYTES, WRITE_REQUEST_PACKETS, packet_bytes};
 use crate::options::OutputChoice;
 use crate::presets::PresetLookup;
-use crate::resolve::{OutputPlan, ResolvedOutput, resolve_output};
+use crate::resolve::{
+    OutputPlan, ResolvedOutput, STILL_MUXER_REASON, muxer_serves_video, resolve_output,
+    serves_video,
+};
 use celesta_composition::Rational;
 use celesta_gpu_renderer::{GpuFrame, GpuRenderer, ReadbackFormat};
 use celesta_media::{
     Answered, AudioBuffer, AudioEncoderOpened, AudioEncoderRequest, Color as MediaColor,
-    ComponentDescription, ComponentRef, Encoded, MediaError, MediaProvider, MediaRegistry,
-    MuxerRequest, Packet, PixelFormat, ProviderUse, RingLayout, SessionId, Track, TrackConfig,
-    TrackPacket, VideoEncoderOpened, VideoEncoderRequest, resample_audio, ring_layout,
+    ComponentDescription, ComponentKind, ComponentRef, Encoded, MediaError, MediaProvider,
+    MediaRegistry, MuxerRequest, Packet, PixelFormat, ProviderUse, RingLayout, SessionId, Track,
+    TrackConfig, TrackPacket, VideoEncoderOpened, VideoEncoderRequest, resample_audio, ring_layout,
 };
 use celesta_plugin_host::{MediaManifest, PluginKillSwitch};
 use std::borrow::Cow;
@@ -507,6 +510,39 @@ fn not_ready(what: &str) -> MediaError {
     MediaError::Codec(format!("the export has {what}"))
 }
 
+/// The refusal of a video export that names a muxer writing stills.
+fn still_muxer(reference: &ComponentRef) -> ExportError {
+    ExportError::ComponentUnavailable {
+        component: reference.clone(),
+        reason: STILL_MUXER_REASON.to_owned(),
+    }
+}
+
+/// Checks a video encoder's answer against what was `offered`: the input it
+/// chose was offered, and keeping alpha (`opened.alpha`) needs `rgba8` or
+/// `rgba16` as that input.
+pub(crate) fn check_opened(
+    offered: &[PixelFormat],
+    opened: &VideoEncoderOpened,
+) -> Result<(), MediaError> {
+    if !offered.contains(&opened.input) {
+        return Err(MediaError::InvalidSettings {
+            key: "input".to_owned(),
+            message: format!("the encoder chose {}, which was not offered", opened.input),
+        });
+    }
+    if opened.alpha && !matches!(opened.input, PixelFormat::Rgba8 | PixelFormat::Rgba16) {
+        return Err(MediaError::InvalidSettings {
+            key: "alpha".to_owned(),
+            message: format!(
+                "keeping alpha needs rgba8 or rgba16 as the input, not {}",
+                opened.input
+            ),
+        });
+    }
+    Ok(())
+}
+
 impl ExportSession {
     /// A session writing through `registry`'s plugins, whose processes
     /// `cancellation` kills.
@@ -549,6 +585,14 @@ impl ExportSession {
     ) -> Result<(OutputPlan, Vec<String>), ExportError> {
         self.frame = frame;
         let registry = self.registry.clone();
+        // A named muxer that writes stills is refused before anything
+        // describes it.
+        if let Some(reference) = &choice.muxer
+            && let Some(info) = registry.component(reference, ComponentKind::Muxer)
+            && !serves_video(&info)
+        {
+            return Err(still_muxer(reference));
+        }
         let kill = &self.kill;
         let processes = &mut self.processes;
         let mut resolved = resolve_output(choice, output, &registry, presets, &mut |plugin| {
@@ -564,6 +608,9 @@ impl ExportSession {
             )
         })
         .map_err(|error| self.cancellation.settle(error))?;
+        if !muxer_serves_video(&resolved.muxer.reference.plugin, &resolved.muxer.entry) {
+            return Err(still_muxer(&resolved.muxer.reference));
+        }
         let used = [
             Some(resolved.muxer.plugin),
             Some(resolved.video.plugin),
@@ -782,21 +829,7 @@ impl ExportSession {
             config: None,
             frames_sent: 0,
         });
-        if !offered.contains(&opened.input) {
-            return Err(MediaError::InvalidSettings {
-                key: "input".to_owned(),
-                message: format!("the encoder chose {}, which was not offered", opened.input),
-            });
-        }
-        if opened.alpha && opened.input != PixelFormat::Rgba16 {
-            return Err(MediaError::InvalidSettings {
-                key: "alpha".to_owned(),
-                message: format!(
-                    "keeping alpha needs rgba16 as the input, not {}",
-                    opened.input
-                ),
-            });
-        }
+        check_opened(offered, &opened)?;
         Ok(opened)
     }
 
@@ -1323,9 +1356,7 @@ mod tests {
     use super::*;
     use crate::interleave::{AUDIO_TRACK, VIDEO_TRACK};
     use crate::presets::PresetsFile;
-    use celesta_media::{
-        AudioEncoder, ComponentKind, Muxer, Pipeline, RegisteredPlugin, VideoEncoder,
-    };
+    use celesta_media::{AudioEncoder, Muxer, Pipeline, RegisteredPlugin, VideoEncoder};
     use celesta_plugin_host::{
         MediaAudioEncoderEntry, MediaMuxerEntry, MediaOrigin, MediaVideoEncoderEntry,
     };
@@ -1962,7 +1993,7 @@ mod tests {
     }
 
     #[test]
-    fn alpha_needs_rgba16_input() {
+    fn alpha_needs_rgba_input() {
         let (mut session, _) = fake_session(Answers {
             input: Some(PixelFormat::Yuv420p),
             alpha: true,
@@ -1985,6 +2016,94 @@ mod tests {
             ),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn an_encoder_may_keep_alpha_in_rgba8() {
+        let (mut session, _) = fake_session(Answers {
+            input: Some(PixelFormat::Rgba8),
+            alpha: true,
+            ..Answers::default()
+        });
+        let opened = session
+            .open_video(
+                2,
+                2,
+                RATE,
+                &[PixelFormat::Rgba8, PixelFormat::Yuv420p],
+                Path::new("staged.fake"),
+            )
+            .unwrap();
+        assert!(opened.alpha);
+
+        let (mut session, _) = fake_session(Answers {
+            input: Some(PixelFormat::Yuv420p),
+            alpha: true,
+            ..Answers::default()
+        });
+        let result = session.open_video(
+            2,
+            2,
+            RATE,
+            &[PixelFormat::Rgba8, PixelFormat::Yuv420p],
+            Path::new("staged.fake"),
+        );
+        assert!(
+            matches!(
+                &result,
+                Err(ExportError::Codec {
+                    source: MediaError::InvalidSettings { key, message },
+                    ..
+                }) if key == "alpha" && message.contains("rgba8 or rgba16")
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_video_naming_a_still_muxer_is_refused() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let uses = Uses::default();
+        let (mut manifest, described) = all_in_one(false);
+        manifest.muxers[0].id = "image".to_owned();
+        let described = described
+            .into_iter()
+            .map(|mut component| {
+                if component.kind == ComponentKind::Muxer {
+                    component.id = "image".to_owned();
+                }
+                component
+            })
+            .collect();
+        let plugin = fake_plugin(
+            "builtin",
+            manifest,
+            described,
+            Answers::default(),
+            &log,
+            &uses,
+        );
+        let registry = Arc::new(MediaRegistry::new(vec![plugin]));
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        let choice = OutputChoice {
+            muxer: Some("builtin/image".parse().unwrap()),
+            ..OutputChoice::default()
+        };
+        let error = session
+            .resolve(
+                &choice,
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (2, 2),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&error, ExportError::ComponentUnavailable { component, reason }
+                if component.to_string() == "builtin/image"
+                    && reason == "it writes still images; select frames to export stills"),
+            "{error:?}"
+        );
+        assert!(uses.lock().unwrap().is_empty());
     }
 
     #[test]

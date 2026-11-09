@@ -235,6 +235,40 @@ mod tests {
     }
 
     #[test]
+    fn built_ins_are_listed_without_a_folder() {
+        let registry = crate::with_builtin(Vec::new());
+        let listed = list_components(&registry, false, &PluginKillSwitch::new());
+        let json = listing_json(&listed);
+        let entries = json["components"].as_array().unwrap();
+        let ids: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        for id in [
+            "builtin/png",
+            "builtin/jpeg",
+            "builtin/webp",
+            "builtin/image",
+            "builtin/imageSequence",
+        ] {
+            assert!(ids.contains(&id), "{ids:?}");
+        }
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry["origin"] == "built-in" && entry.get("directory").is_none())
+        );
+        assert!(!json.to_string().contains("directory"));
+
+        let webp = "builtin/webp".parse().unwrap();
+        let (info, description) =
+            describe_component(&registry, &webp, &PluginKillSwitch::new()).unwrap();
+        assert!(description.available, "{description:?}");
+        let settings = description_json(&info, &description)["settings"].clone();
+        assert_eq!(settings.as_array().unwrap().len(), 3, "{settings}");
+    }
+
+    #[test]
     fn the_built_in_origin_is_labelled() {
         assert_eq!(origin_label(MediaOrigin::BuiltIn), "built-in");
     }

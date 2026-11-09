@@ -31,7 +31,7 @@ pub use control::{
 pub use error::{ExportError, FrameFailure};
 pub use exporter::Exporter;
 pub use job::ExportJob;
-pub use media::{media_registry, use_installed_media, use_media};
+pub use media::{media_registry, use_installed_media, use_media, with_builtin};
 pub use options::{AudioChoice, EncoderChoice, ExportOptions, OutputChoice, SettingInput};
 pub use presets::{
     FoundPreset, NoAudio, PRESETS_FILE, PRESETS_VERSION, Preset, PresetAudio, PresetEncoder,
@@ -41,7 +41,7 @@ pub use range::ExportRange;
 pub use react::{CompanionProject, ReactRuntimeOptions};
 pub use resolve::{
     EncoderPlan, OutputPlan, ResolvedEncoder, ResolvedMuxer, ResolvedOutput, X264_PRESETS,
-    encoding_label, resolve_output, resolve_preset_output, writes_any_codec,
+    encoding_label, resolve_output, resolve_preset_output, serves_video, writes_any_codec,
 };
 pub use subtitles::SubtitleFormat;
 pub use timecode::{TimecodeError, parse_timecode};

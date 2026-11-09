@@ -10,7 +10,7 @@
 use celesta_exporter::{
     AudioChoice, EncoderChoice, ExportError, NoAudio, OutputChoice, Preset, PresetAudio,
     PresetEncoder, PresetOutput, PresetSource, PresetsFile, ResolvedEncoder, ResolvedOutput,
-    SettingInput, writes_any_codec,
+    SettingInput, serves_video, writes_any_codec,
 };
 use celesta_media::settings::{
     differences, drop_hidden, effective, is_visible, sanitize, validate,
@@ -196,6 +196,8 @@ impl ExportDialogModel {
             .components()
             .into_iter()
             .filter(|info| info.kind != ComponentKind::Decoder)
+            // The built-in image muxers write stills, not a video.
+            .filter(|info| info.kind != ComponentKind::Muxer || serves_video(info))
             .collect();
         // Stable: search order, then manifest order, within an origin.
         components.sort_by_key(|info| rank(&registry.plugins()[info.plugin]));
@@ -1136,6 +1138,13 @@ mod tests {
             labels(&model(&registry).muxer_options()),
             ["MP4 · b", "IVF · b", "MP4 · p (project)"]
         );
+    }
+
+    #[test]
+    fn still_muxers_are_not_containers() {
+        let registry = celesta_exporter::with_builtin(vec![bundled()]);
+        let model = model(&registry);
+        assert_eq!(labels(&model.muxer_options()), ["MP4 · b", "IVF · b"]);
     }
 
     #[test]

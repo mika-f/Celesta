@@ -97,10 +97,20 @@ fn json_reports_a_bad_component_reference_as_a_usage_error() {
     assert!(message.contains("<plugin>/<component>"), "{message}");
 }
 
+/// The listing's components other than the built-in ones.
+fn test_codec_components(listed: &serde_json::Value) -> Vec<&serde_json::Value> {
+    listed["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|component| component["plugin"] != "builtin")
+        .collect()
+}
+
 #[test]
 fn json_lists_the_test_codecs_components() {
     let listed = listing(&["--list-components", "--json"]);
-    let components = listed["components"].as_array().unwrap();
+    let components = test_codec_components(&listed);
     assert_eq!(components.len(), 4, "{listed}");
     let muxer = components
         .iter()
@@ -112,10 +122,14 @@ fn json_lists_the_test_codecs_components() {
     assert!(components.iter().all(|c| c.get("available").is_none()));
 
     let checked = listing(&["--list-components", "--check", "--json"]);
-    let components = checked["components"].as_array().unwrap();
+    let components = test_codec_components(&checked);
     assert_eq!(components.len(), 4);
     assert!(
-        components.iter().all(|c| c["available"] == true),
+        checked["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["available"] == true),
         "{checked}"
     );
 }
@@ -124,7 +138,8 @@ fn json_lists_the_test_codecs_components() {
 fn the_plain_listing_has_a_line_per_component() {
     let (ok, stdout) = run(&["--list-components", "--check"]);
     assert!(ok);
-    assert_eq!(stdout.lines().count(), 4, "{stdout}");
+    // The five built-in components, then the test codec's four.
+    assert_eq!(stdout.lines().count(), 9, "{stdout}");
     assert!(
         stdout.lines().all(|line| line.ends_with("available")),
         "{stdout}"
@@ -437,4 +452,43 @@ fn a_broken_preset_file_is_a_usage_error() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     assert!(stdout.contains("unsupported version 2"), "{stdout}");
     assert!(!output.exists());
+}
+
+#[test]
+fn stills_need_no_media_plugin() {
+    let exe = PathBuf::from(env!("CARGO_BIN_EXE_celesta-exporter"));
+    let folder = exe.parent().unwrap();
+    if ["celesta-codec-ffmpeg", "celesta-codec-ffmpeg.exe"]
+        .iter()
+        .any(|name| folder.join(name).exists())
+    {
+        eprintln!("skipped: celesta-codec-ffmpeg sits beside the test binary");
+        return;
+    }
+    let empty = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(&exe)
+        .env(PLUGIN_PATH_ENV, empty.path())
+        .envs(home_env(home.path()))
+        .args(["--list-components", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let listed: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    let ids: Vec<&str> = listed["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|component| component["id"].as_str().unwrap())
+        .collect();
+    for id in [
+        "builtin/png",
+        "builtin/jpeg",
+        "builtin/webp",
+        "builtin/image",
+        "builtin/imageSequence",
+    ] {
+        assert!(ids.contains(&id), "{ids:?}");
+    }
 }

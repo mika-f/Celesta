@@ -14,6 +14,7 @@ celesta-composition.workspace = true
 celesta-evaluator.workspace = true
 celesta-gpu-renderer = { workspace = true, features = ["clap"] }
 celesta-plugin-host.workspace = true
+celesta-media-image.workspace = true
 celesta-media = { workspace = true, features = ["clap"] }
 celesta-project.workspace = true
 celesta-react-bridge.workspace = true

@@ -1789,8 +1789,9 @@ pub fn hanging_media_plugin() -> celesta_media::RegisteredPlugin {
         ..Default::default()
     };
     let registry = celesta_exporter::media_registry(&installed);
-    assert_eq!(registry.plugins().len(), 1);
-    registry.plugin(0).clone()
+    // The built-in plugin comes first.
+    assert_eq!(registry.plugins().len(), 2);
+    registry.plugin(1).clone()
 }
 
 /// Cancel kills an export's media plugins: a frame waiting on an encoder
