@@ -98,14 +98,17 @@ request's payload. Exports are byte-identical to P2a's (see Checks).
 - **The pipeline** (`celesta_media::Pipeline`, `MediaProvider::pipeline`).
   `MediaProcess` sends `send_video_frame`, `send_audio`, and
   `send_packets` without waiting and answers them through `receive` as
-  `Answered::{VideoFrame, Audio, Packets}`. `depth()` is the declared
-  ring's `slots`, or, without one, `pipe_depth` of the opened encoder's
+  `Answered::{VideoFrame, Audio, Packets}`. `depth()` is the ring's
+  `slots` once frames go through it, or, otherwise, `pipe_depth` of the opened encoder's
   frame: `clamp(MAX_RING_BYTES / frame_bytes, 1, PIPE_WINDOW)` with
   `PIPE_WINDOW = 3` (deviations 23 and 28): one for 8192×4320 `rgba16`,
   three for frames of up to about 89 MB. Every other request (`describe`,
   the `open`s, `finish`es, `abort`s, and the one-at-a-time encode and
   write methods) is refused while anything is in flight.
-  `frames_in_ring()` says whether frames go through a declared ring.
+  `frames_in_ring()` says whether frames go through the ring: it was
+  declared and the opened input's frame fits a slot (a declared ring
+  whose slots are too small for the chosen input is not used, and frames
+  go as payloads with the pipe's window).
 - **The export's flow** (`ExportSession`, `crates/exporter/src/encode.rs`).
   One process per plugin. Frames, audio chunks, and batches of packets go
   up to each process's depth at a time (`make_room` receives answers until
@@ -143,7 +146,8 @@ request's payload. Exports are byte-identical to P2a's (see Checks).
   the whole export, `finish`'s packets included, in megabytes of 10^6
   bytes; whether it spilled; and (ruling R12) how the video encoder's
   process takes the frames and how many at a time: `ring` (the segment was
-  accepted and the ring declared), `pipe` (payloads), or `in process` (1).
+  accepted, the ring declared, and the opened input's frame fits a slot),
+  `pipe` (payloads), or `in process` (1).
 - **`codec-bench`** (`plugins/ffmpeg/examples/codec-bench.rs`) encodes
   through the plugin's ring, pipelined, and prints how the frames went
   (from `frames_in_ring()` after the open, ruling R8);
@@ -185,8 +189,9 @@ Deadlines and the window, Audio, and Phases sections. P2c's start at 30.
     started (with a segment) while its plugin was described. The spec takes
     the plugin's acceptance of the segment at `hello` as the whole
     negotiation.
-28. The payload window is bounded by bytes (ruling R11): without a
-    declared ring, the window is `clamp(MAX_RING_BYTES / frame_bytes, 1,
+28. The payload window is bounded by bytes (ruling R11): when frames do
+    not go through the ring (none was declared, or the opened input's
+    frame does not fit a slot), the window is `clamp(MAX_RING_BYTES / frame_bytes, 1,
     PIPE_WINDOW)` (`pipe_depth`), so frames deviation 21 sends through the
     pipe do not wait three deep, two of them in the writer's queue.
 
@@ -457,6 +462,15 @@ test-codec tests), and the editor by hand.
   still not verified. Related, from the final review: a process started
   during `resolve` with a manifest-sized ring that ends up serving only the
   muxer keeps a section it never writes, which on Windows may be charged.
+  The export ring's section is charged in full too (`CreateFileMappingW`
+  with `PAGE_READWRITE` commits it up front), yet only part of it is
+  written: its slots are sized for the largest offerable format (libx264's
+  `inputFormats` include `rgba16`), while the GPU's `yuv420p`, which x264
+  8-bit chooses, writes 12,441,600 of a 4K slot's 66,355,200 bytes
+  (18.75%). At 4K that is about 199 MB charged for about 37 MB touched,
+  capped by `MAX_RING_BYTES`. Sizing the ring after the open, from the
+  input chosen, would need the process to start later or the segment to
+  be replaced.
 - **A same-process packet shortcut**: when the video encoder and the muxer
   are one plugin, each packet still crosses the pipe twice (out with the
   encode's answer, back in `writePackets`), which the ProRes row pays.
