@@ -247,8 +247,8 @@ components are used only when named (`--muxer`, `--video-encoder`,
 | `avfoundation/hevc` | HEVC | as `h264` without `profile`, plus `bitDepth` `8` (Main) or `10` (Main 10) (`8`) |
 | `avfoundation/prores` | ProRes | `profile` `4444` (alpha) or `hq` (422 HQ, opaque) (`4444`) |
 | `avfoundation/aac` | AAC-LC, constant bitrate | `bitrate` 32000–320000 bit/s (192000) |
-| `avfoundation/mp4` | `.mp4`, `.m4v`: `avc1`/`hvc1` + `mp4a`; defaults `h264` + `aac` | none to set (`faststart` stays on) |
-| `avfoundation/mov` | `.mov`: `avc1`/`hvc1`/`ap4h`/`apch` + `mp4a`/`lpcm`; defaults `prores` 4444 + `aac` (not PCM: name `ffmpeg/pcm` for PCM) | none to set (`faststart` stays on) |
+| `avfoundation/mp4` | `.mp4`, `.m4v`: `avc1`/`hvc1` + `mp4a`; defaults `h264` + `aac` | `faststart` (`true`), which the exporter keeps: muxers take their defaults |
+| `avfoundation/mov` | `.mov`: `avc1`/`hvc1`/`ap4h`/`apch` + `mp4a`/`lpcm`; defaults `prores` 4444 + `aac` (not PCM: name `ffmpeg/pcm` for PCM) | `faststart` (`true`), as `mp4` |
 
 ```sh
 Celesta-export --json --overwrite --muxer avfoundation/mp4 --video-encoder avfoundation/hevc \
@@ -262,8 +262,10 @@ Celesta-export --json --overwrite --muxer avfoundation/mp4 --video-encoder avfou
   for the smallest widely playable H.264.
 - AAC's bitrate must also be one AudioToolbox takes at the mix's rate and
   channels (44.1/48 kHz: mono 32000–256000, stereo 64000–320000; less
-  below). Otherwise `invalid_option` naming the range, when the encoder
-  opens after the mix (for a React entry, after the render).
+  below); one it does not take is `invalid_option` naming the range, when
+  the encoder opens after the mix (for a React entry, after the render).
+  The default 192000 is refused for stereo below 32 kHz and mono below
+  44.1 kHz: give such a mix a lower `bitrate`.
 - H.264 and HEVC need even dimensions, as every video export does; a
   software renderer's RGB-only offer is converted by VideoToolbox.
 - `--loop` works with both muxers; FFmpeg and AVFoundation decode the

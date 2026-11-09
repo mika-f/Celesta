@@ -40,7 +40,8 @@ Per-task specifications, implementation details, and validation results live in
   `scripts/plugins/build.mts` skips it elsewhere (`avfoundation: skipped, it
   is built for macos only`); on Linux and Windows its crate builds a stub
   program that exits with an error, so the plugins workspace still builds
-  and lints there. The macOS package puts it in `Contents/PlugIns` beside
+  on both. CI lints it on Linux and macOS (the Plugins job's Clippy step
+  skips Windows). The macOS package puts it in `Contents/PlugIns` beside
   `ffmpeg` (`scripts/package-macos.py`, no `dylibbundler`); see
   [`docs/handoff/2026-11-09-media-avfoundation.md`](docs/handoff/2026-11-09-media-avfoundation.md).
 - Linux: `scripts/build-ffmpeg-linux.sh` builds static FFmpeg 8.1.x libraries
@@ -189,10 +190,11 @@ React entry ─> React bridge ┘
   project contract.
 - No Celesta crate but `celesta-codec-ffmpeg` links FFmpeg (or any codec
   library; `celesta-codec-avfoundation` uses only the operating system's
-  frameworks, and links FFmpeg only in its tests), even optionally: media goes through `celesta_media::MediaBackend`
-  and the media plugins' processes, so the editor, exporter, and MCP server
-  stay MIT/Apache-2.0 when packages ship a GPL FFmpeg. The core's tests use
-  `celesta-codec-test`; only `celesta-codec-ffmpeg`'s own tests link FFmpeg.
+  frameworks, and links FFmpeg only in its tests), even optionally: media
+  goes through `celesta_media::MediaBackend` and the media plugins'
+  processes, so the editor, exporter, and MCP server stay MIT/Apache-2.0
+  when packages ship a GPL FFmpeg. The core's tests use
+  `celesta-codec-test`; only the media plugins' own tests link FFmpeg.
 - GPU preview and audio decoding/mixing run on background workers. Requests
   carry generations, queued work coalesces to the latest request, stale
   results are discarded, and superseded mixing checks cancellation.

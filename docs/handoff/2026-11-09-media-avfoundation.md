@@ -24,7 +24,14 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
   `audio.rs`, `formats.rs`, `muxer.rs`, `decoder.rs`, and `provider.rs`
   are `#[cfg(target_os = "macos")]`. Elsewhere the program prints
   `avfoundation: this media plugin runs on macOS only` and exits 1, so CI's
-  Linux and Windows Plugins jobs still build and lint the workspace.
+  Linux and Windows Plugins jobs still build the workspace; its Clippy
+  step lints it on Linux and macOS (not Windows). Every `AvfCodec` method
+  that reaches a framework runs in an autorelease pool of its own
+  (`objc2::rc::autoreleasepool`), as does each buffer `decode_audio`
+  reads: the program serves on a plain thread, which has none, and what
+  the frameworks autorelease (convenience constructors,
+  `localizedDescription`, `copyNextSampleBuffer`'s internals) would
+  otherwise live as long as the process.
 - **Components** (manifest and `describe`, in this order):
   - decoder `avfoundation` "AVFoundation", extensions `mp4`, `mov`, `m4a`;
   - video encoders `h264` "H.264 (VideoToolbox)" (`avc1`; inputs `nv12`,
@@ -109,10 +116,15 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
   channel for a mono mix, else 2. **Constant bitrate**
   (`kAudioCodecBitRateControlMode_Constant`, ruling R12): with
   AudioToolbox's default, long-term-average rate control, the first second
-  came out worse than the rest (a hit's error 0.00584 against at most
-  0.00048 for the later ones), which is where a looping export's opening
-  is; `Constant` is even from the first packet (0.000066), as libavcodec's
-  `aac_at` chooses when given a bitrate. `delay` is
+  came out worse than the rest, which is where a looping export's opening
+  is: in `aac_codes_its_first_second_as_well_as_the_rest` the first hit's
+  error was 0.00584 against at most 0.00048 for the later ones. `Constant`
+  is even from the first packet, as libavcodec's `aac_at` chooses when
+  given a bitrate: in `a_looping_avfoundation_mp4_starts_its_sound_from_its_end`
+  the one-pass export's first hit is off by 0.000066 and the looped one's
+  by 0.000085, below the later hits. The default `bitrate`, 192000, is
+  refused for stereo below 32 kHz and mono below 44.1 kHz (AudioToolbox's
+  ranges there top out at 128000 and 96000). `delay` is
   `kAudioConverterPrimeInfo.leadingFrames`, 2112. The k-th packet has `pts
   = first + 1024k − 2112`, `dts = pts`, duration 1024, except the last,
   whose duration is the frames it covers, so muxers trim the end.
@@ -126,12 +138,14 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
     file at `output` when it is an empty regular file and refuses anything
     else (`{output} already exists`), after every track has been checked.
   - **Tracks.** A codec the muxer does not take is `{muxer} does not take
-    {codec}` (`mp4 does not take opus`). `lpcm.s16le`, `lpcm.s24le`, and
-    `lpcm.f32le` are `mov`'s PCM. Audio tracks must be timed in sample
-    frames. The movie timescale is the video track's (at AVFoundation's
-    default of 600 a 30000/1001 video's edit list ended at 1.000 s rather
-    than 1.001 s), and `mediaTimeScale` is set on video inputs only (an
-    audio input throws).
+    {codec}` (`mp4 does not take opus`). AAC is `mp4a.40.2` (AAC-LC) only,
+    whose packets the format description gives as 1024 frames: any other
+    `mp4a` (`mp4a.40.5`, HE-AAC's 2048) is refused the same way.
+    `lpcm.s16le`, `lpcm.s24le`, and `lpcm.f32le` are `mov`'s PCM. Audio
+    tracks must be timed in sample frames. The movie timescale is the
+    video track's (at AVFoundation's default of 600 a 30000/1001 video's
+    edit list ended at 1.000 s rather than 1.001 s), and `mediaTimeScale`
+    is set on video inputs only (an audio input throws).
   - **Trims.** AAC buffers before 0 carry
     `kCMSampleBufferAttachmentKey_TrimDurationAtStart` (`min(duration, −pts,
     what is still hidden)` of `delay + leadingAudio`), a short last packet
@@ -143,13 +157,30 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
     packets' bytes (deviation 61).
   - **Interleaving.** Each input has a queue of sample buffers. After each
     packet `writePackets` appends to every input while it
-    `isReadyForMoreMediaData`, until none takes more, and never blocks;
-    `finish` drains the queues, polling every 1 ms, marks each input
-    finished once its queue is empty, then waits for
+    `isReadyForMoreMediaData`, until none takes more. **Back-pressure:**
+    then, while the queues hold more than `MAX_PENDING_BYTES` (64 MiB) of
+    packet bytes and no unfinished input is ready, it polls every 1 ms as
+    `finish` does: the writer is then bound by its output (a disk-bound
+    ProRes 4444 4K file is about 150 MB/s), and without the wait the
+    exporter's 32 MiB batches of a spilled backlog would be queued here
+    whole. An input that is ready has an empty queue, so the writer is
+    waiting for that track's packets, which come only once `writePackets`
+    returns: it returns then, and a long run of one track (all the video,
+    then the audio) is still queued whole rather than stalling. `finish`
+    drains the queues, polling every 1 ms, marks each input finished once
+    its queue is empty, then waits for
     `finishWritingWithCompletionHandler`. A writer whose status leaves
     `writing` fails the next `writePackets` with its error (`AVAssetWriter
-    could not write the file: …`); `finish` gives up after 60 s without
-    progress. An abort cancels the writer.
+    could not write the file: …`); `writePackets` and `finish` give up
+    after 60 s without progress. An abort cancels the writer.
+  - **Exceptions.** `appendSampleBuffer`, `markAsFinished`, and
+    `finishWritingWithCompletionHandler` run inside
+    `objc2::exception::catch` (objc2's `exception` feature, which adds
+    `objc2-exception-helper` to the lockfile): an Objective-C exception,
+    such as one from a writer that failed on its own thread between the
+    status check and the append, is `Codec("AVAssetWriter raised an
+    exception as it tried to {append a sample|finish a track|finish the
+    file}: {reason}")` rather than an aborted process.
 - **FFmpeg's sample entries.** FFmpeg's MP4 and MOV muxers tag H.264 and
   HEVC with the codec string's spelling of its family (`hvc1` or `hev1`,
   `avc1` or `avc3`). libavformat's default in MP4 is `hev1`, which
@@ -309,6 +340,43 @@ The tests that pin the plan's review focus (Tasks 4–8):
 `aac_codes_its_first_second_as_well_as_the_rest`, and the decoder's
 `decodes_the_frame_shown_at_each_time` and
 `rotated_video_is_displayed_upright`.
+
+### The final review's fixes
+
+After the whole-branch review, on the same Mac:
+
+- **Back-pressure.** `muxer::tests::a_busy_writer_holds_writes_back`
+  writes 16 batches of 4 MiB of one PCM track with the cap lowered to
+  1 MiB and asserts that no `write` returns with more than the cap and a
+  batch queued; at most 1 MiB was. With the wait taken out it fails at
+  batch 4 with 6 MiB queued. `long_runs_of_one_track_do_not_stall` still
+  passes, video first and audio first.
+- **Autorelease pools.** A scratch test (not committed) ran 3,000
+  `decode_video` calls without a sequential session (a reader each), then
+  3,000 one-packet `write_packets`, in one process (`ps -o rss=`).
+  Without the pools RSS grew from 31.8 MiB to 77.2 MiB over the decodes
+  (about 15 KiB a call) and stayed flat over the writes; with them it
+  stayed between 31.5 and 34.3 MiB throughout.
+- **CI's encoders.** `h264_and_hevc_decode_times_precede_presentation`
+  checks the 30 packets, the keyframe, `dts ≤ pts`, and increasing `dts`
+  always, and a first `dts` before 0 only when some packet's `dts` differs
+  from its `pts`; otherwise it prints `skipping {component}'s reordering
+  checks: the encoder did not reorder` (a software encoder may make no
+  B-frames). The looping export allows the first hit up to three times
+  the later ones' error; the encoder's own test pins constant bitrate.
+- **AAC-LC only.** `muxer::tests::only_aac_lc_is_taken`, the formats test,
+  and `an_unknown_codec_is_refused` (`mp4 does not take mp4a.40.5`, and
+  `mov`'s).
+- **Exceptions.** `muxer::tests::an_exception_is_an_error` appends to an
+  input whose writer never started, which raises: the error is
+  `AVAssetWriter raised an exception as it tried to append a sample: ***
+  -[AVAssetWriterInput appendSampleBuffer:] Cannot append sample buffer:
+  Cannot call method when status is 0`.
+- `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`
+  (555 passed, 1 ignored as before; no AVFoundation test printed
+  `skipping`), Clippy and `cargo fmt --check` in `plugins/`, and `pnpm
+  --dir packages/website test` (52) passed. The root workspace was not
+  rebuilt: these fixes change no root crate.
 
 ### Measurements
 
