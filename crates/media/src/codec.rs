@@ -7,7 +7,9 @@
 //! [`set_registry`](crate::set_registry); each
 //! [`MediaBackend`](crate::MediaBackend) starts its own instance of a plugin
 //! when it first needs one, and routes each file to one of the plugins'
-//! decoders. See `docs/handoff/2026-11-05-codec-plugin.md`.
+//! decoders. See the media components spec
+//! (`docs/superpowers/specs/2026-11-08-media-components-design.md`) and
+//! `docs/handoff/2026-11-08-media-decoders.md`.
 
 mod process;
 pub mod protocol;

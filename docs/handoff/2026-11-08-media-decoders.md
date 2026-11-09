@@ -231,6 +231,43 @@ staged by `build.mts` on `CELESTA_PLUGIN_PATH`:
   Plugins tab) is done separately from this note's checks.
 - A video export with no media plugin reports `no_codec`, not
   `no_decoder`, because the encoder check comes first. The docs say so.
+- **The sibling layout settles an id clash differently from the
+  bundled-folder layout.** With a bundled folder, discovery rejects a
+  project `ffmpeg` before ids are taken, so a user `ffmpeg` still wins.
+  With the `cargo install` sibling there is no bundled folder: the project
+  `ffmpeg`, searched before the user folder, takes the id, the user's
+  `ffmpeg` is dropped with no report (`manifest.rs`'s `Ok(_) => {}`), and
+  `media_with_sibling` then removes the project plugin and adds the
+  sibling. The user's own build is ignored without a message, and the
+  rejected project plugin stays in `InstalledPlugins.plugins` (the React
+  runtime path, and "on" in the Plugins tab) rather than under Problems.
+  No test covers it.
+- **With only decoder-only media plugins, a video export fails with the
+  bare `codec` code.** `legacy_encoder` does not check that its plugin
+  encodes, so `checkEncoder` gets `unknown request "checkEncoder"`
+  (`MediaError::Codec`), reported as `codec` with no hint, where the docs
+  say `no_decoder`. P2a's per-export encoder components remove this path.
+- **Every `OpenInputError::InvalidData` from the FFmpeg plugin's probe
+  becomes `unsupported`** (`plugins/ffmpeg/src/probe.rs`). libavformat also
+  returns `AVERROR_INVALIDDATA` for a corrupt file of a container it knows
+  (a truncated `moov`, for example), so such a file now reads `no decoder
+  could read <path> (tried ffmpeg/ffmpeg)` after every other decoder was
+  tried, instead of FFmpeg's own message.
+- **A `MediaBackend` keeps the registry it first used**
+  (`MediaBackend::registry`), where the old backend read the global
+  factory on each (re)open. The editor rebuilds its backends on each open
+  and reload, so nothing breaks today (`a_backend_made_before_set_registry_uses_it`
+  pins it), but a backend that outlives a `set_registry` keeps using
+  plugins turned off since, and its `record_use` lands on a registry the
+  editor no longer reads.
+- **Extension-exclusive routing lets a project decoder take extensions
+  FFmpeg's manifest omits.** When any decoder lists a file's extension,
+  only those decoders are tried (`MediaRegistry::decoder_candidates`).
+  `plugins/ffmpeg/plugin.json` lists 26 extensions (not `flv`, `3gp`,
+  `mxf`, `ac3`, …), so a project plugin listing `flv` gets every `.flv`
+  file although FFmpeg reads FLV. This follows the spec, and the project
+  decoder notice still shows; widening FFmpeg's list, or trying bundled
+  decoders that do not list the extension last, would close it.
 
 ## Review follow-ups
 

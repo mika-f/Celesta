@@ -93,7 +93,7 @@ To run from source, use Rust 1.89 or later, Node.js 26, the pnpm version in
 [`mise.toml`](mise.toml) pins the Node.js and pnpm versions CI uses.
 Prepare the **FFmpeg 8.1.x development libraries** using the
 [source-build guide](https://celesta.natsuneko.cat/en/docs/build-from-source/)
-before building the codec plugin (`plugins/ffmpeg`), which links them, as
+before building the media plugin (`plugins/ffmpeg`), which links them, as
 its tests do; Celesta's own crates link no FFmpeg, and the core's tests use
 a lossless test codec instead. The FFmpeg
 executable alone is insufficient; FFmpeg 9 and later are not supported yet.
@@ -108,7 +108,7 @@ export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUG
 cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx
 ```
 
-Celesta reads and writes video and audio through the codec plugin, which it
+Celesta reads and writes video and audio through the media plugin, which it
 finds through `CELESTA_PLUGIN_PATH`. Set it to the absolute path of
 `plugins/dist`, in each shell where you run Celesta.
 
@@ -170,18 +170,18 @@ Celesta's own source code is declared under MIT OR Apache-2.0.
 
 Celesta's executables (the app, `celesta-exporter`, and `Celesta-mcp`) link
 no FFmpeg. Video and audio files are read and written by a separate program,
-the codec plugin `celesta-codec-ffmpeg`, which Celesta starts and talks to only
+the media plugin `celesta-codec-ffmpeg`, which Celesta starts and talks to only
 over its documented plugin protocol on standard input and output. The
 executables are distributed under MIT OR Apache-2.0 alone.
 
 The official Windows and macOS packages, and the Linux container image, ship
-the codec plugin built against an FFmpeg with the `x264` encoder enabled, which
-is GPL-2.0-or-later licensed. That makes the codec plugin's program, as
+the media plugin built against an FFmpeg with the `x264` encoder enabled, which
+is GPL-2.0-or-later licensed. That makes the media plugin's program, as
 distributed, subject to GPL-2.0-or-later; it sits in its own plugin folder
 (`plugins/ffmpeg`, or `Contents/PlugIns/ffmpeg` in the macOS app) with
 [`LICENSE-GPL-2.0`](LICENSE-GPL-2.0) and the corresponding-source offer in
 [`packaging/GPL-SOURCE-OFFER.md`](packaging/GPL-SOURCE-OFFER.md). Its own
 source code is MIT OR Apache-2.0 like the rest of the repository. The same
 FFmpeg build also links `libvpx` and `libopus` (BSD-3-Clause), the WebM
-encoders. Building the codec plugin against an LGPL-only FFmpeg configuration
+encoders. Building the media plugin against an LGPL-only FFmpeg configuration
 avoids the GPL, at the cost of MP4 (H.264) export.

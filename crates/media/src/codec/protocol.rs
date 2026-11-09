@@ -2,8 +2,9 @@
 //! content plugins (`celesta_plugin::protocol`), with the requests of a
 //! [`MediaProvider`]. A media plugin answers `hello` with the role
 //! `media`; `probe`, `decodeVideo`, and `decodeAudio` name the decoder
-//! component of the plugin that is to serve them. See
-//! `docs/handoff/2026-11-05-codec-plugin.md` for the requests.
+//! component of the plugin that is to serve them. See the media components
+//! spec (`docs/superpowers/specs/2026-11-08-media-components-design.md`)
+//! and `docs/handoff/2026-11-08-media-decoders.md` for the requests.
 
 use crate::codec::{
     Container, EncoderId, EncoderSettings, MediaProvider, MuxRequest, Sequential, VideoRequest,
