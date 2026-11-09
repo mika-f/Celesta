@@ -113,13 +113,14 @@ impl PluginChild {
     }
 
     /// [`Self::start`], passing `shared` on to the process, and the handle
-    /// the process maps it by (for its `hello`), or `None` when it could not
-    /// be passed on (the process then runs without it).
+    /// the process maps it by (for its `hello`): `None` without `shared`,
+    /// and the error when it could not be passed on (the process then runs
+    /// without it).
     pub fn start_sharing(
         executable: &Path,
         directory: &Path,
         shared: Option<&SharedMemory>,
-    ) -> Result<(Self, Option<u64>), String> {
+    ) -> Result<(Self, Option<io::Result<u64>>), String> {
         let name = executable.display().to_string();
         let mut command = Command::new(executable);
         command
@@ -134,7 +135,7 @@ impl PluginChild {
         let mut child = command
             .spawn()
             .map_err(|error| format!("could not start {name}: {error}"))?;
-        let shared_handle = shared.and_then(|shared| shared.handle_for(&child).ok());
+        let shared_handle = shared.map(|shared| shared.handle_for(&child));
         let started = (|| -> io::Result<_> {
             let mut input = BufWriter::new(child.stdin.take().expect("piped"));
             let mut output = BufReader::new(child.stdout.take().expect("piped"));
@@ -248,12 +249,21 @@ impl PluginChild {
     /// deadline, answers with another kind, or whose stream fails is killed;
     /// an `error` answer leaves it running. One killed through its
     /// [`PluginKillHandle`] while this waits makes it return at once.
+    ///
+    /// Only with nothing in flight ([`Self::in_flight`] is 0): otherwise
+    /// the answer taken would be the oldest request's, not this one's.
     pub fn request(
         &mut self,
         request: Message,
         expected: &str,
         timeout: Duration,
     ) -> Result<Message, RequestError> {
+        debug_assert!(
+            self.pending.is_empty(),
+            "`{}` was asked with {} requests in flight",
+            request.kind(),
+            self.pending.len()
+        );
         self.send(request, expected, timeout, DeadlineFrom::Sent)?;
         self.receive()
     }
@@ -417,9 +427,12 @@ mod tests {
 
     /// A plugin made of a shell script.
     fn script(directory: &Path, body: &str) -> std::path::PathBuf {
-        // Written under another name and renamed into place once closed:
-        // a sibling test forking while the file is open for writing would
-        // inherit the descriptor, and exec of the script fails with ETXTBSY.
+        // A sibling test forking while the file is open for writing here
+        // inherits the descriptor, and exec of the script then fails with
+        // ETXTBSY until that child execs or exits. Writing under another
+        // name and renaming does not prevent it (the rename keeps the
+        // inode the forked child still holds open for writing); the tests
+        // start the script through `start_retrying`, which waits it out.
         let path = directory.join("plugin.sh");
         let staging = directory.join("plugin.sh.new");
         std::fs::write(&staging, format!("#!/bin/sh\n{body}\n")).unwrap();

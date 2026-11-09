@@ -18,6 +18,7 @@ use serde_json::Map;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// How long each request may take before the plugin is stopped as hung.
@@ -209,7 +210,8 @@ impl MediaProcess {
     /// [`ProviderUse::Export`] with a ring; none to
     /// [`ProviderUse::Describe`] or an export without a ring. A segment
     /// that cannot be made or passed on, or a plugin that declines it,
-    /// leaves the frames in the pipe.
+    /// leaves the frames in the pipe; the first segment in a run that
+    /// cannot be made or passed on is reported on stderr.
     pub fn start_with(
         executable: &Path,
         directory: &Path,
@@ -238,11 +240,29 @@ impl MediaProcess {
             }),
         };
         let memory = segment_bytes
-            .and_then(|bytes| SharedMemory::create(bytes).ok())
+            .and_then(|bytes| {
+                SharedMemory::create(bytes)
+                    .inspect_err(|error| {
+                        frames_through_the_pipe(format_args!(
+                            "could not create {bytes} bytes of shared memory ({error})"
+                        ));
+                    })
+                    .ok()
+            })
             .filter(|memory| ring.is_none_or(|layout| memory.ring(layout).is_ok()));
         let (mut child, handle) =
             PluginChild::start_sharing(executable, directory, memory.as_ref())
                 .map_err(MediaError::CodecUnavailable)?;
+        let handle = handle.and_then(|handle| {
+            handle
+                .inspect_err(|error| {
+                    frames_through_the_pipe(format_args!(
+                        "could not hand the shared memory to {} ({error})",
+                        executable.display()
+                    ));
+                })
+                .ok()
+        });
         kill.register(child.kill_handle());
         let offer = match (&memory, handle) {
             (Some(memory), Some(handle)) => protocol::shared_frames_offer(handle, memory),
@@ -334,7 +354,7 @@ impl MediaProcess {
         match self.pending.len() {
             0 => Ok(()),
             in_flight => Err(MediaError::Codec(format!(
-                "`{kind}` was asked with {in_flight} pipelined requests in flight; they are received first"
+                "`{kind}` was asked with {in_flight} pipelined requests in flight, so it was refused; receive their answers first"
             ))),
         }
     }
@@ -370,6 +390,16 @@ impl MediaProcess {
         if let (Some(slot), Some(ring)) = (slot, self.ring.as_mut()) {
             ring.release(slot);
         }
+    }
+}
+
+/// Says on stderr, once per run, that Celesta could not set up shared
+/// memory for a plugin's process (`reason`), so its frames go through the
+/// pipe: slower, but the export or decode goes on.
+fn frames_through_the_pipe(reason: std::fmt::Arguments<'_>) {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        eprintln!("celesta: frames go through the pipe: {reason}");
     }
 }
 
