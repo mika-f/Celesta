@@ -20,8 +20,11 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 # Homebrew's unversioned ffmpeg formula is FFmpeg 9, which Celesta does not support yet.
 FFMPEG_FORMULA = "ffmpeg@8"
-# The plugins workspace's Cargo package of the bundled codec plugin.
-CODEC_PACKAGE = "celesta-codec-ffmpeg"
+# The plugins the package bundles into Contents/Resources/PlugIns, in build order, and
+# their Cargo packages in the plugins workspace. The AVFoundation plugin links
+# system frameworks only, so it needs no dylibbundler.
+BUNDLED_PLUGINS = ("ffmpeg", "avfoundation")
+BUNDLED_PACKAGES = {"ffmpeg": "celesta-codec-ffmpeg", "avfoundation": "celesta-codec-avfoundation"}
 MACHO_MAGIC = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
     b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -120,18 +123,21 @@ def validate_dependencies(binary, contents, listing):
             raise RuntimeError(f"Missing or external dependency in {binary}: {dependency}")
 
 
-def codec_packages(metadata):
-    """The plugins workspace's packages the bundled codec plugin ships.
+def bundled_packages(metadata):
+    """The plugins workspace's packages the bundled plugins ship.
 
     That workspace also holds plugins the package does not bundle (VRM), so
-    only the codec and what its normal and build dependencies reach in
-    `cargo metadata`'s resolve graph are listed; a dependency it has only
-    for its tests is not shipped.
+    only the bundled plugins and what their normal and build dependencies
+    reach in `cargo metadata`'s resolve graph are listed; a dependency a
+    plugin has only for its tests is not shipped.
     """
     packages = {package["id"]: package for package in metadata["packages"]}
-    roots = [member for member in metadata["workspace_members"] if packages[member]["name"] == CODEC_PACKAGE]
-    if len(roots) != 1:
-        raise RuntimeError(f"The plugins workspace must have one {CODEC_PACKAGE} member, not {len(roots)}")
+    roots = []
+    for name in BUNDLED_PACKAGES.values():
+        found = [member for member in metadata["workspace_members"] if packages[member]["name"] == name]
+        if len(found) != 1:
+            raise RuntimeError(f"The plugins workspace must have one {name} member, not {len(found)}")
+        roots += found
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
     reached, pending = set(), roots
     while pending:
@@ -153,11 +159,11 @@ def collect_licenses(resources, target):
     # The release build downloads only the crates it compiles, so a crate the
     # lockfile holds for tests alone (celesta-codec-test's lz4_flex) may not be
     # downloaded yet: neither workspace is read --offline. The codec plugin's
-    # crates are in the plugins workspace, and only the codec's are listed.
+    # crates are in the plugins workspace, and only the bundled plugins' are listed.
     root = json.loads(run("cargo", "metadata", *flags, capture=True))
     plugins = json.loads(run("cargo", "metadata", "--manifest-path", ROOT / "plugins/Cargo.toml", *flags, capture=True))
     packages = {}
-    for package in (*root["packages"], *codec_packages(plugins)):
+    for package in (*root["packages"], *bundled_packages(plugins)):
         packages.setdefault(package["id"], package)
     inventory = []
     for package in packages.values():
@@ -318,6 +324,12 @@ def main():
     for binary in (executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp"):
         if re.search(r"\blibav|\blibx264|\bffmpeg", run("otool", "-L", binary, capture=True), re.I):
             raise RuntimeError(f"{binary} links FFmpeg, which only the codec plugin may")
+    # The AVFoundation plugin links system frameworks alone (VideoToolbox,
+    # AudioToolbox, AVFoundation), so its folder needs no Frameworks/ and no
+    # dylibbundler; the Mach-O check below rejects any other dependency.
+    run(helpers / "node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins/avfoundation",
+        "--out", plugins, "--target", target, env=codec_env)
+    avfoundation_program = plugin_program(plugins / "avfoundation")
     frameworks = contents / "Frameworks"
     # Main executables and Node are both one directory below Contents.
     run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", executables / "Celesta",
@@ -325,9 +337,9 @@ def main():
         "-d", frameworks, "-p", "@executable_path/../Frameworks/")
     native = macho_files(app)
     required = {executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp",
-                helpers / "node", helpers / "esbuild", program}
+                helpers / "node", helpers / "esbuild", program, avfoundation_program}
     if not required.issubset(native):
-        raise RuntimeError("The app, exporter, MCP server, Node.js, esbuild, and the codec plugin must all be Mach-O executables")
+        raise RuntimeError("The app, exporter, MCP server, Node.js, esbuild, and the media plugins must all be Mach-O executables")
     minimum = (0, 0)
     for binary in native:
         run("lipo", binary, "-verify_arch", platform.machine())

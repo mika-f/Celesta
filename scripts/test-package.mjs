@@ -104,6 +104,38 @@ export default function Root() {
   const mp4 = readFileSync(output);
   assert.equal(mp4.toString('ascii', 4, 8), 'ftyp');
   assert.ok(mp4.length > 100);
+  if (mac) {
+    // The AVFoundation plugin links system frameworks only, so it ships no
+    // Frameworks/ and carries MIT/Apache-2.0 alone.
+    const avfoundation = join(packageDirectory, 'Contents/Resources/PlugIns/avfoundation');
+    assert.ok(existsSync(join(avfoundation, 'celesta-plugin.json')), 'Package must include the AVFoundation plugin');
+    const avManifest = JSON.parse(readFileSync(join(avfoundation, 'celesta-plugin.json'), 'utf8'));
+    assert.deepEqual(avManifest.roles, ['media']);
+    const ids = (kind) => (avManifest.media?.[kind] ?? []).map((component) => component.id);
+    assert.deepEqual(ids('decoders'), ['avfoundation']);
+    assert.deepEqual(ids('videoEncoders'), ['h264', 'hevc', 'prores']);
+    assert.deepEqual(ids('audioEncoders'), ['aac']);
+    assert.deepEqual(ids('muxers'), ['mp4', 'mov']);
+    const avPrograms = Object.entries(avManifest.executable ?? {});
+    assert.equal(avPrograms.length, 1, 'The AVFoundation plugin must name exactly one executable');
+    assert.ok(avPrograms[0][0].startsWith('macos-'), `The AVFoundation plugin's executable ${avPrograms[0][0]} must be a macos-* one`);
+    assert.ok(existsSync(join(avfoundation, avPrograms[0][1])), `The AVFoundation plugin's program ${avPrograms[0][1]} must exist`);
+    const avSource = JSON.parse(readFileSync(new URL('../plugins/avfoundation/plugin.json', import.meta.url), 'utf8'));
+    assert.deepEqual(
+      readdirSync(join(avfoundation, 'licenses')).sort(),
+      avSource.licenses.map((license) => basename(license)).sort(),
+      "The AVFoundation plugin's licenses/ must hold exactly the files plugins/avfoundation/plugin.json lists",
+    );
+    assert.deepEqual(readdirSync(join(avfoundation, 'licenses')).sort(), ['LICENSE-APACHE', 'LICENSE-MIT']);
+    for (const crate of ['celesta-codec-avfoundation', 'objc2-video-toolbox']) {
+      assert.ok(rustPackages.includes(crate), `licenses/rust-packages.json must name ${crate}`);
+    }
+    const output2 = join(directory, 'test-avfoundation.mp4');
+    run(exporter, ['--react', entry, '--muxer', 'avfoundation/mp4', output2]);
+    const avMp4 = readFileSync(output2);
+    assert.equal(avMp4.toString('ascii', 4, 8), 'ftyp');
+    assert.ok(avMp4.length > 100);
+  }
   assert.ok(!existsSync(join(runtime, 'react/.tmp')), 'Runtime must not write into the install directory');
   assert.ok(
     existsSync(join(runtime, 'react/dist/project-types/version.json')),

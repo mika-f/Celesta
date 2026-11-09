@@ -62,6 +62,10 @@ Celesta.app/
           Frameworks/
             (FFmpeg and its non-system shared-library dependencies)
           licenses/
+        avfoundation/
+          celesta-plugin.json
+          bin/macos-<arch>/celesta-codec-avfoundation
+          licenses/
       react/
       examples/
       licenses/
@@ -176,6 +180,12 @@ distributed, GPL-licensed; Celesta's executables stay under MIT/Apache-2.0 (see
 with `LICENSE-GPL-2.0`, is how the package satisfies GPLv2 Section 3 without
 bundling full FFmpeg/x264 source in every download. This is the same release
 concern described in the Windows packaging guide.
+
+`Contents/Resources/PlugIns/avfoundation` holds the AVFoundation plugin
+(`plugins/avfoundation`, built by the same script after FFmpeg). It is
+MIT/Apache-2.0 licensed and links only system frameworks, so it has no
+`Frameworks/` folder, needs no dylibbundler, and its `licenses/` holds
+`LICENSE-MIT` and `LICENSE-APACHE` alone.
 
 The formula also links libvpx and libopus (BSD-3-Clause), the WebM encoders, so
 `ffmpeg@8` already includes them; their notices are collected with the other

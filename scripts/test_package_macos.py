@@ -71,7 +71,7 @@ class MacPackageValidationTests(unittest.TestCase):
                 packaging.validate_dependencies(library, contents, "libavcodec.62.dylib:\n"
                     "\t@executable_path/../Frameworks/libx264.dylib (compatibility version 1.0.0, current version 1.0.0)\n")
 
-    def test_the_plugins_workspace_contributes_only_what_the_codec_ships(self):
+    def test_the_plugins_workspace_contributes_what_the_bundled_plugins_ship(self):
         def package(name):
             return {"id": f"registry+{name}#1.0.0", "name": name, "version": "1.0.0"}
 
@@ -82,28 +82,42 @@ class MacPackageValidationTests(unittest.TestCase):
                 for dependency, *kinds in deps]}
 
         names = ["celesta-codec-ffmpeg", "ez-ffmpeg", "ffmpeg-sys-next", "bindgen", "tempfile",
+                 "celesta-codec-avfoundation", "objc2-video-toolbox", "objc2", "criterion",
                  "celesta-plugin-vrm", "gltf", "rayon"]
         metadata = {
             "packages": [package(name) for name in names],
-            "workspace_members": [package("celesta-codec-ffmpeg")["id"], package("celesta-plugin-vrm")["id"]],
+            "workspace_members": [package(name)["id"] for name in
+                                  ("celesta-codec-ffmpeg", "celesta-codec-avfoundation", "celesta-plugin-vrm")],
             "resolve": {"nodes": [
                 node("celesta-codec-ffmpeg", ("ez-ffmpeg", None), ("ffmpeg-sys-next", None),
                      ("tempfile", "dev"), ("rayon", None, "dev")),
                 node("ez-ffmpeg", ("ffmpeg-sys-next", None)),
                 node("ffmpeg-sys-next", ("bindgen", "build")),
                 node("bindgen"), node("tempfile"), node("rayon"),
+                node("celesta-codec-avfoundation", ("objc2-video-toolbox", None), ("criterion", "dev")),
+                node("objc2-video-toolbox", ("objc2", None)),
+                node("objc2"), node("criterion"),
                 node("celesta-plugin-vrm", ("gltf", None), ("rayon", None)),
                 node("gltf"),
             ]},
         }
-        # Build dependencies stay listed; a dependency the codec has only for
-        # its tests is not shipped, and neither is another plugin's.
-        self.assertEqual(sorted(crate["name"] for crate in packaging.codec_packages(metadata)),
-                         ["bindgen", "celesta-codec-ffmpeg", "ez-ffmpeg", "ffmpeg-sys-next", "rayon"])
+        # Build dependencies stay listed; a dependency a bundled plugin has
+        # only for its tests is not shipped, and neither is another plugin's.
+        self.assertEqual(sorted(crate["name"] for crate in packaging.bundled_packages(metadata)),
+                         ["bindgen", "celesta-codec-avfoundation", "celesta-codec-ffmpeg", "ez-ffmpeg",
+                          "ffmpeg-sys-next", "objc2", "objc2-video-toolbox", "rayon"])
 
-    def test_a_plugins_workspace_without_the_codec_fails(self):
+    def test_a_plugins_workspace_without_a_bundled_plugin_fails(self):
+        def member(name):
+            return {"id": f"registry+{name}#1.0.0", "name": name, "version": "1.0.0"}
+
+        for present in ("celesta-codec-ffmpeg", "celesta-codec-avfoundation"):
+            package = member(present)
+            with self.assertRaises(RuntimeError, msg=f"only {present}"):
+                packaging.bundled_packages({"packages": [package], "workspace_members": [package["id"]],
+                                            "resolve": {"nodes": [{"id": package["id"], "deps": []}]}})
         with self.assertRaises(RuntimeError):
-            packaging.codec_packages({"packages": [], "workspace_members": [], "resolve": {"nodes": []}})
+            packaging.bundled_packages({"packages": [], "workspace_members": [], "resolve": {"nodes": []}})
 
     def test_a_plugin_program_is_the_one_executable_its_manifest_names(self):
         with tempfile.TemporaryDirectory() as directory:
