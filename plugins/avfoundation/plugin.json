@@ -1,0 +1,32 @@
+{
+  "id": "avfoundation",
+  "version": "0.9.0",
+  "cargoPackage": "celesta-codec-avfoundation",
+  "roles": ["media"],
+  "os": ["macos"],
+  "media": {
+    "decoders": [
+      { "id": "avfoundation", "name": "AVFoundation", "extensions": ["mp4", "mov", "m4a"] }
+    ],
+    "videoEncoders": [
+      { "id": "h264", "name": "H.264 (VideoToolbox)", "codecs": ["avc1"],
+        "inputFormats": ["nv12", "rgba16"] },
+      { "id": "hevc", "name": "HEVC (VideoToolbox)", "codecs": ["hvc1"],
+        "inputFormats": ["nv12", "p010", "rgba16"] },
+      { "id": "prores", "name": "ProRes (VideoToolbox)", "codecs": ["ap4h", "apch"],
+        "inputFormats": ["rgba16"] }
+    ],
+    "audioEncoders": [
+      { "id": "aac", "name": "AAC (AudioToolbox)", "codecs": ["mp4a"] }
+    ],
+    "muxers": [
+      { "id": "mp4", "name": "MP4 (AVFoundation)", "extensions": ["mp4", "m4v"],
+        "video": ["avc1", "hvc1"], "audio": ["mp4a"],
+        "defaultVideo": "avc1", "defaultAudio": "mp4a", "trimsLeadingAudio": true },
+      { "id": "mov", "name": "QuickTime (AVFoundation)", "extensions": ["mov"],
+        "video": ["avc1", "hvc1", "ap4h", "apch"], "audio": ["mp4a", "lpcm"],
+        "defaultVideo": "ap4h", "defaultAudio": "mp4a", "trimsLeadingAudio": true }
+    ]
+  },
+  "licenses": ["../../LICENSE-MIT", "../../LICENSE-APACHE"]
+}
