@@ -56,6 +56,14 @@ pub struct RenderFramesArgs {
     /// JPEG or WebP quality, 1–100 (default 90); higher is sharper and
     /// larger. Not accepted for PNG.
     quality: Option<u8>,
+    /// The muxer that writes the image, as `<plugin>/<component>` (see
+    /// `list_components`), instead of the built-in one the format names.
+    muxer: Option<String>,
+    /// The image encoder's component `id`, instead of the built-in one the
+    /// format names, and its `options` by key (see `describe_component`):
+    /// `compression`, `depth` and `transparent` for `builtin/png`,
+    /// `lossless` and `transparent` for `builtin/webp`.
+    video_encoder: Option<EncoderArg>,
     /// The folder to write the images to; default: a temporary folder.
     output_dir: Option<PathBuf>,
     /// Replace images that already exist in `outputDir`.
@@ -89,6 +97,14 @@ pub struct ContactSheetArgs {
     /// JPEG or WebP quality, 1–100 (default 90); higher is sharper and
     /// larger. Not accepted for PNG.
     quality: Option<u8>,
+    /// The muxer that writes the image, as `<plugin>/<component>` (see
+    /// `list_components`), instead of the built-in one the format names.
+    muxer: Option<String>,
+    /// The image encoder's component `id`, instead of the built-in one the
+    /// format names, and its `options` by key (see `describe_component`):
+    /// `compression`, `depth` and `transparent` for `builtin/png`,
+    /// `lossless` and `transparent` for `builtin/webp`.
+    video_encoder: Option<EncoderArg>,
     /// The `.png`, `.jpg`, `.jpeg`, or `.webp` to write; its extension picks
     /// the format. Default: a temporary file.
     output: Option<PathBuf>,
@@ -393,10 +409,38 @@ fn still_path(output: &Path) -> Result<(PathBuf, StillFormat), String> {
     Ok((absolute(output), format))
 }
 
-/// `quality`, checked against the still format it would encode.
-fn still_quality(format: StillFormat, quality: Option<u8>) -> Result<Option<u8>, String> {
+/// The muxer and image encoder a still tool names.
+fn still_choice(
+    muxer: &Option<String>,
+    video_encoder: &Option<EncoderArg>,
+    quality: Option<u8>,
+) -> Result<OutputChoice, String> {
+    let video = video_encoder
+        .as_ref()
+        .map(|encoder| encoder.choice("videoEncoder"))
+        .transpose()?
+        .unwrap_or_default();
+    if quality.is_some() && video.options.contains_key("quality") {
+        return Err(
+            "quality and videoEncoder.options.quality both set the quality; give one".into(),
+        );
+    }
+    Ok(OutputChoice {
+        muxer: muxer.as_deref().map(component_ref).transpose()?,
+        video,
+        ..OutputChoice::default()
+    })
+}
+
+/// `quality`, checked against the still format it would encode; a named
+/// encoder is left to say what it takes.
+fn still_quality(
+    format: StillFormat,
+    quality: Option<u8>,
+    named_encoder: bool,
+) -> Result<Option<u8>, String> {
     match quality {
-        Some(_) if !format.is_lossy() => {
+        Some(_) if !format.is_lossy() && !named_encoder => {
             Err("quality applies to JPEG and WebP output; PNG is lossless".into())
         }
         Some(quality) if !(1..=StillExport::MAX_QUALITY).contains(&quality) => Err(format!(
@@ -433,7 +477,13 @@ impl RenderFramesArgs {
         let source = self.source.check(debug_guides)?;
         let frames = selection(&self.frames, self.every, source.range.as_ref())?;
         let format = StillFormat::from(self.format.unwrap_or_default());
-        let quality = still_quality(format, self.quality)?;
+        let quality = still_quality(
+            format,
+            self.quality,
+            self.video_encoder
+                .as_ref()
+                .is_some_and(|encoder| encoder.id.is_some()),
+        )?;
         let dir = match &self.output_dir {
             Some(dir) => {
                 let dir = absolute(dir);
@@ -446,6 +496,7 @@ impl RenderFramesArgs {
         let options = ExportOptions {
             overwrite: self.overwrite.unwrap_or(false),
             range: source.range,
+            output: still_choice(&self.muxer, &self.video_encoder, self.quality)?,
             ..ExportOptions::default()
         };
         let stills = StillExport {
@@ -492,10 +543,17 @@ impl ContactSheetArgs {
                 (dir.join(format!("sheet.{format}")), format)
             }
         };
-        let quality = still_quality(format, self.quality)?;
+        let quality = still_quality(
+            format,
+            self.quality,
+            self.video_encoder
+                .as_ref()
+                .is_some_and(|encoder| encoder.id.is_some()),
+        )?;
         let options = ExportOptions {
             overwrite: self.overwrite.unwrap_or(false),
             range: source.range,
+            output: still_choice(&self.muxer, &self.video_encoder, self.quality)?,
             ..ExportOptions::default()
         };
         let stills = StillExport {
@@ -787,6 +845,47 @@ mod tests {
                 json!({ "source": "a.tsx", "frames": [0], "format": "gif" })
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn still_tools_take_components() {
+        let reference = |plugin: &str, component: &str| ComponentRef {
+            plugin: plugin.into(),
+            component: component.into(),
+        };
+        let job = frames_job(json!({
+            "source": "a.tsx", "frames": [0], "format": "webp",
+            "videoEncoder": { "options": { "lossless": true } }
+        }))
+        .unwrap();
+        assert_eq!(
+            job.options.output.video.options["lossless"],
+            SettingInput::Value(SettingValue::Boolean(true))
+        );
+        let job = sheet_job(json!({
+            "source": "a.tsx", "every": 5, "muxer": "builtin/image",
+            "videoEncoder": { "id": "builtin/png", "options": { "depth": 16 } }
+        }))
+        .unwrap();
+        assert_eq!(
+            job.options.output.muxer,
+            Some(reference("builtin", "image"))
+        );
+        assert_eq!(
+            job.options.output.video.component,
+            Some(reference("builtin", "png"))
+        );
+        rejects(
+            frames_job(json!({ "source": "a.tsx", "frames": [0], "muxer": "avif" })),
+            "`avif` is not a component reference",
+        );
+        rejects(
+            frames_job(json!({
+                "source": "a.tsx", "frames": [0], "format": "jpeg", "quality": 50,
+                "videoEncoder": { "options": { "quality": 60 } }
+            })),
+            "both set the quality",
         );
     }
 

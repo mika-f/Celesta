@@ -42,7 +42,11 @@ evaluated but not rendered or encoded.
 
 Still images are selected by --frame/--frames or --every and written as PNG
 (.png), JPEG (.jpg, .jpeg) or lossy WebP (.webp) by the output's extension;
---quality sets JPEG and WebP quality, 1-100 (default 90). Stills are drawn
+--quality sets JPEG and WebP quality, 1-100 (default 90). --video-option
+sets the image encoder's settings: compression=none|fastest|fast|balanced|high,
+depth=16 and transparent=true for PNG; lossless=true and transparent=true for
+WebP (--describe builtin/png lists them). --muxer and --video-encoder name a
+plugin's image components. Stills are drawn
 over the export's opaque background, as an MP4 is, so JPEG's missing alpha
 channel loses nothing. Multiple frames use output-000090.png names with the
 output's extension; frame numbers are zero-based. --every <n> picks frames
@@ -845,6 +849,9 @@ enum OutputKind {
 }
 
 /// The flags that choose a video's components, by argument id.
+/// The component flags a still takes: an image encoder and its settings.
+const STILL_COMPONENT_FLAGS: [&str; 3] = ["muxer", "video_encoder", "video_option"];
+
 const COMPONENT_FLAGS: [(&str, &str); 7] = [
     ("preset", "--preset"),
     ("preset_file", "--preset-file"),
@@ -874,7 +881,11 @@ fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind,
         if cli.looping {
             return Err("--loop applies to video output, not still frames".into());
         }
-        if let Some(flag) = COMPONENT_FLAGS.iter().find(|(id, _)| explicit(id)) {
+        if let Some(flag) = COMPONENT_FLAGS
+            .iter()
+            .filter(|(id, _)| !STILL_COMPONENT_FLAGS.contains(id))
+            .find(|(id, _)| explicit(id))
+        {
             return Err(format!(
                 "{} applies to video output, not still frames",
                 flag.1
@@ -886,8 +897,14 @@ fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind,
         // An output with no still extension is left to the exporter, which
         // reports it as `invalid_selection`.
         let format = StillFormat::from_extension(output);
-        if cli.quality.is_some() && format == Some(StillFormat::Png) {
+        if cli.quality.is_some() && cli.video_encoder.is_none() && format == Some(StillFormat::Png)
+        {
             return Err("--quality applies to JPEG and WebP output; PNG is lossless".into());
+        }
+        if cli.quality.is_some() && cli.video_option.iter().any(|(key, _)| key == "quality") {
+            return Err(
+                "--quality and --video-option quality= both set the quality; give one".into(),
+            );
         }
         return Ok(OutputKind::Stills);
     }
@@ -961,7 +978,10 @@ fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
             range,
             output: match kind {
                 OutputKind::Video(choice) => choice.clone(),
-                OutputKind::Stills | OutputKind::SubtitlesOnly => OutputChoice::default(),
+                // The audio and preset flags are refused for a still, so the
+                // choice carries only its image components.
+                OutputKind::Stills => cli.output_choice(),
+                OutputKind::SubtitlesOnly => OutputChoice::default(),
             },
             render_quality: cli.render_quality,
             driver: cli.driver,
@@ -1101,6 +1121,60 @@ mod tests {
         );
         // An unknown extension is left to the exporter, as for video.
         assert_eq!(choice(&["--frame", "0", "out.gif"]), Ok(OutputKind::Stills));
+    }
+
+    #[test]
+    fn stills_take_video_options() {
+        let cli = |args: &[&str]| {
+            let matches = Cli::command()
+                .try_get_matches_from(
+                    ["celesta-exporter", "project.celesta.json"]
+                        .into_iter()
+                        .chain(args.iter().copied()),
+                )
+                .unwrap();
+            Cli::from_arg_matches(&matches).unwrap()
+        };
+        let args = [
+            "--frame",
+            "0",
+            "--video-option",
+            "transparent=true",
+            "out.png",
+        ];
+        assert_eq!(choice(&args), Ok(OutputKind::Stills));
+        let job = job(&cli(&args), &OutputKind::Stills, None);
+        assert_eq!(
+            job.options.output.video.options["transparent"],
+            SettingInput::Text("true".into())
+        );
+        for (flags, flag) in [
+            (["--preset", "web"], "--preset"),
+            (["--audio-encoder", "none"], "--audio-encoder"),
+        ] {
+            let message = error(&[&["--frame", "0"][..], &flags, &["out.png"]].concat());
+            assert_eq!(
+                message,
+                format!("{flag} applies to video output, not still frames")
+            );
+        }
+        let message = error(&[
+            "--frame",
+            "0",
+            "--quality",
+            "50",
+            "--video-option",
+            "quality=60",
+            "out.jpg",
+        ]);
+        assert_eq!(
+            message,
+            "--quality and --video-option quality= both set the quality; give one"
+        );
+        assert_eq!(
+            choice(&["--frame", "0", "--muxer", "foo/avif", "out.avif"]),
+            Ok(OutputKind::Stills)
+        );
     }
 
     #[test]
@@ -1249,8 +1323,12 @@ mod tests {
             (&["--preset", "web"], "--preset"),
             (&["--preset-file", "presets.json"], "--preset-file"),
         ] {
-            let stills = error(&[&["--frame", "0", "out.png"][..], flags].concat());
-            assert!(stills.contains(flag), "{stills}");
+            if !STILL_COMPONENT_FLAGS
+                .contains(&flag.trim_start_matches("--").replace('-', "_").as_str())
+            {
+                let stills = error(&[&["--frame", "0", "out.png"][..], flags].concat());
+                assert!(stills.contains(flag), "{stills}");
+            }
             let subtitles = error(&[&["--subtitles", "a.srt"][..], flags].concat());
             assert!(subtitles.contains(flag), "{subtitles}");
         }

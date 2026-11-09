@@ -114,6 +114,14 @@ export interface StillsOptions extends SourceOptions, RunOptions, RenderOptions 
   to?: Timecode;
   /** JPEG and WebP quality, 1-100. */
   quality?: number;
+  /** The muxer that writes the images, as `<plugin>/<component>`, instead of the built-in one. */
+  muxer?: string;
+  /**
+   * The image encoder and its settings, instead of the built-in one:
+   * `compression`, `depth` and `transparent` for `builtin/png`, `lossless`
+   * and `transparent` for `builtin/webp`. Give `quality` here or above, not both.
+   */
+  videoEncoder?: EncoderOptions;
   /** Write the frames as one labelled grid image. */
   contactSheet?: boolean | { columns?: number; tileWidth?: number };
   /** Draw a React entry's `<DebugOverlay>` and `<DebugBounds>`. */
