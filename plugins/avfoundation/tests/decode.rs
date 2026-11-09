@@ -636,14 +636,20 @@ fn rotated_video_is_displayed_upright() {
     assert_eq!(frame.pixels.len(), (WIDTH * HEIGHT * 4) as usize);
     // Turned a quarter clockwise, the source's bottom left is the top left,
     // its top left the top right, and its bottom right the bottom left.
-    // Within 40 per channel: AVAssetWriter converts the fixture itself, and
-    // VideoToolbox's software H.264 encoder (a CI machine's) bleeds blue
-    // into (25, 30, 247); the four quadrants stay far apart.
-    let close = |actual: [u8; 3], expected: [u8; 3]| {
-        actual
-            .iter()
-            .zip(expected)
-            .all(|(actual, expected)| actual.abs_diff(expected) <= 40)
+    // Each corner is judged by the quadrant colour it is nearest: how close
+    // it comes depends on the encoder (VideoToolbox's software H.264
+    // encoder, a CI machine's, bleeds a neighbour's colour by up to 60 at
+    // this size), and the four colours are far apart.
+    let nearest = |actual: [u8; 3]| {
+        (0..QUADRANTS.len())
+            .min_by_key(|&quadrant| {
+                actual
+                    .iter()
+                    .zip(QUADRANTS[quadrant])
+                    .map(|(&actual, expected)| u32::from(actual.abs_diff(expected)).pow(2))
+                    .sum::<u32>()
+            })
+            .expect("four quadrants")
     };
     for ((column, row), quadrant) in [
         ((2, 2), 2),
@@ -652,9 +658,11 @@ fn rotated_video_is_displayed_upright() {
         ((HEIGHT - 3, WIDTH - 3), 1),
     ] {
         let actual = rgb(&frame, column, row);
-        assert!(
-            close(actual, QUADRANTS[quadrant]),
-            "({column}, {row}): {actual:?}, not {:?}",
+        assert_eq!(
+            nearest(actual),
+            quadrant,
+            "({column}, {row}): {actual:?} is nearest {:?}, not {:?}",
+            QUADRANTS[nearest(actual)],
             QUADRANTS[quadrant]
         );
     }
