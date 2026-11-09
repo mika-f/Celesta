@@ -132,8 +132,9 @@ impl SharedMemory {
     }
 
     /// The segment as a ring of `layout.slots` slots. Fails when the layout
-    /// has no slots or no bytes in them, or its segment is longer than this
-    /// one.
+    /// has no slots or no bytes in them, when it has more than one slot and
+    /// `slot_bytes` is not a multiple of 8 (the next slot's header would be
+    /// misaligned), or when its segment is longer than this one.
     pub fn ring(&self, layout: RingLayout) -> io::Result<Ring<'_>> {
         if layout.slots == 0 || layout.slot_bytes == 0 {
             return Err(io::Error::new(
@@ -152,9 +153,8 @@ impl SharedMemory {
                 ),
             ));
         }
-        let fits = SLOT_HEADER
-            .checked_add(layout.slot_bytes)
-            .and_then(|stride| stride.checked_mul(layout.slots))
+        let fits = layout
+            .segment_bytes()
             .is_some_and(|bytes| bytes <= self.len);
         if !fits {
             return Err(io::Error::new(
@@ -280,19 +280,23 @@ pub struct RingLayout {
 }
 
 impl RingLayout {
-    // `stride`, `segment_bytes` and `offset` are unchecked: they are valid only
-    // for a layout `SharedMemory::ring` accepted (no overflow, slot in range).
-    /// The bytes one slot takes, header and data.
+    /// The bytes one slot takes, header and data. Unchecked: valid only
+    /// for a layout [`SharedMemory::ring`] accepted, which cannot overflow.
     pub const fn stride(&self) -> usize {
         SLOT_HEADER + self.slot_bytes
     }
 
-    /// The bytes the whole ring takes.
-    pub const fn segment_bytes(&self) -> usize {
-        self.slots * self.stride()
+    /// The bytes the whole ring takes; `None` when that overflows `usize`,
+    /// as a layout from elsewhere may.
+    pub const fn segment_bytes(&self) -> Option<usize> {
+        match self.slot_bytes.checked_add(SLOT_HEADER) {
+            Some(stride) => stride.checked_mul(self.slots),
+            None => None,
+        }
     }
 
-    /// Where slot `slot` starts in the segment.
+    /// Where slot `slot` starts in the segment. Unchecked: valid only for
+    /// a layout [`SharedMemory::ring`] accepted and a slot in its range.
     pub const fn offset(&self, slot: usize) -> usize {
         slot * self.stride()
     }
@@ -818,8 +822,20 @@ mod tests {
             slot_bytes: 100,
         };
         assert_eq!(layout.stride(), 164);
-        assert_eq!(layout.segment_bytes(), 492);
+        assert_eq!(layout.segment_bytes(), Some(492));
         assert_eq!(layout.offset(2), 328);
+        for layout in [
+            RingLayout {
+                slots: 2,
+                slot_bytes: usize::MAX - SLOT_HEADER,
+            },
+            RingLayout {
+                slots: 3,
+                slot_bytes: usize::MAX,
+            },
+        ] {
+            assert_eq!(layout.segment_bytes(), None, "{layout:?}");
+        }
     }
 
     #[test]
@@ -828,7 +844,7 @@ mod tests {
             slots: 3,
             slot_bytes: 16,
         };
-        let host = SharedMemory::create(layout.segment_bytes()).unwrap();
+        let host = SharedMemory::create(layout.segment_bytes().unwrap()).unwrap();
         let plugin = SharedMemory::open(host.duplicate_handle().unwrap(), host.len()).unwrap();
         let writer = plugin.ring(layout).unwrap();
         writer.write_slot(1, &[1; 8], 2).unwrap();
@@ -889,7 +905,7 @@ mod tests {
             slots: 3,
             slot_bytes: 8,
         };
-        let host = SharedMemory::create(layout.segment_bytes()).unwrap();
+        let host = SharedMemory::create(layout.segment_bytes().unwrap()).unwrap();
         let ring = host.ring(layout).unwrap();
         assert!(ring.write_slot(3, &[1], 2).is_err());
         assert_eq!(ring.read_slot(3, 1, 2), None);
@@ -917,7 +933,7 @@ mod tests {
             slots: 3,
             slot_bytes: 8,
         };
-        let host = SharedMemory::create(layout.segment_bytes()).unwrap();
+        let host = SharedMemory::create(layout.segment_bytes().unwrap()).unwrap();
         let ring = host.ring(layout).unwrap();
         ring.write_slot(0, &[9; 4], 2).unwrap();
         ring.write_slot(1, &[1, 2, 3, 4], 2).unwrap();

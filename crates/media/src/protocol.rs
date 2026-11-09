@@ -1952,7 +1952,7 @@ mod tests {
     /// A segment of `TWO_SLOTS`, `A` in slot 0 and `B` in slot 1 under
     /// generation 2.
     fn ring_with_frames() -> (SharedMemory, Vec<u8>, Vec<u8>) {
-        let memory = SharedMemory::create(TWO_SLOTS.segment_bytes()).unwrap();
+        let memory = SharedMemory::create(TWO_SLOTS.segment_bytes().unwrap()).unwrap();
         let (a, b) = (vec![0xA; 64], vec![0xB; 48]);
         let ring = memory.ring(TWO_SLOTS).unwrap();
         ring.write_slot(0, &a, 2).unwrap();

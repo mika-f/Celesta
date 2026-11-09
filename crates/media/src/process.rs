@@ -12,7 +12,7 @@ use crate::ring::pipe_depth;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_plugin::MEDIA_PROTOCOL_VERSION;
 use celesta_plugin::protocol::Message;
-use celesta_plugin::shared::{RingLayout, SLOT_HEADER, SharedMemory};
+use celesta_plugin::shared::{RingLayout, SharedMemory};
 use celesta_plugin_host::{DeadlineFrom, PluginChild, PluginKillSwitch, RequestError};
 use serde_json::Map;
 use std::collections::{HashMap, VecDeque};
@@ -231,13 +231,8 @@ impl MediaProcess {
         let segment_bytes = match (transport, purpose) {
             (FrameTransport::Pipe, _) => None,
             (FrameTransport::SharedMemory, ProviderUse::Decode) => Some(SHARED_FRAME_BYTES),
-            (FrameTransport::SharedMemory, _) => ring.and_then(|layout| {
-                // Checked: a caller's layout may be any size.
-                layout
-                    .slot_bytes
-                    .checked_add(SLOT_HEADER)?
-                    .checked_mul(layout.slots)
-            }),
+            // Checked: a caller's layout may be any size.
+            (FrameTransport::SharedMemory, _) => ring.and_then(|layout| layout.segment_bytes()),
         };
         let memory = segment_bytes
             .and_then(|bytes| {
@@ -763,7 +758,7 @@ mod tests {
     #[cfg(any(unix, windows))]
     #[test]
     fn a_ring_hands_out_each_slot_once_until_released() {
-        let memory = SharedMemory::create(TWO_SLOTS.segment_bytes()).unwrap();
+        let memory = SharedMemory::create(TWO_SLOTS.segment_bytes().unwrap()).unwrap();
         let mut ring = FrameRing::new(memory, TWO_SLOTS);
         assert_eq!(ring.free_slots(), 2);
         assert_eq!(ring.place(&[1; 8]), slot(0, 2, 8));
@@ -778,7 +773,7 @@ mod tests {
     #[cfg(any(unix, windows))]
     #[test]
     fn a_frame_larger_than_a_slot_is_not_placed() {
-        let memory = SharedMemory::create(TWO_SLOTS.segment_bytes()).unwrap();
+        let memory = SharedMemory::create(TWO_SLOTS.segment_bytes().unwrap()).unwrap();
         let mut ring = FrameRing::new(memory, TWO_SLOTS);
         assert_eq!(ring.place(&[1; 17]), None);
         assert_eq!(ring.free_slots(), 2);
@@ -789,7 +784,7 @@ mod tests {
     #[cfg(any(unix, windows))]
     #[test]
     fn placed_frames_read_back_under_their_generation() {
-        let memory = SharedMemory::create(TWO_SLOTS.segment_bytes()).unwrap();
+        let memory = SharedMemory::create(TWO_SLOTS.segment_bytes().unwrap()).unwrap();
         let plugin = SharedMemory::open(memory.duplicate_handle().unwrap(), memory.len()).unwrap();
         let mut ring = FrameRing::new(memory, TWO_SLOTS);
         let frames = [vec![0xA; 16], vec![0xB; 5], vec![0xC; 8]];

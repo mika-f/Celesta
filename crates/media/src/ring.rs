@@ -2,7 +2,7 @@
 //! `celesta_plugin::shared::RingLayout`).
 
 use crate::provider::{PIPE_WINDOW, PixelFormat};
-use celesta_plugin::shared::{RingLayout, SLOT_HEADER};
+use celesta_plugin::shared::RingLayout;
 
 /// The slots a ring has when it fits.
 pub const RING_SLOTS: usize = 3;
@@ -26,8 +26,8 @@ pub fn ring_layout(formats: &[PixelFormat], width: u32, height: u32) -> Option<R
         .unwrap_or_else(|| PixelFormat::Rgba16.frame_bytes(width, height))
         .checked_next_multiple_of(8)?;
     (1..=RING_SLOTS).rev().find_map(|slots| {
-        let bytes = slots.checked_mul(slot_bytes.checked_add(SLOT_HEADER)?)?;
-        (bytes <= MAX_RING_BYTES).then_some(RingLayout { slots, slot_bytes })
+        let layout = RingLayout { slots, slot_bytes };
+        (layout.segment_bytes()? <= MAX_RING_BYTES).then_some(layout)
     })
 }
 
