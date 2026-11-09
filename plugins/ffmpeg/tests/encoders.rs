@@ -294,6 +294,10 @@ fn software_offers_pick_rgba_by_bit_depth() {
     );
 }
 
+// Unix only: the test makes the trailer fail by removing the file the
+// muxer still has open, which Windows refuses ("being used by another
+// process").
+#[cfg(unix)]
 #[test]
 fn a_muxer_whose_finish_failed_can_still_be_aborted() {
     let mut codec = FfmpegCodec::new();
