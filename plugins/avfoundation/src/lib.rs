@@ -47,6 +47,14 @@ mod esds;
     not(any(target_os = "macos", test)),
     expect(
         dead_code,
+        reason = "only the macOS decoder names codecs and colours outside their tests"
+    )
+)]
+mod names;
+#[cfg_attr(
+    not(any(target_os = "macos", test)),
+    expect(
+        dead_code,
         reason = "only the macOS VideoToolbox encoders read parameter sets outside their tests"
     )
 )]
@@ -56,6 +64,8 @@ mod params;
 mod apple;
 #[cfg(target_os = "macos")]
 mod audio;
+#[cfg(target_os = "macos")]
+mod decoder;
 #[cfg(target_os = "macos")]
 mod formats;
 #[cfg(target_os = "macos")]

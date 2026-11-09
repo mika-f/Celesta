@@ -1,13 +1,13 @@
 //! [`AvfCodec`], the plugin's [`MediaProvider`], and the plugin as one made
 //! in this process ([`registered`], [`install`]).
 //!
-//! It describes every component, from what this Mac's frameworks list; a
-//! component it cannot open yet answers
-//! [`MediaError::ComponentUnavailable`]. Its sessions, of every kind, are
-//! numbered from one counter.
+//! It describes every component, from what this Mac's frameworks list. Its
+//! encoder and muxer sessions, of every kind, are numbered from one counter;
+//! the decoder's sequential sessions are named by the renderer.
 
 use crate::audio::{self, AudioSession};
 use crate::components::{self, AudioCodec, MuxerFormat, VideoCodec};
+use crate::decoder::AvfDecoder;
 use crate::muxer::{self, MuxerSession};
 use crate::video::{self, VideoSession};
 use crate::{DECODER_ID, PLUGIN_ID, apple};
@@ -25,12 +25,10 @@ use std::sync::Arc;
 /// The plugin's manifest source, which declares its components.
 const PLUGIN_JSON: &str = include_str!("../plugin.json");
 
-/// Why a component the plugin declares cannot be opened yet.
-const NOT_IMPLEMENTED: &str = "not implemented yet";
-
 /// A [`MediaProvider`] on VideoToolbox, AudioToolbox, and AVFoundation.
 #[derive(Default)]
 pub struct AvfCodec {
+    decoder: AvfDecoder,
     video: HashMap<SessionId, VideoSession>,
     audio: HashMap<SessionId, AudioSession>,
     muxers: HashMap<SessionId, MuxerSession>,
@@ -61,19 +59,10 @@ fn no_component(kind: &str, component: &str) -> MediaError {
     MediaError::Codec(format!("no {kind} {component:?} in {PLUGIN_ID}"))
 }
 
-/// The error for `component`, which the plugin declares but cannot open yet.
-fn not_implemented(component: &str) -> MediaError {
-    MediaError::ComponentUnavailable {
-        component: component.to_owned(),
-        reason: NOT_IMPLEMENTED.to_owned(),
-    }
-}
-
-/// The decoder the request names, which only [`DECODER_ID`] is; it cannot
-/// read anything yet.
-fn unopened_decoder<T>(decoder: &str) -> Result<T, MediaError> {
+/// `Ok` for the decoder [`DECODER_ID`], the plugin's one.
+fn check_decoder(decoder: &str) -> Result<(), MediaError> {
     if decoder == DECODER_ID {
-        Err(not_implemented(DECODER_ID))
+        Ok(())
     } else {
         Err(no_component("decoder", decoder))
     }
@@ -135,26 +124,29 @@ impl MediaProvider for AvfCodec {
 }
 
 impl Decoder for AvfCodec {
-    fn probe(&mut self, decoder: &str, _path: &Path) -> Result<MediaProbe, MediaError> {
-        unopened_decoder(decoder)
+    fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
+        check_decoder(decoder)?;
+        self.decoder.probe(path)
     }
 
     fn decode_video(
         &mut self,
         decoder: &str,
-        _request: &VideoRequest<'_>,
+        request: &VideoRequest<'_>,
     ) -> Result<VideoFrame, MediaError> {
-        unopened_decoder(decoder)
+        check_decoder(decoder)?;
+        self.decoder.decode(request)
     }
 
     fn decode_audio(
         &mut self,
         decoder: &str,
-        _path: &Path,
-        _sample_rate: u32,
-        _channels: u16,
+        path: &Path,
+        sample_rate: u32,
+        channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
-        unopened_decoder(decoder)
+        check_decoder(decoder)?;
+        self.decoder.decode_audio(path, sample_rate, channels)
     }
 }
 
@@ -293,13 +285,6 @@ mod tests {
     use celesta_media::{Color, PixelFormat, Settings, Track, TrackConfig};
     use celesta_plugin_host::MediaManifest;
 
-    fn unavailable<T: std::fmt::Debug>(result: Result<T, MediaError>) -> (String, String) {
-        match result {
-            Err(MediaError::ComponentUnavailable { component, reason }) => (component, reason),
-            other => panic!("expected componentUnavailable, got {other:?}"),
-        }
-    }
-
     #[test]
     fn registered_declares_the_manifest() {
         let plugin = registered();
@@ -336,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn the_others_are_not_opened_yet() {
+    fn other_components_are_refused() {
         let mut codec = AvfCodec::default();
         let settings = Settings::new();
         let color = Color::bt709_limited();
@@ -359,18 +344,19 @@ mod tests {
             codec.open_muxer(&request),
             Err(MediaError::Codec(message)) if message == r#"no muxer "webm" in avfoundation"#
         ));
+        // The decoder reads: a missing file is not found.
         let path = Path::new("/nonexistent/clip.mp4");
-        assert_eq!(
-            unavailable(codec.probe(DECODER_ID, path)),
-            (DECODER_ID.to_owned(), NOT_IMPLEMENTED.to_owned())
-        );
-        assert_eq!(
-            unavailable(codec.decode_audio(DECODER_ID, path, 48_000, 2)),
-            (DECODER_ID.to_owned(), NOT_IMPLEMENTED.to_owned())
-        );
+        assert!(matches!(
+            codec.probe(DECODER_ID, path),
+            Err(MediaError::NotFound(missing)) if missing == path
+        ));
+        assert!(matches!(
+            codec.decode_audio(DECODER_ID, path, 48_000, 2),
+            Err(MediaError::NotFound(_))
+        ));
         assert!(matches!(
             codec.probe("ffmpeg", path),
-            Err(MediaError::Codec(_))
+            Err(MediaError::Codec(message)) if message == r#"no decoder "ffmpeg" in avfoundation"#
         ));
     }
 

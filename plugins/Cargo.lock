@@ -2309,7 +2309,9 @@ dependencies = [
  "bitflags 2.13.2",
  "block2",
  "objc2",
+ "objc2-core-foundation",
  "objc2-core-media",
+ "objc2-core-video",
  "objc2-foundation",
 ]
 

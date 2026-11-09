@@ -27,13 +27,13 @@ serde_json = "1.0.154"
 block2 = { version = "0.6.2", default-features = false, features = ["std"] }
 objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
 objc2-audio-toolbox = { version = "0.3.2", default-features = false, features = ["AudioCodec", "AudioConverter", "AudioFormat", "objc2-core-audio-types"] }
-# AVAssetWriter, for the muxers.
-objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-media", "AVAssetWriter", "AVAssetWriterInput", "AVMediaFormat"] }
+# AVAssetWriter, for the muxers; AVAssetReader, for the decoder.
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-core-media", "objc2-core-video", "AVAsset", "AVAssetReader", "AVAssetReaderOutput", "AVAssetTrack", "AVAssetWriter", "AVAssetWriterInput", "AVAsynchronousKeyValueLoading", "AVMediaFormat", "AVVideoSettings"] }
 objc2-core-audio-types = { version = "0.3.2", default-features = false, features = ["CoreAudioBaseTypes"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["alloc", "CFArray", "CFData", "CFDictionary", "CFNumber", "CFString"] }
-objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "objc2", "objc2-core-audio-types", "CMAttachment", "CMBase", "CMBlockBuffer", "CMFormatDescription", "CMSampleBuffer", "CMTime"] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "objc2", "objc2-core-audio-types", "objc2-core-video", "CMAttachment", "CMBase", "CMBlockBuffer", "CMFormatDescription", "CMSampleBuffer", "CMTime", "CMTimeRange"] }
 objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "objc2", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVPixelBufferPool", "CVReturn"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSString", "NSURL"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSString", "NSURL", "NSValue"] }
 objc2-video-toolbox = { version = "0.3.2", default-features = false, features = ["std", "objc2", "block2", "objc2-core-media", "objc2-core-video", "VTCompressionProperties", "VTCompressionSession", "VTErrors", "VTSession", "VTVideoEncoderList"] }
 
 # The FFmpeg plugin decodes and muxes what the encoders give, in the tests.
@@ -45,10 +45,6 @@ celesta-gpu-renderer = { path = "../../crates/gpu-renderer", version = "=0.9.0" 
 celesta-project = { path = "../../crates/project", version = "=0.9.0" }
 # The FFmpeg plugin's bindings, for reading decoded frames' planes.
 ffmpeg-sys-next = "8.1.0"
-# The muxer tests read their files back through AVAssetReader too, until the
-# plugin's own decoder does.
-objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-media", "AVAsset", "AVAssetReader", "AVAssetReaderOutput", "AVAssetTrack", "AVMediaFormat"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSEnumerator", "NSString", "NSURL", "NSValue"] }
 # The export tests' images.
 png = "0.18.1"
 tempfile = "3.23.0"

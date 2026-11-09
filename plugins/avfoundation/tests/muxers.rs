@@ -1,8 +1,7 @@
 //! The AVAssetWriter muxers, in this process: what they write of the
 //! VideoToolbox, AudioToolbox, and FFmpeg encoders' packets, read back with
 //! the FFmpeg plugin's decoder and libavformat, and with AVFoundation's own
-//! reader (`AVAssetReader`, through a helper here until the plugin's
-//! decoder reads files).
+//! reader (`AVAssetReader`, through this plugin's decoder).
 #![cfg(target_os = "macos")]
 
 use celesta_codec_avfoundation::AvfCodec;
@@ -13,14 +12,7 @@ use celesta_media::{
     PixelFormat, SettingValue, Settings, Track, TrackConfig, TrackPacket, VideoEncoderRequest,
     VideoRequest,
 };
-use objc2_av_foundation::{
-    AVAssetReader, AVAssetReaderAudioMixOutput, AVAssetReaderStatus, AVMediaTypeAudio, AVURLAsset,
-};
-use objc2_core_media::CMSampleBuffer;
-use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL};
-use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
 const WIDTH: u32 = 64;
@@ -394,88 +386,16 @@ fn ffmpeg_audio(path: &Path) -> Vec<f32> {
         .samples
 }
 
-/// `path`'s audio as `AVAssetReader` decodes it, through an
-/// `AVAssetReaderAudioMixOutput` of every audio track: interleaved `f32`,
+/// `path`'s audio as this plugin's decoder (`AVAssetReader`) decodes it, at
 /// 48 kHz stereo.
 fn avfoundation_audio(path: &Path) -> Vec<f32> {
-    let key = |name: &str| NSString::from_str(name);
-    let keys = [
-        key("AVFormatIDKey"),
-        key("AVSampleRateKey"),
-        key("AVNumberOfChannelsKey"),
-        key("AVLinearPCMBitDepthKey"),
-        key("AVLinearPCMIsFloatKey"),
-        key("AVLinearPCMIsBigEndianKey"),
-        key("AVLinearPCMIsNonInterleaved"),
-    ];
-    let values = [
-        NSNumber::new_u32(u32::from_be_bytes(*b"lpcm")),
-        NSNumber::new_f64(f64::from(AUDIO_RATE)),
-        NSNumber::new_i32(2),
-        NSNumber::new_i32(32),
-        NSNumber::new_bool(true),
-        NSNumber::new_bool(false),
-        NSNumber::new_bool(false),
-    ];
-    let keys: Vec<&NSString> = keys.iter().map(|key| &**key).collect();
-    let values: Vec<&objc2::runtime::AnyObject> =
-        values.iter().map(|value| value.as_ref()).collect();
-    let settings = NSDictionary::from_slices(&keys, &values);
-    let mut samples = Vec::new();
-    // SAFETY: the asset, reader, and output are used as AVFoundation
-    // documents: the output is added before reading starts, and each
-    // sample buffer is LPCM of the settings given, whose data buffer holds
-    // `data_length` bytes of interleaved f32.
-    unsafe {
-        let url = NSURL::fileURLWithPath(&NSString::from_str(path.to_str().unwrap()));
-        let asset = AVURLAsset::URLAssetWithURL_options(&url, None);
-        let media = AVMediaTypeAudio.unwrap();
-        let tracks: Vec<_> = asset
-            .tracks()
-            .iter()
-            .filter(|track| track.mediaType().isEqualToString(media))
-            .collect();
-        assert!(!tracks.is_empty(), "AVFoundation finds no audio track");
-        let tracks = NSArray::from_retained_slice(&tracks);
-        let output =
-            AVAssetReaderAudioMixOutput::assetReaderAudioMixOutputWithAudioTracks_audioSettings(
-                &tracks,
-                Some(&settings),
-            );
-        let reader = AVAssetReader::assetReaderWithAsset_error(&asset).unwrap();
-        assert!(reader.canAddOutput(&output));
-        reader.addOutput(&output);
-        assert!(reader.startReading(), "{:?}", reader.error());
-        while let Some(sample) = output.copyNextSampleBuffer() {
-            append_samples(&sample, &mut samples);
-        }
-        assert_eq!(reader.status(), AVAssetReaderStatus::Completed);
-    }
-    samples
-}
-
-/// Appends `sample`'s interleaved `f32` data to `samples`.
-fn append_samples(sample: &CMSampleBuffer, samples: &mut Vec<f32>) {
-    // SAFETY: `sample` is a valid LPCM sample buffer; `bytes` has room for
-    // its data buffer's whole length.
-    unsafe {
-        let Some(data) = sample.data_buffer() else {
-            return;
-        };
-        let length = data.data_length();
-        let mut bytes = vec![0_u8; length];
-        if length > 0 {
-            let destination = NonNull::from(&mut bytes[..]).cast::<c_void>();
-            assert_eq!(data.copy_data_bytes(0, length, destination), 0);
-        }
-        samples.extend(
-            bytes
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|&bytes| f32::from_le_bytes(bytes)),
-        );
-    }
+    let mut codec = AvfCodec::default();
+    codec
+        .decoder()
+        .unwrap()
+        .decode_audio(celesta_codec_avfoundation::DECODER_ID, path, AUDIO_RATE, 2)
+        .unwrap()
+        .samples
 }
 
 /// The frame of the loudest sample of `samples`' first channel (stereo).

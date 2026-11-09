@@ -287,3 +287,64 @@ fn errors_keep_their_kind() {
     let opened = open(&mut program, "h264", &Settings::new(), &[PixelFormat::Nv12]).unwrap();
     program.video_encoder().unwrap().abort_video(opened.session);
 }
+
+/// A second of Opus in WebM, which only the FFmpeg plugin writes and
+/// reads, at `output`.
+fn webm(output: &Path) {
+    let mut ffmpeg = FfmpegCodec::new();
+    let encoder = ffmpeg.audio_encoder().unwrap();
+    let opened = encoder
+        .open_audio(&AudioEncoderRequest {
+            component: "opus",
+            settings: &Settings::new(),
+            sample_rate: 48_000,
+            channels: 2,
+        })
+        .unwrap();
+    let mut answers = vec![
+        encoder
+            .encode_audio(opened.session, 0, &vec![0.0; 48_000 * 2])
+            .unwrap(),
+    ];
+    answers.push(encoder.finish_audio(opened.session).unwrap());
+    let (packets, config) = gathered(answers);
+    let track = Track::Audio {
+        config,
+        timescale: opened.sample_rate,
+        sample_rate: opened.sample_rate,
+        channels: opened.channels,
+        delay: opened.delay,
+    };
+    let muxer = ffmpeg.muxer().unwrap();
+    let session = muxer
+        .open_muxer(&MuxerRequest {
+            component: "webm",
+            settings: &Settings::new(),
+            output,
+            tracks: &[track],
+            leading_audio: 0,
+        })
+        .unwrap();
+    let packets: Vec<TrackPacket> = packets
+        .into_iter()
+        .map(|packet| TrackPacket { track: 0, packet })
+        .collect();
+    muxer.write_packets(session, &packets).unwrap();
+    muxer.finish_muxer(session).unwrap();
+}
+
+#[test]
+fn the_program_refuses_what_it_cannot_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("sound.webm");
+    webm(&output);
+    let mut program = program_with(FrameTransport::from_environment(), ProviderUse::Decode);
+    match program
+        .decoder()
+        .expect("the plugin has a decoder")
+        .probe(celesta_codec_avfoundation::DECODER_ID, &output)
+    {
+        Err(MediaError::Unsupported { path, .. }) => assert_eq!(path, output),
+        other => panic!("expected unsupported, got {other:?}"),
+    }
+}
