@@ -129,11 +129,10 @@ impl Exporter {
             }
         };
         progress(ExportProgress::Muxing);
-        let timing = timing.with(session.timing());
         let tracks = session
             .finish()
             .map_err(|error| cancellation.settle(error))?;
-        report_timing(&timing);
+        report_timing(&timing.with(tracks.timing));
         let staged = staged.expect("an encoded export has its staged output");
         let files = self.publish_video(staged, output_path, tracks.files.clone(), cancellation)?;
         progress(ExportProgress::Wrote(video_file(

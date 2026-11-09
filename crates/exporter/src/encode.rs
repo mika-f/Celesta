@@ -146,9 +146,12 @@ pub(crate) struct ExportedTracks {
     pub alpha: bool,
     /// The files the muxer wrote, as it named them (the staged output).
     pub files: Vec<PathBuf>,
+    /// What the session measured, once every packet was staged and written.
+    pub timing: SessionTiming,
 }
 
-/// What a session measured of its staged video: the interleaver's.
+/// What a session measured of its staged video: the interleaver's, over
+/// the whole export (finish's packets included).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SessionTiming {
     pub peak_staged_bytes: usize,
@@ -537,8 +540,9 @@ impl ExportSession {
         self.video.as_ref().map_or(0, |video| video.frames_sent)
     }
 
-    /// What the session measured of its staged video so far.
-    pub(crate) fn timing(&self) -> SessionTiming {
+    /// What the session measured of its staged video so far; the whole
+    /// export's is [`ExportedTracks::timing`].
+    fn timing(&self) -> SessionTiming {
         self.interleaver
             .as_ref()
             .map_or_else(SessionTiming::default, |interleaver| SessionTiming {
@@ -1185,6 +1189,7 @@ impl ExportSession {
             audio,
             alpha,
             files,
+            timing: self.timing(),
         })
     }
 
@@ -2296,6 +2301,18 @@ mod tests {
             .map(|packet| packet.packet.dts)
             .collect();
         assert_eq!(dts, (0..20).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn the_staged_peak_counts_the_packets_finish_receives() {
+        let (mut session, _, _) = piped_session(Receiving::Answers);
+        open(&mut session);
+        session.no_audio().unwrap();
+        // The three frames' answers are received only by finish.
+        frames(&mut session, 3);
+        assert_eq!(session.timing().peak_staged_bytes, 0);
+        let timing = session.finish().unwrap().timing;
+        assert!(timing.peak_staged_bytes >= 300, "{timing:?}");
     }
 
     #[test]
