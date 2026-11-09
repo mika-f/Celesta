@@ -874,13 +874,16 @@ fn aac_audio_must_follow_the_audio_before_it() {
     encoder.finish_audio(opened.session).unwrap();
 }
 
-#[test]
-fn aac_through_ffmpegs_mp4_is_aligned() {
-    let mut codec = AvfCodec::default();
-    let opened = open_aac(&mut codec, &Settings::new(), AAC_RATE, 2).unwrap();
-    let (packets, config) = packets_and_config(encode_aac(&mut codec, opened.session, &click()));
-    let directory = tempfile::tempdir().unwrap();
-    let output = directory.path().join("click.mp4");
+/// `packets` of a 48 kHz stereo AAC track of `config`, delayed by `delay`,
+/// written by the FFmpeg plugin's `mp4` into `directory` and decoded by its
+/// decoder at 48 kHz stereo.
+fn through_ffmpegs_mp4(
+    directory: &Path,
+    config: TrackConfig,
+    delay: u64,
+    packets: Vec<Packet>,
+) -> celesta_media::AudioBuffer {
+    let output = directory.join("audio.mp4");
     let mut ffmpeg = FfmpegCodec::new();
     let muxer = ffmpeg.muxer().unwrap();
     let track = Track::Audio {
@@ -888,7 +891,7 @@ fn aac_through_ffmpegs_mp4_is_aligned() {
         timescale: AAC_RATE,
         sample_rate: AAC_RATE,
         channels: 2,
-        delay: opened.delay,
+        delay,
     };
     let session = muxer
         .open_muxer(&MuxerRequest {
@@ -905,11 +908,20 @@ fn aac_through_ffmpegs_mp4_is_aligned() {
         .collect();
     muxer.write_packets(session, &packets).unwrap();
     muxer.finish_muxer(session).unwrap();
-    let decoded = ffmpeg
+    ffmpeg
         .decoder()
         .unwrap()
         .decode_audio(celesta_codec_ffmpeg::DECODER_ID, &output, AAC_RATE, 2)
-        .unwrap();
+        .unwrap()
+}
+
+#[test]
+fn aac_through_ffmpegs_mp4_is_aligned() {
+    let mut codec = AvfCodec::default();
+    let opened = open_aac(&mut codec, &Settings::new(), AAC_RATE, 2).unwrap();
+    let (packets, config) = packets_and_config(encode_aac(&mut codec, opened.session, &click()));
+    let directory = tempfile::tempdir().unwrap();
+    let decoded = through_ffmpegs_mp4(directory.path(), config, opened.delay, packets);
     let frames = decoded.frame_count();
     assert!(frames.abs_diff(48_000) <= 1_024, "{frames} frames");
     let peak = decoded
@@ -921,6 +933,53 @@ fn aac_through_ffmpegs_mp4_is_aligned() {
         .map(|(frame, _)| frame)
         .unwrap();
     assert_eq!(peak, CLICK);
+}
+
+#[test]
+fn aac_codes_its_first_second_as_well_as_the_rest() {
+    // Four hits a second, each a chord at full strength from its first
+    // sample (the FFmpeg plugin's looping hits), at the level a mono source
+    // takes in each channel of the exporter's stereo mix.
+    let hit = |frame: usize| {
+        let (tau, t) = (std::f64::consts::TAU, (frame % 12_000) as f64 / 48_000.0);
+        std::f64::consts::FRAC_1_SQRT_2
+            * 0.2
+            * (-40.0 * t).exp()
+            * ((tau * 1000.0 * t).cos()
+                + (tau * 2500.0 * t).sin()
+                + (tau * 4400.0 * t).sin()
+                + (tau * 6000.0 * t).cos())
+    };
+    let samples: Vec<f32> = (0..AAC_RATE as usize * 2)
+        .flat_map(|frame| [hit(frame) as f32; 2])
+        .collect();
+    let mut codec = AvfCodec::default();
+    let opened = open_aac(&mut codec, &Settings::new(), AAC_RATE, 2).unwrap();
+    let (packets, config) = packets_and_config(encode_aac(&mut codec, opened.session, &samples));
+    let directory = tempfile::tempdir().unwrap();
+    let decoded = through_ffmpegs_mp4(directory.path(), config, opened.delay, packets);
+    // Each hit's first 1024 samples of the left channel against the
+    // source, relative to their energy.
+    let errors: Vec<f64> = (0..8)
+        .map(|hit_index| {
+            let (mut error, mut energy) = (0.0, 0.0);
+            for frame in hit_index * 12_000..hit_index * 12_000 + 1_024 {
+                let expected = hit(frame);
+                error += (f64::from(decoded.samples[frame * 2]) - expected).powi(2);
+                energy += expected.powi(2);
+            }
+            error / energy
+        })
+        .collect();
+    // An average bitrate starts low and settles over the first second,
+    // which a loop's lead-in of 16384 frames does not cover; a constant one
+    // codes the first hit as it codes the rest.
+    let worst_settled = errors[4..].iter().copied().fold(0.0, f64::max);
+    assert!(
+        errors[0] <= 3.0 * worst_settled,
+        "the first hit is off by {}, the settled ones by up to {worst_settled}: {errors:?}",
+        errors[0]
+    );
 }
 
 #[test]

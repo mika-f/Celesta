@@ -20,6 +20,7 @@ use objc2_audio_toolbox::{
     AudioConverterDispose, AudioConverterFillComplexBuffer, AudioConverterGetProperty,
     AudioConverterGetPropertyInfo, AudioConverterNew, AudioConverterPrimeInfo,
     AudioConverterPropertyID, AudioConverterRef, AudioConverterSetProperty,
+    kAudioCodecBitRateControlMode_Constant, kAudioCodecPropertyBitRateControlMode,
     kAudioConverterApplicableEncodeBitRates, kAudioConverterCompressionMagicCookie,
     kAudioConverterEncodeBitRate, kAudioConverterPrimeInfo,
     kAudioConverterPropertyMaximumOutputPacketSize,
@@ -85,6 +86,32 @@ impl Converter {
             ));
         }
         Ok(value)
+    }
+
+    /// Sets `property`, which is one `UInt32`, to `value`.
+    fn set(
+        &self,
+        property: AudioConverterPropertyID,
+        name: &str,
+        value: u32,
+    ) -> Result<(), MediaError> {
+        // SAFETY: the converter is valid, and `value` is the `UInt32` the
+        // property takes.
+        let status = unsafe {
+            AudioConverterSetProperty(
+                self.raw(),
+                property,
+                size_of::<u32>() as u32,
+                NonNull::from(&value).cast(),
+            )
+        };
+        if status != 0 {
+            return Err(failed(
+                &format!("AudioConverterSetProperty({name})"),
+                status,
+            ));
+        }
+        Ok(())
     }
 
     /// The value of `property`, a list of `T` of the size it says.
@@ -278,6 +305,16 @@ pub(crate) fn open(
     }
     let converter =
         Converter(NonNull::new(raw.cast()).ok_or_else(|| failed("AudioConverterNew", status))?);
+    // AudioToolbox's default, a long-term average, starts low and settles
+    // over the first second, so a video's first hits (and a loop's start,
+    // whose lead-in is shorter) come out worse than the rest; a constant
+    // bitrate codes every packet alike, as FFmpeg's `aac_at` asks for a
+    // bitrate.
+    converter.set(
+        kAudioCodecPropertyBitRateControlMode,
+        "BitRateControlMode",
+        kAudioCodecBitRateControlMode_Constant,
+    )?;
 
     let applicable = converter.list(
         kAudioConverterApplicableEncodeBitRates,
@@ -306,19 +343,7 @@ pub(crate) fn open(
             ),
         });
     }
-    // SAFETY: the converter is valid, and the bitrate is the `UInt32` the
-    // property takes.
-    let status = unsafe {
-        AudioConverterSetProperty(
-            converter.raw(),
-            kAudioConverterEncodeBitRate,
-            size_of::<u32>() as u32,
-            NonNull::from(&bitrate).cast(),
-        )
-    };
-    if status != 0 {
-        return Err(failed("AudioConverterSetProperty(EncodeBitRate)", status));
-    }
+    converter.set(kAudioConverterEncodeBitRate, "EncodeBitRate", bitrate)?;
 
     let prime = converter.value(
         kAudioConverterPrimeInfo,
