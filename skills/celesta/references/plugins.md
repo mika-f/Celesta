@@ -127,7 +127,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   (decoded over 4096×2560; exported over about 33 megapixels, such as
   8192×4320, as the memory holds a frame in the largest format the encoder
   accepts, 16-bit RGBA for FFmpeg's, within 256 MiB), they go through its
-  pipe.
+  pipe. When Celesta cannot create the shared memory or hand it to the
+  process, the frames go through the pipe and it prints
+  `celesta: frames go through the pipe: <reason>` once on stderr.
   `CELESTA_CODEC_SHARED_MEMORY=0` keeps every frame, decoded or exported, in
   the pipe, for a media plugin that misbehaves with it.
 
