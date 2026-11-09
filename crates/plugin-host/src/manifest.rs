@@ -1433,6 +1433,32 @@ pub(crate) mod tests {
             "{:?}",
             ffmpeg.manifest.roles
         );
+        assert!(
+            ffmpeg.has_role(PluginRole::Media),
+            "{:?}",
+            ffmpeg.manifest.roles
+        );
+        // It reads what Celesta's media layers name, under its own id.
+        let media = ffmpeg
+            .manifest
+            .media
+            .as_ref()
+            .expect("ffmpeg declares media");
+        let decoders: Vec<_> = media
+            .decoders
+            .iter()
+            .map(|decoder| decoder.id.as_str())
+            .collect();
+        assert_eq!(decoders, ["ffmpeg"]);
+        for extension in ["mp4", "mov", "webm", "mp3", "wav"] {
+            assert!(
+                media.decoders[0]
+                    .extensions
+                    .iter()
+                    .any(|listed| listed == extension),
+                "{extension}"
+            );
+        }
         assert_eq!(ffmpeg.module(), None);
         let mut found: Vec<_> = found
             .iter()
