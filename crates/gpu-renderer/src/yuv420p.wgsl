@@ -4,10 +4,10 @@
 // encoder without a CPU-side color conversion. `luma10` and `chroma10` write
 // yuv420p10le's 10-bit codes instead, into 16-bit integer planes.
 //
-// The matrix is BT.601 with limited ("TV") range, the conversion libswscale
-// applies to untagged RGB input, so the encoded colors match an RGBA export.
-// Its 10-bit form is the 8-bit one scaled by 4. Chroma is the average of
-// each 2x2 block, sited at the block's center.
+// The matrix is BT.709 with limited ("TV") range: the matrix players assume
+// for HD video and the one every Celesta export is tagged with. Its 10-bit
+// form is the 8-bit one scaled by 4. Chroma is the average of each 2x2 block,
+// sited at the block's center.
 //
 // Each plane is rounded with `dither` (`dither.wgsl`, prepended) from the
 // frame's own precision. Rounded alone, a dark gradient's luma would step
@@ -33,9 +33,9 @@ fn rgb(pixel: vec2<u32>) -> vec3<f32> {
     return clamp(textureLoad(frame, pixel, 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// The pixel's luma in 8-bit code values, unrounded.
+// The pixel's BT.709 luma in 8-bit code values, unrounded.
 fn luma_value(pixel: vec2<u32>) -> f32 {
-    return 16.0 + dot(rgb(pixel), vec3<f32>(65.481, 128.553, 24.966));
+    return 16.0 + dot(rgb(pixel), vec3<f32>(46.559, 156.629, 15.812));
 }
 
 // The U and V of the 2x2 block at `block` in 8-bit code values, unrounded.
@@ -44,8 +44,8 @@ fn chroma_values(block: vec2<u32>) -> vec2<f32> {
     let color = (rgb(pixel) + rgb(pixel + vec2<u32>(1u, 0u)) + rgb(pixel + vec2<u32>(0u, 1u))
         + rgb(pixel + vec2<u32>(1u, 1u))) * 0.25;
     return vec2<f32>(
-        128.0 + dot(color, vec3<f32>(-37.797, -74.203, 112.0)),
-        128.0 + dot(color, vec3<f32>(112.0, -93.786, -18.214)),
+        128.0 + dot(color, vec3<f32>(-25.664, -86.336, 112.0)),
+        128.0 + dot(color, vec3<f32>(112.0, -101.730, -10.270)),
     );
 }
 

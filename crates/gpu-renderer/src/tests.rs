@@ -3220,9 +3220,9 @@ fn dithers_gentle_gradients_converted_to_yuv420p() {
         assert!(longest_run(row) <= 28, "{row:?}");
         assert_eq!(row[0], 16);
     }
-    // #102030, whose luma is 40.9 before rounding: within the dither's code
-    // of 41.
-    assert!(luma[256 * 8..].iter().all(|&value| value.abs_diff(41) <= 1));
+    // #102030, whose luma is 41.55 before rounding: within the dither's code
+    // of 42.
+    assert!(luma[256 * 8..].iter().all(|&value| value.abs_diff(42) <= 1));
 }
 
 #[test]
@@ -3335,15 +3335,16 @@ fn converts_frames_to_within_a_dithered_code_of_libswscale() {
     let (luma, chroma) = frame.pixels().split_at(32);
     let (u, v) = chroma.split_at(8);
     // `ffmpeg -f rawvideo -pix_fmt rgba -i … -pix_fmt yuv420p` output
-    // for the same pixels. White, black, and the chroma of the neutral
-    // columns are whole codes before rounding, so the dither keeps them.
+    // `-vf scale=out_color_matrix=bt709:out_range=tv` for the same pixels.
+    // White, black, red's V, blue's U, and the chroma of the neutral columns
+    // are whole codes before rounding, so the dither keeps them.
     assert_dithered_plane(
         luma,
-        &[81, 81, 41, 41, 235, 235, 16, 16],
+        &[63, 63, 32, 32, 235, 235, 16, 16],
         &[false, false, false, false, true, true, true, true],
     );
-    assert_dithered_plane(u, &[90, 240, 128, 128], &[false, false, true, true]);
-    assert_dithered_plane(v, &[240, 110, 128, 128], &[false, false, true, true]);
+    assert_dithered_plane(u, &[102, 240, 128, 128], &[false, true, true, true]);
+    assert_dithered_plane(v, &[240, 118, 128, 128], &[true, false, true, true]);
 }
 
 #[test]
@@ -3363,8 +3364,8 @@ fn pipelines_yuv420p_frames_with_padded_plane_rows() {
     // Each color's Y, U, and V, and whether its luma is a whole code before
     // rounding, which the dither keeps.
     let colors = [
-        (Color::rgba(255, 0, 0, 255), [81, 90, 240], false),
-        (Color::rgba(0, 0, 255, 255), [41, 240, 110], false),
+        (Color::rgba(255, 0, 0, 255), [63, 102, 240], false),
+        (Color::rgba(0, 0, 255, 255), [32, 240, 118], false),
         (Color::rgba(255, 255, 255, 255), [235, 128, 128], true),
         (Color::rgba(0, 0, 0, 255), [16, 128, 128], true),
         (Color::rgba(128, 128, 128, 255), [126, 128, 128], false),
@@ -3426,13 +3427,13 @@ fn converts_frames_to_ten_bit_yuv420p() {
     renderer
         .set_readback_format(ReadbackFormat::Yuv420p10)
         .unwrap();
-    // Each color's Y, U, and V: the 8-bit codes times 4. Only red's Y and U
-    // fall between codes (325.9 and 360.8), which the dither rounds either
+    // Each color's Y, U, and V: the 8-bit values times 4. Only red's Y and U
+    // fall between codes (250.2 and 409.4), which the dither rounds either
     // way.
     let colors = [
         (
             Color::rgba(255, 0, 0, 255),
-            [326, 361, 960],
+            [250, 409, 960],
             [false, false, true],
         ),
         (Color::rgba(255, 255, 255, 255), [940, 512, 512], [true; 3]),
