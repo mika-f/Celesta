@@ -603,9 +603,11 @@ Fixed after the whole-branch review:
   invalid `channels` setting, and a muxer answering `files: []` reports
   the output path.
 
-Left open from the whole-branch review: `describe`'s
-`inputFormats` is read strictly, so a format Celesta does not know fails
-the whole answer; a muxer may refuse a codec string the resolve matched
+Left open from the whole-branch review: `describe`'s whole answer is
+read strictly as one list of components, so anything in it Celesta does
+not know, an `inputFormats` format or a setting's `type` alike, fails the
+whole answer and makes every component of the plugin unavailable (as
+spec:327 asks); a muxer may refuse a codec string the resolve matched
 by family (`lpcm` against `lpcm.s24le`); one load-dependent run of
 `a_plugins_refusal_is_an_invalid_option` saw the test codec's process
 exit; resolving may start candidate processes it then stops; and
