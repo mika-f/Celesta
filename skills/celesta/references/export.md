@@ -13,6 +13,7 @@ stands for its path.
 - [Commands](#commands)
 - [Options](#options)
 - [Encoders and settings](#encoders-and-settings)
+- [Export presets](#export-presets)
 - [Transparent video](#transparent-video)
 - [Looping video](#looping-video)
 - [Loudness](#loudness)
@@ -65,9 +66,10 @@ Celesta-export --json --react scene.tsx out.mp4
 | `--video-option <key=value>` | A setting of the video encoder, read by its type; repeatable. For H.264: `preset=ultrafast` … `veryslow` (default `medium`; encoding speed against file size only, it does not change what is rendered), `crf=0`…`51` (default 18, lower is better quality), `bitDepth=10`. See [Encoders and settings](#encoders-and-settings). |
 | `--audio-option <key=value>` | A setting of the audio encoder, such as `bitrate=128000`; repeatable. |
 | `--video-encoder <plugin/id>`, `--audio-encoder <plugin/id>` | An encoder other than the muxer's default; `--audio-encoder none` writes no audio and refuses `--audio-option`, as does a muxer that takes no audio. |
-| `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. |
+| `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. One that does not list the output's extension still writes it, with a warning. |
 | `--list-components [--check]`, `--describe <plugin/id>` | List the installed media components, or show one's settings; take no source or output. See [Encoders and settings](#encoders-and-settings). |
-| `--preset <name>` | An export preset. Presets are not available yet: every name fails with `unknown_preset`. x264's preset is `--video-option preset=<name>`. |
+| `--preset <name>` | An export preset from `export-presets.json`: looked up in `--preset-file`, then the project's file, then the user's. The other component and option flags go over it. x264's preset is `--video-option preset=<name>`. See [Export presets](#export-presets). |
+| `--preset-file <file>` | An `export-presets.json` to look `--preset` up in first; a missing or invalid one is a `usage` error. |
 | `--loop` | The video plays in a loop (Shorts, TikTok): the AAC sound is encoded to run from its end into its start. Any video output; WebM ignores it. See [Looping video](#looping-video). |
 | `--loudness <l>` | Bring the whole mix to an integrated loudness: LUFS from -70 to -5, `streaming` (-14), or `broadcast` (-23). Video only. See [Loudness](#loudness). |
 | `--true-peak <db>` | The highest true peak `--loudness` may leave, -9 to 0 dBTP (default -1). |
@@ -131,24 +133,93 @@ Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.
   the wrong type or out of range, or a field hidden by another's value
   (`crf` with `rateControl=vbr`) fails with `invalid_option` before
   anything renders.
-- `--preset` no longer means x264's preset: `--preset ultrafast` fails with
-  `unknown_preset`, and its hint (the `--json` report's `hint`, or a
-  `hint:` line after the message without `--json`) says
-  `use --video-option preset=ultrafast`.
+- `--preset` names an export preset ([Export presets](#export-presets)),
+  not x264's preset: `--preset ultrafast` fails with `unknown_preset`
+  (unless a presets file has that name), and its hint (the `--json`
+  report's `hint`, or a `hint:` line after the message without `--json`)
+  says `use --video-option preset=ultrafast`.
+- A `--muxer` (or a preset's muxer) that does not list the output's
+  extension still writes the file, and the export warns
+  `ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway`.
+  Name the output with the muxer's extension instead.
 - The renderer converts RGB to YUV on the GPU when the encoder takes YUV
   and the renderer is not a software one; otherwise the encoder converts.
   There is no flag for it.
 - The MCP `export_video` tool takes `muxer`, `videoEncoder`
   (`{"id": "ffmpeg/libx264", "options": {"preset": "slow", "crf": 20}}`;
   `id` may be left out for the muxer's default), and `audioEncoder` (the
-  same shape, or `"none"`), with typed option values. MCP's
+  same shape, or `"none"`), with typed option values, and `preset` and
+  `presetFile` as `--preset` and `--preset-file`. MCP's
   `list_components` (`check`) and `describe_component` (`component`) tools
   answer as `--list-components` and `--describe` do.
-  `@celesta.studio/exporter` takes the same `muxer`, `videoEncoder`, and
-  `audioEncoder` in `exportVideo` (its option values go to the CLI as
-  `--video-option`/`--audio-option` text, read by each setting's type, so
-  it takes `"18"` where MCP wants `18`), and has
+  `@celesta.studio/exporter` takes the same `muxer`, `videoEncoder`,
+  `audioEncoder`, `preset`, and `presetFile` in `exportVideo` (its option
+  values go to the CLI as `--video-option`/`--audio-option` text, read by
+  each setting's type, so it takes `"18"` where MCP wants `18`), and has
   `listComponents({ check })` and `describeComponent(id)`.
+
+## Export presets
+
+A preset is a named muxer, encoders, and their options, kept in an
+`export-presets.json`: the user's, beside `settings.json`
+(`~/Library/Application Support/Celesta` on macOS, `%APPDATA%\Celesta` on
+Windows, `$XDG_CONFIG_HOME/celesta` or `~/.config/celesta` elsewhere), and
+a project's, at its root (the folder holding `celesta.config.json`, else the
+entry's folder). The app's export dialog writes both ("Save as preset…")
+and remembers its last choice in the user file's `last`.
+
+```json
+{
+  "version": 1,
+  "presets": [
+    { "name": "YouTube 1080p",
+      "muxer": "ffmpeg/mp4",
+      "video": { "component": "ffmpeg/libx264", "options": { "crf": 18, "preset": "slow" } },
+      "audio": { "component": "ffmpeg/aac", "options": { "bitrate": 192000 } } },
+    { "name": "Silent", "muxer": "ffmpeg/mp4", "audio": "none" }
+  ],
+  "default": "YouTube 1080p"
+}
+```
+
+- Every part is optional: a missing `muxer` comes from the extension, a
+  missing `component` is the muxer's default encoder (which then takes the
+  preset's `options`). `options` hold only values that differ from the
+  defaults. `"audio": "none"` writes no audio. `default` belongs in the
+  project file only; `last` in the user's only. `version` is 1.
+- `--preset <name>` looks in `--preset-file`, then the project's file, then
+  the user's; the first match wins, and a project preset that hides a user
+  preset of the same name warns. Names are case-sensitive.
+- Flags go over the preset: `--muxer`, `--video-encoder`, and
+  `--audio-encoder` replace its components (another encoder drops the
+  preset's options for it), and each `--video-option`/`--audio-option` key
+  replaces the preset's value.
+- **The project's `default`** applies to a video export with no
+  `--preset` and none of `--muxer`, `--video-encoder`, `--audio-encoder`
+  (`--audio-encoder none` counts). Options alone layer over it. So in a
+  project with an `export-presets.json`, check its `default` before
+  assuming an export gets the extension's defaults; the JSON result's
+  `muxer` and `video`/`audio` `component` say what was used.
+- **Stale presets** (after a plugin update) do not fail: an unknown key is
+  left out, a bad value reset to its default, a missing or unusable
+  component replaced by the default (without its options). Each is a
+  warning in the result's `warnings` (and a `warning:` line without
+  `--json`), such as `` preset `Web`: ffmpeg/libx264 has no setting `speed`; it is
+  left out ``. A value given with `--video-option`/`--audio-option`
+  (or MCP/TS `options`) is still strict: `invalid_option`.
+- A presets file that is broken fails with `invalid_presets` only when the
+  lookup reaches it; a missing file is skipped.
+
+```sh
+Celesta-export --json --overwrite --preset "YouTube 1080p" --react scene.tsx out.mp4
+Celesta-export --json --overwrite --preset-file presets/web.json --preset web \
+  --video-option crf=20 --react scene.tsx out.mp4
+```
+
+MCP's `export_video` takes `preset` and `presetFile` (relative paths are
+resolved against the server's working directory), and
+`@celesta.studio/exporter`'s `exportVideo` takes `preset` and `presetFile`;
+both use the project's `default` in the same cases.
 
 ## Transparent video
 
@@ -361,7 +432,8 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `component_unavailable` | A named component is not installed (check `--list-components`), or a chosen one does not work here; `message` has the reason, such as `this FFmpeg build has no libx264`. |
 | `incompatible_components` | The named encoder writes no codec the muxer takes (H.264 in `.webm`, for example). |
 | `invalid_option` | A `--video-option`/`--audio-option` key the encoder does not have, a value of the wrong type or out of range, or a hidden field; or the plugin refused the combination. Check with `--describe`. |
-| `unknown_preset` | `--preset` names no preset (presets are not available yet). For an x264 name, the hint says to use `--video-option preset=<name>`. |
+| `unknown_preset` | `--preset` names a preset in no presets file, or the project file's `default` does (`the default preset … is in no presets file`). For an x264 name, the hint says to use `--video-option preset=<name>`. See [Export presets](#export-presets). |
+| `invalid_presets` | A presets file the lookup reached cannot be read, is not valid JSON, or has a `version` other than 1; `message` starts with its path. Fix the file; do not delete a user's file without asking. |
 | `no_decoder` | No media decoder can run (no media plugin was found, or those found declare no decoder or have no program for this computer), so the entry's video and audio files could not be read (still exports, and video exports whose media plugins have no decoder; a video export with no media plugin at all fails with `unsupported_output` first). Reinstall the app, or in a source build run `node scripts/plugins/build.mts plugins/ffmpeg` and `export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root, in the shell that runs Celesta. A `plugins/dist/ffmpeg` with `"roles": ["codec"]` is from an older checkout and is ignored: build it again. |
 | `unsupported_media` | Media plugins were found, but none of their decoders reads a file the entry uses (`message` names the file and the decoders tried). Convert it to a format the `ffmpeg` plugin reads, such as MP4 or WAV. |
 | `unsupported_dimensions` | Video needs non-zero even width and height. |

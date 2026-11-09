@@ -110,11 +110,11 @@ compositions: no package a composition imports depends on them, though
 | `celesta-renderer` | CPU reference renderer, PNG output, and shared text/path rasterization. |
 | `celesta-gpu-renderer` | wgpu rendering, compositing, readback, and native preview bridge. |
 | `celesta-bench` | GPU export benchmarks driven by `scripts/bench.py`; not published. |
-| `celesta-exporter` | Frame-exact export through media components (MP4, MOV, WebM, and whatever muxers plugins add), including React entries: `resolve_output`, the interleaver, `--list-components` and `--describe`. |
+| `celesta-exporter` | Frame-exact export through media components (MP4, MOV, WebM, and whatever muxers plugins add), including React entries: `resolve_output`, the interleaver, `--list-components` and `--describe`, and export presets (`presets.rs`: the user's and the project's `export-presets.json`, `PresetLookup`, `--preset`/`--preset-file`, and the project's `default`; see [`docs/handoff/2026-11-09-export-presets-dialog.md`](docs/handoff/2026-11-09-export-presets-dialog.md)). |
 | `celesta-mcp` | `Celesta-mcp`, the MCP server agents use to inspect, render, and export. |
 | `celesta-editor-core` | Read-only document, summaries, scene/audio evaluation, and timeline clock. |
 | `celesta-editor-theme` | Shared desktop theme. |
-| `celesta-editor` | GPUI app: preview, playback, panels, canvas and Properties editing, and export controls. |
+| `celesta-editor` | GPUI app: preview, playback, panels, canvas and Properties editing, and export controls, including the export dialog (`export_dialog/`: its model over the registry and the presets files, and the view with its preset, container, encoder fields, range, loudness, and "Save as preset…"). |
 | `celesta-source-edit` | Locates JSX elements in user TSX source and applies byte-span edits for the editor's write-back. |
 | `celesta-remote` | Asset path resolution, remote download cache, and stylesheet font discovery. |
 | `celesta-react-bridge` | Long-lived Node process and frame/component requests over stdin/stdout. |
@@ -140,7 +140,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/voicevox` (`@celesta.studio/voicevox`) | VOICEVOX AudioQuery lip sync. |
 | `packages/aivis-speech` (`@celesta.studio/aivis-speech`) | AivisSpeech AudioQuery and WAV lip sync. |
 | `packages/cli` (`@celesta.studio/cli`) | Entry CLI the bridge spawns; depends on every package it serves. |
-| `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts (`exportVideo` with `muxer`, `videoEncoder`, `audioEncoder`; `listComponents`, `describeComponent`); not part of the runtime. |
+| `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts (`exportVideo` with `preset`, `presetFile`, `muxer`, `videoEncoder`, `audioEncoder`; `listComponents`, `describeComponent`); not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
 | `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mts`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mts`, `cargo.mts`, `manifest.mts`, and `licenses.mts`; `bump-version.mts`, with its helper `version.mts`, which bumps Celesta's version and the plugins that follow it; `affected.mts`, with its helpers `inputs.mts` and `lockfile.mts`, which lists the first-party plugins a change affects, from `plugins/Cargo.lock` or a plugin's own lockfile, the pnpm graph, and `turbo.json`, for CI's `Plugins (<OS>)` jobs; and `libtest.mts`, which finds the skipped tests in a `cargo test -- --show-output` log for `scripts/report-skipped-tests.mts`. They are TypeScript, which Node runs as it is, stripping the types; not published. |
@@ -292,8 +292,15 @@ covered by the dated handoff notes.
 - Exports write through media components (`resolve_output`): the output's
   extension picks the muxer, its default codecs the encoders, and
   `--muxer`, `--video-encoder`, `--audio-encoder`, `--video-option`, and
-  `--audio-option` override them (`--preset` names an export preset, and
-  fails with `unknown_preset` until presets land). libx264's `preset` and
+  `--audio-option` override them. `--preset` takes an export preset from
+  `--preset-file`, the project root's `export-presets.json`, or the user's
+  (beside `settings.json`), and a project's `default` preset applies when no
+  preset and no component is named; a stale preset warns and falls back,
+  while an explicit value stays strict (`invalid_option`), and a broken
+  presets file the lookup reaches is `invalid_presets`. A named or preset
+  muxer that does not list the output's extension writes it anyway, with a
+  warning. The editor's Export… opens the export dialog, which reads the
+  same files and exports an explicit choice. libx264's `preset` and
   `crf` default to `medium` and 18; `bitDepth=10` encodes yuv420p10le
   (High 10). Celesta offers the encoder `yuv420p`, `yuv420p10`, `nv12`, and
   `p010`, which the GPU converts (`ReadbackFormat::Yuv420p`, `Yuv420p10`,

@@ -48,6 +48,13 @@ If `.celesta/` is in a folder above the one containing the composition, such as 
 Celesta talks to a React composition’s runtime over its standard output, so a direct `process.stdout.write()` in the composition or in a package it imports breaks that connection, and loading stops with an error that says something other than the Celesta runtime wrote to its stdout. Log with `console.log()` or `console.error()` instead, which go to standard error. If a package writes to standard output on its own, check its options for a quiet or logging setting.
 
 :::
+:::toggle[An export fails with unknown_preset or invalid_presets]
+
+`unknown_preset` means that no presets file has the name `--preset` (or MCP's and TypeScript's `preset`) gives: Celesta looks in the `--preset-file`, then the project's `export-presets.json` at the project root, then yours beside `settings.json`, and names are case-sensitive. When the message says `the default preset … is in no presets file`, the project file's `"default"` names a preset no file has: fix the name, or remove `"default"`. A name such as `veryfast` is x264's preset, which is a setting: use `--video-option preset=veryfast`, as the hint says.
+
+`invalid_presets` means that a presets file the export had to look in cannot be read, is not valid JSON, or has a `version` other than `1`; the message names the file. Fix or remove it. A `--preset-file` with the same problem is rejected with the other arguments instead. See [Export presets](/en/docs/export/#export-presets).
+
+:::
 :::toggle[MP4 export will not start]
 
 Use non-zero, even-numbered dimensions and confirm that all local media is available. If the destination file already exists, choose another path or explicitly add `--overwrite` to the CLI command.
