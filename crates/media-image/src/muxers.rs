@@ -94,7 +94,6 @@ fn write_whole(path: &Path, bytes: &[u8], files: &mut Vec<PathBuf>) -> Result<()
     let mut file = File::create(path).map_err(|error| failed("create", error))?;
     files.push(path.to_owned());
     file.write_all(bytes)
-        .and_then(|()| file.sync_all())
         .map_err(|error| failed("write", error))
 }
 
