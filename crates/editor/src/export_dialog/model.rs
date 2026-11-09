@@ -18,12 +18,12 @@ use celesta_media::{
     MediaRegistry, PluginDescription, SettingField, SettingValue, Settings,
 };
 use celesta_plugin_host::{MediaMuxerEntry, MediaOrigin};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 /// What a component shows while its plugin's `describe` runs.
-const CHECKING: &str = "Checking…";
+pub(crate) const CHECKING: &str = "Checking…";
 
 /// The reason given for an unavailable component the plugin gave none for
 /// (as the registry words it).
@@ -309,6 +309,43 @@ impl ExportDialogModel {
             .collect()
     }
 
+    /// What a container change to `muxer` resolves: each chosen encoder
+    /// with its settings when `muxer` takes a codec it writes, else the
+    /// muxer's default; audio left out stays out.
+    pub(crate) fn container_choice(&self, muxer: &ComponentRef) -> OutputChoice {
+        let entry = self.muxer(muxer);
+        let kept = |pick: &EncoderPick, track: Track| {
+            let accepted: &[String] = match (entry, track) {
+                (Some(entry), Track::Video) => &entry.video,
+                (Some(entry), Track::Audio) => entry.audio.as_deref().unwrap_or_default(),
+                (None, _) => &[],
+            };
+            match self.info(&pick.component, kind(track)) {
+                Some(info) if writes_any_codec(info, accepted) => EncoderChoice {
+                    component: Some(pick.component.clone()),
+                    options: inputs(&pick.settings),
+                },
+                _ => EncoderChoice::default(),
+            }
+        };
+        let (video, audio) = match &self.choice {
+            Some(choice) => (
+                kept(&choice.video, Track::Video),
+                match &choice.audio {
+                    Some(audio) => AudioChoice::Encode(kept(audio, Track::Audio)),
+                    None => AudioChoice::None,
+                },
+            ),
+            None => Default::default(),
+        };
+        OutputChoice {
+            preset: None,
+            muxer: Some(muxer.clone()),
+            video,
+            audio,
+        }
+    }
+
     /// Chooses `track`'s encoder with its default settings; `None` leaves
     /// the audio out (the video always has one).
     pub(crate) fn choose_encoder(&mut self, track: Track, component: Option<ComponentRef>) {
@@ -591,11 +628,7 @@ impl ExportDialogModel {
         })?;
         Ok(EncoderChoice {
             component: Some(pick.component.clone()),
-            options: pick
-                .settings
-                .iter()
-                .map(|(key, value)| (key.clone(), SettingInput::Value(value.clone())))
-                .collect(),
+            options: inputs(&pick.settings),
         })
     }
 }
@@ -644,6 +677,14 @@ fn listed(state: &PresetFileState) -> Vec<&Preset> {
     loaded(state)
         .map(|file| file.presets.iter().collect())
         .unwrap_or_default()
+}
+
+/// Given settings as an export takes them: each one an explicit value.
+fn inputs(settings: &Settings) -> BTreeMap<String, SettingInput> {
+    settings
+        .iter()
+        .map(|(key, value)| (key.clone(), SettingInput::Value(value.clone())))
+        .collect()
 }
 
 /// A resolved encoder as the dialog holds it: its settings that differ
@@ -1062,6 +1103,39 @@ mod tests {
         assert_eq!(
             model.saved_output().audio,
             Some(PresetAudio::None(NoAudio::None))
+        );
+    }
+
+    #[test]
+    fn a_container_change_keeps_the_encoders_it_takes() {
+        let registry = registry();
+        let mut model = resolved_model(&registry, "export.mp4");
+        model.set_setting(Track::Video, "crf", number(20.0));
+
+        // The project's MP4 takes x264 and AAC: both are kept, with the CRF.
+        let same = model.container_choice(&reference("p/mp4"));
+        assert_eq!(same.preset, None);
+        assert_eq!(same.muxer, Some(reference("p/mp4")));
+        assert_eq!(same.video.component, Some(reference("b/x264")));
+        assert_eq!(
+            same.video.options.into_iter().collect::<Vec<_>>(),
+            [("crf".to_owned(), SettingInput::Value(number(20.0)))]
+        );
+        let AudioChoice::Encode(audio) = same.audio else {
+            panic!("the audio is kept");
+        };
+        assert_eq!(audio.component, Some(reference("b/aac")));
+
+        // IVF takes neither: the muxer's defaults are resolved.
+        let ivf = model.container_choice(&reference("b/ivf"));
+        assert_eq!(ivf.video, EncoderChoice::default());
+        assert_eq!(ivf.audio, AudioChoice::default());
+
+        // No audio stays no audio.
+        model.choose_encoder(Track::Audio, None);
+        assert_eq!(
+            model.container_choice(&reference("p/mp4")).audio,
+            AudioChoice::None
         );
     }
 

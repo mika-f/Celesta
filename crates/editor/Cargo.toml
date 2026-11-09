@@ -40,3 +40,9 @@ shlex = "2"
 unicode-segmentation = "1.13.3"
 anyhow.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+# GPUI's test context, for the export dialog's test in a headless window.
+gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
+# The export dialog's test lists the lossless test codec's components.
+celesta-codec-test.workspace = true

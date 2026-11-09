@@ -61,10 +61,10 @@ use celesta_composition::{
 };
 use celesta_editor_core::ClipSummary;
 use celesta_exporter::{
-    AudioLoudness, EncoderPlan, ExportCancellation, ExportProgress, LoudnessTarget, OutputChoice,
-    OutputPlan,
+    AudioChoice, AudioLoudness, EncoderChoice, EncoderPlan, ExportCancellation, ExportProgress,
+    LoudnessTarget, OutputChoice, OutputPlan, SettingInput,
 };
-use celesta_media::{AudioBuffer, AudioDecoder};
+use celesta_media::{AudioBuffer, AudioDecoder, SettingValue};
 use celesta_project::{Project, TrackKind};
 use celesta_react_bridge::{
     ComponentResolutions, ElementKind, LayerSource, LayerSourceReport, PrimitivePropertyField,
@@ -106,6 +106,7 @@ fn export_worker_reports_cancellation_without_creating_output() {
             output: output.clone(),
             range: None,
             loudness: None,
+            output_choice: OutputChoice::default(),
             cancellation,
             driver: GpuDriver::default(),
             plugins: Default::default(),
@@ -124,26 +125,29 @@ fn export_worker_reports_cancellation_without_creating_output() {
     assert!(!output.exists());
 }
 
-#[test]
-fn export_options_carry_the_chosen_loudness() {
-    let request = |loudness: ExportLoudness| ExportRequest {
+fn export_request(loudness: ExportLoudness, output_choice: OutputChoice) -> ExportRequest {
+    ExportRequest {
         source: ExportSource::Project(Box::new(Project::from_json(EDITOR_DEMO_PROJECT).unwrap())),
         asset_root: PathBuf::from("examples"),
         output: PathBuf::from("out.mov"),
         range: None,
         loudness: loudness.target(),
+        output_choice,
         cancellation: ExportCancellation::default(),
         driver: GpuDriver::default(),
         plugins: Default::default(),
-    };
+    }
+}
+
+#[test]
+fn export_options_carry_the_chosen_loudness() {
+    let request = |loudness| export_request(loudness, OutputChoice::default());
 
     let off = export_options(&request(ExportLoudness::Off));
     assert_eq!(off.loudness, None);
     assert!(off.overwrite);
     // The export draws with the preview's plugins rather than finding its own.
     assert_eq!(off.plugins, Some(Default::default()));
-    // The extension picks the muxer, with its default encoders.
-    assert_eq!(off.output, OutputChoice::default());
     assert_eq!(
         export_options(&request(ExportLoudness::Streaming)).loudness,
         Some(LoudnessTarget::STREAMING)
@@ -152,6 +156,27 @@ fn export_options_carry_the_chosen_loudness() {
         export_options(&request(ExportLoudness::Broadcast)).loudness,
         Some(LoudnessTarget::BROADCAST)
     );
+}
+
+#[test]
+fn export_options_take_the_dialogs_choice() {
+    let choice = OutputChoice {
+        preset: None,
+        muxer: Some("b/mp4".parse().unwrap()),
+        video: EncoderChoice {
+            component: Some("b/x264".parse().unwrap()),
+            options: [(
+                "crf".to_owned(),
+                SettingInput::Value(SettingValue::Number(20.0)),
+            )]
+            .into(),
+        },
+        audio: AudioChoice::None,
+    };
+    let options = export_options(&export_request(ExportLoudness::Off, choice.clone()));
+    assert_eq!(options.output, choice);
+    // The choice names every component, so no presets file is read.
+    assert_eq!(options.presets, Default::default());
 }
 
 #[test]
@@ -219,11 +244,31 @@ fn export_name_replaces_project_extensions() {
     assert_eq!(
         export_suggested_name(
             Some(PathBuf::from("demo.celesta.json").as_path()),
-            "ignored"
+            "ignored",
+            "mp4"
         ),
         "demo.mp4"
     );
-    assert_eq!(export_suggested_name(None, "Untitled"), "Untitled.mp4");
+    assert_eq!(
+        export_suggested_name(None, "Untitled", "mp4"),
+        "Untitled.mp4"
+    );
+}
+
+#[test]
+fn the_suggested_name_takes_the_muxers_extension() {
+    assert_eq!(
+        export_suggested_name(Some(Path::new("a/film.celesta.json")), "x", "mov"),
+        "film.mov"
+    );
+    assert_eq!(
+        export_output(PathBuf::from("a/film"), &["mov"]),
+        PathBuf::from("a/film.mov")
+    );
+    assert_eq!(
+        export_output(PathBuf::from("a/film.MOV"), &["mov"]),
+        PathBuf::from("a/film.MOV")
+    );
 }
 
 #[test]
@@ -249,13 +294,13 @@ fn the_finished_export_names_its_loudness() {
 }
 
 #[test]
-fn export_output_keeps_video_extensions() {
-    let case = |path: &str| export_output(PathBuf::from(path));
-    assert_eq!(case("a.mov"), PathBuf::from("a.mov"));
-    assert_eq!(case("a.WebM"), PathBuf::from("a.WebM"));
-    assert_eq!(case("a.mp4"), PathBuf::from("a.mp4"));
+fn export_output_keeps_the_muxers_extensions() {
+    let case = |path: &str| export_output(PathBuf::from(path), &["mp4", "m4v"]);
+    assert_eq!(case("a.m4v"), PathBuf::from("a.m4v"));
+    assert_eq!(case("a.MP4"), PathBuf::from("a.MP4"));
+    // Anything else takes the muxer's first extension.
     assert_eq!(case("a"), PathBuf::from("a.mp4"));
-    assert_eq!(case("a.gif"), PathBuf::from("a.mp4"));
+    assert_eq!(case("a.mov"), PathBuf::from("a.mp4"));
 }
 
 #[test]

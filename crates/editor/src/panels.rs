@@ -1,4 +1,4 @@
-use crate::helpers::{ExportLoudness, clip_kind_label};
+use crate::helpers::clip_kind_label;
 use crate::problems::{Source, flow_line_breaks};
 use crate::problems_panel::show_in_problems_row;
 use crate::react_audio::react_audio_clip_id;
@@ -24,7 +24,7 @@ use gpui_kit::{ClickEvent, Context, ObjectFit, SharedString, Window, div, img, p
 impl EditorView {
     /// The window's title bar: the menu bar (outside macOS, which shows it
     /// natively), the open file, and the window-wide commands — Create New
-    /// Project…, Open…, the export loudness, and Export….
+    /// Project…, Open…, and Export… (or Cancel export).
     pub(crate) fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let exporting = self.export_cancellation.is_some();
         let muted = cx.theme().muted_foreground;
@@ -125,7 +125,6 @@ impl EditorView {
                         .disabled(self.opening || exporting)
                         .on_click(cx.listener(Self::open_project_click)),
                 )
-                .child(self.export_loudness_button(exporting, cx))
                 .child(if exporting {
                     Button::new("export-project")
                         .small()
@@ -150,33 +149,6 @@ impl EditorView {
                         .on_click(cx.listener(Self::export_project_click))
                 }),
         )
-    }
-
-    /// Picks the loudness Export… brings the mix to; the choice lasts for
-    /// the session.
-    fn export_loudness_button(&self, exporting: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.export_loudness;
-        let view = cx.entity().downgrade();
-        Button::new("export-loudness")
-            .small()
-            .ghost()
-            .label(format!("Loudness: {}", selected.name()))
-            .dropdown_caret(true)
-            .disabled(exporting || self.choosing_export_path)
-            .dropdown_menu(move |mut menu, _, _| {
-                for loudness in ExportLoudness::ALL {
-                    let view = view.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(loudness.menu_label())
-                            .checked(loudness == selected)
-                            .on_click(move |_, _, cx| {
-                                let _ = view
-                                    .update(cx, |this, cx| this.set_export_loudness(loudness, cx));
-                            }),
-                    );
-                }
-                menu
-            })
     }
 
     pub(crate) fn asset_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
