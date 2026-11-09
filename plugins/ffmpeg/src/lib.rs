@@ -327,10 +327,15 @@ impl Muxer for FfmpegCodec {
     }
 
     fn finish_muxer(&mut self, session: SessionId) -> Result<Vec<PathBuf>, MediaError> {
-        self.muxers
-            .remove(&session)
+        // The session stays until finishing succeeds, so a failed finish
+        // can still be aborted and its files reported for removal.
+        let written = self
+            .muxers
+            .get_mut(&session)
             .ok_or_else(|| no_session("muxer", session))?
-            .finish()
+            .finish()?;
+        self.muxers.remove(&session);
+        Ok(written)
     }
 
     fn abort_muxer(&mut self, session: SessionId) -> Vec<PathBuf> {

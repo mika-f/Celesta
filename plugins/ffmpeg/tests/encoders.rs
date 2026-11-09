@@ -295,6 +295,33 @@ fn software_offers_pick_rgba_by_bit_depth() {
 }
 
 #[test]
+fn a_muxer_whose_finish_failed_can_still_be_aborted() {
+    let mut codec = FfmpegCodec::new();
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("film.mp4");
+    let faststart = settings(&[("faststart", SettingValue::Boolean(true))]);
+    let muxer = codec.muxer().unwrap();
+    let session = muxer
+        .open_muxer(&MuxerRequest {
+            component: "mp4",
+            settings: &faststart,
+            output: &output,
+            tracks: &[aac_track()],
+            leading_audio: 0,
+        })
+        .unwrap();
+    // `+faststart` reopens the file by name to move the index to its
+    // start, so the trailer fails once the file is gone.
+    std::fs::remove_file(&output).unwrap();
+    assert!(muxer.finish_muxer(session).is_err());
+    // The session is still there for the host's abort, which names the
+    // file to remove.
+    assert_eq!(muxer.abort_muxer(session), [output]);
+    assert!(muxer.finish_muxer(session).is_err());
+    assert_eq!(muxer.abort_muxer(session), Vec::<std::path::PathBuf>::new());
+}
+
+#[test]
 fn sessions_are_unique_across_kinds() {
     let mut codec = FfmpegCodec::new();
     let offered = [PixelFormat::Rgba16];

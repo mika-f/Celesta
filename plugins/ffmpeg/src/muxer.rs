@@ -508,15 +508,17 @@ impl MuxerSession {
         Ok(())
     }
 
-    /// Writes the trailer and closes the file: the files written.
-    pub(crate) fn finish(mut self) -> Result<Vec<PathBuf>, MediaError> {
-        // SAFETY: the context's header was written.
+    /// Writes the trailer and closes the file: the files written. On an
+    /// error the session is left to [`Self::abort`].
+    pub(crate) fn finish(&mut self) -> Result<Vec<PathBuf>, MediaError> {
+        // SAFETY: the context's header was written, and it is finished at
+        // most once: the caller drops the session once this succeeds.
         let result = unsafe { av_write_trailer(self.context.0) };
         if result < 0 {
             return Err(av_error(result, "finish the file"));
         }
         self.context.close()?;
-        Ok(vec![self.output])
+        Ok(vec![self.output.clone()])
     }
 
     /// Closes the file with no trailer: the files left.
