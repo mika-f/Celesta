@@ -4,9 +4,10 @@
 //! lists come from `apple.rs` on macOS.
 
 use crate::DECODER_ID;
+use celesta_media::settings::{InvalidSetting, validate};
 use celesta_media::{
-    ComponentDescription, ComponentKind, PixelFormat, SampleRates, SelectOption, SettingField,
-    SettingKind, SettingValue,
+    ComponentDescription, ComponentKind, MediaError, PixelFormat, SampleRates, SelectOption,
+    SettingField, SettingKind, SettingValue, Settings,
 };
 
 /// A four-character code as Apple's frameworks hold it: the four bytes
@@ -105,6 +106,120 @@ impl VideoCodec {
             )],
         }
     }
+}
+
+/// One VideoToolbox compression property a video encoder's settings set:
+/// `kVTCompressionPropertyKey_ProfileLevel` (named by its
+/// `kVTProfileLevel_` suffix), `Quality` (0 to 1), `AverageBitRate`
+/// (bit/s), `MaxKeyFrameInterval` (frames), and `AllowFrameReordering`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum VtSetting {
+    ProfileLevel(&'static str),
+    Quality(f32),
+    AverageBitRate(i64),
+    MaxKeyFrameInterval(i32),
+    AllowFrameReordering(bool),
+}
+
+/// The settings `given` for `codec`, checked against its schema, with the
+/// defaults of those not given.
+pub(crate) fn checked_settings(
+    codec: VideoCodec,
+    given: &Settings,
+) -> Result<Settings, MediaError> {
+    validate(&codec.settings(), given)
+        .map_err(|InvalidSetting { key, message }| MediaError::InvalidSettings { key, message })
+}
+
+fn text<'a>(settings: &'a Settings, key: &str) -> &'a str {
+    match settings.get(key) {
+        Some(SettingValue::String(value)) => value,
+        _ => "",
+    }
+}
+
+/// A whole-number setting; none when its field is hidden.
+fn whole(settings: &Settings, key: &str) -> Option<i64> {
+    match settings.get(key) {
+        Some(SettingValue::Number(value)) => Some(*value as i64),
+        _ => None,
+    }
+}
+
+/// Whether ProRes `settings` ask for 422 HQ rather than 4444.
+pub(crate) fn prores_hq(settings: &Settings) -> bool {
+    text(settings, "profile") == "hq"
+}
+
+/// What `codec` takes of `offered` (best first) at `width` x `height`, and
+/// whether it keeps alpha: 4:2:0 YUV of the bit depth when both dimensions
+/// are even, else `rgba16`, which VideoToolbox converts with the session's
+/// matrix; ProRes always takes `rgba16`, and 4444 alone keeps its alpha.
+pub(crate) fn choose_input(
+    codec: VideoCodec,
+    settings: &Settings,
+    width: u32,
+    height: u32,
+    offered: &[PixelFormat],
+) -> Result<(PixelFormat, bool), MediaError> {
+    let even = width.is_multiple_of(2) && height.is_multiple_of(2);
+    let yuv = match codec {
+        VideoCodec::H264 => Some(PixelFormat::Nv12),
+        VideoCodec::Hevc if text(settings, "bitDepth") == "10" => Some(PixelFormat::P010),
+        VideoCodec::Hevc => Some(PixelFormat::Nv12),
+        VideoCodec::ProRes => None,
+    };
+    let wanted: Vec<PixelFormat> = yuv
+        .filter(|_| even)
+        .into_iter()
+        .chain([PixelFormat::Rgba16])
+        .collect();
+    let input = wanted
+        .iter()
+        .copied()
+        .find(|format| offered.contains(format))
+        .ok_or_else(|| {
+            let names: Vec<String> = wanted.iter().map(ToString::to_string).collect();
+            MediaError::InvalidSettings {
+                key: "input".to_owned(),
+                message: format!("needs {}", names.join(" or ")),
+            }
+        })?;
+    let alpha = codec == VideoCodec::ProRes && !prores_hq(settings);
+    Ok((input, alpha))
+}
+
+/// The VideoToolbox properties `settings` give `codec`, checked against its
+/// schema (the defaults fill what is not given). ProRes has none: its codec
+/// type picks the profile.
+pub(crate) fn vt_settings(
+    codec: VideoCodec,
+    settings: &Settings,
+) -> Result<Vec<VtSetting>, MediaError> {
+    let settings = checked_settings(codec, settings)?;
+    let profile = match codec {
+        VideoCodec::H264 => match text(&settings, "profile") {
+            "main" => "H264_Main_AutoLevel",
+            "baseline" => "H264_Baseline_AutoLevel",
+            _ => "H264_High_AutoLevel",
+        },
+        VideoCodec::Hevc if text(&settings, "bitDepth") == "10" => "HEVC_Main10_AutoLevel",
+        VideoCodec::Hevc => "HEVC_Main_AutoLevel",
+        VideoCodec::ProRes => return Ok(Vec::new()),
+    };
+    let mut properties = vec![VtSetting::ProfileLevel(profile)];
+    if text(&settings, "rateControl") == "bitrate" {
+        properties.extend(whole(&settings, "bitrate").map(VtSetting::AverageBitRate));
+    } else if let Some(quality) = whole(&settings, "quality") {
+        properties.push(VtSetting::Quality(quality as f32 / 100.0));
+    }
+    if let Some(interval) = whole(&settings, "keyframeInterval") {
+        properties.push(VtSetting::MaxKeyFrameInterval(interval as i32));
+    }
+    properties.push(VtSetting::AllowFrameReordering(
+        settings.get("bFrames") != Some(&SettingValue::Boolean(false)),
+    ));
+    Ok(properties)
 }
 
 /// An audio encoder component, on AudioToolbox.
@@ -382,7 +497,7 @@ fn in_group(mut field: SettingField, group: &str) -> SettingField {
 mod tests {
     use super::*;
     use celesta_media::settings::validate;
-    use celesta_media::{ComponentKind, SampleRates, SettingValue, Settings};
+    use celesta_media::{ComponentKind, MediaError, SampleRates, SettingValue, Settings};
     use celesta_plugin_host::{
         MediaAudioEncoderEntry, MediaDecoderEntry, MediaManifest, MediaMuxerEntry,
         MediaVideoEncoderEntry,
@@ -668,6 +783,144 @@ mod tests {
             [*b"avc1", *b"hvc1", *b"ap4h"].map(u32::from_be_bytes)
         );
         assert_eq!(AAC_FORMAT, u32::from_be_bytes(*b"aac "));
+    }
+
+    #[test]
+    fn odd_sizes_and_rgb_offers_take_rgba16() {
+        use PixelFormat::{Nv12, P010, Rgba8, Rgba16};
+        let none = Settings::new();
+        let offerable = PixelFormat::OFFERABLE;
+        let choose = |codec, given: &Settings, width, height, offered: &[PixelFormat]| {
+            choose_input(codec, given, width, height, offered).unwrap()
+        };
+        for codec in [VideoCodec::H264, VideoCodec::Hevc] {
+            assert_eq!(choose(codec, &none, 64, 36, &offerable), (Nv12, false));
+            assert_eq!(choose(codec, &none, 63, 35, &offerable), (Rgba16, false));
+            assert_eq!(choose(codec, &none, 64, 35, &offerable), (Rgba16, false));
+            assert_eq!(
+                choose(codec, &none, 64, 36, &[Rgba16, Rgba8]),
+                (Rgba16, false)
+            );
+        }
+        let ten = settings(&[("bitDepth", text("10"))]);
+        assert_eq!(
+            choose(VideoCodec::Hevc, &ten, 64, 36, &offerable),
+            (P010, false)
+        );
+        assert_eq!(
+            choose(VideoCodec::Hevc, &ten, 63, 36, &offerable),
+            (Rgba16, false)
+        );
+        assert_eq!(
+            choose(VideoCodec::Hevc, &ten, 64, 36, &[Rgba16, Rgba8]),
+            (Rgba16, false)
+        );
+        // VideoToolbox's H.264 is 8-bit only.
+        assert_eq!(
+            choose(VideoCodec::H264, &none, 64, 36, &[P010, Rgba16]),
+            (Rgba16, false)
+        );
+        let prores = |profile| settings(&[("profile", text(profile))]);
+        assert_eq!(
+            choose(VideoCodec::ProRes, &prores("4444"), 64, 36, &offerable),
+            (Rgba16, true)
+        );
+        assert_eq!(
+            choose(VideoCodec::ProRes, &none, 63, 35, &offerable),
+            (Rgba16, true)
+        );
+        assert_eq!(
+            choose(VideoCodec::ProRes, &prores("hq"), 64, 36, &offerable),
+            (Rgba16, false)
+        );
+        for codec in VideoCodec::ALL {
+            for (width, height) in [(64, 36), (63, 35)] {
+                assert!(
+                    matches!(
+                        choose_input(codec, &none, width, height, &[Rgba8]),
+                        Err(MediaError::InvalidSettings { key, .. }) if key == "input"
+                    ),
+                    "{codec:?} {width}x{height}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn settings_become_videotoolbox_properties() {
+        use VtSetting::{
+            AllowFrameReordering, AverageBitRate, MaxKeyFrameInterval, ProfileLevel, Quality,
+        };
+        let none = Settings::new();
+        assert_eq!(
+            vt_settings(VideoCodec::H264, &none).unwrap(),
+            [
+                ProfileLevel("H264_High_AutoLevel"),
+                Quality(0.7),
+                MaxKeyFrameInterval(250),
+                AllowFrameReordering(true),
+            ]
+        );
+        assert_eq!(
+            vt_settings(VideoCodec::H264, &filled(&VideoCodec::H264.settings())).unwrap(),
+            vt_settings(VideoCodec::H264, &none).unwrap()
+        );
+        for (profile, level) in [
+            ("main", "H264_Main_AutoLevel"),
+            ("baseline", "H264_Baseline_AutoLevel"),
+        ] {
+            let given = settings(&[("profile", text(profile))]);
+            assert_eq!(
+                vt_settings(VideoCodec::H264, &given).unwrap()[0],
+                ProfileLevel(level)
+            );
+        }
+        let given = settings(&[
+            ("rateControl", text("bitrate")),
+            ("bitrate", SettingValue::Number(5_000_000.0)),
+            ("bFrames", SettingValue::Boolean(false)),
+            ("keyframeInterval", SettingValue::Number(60.0)),
+        ]);
+        assert_eq!(
+            vt_settings(VideoCodec::H264, &given).unwrap(),
+            [
+                ProfileLevel("H264_High_AutoLevel"),
+                AverageBitRate(5_000_000),
+                MaxKeyFrameInterval(60),
+                AllowFrameReordering(false),
+            ]
+        );
+        let given = settings(&[("quality", SettingValue::Number(35.0))]);
+        assert_eq!(
+            vt_settings(VideoCodec::H264, &given).unwrap()[1],
+            Quality(0.35)
+        );
+        assert_eq!(
+            vt_settings(VideoCodec::Hevc, &none).unwrap(),
+            [
+                ProfileLevel("HEVC_Main_AutoLevel"),
+                Quality(0.7),
+                MaxKeyFrameInterval(250),
+                AllowFrameReordering(true),
+            ]
+        );
+        let ten = settings(&[("bitDepth", text("10"))]);
+        assert_eq!(
+            vt_settings(VideoCodec::Hevc, &ten).unwrap()[0],
+            ProfileLevel("HEVC_Main10_AutoLevel")
+        );
+        for profile in ["4444", "hq"] {
+            let given = settings(&[("profile", text(profile))]);
+            assert_eq!(vt_settings(VideoCodec::ProRes, &given).unwrap(), []);
+        }
+        assert!(matches!(
+            vt_settings(VideoCodec::H264, &settings(&[("profile", text("high10"))])),
+            Err(MediaError::InvalidSettings { key, .. }) if key == "profile"
+        ));
+        assert!(matches!(
+            vt_settings(VideoCodec::Hevc, &settings(&[("profile", text("main"))])),
+            Err(MediaError::InvalidSettings { key, .. }) if key == "profile"
+        ));
     }
 
     #[test]

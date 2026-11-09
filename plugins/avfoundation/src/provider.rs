@@ -3,9 +3,11 @@
 //!
 //! It describes every component, from what this Mac's frameworks list; a
 //! component it cannot open yet answers
-//! [`MediaError::ComponentUnavailable`].
+//! [`MediaError::ComponentUnavailable`]. Its sessions, of every kind, are
+//! numbered from one counter.
 
 use crate::components::{self, AudioCodec, MuxerFormat, VideoCodec};
+use crate::video::{self, VideoSession};
 use crate::{DECODER_ID, PLUGIN_ID, apple};
 use celesta_media::{
     AudioBuffer, AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, ComponentDescription,
@@ -14,6 +16,7 @@ use celesta_media::{
     VideoEncoderRequest, VideoFrame, VideoRequest,
 };
 use celesta_plugin_host::{MediaManifest, MediaOrigin};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -25,13 +28,22 @@ const NOT_IMPLEMENTED: &str = "not implemented yet";
 
 /// A [`MediaProvider`] on VideoToolbox, AudioToolbox, and AVFoundation.
 #[derive(Default)]
-pub struct AvfCodec {}
+pub struct AvfCodec {
+    video: HashMap<SessionId, VideoSession>,
+    /// The last session number given, one count for every kind.
+    last: u64,
+}
 
 impl AvfCodec {
     /// A [`ProviderFactory`] making an [`AvfCodec`] in this process,
     /// whatever it is for.
     pub fn factory() -> ProviderFactory {
         Arc::new(|_kill, _use| Ok(Box::new(Self::default()) as Box<dyn MediaProvider>))
+    }
+
+    fn next_session(&mut self) -> SessionId {
+        self.last += 1;
+        SessionId(self.last)
     }
 }
 
@@ -149,24 +161,41 @@ impl VideoEncoder for AvfCodec {
     ) -> Result<VideoEncoderOpened, MediaError> {
         let codec = VideoCodec::from_id(request.component)
             .ok_or_else(|| no_component("video encoder", request.component))?;
-        Err(not_implemented(codec.id()))
+        let (opened, input, alpha) = video::open(codec, request)?;
+        let session = self.next_session();
+        self.video.insert(session, opened);
+        Ok(VideoEncoderOpened {
+            session,
+            input,
+            alpha,
+        })
     }
 
     fn encode_video(
         &mut self,
         session: SessionId,
-        _pts: i64,
-        _frame: Vec<u8>,
+        pts: i64,
+        frame: Vec<u8>,
     ) -> Result<Encoded, MediaError> {
-        Err(no_session("video encoder", session))
+        self.video
+            .get_mut(&session)
+            .ok_or_else(|| no_session("video encoder", session))?
+            .encode(pts, &frame)
     }
 
     fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
-        Err(no_session("video encoder", session))
+        self.video
+            .remove(&session)
+            .ok_or_else(|| no_session("video encoder", session))?
+            .finish()
     }
 
-    /// No video encoder session is ever open, so there is none to abort.
-    fn abort_video(&mut self, _session: SessionId) {}
+    /// Ends a video encoder session without completing its frames (dropping
+    /// it invalidates the `VTCompressionSession`); a session of another
+    /// kind is left alone.
+    fn abort_video(&mut self, session: SessionId) {
+        self.video.remove(&session);
+    }
 }
 
 impl AudioEncoder for AvfCodec {
@@ -192,7 +221,8 @@ impl AudioEncoder for AvfCodec {
         Err(no_session("audio encoder", session))
     }
 
-    /// No audio encoder session is ever open, so there is none to abort.
+    /// No audio encoder session is ever open, so there is none to abort; a
+    /// video encoder's session of the same number is left alone.
     fn abort_audio(&mut self, _session: SessionId) {}
 }
 
@@ -244,29 +274,30 @@ mod tests {
         assert_eq!(plugin.media, manifest());
     }
 
-    #[test]
-    fn components_are_not_opened_yet() {
-        let mut codec = AvfCodec::default();
-        let settings = Settings::new();
-        let color = Color::bt709_limited();
-        let video = |component| VideoEncoderRequest {
+    fn video_request<'a>(
+        component: &'a str,
+        settings: &'a Settings,
+        color: &'a Color,
+    ) -> VideoEncoderRequest<'a> {
+        VideoEncoderRequest {
             component,
-            settings: &settings,
+            settings,
             width: 64,
             height: 36,
             frame_rate: Rational::new(30, 1),
             timescale: 30,
-            offered: &[PixelFormat::Rgba16],
-            color: &color,
-        };
-        for codec_id in ["h264", "hevc", "prores"] {
-            assert_eq!(
-                unavailable(codec.open_video(&video(codec_id))),
-                (codec_id.to_owned(), NOT_IMPLEMENTED.to_owned())
-            );
+            offered: &[PixelFormat::Nv12, PixelFormat::Rgba16],
+            color,
         }
+    }
+
+    #[test]
+    fn the_others_are_not_opened_yet() {
+        let mut codec = AvfCodec::default();
+        let settings = Settings::new();
+        let color = Color::bt709_limited();
         assert!(matches!(
-            codec.open_video(&video("libx264")),
+            codec.open_video(&video_request("libx264", &settings, &color)),
             Err(MediaError::Codec(message)) if message == r#"no video encoder "libx264" in avfoundation"#
         ));
         let audio = |component| AudioEncoderRequest {
@@ -310,6 +341,61 @@ mod tests {
             codec.probe("ffmpeg", path),
             Err(MediaError::Codec(_))
         ));
+    }
+
+    #[test]
+    fn video_sessions_count_from_one_and_abort_alone() {
+        let mut codec = AvfCodec::default();
+        let settings = Settings::new();
+        let color = Color::bt709_limited();
+        let first = codec
+            .open_video(&video_request("h264", &settings, &color))
+            .unwrap();
+        let second = codec
+            .open_video(&video_request("h264", &settings, &color))
+            .unwrap();
+        assert_eq!(
+            (first.session, second.session),
+            (SessionId(1), SessionId(2))
+        );
+        assert_eq!(first.input, PixelFormat::Nv12);
+        // A refused open takes no number.
+        let unknown = Color {
+            primaries: "smpte432".into(),
+            ..Color::bt709_limited()
+        };
+        assert!(matches!(
+            codec.open_video(&video_request("h264", &settings, &unknown)),
+            Err(MediaError::Codec(message)) if message == "unknown color primaries `smpte432`"
+        ));
+        let bad = [(
+            "profile".to_owned(),
+            celesta_media::SettingValue::String("high10".into()),
+        )]
+        .into();
+        assert!(matches!(
+            codec.open_video(&video_request("h264", &bad, &color)),
+            Err(MediaError::InvalidSettings { key, .. }) if key == "profile"
+        ));
+        let third = codec
+            .open_video(&video_request("h264", &settings, &color))
+            .unwrap();
+        assert_eq!(third.session, SessionId(3));
+
+        // `abortEncoder` reaches both kinds: the audio side leaves a video
+        // session alone, the video side ends it.
+        codec.abort_audio(first.session);
+        let frame = vec![128; PixelFormat::Nv12.frame_bytes(64, 36)];
+        codec.encode_video(first.session, 0, frame.clone()).unwrap();
+        codec.abort_video(first.session);
+        assert!(codec.encode_video(first.session, 1, frame.clone()).is_err());
+        assert!(codec.finish_video(first.session).is_err());
+        let finished = codec.encode_video(second.session, 0, frame).unwrap();
+        let rest = codec.finish_video(second.session).unwrap();
+        assert_eq!(finished.packets.len() + rest.packets.len(), 1);
+        assert!(codec.finish_video(second.session).is_err());
+        codec.abort_video(third.session);
+        codec.abort_video(third.session);
     }
 
     #[test]

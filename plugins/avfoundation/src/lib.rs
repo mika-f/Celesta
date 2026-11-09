@@ -25,6 +25,15 @@ pub const DECODER_ID: &str = "avfoundation";
 )]
 mod components;
 
+#[cfg_attr(
+    not(any(target_os = "macos", test)),
+    expect(
+        dead_code,
+        reason = "only the macOS video encoders check colours outside their tests"
+    )
+)]
+mod color;
+
 // Platform-independent: read on every system, tests included.
 #[cfg_attr(
     not(test),
@@ -35,10 +44,10 @@ mod components;
 )]
 mod esds;
 #[cfg_attr(
-    not(test),
+    not(any(target_os = "macos", test)),
     expect(
         dead_code,
-        reason = "the VideoToolbox components call them in later tasks"
+        reason = "only the macOS VideoToolbox encoders read parameter sets outside their tests"
     )
 )]
 mod params;
@@ -47,6 +56,8 @@ mod params;
 mod apple;
 #[cfg(target_os = "macos")]
 mod provider;
+#[cfg(target_os = "macos")]
+mod video;
 
 #[cfg(target_os = "macos")]
 pub use provider::{AvfCodec, install, registered};
