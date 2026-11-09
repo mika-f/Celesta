@@ -122,6 +122,8 @@ Muxers keep their defaults: MP4 and MOV are written with `faststart`, which puts
 
 Faster x264 presets such as `veryfast` reduce encoding time but usually make larger files at similar quality. `bitDepth=10` keeps dark gradients smoother, but plays on fewer devices. `--render-quality draft` speeds up timing checks by skipping scaled-text re-rasterization; use `final` (the default) to judge the finished image. Celesta converts RGB to YUV on the GPU whenever the encoder takes YUV and the renderer is not a software one; otherwise the encoder converts.
 
+Every video export is BT.709 with limited range. Celesta converts on the GPU, or the encoder does when it takes RGB, and the file is tagged to say so (H.264's VUI, `colr` in MP4 and MOV, `Colour` in WebM), so players show the colors as rendered. Earlier releases wrote untagged MP4 files with BT.601 coefficients, which players that assume BT.709 for HD showed slightly off.
+
 `--preset <name>` names an export preset, a saved set of these choices. Presets come in a later release, so for now every name fails with the error code `unknown_preset`. x264's preset is the setting above: `--preset veryfast` fails, and its hint says to use `--video-option preset=veryfast`. Without `--json`, an error's hint is printed on a `hint:` line after its message.
 
 ::::tabs[Exporter platform]{default="macOS"}

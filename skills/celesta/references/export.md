@@ -440,6 +440,13 @@ text is rasterized at the size it is drawn at. The app preview draws in
 `draft` quality while playing and in `final` quality when paused, so a
 paused frame matches the export.
 
+Every video export is BT.709 with limited range, converted on the GPU or by
+the encoder when it takes RGB, and tagged in the file (H.264's VUI, MP4 and
+MOV `colr`, WebM `Colour`), so players show the colors as rendered. Earlier
+releases wrote untagged MP4s with BT.601 coefficients, which players that
+assume BT.709 for HD showed slightly off. `--describe ffmpeg/libx264` shows
+no color option: there is nothing to choose.
+
 For speed problems, see [performance.md](performance.md).
 
 ## Without a GPU
