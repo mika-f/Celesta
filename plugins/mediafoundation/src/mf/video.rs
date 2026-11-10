@@ -24,7 +24,8 @@ use crate::convert::{rgba8_to_nv12, rgba16_to_p010};
 use crate::hns::{from_hns, to_hns};
 use crate::mf::media_type::{encoder_input, encoder_output, input_subtype};
 use crate::mf::mft::{
-    Transform, blob_attribute, candidates, check, first_accepting, make_sample, sample_bytes,
+    Transform, blob_attribute, candidates, check, first_accepting, friendly_name, make_sample,
+    named, sample_bytes,
 };
 use crate::params::{
     UNKNOWN_REORDER_DEPTH, avc_codec_string, avc_reorder_depth, hevc_codec_string,
@@ -110,49 +111,72 @@ fn set_value(codec: &ICodecAPI, api: &GUID, value: &VARIANT) -> bool {
     unsafe { codec.IsSupported(api).is_ok() && codec.SetValue(api, value).is_ok() }
 }
 
-/// Sets `values` on `transform`'s `ICodecAPI`. A property it does not take
-/// is skipped (Task 1: Microsoft's software MFT refuses `LowLatency`,
-/// NVIDIA's `BPictureCount` too), except the rate-control mode, which
-/// refuses the transform.
-fn apply_codec_settings(transform: &Transform, values: &[CodecSetting]) -> Result<(), MediaError> {
+/// The refusal of a transform `name` that has no `mode` of rate control
+/// (the setting `key`): the user can choose the `other` mode, or, when the
+/// transform is a GPU's and `hardware` is on, Microsoft's software encoder.
+fn no_rate_control(
+    key: &str,
+    name: &str,
+    mode: &str,
+    other: &str,
+    hint_hardware: bool,
+) -> MediaError {
+    let hardware = if hint_hardware {
+        ", or turn Hardware off"
+    } else {
+        ""
+    };
+    MediaError::InvalidSettings {
+        key: key.to_owned(),
+        message: format!("{name} has no {mode} mode; choose {other}{hardware}"),
+    }
+}
+
+/// Sets `values` on `transform`'s `ICodecAPI`, `hardware` being the
+/// setting. A property it does not take is skipped (Task 1: Microsoft's
+/// software MFT refuses `LowLatency`, NVIDIA's `BPictureCount` too), except
+/// the rate-control mode, and the bitrate in bitrate mode, which refuse the
+/// transform: the next candidate is tried (deviation 78).
+fn apply_codec_settings(
+    transform: &Transform,
+    values: &[CodecSetting],
+    hardware: bool,
+) -> Result<(), MediaError> {
     let codec = transform.codec_api();
     let name = transform.name();
+    let hint_hardware = hardware && transform.is_hardware();
+    let takes = |api: &GUID, value: &VARIANT| {
+        codec
+            .as_ref()
+            .is_some_and(|codec| set_value(codec, api, value))
+    };
     for value in values {
         match *value {
             CodecSetting::RateControlQuality(quality) => {
                 let mode = variant_u32(eAVEncCommonRateControlMode_Quality.0 as u32);
-                if !codec.as_ref().is_some_and(|codec| {
-                    set_value(codec, &CODECAPI_AVEncCommonRateControlMode, &mode)
-                }) {
-                    return Err(MediaError::InvalidSettings {
-                        key: "rateControl".to_owned(),
-                        message: format!(
-                            "{name} has no constant quality mode; choose Average bitrate, or turn Hardware off"
-                        ),
-                    });
+                if !takes(&CODECAPI_AVEncCommonRateControlMode, &mode) {
+                    return Err(no_rate_control(
+                        "rateControl",
+                        name,
+                        "constant quality",
+                        "Average bitrate",
+                        hint_hardware,
+                    ));
                 }
-                if let Some(codec) = &codec {
-                    set_value(codec, &CODECAPI_AVEncCommonQuality, &variant_u32(quality));
-                }
+                takes(&CODECAPI_AVEncCommonQuality, &variant_u32(quality));
             }
             CodecSetting::RateControlMeanBitRate(bitrate) => {
                 let mode = variant_u32(eAVEncCommonRateControlMode_UnconstrainedVBR.0 as u32);
-                if !codec.as_ref().is_some_and(|codec| {
-                    set_value(codec, &CODECAPI_AVEncCommonRateControlMode, &mode)
-                }) {
-                    return Err(MediaError::InvalidSettings {
-                        key: "rateControl".to_owned(),
-                        message: format!(
-                            "{name} has no average bitrate mode; choose Constant quality, or turn Hardware off"
-                        ),
-                    });
-                }
-                if let Some(codec) = &codec {
-                    set_value(
-                        codec,
-                        &CODECAPI_AVEncCommonMeanBitRate,
-                        &variant_u32(bitrate),
-                    );
+                if !(takes(&CODECAPI_AVEncCommonRateControlMode, &mode)
+                    && takes(&CODECAPI_AVEncCommonMeanBitRate, &variant_u32(bitrate)))
+                {
+                    return Err(no_rate_control(
+                        "bitrate",
+                        name,
+                        "average bitrate",
+                        "Constant quality",
+                        hint_hardware,
+                    ));
                 }
             }
             CodecSetting::GopSize(frames) => {
@@ -250,13 +274,17 @@ pub(crate) fn open(
             reason,
         });
     }
+    // Each refusal names its transform, so the one kept says which refused.
     let transform = first_accepting(&listed, |activate| {
-        let mut transform = Transform::activate(activate)?;
-        apply_codec_settings(&transform, &values)?;
-        let output = encoder_output(codec, profile, width, height, rate, bitrate)?;
-        let input_type = encoder_input(input, width, height, rate)?;
-        transform.set_types(&output, &input_type)?;
-        Ok(transform)
+        let try_one = || {
+            let mut transform = Transform::activate(activate)?;
+            apply_codec_settings(&transform, &values, hardware)?;
+            let output = encoder_output(codec, profile, width, height, rate, bitrate)?;
+            let input_type = encoder_input(input, width, height, rate)?;
+            transform.set_types(&output, &input_type)?;
+            Ok(transform)
+        };
+        try_one().map_err(|error| named(&friendly_name(activate), error))
     })?;
     let session = VideoSession {
         transform,
@@ -431,5 +459,48 @@ impl VideoSession {
             bytes,
             additional: Vec::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refusal(error: MediaError) -> (String, String) {
+        match error {
+            MediaError::InvalidSettings { key, message } => (key, message),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn rate_control_refusals_say_what_to_change() {
+        assert_eq!(
+            refusal(no_rate_control(
+                "rateControl",
+                "NVIDIA H.264 Encoder MFT",
+                "constant quality",
+                "Average bitrate",
+                true
+            )),
+            (
+                "rateControl".to_owned(),
+                "NVIDIA H.264 Encoder MFT has no constant quality mode; choose Average bitrate, or turn Hardware off".to_owned()
+            )
+        );
+        // A software transform, or Hardware already off: no hardware hint.
+        assert_eq!(
+            refusal(no_rate_control(
+                "bitrate",
+                "H264 Encoder MFT",
+                "average bitrate",
+                "Constant quality",
+                false
+            )),
+            (
+                "bitrate".to_owned(),
+                "H264 Encoder MFT has no average bitrate mode; choose Constant quality".to_owned()
+            )
+        );
     }
 }

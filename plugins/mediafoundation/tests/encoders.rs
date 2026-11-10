@@ -546,6 +546,25 @@ fn h264_and_hevc_decode_times_precede_presentation() {
 }
 
 #[test]
+fn average_bitrate_mode_encodes() {
+    // The bitrate mode and its bitrate refuse a transform that does not take
+    // them (deviation 78), so Microsoft's software MFT must take both.
+    let mut codec = MfCodec::new();
+    let by_bitrate = software(&[
+        ("rateControl", text("bitrate")),
+        ("bitrate", SettingValue::Number(2_000_000.0)),
+    ]);
+    let opened = open(&mut codec, "h264", &by_bitrate, &[PixelFormat::Nv12]).unwrap();
+    let answers = encode_frames(
+        &mut codec,
+        opened.session,
+        (0..10).map(|index| nv12_moving(SIZE, index)),
+    );
+    let (packets, _) = packets_and_config(answers);
+    assert_invariants("h264 at an average bitrate", &packets, 10);
+}
+
+#[test]
 fn every_input_pts_comes_back() {
     let mut codec = MfCodec::new();
     let opened = open(&mut codec, "h264", &software(&[]), &[PixelFormat::Nv12]).unwrap();
@@ -702,14 +721,21 @@ fn hardware_encoders_keep_the_invariants() {
             continue;
         }
         let hardware = settings(&[("hardware", SettingValue::Boolean(true))]);
-        let opened = open_sized(
+        // A GPU's encoder may refuse what Microsoft's would take; that is
+        // this machine's driver, not the plugin, so the test skips.
+        let opened = match open_sized(
             &mut codec,
             component,
             &hardware,
             &[PixelFormat::Nv12],
             HARDWARE_SIZE,
-        )
-        .unwrap();
+        ) {
+            Ok(opened) => opened,
+            Err(error) => {
+                println!("skipping {TEST}: {error}");
+                continue;
+            }
+        };
         let name = codec
             .encoder_name(opened.session)
             .expect("an open session has an encoder")

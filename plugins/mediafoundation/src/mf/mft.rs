@@ -14,6 +14,7 @@
 //!   ([`wait_for`]); a transform silent for [`STALL`] has stopped
 //!   answering.
 
+use crate::mf::media_type::set_color;
 use celesta_media::MediaError;
 use std::mem::ManuallyDrop;
 use std::thread;
@@ -23,10 +24,11 @@ use windows::Win32::Media::MediaFoundation::{
     IMFShutdown, IMFTransform, MEError, METransformDrainComplete, METransformHaveOutput,
     METransformNeedInput, MF_E_NO_EVENTS_AVAILABLE, MF_E_NOTACCEPTING,
     MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE, MF_EVENT_FLAG_NO_WAIT,
-    MF_TRANSFORM_ASYNC, MF_TRANSFORM_ASYNC_UNLOCK, MFCreateMemoryBuffer, MFCreateSample,
-    MFMediaType_Audio, MFMediaType_Video, MFT_CATEGORY_AUDIO_ENCODER, MFT_ENUM_FLAG,
-    MFT_ENUM_FLAG_ASYNCMFT, MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_LOCALMFT,
-    MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT, MFT_FRIENDLY_NAME_Attribute,
+    MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC, MF_TRANSFORM_ASYNC_UNLOCK,
+    MF_TRANSFORM_FLAGS_Attribute, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Audio,
+    MFMediaType_Video, MFT_CATEGORY_AUDIO_ENCODER, MFT_ENUM_FLAG, MFT_ENUM_FLAG_ASYNCMFT,
+    MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_LOCALMFT, MFT_ENUM_FLAG_SORTANDFILTER,
+    MFT_ENUM_FLAG_SYNCMFT, MFT_ENUM_HARDWARE_URL_Attribute, MFT_FRIENDLY_NAME_Attribute,
     MFT_MESSAGE_COMMAND_DRAIN, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_END_OF_STREAM, MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
     MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
@@ -236,20 +238,56 @@ pub(crate) fn wait_for<T>(
 }
 
 /// The first of `candidates` that `try_one` accepts, tried in order: what
-/// it gave, or the last refusal when none accepts. Whatever `try_one` made
-/// of a refused candidate is dropped before the next is tried.
+/// it gave, or, when none accepts, the most specific refusal. That is the
+/// last `MediaError::InvalidSettings` (a candidate that refused a setting
+/// the user can change, such as its rate control: deviation 78), else the
+/// last refusal. Whatever `try_one` made of a refused candidate is dropped
+/// before the next is tried.
 pub(crate) fn first_accepting<C, S>(
     candidates: &[C],
     mut try_one: impl FnMut(&C) -> Result<S, MediaError>,
 ) -> Result<S, MediaError> {
-    let mut refusal = MediaError::Codec("there was no transform to try".to_owned());
+    let settings = |error: &MediaError| matches!(error, MediaError::InvalidSettings { .. });
+    let mut refusal: Option<MediaError> = None;
     for candidate in candidates {
         match try_one(candidate) {
             Ok(session) => return Ok(session),
-            Err(error) => refusal = error,
+            Err(error) => {
+                if !(refusal.as_ref().is_some_and(settings) && !settings(&error)) {
+                    refusal = Some(error);
+                }
+            }
         }
     }
-    Err(refusal)
+    Err(refusal.unwrap_or_else(|| MediaError::Codec("there was no transform to try".to_owned())))
+}
+
+/// `activate`'s friendly name (`MFT_FRIENDLY_NAME_Attribute`).
+pub(crate) fn friendly_name(activate: &IMFActivate) -> String {
+    string_attribute(activate, &MFT_FRIENDLY_NAME_Attribute)
+        .unwrap_or_else(|| "a Media Foundation transform".to_owned())
+}
+
+/// Whether `activate` is a hardware transform: its
+/// `MF_TRANSFORM_FLAGS_Attribute` has `MFT_ENUM_FLAG_HARDWARE` (Task 1:
+/// NVIDIA's are `0x4`, the DX12 encoders' `0x6`), or it has a hardware URL.
+pub(crate) fn is_hardware(activate: &IMFActivate) -> bool {
+    // SAFETY: a plain COM call on a live interface.
+    let flags = unsafe { activate.GetUINT32(&MF_TRANSFORM_FLAGS_Attribute) }.unwrap_or(0);
+    flags & MFT_ENUM_FLAG_HARDWARE.0 as u32 != 0
+        || string_attribute(activate, &MFT_ENUM_HARDWARE_URL_Attribute).is_some()
+}
+
+/// `error` from the transform `name`, its message led by the name, so the
+/// refusal [`first_accepting`] keeps says which transform refused. A
+/// settings refusal, which names the transform itself, is left as it is.
+pub(crate) fn named(name: &str, error: MediaError) -> MediaError {
+    match error {
+        MediaError::Codec(message) if !message.starts_with(name) => {
+            MediaError::Codec(format!("{name}: {message}"))
+        }
+        other => other,
+    }
 }
 
 /// What an asynchronous transform's event asks.
@@ -278,14 +316,19 @@ pub(crate) struct Transform {
     need_input: u32,
     /// Whether the types are set and it has not been drained.
     streaming: bool,
+    /// Whether it is a hardware transform.
+    hardware: bool,
+    /// The output type's major type and subtype, once set: a stream change
+    /// must keep the subtype.
+    output_kind: Option<(GUID, GUID)>,
 }
 
 impl Transform {
     /// Activates `activate`'s transform, unlocking it when it is
     /// asynchronous.
     pub(crate) fn activate(activate: &IMFActivate) -> Result<Self, MediaError> {
-        let name = string_attribute(activate, &MFT_FRIENDLY_NAME_Attribute)
-            .unwrap_or_else(|| "a Media Foundation transform".to_owned());
+        let name = friendly_name(activate);
+        let hardware = is_hardware(activate);
         // SAFETY: plain COM calls on live interfaces.
         let transform: IMFTransform = check("IMFActivate::ActivateObject", unsafe {
             activate.ActivateObject::<IMFTransform>()
@@ -299,6 +342,8 @@ impl Transform {
             output_size: 0,
             need_input: 0,
             streaming: false,
+            hardware,
+            output_kind: None,
         };
         // SAFETY: plain COM calls on live interfaces.
         let attributes = unsafe { opened.transform.GetAttributes() }.ok();
@@ -325,6 +370,11 @@ impl Transform {
         &self.name
     }
 
+    /// Whether it is a hardware transform ([`is_hardware`]).
+    pub(crate) fn is_hardware(&self) -> bool {
+        self.hardware
+    }
+
     /// Sets the output type, then the input type, and begins streaming.
     pub(crate) fn set_types(
         &mut self,
@@ -341,6 +391,13 @@ impl Transform {
                 "IMFTransform::SetInputType",
                 self.transform.SetInputType(0, input, 0),
             )?;
+            self.output_kind = Some((
+                check(
+                    "GetGUID(MF_MT_MAJOR_TYPE)",
+                    output.GetGUID(&MF_MT_MAJOR_TYPE),
+                )?,
+                check("GetGUID(MF_MT_SUBTYPE)", output.GetGUID(&MF_MT_SUBTYPE))?,
+            ));
         }
         self.read_output_info()?;
         // SAFETY: as above.
@@ -533,14 +590,31 @@ impl Transform {
     }
 
     /// Sets the output type again after a stream change: the first one
-    /// available, which keeps the subtype.
+    /// available, which must keep the subtype, with a video type's BT.709
+    /// limited colour, which every output type carries.
     fn renegotiate(&mut self) -> Result<(), MediaError> {
+        let Some((major, subtype)) = self.output_kind else {
+            return Err(MediaError::Codec(format!(
+                "{} changed its stream before its types were set",
+                self.name
+            )));
+        };
         // SAFETY: plain COM calls on live interfaces.
         unsafe {
             let available = check(
                 "IMFTransform::GetOutputAvailableType",
                 self.transform.GetOutputAvailableType(0, 0),
             )?;
+            let offered = check("GetGUID(MF_MT_SUBTYPE)", available.GetGUID(&MF_MT_SUBTYPE))?;
+            if offered != subtype {
+                return Err(MediaError::Codec(format!(
+                    "{} changed its output subtype",
+                    self.name
+                )));
+            }
+            if major == MFMediaType_Video {
+                set_color(&available)?;
+            }
             check(
                 "IMFTransform::SetOutputType",
                 self.transform.SetOutputType(0, &available, 0),
@@ -658,5 +732,72 @@ mod tests {
             Ok(*name)
         });
         assert_eq!((opened.unwrap(), tried), ("first", 1));
+    }
+
+    /// A refusal of the rate control, as `video.rs` words it.
+    fn no_quality_mode(name: &str) -> MediaError {
+        MediaError::InvalidSettings {
+            key: "rateControl".to_owned(),
+            message: format!("{name} has no constant quality mode; choose Average bitrate"),
+        }
+    }
+
+    #[test]
+    fn a_rate_control_refusal_outranks_later_refusals() {
+        // A GPU's MFT refuses the rate control, a DX12 one its output type:
+        // the user is told what to change, not the DX12 error.
+        let candidates = ["GPU MFT", "DX12 MFT"];
+        let refused: Result<(), MediaError> = first_accepting(&candidates, |name| {
+            if *name == "GPU MFT" {
+                Err(no_quality_mode(name))
+            } else {
+                Err(MediaError::Codec(format!(
+                    "{name}: IMFTransform::SetOutputType failed: 0x80041000"
+                )))
+            }
+        });
+        assert!(
+            matches!(&refused, Err(MediaError::InvalidSettings { key, message })
+                if key == "rateControl" && message.starts_with("GPU MFT has no constant quality mode")),
+            "{refused:?}"
+        );
+        // A later settings refusal replaces an earlier one, as any refusal does.
+        let refused: Result<(), MediaError> =
+            first_accepting(&candidates, |name| Err(no_quality_mode(name)));
+        assert!(
+            matches!(&refused, Err(MediaError::InvalidSettings { message, .. }) if message.starts_with("DX12 MFT")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_rate_control_refusal_falls_back() {
+        // Deviation 78: the next candidate (Microsoft's software MFT) opens.
+        let candidates = ["GPU MFT", "H264 Encoder MFT"];
+        let opened = first_accepting(&candidates, |name| {
+            if *name == "GPU MFT" {
+                Err(no_quality_mode(name))
+            } else {
+                Ok(format!("{name}'s session"))
+            }
+        });
+        assert_eq!(opened.unwrap(), "H264 Encoder MFT's session");
+    }
+
+    #[test]
+    fn refusals_name_their_transform() {
+        assert!(matches!(
+            named("NVIDIA H.264 Encoder MFT", MediaError::Codec("IMFTransform::SetOutputType failed: 0xC00D6D76".into())),
+            MediaError::Codec(message) if message == "NVIDIA H.264 Encoder MFT: IMFTransform::SetOutputType failed: 0xC00D6D76"
+        ));
+        // A message that leads with the name already is left alone.
+        assert!(matches!(
+            named("Silent MFT", MediaError::Codec("Silent MFT stopped answering".into())),
+            MediaError::Codec(message) if message == "Silent MFT stopped answering"
+        ));
+        assert!(matches!(
+            named("GPU MFT", no_quality_mode("GPU MFT")),
+            MediaError::InvalidSettings { key, .. } if key == "rateControl"
+        ));
     }
 }

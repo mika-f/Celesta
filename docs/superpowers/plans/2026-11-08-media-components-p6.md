@@ -65,7 +65,7 @@ FFmpeg's components in one export.
 **Spec:** `docs/superpowers/specs/2026-11-08-media-components-design.md`.
 Read these sections with this plan:
 - OS-native plugins (P5, P6), including the P6 paragraph and deviations
-  70–77;
+  70–78;
 - Phases (P5, P6);
 - Manifest; Protocol 2; Capability discovery; Settings schema;
 - Transport; Pixel formats and color;
@@ -235,7 +235,7 @@ the conversation that wrote it.
 
 ## Deviations from the spec
 
-Deviations 70–77 are in the spec's P6 paragraph (OS-native plugins), which
+Deviations 70–78 are in the spec's P6 paragraph (OS-native plugins), which
 Task 10 rewrites as built. In short:
 - 70: no ProRes and no `mov`.
 - 71: the `mp4` muxer only under Task 1's ruling A. Task 1 ruled B, so
@@ -251,8 +251,12 @@ Task 10 rewrites as built. In short:
   answers them as its delay (`AAC_DELAY = AAC_LEAD_IN = 1024`). Microsoft's
   AAC MFT has no priming, but it loses up to the first 700 frames it is
   given.
+- 78 (Task 4 review): a GPU MFT that lacks the chosen rate control falls
+  back to the next encoder. `hardware: true` and `rateControl: quality` are
+  both defaults, so the default export must still work, on Microsoft's
+  software MFT, on a GPU whose MFT has no quality mode.
 
-A new deviation gets the next number (78 on) and goes in Task 10's spec
+A new deviation gets the next number (79 on) and goes in Task 10's spec
 edit and the handoff note.
 
 ## Decisions the spec left to this plan
@@ -313,9 +317,17 @@ edit and the handoff note.
   - NVIDIA's: `IsSupported` `0x80004001` and `SetValue` `0x80070057` for
     `BPictureCount` and `LowLatency`.
 
-  An unsupported mode is
-  `MediaError::InvalidSettings { key: "rateControl", message: "{name} has no constant quality mode; choose Average bitrate, or turn Hardware off" }`
-  (and likewise for bitrate).
+  An unsupported mode (or, in bitrate mode, a refused
+  `CODECAPI_AVEncCommonMeanBitRate`) refuses the candidate, like a refused
+  type, and the next one is tried (deviation 78). When every candidate
+  refuses and one refused the rate control, that refusal is the error, over
+  later generic ones (such as the DX12 encoder's `SetOutputType`
+  `0x80041000`):
+  `MediaError::InvalidSettings { key: "rateControl", message: "{name} has no constant quality mode; choose Average bitrate, or turn Hardware off" }`,
+  and likewise for bitrate (key `bitrate`, "{name} has no average bitrate
+  mode; choose Constant quality, or turn Hardware off"). ", or turn
+  Hardware off" is there only when the refusing MFT is a hardware one and
+  `hardware` is on. Every other refusal is led by the MFT's friendly name.
   - Profiles: `h264` `high` → `eAVEncH264VProfile_High`, `main` →
     `eAVEncH264VProfile_Main`, `baseline` → `eAVEncH264VProfile_Base`;
     `hevc` 8 → `eAVEncH265VProfile_Main_420_8`, 10 →
@@ -1551,7 +1563,7 @@ impl MfDecoder {
     `plugin.json`'s `os`, and the Windows prerequisites of How to start;
   - the Windows package's `plugins\mediafoundation`.
 - Modify `docs/superpowers/specs/2026-11-08-media-components-design.md`:
-  rewrite the P6 paragraph as built, with deviations 70–77 (and any
+  rewrite the P6 paragraph as built, with deviations 70–78 (and any
   later ones) and Task 1's verified answers; Phases → P6 as built.
 - Create: `docs/handoff/<date>-media-windows.md`.
 
