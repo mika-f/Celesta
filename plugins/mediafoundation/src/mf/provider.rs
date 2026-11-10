@@ -3,11 +3,11 @@
 //!
 //! It describes every component, from what this system's Media Foundation
 //! lists. Its encoder sessions, of every kind, are numbered from one counter.
-//! Until the decoder is built, it answers that the component is not
-//! available.
+//! Its decoder is [`MfDecoder`], on the source reader.
 
 use crate::components::{self, AudioCodec, VideoCodec};
 use crate::mf::audio::{self, AudioSession};
+use crate::mf::decoder::MfDecoder;
 use crate::mf::video::{self, VideoSession};
 use crate::mf::{enumerate, startup::Started};
 use crate::{DECODER_ID, PLUGIN_ID};
@@ -32,6 +32,8 @@ pub struct MfCodec {
     video: HashMap<SessionId, VideoSession>,
     /// The open audio encoder sessions, likewise.
     audio: HashMap<SessionId, AudioSession>,
+    /// The decoder and its sequential sessions' readers, likewise.
+    decoder: MfDecoder,
     /// The last session number given, one count for every kind.
     last: u64,
     /// COM and Media Foundation as started, or why they did not: `describe`
@@ -45,6 +47,7 @@ impl MfCodec {
         Self {
             video: HashMap::new(),
             audio: HashMap::new(),
+            decoder: MfDecoder::default(),
             last: 0,
             startup: Started::new(),
         }
@@ -95,14 +98,6 @@ fn no_session(kind: &str, session: SessionId) -> MediaError {
 /// The error for a component the plugin has no `kind` of.
 fn no_component(kind: &str, component: &str) -> MediaError {
     MediaError::Codec(format!("no {kind} {component:?} in {PLUGIN_ID}"))
-}
-
-/// The answer to a request for `component`, which is built later.
-fn not_implemented(component: &str) -> MediaError {
-    MediaError::ComponentUnavailable {
-        component: component.to_owned(),
-        reason: "not implemented yet".to_owned(),
-    }
 }
 
 /// `Ok` for the decoder [`DECODER_ID`], the plugin's one.
@@ -172,29 +167,32 @@ impl MediaProvider for MfCodec {
 }
 
 impl Decoder for MfCodec {
-    fn probe(&mut self, decoder: &str, _path: &Path) -> Result<MediaProbe, MediaError> {
+    fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
         check_decoder(decoder)?;
-        Err(not_implemented(decoder))
+        self.started(decoder)?;
+        self.decoder.probe(path)
     }
 
     fn decode_video(
         &mut self,
         decoder: &str,
-        _request: &VideoRequest<'_>,
+        request: &VideoRequest<'_>,
     ) -> Result<VideoFrame, MediaError> {
         check_decoder(decoder)?;
-        Err(not_implemented(decoder))
+        self.started(decoder)?;
+        self.decoder.decode(request)
     }
 
     fn decode_audio(
         &mut self,
         decoder: &str,
-        _path: &Path,
-        _sample_rate: u32,
-        _channels: u16,
+        path: &Path,
+        sample_rate: u32,
+        channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
         check_decoder(decoder)?;
-        Err(not_implemented(decoder))
+        self.started(decoder)?;
+        self.decoder.decode_audio(path, sample_rate, channels)
     }
 }
 
@@ -414,16 +412,16 @@ mod tests {
     }
 
     #[test]
-    fn a_component_that_is_not_built_yet_is_unavailable() {
+    fn the_decoder_answers_for_its_own_id() {
         let mut codec = MfCodec::new();
-        let error = codec.probe(DECODER_ID, Path::new("a.mp4")).unwrap_err();
-        assert!(
-            matches!(&error, MediaError::ComponentUnavailable { component, .. } if component == DECODER_ID),
-            "{error:?}"
-        );
+        let missing = Path::new("no such file.mp4");
         assert!(matches!(
-            codec.probe("avfoundation", Path::new("a.mp4")),
-            Err(MediaError::Codec(_))
+            codec.probe(DECODER_ID, missing),
+            Err(MediaError::NotFound(path)) if path == missing
+        ));
+        assert!(matches!(
+            codec.probe("avfoundation", missing),
+            Err(MediaError::Codec(message)) if message == r#"no decoder "avfoundation" in mediafoundation"#
         ));
     }
 }

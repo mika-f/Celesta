@@ -322,11 +322,10 @@ fn refused<T: std::fmt::Debug>(result: Result<T, MediaError>) -> String {
 }
 
 /// Whether `error` is what probing a file the decoder cannot read gives.
-/// Task 8 implements the decoder, which answers `Unsupported { path, .. }`;
-/// the stub before it answers `ComponentUnavailable`. Changing this
-/// function's body is the only edit that takes.
-fn is_the_refusal_of_unreadable_files(error: &MediaError, _path: &Path) -> bool {
-    matches!(error, MediaError::ComponentUnavailable { .. })
+/// The decoder's refusal of a file Media Foundation's reader cannot open:
+/// `Unsupported`, naming the file.
+fn is_the_refusal_of_unreadable_files(error: &MediaError, path: &Path) -> bool {
+    matches!(error, MediaError::Unsupported { path: refused, .. } if refused == path)
 }
 
 #[test]
@@ -356,17 +355,23 @@ fn errors_keep_their_kind() {
     drop(program);
 
     // A file the decoder cannot read: a WebM, which only the FFmpeg plugin
-    // writes and reads.
+    // writes and reads, unless this Windows has a WebM source (this
+    // machine's Windows 11 reads Opus in WebM).
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("sound.webm");
     webm(&output);
     let mut program = program_with(FrameTransport::from_environment(), ProviderUse::Decode);
-    let result = program
-        .decoder()
-        .expect("the plugin has a decoder")
-        .probe(celesta_codec_mediafoundation::DECODER_ID, &output);
-    match result {
+    let decoder = program.decoder().expect("the plugin has a decoder");
+    match decoder.probe(celesta_codec_mediafoundation::DECODER_ID, &output) {
         Err(error) if is_the_refusal_of_unreadable_files(&error, &output) => {}
+        Ok(probe) => println!("this Windows reads WebM: {probe:?}"),
+        other => panic!("expected the refusal of an unreadable file, got {other:?}"),
+    }
+    // And a file no Media Foundation reads, on every Windows.
+    let text = directory.path().join("x.mp4");
+    std::fs::write(&text, "not a movie\n").unwrap();
+    match decoder.probe(celesta_codec_mediafoundation::DECODER_ID, &text) {
+        Err(error) if is_the_refusal_of_unreadable_files(&error, &text) => {}
         other => panic!("expected the refusal of an unreadable file, got {other:?}"),
     }
 }

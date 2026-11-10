@@ -65,10 +65,28 @@ mod convert;
     not(any(windows, test)),
     expect(
         dead_code,
+        reason = "only the Windows decoder uses it outside its tests"
+    )
+)]
+mod edit_list;
+
+#[cfg_attr(
+    not(any(windows, test)),
+    expect(
+        dead_code,
         reason = "only the Windows encoders use it outside its tests"
     )
 )]
 mod hns;
+
+#[cfg_attr(
+    not(any(windows, test)),
+    expect(
+        dead_code,
+        reason = "only the Windows decoder uses it outside its tests"
+    )
+)]
+mod names;
 
 #[cfg_attr(
     not(any(windows, test)),
