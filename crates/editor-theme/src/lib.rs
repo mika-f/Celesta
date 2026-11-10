@@ -7,15 +7,36 @@
 //! *data* drawn on the timeline (clip kinds, the audio waveform, level meters,
 //! the playhead), where the hue is the information rather than decoration.
 
+pub mod metrics;
+
 use celesta_project::TrackKind;
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Hsla, rgb, rgba};
+use gpui_kit::{Anchor, App, Hsla, px, rgb, rgba};
 
 /// Forces the NLE-standard dark appearance. gpui-component's dark theme still
 /// defines the full light palette, so `cx.theme()` stays valid in both modes;
 /// the editor simply never switches to light.
 pub fn init(cx: &mut App) {
     Theme::change(ThemeMode::Dark, None, cx);
+    apply(cx);
+}
+
+/// Puts the editor's scale and palette on the global theme.
+///
+/// `Theme::change` reloads the dark theme's config, which resets everything
+/// set here; call this again after any reload.
+pub fn apply(cx: &mut App) {
+    Theme::update(cx, |theme| {
+        theme.font_size = px(metrics::BASE_FONT_SIZE);
+        theme.radius = px(0.);
+        theme.radius_lg = px(0.);
+        // A thin inner line instead of a ring outside the control.
+        theme.focus_ring = false;
+        // Toasts sit just above the status bar (a toolbar row tall) instead
+        // of over the panel headers at the top right.
+        theme.notification.placement = Anchor::BottomRight;
+        theme.notification.margins.bottom = px(metrics::BASE_FONT_SIZE * (2.0 + 0.75));
+    });
 }
 
 /// celesta's brand accent (the "Celesta" wordmark, the timeline playhead). It is a
@@ -75,4 +96,37 @@ pub fn export_range_fill() -> Hsla {
 
 pub fn export_range_border() -> Hsla {
     rgba(EXPORT_RANGE_BORDER).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::TestAppContext;
+
+    #[gpui_kit::test]
+    fn init_sets_the_editor_scale(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let theme = Theme::global(cx);
+            assert_eq!(theme.font_size, px(metrics::BASE_FONT_SIZE));
+            assert_eq!(theme.radius, px(0.));
+            assert_eq!(theme.radius_lg, px(0.));
+            assert!(!theme.focus_ring);
+            assert_eq!(theme.notification.placement, Anchor::BottomRight);
+            assert!(theme.is_dark());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn apply_restores_the_scale_after_a_reload(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            Theme::change(ThemeMode::Dark, None, cx);
+            apply(cx);
+            assert_eq!(Theme::global(cx).font_size, px(metrics::BASE_FONT_SIZE));
+            assert_eq!(Theme::global(cx).radius, px(0.));
+        });
+    }
 }

@@ -1082,6 +1082,7 @@ version = "0.9.0"
 dependencies = [
  "celesta-project",
  "gpui-kit",
+ "gpui-pre",
 ]
 
 [[package]]
