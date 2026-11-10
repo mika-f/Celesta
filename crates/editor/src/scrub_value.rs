@@ -79,7 +79,7 @@ pub(crate) enum ScrubEnd {
 }
 
 /// Whether a number row shows its text field rather than its resting value.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RowTyping(bool);
 
 impl RowTyping {

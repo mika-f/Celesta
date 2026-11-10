@@ -348,6 +348,7 @@ impl EditorView {
         self.continue_timeline_drag::<BandDrag>(event, cx);
         self.continue_timeline_drag::<SceneDrag>(event, cx);
         self.continue_row_scrub(event, cx);
+        self.continue_property_scrub(event, cx);
         self.continue_inline_selection(event, window, cx);
         self.continue_add(event, cx);
     }
@@ -365,6 +366,7 @@ impl EditorView {
         let ended = self.end_timeline_drag::<BandDrag>(cx) | ended;
         let ended = self.end_timeline_drag::<SceneDrag>(cx) | ended;
         let ended = self.end_row_scrub(window, cx) | ended;
+        let ended = self.end_property_scrub(window, cx) | ended;
         let ended = self.end_add(event.position, cx) | ended;
         if ended {
             cx.notify();

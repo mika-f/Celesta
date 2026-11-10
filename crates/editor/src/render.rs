@@ -108,7 +108,8 @@ impl EditorView {
                 let escaped = this.escape_transform_drag()
                     || this.escape_timeline_drag::<BandDrag>()
                     || this.escape_timeline_drag::<SceneDrag>()
-                    || this.escape_row_scrub();
+                    || this.escape_row_scrub()
+                    || this.escape_property_scrub();
                 let added = !escaped && this.escape_add();
                 if added {
                     this.end_inline_text(EditEvent::Escape, cx);

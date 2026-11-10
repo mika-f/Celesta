@@ -74,7 +74,7 @@ fn sections(targets: &ElementTargets) -> Vec<(String, Vec<&(PropKey, Target)>)> 
 
 /// A number row's resting text: the shown value with as many places as the
 /// field's step has, then its unit; text that is not a number as it is.
-fn number_text(text: &str, field: Option<&PrimitivePropertyField>) -> String {
+pub(crate) fn number_text(text: &str, field: Option<&PrimitivePropertyField>) -> String {
     let (step, integer, unit) = match field {
         Some(PrimitivePropertyField::Number {
             step,
