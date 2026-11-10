@@ -13,6 +13,7 @@ members = [
   "crates/gpu-renderer",
   "crates/mcp",
   "crates/media",
+  "crates/media-image",
   "crates/plugin",
   "crates/plugin-host",
   "crates/project",
@@ -49,6 +50,7 @@ celesta-evaluator = { path = "crates/evaluator", version = "=0.9.0" }
 celesta-exporter = { path = "crates/exporter", version = "=0.9.0" }
 celesta-gpu-renderer = { path = "crates/gpu-renderer", version = "=0.9.0" }
 celesta-media = { path = "crates/media", version = "=0.9.0" }
+celesta-media-image = { path = "crates/media-image", version = "=0.9.0" }
 celesta-plugin = { path = "crates/plugin", version = "=0.9.0" }
 celesta-plugin-host = { path = "crates/plugin-host", version = "=0.9.0" }
 celesta-project = { path = "crates/project", version = "=0.9.0" }

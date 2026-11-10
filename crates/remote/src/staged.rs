@@ -6,7 +6,7 @@ use std::fs::{self, File};
 use std::io;
 use std::path::Path;
 
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempPath};
 
 /// A file being written beside its destination. [`StagedFile::publish`]
 /// renames it into place; dropping it unpublished removes it.
@@ -66,6 +66,20 @@ impl StagedFile {
             Err(error) => Err(error.error),
         }
     }
+}
+
+/// Renames the file at `staged` to `destination`, as [`StagedFile::publish`]
+/// does: with `overwrite` it replaces a file already there; without it, that
+/// file stays and publishing fails with [`io::ErrorKind::AlreadyExists`]. A
+/// failed publish removes the staged file.
+pub fn publish_path(staged: &Path, destination: &Path, overwrite: bool) -> io::Result<()> {
+    let staged = TempPath::try_from_path(staged)?;
+    let published = if overwrite {
+        staged.persist(destination)
+    } else {
+        staged.persist_noclobber(destination)
+    };
+    published.map_err(|error| error.error)
 }
 
 #[cfg(test)]
@@ -143,6 +157,31 @@ mod tests {
         assert!(file.path().exists());
         drop(file);
         assert!(names(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn publish_path_never_clobbers_unless_asked() {
+        let directory = tempfile::tempdir().unwrap();
+        let staged = directory.path().join("staged.png");
+        let destination = directory.path().join("out.png");
+        fs::write(&destination, "old").unwrap();
+
+        fs::write(&staged, "new").unwrap();
+        let error = publish_path(&staged, &destination, false).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "old");
+
+        fs::write(&staged, "new").unwrap();
+        publish_path(&staged, &destination, true).unwrap();
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "new");
+        assert!(!staged.exists());
+        assert_eq!(names(directory.path()), ["out.png"]);
+
+        let fresh = directory.path().join("fresh.png");
+        fs::write(&staged, "fresh").unwrap();
+        publish_path(&staged, &fresh, false).unwrap();
+        assert_eq!(fs::read_to_string(&fresh).unwrap(), "fresh");
+        assert_eq!(names(directory.path()), ["fresh.png", "out.png"]);
     }
 
     #[cfg(unix)]

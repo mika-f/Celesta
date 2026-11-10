@@ -135,23 +135,35 @@ pub enum ReadbackFormat {
     /// done on the GPU at 16 bits, so a translucent edge keeps its color.
     Rgba16Straight,
     /// Planar I420 converted on the GPU: the full-size Y plane followed by
-    /// the quarter-size U and V planes, 1.5 bytes per pixel. BT.601 limited
-    /// range with 2x2-averaged chroma, the same matrix libswscale applies to
-    /// untagged RGB input. Both dimensions must be even. A solid color whose
-    /// Y, U or V falls between two codes alternates between them, within a
-    /// code of libswscale's value.
+    /// the quarter-size U and V planes, 1.5 bytes per pixel. BT.709 limited
+    /// range with 2x2-averaged chroma, the matrix players assume for HD video
+    /// and the one libswscale applies for `out_color_matrix=bt709`. Both
+    /// dimensions must be even. A solid color whose Y, U or V falls between
+    /// two codes alternates between them, within a code of libswscale's
+    /// value.
     Yuv420p,
     /// [`Yuv420p`](Self::Yuv420p) in 10-bit codes, each a little-endian
     /// 16-bit sample (FFmpeg's `yuv420p10le`), 3 bytes per pixel: the 8-bit
     /// matrix scaled by 4, so Y spans 64-940.
     Yuv420p10,
+    /// Semi-planar NV12 (FFmpeg's `nv12`) converted on the GPU: the full-size
+    /// Y plane (`width` x `height` bytes), then one plane of interleaved
+    /// `U, V` byte pairs, one per 2x2 block, 1.5 bytes per pixel. The same
+    /// BT.709 limited-range codes as [`Yuv420p`](Self::Yuv420p). Both
+    /// dimensions must be even.
+    Nv12,
+    /// Semi-planar P010 (FFmpeg's `p010le`): [`Nv12`](Self::Nv12)'s planes in
+    /// little-endian 16-bit samples holding the 10-bit code of
+    /// [`Yuv420p10`](Self::Yuv420p10) in the high bits (`code << 6`), 3 bytes
+    /// per pixel. Both dimensions must be even.
+    P010,
 }
 
 impl ReadbackFormat {
-    /// Whether frames come back as Y, U, and V planes, which needs even
-    /// dimensions.
+    /// Whether frames come back as luma and chroma planes (planar or
+    /// semi-planar), which needs even dimensions.
     pub const fn is_yuv(self) -> bool {
-        matches!(self, Self::Yuv420p | Self::Yuv420p10)
+        crate::yuv::yuv_shape(self).is_some()
     }
 }
 

@@ -120,6 +120,20 @@ test('stills take frames or every, and contact sheet options', () => {
   assert.throws(() => stillsArgs({ source: 'film.tsx', output: 'f.png', frames: [1], from: 1 }), { code: 'usage' });
 });
 
+test('stills take a muxer and a video encoder', () => {
+  const args = stillsArgs({
+    source: 'film.tsx',
+    output: 'f.png',
+    frames: 0,
+    muxer: 'builtin/image',
+    videoEncoder: { options: { depth: 16 } },
+  });
+  assert.deepEqual(args.slice(args.indexOf('--muxer=builtin/image'), args.indexOf('--')), [
+    '--muxer=builtin/image',
+    '--video-option=depth=16',
+  ]);
+});
+
 test('a source that starts with a dash stays positional', () => {
   assert.deepEqual(compositionArgs({ source: '-film.tsx' }).slice(-2), ['--', '-film.tsx']);
 });

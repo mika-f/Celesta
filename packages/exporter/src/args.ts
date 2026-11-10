@@ -56,6 +56,8 @@ export function stillsArgs(options: StillsOptions): string[] {
     ...value('from', timecode('from', options.from)),
     ...value('to', timecode('to', options.to)),
     ...value('quality', options.quality),
+    ...value('muxer', options.muxer),
+    ...encoderFlags('video', options.videoEncoder),
     ...(sheet ? ['--contact-sheet'] : []),
     ...(typeof sheet === 'object' ? [...value('columns', sheet.columns), ...value('tile-width', sheet.tileWidth)] : []),
     ...(options.debugGuides ? ['--debug-guides'] : []),

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use celesta_exporter::{
     AudioChoice, ContactSheet, EncoderChoice, ExportJob, ExportOptions, ExportRange,
-    FrameSelection, LoudnessTarget, OutputChoice, PeakHandling, SettingInput, StillExport,
-    StillFormat, parse_timecode,
+    FrameSelection, LoudnessTarget, OutputChoice, PeakHandling, PresetLookup, PresetsFile,
+    SettingInput, StillExport, StillFormat, parse_timecode,
 };
 use celesta_media::{ComponentRef, SettingValue};
 use schemars::JsonSchema;
@@ -54,8 +54,17 @@ pub struct RenderFramesArgs {
     /// `jpeg`, or `webp`.
     format: Option<ImageFormat>,
     /// JPEG or WebP quality, 1–100 (default 90); higher is sharper and
-    /// larger. Not accepted for PNG.
+    /// larger. Not accepted for PNG unless `videoEncoder` names an encoder,
+    /// which then says whether it takes one.
     quality: Option<u8>,
+    /// The muxer that writes the image, as `<plugin>/<component>` (see
+    /// `list_components`), instead of the built-in one the format names.
+    muxer: Option<String>,
+    /// The image encoder's component `id`, instead of the built-in one the
+    /// format names, and its `options` by key (see `describe_component`):
+    /// `compression`, `depth` and `transparent` for `builtin/png`,
+    /// `lossless` and `transparent` for `builtin/webp`.
+    video_encoder: Option<EncoderArg>,
     /// The folder to write the images to; default: a temporary folder.
     output_dir: Option<PathBuf>,
     /// Replace images that already exist in `outputDir`.
@@ -87,8 +96,17 @@ pub struct ContactSheetArgs {
     /// output's extension.
     format: Option<ImageFormat>,
     /// JPEG or WebP quality, 1–100 (default 90); higher is sharper and
-    /// larger. Not accepted for PNG.
+    /// larger. Not accepted for PNG unless `videoEncoder` names an encoder,
+    /// which then says whether it takes one.
     quality: Option<u8>,
+    /// The muxer that writes the image, as `<plugin>/<component>` (see
+    /// `list_components`), instead of the built-in one the format names.
+    muxer: Option<String>,
+    /// The image encoder's component `id`, instead of the built-in one the
+    /// format names, and its `options` by key (see `describe_component`):
+    /// `compression`, `depth` and `transparent` for `builtin/png`,
+    /// `lossless` and `transparent` for `builtin/webp`.
+    video_encoder: Option<EncoderArg>,
     /// The `.png`, `.jpg`, `.jpeg`, or `.webp` to write; its extension picks
     /// the format. Default: a temporary file.
     output: Option<PathBuf>,
@@ -133,8 +151,9 @@ pub struct ExportVideoArgs {
     output: Option<PathBuf>,
     /// Replace `output` if it exists.
     overwrite: Option<bool>,
-    /// A preset's name. Presets are not available yet: any name is an
-    /// `unknown_preset` error.
+    /// An export preset's name, looked up in presetFile, then the project's
+    /// export-presets.json, then the user's. Without it, the project's
+    /// default preset applies when no component is chosen.
     preset: Option<String>,
     /// An export-presets.json to look `preset` up in first.
     preset_file: Option<PathBuf>,
@@ -217,22 +236,12 @@ pub struct DescribeComponentArgs {
     pub component: String,
 }
 
-/// `presetFile`: a readable JSON object, as the CLI's `--preset-file`.
-/// Presets arrive with P3, so nothing reads names from it yet.
+/// `presetFile`: an export-presets.json that exists and parses, as the
+/// CLI's `--preset-file`.
 fn check_preset_file(path: &Path) -> Result<(), String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("cannot read presetFile {}: {error}", path.display()))?;
-    match serde_json::from_str::<Value>(&text) {
-        Ok(Value::Object(_)) => Ok(()),
-        Ok(_) => Err(format!(
-            "presetFile {} is not a JSON object",
-            path.display()
-        )),
-        Err(error) => Err(format!(
-            "presetFile {} is not valid JSON: {error}",
-            path.display()
-        )),
-    }
+    PresetsFile::load(path)
+        .map(drop)
+        .map_err(|error| format!("presetFile {error}"))
 }
 
 fn component_ref(text: &str) -> Result<ComponentRef, String> {
@@ -402,10 +411,38 @@ fn still_path(output: &Path) -> Result<(PathBuf, StillFormat), String> {
     Ok((absolute(output), format))
 }
 
-/// `quality`, checked against the still format it would encode.
-fn still_quality(format: StillFormat, quality: Option<u8>) -> Result<Option<u8>, String> {
+/// The muxer and image encoder a still tool names.
+fn still_choice(
+    muxer: &Option<String>,
+    video_encoder: &Option<EncoderArg>,
+    quality: Option<u8>,
+) -> Result<OutputChoice, String> {
+    let video = video_encoder
+        .as_ref()
+        .map(|encoder| encoder.choice("videoEncoder"))
+        .transpose()?
+        .unwrap_or_default();
+    if quality.is_some() && video.options.contains_key("quality") {
+        return Err(
+            "quality and videoEncoder.options.quality both set the quality; give one".into(),
+        );
+    }
+    Ok(OutputChoice {
+        muxer: muxer.as_deref().map(component_ref).transpose()?,
+        video,
+        ..OutputChoice::default()
+    })
+}
+
+/// `quality`, checked against the still format it would encode; a named
+/// encoder is left to say what it takes.
+fn still_quality(
+    format: StillFormat,
+    quality: Option<u8>,
+    named_encoder: bool,
+) -> Result<Option<u8>, String> {
     match quality {
-        Some(_) if !format.is_lossy() => {
+        Some(_) if !format.is_lossy() && !named_encoder => {
             Err("quality applies to JPEG and WebP output; PNG is lossless".into())
         }
         Some(quality) if !(1..=StillExport::MAX_QUALITY).contains(&quality) => Err(format!(
@@ -442,7 +479,13 @@ impl RenderFramesArgs {
         let source = self.source.check(debug_guides)?;
         let frames = selection(&self.frames, self.every, source.range.as_ref())?;
         let format = StillFormat::from(self.format.unwrap_or_default());
-        let quality = still_quality(format, self.quality)?;
+        let quality = still_quality(
+            format,
+            self.quality,
+            self.video_encoder
+                .as_ref()
+                .is_some_and(|encoder| encoder.id.is_some()),
+        )?;
         let dir = match &self.output_dir {
             Some(dir) => {
                 let dir = absolute(dir);
@@ -455,6 +498,7 @@ impl RenderFramesArgs {
         let options = ExportOptions {
             overwrite: self.overwrite.unwrap_or(false),
             range: source.range,
+            output: still_choice(&self.muxer, &self.video_encoder, self.quality)?,
             ..ExportOptions::default()
         };
         let stills = StillExport {
@@ -501,10 +545,17 @@ impl ContactSheetArgs {
                 (dir.join(format!("sheet.{format}")), format)
             }
         };
-        let quality = still_quality(format, self.quality)?;
+        let quality = still_quality(
+            format,
+            self.quality,
+            self.video_encoder
+                .as_ref()
+                .is_some_and(|encoder| encoder.id.is_some()),
+        )?;
         let options = ExportOptions {
             overwrite: self.overwrite.unwrap_or(false),
             range: source.range,
+            output: still_choice(&self.muxer, &self.video_encoder, self.quality)?,
             ..ExportOptions::default()
         };
         let stills = StillExport {
@@ -561,8 +612,9 @@ impl ExportVideoArgs {
                 output.display()
             ));
         }
-        if let Some(file) = &self.preset_file {
-            check_preset_file(&absolute(file))?;
+        let preset_file = self.preset_file.as_deref().map(absolute);
+        if let Some(file) = &preset_file {
+            check_preset_file(file)?;
         }
         let choice = OutputChoice {
             preset: self.preset.clone(),
@@ -589,6 +641,7 @@ impl ExportVideoArgs {
             subtitles,
             looping: self.looping.unwrap_or(false),
             loudness,
+            presets: PresetLookup::for_source(&source.path, preset_file),
             ..ExportOptions::default()
         };
         Ok(job(source, Some(absolute(output)), None, options))
@@ -798,6 +851,51 @@ mod tests {
     }
 
     #[test]
+    fn still_tools_take_components() {
+        let reference = |plugin: &str, component: &str| ComponentRef {
+            plugin: plugin.into(),
+            component: component.into(),
+        };
+        let job = frames_job(json!({
+            "source": "a.tsx", "frames": [0], "format": "webp",
+            "videoEncoder": { "options": { "lossless": true } }
+        }))
+        .unwrap();
+        assert_eq!(
+            job.options.output.video.options["lossless"],
+            SettingInput::Value(SettingValue::Boolean(true))
+        );
+        let job = sheet_job(json!({
+            "source": "a.tsx", "every": 5, "muxer": "builtin/image",
+            "videoEncoder": { "id": "builtin/png", "options": { "depth": "16" } }
+        }))
+        .unwrap();
+        assert_eq!(
+            job.options.output.video.options["depth"],
+            SettingInput::Value(SettingValue::String("16".into()))
+        );
+        assert_eq!(
+            job.options.output.muxer,
+            Some(reference("builtin", "image"))
+        );
+        assert_eq!(
+            job.options.output.video.component,
+            Some(reference("builtin", "png"))
+        );
+        rejects(
+            frames_job(json!({ "source": "a.tsx", "frames": [0], "muxer": "avif" })),
+            "`avif` is not a component reference",
+        );
+        rejects(
+            frames_job(json!({
+                "source": "a.tsx", "frames": [0], "format": "jpeg", "quality": 50,
+                "videoEncoder": { "options": { "quality": 60 } }
+            })),
+            "both set the quality",
+        );
+    }
+
+    #[test]
     fn quality_applies_to_jpeg_and_webp_only() {
         let quality = |job: ExportJob| job.stills.unwrap().quality;
         assert_eq!(
@@ -932,7 +1030,7 @@ mod tests {
     }
 
     #[test]
-    fn a_preset_file_must_be_a_json_object() {
+    fn a_preset_file_must_be_a_presets_file() {
         let dir = tempfile::tempdir().unwrap();
         let write = |name: &str, text: &str| {
             let path = dir.path().join(name);
@@ -942,12 +1040,20 @@ mod tests {
         let job = |path: &Path| {
             video_job(json!({ "source": "a.tsx", "output": "a.mp4", "presetFile": path }))
         };
-        assert!(job(&write("ok.json", "{}")).is_ok());
-        rejects(job(&write("list.json", "[]")), "not a JSON object");
-        rejects(job(&write("bad.json", "{")), "not valid JSON");
+        rejects(job(&write("none.json", "{}")), "presetFile");
         rejects(
-            job(&dir.path().join("missing.json")),
-            "cannot read presetFile",
+            job(&write("future.json", r#"{"version": 2}"#)),
+            "unsupported version 2",
+        );
+        rejects(job(&write("bad.json", "{")), "not valid JSON");
+        rejects(job(&dir.path().join("missing.json")), "presetFile");
+
+        let ok = write("ok.json", r#"{"version": 1, "presets": []}"#);
+        let job = job(&ok).unwrap();
+        assert_eq!(job.options.presets.file.as_deref(), Some(ok.as_path()));
+        assert_eq!(
+            job.options.presets.project,
+            Some(celesta_plugin_host::project_root(&job.source).join("export-presets.json"))
         );
     }
 

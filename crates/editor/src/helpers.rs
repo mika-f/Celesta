@@ -152,7 +152,13 @@ pub(crate) fn export_range_for(
     ))
 }
 
-pub(crate) fn export_suggested_name(path: Option<&Path>, project_name: &str) -> String {
+/// The save panel's first name: the document's (or else the project's)
+/// name with `extension`, the chosen muxer's first.
+pub(crate) fn export_suggested_name(
+    path: Option<&Path>,
+    project_name: &str,
+    extension: &str,
+) -> String {
     let name = path
         .and_then(Path::file_name)
         .and_then(OsStr::to_str)
@@ -161,27 +167,22 @@ pub(crate) fn export_suggested_name(path: Option<&Path>, project_name: &str) -> 
         .strip_suffix(".celesta.json")
         .or_else(|| name.strip_suffix(".json"))
         .unwrap_or(name);
-    format!("{stem}.mp4")
+    format!("{stem}.{extension}")
 }
 
-/// The extensions the save panel offers, which Celesta's media plugin
-/// writes.
-const EXPORT_EXTENSIONS: [&str; 3] = ["mp4", "mov", "webm"];
-
-/// The file to export to: `.mp4`, `.mov` and `.webm` choices are kept
-/// (ignoring case), anything else becomes an `.mp4`. Its extension picks the
-/// muxer.
-pub(crate) fn export_output(mut path: PathBuf) -> PathBuf {
-    let offered = path
+/// The file to export to: a path with one of the chosen muxer's
+/// `extensions` (ignoring case) is kept, anything else takes the first.
+pub(crate) fn export_output(mut path: PathBuf, extensions: &[impl AsRef<str>]) -> PathBuf {
+    let kept = path
         .extension()
         .and_then(OsStr::to_str)
         .is_some_and(|extension| {
-            EXPORT_EXTENSIONS
+            extensions
                 .iter()
-                .any(|offered| offered.eq_ignore_ascii_case(extension))
+                .any(|offered| offered.as_ref().eq_ignore_ascii_case(extension))
         });
-    if !offered {
-        path.set_extension("mp4");
+    if let (false, Some(first)) = (kept, extensions.first()) {
+        path.set_extension(first.as_ref());
     }
     path
 }

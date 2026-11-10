@@ -220,11 +220,16 @@ impl Exporter {
         let metadata = bridge.metadata().clone();
         report_composition(&metadata, progress);
         // The video encoder's ring is sized for the entry's frames.
-        progress(ExportProgress::Output(session.resolve(
+        let (plan, warnings) = session.resolve(
             &self.options.output,
+            &self.options.presets,
             output_path,
             (metadata.width, metadata.height),
-        )?));
+        )?;
+        for warning in warnings {
+            progress(ExportProgress::Warning(warning));
+        }
+        progress(ExportProgress::Output(plan));
         validate_dimensions(metadata.width, metadata.height)?;
         if metadata.duration_in_frames == 0 {
             return Err(ExportError::EmptyTimeline);

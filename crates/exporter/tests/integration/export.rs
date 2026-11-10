@@ -410,6 +410,102 @@ fn the_encoder_chooses_the_frames_it_gets() {
     }
 }
 
+/// The interleaved formats hold the planar formats' samples: `nv12`'s UV
+/// pairs are `yuv420p`'s U and V planes, `p010`'s samples are `yuv420p10`'s
+/// shifted left by six bits.
+#[test]
+fn nv12_and_p010_are_read_back_interleaved() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = solid_video_project(directory.path(), &[[200, 40, 90, 255], [30, 160, 220, 255]]);
+
+    let mut stored = Vec::new();
+    for (input, format, bytes) in [
+        ("yuv420p", PixelFormat::Yuv420p, 6_144),
+        ("nv12", PixelFormat::Nv12, 6_144),
+        ("yuv420p10", PixelFormat::Yuv420p10, 12_288),
+        ("p010", PixelFormat::P010, 12_288),
+    ] {
+        let output = directory.path().join(format!("{input}.mp4"));
+        let result = crate::exporter(ExportOptions {
+            output: video_options(&[("input", input)]),
+            ..ExportOptions::default()
+        })
+        .export_project(&project, directory.path(), &output);
+        match result {
+            Ok(()) => {}
+            Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+                skip_without_gpu(&error);
+                return;
+            }
+            Err(ExportError::Codec {
+                source: MediaError::InvalidSettings { key, .. },
+                ..
+            }) if key == "input" => {
+                eprintln!("skipping: this renderer does not offer {input}");
+                return;
+            }
+            Err(error) => panic!("{input} export failed: {error}"),
+        }
+        let media = read(&output);
+        let video = stored_video(&media);
+        assert_eq!(video.format, format, "{input}");
+        assert_eq!(video.frames.len(), 2, "{input}");
+        assert!(
+            video.frames.iter().all(|frame| frame.len() == bytes),
+            "{input}: frames of {:?} bytes, not {bytes}",
+            video.frames.iter().map(Vec::len).collect::<Vec<_>>()
+        );
+        stored.push(video.frames.clone());
+    }
+    let [yuv420p, nv12, yuv420p10, p010] = &stored[..] else {
+        unreachable!()
+    };
+    // The samples of `bytes`, 16 bits each, little-endian.
+    let samples = |bytes: &[u8]| -> Vec<u16> {
+        let (pairs, _) = bytes.as_chunks::<2>();
+        pairs.iter().map(|&pair| u16::from_le_bytes(pair)).collect()
+    };
+    for frame in 0..2 {
+        let (planar, semi) = (&yuv420p[frame], &nv12[frame]);
+        assert_eq!(semi[..4_096], planar[..4_096], "nv12 luma, frame {frame}");
+        let (u, v) = (&planar[4_096..5_120], &planar[5_120..]);
+        let (pairs, _) = semi[4_096..].as_chunks::<2>();
+        assert_eq!(pairs.len(), 1_024);
+        for (index, pair) in pairs.iter().enumerate() {
+            assert_eq!(
+                *pair,
+                [u[index], v[index]],
+                "nv12 chroma sample {index}, frame {frame}"
+            );
+        }
+
+        // 16-bit samples: 4096 of luma, then 1024 each of U and V.
+        let (planar, semi) = (samples(&yuv420p10[frame]), samples(&p010[frame]));
+        assert_eq!(planar.len(), 6_144);
+        assert_eq!(semi.len(), 6_144);
+        for index in 0..4_096 {
+            assert_eq!(
+                semi[index] >> 6,
+                planar[index],
+                "p010 luma {index}, frame {frame}"
+            );
+        }
+        for index in 0..1_024 {
+            let (u, v) = (planar[4_096 + index], planar[5_120 + index]);
+            assert_eq!(
+                semi[4_096 + 2 * index] >> 6,
+                u,
+                "p010 U {index}, frame {frame}"
+            );
+            assert_eq!(
+                semi[4_097 + 2 * index] >> 6,
+                v,
+                "p010 V {index}, frame {frame}"
+            );
+        }
+    }
+}
+
 /// A 64x64, 2 fps, one-second project whose only item is a 64x64 image of
 /// straight `(255, 0, 0, 128)`. Images are centered on the canvas origin, so
 /// it covers the top-left 32x32 quadrant and leaves the rest undrawn.
@@ -1693,8 +1789,9 @@ pub fn hanging_media_plugin() -> celesta_media::RegisteredPlugin {
         ..Default::default()
     };
     let registry = celesta_exporter::media_registry(&installed);
-    assert_eq!(registry.plugins().len(), 1);
-    registry.plugin(0).clone()
+    // The built-in plugin comes first.
+    assert_eq!(registry.plugins().len(), 2);
+    registry.plugin(1).clone()
 }
 
 /// Cancel kills an export's media plugins: a frame waiting on an encoder

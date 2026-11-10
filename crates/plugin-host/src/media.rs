@@ -14,6 +14,10 @@ use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
+/// The ID of the FFmpeg media plugin that comes with Celesta, which ranks
+/// first among the bundled plugins.
+pub const FFMPEG_PLUGIN_ID: &str = "ffmpeg";
+
 /// The plugin ID of the components Celesta has built in (`builtin/png`),
 /// which no plugin may take.
 pub const RESERVED_PLUGIN_ID: &str = "builtin";
@@ -133,9 +137,11 @@ pub fn codec_family(codec: &str) -> String {
     .to_owned()
 }
 
-/// Where a media plugin comes from, in the order its decoders are tried:
-/// the user's own plugins first, then those that come with Celesta, then a
-/// project's.
+/// Where a media plugin comes from: the user's own plugins, those that come
+/// with Celesta, a project's, or Celesta's built-in components. Ranking
+/// does not follow this type's derived `Ord`: defaults rank by
+/// `celesta_media::default_rank`, and decoders are tried in the registry's
+/// decoder order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MediaOrigin {
     /// `--plugin-dir`, `CELESTA_PLUGIN_PATH`, the user's plugin folder, or a
@@ -146,6 +152,9 @@ pub enum MediaOrigin {
     Bundled,
     /// A folder the open project lists.
     Project,
+    /// Celesta's own, in its process (`builtin/png`). Appended: the derived
+    /// order is not used for ranking any more.
+    BuiltIn,
 }
 
 impl From<PluginSource> for MediaOrigin {

@@ -277,7 +277,7 @@ impl CelestaServer {
     }
 
     #[tool(
-        description = "Render frames of a React entry or JSON project to PNG (or JPEG/WebP with `format`) and return them as images (the first 6; the report lists every file). Look at them before saying a change looks right; PNG shows fine text and edges without compression artifacts. Also validates a whole .celesta.json."
+        description = "Render frames of a React entry or JSON project to PNG (or JPEG/WebP with `format`) and return them as images (the first 6; the report lists every file). Look at them before saying a change looks right; PNG shows fine text and edges without compression artifacts. Also validates a whole .celesta.json. `muxer`, `videoEncoder` and its `options` choose the image components and their settings (see describe_component, such as builtin/png)."
     )]
     async fn render_frames(
         &self,
@@ -291,7 +291,7 @@ impl CelestaServer {
     }
 
     #[tool(
-        description = "Render the selected frames as one labelled grid image (PNG, or JPEG/WebP by the output extension or `format`), to see a whole video at once (for example every 150 frames). Returns the image and the tile frames. A frame that fails to evaluate or render becomes a FAILED tile; the result is then an error with code frames_failed listing each in error.failedFrames, and still carries the image."
+        description = "Render the selected frames as one labelled grid image (PNG, or JPEG/WebP by the output extension or `format`), to see a whole video at once (for example every 150 frames). `muxer` and `videoEncoder` choose the image components as in render_frames. Returns the image and the tile frames. A frame that fails to evaluate or render becomes a FAILED tile; the result is then an error with code frames_failed listing each in error.failedFrames, and still carries the image."
     )]
     async fn contact_sheet(
         &self,

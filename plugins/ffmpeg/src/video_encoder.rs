@@ -2,25 +2,30 @@
 //! VP9, each fed frames in the pixel format it chose, converting RGBA with
 //! libswscale, and answering packets as MP4, MOV, and WebM store them.
 //!
-//! The conversions and options are those of `main`'s `ffmpeg` pipelines,
-//! so the encoded video is the same (deviation 8): libx264 takes YUV as it
-//! is and converts RGBA with libswscale's default BT.601 matrix, untagged;
-//! ProRes and VP9 convert with BT.709 in limited range and are tagged so.
+//! Every encoder tags with the [`Color`](celesta_media::Color) it is given
+//! (BT.709 in limited range from Celesta), so the encoder and every frame
+//! carry it and H.264's VUI, ProRes's frame header, and VP9's color space
+//! say it. RGBA input is converted with libswscale's coefficients for it.
+//! YUV input is BT.709 limited range, as
+//! [`PixelFormat`](celesta_media::PixelFormat) defines it, and is taken as
+//! it is (libx264's `nv12` too, its `p010` repacked to planar): `Color` only
+//! tags it, so a host offering YUV sends the `Color` it rendered. The
+//! options are those of `main`'s `ffmpeg` pipelines.
 
 use crate::components::{VideoCodec, availability};
 use crate::ffi::{
     CodecContext, Frame, PacketBuf, Scaler, av_error, dimension, extradata, quiet_logs,
 };
 use crate::h264::{annexb_to_avc, avcc_codec_string, avcc_from_annexb};
+use crate::tags::AvColor;
 use celesta_media::{
     Encoded, InvalidSetting, MediaError, Packet, PixelFormat, SettingValue, Settings, SideData,
     TrackConfig, VideoEncoderRequest, settings::validate,
 };
 use ffmpeg_sys_next::{
-    AV_CODEC_FLAG_GLOBAL_HEADER, AV_NOPTS_VALUE, AV_PKT_FLAG_KEY, AVColorPrimaries, AVColorRange,
-    AVColorSpace, AVColorTransferCharacteristic, AVDictionary, AVERROR, AVERROR_EOF, AVFrame,
-    AVPacketSideDataType, AVPixelFormat, AVRational, EAGAIN, SwsFlags, av_dict_count, av_dict_free,
-    av_dict_set, av_frame_is_writable, av_image_copy, av_image_fill_arrays,
+    AV_CODEC_FLAG_GLOBAL_HEADER, AV_NOPTS_VALUE, AV_PKT_FLAG_KEY, AVDictionary, AVERROR,
+    AVERROR_EOF, AVFrame, AVPacketSideDataType, AVPixelFormat, AVRational, EAGAIN, av_dict_count,
+    av_dict_free, av_dict_set, av_frame_is_writable, av_image_copy, av_image_fill_arrays,
     av_image_get_buffer_size, av_packet_get_side_data, av_packet_unref, av_rescale_q,
     avcodec_find_encoder_by_name, avcodec_open2, avcodec_receive_packet, avcodec_send_frame,
 };
@@ -38,8 +43,8 @@ pub(crate) struct VideoSession {
     frames: Vec<Frame>,
     format: AVPixelFormat,
     packet: PacketBuf,
-    /// Converts RGBA input to the encoder's format; none for YUV input,
-    /// which is the encoder's format already.
+    /// Converts RGBA input to the encoder's format, or repacks P010 into
+    /// it; none for other YUV input, which is the encoder's format already.
     scaler: Option<Scaler>,
     input: AVPixelFormat,
     input_bytes: usize,
@@ -51,8 +56,8 @@ pub(crate) struct VideoSession {
     /// The track's time base, one over its timescale, which frames come in
     /// and packets go out in.
     track_base: AVRational,
-    /// Whether frames are tagged BT.709 limited.
-    bt709: bool,
+    /// The tags every frame carries.
+    color: AvColor,
     /// Whether packets are H.264 Annex B, which is answered length-prefixed.
     annexb: bool,
     /// The track's config, until the first packets carry it.
@@ -76,7 +81,6 @@ struct Plan {
     /// Options for `avcodec_open2`.
     options: Vec<(&'static str, String)>,
     bit_rate: Option<i64>,
-    bt709: bool,
     /// The codec string; none for H.264, whose string comes from its SPS.
     codec: Option<&'static str>,
 }
@@ -124,26 +128,42 @@ fn plan(
     let rgba16 = || choose(offered, &[PixelFormat::Rgba16], "needs rgba16");
     Ok(match codec {
         VideoCodec::X264 => {
-            // With no YUV offered (a software renderer), 8 bits take RGBA8
-            // and 10 bits RGBA16, as `main` read them back.
+            // Planar YUV first, as libx264 takes it; then the interleaved
+            // form (taken as it is at 8 bits, repacked at 10, where
+            // libx264's only semi-planar format is 4:2:2's `nv20`); with no
+            // YUV offered (a software renderer), the RGBA of the bit depth,
+            // then the other.
             let (input, format) = if text(settings, "bitDepth") == "10" {
                 (
                     choose(
                         offered,
-                        &[PixelFormat::Yuv420p10, PixelFormat::Rgba16],
-                        "needs yuv420p10 or rgba16",
+                        &[
+                            PixelFormat::Yuv420p10,
+                            PixelFormat::P010,
+                            PixelFormat::Rgba16,
+                            PixelFormat::Rgba8,
+                        ],
+                        "needs yuv420p10, p010, rgba16, or rgba8",
                     )?,
                     AVPixelFormat::AV_PIX_FMT_YUV420P10LE,
                 )
             } else {
-                (
-                    choose(
-                        offered,
-                        &[PixelFormat::Yuv420p, PixelFormat::Rgba8],
-                        "needs yuv420p or rgba8",
-                    )?,
-                    AVPixelFormat::AV_PIX_FMT_YUV420P,
-                )
+                let input = choose(
+                    offered,
+                    &[
+                        PixelFormat::Yuv420p,
+                        PixelFormat::Nv12,
+                        PixelFormat::Rgba8,
+                        PixelFormat::Rgba16,
+                    ],
+                    "needs yuv420p, nv12, rgba8, or rgba16",
+                )?;
+                let format = if input == PixelFormat::Nv12 {
+                    AVPixelFormat::AV_PIX_FMT_NV12
+                } else {
+                    AVPixelFormat::AV_PIX_FMT_YUV420P
+                };
+                (input, format)
             };
             let mut options = vec![("preset", text(settings, "preset").to_owned())];
             let mut bit_rate = None;
@@ -165,7 +185,6 @@ fn plan(
                 alpha: false,
                 options,
                 bit_rate,
-                bt709: false,
                 codec: None,
             }
         }
@@ -178,7 +197,6 @@ fn plan(
                     alpha: false,
                     options: vec![("profile", "hq".to_owned())],
                     bit_rate: None,
-                    bt709: true,
                     codec: Some("apch"),
                 }
             } else {
@@ -192,7 +210,6 @@ fn plan(
                         ("vendor", "apl0".to_owned()),
                     ],
                     bit_rate: None,
-                    bt709: true,
                     codec: Some("ap4h"),
                 }
             }
@@ -215,7 +232,6 @@ fn plan(
                     ("row-mt", "1".to_owned()),
                 ],
                 bit_rate: None,
-                bt709: true,
                 // libvpx reports no level; the WebM muxer derives vpcC itself.
                 codec: Some("vp09.00.10.08"),
             }
@@ -293,7 +309,29 @@ pub(crate) fn open(
     let settings = validate(&codec.settings(), request.settings)
         .map_err(|InvalidSetting { key, message }| MediaError::InvalidSettings { key, message })?;
     let plan = plan(codec, &settings, request.offered)?;
+    let color = AvColor::from_color(request.color)?;
     let (width, height) = (dimension(request.width)?, dimension(request.height)?);
+    let input = av_format(plan.input);
+    // Before the codec opens, so a matrix libswscale cannot convert RGB to
+    // is refused first.
+    let scaler = if is_rgba(plan.input) {
+        Some(Scaler::rgb_to_yuv(
+            request.width,
+            request.height,
+            input,
+            plan.format,
+            &color,
+        )?)
+    } else if input != plan.format {
+        Some(Scaler::repack(
+            request.width,
+            request.height,
+            input,
+            plan.format,
+        )?)
+    } else {
+        None
+    };
     let rate = request.frame_rate;
     let (Ok(timescale), Ok(numerator), Ok(denominator)) = (
         c_int::try_from(request.timescale),
@@ -319,7 +357,6 @@ pub(crate) fn open(
     // SAFETY: `name` is NUL-terminated and outlives the call.
     let encoder = unsafe { avcodec_find_encoder_by_name(name.as_ptr()) };
     let context = CodecContext::new(encoder)?;
-    let input = av_format(plan.input);
     let options = plan
         .options
         .iter()
@@ -347,12 +384,7 @@ pub(crate) fn open(
         if let Some(bit_rate) = plan.bit_rate {
             (*raw).bit_rate = bit_rate;
         }
-        if plan.bt709 {
-            (*raw).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
-            (*raw).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
-            (*raw).colorspace = AVColorSpace::AVCOL_SPC_BT709;
-            (*raw).color_range = AVColorRange::AVCOL_RANGE_MPEG;
-        }
+        color.apply_to_codec(raw);
         let mut dictionary: *mut AVDictionary = null_mut();
         for (key, value) in &options {
             let result = av_dict_set(&mut dictionary, key.as_ptr(), value.as_ptr(), 0);
@@ -388,21 +420,6 @@ pub(crate) fn open(
             }
         }
     };
-    let scaler = if is_rgba(plan.input) {
-        let scaler = Scaler::new(
-            request.width,
-            request.height,
-            input,
-            plan.format,
-            SwsFlags::SWS_BICUBIC as c_int,
-        )?;
-        if plan.bt709 {
-            scaler.bt709_limited()?;
-        }
-        Some(scaler)
-    } else {
-        None
-    };
     // SAFETY: a size query on a valid format and dimensions.
     let input_bytes = unsafe { av_image_get_buffer_size(input, width, height, 1) };
     let input_bytes =
@@ -423,7 +440,7 @@ pub(crate) fn open(
                 num: 1,
                 den: timescale,
             },
-            bt709: plan.bt709,
+            color,
             annexb: codec == VideoCodec::X264,
             config: Some(config),
         },
@@ -481,12 +498,7 @@ impl VideoSession {
             }
             (*frame).pts = av_rescale_q(pts, self.track_base, self.frame_base);
             (*frame).duration = 1;
-            if self.bt709 {
-                (*frame).color_primaries = AVColorPrimaries::AVCOL_PRI_BT709;
-                (*frame).color_trc = AVColorTransferCharacteristic::AVCOL_TRC_BT709;
-                (*frame).colorspace = AVColorSpace::AVCOL_SPC_BT709;
-                (*frame).color_range = AVColorRange::AVCOL_RANGE_MPEG;
-            }
+            self.color.apply_to_frame(frame);
             let result = avcodec_send_frame(self.context.as_ptr(), frame);
             if result < 0 {
                 return Err(av_error(result, "encode a frame"));

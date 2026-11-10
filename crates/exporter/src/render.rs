@@ -1,5 +1,5 @@
 use crate::control::{ExportCancellation, ExportProgress};
-use crate::encode::{ExportSession, readback_of};
+use crate::encode::{ExportSession, readback_for};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
 use crate::project::{absolutize_fonts, absolutize_layers};
@@ -8,7 +8,7 @@ use crate::react::ReactVideoRequest;
 use celesta_composition::{Rational, Time, TimeError};
 use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, NoticeLevel};
-use celesta_media::MediaBackend;
+use celesta_media::{MediaBackend, VideoEncoderOpened};
 use celesta_project::Project;
 use celesta_react_bridge::{ProjectFrame, ReactBridge};
 use std::collections::{BTreeMap, HashSet};
@@ -252,7 +252,7 @@ impl Exporter {
     /// quality, on their driver, with their plugins, whose processes (and
     /// its video decoder's) `cancellation` kills. It clears to the default
     /// opaque background and reads back RGBA8 until [`open_video_output`]
-    /// sets what the encoder takes.
+    /// (or, for stills, [`configure_renderer`]) sets what the encoder takes.
     pub(crate) fn export_renderer(
         &self,
         asset_root: &Path,
@@ -297,8 +297,18 @@ pub(crate) fn open_video_output(
 ) -> Result<(), ExportError> {
     let offered = ExportSession::offered_formats(renderer);
     let opened = session.open_video(width, height, frame_rate, &offered, staged)?;
+    configure_renderer(renderer, &opened)
+}
+
+/// Sets `renderer` to the encoder's answer `opened`: the readback for its
+/// input format ([`readback_for`]), and a transparent background when it
+/// keeps alpha, else the default opaque one.
+pub(crate) fn configure_renderer(
+    renderer: &mut GpuRenderer,
+    opened: &VideoEncoderOpened,
+) -> Result<(), ExportError> {
     renderer
-        .set_readback_format(readback_of(opened.input)?)
+        .set_readback_format(readback_for(opened)?)
         .map_err(ExportError::Render)?;
     renderer.set_background(if opened.alpha {
         Color::TRANSPARENT

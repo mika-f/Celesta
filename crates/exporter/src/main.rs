@@ -19,8 +19,8 @@ use celesta_exporter::report::{self, HintStyle};
 use celesta_exporter::{
     AudioChoice, AudioLoudness, ContactSheet, EncoderChoice, ExportCancellation, ExportError,
     ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
-    LoudnessTarget, OutputChoice, PeakHandling, ReactRuntimeOptions, RenderQuality, SettingInput,
-    StillExport, StillFormat, parse_timecode,
+    LoudnessTarget, OutputChoice, PeakHandling, PresetLookup, PresetsFile, ReactRuntimeOptions,
+    RenderQuality, SettingInput, StillExport, StillFormat, parse_timecode,
 };
 use celesta_media::{ComponentRef, SettingKind, SettingValue};
 use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
@@ -41,10 +41,15 @@ Without <OUTPUT>, only the subtitle files are written: the frames are
 evaluated but not rendered or encoded.
 
 Still images are selected by --frame/--frames or --every and written as PNG
-(.png), JPEG (.jpg, .jpeg) or lossy WebP (.webp) by the output's extension;
---quality sets JPEG and WebP quality, 1-100 (default 90). Stills are drawn
-over the export's opaque background, as an MP4 is, so JPEG's missing alpha
-channel loses nothing. Multiple frames use output-000090.png names with the
+(.png), JPEG (.jpg, .jpeg) or WebP (.webp) by the output's extension;
+--quality sets JPEG and WebP quality, 1-100 (default 90). --video-option
+sets the image encoder's settings: compression=none|fastest|fast|balanced|high,
+depth=16 and transparent=true for PNG; lossless=true and transparent=true for
+WebP (--describe builtin/png lists them). --muxer and --video-encoder name a
+plugin's image components. WebP is lossy unless
+lossless=true. By default, stills are drawn over the export's opaque
+background, as an MP4 is, so JPEG's missing alpha channel loses nothing;
+transparent=true keeps PNG and WebP transparent. Multiple frames use output-000090.png names with the
 output's extension; frame numbers are zero-based. --every <n> picks frames
 0, n, 2n, ... of the --from/--to span (or the whole composition) plus its
 last frame. --contact-sheet writes the selection as one labelled grid image
@@ -228,21 +233,21 @@ struct Cli {
         default_value_t = non_zero(ContactSheet::DEFAULT_TILE_WIDTH)
     )]
     tile_width: NonZeroU32,
-    /// A preset's name. Presets are not available yet: every name fails
-    /// with unknown_preset.
+    /// An export preset: looked up in --preset-file, then the project's export-presets.json, then yours.
     #[arg(long, value_name = "NAME")]
     preset: Option<String>,
-    /// An export-presets.json, checked to be a JSON object; nothing is
-    /// looked up in it yet.
+    /// An export-presets.json to look --preset up in first.
     #[arg(long, value_name = "PATH")]
     preset_file: Option<PathBuf>,
-    /// The muxer that writes the video, instead of the output's extension's.
+    /// The muxer that writes the output (a video, or a still's file or
+    /// sequence), instead of the output's extension's.
     #[arg(long, value_name = "PLUGIN/ID", value_parser = parse_component)]
     muxer: Option<ComponentRef>,
-    /// The video encoder, instead of the muxer's default.
+    /// The video encoder, or a still's image encoder, instead of the
+    /// muxer's default.
     #[arg(long, value_name = "PLUGIN/ID", value_parser = parse_component)]
     video_encoder: Option<ComponentRef>,
-    /// A video encoder setting; repeatable.
+    /// A video or image encoder setting; repeatable.
     #[arg(long, value_name = "KEY=VALUE", value_parser = parse_option)]
     video_option: Vec<(String, String)>,
     /// The audio encoder, instead of the muxer's default, or none for a
@@ -502,9 +507,7 @@ fn main() -> ExitCode {
                 source: cli.source(),
                 output,
                 react: cli.react,
-                still: (kind == OutputKind::Stills)
-                    .then(|| StillFormat::from_extension(output).unwrap_or_default()),
-                still_quality: cli.quality.unwrap_or(StillExport::DEFAULT_QUALITY),
+                still: kind == OutputKind::Stills,
                 render_quality: cli.render_quality,
                 props: props_file.as_ref().map(props_label),
             };
@@ -548,22 +551,11 @@ fn main() -> ExitCode {
     }
 }
 
-/// `--preset-file`: a readable JSON object. Presets arrive with P3, so
-/// nothing reads names from it yet.
+/// `--preset-file`: an export-presets.json that exists and parses.
 fn read_preset_file(path: &Path) -> Result<(), String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("cannot read --preset-file {}: {error}", path.display()))?;
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(serde_json::Value::Object(_)) => Ok(()),
-        Ok(_) => Err(format!(
-            "--preset-file {} is not a JSON object",
-            path.display()
-        )),
-        Err(error) => Err(format!(
-            "--preset-file {} is not valid JSON: {error}",
-            path.display()
-        )),
-    }
+    PresetsFile::load(path)
+        .map(drop)
+        .map_err(|error| format!("--preset-file {error}"))
 }
 
 /// `--list-components` and `--describe`: what is installed, from the
@@ -857,6 +849,10 @@ enum OutputKind {
     SubtitlesOnly,
 }
 
+/// The component flags a still takes, by argument id: a muxer, and an image
+/// encoder and its settings.
+const STILL_COMPONENT_FLAGS: [&str; 3] = ["muxer", "video_encoder", "video_option"];
+
 /// The flags that choose a video's components, by argument id.
 const COMPONENT_FLAGS: [(&str, &str); 7] = [
     ("preset", "--preset"),
@@ -887,7 +883,11 @@ fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind,
         if cli.looping {
             return Err("--loop applies to video output, not still frames".into());
         }
-        if let Some(flag) = COMPONENT_FLAGS.iter().find(|(id, _)| explicit(id)) {
+        if let Some(flag) = COMPONENT_FLAGS
+            .iter()
+            .filter(|(id, _)| !STILL_COMPONENT_FLAGS.contains(id))
+            .find(|(id, _)| explicit(id))
+        {
             return Err(format!(
                 "{} applies to video output, not still frames",
                 flag.1
@@ -896,11 +896,20 @@ fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind,
         if cli.loudness.is_some() {
             return Err("--loudness applies to video output, not still frames".into());
         }
-        // An output with no still extension is left to the exporter, which
-        // reports it as `invalid_selection`.
+        // The extension is the exporter's to check once the components are
+        // named: one the built-in muxers do not write is
+        // `invalid_selection`, and a plugin's muxer may write others. A
+        // quality for `.png` is refused here only when no encoder is named;
+        // a named one says what it takes.
         let format = StillFormat::from_extension(output);
-        if cli.quality.is_some() && format == Some(StillFormat::Png) {
+        if cli.quality.is_some() && cli.video_encoder.is_none() && format == Some(StillFormat::Png)
+        {
             return Err("--quality applies to JPEG and WebP output; PNG is lossless".into());
+        }
+        if cli.quality.is_some() && cli.video_option.iter().any(|(key, _)| key == "quality") {
+            return Err(
+                "--quality and --video-option quality= both set the quality; give one".into(),
+            );
         }
         return Ok(OutputKind::Stills);
     }
@@ -974,7 +983,10 @@ fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
             range,
             output: match kind {
                 OutputKind::Video(choice) => choice.clone(),
-                OutputKind::Stills | OutputKind::SubtitlesOnly => OutputChoice::default(),
+                // The audio and preset flags are refused for a still, so the
+                // choice carries only its image components.
+                OutputKind::Stills => cli.output_choice(),
+                OutputKind::SubtitlesOnly => OutputChoice::default(),
             },
             render_quality: cli.render_quality,
             driver: cli.driver,
@@ -985,6 +997,12 @@ fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
                 &cli.plugin_dir,
                 &cli.allow_plugin,
             )),
+            presets: match kind {
+                OutputKind::Video(_) => {
+                    PresetLookup::for_source(cli.source(), cli.preset_file.clone())
+                }
+                OutputKind::Stills | OutputKind::SubtitlesOnly => PresetLookup::default(),
+            },
         },
     }
 }
@@ -1108,6 +1126,60 @@ mod tests {
         );
         // An unknown extension is left to the exporter, as for video.
         assert_eq!(choice(&["--frame", "0", "out.gif"]), Ok(OutputKind::Stills));
+    }
+
+    #[test]
+    fn stills_take_video_options() {
+        let cli = |args: &[&str]| {
+            let matches = Cli::command()
+                .try_get_matches_from(
+                    ["celesta-exporter", "project.celesta.json"]
+                        .into_iter()
+                        .chain(args.iter().copied()),
+                )
+                .unwrap();
+            Cli::from_arg_matches(&matches).unwrap()
+        };
+        let args = [
+            "--frame",
+            "0",
+            "--video-option",
+            "transparent=true",
+            "out.png",
+        ];
+        assert_eq!(choice(&args), Ok(OutputKind::Stills));
+        let job = job(&cli(&args), &OutputKind::Stills, None);
+        assert_eq!(
+            job.options.output.video.options["transparent"],
+            SettingInput::Text("true".into())
+        );
+        for (flags, flag) in [
+            (["--preset", "web"], "--preset"),
+            (["--audio-encoder", "none"], "--audio-encoder"),
+        ] {
+            let message = error(&[&["--frame", "0"][..], &flags, &["out.png"]].concat());
+            assert_eq!(
+                message,
+                format!("{flag} applies to video output, not still frames")
+            );
+        }
+        let message = error(&[
+            "--frame",
+            "0",
+            "--quality",
+            "50",
+            "--video-option",
+            "quality=60",
+            "out.jpg",
+        ]);
+        assert_eq!(
+            message,
+            "--quality and --video-option quality= both set the quality; give one"
+        );
+        assert_eq!(
+            choice(&["--frame", "0", "--muxer", "foo/avif", "out.avif"]),
+            Ok(OutputKind::Stills)
+        );
     }
 
     #[test]
@@ -1256,8 +1328,12 @@ mod tests {
             (&["--preset", "web"], "--preset"),
             (&["--preset-file", "presets.json"], "--preset-file"),
         ] {
-            let stills = error(&[&["--frame", "0", "out.png"][..], flags].concat());
-            assert!(stills.contains(flag), "{stills}");
+            if !STILL_COMPONENT_FLAGS
+                .contains(&flag.trim_start_matches("--").replace('-', "_").as_str())
+            {
+                let stills = error(&[&["--frame", "0", "out.png"][..], flags].concat());
+                assert!(stills.contains(flag), "{stills}");
+            }
             let subtitles = error(&[&["--subtitles", "a.srt"][..], flags].concat());
             assert!(subtitles.contains(flag), "{subtitles}");
         }

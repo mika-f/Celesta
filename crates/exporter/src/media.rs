@@ -1,14 +1,14 @@
 //! Choosing the media plugins Celesta reads and writes media with.
 
 use celesta_media::{MediaProcess, MediaRegistry, RegisteredPlugin, registry, set_registry};
-use celesta_plugin_host::InstalledPlugins;
+use celesta_plugin_host::{InstalledPlugins, RESERVED_PLUGIN_ID};
 use std::sync::Arc;
 
 /// A registry of `plugins`' media plugins ([`InstalledPlugins::media`]), in
 /// search order, each started as a [`MediaProcess`] when a backend first
 /// needs it.
 pub fn media_registry(plugins: &InstalledPlugins) -> Arc<MediaRegistry> {
-    let registered = plugins
+    let registered: Vec<RegisteredPlugin> = plugins
         .media()
         .into_iter()
         .map(|plugin| RegisteredPlugin {
@@ -21,7 +21,18 @@ pub fn media_registry(plugins: &InstalledPlugins) -> Arc<MediaRegistry> {
             factory: MediaProcess::factory(plugin.executable, plugin.directory),
         })
         .collect();
-    Arc::new(MediaRegistry::new(registered))
+    with_builtin(registered)
+}
+
+/// `plugins` after the built-in components, unless one of them already has
+/// the reserved id.
+pub fn with_builtin(plugins: Vec<RegisteredPlugin>) -> Arc<MediaRegistry> {
+    let mut all = Vec::with_capacity(plugins.len() + 1);
+    if !plugins.iter().any(|plugin| plugin.id == RESERVED_PLUGIN_ID) {
+        all.push(celesta_media_image::registered());
+    }
+    all.extend(plugins);
+    Arc::new(MediaRegistry::new(all))
 }
 
 /// Makes [`media_registry`] of `plugins` the registry every media backend
@@ -41,7 +52,7 @@ pub fn use_installed_media() -> Arc<MediaRegistry> {
 /// The registry exports write through: the one chosen, or an empty one,
 /// whose exports then find no muxer.
 pub(crate) fn current() -> Arc<MediaRegistry> {
-    registry().unwrap_or_else(|| Arc::new(MediaRegistry::new(Vec::new())))
+    registry().unwrap_or_else(|| with_builtin(Vec::new()))
 }
 
 /// [`use_media`], unless a registry was chosen already: by the application,
@@ -82,8 +93,22 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
 
         let media = media_registry(&plugins);
-        assert_eq!(media.plugin(0).id, "first-media");
-        assert_eq!(media.plugin(1).id, "second-media");
+        assert_eq!(media.plugin(0).id, "builtin");
+        assert_eq!(
+            media.plugin(0).origin,
+            celesta_plugin_host::MediaOrigin::BuiltIn
+        );
+        assert_eq!(media.plugin(1).id, "first-media");
+        assert_eq!(media.plugin(2).id, "second-media");
+        assert_eq!(media.plugins().len(), 3);
         assert!(media.has_decoders());
+    }
+
+    #[test]
+    fn with_builtin_adds_no_second_builtin() {
+        let once = with_builtin(Vec::new());
+        let plugins = vec![once.plugin(0).clone()];
+        let twice = with_builtin(plugins);
+        assert_eq!(twice.plugins().len(), 1);
     }
 }

@@ -338,6 +338,21 @@ fn watch(rgba_only: bool, opened: &Opened) {
     }]))));
 }
 
+/// Runs `export` with a [`Watched`] FFmpeg plugin, then restores the plain
+/// one: its result, with what libx264 was offered and the input it chose.
+fn watching<T>(
+    rgba_only: bool,
+    export: impl FnOnce() -> Result<T, ExportError>,
+) -> Result<(T, (Vec<PixelFormat>, PixelFormat)), ExportError> {
+    let opened = Opened::default();
+    watch(rgba_only, &opened);
+    let result = export();
+    celesta_codec_ffmpeg::install();
+    let mut opened = opened.lock().unwrap();
+    assert!(opened.len() <= 1, "{opened:?}");
+    result.map(|value| (value, opened.pop().expect("libx264 was opened")))
+}
+
 #[test]
 fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
     let _gpu = gpu();
@@ -416,13 +431,7 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
     // RGBA when it is not offered. Each export answers the input libx264
     // chose and what it was offered.
     let watched = |rgba_only: bool, bit_depth: &str, name: &str| {
-        let opened = Opened::default();
-        watch(rgba_only, &opened);
-        let result = export(bit_depth, name);
-        celesta_codec_ffmpeg::install();
-        let mut opened = opened.lock().unwrap();
-        assert!(opened.len() <= 1, "{opened:?}");
-        result.map(|output| (output, opened.pop().expect("libx264 was opened")))
+        watching(rgba_only, || export(bit_depth, name))
     };
     let mut pixel_formats: Vec<i32> = Vec::new();
     for (bit_depth, yuv, rgba) in [
@@ -634,6 +643,190 @@ fn video_stream(
         (color_space, color_primaries, color_transfer),
         metadata,
     )
+}
+
+/// A 64x64, 2 fps, one-second project whose only item is the video clip
+/// `source.mkv` in `dir`.
+fn one_clip_project(_dir: &Path) -> Project {
+    let mut project = minimal_project();
+    project.settings.width = 64;
+    project.settings.height = 64;
+    project.settings.frame_rate = Rational::new(2, 1);
+    project.settings.sample_rate = 8_000;
+    project.settings.duration = Some(Time::new(1, 1));
+    project.assets.insert(
+        "source".to_owned(),
+        Asset::Video {
+            name: None,
+            source: AssetSource::File {
+                path: "source.mkv".to_owned(),
+            },
+        },
+    );
+    project.tracks.push(Track {
+        id: "video".to_owned(),
+        name: "Video".to_owned(),
+        kind: TrackKind::Video,
+        enabled: None,
+        locked: None,
+        muted: None,
+        solo: None,
+        items: vec![TimelineItem {
+            id: "video-clip".to_owned(),
+            name: None,
+            range: TimeRange {
+                start: Time::ZERO,
+                duration: Time::new(1, 1),
+            },
+            content: TimelineContent::Video {
+                asset: "source".to_owned(),
+                source_range: None,
+                playback_rate: None,
+                volume: None,
+                muted: None,
+                duck_group: None,
+                duck: None,
+            },
+            enabled: None,
+            transform: None,
+            opacity: None,
+            blend_mode: None,
+            effects: None,
+        }],
+    });
+    project
+}
+
+/// The video stream's `(color_primaries, color_trc, color_space,
+/// color_range)` as libavformat reads them from the container.
+fn stream_color(path: &Path) -> (i32, i32, i32, i32) {
+    use ffmpeg_sys_next as ff;
+    let url = std::ffi::CString::new(path.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: the context is opened, read, and closed here; the stream
+    // pointers are valid while it is open.
+    unsafe {
+        let mut context = std::ptr::null_mut();
+        assert!(
+            ff::avformat_open_input(
+                &mut context,
+                url.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null_mut()
+            ) >= 0
+        );
+        assert!(ff::avformat_find_stream_info(context, std::ptr::null_mut()) >= 0);
+        let streams =
+            std::slice::from_raw_parts((*context).streams, (*context).nb_streams as usize);
+        let parameters = streams
+            .iter()
+            .map(|&stream| (*stream).codecpar)
+            .find(|&parameters| (*parameters).codec_type == ff::AVMediaType::AVMEDIA_TYPE_VIDEO)
+            .expect("a video stream");
+        let colors = (
+            (*parameters).color_primaries as i32,
+            (*parameters).color_trc as i32,
+            (*parameters).color_space as i32,
+            (*parameters).color_range as i32,
+        );
+        ff::avformat_close_input(&mut context);
+        colors
+    }
+}
+
+/// The four bytes after the first `colr` in `path` (an ISO BMFF colour
+/// type: `nclx` in MP4, `nclc` in QuickTime).
+fn colr_atom(path: &Path) -> Option<[u8; 4]> {
+    let bytes = std::fs::read(path).unwrap();
+    let at = bytes.windows(4).position(|window| window == b"colr")?;
+    bytes.get(at + 4..at + 8)?.try_into().ok()
+}
+
+/// Whether `path` has a Matroska `Colour` element (`55 B0`) before its first
+/// Cluster (`1F 43 B6 75`).
+fn webm_has_colour(path: &Path) -> bool {
+    let bytes = std::fs::read(path).unwrap();
+    let cluster = bytes
+        .windows(4)
+        .position(|window| window == [0x1F, 0x43, 0xB6, 0x75])
+        .expect("a cluster");
+    bytes[..cluster]
+        .windows(2)
+        .any(|window| window == [0x55, 0xB0])
+}
+
+/// Every frame's Y, U, and V samples of `path`, decoded to rawvideo in
+/// `pix_fmt` (`yuv420p` or `yuv420p10le`).
+fn decoded_planes(path: &Path, pix_fmt: &str) -> Vec<Vec<u16>> {
+    let raw = path.with_extension("yuv");
+    FfmpegContext::builder()
+        .input(Input::from(path.to_string_lossy().into_owned()))
+        .output(
+            Output::from(raw.to_string_lossy().into_owned())
+                .add_stream_map("0:v:0")
+                .set_format("rawvideo")
+                .set_pix_fmt(pix_fmt),
+        )
+        .build()
+        .unwrap()
+        .start()
+        .unwrap()
+        .wait()
+        .unwrap();
+    let bytes = std::fs::read(raw).unwrap();
+    let samples: Vec<u16> = if pix_fmt == "yuv420p" {
+        bytes.iter().map(|&byte| u16::from(byte)).collect()
+    } else {
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&sample| u16::from_le_bytes(sample))
+            .collect()
+    };
+    samples
+        .as_chunks::<{ 64 * 64 * 3 / 2 }>()
+        .0
+        .iter()
+        .map(|frame| frame.to_vec())
+        .collect()
+}
+
+/// The data of `path`'s first video packet.
+fn first_video_packet(path: &Path) -> Vec<u8> {
+    use ffmpeg_sys_next as ff;
+    let url = std::ffi::CString::new(path.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: the context and packet are opened, read, and freed here.
+    unsafe {
+        let mut context = std::ptr::null_mut();
+        assert!(
+            ff::avformat_open_input(
+                &mut context,
+                url.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null_mut()
+            ) >= 0
+        );
+        assert!(ff::avformat_find_stream_info(context, std::ptr::null_mut()) >= 0);
+        let streams =
+            std::slice::from_raw_parts((*context).streams, (*context).nb_streams as usize);
+        let video = streams
+            .iter()
+            .position(|&stream| {
+                (*(*stream).codecpar).codec_type == ff::AVMediaType::AVMEDIA_TYPE_VIDEO
+            })
+            .expect("a video stream") as i32;
+        let mut packet = ff::av_packet_alloc();
+        let data = loop {
+            assert!(ff::av_read_frame(context, packet) >= 0, "no video packet");
+            if (*packet).stream_index == video {
+                break std::slice::from_raw_parts((*packet).data, (*packet).size as usize).to_vec();
+            }
+            ff::av_packet_unref(packet);
+        };
+        ff::av_packet_free(&mut packet);
+        ff::avformat_close_input(&mut context);
+        data
+    }
 }
 
 fn audio_stream(url: &str) -> (String, i32) {
@@ -1002,24 +1195,135 @@ fn brings_the_mix_to_a_loudness_target() {
 }
 
 #[test]
-fn mov_and_webm_stay_tagged_bt709_and_mp4_untagged() {
+fn mp4_mov_and_webm_are_tagged_bt709() {
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
-    // AVCOL_SPC_BT709, AVCOL_PRI_BT709 and AVCOL_TRC_BT709 are all 1; the
-    // unspecified values (AVCOL_SPC_UNSPECIFIED, AVCOL_PRI_UNSPECIFIED,
-    // AVCOL_TRC_UNSPECIFIED) all 2 (deviation 8).
-    for (name, colors) in [
-        ("clip.mov", (1, 1, 1)),
-        ("clip.webm", (1, 1, 1)),
-        ("clip.mp4", (2, 2, 2)),
-    ] {
+    // Primaries, transfer, matrix (all AVCOL_*_BT709, 1), and range
+    // (AVCOL_RANGE_MPEG, 1), as libavformat reads them back.
+    for name in ["clip.mp4", "clip.mov", "clip.webm"] {
         let Some(output) = export_as(&project, directory.path(), name) else {
             return;
         };
-        let (_, tagged, _) = video_stream(&output.to_string_lossy());
-        assert_eq!(tagged, colors, "{name}");
+        assert_eq!(stream_color(&output), (1, 1, 1, 1), "{name}");
+        match name {
+            "clip.mp4" => assert_eq!(colr_atom(&output), Some(*b"nclx")),
+            "clip.mov" => assert_eq!(colr_atom(&output), Some(*b"nclc")),
+            _ => assert!(webm_has_colour(&output)),
+        }
     }
+}
+
+/// The decoded `yuv420p` (or 10-bit) code values of a flat color through
+/// the GPU's conversion and a lossless encode. Every export is tagged
+/// BT.709; the code values are checked only where the GPU converted.
+#[test]
+fn mp4_colors_hold_bt709_code_values() {
+    let _gpu = gpu();
+    for (hex, eight, ten) in [
+        ("ff0000", (63, 102, 240), (250, 409, 960)),
+        ("00ff00", (173, 42, 26), (691, 167, 105)),
+        ("0000ff", (32, 240, 118), (127, 960, 471)),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.mkv");
+        generate_source(
+            &source,
+            &format!("color=c=#{hex}:size=64x64:rate=2:duration=0.5,format=rgba"),
+            (2, 1),
+        );
+        let project = one_clip_project(directory.path());
+        for (bit_depth, pix_fmt, yuv, expected) in [
+            (
+                "8",
+                "yuv420p",
+                PixelFormat::Yuv420p,
+                [eight.0, eight.1, eight.2],
+            ),
+            (
+                "10",
+                "yuv420p10le",
+                PixelFormat::Yuv420p10,
+                [ten.0, ten.1, ten.2],
+            ),
+        ] {
+            let output = directory.path().join(format!("{hex}-{bit_depth}.mp4"));
+            let exported = watching(false, || {
+                Exporter::new(ExportOptions {
+                    output: OutputChoice {
+                        video: EncoderChoice {
+                            component: Some(component("ffmpeg/libx264")),
+                            options: options(&[
+                                ("preset", "ultrafast"),
+                                ("crf", "0"),
+                                ("bitDepth", bit_depth),
+                            ]),
+                        },
+                        ..OutputChoice::default()
+                    },
+                    ..ExportOptions::default()
+                })
+                .export_project(&project, directory.path(), &output)
+            });
+            let offered = match exported {
+                Ok(((), (offered, _))) => offered,
+                Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+                    skip_without_gpu(&error);
+                    return;
+                }
+                Err(error) => panic!("{hex} {bit_depth}-bit export failed: {error}"),
+            };
+            assert_eq!(stream_color(&output), (1, 1, 1, 1), "{hex} {bit_depth}");
+            if !offered.contains(&yuv) {
+                // A software renderer, such as CI's lavapipe, reads back no
+                // YUV (deviation 18), so libx264 converts RGBA with
+                // libswscale: its 10-bit codes differ from the formula by up
+                // to 2, and its bicubic chroma bleeds the background into
+                // the quadrant's last chroma row.
+                eprintln!(
+                    "skipping BT.709 code value check of {hex} {bit_depth}-bit: \
+                     the renderer offers no YUV ({offered:?})"
+                );
+                continue;
+            }
+            let frames = decoded_planes(&output, pix_fmt);
+            assert!(!frames.is_empty(), "{hex} {bit_depth}: no frames");
+            // Video clips are centered on the canvas origin, as images are:
+            // the source covers the top-left 32x32 quadrant (16x16 of
+            // chroma) and the rest is the background.
+            for planes in frames {
+                let (luma, rest) = planes.split_at(64 * 64);
+                let (blue, red) = rest.split_at(32 * 32);
+                for (plane, width, want) in [
+                    (luma, 64, expected[0]),
+                    (blue, 32, expected[1]),
+                    (red, 32, expected[2]),
+                ] {
+                    for y in 0..width / 2 {
+                        for &code in &plane[y * width..y * width + width / 2] {
+                            assert!(
+                                (i32::from(code) - want).abs() <= 1,
+                                "{hex} {bit_depth}-bit: code {code}, expected {want}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn vp9_frames_carry_bt709_in_their_header() {
+    let _gpu = gpu();
+    let directory = tempfile::tempdir().unwrap();
+    let project = transparent_project(directory.path());
+    let Some(output) = export_as(&project, directory.path(), "clip.webm") else {
+        return;
+    };
+    // The keyframe header's color_space, 2 for BT.709, so a player that
+    // ignores the container's Colour still decodes BT.709.
+    assert_eq!(first_video_packet(&output)[4] >> 5, 2);
 }
 
 /// The hits of `a_looping_mp4_starts_its_sound_from_its_end`, at 48 kHz.

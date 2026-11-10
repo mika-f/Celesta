@@ -65,8 +65,11 @@ the components, a video takes:
   each option becomes `--video-option=key=value` and is checked against the
   component's settings (see `describeComponent`).
 - `audioEncoder`: the same shape for audio, or `'none'` for a silent video.
-- `preset`, `presetFile`: a named bundle of the above (`--preset`,
-  `--preset-file`).
+- `preset`, `presetFile`: an export preset's name, looked up in
+  `presetFile` (an `export-presets.json`), then the project's
+  `export-presets.json`, then the user's (`--preset`, `--preset-file`).
+  Without `preset`, the project's default preset applies when no component
+  is chosen.
 
 `from` and `to` are seconds (rounded to milliseconds) or timecode
 strings such as `"01:30.5"`. The types in `dist/index.d.ts` document each
@@ -91,7 +94,7 @@ than working out file names.
 | --- | --- |
 | `compositions` | `compositionId`, `compositions` (React entries) |
 | `composition` | `composition` (`width`, `height`, `fps`, `frames`, `duration`) |
-| `output` | `muxer`, `muxerName`, `video` and `audio` (`component`, `name`, `settings` labels, or `audio: null`), sent before rendering |
+| `output` | `muxer`, `muxerName`, `video` and `audio` (`component`, `name`, `settings` labels, or `audio: null`), sent before rendering; a still export names its image muxer and encoder, with `audio: null` |
 | `rendering` | `frame` (counting from 1) of `total` |
 | `mixingAudio`, `muxing` | none |
 | `warning` | `message` |

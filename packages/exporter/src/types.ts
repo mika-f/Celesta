@@ -72,9 +72,13 @@ export interface VideoOptions extends SourceOptions, RunOptions, RenderOptions {
   to?: Timecode;
   /** `.srt` or `.vtt` files to write beside the video; `{lang}` writes one per language. */
   subtitles?: string | string[];
-  /** A named bundle of component choices and settings (`--preset`). */
+  /**
+   * An export preset's name (`--preset`), looked up in `presetFile`, then the
+   * project's `export-presets.json`, then the user's. Without it, the
+   * project's default preset applies when no component is chosen.
+   */
   preset?: string;
-  /** A JSON file of presets (`--preset-file`). */
+  /** An `export-presets.json` to look `preset` up in first (`--preset-file`). */
   presetFile?: string;
   /** The muxer component, `<plugin>/<id>`; the output's extension picks one when left out. */
   muxer?: string;
@@ -110,6 +114,14 @@ export interface StillsOptions extends SourceOptions, RunOptions, RenderOptions 
   to?: Timecode;
   /** JPEG and WebP quality, 1-100. */
   quality?: number;
+  /** The muxer that writes the images, as `<plugin>/<component>`, instead of the built-in one. */
+  muxer?: string;
+  /**
+   * The image encoder and its settings, instead of the built-in one:
+   * `compression`, `depth` and `transparent` for `builtin/png`, `lossless`
+   * and `transparent` for `builtin/webp`. Give `quality` here or above, not both.
+   */
+  videoEncoder?: EncoderOptions;
   /** Write the frames as one labelled grid image. */
   contactSheet?: boolean | { columns?: number; tileWidth?: number };
   /** Draw a React entry's `<DebugOverlay>` and `<DebugBounds>`. */
@@ -253,7 +265,11 @@ export type ProgressEvent =
   | { event: 'mixingAudio' }
   | { event: 'muxing' }
   | { event: 'warning'; message: string }
-  /** The components the export resolved, sent before rendering starts. */
+  /**
+   * The components the export resolved, sent before rendering starts. A
+   * still export sends it too, with its image muxer and encoder and
+   * `audio: null`.
+   */
   | {
       event: 'output';
       muxer: string;
@@ -270,7 +286,8 @@ export interface ComponentInfo {
   kind: 'decoder' | 'videoEncoder' | 'audioEncoder' | 'muxer';
   name: string;
   plugin: string;
-  origin: 'user' | 'bundled' | 'project';
+  /** Where the plugin comes from; `built-in` for the image components inside the exporter. */
+  origin: 'user' | 'bundled' | 'project' | 'built-in';
   /** With `check`: whether the plugin could start and offers the component. */
   available?: boolean;
   /** With `check`: why it is not available. */

@@ -82,10 +82,7 @@ mod tests {
         );
         assert_eq!(ring_layout(&[Yuv420p], 1920, 1080), layout(3, 3_110_400));
         assert_eq!(ring_layout(&[], 1920, 1080), layout(3, 16_588_800));
-        assert_eq!(
-            ring_layout(&[Nv12, P010], 1920, 1080),
-            layout(3, 16_588_800)
-        );
+        assert_eq!(ring_layout(&[Nv12, P010], 1920, 1080), layout(3, 6_220_800));
     }
 
     #[test]

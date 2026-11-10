@@ -11,6 +11,7 @@ mod loudness;
 mod media;
 mod options;
 mod output;
+pub mod presets;
 mod project;
 mod range;
 mod react;
@@ -30,18 +31,23 @@ pub use control::{
 pub use error::{ExportError, FrameFailure};
 pub use exporter::Exporter;
 pub use job::ExportJob;
-pub use media::{media_registry, use_installed_media, use_media};
+pub use media::{media_registry, use_installed_media, use_media, with_builtin};
 pub use options::{AudioChoice, EncoderChoice, ExportOptions, OutputChoice, SettingInput};
+pub use presets::{
+    FoundPreset, NoAudio, PRESETS_FILE, PRESETS_VERSION, Preset, PresetAudio, PresetEncoder,
+    PresetLookup, PresetOutput, PresetSource, PresetsFile, update_presets, user_presets_path,
+};
 pub use range::ExportRange;
 pub use react::{CompanionProject, ReactRuntimeOptions};
 pub use resolve::{
     EncoderPlan, OutputPlan, ResolvedEncoder, ResolvedMuxer, ResolvedOutput, X264_PRESETS,
-    encoding_label, resolve_output,
+    encoding_label, resolve_output, resolve_preset_output, serves_video, writes_any_codec,
 };
 pub use subtitles::SubtitleFormat;
 pub use timecode::{TimecodeError, parse_timecode};
 
 mod contact_sheet;
+mod still_output;
 mod stills;
 
 pub use celesta_gpu_renderer::{GpuDriver, RenderQuality, UnknownGpuDriver, UnknownRenderQuality};

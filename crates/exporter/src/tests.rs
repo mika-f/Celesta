@@ -19,6 +19,31 @@ use std::path::Path;
 
 use celesta_composition::{Animatable, Keyframe, KeyframeAnimation, KeyframeAnimationType};
 
+#[test]
+fn nv12_and_p010_are_offered_after_the_planar_formats() {
+    use crate::encode::ExportSession;
+    use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
+    use celesta_media::PixelFormat::{Nv12, P010, Rgba8, Rgba16, Yuv420p, Yuv420p10};
+
+    let renderer = match GpuRenderer::new(GpuRenderOptions::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => {
+            assert!(
+                std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
+                "GPU tests require an adapter: {error}"
+            );
+            eprintln!("skipping: no GPU adapter is available: {error}");
+            return;
+        }
+    };
+    let expected = if renderer.supports_yuv420p_readback() && !renderer.is_software() {
+        vec![Yuv420p, Yuv420p10, Nv12, P010, Rgba16, Rgba8]
+    } else {
+        vec![Rgba16, Rgba8]
+    };
+    assert_eq!(ExportSession::offered_formats(&renderer), expected);
+}
+
 fn static_clip(src: &str, start: f64, duration: f64, volume: f64) -> ReactAudioClipDescriptor {
     ReactAudioClipDescriptor {
         src: src.to_owned(),

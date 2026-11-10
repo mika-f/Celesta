@@ -1,13 +1,22 @@
 use crate::actions::{ClearExportRange, ExportProject, SetExportIn, SetExportOut};
+use crate::export_dialog::view::{ExportDialog, ExportDialogEvent, open_export_dialog};
 use crate::export_worker::{ExportRequest, ExportSource};
 use crate::helpers::{ExportLoudness, export_output, export_range_for, export_suggested_name};
 use crate::inline_text_view::EditEvent;
-use crate::problems::{Source, error_chain};
+use crate::problems::{Problems, Source, error_chain};
+use crate::timecode::format_timecode;
 use crate::view::EditorView;
-use celesta_exporter::{ExportCancellation, ExportProgress};
+use celesta_exporter::{
+    ExportCancellation, ExportProgress, OutputChoice, PRESETS_FILE, PresetOutput, update_presets,
+    user_presets_path,
+};
+use celesta_media::{ComponentEntry, ComponentKind, MediaRegistry};
+use celesta_plugin_host::{create_private_dir_all, project_root};
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
-use gpui_kit::{ClickEvent, Context, Window};
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::{AppContext as _, ClickEvent, Context, Entity, SharedString, Window};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 impl EditorView {
     pub(crate) fn export_project_action(
@@ -29,18 +38,131 @@ impl EditorView {
         self.request_export(window, cx);
     }
 
+    /// Export…: opens the export dialog (as it was left, within a
+    /// session); its `Export…` asks where to write the file.
     pub(crate) fn request_export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.choosing_export_path || self.export_cancellation.is_some() {
+        if self.choosing_export_path
+            || self.export_cancellation.is_some()
+            || window.has_active_dialog(cx)
+        {
             return;
         }
         self.pause();
-        self.choosing_export_path = true;
         self.problems.clear(Source::Export);
+        let project_file = self
+            .export_source_path()
+            .map(|source| project_root(source).join(PRESETS_FILE));
+        // A dialog is kept for the project file it read; an untitled
+        // document saved since, or another file, reads its own.
+        let kept = self
+            .export_dialog
+            .as_ref()
+            .filter(|(dialog, _)| dialog.read(cx).project_file() == project_file.as_deref());
+        let dialog = match kept {
+            Some((dialog, _)) => {
+                let dialog = dialog.clone();
+                dialog.update(cx, |dialog, cx| dialog.reopen(window, cx));
+                dialog
+            }
+            None => {
+                // Without a registry yet no media plugin can export: the
+                // dialog lists none and says why Export… cannot run.
+                let registry = self
+                    .found_plugins
+                    .registry
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(MediaRegistry::new(Vec::new())));
+                let loudness = self.export_loudness;
+                let dialog = cx.new(|cx| {
+                    ExportDialog::new(
+                        registry,
+                        project_file,
+                        user_presets_path(),
+                        loudness,
+                        window,
+                        cx,
+                    )
+                });
+                let events = cx.subscribe_in(&dialog, window, Self::export_dialog_event);
+                self.export_dialog = Some((dialog.clone(), events));
+                dialog
+            }
+        };
+        let range = self.export_range_label();
+        dialog.update(cx, |dialog, cx| dialog.set_range(range, cx));
+        open_export_dialog(&dialog, window, cx);
+        cx.notify();
+    }
+
+    /// The document or React entry an export renders; `None` for an
+    /// untitled document, which has no project presets file.
+    fn export_source_path(&self) -> Option<&Path> {
+        match &self.react_preview {
+            Some(react) => Some(react.entry.as_path()),
+            None => self.document.path(),
+        }
+    }
+
+    /// The in- and out-points as the dialog shows them, when they mark
+    /// what is exported; a React entry always exports all of it.
+    fn export_range_label(&self) -> Option<SharedString> {
+        if self.react_preview.is_some() {
+            return None;
+        }
+        let (start, end) = (self.export_in_frame?, self.export_out_frame?);
+        export_range_for(Some(start), Some(end), self.frame_rate_value)?;
+        let rate = self.frame_rate_value;
+        Some(
+            format!(
+                "{} – {}",
+                format_timecode(start, rate),
+                format_timecode(end, rate)
+            )
+            .into(),
+        )
+    }
+
+    fn export_dialog_event(
+        &mut self,
+        dialog: &Entity<ExportDialog>,
+        event: &ExportDialogEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ExportDialogEvent::Export {
+                choice,
+                extension,
+                last,
+            } => {
+                remember_last(&mut self.problems, user_presets_path().as_deref(), last);
+                self.choose_export_path(choice.clone(), extension, window, cx);
+            }
+            ExportDialogEvent::Loudness(loudness) => self.set_export_loudness(*loudness, cx),
+            ExportDialogEvent::ClearRange => {
+                self.clear_export_range(cx);
+                dialog.update(cx, |dialog, cx| dialog.set_range(None, cx));
+            }
+        }
+    }
+
+    /// Asks where to write the export, in the document's folder, named
+    /// after it with `extension`, and starts it there with `choice`.
+    fn choose_export_path(
+        &mut self,
+        choice: OutputChoice,
+        extension: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.choosing_export_path = true;
         let directory = self.document.path().and_then(Path::parent).map_or_else(
             || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             Path::to_path_buf,
         );
-        let suggested_name = export_suggested_name(self.document.path(), &self.project_name);
+        let suggested_name =
+            export_suggested_name(self.document.path(), &self.project_name, extension);
+        let extensions = self.muxer_extensions(&choice);
         let selection = cx.prompt_for_new_path(&directory, Some(&suggested_name));
         cx.spawn_in(window, async move |view, cx| {
             let selected_path = match selection.await {
@@ -50,7 +172,7 @@ impl EditorView {
                         this.choosing_export_path = false;
                         this.problems.report(
                             Source::Export,
-                            "Couldn’t show the Export dialog",
+                            "Couldn’t show the save panel",
                             error_chain(error.as_ref()),
                         );
                         cx.notify();
@@ -63,7 +185,7 @@ impl EditorView {
                         this.choosing_export_path = false;
                         this.problems.report(
                             Source::Export,
-                            "Export dialog was interrupted",
+                            "The save panel was interrupted",
                             error_chain(&error),
                         );
                         cx.notify();
@@ -78,7 +200,7 @@ impl EditorView {
                     cx.notify();
                     return;
                 };
-                this.start_export(export_output(selected_path));
+                this.start_export(export_output(selected_path, &extensions), choice);
                 cx.notify();
             })
             .ok();
@@ -87,7 +209,21 @@ impl EditorView {
         cx.notify();
     }
 
-    pub(crate) fn start_export(&mut self, output: PathBuf) {
+    /// The extensions `choice`'s muxer writes, the first one first.
+    fn muxer_extensions(&self, choice: &OutputChoice) -> Vec<String> {
+        let entry = choice.muxer.as_ref().and_then(|muxer| {
+            self.found_plugins
+                .registry
+                .as_ref()?
+                .component(muxer, ComponentKind::Muxer)
+        });
+        match entry.map(|info| info.entry) {
+            Some(ComponentEntry::Muxer(muxer)) => muxer.extensions,
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn start_export(&mut self, output: PathBuf, output_choice: OutputChoice) {
         let cancellation = ExportCancellation::default();
         let (source, range) = match &self.react_preview {
             Some(react) => {
@@ -118,6 +254,7 @@ impl EditorView {
             output: output.clone(),
             range,
             loudness: self.export_loudness.target(),
+            output_choice,
             cancellation: cancellation.clone(),
             driver: self.driver,
             plugins: self.plugins.clone(),
@@ -209,5 +346,33 @@ impl EditorView {
             self.export_cancelling = true;
             cx.notify();
         }
+    }
+}
+
+/// Saves the dialog's choice as `last` in the user presets file at `path`
+/// (none on a platform without a settings folder), creating its folder
+/// readable by the user alone. A failure is reported under
+/// [`Source::ExportPresets`], which the export that goes on does not
+/// clear; a success clears an earlier one.
+pub(crate) fn remember_last(problems: &mut Problems, path: Option<&Path>, last: &PresetOutput) {
+    let Some(path) = path else {
+        return;
+    };
+    let saved = path
+        .parent()
+        .map_or(Ok(()), create_private_dir_all)
+        .map_err(anyhow::Error::from)
+        .and_then(|()| {
+            update_presets(path, |file| file.last = Some(last.clone()))
+                .map(drop)
+                .map_err(anyhow::Error::from)
+        });
+    match saved {
+        Ok(()) => problems.clear(Source::ExportPresets),
+        Err(error) => problems.report(
+            Source::ExportPresets,
+            "Couldn’t remember the export settings",
+            error_chain(error.as_ref()),
+        ),
     }
 }

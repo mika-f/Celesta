@@ -284,30 +284,30 @@ pub struct Sequential<'a> {
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum PixelFormat {
-    /// RGBA, 8 bits a channel.
+    /// RGBA, 8 bits a channel. Straight alpha when the encoder keeps alpha
+    /// (answers `alpha: true`); otherwise opaque.
     Rgba8,
     /// RGBA, 16-bit little-endian channels.
     Rgba16,
-    /// Planar BT.601 limited-range Y, U, V with chroma halved both ways,
-    /// although the session's [`Color`] says BT.709: P2a's encoders do not
-    /// apply it (deviation 8 of the media components spec).
+    /// Planar BT.709 limited-range Y, U, V with chroma halved both ways.
     Yuv420p,
     /// [`PixelFormat::Yuv420p`] with 10 bits in 16-bit little-endian samples.
     Yuv420p10,
-    /// A Y plane, then U and V interleaved in one plane, chroma halved both
-    /// ways. Celesta does not offer it yet.
+    /// A BT.709 limited-range Y plane, then U and V interleaved in one
+    /// plane, chroma halved both ways.
     Nv12,
     /// [`PixelFormat::Nv12`] with 10 bits in the high bits of 16-bit
-    /// little-endian samples. Celesta does not offer it yet.
+    /// little-endian samples.
     P010,
 }
 
 impl PixelFormat {
-    /// The formats Celesta can produce today, which size an export's ring.
-    /// Nv12 and P010 join them when a renderer offers them.
-    pub const OFFERABLE: [PixelFormat; 4] = [
+    /// The formats Celesta can produce, which size an export's ring.
+    pub const OFFERABLE: [PixelFormat; 6] = [
         PixelFormat::Yuv420p,
         PixelFormat::Yuv420p10,
+        PixelFormat::Nv12,
+        PixelFormat::P010,
         PixelFormat::Rgba16,
         PixelFormat::Rgba8,
     ];
@@ -351,8 +351,7 @@ pub struct Color {
 
 impl Color {
     /// BT.709 primaries, transfer, and matrix in limited range: what every
-    /// export says today, although P2a's encoders do not convert or tag by
-    /// it yet (deviation 8 of the media components spec).
+    /// export converts with and tags.
     pub fn bt709_limited() -> Self {
         Self {
             primaries: "bt709".to_owned(),

@@ -7,15 +7,17 @@ use celesta_codec_ffmpeg::FfmpegCodec;
 use celesta_composition::Rational;
 use celesta_media::{
     AudioEncoderOpened, AudioEncoderRequest, Color, ComponentKind, Encoded, MediaError,
-    MediaProvider, MuxerRequest, Packet, PixelFormat, SampleRates, SettingValue, Settings, Track,
-    TrackConfig, VideoEncoderOpened, VideoEncoderRequest,
+    MediaProvider, MuxerRequest, Packet, PixelFormat, SampleRates, SessionId, SettingValue,
+    Settings, Track, TrackConfig, VideoEncoderOpened, VideoEncoderRequest,
 };
 use ffmpeg_sys_next::{
-    AVCodecID, AVERROR, AVERROR_EOF, EAGAIN, av_frame_alloc, av_frame_free, av_malloc,
-    av_packet_alloc, av_packet_free, avcodec_alloc_context3, avcodec_find_decoder,
+    AVColorPrimaries, AVColorRange, AVColorSpace, AVColorTransferCharacteristic, AVERROR,
+    AVERROR_EOF, AVPixelFormat, EAGAIN, av_frame_alloc, av_frame_free, av_malloc, av_packet_alloc,
+    av_packet_free, av_pix_fmt_desc_get, avcodec_alloc_context3, avcodec_find_decoder_by_name,
     avcodec_free_context, avcodec_open2, avcodec_receive_frame, avcodec_send_packet,
 };
 use std::collections::BTreeSet;
+use std::ffi::CString;
 use std::ptr::null_mut;
 
 const WIDTH: u32 = 32;
@@ -40,7 +42,17 @@ fn open(
     given: &Settings,
     offered: &[PixelFormat],
 ) -> Result<VideoEncoderOpened, MediaError> {
-    let color = Color::bt709_limited();
+    open_colored(codec, component, given, offered, &Color::bt709_limited())
+}
+
+/// [`open`] with `color`.
+fn open_colored(
+    codec: &mut FfmpegCodec,
+    component: &str,
+    given: &Settings,
+    offered: &[PixelFormat],
+    color: &Color,
+) -> Result<VideoEncoderOpened, MediaError> {
     codec
         .video_encoder()
         .expect("the plugin has video encoders")
@@ -52,11 +64,47 @@ fn open(
             frame_rate: Rational::new(10, 1),
             timescale: 10,
             offered,
-            color: &color,
+            color,
         })
 }
 
-/// One frame of `format` at 32x16 whose colors move with `index`.
+/// The Y, U, and V planes of frame `index` at 32x16, in 8-bit codes or, with
+/// `ten`, 10-bit ones: each moves with `index` and along its rows and
+/// columns, and U and V differ, so a mixed-up plane or chroma order shows.
+fn planes(index: i64, ten: bool) -> [Vec<u16>; 3] {
+    let (width, height) = (WIDTH as u16, HEIGHT as u16);
+    let step = index as u16 * 20;
+    let plane = |width: u16, height: u16, sample: &dyn Fn(u16, u16) -> u16| {
+        (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let code = sample(x, y);
+                if ten { code * 4 + (x + y) % 4 } else { code }
+            })
+            .collect::<Vec<u16>>()
+    };
+    [
+        plane(width, height, &|x, y| 16 + step / 2 + x * 4 + y),
+        plane(width / 2, height / 2, &|x, y| 64 + step / 4 + x * 3 + y * 2),
+        plane(width / 2, height / 2, &|x, y| 192 - step / 4 - x * 3 - y),
+    ]
+}
+
+/// `samples` as 16-bit little-endian bytes.
+fn little_endian(samples: impl IntoIterator<Item = u16>) -> Vec<u8> {
+    samples
+        .into_iter()
+        .flat_map(|sample| sample.to_le_bytes())
+        .collect()
+}
+
+/// U and V interleaved, as NV12 and P010 store chroma.
+fn interleaved(u: &[u16], v: &[u16]) -> Vec<u16> {
+    u.iter().zip(v).flat_map(|(u, v)| [*u, *v]).collect()
+}
+
+/// One frame of `format` at 32x16 whose colors move with `index`; the YUV
+/// formats hold the same [`planes`].
 fn frame(format: PixelFormat, index: i64) -> Vec<u8> {
     let (width, height) = (WIDTH as usize, HEIGHT as usize);
     let step = index as u8 * 20;
@@ -68,26 +116,59 @@ fn frame(format: PixelFormat, index: i64) -> Vec<u8> {
             .flat_map(|channel| channel.to_le_bytes())
             .collect::<Vec<u8>>()
             .repeat(width * height),
-        PixelFormat::Yuv420p => {
-            let mut planes = vec![16 + step / 2; width * height];
-            planes.extend(vec![128 - step / 4; width * height / 2]);
-            planes
-        }
-        PixelFormat::Yuv420p10 => {
-            let mut samples = vec![64 + u16::from(step) * 2; width * height];
-            samples.extend(vec![512 - u16::from(step); width * height / 2]);
-            samples
+        PixelFormat::Yuv420p => planes(index, false)
+            .concat()
+            .iter()
+            .map(|&code| code as u8)
+            .collect(),
+        PixelFormat::Nv12 => {
+            let [y, u, v] = planes(index, false);
+            [y, interleaved(&u, &v)]
+                .concat()
                 .iter()
-                .flat_map(|sample| sample.to_le_bytes())
+                .map(|&code| code as u8)
                 .collect()
         }
-        other => panic!("no test frames of {other}"),
+        PixelFormat::Yuv420p10 => little_endian(planes(index, true).concat()),
+        PixelFormat::P010 => {
+            let [y, u, v] = planes(index, true);
+            little_endian(
+                [y, interleaved(&u, &v)]
+                    .concat()
+                    .iter()
+                    .map(|code| code << 6),
+            )
+        }
+    }
+}
+
+/// A frame of RGBA `format` of one color, `rgb` in 8 bits.
+fn solid(format: PixelFormat, rgb: [u8; 3]) -> Vec<u8> {
+    let [r, g, b] = rgb;
+    let pixels = (WIDTH * HEIGHT) as usize;
+    match format {
+        PixelFormat::Rgba8 => [r, g, b, 255].repeat(pixels),
+        PixelFormat::Rgba16 => {
+            little_endian([r, g, b, 255].map(|channel| u16::from(channel) * 257)).repeat(pixels)
+        }
+        other => panic!("no solid frames of {other}"),
     }
 }
 
 /// Ten frames through `opened`'s session and its finish: every packet, and
 /// the config of the first answer with packets.
 fn encode_all(codec: &mut FfmpegCodec, opened: VideoEncoderOpened) -> (Vec<Packet>, TrackConfig) {
+    let frames = (0..FRAMES).map(|index| frame(opened.input, index));
+    encode_frames(codec, opened.session, frames)
+}
+
+/// `frames` through `session` and its finish: every packet, and the config
+/// of the first answer with packets.
+fn encode_frames(
+    codec: &mut FfmpegCodec,
+    session: SessionId,
+    frames: impl IntoIterator<Item = Vec<u8>>,
+) -> (Vec<Packet>, TrackConfig) {
     let encoder = codec.video_encoder().unwrap();
     let mut packets = Vec::new();
     let mut config = None;
@@ -101,13 +182,11 @@ fn encode_all(codec: &mut FfmpegCodec, opened: VideoEncoderOpened) -> (Vec<Packe
         }
         packets.extend(answer.packets);
     };
-    for index in 0..FRAMES {
-        let answer = encoder
-            .encode_video(opened.session, index, frame(opened.input, index))
-            .unwrap();
+    for (index, pixels) in frames.into_iter().enumerate() {
+        let answer = encoder.encode_video(session, index as i64, pixels).unwrap();
         take(answer, &mut packets);
     }
-    let answer = encoder.finish_video(opened.session).unwrap();
+    let answer = encoder.finish_video(session).unwrap();
     take(answer, &mut packets);
     (packets, config.expect("the encoder made packets"))
 }
@@ -166,34 +245,99 @@ fn ten_bit_h264_picks_yuv420p10_when_offered() {
     assert!(config.codec.starts_with("avc1.6E"), "{}", config.codec);
 }
 
-/// Decodes `packets` with libavcodec's H.264 decoder given `avcc`: the
-/// sizes of the frames it gives.
-fn decode_h264(avcc: &[u8], packets: &[Packet]) -> Vec<(i32, i32)> {
-    let mut sizes = Vec::new();
+/// A frame a decoder gave: its size, color tags, and samples.
+#[derive(Debug, PartialEq)]
+struct Decoded {
+    size: (i32, i32),
+    colorspace: AVColorSpace,
+    primaries: AVColorPrimaries,
+    transfer: AVColorTransferCharacteristic,
+    range: AVColorRange,
+    /// Each plane's samples, tightly packed, 16 bits or fewer each.
+    planes: Vec<Vec<u16>>,
+}
+
+impl Decoded {
+    /// The distinct samples of each of the first three planes.
+    fn plane_values(&self) -> Vec<BTreeSet<u16>> {
+        self.planes[..3]
+            .iter()
+            .map(|plane| plane.iter().copied().collect())
+            .collect()
+    }
+}
+
+/// Decodes `packets` with libavcodec's decoder `name`, given `extradata`
+/// (an avcC for H.264): every frame it gives.
+fn decode(name: &str, extradata: Option<&[u8]>, packets: &[Packet]) -> Vec<Decoded> {
+    let mut frames = Vec::new();
+    let name = CString::new(name).unwrap();
     // SAFETY: every pointer comes from the allocator it is freed with; the
     // extradata carries libavcodec's input padding, and libavcodec copies
     // the packets' data, which is not reference counted, into padded
-    // buffers of its own.
+    // buffers of its own. A frame's planes hold `linesize` bytes a row for
+    // the rows its format's descriptor gives.
     unsafe {
-        let decoder = avcodec_find_decoder(AVCodecID::AV_CODEC_ID_H264);
-        assert!(!decoder.is_null());
+        let decoder = avcodec_find_decoder_by_name(name.as_ptr());
+        assert!(!decoder.is_null(), "no decoder {name:?}");
         let mut context = avcodec_alloc_context3(decoder);
-        let padding = 64;
-        let extradata = av_malloc(avcc.len() + padding).cast::<u8>();
-        std::ptr::write_bytes(extradata, 0, avcc.len() + padding);
-        std::ptr::copy_nonoverlapping(avcc.as_ptr(), extradata, avcc.len());
-        (*context).extradata = extradata;
-        (*context).extradata_size = avcc.len() as i32;
+        if let Some(bytes) = extradata {
+            let padding = 64;
+            let copy = av_malloc(bytes.len() + padding).cast::<u8>();
+            std::ptr::write_bytes(copy, 0, bytes.len() + padding);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), copy, bytes.len());
+            (*context).extradata = copy;
+            (*context).extradata_size = bytes.len() as i32;
+        }
         assert_eq!(avcodec_open2(context, decoder, null_mut()), 0);
         let mut packet = av_packet_alloc();
         let mut frame = av_frame_alloc();
-        let receive = |sizes: &mut Vec<(i32, i32)>| loop {
+        let receive = |frames: &mut Vec<Decoded>| loop {
             let result = avcodec_receive_frame(context, frame);
             if result == AVERROR(EAGAIN) || result == AVERROR_EOF {
                 break;
             }
             assert_eq!(result, 0, "the decoder failed");
-            sizes.push(((*frame).width, (*frame).height));
+            let (width, height) = ((*frame).width, (*frame).height);
+            let format: AVPixelFormat = std::mem::transmute((*frame).format);
+            let descriptor = av_pix_fmt_desc_get(format);
+            let wide = (*descriptor).comp[0].depth > 8;
+            let mut planes = Vec::new();
+            for plane in 0..4 {
+                let data = (*frame).data[plane];
+                if data.is_null() {
+                    break;
+                }
+                let (columns, rows) = if plane == 1 || plane == 2 {
+                    (
+                        -((-width) >> (*descriptor).log2_chroma_w),
+                        -((-height) >> (*descriptor).log2_chroma_h),
+                    )
+                } else {
+                    (width, height)
+                };
+                let stride = (*frame).linesize[plane] as isize;
+                let mut samples = Vec::new();
+                for row in 0..rows as isize {
+                    let start = data.offset(row * stride);
+                    for column in 0..columns as usize {
+                        samples.push(if wide {
+                            u16::from_le_bytes([*start.add(column * 2), *start.add(column * 2 + 1)])
+                        } else {
+                            u16::from(*start.add(column))
+                        });
+                    }
+                }
+                planes.push(samples);
+            }
+            frames.push(Decoded {
+                size: (width, height),
+                colorspace: (*frame).colorspace,
+                primaries: (*frame).color_primaries,
+                transfer: (*frame).color_trc,
+                range: (*frame).color_range,
+                planes,
+            });
         };
         for encoded in packets {
             let copy = encoded.bytes.clone();
@@ -204,15 +348,20 @@ fn decode_h264(avcc: &[u8], packets: &[Packet]) -> Vec<(i32, i32)> {
             assert_eq!(avcodec_send_packet(context, packet), 0);
             (*packet).data = null_mut();
             (*packet).size = 0;
-            receive(&mut sizes);
+            receive(&mut frames);
         }
         assert_eq!(avcodec_send_packet(context, null_mut()), 0);
-        receive(&mut sizes);
+        receive(&mut frames);
         av_frame_free(&mut frame);
         av_packet_free(&mut packet);
         avcodec_free_context(&mut context);
     }
-    sizes
+    frames
+}
+
+/// [`decode`] with libavcodec's H.264 decoder, given the track's avcC.
+fn decode_h264(config: &TrackConfig, packets: &[Packet]) -> Vec<Decoded> {
+    decode("h264", config.description.as_deref(), packets)
 }
 
 #[test]
@@ -228,7 +377,10 @@ fn rgba_input_is_converted() {
     assert_eq!(opened.input, PixelFormat::Rgba8);
     assert!(!opened.alpha);
     let (packets, config) = encode_all(&mut codec, opened);
-    let sizes = decode_h264(&config.description.unwrap(), &packets);
+    let sizes: Vec<(i32, i32)> = decode_h264(&config, &packets)
+        .iter()
+        .map(|frame| frame.size)
+        .collect();
     assert_eq!(sizes, vec![(WIDTH as i32, HEIGHT as i32); FRAMES as usize]);
 }
 
@@ -254,6 +406,17 @@ fn software_offers_pick_rgba_by_bit_depth() {
     assert_eq!(ten.input, PixelFormat::Rgba16);
     let (_, config) = encode_all(&mut codec, ten);
     assert!(config.codec.starts_with("avc1.6E"), "{}", config.codec);
+    // Either RGBA serves either bit depth when the other is not offered.
+    for (depth, offered) in [("8", PixelFormat::Rgba16), ("10", PixelFormat::Rgba8)] {
+        let opened = open(
+            &mut codec,
+            "libx264",
+            &settings(&[("bitDepth", text(depth))]),
+            &[offered],
+        )
+        .unwrap();
+        assert_eq!(opened.input, offered, "{depth}-bit");
+    }
 
     let refused = |error: MediaError| match error {
         MediaError::InvalidSettings { key, message } => (key, message),
@@ -263,23 +426,29 @@ fn software_offers_pick_rgba_by_bit_depth() {
         &mut codec,
         "libx264",
         &Settings::new(),
-        &[PixelFormat::Rgba16],
+        &[PixelFormat::Yuv420p10, PixelFormat::P010],
     )
     .unwrap_err();
     assert_eq!(
         refused(error),
-        ("input".to_owned(), "needs yuv420p or rgba8".to_owned())
+        (
+            "input".to_owned(),
+            "needs yuv420p, nv12, rgba8, or rgba16".to_owned()
+        )
     );
     let error = open(
         &mut codec,
         "libx264",
         &settings(&[("bitDepth", text("10"))]),
-        &[PixelFormat::Yuv420p, PixelFormat::Rgba8],
+        &[PixelFormat::Yuv420p, PixelFormat::Nv12],
     )
     .unwrap_err();
     assert_eq!(
         refused(error),
-        ("input".to_owned(), "needs yuv420p10 or rgba16".to_owned())
+        (
+            "input".to_owned(),
+            "needs yuv420p10, p010, rgba16, or rgba8".to_owned()
+        )
     );
     let error = open(
         &mut codec,
@@ -546,6 +715,7 @@ fn audio_and_muxer_settings_are_checked() {
         refused(codec.muxer().unwrap().open_muxer(&request(&faststart))).0,
         "faststart"
     );
+    let empty = Settings::new();
     // A codec the muxer has no mapping for is refused before any file is
     // made.
     let theora = Track::Video {
@@ -565,7 +735,7 @@ fn audio_and_muxer_settings_are_checked() {
         .unwrap()
         .open_muxer(&MuxerRequest {
             tracks: &[theora],
-            ..request(&Settings::new())
+            ..request(&empty)
         })
         .unwrap_err();
     assert_eq!(
@@ -573,6 +743,46 @@ fn audio_and_muxer_settings_are_checked() {
         MediaError::Codec("webm does not take theora".into()).to_string()
     );
     assert!(!output.exists());
+    // So is a track color no file may carry (libavutil's `reserved`, H.273's
+    // reserved matrix), by its field, in every container.
+    for (component, file, codec_string) in [
+        ("mp4", "clip.mp4", "avc1.42c00a"),
+        ("mov", "clip.mov", "apch"),
+        ("webm", "clip.webm", "vp09.00.10.08"),
+    ] {
+        let output = directory.path().join(file);
+        let track = Track::Video {
+            config: TrackConfig {
+                codec: codec_string.to_owned(),
+                description: None,
+            },
+            timescale: 10,
+            width: 2,
+            height: 2,
+            frame_rate: Rational::new(10, 1),
+            color: Color {
+                matrix: "reserved".to_owned(),
+                ..Color::bt709_limited()
+            },
+            alpha: false,
+        };
+        let error = codec
+            .muxer()
+            .unwrap()
+            .open_muxer(&MuxerRequest {
+                component,
+                output: &output,
+                tracks: &[track],
+                ..request(&empty)
+            })
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            MediaError::Codec("unknown color matrix `reserved`".into()).to_string(),
+            "{component}"
+        );
+        assert!(!output.exists(), "{component}");
+    }
 }
 
 #[test]
@@ -631,6 +841,257 @@ fn vp9_alpha_rides_as_block_additions() {
     }
 }
 
+const RED: [u8; 3] = [255, 0, 0];
+const GREEN: [u8; 3] = [0, 255, 0];
+const BLUE: [u8; 3] = [0, 0, 255];
+
+#[test]
+fn libx264_writes_bt709_vui() {
+    let mut codec = FfmpegCodec::new();
+    let opened = open(
+        &mut codec,
+        "libx264",
+        &settings(&[("preset", text("ultrafast"))]),
+        &[PixelFormat::Yuv420p],
+    )
+    .unwrap();
+    let (packets, config) = encode_all(&mut codec, opened);
+    let frames = decode_h264(&config, &packets);
+    assert_eq!(frames.len(), FRAMES as usize);
+    for frame in &frames {
+        assert_eq!(
+            (
+                frame.colorspace,
+                frame.primaries,
+                frame.transfer,
+                frame.range
+            ),
+            (
+                AVColorSpace::AVCOL_SPC_BT709,
+                AVColorPrimaries::AVCOL_PRI_BT709,
+                AVColorTransferCharacteristic::AVCOL_TRC_BT709,
+                AVColorRange::AVCOL_RANGE_MPEG
+            )
+        );
+    }
+}
+
+#[test]
+fn rgba_input_is_converted_with_bt709() {
+    let mut codec = FfmpegCodec::new();
+    // libswscale's BT.709 limited-range codes of red, green, and blue, as
+    // measured on arm64 (Apple M4); every decoded sample is within 1 of
+    // them, since x86_64's SIMD paths may round differently. At 10 bits,
+    // from 16-bit RGB, its fixed point gives these: within 2 of the
+    // formula's (250, 409, 960), (691, 167, 105), (127, 960, 471), and far
+    // from BT.601's (red's Y would be about 326).
+    for (format, depth, expected) in [
+        (
+            PixelFormat::Rgba8,
+            "8",
+            [[63, 102, 240], [173, 42, 26], [32, 240, 118]],
+        ),
+        (
+            PixelFormat::Rgba16,
+            "10",
+            [[251, 409, 962], [693, 165, 103], [128, 962, 471]],
+        ),
+    ] {
+        let opened = open(
+            &mut codec,
+            "libx264",
+            &settings(&[
+                ("preset", text("ultrafast")),
+                ("crf", SettingValue::Number(0.0)),
+                ("bitDepth", text(depth)),
+            ]),
+            &[format],
+        )
+        .unwrap();
+        assert_eq!(opened.input, format);
+        let frames = [RED, GREEN, BLUE].map(|rgb| solid(format, rgb));
+        let (packets, config) = encode_frames(&mut codec, opened.session, frames);
+        let decoded = decode_h264(&config, &packets);
+        assert_eq!(decoded.len(), 3, "{format}");
+        for (frame, codes) in decoded.iter().zip(expected) {
+            let planes = frame.plane_values();
+            assert_eq!(planes.len(), codes.len(), "{format}");
+            for (values, code) in planes.iter().zip(codes) {
+                assert!(
+                    values.iter().all(|value| value.abs_diff(code) <= 1),
+                    "{format}: {values:?}, expected {code}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn libx264_takes_nv12_and_p010() {
+    let mut codec = FfmpegCodec::new();
+    for (depth, planar, interleaved) in [
+        ("8", PixelFormat::Yuv420p, PixelFormat::Nv12),
+        ("10", PixelFormat::Yuv420p10, PixelFormat::P010),
+    ] {
+        let given = settings(&[("preset", text("ultrafast")), ("bitDepth", text(depth))]);
+        let mut run = |offered: PixelFormat| {
+            let opened = open(&mut codec, "libx264", &given, &[offered]).unwrap();
+            assert_eq!(opened.input, offered);
+            let (packets, config) = encode_all(&mut codec, opened);
+            (decode_h264(&config, &packets), config.codec)
+        };
+        let (expected, _) = run(planar);
+        let (decoded, family) = run(interleaved);
+        assert_eq!(decoded.len(), FRAMES as usize, "{interleaved}");
+        assert!(decoded == expected, "{interleaved} decodes unlike {planar}");
+        if depth == "10" {
+            assert!(family.starts_with("avc1.6E"), "{family}");
+        }
+    }
+}
+
+#[test]
+fn prores_and_vp9_are_tagged_bt709() {
+    let mut codec = FfmpegCodec::new();
+    let opened = open(
+        &mut codec,
+        "prores",
+        &settings(&[("profile", text("4444"))]),
+        &[PixelFormat::Rgba16],
+    )
+    .unwrap();
+    let (packets, _) = encode_all(&mut codec, opened);
+    let frames = decode("prores", None, &packets);
+    assert_eq!(frames.len(), FRAMES as usize);
+    for frame in &frames {
+        assert_eq!(
+            (frame.colorspace, frame.primaries, frame.transfer),
+            (
+                AVColorSpace::AVCOL_SPC_BT709,
+                AVColorPrimaries::AVCOL_PRI_BT709,
+                AVColorTransferCharacteristic::AVCOL_TRC_BT709
+            )
+        );
+    }
+
+    let opened = open(&mut codec, "vp9", &Settings::new(), &[PixelFormat::Rgba16]).unwrap();
+    let (packets, _) = encode_all(&mut codec, opened);
+    let frames = decode("libvpx-vp9", None, &packets);
+    assert_eq!(frames.len(), FRAMES as usize);
+    for frame in &frames {
+        assert_eq!(
+            (frame.colorspace, frame.range),
+            (
+                AVColorSpace::AVCOL_SPC_BT709,
+                AVColorRange::AVCOL_RANGE_MPEG
+            )
+        );
+    }
+    // A profile 0 key frame's header: one byte of marker, profile, and
+    // flags, the three-byte sync code, then `color_space`'s three bits,
+    // CS_BT_709 being 2.
+    assert_eq!(packets[0].bytes[1..4], [0x49, 0x83, 0x42]);
+    assert_eq!(packets[0].bytes[4] >> 5, 2);
+}
+
+#[test]
+fn an_unknown_color_name_is_refused() {
+    let mut codec = FfmpegCodec::new();
+    let colors = [
+        (
+            Color {
+                matrix: "nonsense".into(),
+                ..Color::bt709_limited()
+            },
+            "unknown color matrix `nonsense`",
+        ),
+        (
+            Color {
+                range: "wide".into(),
+                ..Color::bt709_limited()
+            },
+            "unknown color range `wide`",
+        ),
+    ];
+    for (component, offered) in [
+        ("libx264", PixelFormat::Yuv420p),
+        ("prores", PixelFormat::Rgba16),
+        ("vp9", PixelFormat::Rgba16),
+    ] {
+        for (color, expected) in &colors {
+            let result = open_colored(&mut codec, component, &Settings::new(), &[offered], color);
+            match result {
+                Err(MediaError::Codec(message)) => {
+                    assert!(message.contains(expected), "{component}: {message}");
+                }
+                other => panic!("{component} took {color:?}: {:?}", other.map(|_| ())),
+            }
+        }
+    }
+}
+
+#[test]
+fn an_rgb_matrix_libswscale_cannot_convert_to_is_refused() {
+    let mut codec = FfmpegCodec::new();
+    let ycgco = Color {
+        matrix: "ycgco".into(),
+        ..Color::bt709_limited()
+    };
+    for (component, offered) in [
+        ("libx264", PixelFormat::Rgba8),
+        ("prores", PixelFormat::Rgba16),
+        ("vp9", PixelFormat::Rgba16),
+    ] {
+        let result = open_colored(&mut codec, component, &Settings::new(), &[offered], &ycgco);
+        match result {
+            Err(MediaError::Codec(message)) => assert_eq!(
+                message, "libswscale cannot convert RGB to the `ycgco` matrix",
+                "{component}"
+            ),
+            other => panic!("{component} took ycgco: {:?}", other.map(|_| ())),
+        }
+    }
+    // YUV input needs no conversion, so the matrix is only a tag.
+    let opened = open_colored(
+        &mut codec,
+        "libx264",
+        &Settings::new(),
+        &[PixelFormat::Yuv420p],
+        &ycgco,
+    )
+    .unwrap();
+    codec.video_encoder().unwrap().abort_video(opened.session);
+}
+
+#[test]
+fn describe_lists_six_inputs_for_libx264() {
+    let described = FfmpegCodec::new().describe().unwrap();
+    let libx264 = described
+        .iter()
+        .find(|component| {
+            component.kind == ComponentKind::VideoEncoder && component.id == "libx264"
+        })
+        .unwrap();
+    let six = [
+        PixelFormat::Yuv420p,
+        PixelFormat::Yuv420p10,
+        PixelFormat::Nv12,
+        PixelFormat::P010,
+        PixelFormat::Rgba8,
+        PixelFormat::Rgba16,
+    ];
+    assert_eq!(libx264.input_formats, six);
+    let manifest: serde_json::Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
+    let entry = manifest["media"]["videoEncoders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == "libx264")
+        .unwrap();
+    let listed: Vec<PixelFormat> = serde_json::from_value(entry["inputFormats"].clone()).unwrap();
+    assert_eq!(listed, six);
+}
+
 /// The ids `plugin.json` declares under `key`.
 fn manifest_ids(key: &str) -> BTreeSet<String> {
     let manifest: serde_json::Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
@@ -676,15 +1137,6 @@ fn describe_names_every_manifest_component() {
             encoder.id
         );
     }
-    assert_eq!(
-        libx264.input_formats,
-        [
-            PixelFormat::Yuv420p,
-            PixelFormat::Yuv420p10,
-            PixelFormat::Rgba16,
-            PixelFormat::Rgba8
-        ]
-    );
     let keys: Vec<&str> = libx264
         .settings
         .iter()

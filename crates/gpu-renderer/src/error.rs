@@ -105,9 +105,11 @@ pub enum GpuRenderError {
     /// The GPU cannot produce frames in this [`ReadbackFormat`].
     #[error("this GPU cannot read frames back as {0:?}")]
     UnsupportedReadbackFormat(ReadbackFormat),
-    /// [`ReadbackFormat::Yuv420p`] and [`ReadbackFormat::Yuv420p10`]
-    /// subsample chroma 2x2, so they need even dimensions.
-    #[error("yuv420p readback requires even dimensions, got {width}x{height}")]
+    /// The YUV readbacks ([`ReadbackFormat::Yuv420p`],
+    /// [`ReadbackFormat::Yuv420p10`], [`ReadbackFormat::Nv12`], and
+    /// [`ReadbackFormat::P010`]) subsample chroma 2x2, so they need even
+    /// dimensions.
+    #[error("YUV 4:2:0 readback requires even dimensions, got {width}x{height}")]
     OddYuv420pSize { width: u32, height: u32 },
     /// A frame has more layers than one GPU buffer can hold.
     #[error("frame has too many layers for the GPU: {0}")]

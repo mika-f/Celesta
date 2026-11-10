@@ -50,9 +50,18 @@ pub enum ExportError {
         path: PathBuf,
         extensions: Vec<String>,
     },
-    /// A preset name found in no presets file.
-    #[error("unknown preset `{name}`")]
-    UnknownPreset { name: String },
+    /// A preset name found in no presets file. `default_in` is the project
+    /// presets file whose `default` names it, when that is where the name
+    /// came from.
+    #[error("{}", unknown_preset(.name, .default_in))]
+    UnknownPreset {
+        name: String,
+        default_in: Option<PathBuf>,
+    },
+    /// A presets file that cannot be read, is not a presets file, or has a
+    /// version this Celesta does not read; or that cannot be written.
+    #[error("{}: {message}", .path.display())]
+    InvalidPresets { path: PathBuf, message: String },
     /// An encoder the choice names writes no codec its muxer takes, or an
     /// audio encoder for a muxer that takes no audio.
     #[error("{component} cannot be used with {muxer}: {reason}")]
@@ -140,6 +149,16 @@ fn unsupported_output(path: &Path, extensions: &[String]) -> String {
     match path.extension() {
         Some(extension) => format!("no muxer writes .{} files", extension.to_string_lossy()),
         None => "no muxer writes files without an extension".to_owned(),
+    }
+}
+
+fn unknown_preset(name: &str, default_in: &Option<PathBuf>) -> String {
+    match default_in {
+        Some(path) => format!(
+            "the default preset `{name}` of {} is in no presets file",
+            path.display()
+        ),
+        None => format!("unknown preset `{name}`"),
     }
 }
 

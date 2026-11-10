@@ -12,11 +12,13 @@ use std::path::PathBuf;
 pub(crate) struct ExportRequest {
     pub(crate) source: ExportSource,
     pub(crate) asset_root: PathBuf,
-    /// The video to write; its extension picks the muxer.
+    /// The video to write.
     pub(crate) output: PathBuf,
     pub(crate) range: Option<ExportRange>,
     /// The loudness to bring the mix to; `None` leaves it as it is.
     pub(crate) loudness: Option<LoudnessTarget>,
+    /// The muxer and encoders the export dialog chose, with their options.
+    pub(crate) output_choice: OutputChoice,
     pub(crate) cancellation: ExportCancellation,
     pub(crate) driver: GpuDriver,
     /// The plugins the preview draws with, so the export draws the same.
@@ -112,13 +114,13 @@ pub(crate) fn spawn_export() -> anyhow::Result<ExportWorker> {
 }
 
 /// The exporter settings for one request: the editor always overwrites the
-/// file the save panel already confirmed, and writes it with the default
-/// components of its extension's muxer.
+/// file the save panel already confirmed, and writes it with the components
+/// the export dialog chose.
 pub(crate) fn export_options(request: &ExportRequest) -> ExportOptions {
     ExportOptions {
         overwrite: true,
         range: request.range,
-        output: OutputChoice::default(),
+        output: request.output_choice.clone(),
         driver: request.driver,
         loudness: request.loudness,
         plugins: Some(request.plugins.clone()),

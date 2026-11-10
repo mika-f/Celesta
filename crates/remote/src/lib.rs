@@ -33,7 +33,7 @@ use url::Url;
 mod staged;
 mod stylesheet;
 
-pub use staged::StagedFile;
+pub use staged::{StagedFile, publish_path};
 pub use stylesheet::{
     FontFaceDescriptors, FontFaceSource, FontFaceStyle, StylesheetFontFace, is_font_stylesheet,
     stylesheet_font_faces,

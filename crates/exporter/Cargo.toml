@@ -9,11 +9,11 @@ rust-version.workspace = true
 
 [dependencies]
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
-png = "0.18.1"
 celesta-composition.workspace = true
 celesta-evaluator.workspace = true
 celesta-gpu-renderer = { workspace = true, features = ["clap"] }
 celesta-plugin-host.workspace = true
+celesta-media-image.workspace = true
 celesta-media = { workspace = true, features = ["clap"] }
 celesta-project.workspace = true
 celesta-react-bridge.workspace = true
@@ -22,8 +22,6 @@ tempfile = "3.23.0"
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true
-webp = { version = "0.3.1", default-features = false }
-image = { version = "0.25.8", default-features = false, features = ["jpeg"] }
 strum.workspace = true
 thiserror.workspace = true
 
@@ -32,3 +30,7 @@ thiserror.workspace = true
 celesta-codec-test.workspace = true
 # A fake content plugin's answers, for the cancel test.
 celesta-plugin.workspace = true
+# Tests decode the stills they write.
+png = "0.18.1"
+webp = { version = "0.3.1", default-features = false }
+image = { version = "0.25.8", default-features = false, features = ["jpeg"] }

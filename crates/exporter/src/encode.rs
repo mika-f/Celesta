@@ -6,14 +6,18 @@ use crate::control::{ExportCancellation, TrackInfo};
 use crate::error::ExportError;
 use crate::interleave::{Interleaver, WRITE_REQUEST_BYTES, WRITE_REQUEST_PACKETS, packet_bytes};
 use crate::options::OutputChoice;
-use crate::resolve::{OutputPlan, ResolvedOutput, resolve_output};
+use crate::presets::PresetLookup;
+use crate::resolve::{
+    OutputPlan, ResolvedOutput, STILL_MUXER_REASON, muxer_serves_video, resolve_output,
+    serves_video,
+};
 use celesta_composition::Rational;
 use celesta_gpu_renderer::{GpuFrame, GpuRenderer, ReadbackFormat};
 use celesta_media::{
     Answered, AudioBuffer, AudioEncoderOpened, AudioEncoderRequest, Color as MediaColor,
-    ComponentDescription, ComponentRef, Encoded, MediaError, MediaProvider, MediaRegistry,
-    MuxerRequest, Packet, PixelFormat, ProviderUse, RingLayout, SessionId, Track, TrackConfig,
-    TrackPacket, VideoEncoderOpened, VideoEncoderRequest, resample_audio, ring_layout,
+    ComponentDescription, ComponentKind, ComponentRef, Encoded, MediaError, MediaProvider,
+    MediaRegistry, MuxerRequest, Packet, PixelFormat, ProviderUse, RingLayout, SessionId, Track,
+    TrackConfig, TrackPacket, VideoEncoderOpened, VideoEncoderRequest, resample_audio, ring_layout,
 };
 use celesta_plugin_host::{MediaManifest, PluginKillSwitch};
 use std::borrow::Cow;
@@ -50,9 +54,11 @@ pub(crate) const LOOP_LEAD_IN_FRAMES: usize = 16 * 1024;
 /// ring of shared memory.
 const SHARED_MEMORY_TRANSPORT: &str = "sharedMemory";
 
-const VIDEO_STAGE: &str = "video encoding";
+pub(crate) const VIDEO_STAGE: &str = "video encoding";
 const AUDIO_STAGE: &str = "audio encoding";
-const MUXER_STAGE: &str = "muxing";
+pub(crate) const MUXER_STAGE: &str = "muxing";
+/// A still's encoder: opening it, encoding a frame, or flushing it.
+pub(crate) const IMAGE_STAGE: &str = "image encoding";
 
 /// The [`LOOP_LEAD_IN_FRAMES`] sample frames that precede the mix's start
 /// when it plays in a loop: its end, repeated as many times as a short mix
@@ -99,19 +105,97 @@ pub(crate) fn convert_channels(audio: &AudioBuffer, channels: u16) -> AudioBuffe
 }
 
 /// The renderer's readback that produces `format`.
-pub(crate) fn readback_of(format: PixelFormat) -> Result<ReadbackFormat, ExportError> {
+pub(crate) const fn readback_of(format: PixelFormat) -> ReadbackFormat {
     match format {
-        PixelFormat::Rgba8 => Ok(ReadbackFormat::Rgba8),
-        PixelFormat::Rgba16 => Ok(ReadbackFormat::Rgba16Straight),
-        PixelFormat::Yuv420p => Ok(ReadbackFormat::Yuv420p),
-        PixelFormat::Yuv420p10 => Ok(ReadbackFormat::Yuv420p10),
-        PixelFormat::Nv12 | PixelFormat::P010 => Err(ExportError::Codec {
-            stage: VIDEO_STAGE,
-            source: MediaError::Codec(format!(
-                "the video encoder chose {format}, which Celesta does not produce yet"
-            )),
-        }),
+        PixelFormat::Rgba8 => ReadbackFormat::Rgba8,
+        PixelFormat::Rgba16 => ReadbackFormat::Rgba16Straight,
+        PixelFormat::Yuv420p => ReadbackFormat::Yuv420p,
+        PixelFormat::Yuv420p10 => ReadbackFormat::Yuv420p10,
+        PixelFormat::Nv12 => ReadbackFormat::Nv12,
+        PixelFormat::P010 => ReadbackFormat::P010,
     }
+}
+
+/// The renderer's readback for an encoder that answered `opened`: the one
+/// producing its input format, except that `rgba8` kept with alpha is read
+/// back as straight `rgba16` and narrowed ([`encoder_pixels`]), since the
+/// renderer's 8-bit readback is premultiplied and `rgba8` with alpha is
+/// straight.
+pub(crate) fn readback_for(opened: &VideoEncoderOpened) -> Result<ReadbackFormat, ExportError> {
+    if opened.alpha && opened.input == PixelFormat::Rgba8 {
+        Ok(ReadbackFormat::Rgba16Straight)
+    } else {
+        Ok(readback_of(opened.input))
+    }
+}
+
+/// A frame `width` pixels wide read back as `format`, as the `input` an
+/// encoder takes: straight `rgba16` narrowed to `rgba8` ([`narrow_rgba16`])
+/// for one taking `rgba8` ([`readback_for`]); any other frame as it is.
+pub(crate) fn encoder_pixels(
+    format: ReadbackFormat,
+    pixels: Vec<u8>,
+    width: u32,
+    input: PixelFormat,
+) -> Vec<u8> {
+    if format == ReadbackFormat::Rgba16Straight && input == PixelFormat::Rgba8 {
+        narrow_rgba16(&pixels, width)
+    } else {
+        pixels
+    }
+}
+
+/// A frame `width` pixels wide of little-endian 16-bit RGBA samples narrowed
+/// to 8 bits each the way the renderer's own 8-bit readback rounds
+/// (`dither.wgsl` in `celesta-gpu-renderer`): every channel, alpha too, is
+/// rounded to a whole code after adding the 8x8 ordered dither at the
+/// pixel's position ([`dither`]), so a gentle gradient does not band, and a
+/// value within [`WHOLE_CODE_TOLERANCE`] of a whole code keeps that code.
+pub(crate) fn narrow_rgba16(pixels: &[u8], width: u32) -> Vec<u8> {
+    let width = width.max(1) as usize;
+    let samples = pixels.as_chunks::<2>().0;
+    let mut narrowed = Vec::with_capacity(samples.len());
+    for (index, pixel) in samples.chunks(4).enumerate() {
+        let offset = dither((index % width) as u32, (index / width) as u32);
+        narrowed.extend(pixel.iter().map(|&sample| {
+            let value = f32::from(u16::from_le_bytes(sample)) / 65_535.0 * 255.0;
+            dithered_code(value, offset)
+        }));
+    }
+    narrowed
+}
+
+/// The renderer's ordered dither offset at pixel (`x`, `y`), in codes: the
+/// 8x8 Bayer matrix's 64 thresholds, evenly spaced around 0 within half a
+/// code (`dither` in `dither.wgsl`).
+fn dither(x: u32, y: u32) -> f32 {
+    let y = y & 7;
+    let v = (x & 7) ^ y;
+    // The bits of `v` and `y` interleaved, lowest first.
+    let index = ((v & 1) << 5)
+        | ((y & 1) << 4)
+        | ((v & 2) << 2)
+        | ((y & 2) << 1)
+        | ((v & 4) >> 1)
+        | ((y & 4) >> 2);
+    (index as f32 + 0.5) / 64.0 - 0.5
+}
+
+/// How far from a whole code a value can be and still be taken for it
+/// (`WHOLE_CODE_TOLERANCE` in `dither.wgsl`).
+const WHOLE_CODE_TOLERANCE: f32 = 0.125;
+
+/// `value`, in code values, rounded to a whole code after adding `offset`,
+/// or to the nearest code when it is within [`WHOLE_CODE_TOLERANCE`] of one
+/// (`code` in `dither.wgsl`).
+fn dithered_code(value: f32, offset: f32) -> u8 {
+    let nearest = (value + 0.5).floor();
+    let rounded = if (value - nearest).abs() < WHOLE_CODE_TOLERANCE {
+        nearest
+    } else {
+        (value + 0.5 + offset).floor()
+    };
+    rounded.clamp(0.0, 255.0) as u8
 }
 
 /// `files` as they are once the staged output is published at `output`.
@@ -133,7 +217,9 @@ pub(crate) fn published_files(files: Vec<PathBuf>, staged: &Path, output: &Path)
         .collect()
 }
 
-fn absolute(path: &Path) -> PathBuf {
+/// `path` made absolute the way a plugin process is handed it, so a muxer's
+/// answer compares with the staged path it was given.
+pub(crate) fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_owned())
 }
 
@@ -245,6 +331,8 @@ struct VideoTrack {
     width: u32,
     height: u32,
     frame_rate: Rational,
+    /// The input format the encoder chose.
+    input: PixelFormat,
     alpha: bool,
     config: Option<TrackConfig>,
     frames_sent: u64,
@@ -510,6 +598,39 @@ fn not_ready(what: &str) -> MediaError {
     MediaError::Codec(format!("the export has {what}"))
 }
 
+/// The refusal of a video export that names a muxer writing stills.
+fn still_muxer(reference: &ComponentRef) -> ExportError {
+    ExportError::ComponentUnavailable {
+        component: reference.clone(),
+        reason: STILL_MUXER_REASON.to_owned(),
+    }
+}
+
+/// Checks a video encoder's answer against what was `offered`: the input it
+/// chose was offered, and keeping alpha (`opened.alpha`) needs `rgba8` or
+/// `rgba16` as that input.
+pub(crate) fn check_opened(
+    offered: &[PixelFormat],
+    opened: &VideoEncoderOpened,
+) -> Result<(), MediaError> {
+    if !offered.contains(&opened.input) {
+        return Err(MediaError::InvalidSettings {
+            key: "input".to_owned(),
+            message: format!("the encoder chose {}, which was not offered", opened.input),
+        });
+    }
+    if opened.alpha && !matches!(opened.input, PixelFormat::Rgba8 | PixelFormat::Rgba16) {
+        return Err(MediaError::InvalidSettings {
+            key: "alpha".to_owned(),
+            message: format!(
+                "keeping alpha needs rgba8 or rgba16 as the input, not {}",
+                opened.input
+            ),
+        });
+    }
+    Ok(())
+}
+
 impl ExportSession {
     /// A session writing through `registry`'s plugins, whose processes
     /// `cancellation` kills.
@@ -538,21 +659,31 @@ impl ExportSession {
         }
     }
 
-    /// Chooses the components `choice` names for `output`
-    /// ([`resolve_output`]), describing each plugin through the process
-    /// this session keeps for it, whose ring is sized for `frame`-sized
-    /// frames. Processes of plugins left unused stop.
+    /// Chooses the components `choice` names for `output`, with presets
+    /// looked up in `presets` ([`resolve_output`]), describing each plugin
+    /// through the process this session keeps for it, whose ring is sized
+    /// for `frame`-sized frames. Processes of plugins left unused stop.
+    /// Returns the plan and the resolution's warnings.
     pub(crate) fn resolve(
         &mut self,
         choice: &OutputChoice,
+        presets: &PresetLookup,
         output: &Path,
         frame: (u32, u32),
-    ) -> Result<OutputPlan, ExportError> {
+    ) -> Result<(OutputPlan, Vec<String>), ExportError> {
         self.frame = frame;
         let registry = self.registry.clone();
+        // A named muxer that writes stills is refused before anything
+        // describes it.
+        if let Some(reference) = &choice.muxer
+            && let Some(info) = registry.component(reference, ComponentKind::Muxer)
+            && !serves_video(&info)
+        {
+            return Err(still_muxer(reference));
+        }
         let kill = &self.kill;
         let processes = &mut self.processes;
-        let resolved = resolve_output(choice, output, &registry, &mut |plugin| {
+        let mut resolved = resolve_output(choice, output, &registry, presets, &mut |plugin| {
             registry.describe_with(
                 plugin,
                 &mut Lazy {
@@ -565,6 +696,9 @@ impl ExportSession {
             )
         })
         .map_err(|error| self.cancellation.settle(error))?;
+        if !muxer_serves_video(&resolved.muxer.reference.plugin, &resolved.muxer.entry) {
+            return Err(still_muxer(&resolved.muxer.reference));
+        }
         let used = [
             Some(resolved.muxer.plugin),
             Some(resolved.video.plugin),
@@ -572,9 +706,10 @@ impl ExportSession {
         ];
         self.processes
             .retain(|plugin, _| used.contains(&Some(*plugin)));
+        let warnings = std::mem::take(&mut resolved.warnings);
         let plan = resolved.plan();
         self.resolved = Some(resolved);
-        Ok(plan)
+        Ok((plan, warnings))
     }
 
     /// The ring for `frame`-sized frames of an encoder taking `formats`
@@ -614,12 +749,17 @@ impl ExportSession {
     }
 
     /// The formats `renderer` can read back, best first: the YUV formats
-    /// when it converts on a hardware GPU, then straight-alpha 16-bit and
-    /// 8-bit RGBA.
+    /// when it converts on a hardware GPU (planar, then interleaved), then
+    /// straight-alpha 16-bit and 8-bit RGBA.
     pub(crate) fn offered_formats(renderer: &GpuRenderer) -> Vec<PixelFormat> {
-        let mut offered = Vec::with_capacity(4);
+        let mut offered = Vec::with_capacity(6);
         if renderer.supports_yuv420p_readback() && !renderer.is_software() {
-            offered.extend([PixelFormat::Yuv420p, PixelFormat::Yuv420p10]);
+            offered.extend([
+                PixelFormat::Yuv420p,
+                PixelFormat::Yuv420p10,
+                PixelFormat::Nv12,
+                PixelFormat::P010,
+            ]);
         }
         offered.extend([PixelFormat::Rgba16, PixelFormat::Rgba8]);
         offered
@@ -773,31 +913,35 @@ impl ExportSession {
             width,
             height,
             frame_rate,
+            input: opened.input,
             alpha: opened.alpha,
             config: None,
             frames_sent: 0,
         });
-        if !offered.contains(&opened.input) {
-            return Err(MediaError::InvalidSettings {
-                key: "input".to_owned(),
-                message: format!("the encoder chose {}, which was not offered", opened.input),
-            });
-        }
-        if opened.alpha && opened.input != PixelFormat::Rgba16 {
-            return Err(MediaError::InvalidSettings {
-                key: "alpha".to_owned(),
-                message: format!(
-                    "keeping alpha needs rgba16 as the input, not {}",
-                    opened.input
-                ),
-            });
-        }
+        check_opened(offered, &opened)?;
         Ok(opened)
     }
 
     /// Encodes the next frame, read back in the encoder's input format.
     pub(crate) fn encode_frame(&mut self, frame: GpuFrame) -> Result<(), ExportError> {
-        self.encode_pixels(frame.into_pixels())
+        let width = frame.width();
+        self.encode_readback(frame.format(), frame.into_pixels(), width)
+    }
+
+    /// Encodes the next frame, `width` pixels wide, from `pixels` read back
+    /// as `format`, as the encoder's input ([`encoder_pixels`]).
+    fn encode_readback(
+        &mut self,
+        format: ReadbackFormat,
+        pixels: Vec<u8>,
+        width: u32,
+    ) -> Result<(), ExportError> {
+        let input = self.video.as_ref().map(|video| video.input);
+        let pixels = match input {
+            Some(input) => encoder_pixels(format, pixels, width, input),
+            None => pixels,
+        };
+        self.encode_pixels(pixels)
     }
 
     /// Sends the next frame's pixels, shown at `frames_sent × denominator`,
@@ -1317,9 +1461,8 @@ impl ExportSession {
 mod tests {
     use super::*;
     use crate::interleave::{AUDIO_TRACK, VIDEO_TRACK};
-    use celesta_media::{
-        AudioEncoder, ComponentKind, Muxer, Pipeline, RegisteredPlugin, VideoEncoder,
-    };
+    use crate::presets::PresetsFile;
+    use celesta_media::{AudioEncoder, Muxer, Pipeline, RegisteredPlugin, VideoEncoder};
     use celesta_plugin_host::{
         MediaAudioEncoderEntry, MediaMuxerEntry, MediaOrigin, MediaVideoEncoderEntry,
     };
@@ -1330,6 +1473,8 @@ mod tests {
     #[derive(Clone, Debug, PartialEq)]
     enum Asked {
         OpenVideo,
+        /// The `Color` the video encoder was asked to open with.
+        VideoColor(MediaColor),
         EncodeVideo {
             pts: i64,
         },
@@ -1439,6 +1584,7 @@ mod tests {
             request: &VideoEncoderRequest<'_>,
         ) -> Result<VideoEncoderOpened, MediaError> {
             self.ask(Asked::OpenVideo);
+            self.ask(Asked::VideoColor(request.color.clone()));
             Ok(VideoEncoderOpened {
                 session: self.session(),
                 input: self.answers.input.unwrap_or(request.offered[0]),
@@ -1658,7 +1804,12 @@ mod tests {
         let registry = Arc::new(MediaRegistry::new(vec![plugin]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), Path::new("out.fake"), (2, 2))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (2, 2),
+            )
             .unwrap();
         (session, log)
     }
@@ -1716,6 +1867,25 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn the_video_track_carries_bt709_color() {
+        let (mut session, log) = fake_session(Answers::default());
+        open(&mut session);
+        frames(&mut session, 3);
+        session.encode_audio(&mix(48_000, 100), false).unwrap();
+
+        let encoder_color = log_of(&log).into_iter().find_map(|asked| match asked {
+            Asked::VideoColor(color) => Some(color),
+            _ => None,
+        });
+        assert_eq!(encoder_color, Some(MediaColor::bt709_limited()));
+        let (tracks, _) = opened_muxer(&log).expect("the muxer opened");
+        let Some(Track::Video { color, .. }) = tracks.first() else {
+            panic!("{tracks:?}");
+        };
+        assert_eq!(*color, MediaColor::bt709_limited());
     }
 
     #[test]
@@ -1929,7 +2099,7 @@ mod tests {
     }
 
     #[test]
-    fn alpha_needs_rgba16_input() {
+    fn alpha_needs_rgba_input() {
         let (mut session, _) = fake_session(Answers {
             input: Some(PixelFormat::Yuv420p),
             alpha: true,
@@ -1952,6 +2122,231 @@ mod tests {
             ),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn an_encoder_may_keep_alpha_in_rgba8() {
+        let (mut session, _) = fake_session(Answers {
+            input: Some(PixelFormat::Rgba8),
+            alpha: true,
+            ..Answers::default()
+        });
+        let opened = session
+            .open_video(
+                2,
+                2,
+                RATE,
+                &[PixelFormat::Rgba8, PixelFormat::Yuv420p],
+                Path::new("staged.fake"),
+            )
+            .unwrap();
+        assert!(opened.alpha);
+
+        let (mut session, _) = fake_session(Answers {
+            input: Some(PixelFormat::Yuv420p),
+            alpha: true,
+            ..Answers::default()
+        });
+        let result = session.open_video(
+            2,
+            2,
+            RATE,
+            &[PixelFormat::Rgba8, PixelFormat::Yuv420p],
+            Path::new("staged.fake"),
+        );
+        assert!(
+            matches!(
+                &result,
+                Err(ExportError::Codec {
+                    source: MediaError::InvalidSettings { key, message },
+                    ..
+                }) if key == "alpha" && message.contains("rgba8 or rgba16")
+            ),
+            "{result:?}"
+        );
+    }
+
+    fn le_samples(samples: &[u16]) -> Vec<u8> {
+        samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect()
+    }
+
+    #[test]
+    fn straight_rgba16_narrows_to_rgba8_keeping_whole_codes() {
+        // Whole codes (n × 257), and values within the tolerance of one,
+        // keep that code wherever they are.
+        let samples = le_samples(&[0, 65_535, 32_896, 25_700, 25_730, 51_370, 257, 65_535]);
+        assert_eq!(
+            narrow_rgba16(&samples, 2),
+            [0, 255, 128, 100, 100, 200, 1, 255]
+        );
+        // Only straight rgba16 for an rgba8 encoder is narrowed.
+        assert_eq!(
+            encoder_pixels(
+                ReadbackFormat::Rgba16Straight,
+                samples.clone(),
+                2,
+                PixelFormat::Rgba8
+            ),
+            [0, 255, 128, 100, 100, 200, 1, 255]
+        );
+        for (format, input) in [
+            (ReadbackFormat::Rgba8, PixelFormat::Rgba8),
+            (ReadbackFormat::Rgba16Straight, PixelFormat::Rgba16),
+        ] {
+            assert_eq!(encoder_pixels(format, samples.clone(), 2, input), samples);
+        }
+    }
+
+    #[test]
+    fn narrowing_uses_the_renderers_8x8_bayer_dither() {
+        // The first two rows of the 8x8 Bayer matrix `dither.wgsl` indexes.
+        let index = |x, y| ((dither(x, y) + 0.5) * 64.0 - 0.5).round() as u32;
+        let rows: Vec<Vec<u32>> = (0..2)
+            .map(|y| (0..8).map(|x| index(x, y)).collect())
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                [0, 32, 8, 40, 2, 34, 10, 42],
+                [48, 16, 56, 24, 50, 18, 58, 26]
+            ]
+        );
+        // A flat gray halfway between codes 127 and 128 (32768 is 127.502
+        // codes): `floor(127.502 + 0.5 + dither)` is 127 where the offset is
+        // below 0 (index under 32) and 128 elsewhere, on every channel.
+        let frame = le_samples(&[32_768; 4 * 64]);
+        let narrowed = narrow_rgba16(&frame, 8);
+        let at = |x: usize, y: usize| &narrowed[(y * 8 + x) * 4..][..4];
+        assert_eq!(at(0, 0), [127; 4]); // index 0
+        assert_eq!(at(1, 0), [128; 4]); // index 32
+        assert_eq!(at(0, 1), [128; 4]); // index 48
+        assert_eq!(at(1, 1), [127; 4]); // index 16
+        assert_eq!(at(7, 7), [127; 4]); // index 21
+        let high = narrowed.iter().filter(|&&code| code == 128).count();
+        assert_eq!(high, 4 * 32, "half the pattern rounds up");
+    }
+
+    #[test]
+    fn a_narrowed_ramp_does_not_band() {
+        // Codes 100 to 104 across 256 pixels: rounded alone, each code is a
+        // flat 64-pixel band.
+        let width = 256;
+        let ramp: Vec<u16> = (0..width)
+            .flat_map(|x| {
+                let code = 100.0 + 4.0 * f64::from(x) / f64::from(width - 1);
+                [(code * 257.0).round() as u16; 4]
+            })
+            .collect();
+        let narrowed = narrow_rgba16(&le_samples(&ramp), width);
+        let red: Vec<u8> = narrowed.iter().step_by(4).copied().collect();
+        let longest = red.chunk_by(|a, b| a == b).map(<[u8]>::len).max().unwrap();
+        assert!(longest < 40, "a run of {longest} identical codes: {red:?}");
+        assert_eq!((red[0], red[255]), (100, 104));
+        let opened = |input, alpha| VideoEncoderOpened {
+            session: SessionId(1),
+            input,
+            alpha,
+        };
+        assert_eq!(
+            readback_for(&opened(PixelFormat::Rgba8, true)).unwrap(),
+            ReadbackFormat::Rgba16Straight
+        );
+        assert_eq!(
+            readback_for(&opened(PixelFormat::Rgba8, false)).unwrap(),
+            ReadbackFormat::Rgba8
+        );
+        assert_eq!(
+            readback_for(&opened(PixelFormat::Rgba16, true)).unwrap(),
+            ReadbackFormat::Rgba16Straight
+        );
+        assert_eq!(
+            readback_for(&opened(PixelFormat::Yuv420p, false)).unwrap(),
+            ReadbackFormat::Yuv420p
+        );
+    }
+
+    #[test]
+    fn an_rgba8_encoder_keeping_alpha_gets_straight_8_bit_frames() {
+        let (mut session, log) = fake_session(Answers {
+            input: Some(PixelFormat::Rgba8),
+            alpha: true,
+            ..Answers::default()
+        });
+        let opened = open(&mut session);
+        assert_eq!(
+            readback_for(&opened).unwrap(),
+            ReadbackFormat::Rgba16Straight
+        );
+        // A 2x2 frame of half-transparent red, read back as straight rgba16.
+        let frame: Vec<u8> = [65_535u16, 0, 0, 32_896]
+            .repeat(4)
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        session
+            .encode_readback(ReadbackFormat::Rgba16Straight, frame, 2)
+            .unwrap();
+        session.no_audio().unwrap();
+        session.finish().unwrap();
+        let written: Vec<Vec<u8>> = log_of(&log)
+            .into_iter()
+            .filter_map(|asked| match asked {
+                Asked::WritePackets(packets) => Some(packets),
+                _ => None,
+            })
+            .flatten()
+            .map(|packet| packet.packet.bytes)
+            .collect();
+        assert_eq!(written, [[255, 0, 0, 128].repeat(4)]);
+    }
+
+    #[test]
+    fn a_video_naming_a_still_muxer_is_refused() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let uses = Uses::default();
+        let (mut manifest, described) = all_in_one(false);
+        manifest.muxers[0].id = "image".to_owned();
+        let described = described
+            .into_iter()
+            .map(|mut component| {
+                if component.kind == ComponentKind::Muxer {
+                    component.id = "image".to_owned();
+                }
+                component
+            })
+            .collect();
+        let plugin = fake_plugin(
+            "builtin",
+            manifest,
+            described,
+            Answers::default(),
+            &log,
+            &uses,
+        );
+        let registry = Arc::new(MediaRegistry::new(vec![plugin]));
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        let choice = OutputChoice {
+            muxer: Some("builtin/image".parse().unwrap()),
+            ..OutputChoice::default()
+        };
+        let error = session
+            .resolve(
+                &choice,
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (2, 2),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&error, ExportError::ComponentUnavailable { component, reason }
+                if component.to_string() == "builtin/image"
+                    && reason == "it writes still images; select frames to export stills"),
+            "{error:?}"
+        );
+        assert!(uses.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -2311,7 +2706,12 @@ mod tests {
         let registry = Arc::new(MediaRegistry::new(vec![encoder, muxer]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), Path::new("out.fake"), (2, 2))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (2, 2),
+            )
             .unwrap();
         (session, log, dropped)
     }
@@ -2712,7 +3112,12 @@ mod tests {
         let registry = Arc::new(MediaRegistry::new(vec![plugin]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), Path::new("out.fake"), (2, 2))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (2, 2),
+            )
             .unwrap();
         (session, log)
     }
@@ -2817,7 +3222,12 @@ mod tests {
         let registry = Arc::new(MediaRegistry::new(vec![plugin]));
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), output, (4, 4))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                output,
+                (4, 4),
+            )
             .unwrap();
         session
             .open_video(4, 4, RATE, &[PixelFormat::Rgba8], output)
@@ -2953,7 +3363,12 @@ mod tests {
         }
         let mut session = ExportSession::start(registry, &ExportCancellation::default());
         session
-            .resolve(&OutputChoice::default(), Path::new("out.fake"), (64, 48))
+            .resolve(
+                &OutputChoice::default(),
+                &PresetLookup::default(),
+                Path::new("out.fake"),
+                (64, 48),
+            )
             .unwrap();
         assert_eq!(
             exports_of(&uses, "v"),
@@ -2975,6 +3390,38 @@ mod tests {
     }
 
     #[test]
+    fn resolve_warnings_reach_the_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("presets.json");
+        let mut file = PresetsFile::new();
+        file.put(
+            serde_json::from_value(serde_json::json!({ "name": "stale",
+                "video": { "component": "celesta-test-codec/video",
+                           "options": { "speed": 1 } } }))
+            .unwrap(),
+        );
+        file.save(&path).unwrap();
+        let presets = PresetLookup {
+            file: Some(path),
+            ..PresetLookup::default()
+        };
+        let registry = Arc::new(MediaRegistry::new(vec![celesta_codec_test::registered()]));
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        let choice = OutputChoice {
+            preset: Some("stale".into()),
+            ..OutputChoice::default()
+        };
+        let (plan, warnings) = session
+            .resolve(&choice, &presets, Path::new("out.ctst"), (2, 2))
+            .unwrap();
+        assert_eq!(plan.video.component.to_string(), "celesta-test-codec/video");
+        assert_eq!(
+            warnings,
+            ["preset `stale`: celesta-test-codec/video has no setting `speed`; it is left out"]
+        );
+    }
+
+    #[test]
     fn an_uncached_describe_sizes_the_ring_from_the_manifest() {
         for (manifest, expected) in [
             (Some(&["yuv420p"][..]), ring(3, 4_608)),
@@ -2986,7 +3433,12 @@ mod tests {
             let registry = Arc::new(MediaRegistry::new(vec![plugin]));
             let mut session = ExportSession::start(registry, &ExportCancellation::default());
             session
-                .resolve(&OutputChoice::default(), Path::new("out.fake"), (64, 48))
+                .resolve(
+                    &OutputChoice::default(),
+                    &PresetLookup::default(),
+                    Path::new("out.fake"),
+                    (64, 48),
+                )
                 .unwrap();
             assert_eq!(exports_of(&uses, "v"), [expected], "{manifest:?}");
         }
@@ -3001,6 +3453,7 @@ mod tests {
         session
             .resolve(
                 &OutputChoice::default(),
+                &PresetLookup::default(),
                 Path::new("out.fake"),
                 (8192, 4320),
             )

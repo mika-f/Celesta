@@ -599,7 +599,11 @@ pub(crate) fn classify(
     let cli = hints == HintStyle::Cli;
     match error {
         ExportError::Frame(failure) => classify(&failure.error, hints, issues),
-        ExportError::UnknownPreset { name } => (
+        ExportError::InvalidPresets { .. } => ("invalid_presets", None),
+        ExportError::UnknownPreset {
+            name,
+            default_in: None,
+        } => (
             "unknown_preset",
             X264_PRESETS.contains(&name.as_str()).then(|| {
                 Cow::Owned(if cli {
@@ -609,6 +613,7 @@ pub(crate) fn classify(
                 })
             }),
         ),
+        ExportError::UnknownPreset { .. } => ("unknown_preset", None),
         ExportError::UnsupportedOutput { path, extensions } => (
             "unsupported_output",
             Some(unsupported_output_hint(path, extensions, cli)),
@@ -1013,6 +1018,33 @@ mod tests {
                 .unwrap_or_default()
                 .to_owned(),
         )
+    }
+
+    #[test]
+    fn presets_errors_have_their_own_codes_and_no_hints() {
+        for hints in [HintStyle::Cli, HintStyle::Mcp] {
+            let invalid = ExportError::InvalidPresets {
+                path: PathBuf::from("/tmp/export-presets.json"),
+                message: "unsupported version 2; this Celesta reads version 1".into(),
+            };
+            assert_eq!(
+                hint(hints, invalid),
+                ("invalid_presets".into(), String::new())
+            );
+            // A project default is not a `--preset` the user can swap for an option.
+            let unknown = ExportError::UnknownPreset {
+                name: "fast".into(),
+                default_in: Some(PathBuf::from("/tmp/export-presets.json")),
+            };
+            assert_eq!(
+                unknown.to_string(),
+                "the default preset `fast` of /tmp/export-presets.json is in no presets file"
+            );
+            assert_eq!(
+                hint(hints, unknown),
+                ("unknown_preset".into(), String::new())
+            );
+        }
     }
 
     #[test]

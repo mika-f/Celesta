@@ -22,6 +22,7 @@ mod h264;
 mod muxer;
 mod probe;
 mod sequential;
+mod tags;
 #[cfg(test)]
 mod tests;
 mod video_encoder;

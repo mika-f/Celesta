@@ -52,7 +52,12 @@ switch (process.env.FAKE_MODE) {
     line(
       process.argv.includes('--describe')
         ? { id: 'ffmpeg/libx264', kind: 'videoEncoder', name: 'H.264', plugin: 'ffmpeg', origin: 'bundled', available: true, settings: [] }
-        : { components: [{ id: 'ffmpeg/mp4', kind: 'muxer', name: 'MP4', plugin: 'ffmpeg', origin: 'bundled', args: process.argv.slice(2) }] },
+        : {
+            components: [
+              { id: 'ffmpeg/mp4', kind: 'muxer', name: 'MP4', plugin: 'ffmpeg', origin: 'bundled', args: process.argv.slice(2) },
+              { id: 'builtin/png', kind: 'videoEncoder', name: 'PNG', plugin: 'builtin', origin: 'built-in', codecs: ['png'] },
+            ],
+          },
     );
     break;
   case 'progress':

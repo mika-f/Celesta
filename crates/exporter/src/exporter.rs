@@ -167,11 +167,16 @@ impl Exporter {
         cancellation: &ExportCancellation,
         progress: &mut impl FnMut(ExportProgress),
     ) -> Result<(ExportWindow, Option<AudioLoudness>, ExportTiming), ExportError> {
-        progress(ExportProgress::Output(session.resolve(
+        let (plan, warnings) = session.resolve(
             &self.options.output,
+            &self.options.presets,
             output_path,
             (project.settings.width, project.settings.height),
-        )?));
+        )?;
+        for warning in warnings {
+            progress(ExportProgress::Warning(warning));
+        }
+        progress(ExportProgress::Output(plan));
         subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
         let duration = project.effective_duration().map_err(ExportError::Time)?;
         let full_frame_count = frame_count(duration, project.settings.frame_rate)?;

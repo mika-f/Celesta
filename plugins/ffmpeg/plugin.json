@@ -16,7 +16,7 @@
     ],
     "videoEncoders": [
       { "id": "libx264", "name": "H.264 (x264)", "codecs": ["avc1"],
-        "inputFormats": ["yuv420p", "yuv420p10", "rgba16", "rgba8"] },
+        "inputFormats": ["yuv420p", "yuv420p10", "nv12", "p010", "rgba8", "rgba16"] },
       { "id": "prores", "name": "ProRes (prores_ks)", "codecs": ["ap4h", "apch"],
         "inputFormats": ["rgba16"] },
       { "id": "vp9", "name": "VP9 (libvpx)", "codecs": ["vp09"],

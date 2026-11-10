@@ -13,8 +13,9 @@ pub enum ExportProgress {
     /// The composition being exported, reported once as soon as it is known
     /// (before the export range or frame selection is checked against it).
     Composition(CompositionInfo),
-    /// The muxer and encoders the video is written with, reported once
-    /// they are chosen and before any frame renders.
+    /// The muxer and encoders the video, or the stills, are written with,
+    /// reported once they are chosen and before any frame renders. A still
+    /// export has no audio encoder.
     Output(OutputPlan),
     /// All roots and the selected ID of a React entry.
     ReactCompositions {

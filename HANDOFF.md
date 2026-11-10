@@ -104,17 +104,18 @@ compositions: no package a composition imports depends on them, though
 | `celesta-project` | Project loading and semantic validation. |
 | `celesta-evaluator` | Deterministic project-to-`Scene` and project-to-`AudioGraph` evaluation. |
 | `celesta-media` | Media through plugins: probing, exact-time video frames, and audio decoding (`MediaBackend`, decoder routing), the component model (`MediaRegistry` with its `describe` cache, `MediaProvider` and the `Decoder`, `VideoEncoder`, `AudioEncoder`, and `Muxer` traits, `MediaProcess`, plugin protocol 2's messages), pipelined export requests (`Pipeline`, `PIPE_WINDOW`, and the ring of frame slots an export process gets, `ProviderUse::Export { ring }` sized by `ring_layout`), the settings schema and its validation, and audio resampling; plus the audio mix, ducking, time stretching, and loudness. Links no codec library. |
+| `celesta-media-image` | The built-in image components, registered in every exporter registry by `celesta_exporter::with_builtin` (plugin id `builtin`, `MediaOrigin::BuiltIn`, no folder or process): the video encoders `builtin/png` (`compression`, `depth`, `transparent`), `builtin/jpeg` (`quality`), and `builtin/webp` (`lossless`, `quality`, `transparent`), and the muxers `builtin/image` (one file) and `builtin/imageSequence` (`sequence: true`, one file per frame from a `frame-%06d.<ext>` pattern), which serve still exports only; see [`docs/handoff/2026-11-09-media-stills.md`](docs/handoff/2026-11-09-media-stills.md). |
 | `celesta-codec-ffmpeg` | `plugins/ffmpeg`, the FFmpeg media plugin: a program serving protocol 2 (its decoder `ffmpeg/ffmpeg`, with HDR tone mapping; video encoders `libx264`, `prores`, `vp9`; audio encoders `aac`, `opus`, `pcm`; muxers `mp4`, `mov`, `webm`, on libavcodec and libavformat) and answering `--manifest` for the `cargo install` sibling, and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. A member of the plugins workspace, `plugins/Cargo.toml`, with Celesta's version; built into a plugin directory by `scripts/plugins/build.mts`. |
 | `celesta-codec-test` | The lossless test media plugin the core's tests read and write media with, in-process (`install`) or as the program `celesta-codec-test` in a temporary plugin folder (`TestCodecPlugin`): a decoder, `celesta-test-codec/test`, which lists no extensions and reads test codec and WAV files of any name, a lossless video encoder, a PCM audio encoder, and its own muxer; not published. |
 | `celesta-budoux` | Japanese phrase segmentation for text line breaking. |
 | `celesta-renderer` | CPU reference renderer, PNG output, and shared text/path rasterization. |
 | `celesta-gpu-renderer` | wgpu rendering, compositing, readback, and native preview bridge. |
 | `celesta-bench` | GPU export benchmarks driven by `scripts/bench.py`; not published. |
-| `celesta-exporter` | Frame-exact export through media components (MP4, MOV, WebM, and whatever muxers plugins add), including React entries: `resolve_output`, the interleaver, `--list-components` and `--describe`. |
+| `celesta-exporter` | Frame-exact export through media components (MP4, MOV, WebM, and whatever muxers plugins add), including React entries: `resolve_output`, the interleaver, `--list-components` and `--describe`, stills, sequences, and contact sheets through the built-in image components (`still_output.rs`, `with_builtin`, `serves_video`), and export presets (`presets.rs`: the user's and the project's `export-presets.json`, `PresetLookup`, `--preset`/`--preset-file`, and the project's `default`; see [`docs/handoff/2026-11-09-export-presets-dialog.md`](docs/handoff/2026-11-09-export-presets-dialog.md)). |
 | `celesta-mcp` | `Celesta-mcp`, the MCP server agents use to inspect, render, and export. |
 | `celesta-editor-core` | Read-only document, summaries, scene/audio evaluation, and timeline clock. |
 | `celesta-editor-theme` | Shared desktop theme. |
-| `celesta-editor` | GPUI app: preview, playback, panels, canvas and Properties editing, and export controls. |
+| `celesta-editor` | GPUI app: preview, playback, panels, canvas and Properties editing, and export controls, including the export dialog (`export_dialog/`: its model over the registry and the presets files, and the view with its preset, container, encoder fields, range, loudness, and "Save as preset…"). |
 | `celesta-source-edit` | Locates JSX elements in user TSX source and applies byte-span edits for the editor's write-back. |
 | `celesta-remote` | Asset path resolution, remote download cache, and stylesheet font discovery. |
 | `celesta-react-bridge` | Long-lived Node process and frame/component requests over stdin/stdout. |
@@ -140,7 +141,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/voicevox` (`@celesta.studio/voicevox`) | VOICEVOX AudioQuery lip sync. |
 | `packages/aivis-speech` (`@celesta.studio/aivis-speech`) | AivisSpeech AudioQuery and WAV lip sync. |
 | `packages/cli` (`@celesta.studio/cli`) | Entry CLI the bridge spawns; depends on every package it serves. |
-| `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts (`exportVideo` with `muxer`, `videoEncoder`, `audioEncoder`; `listComponents`, `describeComponent`); not part of the runtime. |
+| `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts (`exportVideo` with `preset`, `presetFile`, `muxer`, `videoEncoder`, `audioEncoder`; `exportStills` with `muxer` and `videoEncoder`; `listComponents`, `describeComponent`); not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
 | `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mts`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mts`, `cargo.mts`, `manifest.mts`, and `licenses.mts`; `bump-version.mts`, with its helper `version.mts`, which bumps Celesta's version and the plugins that follow it; `affected.mts`, with its helpers `inputs.mts` and `lockfile.mts`, which lists the first-party plugins a change affects, from `plugins/Cargo.lock` or a plugin's own lockfile, the pnpm graph, and `turbo.json`, for CI's `Plugins (<OS>)` jobs; and `libtest.mts`, which finds the skipped tests in a `cargo test -- --show-output` log for `scripts/report-skipped-tests.mts`. They are TypeScript, which Node runs as it is, stripping the types; not published. |
@@ -292,16 +293,44 @@ covered by the dated handoff notes.
 - Exports write through media components (`resolve_output`): the output's
   extension picks the muxer, its default codecs the encoders, and
   `--muxer`, `--video-encoder`, `--audio-encoder`, `--video-option`, and
-  `--audio-option` override them (`--preset` names an export preset, and
-  fails with `unknown_preset` until presets land). libx264's `preset` and
+  `--audio-option` override them. `--preset` takes an export preset from
+  `--preset-file`, the project root's `export-presets.json`, or the user's
+  (beside `settings.json`), and a project's `default` preset applies when no
+  preset and no component is named; a stale preset warns and falls back,
+  while an explicit value stays strict (`invalid_option`), and a broken
+  presets file the lookup has to find a name in is `invalid_presets` (a
+  broken user file only warns under a project preset). A named or preset
+  muxer that does not list the output's extension writes it anyway, with a
+  warning. The editor's Export… opens the export dialog, which reads the
+  same files and exports an explicit choice. libx264's `preset` and
   `crf` default to `medium` and 18; `bitDepth=10` encodes yuv420p10le
-  (High 10). Celesta offers the encoder `yuv420p` and `yuv420p10`, which the
-  GPU converts (`ReadbackFormat::Yuv420p10` for 10-bit), unless the renderer
-  is software, then `rgba16` (`ReadbackFormat::Rgba16Straight`,
-  straight-alpha rgba64le) and `rgba8`, which the encoder converts. GPU
-  readback returns I420
-  at 1.5 bytes/pixel and uses BT.601 limited range. Its 2x2 chroma averaging
-  can differ from the encoder's filtering at hard color edges.
+  (High 10). Celesta offers the encoder `yuv420p`, `yuv420p10`, `nv12`, and
+  `p010`, which the GPU converts (`ReadbackFormat::Yuv420p`, `Yuv420p10`,
+  `Nv12`, and `P010`), unless the renderer is software, then `rgba16`
+  (`ReadbackFormat::Rgba16Straight`, straight-alpha rgba64le) and `rgba8`,
+  which the encoder converts. GPU readback returns I420 or NV12 at 1.5
+  bytes/pixel, or their 10-bit forms (`yuv420p10`, `p010`) at 3, in BT.709
+  limited range. Its 2x2 chroma averaging can differ from the encoder's
+  filtering at hard color edges. Every encoder is given `Color` (BT.709
+  limited) and every container is tagged from it (H.264 VUI, MP4 and MOV
+  `colr`, WebM `Colour`). See
+  [`docs/handoff/2026-11-08-media-bt709.md`](docs/handoff/2026-11-08-media-bt709.md).
+- Stills (`--frame`, `--frames`, `--every`, `--contact-sheet`) write through
+  the built-in image components, named by the output's extension rather
+  than ranked: `builtin/image` for one file, `builtin/imageSequence` for
+  several, and `builtin/png`, `builtin/jpeg`, or `builtin/webp`. A plugin's
+  image muxer or encoder is used only when named (`--muxer`,
+  `--video-encoder`), and `--video-option` sets their settings (`--quality`
+  is the encoder's `quality`). Stills read no presets file, and a video
+  export never uses a built-in or `sequence: true` muxer. With default
+  settings the files are byte-identical to those before P4. A sequence is
+  staged in a hidden `.celesta-*` folder beside the output and each frame is
+  published as soon as the muxer writes it, so a failed or cancelled
+  sequence keeps the frames before it; one file is published when the
+  muxer finishes. `transparent=true` (PNG, WebP) keeps alpha in straight
+  `rgba8`, read back as `Rgba16Straight` and narrowed on the CPU, and
+  `depth=16` writes 16-bit PNG from `rgba16`. See
+  [`docs/handoff/2026-11-09-media-stills.md`](docs/handoff/2026-11-09-media-stills.md).
 - GPU canvases are `Rgba16Float` where the adapter can render and blend it
   (`canvas_format`), and every readback (RGBA, I420, and preview targets) is
   rounded to 8 bits once, with an ordered dither, so gentle gradients do not

@@ -184,7 +184,7 @@ fn find<'a>(schema: &'a [SettingField], key: &str) -> Result<&'a SettingField, I
 }
 
 /// Every field's default, overridden by `settings`.
-fn effective(schema: &[SettingField], settings: &Settings) -> Settings {
+pub fn effective(schema: &[SettingField], settings: &Settings) -> Settings {
     let mut values: Settings = schema
         .iter()
         .map(|field| (field.key.clone(), field.default.clone()))
@@ -284,6 +284,63 @@ pub fn validate(schema: &[SettingField], given: &Settings) -> Result<Settings, I
         .filter(|field| is_visible(field, &values))
         .map(|field| (field.key.clone(), values[&field.key].clone()))
         .collect())
+}
+
+/// `given` without the keys `schema` lacks and the values their fields do not
+/// take, and why each went (in key order): what is left of saved settings
+/// after the component's schema changed.
+pub fn sanitize(schema: &[SettingField], given: &Settings) -> (Settings, Vec<InvalidSetting>) {
+    let mut kept = Settings::new();
+    let mut dropped = Vec::new();
+    for (key, value) in given {
+        match find(schema, key).and_then(|field| check_value(field, value)) {
+            Ok(()) => {
+                kept.insert(key.clone(), value.clone());
+            }
+            Err(error) => dropped.push(error),
+        }
+    }
+    (kept, dropped)
+}
+
+/// `over` layered on `base`: base values hidden by the layered values are
+/// dropped, then the whole is validated as [`validate`] does (so an error is
+/// about `over`, or about `base` when it was not [`sanitize`]d).
+pub fn layer(
+    schema: &[SettingField],
+    base: &Settings,
+    over: &Settings,
+) -> Result<Settings, InvalidSetting> {
+    let mut merged = base.clone();
+    merged.extend(over.iter().map(|(key, value)| (key.clone(), value.clone())));
+    drop_hidden(schema, &mut merged, |key| over.contains_key(key));
+    validate(schema, &merged)
+}
+
+/// Drops from `settings` each value whose field the others hide, except
+/// the keys `keep` holds to. Dropping one value can hide another (its
+/// `visibleWhen` named the first), so it drops until none is hidden.
+pub fn drop_hidden(schema: &[SettingField], settings: &mut Settings, keep: impl Fn(&str) -> bool) {
+    loop {
+        let values = effective(schema, settings);
+        let hidden: Vec<String> = settings
+            .keys()
+            .filter(|key| !keep(key))
+            .filter(|key| {
+                schema
+                    .iter()
+                    .find(|field| field.key == **key)
+                    .is_some_and(|field| !is_visible(field, &values))
+            })
+            .cloned()
+            .collect();
+        if hidden.is_empty() {
+            break;
+        }
+        for key in hidden {
+            settings.remove(&key);
+        }
+    }
 }
 
 /// Reads command-line text as the field's type: a number or a boolean
@@ -543,6 +600,66 @@ mod tests {
         assert_eq!(
             parse_setting(&schema, "crf", "x").unwrap_err().message,
             "must be a number"
+        );
+    }
+
+    #[test]
+    fn sanitize_drops_unknown_keys_and_bad_values() {
+        let (kept, dropped) = sanitize(
+            &schema(),
+            &given(json!({ "crf": 99, "tune": "film", "speed": 3 })),
+        );
+        assert_eq!(kept, given(json!({ "tune": "film" })));
+        let keys: Vec<&str> = dropped.iter().map(|error| error.key.as_str()).collect();
+        assert_eq!(keys, ["crf", "speed"]);
+        assert_eq!(dropped[0].message, "must be at most 51");
+        assert_eq!(dropped[1].message, "unknown setting");
+    }
+
+    #[test]
+    fn layer_drops_base_values_the_layer_hides() {
+        let schema = schema();
+        let base = given(json!({ "crf": 20 }));
+        let layered = layer(&schema, &base, &given(json!({ "rateControl": "vbr" }))).unwrap();
+        assert_eq!(layered["rateControl"], SettingValue::String("vbr".into()));
+        assert_eq!(layered["bitrate"], num(8_000_000.0));
+        assert!(!layered.contains_key("crf"));
+
+        let layered = layer(&schema, &base, &given(json!({ "tune": "film" }))).unwrap();
+        assert_eq!(layered["crf"], num(20.0));
+        assert_eq!(layered["tune"], SettingValue::String("film".into()));
+
+        let error = layer(&schema, &base, &given(json!({ "crf": 99 }))).unwrap_err();
+        assert_eq!(error.key, "crf");
+    }
+
+    #[test]
+    fn drop_hidden_repeats_until_nothing_is_hidden() {
+        // `pass` shows only for `vbr`, and `lookahead` only for two passes.
+        let mut schema = schema();
+        schema.extend(
+            [
+                json!({ "key": "pass", "type": "number", "default": 1, "label": "Passes",
+                    "visibleWhen": { "rateControl": "vbr" } }),
+                json!({ "key": "lookahead", "type": "boolean", "default": false,
+                    "label": "Look ahead", "visibleWhen": { "pass": 2 } }),
+            ]
+            .map(|field| serde_json::from_value::<SettingField>(field).unwrap()),
+        );
+        let mut settings = given(json!({ "rateControl": "crf", "pass": 2, "lookahead": true,
+            "tune": "film" }));
+        drop_hidden(&schema, &mut settings, |_| false);
+        assert_eq!(
+            settings,
+            given(json!({ "rateControl": "crf", "tune": "film" }))
+        );
+
+        // A kept key stays, and keeps what it shows.
+        let mut settings = given(json!({ "rateControl": "crf", "pass": 2, "lookahead": true }));
+        drop_hidden(&schema, &mut settings, |key| key == "pass");
+        assert_eq!(
+            settings,
+            given(json!({ "rateControl": "crf", "pass": 2, "lookahead": true }))
         );
     }
 

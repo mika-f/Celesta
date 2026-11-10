@@ -69,8 +69,10 @@ impl VideoCodec {
             Self::X264 => vec![
                 PixelFormat::Yuv420p,
                 PixelFormat::Yuv420p10,
-                PixelFormat::Rgba16,
+                PixelFormat::Nv12,
+                PixelFormat::P010,
                 PixelFormat::Rgba8,
+                PixelFormat::Rgba16,
             ],
             Self::ProRes | Self::Vp9 => vec![PixelFormat::Rgba16],
         }

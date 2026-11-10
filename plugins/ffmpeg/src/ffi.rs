@@ -2,14 +2,15 @@
 //! use, each freed when dropped, and FFmpeg's error codes as
 //! [`MediaError`]s.
 
+use crate::tags::AvColor;
 use celesta_media::MediaError;
 use ffmpeg_sys_next::{
     AV_BUFFER_FLAG_READONLY, AV_LOG_ERROR, AVAudioFifo, AVCodec, AVCodecContext, AVFrame, AVPacket,
-    AVPixelFormat, AVSampleFormat, SWS_CS_ITU709, SwsContext, av_audio_fifo_alloc,
-    av_audio_fifo_free, av_buffer_create, av_channel_layout_default, av_frame_alloc, av_frame_free,
+    AVPixelFormat, AVSampleFormat, SwsContext, SwsFlags, av_audio_fifo_alloc, av_audio_fifo_free,
+    av_buffer_create, av_channel_layout_default, av_frame_alloc, av_frame_free,
     av_frame_get_buffer, av_image_fill_arrays, av_log_set_level, av_packet_alloc, av_packet_free,
     av_strerror, avcodec_alloc_context3, avcodec_free_context, sws_alloc_context, sws_freeContext,
-    sws_getCoefficients, sws_init_context, sws_scale_frame, sws_setColorspaceDetails,
+    sws_init_context, sws_scale_frame, sws_setColorspaceDetails,
 };
 use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use std::ptr::null_mut;
@@ -247,7 +248,7 @@ unsafe impl Send for Scaler {}
 impl Scaler {
     /// Converts `width`x`height` frames from `source` to `destination` with
     /// `flags` (`SWS_*`).
-    pub(crate) fn new(
+    fn new(
         width: u32,
         height: u32,
         source: AVPixelFormat,
@@ -293,21 +294,53 @@ impl Scaler {
         }
     }
 
-    /// Converts with the BT.709 matrix from full-range RGB to limited-range
-    /// YUV, rather than libswscale's default BT.601.
-    pub(crate) fn bt709_limited(&self) -> Result<(), MediaError> {
-        // SAFETY: the coefficient tables are libswscale's own statics; the
-        // details reach the context's per-thread contexts too.
+    /// Converts full-range RGB `source` to YUV `destination` with `color`'s
+    /// matrix and range, bicubically filtering the chroma it halves.
+    pub(crate) fn rgb_to_yuv(
+        width: u32,
+        height: u32,
+        source: AVPixelFormat,
+        destination: AVPixelFormat,
+        color: &AvColor,
+    ) -> Result<Self, MediaError> {
+        let (table, range) = color.sws_coefficients()?;
+        let scaler = Self::new(
+            width,
+            height,
+            source,
+            destination,
+            SwsFlags::SWS_BICUBIC as c_int,
+        )?;
+        // SAFETY: the table is libswscale's own static; the details reach
+        // the context's per-thread contexts too. The source table goes
+        // unused for RGB input; it is the destination's, as ProRes's and
+        // VP9's BT.709 conversion has always set it, so their bytes stay
+        // the same.
         let result = unsafe {
-            let bt709 = sws_getCoefficients(SWS_CS_ITU709);
-            // RGB input is full range; the output limited.
-            sws_setColorspaceDetails(self.context, bt709, 1, bt709, 0, 0, 1 << 16, 1 << 16)
+            sws_setColorspaceDetails(scaler.context, table, 1, table, range, 0, 1 << 16, 1 << 16)
         };
         if result < 0 {
-            Err(av_error(result, "set the BT.709 conversion"))
-        } else {
-            Ok(())
+            return Err(av_error(result, "set the color conversion"));
         }
+        Ok(scaler)
+    }
+
+    /// Moves YUV `source` samples into `destination`'s layout, of the same
+    /// matrix, range, and subsampling (P010 into planar 10-bit 4:2:0), with
+    /// no filtering.
+    pub(crate) fn repack(
+        width: u32,
+        height: u32,
+        source: AVPixelFormat,
+        destination: AVPixelFormat,
+    ) -> Result<Self, MediaError> {
+        Self::new(
+            width,
+            height,
+            source,
+            destination,
+            SwsFlags::SWS_POINT as c_int,
+        )
     }
 
     /// Converts `pixels`, a tightly packed frame of the source format,
@@ -397,7 +430,8 @@ pub(crate) fn dimension(value: u32) -> Result<c_int, MediaError> {
 mod tests {
     use super::*;
     use ffmpeg_sys_next::{
-        SwsFlags, av_image_copy_to_buffer, av_image_get_buffer_size, sws_getContext, sws_scale,
+        SWS_CS_ITU709, av_image_copy_to_buffer, av_image_get_buffer_size, sws_getCoefficients,
+        sws_getContext, sws_scale,
     };
 
     /// `frame`'s pixels, tightly packed.
@@ -433,13 +467,17 @@ mod tests {
         const WIDTH: u32 = 642;
         const HEIGHT: u32 = 362;
         let (width, height) = (WIDTH as c_int, HEIGHT as c_int);
-        for (source, destination, bt709) in [
-            (AV_PIX_FMT_RGBA, AV_PIX_FMT_YUV420P, false),
-            (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUV420P10LE, false),
+        let color = AvColor::from_color(&celesta_media::Color::bt709_limited()).unwrap();
+        // Whether each converts RGB to YUV, rather than repacking YUV.
+        for (source, destination, rgb) in [
+            (AV_PIX_FMT_RGBA, AV_PIX_FMT_YUV420P, true),
+            (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUV420P, true),
+            (AV_PIX_FMT_RGBA, AV_PIX_FMT_YUV420P10LE, true),
+            (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUV420P10LE, true),
             (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUV422P10LE, true),
             (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUVA444P10LE, true),
             (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUVA420P, true),
-            (AV_PIX_FMT_RGBA64LE, AV_PIX_FMT_YUV420P, true),
+            (AV_PIX_FMT_P010LE, AV_PIX_FMT_YUV420P10LE, false),
         ] {
             // SAFETY: a size query on a valid format and dimensions.
             let bytes = unsafe { av_image_get_buffer_size(source, width, height, 1) };
@@ -450,11 +488,17 @@ mod tests {
                     (seed >> 24) as u8
                 })
                 .collect();
-            let flags = SwsFlags::SWS_BICUBIC as c_int;
-            let scaler = Scaler::new(WIDTH, HEIGHT, source, destination, flags).unwrap();
-            if bt709 {
-                scaler.bt709_limited().unwrap();
-            }
+            let (scaler, flags) = if rgb {
+                (
+                    Scaler::rgb_to_yuv(WIDTH, HEIGHT, source, destination, &color).unwrap(),
+                    SwsFlags::SWS_BICUBIC as c_int,
+                )
+            } else {
+                (
+                    Scaler::repack(WIDTH, HEIGHT, source, destination).unwrap(),
+                    SwsFlags::SWS_POINT as c_int,
+                )
+            };
             let threaded = Frame::video(destination, WIDTH, HEIGHT).unwrap();
             // SAFETY: the frame is the conversion's destination, and the
             // pixels a whole source frame.
@@ -477,7 +521,7 @@ mod tests {
                     std::ptr::null(),
                 );
                 assert!(!context.is_null());
-                if bt709 {
+                if rgb {
                     let table = sws_getCoefficients(SWS_CS_ITU709);
                     sws_setColorspaceDetails(context, table, 1, table, 0, 0, 1 << 16, 1 << 16);
                 }
@@ -511,5 +555,40 @@ mod tests {
                 "{source:?} to {destination:?} differs on threads"
             );
         }
+    }
+
+    /// Repacking P010 keeps each sample's ten bits as they are.
+    #[test]
+    fn repacking_p010_keeps_its_samples() {
+        use AVPixelFormat::*;
+        const WIDTH: u32 = 6;
+        const HEIGHT: u32 = 4;
+        let luma: Vec<u16> = (0..WIDTH * HEIGHT)
+            .map(|index| 64 + index as u16 * 37)
+            .collect();
+        let chroma: Vec<u16> = (0..WIDTH * HEIGHT / 2)
+            .map(|index| 960 - index as u16 * 41)
+            .collect();
+        let pixels: Vec<u8> = luma
+            .iter()
+            .chain(&chroma)
+            .flat_map(|sample| (sample << 6).to_le_bytes())
+            .collect();
+        let scaler =
+            Scaler::repack(WIDTH, HEIGHT, AV_PIX_FMT_P010LE, AV_PIX_FMT_YUV420P10LE).unwrap();
+        let frame = Frame::video(AV_PIX_FMT_YUV420P10LE, WIDTH, HEIGHT).unwrap();
+        // SAFETY: as in the test above.
+        unsafe { scaler.convert(frame.as_ptr(), &pixels) }.unwrap();
+        let planar: Vec<u16> = packed(
+            &frame,
+            AV_PIX_FMT_YUV420P10LE,
+            WIDTH as c_int,
+            HEIGHT as c_int,
+        )
+        .chunks(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+        let (u, v): (Vec<u16>, Vec<u16>) = chroma.chunks(2).map(|pair| (pair[0], pair[1])).unzip();
+        assert_eq!(planar, [luma, u, v].concat());
     }
 }

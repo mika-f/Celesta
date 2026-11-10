@@ -11,9 +11,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use celesta_exporter::{
-    ExportError, ExportProgress, OutputPlan, RenderQuality, StillFormat, encoding_label,
-};
+use celesta_exporter::{ExportError, ExportProgress, OutputPlan, RenderQuality, encoding_label};
 use ratatui::{
     Frame, Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
@@ -35,10 +33,9 @@ pub struct Settings<'a> {
     pub source: &'a Path,
     pub output: &'a Path,
     pub react: bool,
-    /// `Some` for a still export, in this format.
-    pub still: Option<StillFormat>,
-    /// The JPEG or WebP quality a still export uses.
-    pub still_quality: u8,
+    /// Whether this is a still export, named by the components it resolves
+    /// ([`ExportProgress::Output`]) like a video.
+    pub still: bool,
     pub render_quality: RenderQuality,
     /// The property file in effect: `props.json (auto)` or the `--props-file` name.
     pub props: Option<String>,
@@ -113,7 +110,8 @@ pub(crate) struct State {
     /// How many of `diagnostics` are already printed.
     printed: usize,
     error: Option<String>,
-    /// The components a video is written with, once they are chosen.
+    /// The components a video or stills are written with, once they are
+    /// chosen.
     output: Option<OutputPlan>,
 }
 
@@ -181,6 +179,22 @@ impl State {
             plan.muxer_name,
             encoding_label(&plan.video)
         )
+    }
+
+    /// A still export's format line: `resolving…` until the components are
+    /// chosen, then "{muxer} · {encoder and settings}".
+    fn still_line(&self) -> String {
+        self.output.as_ref().map_or_else(
+            || "resolving…".to_owned(),
+            |plan| format!("{} · {}", plan.muxer_name, encoding_label(&plan.video)),
+        )
+    }
+
+    /// The muxer's name, `resolving…` until it is chosen.
+    fn muxer_line(&self) -> String {
+        self.output
+            .as_ref()
+            .map_or_else(|| "resolving…".to_owned(), |plan| plan.muxer_name.clone())
     }
 
     /// The video's encoder line, `resolving…` until it is chosen.
@@ -325,6 +339,7 @@ pub fn run(
     export: impl FnOnce(&mut dyn FnMut(ExportProgress)) -> Result<(), ExportError>,
 ) -> Result<(), ExportError> {
     let mut plain = PlainProgress::new("rendering");
+    plain.still = settings.still;
     if no_ui
         || !io::stderr().is_terminal()
         || std::env::var_os("TERM").is_some_and(|term| term == "dumb")
@@ -462,15 +477,10 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
                     Style::new().fg(status_color),
                 ),
                 Span::styled(
-                    match settings.still {
-                        Some(StillFormat::Png) => "PNG / LOSSLESS".to_owned(),
-                        Some(StillFormat::Jpeg) => {
-                            format!("JPEG / QUALITY {}", settings.still_quality)
-                        }
-                        Some(StillFormat::Webp) => {
-                            format!("WEBP / QUALITY {}", settings.still_quality)
-                        }
-                        None => state.format_line(),
+                    if settings.still {
+                        state.still_line()
+                    } else {
+                        state.format_line()
                     },
                     Style::new().fg(MUTED),
                 ),
@@ -565,12 +575,7 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         .block(panel(" FILES ")),
         details[0],
     );
-    let encoding = match settings.still {
-        Some(StillFormat::Png) => "Lossless RGBA".into(),
-        Some(StillFormat::Jpeg) => format!("JPEG quality {}", settings.still_quality),
-        Some(StillFormat::Webp) => format!("WebP quality {}", settings.still_quality),
-        None => state.video_line(),
-    };
+    let encoding = state.video_line();
     let mut profile = vec![
         Line::from(format!(
             " Input    {}",
@@ -582,9 +587,10 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         )),
         Line::from(format!(" Quality  {}", settings.render_quality)),
         Line::from(format!(" Encode   {encoding}")),
-        Line::from(if settings.still.is_some() {
-            // Stills are drawn over the opaque export background.
-            " Alpha    opaque background".into()
+        Line::from(if settings.still {
+            // Stills have no audio; whether they keep alpha is the
+            // encoder's settings' to say.
+            format!(" Muxer    {}", state.muxer_line())
         } else {
             format!(" Audio    {}", state.audio_line())
         }),
@@ -635,7 +641,7 @@ fn render_pipeline(frame: &mut Frame, area: Rect, settings: &Settings<'_>, state
     let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let mut lines = Vec::new();
     for (index, (stage, label)) in stages.iter().enumerate() {
-        if settings.still.is_some() && index > 1 {
+        if settings.still && index > 1 {
             continue;
         }
         let active = *stage == state.active_stage;
@@ -749,12 +755,8 @@ fn render_compact(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         )),
         rows[2],
     );
-    let format = if let Some(still) = settings.still {
-        match still {
-            StillFormat::Png => "PNG stills".to_owned(),
-            StillFormat::Jpeg => format!("JPEG stills  •  quality {}", settings.still_quality),
-            StillFormat::Webp => format!("WebP stills  •  quality {}", settings.still_quality),
-        }
+    let format = if settings.still {
+        state.still_line()
     } else {
         state.format_line()
     };
@@ -804,6 +806,8 @@ struct PlainProgress {
     terminal: bool,
     /// What is done to each frame, as progress lines name it.
     verb: &'static str,
+    /// Whether this is a still export, whose format line has no audio.
+    still: bool,
 }
 
 impl PlainProgress {
@@ -813,6 +817,7 @@ impl PlainProgress {
             last_line: None,
             terminal: io::stderr().is_terminal(),
             verb,
+            still: false,
         }
     }
 
@@ -857,7 +862,12 @@ impl PlainProgress {
             }
             ExportProgress::Output(_) => {
                 self.state.update(event);
-                eprintln!("format: {}", self.state.format_line());
+                let line = if self.still {
+                    self.state.still_line()
+                } else {
+                    self.state.format_line()
+                };
+                eprintln!("format: {line}");
             }
             ExportProgress::Composition(_)
             | ExportProgress::ReactCompositions { .. }
@@ -900,8 +910,7 @@ mod tests {
             source: Path::new("film.tsx"),
             output: Path::new("film.mp4"),
             react: true,
-            still: None,
-            still_quality: 90,
+            still: false,
             render_quality: RenderQuality::default(),
             props: Some("props.json (auto)".to_owned()),
         }
@@ -981,35 +990,61 @@ mod tests {
         );
     }
 
+    fn still_plan(video: &str, settings: &[&str]) -> OutputPlan {
+        OutputPlan {
+            muxer: "builtin/image".parse().unwrap(),
+            muxer_name: "Image".to_owned(),
+            video: EncoderPlan {
+                component: "builtin/webp".parse().unwrap(),
+                name: video.to_owned(),
+                settings: settings.iter().map(|&setting| setting.to_owned()).collect(),
+            },
+            audio: None,
+        }
+    }
+
     #[test]
-    fn still_formats_name_their_encoding_and_quality() {
-        for (still, header, encode) in [
-            (StillFormat::Png, "PNG / LOSSLESS", "Lossless RGBA"),
-            (StillFormat::Jpeg, "JPEG / QUALITY 75", "JPEG quality 75"),
-            (StillFormat::Webp, "WEBP / QUALITY 75", "WebP quality 75"),
-        ] {
-            let settings = Settings {
-                output: Path::new("film.png"),
-                still: Some(still),
-                still_quality: 75,
-                ..settings()
-            };
-            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-            terminal
-                .draw(|frame| render(frame, &settings, &State::new()))
-                .unwrap();
-            let text: String = terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect();
-            assert!(text.contains(header), "{text}");
-            assert!(text.contains(encode), "{text}");
-            assert!(text.contains("Alpha    opaque background"), "{text}");
+    fn stills_name_the_components_they_resolve() {
+        let settings = Settings {
+            output: Path::new("film.webp"),
+            still: true,
+            ..settings()
+        };
+        let mut state = State::new();
+        for (width, height) in [(100, 30), (60, 14)] {
+            let text = screen_with(&settings, &state, width, height);
+            assert!(text.contains("resolving…"), "{text}");
             assert!(!text.contains("Audio mix"), "{text}");
         }
+        state.update(ExportProgress::Output(still_plan(
+            "WebP",
+            &["Lossless", "Transparent background"],
+        )));
+        assert_eq!(
+            state.still_line(),
+            "Image · WebP · Lossless · Transparent background"
+        );
+        let text = screen_with(&settings, &state, 100, 30);
+        assert!(
+            text.contains("Image · WebP · Lossless · Transparent background"),
+            "{text}"
+        );
+        // The profile panel cuts the line at its edge.
+        assert!(
+            text.contains("Encode   WebP · Lossless · Transparen"),
+            "{text}"
+        );
+        assert!(text.contains("Muxer    Image"), "{text}");
+        assert!(!text.contains("no audio"), "{text}");
+        assert!(!text.contains("Audio mix"), "{text}");
+        let text = screen_with(&settings, &state, 120, 14);
+        assert!(
+            text.contains("Image · WebP · Lossless · Transparent background"),
+            "{text}"
+        );
+        // A JPEG at its default quality names only the encoder.
+        state.update(ExportProgress::Output(still_plan("JPEG", &[])));
+        assert_eq!(state.still_line(), "Image · JPEG");
     }
 
     #[test]
