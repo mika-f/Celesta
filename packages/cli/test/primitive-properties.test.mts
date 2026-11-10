@@ -42,7 +42,7 @@ test('the ready message lists the primitives\' property tables in order', () => 
 
 test('a prop the props type requires is sent as required', () => {
   const size = ready([]).primitiveProperties.Rect?.groups.find((group) => group.name === 'Size')?.fields;
-  assert.deepEqual(size?.find((row) => row.key === 'width')?.field, { type: 'number', required: true, min: 0 });
+  assert.deepEqual(size?.find((row) => row.key === 'width')?.field, { type: 'number', required: true, min: 0, unit: 'px' });
   assert.equal(size?.find((row) => row.key === 'cornerRadius')?.field.required, undefined);
 });
 
