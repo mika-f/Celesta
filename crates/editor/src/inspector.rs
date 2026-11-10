@@ -197,6 +197,30 @@ impl RenderOnce for InspectorSection {
     }
 }
 
+impl crate::view::EditorView {
+    /// The section `id` titled `title`, collapsed and toggled through
+    /// [`crate::view::EditorView::collapsed_sections`].
+    pub(crate) fn section(
+        &self,
+        id: impl Into<SharedString>,
+        title: impl Into<SharedString>,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> InspectorSection {
+        let id: SharedString = id.into();
+        let view = cx.entity().downgrade();
+        let toggled = id.clone();
+        InspectorSection::new(id.clone(), title)
+            .collapsed(self.collapsed_sections.is_collapsed(&id))
+            .on_toggle(move |_, cx| {
+                view.update(cx, |this, cx| {
+                    this.collapsed_sections.toggle(&toggled);
+                    cx.notify();
+                })
+                .ok();
+            })
+    }
+}
+
 /// A row of the Inspector: `[label][value][trailing]`. The label lane has
 /// one width for every row and the trailing lane is always there, so the
 /// values of every row share one left edge whatever the row holds.

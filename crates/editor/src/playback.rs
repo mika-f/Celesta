@@ -355,7 +355,7 @@ impl EditorView {
     pub(crate) fn drag_end(
         &mut self,
         event: &MouseUpEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.end_inline_selection();
@@ -364,7 +364,7 @@ impl EditorView {
         let ended = self.end_transform_drag(cx) | ended;
         let ended = self.end_timeline_drag::<BandDrag>(cx) | ended;
         let ended = self.end_timeline_drag::<SceneDrag>(cx) | ended;
-        let ended = self.end_row_scrub(cx) | ended;
+        let ended = self.end_row_scrub(window, cx) | ended;
         let ended = self.end_add(event.position, cx) | ended;
         if ended {
             cx.notify();

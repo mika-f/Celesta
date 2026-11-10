@@ -58,6 +58,54 @@ pub(crate) fn with_unit(number: &str, unit: Option<&str>) -> String {
     }
 }
 
+/// What a press on a row started from: its label drags only; its value
+/// drags, or opens typing when released without a drag.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ScrubOrigin {
+    #[default]
+    Label,
+    Value,
+}
+
+/// What a released press does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ScrubEnd {
+    /// Write the dragged value, once.
+    Write(f64),
+    /// A drag back at its start, or a label pressed without a drag.
+    Nothing,
+    /// A value pressed without a drag: open the row's field to type.
+    Type,
+}
+
+/// Whether a number row shows its text field rather than its resting value.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct RowTyping(bool);
+
+impl RowTyping {
+    /// Follows the row's field: open once it has the focus, closed by Enter,
+    /// a blur or Escape.
+    pub(crate) fn on(&mut self, event: &crate::property_controls::ControlEvent) {
+        use crate::property_controls::ControlEvent;
+        match event {
+            ControlEvent::Focused => self.0 = true,
+            ControlEvent::Submit { .. } | ControlEvent::Escape => self.0 = false,
+            _ => {}
+        }
+    }
+
+    /// Enter on the focused resting value.
+    pub(crate) fn request(&mut self) {
+        self.0 = true;
+    }
+
+    /// Whether the field shows: while typing, and while it holds typed text
+    /// (`edited`) or text that was not written (`invalid`).
+    pub(crate) fn open(self, edited: bool, invalid: bool) -> bool {
+        self.0 || edited || invalid
+    }
+}
+
 type Press = Rc<dyn Fn(f32, &mut Window, &mut App)>;
 type Type = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -69,6 +117,7 @@ pub(crate) struct ScrubValue {
     input: Entity<InputState>,
     field: Option<AnyElement>,
     text: String,
+    placeholder: bool,
     typing: bool,
     locked: bool,
     on_press: Option<Press>,
@@ -82,6 +131,7 @@ impl ScrubValue {
             input,
             field: None,
             text: String::new(),
+            placeholder: false,
             typing: false,
             locked: false,
             on_press: None,
@@ -92,6 +142,12 @@ impl ScrubValue {
     /// The resting text, the number with its unit.
     pub(crate) fn text(mut self, text: String) -> Self {
         self.text = text;
+        self
+    }
+
+    /// The text is the dimmed value an absent prop takes, not a written one.
+    pub(crate) fn placeholder(mut self, placeholder: bool) -> Self {
+        self.placeholder = placeholder;
         self
     }
 
@@ -160,7 +216,7 @@ impl RenderOnce for ScrubValue {
             .text_ellipsis()
             .font_family(theme.mono_font_family.clone())
             .text_base()
-            .text_color(if locked {
+            .text_color(if locked || self.placeholder {
                 theme.muted_foreground
             } else {
                 theme.foreground

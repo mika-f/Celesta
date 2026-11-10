@@ -33,9 +33,11 @@ use crate::layer_select::{
 };
 use crate::playback::in_text_field;
 use crate::problems::{Problems, Source};
+use crate::property_controls::ControlEvent;
 use crate::property_controls::ControlKind;
 use crate::react_audio::{react_audio_clip_id, react_tracks};
 use crate::refresh::{LookupFate, SelectionKeep};
+use crate::scrub_value::{RowTyping, ScrubEnd, ScrubOrigin};
 use crate::source::is_react_entry;
 use crate::transform_drag::{
     OverrideSite, TransformDrag, override_sites, presses_body, prop_overrides,

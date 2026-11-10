@@ -16,6 +16,7 @@ use crate::property_controls::{
 };
 use crate::property_panel::field_label;
 use crate::scope::{CommitGate, HeldOrigin, SceneCalls, Scope, ScopedRow, scoped_row};
+use crate::scrub_value::{RowTyping, ScrubEnd, ScrubOrigin, drag_distance};
 use crate::transform_drag::override_sites;
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -575,6 +576,10 @@ pub(crate) struct Scrub {
     /// The edit scope the control showed when the scrub started: it is
     /// written under it or refused (see `EditorView::commit_gesture_row`).
     scope: Option<Scope>,
+    /// What was pressed: a value released without a drag opens typing.
+    origin: ScrubOrigin,
+    /// The pointer passed the drag threshold.
+    dragged: bool,
 }
 
 impl Scrub {
@@ -620,13 +625,29 @@ impl Scrub {
             moved: false,
             released: false,
             scope,
+            origin: ScrubOrigin::Label,
+            dragged: false,
         })
+    }
+
+    /// The same scrub, pressed on `origin`.
+    pub(crate) fn with_origin(mut self, origin: ScrubOrigin) -> Self {
+        self.origin = origin;
+        self
     }
 
     /// Takes the pointer at `x` (window pixels); true when the value
     /// changed.
+    /// Nothing changes until the pointer passes the drag threshold; from
+    /// then on the value counts from the threshold, back to the start value
+    /// inside it.
     pub(crate) fn follow(&mut self, x: f32, shift: bool) -> bool {
-        let dx = (x - self.start_x).round();
+        let dx = match drag_distance((x - self.start_x).round()) {
+            Some(dx) => dx,
+            None if self.dragged => 0.0,
+            None => return false,
+        };
+        self.dragged = true;
         let value = scrub_value(self.start_value, dx, self.field.as_ref(), shift);
         if value == self.value {
             return false;
@@ -639,6 +660,21 @@ impl Scrub {
     /// Whether there is a value to write: the pointer left the start value.
     pub(crate) fn changed(&self) -> bool {
         self.value != self.start_value
+    }
+
+    /// What the release does: see [`ScrubEnd`].
+    pub(crate) fn finish(&self) -> ScrubEnd {
+        if !self.dragged {
+            return match self.origin {
+                ScrubOrigin::Value => ScrubEnd::Type,
+                ScrubOrigin::Label => ScrubEnd::Nothing,
+            };
+        }
+        if self.changed() {
+            ScrubEnd::Write(self.value)
+        } else {
+            ScrubEnd::Nothing
+        }
     }
 
     /// The prop overrides the preview evaluates the scene with: none before
@@ -715,10 +751,17 @@ pub(crate) struct ElementRow {
     /// Why the row's held commit waits, when the occurrence index has yet
     /// to answer ("Scanning scenes…"); shown instead of "Saving…".
     pub(crate) held_note: Option<String>,
+    /// A number row shows its field rather than its resting value.
+    pub(crate) typing: RowTyping,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ElementRow {
+    /// Whether a number row shows its text field.
+    pub(crate) fn typing_open(&self) -> bool {
+        self.typing.open(self.edited, self.invalid.is_some())
+    }
+
     /// The switch state: the shown value, else the placeholder.
     pub(crate) fn shown_bool(&self) -> bool {
         self.shown.as_ref().is_some_and(|(text, placeholder)| {
@@ -1114,6 +1157,7 @@ impl EditorView {
                     picked: false,
                     pending: None,
                     held_note: None,
+                    typing: RowTyping::default(),
                     _subscriptions: built.subscriptions,
                 };
                 rows.insert(key.clone(), row);
@@ -1153,6 +1197,11 @@ impl EditorView {
         event: ControlEvent,
         cx: &mut Context<Self>,
     ) {
+        // A number row opens for typing with its field's focus and rests
+        // again on Enter, a blur or Escape.
+        if let Some(row) = self.element_rows.rows.get_mut(key) {
+            row.typing.on(&event);
+        }
         match event {
             ControlEvent::Edited => {
                 if let Some(row) = self.element_rows.rows.get_mut(key) {
@@ -1162,8 +1211,7 @@ impl EditorView {
             }
             ControlEvent::Submit { blur } => self.submit_element_row(key, blur, cx),
             ControlEvent::Escape => self.restore_element_row(key, true, cx),
-            // Tasks 5 and 6 of P7b open a number row for typing here.
-            ControlEvent::Focused => {}
+            ControlEvent::Focused => cx.notify(),
             ControlEvent::Toggled(checked) => {
                 self.commit_element_row(key, Some(EditValue::Bool(checked)), cx);
             }
@@ -1665,12 +1713,24 @@ impl EditorView {
         &mut self,
         key: &PropKey,
         x: f32,
+        origin: ScrubOrigin,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A value pressed where no scrub can start (while playing, or a row
+        // that types but does not scrub, such as an input) opens typing.
+        let type_instead = |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            if origin == ScrubOrigin::Value {
+                this.focus_element_row_input(key, window, cx);
+            }
+        };
         // While a released scrub or drag is being written, none starts: its
         // override stays until the reload draws the written value.
-        if self.playing || self.element_rows.scrub.is_some() || self.transform_drag_released() {
+        if self.element_rows.scrub.is_some() || self.transform_drag_released() {
+            return;
+        }
+        if self.playing {
+            type_instead(self, window, cx);
             return;
         }
         let scope = (
@@ -1680,7 +1740,9 @@ impl EditorView {
         let Some(scrub) = self
             .element_targets()
             .and_then(|(targets, report)| Scrub::start(targets, report, key, x, scope))
+            .map(|scrub| scrub.with_origin(origin))
         else {
+            type_instead(self, window, cx);
             return;
         };
         // A scrub that would be refused at release (the scope it keeps can't
@@ -1744,7 +1806,7 @@ impl EditorView {
         if !self.row_scrub_active() {
             return;
         }
-        if self.release_unseen(event, cx, Self::end_row_scrub) {
+        if self.release_unseen(event, cx, Self::end_row_scrub_unseen) {
             return;
         }
         let Some(scrub) = self.element_rows.scrub.as_mut() else {
@@ -1759,26 +1821,81 @@ impl EditorView {
     /// Release: writes the scrubbed value as one history entry, or nothing
     /// when the value is back where it started (or never moved). True when
     /// a scrub was running.
-    pub(crate) fn end_row_scrub(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn end_row_scrub(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let (ended, typed) = self.release_row_scrub(cx);
+        if let Some(key) = typed {
+            self.focus_element_row_input(&key, window, cx);
+        }
+        ended
+    }
+
+    /// A release the window did not see (outside it): ends the scrub as
+    /// [`Self::end_row_scrub`] does, but a click opens nothing.
+    fn end_row_scrub_unseen(&mut self, cx: &mut Context<Self>) -> bool {
+        self.release_row_scrub(cx).0
+    }
+
+    /// Ends a pressed scrub as [`Scrub::finish`] says: true when one was
+    /// running, and the row to open for typing after a click on its value.
+    fn release_row_scrub(&mut self, cx: &mut Context<Self>) -> (bool, Option<PropKey>) {
         let Some(scrub) = self
             .element_rows
             .scrub
             .as_mut()
             .filter(|scrub| !scrub.released)
         else {
-            return false;
+            return (false, None);
         };
-        if !scrub.changed() {
-            self.cancel_row_scrub();
-            return true;
-        }
+        let value = match scrub.finish() {
+            ScrubEnd::Write(value) => value,
+            ScrubEnd::Nothing => {
+                self.cancel_row_scrub();
+                return (true, None);
+            }
+            ScrubEnd::Type => {
+                let key = scrub.key.clone();
+                self.cancel_row_scrub();
+                return (true, Some(key));
+            }
+        };
         scrub.released = true;
-        let (key, value, scope) = (scrub.key.clone(), scrub.value, scrub.scope);
+        let (key, scope) = (scrub.key.clone(), scrub.scope);
         // The row shows the value until the write finishes; a failure (the
         // targets went stale, the source changed, the scope it started
         // under is locked by now) drops the override.
         self.commit_gesture_row(&key, Some(EditValue::Number(value)), scope, cx);
-        true
+        (true, None)
+    }
+
+    /// Opens the number row `key` for typing: its field takes the focus with
+    /// its text selected (the field's focus opens the row, see
+    /// [`RowTyping`]).
+    pub(crate) fn focus_element_row_input(
+        &mut self,
+        key: &PropKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.element_rows.rows.get_mut(key) else {
+            return;
+        };
+        let Control::Text(input) = &row.control else {
+            return;
+        };
+        row.typing.request();
+        input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            input.select_all(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Enter on a resting number row: opens it for typing.
+    pub(crate) fn type_element_row(&mut self, key: &PropKey, cx: &mut Context<Self>) {
+        if let Some(row) = self.element_rows.rows.get_mut(key) {
+            row.typing.request();
+            cx.notify();
+        }
     }
 
     /// Escape during a scrub: drops it and its override, writing nothing.

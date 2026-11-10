@@ -31,10 +31,6 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, ClickEvent, Context, Div, Hsla, SharedString, Window, div};
 use std::path::{Path, PathBuf};
 
-/// The label column of the header rows and the property rows, so the labels
-/// and the values share one edge; wide enough for "Corner radius".
-pub(crate) const LABEL_WIDTH: f32 = 84.0;
-
 /// The icon for a primitive element by its tag; any other shape (and an
 /// element that is not a primitive) gets the generic shapes icon.
 pub(crate) fn primitive_icon(name: &str) -> IconName {
@@ -241,7 +237,7 @@ fn labelled(label: &'static str, value: impl IntoElement, cx: &App) -> Div {
         .child(
             div()
                 .flex_none()
-                .w(metrics::scaled(LABEL_WIDTH))
+                .w(metrics::inspector_label_width())
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
@@ -326,7 +322,7 @@ impl EditorView {
                 .child(
                     div()
                         .flex_none()
-                        .w(metrics::scaled(LABEL_WIDTH))
+                        .w(metrics::inspector_label_width())
                         .text_color(muted)
                         .child(label),
                 )

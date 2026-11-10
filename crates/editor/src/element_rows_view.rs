@@ -9,28 +9,25 @@ use crate::element_rows::{
     component_row_label, element_control_handler, row_field, row_label, scrubs, set_at_text,
 };
 use crate::icons::DiamondFilled;
-use crate::layer_panel::LABEL_WIDTH;
-use crate::property_controls::{ControlKind, number_hint, render_control};
+use crate::inspector::InspectorRow;
+use crate::property_controls::{Control, ControlKind, number_hint, render_control, text_input};
 use crate::scope::{
     SceneCalls, Scope, ScopedRow, component_section_note, gesture_lock, remove_tooltip, scoped_row,
 };
+use crate::scrub_value::{ScrubOrigin, ScrubValue, display_number, with_unit};
 use crate::view::EditorView;
-use crate::widgets::inspector_section;
 use celesta_editor_theme::metrics;
 use celesta_react_bridge::{PrimitivePropertyField, SourcePos};
 use celesta_source_edit::{EditTarget, LockReason};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::Input;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, CursorStyle, Div, ElementId, MouseButton, MouseDownEvent, SharedString,
-    div,
+    AnyElement, App, Context, Div, ElementId, MouseDownEvent, SharedString, Window, div,
 };
 use std::path::Path;
-
-/// How far an input sub-row is indented under its row.
-const INDENT: f32 = 12.0;
 
 /// The hover group of a row, which shows its remove button.
 const ROW_GROUP: &str = "element-row";
@@ -73,6 +70,24 @@ fn sections(targets: &ElementTargets) -> Vec<(String, Vec<&(PropKey, Target)>)> 
         })
         .filter(|(_, rows)| !rows.is_empty())
         .collect()
+}
+
+/// A number row's resting text: the shown value with as many places as the
+/// field's step has, then its unit; text that is not a number as it is.
+fn number_text(text: &str, field: Option<&PrimitivePropertyField>) -> String {
+    let (step, integer, unit) = match field {
+        Some(PrimitivePropertyField::Number {
+            step,
+            integer,
+            unit,
+            ..
+        }) => (*step, integer.unwrap_or(false), unit.as_deref()),
+        _ => (None, false, None),
+    };
+    match text.trim().parse::<f64>() {
+        Ok(value) => with_unit(&display_number(value, step, integer), unit),
+        Err(_) => text.to_owned(),
+    }
 }
 
 /// "Set at `<file>`:`<line>`" after a `corner-down-right` icon, on one
@@ -130,13 +145,13 @@ impl EditorView {
         let scope = self.rows_scope(targets);
         let mut column = div().flex().flex_col();
         for (name, rows) in sections(targets) {
-            column = column.child(inspector_section(name, cx));
+            let mut section_rows: Vec<AnyElement> = Vec::new();
             for (key, target) in rows {
                 let PropKey::Prop(prop) = key else {
                     continue;
                 };
                 let field = row_field(targets, key);
-                column = column.child(self.element_row(
+                section_rows.push(self.element_row(
                     key,
                     row_label(prop),
                     target,
@@ -153,7 +168,7 @@ impl EditorView {
                         row: prop.clone(),
                         name: input.clone(),
                     };
-                    column = column.child(self.element_row(
+                    section_rows.push(self.element_row(
                         &input_key,
                         input.clone(),
                         input_target,
@@ -167,6 +182,8 @@ impl EditorView {
                     ));
                 }
             }
+            let id = format!("properties/{}", name.to_lowercase());
+            column = column.child(self.section(id, name, cx).children(section_rows));
         }
         // The props written at the component's call, under its name; none
         // when every prop written there already shows "Set at …" above.
@@ -179,26 +196,20 @@ impl EditorView {
             let state = self.shown_scope_context().map(|context| context.state);
             let note =
                 component_section_note(state.as_ref()).map(|note| component_note_line(note, cx));
-            column = column
-                .child(inspector_section(
-                    format!("Component · {}", component.name),
-                    cx,
-                ))
-                .child(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .child(set_at_line(&component.call_site, &entry_dir, cx))
-                        .children(note),
-                );
+            let mut section_rows: Vec<AnyElement> = vec![
+                div()
+                    .px(metrics::panel_padding())
+                    .pb_1()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(set_at_line(&component.call_site, &entry_dir, cx))
+                    .children(note)
+                    .into_any_element(),
+            ];
             for prop in &component.props {
                 let key = PropKey::CallSite(prop.name.clone());
-                column = column.child(self.element_row(
+                section_rows.push(self.element_row(
                     &key,
                     component_row_label(component, &prop.name),
                     &prop.target,
@@ -211,6 +222,11 @@ impl EditorView {
                     cx,
                 ));
             }
+            let title = format!("Component · {}", component.name);
+            column = column.child(
+                self.section("properties/component", title, cx)
+                    .children(section_rows),
+            );
         }
         column.into_any_element()
     }
@@ -309,16 +325,65 @@ impl EditorView {
                 }),
                 _ => None,
             };
-            div().flex_1().min_w_0().child(render_control(
-                row_id("control", key),
-                &row.kind,
-                &row.control,
-                locked,
-                row.shown_bool(),
-                hint,
-                cx,
-                element_control_handler(key.clone()),
-            ))
+            match (&row.kind, &row.control) {
+                (ControlKind::Number, Control::Text(input)) => {
+                    let (text, placeholder) = match row.control.text(cx) {
+                        Some(text) if !text.is_empty() => (text.to_string(), false),
+                        _ => (
+                            row.shown
+                                .as_ref()
+                                .map(|(_, placeholder)| placeholder.clone())
+                                .unwrap_or_default(),
+                            true,
+                        ),
+                    };
+                    let typing = row.typing_open();
+                    let field_input = input.clone();
+                    let view = cx.entity().downgrade();
+                    let press_key = key.clone();
+                    let type_key = key.clone();
+                    let type_view = view.clone();
+                    let mut value = ScrubValue::new(
+                        SharedString::from(format!("element-value-{}", key_id(key))),
+                        input.clone(),
+                    )
+                    .text(number_text(&text, field))
+                    .placeholder(placeholder)
+                    .typing(typing)
+                    .locked(locked)
+                    .on_press(move |x, window, cx| {
+                        view.update(cx, |this, cx| {
+                            this.begin_row_scrub(&press_key, x, ScrubOrigin::Value, window, cx);
+                        })
+                        .ok();
+                    })
+                    .on_type(move |_, cx| {
+                        type_view
+                            .update(cx, |this, cx| this.type_element_row(&type_key, cx))
+                            .ok();
+                    });
+                    if typing {
+                        value = value.field(text_input(
+                            Input::new(&field_input),
+                            locked,
+                            hint,
+                            cx,
+                            element_control_handler(key.clone()),
+                        ));
+                    }
+                    value.into_any_element()
+                }
+                _ => render_control(
+                    row_id("control", key),
+                    &row.kind,
+                    &row.control,
+                    locked,
+                    row.shown_bool(),
+                    hint,
+                    cx,
+                    element_control_handler(key.clone()),
+                ),
+            }
         });
         // One line: a long expression is cut by `reason_text`, and anything
         // still wider than the panel ends in an ellipsis.
@@ -377,74 +442,50 @@ impl EditorView {
                 )
         });
         let multi_line = row.is_some_and(|row| row.kind == ControlKind::Text);
-        let label_width = if indented {
-            LABEL_WIDTH - INDENT
-        } else {
-            LABEL_WIDTH
-        };
-        div()
-            .group(ROW_GROUP)
+        let label_press = scrubbable.then(|| {
+            let key = key.clone();
+            let view = cx.entity().downgrade();
+            move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+                // The scrub decides where the focus goes: the root's
+                // `track_focus` would take it and blur (and submit) a row's
+                // field holding typed text.
+                window.prevent_default();
+                let x = f32::from(event.position.x);
+                view.update(cx, |this, cx| {
+                    this.begin_row_scrub(&key, x, ScrubOrigin::Label, window, cx);
+                })
+                .ok();
+            }
+        });
+        // The state icon, or the remove button of a written value (a row
+        // with one has no icon).
+        let trailing = div()
             .flex()
-            .flex_col()
-            .gap_1()
-            .pr_3()
-            // `pl_6` is `pl_3` plus `INDENT`.
-            .when(indented, |row| row.pl_6())
-            .when(!indented, |row| row.pl_3())
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                div()
-                    .flex()
-                    .when(multi_line, |line| line.items_start())
-                    .when(!multi_line, |line| line.items_center())
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(metrics::scaled(label_width))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_sm()
-                            .text_color(muted)
-                            .when(scrubbable, |label| {
-                                let key = key.clone();
-                                label.cursor(CursorStyle::ResizeLeftRight).on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                        // The scrub decides where the focus
-                                        // goes: the root's `track_focus` would
-                                        // take it and blur (and submit) a
-                                        // row's field holding typed text.
-                                        window.prevent_default();
-                                        let x = f32::from(event.position.x);
-                                        this.begin_row_scrub(&key, x, window, cx);
-                                    }),
-                                )
-                            })
-                            .child(label),
-                    )
-                    .children(control)
-                    // The state icon, or the remove button of a written
-                    // value (a row with one has no icon).
-                    .child(
-                        div()
-                            .flex_none()
-                            .size_5()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(muted)
-                            .children(icon.map(|icon| icon.xsmall()))
-                            .children(remove),
-                    ),
-            )
-            .children(set_at)
-            .children(detail)
-            .children(message)
-            .into_any_element()
+            .items_center()
+            .justify_center()
+            .children(icon.map(|icon| icon.xsmall()))
+            .children(remove);
+        let row = InspectorRow::new(format!("element-{}", key_id(key)), label)
+            .indented(indented)
+            .top_aligned(multi_line)
+            .trailing(trailing);
+        let row = match control {
+            Some(control) => row.value(control),
+            None => row,
+        };
+        let row = match label_press {
+            Some(press) => row.on_label_press(press),
+            None => row,
+        };
+        let row = [
+            set_at.map(IntoElement::into_any_element),
+            detail,
+            message.map(IntoElement::into_any_element),
+        ]
+        .into_iter()
+        .flatten()
+        .fold(row, |row, line| row.sub_line(line));
+        div().group(ROW_GROUP).child(row).into_any_element()
     }
 
     /// "Between keyframes at {previous} and {next}" with buttons moving the
