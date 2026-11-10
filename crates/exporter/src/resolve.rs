@@ -210,10 +210,10 @@ pub fn resolve_output(
     else {
         return resolve_preset_output(choice, None, output, registry, describe);
     };
-    let name = preset.name.as_str();
+    let label = format!("preset `{}`", preset.name);
     let mut resolved = resolve_preset_output(
         choice,
-        Some((name, &preset.output)),
+        Some((&label, &preset.output)),
         output,
         registry,
         describe,
@@ -231,8 +231,8 @@ pub fn resolve_output(
         for (plugin, reference) in used.into_iter().flatten() {
             if registry.plugin(plugin).origin == MediaOrigin::Project {
                 warnings.push(format!(
-                    "the project's default preset `{name}` uses {reference}, from the project's plugin {}",
-                    reference.plugin
+                    "the project's default preset `{}` uses {reference}, from the project's plugin {}",
+                    preset.name, reference.plugin
                 ));
             }
         }
@@ -249,9 +249,9 @@ fn names_no_component(choice: &OutputChoice) -> bool {
         && matches!(&choice.audio, AudioChoice::Encode(audio) if audio.component.is_none())
 }
 
-/// [`resolve_output`] with the base already found: `base` is (the name
-/// warnings use, the preset), and `choice.preset` is not read. Steps 2–6
-/// are [`resolve_output`]'s.
+/// [`resolve_output`] with the base already found: `base` is (what its
+/// warnings call it, as ``preset `web` ``, and the preset), and
+/// `choice.preset` is not read. Steps 2–6 are [`resolve_output`]'s.
 pub fn resolve_preset_output(
     choice: &OutputChoice,
     base: Option<(&str, &PresetOutput)>,
@@ -345,7 +345,7 @@ pub fn resolve_preset_output(
         {
             if !encoder.options.is_empty() {
                 warnings.push(format!(
-                    "audio options are ignored: preset `{name}` leaves the audio out"
+                    "audio options are ignored: {name} leaves the audio out"
                 ));
             }
             None
@@ -371,7 +371,7 @@ pub fn resolve_preset_output(
                 (None, Some(text)) => match accepted_audio {
                     None => {
                         warnings.push(format!(
-                            "preset `{name}`: {text} is unavailable ({} takes no audio); the audio is left out",
+                            "{name}: {text} is unavailable ({} takes no audio); the audio is left out",
                             muxer.reference
                         ));
                         None
@@ -494,8 +494,8 @@ fn preset_component<'a>(
     Ok(component)
 }
 
-/// `found`, or `None` with the warning that preset `name`'s `text` falls
-/// back to the default.
+/// `found`, or `None` with the warning that the base `name` (as warnings
+/// call it)'s `text` falls back to the default.
 fn fallback<'a>(
     warnings: &mut Vec<String>,
     name: &str,
@@ -506,7 +506,7 @@ fn fallback<'a>(
         Ok(component) => Some(component),
         Err(reason) => {
             warnings.push(format!(
-                "preset `{name}`: {text} is unavailable ({reason}); using the default instead"
+                "{name}: {text} is unavailable ({reason}); using the default instead"
             ));
             None
         }
@@ -778,7 +778,7 @@ fn resolved_encoder(
 
 /// `options` read by each field's type (text) or as given (values), then
 /// validated against `description`'s schema: alone, or layered over
-/// `base`'s options (the preset's name, its options) once those the schema
+/// `base`'s options (what warnings call the preset, its options) once those the schema
 /// does not take are left out, each with a warning.
 fn settings(
     component: &MediaComponentInfo,
@@ -810,9 +810,9 @@ fn settings(
     let reference = &component.reference;
     for InvalidSetting { key, message } in dropped {
         warnings.push(if schema.iter().any(|field| field.key == key) {
-            format!("preset `{name}`: {reference} {key} {message}; using its default")
+            format!("{name}: {reference} {key} {message}; using its default")
         } else {
-            format!("preset `{name}`: {reference} has no setting `{key}`; it is left out")
+            format!("{name}: {reference} has no setting `{key}`; it is left out")
         });
     }
     layer(schema, &kept, &given).map_err(invalid)

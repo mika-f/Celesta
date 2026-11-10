@@ -635,6 +635,25 @@ clean; `pnpm run test:runtime` (17 packages; `@celesta.studio/cli` 119),
 `pnpm --dir packages/exporter test` 24, and `pnpm --dir packages/website
 test` 52 passed; `git diff --check` clean.
 
+**Re-check fixes** (mika-f/Celesta#794, the re-check at `c88f2634`):
+`resolve_preset_output`'s base now carries what its warnings call it
+(``preset `web` `` from the CLI and the dialog, "your last export" for
+`last`), so a warning about `last` no longer reads "preset …"
+(`warnings_about_last_call_it_your_last_export`). New tests:
+`opens_with_the_project_default_and_switches_presets` (the dialog opens
+on the project `default`, `choose_preset` switches to a user preset and
+back to None), `reopening_describes_a_failed_plugin_again` (a plugin
+whose describe failed is described again by `reopen`), and
+`a_file_that_cannot_be_read_says_so` plus the "is not valid JSON" and "is
+not an export presets file" messages in `the_version_must_be_one`; these
+pin behavior that was already there. Checks: `cargo test --workspace
+--no-fail-fast` 2,735 passed, 1 failed, 1 ignored. The failure was the
+new project-default test's last assertion, which expected `auto` where
+the choice holds no value; with that fixed, the dialog tests passed (36),
+and `cargo clippy -p celesta-editor --all-targets -- -D warnings`
+(workspace clippy clean before the fix) and `cargo fmt --all -- --check`
+are clean.
+
 ## Not done
 
 - **Presets files.**
@@ -729,7 +748,7 @@ test` 52 passed; `git diff --check` clean.
   - `#[allow(clippy::too_many_arguments)]` and `#[expect]` are mixed in
     `view.rs`.
   - Every keystroke rebuilds all the `Select`s through `sync`.
-  - No view test for a whole save (writing the file), a stale preset's
-    warnings, a container change in the window (the model covers the
-    rule), Escape keeping state, or a click on Export… (the gpui-kit
-    test-support conflict, ruling 7).
+  - No view test for a container change in the window (the model covers
+    the rule) or Escape keeping state. `request_export`'s call to
+    `ExportDialog::reopen` is untested: no test builds the whole editor
+    (`reopening_describes_a_failed_plugin_again` calls `reopen` itself).

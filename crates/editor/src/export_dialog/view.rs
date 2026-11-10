@@ -31,9 +31,14 @@ use gpui_kit::{
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// What the user file's `last` is called in a warning about it, where a
-/// preset's name would be.
+/// What a warning about the user file's `last` calls it, where it calls a
+/// preset ``preset `web` ``.
 const LAST_EXPORT: &str = "your last export";
+
+/// What a warning about the preset `name` calls it.
+fn preset_label(name: &str) -> String {
+    format!("preset `{name}`")
+}
 
 /// Wide enough for a component's label and its plugin beside a field.
 const EXPORT_DIALOG_WIDTH: Pixels = px(560.);
@@ -257,7 +262,7 @@ impl ExportDialog {
         let (selected, base, asked) = match base {
             InitialBase::Preset(source, name, output) => (
                 Some((source, name.clone())),
-                Some((name, output.clone())),
+                Some((preset_label(&name), output.clone())),
                 Asked::Preset(Box::new(output)),
             ),
             InitialBase::Last(output) => (
@@ -310,7 +315,7 @@ impl ExportDialog {
         cx.notify();
     }
 
-    /// Resolves `choice` over `base` (its name for warnings, and the
+    /// Resolves `choice` over `base` (what its warnings call it, and the
     /// preset) for `output` in the background, and applies the result as
     /// `applied` says (the preset selected, and what was asked) with
     /// `warnings` added; a failure is shown under `section` and keeps the
@@ -375,7 +380,7 @@ impl ExportDialog {
                 PresetSource::User | PresetSource::File => user,
             };
             let preset = file.into_iter().find(|preset| preset.name == *name)?;
-            Some((name.clone(), preset.output.clone()))
+            Some((preset_label(name), preset.output.clone()))
         });
         let output = self
             .model
@@ -879,12 +884,30 @@ mod tests {
         plugins: Vec<celesta_media::RegisteredPlugin>,
         user_file: Option<PathBuf>,
     ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
+        window_with_files(cx, plugins, None, user_file)
+    }
+
+    /// [`window_with_dialog`] with the project's and the user's presets
+    /// files.
+    fn window_with_files(
+        cx: &mut TestAppContext,
+        plugins: Vec<celesta_media::RegisteredPlugin>,
+        project_file: Option<PathBuf>,
+        user_file: Option<PathBuf>,
+    ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
         cx.update(gpui_kit::init);
         let registry = Arc::new(MediaRegistry::new(plugins));
         let mut dialog = None;
         let handle = cx.open_window(size(px(800.), px(1000.)), |window, cx| {
             dialog = Some(cx.new(|cx| {
-                ExportDialog::new(registry, None, user_file, ExportLoudness::Off, window, cx)
+                ExportDialog::new(
+                    registry,
+                    project_file,
+                    user_file,
+                    ExportLoudness::Off,
+                    window,
+                    cx,
+                )
             }));
             let blank = cx.new(|_| Blank);
             Root::new(blank, window, cx)
@@ -983,10 +1006,137 @@ mod tests {
         cx.update(|_, cx| {
             assert_eq!(
                 dialog.read(cx).model.warnings,
-                ["preset `your last export`: celesta-test-codec/video has no setting `nope`; it is left out"]
+                ["your last export: celesta-test-codec/video has no setting `nope`; it is left out"]
             );
         });
         std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    /// The test codec's video `input` the dialog's choice has.
+    fn video_input(dialog: &ExportDialog) -> Option<SettingValue> {
+        let choice = dialog.model.choice()?;
+        choice.video.settings.get("input").cloned()
+    }
+
+    #[gpui_kit::test]
+    fn opens_with_the_project_default_and_switches_presets(cx: &mut TestAppContext) {
+        let folder = scratch("project-default");
+        let (project_file, user_file) = (
+            folder.join("project").join("export-presets.json"),
+            folder.join("user").join("export-presets.json"),
+        );
+        let preset = |name: &str, input: &str| {
+            format!(
+                r#"{{"name":"{name}","muxer":"celesta-test-codec/file",
+                    "video":{{"component":"celesta-test-codec/video",
+                    "options":{{"input":"{input}"}}}}}}"#
+            )
+        };
+        std::fs::create_dir_all(project_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(user_file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &project_file,
+            format!(
+                r#"{{"version":1,"default":"web","presets":[{}]}}"#,
+                preset("web", "rgba8")
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            &user_file,
+            format!(r#"{{"version":1,"presets":[{}]}}"#, preset("mine", "nv12")),
+        )
+        .unwrap();
+        let (handle, dialog) = window_with_files(
+            cx,
+            vec![celesta_codec_test::registered()],
+            Some(project_file),
+            Some(user_file),
+        );
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        let string = |text: &str| Some(SettingValue::String(text.to_owned()));
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(
+                dialog.model.selected,
+                Some((PresetSource::Project, "web".to_owned()))
+            );
+            assert_eq!(video_input(dialog), string("rgba8"));
+            assert_eq!(
+                dialog.preset.read(cx).selected_value(),
+                Some(&Some((PresetSource::Project, "web".to_owned())))
+            );
+        });
+
+        cx.update(|window, cx| {
+            dialog.update(cx, |dialog, cx| {
+                dialog.choose_preset(Some((PresetSource::User, "mine".to_owned())), window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(
+                dialog.model.selected,
+                Some((PresetSource::User, "mine".to_owned()))
+            );
+            assert_eq!(video_input(dialog), string("nv12"));
+        });
+
+        // None goes back to the defaults.
+        cx.update(|window, cx| {
+            dialog.update(cx, |dialog, cx| dialog.choose_preset(None, window, cx));
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(dialog.model.selected, None);
+            // No value: the field is at its default.
+            assert_eq!(video_input(dialog), None);
+        });
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn reopening_describes_a_failed_plugin_again(cx: &mut TestAppContext) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // The test codec, failing to start until `up` is set.
+        let up = Arc::new(AtomicBool::new(false));
+        let mut plugin = celesta_codec_test::registered();
+        let factory = plugin.factory.clone();
+        plugin.factory = Arc::new({
+            let up = up.clone();
+            move |kill, using| {
+                if up.load(Ordering::SeqCst) {
+                    factory(kill, using)
+                } else {
+                    Err(celesta_media::MediaError::Codec(
+                        "the plugin exited".to_owned(),
+                    ))
+                }
+            }
+        });
+        let (handle, dialog) = window_with_dialog(cx, vec![plugin]);
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert!(dialog.export_blocked().is_some(), "nothing can export");
+            assert!(dialog.model.choice().is_none());
+        });
+
+        up.store(true, Ordering::SeqCst);
+        cx.update(|window, cx| dialog.update(cx, |dialog, cx| dialog.reopen(window, cx)));
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(dialog.export_blocked(), None);
+            assert_eq!(
+                dialog.model.choice().map(|choice| &choice.muxer),
+                Some(&reference("celesta-test-codec/file"))
+            );
+        });
     }
 
     #[gpui_kit::test]

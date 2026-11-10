@@ -434,19 +434,29 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(PRESETS_FILE);
         write(&path, r#"{"version": 2, "presets": []}"#);
-        let (named_path, message) = message(PresetsFile::load(&path).unwrap_err());
+        let (named_path, text) = message(PresetsFile::load(&path).unwrap_err());
         assert_eq!(named_path, path);
-        assert!(message.contains("unsupported version 2"), "{message}");
+        assert!(text.contains("unsupported version 2"), "{text}");
         write(&path, r#"{"presets": []}"#);
-        assert!(matches!(
-            PresetsFile::load(&path),
-            Err(ExportError::InvalidPresets { .. })
-        ));
+        let (_, text) = message(PresetsFile::load(&path).unwrap_err());
+        assert!(
+            text.starts_with("is not an export presets file: "),
+            "{text}"
+        );
         write(&path, "{");
-        assert!(matches!(
-            PresetsFile::load(&path),
-            Err(ExportError::InvalidPresets { .. })
-        ));
+        let (_, text) = message(PresetsFile::load(&path).unwrap_err());
+        assert!(text.starts_with("is not valid JSON: "), "{text}");
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_says_so() {
+        // A folder where the file would be cannot be read as one.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PRESETS_FILE);
+        std::fs::create_dir(&path).unwrap();
+        let (named_path, text) = message(PresetsFile::load(&path).unwrap_err());
+        assert_eq!(named_path, path);
+        assert!(text.starts_with("cannot be read: "), "{text}");
     }
 
     #[test]

@@ -1278,7 +1278,7 @@ mod tests {
         let resolved = resolve(
             &registry,
             &OutputChoice::default(),
-            Some(("web", &web)),
+            Some(("preset `web`", &web)),
             "export.mp4",
         );
         assert_eq!(resolved.warnings.len(), 1);
@@ -1546,7 +1546,7 @@ mod tests {
             &resolve(
                 &registry,
                 &OutputChoice::default(),
-                Some(("web", &web)),
+                Some(("preset `web`", &web)),
                 "export.mp4",
             ),
             Some((PresetSource::User, "web".into())),
@@ -1567,7 +1567,7 @@ mod tests {
             &resolve(
                 &registry,
                 &OutputChoice::default(),
-                Some(("last", &last)),
+                Some(("your last export", &last)),
                 "export.mp4",
             ),
             None,
