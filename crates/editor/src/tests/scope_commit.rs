@@ -45,15 +45,7 @@ struct Files {
 
 impl Files {
     fn new(name: &str, tag: &str, price: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "celesta-scope-{name}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::scratch_dir(&format!("scope-{name}"));
         let files = Self { dir };
         fs::write(files.tag(), tag).unwrap();
         fs::write(files.price(), price).unwrap();

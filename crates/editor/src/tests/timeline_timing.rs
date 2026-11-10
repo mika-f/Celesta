@@ -64,15 +64,7 @@ struct Files {
 
 impl Files {
     fn new(name: &str, files: &[(&str, &str)]) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "celesta-timing-{name}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::scratch_dir(&format!("timing-{name}"));
         for (file, text) in files {
             fs::write(dir.join(file), text).unwrap();
         }

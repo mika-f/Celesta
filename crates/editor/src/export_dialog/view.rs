@@ -919,13 +919,7 @@ mod tests {
 
     /// A folder of its own under the system's temporary folder.
     fn scratch(name: &str) -> PathBuf {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let folder = std::env::temp_dir().join(format!("celesta-export-dialog-{name}-{unique}"));
-        std::fs::create_dir_all(&folder).unwrap();
-        folder
+        crate::scratch::scratch_dir(&format!("export-dialog-{name}"))
     }
 
     #[test]

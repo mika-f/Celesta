@@ -672,16 +672,7 @@ fn pass_through_files(dir: &Path) -> (PathBuf, PathBuf, LayerSourceReport) {
 }
 
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "celesta-{name}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    crate::scratch::scratch_dir(name)
 }
 
 /// Commits `value` as the `text` row's own write does: the files read and
