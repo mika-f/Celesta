@@ -9,7 +9,7 @@
 //! failed or cancelled export keeps the frames written before it.
 
 use crate::control::ExportCancellation;
-use crate::encode::{IMAGE_STAGE, MUXER_STAGE, check_opened};
+use crate::encode::{IMAGE_STAGE, MUXER_STAGE, absolute, check_opened};
 use crate::error::ExportError;
 use crate::options::{AudioChoice, OutputChoice, SettingInput};
 use crate::output;
@@ -612,8 +612,14 @@ impl StillOutput {
             .map_err(|source| self.error(MUXER_STAGE, source))?;
         let muxer = &self.resolved.muxer.reference;
         let unwritten = match &self.staging {
-            Staging::One { file, .. } => (!files.iter().any(|written| written == file.path()))
-                .then(|| format!("{muxer} wrote no image file")),
+            Staging::One { file, .. } => {
+                // A plugin is handed the path made absolute, which may differ
+                // from the staged one in form (`..` on Windows), as in
+                // `published_files`.
+                let staged = absolute(file.path());
+                (!files.iter().any(|written| absolute(written) == staged))
+                    .then(|| format!("{muxer} wrote no image file"))
+            }
             Staging::Sequence { order, .. } => order
                 .iter()
                 .find(|frame| !self.published.contains(frame))

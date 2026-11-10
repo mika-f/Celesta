@@ -217,7 +217,9 @@ pub(crate) fn published_files(files: Vec<PathBuf>, staged: &Path, output: &Path)
         .collect()
 }
 
-fn absolute(path: &Path) -> PathBuf {
+/// `path` made absolute the way a plugin process is handed it, so a muxer's
+/// answer compares with the staged path it was given.
+pub(crate) fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_owned())
 }
 
