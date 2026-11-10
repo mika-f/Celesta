@@ -64,7 +64,7 @@ Celesta-export --json --react scene.tsx out.mp4
 | `--overwrite` | Replace an existing output file. |
 | `--video-option <key=value>` | A setting of the video encoder, read by its type; repeatable. For H.264: `preset=ultrafast` … `veryslow` (default `medium`; encoding speed against file size only, it does not change what is rendered), `crf=0`…`51` (default 18, lower is better quality), `bitDepth=10`. See [Encoders and settings](#encoders-and-settings). |
 | `--audio-option <key=value>` | A setting of the audio encoder, such as `bitrate=128000`; repeatable. |
-| `--video-encoder <plugin/id>`, `--audio-encoder <plugin/id>` | An encoder other than the muxer's default; `--audio-encoder none` writes no audio and refuses `--audio-option`. |
+| `--video-encoder <plugin/id>`, `--audio-encoder <plugin/id>` | An encoder other than the muxer's default; `--audio-encoder none` writes no audio and refuses `--audio-option`, as does a muxer that takes no audio. |
 | `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. |
 | `--list-components [--check]`, `--describe <plugin/id>` | List the installed media components, or show one's settings; take no source or output. See [Encoders and settings](#encoders-and-settings). |
 | `--preset <name>` | An export preset. Presets are not available yet: every name fails with `unknown_preset`. x264's preset is `--video-option preset=<name>`. |

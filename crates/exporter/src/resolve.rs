@@ -208,7 +208,21 @@ pub fn resolve_output(
         (AudioChoice::None, _) => None,
         (AudioChoice::Encode(encoder), accepted) => {
             let audio = match (&encoder.component, accepted) {
-                (None, None) => None,
+                // Options for an encoder the output does not have would be
+                // dropped unchecked, typos and all.
+                (None, None) => match encoder.options.keys().next() {
+                    Some(key) => {
+                        return Err(ExportError::InvalidOption {
+                            component: muxer.reference.clone(),
+                            key: key.clone(),
+                            message: format!(
+                                "needs an audio encoder, and {} takes no audio",
+                                muxer.reference
+                            ),
+                        });
+                    }
+                    None => None,
+                },
                 (Some(reference), None) => {
                     let audio = named(&components, reference, ComponentKind::AudioEncoder)?;
                     return Err(ExportError::IncompatibleComponents {
@@ -924,6 +938,24 @@ mod tests {
         assert_eq!(resolved.muxer.reference, reference("b/ivf"));
         assert_eq!(resolved.video.reference, reference("b/vp9"));
         assert_eq!(resolved.audio, None);
+
+        let choice = OutputChoice {
+            audio: AudioChoice::Encode(EncoderChoice {
+                component: None,
+                options: BTreeMap::from([("bitrate".to_owned(), text("96000"))]),
+            }),
+            ..OutputChoice::default()
+        };
+        let error = resolve(&registry, &choice, "film.ivf").unwrap_err();
+        assert!(
+            matches!(&error, ExportError::InvalidOption { component, key, .. }
+                if *component == reference("b/ivf") && key == "bitrate"),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "b/ivf: bitrate needs an audio encoder, and b/ivf takes no audio"
+        );
 
         let error = resolve(&registry, &with_audio("b/aac"), "film.ivf").unwrap_err();
         assert!(
