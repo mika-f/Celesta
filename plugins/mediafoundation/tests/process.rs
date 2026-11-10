@@ -301,7 +301,7 @@ fn encodes_through_the_ring() {
             "frame {index}: {ring} through the ring, {local} in process"
         );
         assert!(
-            (ring - f64::from(grey(index))).abs() <= 3.0,
+            (ring - f64::from(grey(index))).abs() <= 2.0,
             "frame {index}: {ring}, not {}",
             grey(index)
         );

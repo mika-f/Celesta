@@ -11,7 +11,7 @@ use celesta_codec_ffmpeg::FfmpegBackend;
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::report::{self, HintStyle};
 use celesta_exporter::{
-    AudioChoice, EncoderChoice, ExportError, ExportOptions, Exporter, OutputChoice,
+    AudioChoice, EncoderChoice, ExportError, ExportOptions, Exporter, OutputChoice, SettingInput,
 };
 use celesta_gpu_renderer::GpuRenderError;
 use celesta_media::{AudioDecoder, ComponentRef, MediaRegistry, VideoFrameDecoder};
@@ -78,11 +78,21 @@ fn component(text: &str) -> ComponentRef {
 }
 
 /// The output choice of `--muxer`, `--video-encoder`, and `--audio-encoder`,
-/// with no options; an encoder of `None` is the muxer's default.
+/// with no options but `hardware=false` for this plugin's video encoders: a
+/// GPU's encoder (NVIDIA's refuses 64x36, and others differ in colour) is not
+/// what these exports compare decoded colours of. An encoder of `None` is
+/// the muxer's default.
 fn choice(muxer: &str, video: Option<&str>, audio: Option<&str>) -> OutputChoice {
     let encoder = |name: Option<&str>| EncoderChoice {
         component: name.map(component),
-        options: Default::default(),
+        options: match name {
+            Some(name) if name.starts_with("mediafoundation/h") => [(
+                "hardware".to_owned(),
+                SettingInput::Text("false".to_owned()),
+            )]
+            .into(),
+            _ => Default::default(),
+        },
     };
     OutputChoice {
         preset: None,
@@ -478,35 +488,26 @@ fn pixel(pixels: &[u8], column: u32, row: u32) -> [u8; 4] {
     pixels[start..start + 4].try_into().unwrap()
 }
 
-/// Panics unless every frame of `path` shows `left` and `right` (within
-/// `tolerance`) away from the halves' edge, and it has the 30 frames of a
-/// second.
-fn assert_halves_within(path: &Path, left: [u8; 4], right: [u8; 4], tolerance: u8) {
+/// Panics unless every frame of `path` shows `left` and `right` (within 3)
+/// away from the halves' edge, and it has the 30 frames of a second.
+fn assert_halves(path: &Path, left: [u8; 4], right: [u8; 4]) {
     let frames = decoded_frames(path);
     assert_eq!(frames.len(), 30, "{}", path.display());
     for (index, frame) in frames.iter().enumerate() {
         for row in [2, HEIGHT / 2, HEIGHT - 3] {
             for (column, expected) in [(4, left), (24, left), (40, right), (WIDTH - 5, right)] {
                 let actual = pixel(frame, column, row);
-                let distance = actual
-                    .iter()
-                    .zip(expected)
-                    .map(|(actual, expected)| actual.abs_diff(expected))
-                    .max()
-                    .unwrap();
                 assert!(
-                    distance <= tolerance,
+                    actual
+                        .iter()
+                        .zip(expected)
+                        .all(|(actual, expected)| actual.abs_diff(expected) <= 3),
                     "{} frame {index} at ({column}, {row}): {actual:?}, not {expected:?}",
                     path.display()
                 );
             }
         }
     }
-}
-
-/// [`assert_halves_within`] 3, as every export test but HEVC's.
-fn assert_halves(path: &Path, left: [u8; 4], right: [u8; 4]) {
-    assert_halves_within(path, left, right, 3);
 }
 
 /// `path`'s audio as the FFmpeg plugin decodes it, at 48 kHz in `channels`.
@@ -653,12 +654,7 @@ fn mediafoundation_hevc_with_ffmpeg_opus_in_ffmpeg_mp4() {
     let codec = report["outputs"][0]["video"]["codec"].as_str().unwrap();
     assert!(codec.starts_with("hvc1."), "{codec}");
     assert_eq!(sample_entries(&output), [*b"hvc1", *b"Opus"]);
-    // Microsoft's HEVC encoders write no colour description into the SPS,
-    // only the muxer's `colr` box says BT.709, and libavcodec's HEVC decoder
-    // ignores that box and converts to RGB as BT.601: full red decodes to
-    // 231 here, not 255. The decoded colours are therefore only checked to
-    // within 32.
-    assert_halves_within(&output, LEFT, RIGHT, 32);
+    assert_halves(&output, LEFT, RIGHT);
     assert_audio_lasts_the_video(&output);
 }
 
