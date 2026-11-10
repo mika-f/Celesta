@@ -79,9 +79,39 @@ mod hns;
 )]
 mod params;
 
+#[cfg_attr(
+    not(any(windows, test)),
+    expect(
+        dead_code,
+        reason = "only the Windows encoders use it outside its tests"
+    )
+)]
+mod vui;
+
 // Named `mf`, not `windows`, which would shadow the `windows` crate.
 #[cfg(windows)]
 mod mf;
 
 #[cfg(windows)]
 pub use mf::provider::{MfCodec, install, registered};
+
+/// The colour description in the SPS of a track config's `avcC` (`hevc`
+/// false) or `hvcC` record: whether its range is full, and its primaries,
+/// transfer characteristics, and matrix coefficients as H.273 numbers. None
+/// when the record is malformed or its SPS describes no colour. For tests.
+#[cfg(windows)]
+#[doc(hidden)]
+pub fn record_colour(record: &[u8], hevc: bool) -> Option<(bool, u8, u8, u8)> {
+    let codec = if hevc {
+        annexb::Codec::Hevc
+    } else {
+        annexb::Codec::H264
+    };
+    let colour = vui::sps_colour(codec, params::record_sps(codec, record).ok()?)?;
+    Some((
+        colour.full_range,
+        colour.primaries,
+        colour.transfer,
+        colour.matrix,
+    ))
+}

@@ -31,14 +31,18 @@ use crate::params::{
     UNKNOWN_REORDER_DEPTH, avc_codec_string, avc_reorder_depth, hevc_codec_string,
     hevc_reorder_depth,
 };
+use crate::vui::with_bt709;
 use celesta_media::{Encoded, MediaError, Packet, PixelFormat, TrackConfig, VideoEncoderRequest};
 use windows::Win32::Foundation::VARIANT_BOOL;
 use windows::Win32::Media::MediaFoundation::{
     CODECAPI_AVEncCommonLowLatency, CODECAPI_AVEncCommonMeanBitRate, CODECAPI_AVEncCommonQuality,
     CODECAPI_AVEncCommonRateControlMode, CODECAPI_AVEncMPVDefaultBPictureCount,
-    CODECAPI_AVEncMPVGOPSize, ICodecAPI, IMFSample, MF_MT_MPEG_SEQUENCE_HEADER,
-    MFSampleExtension_CleanPoint, MFSampleExtension_DecodeTimestamp, MFT_CATEGORY_VIDEO_ENCODER,
-    MFVideoFormat_H264, MFVideoFormat_HEVC, eAVEncCommonRateControlMode_Quality,
+    CODECAPI_AVEncMPVGOPSize, CODECAPI_AVEncVideoOutputColorNominalRange,
+    CODECAPI_AVEncVideoOutputColorPrimaries, CODECAPI_AVEncVideoOutputColorTransferFunction,
+    CODECAPI_AVEncVideoOutputColorTransferMatrix, ICodecAPI, IMFSample, MF_MT_MPEG_SEQUENCE_HEADER,
+    MFNominalRange_16_235, MFSampleExtension_CleanPoint, MFSampleExtension_DecodeTimestamp,
+    MFT_CATEGORY_VIDEO_ENCODER, MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoPrimaries_BT709,
+    MFVideoTransFunc_709, MFVideoTransferMatrix_BT709, eAVEncCommonRateControlMode_Quality,
     eAVEncCommonRateControlMode_UnconstrainedVBR,
 };
 use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_UI4};
@@ -198,6 +202,31 @@ fn apply_codec_settings(
                     set_value(codec, &CODECAPI_AVEncCommonLowLatency, &variant_bool(low));
                 }
             }
+        }
+    }
+    // The colour the encoder writes into the stream's own headers (the SPS's
+    // VUI), so a decoder that reads no container box decodes BT.709 limited
+    // too. A transform that does not take them is skipped, as above.
+    if let Some(codec) = &codec {
+        for (api, value) in [
+            (
+                &CODECAPI_AVEncVideoOutputColorPrimaries,
+                MFVideoPrimaries_BT709.0,
+            ),
+            (
+                &CODECAPI_AVEncVideoOutputColorTransferFunction,
+                MFVideoTransFunc_709.0,
+            ),
+            (
+                &CODECAPI_AVEncVideoOutputColorTransferMatrix,
+                MFVideoTransferMatrix_BT709.0,
+            ),
+            (
+                &CODECAPI_AVEncVideoOutputColorNominalRange,
+                MFNominalRange_16_235.0,
+            ),
+        ] {
+            set_value(codec, api, &variant_u32(value as u32));
         }
     }
     Ok(())
@@ -372,13 +401,19 @@ impl VideoSession {
 
     /// The track's config and reorder depth, from the first parameter sets.
     fn configure(&mut self, sets: ParameterSets) -> Result<TrackConfig, MediaError> {
+        // The record's SPS says BT.709 limited whatever the MFT wrote; `sets`
+        // stays as it came, to compare the later ones with.
+        let described = ParameterSets {
+            sps: with_bt709(self.annexb_codec(), &sets.sps),
+            ..sets.clone()
+        };
         let (codec, depth, record) = match self.codec {
             VideoCodec::H264 => {
-                let avcc = annexb::avcc_from(&sets)?;
+                let avcc = annexb::avcc_from(&described)?;
                 (avc_codec_string(&avcc)?, avc_reorder_depth(&avcc)?, avcc)
             }
             VideoCodec::Hevc => {
-                let hvcc = annexb::hvcc_from(&sets)?;
+                let hvcc = annexb::hvcc_from(&described)?;
                 (hevc_codec_string(&hvcc)?, hevc_reorder_depth(&hvcc)?, hvcc)
             }
         };

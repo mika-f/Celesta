@@ -657,6 +657,45 @@ fn packets_come_with_the_config() {
     }
 }
 
+/// BT.709 limited range as a VUI says it: `(full range, primaries,
+/// transfer, matrix)`.
+const BT709_VUI: (bool, u8, u8, u8) = (false, 1, 1, 1);
+
+#[test]
+fn video_streams_carry_bt709_in_the_sps() {
+    const TEST: &str = "video_streams_carry_bt709_in_the_sps";
+    let mut codec = MfCodec::new();
+    for component in ["h264", "hevc"] {
+        if !available(&mut codec, component, TEST) {
+            continue;
+        }
+        // The software MFT at 64x36, and the system's choice at a size
+        // NVIDIA's accepts.
+        for (hardware, size) in [(false, SIZE), (true, HARDWARE_SIZE)] {
+            let mut given = settings(&[]);
+            given.insert("hardware".to_owned(), SettingValue::Boolean(hardware));
+            let Some(opened) = open_or_skip(
+                &mut codec,
+                component,
+                &given,
+                &[PixelFormat::Nv12],
+                size,
+                TEST,
+            ) else {
+                continue;
+            };
+            let frames = (0..4).map(|index| nv12_moving(size, index));
+            let (_, config) = packets_and_config(encode_frames(&mut codec, opened.session, frames));
+            let record = config.description.as_deref().expect("a record");
+            assert_eq!(
+                celesta_codec_mediafoundation::record_colour(record, component == "hevc"),
+                Some(BT709_VUI),
+                "{component} (hardware {hardware}) wrote no BT.709 limited colour description"
+            );
+        }
+    }
+}
+
 #[test]
 fn odd_sizes_are_refused() {
     let mut codec = MfCodec::new();

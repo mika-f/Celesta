@@ -255,8 +255,11 @@ Task 10 rewrites as built. In short:
   back to the next encoder. `hardware: true` and `rateControl: quality` are
   both defaults, so the default export must still work, on Microsoft's
   software MFT, on a GPU whose MFT has no quality mode.
+- 79 (Task 7 review): the plugin writes the BT.709 colour description into
+  an H.264 or HEVC SPS that lacks it, so every decoder, not only those that
+  read the container's `colr` box, decodes BT.709 limited.
 
-A new deviation gets the next number (79 on) and goes in Task 10's spec
+A new deviation gets the next number (80 on) and goes in Task 10's spec
 edit and the handoff note.
 
 ## Decisions the spec left to this plan
@@ -753,6 +756,15 @@ Every other number below is a probe's output.
      After the release, the file opens for writing (without truncation),
      and its size is unchanged.
 7. **CI** (Step 2): not run; deferred to the PR's CI (controller ruling).
+8. **Colour in the SPS** (Task 7 review; deviation 79). Setting
+   `CODECAPI_AVEncVideoOutputColorPrimaries`, `…TransferFunction`,
+   `…TransferMatrix`, and `…ColorNominalRange` through `ICodecAPI` (route a)
+   does not make Microsoft's software H.264 or HEVC MFT write a
+   `video_signal_type` into the SPS's VUI. libavcodec's HEVC decoder then
+   ignores the `colr` box and converts as BT.601 (full red decoded to 231).
+   Route (b) was needed: `vui::with_bt709` rewrites the SPS that goes into
+   `avcC` and `hvcC`. The `ICodecAPI` properties are still set (a GPU MFT
+   may honour them).
 
 **Rulings.**
 - **`AAC_DELAY = 1024`, with a lead-in.** The MFT's own priming is 0, but

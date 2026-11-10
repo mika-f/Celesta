@@ -27,7 +27,7 @@ pub(crate) fn malformed(what: &str) -> MediaError {
 
 /// A NAL unit's payload without its emulation prevention bytes: the 3 of
 /// each `00 00 03`.
-fn unescaped(unit: &[u8]) -> Vec<u8> {
+pub(crate) fn unescaped(unit: &[u8]) -> Vec<u8> {
     let mut payload = Vec::with_capacity(unit.len());
     let mut zeros = 0;
     for &byte in unit {
@@ -42,38 +42,38 @@ fn unescaped(unit: &[u8]) -> Vec<u8> {
 }
 
 /// Reads bits from the most significant of the first byte on.
-struct Bits {
-    bytes: Vec<u8>,
-    position: usize,
+pub(crate) struct Bits {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) position: usize,
 }
 
 impl Bits {
-    fn new(bytes: Vec<u8>) -> Self {
+    pub(crate) fn new(bytes: Vec<u8>) -> Self {
         Self { bytes, position: 0 }
     }
 
-    fn bit(&mut self) -> Option<u32> {
+    pub(crate) fn bit(&mut self) -> Option<u32> {
         let byte = *self.bytes.get(self.position / 8)?;
         let bit = u32::from(byte >> (7 - self.position % 8)) & 1;
         self.position += 1;
         Some(bit)
     }
 
-    fn flag(&mut self) -> Option<bool> {
+    pub(crate) fn flag(&mut self) -> Option<bool> {
         Some(self.bit()? == 1)
     }
 
-    fn bits(&mut self, count: u32) -> Option<u32> {
+    pub(crate) fn bits(&mut self, count: u32) -> Option<u32> {
         (0..count).try_fold(0, |value, _| Some(value << 1 | self.bit()?))
     }
 
-    fn skip(&mut self, count: usize) -> Option<()> {
+    pub(crate) fn skip(&mut self, count: usize) -> Option<()> {
         self.position += count;
         (self.position <= self.bytes.len() * 8).then_some(())
     }
 
     /// An unsigned Exp-Golomb code.
-    fn ue(&mut self) -> Option<u32> {
+    pub(crate) fn ue(&mut self) -> Option<u32> {
         let mut zeros = 0;
         while self.bit()? == 0 {
             zeros += 1;
@@ -85,7 +85,7 @@ impl Bits {
     }
 
     /// A signed Exp-Golomb code, skipped.
-    fn se(&mut self) -> Option<()> {
+    pub(crate) fn se(&mut self) -> Option<()> {
         self.ue().map(|_| ())
     }
 }
@@ -113,7 +113,7 @@ pub(crate) fn avc_codec_string(avcc: &[u8]) -> Result<String, MediaError> {
 }
 
 /// A scaling list of `size` entries, skipped.
-fn skip_scaling_list(bits: &mut Bits, size: usize) -> Option<()> {
+pub(crate) fn skip_scaling_list(bits: &mut Bits, size: usize) -> Option<()> {
     let (mut last, mut next) = (8i64, 8i64);
     for _ in 0..size {
         if next != 0 {
@@ -134,7 +134,17 @@ fn skip_scaling_list(bits: &mut Bits, size: usize) -> Option<()> {
 /// `max_num_reorder_frames` of an H.264 SPS's `bitstream_restriction`, None
 /// when it has none.
 fn avc_sps_reorder_depth(sps: &[u8]) -> Option<Option<u32>> {
-    let profile = sps[1];
+    let mut bits = avc_sps_to_vui_flag(sps)?;
+    if !bits.flag()? {
+        return Some(None); // no VUI
+    }
+    avc_vui_reorder_depth(&mut bits)
+}
+
+/// An H.264 SPS (header included) read up to `vui_parameters_present_flag`,
+/// which is the next bit.
+pub(crate) fn avc_sps_to_vui_flag(sps: &[u8]) -> Option<Bits> {
+    let profile = *sps.get(1)?;
     let mut bits = Bits::new(unescaped(sps.get(4..)?));
     bits.ue()?; // seq_parameter_set_id
     if PROFILES_WITH_CHROMA_FORMAT.contains(&profile) {
@@ -182,9 +192,12 @@ fn avc_sps_reorder_depth(sps: &[u8]) -> Option<Option<u32>> {
             bits.ue()?;
         }
     }
-    if !bits.flag()? {
-        return Some(None); // no VUI
-    }
+    Some(bits)
+}
+
+/// `max_num_reorder_frames` of an H.264 VUI's `bitstream_restriction`, the
+/// VUI read from its first bit.
+fn avc_vui_reorder_depth(bits: &mut Bits) -> Option<Option<u32>> {
     if bits.flag()? {
         // aspect_ratio_info_present_flag: aspect_ratio_idc, and Extended_SAR's sizes.
         if bits.bits(8)? == 255 {
@@ -211,11 +224,11 @@ fn avc_sps_reorder_depth(sps: &[u8]) -> Option<Option<u32>> {
     }
     let nal_hrd = bits.flag()?;
     if nal_hrd {
-        skip_hrd(&mut bits)?;
+        skip_hrd(bits)?;
     }
     let vcl_hrd = bits.flag()?;
     if vcl_hrd {
-        skip_hrd(&mut bits)?;
+        skip_hrd(bits)?;
     }
     if nal_hrd || vcl_hrd {
         bits.bit()?; // low_delay_hrd_flag
@@ -271,6 +284,14 @@ pub(crate) fn avc_sps_format(sps: &[u8]) -> Option<(u8, u8, u8)> {
 /// `max_num_reorder_frames`, None when the SPS has no `bitstream_restriction`.
 pub(crate) fn avc_reorder_depth(avcc: &[u8]) -> Result<Option<u32>, MediaError> {
     avc_sps_reorder_depth(avc_sps(avcc)?).ok_or_else(|| malformed("avcC"))
+}
+
+/// The first SPS of an `avcC` or `hvcC` record, header included.
+pub(crate) fn record_sps(codec: crate::annexb::Codec, record: &[u8]) -> Result<&[u8], MediaError> {
+    match codec {
+        crate::annexb::Codec::H264 => avc_sps(record),
+        crate::annexb::Codec::Hevc => hevc_sps(record),
+    }
 }
 
 /// The first SPS (NAL type 33) of an `hvcC` record, header included.
@@ -335,7 +356,7 @@ pub(crate) fn hevc_codec_string(hvcc: &[u8]) -> Result<String, MediaError> {
 
 /// An HEVC `profile_tier_level()` with `sub_layers` sub-layers beyond the
 /// first, skipped.
-fn skip_profile_tier_level(bits: &mut Bits, max_sub_layers_minus1: u32) -> Option<()> {
+pub(crate) fn skip_profile_tier_level(bits: &mut Bits, max_sub_layers_minus1: u32) -> Option<()> {
     bits.skip(96)?; // general profile (88 bits) and level (8)
     let mut present = Vec::new();
     for _ in 0..max_sub_layers_minus1 {
