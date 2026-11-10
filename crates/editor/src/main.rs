@@ -73,12 +73,12 @@ mod widgets;
 mod worker;
 
 use actions::{
-    ClearExportRange, CloseWindow, CreateNewProject, ExportProject, GoToEnd, GoToIn, GoToOut,
-    GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject, PausePlayback,
-    PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins, ReloadProject,
-    SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder, ShowProblems,
-    ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo, ZoomTimelineIn,
-    ZoomTimelineOut, ZoomTimelineToFit,
+    ClearExportRange, CloseWindow, ConfirmExport, CreateNewProject, ExportProject, GoToEnd, GoToIn,
+    GoToOut, GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject,
+    PausePlayback, PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins,
+    ReloadProject, SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder,
+    ShowProblems, ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo,
+    ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit,
 };
 use inline_text_view::EditEvent;
 use source::PropertyArgs;
@@ -203,6 +203,8 @@ fn run() -> anyhow::Result<()> {
             KeyBinding::new(secondary!("w"), CloseWindow, Some("CelestaEditor")),
             KeyBinding::new(secondary!("q"), Quit, None),
             KeyBinding::new(secondary!("shift-e"), ExportProject, Some("CelestaEditor")),
+            // Enter runs the export page's Export… from anywhere in it.
+            KeyBinding::new("enter", ConfirmExport, Some("ExportPage")),
             KeyBinding::new("i", SetExportIn, EDITOR_KEYS),
             KeyBinding::new("o", SetExportOut, EDITOR_KEYS),
             KeyBinding::new("shift-x", ClearExportRange, EDITOR_KEYS),

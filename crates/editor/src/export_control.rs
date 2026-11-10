@@ -1,5 +1,5 @@
 use crate::actions::{ClearExportRange, ExportProject, SetExportIn, SetExportOut};
-use crate::export_page::view::{ExportPage, ExportPageEvent, open_export_dialog};
+use crate::export_page::view::{ExportPage, ExportPageEvent};
 use crate::export_worker::{ExportRequest, ExportSource};
 use crate::helpers::{ExportLoudness, export_output, export_range_for, export_suggested_name};
 use crate::inline_text_view::EditEvent;
@@ -89,8 +89,8 @@ impl EditorView {
             }
         };
         let range = self.export_range_label();
-        dialog.update(cx, |dialog, cx| dialog.set_range(range, cx));
-        open_export_dialog(&dialog, window, cx);
+        let settable = !self.is_react_preview();
+        dialog.update(cx, |dialog, cx| dialog.set_range(range, settable, cx));
         cx.notify();
     }
 
@@ -141,8 +141,11 @@ impl EditorView {
             ExportPageEvent::Loudness(loudness) => self.set_export_loudness(*loudness, cx),
             ExportPageEvent::ClearRange => {
                 self.clear_export_range(cx);
-                dialog.update(cx, |dialog, cx| dialog.set_range(None, cx));
+                let settable = !self.is_react_preview();
+                dialog.update(cx, |dialog, cx| dialog.set_range(None, settable, cx));
             }
+            // Task 7 shows the page and closes it here.
+            ExportPageEvent::Close => {}
         }
     }
 

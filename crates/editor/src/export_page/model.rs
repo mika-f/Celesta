@@ -304,6 +304,14 @@ impl ExportModel {
         self.choice.as_ref()
     }
 
+    /// Whether the export has audio: an audio encoder is chosen and the
+    /// muxer takes audio.
+    pub(crate) fn exports_audio(&self) -> bool {
+        self.choice.as_ref().is_some_and(|choice| {
+            choice.audio.is_some() && self.muxer(&choice.muxer).is_some_and(takes_audio)
+        })
+    }
+
     /// Takes a resolve's components, and the settings it chose that are
     /// not their defaults, as the choice; `selected` is the preset it was
     /// resolved from, and `asked` what the resolve was asked for.
@@ -1258,6 +1266,17 @@ mod tests {
         );
         assert!(ivf.encoder_options(Track::Audio).is_empty());
         assert_eq!(ivf.extension().as_deref(), Some("ivf"));
+    }
+
+    #[test]
+    fn audio_is_exported_with_an_encoder_and_a_muxer_taking_it() {
+        let registry = registry();
+        assert!(!model(&registry).exports_audio(), "nothing chosen yet");
+        let mut mp4 = resolved_model(&registry, "export.mp4");
+        assert!(mp4.exports_audio());
+        mp4.choose_encoder(Track::Audio, None);
+        assert!(!mp4.exports_audio());
+        assert!(!resolved_model(&registry, "export.ivf").exports_audio());
     }
 
     #[test]
