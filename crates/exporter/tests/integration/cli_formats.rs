@@ -49,11 +49,16 @@ fn json_reports_a_png_path_without_frame_selection_as_unsupported_output() {
 }
 
 /// Runs the exporter with `args` and the test codec as its only media
-/// plugin, and returns its exit status and stdout.
+/// plugin (an empty home, so no user plugin folder or settings), and
+/// returns its exit status and stdout.
 fn run(args: &[&str]) -> (bool, String) {
     let plugin = TestCodecPlugin::new();
+    let home = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
         .env_remove(PLUGIN_PATH_ENV)
+        .env("HOME", home.path())
+        .env("XDG_DATA_HOME", home.path())
+        .env("APPDATA", home.path())
         .arg("--plugin-dir")
         .arg(plugin.folder())
         .args(args)
