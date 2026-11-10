@@ -88,6 +88,7 @@ mod meter;
 mod timecode;
 mod timeline;
 mod timeline_drag;
+mod timeline_geometry;
 mod viewer;
 
 /// A keystroke with the platform's primary modifier: ⌘ on macOS, Ctrl

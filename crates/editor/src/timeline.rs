@@ -32,6 +32,7 @@ use crate::layer_select::display_path;
 use crate::scene_entries::SceneEdge;
 use crate::timecode::{format_timecode, nominal_fps, ruler_scale};
 use crate::timeline_drag::{BandGrip, BandGrips, draggable_band, edge_width};
+use crate::timeline_geometry::TimelineGeometry;
 use crate::timing::{SET_TIMING_NOTE, SetTimingOffer};
 use crate::view::EditorView;
 use crate::waveform::{level_at_time, waveform_segment};
@@ -303,9 +304,10 @@ impl EditorView {
     /// Window x of composition frame `frame` on the lanes, which may lie
     /// outside them.
     pub(crate) fn frame_x(&self, frame: f64) -> f32 {
-        let left = self
-            .lane_bounds()
-            .map_or(TRACK_HEADER_WIDTH, |bounds| f32::from(bounds.origin.x));
+        let left = self.lane_bounds().map_or(
+            f32::from(self.timeline_geometry.get().track_header_width),
+            |bounds| f32::from(bounds.origin.x),
+        );
         let view = self.lane_view();
         left + view.x(frame / view.end_frame) * self.lane_width()
     }
@@ -318,11 +320,13 @@ impl EditorView {
 
     /// Composition fraction under window position `x`.
     fn timeline_fraction_at(&self, x: Pixels) -> f64 {
-        let (left, width) = self
-            .lane_bounds()
-            .map_or((TRACK_HEADER_WIDTH, FALLBACK_LANE_WIDTH), |bounds| {
-                (f32::from(bounds.origin.x), f32::from(bounds.size.width))
-            });
+        let (left, width) = self.lane_bounds().map_or(
+            (
+                f32::from(self.timeline_geometry.get().track_header_width),
+                FALLBACK_LANE_WIDTH,
+            ),
+            |bounds| (f32::from(bounds.origin.x), f32::from(bounds.size.width)),
+        );
         let local = ((f32::from(x) - left) / width.max(1.0)).clamp(0.0, 1.0) as f64;
         let (zoom, view_start) = self.timeline_view();
         (view_start + local / zoom).clamp(0.0, 1.0)
@@ -616,7 +620,9 @@ impl EditorView {
         self.timeline_view_start = (grab_view_start + delta).clamp(0.0, 1.0);
     }
 
-    pub(crate) fn timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn timeline(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.timeline_geometry
+            .set(TimelineGeometry::new(window.rem_size()));
         let view = self.lane_view();
         let react = self.is_react_preview();
         let (visual, audio) = timeline_rows(self.timeline_tracks(), usize::from(react));
