@@ -1,12 +1,17 @@
-//! The plugin's components: their ids, settings schemas, and what
-//! `describe` says of each, from the encoders `MFTEnumEx` lists. Nothing
-//! here calls Media Foundation, so it builds and is tested on every system;
-//! the lists come from `mf/enumerate.rs` on Windows.
+//! The plugin's components: their ids, settings schemas, what `describe`
+//! says of each (from the encoders `MFTEnumEx` lists), the input a video
+//! encoder takes of an offer, and the `ICodecAPI` values its settings
+//! become. Nothing here calls Media Foundation, so it builds and is tested
+//! on every system; the lists come from `mf/enumerate.rs` on Windows.
+//!
+//! The settings helpers follow `plugins/avfoundation/src/components.rs`
+//! (P5), which is private to that crate.
 
 use crate::DECODER_ID;
+use celesta_media::settings::validate;
 use celesta_media::{
-    ComponentDescription, ComponentKind, PixelFormat, SampleRates, SelectOption, SettingField,
-    SettingKind, SettingValue,
+    ComponentDescription, ComponentKind, InvalidSetting, MediaError, PixelFormat, SampleRates,
+    SelectOption, SettingField, SettingKind, SettingValue, Settings,
 };
 
 /// A video encoder component.
@@ -75,7 +80,7 @@ impl VideoCodec {
 
     /// Why `describe` calls it unavailable when `MFTEnumEx` lists no encoder
     /// for it.
-    const fn missing_reason(self) -> &'static str {
+    pub(crate) const fn missing_reason(self) -> &'static str {
         match self {
             Self::H264 => "Media Foundation has no H.264 encoder on this system",
             Self::Hevc => {
@@ -83,6 +88,136 @@ impl VideoCodec {
             }
         }
     }
+
+    /// The codec's name in messages.
+    pub(crate) const fn display_name(self) -> &'static str {
+        match self {
+            Self::H264 => "H.264",
+            Self::Hevc => "HEVC",
+        }
+    }
+}
+
+/// The settings `given` for `codec`, checked against its schema, with the
+/// defaults of those not given.
+pub(crate) fn checked_settings(
+    codec: VideoCodec,
+    given: &Settings,
+) -> Result<Settings, MediaError> {
+    validate(&codec.settings(), given)
+        .map_err(|InvalidSetting { key, message }| MediaError::InvalidSettings { key, message })
+}
+
+fn text<'a>(settings: &'a Settings, key: &str) -> &'a str {
+    match settings.get(key) {
+        Some(SettingValue::String(value)) => value,
+        _ => "",
+    }
+}
+
+/// A whole-number setting; none when its field is hidden.
+fn whole(settings: &Settings, key: &str) -> Option<u32> {
+    match settings.get(key) {
+        Some(SettingValue::Number(value)) => Some(value.clamp(0.0, f64::from(u32::MAX)) as u32),
+        _ => None,
+    }
+}
+
+/// Whether `settings` ask for 10-bit HEVC.
+fn ten_bit(settings: &Settings) -> bool {
+    text(settings, "bitDepth") == "10"
+}
+
+/// What `codec` takes of `offered` (best first): 4:2:0 YUV of its bit depth
+/// when offered, else RGBA of that depth, which the plugin converts. It
+/// never keeps alpha.
+pub(crate) fn choose_input(
+    codec: VideoCodec,
+    settings: &Settings,
+    offered: &[PixelFormat],
+) -> Result<PixelFormat, MediaError> {
+    let wanted = match codec {
+        VideoCodec::Hevc if ten_bit(settings) => [PixelFormat::P010, PixelFormat::Rgba16],
+        VideoCodec::H264 | VideoCodec::Hevc => [PixelFormat::Nv12, PixelFormat::Rgba8],
+    };
+    wanted
+        .into_iter()
+        .find(|format| offered.contains(format))
+        .ok_or_else(|| {
+            let names: Vec<String> = wanted.iter().map(ToString::to_string).collect();
+            MediaError::InvalidSettings {
+                key: "input".to_owned(),
+                message: format!("needs {}", names.join(" or ")),
+            }
+        })
+}
+
+/// The encoder profile, which the output type's `MF_MT_MPEG2_PROFILE` gives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Profile {
+    H264High,
+    H264Main,
+    H264Baseline,
+    HevcMain,
+    HevcMain10,
+}
+
+/// One `ICodecAPI` value a video encoder's settings set:
+/// `CODECAPI_AVEncCommonRateControlMode` with `CODECAPI_AVEncCommonQuality`
+/// (0 to 100) or `CODECAPI_AVEncCommonMeanBitRate` (bit/s),
+/// `CODECAPI_AVEncMPVGOPSize` (frames), `CODECAPI_AVEncMPVDefaultBPictureCount`,
+/// and `CODECAPI_AVEncCommonLowLatency`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CodecSetting {
+    RateControlQuality(u32),
+    RateControlMeanBitRate(u32),
+    GopSize(u32),
+    BPictureCount(u32),
+    LowLatency(bool),
+}
+
+/// The B-pictures between references when `bFrames` is on.
+const B_PICTURES: u32 = 2;
+
+/// The profile and `ICodecAPI` values `settings` give `codec`, checked
+/// against its schema (the defaults fill what is not given). Baseline has
+/// no B-frames, whatever `bFrames` says.
+pub(crate) fn codec_settings(
+    codec: VideoCodec,
+    settings: &Settings,
+) -> Result<(Profile, Vec<CodecSetting>), MediaError> {
+    let settings = checked_settings(codec, settings)?;
+    let profile = match codec {
+        VideoCodec::H264 => match text(&settings, "profile") {
+            "main" => Profile::H264Main,
+            "baseline" => Profile::H264Baseline,
+            _ => Profile::H264High,
+        },
+        VideoCodec::Hevc if ten_bit(&settings) => Profile::HevcMain10,
+        VideoCodec::Hevc => Profile::HevcMain,
+    };
+    let mut values = Vec::new();
+    if text(&settings, "rateControl") == "bitrate" {
+        values.extend(whole(&settings, "bitrate").map(CodecSetting::RateControlMeanBitRate));
+    } else {
+        values.extend(whole(&settings, "quality").map(CodecSetting::RateControlQuality));
+    }
+    values.extend(whole(&settings, "keyframeInterval").map(CodecSetting::GopSize));
+    let b_frames = profile != Profile::H264Baseline
+        && settings.get("bFrames") != Some(&SettingValue::Boolean(false));
+    values.push(CodecSetting::BPictureCount(if b_frames {
+        B_PICTURES
+    } else {
+        0
+    }));
+    values.push(CodecSetting::LowLatency(false));
+    Ok((profile, values))
+}
+
+/// Whether `settings` let the encoder be the GPU's (`hardware`, on unless
+/// turned off).
+pub(crate) fn hardware(settings: &Settings) -> bool {
+    settings.get("hardware") != Some(&SettingValue::Boolean(false))
 }
 
 /// An audio encoder component.
@@ -188,12 +323,13 @@ pub(crate) fn describe_from(
 
 /// `kind` `id` as unavailable because `MFStartup` failed with `error`.
 fn not_started(kind: ComponentKind, id: &str, error: &str) -> ComponentDescription {
-    ComponentDescription::unavailable(
-        kind,
-        id,
-        format!(
-            "Media Foundation is not available on this system ({error}); on Windows Server add the Media Foundation feature, on an N edition install the Media Feature Pack"
-        ),
+    ComponentDescription::unavailable(kind, id, not_started_reason(error))
+}
+
+/// Why every component is unavailable when `MFStartup` failed with `error`.
+pub(crate) fn not_started_reason(error: &str) -> String {
+    format!(
+        "Media Foundation is not available on this system ({error}); on Windows Server add the Media Foundation feature, on an N edition install the Media Feature Pack"
     )
 }
 
@@ -623,6 +759,166 @@ mod tests {
             setting(&h264, "quality").group.as_deref(),
             Some("Rate control")
         );
+    }
+
+    fn settings(pairs: &[(&str, SettingValue)]) -> Settings {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), value.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn inputs_follow_the_offer() {
+        use celesta_media::{MediaError, PixelFormat::*};
+        let none = Settings::new();
+        let ten = settings(&[("bitDepth", text("10"))]);
+        let offerable = PixelFormat::OFFERABLE;
+        assert_eq!(
+            choose_input(VideoCodec::H264, &none, &offerable).unwrap(),
+            Nv12
+        );
+        assert_eq!(
+            choose_input(VideoCodec::H264, &none, &[Rgba16, Rgba8]).unwrap(),
+            Rgba8
+        );
+        assert_eq!(
+            choose_input(VideoCodec::Hevc, &none, &offerable).unwrap(),
+            Nv12
+        );
+        assert_eq!(
+            choose_input(VideoCodec::Hevc, &none, &[Rgba16, Rgba8]).unwrap(),
+            Rgba8
+        );
+        assert_eq!(
+            choose_input(VideoCodec::Hevc, &ten, &offerable).unwrap(),
+            P010
+        );
+        assert_eq!(
+            choose_input(VideoCodec::Hevc, &ten, &[Rgba16, Rgba8]).unwrap(),
+            Rgba16
+        );
+        for (codec, given) in [
+            (VideoCodec::H264, &none),
+            (VideoCodec::Hevc, &none),
+            (VideoCodec::Hevc, &ten),
+        ] {
+            assert!(
+                matches!(
+                    choose_input(codec, given, &[Yuv420p]),
+                    Err(MediaError::InvalidSettings { key, .. }) if key == "input"
+                ),
+                "{codec:?} {given:?}"
+            );
+        }
+        // 10-bit HEVC takes no 8-bit input.
+        assert!(choose_input(VideoCodec::Hevc, &ten, &[Nv12, Rgba8]).is_err());
+    }
+
+    #[test]
+    fn settings_become_codec_api_values() {
+        use CodecSetting::*;
+        let none = Settings::new();
+        assert_eq!(
+            codec_settings(VideoCodec::H264, &none).unwrap(),
+            (
+                Profile::H264High,
+                vec![
+                    RateControlQuality(70),
+                    GopSize(250),
+                    BPictureCount(2),
+                    LowLatency(false)
+                ]
+            )
+        );
+        assert_eq!(
+            codec_settings(VideoCodec::H264, &filled(&VideoCodec::H264.settings())).unwrap(),
+            codec_settings(VideoCodec::H264, &none).unwrap()
+        );
+        let by_bitrate = settings(&[
+            ("rateControl", text("bitrate")),
+            ("bitrate", SettingValue::Number(5_000_000.0)),
+            ("bFrames", SettingValue::Boolean(false)),
+        ]);
+        assert_eq!(
+            codec_settings(VideoCodec::H264, &by_bitrate).unwrap().1,
+            [
+                RateControlMeanBitRate(5_000_000),
+                GopSize(250),
+                BPictureCount(0),
+                LowLatency(false)
+            ]
+        );
+        let interval = settings(&[
+            ("keyframeInterval", SettingValue::Number(60.0)),
+            ("quality", SettingValue::Number(35.0)),
+        ]);
+        assert_eq!(
+            codec_settings(VideoCodec::H264, &interval).unwrap().1[..2],
+            [RateControlQuality(35), GopSize(60)]
+        );
+        for (profile, expected) in [
+            ("main", Profile::H264Main),
+            ("baseline", Profile::H264Baseline),
+        ] {
+            let given = settings(&[("profile", text(profile))]);
+            assert_eq!(
+                codec_settings(VideoCodec::H264, &given).unwrap().0,
+                expected
+            );
+        }
+        // Baseline has no B-frames, whatever `bFrames` says.
+        for b_frames in [true, false] {
+            let given = settings(&[
+                ("profile", text("baseline")),
+                ("bFrames", SettingValue::Boolean(b_frames)),
+            ]);
+            assert!(
+                codec_settings(VideoCodec::H264, &given)
+                    .unwrap()
+                    .1
+                    .contains(&BPictureCount(0))
+            );
+        }
+        let main = settings(&[("profile", text("main"))]);
+        assert!(
+            codec_settings(VideoCodec::H264, &main)
+                .unwrap()
+                .1
+                .contains(&BPictureCount(2))
+        );
+        assert_eq!(
+            codec_settings(VideoCodec::Hevc, &none).unwrap(),
+            (
+                Profile::HevcMain,
+                vec![
+                    RateControlQuality(70),
+                    GopSize(250),
+                    BPictureCount(2),
+                    LowLatency(false)
+                ]
+            )
+        );
+        let ten = settings(&[("bitDepth", text("10"))]);
+        assert_eq!(
+            codec_settings(VideoCodec::Hevc, &ten).unwrap().0,
+            Profile::HevcMain10
+        );
+        assert!(matches!(
+            codec_settings(VideoCodec::H264, &settings(&[("profile", text("high10"))])),
+            Err(celesta_media::MediaError::InvalidSettings { key, .. }) if key == "profile"
+        ));
+        assert!(matches!(
+            codec_settings(VideoCodec::Hevc, &settings(&[("profile", text("main"))])),
+            Err(celesta_media::MediaError::InvalidSettings { key, .. }) if key == "profile"
+        ));
+
+        assert!(hardware(&none));
+        assert!(hardware(&filled(&VideoCodec::H264.settings())));
+        assert!(!hardware(&settings(&[(
+            "hardware",
+            SettingValue::Boolean(false)
+        )])));
     }
 
     #[test]

@@ -25,21 +25,19 @@ pub const DECODER_ID: &str = "mediafoundation";
 )]
 mod components;
 
-// Nothing outside these modules' tests calls them yet: Task 4's Windows
-// code does, and then this narrows to `not(any(windows, test))`.
+// Nothing outside its tests calls it yet: Task 5's Windows AAC encoder
+// does, and then this narrows to `not(any(windows, test))`.
 #[cfg_attr(
     not(test),
     expect(
         dead_code,
-        reason = "only the Windows encoders use it outside its tests"
+        reason = "only the Windows AAC encoder uses it outside its tests"
     )
 )]
 mod aac_user_data;
 
-// Nothing outside these modules' tests calls them yet: Task 4's Windows
-// code does, and then this narrows to `not(any(windows, test))`.
 #[cfg_attr(
-    not(test),
+    not(any(windows, test)),
     expect(
         dead_code,
         reason = "only the Windows encoders use it outside its tests"
@@ -47,10 +45,8 @@ mod aac_user_data;
 )]
 mod annexb;
 
-// Nothing outside these modules' tests calls them yet: Task 4's Windows
-// code does, and then this narrows to `not(any(windows, test))`.
 #[cfg_attr(
-    not(test),
+    not(any(windows, test)),
     expect(
         dead_code,
         reason = "only the Windows encoders use it outside its tests"
@@ -58,10 +54,8 @@ mod annexb;
 )]
 mod color;
 
-// Nothing outside these modules' tests calls them yet: Task 4's Windows
-// code does, and then this narrows to `not(any(windows, test))`.
 #[cfg_attr(
-    not(test),
+    not(any(windows, test)),
     expect(
         dead_code,
         reason = "only the Windows encoders use it outside its tests"
@@ -69,10 +63,8 @@ mod color;
 )]
 mod convert;
 
-// Nothing outside these modules' tests calls them yet: Task 4's Windows
-// code does, and then this narrows to `not(any(windows, test))`.
 #[cfg_attr(
-    not(test),
+    not(any(windows, test)),
     expect(
         dead_code,
         reason = "only the Windows encoders use it outside its tests"
@@ -80,10 +72,8 @@ mod convert;
 )]
 mod hns;
 
-// Nothing outside these modules' tests calls them yet: Task 4's Windows
-// code does, and then this narrows to `not(any(windows, test))`.
 #[cfg_attr(
-    not(test),
+    not(any(windows, test)),
     expect(
         dead_code,
         reason = "only the Windows encoders use it outside its tests"

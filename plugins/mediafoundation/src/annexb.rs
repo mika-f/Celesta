@@ -33,6 +33,13 @@ impl Codec {
     }
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "for a muxer, which Task 1's ruling B leaves unbuilt; only its tests use it"
+    )
+)]
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
 
 /// The NAL units of an Annex B stream, without their start codes (`00 00
@@ -179,6 +186,13 @@ pub(crate) fn hvcc_from(sets: &ParameterSets) -> Result<Vec<u8>, MediaError> {
 
 /// Every parameter set in an `avcC` or `hvcC` record, in order, each a NAL
 /// unit with its header.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "for a muxer, which Task 1's ruling B leaves unbuilt; only its tests use it"
+    )
+)]
 pub(crate) fn record_units(codec: Codec, record: &[u8]) -> Result<Vec<&[u8]>, MediaError> {
     let what = match codec {
         Codec::H264 => "avcC",
@@ -238,6 +252,13 @@ pub(crate) fn record_units(codec: Codec, record: &[u8]) -> Result<Vec<&[u8]>, Me
 
 /// The parameter sets of an `avcC` or `hvcC` record as Annex B, each behind
 /// a 4-byte start code: the encoder's sequence header.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "for a muxer, which Task 1's ruling B leaves unbuilt; only its tests use it"
+    )
+)]
 pub(crate) fn sequence_header(codec: Codec, record: &[u8]) -> Result<Vec<u8>, MediaError> {
     let mut annexb = Vec::new();
     for unit in record_units(codec, record)? {
@@ -249,6 +270,13 @@ pub(crate) fn sequence_header(codec: Codec, record: &[u8]) -> Result<Vec<u8>, Me
 
 /// A sample of 4-byte length-prefixed NAL units as Annex B, each behind a
 /// 4-byte start code.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "for a muxer, which Task 1's ruling B leaves unbuilt; only its tests use it"
+    )
+)]
 pub(crate) fn to_annexb(sample: &[u8]) -> Result<Vec<u8>, MediaError> {
     let bad = || malformed("sample");
     let mut annexb = Vec::with_capacity(sample.len());
