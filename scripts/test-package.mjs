@@ -67,7 +67,7 @@ export default function Root() {
   assert.ok(messages[1].scene);
   // Celesta links no FFmpeg: the MP4 below is written by the bundled media
   // plugin, which carries the GPL its libx264 needs.
-  const codec = join(packageDirectory, mac ? 'Contents/PlugIns/ffmpeg' : 'plugins/ffmpeg');
+  const codec = join(packageDirectory, mac ? 'Contents/Resources/PlugIns/ffmpeg' : 'plugins/ffmpeg');
   assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the media plugin');
   const codecManifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
   assert.ok(codecManifest.roles?.includes('media'), 'The media plugin must have the media role');

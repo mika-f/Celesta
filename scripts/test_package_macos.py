@@ -53,7 +53,7 @@ class MacPackageValidationTests(unittest.TestCase):
     def test_plugin_libraries_resolve_from_the_plugin_program_folder(self):
         with tempfile.TemporaryDirectory() as directory:
             contents = Path(directory) / "Celesta.app/Contents"
-            plugin = contents / "PlugIns/ffmpeg"
+            plugin = contents / "Resources/PlugIns/ffmpeg"
             (plugin / "Frameworks").mkdir(parents=True)
             (plugin / "bin/macos-aarch64").mkdir(parents=True)
             (plugin / "celesta-plugin.json").write_text(json.dumps(

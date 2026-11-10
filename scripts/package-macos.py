@@ -105,7 +105,7 @@ def validate_dependencies(binary, contents, listing):
         if dependency.startswith("@executable_path/"):
             if binary.suffix != ".dylib":
                 executable_directory = binary.parent
-            elif binary.parent.parent.parent.name == "PlugIns":
+            elif binary.parent.parent.parent == contents / "Resources/PlugIns":
                 # A plugin's libraries, in <plugin>/Frameworks, load for the
                 # program its manifest names.
                 executable_directory = plugin_program(binary.parent.parent).parent
@@ -301,10 +301,16 @@ def main():
     # script builds it in the plugins workspace (plugins/target, so not with
     # CARGO_TARGET_DIR; with --skip-build Cargo finds it current) and lays the
     # folder out; --target matches CARGO_BUILD_TARGET, where the script looks.
-    codec = contents / "PlugIns" / "ffmpeg"
+    # Plugins go in Resources/PlugIns, not Contents/PlugIns: codesign takes
+    # everything in Contents/PlugIns for nested code, and a plugin folder also
+    # holds its manifest and licenses, so the app could not be signed there.
+    # In Resources they are sealed as resources, and their Mach-O files are
+    # signed one by one below like the app's other executables.
+    plugins = resources / "PlugIns"
+    codec = plugins / "ffmpeg"
     codec_env = {name: value for name, value in build_env.items() if name != "CARGO_TARGET_DIR"}
     run(helpers / "node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins/ffmpeg",
-        "--out", contents / "PlugIns", "--target", target, env=codec_env)
+        "--out", plugins, "--target", target, env=codec_env)
     program = plugin_program(codec)
     frameworks_from_program = os.path.relpath(codec / "Frameworks", program.parent)
     run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", program,
