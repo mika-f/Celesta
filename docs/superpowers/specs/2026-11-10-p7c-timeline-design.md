@@ -60,7 +60,7 @@ New functions, all returning `Rems` (pixel values at the 13px base):
 | `clip_inset()` | 0.25rem ≈ 3px (space above and below a clip) | 3px |
 | `clip_label_height()` | 1.25rem ≈ 16px (the name strip) | — |
 | `chapter_lane_height()` | 1.75rem ≈ 23px | 22px |
-| `meter_column_width()` | 8.75rem ≈ 114px | 112px |
+| `meter_column_width()` | 10rem ≈ 130px (two monospace `text_sm` peak readouts fit under the bars) | 112px |
 | `volume_slider_width()` | 6.75rem ≈ 88px | 88px |
 
 The timeline footer uses the existing `toolbar_row_height()` (2rem ≈ 26px,

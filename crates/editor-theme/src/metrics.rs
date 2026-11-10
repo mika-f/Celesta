@@ -80,7 +80,7 @@ pub fn chapter_lane_height() -> Rems {
 
 /// Width of the master meter column beside the timeline.
 pub fn meter_column_width() -> Rems {
-    rems(8.75)
+    rems(10.0)
 }
 
 /// Width of the preview-volume slider under the master meter.

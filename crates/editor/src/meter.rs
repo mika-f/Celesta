@@ -14,8 +14,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::{
-    App, Bounds, Hsla, IntoElement, ParentElement as _, Pixels, Styled as _, canvas, div, fill,
-    point, px, relative, rems, size,
+    App, Bounds, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
+    Styled as _, canvas, div, fill, point, px, relative, rems, size,
 };
 
 use celesta_editor_theme as theme;
@@ -173,7 +173,7 @@ pub fn audio_meter(
     let scale = div()
         .relative()
         .flex_none()
-        .w(rems(1.75))
+        .w(rems(1.25))
         .h_full()
         .font_family(mono.clone())
         .text_sm()
@@ -208,19 +208,26 @@ pub fn audio_meter(
             div()
                 .flex()
                 .gap_1()
-                .pl(rems(2.0))
+                .pl(rems(1.5))
                 .font_family(mono)
                 .text_sm()
-                .children(reading.hold.iter().map(|hold| {
+                .children(reading.hold.iter().enumerate().map(|(channel, hold)| {
                     div()
+                        .flex()
                         .flex_1()
-                        .text_center()
+                        .justify_center()
                         .text_color(if amplitude_db(*hold) > HOT_DB {
                             theme::meter(1.0)
                         } else {
                             muted
                         })
-                        .child(format_peak(*hold))
+                        .child(
+                            div()
+                                .flex_none()
+                                .whitespace_nowrap()
+                                .debug_selector(move || format!("meter-hold-{channel}-text"))
+                                .child(format_peak(*hold)),
+                        )
                 })),
         )
 }
@@ -272,11 +279,12 @@ fn paint_bars(
 #[cfg(test)]
 mod tests {
     use super::{
-        DENSE, FLOOR_DB, MasterLevels, SPARSE, TWELVE, amplitude_db, format_peak, scale_marks,
-        scale_position,
+        DENSE, FLOOR_DB, MasterLevels, MeterReading, SPARSE, TWELVE, amplitude_db, audio_meter,
+        format_peak, scale_marks, scale_position,
     };
     use celesta_media::AudioBuffer;
     use gpui_kit::px;
+    use std::rc::Rc;
 
     fn stereo(sample_rate: u32, frames: &[[f32; 2]]) -> AudioBuffer {
         AudioBuffer {
@@ -325,6 +333,71 @@ mod tests {
             MasterLevels::from_buffer(&buffer).reading(0.01).peak,
             [0.8, 0.8]
         );
+    }
+
+    /// The meter as the master column lays it out: its width less the
+    /// column's padding, at the base rem.
+    struct Host;
+
+    impl gpui_kit::Render for Host {
+        fn render(
+            &mut self,
+            window: &mut gpui_kit::Window,
+            cx: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            use celesta_editor_theme::metrics;
+            use gpui_kit::{InteractiveElement as _, ParentElement as _, Styled as _};
+            let reading = MeterReading {
+                peak: [0.069, 0.069],
+                hold: [0.069, 0.069],
+            };
+            gpui_kit::div()
+                .debug_selector(|| "meter-column".into())
+                .flex()
+                .flex_col()
+                .w(metrics::meter_column_width())
+                .h(px(240.))
+                .px(metrics::panel_padding())
+                .child(audio_meter(
+                    Some(reading),
+                    Rc::default(),
+                    window.rem_size() * 1.25,
+                    cx,
+                ))
+        }
+    }
+
+    #[gpui_kit::test]
+    fn peak_readouts_fit_the_column(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            celesta_editor_theme::init(cx);
+        });
+        let handle = cx.open_window(gpui_kit::size(px(400.), px(300.)), |window, cx| {
+            let host = cx.new(|_| Host);
+            gpui_kit::component::Root::new(host, window, cx)
+        });
+        let cx = &mut gpui_kit::VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        let column = cx.debug_bounds("meter-column").expect("the column");
+        let inner_right = column.right() - px(metrics_padding());
+        for (channel, selector) in ["meter-hold-0-text", "meter-hold-1-text"]
+            .into_iter()
+            .enumerate()
+        {
+            let hold = cx.debug_bounds(selector).expect("the readout text");
+            assert!(
+                hold.right() <= inner_right,
+                "channel {channel}: {:?} past {inner_right:?}",
+                hold.right()
+            );
+        }
+    }
+
+    fn metrics_padding() -> f32 {
+        celesta_editor_theme::metrics::panel_padding().0
+            * celesta_editor_theme::metrics::BASE_FONT_SIZE
     }
 
     #[test]
