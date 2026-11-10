@@ -11,12 +11,12 @@ Spec: `docs/superpowers/specs/2026-11-10-p7c-timeline-design.md`. Plan:
 
 | Token | Value |
 | --- | --- |
-| `track_header_width()` | 17rem ≈ 221px |
-| `ruler_height()` | 2.25rem ≈ 29px (also the meter's "Master" header) |
-| `video_track_height()` / `audio_track_height()` | 3rem / 4rem |
-| `clip_inset()` | 0.25rem, above and below a clip |
-| `clip_label_height()` | 1.25rem, a clip's name strip |
-| `chapter_lane_height()` | 1.75rem |
+| `track_header_width()` | 18rem ≈ 234px |
+| `ruler_height()` | 2.75rem ≈ 36px (also the meter's "Master" header) |
+| `video_track_height()` / `audio_track_height()` | 4rem / 5rem |
+| `clip_inset()` | 0.375rem, above and below a clip |
+| `clip_label_height()` | 1.5rem, a clip's name strip |
+| `chapter_lane_height()` | 2rem |
 | `meter_column_width()` | 10rem ≈ 130px |
 | `volume_slider_width()` | 6.75rem |
 
@@ -69,6 +69,14 @@ the column grew from the spec's 8.75rem to 10rem because the two readouts
 (`-23.2 -23.2`) overflowed it. The volume slider is on rems, and a drag maps
 across `volume_slider_width()` at the window's rem
 (`MasterVolumeDrag::slider_width`).
+
+**Spacing review.** The first build was too cramped; two rounds of inner
+padding, each launched for the user's review, set the token values above
+plus: 0.75rem between the header's lanes and the panel padding on both its
+ends, 0.5rem side padding on clip, chapter and composition names, 0.25rem
+above and below the waveform, ruler labels 0.375rem from the top and from
+their tick, a 3rem transport row, and 1rem side / 0.75rem vertical padding
+in the meter column. The right dock's spacing was passed to P7b (#805).
 
 ## Pixel rules
 

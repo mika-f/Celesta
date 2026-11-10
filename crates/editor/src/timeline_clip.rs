@@ -110,7 +110,7 @@ impl RenderOnce for ClipBlock {
                             .left(relative(self.label_offset))
                             .flex()
                             .items_center()
-                            .px_1()
+                            .px_2()
                             .text_sm()
                             .text_color(ink)
                             .whitespace_nowrap()
@@ -131,8 +131,8 @@ impl RenderOnce for ClipBlock {
                                 },
                             )
                             .absolute()
-                            .top(rems(0.125))
-                            .bottom(rems(0.125))
+                            .top(rems(0.25))
+                            .bottom(rems(0.25))
                             .left_0()
                             .right_0(),
                         )

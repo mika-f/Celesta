@@ -77,10 +77,10 @@ mod tests {
         for rem in [13.0, 16.0] {
             let geometry = TimelineGeometry::new(px(rem));
             assert_eq!(geometry.rem, px(rem));
-            assert_eq!(geometry.track_header_width, px(17.0 * rem));
-            assert_eq!(geometry.ruler_height, px(2.25 * rem));
-            assert_eq!(geometry.video_track_height, px(3.0 * rem));
-            assert_eq!(geometry.audio_track_height, px(4.0 * rem));
+            assert_eq!(geometry.track_header_width, px(18.0 * rem));
+            assert_eq!(geometry.ruler_height, px(2.75 * rem));
+            assert_eq!(geometry.video_track_height, px(4.0 * rem));
+            assert_eq!(geometry.audio_track_height, px(5.0 * rem));
             assert_eq!(geometry.label_spacing, px(12.0 * rem));
             assert_eq!(geometry.footer_height, px(2.0 * rem));
         }
@@ -92,6 +92,6 @@ mod tests {
             TimelineGeometry::default(),
             TimelineGeometry::new(px(metrics::BASE_FONT_SIZE))
         );
-        assert_eq!(TimelineGeometry::default().track_header_width, px(221.0));
+        assert_eq!(TimelineGeometry::default().track_header_width, px(234.0));
     }
 }

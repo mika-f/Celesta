@@ -357,7 +357,7 @@ mod tests {
                 .flex_col()
                 .w(metrics::meter_column_width())
                 .h(px(240.))
-                .px(metrics::panel_padding())
+                .px(gpui_kit::rems(1.0))
                 .child(audio_meter(
                     Some(reading),
                     Rc::default(),
@@ -395,9 +395,9 @@ mod tests {
         }
     }
 
+    /// The master column's side padding (`px_4`).
     fn metrics_padding() -> f32 {
-        celesta_editor_theme::metrics::panel_padding().0
-            * celesta_editor_theme::metrics::BASE_FONT_SIZE
+        1.0 * celesta_editor_theme::metrics::BASE_FONT_SIZE
     }
 
     #[test]

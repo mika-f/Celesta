@@ -183,11 +183,11 @@ impl RenderOnce for TrackHeader {
             .flex()
             .flex_none()
             .items_center()
-            .gap_2()
+            .gap_3()
             .w(metrics::track_header_width())
             .h_full()
             .pl(metrics::panel_padding())
-            .pr(rems(0.5))
+            .pr(metrics::panel_padding())
             .border_r_1()
             .border_color(theme.border)
             .child(

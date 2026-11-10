@@ -45,37 +45,37 @@ pub fn panel_padding() -> Rems {
 /// Width of the timeline's track header column (and the cells above and
 /// below it: the ruler's corner, the zoom controls).
 pub fn track_header_width() -> Rems {
-    rems(17.0)
+    rems(18.0)
 }
 
 /// Height of the timeline's ruler, and of the master meter's header beside it.
 pub fn ruler_height() -> Rems {
-    rems(2.25)
+    rems(2.75)
 }
 
 /// Height of a video (visual) track row.
 pub fn video_track_height() -> Rems {
-    rems(3.0)
+    rems(4.0)
 }
 
 /// Height of an audio track row: its clips have room for a waveform.
 pub fn audio_track_height() -> Rems {
-    rems(4.0)
+    rems(5.0)
 }
 
 /// Space between a track row's top and bottom edges and its clips.
 pub fn clip_inset() -> Rems {
-    rems(0.25)
+    rems(0.375)
 }
 
 /// Height of a clip's name strip, along its top.
 pub fn clip_label_height() -> Rems {
-    rems(1.25)
+    rems(1.5)
 }
 
 /// Height of one lane of the timeline's Chapters row.
 pub fn chapter_lane_height() -> Rems {
-    rems(1.75)
+    rems(2.0)
 }
 
 /// Width of the master meter column beside the timeline.

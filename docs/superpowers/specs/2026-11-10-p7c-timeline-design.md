@@ -42,8 +42,20 @@ In/Out, mute/solo) is unchanged.
 | How the ruler thins | Full `HH:MM:SS:FF` labels, spaced about twice a label's width; three tick tiers. |
 | In / Out buttons | lucide icons: `arrow-right-from-line` (In), `arrow-right-to-line` (Out). The footer's "Fit" becomes `unfold-horizontal`. |
 | Clip look | A name strip along the clip's top, one step darker than the clip; the body (and an audio clip's waveform) below it. |
-| Track heights | About today's: video 3rem, audio 4rem. |
+| Track heights | Video 4rem, audio 5rem: roomier than today, after the user's review of a launched build (first proposed as 3rem / 4rem). |
 | Geometry on tokens | `rem` tokens in `metrics`, and a `TimelineGeometry` value built from the window's `rem` at render for hit tests and painting. |
+
+## Spacing review (2026-11-11)
+
+The first build was too cramped for the user. Two rounds of inner padding,
+each launched for review, settled the values in the table below: taller
+tracks, clip insets and name strip, a taller ruler with its labels further
+from the top and from their tick, a wider track header with 0.75rem between
+its lanes and the panel padding on both ends, 0.5rem around a clip's,
+chapter's and composition block's name, 0.25rem above and below the
+waveform, a 3rem transport row, and 1rem side and 0.75rem vertical padding
+in the meter column. The right dock's spacing belongs to P7b (#805), which
+rewrites that panel, and was passed on to it.
 
 ## Tokens and geometry
 
@@ -53,13 +65,13 @@ New functions, all returning `Rems` (pixel values at the 13px base):
 
 | Token | Value | Today |
 | --- | --- | --- |
-| `track_header_width()` | 17rem ≈ 221px | 220px |
-| `ruler_height()` | 2.25rem ≈ 29px | 30px |
-| `video_track_height()` | 3rem ≈ 39px | 40px |
-| `audio_track_height()` | 4rem ≈ 52px | 52px |
-| `clip_inset()` | 0.25rem ≈ 3px (space above and below a clip) | 3px |
-| `clip_label_height()` | 1.25rem ≈ 16px (the name strip) | — |
-| `chapter_lane_height()` | 1.75rem ≈ 23px | 22px |
+| `track_header_width()` | 18rem ≈ 234px | 220px |
+| `ruler_height()` | 2.75rem ≈ 36px | 30px |
+| `video_track_height()` | 4rem ≈ 52px | 40px |
+| `audio_track_height()` | 5rem ≈ 65px | 52px |
+| `clip_inset()` | 0.375rem ≈ 5px (space above and below a clip) | 3px |
+| `clip_label_height()` | 1.5rem ≈ 20px (the name strip) | — |
+| `chapter_lane_height()` | 2rem ≈ 26px | 22px |
 | `meter_column_width()` | 10rem ≈ 130px (two monospace `text_sm` peak readouts fit under the bars) | 112px |
 | `volume_slider_width()` | 6.75rem ≈ 88px | 88px |
 
@@ -152,7 +164,7 @@ layers on the trailing side.
   In/Out buttons show at ≥ 37.5rem. These are today's 820px and 600px read as
   a design against a 16px `rem` (`metrics::scaled`), so they keep their
   proportion to the content. `transport_layout` takes the width in `rem`s.
-- The row's height stays `metrics::scaled(44.0)`.
+- The row is 3rem tall (was `metrics::scaled(44.0)`, 2.75rem).
 
 ## Timeline footer
 
