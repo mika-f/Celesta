@@ -8,7 +8,6 @@
     "decoders": [
       {
         "id": "ffmpeg",
-  "name": "FFmpeg",
         "name": "FFmpeg",
         "extensions": [
           "mp4", "m4v", "mov", "webm", "mkv", "avi", "mpg", "mpeg", "ts", "m2ts", "mts", "ogv", "gif",
