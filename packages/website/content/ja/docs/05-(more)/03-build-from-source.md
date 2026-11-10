@@ -11,15 +11,18 @@ LGPL ビルド（デコード、ProRes、AAC、PCM、muxer）です。追加の 
 `ffmpeg-opus`、`ffmpeg-vpx` はそれぞれ H.264、Opus、VP9 を提供し、GPL を有効にするのは
 x264 だけです。ビルド先の prefix は必ず別々にしてください。
 
-macOS では Homebrew で `pkg-config nasm x264 libvpx opus` をインストールします。
-Linux では `build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev
-libvpx-dev libopus-dev libclang-dev` が必要です。エディターには
-`libasound2-dev libxkbcommon-x11-dev libfontconfig-dev` も必要です。
-手順 2 でソースを取得した後、リポジトリのルートで実行します。
+手順 2 でソースを取得した後、リポジトリのルートで OS に合うコマンドを実行します。
+プラグインをビルドするシェルで、設定した環境変数を保持してください。
 
-```sh
-# macOS: external codec libraries for pkg-config
-# export PKG_CONFIG_PATH="$(brew --prefix x264)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig:$(brew --prefix libvpx)/lib/pkgconfig"
+::::tabs[Source build platform]{default="macOS"}
+:::tab[macOS]
+
+Xcode Command Line Tools と Homebrew を用意します。スクリプトは、それぞれ別の
+prefix に FFmpeg の dylib を構築します。
+
+```sh title="ネイティブビルドの依存関係"
+brew install pkg-config nasm x264 libvpx opus
+export PKG_CONFIG_PATH="$(brew --prefix x264)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig:$(brew --prefix libvpx)/lib/pkgconfig"
 for variant in standard x264 opus vpx; do
   FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
 done
@@ -29,9 +32,10 @@ export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfi
 export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 ```
 
-スクリプトは macOS では dylib、Linux では静的ライブラリをビルドします。
-Homebrew の GPL 構成の `ffmpeg@8` は `ffmpeg-x264` に利用できますが、標準プラグインには
-使えません。プラグインをビルドするシェルで、上記の環境変数を保持してください。
+Homebrew の GPL 構成の `ffmpeg@8` は `ffmpeg-x264` に利用できますが、標準プラグインには使えません。
+
+:::
+:::tab[Windows]
 
 Windows では vcpkg 2026.07.29（FFmpeg 8.1.x）と MSVC のビルドツールを使います。
 `ffmpeg[zlib]`（標準）、`ffmpeg[x264]`、`ffmpeg[opus]`、`ffmpeg[vpx]` を
@@ -40,6 +44,27 @@ Windows では vcpkg 2026.07.29（FFmpeg 8.1.x）と MSVC のビルドツール�
 `FFMPEG_VPX_VCPKG_ROOT` に追加版のルートを指定します。完全な設定例はリポジトリの
 setup-ffmpeg CI アクションにあります。標準版のルートに x264 を追加すると GPL 構成に
 変わるため、標準プラグインは起動を拒否します。
+
+:::
+:::tab[Linux]
+
+スクリプトは FFmpeg の静的ライブラリを構築します。Debian と Ubuntu では、
+ネイティブビルドとエディターに必要なシステムライブラリを先にインストールします。
+
+```sh title="ネイティブビルドの依存関係"
+sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libvpx-dev libopus-dev libclang-dev
+sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev
+for variant in standard x264 opus vpx; do
+  FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
+done
+export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
+export FFMPEG_X264_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/x264/lib/pkgconfig"
+export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfig"
+export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
+```
+
+:::
+::::
 
 ## 2. ソースを取得
 

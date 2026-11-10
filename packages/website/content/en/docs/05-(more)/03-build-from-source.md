@@ -11,15 +11,18 @@ standard LGPL build (decoding, ProRes, AAC, PCM and muxing). The optional
 `ffmpeg-x264`, `ffmpeg-opus` and `ffmpeg-vpx` builds add H.264, Opus and VP9.
 Only x264 enables GPL code. Never install these builds into the same prefix.
 
-On macOS, install `pkg-config`, `nasm`, `x264`, `libvpx` and `opus` with Homebrew.
-On Linux, install `build-essential nasm pkg-config curl xz-utils zlib1g-dev
-libx264-dev libvpx-dev libopus-dev libclang-dev`; the editor also needs
-`libasound2-dev libxkbcommon-x11-dev libfontconfig-dev`.
-After cloning the repository in step 2, run from its root:
+After cloning the repository in step 2, run the commands for your platform
+from its root. Keep these environment variables in the shell that builds plugins.
 
-```sh
-# macOS: external codec libraries for pkg-config
-# export PKG_CONFIG_PATH="$(brew --prefix x264)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig:$(brew --prefix libvpx)/lib/pkgconfig"
+::::tabs[Source build platform]{default="macOS"}
+:::tab[macOS]
+
+Install the Xcode Command Line Tools and Homebrew. The script builds FFmpeg
+dylibs with a separate prefix for each variant:
+
+```sh title="Native build dependencies"
+brew install pkg-config nasm x264 libvpx opus
+export PKG_CONFIG_PATH="$(brew --prefix x264)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig:$(brew --prefix libvpx)/lib/pkgconfig"
 for variant in standard x264 opus vpx; do
   FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
 done
@@ -29,9 +32,10 @@ export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfi
 export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 ```
 
-The script builds dylibs on macOS and static archives on Linux. Homebrew's
-GPL `ffmpeg@8` can be used for `ffmpeg-x264`, but cannot build the standard plugin.
-Keep these environment variables in the shell that builds plugins.
+Homebrew's GPL `ffmpeg@8` can be used for `ffmpeg-x264`, but cannot build the standard plugin.
+
+:::
+:::tab[Windows]
 
 On Windows, use vcpkg 2026.07.29 (FFmpeg 8.1.x) and the MSVC build tools.
 Use separate vcpkg installation roots for `ffmpeg[zlib]` (standard),
@@ -40,6 +44,27 @@ Use separate vcpkg installation roots for `ffmpeg[zlib]` (standard),
 `FFMPEG_X264_VCPKG_ROOT`, `FFMPEG_OPUS_VCPKG_ROOT`, and `FFMPEG_VPX_VCPKG_ROOT`
 to the optional roots. The repository's setup-ffmpeg CI action shows a complete
 Windows setup. Adding x264 to the standard root makes that build GPL and is rejected.
+
+:::
+:::tab[Linux]
+
+The script builds static FFmpeg libraries. On Debian and Ubuntu, install the
+native dependencies and the editor's system libraries first:
+
+```sh title="Native build dependencies"
+sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libvpx-dev libopus-dev libclang-dev
+sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev
+for variant in standard x264 opus vpx; do
+  FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
+done
+export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
+export FFMPEG_X264_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/x264/lib/pkgconfig"
+export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfig"
+export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
+```
+
+:::
+::::
 
 ## 2. Get the source
 
