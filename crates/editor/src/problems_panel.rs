@@ -4,6 +4,7 @@ use crate::actions::ShowProblems;
 use crate::problems::first_line;
 use crate::problems::{ActiveProblem, LogEntry, Severity, Source, fenced};
 use crate::view::{EditorView, RightTab};
+use celesta_editor_theme::metrics;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::clipboard::Clipboard;
 use gpui_kit::component::notification::{Notification, NotificationType};
@@ -23,21 +24,35 @@ impl EditorView {
         let count = self.problems.error_count() + self.problems.warning_count();
         let waiting = self.found_plugins.pending.len();
         let muted = cx.theme().muted_foreground;
+        let mono = cx.theme().mono_font_family.clone();
+        // Classic tabs: the selected one takes the panel's color and joins the
+        // content; the band matches `PanelHeader` so both docks share a line.
         let tabs = TabBar::new("right-dock-tabs")
-            .underline()
             // Four tabs outgrow a narrow dock; the rest stay a click away.
             .menu(true)
-            .px_3()
+            .h(metrics::panel_header_height())
             .selected_index(offered.iter().position(|tab| *tab == shown).unwrap_or(0))
             .children(offered.iter().map(|tab| match tab {
                 RightTab::Details if react_preview => Tab::new().label("React Preview"),
                 RightTab::Details => Tab::new().label("Inspector"),
                 RightTab::Properties => Tab::new().label("Properties"),
                 RightTab::Plugins => Tab::new().label("Plugins").when(waiting > 0, |tab| {
-                    tab.suffix(div().text_xs().text_color(muted).child(waiting.to_string()))
+                    tab.suffix(
+                        div()
+                            .font_family(mono.clone())
+                            .text_sm()
+                            .text_color(muted)
+                            .child(waiting.to_string()),
+                    )
                 }),
                 RightTab::Problems => Tab::new().label("Problems").when(count > 0, |tab| {
-                    tab.suffix(div().text_xs().text_color(muted).child(count.to_string()))
+                    tab.suffix(
+                        div()
+                            .font_family(mono.clone())
+                            .text_sm()
+                            .text_color(muted)
+                            .child(count.to_string()),
+                    )
                 }),
             }))
             .on_click(cx.listener(move |this, index: &usize, _, cx| {
