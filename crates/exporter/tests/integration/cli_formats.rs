@@ -69,9 +69,7 @@ fn run(args: &[&str]) -> (bool, String) {
     let home = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
         .env_remove(PLUGIN_PATH_ENV)
-        .env("HOME", home.path())
-        .env("XDG_DATA_HOME", home.path())
-        .env("APPDATA", home.path())
+        .envs(home_env(home.path()))
         .arg("--plugin-dir")
         .arg(plugin.folder())
         .args(args)
