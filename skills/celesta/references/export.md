@@ -278,6 +278,60 @@ Celesta-export --json --overwrite --muxer avfoundation/mp4 --video-encoder avfou
   with AVFoundation's own colour conversion (HDR is not tone-mapped as
   FFmpeg's decoder does).
 
+### Media Foundation components (Windows)
+
+The Windows app also bundles the `mediafoundation` media plugin (Media
+Foundation's encoder transforms and source reader; Windows only). It has
+encoders and a decoder but **no muxer**: its packets go into another
+plugin's, `ffmpeg/mp4` (`.mp4`) or `ffmpeg/mov` (`.mov`) by the output's
+extension or `--muxer`. FFmpeg stays the default: its components are used
+only when named (`--video-encoder`, `--audio-encoder`, MCP's and the
+package's `videoEncoder` / `audioEncoder`, or a preset)
+(`--video-encoder mediafoundation/h264` alone gives `ffmpeg/mp4` +
+`mediafoundation/h264` + `ffmpeg/aac`).
+
+| Component | Writes | Keys (default) |
+| --- | --- | --- |
+| `mediafoundation/h264` | H.264 | `profile` `high`/`main`/`baseline` (`high`); `rateControl` `quality`/`bitrate` (`quality`); `quality` 0–100, higher is better (70); `bitrate` bit/s, at least 100000 (8000000); `keyframeInterval` 1–1000 (250); `bFrames` (`true`; Baseline never reorders); `hardware` (`true`: the GPU's encoder when Windows lists one; `false`: Microsoft's software encoder) |
+| `mediafoundation/hevc` | HEVC | as `h264` without `profile`, plus `bitDepth` `8` (Main) or `10` (Main 10) (`8`) |
+| `mediafoundation/aac` | AAC-LC, 16-bit, 44.1 or 48 kHz (other mixes at 48 kHz), mono or stereo | `bitrate` a choice of `96000`/`128000`/`160000`/`192000` (`192000`); MCP takes it as a string |
+
+```sh
+Celesta-export --json --overwrite --video-encoder mediafoundation/hevc \
+  --video-option quality=80 --audio-encoder mediafoundation/aac \
+  --audio-option bitrate=160000 --react scene.tsx out.mp4
+```
+
+- Speed and size (RTX 4070, 4K, defaults): the GPU's H.264 and HEVC
+  export about 2x as fast as x264's defaults, files about 15% smaller at
+  0.5–1.1 dB lower PSNR (about x264's size at 1080p). `hardware=false`
+  (Microsoft's software encoders) is slower and 10–50% larger than x264.
+  Name the GPU's for fast drafts on Windows; keep x264 for the best
+  quality per byte.
+- `bFrames` is a request: NVIDIA's encoder and the HEVC Video Extensions'
+  software encoder make no B-frames. A GPU encoder that refuses the chosen
+  `rateControl` falls back to the next encoder Windows lists (in the end
+  the software one); only when all refuse is it `invalid_option`.
+- `hardware=false` HEVC is the Store's HEVC Video Extensions, 8-bit only:
+  `bitDepth=10` with `hardware=false` is `component_unavailable` (`no
+  software HEVC encoder; turn Hardware on`).
+- H.264 and HEVC need even dimensions; a software renderer's RGB-only offer
+  is converted to BT.709 limited YUV by the plugin. Colour is tagged, and
+  the plugin writes BT.709 into the SPS where Microsoft's encoders leave
+  it out.
+- `--loop` works: the AAC encoder's 1024-frame lead-in (it starts with
+  silence, since Microsoft's AAC encoder drops its first frames) and the
+  loop's lead-in are hidden by `ffmpeg/mp4`'s edit list.
+- A codec Windows has no encoder for is `component_unavailable` (`Media
+  Foundation has no HEVC encoder on this system; install a GPU driver
+  with one or the HEVC Video Extensions`); without Media Foundation
+  (Windows Server without the feature, N editions without the Media
+  Feature Pack) every component is. Check with `--list-components --check`.
+- The decoder `mediafoundation/mediafoundation` (`mp4`, `mov`, `m4a`)
+  reads only files FFmpeg's decoder does not (or all, with `ffmpeg`
+  turned off), with Media Foundation's colour conversion (no HDR tone
+  mapping) and without alpha; it honours MP4 and MOV edit lists itself.
+
 ## Transparent video
 
 The output extension picks the video format:

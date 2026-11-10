@@ -260,6 +260,45 @@ The plugin also has a decoder, `avfoundation/avfoundation`, for MP4, MOV, and M4
 
 The MCP `export_video` tool and `@celesta.studio/exporter` take the same names: `"muxer": "avfoundation/mp4"` and `"videoEncoder": { "id": "avfoundation/hevc", "options": { "quality": 80 } }`.
 
+## Media Foundation components on Windows
+
+The Windows app also comes with the `mediafoundation` media plugin. It encodes H.264, HEVC, and AAC with Windows' own Media Foundation, on the GPU's video encoder where Windows has one. It has no muxer of its own: its encoders write into another plugin's container, which the output's extension picks as usual (`ffmpeg/mp4` for `.mp4`, `ffmpeg/mov` for `.mov`) or `--muxer` names. FFmpeg stays the default: an export uses these components only when you name them, with `--video-encoder` and `--audio-encoder` or in an export preset (`"video": { "component": "mediafoundation/hevc" }`), so `--video-encoder mediafoundation/h264` alone writes Media Foundation's H.264 into `ffmpeg/mp4` with `ffmpeg/aac`. The app's export dialog lists them among the video and audio encoders. The plugin runs on Windows only; macOS and Linux do not have it.
+
+| Component | Kind | Writes |
+| --- | --- | --- |
+| `mediafoundation/h264` | Video encoder | H.264 |
+| `mediafoundation/hevc` | Video encoder | HEVC, 8-bit or 10-bit |
+| `mediafoundation/aac` | Audio encoder | AAC at 44.1 or 48 kHz |
+
+On an NVIDIA GeForce RTX 4070, the GPU's H.264 and HEVC encoders exported a 4K film about twice as fast as x264 with its defaults. At their own defaults, their files came out about 15% smaller than x264's at slightly lower quality, and about the same size at 1080p. Microsoft's software encoders (`hardware=false`) took longer than the GPU's and wrote files 10–50% larger than x264's.
+
+Their settings in this release (`--describe mediafoundation/hevc` shows them too):
+
+| Component | Key | Values (default) |
+| --- | --- | --- |
+| `mediafoundation/h264` | `profile` | `high`, `main`, or `baseline` (`high`) |
+| | `rateControl` | `quality` for constant quality or `bitrate` for an average bitrate (`quality`) |
+| | `quality` | 0–100, with `rateControl=quality`; higher is better quality and larger (70) |
+| | `bitrate` | bits per second, at least 100000, with `rateControl=bitrate` (8000000) |
+| | `keyframeInterval` | 1–1000, the most frames between keyframes (250) |
+| | `bFrames` | `true` or `false`: reordered frames compress better; turn them off for players that cannot decode them (`true`). Baseline never has them |
+| | `hardware` | `true` to use the GPU's encoder when Windows has one, or `false` for Microsoft's software encoder (`true`) |
+| `mediafoundation/hevc` | `rateControl`, `quality`, `bitrate`, `keyframeInterval`, `bFrames`, `hardware` | as for `mediafoundation/h264` |
+| | `bitDepth` | `8` for Main, or `10` for Main 10 (`8`) |
+| `mediafoundation/aac` | `bitrate` | `96000`, `128000`, `160000`, or `192000` bits per second (`192000`) |
+
+`bFrames` asks for reordered frames; an encoder that cannot make them, such as NVIDIA's, writes the video without them. When the GPU's encoder does not take the chosen `rateControl`, the export uses the next encoder Windows lists, in the end Microsoft's software one. Windows' software HEVC encoder comes with the HEVC Video Extensions from the Microsoft Store and is 8-bit only, so 10-bit HEVC needs the GPU's encoder: with `bitDepth=10` and `hardware=false` the export fails with `component_unavailable`. AAC is encoded from 16-bit samples, in mono or stereo, at 44.1 or 48 kHz; a soundtrack mixed at another rate is encoded at 48 kHz.
+
+`--loop` works with these encoders: the lead-in, and the short silence `mediafoundation/aac` starts with, are hidden by the MP4's edit list, as FFmpeg's AAC delay is. Colors are BT.709 with limited range and tagged, as with FFmpeg; the plugin also writes the tags into the H.264 and HEVC stream itself, where Microsoft's software encoders leave them out. When Windows has no encoder for a codec, the component reports that it does not work here (`Media Foundation has no HEVC encoder on this system; install a GPU driver with one or the HEVC Video Extensions`), and naming it fails with `component_unavailable`; `--list-components --check` shows which work. On Windows Server without the Media Foundation feature, or on an N edition of Windows without the Media Feature Pack, none of them work.
+
+The plugin also has a decoder, `mediafoundation/mediafoundation`, for MP4, MOV, and M4A files. FFmpeg's decoder goes first, so it reads only the files FFmpeg cannot, or every such file when the `ffmpeg` plugin is turned off. It takes Media Foundation's own color conversion, so an HDR video read through it is not tone-mapped as FFmpeg's decoder does it and can look different, and it drops alpha.
+
+```sh title="Export HEVC and AAC with Media Foundation"
+& "C:\path\to\Celesta\Celesta-export.exe" --react --video-encoder mediafoundation/hevc --video-option quality=80 --audio-encoder mediafoundation/aac --audio-option bitrate=160000 first-scene.tsx output.mp4
+```
+
+The MCP `export_video` tool and `@celesta.studio/exporter` take the same names: `"videoEncoder": { "id": "mediafoundation/hevc", "options": { "quality": 80 } }` and `"audioEncoder": { "id": "mediafoundation/aac", "options": { "bitrate": "160000" } }`. AAC's `bitrate` is a choice, so MCP takes it as a string.
+
 ## Videos that play on repeat
 
 Shorts and TikTok play a video on repeat. When its last frame runs into its first, add `--loop` so the sound does too. An AAC encoder starts from silence, so without it a hit on the first frame, such as a kick, comes out smeared for about 10 ms, and the player repeats that on every pass. With `--loop`, the encoder first takes the end of the soundtrack, and the MP4's edit list hides that lead-in: the sound still lasts exactly as long as the video. The soundtrack itself must loop, with anything that rings past the end mixed into the start. `--loop` is accepted for any video: MP4 and MOV hide the lead-in, while a muxer that cannot hide it, such as WebM's, ignores `--loop`. A `.mov`'s PCM audio loops without it, since PCM has no encoder delay.

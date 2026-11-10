@@ -86,11 +86,17 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   component is `<plugin>/<id>`, such as `ffmpeg/libx264`). The app's packages
   bundle `ffmpeg`; the macOS app also bundles `avfoundation` (VideoToolbox,
   AudioToolbox, and AVFoundation; MIT/Apache-2.0, system frameworks only),
-  whose components are used only when named, since `ffmpeg` ranks first
-  among bundled plugins ([export.md](export.md#avfoundation-components-macos)).
+  and the Windows app `mediafoundation` (Media Foundation's H.264, HEVC,
+  and AAC encoders and a decoder, no muxer; MIT/Apache-2.0, Windows'
+  libraries only), whose components are used only when named, since
+  `ffmpeg` ranks first among bundled plugins
+  ([export.md](export.md#avfoundation-components-macos),
+  [export.md](export.md#media-foundation-components-windows)).
   A source build makes them with
-  `node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation` (off
-  macOS it prints `avfoundation: skipped, it is built for macos only`) and points
+  `node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation plugins/mediafoundation`
+  (each OS-native plugin is skipped on the other systems:
+  `avfoundation: skipped, it is built for macos only`,
+  `mediafoundation: skipped, it is built for windows only`) and points
   `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
   (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root).
   `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables
@@ -306,8 +312,8 @@ and the `react`/`@celesta.studio/*` APIs the module uses. A pre-release
 Celesta (`0.10.0-beta.1`) matches only a range naming a pre-release of
 that version. `scripts/plugins/build.mts` writes the range from the Celesta
 it builds against. A repository plugin's `plugin.json` may list `os`
-(`["macos"]`): `build.mts` then builds it on those systems only and skips
-it elsewhere.
+(`["macos"]`, `["windows"]`): `build.mts` then builds it on those systems
+only and skips it elsewhere.
 
 The manifest's optional `components` puts a component in the app's Add
 menu: `{ "name": "Flag", "label": "Flag", "src": "image", "props": {

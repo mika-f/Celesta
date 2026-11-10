@@ -32,6 +32,23 @@ Per-task specifications, implementation details, and validation results live in
   The `ffmpeg`/`ffprobe` binaries are not used at runtime.
 - Windows: `vcpkg install ffmpeg[x264,vpx,opus]:x64-windows-static-md`, with
   `VCPKG_ROOT` set. Non-macOS builds enable `ez-ffmpeg`'s `static` feature.
+  Also needed there:
+  - Git for Windows with `git config --global core.autocrlf false` before
+    cloning (the repository has no `.gitattributes`, and CRLF files fail
+    CI's `cargo fmt --check` on Linux);
+  - Visual Studio 2022 Build Tools, "Desktop development with C++",
+    including a Windows 11 SDK (10.0.22621 or later), for MSVC;
+  - `rustup toolchain install 1.99.1 --component clippy,rustfmt` and
+    `rustup override set 1.99.1` in the checkout (`mise.toml` pins Rust
+    through `mr-boxington`, which is macOS-only);
+  - Node.js and pnpm at `mise.toml`'s versions, through `mise` with
+    `MISE_DISABLE_TOOLS=rust,mr-boxington` (as CI sets it) or the official
+    installers;
+  - LLVM (`winget install LLVM.LLVM`) for `ffmpeg-sys-next`'s bindgen, with
+    `LIBCLANG_PATH` set to `C:\Program Files\LLVM\bin` if `libclang` is not
+    found;
+  - a GPU with a current driver: the media plugins' export tests skip
+    without one.
 - macOS: `brew install ffmpeg@8 pkg-config`, then
   `export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"` (the
   formula is keg-only); desktop packaging bundles the required dylibs.
@@ -42,10 +59,25 @@ Per-task specifications, implementation details, and validation results live in
   `scripts/plugins/build.mts` skips it elsewhere (`avfoundation: skipped, it
   is built for macos only`); on Linux and Windows its crate builds a stub
   program that exits with an error, so the plugins workspace still builds
-  on both. CI lints it on Linux and macOS (the Plugins job's Clippy step
-  skips Windows). The macOS package puts it in `Contents/Resources/PlugIns` beside
+  on both. The macOS package puts it in `Contents/Resources/PlugIns` beside
   `ffmpeg` (`scripts/package-macos.py`, no `dylibbundler`); see
   [`docs/handoff/2026-11-09-media-avfoundation.md`](docs/handoff/2026-11-09-media-avfoundation.md).
+- The Media Foundation media plugin, `plugins/mediafoundation`
+  (`celesta-codec-mediafoundation`), is its Windows twin: it builds on
+  Windows only and links only Windows' system libraries (Media Foundation
+  and COM, through the `windows` crate; `celesta-codec-ffmpeg` is a
+  Windows-only dev-dependency of its tests). Its `plugin.json` has
+  `"os": ["windows"]`, so `build.mts` skips it elsewhere (`mediafoundation:
+  skipped, it is built for windows only`); on macOS and Linux its crate
+  builds a stub program that exits with an error. It has no muxer: its encoders write
+  into another plugin's (`ffmpeg/mp4`). The Windows package puts it in
+  `plugins\mediafoundation` beside `plugins\ffmpeg`
+  (`scripts/package-windows.ps1`, with its own copies of the MSVC runtime
+  DLLs); see
+  [`docs/handoff/2026-11-10-media-windows.md`](docs/handoff/2026-11-10-media-windows.md).
+- CI's Plugins job runs Clippy on every system, so each OS-native plugin is
+  linted on its own system (rustfmt, Linux only, formats their gated code
+  too).
 - Linux: `scripts/build-ffmpeg-linux.sh` builds static FFmpeg 8.1.x libraries
   with libx264, libvpx, and libopus. Point `PKG_CONFIG_PATH` at
   `<prefix>/lib/pkgconfig`; bindgen
@@ -120,6 +152,7 @@ compositions: no package a composition imports depends on them, though
 | `celesta-media-image` | The built-in image components, registered in every exporter registry by `celesta_exporter::with_builtin` (plugin id `builtin`, `MediaOrigin::BuiltIn`, no folder or process): the video encoders `builtin/png` (`compression`, `depth`, `transparent`), `builtin/jpeg` (`quality`), and `builtin/webp` (`lossless`, `quality`, `transparent`), and the muxers `builtin/image` (one file) and `builtin/imageSequence` (`sequence: true`, one file per frame from a `frame-%06d.<ext>` pattern), which serve still exports only; see [`docs/handoff/2026-11-09-media-stills.md`](docs/handoff/2026-11-09-media-stills.md). |
 | `celesta-codec-ffmpeg` | `plugins/ffmpeg`, the FFmpeg media plugin: a program serving protocol 2 (its decoder `ffmpeg/ffmpeg`, with HDR tone mapping; video encoders `libx264`, `prores`, `vp9`; audio encoders `aac`, `opus`, `pcm`; muxers `mp4`, `mov`, `webm`, on libavcodec and libavformat) and answering `--manifest` for the `cargo install` sibling, and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. A member of the plugins workspace, `plugins/Cargo.toml`, with Celesta's version; built into a plugin directory by `scripts/plugins/build.mts`. |
 | `celesta-codec-avfoundation` | `plugins/avfoundation`, the macOS media plugin: a program serving protocol 2 with VideoToolbox's video encoders `h264`, `hevc`, and `prores`, AudioToolbox's `aac`, AVAssetWriter's muxers `mp4` and `mov`, and an AVAssetReader decoder `avfoundation/avfoundation` (`mp4`, `mov`, `m4a`), through `objc2` bindings; `AvfCodec`, through which its own tests drive the exporter. MIT or Apache-2.0; `plugin.json`'s `"os": ["macos"]`. FFmpeg ranks before it among bundled plugins, so its components serve exports only when named. A member of the plugins workspace with Celesta's version. |
+| `celesta-codec-mediafoundation` | `plugins/mediafoundation`, the Windows media plugin: a program serving protocol 2 with Media Foundation's encoder MFTs `h264` and `hevc` (hardware first, with a `hardware` setting; RGB converted to BT.709 YUV in the plugin) and `aac` (Microsoft's AAC encoder, with a 1024-frame lead-in as its delay), and an `IMFSourceReader` decoder `mediafoundation/mediafoundation` (`mp4`, `mov`, `m4a`) that applies MP4 and MOV edit lists itself, through the `windows` crate; no muxer, so its encoders write into another plugin's (`ffmpeg/mp4`); `MfCodec`, through which its own tests drive the exporter. MIT or Apache-2.0; `plugin.json`'s `"os": ["windows"]`. FFmpeg ranks before it among bundled plugins, so its components serve exports only when named. A member of the plugins workspace with Celesta's version. |
 | `celesta-codec-test` | The lossless test media plugin the core's tests read and write media with, in-process (`install`) or as the program `celesta-codec-test` in a temporary plugin folder (`TestCodecPlugin`): a decoder, `celesta-test-codec/test`, which lists no extensions and reads test codec and WAV files of any name, a lossless video encoder, a PCM audio encoder, and its own muxer; not published. |
 | `celesta-budoux` | Japanese phrase segmentation for text line breaking. |
 | `celesta-renderer` | CPU reference renderer, PNG output, and shared text/path rasterization. |
@@ -191,8 +224,9 @@ React entry ─> React bridge ┘
 - Media probing, decoding, caching, and UI state stay outside the persisted
   project contract.
 - No Celesta crate but `celesta-codec-ffmpeg` links FFmpeg (or any codec
-  library; `celesta-codec-avfoundation` uses only the operating system's
-  frameworks, and links FFmpeg only in its tests), even optionally: media
+  library; `celesta-codec-avfoundation` and `celesta-codec-mediafoundation`
+  use only the operating system's frameworks, and link FFmpeg only in their
+  tests), even optionally: media
   goes through `celesta_media::MediaBackend` and the media plugins'
   processes, so the editor, exporter, and MCP server stay MIT/Apache-2.0
   when packages ship a GPL FFmpeg. The core's tests use
