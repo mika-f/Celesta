@@ -63,10 +63,10 @@ pnpm run build:runtime
 
 ## 4. React コンポジションを開く
 
-メディアプラグインを一度ビルドします（ソースを更新したらもう一度）。Celesta は動画と音声をこれらで読み書きし、`CELESTA_PLUGIN_PATH` から見つけます。`plugins/avfoundation`（VideoToolbox と AVFoundation）は macOS でだけビルドされます。ほかの OS ではスクリプトが `avfoundation: skipped, it is built for macos only` と表示し、FFmpeg だけをビルドします。この変数には絶対パスを指定し、Celesta を実行する各シェルで設定してください。
+メディアプラグインを一度ビルドします（ソースを更新したらもう一度）。Celesta は動画と音声をこれらで読み書きし、`CELESTA_PLUGIN_PATH` から見つけます。`plugins/avfoundation`（VideoToolbox と AVFoundation）は macOS でだけ、`plugins/mediafoundation`（Media Foundation）は Windows でだけビルドされます。それ以外の OS ではスクリプトが `avfoundation: skipped, it is built for macos only` または `mediafoundation: skipped, it is built for windows only` と表示して残りをビルドするので、Linux では FFmpeg だけがビルドされます。この変数には絶対パスを指定し、Celesta を実行する各シェルで設定してください。
 
 ```sh title="メディアプラグインをビルド"
-node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation
+node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation plugins/mediafoundation
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 
