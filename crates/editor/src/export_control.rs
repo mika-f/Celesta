@@ -59,7 +59,11 @@ impl EditorView {
             .as_ref()
             .filter(|(dialog, _)| dialog.read(cx).project_file() == project_file.as_deref());
         let dialog = match kept {
-            Some((dialog, _)) => dialog.clone(),
+            Some((dialog, _)) => {
+                let dialog = dialog.clone();
+                dialog.update(cx, |dialog, cx| dialog.reopen(window, cx));
+                dialog
+            }
             None => {
                 // Without a registry yet no media plugin can export: the
                 // dialog lists none and says why Export… cannot run.

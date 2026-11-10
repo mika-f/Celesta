@@ -25,11 +25,15 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, Entity, EventEmitter, Focusable as _, FontWeight, Hsla, Pixels, SharedString,
-    Subscription, Task, Window, div, px,
+    App, Context, Entity, EventEmitter, FontWeight, Hsla, Pixels, SharedString, Subscription, Task,
+    Window, div, px,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// What the user file's `last` is called in a warning about it, where a
+/// preset's name would be.
+const LAST_EXPORT: &str = "your last export";
 
 /// Wide enough for a component's label and its plugin beside a field.
 const EXPORT_DIALOG_WIDTH: Pixels = px(560.);
@@ -95,7 +99,7 @@ pub(crate) struct ExportDialog {
     save: Option<SaveForm>,
     /// The running resolve; replacing it drops a stale one.
     resolving: Option<Task<()>>,
-    _describing: Vec<Task<()>>,
+    describing: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -201,23 +205,6 @@ impl ExportDialog {
             .map(|info| info.plugin)
             .collect();
         plugins.dedup();
-        let describing = plugins
-            .into_iter()
-            .map(|plugin| {
-                let (registry, kill) = (registry.clone(), kill.clone());
-                let described = cx
-                    .background_executor()
-                    .spawn(async move { registry.describe(plugin, &kill) });
-                cx.spawn_in(window, async move |this, cx| {
-                    let description = described.await;
-                    this.update_in(cx, |this, window, cx| {
-                        this.model.described(plugin, description);
-                        this.sync(window, cx);
-                    })
-                    .ok();
-                })
-            })
-            .collect();
 
         let mut this = Self {
             model,
@@ -235,23 +222,55 @@ impl ExportDialog {
             range: None,
             save: None,
             resolving: None,
-            _describing: describing,
+            describing: Vec::new(),
             _subscriptions: subscriptions,
         };
-        let (base, warnings) = this.model.initial_base();
+        this.describe(plugins, window, cx);
+        this.resolve_first(window, cx);
+        this.sync(window, cx);
+        this
+    }
+
+    /// Describes each of `plugins` in the background, each on its own.
+    fn describe(&mut self, plugins: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        for plugin in plugins {
+            let (registry, kill) = (self.registry.clone(), self.kill.clone());
+            let described = cx
+                .background_executor()
+                .spawn(async move { registry.describe(plugin, &kill) });
+            self.describing
+                .push(cx.spawn_in(window, async move |this, cx| {
+                    let description = described.await;
+                    this.update_in(cx, |this, window, cx| {
+                        this.model.described(plugin, description);
+                        this.sync(window, cx);
+                    })
+                    .ok();
+                }));
+        }
+    }
+
+    /// Resolves the first choice: the project's default preset, else the
+    /// user's `last`, else the defaults, with the warnings opening found.
+    fn resolve_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (base, warnings) = self.model.initial_base();
         let (selected, base, asked) = match base {
             InitialBase::Preset(source, name, output) => (
                 Some((source, name.clone())),
                 Some((name, output.clone())),
                 Asked::Preset(Box::new(output)),
             ),
-            InitialBase::Last(output) => (None, Some(("last".to_owned(), output)), Asked::Defaults),
+            InitialBase::Last(output) => (
+                None,
+                Some((LAST_EXPORT.to_owned(), output)),
+                Asked::Defaults,
+            ),
             InitialBase::None => (None, None, Asked::Defaults),
         };
-        let output = this
+        let output = self
             .model
             .initial_output(base.as_ref().map(|(_, output)| output));
-        this.resolve(
+        self.resolve(
             OutputChoice::default(),
             base,
             output,
@@ -261,8 +280,21 @@ impl ExportDialog {
             window,
             cx,
         );
-        this.sync(window, cx);
-        this
+    }
+
+    /// The dialog is shown again: a plugin whose `describe` failed (none
+    /// of its components available) is described again, and a first
+    /// choice that could not be resolved is resolved again, so a passing
+    /// failure does not keep `Export…` blocked while the dialog is kept.
+    pub(crate) fn reopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let failed = self.model.recheck_failed();
+        self.describe(failed, window, cx);
+        if self.model.choice().is_none() && self.resolving.is_none() {
+            self.failure = None;
+            self.model.error = None;
+            self.resolve_first(window, cx);
+        }
+        self.sync(window, cx);
     }
 
     /// The project presets file this dialog read; `None` for an untitled
@@ -318,6 +350,12 @@ impl ExportDialog {
                         let message = error.to_string();
                         if this.model.choice().is_none() {
                             this.model.error = Some(message.clone());
+                        }
+                        // The opening's warnings (an unreadable presets
+                        // file) still say why its presets are missing.
+                        if !warnings.is_empty() {
+                            this.model.warnings = warnings;
+                            this.warned = section;
                         }
                         this.failure = Some((section, message));
                     }
@@ -486,22 +524,10 @@ impl ExportDialog {
         self.model.output_choice().err()
     }
 
-    /// Enter or `Export…`: saves the preset when its name has the focus,
-    /// else exports. `true` closes the dialog.
-    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self
-            .save
-            .as_ref()
-            .is_some_and(|save| save.name.focus_handle(cx).is_focused(window))
-        {
-            self.save_preset(window, cx);
-            return false;
-        }
-        self.export(cx)
-    }
-
-    /// Emits [`ExportDialogEvent::Export`] when the choice can be
-    /// exported.
+    /// `Export…` or Enter (the dialog's `Confirm`; Enter in the save
+    /// form's name saves instead, and never reaches it): emits
+    /// [`ExportDialogEvent::Export`] when the choice can be exported.
+    /// `true` closes the dialog.
     fn export(&mut self, cx: &mut Context<Self>) -> bool {
         if self.export_blocked().is_some() {
             return false;
@@ -788,7 +814,8 @@ fn footer(dialog: &Entity<ExportDialog>, cx: &App) -> impl IntoElement {
                                 Button::new("export-dialog-export")
                                     .primary()
                                     .label("Export…")
-                                    .disabled(disabled),
+                                    .disabled(disabled)
+                                    .debug_selector(|| "export-dialog-export".to_owned()),
                             ),
                         ),
                 ),
@@ -810,7 +837,7 @@ pub(crate) fn open_export_dialog(dialog: &Entity<ExportDialog>, window: &mut Win
             .w(EXPORT_DIALOG_WIDTH)
             .footer(footer(&dialog, cx))
             .child(dialog)
-            .on_ok(move |_, window, cx| confirm.update(cx, |this, cx| this.confirm(window, cx)))
+            .on_ok(move |_, _, cx| confirm.update(cx, |this, cx| this.export(cx)))
     });
 }
 
@@ -819,7 +846,9 @@ mod tests {
     use super::*;
     use celesta_exporter::SettingInput;
     use gpui_kit::component::Root;
-    use gpui_kit::{TestAppContext, VisualTestContext, WindowHandle, size};
+    use gpui_kit::{
+        Focusable as _, Modifiers, TestAppContext, VisualTestContext, WindowHandle, size,
+    };
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -907,6 +936,129 @@ mod tests {
             );
             // The first choice is still made, from the defaults.
             assert_eq!(dialog.export_blocked(), None);
+        });
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_failed_first_resolve_keeps_the_opening_warnings(cx: &mut TestAppContext) {
+        let folder = scratch("broken-no-plugin");
+        let user_file = folder.join("export-presets.json");
+        std::fs::write(&user_file, "{").unwrap();
+        let (handle, dialog) = window_with_user_file(cx, Vec::new(), Some(user_file.clone()));
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(
+                dialog.failure,
+                Some((Section::Preset, "no media plugin offers a muxer".to_owned()))
+            );
+            assert_eq!(dialog.warned, Section::Preset);
+            let [warning] = dialog.model.warnings.as_slice() else {
+                panic!("one warning: {:?}", dialog.model.warnings);
+            };
+            assert!(
+                warning.starts_with(&user_file.display().to_string()),
+                "{warning}"
+            );
+        });
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn warnings_about_last_call_it_your_last_export(cx: &mut TestAppContext) {
+        let folder = scratch("last");
+        let user_file = folder.join("export-presets.json");
+        std::fs::write(
+            &user_file,
+            r#"{"version":1,"last":{"muxer":"celesta-test-codec/file",
+                "video":{"component":"celesta-test-codec/video","options":{"nope":1}}}}"#,
+        )
+        .unwrap();
+        let (handle, dialog) =
+            window_with_user_file(cx, vec![celesta_codec_test::registered()], Some(user_file));
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.update(|_, cx| {
+            assert_eq!(
+                dialog.read(cx).model.warnings,
+                ["preset `your last export`: celesta-test-codec/video has no setting `nope`; it is left out"]
+            );
+        });
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn export_exports_while_the_preset_name_has_the_focus(cx: &mut TestAppContext) {
+        let folder = scratch("click-export");
+        let user_file = folder.join("export-presets.json");
+        let (handle, dialog) = window_with_user_file(
+            cx,
+            vec![celesta_codec_test::registered()],
+            Some(user_file.clone()),
+        );
+        let exported = Rc::new(RefCell::new(0));
+        cx.update(|cx| {
+            let exported = exported.clone();
+            cx.subscribe(&dialog, move |_, event: &ExportDialogEvent, _| {
+                if let ExportDialogEvent::Export { .. } = event {
+                    *exported.borrow_mut() += 1;
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        let open_form = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| open_export_dialog(&dialog, window, cx));
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                dialog.update(cx, |dialog, cx| {
+                    dialog.open_save(window, cx);
+                    let name = dialog.save.as_ref().unwrap().name.clone();
+                    name.update(cx, |name, cx| name.set_value("Web", window, cx));
+                });
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                let name = dialog.read(cx).save.as_ref().unwrap().name.clone();
+                assert!(name.focus_handle(cx).is_focused(window));
+            });
+        };
+
+        // A click on Export… does not take the focus from the name; it
+        // still exports, and saves nothing.
+        open_form(cx);
+        let export = cx
+            .debug_bounds("export-dialog-export")
+            .expect("the Export… button");
+        cx.simulate_click(export.center(), Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(*exported.borrow(), 1);
+        assert!(!user_file.exists());
+        cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
+
+        // Enter in the name saves, and does not export.
+        dialog.update_in(cx, |dialog, _, cx| {
+            dialog.save = None;
+            cx.notify();
+        });
+        open_form(cx);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(*exported.borrow(), 1);
+        let saved = PresetsFile::load(&user_file).unwrap();
+        assert_eq!(saved.presets.len(), 1);
+        assert_eq!(saved.presets[0].name, "Web");
+        cx.update(|window, cx| {
+            assert!(window.has_active_dialog(cx));
+            let dialog = dialog.read(cx);
+            assert!(dialog.save.is_none());
+            assert_eq!(
+                dialog.model.selected,
+                Some((PresetSource::User, "Web".to_owned()))
+            );
         });
         std::fs::remove_dir_all(folder).unwrap();
     }
@@ -1102,10 +1254,10 @@ mod tests {
         // Enter, the dialog's default, does nothing while the plugin is
         // being described and the first choice resolved.
         cx.update(|window, cx| open_export_dialog(&dialog, window, cx));
-        cx.update(|window, cx| {
+        cx.update(|_, cx| {
             let reason = dialog.read(cx).export_blocked();
             assert_eq!(reason.as_deref(), Some(CHECKING));
-            dialog.update(cx, |dialog, cx| assert!(!dialog.confirm(window, cx)));
+            dialog.update(cx, |dialog, cx| assert!(!dialog.export(cx)));
         });
         assert!(exported.borrow().is_empty());
 

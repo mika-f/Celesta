@@ -4,9 +4,10 @@
 use super::super::model::SaveTarget;
 use super::choice::Choice;
 use super::{ExportDialog, blocked_line, problem_line, section_label};
-use celesta_exporter::{Preset, PresetSource, update_presets};
+use celesta_exporter::{Preset, update_presets};
 use celesta_plugin_host::create_private_dir_all;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::dialog::Confirm;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
@@ -49,14 +50,17 @@ impl ExportDialog {
         let target = cx
             .new(|cx| SelectState::new(targets.to_vec(), Some(IndexPath::new(first)), window, cx));
         let subscriptions = [
-            // `Save` becomes `Replace` as the name is typed.
-            cx.subscribe_in(&name, window, |this, _, event, _, cx| {
-                if let InputEvent::Change = event {
+            // `Save` becomes `Replace` as the name is typed, and Enter in
+            // the name saves.
+            cx.subscribe_in(&name, window, |this, _, event, window, cx| match event {
+                InputEvent::Change => {
                     if let Some(save) = &mut this.save {
                         save.error = None;
                     }
                     cx.notify();
                 }
+                InputEvent::PressEnter { .. } => this.save_preset(window, cx),
+                _ => {}
             }),
             cx.subscribe_in(&target, window, |_, _, _: &SelectEvent<_>, _, cx| {
                 cx.notify();
@@ -120,18 +124,7 @@ impl ExportDialog {
             });
         match written {
             Ok(file) => {
-                let state = match target {
-                    SaveTarget::Project => &mut self.model.project,
-                    SaveTarget::User => &mut self.model.user,
-                };
-                state.file = Ok(Some(file));
-                self.model.selected = Some((
-                    match target {
-                        SaveTarget::Project => PresetSource::Project,
-                        SaveTarget::User => PresetSource::User,
-                    },
-                    name,
-                ));
+                self.model.saved(target, name, file);
                 self.save = None;
                 self.sync(window, cx);
             }
@@ -190,7 +183,17 @@ pub(super) fn save_section(dialog: &Entity<ExportDialog>, cx: &App) -> Option<im
                             .min_w_0()
                             .gap_1()
                             .child(div().text_sm().child("Name"))
-                            .child(Input::new(&save.name).id("export-save-name")),
+                            .child(
+                                div()
+                                    // Enter in the name saves (its
+                                    // `PressEnter`); the input passes the
+                                    // key on as the dialog's `Confirm`,
+                                    // which would also export, so it
+                                    // stops here. `Export…` dispatches
+                                    // its own `Confirm` from the footer.
+                                    .on_action(|_: &Confirm, _, _| {})
+                                    .child(Input::new(&save.name).id("export-save-name")),
+                            ),
                     )
                     .child(
                         v_flex()

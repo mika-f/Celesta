@@ -12,7 +12,9 @@ use celesta_exporter::{
     PresetEncoder, PresetOutput, PresetSource, PresetsFile, ResolvedEncoder, ResolvedOutput,
     SettingInput, writes_any_codec,
 };
-use celesta_media::settings::{differences, effective, is_visible, sanitize, validate};
+use celesta_media::settings::{
+    differences, drop_hidden, effective, is_visible, sanitize, validate,
+};
 use celesta_media::{
     ComponentDescription, ComponentEntry, ComponentKind, ComponentRef, MediaComponentInfo,
     MediaRegistry, PluginDescription, SettingField, SettingValue, Settings,
@@ -313,36 +315,10 @@ impl ExportDialogModel {
     ) {
         let video = pick(&resolved.video);
         let audio = resolved.audio.as_ref().map(pick);
-        let takes_audio = resolved
-            .muxer
-            .entry
-            .audio
-            .as_ref()
-            .is_some_and(|accepted| !accepted.is_empty());
-        let names = |text: Option<&str>, component: &ComponentRef| {
-            text.and_then(|text| text.parse::<ComponentRef>().ok())
-                .is_some_and(|named| named == *component)
-        };
+        let takes_audio = takes_audio(&resolved.muxer.entry);
         let previous = self.choice.take();
         self.chosen = match asked {
-            Asked::Preset(base) => Chosen {
-                video: names(
-                    base.video
-                        .as_ref()
-                        .and_then(|video| video.component.as_deref()),
-                    &video.component,
-                ),
-                audio: match (&base.audio, &audio) {
-                    (Some(PresetAudio::None(_)), _) => ChosenAudio::None,
-                    (_, None) if takes_audio => ChosenAudio::None,
-                    (Some(PresetAudio::Encode(named)), Some(audio))
-                        if names(named.component.as_deref(), &audio.component) =>
-                    {
-                        ChosenAudio::Encoder
-                    }
-                    _ => ChosenAudio::Default,
-                },
-            },
+            Asked::Preset(base) => preset_chosen(&base, &video, audio.as_ref(), takes_audio),
             Asked::Defaults => Chosen {
                 video: false,
                 audio: if audio.is_none() && takes_audio {
@@ -380,6 +356,51 @@ impl ExportDialogModel {
         self.selected = selected;
         self.warnings = resolved.warnings.clone();
         self.error = None;
+    }
+
+    /// Takes `file` as `target`'s file once "Save as preset…" wrote the
+    /// choice into it as `name`, and selects that preset.
+    pub(crate) fn saved(&mut self, target: SaveTarget, name: String, file: PresetsFile) {
+        // The choice is now that preset's, as picking it from the list
+        // would make it: what it names counts as chosen.
+        if let (Some(choice), Some(preset)) = (&self.choice, file.find(&name)) {
+            let takes_audio = self.muxer(&choice.muxer).is_some_and(takes_audio);
+            self.chosen = preset_chosen(
+                &preset.output,
+                &choice.video,
+                choice.audio.as_ref(),
+                takes_audio,
+            );
+        }
+        let state = match target {
+            SaveTarget::Project => &mut self.project,
+            SaveTarget::User => &mut self.user,
+        };
+        state.file = Ok(Some(file));
+        self.selected = Some((source(target), name));
+    }
+
+    /// The plugins whose `describe` made none of their components
+    /// available, as a failed one does, set back to checking so the view
+    /// describes them again.
+    pub(crate) fn recheck_failed(&mut self) -> Vec<usize> {
+        let mut failed: Vec<usize> = self
+            .described
+            .iter()
+            .filter(|(_, described)| match described {
+                Described::Checking => false,
+                Described::Done(description) => description
+                    .components
+                    .iter()
+                    .all(|component| !component.available),
+            })
+            .map(|(plugin, _)| *plugin)
+            .collect();
+        failed.sort_unstable();
+        for plugin in &failed {
+            self.described.insert(*plugin, Described::Checking);
+        }
+        failed
     }
 
     /// Every muxer, project plugins' too.
@@ -528,29 +549,7 @@ impl ExportDialogModel {
             return;
         };
         pick.settings.insert(key.to_owned(), value);
-        // Dropping one value can hide another (its `visibleWhen` named the
-        // first), so drop until none is hidden.
-        loop {
-            let values = effective(&schema, &pick.settings);
-            let hidden: Vec<String> = pick
-                .settings
-                .keys()
-                .filter(|given| *given != key)
-                .filter(|given| {
-                    schema
-                        .iter()
-                        .find(|field| field.key == **given)
-                        .is_some_and(|field| !is_visible(field, &values))
-                })
-                .cloned()
-                .collect();
-            if hidden.is_empty() {
-                break;
-            }
-            for given in hidden {
-                pick.settings.remove(&given);
-            }
-        }
+        drop_hidden(&schema, &mut pick.settings, |given| given == key);
         self.selected = None;
     }
 
@@ -752,6 +751,55 @@ impl ExportDialogModel {
             component: Some(pick.component.clone()),
             options: inputs(&pick.settings),
         })
+    }
+}
+
+/// Whether `muxer` takes any audio.
+fn takes_audio(muxer: &MediaMuxerEntry) -> bool {
+    muxer
+        .audio
+        .as_ref()
+        .is_some_and(|accepted| !accepted.is_empty())
+}
+
+/// What counts as chosen once `base`, a preset, resolved to `video` and
+/// `audio`: the encoders it names, and leaving the audio out (by `"none"`,
+/// or where the muxer takes audio).
+fn preset_chosen(
+    base: &PresetOutput,
+    video: &EncoderPick,
+    audio: Option<&EncoderPick>,
+    takes_audio: bool,
+) -> Chosen {
+    let names = |text: Option<&str>, component: &ComponentRef| {
+        text.and_then(|text| text.parse::<ComponentRef>().ok())
+            .is_some_and(|named| named == *component)
+    };
+    Chosen {
+        video: names(
+            base.video
+                .as_ref()
+                .and_then(|video| video.component.as_deref()),
+            &video.component,
+        ),
+        audio: match (&base.audio, audio) {
+            (Some(PresetAudio::None(_)), _) => ChosenAudio::None,
+            (_, None) if takes_audio => ChosenAudio::None,
+            (Some(PresetAudio::Encode(named)), Some(audio))
+                if names(named.component.as_deref(), &audio.component) =>
+            {
+                ChosenAudio::Encoder
+            }
+            _ => ChosenAudio::Default,
+        },
+    }
+}
+
+/// The file `target` saves to, as a preset's source.
+fn source(target: SaveTarget) -> PresetSource {
+    match target {
+        SaveTarget::Project => PresetSource::Project,
+        SaveTarget::User => PresetSource::User,
     }
 }
 
@@ -970,8 +1018,18 @@ mod tests {
         .collect()
     }
 
+    /// One AAC field: the bitrate.
+    fn aac_settings() -> Vec<SettingField> {
+        vec![
+            serde_json::from_value(json!({ "key": "bitrate", "type": "number", "integer": true,
+                "min": 32000, "default": 128000, "label": "Bitrate", "unit": "bit/s" }))
+            .unwrap(),
+        ]
+    }
+
     /// What `plugin` describes: every component available, `b/x264` with
-    /// [`x264_settings`], except `unavailable`'s, each for its reason.
+    /// [`x264_settings`] and `b/aac` with [`aac_settings`], except
+    /// `unavailable`'s, each for its reason.
     fn description(
         registry: &MediaRegistry,
         plugin: usize,
@@ -994,6 +1052,9 @@ mod tests {
                         description.reason = None;
                         if info.reference == reference("b/x264") {
                             description.settings = x264_settings();
+                        }
+                        if info.reference == reference("b/aac") {
+                            description.settings = aac_settings();
                         }
                         description
                     }
@@ -1386,6 +1447,88 @@ mod tests {
                 options: BTreeMap::new(),
             })
         );
+    }
+
+    #[test]
+    fn audio_set_aside_comes_back_with_its_settings() {
+        let registry = registry();
+        let mut model = resolved_model(&registry, "export.mp4");
+        model.choose_encoder(Track::Audio, Some(reference("b/aac")));
+        model.set_setting(Track::Audio, "bitrate", number(192000.0));
+        change_container(&registry, &mut model, "b/ivf");
+        assert_eq!(model.choice().unwrap().audio, None);
+        change_container(&registry, &mut model, "b/mp4");
+        assert_eq!(
+            model.choice().unwrap().audio,
+            Some(EncoderPick {
+                component: reference("b/aac"),
+                settings: Settings::from([("bitrate".to_owned(), number(192000.0))]),
+            })
+        );
+    }
+
+    #[test]
+    fn a_saved_preset_is_chosen_as_picking_it_would_be() {
+        let registry = registry_with_mov();
+        let mut model = resolved_model(&registry, "export.mp4");
+        model.set_setting(Track::Video, "crf", number(22.0));
+        let mut file = PresetsFile::new();
+        file.put(Preset {
+            name: "web".into(),
+            output: model.saved_output(),
+        });
+        model.saved(SaveTarget::User, "web".into(), file.clone());
+        assert_eq!(model.selected, Some((PresetSource::User, "web".into())));
+        assert_eq!(model.user.file, Ok(Some(file)));
+        assert_eq!(model.presets().1[0].name, "web");
+
+        // The saved preset names x264, so QuickTime keeps it with its CRF.
+        change_container(&registry, &mut model, "b/mov");
+        let choice = model.choice().unwrap();
+        assert_eq!(choice.video.component, reference("b/x264"));
+        assert_eq!(
+            choice.video.settings,
+            Settings::from([("crf".to_owned(), number(22.0))])
+        );
+        assert_eq!(
+            choice.audio.as_ref().map(|audio| &audio.component),
+            Some(&reference("b/aac"))
+        );
+    }
+
+    #[test]
+    fn a_failed_describe_is_checked_again() {
+        let registry = registry();
+        let (b, p) = (
+            registry.plugin_index("b").unwrap(),
+            registry.plugin_index("p").unwrap(),
+        );
+        let mut model = model(&registry);
+        assert!(model.recheck_failed().is_empty(), "nothing described yet");
+        // `p`'s describe failed: every component unavailable.
+        model.described(
+            p,
+            description(
+                &registry,
+                p,
+                &[
+                    ("p/mp4", "the plugin exited"),
+                    ("p/h264", "the plugin exited"),
+                ],
+            ),
+        );
+        model.described(b, description(&registry, b, &[("b/vp9", "no libvpx")]));
+        assert_eq!(model.recheck_failed(), [p]);
+        let state = |model: &ExportDialogModel, component: &str| {
+            model
+                .muxer_options()
+                .into_iter()
+                .find(|option| option.reference == reference(component))
+                .map(|option| option.state)
+        };
+        assert_eq!(state(&model, "p/mp4"), Some(OptionState::Checking));
+        assert_eq!(state(&model, "b/mp4"), Some(OptionState::Available));
+        assert!(model.recheck_failed().is_empty(), "already checking");
     }
 
     #[test]
