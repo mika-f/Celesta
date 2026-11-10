@@ -796,7 +796,7 @@ impl EditorView {
                     .top(px(3.0))
                     .left(relative(x))
                     .ml(px(4.0))
-                    .text_size(px(10.0))
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .whitespace_nowrap()
                     .child(format_timecode(frame, frame_rate))
@@ -872,7 +872,7 @@ impl EditorView {
                     .border_r_1()
                     .border_color(cx.theme().border)
                     .font_family(cx.theme().mono_font_family.clone())
-                    .text_sm()
+                    .text_base()
                     .text_color(theme::accent())
                     .child(format_timecode(self.clock.frame(), frame_rate)),
             )
@@ -921,7 +921,7 @@ impl EditorView {
                     .flex_none()
                     .w(px(22.0))
                     .font_family(cx.theme().mono_font_family.clone())
-                    .text_xs()
+                    .text_sm()
                     .text_color(muted)
                     .child(row.label.clone()),
             )
@@ -939,7 +939,7 @@ impl EditorView {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_sm()
+                    .text_base()
                     .text_color(if track.enabled {
                         cx.theme().foreground
                     } else {
@@ -1134,7 +1134,7 @@ impl EditorView {
                     .top(px(1.0))
                     .left(relative(label_offset))
                     .px_1()
-                    .text_xs()
+                    .text_sm()
                     .text_color(label_color)
                     .whitespace_nowrap()
                     .child(clip.name.clone()),
@@ -1218,7 +1218,7 @@ impl EditorView {
                         div()
                             .w(px(22.0))
                             .font_family(cx.theme().mono_font_family.clone())
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child("V1"),
                     )
@@ -1230,7 +1230,7 @@ impl EditorView {
                     )
                     .child(
                         div()
-                            .text_sm()
+                            .text_base()
                             .text_color(cx.theme().foreground)
                             .child("Composition"),
                     ),
@@ -1256,7 +1256,7 @@ impl EditorView {
                             .rounded_sm()
                             .bg(rgb(theme::clip_fill(TrackKind::Overlay)))
                             .px_1()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme::waveform())
                             .when(set_timing.is_none(), |block| block.child(entry)),
                     )
@@ -1276,7 +1276,7 @@ impl EditorView {
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().popover)
-                    .text_xs()
+                    .text_sm()
                     .whitespace_nowrap()
                     .map(|label| {
                         if notice {
@@ -1416,7 +1416,7 @@ impl EditorView {
             .child(
                 div()
                     .px_1()
-                    .text_xs()
+                    .text_sm()
                     .text_color(theme::waveform())
                     .whitespace_nowrap()
                     .child(SharedString::from(entry.to_owned())),
@@ -1676,7 +1676,7 @@ impl EditorView {
                             .top(px(1.0))
                             .left(relative(label_offset))
                             .px_1()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().foreground)
                             .whitespace_nowrap()
                             .child(chapter.name.clone()),
@@ -1711,13 +1711,13 @@ impl EditorView {
                     .child(div().size(px(8.0)).rounded_sm().bg(theme::accent()))
                     .child(
                         div()
-                            .text_sm()
+                            .text_base()
                             .text_color(cx.theme().foreground)
                             .child("Chapters"),
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(chapters.len().to_string()),
                     ),
@@ -1750,7 +1750,7 @@ impl EditorView {
                         .border_1()
                         .border_color(cx.theme().border)
                         .bg(cx.theme().popover)
-                        .text_xs()
+                        .text_sm()
                         .whitespace_nowrap()
                         .map(|label| {
                             if notice {
@@ -1823,7 +1823,7 @@ impl EditorView {
                         div()
                             .ml_auto()
                             .font_family(cx.theme().mono_font_family.clone())
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("{:.1}×", view.zoom)),
                     ),

@@ -18,13 +18,13 @@ pub(crate) fn inspector_row(
         .border_color(cx.theme().border)
         .child(
             div()
-                .text_xs()
+                .text_sm()
                 .text_color(cx.theme().muted_foreground)
                 .child(label.into()),
         )
         .child(
             div()
-                .text_sm()
+                .text_base()
                 .text_color(cx.theme().foreground)
                 .child(value.into()),
         )
@@ -38,7 +38,7 @@ pub(crate) fn inspector_section(title: impl Into<SharedString>, cx: &App) -> imp
         .border_t_1()
         .border_b_1()
         .border_color(cx.theme().border)
-        .text_sm()
+        .text_base()
         .text_color(cx.theme().foreground)
         .child(title.into())
 }
@@ -47,7 +47,7 @@ pub(crate) fn inspector_note(text: &'static str, cx: &App) -> impl IntoElement {
     div()
         .px_3()
         .py_2()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(text)
 }

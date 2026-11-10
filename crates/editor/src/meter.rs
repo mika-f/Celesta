@@ -148,7 +148,7 @@ pub fn audio_meter(reading: Option<MeterReading>, cx: &App) -> impl IntoElement 
                 .right_0()
                 .top(relative(1.0 - scale_position(*db)))
                 .mt(px(-6.0))
-                .text_size(px(9.0))
+                .text_sm()
                 .line_height(px(12.0))
                 .text_color(muted)
                 .child(format!("{}", db.abs() as i32))
@@ -176,7 +176,7 @@ pub fn audio_meter(reading: Option<MeterReading>, cx: &App) -> impl IntoElement 
                 .gap_1()
                 .pl(px(26.0))
                 .font_family(mono)
-                .text_size(px(9.0))
+                .text_sm()
                 .children(reading.hold.iter().map(|hold| {
                     div()
                         .flex_1()

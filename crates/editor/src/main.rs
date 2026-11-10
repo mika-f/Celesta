@@ -59,6 +59,8 @@ mod scene_entries;
 mod scope;
 mod source;
 #[cfg(test)]
+mod style_guard;
+#[cfg(test)]
 mod tests;
 mod timing;
 mod transform_drag;

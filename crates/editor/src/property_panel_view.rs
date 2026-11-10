@@ -45,7 +45,7 @@ impl EditorView {
             .flex()
             .items_center()
             .gap_2()
-            .text_sm()
+            .text_base()
             .text_color(cx.theme().foreground)
             .child("Properties")
             .when(busy, |heading| heading.child(Spinner::new().xsmall()));
@@ -72,7 +72,7 @@ impl EditorView {
                 .children(
                     general
                         .into_iter()
-                        .map(|message| div().text_xs().text_color(danger).child(message)),
+                        .map(|message| div().text_sm().text_color(danger).child(message)),
                 )
                 .children(rows)
                 .into_any_element(),
@@ -106,7 +106,7 @@ impl EditorView {
                 div()
                     .min_w_0()
                     .truncate()
-                    .text_xs()
+                    .text_sm()
                     .text_color(muted)
                     .child(field_label(key, &row.field).to_owned()),
             )
@@ -127,7 +127,7 @@ impl EditorView {
             .chain(&row.state.write_error)
             .chain(issues)
             .cloned()
-            .map(move |message| div().text_xs().text_color(danger).child(message));
+            .map(move |message| div().text_sm().text_color(danger).child(message));
         div()
             .flex()
             .flex_col()
@@ -135,7 +135,7 @@ impl EditorView {
             .child(header)
             .child(self.property_control(key, row, locked, cx))
             .when(locked, |row| {
-                row.child(div().text_xs().text_color(muted).child("Set by --props"))
+                row.child(div().text_sm().text_color(muted).child("Set by --props"))
             })
             .children(messages)
             .into_any_element()

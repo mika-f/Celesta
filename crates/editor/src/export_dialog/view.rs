@@ -556,7 +556,7 @@ fn problem_line(text: impl Into<SharedString>, color: Hsla) -> impl IntoElement 
     h_flex()
         .items_start()
         .gap_1()
-        .text_xs()
+        .text_sm()
         .text_color(color)
         .child(
             Icon::new(IconName::TriangleAlert)
@@ -594,7 +594,7 @@ fn plain(text: &str) -> String {
 
 fn muted_line(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
     div()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(text.into())
 }
@@ -611,7 +611,7 @@ fn separated(section: impl IntoElement, border: Hsla) -> impl IntoElement {
 /// A section's label above its control.
 fn section_label(label: &'static str, cx: &App) -> impl IntoElement {
     div()
-        .text_sm()
+        .text_base()
         .font_weight(FontWeight::MEDIUM)
         .text_color(cx.theme().foreground)
         .child(label)
@@ -721,7 +721,7 @@ impl ExportDialog {
         let range = match &self.range {
             Some(range) => h_flex()
                 .gap_2()
-                .child(div().text_sm().child(range.clone()))
+                .child(div().text_base().child(range.clone()))
                 .child(
                     Button::new("export-range-clear")
                         .ghost()
@@ -733,7 +733,7 @@ impl ExportDialog {
                 )
                 .into_any_element(),
             None => div()
-                .text_sm()
+                .text_base()
                 .child("Whole composition")
                 .into_any_element(),
         };

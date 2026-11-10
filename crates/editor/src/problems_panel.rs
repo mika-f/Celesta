@@ -107,7 +107,7 @@ impl EditorView {
                     div()
                         .px_3()
                         .pb_3()
-                        .text_xs()
+                        .text_sm()
                         .text_color(muted)
                         .child("No problems"),
                 )
@@ -178,7 +178,7 @@ impl EditorView {
                     div()
                         .px_3()
                         .pb_3()
-                        .text_xs()
+                        .text_sm()
                         .text_color(muted)
                         .child("Nothing logged yet"),
                 )
@@ -212,7 +212,7 @@ impl EditorView {
                     .gap_2()
                     .px_3()
                     .py_1()
-                    .text_xs()
+                    .text_sm()
                     .when(has_detail, |row| {
                         row.hover(|row| row.bg(cx.theme().list_hover))
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -400,7 +400,7 @@ fn section_heading(title: &'static str, cx: &App) -> impl IntoElement {
         .px_3()
         .pt_3()
         .pb_1()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(title)
 }
@@ -434,7 +434,7 @@ fn problem_block(
                 .flex()
                 .items_center()
                 .gap_2()
-                .text_xs()
+                .text_sm()
                 .text_color(cx.theme().foreground)
                 .child(icon)
                 .child(div().flex_1().min_w_0().child(heading)),

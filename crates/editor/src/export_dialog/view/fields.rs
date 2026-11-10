@@ -215,7 +215,7 @@ impl ExportDialog {
                     Input::new(input)
                         .id(id)
                         .when_some(unit, |input, unit| {
-                            input.suffix(div().text_xs().text_color(muted).child(unit))
+                            input.suffix(div().text_sm().text_color(muted).child(unit))
                         })
                         .into_any_element(),
                     typo.clone(),

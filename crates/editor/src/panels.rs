@@ -181,7 +181,7 @@ impl EditorView {
                 .cursor_pointer()
                 .when(selected, |row| row.bg(cx.theme().list_active))
                 .hover(|style| style.bg(cx.theme().list_hover))
-                .text_sm()
+                .text_base()
                 .text_color(cx.theme().foreground)
                 .child(
                     div()
@@ -200,7 +200,7 @@ impl EditorView {
                             }
                             None => slot.child(
                                 div()
-                                    .text_xs()
+                                    .text_sm()
                                     .text_color(theme::accent())
                                     .child(asset.kind.to_string().to_uppercase()),
                             ),
@@ -216,7 +216,7 @@ impl EditorView {
                         .when_some(media_detail, |column, detail| {
                             column.child(
                                 div()
-                                    .text_xs()
+                                    .text_sm()
                                     .text_color(if asset.missing {
                                         missing_color
                                     } else {
@@ -319,7 +319,7 @@ impl EditorView {
                             .gap_1()
                             .px_3()
                             .py_2()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().danger)
                             .child(div().line_clamp(2).text_ellipsis().child(format!(
                                 "{}: {}",
@@ -504,13 +504,13 @@ impl EditorView {
                     .border_color(cx.theme().border)
                     .child(
                         div()
-                            .text_sm()
+                            .text_base()
                             .text_color(cx.theme().foreground)
                             .child(character.name.clone()),
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!(
                                 "{} · {} expression(s)",
@@ -521,7 +521,7 @@ impl EditorView {
                     .when_some(character.lip_sync.clone(), |details, lip_sync| {
                         details.child(
                             div()
-                                .text_xs()
+                                .text_sm()
                                 .text_color(cx.theme().muted_foreground)
                                 .child(format!(
                                     "Lip sync: a={} i={} u={} e={} o={} closed={}",
@@ -727,7 +727,7 @@ impl EditorView {
                     .gap_2()
                     .px_3()
                     .py_1()
-                    .text_xs()
+                    .text_sm()
                     .cursor_pointer()
                     .when(is_current, |row| row.bg(cx.theme().list_active))
                     .hover(|row| row.bg(cx.theme().list_hover))
@@ -761,7 +761,7 @@ impl EditorView {
                         .justify_between()
                         .px_3()
                         .py_1()
-                        .text_xs()
+                        .text_sm()
                         .text_color(muted)
                         .child("Name")
                         .child("Start  Length"),
@@ -787,7 +787,7 @@ impl EditorView {
                     div()
                         .px_3()
                         .py_2()
-                        .text_xs()
+                        .text_sm()
                         .text_color(muted)
                         .child("Select a layer in the preview"),
                 )
@@ -843,7 +843,7 @@ impl EditorView {
                 .flex()
                 .justify_between()
                 .gap_2()
-                .text_xs()
+                .text_sm()
                 .child(div().text_color(label_color).child(label.to_owned()))
                 .child(div().text_color(value_color).text_right().child(value))
         };
@@ -852,8 +852,8 @@ impl EditorView {
             .flex_col()
             .gap_2()
             .p_3()
-            .child(div().text_xs().text_color(label_color).child("Entry"))
-            .child(div().text_xs().text_color(value_color).child(entry))
+            .child(div().text_sm().text_color(label_color).child("Entry"))
+            .child(div().text_sm().text_color(value_color).child(entry))
             .child(div().h(px(4.0)))
             .child(row("Size", self.dimensions.to_string()))
             .child(row("Frame rate", self.frame_rate_label.to_string()))
@@ -883,7 +883,7 @@ impl EditorView {
                         .border_color(cx.theme().warning.opacity(0.5))
                         .bg(cx.theme().warning.opacity(0.12))
                         .p_2()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().warning)
                         .children(
                             self.preview_warnings_summary(

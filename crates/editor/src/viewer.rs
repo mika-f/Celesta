@@ -160,7 +160,7 @@ fn mode_toggle(
                 .h(px(TAB_HEIGHT))
                 .rounded_sm()
                 .border_1()
-                .text_xs()
+                .text_sm()
                 .cursor_pointer()
                 // Both tabs carry a hover style, the chosen one restating its
                 // own colors: GPUI tracks a div's hover flag (by its id, one
@@ -206,7 +206,7 @@ fn tool_group(label: &'static str, toggle: impl IntoElement, cx: &App) -> impl I
         .gap_2()
         .child(
             div()
-                .text_xs()
+                .text_sm()
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
@@ -537,7 +537,7 @@ impl EditorView {
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().popover)
-                    .text_xs()
+                    .text_sm()
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_color(cx.theme().foreground)
                     .whitespace_nowrap()
@@ -554,7 +554,7 @@ impl EditorView {
                         .border_1()
                         .border_color(cx.theme().border)
                         .bg(cx.theme().popover)
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(notice),
                 )
@@ -626,7 +626,7 @@ impl EditorView {
                             .flex_none()
                             .items_center()
                             .gap_2()
-                            .text_sm()
+                            .text_base()
                             .text_color(cx.theme().danger)
                             .child(Icon::new(IconName::CircleX).small())
                             .child(active.problem.title.clone()),
@@ -690,7 +690,7 @@ impl EditorView {
             .border_color(cx.theme().warning.opacity(0.5))
             .bg(cx.theme().warning.opacity(0.12))
             .p_2()
-            .text_xs()
+            .text_sm()
             .text_color(cx.theme().warning)
             .children(self.preview_warnings_summary("preview-warnings-show-problems", cx))
     }
@@ -768,7 +768,7 @@ impl EditorView {
                     .child(format_timecode(self.clock.frame(), frame_rate)),
             )
             .when(full, |timecode| {
-                timecode.child(div().text_xs().text_color(muted).child(format!(
+                timecode.child(div().text_sm().text_color(muted).child(format!(
                     "/ {}",
                     format_timecode(self.clock.end_frame(), frame_rate)
                 )))
@@ -884,7 +884,7 @@ impl EditorView {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .font_family(mono.clone())
-                            .text_xs()
+                            .text_sm()
                             .child(div().text_color(cx.theme().foreground).child(format!(
                                 "{} – {}",
                                 mark(self.export_in_frame),
@@ -1191,7 +1191,7 @@ impl EditorView {
                     div()
                         .min_w_0()
                         .overflow_hidden()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .whitespace_nowrap()
                         .text_ellipsis()
@@ -1252,7 +1252,7 @@ impl EditorView {
                     .px_3()
                     .border_b_1()
                     .border_color(cx.theme().border)
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().foreground)
                     .child("Master"),
             )
@@ -1279,7 +1279,7 @@ impl EditorView {
                     .py_2()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(
                         div()

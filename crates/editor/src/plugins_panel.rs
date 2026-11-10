@@ -215,7 +215,7 @@ impl EditorView {
                     .py_1()
                     .gap_2()
                     .justify_between()
-                    .child(div().min_w_0().text_xs().text_color(muted).child(shown))
+                    .child(div().min_w_0().text_sm().text_color(muted).child(shown))
                     .child(
                         Button::new(("plugins-remove-folder", index))
                             .xsmall()
@@ -241,7 +241,7 @@ impl EditorView {
                         div()
                             .px_3()
                             .py_1()
-                            .text_xs()
+                            .text_sm()
                             .text_color(muted)
                             .child(reason)
                     }))
@@ -350,20 +350,20 @@ impl EditorView {
                 h_flex()
                     .justify_between()
                     .gap_2()
-                    .child(div().text_sm().child(title))
+                    .child(div().text_base().child(title))
                     .child(switch),
             )
-            .child(div().text_xs().text_color(muted).child(detail))
-            .children(decoder_uses.map(|text| div().text_xs().text_color(muted).child(text)))
+            .child(div().text_sm().text_color(muted).child(detail))
+            .children(decoder_uses.map(|text| div().text_sm().text_color(muted).child(text)))
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(muted)
                     .child(row.entry.directory.display().to_string()),
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .when(row.state == PluginState::Off, |label| {
                         label.text_color(muted)
                     })
@@ -375,7 +375,7 @@ impl EditorView {
             .when(internet, |column| {
                 column.child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().danger)
                         .child("Downloaded from the internet."),
                 )
@@ -491,7 +491,7 @@ fn heading(title: &'static str, cx: &App) -> impl IntoElement {
         .px_3()
         .pt_3()
         .pb_1()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(title)
 }
@@ -500,7 +500,7 @@ fn note(text: &'static str, cx: &App) -> impl IntoElement {
     div()
         .px_3()
         .pb_2()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(text)
 }
