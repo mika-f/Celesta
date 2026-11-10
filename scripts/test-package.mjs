@@ -136,6 +136,48 @@ export default function Root() {
     assert.equal(avMp4.toString('ascii', 4, 8), 'ftyp');
     assert.ok(avMp4.length > 100);
   }
+  if (!mac) {
+    // The Media Foundation plugin links Windows system libraries only, so it
+    // carries MIT/Apache-2.0 alone. It has no muxer: its encoders write into
+    // the FFmpeg plugin's MP4.
+    const native = join(packageDirectory, 'plugins/mediafoundation');
+    assert.ok(existsSync(join(native, 'celesta-plugin.json')), 'Package must include the Media Foundation plugin');
+    const nativeManifest = JSON.parse(readFileSync(join(native, 'celesta-plugin.json'), 'utf8'));
+    assert.deepEqual(nativeManifest.roles, ['media']);
+    const nativeIds = (kind) => (nativeManifest.media?.[kind] ?? []).map((component) => component.id);
+    assert.deepEqual(nativeIds('decoders'), ['mediafoundation']);
+    assert.deepEqual(nativeIds('videoEncoders'), ['h264', 'hevc']);
+    assert.deepEqual(nativeIds('audioEncoders'), ['aac']);
+    assert.deepEqual(nativeIds('muxers'), []);
+    const nativePrograms = Object.entries(nativeManifest.executable ?? {});
+    assert.equal(nativePrograms.length, 1, 'The Media Foundation plugin must name exactly one executable');
+    assert.ok(nativePrograms[0][0].startsWith('windows-'), `The Media Foundation plugin's executable ${nativePrograms[0][0]} must be a windows-* one`);
+    assert.ok(existsSync(join(native, nativePrograms[0][1])), `The Media Foundation plugin's program ${nativePrograms[0][1]} must exist`);
+    const nativeSource = JSON.parse(readFileSync(new URL('../plugins/mediafoundation/plugin.json', import.meta.url), 'utf8'));
+    assert.deepEqual(
+      readdirSync(join(native, 'licenses')).sort(),
+      nativeSource.licenses.map((license) => basename(license)).sort(),
+      "The Media Foundation plugin's licenses/ must hold exactly the files plugins/mediafoundation/plugin.json lists",
+    );
+    assert.deepEqual(readdirSync(join(native, 'licenses')).sort(), ['LICENSE-APACHE', 'LICENSE-MIT']);
+    for (const crate of ['celesta-codec-mediafoundation', 'windows']) {
+      assert.ok(rustPackages.includes(crate), `licenses/rust-packages.json must name ${crate}`);
+    }
+    // The encoder is the machine's: a Windows Server without the Media
+    // Foundation feature, or a runner without a usable encoder, has none.
+    const listing = JSON.parse(run(exporter, ['--list-components', '--check', '--json']));
+    const h264 = listing.components.find((component) => component.id === 'mediafoundation/h264');
+    assert.ok(h264, 'The exporter must list mediafoundation/h264');
+    if (h264.available) {
+      const output3 = join(directory, 'test-mediafoundation.mp4');
+      run(exporter, ['--react', entry, '--video-encoder', 'mediafoundation/h264', output3]);
+      const nativeMp4 = readFileSync(output3);
+      assert.equal(nativeMp4.toString('ascii', 4, 8), 'ftyp');
+      assert.ok(nativeMp4.length > 100);
+    } else {
+      console.log(`skipping the Media Foundation export: ${h264.reason ?? 'mediafoundation/h264 is unavailable'}`);
+    }
+  }
   assert.ok(!existsSync(join(runtime, 'react/.tmp')), 'Runtime must not write into the install directory');
   assert.ok(
     existsSync(join(runtime, 'react/dist/project-types/version.json')),

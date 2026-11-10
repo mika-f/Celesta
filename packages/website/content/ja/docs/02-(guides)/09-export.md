@@ -260,6 +260,45 @@ AudioToolbox が受け付けるビットレートは、サンプリングレー�
 
 MCP の `export_video` ツールと `@celesta.studio/exporter` も同じ名前を受け取ります。`"muxer": "avfoundation/mp4"`、`"videoEncoder": { "id": "avfoundation/hevc", "options": { "quality": 80 } }` のように指定します。
 
+## Windows の Media Foundation コンポーネント
+
+Windows のアプリには `mediafoundation` メディアプラグインも入っています。Windows 自身の Media Foundation で（Windows が GPU の動画エンコーダーを使えるときはそれを使って）H.264、HEVC、AAC をエンコードします。マルチプレクサーは持たず、エンコーダーはほかのプラグインのコンテナーに書きます。コンテナーはいつもどおり出力の拡張子で決まり（`.mp4` なら `ffmpeg/mp4`、`.mov` なら `ffmpeg/mov`）、`--muxer` でも指定できます。既定は FFmpeg のままです。これらのコンポーネントは、`--video-encoder` と `--audio-encoder` や書き出しプリセット（`"video": { "component": "mediafoundation/hevc" }`）で名前を指定したときだけ使われます。`--video-encoder mediafoundation/h264` だけを指定すると、Media Foundation の H.264 を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。アプリの書き出しダイアログでも、映像と音声のエンコーダーの中に表示されます。このプラグインは Windows 専用で、macOS と Linux にはありません。
+
+| コンポーネント | 種類 | 書き出すもの |
+| --- | --- | --- |
+| `mediafoundation/h264` | 映像エンコーダー | H.264 |
+| `mediafoundation/hevc` | 映像エンコーダー | HEVC（8 bit または 10 bit） |
+| `mediafoundation/aac` | 音声エンコーダー | 44.1 kHz または 48 kHz の AAC |
+
+NVIDIA GeForce RTX 4070 では、GPU の H.264 と HEVC のエンコーダーは、4K の作品を既定の設定の x264 の約 2 倍の速さで書き出しました。それぞれの既定の設定では、ファイルは x264 より約 15% 小さく画質はわずかに低く、1080p ではほぼ同じ大きさでした。Microsoft のソフトウェアエンコーダー（`hardware=false`）は GPU のものより時間がかかり、ファイルは x264 より 10〜54% 大きくなりました。
+
+このリリースでの設定は次のとおりです（`--describe mediafoundation/hevc` でも確認できます）。
+
+| コンポーネント | キー | 値（既定値） |
+| --- | --- | --- |
+| `mediafoundation/h264` | `profile` | `high`、`main`、`baseline`（`high`） |
+| | `rateControl` | 品質一定の `quality`、平均ビットレートの `bitrate`（`quality`） |
+| | `quality` | 0〜100、`rateControl=quality` のとき。大きいほど高画質・大容量で、0 は Microsoft のエンコーダーが受け付ける最低の 1 として扱います（70） |
+| | `bitrate` | ビット毎秒、100000 以上、`rateControl=bitrate` のとき（8000000） |
+| | `keyframeInterval` | 1〜1000、キーフレームの間隔の最大フレーム数（250） |
+| | `bFrames` | `true` または `false`。フレームを並べ替えると圧縮率が上がります。デコードできないプレーヤー向けには無効にします（`true`）。Baseline では常に使いません |
+| | `hardware` | Windows が GPU のエンコーダーを使えるときにそれを使う `true`、または Microsoft のソフトウェアエンコーダーを使う `false`（`true`） |
+| `mediafoundation/hevc` | `rateControl`、`quality`、`bitrate`、`keyframeInterval`、`bFrames`、`hardware` | `mediafoundation/h264` と同じ |
+| | `bitDepth` | Main の `8`、または Main 10 の `10`（`8`） |
+| `mediafoundation/aac` | `bitrate` | `96000`、`128000`、`160000`、`192000` ビット毎秒のいずれか（`192000`） |
+
+`bFrames` はフレームの並べ替えを求める設定で、NVIDIA のものなど並べ替えられないエンコーダーは、並べ替えずに映像を書きます。GPU のエンコーダーが指定した `rateControl` を受け付けないときは、Windows が挙げる次のエンコーダーを使い、最後は Microsoft のソフトウェアエンコーダーになります。Windows のソフトウェアの HEVC エンコーダーは Microsoft Store の HEVC ビデオ拡張機能に含まれていて 8 bit のみなので、10 bit の HEVC には GPU のエンコーダーが必要です。`bitDepth=10` と `hardware=false` を指定すると、エラーコード `component_unavailable` で失敗します。AAC は 16 bit のサンプルから、モノラルまたはステレオ、44.1 kHz または 48 kHz でエンコードします。ほかのレートでミックスする音声は 48 kHz でエンコードします。
+
+`--loop` はこれらのエンコーダーでも使えます。先頭に入れた音声と、`mediafoundation/aac` が最初に入れる短い無音は、FFmpeg の AAC の遅延と同じく MP4 の edit list で隠します。色は FFmpeg と同じく、リミテッドレンジの BT.709 で、タグも付きます。Microsoft のソフトウェアエンコーダーは H.264 と HEVC のストリーム自体にこのタグを書かないので、プラグインが書き加えます。Windows にそのコーデックのエンコーダーがないときは、コンポーネントはこのコンピューターでは使えないと答え（`Media Foundation has no HEVC encoder on this system; install a GPU driver with one or the HEVC Video Extensions`）、指定するとエラーコード `component_unavailable` で失敗します。どれが使えるかは `--list-components --check` で確認できます。Media Foundation の機能を入れていない Windows Server や、Media Feature Pack を入れていない N エディションの Windows では、どれも使えません。
+
+このプラグインには、MP4、MOV、M4A のファイルを読むデコーダー `mediafoundation/mediafoundation` もあります。FFmpeg のデコーダーが先に読むので、これが読むのは FFmpeg が読めないファイルだけです（`ffmpeg` プラグインをオフにしたときは、これらのファイルをすべて読みます）。色は Media Foundation 自身の変換によるため、HDR の動画は FFmpeg のデコーダーのようなトーンマッピングを通らず、見え方が異なることがあります。また、アルファは捨てます。
+
+```sh title="Media Foundation で HEVC と AAC を書き出す"
+& "C:\path\to\Celesta\Celesta-export.exe" --react --video-encoder mediafoundation/hevc --video-option quality=80 --audio-encoder mediafoundation/aac --audio-option bitrate=160000 first-scene.tsx output.mp4
+```
+
+MCP の `export_video` ツールと `@celesta.studio/exporter` も同じ名前を受け取ります。`"videoEncoder": { "id": "mediafoundation/hevc", "options": { "quality": 80 } }`、`"audioEncoder": { "id": "mediafoundation/aac", "options": { "bitrate": "160000" } }` のように指定します。AAC の `bitrate` は選択肢なので、MCP では文字列で渡します。
+
 ## 繰り返し再生する動画
 
 Shorts や TikTok は動画を繰り返し再生します。最後のフレームが最初のフレームへつながる動画では、`--loop` を付けて音もつながるようにします。AAC のエンコーダーは無音から符号化を始めるので、付けないと最初のフレームのキックなどの立ち上がりが約 10 ms にじみ、繰り返すたびにそれが鳴ります。`--loop` を付けると、エンコーダーは先にサウンドトラックの末尾を符号化し、その分は MP4 の edit list で隠します。音声の長さは映像とちょうど同じままです。サウンドトラック自体はループしている必要があり、末尾からはみ出す響きは先頭に重ねておきます。`--loop` はどの動画にも付けられます。MP4 と MOV はその分を隠し、WebM のようにそれを隠せないマルチプレクサーでは `--loop` は何も変えません。`.mov` の PCM 音声にはエンコーダーの遅延がないので、付けなくてもつながります。

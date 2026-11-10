@@ -45,8 +45,9 @@ Outputs are placed in `target/packages`:
 - A unique `staging-*/Celesta` directory for inspecting the package.
 
 Existing output files are never overwritten. `-SkipBuild` reuses already-built
-`target/release` executables and the built `packages/*/dist` runtime; the codec plugin is always
-built, which costs nothing when `plugins/target` is current. Use it only after building the
+`target/release` executables and the built `packages/*/dist` runtime; the media plugins
+(`plugins/ffmpeg` and `plugins/mediafoundation`) are always built, which costs nothing when
+`plugins/target` is current. Use it only after building the
 current sources. A custom Cargo target directory is not supported.
 
 The installer installs for the current user without elevation, adds a Start menu
@@ -95,3 +96,12 @@ The same FFmpeg build links libvpx and libopus (BSD-3-Clause), the WebM
 encoders. The `vcpkg install` line above builds them, and their copyright files
 ship under `licenses/native` with the other native notices (the packaging script
 copies vcpkg's whole `share` tree).
+
+`plugins\mediafoundation` holds the Media Foundation plugin
+(`celesta-codec-mediafoundation`): the H.264, HEVC and AAC encoders and the
+decoder of Windows' own Media Foundation. Its program links only Windows
+system libraries, so the folder carries MIT/Apache-2.0 alone
+(`plugins\mediafoundation\licenses`), and the program gets its own copies of
+the MSVC runtime DLLs beside it. The plugin has no muxer: its encoders write
+into the FFmpeg plugin's MP4. The shared build script builds it after
+`plugins/ffmpeg`.

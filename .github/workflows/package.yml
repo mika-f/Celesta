@@ -44,7 +44,7 @@ jobs:
             echo "Release $RELEASE_TAG does not match the workspace version $version in Cargo.toml" >&2
             exit 1
           fi
-          for plugin in ffmpeg avfoundation; do
+          for plugin in ffmpeg avfoundation mediafoundation; do
             plugin_version="$(node -p "require('./plugins/$plugin/plugin.json').version")"
             if [[ "$plugin_version" != "$version" ]]; then
               echo "plugins/$plugin/plugin.json gives $plugin_version, not the workspace version $version; run node scripts/plugins/bump-version.mts" >&2

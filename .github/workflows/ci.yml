@@ -360,11 +360,12 @@ jobs:
             (cd "$workspace" && cargo fmt --check $packages) < /dev/null
           done <<< "$CARGO_WORKSPACES"
 
-      # Linux and macOS, not Windows: the AVFoundation plugin's code builds on
-      # macOS only, so only a macOS run lints it (Format stays Linux only:
-      # rustfmt formats cfg-gated modules too).
+      # Every system: each OS-native plugin's code builds on its own system
+      # only (AVFoundation's on macOS, Media Foundation's on Windows), so
+      # only that system's run lints it (Format stays Linux only: rustfmt
+      # formats cfg-gated modules too).
       - name: Clippy
-        if: steps.affected.outputs.cargo != '' && runner.os != 'Windows'
+        if: steps.affected.outputs.cargo != ''
         env:
           CARGO_WORKSPACES: ${{ steps.affected.outputs.cargo }}
         run: |

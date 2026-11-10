@@ -108,6 +108,13 @@ try {
     $codecManifest = Get-Content -Raw -LiteralPath "$codec/celesta-plugin.json" | ConvertFrom-Json
     $codecProgram = Join-Path $codec $codecManifest.executable.'windows-x86_64'
     Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination (Split-Path $codecProgram -Parent)
+    # The Media Foundation plugin links Windows system libraries only, but its
+    # program is a Rust executable of its own and gets the same CRT copies.
+    $native = Join-Path $package 'plugins/mediafoundation'
+    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/plugins/build.mts", "$root/plugins/mediafoundation", '--out', "$package/plugins")
+    $nativeManifest = Get-Content -Raw -LiteralPath "$native/celesta-plugin.json" | ConvertFrom-Json
+    $nativeProgram = Join-Path $native $nativeManifest.executable.'windows-x86_64'
+    Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination (Split-Path $nativeProgram -Parent)
 
     Copy-Item -LiteralPath "$root/README.md" -Destination $package
     New-Item -ItemType Directory "$package/examples" | Out-Null
@@ -129,12 +136,12 @@ try {
     $metadataText = & cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
     $metadata = $metadataText | ConvertFrom-Json
-    # The codec plugin and its crates are in the plugins workspace. Packaging
-    # builds only the codec there. That workspace also holds plugins
-    # the package does not bundle (VRM), so only the codec and what its normal
-    # and build dependencies reach in the resolve graph are listed; a
-    # dependency it has only for its tests is not shipped. package-macos.py's
-    # bundled_packages does the same.
+    # The bundled plugins and their crates are in the plugins workspace.
+    # Packaging builds only those there. That workspace also holds plugins the
+    # package does not bundle (VRM), so only the bundled plugins and what their
+    # normal and build dependencies reach in the resolve graph are listed; a
+    # dependency a plugin has only for its tests is not shipped.
+    # package-macos.py's bundled_packages does the same.
     $pluginsText = & cargo metadata --manifest-path "$root/plugins/Cargo.toml" --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed for the plugins workspace' }
     $plugins = $pluginsText | ConvertFrom-Json
@@ -143,11 +150,16 @@ try {
     foreach ($crate in $plugins.packages) { $pluginPackages[$crate.id] = $crate }
     $nodes = [hashtable]::new([StringComparer]::Ordinal)
     foreach ($node in $plugins.resolve.nodes) { $nodes[$node.id] = $node }
-    $codecIds = @($plugins.workspace_members | Where-Object { $pluginPackages[$_].name -eq 'celesta-codec-ffmpeg' })
-    if ($codecIds.Count -ne 1) { throw "The plugins workspace must have one celesta-codec-ffmpeg member, not $($codecIds.Count)" }
+    $bundled = @('celesta-codec-ffmpeg', 'celesta-codec-mediafoundation')
+    $roots = @()
+    foreach ($name in $bundled) {
+        $found = @($plugins.workspace_members | Where-Object { $pluginPackages[$_].name -eq $name })
+        if ($found.Count -ne 1) { throw "The plugins workspace must have one $name member, not $($found.Count)" }
+        $roots += $found
+    }
     $reached = [hashtable]::new([StringComparer]::Ordinal)
     $pending = [System.Collections.Generic.Stack[string]]::new()
-    $pending.Push($codecIds[0])
+    foreach ($rootId in $roots) { $pending.Push($rootId) }
     while ($pending.Count) {
         $id = $pending.Pop()
         if ($reached.ContainsKey($id)) { continue }

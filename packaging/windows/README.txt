@@ -22,12 +22,18 @@ licenses/rust, Node.js notices in runtime/LICENSE, and JavaScript notices in
 runtime/react/node_modules.
 
 Celesta.exe, Celesta-export.exe, and Celesta-mcp.exe link no FFmpeg and are
-MIT/Apache-2.0 licensed. Video and audio are read and written by the codec
-plugin in plugins\ffmpeg, a separate program
+MIT/Apache-2.0 licensed. Video and audio are read and written by the media
+plugins in plugins\ffmpeg and plugins\mediafoundation, separate programs.
+The codec plugin in plugins\ffmpeg
 (plugins\ffmpeg\bin\windows-x86_64\celesta-codec-ffmpeg.exe, with its own MSVC
-runtime DLLs beside it) built with an x264-enabled FFmpeg, which is
+runtime DLLs beside it) is built with an x264-enabled FFmpeg, which is
 GPL-2.0-or-later licensed. See plugins\ffmpeg\licenses (or
 licenses/LICENSE-GPL-2.0) for the license text and
 licenses/GPL-SOURCE-OFFER.md for the corresponding-source offer.
 The build also includes libvpx and libopus (BSD-3-Clause); their notices are in
 licenses/native.
+The Media Foundation plugin in plugins\mediafoundation
+(plugins\mediafoundation\bin\windows-x86_64\celesta-codec-mediafoundation.exe)
+adds Windows' own H.264, HEVC, and AAC encoders and a decoder. It links only
+Windows system libraries and is MIT/Apache-2.0 licensed
+(plugins\mediafoundation\licenses).
