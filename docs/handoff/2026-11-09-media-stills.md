@@ -158,22 +158,26 @@ every still export P3 wrote is byte-identical (see Checks).
 
 ## Implementation
 
-The branch was rebased onto `claude/media-components-p3` at `a53a0c11`,
-which already contains P2c (BT.709), from `8c0ad423`; the hashes below are
-the rebased commits, matched to the old ones by subject (old hash in
-parentheses).
+The branch sits on `claude/media-components-p3` at `61f44451`: P3 rebased
+onto P2c (BT.709) after P2c's review fixes were force-pushed, with P2b's
+review fixes below them. It was rebased there from `a53a0c11`, P3's earlier
+tip, and before that from `8c0ad423`. The hashes below are the rebased
+commits, matched to the ones before this rebase by subject (that hash in
+parentheses). `2549c697` keeps only its `progress.rs` change: P3's
+`c68f2a19` already gives the listing tests' `run` an empty home, so the
+rebase kept P3's version of that function.
 
 | Commit | Task |
 | --- | --- |
-| `174bfc39` (`03a09586`) | `MediaOrigin::BuiltIn`, `FFMPEG_PLUGIN_ID`, `default_rank`, the decoder order, and the editor's rank. |
-| `1c7f5236` (`c2ca205d`) | `crates/media-image`: the encoders, the muxers, `codec_for_extension`, `sequence_path`. |
-| `3124d739` (`caab95e2`) | `with_builtin`, `serves_video`, the video refusal, `check_opened` shared, the editor's container filter, the listings. |
-| `0255a1dd` (`b422a2d7`) | `still_output.rs`; `stills.rs` loses its encoders; `celesta_remote::publish_path`; `png`, `image`, and `webp` move to the exporter's dev-dependencies. |
-| `977eae1f` (`f558b847`) | Straight `rgba8` (`readback_for`, `encoder_pixels`), and sequences publishing the frames of the packets written. |
-| `93442dac` (`a2a79905`) | The CLI's, MCP's, and the TS package's still component options. |
-| `74a70d4c`, `c1b3b525` | The docs, and `plugins/Cargo.lock`. |
-| `b27684ae`, `dd2ffbff`, `dea91885`, `3d3f2ade`, `afc05b0a` | The first review's fixes: MCP's string select settings, no `fsync` per frame, the straight `rgba8` dither, staging after open, partial flushes, stills with no media plugin, and their docs. |
-| `00d45157`, `2fbb4649`, `83e6c364`, `954451cd` | The second review's fixes (#795), below. |
+| `8fb99067` (`174bfc39`) | `MediaOrigin::BuiltIn`, `FFMPEG_PLUGIN_ID`, `default_rank`, the decoder order, and the editor's rank. |
+| `4b37da7c` (`1c7f5236`) | `crates/media-image`: the encoders, the muxers, `codec_for_extension`, `sequence_path`. |
+| `92d27688` (`3124d739`) | `with_builtin`, `serves_video`, the video refusal, `check_opened` shared, the editor's container filter, the listings. |
+| `cd1bcf61` (`0255a1dd`) | `still_output.rs`; `stills.rs` loses its encoders; `celesta_remote::publish_path`; `png`, `image`, and `webp` move to the exporter's dev-dependencies. |
+| `3fc63edc` (`977eae1f`) | Straight `rgba8` (`readback_for`, `encoder_pixels`), and sequences publishing the frames of the packets written. |
+| `f8e8a4e2` (`93442dac`) | The CLI's, MCP's, and the TS package's still component options. |
+| `f577aba9`, `7f1088c5` (`74a70d4c`, `c1b3b525`) | The docs, and `plugins/Cargo.lock`. |
+| `8715ba46`, `b9c20c8f`, `a6fa4514`, `8ab8d051`, `5867bd74` (`b27684ae`, `dd2ffbff`, `dea91885`, `3d3f2ade`, `afc05b0a`) | The first review's fixes: MCP's string select settings, no `fsync` per frame, the straight `rgba8` dither, staging after open, partial flushes, stills with no media plugin, and their docs. |
+| `83c49bf2`, `5a67f109`, `28e2c56a`, `2549c697` (`00d45157`, `2fbb4649`, `83e6c364`, `954451cd`) | The second review's fixes (#795), below. |
 
 ## Deviations from the spec
 
@@ -402,16 +406,16 @@ The second review's findings, each checked against the code first:
 ## Checks
 
 On macOS 26.6.2, Apple M4, Metal, with `PKG_CONFIG_PATH` at Homebrew's
-`ffmpeg@8`, at `954451cd` (the branch rebased onto `a53a0c11`, with the
-second review's fixes) plus this note's commit. A GPU adapter was
-available, so the live still tests ran. (The first round ran at the old
-`a2a79905`, before the rebase and the first review's fixes; its numbers
-are replaced by these.)
+`ffmpeg@8`, at `777da987` (the branch rebased onto P3's `61f44451`)
+plus this note's commit. A GPU adapter was available, so the live still
+tests ran. (Earlier rounds ran at `954451cd`, on P3's `a53a0c11`, and at
+`a2a79905`, before the first rebase and the first review's fixes; their
+numbers are replaced by these.)
 
 **Against P3, byte for byte.** P3's exporter was built in a detached
-worktree of `a53a0c11` (`claude/media-components-p3`, which contains
-P2c) in the session's scratch folder (`git worktree add --detach
-<scratch>/p3 a53a0c11`, then `cargo build --release -p celesta-exporter`,
+worktree of `61f44451` (`claude/media-components-p3`, which contains
+P2c) in a scratch folder (`git worktree add --detach
+<scratch>/p3 61f44451`, then `cargo build --release -p celesta-exporter`,
 and `pnpm install` and `turbo run build --filter "@celesta.studio/cli..."
 --force` there for its own `packages/cli/dist`), and this branch's with
 the same `cargo` command. Both ran from this worktree on the same
@@ -438,24 +442,27 @@ celesta-exporter --json [--react] $S --every 10 --contact-sheet $OUT/f.webp
 - The 12 `--json` reports are identical once each binary's output folder
   is replaced by one name and `stats` is removed.
 
-The local build cache (`mbx`) removed a release `target` twice during the
-run; each binary was rebuilt from the same tree, and this branch's last
-command (`f.webp`, React) ran from a byte-identical copy of its binary,
-which reproduces its `e.png`. The P3 worktree was removed afterwards
-(`git worktree remove`).
+Each binary was copied out of its `target` before the run (a copy still
+finds its own worktree's `packages/cli/dist`), and both wrote nothing to
+stderr. The P3 worktree was removed afterwards (`git worktree remove`).
 
-**Full verification.** The JS runtime was built first, so
-`packages/cli/dist` was whole and the React and MCP live tests ran.
+**Full verification.** `packages/cli/dist` was already built from the
+same runtime sources (this rebase changed no runtime package and none of
+the codegen inputs), so it was whole and the React and MCP live tests
+ran.
 
-- `cargo build -p celesta-codec-test`, then `cargo test --workspace
-  --no-fail-fast`: 2,782 passed, 0 failed, 1 ignored as before
-  (`builtin_effect::write_web_effect_fixtures`). A first run failed three
+- `cargo build -p celesta-codec-test`, then `cargo test --workspace`:
+  2,797 passed, 0 failed, 1 ignored as before
+  (`builtin_effect::write_web_effect_fixtures`); the 15 more than the
+  previous round's 2,782 come with the rebased base. On P3's `a53a0c11`,
+  a first run failed three
   `cli_formats` tests: two listing tests read the developer's own
   `settings.json`, whose `pluginFolders` names another worktree's FFmpeg
   build (`run` now gives the exporter an empty settings folder, as
-  `failure` already did), and `a_plugins_refusal_is_an_invalid_option`
-  saw the test codec's process exit once under the full run's load; it
-  passed alone and in the later full run.
+  `failure` already did; P3's `c68f2a19` now makes the same change), and
+  `a_plugins_refusal_is_an_invalid_option` saw the test codec's process
+  exit once under the full run's load; it passed alone and in the later
+  full run. The run at `777da987` passed first time.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` and
   `cargo fmt --all -- --check`: clean.
 - `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`
