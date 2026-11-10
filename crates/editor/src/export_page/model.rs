@@ -7,10 +7,11 @@
 //! `resolve_preset_output` and handed to [`ExportModel::apply`];
 //! encoder and field edits change the choice here.
 
+use super::wording::PageWarning;
 use celesta_exporter::{
-    AudioChoice, EncoderChoice, ExportError, NoAudio, OutputChoice, Preset, PresetAudio,
-    PresetEncoder, PresetOutput, PresetSource, PresetsFile, ResolvedEncoder, ResolvedOutput,
-    SettingInput, serves_video, writes_any_codec,
+    AudioChoice, EncoderChoice, NoAudio, OutputChoice, Preset, PresetAudio, PresetEncoder,
+    PresetOutput, PresetSource, PresetsFile, ResolvedEncoder, ResolvedOutput, SettingInput,
+    serves_video, writes_any_codec,
 };
 use celesta_media::settings::{
     differences, drop_hidden, effective, is_visible, sanitize, validate,
@@ -63,7 +64,7 @@ pub(crate) enum OptionState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ComponentOption {
     pub(crate) reference: ComponentRef,
-    /// `"{name} · {plugin id}"`, with ` (project)` for a project plugin's.
+    /// `"{name} · {plugin name}"`, with ` (project)` for a project plugin's.
     pub(crate) label: String,
     pub(crate) state: OptionState,
 }
@@ -181,7 +182,7 @@ pub(crate) struct ExportModel {
     /// a field or an encoder is changed.
     pub(crate) selected: Option<(PresetSource, String)>,
     /// The last resolve's warnings, kept until the next one.
-    pub(crate) warnings: Vec<String>,
+    pub(crate) warnings: Vec<PageWarning>,
     /// Why the last resolve failed, which the view sets.
     pub(crate) error: Option<String>,
 }
@@ -229,10 +230,10 @@ impl ExportModel {
     /// read (whose presets the list then leaves out), or a `default`
     /// naming a preset found in no file (an export's `unknown_preset`),
     /// which falls back to `last`.
-    pub(crate) fn initial_base(&self) -> (InitialBase, Vec<String>) {
+    pub(crate) fn initial_base(&self) -> (InitialBase, Vec<PageWarning>) {
         let mut warnings = Vec::new();
-        let project = read(&self.project, &mut warnings);
-        let user = read(&self.user, &mut warnings);
+        let project = read(&self.project, PresetSource::Project, &mut warnings);
+        let user = read(&self.user, PresetSource::User, &mut warnings);
         if let Some(name) = project.and_then(|file| file.default.as_deref()) {
             if let Some(preset) = project.and_then(|file| file.find(name)) {
                 return (
@@ -250,13 +251,9 @@ impl ExportModel {
                     warnings,
                 );
             }
-            warnings.push(
-                ExportError::UnknownPreset {
-                    name: name.to_owned(),
-                    default_in: self.project.path.clone(),
-                }
-                .to_string(),
-            );
+            warnings.push(PageWarning::UnknownDefault {
+                name: name.to_owned(),
+            });
         }
         let base = match user.and_then(|file| file.last.clone()) {
             Some(last) => InitialBase::Last(last),
@@ -357,7 +354,12 @@ impl ExportModel {
             audio,
         });
         self.selected = selected;
-        self.warnings = resolved.warnings.iter().map(ToString::to_string).collect();
+        self.warnings = resolved
+            .warnings
+            .iter()
+            .cloned()
+            .map(PageWarning::Resolve)
+            .collect();
         self.error = None;
     }
 
@@ -657,6 +659,23 @@ impl ExportModel {
             .find(|info| info.kind == kind && info.reference == *reference)
     }
 
+    /// The label of the listed component `reference` of `kind`.
+    pub(super) fn component_label(
+        &self,
+        reference: &ComponentRef,
+        kind: ComponentKind,
+    ) -> Option<String> {
+        self.info(reference, kind).map(label)
+    }
+
+    /// The name of the listed component `reference`, of any kind.
+    pub(super) fn component_name(&self, reference: &ComponentRef) -> Option<String> {
+        self.components
+            .iter()
+            .find(|info| info.reference == *reference)
+            .map(|info| info.name.clone())
+    }
+
     /// The manifest entry of the installed muxer `reference`.
     fn muxer(&self, reference: &ComponentRef) -> Option<&MediaMuxerEntry> {
         match &self.info(reference, ComponentKind::Muxer)?.entry {
@@ -819,8 +838,8 @@ fn kind(track: Track) -> ComponentKind {
     }
 }
 
-fn label(info: &MediaComponentInfo) -> String {
-    let mut label = format!("{} · {}", info.name, info.reference.plugin);
+pub(super) fn label(info: &MediaComponentInfo) -> String {
+    let mut label = format!("{} · {}", info.name, info.plugin_name);
     if info.origin == MediaOrigin::Project {
         label.push_str(" (project)");
     }
@@ -831,13 +850,20 @@ fn loaded(state: &PresetFileState) -> Option<&PresetsFile> {
     state.file.as_ref().ok()?.as_ref()
 }
 
-/// [`loaded`], adding the error of a file that could not be read to
+/// [`loaded`], adding a warning for a file that could not be read to
 /// `warnings`.
-fn read<'a>(state: &'a PresetFileState, warnings: &mut Vec<String>) -> Option<&'a PresetsFile> {
+fn read<'a>(
+    state: &'a PresetFileState,
+    source: PresetSource,
+    warnings: &mut Vec<PageWarning>,
+) -> Option<&'a PresetsFile> {
     match &state.file {
         Ok(file) => file.as_ref(),
-        Err(error) => {
-            warnings.push(error.clone());
+        Err(message) => {
+            warnings.push(PageWarning::UnreadableFile {
+                source,
+                message: message.clone(),
+            });
             None
         }
     }
@@ -1304,7 +1330,8 @@ mod tests {
             resolved
                 .warnings
                 .iter()
-                .map(ToString::to_string)
+                .cloned()
+                .map(PageWarning::Resolve)
                 .collect::<Vec<_>>()
         );
     }
@@ -1659,10 +1686,9 @@ mod tests {
             ExportModel::new(&registry, project, user.clone()).initial_base(),
             (
                 InitialBase::Last(output("b/ivf")),
-                vec![
-                    "the default preset `gone` of /project/export-presets.json is in no presets file"
-                        .to_owned()
-                ]
+                vec![PageWarning::UnknownDefault {
+                    name: "gone".to_owned()
+                }]
             )
         );
 
@@ -1673,8 +1699,18 @@ mod tests {
         };
         assert_eq!(
             ExportModel::new(&registry, broken, user).initial_base(),
-            (InitialBase::Last(output("b/ivf")), vec![message.to_owned()])
+            (
+                InitialBase::Last(output("b/ivf")),
+                vec![unreadable(PresetSource::Project, message)]
+            )
         );
+    }
+
+    fn unreadable(source: PresetSource, message: &str) -> PageWarning {
+        PageWarning::UnreadableFile {
+            source,
+            message: message.to_owned(),
+        }
     }
 
     #[test]
@@ -1688,7 +1724,10 @@ mod tests {
         // With no project default, `last` is looked for in the user file.
         assert_eq!(
             ExportModel::new(&registry, no_files().0, broken.clone()).initial_base(),
-            (InitialBase::None, vec![message.to_owned()])
+            (
+                InitialBase::None,
+                vec![unreadable(PresetSource::User, message)]
+            )
         );
         // The project default found in the project file still says so.
         let project = file(
@@ -1700,7 +1739,7 @@ mod tests {
             ExportModel::new(&registry, project, broken).initial_base(),
             (
                 InitialBase::Preset(PresetSource::Project, "web".into(), output("b/mp4")),
-                vec![message.to_owned()]
+                vec![unreadable(PresetSource::User, message)]
             )
         );
     }

@@ -9,6 +9,7 @@
 //! on the background executor, each plugin's `describe` too.
 
 use super::model::{Asked, CHECKING, ExportModel, InitialBase, PresetFileState, Track};
+use super::wording::{PageWarning, plain};
 use crate::helpers::ExportLoudness;
 use celesta_editor_theme::metrics;
 use celesta_exporter::{
@@ -330,7 +331,7 @@ impl ExportPage {
         output: PathBuf,
         (selected, asked): (Option<(PresetSource, String)>, Asked),
         section: Section,
-        warnings: Vec<String>,
+        warnings: Vec<PageWarning>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -579,21 +580,6 @@ fn blocked_line(reason: String, cx: &App) -> impl IntoElement {
     }
 }
 
-/// A resolve's warning or error as the page shows it: the exporter's
-/// `code` quoting (the CLI's) becomes typographic quotes.
-fn plain(text: &str) -> String {
-    let mut open = false;
-    text.chars()
-        .map(|character| match character {
-            '`' => {
-                open = !open;
-                if open { '“' } else { '”' }
-            }
-            other => other,
-        })
-        .collect()
-}
-
 fn muted_line(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
     div()
         .text_sm()
@@ -632,7 +618,7 @@ impl ExportPage {
         self.model
             .warnings
             .iter()
-            .map(|warning| problem_line(plain(warning), cx.theme().warning))
+            .map(|warning| problem_line(self.model.warning_text(warning), cx.theme().warning))
             .collect()
     }
 
@@ -922,14 +908,6 @@ mod tests {
         crate::scratch::scratch_dir(&format!("export-dialog-{name}"))
     }
 
-    #[test]
-    fn warnings_quote_without_code_marks() {
-        assert_eq!(
-            plain("preset `Web`: b/x264 has no setting `speed`; it is left out"),
-            "preset “Web”: b/x264 has no setting “speed”; it is left out"
-        );
-    }
-
     #[gpui_kit::test]
     fn a_broken_user_file_shows_under_preset(cx: &mut TestAppContext) {
         let folder = scratch("broken");
@@ -948,10 +926,14 @@ mod tests {
             let [warning] = dialog.model.warnings.as_slice() else {
                 panic!("one warning: {:?}", dialog.model.warnings);
             };
+            let PageWarning::UnreadableFile { source, message } = warning else {
+                panic!("an unreadable file: {warning:?}");
+            };
+            assert_eq!(*source, PresetSource::User);
             assert!(
-                warning.starts_with(&user_file.display().to_string())
-                    && warning.contains("is not valid JSON"),
-                "{warning}"
+                message.starts_with(&user_file.display().to_string())
+                    && message.contains("is not valid JSON"),
+                "{message}"
             );
             // The first choice is still made, from the defaults.
             assert_eq!(dialog.export_blocked(), None);
@@ -978,15 +960,16 @@ mod tests {
                 panic!("one warning: {:?}", dialog.model.warnings);
             };
             assert!(
-                warning.starts_with(&user_file.display().to_string()),
-                "{warning}"
+                matches!(warning, PageWarning::UnreadableFile { message, .. }
+                    if message.starts_with(&user_file.display().to_string())),
+                "{warning:?}"
             );
         });
         std::fs::remove_dir_all(folder).unwrap();
     }
 
     #[gpui_kit::test]
-    fn warnings_about_last_call_it_your_last_export(cx: &mut TestAppContext) {
+    fn warnings_name_no_preset(cx: &mut TestAppContext) {
         let folder = scratch("last");
         let user_file = folder.join("export-presets.json");
         std::fs::write(
@@ -1000,9 +983,18 @@ mod tests {
         cx.run_until_parked();
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
         cx.update(|_, cx| {
+            let model = &dialog.read(cx).model;
+            assert!(!model.warnings.is_empty());
+            for warning in &model.warnings {
+                let text = model.warning_text(warning);
+                assert!(
+                    !text.starts_with("preset") && !text.contains("your last export"),
+                    "{text}"
+                );
+            }
             assert_eq!(
-                dialog.read(cx).model.warnings,
-                ["your last export: celesta-test-codec/video has no setting `nope`; it is left out"]
+                model.warning_text(&model.warnings[0]),
+                "Test video encoder has no setting “nope”. It is left out."
             );
         });
         std::fs::remove_dir_all(folder).unwrap();
