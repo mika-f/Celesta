@@ -1,4 +1,5 @@
 use crate::helpers::clip_kind_label;
+use crate::panel_header::PanelHeader;
 use crate::problems::{Source, flow_line_breaks};
 use crate::problems_panel::show_in_problems_row;
 use crate::react_audio::react_audio_clip_id;
@@ -6,7 +7,7 @@ use crate::timecode::format_timecode;
 use crate::view::EditorView;
 use crate::waveform::{clip_local_time, format_media_asset_info};
 use crate::widgets::{
-    inspector_note, inspector_row, inspector_section, json_display, panel_header, property_display,
+    inspector_note, inspector_row, inspector_section, json_display, property_display,
 };
 use celesta_composition::{Animatable, evaluate_f64};
 use celesta_editor_core::{
@@ -256,7 +257,7 @@ impl EditorView {
             .min_h_0()
             .w_full()
             .bg(cx.theme().sidebar)
-            .child(panel_header("Assets", self.assets.len(), cx))
+            .child(PanelHeader::new("assets-header", "Assets").count(self.assets.len()))
             .child(contents)
     }
 

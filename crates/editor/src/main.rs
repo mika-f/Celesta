@@ -41,6 +41,7 @@ mod layer_select;
 mod lifecycle;
 mod media_probe;
 mod occurrences;
+mod panel_header;
 mod panels;
 mod playback;
 mod plugins;

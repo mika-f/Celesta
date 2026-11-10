@@ -1,30 +1,7 @@
 use celesta_react_bridge::ComponentPropertyField;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::prelude::*;
-use gpui_kit::{App, SharedString, div, px};
-
-pub(crate) fn panel_header(title: &'static str, count: usize, cx: &App) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_none()
-        .h(px(40.0))
-        .items_center()
-        .justify_between()
-        .px_3()
-        .border_b_1()
-        .border_color(cx.theme().border)
-        .text_sm()
-        .text_color(cx.theme().foreground)
-        .child(title)
-        .when(count > 0, |header| {
-            header.child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(count.to_string()),
-            )
-        })
-}
+use gpui_kit::{App, SharedString, div};
 
 pub(crate) fn inspector_row(
     label: impl Into<SharedString>,
