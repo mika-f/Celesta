@@ -2,12 +2,14 @@
 //! VP9, each fed frames in the pixel format it chose, converting RGBA with
 //! libswscale, and answering packets as MP4, MOV, and WebM store them.
 //!
-//! Every encoder converts and tags with the [`Color`](celesta_media::Color)
-//! it is given (BT.709 in limited range from Celesta): YUV input is in that
-//! matrix and range already and is taken as it is (libx264's `nv12` too,
-//! its `p010` repacked to planar), RGBA is converted with libswscale's
-//! coefficients for it, and the encoder and every frame carry its tags, so
-//! H.264's VUI, ProRes's frame header, and VP9's color space say it. The
+//! Every encoder tags with the [`Color`](celesta_media::Color) it is given
+//! (BT.709 in limited range from Celesta), so the encoder and every frame
+//! carry it and H.264's VUI, ProRes's frame header, and VP9's color space
+//! say it. RGBA input is converted with libswscale's coefficients for it.
+//! YUV input is BT.709 limited range, as
+//! [`PixelFormat`](celesta_media::PixelFormat) defines it, and is taken as
+//! it is (libx264's `nv12` too, its `p010` repacked to planar): `Color` only
+//! tags it, so a host offering YUV sends the `Color` it rendered. The
 //! options are those of `main`'s `ffmpeg` pipelines.
 
 use crate::components::{VideoCodec, availability};
@@ -127,9 +129,10 @@ fn plan(
     Ok(match codec {
         VideoCodec::X264 => {
             // Planar YUV first, as libx264 takes it; then the interleaved
-            // form (taken as it is at 8 bits, repacked at 10, which libx264
-            // has no semi-planar format for); with no YUV offered (a
-            // software renderer), the RGBA of the bit depth, then the other.
+            // form (taken as it is at 8 bits, repacked at 10, where
+            // libx264's only semi-planar format is 4:2:2's `nv20`); with no
+            // YUV offered (a software renderer), the RGBA of the bit depth,
+            // then the other.
             let (input, format) = if text(settings, "bitDepth") == "10" {
                 (
                     choose(
@@ -307,12 +310,28 @@ pub(crate) fn open(
         .map_err(|InvalidSetting { key, message }| MediaError::InvalidSettings { key, message })?;
     let plan = plan(codec, &settings, request.offered)?;
     let color = AvColor::from_color(request.color)?;
-    if is_rgba(plan.input) {
-        // Refuses a matrix libswscale cannot convert RGB to before the
-        // codec opens.
-        color.sws_coefficients()?;
-    }
     let (width, height) = (dimension(request.width)?, dimension(request.height)?);
+    let input = av_format(plan.input);
+    // Before the codec opens, so a matrix libswscale cannot convert RGB to
+    // is refused first.
+    let scaler = if is_rgba(plan.input) {
+        Some(Scaler::rgb_to_yuv(
+            request.width,
+            request.height,
+            input,
+            plan.format,
+            &color,
+        )?)
+    } else if input != plan.format {
+        Some(Scaler::repack(
+            request.width,
+            request.height,
+            input,
+            plan.format,
+        )?)
+    } else {
+        None
+    };
     let rate = request.frame_rate;
     let (Ok(timescale), Ok(numerator), Ok(denominator)) = (
         c_int::try_from(request.timescale),
@@ -338,7 +357,6 @@ pub(crate) fn open(
     // SAFETY: `name` is NUL-terminated and outlives the call.
     let encoder = unsafe { avcodec_find_encoder_by_name(name.as_ptr()) };
     let context = CodecContext::new(encoder)?;
-    let input = av_format(plan.input);
     let options = plan
         .options
         .iter()
@@ -401,24 +419,6 @@ pub(crate) fn open(
                 description: Some(avcc),
             }
         }
-    };
-    let scaler = if is_rgba(plan.input) {
-        Some(Scaler::rgb_to_yuv(
-            request.width,
-            request.height,
-            input,
-            plan.format,
-            &color,
-        )?)
-    } else if input != plan.format {
-        Some(Scaler::repack(
-            request.width,
-            request.height,
-            input,
-            plan.format,
-        )?)
-    } else {
-        None
     };
     // SAFETY: a size query on a valid format and dimensions.
     let input_bytes = unsafe { av_image_get_buffer_size(input, width, height, 1) };

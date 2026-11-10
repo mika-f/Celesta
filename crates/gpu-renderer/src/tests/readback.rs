@@ -8,11 +8,16 @@ use super::*;
 /// `screen`, each column screens onto the black background, which leaves
 /// its color as it is but composites the frame through the root canvas.
 fn columns(colors: &[&str], screen: bool) -> Scene {
+    columns_from(0.0, colors, screen)
+}
+
+/// [`columns`] starting `left` pixels in.
+fn columns_from(left: f64, colors: &[&str], screen: bool) -> Scene {
     let mut scene = empty_scene(16, 4);
     for (index, color) in colors.iter().enumerate() {
         let mut layer = solid_rect(
             &format!("column-{index}"),
-            index as f64 * 2.0 + 1.0,
+            left + index as f64 * 2.0 + 1.0,
             2.0,
             4.0,
             color,
@@ -172,13 +177,9 @@ fn nv12_interleaves_the_yuv420p_planes() {
     assert_eq!(pairs, expected);
 }
 
-/// The samples of a `P010` or `Yuv420p10` frame, with the UV plane of a
-/// semi-planar one de-interleaved into U then V.
-fn planar_samples(bytes: &[u8], semi_planar: bool) -> Vec<u16> {
-    let samples = samples16(bytes);
-    if !semi_planar {
-        return samples;
-    }
+/// The samples of a 16x4 semi-planar frame with its UV plane
+/// de-interleaved into U then V, as the planar formats pack them.
+fn planar_samples<T: Copy>(samples: &[T]) -> Vec<T> {
     let (luma, chroma) = samples.split_at(64);
     let u = chroma.iter().step_by(2);
     let v = chroma.iter().skip(1).step_by(2);
@@ -199,7 +200,7 @@ fn p010_is_yuv420p10_in_the_high_bits() {
     let raw = samples16(&p010);
     assert!(raw.iter().all(|sample| sample & 0x3f == 0));
     let planar = samples16(&planar);
-    let interleaved = planar_samples(&p010, true);
+    let interleaved = planar_samples(&raw);
     assert_eq!(interleaved.len(), planar.len());
     for (index, (high, low)) in interleaved.iter().zip(&planar).enumerate() {
         assert_eq!(high >> 6, *low, "sample {index}");
@@ -211,41 +212,42 @@ fn nv12_and_p010_match_a_cpu_reference() {
     let Some(mut renderer) = black_renderer() else {
         return;
     };
-    let scene = columns(&REFERENCE_COLORS, false);
-    let rgba = renderer.render(&scene).unwrap().pixels().to_vec();
-    for (format, bits) in [(ReadbackFormat::Nv12, 8), (ReadbackFormat::P010, 10)] {
-        let Some(bytes) = read_back(&mut renderer, format, &scene) else {
-            return;
-        };
-        let actual = if bits == 10 {
-            planar_samples(&bytes, true)
-                .into_iter()
-                .map(|sample| f64::from(sample >> 6))
-                .collect::<Vec<_>>()
-        } else {
-            let (luma, chroma) = bytes.split_at(64);
-            let u = chroma.iter().step_by(2);
-            let v = chroma.iter().skip(1).step_by(2);
-            luma.iter()
-                .chain(u)
-                .chain(v)
-                .map(|&s| f64::from(s))
-                .collect()
-        };
-        let (y, u, v) = reference_yuv(&rgba, 16, 4, bits);
-        let expected = y.into_iter().chain(u).chain(v).collect::<Vec<_>>();
-        assert_eq!(actual.len(), expected.len());
-        for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
-            let rounded = expected.round();
-            assert!(
-                (actual - rounded).abs() <= 1.0,
-                "{format:?} sample {index}: {actual} against {expected}"
-            );
-            // The 8-bit dither keeps a code within an eighth of it; the 10-bit
-            // one has no such margin, only the dither's own (under 1/128).
-            let margin = if bits == 10 { 1.0 / 128.0 } else { 0.125 };
-            if (expected - rounded).abs() <= margin {
-                assert_eq!(*actual, rounded, "{format:?} sample {index}: {expected}");
+    // Columns on whole 2x2 blocks, then shifted a pixel, so every block
+    // straddles two colors and its chroma is their mean, not either one.
+    for (left, scene) in [0.0, 1.0].map(|left| (left, columns_from(left, &REFERENCE_COLORS, false)))
+    {
+        let rgba = renderer.render(&scene).unwrap().pixels().to_vec();
+        for (format, bits) in [(ReadbackFormat::Nv12, 8), (ReadbackFormat::P010, 10)] {
+            let Some(bytes) = read_back(&mut renderer, format, &scene) else {
+                return;
+            };
+            let actual = if bits == 10 {
+                planar_samples(&samples16(&bytes))
+                    .into_iter()
+                    .map(|sample| f64::from(sample >> 6))
+                    .collect::<Vec<_>>()
+            } else {
+                planar_samples(&bytes).into_iter().map(f64::from).collect()
+            };
+            let (y, u, v) = reference_yuv(&rgba, 16, 4, bits);
+            let expected = y.into_iter().chain(u).chain(v).collect::<Vec<_>>();
+            assert_eq!(actual.len(), expected.len());
+            for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+                let rounded = expected.round();
+                assert!(
+                    (actual - rounded).abs() <= 1.0,
+                    "{format:?} from {left} sample {index}: {actual} against {expected}"
+                );
+                // The 8-bit dither keeps a code within an eighth of it; the
+                // 10-bit one has no such margin, only the dither's own (under
+                // 1/128).
+                let margin = if bits == 10 { 1.0 / 128.0 } else { 0.125 };
+                if (expected - rounded).abs() <= margin {
+                    assert_eq!(
+                        *actual, rounded,
+                        "{format:?} from {left} sample {index}: {expected}"
+                    );
+                }
             }
         }
     }

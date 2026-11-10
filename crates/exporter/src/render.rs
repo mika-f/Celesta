@@ -298,7 +298,7 @@ pub(crate) fn open_video_output(
     let offered = ExportSession::offered_formats(renderer);
     let opened = session.open_video(width, height, frame_rate, &offered, staged)?;
     renderer
-        .set_readback_format(readback_of(opened.input)?)
+        .set_readback_format(readback_of(opened.input))
         .map_err(ExportError::Render)?;
     renderer.set_background(if opened.alpha {
         Color::TRANSPARENT

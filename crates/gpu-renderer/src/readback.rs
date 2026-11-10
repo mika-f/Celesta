@@ -113,8 +113,10 @@ pub(crate) struct RgbaReadback {
 pub(crate) struct YuvReadback {
     /// Samples the slot's canvas.
     pub(crate) bind_group: wgpu::BindGroup,
-    /// Y, then U and V, or the interleaved UV, in the order they are packed.
-    pub(crate) planes: Vec<YuvPlane>,
+    /// The Y plane, packed first.
+    pub(crate) luma: YuvPlane,
+    /// U and V, or the interleaved UV, packed after it in this order.
+    pub(crate) chroma: Vec<YuvPlane>,
 }
 
 pub(crate) struct YuvPlane {
@@ -127,9 +129,14 @@ pub(crate) struct YuvPlane {
 }
 
 impl YuvReadback {
+    /// The planes in the order they are packed.
+    pub(crate) fn planes(&self) -> impl Iterator<Item = &YuvPlane> {
+        std::iter::once(&self.luma).chain(&self.chroma)
+    }
+
     /// Total size of the padded planes.
     pub(crate) fn buffer_size(&self) -> u64 {
-        let last = self.planes.last().expect("a slot has planes");
+        let last = self.chroma.last().unwrap_or(&self.luma);
         last.offset + last.layout.buffer_size
     }
 }
@@ -212,8 +219,7 @@ impl ReadbackSlot {
         let planes = match &self.readback {
             SlotReadback::Rgba(rgba) => vec![(0, rgba.layout, self.height)],
             SlotReadback::Yuv(yuv) => yuv
-                .planes
-                .iter()
+                .planes()
                 .map(|plane| (plane.offset, plane.layout, plane.height))
                 .collect(),
         };

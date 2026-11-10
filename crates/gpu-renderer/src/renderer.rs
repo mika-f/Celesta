@@ -26,7 +26,7 @@ use crate::types::{
     Color, GpuFrame, GpuRenderOptions, GpuRenderTarget, PreviewFrame, PreviewFrameStatus,
     ReadbackFormat, RenderQuality,
 };
-use crate::yuv::YuvConverter;
+use crate::yuv::{YuvConverter, yuv_shape};
 use crate::{BYTES_PER_PIXEL, PIPELINE_DEPTH};
 use celesta_composition::{LayerContent, Scene, TextAlign, TextStyle};
 use celesta_media::{VideoFrame, VideoFrameDecoder};
@@ -532,11 +532,13 @@ impl GpuRenderer {
     /// always returns RGBA. Frames already in flight keep the format they
     /// were submitted with.
     pub fn set_readback_format(&mut self, format: ReadbackFormat) -> Result<(), GpuRenderError> {
-        if format.is_yuv() && !self.yuv_converters.contains_key(&format) {
+        if let Some(shape) = yuv_shape(format)
+            && !self.yuv_converters.contains_key(&format)
+        {
             if !self.supports_yuv420p_readback() {
                 return Err(GpuRenderError::UnsupportedReadbackFormat(format));
             }
-            let converter = YuvConverter::new(&self.device, format);
+            let converter = YuvConverter::new(&self.device, shape);
             self.yuv_converters.insert(format, converter);
         }
         let output = match format {
@@ -869,7 +871,7 @@ impl GpuRenderer {
                     let bind_group = converter.frame_bind_group(&self.device, &frame.view);
                     converter.encode(&mut encoder, yuv, &bind_group);
                 }
-                for plane in &yuv.planes {
+                for plane in yuv.planes() {
                     encoder.copy_texture_to_buffer(
                         plane.texture.as_image_copy(),
                         wgpu::TexelCopyBufferInfo {

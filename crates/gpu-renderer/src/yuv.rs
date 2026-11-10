@@ -2,32 +2,55 @@ use crate::error::GpuRenderError;
 use crate::readback::{ReadbackLayout, YuvPlane, YuvReadback};
 use crate::types::ReadbackFormat;
 
+/// What a YUV [`ReadbackFormat`] renders: its luma target and entry point,
+/// and its chroma targets' format, entry point, and one label each (U and V
+/// for the planar formats, UV for the semi-planar ones).
+#[derive(Clone, Copy)]
+pub(crate) struct YuvShape {
+    luma_format: wgpu::TextureFormat,
+    luma_entry: &'static str,
+    chroma_format: wgpu::TextureFormat,
+    chroma_entry: &'static str,
+    chroma_labels: &'static [&'static str],
+}
+
+const PLANAR: &[&str] = &["Celesta yuv420p U plane", "Celesta yuv420p V plane"];
+const SEMI_PLANAR: &[&str] = &["Celesta yuv420p UV plane"];
+
+/// `format`'s [`YuvShape`], or none for an RGBA format. The one list of the
+/// YUV formats, which [`ReadbackFormat::is_yuv`] reads.
+pub(crate) const fn yuv_shape(format: ReadbackFormat) -> Option<YuvShape> {
+    use wgpu::TextureFormat::{R8Unorm, R16Uint, Rg8Unorm, Rg16Uint};
+    let (luma_format, luma_entry, chroma_format, chroma_entry, chroma_labels) = match format {
+        ReadbackFormat::Yuv420p => (R8Unorm, "luma", R8Unorm, "chroma", PLANAR),
+        ReadbackFormat::Yuv420p10 => (R16Uint, "luma10", R16Uint, "chroma10", PLANAR),
+        ReadbackFormat::Nv12 => (R8Unorm, "luma", Rg8Unorm, "chroma_nv12", SEMI_PLANAR),
+        ReadbackFormat::P010 => (R16Uint, "luma_p010", Rg16Uint, "chroma_p010", SEMI_PLANAR),
+        ReadbackFormat::Rgba8 | ReadbackFormat::Rgba16 | ReadbackFormat::Rgba16Straight => {
+            return None;
+        }
+    };
+    Some(YuvShape {
+        luma_format,
+        luma_entry,
+        chroma_format,
+        chroma_entry,
+        chroma_labels,
+    })
+}
+
 /// The render pipelines behind the YUV [`ReadbackFormat`]s
 /// (`yuv420p.wgsl`), one converter each.
 pub(crate) struct YuvConverter {
     pub(crate) luma: wgpu::RenderPipeline,
     pub(crate) chroma: wgpu::RenderPipeline,
     pub(crate) bind_group_layout: wgpu::BindGroupLayout,
-    /// `R8Unorm` for 8-bit luma, `R16Uint` for 10-bit.
-    luma_format: wgpu::TextureFormat,
-    /// What each chroma plane is: `R8Unorm` / `R16Uint` for the planar
-    /// formats (two planes), `Rg8Unorm` / `Rg16Uint` for the semi-planar
-    /// ones (one interleaved plane).
-    chroma_format: wgpu::TextureFormat,
-    chroma_targets: usize,
+    shape: YuvShape,
 }
 
 impl YuvConverter {
-    /// A converter to `format`, which must be a YUV format.
-    pub(crate) fn new(device: &wgpu::Device, format: ReadbackFormat) -> Self {
-        use wgpu::TextureFormat::{R8Unorm, R16Uint, Rg8Unorm, Rg16Uint};
-        let (luma_format, luma, chroma_format, chroma, chroma_targets) = match format {
-            ReadbackFormat::Yuv420p => (R8Unorm, "luma", R8Unorm, "chroma", 2),
-            ReadbackFormat::Yuv420p10 => (R16Uint, "luma10", R16Uint, "chroma10", 2),
-            ReadbackFormat::Nv12 => (R8Unorm, "luma", Rg8Unorm, "chroma_nv12", 1),
-            ReadbackFormat::P010 => (R16Uint, "luma_p010", Rg16Uint, "chroma_p010", 1),
-            _ => unreachable!("{format:?} is not a YUV format"),
-        };
+    /// A converter to the YUV format `shape` describes.
+    pub(crate) fn new(device: &wgpu::Device, shape: YuvShape) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Celesta yuv420p bind group layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -82,14 +105,16 @@ impl YuvConverter {
                 cache: None,
             })
         };
-        let chroma_target = vec![target(chroma_format); chroma_targets];
+        let chroma_target = vec![target(shape.chroma_format); shape.chroma_labels.len()];
         Self {
-            luma: pipeline("Celesta yuv420p luma", luma, &[target(luma_format)]),
-            chroma: pipeline("Celesta yuv420p chroma", chroma, &chroma_target),
+            luma: pipeline(
+                "Celesta yuv420p luma",
+                shape.luma_entry,
+                &[target(shape.luma_format)],
+            ),
+            chroma: pipeline("Celesta yuv420p chroma", shape.chroma_entry, &chroma_target),
             bind_group_layout,
-            luma_format,
-            chroma_format,
-            chroma_targets,
+            shape,
         }
     }
 
@@ -155,21 +180,23 @@ impl YuvConverter {
                 offset: plane_offset,
             })
         };
-        let mut planes = vec![plane(
+        let luma = plane(
             "Celesta yuv420p Y plane",
-            self.luma_format,
+            self.shape.luma_format,
             width,
             height,
-        )?];
-        for index in 0..self.chroma_targets {
-            let label = match (self.chroma_targets, index) {
-                (1, _) => "Celesta yuv420p UV plane",
-                (_, 0) => "Celesta yuv420p U plane",
-                _ => "Celesta yuv420p V plane",
-            };
-            planes.push(plane(label, self.chroma_format, width / 2, height / 2)?);
-        }
-        Ok(YuvReadback { bind_group, planes })
+        )?;
+        let chroma = self
+            .shape
+            .chroma_labels
+            .iter()
+            .map(|label| plane(label, self.shape.chroma_format, width / 2, height / 2))
+            .collect::<Result<_, _>>()?;
+        Ok(YuvReadback {
+            bind_group,
+            luma,
+            chroma,
+        })
     }
 
     /// Renders the frame `frame` binds (`frame_bind_group`; the slot's own
@@ -191,7 +218,7 @@ impl YuvConverter {
                 depth_slice: None,
             })
         }
-        let (luma, chroma) = yuv.planes.split_first().expect("a slot has planes");
+        let (luma, chroma) = (&yuv.luma, &yuv.chroma);
         for (label, pipeline, targets) in [
             (
                 "Celesta yuv420p luma pass",

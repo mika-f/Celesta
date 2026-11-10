@@ -99,14 +99,14 @@ pub(crate) fn convert_channels(audio: &AudioBuffer, channels: u16) -> AudioBuffe
 }
 
 /// The renderer's readback that produces `format`.
-pub(crate) fn readback_of(format: PixelFormat) -> Result<ReadbackFormat, ExportError> {
+pub(crate) const fn readback_of(format: PixelFormat) -> ReadbackFormat {
     match format {
-        PixelFormat::Rgba8 => Ok(ReadbackFormat::Rgba8),
-        PixelFormat::Rgba16 => Ok(ReadbackFormat::Rgba16Straight),
-        PixelFormat::Yuv420p => Ok(ReadbackFormat::Yuv420p),
-        PixelFormat::Yuv420p10 => Ok(ReadbackFormat::Yuv420p10),
-        PixelFormat::Nv12 => Ok(ReadbackFormat::Nv12),
-        PixelFormat::P010 => Ok(ReadbackFormat::P010),
+        PixelFormat::Rgba8 => ReadbackFormat::Rgba8,
+        PixelFormat::Rgba16 => ReadbackFormat::Rgba16Straight,
+        PixelFormat::Yuv420p => ReadbackFormat::Yuv420p,
+        PixelFormat::Yuv420p10 => ReadbackFormat::Yuv420p10,
+        PixelFormat::Nv12 => ReadbackFormat::Nv12,
+        PixelFormat::P010 => ReadbackFormat::P010,
     }
 }
 

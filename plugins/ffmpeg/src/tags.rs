@@ -14,10 +14,10 @@ use std::ffi::{CStr, CString, c_char, c_int};
 /// A [`Color`] in libavutil's terms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AvColor {
-    pub(crate) primaries: AVColorPrimaries,
-    pub(crate) transfer: AVColorTransferCharacteristic,
-    pub(crate) matrix: AVColorSpace,
-    pub(crate) range: AVColorRange,
+    primaries: AVColorPrimaries,
+    transfer: AVColorTransferCharacteristic,
+    matrix: AVColorSpace,
+    range: AVColorRange,
 }
 
 /// The refusal of `name` for the color field `field`.
@@ -27,7 +27,9 @@ fn unknown(field: &str, name: &str) -> MediaError {
 
 /// The enumerator of a bindgen enum whose value libavutil returned, or none
 /// for one the bindings lack (a libavutil newer than their headers), so no
-/// integer is ever reinterpreted as an enum it may not be.
+/// integer is ever reinterpreted as an enum it may not be. The lists leave
+/// out H.273's reserved and unspecified values, which libavutil names
+/// `reserved` and `unknown`, so neither name reaches a file.
 macro_rules! enumerator {
     ($function:ident, $enum:ident { $($variant:ident),* $(,)? }) => {
         fn $function(value: c_int) -> Option<$enum> {
@@ -41,10 +43,7 @@ macro_rules! enumerator {
 enumerator!(
     primaries,
     AVColorPrimaries {
-        AVCOL_PRI_RESERVED0,
         AVCOL_PRI_BT709,
-        AVCOL_PRI_UNSPECIFIED,
-        AVCOL_PRI_RESERVED,
         AVCOL_PRI_BT470M,
         AVCOL_PRI_BT470BG,
         AVCOL_PRI_SMPTE170M,
@@ -62,10 +61,7 @@ enumerator!(
 enumerator!(
     transfer,
     AVColorTransferCharacteristic {
-        AVCOL_TRC_RESERVED0,
         AVCOL_TRC_BT709,
-        AVCOL_TRC_UNSPECIFIED,
-        AVCOL_TRC_RESERVED,
         AVCOL_TRC_GAMMA22,
         AVCOL_TRC_GAMMA28,
         AVCOL_TRC_SMPTE170M,
@@ -90,8 +86,6 @@ enumerator!(
     AVColorSpace {
         AVCOL_SPC_RGB,
         AVCOL_SPC_BT709,
-        AVCOL_SPC_UNSPECIFIED,
-        AVCOL_SPC_RESERVED,
         AVCOL_SPC_FCC,
         AVCOL_SPC_BT470BG,
         AVCOL_SPC_SMPTE170M,
@@ -111,7 +105,7 @@ enumerator!(
 
 /// The value libavutil names `name`, through its `from_name` lookup, the
 /// bindings' enumerator of the integer it returns, and back through
-/// `to_name`. FFmpeg 8's lookup is exact already; the round trip is a
+/// `to_name`. FFmpeg 8.1's lookup is exact already; the round trip is a
 /// defensive check that a name is taken only when it is libavutil's own
 /// spelling exactly, whatever lookup the linked libavutil has.
 fn lookup<T: Copy>(
@@ -318,6 +312,32 @@ mod tests {
             (
                 color("bt\x00709", "bt709", "bt709", "limited"),
                 "unknown color primaries `bt\x00709`",
+            ),
+            // libavutil's own names for H.273's reserved and unspecified
+            // values, which no file may carry.
+            (
+                color("reserved", "bt709", "bt709", "limited"),
+                "unknown color primaries `reserved`",
+            ),
+            (
+                color("unknown", "bt709", "bt709", "limited"),
+                "unknown color primaries `unknown`",
+            ),
+            (
+                color("bt709", "reserved", "bt709", "limited"),
+                "unknown color transfer `reserved`",
+            ),
+            (
+                color("bt709", "unknown", "bt709", "limited"),
+                "unknown color transfer `unknown`",
+            ),
+            (
+                color("bt709", "bt709", "reserved", "limited"),
+                "unknown color matrix `reserved`",
+            ),
+            (
+                color("bt709", "bt709", "unknown", "limited"),
+                "unknown color matrix `unknown`",
             ),
         ] {
             let Err(MediaError::Codec(refusal)) = AvColor::from_color(&given) else {

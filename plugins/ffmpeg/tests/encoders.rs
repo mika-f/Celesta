@@ -715,6 +715,7 @@ fn audio_and_muxer_settings_are_checked() {
         refused(codec.muxer().unwrap().open_muxer(&request(&faststart))).0,
         "faststart"
     );
+    let empty = Settings::new();
     // A codec the muxer has no mapping for is refused before any file is
     // made.
     let theora = Track::Video {
@@ -734,7 +735,7 @@ fn audio_and_muxer_settings_are_checked() {
         .unwrap()
         .open_muxer(&MuxerRequest {
             tracks: &[theora],
-            ..request(&Settings::new())
+            ..request(&empty)
         })
         .unwrap_err();
     assert_eq!(
@@ -742,6 +743,46 @@ fn audio_and_muxer_settings_are_checked() {
         MediaError::Codec("webm does not take theora".into()).to_string()
     );
     assert!(!output.exists());
+    // So is a track color libavutil does not name, by its field, in every
+    // container.
+    for (component, file, codec_string) in [
+        ("mp4", "clip.mp4", "avc1.42c00a"),
+        ("mov", "clip.mov", "apch"),
+        ("webm", "clip.webm", "vp09.00.10.08"),
+    ] {
+        let output = directory.path().join(file);
+        let track = Track::Video {
+            config: TrackConfig {
+                codec: codec_string.to_owned(),
+                description: None,
+            },
+            timescale: 10,
+            width: 2,
+            height: 2,
+            frame_rate: Rational::new(10, 1),
+            color: Color {
+                matrix: "reserved".to_owned(),
+                ..Color::bt709_limited()
+            },
+            alpha: false,
+        };
+        let error = codec
+            .muxer()
+            .unwrap()
+            .open_muxer(&MuxerRequest {
+                component,
+                output: &output,
+                tracks: &[track],
+                ..request(&empty)
+            })
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            MediaError::Codec("unknown color matrix `reserved`".into()).to_string(),
+            "{component}"
+        );
+        assert!(!output.exists(), "{component}");
+    }
 }
 
 #[test]

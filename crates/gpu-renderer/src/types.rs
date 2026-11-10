@@ -163,10 +163,7 @@ impl ReadbackFormat {
     /// Whether frames come back as luma and chroma planes (planar or
     /// semi-planar), which needs even dimensions.
     pub const fn is_yuv(self) -> bool {
-        matches!(
-            self,
-            Self::Yuv420p | Self::Yuv420p10 | Self::Nv12 | Self::P010
-        )
+        crate::yuv::yuv_shape(self).is_some()
     }
 }
 
