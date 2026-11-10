@@ -150,10 +150,11 @@ def collect_licenses(resources, target):
         shutil.copy2(path, licenses / path.name)
     shutil.copy2(ROOT / "packaging" / "GPL-SOURCE-OFFER.md", licenses / "GPL-SOURCE-OFFER.md")
     flags = ("--locked", "--format-version", "1", "--filter-platform", target)
-    # The codec plugin and its crates are in the plugins workspace. Packaging
-    # builds only the codec there, so that workspace's other crates may not be
-    # downloaded yet: no --offline for it, and only the codec's are listed.
-    root = json.loads(run("cargo", "metadata", "--offline", *flags, capture=True))
+    # The release build downloads only the crates it compiles, so a crate the
+    # lockfile holds for tests alone (celesta-codec-test's lz4_flex) may not be
+    # downloaded yet: neither workspace is read --offline. The codec plugin's
+    # crates are in the plugins workspace, and only the codec's are listed.
+    root = json.loads(run("cargo", "metadata", *flags, capture=True))
     plugins = json.loads(run("cargo", "metadata", "--manifest-path", ROOT / "plugins/Cargo.toml", *flags, capture=True))
     packages = {}
     for package in (*root["packages"], *codec_packages(plugins)):
