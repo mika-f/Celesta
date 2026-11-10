@@ -785,6 +785,7 @@ impl EditorView {
                             .ghost()
                             .icon(IconName::ArrowRightFromLine)
                             .selected(self.export_in_frame.is_some())
+                            .accessibility_label("Mark In")
                             .tooltip_with_action("Mark In", &SetExportIn, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.set_export_in(cx))),
                     )
@@ -794,6 +795,7 @@ impl EditorView {
                             .ghost()
                             .icon(IconName::ArrowRightToLine)
                             .selected(self.export_out_frame.is_some())
+                            .accessibility_label("Mark Out")
                             .tooltip_with_action("Mark Out", &SetExportOut, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.set_export_out(cx))),
                     )
@@ -804,6 +806,7 @@ impl EditorView {
                     .small()
                     .ghost()
                     .icon(IconName::SkipBack)
+                    .accessibility_label("Go to start")
                     .tooltip_with_action("Go to start", &GoToStart, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.go_to_frame(0, cx))),
             )
@@ -812,6 +815,7 @@ impl EditorView {
                     .small()
                     .ghost()
                     .icon(IconName::ChevronLeft)
+                    .accessibility_label("Previous frame")
                     .tooltip_with_action("Previous frame", &PreviousFrame, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.step_frames(-1, cx))),
             )
@@ -819,23 +823,20 @@ impl EditorView {
                 let button = Button::new("toggle-playback").small();
                 // Waiting for the preview audio: still clickable, to cancel.
                 let button = if self.play_when_audio_ready {
-                    button.icon(Spinner::new()).tooltip_with_action(
-                        "Preparing audio…",
-                        &TogglePlayback,
-                        KEY_CONTEXT,
-                    )
+                    button
+                        .icon(Spinner::new())
+                        .accessibility_label("Preparing audio…")
+                        .tooltip_with_action("Preparing audio…", &TogglePlayback, KEY_CONTEXT)
                 } else if self.playing {
-                    button.icon(IconName::Pause).tooltip_with_action(
-                        "Pause",
-                        &TogglePlayback,
-                        KEY_CONTEXT,
-                    )
+                    button
+                        .icon(IconName::Pause)
+                        .accessibility_label("Pause")
+                        .tooltip_with_action("Pause", &TogglePlayback, KEY_CONTEXT)
                 } else {
-                    button.icon(IconName::Play).tooltip_with_action(
-                        "Play",
-                        &TogglePlayback,
-                        KEY_CONTEXT,
-                    )
+                    button
+                        .icon(IconName::Play)
+                        .accessibility_label("Play")
+                        .tooltip_with_action("Play", &TogglePlayback, KEY_CONTEXT)
                 };
                 button.on_click(cx.listener(Self::toggle_playback))
             })
@@ -844,6 +845,7 @@ impl EditorView {
                     .small()
                     .ghost()
                     .icon(IconName::ChevronRight)
+                    .accessibility_label("Next frame")
                     .tooltip_with_action("Next frame", &NextFrame, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.step_frames(1, cx))),
             )
@@ -852,6 +854,7 @@ impl EditorView {
                     .small()
                     .ghost()
                     .icon(IconName::SkipForward)
+                    .accessibility_label("Go to end")
                     .tooltip_with_action("Go to end", &GoToEnd, KEY_CONTEXT)
                     .on_click(
                         cx.listener(|this, _, _, cx| this.go_to_frame(this.clock.end_frame(), cx)),
@@ -864,6 +867,7 @@ impl EditorView {
                     .ghost()
                     .icon(IconName::Repeat)
                     .selected(self.loop_playback)
+                    .accessibility_label("Loop playback")
                     .tooltip_with_action("Loop playback", &ToggleLoop, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_loop(cx))),
             );
@@ -898,6 +902,7 @@ impl EditorView {
                             .xsmall()
                             .ghost()
                             .icon(IconName::Close)
+                            .accessibility_label("Clear In and Out")
                             .tooltip_with_action("Clear In and Out", &ClearExportRange, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.clear_export_range(cx))),
                     )
@@ -908,6 +913,7 @@ impl EditorView {
                     .ghost()
                     .icon(IconName::Scan)
                     .selected(self.show_safe_areas)
+                    .accessibility_label("Safe areas")
                     .tooltip_with_action("Safe areas", &ToggleSafeAreas, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_safe_areas(cx))),
             )
@@ -919,14 +925,18 @@ impl EditorView {
                 // Leaving waits for held commits: still on, and clickable to
                 // stay.
                 let button = if self.element_rows.leaving_interactive {
-                    button.icon(Spinner::new()).tooltip_with_action(
-                        "Turning off Select layers once saved…",
-                        &ToggleInteractive,
-                        KEY_CONTEXT,
-                    )
+                    button
+                        .icon(Spinner::new())
+                        .accessibility_label("Turning off Select layers once saved…")
+                        .tooltip_with_action(
+                            "Turning off Select layers once saved…",
+                            &ToggleInteractive,
+                            KEY_CONTEXT,
+                        )
                 } else {
                     button
                         .icon(IconName::MousePointerClick)
+                        .accessibility_label("Select layers")
                         .tooltip_with_action("Select layers", &ToggleInteractive, KEY_CONTEXT)
                 };
                 bar.child(

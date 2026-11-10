@@ -1668,6 +1668,7 @@ impl EditorView {
                             .ghost()
                             .icon(IconName::Minus)
                             .disabled(fitted)
+                            .accessibility_label("Zoom out")
                             .tooltip_with_action("Zoom out", &ZoomTimelineOut, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.zoom_timeline_by(1.0 / ZOOM_STEP, cx)
@@ -1678,6 +1679,7 @@ impl EditorView {
                             .xsmall()
                             .ghost()
                             .icon(IconName::Plus)
+                            .accessibility_label("Zoom in")
                             .tooltip_with_action("Zoom in", &ZoomTimelineIn, KEY_CONTEXT)
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.zoom_timeline_by(ZOOM_STEP, cx)),
@@ -1689,6 +1691,7 @@ impl EditorView {
                             .ghost()
                             .icon(IconName::UnfoldHorizontal)
                             .disabled(fitted)
+                            .accessibility_label("Zoom to fit")
                             .tooltip_with_action("Zoom to fit", &ZoomTimelineToFit, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.zoom_timeline_to_fit(cx))),
                     )
