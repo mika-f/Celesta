@@ -467,7 +467,10 @@ until `TURBO_FORCE=1 pnpm run build:runtime` rebuilt them.
   disk garbage collector deleted the root `target` mid-build on this Mac
   (under its 45 GiB free-space minimum). `test_package_macos.py` passes,
   and `test-package.mjs`'s new block was only syntax-checked; CI's
-  Package job, or a run with more free disk, must check it.
+  Package job, or a run with more free disk, must check it. CI's Package
+  job now also runs when CI is dispatched by hand (`if: github.event_name
+  != 'pull_request'`: unsigned, nothing released, no cache saved off
+  `main`), so a branch's packages can be built before it merges.
 - **P6** (`plugins/mediafoundation`, Windows), in its own session.
 - **GPU texture sharing** (`transports: ioSurface`): frames still cross
   shared memory or the pipe and are copied into a CoreVideo pool buffer.
