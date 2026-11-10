@@ -77,6 +77,11 @@ ends, 0.5rem side padding on clip, chapter and composition names, 0.25rem
 above and below the waveform, ruler labels 0.375rem from the top and from
 their tick, a 3rem transport row, and 1rem side / 0.75rem vertical padding
 in the meter column. The right dock's spacing was passed to P7b (#805).
+In the same review, `panel_header_height()` went from P7a's 1.875rem to
+2.5rem: gpui-kit draws a medium `TabVariant::Tab` 32px tall, and the shorter
+band squeezed the right dock's tabs (`the_panel_header_holds_a_whole_tab`
+keeps it). "Reload composition" dropped `.small()` for the default size;
+#805 rewrites that panel, so expect a one-line conflict there.
 
 ## Pixel rules
 

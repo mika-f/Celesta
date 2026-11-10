@@ -55,7 +55,10 @@ its lanes and the panel padding on both ends, 0.5rem around a clip's,
 chapter's and composition block's name, 0.25rem above and below the
 waveform, a 3rem transport row, and 1rem side and 0.75rem vertical padding
 in the meter column. The right dock's spacing belongs to P7b (#805), which
-rewrites that panel, and was passed on to it.
+rewrites that panel, and was passed on to it, except for two fixes the user
+asked for here: the panel header band (`panel_header_height()`, P7a's
+1.875rem) is 2.5rem so gpui-kit's 32px tabs fit it, and "Reload composition"
+is a default-size button instead of `small`.
 
 ## Tokens and geometry
 

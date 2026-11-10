@@ -12,7 +12,7 @@ pub const BASE_FONT_SIZE: f32 = 13.0;
 
 /// Height of a panel's header band (the editor's `PanelHeader` and the right dock's tabs).
 pub fn panel_header_height() -> Rems {
-    rems(1.875)
+    rems(2.5)
 }
 
 /// Height of one row in a list or tree.
@@ -118,6 +118,13 @@ mod tests {
         assert!(px(audio_track_height()) > px(video_track_height()));
         assert!(px(ruler_height()) >= px(list_row_height()));
         assert!(px(meter_column_width()) >= px(volume_slider_width()) + 2.0 * px(panel_padding()));
+    }
+
+    #[test]
+    fn the_panel_header_holds_a_whole_tab() {
+        // gpui-kit draws a medium `TabVariant::Tab` 32px tall; a shorter
+        // band squeezes the right dock's tabs.
+        assert!(panel_header_height().0 * BASE_FONT_SIZE >= 32.0);
     }
 
     #[test]
