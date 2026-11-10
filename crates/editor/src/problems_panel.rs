@@ -311,7 +311,8 @@ impl EditorView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_xs()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_sm()
                     .child(count(IconName::CircleX, cx.theme().danger, errors))
                     .child(count(IconName::TriangleAlert, cx.theme().warning, warnings)),
             )

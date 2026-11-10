@@ -42,7 +42,7 @@ impl EditorView {
         let leading = leading
             .child(
                 div()
-                    .text_sm()
+                    .text_base()
                     .text_color(cx.theme().foreground)
                     .whitespace_nowrap()
                     .child(self.project_name.clone()),
@@ -50,7 +50,7 @@ impl EditorView {
             .when(self.is_react_preview(), |leading| {
                 leading.child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(muted)
                         .whitespace_nowrap()
                         .child("React composition"),
@@ -68,7 +68,7 @@ impl EditorView {
                     div().occlude().child(
                         Button::new("select-composition")
                             .small()
-                            .outline()
+                            .ghost()
                             .label(format!("Composition: {}", selected))
                             .loading(self.react_reloads.is_running())
                             .icon(IconName::ChevronDown)
@@ -140,7 +140,7 @@ impl EditorView {
                 } else {
                     Button::new("export-project")
                         .small()
-                        .outline()
+                        .ghost()
                         .label("Export…")
                         .disabled(
                             self.choosing_export_path
