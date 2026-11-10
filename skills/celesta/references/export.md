@@ -184,16 +184,20 @@ and remembers its last choice in the user file's `last`.
 
 - Every part is optional: a missing `muxer` comes from the extension, a
   missing `component` is the muxer's default encoder (which then takes the
-  preset's `options`). `options` hold only values that differ from the
+  preset's `options`, unless the export names an encoder itself). `options` hold only values that differ from the
   defaults. `"audio": "none"` writes no audio. `default` belongs in the
   project file only; `last` in the user's only. `version` is 1.
 - `--preset <name>` looks in `--preset-file`, then the project's file, then
   the user's; the first match wins, and a project preset that hides a user
   preset of the same name warns. Names are case-sensitive.
 - Flags go over the preset: `--muxer`, `--video-encoder`, and
-  `--audio-encoder` replace its components (another encoder drops the
-  preset's options for it), and each `--video-option`/`--audio-option` key
-  replaces the preset's value.
+  `--audio-encoder` replace its components, and each
+  `--video-option`/`--audio-option` key replaces the preset's value. A
+  preset's options go only to the encoder they were saved for: naming the
+  preset's own encoder keeps them, naming another drops them. For a preset
+  that names **no** encoder, its options go to the muxer's default encoder
+  only while the export names none; naming any `--video-encoder` (or
+  `--audio-encoder`), even that default one, drops them.
 - **The project's `default`** applies to a video export with no
   `--preset` and none of `--muxer`, `--video-encoder`, `--audio-encoder`
   (`--audio-encoder none` counts). Options alone layer over it. So in a
@@ -206,9 +210,15 @@ and remembers its last choice in the user file's `last`.
   warning in the result's `warnings` (and a `warning:` line without
   `--json`), such as `` preset `Web`: ffmpeg/libx264 has no setting `speed`; it is
   left out ``. A value given with `--video-option`/`--audio-option`
-  (or MCP/TS `options`) is still strict: `invalid_option`.
+  (or MCP/TS `options`) is still strict: `invalid_option`. The exception:
+  `--audio-option` with a preset that leaves the audio out (`"audio":
+  "none"`, no `--audio-encoder`) is ignored with the warning
+  ``audio options are ignored: preset `<name>` leaves the audio out``.
 - A presets file that is broken fails with `invalid_presets` only when the
-  lookup reaches it; a missing file is skipped.
+  lookup has to find a name in it; a missing file is skipped. A broken
+  **user** file does not fail a preset (or project `default`) found in the
+  project's file: the export warns that the user file was not checked for a
+  preset of the same name, and goes ahead.
 
 ```sh
 Celesta-export --json --overwrite --preset "YouTube 1080p" --react scene.tsx out.mp4

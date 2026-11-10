@@ -418,7 +418,7 @@ The user file:
   2. the project's file
   3. the user's file
 
-  The first match wins. A project preset that shadows a user preset of the same name gets a warning.
+  The first match wins. A project preset that shadows a user preset of the same name gets a warning (and a user file that cannot be read for that check gets one too, deviation 42).
 - **Stale presets.** After a plugin update, a preset may hold an unknown key, a value out of range, or a component that is gone. The response depends on who uses it:
   - The editor drops the key or resets the value to its default, falls back to the default component, and shows a warning on the preset.
   - `--preset` warns on stderr (and in the JSON report's `warnings`) and does the same.
@@ -426,7 +426,7 @@ The user file:
 
 Deviations in P3 (`docs/handoff/2026-11-09-export-presets-dialog.md`):
 
-- **A presets file that cannot be read or parsed is a new error, `invalid_presets`** (deviation 42; `ExportError::InvalidPresets { path, message }`), as is a `version` other than 1. It is raised only when a lookup reaches that file: a broken user file does not fail an export that names no preset in a project without a `default`, and a missing file is skipped. A `--preset-file` (or MCP `presetFile`) that is missing or invalid stays P2a's usage error, now checked with the same parser (`PresetsFile::load`).
+- **A presets file that cannot be read or parsed is a new error, `invalid_presets`** (deviation 42; `ExportError::InvalidPresets { path, message }`), as is a `version` other than 1. It is raised only when a lookup has to find a name in that file: a broken user file does not fail an export that names no preset in a project without a `default`, nor one whose preset (or `default`) is found in the project file, where the shadow check warns ``your presets file <path> could not be read, so it was not checked for a preset of the same name: <message>`` instead; a missing file is skipped. A `--preset-file` (or MCP `presetFile`) that is missing or invalid stays P2a's usage error, now checked with the same parser (`PresetsFile::load`).
 
 ## Selection
 

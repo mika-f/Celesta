@@ -52,7 +52,7 @@ Celesta talks to a React composition’s runtime over its standard output, so a 
 
 `unknown_preset` means that no presets file has the name `--preset` (or MCP's and TypeScript's `preset`) gives: Celesta looks in the `--preset-file`, then the project's `export-presets.json` at the project root, then yours beside `settings.json`, and names are case-sensitive. When the message says `the default preset … is in no presets file`, the project file's `"default"` names a preset no file has: fix the name, or remove `"default"`. A name such as `veryfast` is x264's preset, which is a setting: use `--video-option preset=veryfast`, as the hint says.
 
-`invalid_presets` means that a presets file the export had to look in cannot be read, is not valid JSON, or has a `version` other than `1`; the message names the file. Fix or remove it. A `--preset-file` with the same problem is rejected with the other arguments instead. See [Export presets](/en/docs/export/#export-presets).
+`invalid_presets` means that a presets file the export had to look in cannot be read, is not valid JSON, or has a `version` other than `1`; the message names the file. Fix or remove it. When the project's preset is found first and only your file is broken, the export runs instead, with a warning that your file could not be checked for a preset of the same name. A `--preset-file` with the same problem is rejected with the other arguments instead. See [Export presets](/en/docs/export/#export-presets).
 
 :::
 :::toggle[MP4 export will not start]

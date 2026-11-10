@@ -297,7 +297,8 @@ covered by the dated handoff notes.
   (beside `settings.json`), and a project's `default` preset applies when no
   preset and no component is named; a stale preset warns and falls back,
   while an explicit value stays strict (`invalid_option`), and a broken
-  presets file the lookup reaches is `invalid_presets`. A named or preset
+  presets file the lookup has to find a name in is `invalid_presets` (a
+  broken user file only warns under a project preset). A named or preset
   muxer that does not list the output's extension writes it anyway, with a
   warning. The editor's Export… opens the export dialog, which reads the
   same files and exports an explicit choice. libx264's `preset` and
