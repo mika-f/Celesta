@@ -42,6 +42,52 @@ pub fn panel_padding() -> Rems {
     rems(0.75)
 }
 
+/// Width of the timeline's track header column (and the cells above and
+/// below it: the ruler's corner, the zoom controls).
+pub fn track_header_width() -> Rems {
+    rems(17.0)
+}
+
+/// Height of the timeline's ruler, and of the master meter's header beside it.
+pub fn ruler_height() -> Rems {
+    rems(2.25)
+}
+
+/// Height of a video (visual) track row.
+pub fn video_track_height() -> Rems {
+    rems(3.0)
+}
+
+/// Height of an audio track row: its clips have room for a waveform.
+pub fn audio_track_height() -> Rems {
+    rems(4.0)
+}
+
+/// Space between a track row's top and bottom edges and its clips.
+pub fn clip_inset() -> Rems {
+    rems(0.25)
+}
+
+/// Height of a clip's name strip, along its top.
+pub fn clip_label_height() -> Rems {
+    rems(1.25)
+}
+
+/// Height of one lane of the timeline's Chapters row.
+pub fn chapter_lane_height() -> Rems {
+    rems(1.75)
+}
+
+/// Width of the master meter column beside the timeline.
+pub fn meter_column_width() -> Rems {
+    rems(8.75)
+}
+
+/// Width of the preview-volume slider under the master meter.
+pub fn volume_slider_width() -> Rems {
+    rems(6.75)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +105,19 @@ mod tests {
         for design in [16.0, 520.0] {
             assert_eq!(scaled_px(design), px(scaled(design).0 * BASE_FONT_SIZE));
         }
+    }
+
+    #[test]
+    fn timeline_tokens_keep_their_order() {
+        let px = |r: Rems| r.0 * BASE_FONT_SIZE;
+        // The strip and at least a strip-high body fit a video clip.
+        assert!(
+            px(clip_label_height()) * 2.0
+                <= px(video_track_height()) - 2.0 * px(clip_inset()) + 0.01
+        );
+        assert!(px(audio_track_height()) > px(video_track_height()));
+        assert!(px(ruler_height()) >= px(list_row_height()));
+        assert!(px(meter_column_width()) >= px(volume_slider_width()) + 2.0 * px(panel_padding()));
     }
 
     #[test]
