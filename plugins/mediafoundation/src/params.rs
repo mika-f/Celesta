@@ -286,7 +286,9 @@ pub(crate) fn avc_reorder_depth(avcc: &[u8]) -> Result<Option<u32>, MediaError> 
     avc_sps_reorder_depth(avc_sps(avcc)?).ok_or_else(|| malformed("avcC"))
 }
 
-/// The first SPS of an `avcC` or `hvcC` record, header included.
+/// The first SPS of an `avcC` or `hvcC` record, header included. Only the
+/// Windows-only `record_colour` reads it.
+#[cfg(windows)]
 pub(crate) fn record_sps(codec: crate::annexb::Codec, record: &[u8]) -> Result<&[u8], MediaError> {
     match codec {
         crate::annexb::Codec::H264 => avc_sps(record),

@@ -89,7 +89,9 @@ impl VideoCodec {
         }
     }
 
-    /// The codec's name in messages.
+    /// The codec's name in messages. Only the Windows encoders give them,
+    /// so it is Windows only, like its callers.
+    #[cfg(windows)]
     pub(crate) const fn display_name(self) -> &'static str {
         match self {
             Self::H264 => "H.264",
