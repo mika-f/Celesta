@@ -202,7 +202,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # The first-party plugins (the VRM plugin and the FFmpeg codec) are members
+  # The first-party plugins (the VRM plugin and the FFmpeg and AVFoundation
+  # codecs, the last macOS-only) are members
   # of the plugins workspace (plugins/Cargo.toml), which the root workspace
   # excludes, so the test job never builds them. Each job first finds the
   # plugins a change affects, from the Cargo and pnpm dependency graphs, and

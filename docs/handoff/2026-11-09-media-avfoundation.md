@@ -50,12 +50,17 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
     defaults `ap4h`, `mp4a`), both `trimsLeadingAudio: true`.
 
   A video encoder is available when `VTCopyVideoEncoderList` lists its
-  codec type (`prores` needs `ap4h`; `hq` without `apch` is
-  `componentUnavailable` at `open`), otherwise `VideoToolbox has no
-  {H.264|HEVC|ProRes 4444} encoder on this Mac`; `aac` when
-  `kAudioFormatProperty_Encoders`, asked with `kAudioFormatMPEG4AAC` as its
-  specifier, lists it, otherwise `AudioToolbox has no AAC encoder on this
-  Mac`. The decoder and the muxers are always available.
+  codec type (`prores` either `ap4h` or `apch`; a profile whose encoder is
+  missing is `componentUnavailable` at `open`: `VideoToolbox has no
+  {ProRes 4444|ProRes 422 HQ} encoder on this Mac`), otherwise
+  `VideoToolbox has no {H.264|HEVC|ProRes 4444 or 422 HQ} encoder on this
+  Mac`; `aac` when `kAudioFormatProperty_Encoders`, asked with
+  `kAudioFormatMPEG4AAC` as its specifier, lists it, otherwise
+  `AudioToolbox has no AAC encoder on this Mac`. A list that cannot be read
+  is the reason itself (`VideoToolbox could not list its encoders:
+  VTCopyVideoEncoderList failed with status …`, likewise AudioToolbox's
+  encoders and the AAC encoder's sample rates), not a missing encoder. The
+  decoder and the muxers are always available.
 - **Settings** (keys follow FFmpeg's where they mean the same):
   - `h264`: `profile` `high` / `main` / `baseline` (`high`; the
     `kVTProfileLevel_H264_*_AutoLevel`s); `rateControl` `quality` /
@@ -173,8 +178,11 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
     its queue is empty, then waits for
     `finishWritingWithCompletionHandler`. A writer whose status leaves
     `writing` fails the next `writePackets` with its error (`AVAssetWriter
-    could not write the file: …`); `writePackets` and `finish` give up
-    after 60 s without progress. An abort cancels the writer.
+    could not write the file: …`); `writePackets` and `finish`'s drain
+    give up after 60 s without progress. The wait for
+    `finishWritingWithCompletionHandler` has no limit, since with
+    `faststart` the writer rewrites the whole file there; the host's
+    deadline bounds it. An abort cancels the writer.
   - **Exceptions.** `appendSampleBuffer`, `markAsFinished`, and
     `finishWritingWithCompletionHandler` run inside
     `objc2::exception::catch` (objc2's `exception` feature, which adds
@@ -195,8 +203,10 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
   `minFrameDuration`, FFmpeg's codec names (`h264`, `hevc`, `prores`,
   `aac`, `pcm_s16le` …, from the ASBD for PCM, else the four-character
   code) and colour names (`bt709`, `bt2020`, `smpte2084`, `arib-std-b67`,
-  `bt2020nc` …). A file AVFoundation cannot open, or one with no audio and
-  no video track, is `Unsupported`; a missing one `NotFound`. Frames are
+  `bt2020nc` …). A file AVFoundation cannot open, one with no audio and
+  no video track, or one with a video track it cannot describe (no format
+  description or size), is `Unsupported`, so another decoder may read it;
+  a missing one `NotFound`. Loading a file's keys gives up after 60 s. Frames are
   the ones shown at the requested time (`timestamps_match`), the last past
   the end, as 8-bit BGRA with `AVVideoColorPropertiesKey` BT.709 turned
   into RGBA and rotated upright (deviation 64). A sequential session keeps
@@ -465,11 +475,7 @@ until `TURBO_FORCE=1 pnpm run build:runtime` rebuilt them.
   neither a component nor a setting yet.
 - **The decoder's HDR tone curve**: deviation 64 takes AVFoundation's
   conversion rather than the FFmpeg plugin's curve.
-- **Deferred minors from review**: an AAC rate query that fails leaves
-  `aac` described available with no sample rates; doc comments in
-  `apple.rs` still say `kAudioFormatProperty_Encoders` lists format ids;
-  `params.rs` says VideoToolbox's SPS "has no VUI" (it has one without
-  `bitstream_restriction`); an encode error mid-drain drops the packets
+- **Deferred minors from review**: an encode error mid-drain drops the packets
   already drained in that answer; padded strides and mid-frame decoder
   starts are untested; the decoder's past-the-end request without a frame
   rate answers `NoVideoStream`; its asset cache per path is unbounded and

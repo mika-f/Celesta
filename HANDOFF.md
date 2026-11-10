@@ -20,8 +20,10 @@ Per-task specifications, implementation details, and validation results live in
 - FFmpeg 8.1.x development libraries must be available for `ez-ffmpeg` /
   `ffmpeg-sys-next` to link against. They are needed only for the FFmpeg
   media plugin, `plugins/ffmpeg` (`celesta-codec-ffmpeg`), and its tests, which
-  the plugins workspace's `--workspace` checks include; the root workspace
-  and the VRM plugin link no FFmpeg. Celesta's own crates
+  the plugins workspace's `--workspace` checks include. On macOS the
+  AVFoundation plugin's tests (`plugins/avfoundation`) need them too: they
+  read its files back with the FFmpeg plugin and libavformat. The root
+  workspace and the VRM plugin link no FFmpeg. Celesta's own crates
   read and write media through the plugin's process, and their tests use the
   lossless test codec (`celesta-codec-test`) instead (see
   [`docs/handoff/2026-11-05-codec-plugin.md`](docs/handoff/2026-11-05-codec-plugin.md),

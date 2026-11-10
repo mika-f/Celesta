@@ -63,10 +63,10 @@ pnpm run build:runtime
 
 ## 4. Open a React composition
 
-Build the media plugin once, and again after updating the source. Celesta reads and writes video and audio through it, and finds it through `CELESTA_PLUGIN_PATH`, which must be an absolute path. Set the variable in every shell where you run Celesta:
+Build the media plugins once, and again after updating the source. Celesta reads and writes video and audio through them, and finds them through `CELESTA_PLUGIN_PATH`, which must be an absolute path. `plugins/avfoundation` (VideoToolbox and AVFoundation) builds on macOS only; elsewhere the script prints `avfoundation: skipped, it is built for macos only` and builds FFmpeg alone. Set the variable in every shell where you run Celesta:
 
-```sh title="Build the media plugin"
-node scripts/plugins/build.mts plugins/ffmpeg
+```sh title="Build the media plugins"
+node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 
