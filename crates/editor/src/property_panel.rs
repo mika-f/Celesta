@@ -221,6 +221,9 @@ pub(crate) struct RowState {
     error_released_by: Option<u64>,
     /// A number row shows its field rather than its resting value.
     pub(crate) typing: RowTyping,
+    /// The last commit came from typed text (`TextUpdate::Keep`), which a
+    /// failed write keeps for a retry; a drag, pick or reset has none.
+    typed_commit: bool,
 }
 
 impl RowState {
@@ -235,6 +238,7 @@ impl RowState {
             write_error: None,
             error_released_by: None,
             typing: RowTyping::default(),
+            typed_commit: false,
         }
     }
 
@@ -297,6 +301,7 @@ impl RowState {
     ) -> bool {
         // The text now holds (or is about to show) the committed value.
         self.edited = false;
+        self.typed_commit = text == TextUpdate::Keep;
         let shown = value.cloned().unwrap_or(default);
         if value.is_some() && values_match(&shown, &self.shown, self.ignore_case) {
             return false;
@@ -313,13 +318,19 @@ impl RowState {
         self.error_released_by = None;
     }
 
-    /// The write failed and the file still holds `file_value`. The typed
-    /// text stays and counts as an edit, so the next Enter or blur retries.
+    /// The write failed and the file still holds `file_value`. Typed text
+    /// stays and counts as an edit, so the next Enter or blur retries; after
+    /// a drag, pick or reset the controls show the file's value again.
     pub(crate) fn write_failed(&mut self, file_value: Option<Value>) {
-        self.edited = true;
+        let text = if self.typed_commit {
+            self.edited = true;
+            TextUpdate::Keep
+        } else {
+            TextUpdate::Always
+        };
         if let Some(value) = file_value {
             self.shown = value.clone();
-            self.update = Some((value, TextUpdate::Keep));
+            self.update = Some((value, text));
         }
     }
 
@@ -719,7 +730,8 @@ impl EditorView {
         cx.notify();
     }
 
-    /// Follows the pointer: the row shows the dragged value. Writes nothing.
+    /// Follows the pointer: the row shows the dragged value. Writes only
+    /// when the button was released outside the window, as a release would.
     pub(crate) fn continue_property_scrub(
         &mut self,
         event: &MouseMoveEvent,
@@ -1202,6 +1214,25 @@ mod tests {
             Some((json!("on disk"), TextUpdate::Keep))
         );
         assert_eq!(row.submitted(true), TextSubmit::Commit);
+    }
+
+    #[test]
+    fn a_failed_drag_write_rests_the_row_on_the_file_value() {
+        let mut row = RowState::new();
+        row.offer_loaded(&json!(0.5), 0, false);
+        row.take_update();
+        // A drag commits the dragged value into the text.
+        row.commit(Some(&json!(0.7)), json!(0), TextUpdate::Always);
+        row.take_update();
+
+        row.write_failed(Some(json!(0.5)));
+        assert_eq!(row.shown, json!(0.5));
+        assert_eq!(
+            row.take_update(),
+            Some((json!(0.5), TextUpdate::Always)),
+            "the text shows the file's value again"
+        );
+        assert!(!row.typing_open(false), "the row rests, so it drags again");
     }
 
     #[test]

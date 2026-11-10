@@ -159,6 +159,9 @@ impl RenderOnce for InspectorSection {
                                     ),
                             )
                             .track_focus(&focus)
+                            // The editor's Space shortcut steps aside here,
+                            // so Space toggles the focused header.
+                            .key_context("InspectorHeader")
                             .when_some(toggle, |button, toggle| {
                                 button.on_click(move |_, window, cx| {
                                     // A click does not move the focus to a
@@ -419,13 +422,24 @@ mod tests {
         sections: CollapsedSections,
         input: Option<Entity<InputState>>,
         blurred: bool,
+        /// Whether the editor's Space shortcut fired.
+        played: bool,
         build: Build,
     }
 
     impl Render for Host {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let build = self.build.clone();
-            div().size_full().child(build(self, window, cx))
+            div()
+                .size_full()
+                // The editor's key context, so its shortcuts reach the host.
+                .key_context("CelestaEditor")
+                .on_action(
+                    cx.listener(|host, _: &crate::actions::TogglePlayback, _, _| {
+                        host.played = true;
+                    }),
+                )
+                .child(build(self, window, cx))
         }
     }
 
@@ -455,6 +469,7 @@ mod tests {
                     sections: CollapsedSections::default(),
                     input,
                     blurred: false,
+                    played: false,
                     build,
                 }
             });
@@ -531,6 +546,8 @@ mod tests {
 
     #[gpui_kit::test]
     fn space_toggles_a_focused_header(cx: &mut TestAppContext) {
+        // With the editor's own shortcuts, where Space also means play.
+        cx.update(|cx| cx.bind_keys(crate::key_bindings()));
         let handle = window_with(cx, 400., false, |host, _, cx| {
             let row = InspectorRow::new("r", "X").value("0").into_any_element();
             section(host, cx, vec![row])
@@ -541,6 +558,17 @@ mod tests {
         cx.update(|window, cx| window.focus_next(cx));
         press_space(cx);
         assert!(cx.debug_bounds("s-body").is_none(), "space collapses it");
+        let played = handle
+            .read_with(cx, |root, cx| {
+                root.view()
+                    .clone()
+                    .downcast::<Host>()
+                    .expect("the host")
+                    .read(cx)
+                    .played
+            })
+            .expect("the window");
+        assert!(!played, "space on a header does not start playback");
 
         press_space(cx);
         cx.run_until_parked();

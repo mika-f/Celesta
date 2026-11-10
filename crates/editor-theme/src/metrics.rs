@@ -126,8 +126,8 @@ mod tests {
     fn inspector_lanes_fit_their_contents() {
         assert_eq!(inspector_label_width(), rems(7.0));
         assert!(inspector_label_width().0 > list_row_height().0);
-        // An xsmall icon button is 1rem (`size_4`).
-        assert!(inspector_trailing_width().0 >= 1.0);
+        // An xsmall icon button is 1.25rem (`size_5`).
+        assert!(inspector_trailing_width().0 >= 1.25);
     }
 
     #[test]

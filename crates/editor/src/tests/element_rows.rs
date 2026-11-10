@@ -466,6 +466,17 @@ fn none_on_an_absent_path_writes_nothing() {
 }
 
 #[test]
+fn a_scrub_lands_on_its_steps_places() {
+    let unit = num_range(1.0, 0.0, 1.0);
+    let anchor = stepped_field(0.0, 0.01);
+    // No float noise reaches the file or the row (0.5 + 7 * 0.01).
+    assert_eq!(scrub_value(0.5, 7.0, Some(&anchor), false), 0.57);
+    assert_eq!(scrub_value(0.5, 43.0, Some(&unit), false), 0.93);
+    // A start with more places than the step keeps them.
+    assert_eq!(scrub_value(0.123, 1.0, Some(&anchor), false), 0.133);
+}
+
+#[test]
 fn scrub_steps() {
     let free = number_field(None);
     let unit = num_range(1.0, 0.0, 1.0);
@@ -1367,10 +1378,10 @@ fn typing_follows_the_fields_focus() {
     assert!(typing.open(false, false));
     typing.on(&ControlEvent::Submit { blur: false });
     assert!(!typing.open(false, false));
-    typing.on(&ControlEvent::Focused);
+    typing.request();
     typing.on(&ControlEvent::Escape);
     assert!(!typing.open(false, false));
-    typing.on(&ControlEvent::Focused);
+    typing.request();
     typing.on(&ControlEvent::Submit { blur: true });
     assert!(!typing.open(false, false));
     // Typed text, or text that did not parse, keeps the field open.
@@ -1379,6 +1390,29 @@ fn typing_follows_the_fields_focus() {
     // Other events leave it as it is.
     typing.on(&ControlEvent::Focused);
     typing.on(&ControlEvent::Edited);
+    assert!(typing.open(false, false));
+}
+
+#[test]
+fn a_resting_row_with_the_focus_opens_only_on_request() {
+    // Escape and Enter leave the focus on the resting value; the window
+    // coming back to the front sends that focus again, which must not
+    // open the row. Enter (a request) does.
+    for closing in [ControlEvent::Escape, ControlEvent::Submit { blur: false }] {
+        let mut typing = RowTyping::default();
+        typing.on(&ControlEvent::Focused);
+        typing.on(&closing);
+        typing.on(&ControlEvent::Focused);
+        assert!(!typing.open(false, false), "{closing:?}");
+        typing.request();
+        assert!(typing.open(false, false));
+    }
+    // Once the focus left, coming back opens it again (Tab).
+    let mut typing = RowTyping::default();
+    typing.on(&ControlEvent::Focused);
+    typing.on(&ControlEvent::Escape);
+    typing.on(&ControlEvent::Submit { blur: true });
+    typing.on(&ControlEvent::Focused);
     assert!(typing.open(false, false));
 }
 

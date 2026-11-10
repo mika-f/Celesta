@@ -17,7 +17,7 @@ use crate::property_controls::{
 use crate::property_panel::field_label;
 use crate::scope::{CommitGate, HeldOrigin, SceneCalls, Scope, ScopedRow, scoped_row};
 use crate::scrub_value::{
-    RefusedPress, RowTyping, ScrubEnd, ScrubOrigin, drag_distance, refused_press,
+    RefusedPress, RowTyping, ScrubEnd, ScrubOrigin, drag_distance, refused_press, step_places,
 };
 use crate::transform_drag::override_sites;
 use crate::view::EditorView;
@@ -501,8 +501,9 @@ pub(crate) fn row_kind(targets: &ElementTargets, key: &PropKey, target: &Target)
 /// The value a scrub `dx` pixels from its start gives: `start + dx * step`,
 /// `step` the field's declared step per pixel, else 0.01 for a field with
 /// `max <= 1` (opacity, ratios), else 1, rounded for a whole-number field
-/// (a start that is not whole too), clamped to `min`/`max`; Shift
-/// multiplies the step by 10.
+/// (a start that is not whole too), else to the places of the step or the
+/// start, whichever has more (no float noise such as 0.5700000000000001),
+/// clamped to `min`/`max`; Shift multiplies the step by 10.
 pub(crate) fn scrub_value(
     start: f64,
     dx: f32,
@@ -526,7 +527,14 @@ pub(crate) fn scrub_value(
     });
     let step = if shift { step * 10.0 } else { step };
     let value = start + f64::from(dx) * step;
-    let value = if integer { value.round() } else { value };
+    let value = if integer {
+        value.round()
+    } else {
+        // Past 12 places a value is noise, not something typed.
+        let places = step_places(step).max(step_places(start)).min(12);
+        let scale = 10f64.powi(places as i32);
+        (value * scale).round() / scale
+    };
     let value = min.map_or(value, |min| value.max(min));
     max.map_or(value, |max| value.min(max))
 }
@@ -1830,9 +1838,10 @@ impl EditorView {
         }
     }
 
-    /// Release: writes the scrubbed value as one history entry, or nothing
-    /// when the value is back where it started (or never moved). True when
-    /// a scrub was running.
+    /// Release: writes the scrubbed value as one history entry, opens the
+    /// row for typing after a press on its value without a drag, or does
+    /// nothing (a drag back at its start, a label pressed without a drag).
+    /// True when a scrub was running.
     pub(crate) fn end_row_scrub(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let (ended, typed) = self.release_row_scrub(cx);
         if let Some(key) = typed {

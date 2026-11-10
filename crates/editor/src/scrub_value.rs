@@ -29,7 +29,7 @@ pub(crate) fn drag_distance(dx: f32) -> Option<f32> {
 }
 
 /// The digits after the point of `step` written plainly (0.01 → 2).
-fn step_places(step: f64) -> usize {
+pub(crate) fn step_places(step: f64) -> usize {
     let text = format!("{step}");
     text.split_once('.')
         .map_or(0, |(_, fraction)| fraction.len())
@@ -69,29 +69,43 @@ pub(crate) enum ScrubEnd {
 
 /// Whether a number row shows its text field rather than its resting value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct RowTyping(bool);
+pub(crate) struct RowTyping {
+    open: bool,
+    /// Enter or Escape closed the row and its field kept the focus: the
+    /// focus the window sends again when it comes back to the front does
+    /// not reopen it; Enter on the resting value ([`Self::request`]) does.
+    rests_focused: bool,
+}
 
 impl RowTyping {
-    /// Follows the row's field: open once it has the focus, closed by Enter,
-    /// a blur or Escape.
+    /// Follows the row's field: open once it gains the focus, closed by
+    /// Enter, a blur or Escape.
     pub(crate) fn on(&mut self, event: &crate::property_controls::ControlEvent) {
         use crate::property_controls::ControlEvent;
         match event {
-            ControlEvent::Focused => self.0 = true,
-            ControlEvent::Submit { .. } | ControlEvent::Escape => self.0 = false,
+            ControlEvent::Focused if !self.rests_focused => self.open = true,
+            ControlEvent::Submit { blur: false } | ControlEvent::Escape => {
+                self.open = false;
+                self.rests_focused = true;
+            }
+            ControlEvent::Submit { blur: true } => {
+                self.open = false;
+                self.rests_focused = false;
+            }
             _ => {}
         }
     }
 
-    /// Enter on the focused resting value.
+    /// Opens the row: a click on its value, a refused press, or Enter on the
+    /// focused resting value.
     pub(crate) fn request(&mut self) {
-        self.0 = true;
+        self.open = true;
     }
 
     /// Whether the field shows: while typing, and while it holds typed text
     /// (`edited`) or text that was not written (`invalid`).
     pub(crate) fn open(self, edited: bool, invalid: bool) -> bool {
-        self.0 || edited || invalid
+        self.open || edited || invalid
     }
 }
 
@@ -442,6 +456,64 @@ mod tests {
         cx.simulate_event(KeyUpEvent { keystroke });
         cx.run_until_parked();
         assert!(host.read_with(cx, |host, _| host.typed.get()));
+    }
+
+    /// One `ScrubValue` whose row follows its field's focus as the panels'
+    /// rows do.
+    struct Tabbed {
+        input: Entity<InputState>,
+        row: RowTyping,
+    }
+
+    impl Render for Tabbed {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                ScrubValue::new("t", self.input.clone())
+                    .text("120".to_owned())
+                    .typing(self.row.open(false, false))
+                    .field(Input::new(&self.input)),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn tab_opens_a_resting_number_for_typing(cx: &mut TestAppContext) {
+        use crate::property_controls::ControlEvent;
+        use gpui_kit::component::input::InputEvent;
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            celesta_editor_theme::init(cx);
+        });
+        let handle = cx.open_window(size(px(300.), px(100.)), |window, cx| {
+            let host = cx.new(|cx| {
+                let input = cx.new(|cx| InputState::new(window, cx));
+                cx.subscribe(&input, |host: &mut Tabbed, _, event: &InputEvent, cx| {
+                    let event = match event {
+                        InputEvent::Focus => ControlEvent::Focused,
+                        InputEvent::Blur => ControlEvent::Submit { blur: true },
+                        _ => return,
+                    };
+                    host.row.on(&event);
+                    cx.notify();
+                })
+                .detach();
+                Tabbed {
+                    input,
+                    row: RowTyping::default(),
+                }
+            });
+            Root::new(host, window, cx)
+        });
+        handle
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("the window");
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("t-input").is_none(), "it rests");
+
+        cx.update(|window, cx| window.focus_next(cx));
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("t-input").is_some(), "Tab opens it");
     }
 
     struct Narrow {

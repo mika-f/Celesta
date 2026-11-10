@@ -133,8 +133,14 @@ fn icon_line(icon: IconName, cx: &Context<EditorView>) -> Div {
 impl EditorView {
     /// The selected layer's property sections, or why there are none yet.
     pub(crate) fn element_sections(&self, cx: &mut Context<Self>) -> AnyElement {
-        let note =
-            |text: SharedString, color| div().px_3().py_2().text_sm().text_color(color).child(text);
+        let note = |text: SharedString, color| {
+            div()
+                .px(metrics::inspector_padding())
+                .py_2()
+                .text_sm()
+                .text_color(color)
+                .child(text)
+        };
         let muted = cx.theme().muted_foreground;
         let resolved = self.element_edit.resolved(self.selected_layer.as_deref());
         let Some((resolved, current)) = resolved else {

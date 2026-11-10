@@ -125,6 +125,52 @@ enum StartUp {
     OpenAgain(std::path::PathBuf, PropertyArgs),
 }
 
+/// The editor's shortcuts.
+fn key_bindings() -> Vec<KeyBinding> {
+    // Keys that type text (letters, Space, arrows…) act on the editor only
+    // outside a text field, such as a property input.
+    const EDITOR_KEYS: Option<&str> = Some("CelestaEditor && !Input");
+    vec![
+        KeyBinding::new(secondary!("n"), CreateNewProject, Some("CelestaEditor")),
+        KeyBinding::new(secondary!("o"), OpenProject, Some("CelestaEditor")),
+        KeyBinding::new(secondary!("r"), ReloadProject, Some("CelestaEditor")),
+        KeyBinding::new(secondary!("w"), CloseWindow, Some("CelestaEditor")),
+        KeyBinding::new(secondary!("q"), Quit, None),
+        KeyBinding::new(secondary!("shift-e"), ExportProject, Some("CelestaEditor")),
+        KeyBinding::new("i", SetExportIn, EDITOR_KEYS),
+        KeyBinding::new("o", SetExportOut, EDITOR_KEYS),
+        KeyBinding::new("shift-x", ClearExportRange, EDITOR_KEYS),
+        KeyBinding::new("shift-i", GoToIn, EDITOR_KEYS),
+        KeyBinding::new("shift-o", GoToOut, EDITOR_KEYS),
+        // A focused section header takes Space itself: bindings run before
+        // an element's own keys, so playback would swallow it.
+        KeyBinding::new(
+            "space",
+            TogglePlayback,
+            Some("CelestaEditor && !Input && !InspectorHeader"),
+        ),
+        KeyBinding::new("k", PausePlayback, EDITOR_KEYS),
+        KeyBinding::new("l", PlayForward, EDITOR_KEYS),
+        KeyBinding::new("left", PreviousFrame, EDITOR_KEYS),
+        KeyBinding::new("right", NextFrame, EDITOR_KEYS),
+        KeyBinding::new("shift-left", JumpBackward, EDITOR_KEYS),
+        KeyBinding::new("shift-right", JumpForward, EDITOR_KEYS),
+        KeyBinding::new("home", GoToStart, EDITOR_KEYS),
+        KeyBinding::new("end", GoToEnd, EDITOR_KEYS),
+        KeyBinding::new("up", PreviousEditPoint, EDITOR_KEYS),
+        KeyBinding::new("down", NextEditPoint, EDITOR_KEYS),
+        KeyBinding::new(secondary!("/"), ToggleLoop, Some("CelestaEditor")),
+        KeyBinding::new("'", ToggleSafeAreas, EDITOR_KEYS),
+        KeyBinding::new(secondary!("shift-m"), ShowProblems, Some("CelestaEditor")),
+        KeyBinding::new("v", ToggleInteractive, EDITOR_KEYS),
+        KeyBinding::new("=", ZoomTimelineIn, EDITOR_KEYS),
+        KeyBinding::new("-", ZoomTimelineOut, EDITOR_KEYS),
+        KeyBinding::new("shift-z", ZoomTimelineToFit, EDITOR_KEYS),
+        KeyBinding::new(secondary!("z"), Undo, EDITOR_KEYS),
+        KeyBinding::new(secondary!("shift-z"), Redo, EDITOR_KEYS),
+    ]
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("Celesta: {error}");
@@ -195,42 +241,7 @@ fn run() -> anyhow::Result<()> {
     app.run(move |cx: &mut App| {
         gpui_kit::init(cx);
         theme::init(cx);
-        // Keys that type text (letters, Space, arrows…) act on the editor only
-        // outside a text field, such as a property input.
-        const EDITOR_KEYS: Option<&str> = Some("CelestaEditor && !Input");
-        cx.bind_keys([
-            KeyBinding::new(secondary!("n"), CreateNewProject, Some("CelestaEditor")),
-            KeyBinding::new(secondary!("o"), OpenProject, Some("CelestaEditor")),
-            KeyBinding::new(secondary!("r"), ReloadProject, Some("CelestaEditor")),
-            KeyBinding::new(secondary!("w"), CloseWindow, Some("CelestaEditor")),
-            KeyBinding::new(secondary!("q"), Quit, None),
-            KeyBinding::new(secondary!("shift-e"), ExportProject, Some("CelestaEditor")),
-            KeyBinding::new("i", SetExportIn, EDITOR_KEYS),
-            KeyBinding::new("o", SetExportOut, EDITOR_KEYS),
-            KeyBinding::new("shift-x", ClearExportRange, EDITOR_KEYS),
-            KeyBinding::new("shift-i", GoToIn, EDITOR_KEYS),
-            KeyBinding::new("shift-o", GoToOut, EDITOR_KEYS),
-            KeyBinding::new("space", TogglePlayback, EDITOR_KEYS),
-            KeyBinding::new("k", PausePlayback, EDITOR_KEYS),
-            KeyBinding::new("l", PlayForward, EDITOR_KEYS),
-            KeyBinding::new("left", PreviousFrame, EDITOR_KEYS),
-            KeyBinding::new("right", NextFrame, EDITOR_KEYS),
-            KeyBinding::new("shift-left", JumpBackward, EDITOR_KEYS),
-            KeyBinding::new("shift-right", JumpForward, EDITOR_KEYS),
-            KeyBinding::new("home", GoToStart, EDITOR_KEYS),
-            KeyBinding::new("end", GoToEnd, EDITOR_KEYS),
-            KeyBinding::new("up", PreviousEditPoint, EDITOR_KEYS),
-            KeyBinding::new("down", NextEditPoint, EDITOR_KEYS),
-            KeyBinding::new(secondary!("/"), ToggleLoop, Some("CelestaEditor")),
-            KeyBinding::new("'", ToggleSafeAreas, EDITOR_KEYS),
-            KeyBinding::new(secondary!("shift-m"), ShowProblems, Some("CelestaEditor")),
-            KeyBinding::new("v", ToggleInteractive, EDITOR_KEYS),
-            KeyBinding::new("=", ZoomTimelineIn, EDITOR_KEYS),
-            KeyBinding::new("-", ZoomTimelineOut, EDITOR_KEYS),
-            KeyBinding::new("shift-z", ZoomTimelineToFit, EDITOR_KEYS),
-            KeyBinding::new(secondary!("z"), Undo, EDITOR_KEYS),
-            KeyBinding::new(secondary!("shift-z"), Redo, EDITOR_KEYS),
-        ]);
+        cx.bind_keys(key_bindings());
         cx.bind_keys(export_page::view::key_bindings());
         // A text edited on the canvas is written first.
         cx.on_action(|_: &Quit, cx| lifecycle::quit_after_inline_commits(cx));

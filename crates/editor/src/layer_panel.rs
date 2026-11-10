@@ -250,7 +250,7 @@ fn scope_box(cx: &App) -> Div {
         .flex()
         .flex_col()
         .gap_1()
-        .px_3()
+        .px(metrics::inspector_padding())
         .py_2()
         .border_b_1()
         .border_color(cx.theme().border)
@@ -452,7 +452,7 @@ impl EditorView {
                 .flex()
                 .flex_col()
                 .gap_1()
-                .px_3()
+                .px(metrics::inspector_padding())
                 .py_2()
                 .border_b_1()
                 .border_color(cx.theme().border)
@@ -580,7 +580,7 @@ impl EditorView {
         };
         div()
             .id("selection-impact")
-            .px_3()
+            .px(metrics::inspector_padding())
             .py_2()
             .border_b_1()
             .border_color(cx.theme().border)
@@ -617,7 +617,7 @@ impl EditorView {
                     |section, error| {
                         section.child(
                             div()
-                                .px_3()
+                                .px(metrics::inspector_padding())
                                 .py_2()
                                 .text_sm()
                                 .text_color(cx.theme().danger)
@@ -637,7 +637,12 @@ impl EditorView {
         let entry_dir = self.entry_dir();
         let muted = cx.theme().muted_foreground;
         let note = |text: SharedString, color: Hsla| {
-            div().px_3().py_2().text_sm().text_color(color).child(text)
+            div()
+                .px(metrics::inspector_padding())
+                .py_2()
+                .text_sm()
+                .text_color(color)
+                .child(text)
         };
         let mut called_from = None;
         let section = self
@@ -650,7 +655,7 @@ impl EditorView {
                 section
                     .child(
                         div()
-                            .px_3()
+                            .px(metrics::inspector_padding())
                             .py_2()
                             .border_b_1()
                             .border_color(cx.theme().border)
@@ -726,7 +731,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .gap_1()
-            .px_3()
+            .px(metrics::inspector_padding())
             .py_2()
             .border_b_1()
             .border_color(cx.theme().border)

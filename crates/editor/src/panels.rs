@@ -711,8 +711,10 @@ impl EditorView {
     ) -> E {
         let section = self
             .section("inspector/component", "Component", cx)
+            // `component-registered`, not `component-name`: a prop called
+            // `name` takes `component-prop-name`, and ids must not repeat.
             .child(fact(
-                "component-name",
+                "component-registered",
                 "Registered as",
                 component.name.clone(),
                 false,
@@ -721,7 +723,13 @@ impl EditorView {
         let section = match self.component_schemas.get(&component.name) {
             Some(schema) => schema.iter().fold(section, |section, (key, entry)| {
                 let (label, value) = property_display(key, &entry.field, component.props.get(key));
-                section.child(fact(format!("component-{key}"), label, value, false, cx))
+                section.child(fact(
+                    format!("component-prop-{key}"),
+                    label,
+                    value,
+                    false,
+                    cx,
+                ))
             }),
             None if self.component_schema_worker.pending() => section.child(
                 div()
@@ -735,7 +743,7 @@ impl EditorView {
                 .iter()
                 .fold(section, |section, (key, value)| {
                     section.child(fact(
-                        format!("component-{key}"),
+                        format!("component-prop-{key}"),
                         key.clone(),
                         json_display(value),
                         false,

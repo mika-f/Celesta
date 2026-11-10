@@ -225,9 +225,14 @@ fn old_helper_calls(dir: &Path, found: &mut Vec<String>) {
         {
             let text = std::fs::read_to_string(&path).unwrap();
             for (number, line) in text.lines().enumerate() {
-                if ["inspector_row(", "inspector_section(", "inspector_note("]
-                    .iter()
-                    .any(|pattern| line.contains(pattern))
+                if [
+                    "inspector_row(",
+                    "inspector_section(",
+                    "inspector_note(",
+                    "LABEL_WIDTH",
+                ]
+                .iter()
+                .any(|pattern| line.contains(pattern))
                 {
                     found.push(format!("{}:{}", path.display(), number + 1));
                 }
@@ -246,6 +251,33 @@ fn old_inspector_helpers_are_gone() {
     assert!(
         found.is_empty(),
         "{} uses of the old inspector helpers:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
+
+/// The Inspector's own files pad their lines with
+/// `metrics::inspector_padding()`, as `InspectorRow` does, so every value
+/// edge beside `inspector_label_width()` lands on the rows' edge.
+#[test]
+fn inspector_lines_share_the_row_padding() {
+    let src = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+    let mut found = Vec::new();
+    for name in [
+        "layer_panel.rs",
+        "element_rows_view.rs",
+        "property_panel_view.rs",
+    ] {
+        let text = std::fs::read_to_string(src.join(name)).unwrap();
+        for (number, line) in text.lines().enumerate() {
+            if line.contains(".px_3()") {
+                found.push(format!("{name}:{}", number + 1));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{} lines padded px_3 beside the rows:\n{}",
         found.len(),
         found.join("\n")
     );
