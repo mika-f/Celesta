@@ -1029,8 +1029,9 @@ mod tests {
             text.contains("Image · WebP · Lossless · Transparent background"),
             "{text}"
         );
+        // The profile panel cuts the line at its edge.
         assert!(
-            text.contains("Encode   WebP · Lossless · Transparent background"),
+            text.contains("Encode   WebP · Lossless · Transparen"),
             "{text}"
         );
         assert!(text.contains("Muxer    Image"), "{text}");
