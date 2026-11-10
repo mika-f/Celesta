@@ -1,8 +1,10 @@
 //! Keeps text sizes on the editor's type roles.
 //!
 //! At the editor's 13px `rem`, `text_xs` is about 9.75px, too small to read,
-//! and a pixel `text_size` steps outside the scale altogether. Body text,
-//! values and titles are `text_base`; labels and secondary text `text_sm`.
+//! and a pixel `text_size` steps outside the scale altogether, except on a
+//! painted scale whose labels share its pixel geometry (marked `physical:`
+//! on the line). Body text, values and titles are `text_base`; labels and
+//! secondary text `text_sm`.
 
 use std::path::Path;
 
@@ -20,7 +22,10 @@ fn offenders(dir: &Path, found: &mut Vec<String>) {
         {
             let text = std::fs::read_to_string(&path).unwrap();
             for (number, line) in text.lines().enumerate() {
-                if FORBIDDEN.iter().any(|pattern| line.contains(pattern)) {
+                // A painted scale may keep a pixel size, said on its line.
+                if FORBIDDEN.iter().any(|pattern| line.contains(pattern))
+                    && !line.contains("physical:")
+                {
                     found.push(format!("{}:{}", path.display(), number + 1));
                 }
             }
