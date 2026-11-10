@@ -1687,7 +1687,7 @@ impl EditorView {
                         Button::new("timeline-zoom-fit")
                             .xsmall()
                             .ghost()
-                            .compact_label("Fit")
+                            .icon(IconName::UnfoldHorizontal)
                             .disabled(fitted)
                             .tooltip_with_action("Zoom to fit", &ZoomTimelineToFit, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.zoom_timeline_to_fit(cx))),

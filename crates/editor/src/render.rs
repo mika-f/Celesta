@@ -198,7 +198,7 @@ impl EditorView {
                             .child(self.asset_panel(cx)),
                     ),
             )
-            .child(resizable_panel().child(self.viewer_panel(cx)))
+            .child(resizable_panel().child(self.viewer_panel(window, cx)))
             .child(
                 resizable_panel()
                     .size(px(300.0))

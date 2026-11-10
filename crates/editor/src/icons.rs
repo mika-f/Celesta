@@ -28,6 +28,9 @@ icon_assets!(
         Group,
         Shapes,
         CornerDownRight,
+        ArrowRightFromLine,
+        ArrowRightToLine,
+        UnfoldHorizontal,
     ]
 );
 

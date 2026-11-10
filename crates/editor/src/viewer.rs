@@ -59,18 +59,20 @@ pub(crate) const VOLUME_SLIDER_WIDTH: f32 = 88.0;
 /// Width of the audio monitor column beside the timeline.
 pub(crate) const AUDIO_PANEL_WIDTH: f32 = 112.0;
 
-/// The transport bar's layout at `width` (viewer pixels): whether the In/Out
+/// The transport bar's layout at `width` at a `rem`: whether the In/Out
 /// readout and the duration show (`full`), then whether the In/Out buttons
 /// do; below these widths they give way to the playback controls.
-fn transport_layout(width: f32) -> (bool, bool) {
+fn transport_layout(width: Pixels, rem: Pixels) -> (bool, bool) {
+    let width = width / rem;
     (
         width >= TRANSPORT_FULL_WIDTH,
         width >= TRANSPORT_MARKS_WIDTH,
     )
 }
 
-const TRANSPORT_FULL_WIDTH: f32 = 820.0;
-const TRANSPORT_MARKS_WIDTH: f32 = 600.0;
+/// The breakpoints in rems: 820px and 600px designed against a 16px rem.
+const TRANSPORT_FULL_WIDTH: f32 = 51.25;
+const TRANSPORT_MARKS_WIDTH: f32 = 37.5;
 
 /// Whether the canvas-tool row shows above the viewer: in a React preview's
 /// interactive mode (Select layers on), selected layer or not, so the
@@ -215,7 +217,7 @@ fn tool_group(label: &'static str, toggle: impl IntoElement, cx: &App) -> impl I
 }
 
 impl EditorView {
-    pub(crate) fn viewer_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn viewer_panel(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = &self.document.project().settings;
         let frame_size = (settings.width as f32, settings.height as f32);
         let overlay_color = cx.theme().foreground.opacity(0.55);
@@ -589,7 +591,7 @@ impl EditorView {
                 panel.child(self.tool_row(pivot_note, cx))
             })
             .child(canvas_area)
-            .child(self.transport_bar(cx))
+            .child(self.transport_bar(window, cx))
     }
 
     /// The active preview error, centered in the space above the warnings
@@ -734,15 +736,16 @@ impl EditorView {
     }
 
     /// Playhead timecode, transport controls, and the In/Out marks.
-    fn transport_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn transport_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frame_rate = self.frame_rate_value;
         let mono = cx.theme().mono_font_family.clone();
         let muted = cx.theme().muted_foreground;
+        let rem = window.rem_size();
         let width = self
             .transport_width
             .get()
-            .map_or(TRANSPORT_FULL_WIDTH, f32::from);
-        let (full, show_marks) = transport_layout(width);
+            .unwrap_or(rem * TRANSPORT_FULL_WIDTH);
+        let (full, show_marks) = transport_layout(width, rem);
         let has_range = full && (self.export_in_frame.is_some() || self.export_out_frame.is_some());
         let mark = |frame: Option<i64>| {
             frame.map_or_else(
@@ -787,7 +790,7 @@ impl EditorView {
                         Button::new("mark-in")
                             .small()
                             .ghost()
-                            .label("In")
+                            .icon(IconName::ArrowRightFromLine)
                             .selected(self.export_in_frame.is_some())
                             .tooltip_with_action("Mark In", &SetExportIn, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.set_export_in(cx))),
@@ -796,7 +799,7 @@ impl EditorView {
                         Button::new("mark-out")
                             .small()
                             .ghost()
-                            .label("Out")
+                            .icon(IconName::ArrowRightToLine)
                             .selected(self.export_out_frame.is_some())
                             .tooltip_with_action("Mark Out", &SetExportOut, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.set_export_out(cx))),
@@ -1972,9 +1975,14 @@ mod tests {
     fn the_transport_bar_collapses_at_its_own_widths() {
         // The canvas tools sit in a row above the viewer, not in the bar:
         // its breakpoints are the bar's own.
-        assert_eq!(transport_layout(820.0), (true, true));
-        assert_eq!(transport_layout(819.0), (false, true));
-        assert_eq!(transport_layout(600.0), (false, true));
-        assert_eq!(transport_layout(599.0), (false, false));
+        // In rems: they keep their proportion to the content.
+        let rem = px(13.0);
+        assert_eq!(transport_layout(px(666.25), rem), (true, true));
+        assert_eq!(transport_layout(px(666.0), rem), (false, true));
+        assert_eq!(transport_layout(px(487.5), rem), (false, true));
+        assert_eq!(transport_layout(px(487.0), rem), (false, false));
+        let rem = px(16.0);
+        assert_eq!(transport_layout(px(820.0), rem), (true, true));
+        assert_eq!(transport_layout(px(819.0), rem), (false, true));
     }
 }
