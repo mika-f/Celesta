@@ -56,6 +56,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::mpsc;
+use std::time::Duration;
 
 /// How far past the last request a sequential session's next may be while
 /// its reader is walked forward to it; past it, a new reader starts there.
@@ -140,7 +141,8 @@ impl Turn {
         }
         let (width, height) = (i64::from(width), i64::from(height));
         let (shown_width, _) = self.size(width as u32, height as u32);
-        // The display coordinates of the coded corners are at least these.
+        // The offsets that move the turned coded corners to display
+        // coordinates that start at 0.
         let column0 = -(self.a.min(0) * (width - 1) + self.c.min(0) * (height - 1));
         let row0 = -(self.b.min(0) * (width - 1) + self.d.min(0) * (height - 1));
         let mut turned = vec![0; pixels.len()];
@@ -250,9 +252,12 @@ fn unsupported(path: &Path) -> MediaError {
     }
 }
 
-/// Loads `keys` of `object` and waits for AVFoundation to say it is done,
-/// on whatever queue it says it on. A key that failed to load reads as
-/// empty or invalid afterwards, which the callers check.
+/// How long [`load`] waits for AVFoundation to load a file's keys.
+const LOAD_LIMIT: Duration = Duration::from_secs(60);
+
+/// Loads `keys` of `object` and waits, up to [`LOAD_LIMIT`], for AVFoundation
+/// to say it is done, on whatever queue it says it on. A key that failed to
+/// load reads as empty or invalid afterwards, which the callers check.
 fn load<T>(object: &T, keys: &[&str]) -> Result<(), MediaError>
 where
     T: AVAsynchronousKeyValueLoading + objc2::Message,
@@ -266,8 +271,20 @@ where
     // SAFETY: the keys are an array of strings; the handler only sends on a
     // channel, which may be done from any thread.
     unsafe { object.loadValuesAsynchronouslyForKeys_completionHandler(&keys, Some(&handler)) };
-    done.recv()
-        .map_err(|_| MediaError::Codec("AVFoundation never finished loading a file".to_owned()))
+    // AVFoundation holds the block now: once it lets go of it without
+    // calling it, the channel closes.
+    drop(handler);
+    done.recv_timeout(LOAD_LIMIT).map_err(|error| {
+        MediaError::Codec(match error {
+            mpsc::RecvTimeoutError::Timeout => format!(
+                "AVFoundation did not finish loading a file in {} s",
+                LOAD_LIMIT.as_secs()
+            ),
+            mpsc::RecvTimeoutError::Disconnected => {
+                "AVFoundation never finished loading a file".to_owned()
+            }
+        })
+    })
 }
 
 /// The seconds of `time`, if it is numeric.
@@ -456,6 +473,7 @@ fn open_source(path: &Path) -> Result<Source, MediaError> {
         ));
     };
     let mut video = None;
+    let mut has_video = false;
     let mut audio = Vec::new();
     let mut audio_track = None;
     for (index, track) in tracks.iter().enumerate() {
@@ -464,6 +482,7 @@ fn open_source(path: &Path) -> Result<Source, MediaError> {
         // SAFETY: the key was loaded.
         let media = unsafe { track.mediaType() };
         if media.isEqualToString(video_type) {
+            has_video = true;
             if video.is_none() {
                 video = video_stream(index, track);
             }
@@ -472,7 +491,9 @@ fn open_source(path: &Path) -> Result<Source, MediaError> {
             audio_track.get_or_insert(track);
         }
     }
-    if video.is_none() && audio.is_empty() {
+    // A file whose video AVFoundation cannot describe is one it cannot read
+    // (another decoder may), not an audio-only one.
+    if (has_video && video.is_none()) || (video.is_none() && audio.is_empty()) {
         return Err(unsupported(path));
     }
     let (video_stream, video) = video.unzip();
@@ -1002,7 +1023,7 @@ mod tests {
     #[test]
     fn quarter_turns_and_mirrors_are_taken() {
         assert_eq!(Turn::of(transform(1.0, 0.0, 0.0, 1.0)), Turn::NONE);
-        // A half turn of a few degrees off is not a quarter turn.
+        // A turn of about 6 degrees is no quarter turn.
         assert_eq!(Turn::of(transform(0.9, 0.1, -0.1, 0.9)), Turn::NONE);
         assert_eq!(Turn::of(transform(2.0, 0.0, 0.0, 2.0)), Turn::NONE);
         let clockwise = Turn::of(transform(0.0, 1.0, -1.0, 0.0));

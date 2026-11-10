@@ -61,7 +61,9 @@ const STALL: Duration = Duration::from_secs(60);
 /// [`MuxerSession::write`] returns, while the writer is busy writing: the
 /// exporter streams a backlog in `writePackets` batches as fast as they are
 /// answered, and a disk-bound writer (ProRes 4444 at 4K is about 150 MB/s)
-/// would otherwise have the whole backlog queued here.
+/// would otherwise have the whole backlog queued here. The cap is soft: a
+/// batch is queued whole before the wait, and the wait ends as soon as an
+/// input is ready again.
 const MAX_PENDING_BYTES: usize = 64 << 20;
 
 /// The attachment AVAssetReader's own passthrough AAC buffers carry beside
@@ -777,6 +779,11 @@ impl MuxerSession {
         catching("finish the file", || unsafe {
             self.writer.finishWritingWithCompletionHandler(&handler);
         })?;
+        // The writer holds the block now: once it lets go of it without
+        // calling it, the channel closes. There is no time limit: with
+        // `faststart` the writer rewrites the whole file here, which takes as
+        // long as the file is large; the host's deadline bounds the wait.
+        drop(handler);
         done.recv()
             .map_err(|_| MediaError::Codec("AVAssetWriter never said it finished".to_owned()))?;
         // SAFETY: reading a writer's status is always allowed.

@@ -16,8 +16,9 @@ const fn fourcc(code: &[u8; 4]) -> u32 {
     u32::from_be_bytes(*code)
 }
 
-/// `kAudioFormatMPEG4AAC`, the format id `kAudioFormatProperty_Encoders`
-/// lists for AudioToolbox's AAC encoder.
+/// `kAudioFormatMPEG4AAC`, the format id AudioToolbox's AAC encoder
+/// encodes: the subtype of its class description in
+/// `kAudioFormatProperty_Encoders`.
 pub(crate) const AAC_FORMAT: u32 = fourcc(b"aac ");
 
 /// A video encoder component, on VideoToolbox.
@@ -45,9 +46,8 @@ impl VideoCodec {
         Self::ALL.into_iter().find(|codec| codec.id() == id)
     }
 
-    /// The codec type (`CMVideoCodecType`) whose encoder in
-    /// `VTCopyVideoEncoderList` makes the component available: ProRes
-    /// needs 4444's, `ap4h`.
+    /// The codec type (`CMVideoCodecType`) of the encoder its default
+    /// settings open: ProRes's is 4444's, `ap4h`.
     pub(crate) const fn codec_type(self) -> u32 {
         match self {
             Self::H264 => fourcc(b"avc1"),
@@ -56,12 +56,26 @@ impl VideoCodec {
         }
     }
 
+    /// The codec types any of whose encoders in `VTCopyVideoEncoderList`
+    /// makes the component available: ProRes's 4444 (`ap4h`) and 422 HQ
+    /// (`apch`), either of which a `profile` opens.
+    const fn codec_types(self) -> &'static [u32] {
+        const H264: [u32; 1] = [fourcc(b"avc1")];
+        const HEVC: [u32; 1] = [fourcc(b"hvc1")];
+        const PRORES: [u32; 2] = [fourcc(b"ap4h"), fourcc(b"apch")];
+        match self {
+            Self::H264 => &H264,
+            Self::Hevc => &HEVC,
+            Self::ProRes => &PRORES,
+        }
+    }
+
     /// Its name in an unavailable component's reason.
     const fn display_name(self) -> &'static str {
         match self {
             Self::H264 => "H.264",
             Self::Hevc => "HEVC",
-            Self::ProRes => "ProRes 4444",
+            Self::ProRes => "ProRes 4444 or 422 HQ",
         }
     }
 
@@ -316,9 +330,19 @@ impl MuxerFormat {
 }
 
 /// `Ok` when `encoders`, the codec types `VTCopyVideoEncoderList` lists,
-/// have `codec`'s, else why not.
-pub(crate) fn video_availability(codec: VideoCodec, encoders: &[u32]) -> Result<(), String> {
-    if encoders.contains(&codec.codec_type()) {
+/// have one of `codec`'s, else why not (also when the list could not be
+/// read).
+pub(crate) fn video_availability(
+    codec: VideoCodec,
+    encoders: Result<&[u32], &str>,
+) -> Result<(), String> {
+    let encoders =
+        encoders.map_err(|reason| format!("VideoToolbox could not list its encoders: {reason}"))?;
+    if codec
+        .codec_types()
+        .iter()
+        .any(|code| encoders.contains(code))
+    {
         Ok(())
     } else {
         Err(format!(
@@ -328,9 +352,11 @@ pub(crate) fn video_availability(codec: VideoCodec, encoders: &[u32]) -> Result<
     }
 }
 
-/// `Ok` when `encoders`, the format ids `kAudioFormatProperty_Encoders`
-/// lists, have AAC's, else why not.
-pub(crate) fn aac_availability(encoders: &[u32]) -> Result<(), String> {
+/// `Ok` when `encoders`, the format ids the encoders
+/// `kAudioFormatProperty_Encoders` lists encode, have AAC's, else why not (also when the list could not be read).
+pub(crate) fn aac_availability(encoders: Result<&[u32], &str>) -> Result<(), String> {
+    let encoders =
+        encoders.map_err(|reason| format!("AudioToolbox could not list its encoders: {reason}"))?;
     if encoders.contains(&AAC_FORMAT) {
         Ok(())
     } else {
@@ -338,15 +364,28 @@ pub(crate) fn aac_availability(encoders: &[u32]) -> Result<(), String> {
     }
 }
 
+/// The sample rates the AAC encoder takes, when AudioToolbox has it and
+/// says which; else why not.
+pub(crate) fn aac_rates<'a>(
+    encoders: Result<&[u32], &str>,
+    sample_rates: Result<&'a [u32], &str>,
+) -> Result<&'a [u32], String> {
+    aac_availability(encoders)?;
+    sample_rates.map_err(|reason| {
+        format!("AudioToolbox could not list the AAC encoder's sample rates: {reason}")
+    })
+}
+
 /// What `describe` answers, from the encoders VideoToolbox lists
 /// (`video_encoders`, codec types), the encoders AudioToolbox lists
-/// (`audio_encoders`, format ids), and the sample rates its AAC encoder
-/// takes: every component the manifest declares, in its order. The decoder
-/// and the muxers are always available.
+/// (`audio_encoders`, the format ids they encode), and the sample rates its AAC encoder
+/// takes, each with why it could not be read when it could not: every
+/// component the manifest declares, in its order. The decoder and the
+/// muxers are always available.
 pub(crate) fn describe_from(
-    video_encoders: &[u32],
-    audio_encoders: &[u32],
-    sample_rates: &[u32],
+    video_encoders: Result<&[u32], &str>,
+    audio_encoders: Result<&[u32], &str>,
+    sample_rates: Result<&[u32], &str>,
 ) -> Vec<ComponentDescription> {
     let mut components = vec![available(ComponentKind::Decoder, DECODER_ID)];
     components.extend(VideoCodec::ALL.map(|codec| {
@@ -363,8 +402,8 @@ pub(crate) fn describe_from(
         }
     }));
     components.extend(
-        AudioCodec::ALL.map(|codec| match aac_availability(audio_encoders) {
-            Ok(()) => ComponentDescription {
+        AudioCodec::ALL.map(|codec| match aac_rates(audio_encoders, sample_rates) {
+            Ok(sample_rates) => ComponentDescription {
                 settings: codec.settings(),
                 sample_rates: Some(SampleRates::Only(sample_rates.to_vec())),
                 channels: vec![1, 2],
@@ -668,7 +707,7 @@ mod tests {
     fn describe_matches_the_manifest() {
         let manifest = manifest();
         let (video, audio) = every_encoder();
-        let described = describe_from(&video, &audio, &RATES);
+        let described = describe_from(Ok(&video), Ok(&audio), Ok(&RATES));
         let expected: Vec<(ComponentKind, &str)> = []
             .into_iter()
             .chain(
@@ -744,7 +783,7 @@ mod tests {
 
     #[test]
     fn a_missing_encoder_has_a_reason() {
-        let described = describe_from(&[VideoCodec::H264.codec_type()], &[], &RATES);
+        let described = describe_from(Ok(&[VideoCodec::H264.codec_type()]), Ok(&[]), Ok(&RATES));
         let reason = |kind: ComponentKind, id: &str| {
             let component = described
                 .iter()
@@ -764,7 +803,7 @@ mod tests {
         );
         assert_eq!(
             reason(ComponentKind::VideoEncoder, "prores").as_deref(),
-            Some("VideoToolbox has no ProRes 4444 encoder on this Mac")
+            Some("VideoToolbox has no ProRes 4444 or 422 HQ encoder on this Mac")
         );
         assert_eq!(
             reason(ComponentKind::AudioEncoder, "aac").as_deref(),
@@ -774,12 +813,60 @@ mod tests {
         assert_eq!(reason(ComponentKind::Muxer, "mp4"), None);
         assert_eq!(reason(ComponentKind::Muxer, "mov"), None);
         assert_eq!(
-            video_availability(VideoCodec::H264, &[]),
+            video_availability(VideoCodec::H264, Ok(&[])),
             Err("VideoToolbox has no H.264 encoder on this Mac".to_owned())
         );
-        // ProRes 422 HQ alone is not ProRes 4444.
-        assert!(video_availability(VideoCodec::ProRes, &[u32::from_be_bytes(*b"apch")]).is_err());
-        assert_eq!(aac_availability(&[AAC_FORMAT]), Ok(()));
+        // ProRes 422 HQ alone opens `profile: hq`.
+        assert_eq!(
+            video_availability(VideoCodec::ProRes, Ok(&[u32::from_be_bytes(*b"apch")])),
+            Ok(())
+        );
+        assert_eq!(aac_availability(Ok(&[AAC_FORMAT])), Ok(()));
+    }
+
+    #[test]
+    fn a_list_that_could_not_be_read_is_the_reason() {
+        let failed = "VTCopyVideoEncoderList failed with status -12902";
+        let described = describe_from(
+            Err(failed),
+            Err("AudioFormatGetPropertyInfo failed with status -50"),
+            Ok(&RATES),
+        );
+        let reason = |id: &str| {
+            described
+                .iter()
+                .find(|component| component.id == id)
+                .and_then(|component| component.reason.clone())
+        };
+        for id in ["h264", "hevc", "prores"] {
+            assert_eq!(
+                reason(id).as_deref(),
+                Some(
+                    "VideoToolbox could not list its encoders: VTCopyVideoEncoderList failed with status -12902"
+                )
+            );
+        }
+        assert_eq!(
+            reason("aac").as_deref(),
+            Some(
+                "AudioToolbox could not list its encoders: AudioFormatGetPropertyInfo failed with status -50"
+            )
+        );
+        let described = describe_from(
+            Ok(&[]),
+            Ok(&[AAC_FORMAT]),
+            Err("AudioFormatGetProperty failed with status -50"),
+        );
+        let aac = described
+            .iter()
+            .find(|component| component.id == "aac")
+            .unwrap();
+        assert_eq!(
+            aac.reason.as_deref(),
+            Some(
+                "AudioToolbox could not list the AAC encoder's sample rates: AudioFormatGetProperty failed with status -50"
+            )
+        );
     }
 
     #[test]

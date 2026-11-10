@@ -253,18 +253,21 @@ fn sample_rate(asked: u32, rates: &[u32]) -> u32 {
 }
 
 /// Opens the AAC encoder for `request`, at the mix's rate when it is one of
-/// `rates`, else 48 kHz, and the mix's channel count (mono or stereo): the
-/// session, its rate, channels, and delay.
+/// the rates the encoder takes, else 48 kHz, mono for a mono mix and stereo
+/// for any other: the session, its rate, channels, and delay.
 pub(crate) fn open(
     request: &AudioEncoderRequest<'_>,
-    rates: &[u32],
 ) -> Result<(AudioSession, u32, u16, u64), MediaError> {
     let bitrate = aac_bitrate(request.settings)?;
-    components::aac_availability(&apple::audio_encoder_formats()).map_err(|reason| {
-        MediaError::ComponentUnavailable {
-            component: components::AudioCodec::Aac.id().to_owned(),
-            reason,
-        }
+    let encoders = apple::audio_encoder_formats();
+    let rates = apple::aac_sample_rates();
+    let rates = components::aac_rates(
+        encoders.as_deref().map_err(String::as_str),
+        rates.as_deref().map_err(String::as_str),
+    )
+    .map_err(|reason| MediaError::ComponentUnavailable {
+        component: components::AudioCodec::Aac.id().to_owned(),
+        reason,
     })?;
     let rate = sample_rate(request.sample_rate, rates);
     let channels: u16 = if request.channels == 1 { 1 } else { 2 };

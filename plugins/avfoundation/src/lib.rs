@@ -34,7 +34,8 @@ mod components;
 )]
 mod color;
 
-// Platform-independent: read on every system, tests included.
+// Platform-independent: the esds reader builds on every system, tests
+// included.
 #[cfg_attr(
     not(any(target_os = "macos", test)),
     expect(

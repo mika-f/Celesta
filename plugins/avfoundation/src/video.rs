@@ -434,13 +434,14 @@ pub(crate) fn open(
     let hq = codec == VideoCodec::ProRes && prores_hq(&settings);
     let codec_type = if hq { PRORES_HQ } else { codec.codec_type() };
     let encoders = apple::video_encoder_types();
-    if !encoders.contains(&codec_type) {
-        let reason = if hq {
-            "VideoToolbox has no ProRes 422 HQ encoder on this Mac".to_owned()
-        } else {
-            components::video_availability(codec, &encoders)
-                .err()
-                .unwrap_or_default()
+    let listed = encoders.as_deref().map_err(String::as_str);
+    if !listed.is_ok_and(|encoders| encoders.contains(&codec_type)) {
+        let reason = match components::video_availability(codec, listed) {
+            Err(reason) => reason,
+            // The component has an encoder, but not the one its profile
+            // asks for.
+            Ok(()) if hq => "VideoToolbox has no ProRes 422 HQ encoder on this Mac".to_owned(),
+            Ok(()) => "VideoToolbox has no ProRes 4444 encoder on this Mac".to_owned(),
         };
         return Err(MediaError::ComponentUnavailable {
             component: codec.id().to_owned(),

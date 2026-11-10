@@ -109,10 +109,13 @@ pub fn install() {
 impl MediaProvider for AvfCodec {
     fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
         Ok(pooled(|| {
+            let video = apple::video_encoder_types();
+            let audio = apple::audio_encoder_formats();
+            let rates = apple::aac_sample_rates();
             components::describe_from(
-                &apple::video_encoder_types(),
-                &apple::audio_encoder_formats(),
-                &apple::aac_sample_rates(),
+                video.as_deref().map_err(String::as_str),
+                audio.as_deref().map_err(String::as_str),
+                rates.as_deref().map_err(String::as_str),
             )
         }))
     }
@@ -214,8 +217,7 @@ impl AudioEncoder for AvfCodec {
     ) -> Result<AudioEncoderOpened, MediaError> {
         AudioCodec::from_id(request.component)
             .ok_or_else(|| no_component("audio encoder", request.component))?;
-        let (opened, sample_rate, channels, delay) =
-            pooled(|| audio::open(request, &apple::aac_sample_rates()))?;
+        let (opened, sample_rate, channels, delay) = pooled(|| audio::open(request))?;
         let session = self.next_session();
         self.audio.insert(session, opened);
         Ok(AudioEncoderOpened {

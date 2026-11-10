@@ -29,6 +29,8 @@ const FRAME: i64 = 1_001;
 const AUDIO_RATE: u32 = 48_000;
 /// AudioToolbox's AAC-LC priming, in sample frames.
 const AAC_DELAY: u64 = 2_112;
+/// libavcodec's AAC priming, in sample frames.
+const FFMPEG_AAC_DELAY: i64 = 1_024;
 /// The frame of the click in [`click`].
 const CLICK: usize = 4_800;
 /// The loop pre-roll the delay test encodes before 0.
@@ -493,6 +495,47 @@ fn aac_delay_and_preroll_are_hidden_for_every_reader() {
         ] {
             // The last packet covers 960 frames and is trimmed by 64 at its
             // end: exactly the second the click track is.
+            let frames = decoded.len() / 2;
+            assert_eq!(frames, AUDIO_RATE as usize, "{component}, {reader}");
+            assert_eq!(peak(&decoded), CLICK, "{component}, {reader}");
+            let early = loudest(&decoded, 4_000);
+            assert!(
+                early < 0.1,
+                "{component}, {reader}: {early} before the click"
+            );
+        }
+    }
+}
+
+#[test]
+fn ffmpeg_aac_delay_and_preroll_are_hidden_for_every_reader() {
+    // FFmpeg's AAC primes 1024 frames, not AudioToolbox's 2112: the trims
+    // follow the track's delay rather than either encoder's.
+    let mut samples = vec![0.25; PRE_ROLL * 2];
+    samples.extend(click());
+    let (audio, track) = encode_audio(
+        &mut FfmpegCodec::new(),
+        "aac",
+        &Settings::new(),
+        -(PRE_ROLL as i64),
+        &samples,
+    );
+    assert_eq!(audio[0].pts, -(PRE_ROLL as i64) - FFMPEG_AAC_DELAY);
+    let directory = tempfile::tempdir().unwrap();
+    for component in ["mp4", "mov"] {
+        let output = directory.path().join(format!("ffmpeg-click.{component}"));
+        let tracks = [track.clone()];
+        mux(
+            component,
+            &output,
+            &tracks,
+            PRE_ROLL as u64,
+            &[on_track(0, &audio)],
+        );
+        for (reader, decoded) in [
+            ("FFmpeg", ffmpeg_audio(&output)),
+            ("AVFoundation", avfoundation_audio(&output)),
+        ] {
             let frames = decoded.len() / 2;
             assert_eq!(frames, AUDIO_RATE as usize, "{component}, {reader}");
             assert_eq!(peak(&decoded), CLICK, "{component}, {reader}");

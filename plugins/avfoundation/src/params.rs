@@ -306,8 +306,8 @@ pub(crate) fn hevc_codec_string(hvcc: &[u8]) -> Result<String, MediaError> {
     Ok(text)
 }
 
-/// An HEVC `profile_tier_level()` with `sub_layers` sub-layers beyond the
-/// first, skipped.
+/// An HEVC `profile_tier_level()` with `max_sub_layers_minus1` sub-layers
+/// beyond the first, skipped.
 fn skip_profile_tier_level(bits: &mut Bits, max_sub_layers_minus1: u32) -> Option<()> {
     bits.skip(96)?; // general profile (88 bits) and level (8)
     let mut present = Vec::new();
@@ -385,7 +385,7 @@ mod tests {
     fn avc_strings_and_depth() {
         let avcc = hex(AVCC);
         assert_eq!(avc_codec_string(&avcc).unwrap(), "avc1.64000D");
-        // VideoToolbox's SPS has no VUI, so no bitstream_restriction.
+        // VideoToolbox's SPS has a VUI without bitstream_restriction.
         assert_eq!(avc_reorder_depth(&avcc).unwrap(), None);
         // H.264's largest DPB: the fallback bounds any reorder depth.
         assert_eq!(UNKNOWN_REORDER_DEPTH, 16);
