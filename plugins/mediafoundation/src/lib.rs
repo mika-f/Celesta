@@ -25,6 +25,72 @@ pub const DECODER_ID: &str = "mediafoundation";
 )]
 mod components;
 
+// Nothing outside these modules' tests calls them yet: Task 4's Windows
+// code does, and then this narrows to `not(any(windows, test))`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only the Windows encoders use it outside its tests"
+    )
+)]
+mod aac_user_data;
+
+// Nothing outside these modules' tests calls them yet: Task 4's Windows
+// code does, and then this narrows to `not(any(windows, test))`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only the Windows encoders use it outside its tests"
+    )
+)]
+mod annexb;
+
+// Nothing outside these modules' tests calls them yet: Task 4's Windows
+// code does, and then this narrows to `not(any(windows, test))`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only the Windows encoders use it outside its tests"
+    )
+)]
+mod color;
+
+// Nothing outside these modules' tests calls them yet: Task 4's Windows
+// code does, and then this narrows to `not(any(windows, test))`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only the Windows encoders use it outside its tests"
+    )
+)]
+mod convert;
+
+// Nothing outside these modules' tests calls them yet: Task 4's Windows
+// code does, and then this narrows to `not(any(windows, test))`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only the Windows encoders use it outside its tests"
+    )
+)]
+mod hns;
+
+// Nothing outside these modules' tests calls them yet: Task 4's Windows
+// code does, and then this narrows to `not(any(windows, test))`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only the Windows encoders use it outside its tests"
+    )
+)]
+mod params;
+
 // Named `mf`, not `windows`, which would shadow the `windows` crate.
 #[cfg(windows)]
 mod mf;
