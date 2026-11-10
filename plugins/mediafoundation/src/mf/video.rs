@@ -38,15 +38,15 @@ use celesta_media::{Encoded, MediaError, Packet, PixelFormat, TrackConfig, Video
 use std::collections::VecDeque;
 use windows::Win32::Foundation::VARIANT_BOOL;
 use windows::Win32::Media::MediaFoundation::{
-    CODECAPI_AVEncCommonLowLatency, CODECAPI_AVEncCommonMeanBitRate, CODECAPI_AVEncCommonQuality,
+    CODECAPI_AVEncCommonMeanBitRate, CODECAPI_AVEncCommonQuality,
     CODECAPI_AVEncCommonRateControlMode, CODECAPI_AVEncMPVDefaultBPictureCount,
     CODECAPI_AVEncMPVGOPSize, CODECAPI_AVEncVideoOutputColorNominalRange,
     CODECAPI_AVEncVideoOutputColorPrimaries, CODECAPI_AVEncVideoOutputColorTransferFunction,
-    CODECAPI_AVEncVideoOutputColorTransferMatrix, ICodecAPI, IMFSample, MF_MT_MPEG_SEQUENCE_HEADER,
-    MFNominalRange_16_235, MFSampleExtension_CleanPoint, MFSampleExtension_DecodeTimestamp,
-    MFT_CATEGORY_VIDEO_ENCODER, MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoPrimaries_BT709,
-    MFVideoTransFunc_709, MFVideoTransferMatrix_BT709, eAVEncCommonRateControlMode_Quality,
-    eAVEncCommonRateControlMode_UnconstrainedVBR,
+    CODECAPI_AVEncVideoOutputColorTransferMatrix, CODECAPI_AVLowLatencyMode, ICodecAPI, IMFSample,
+    MF_MT_MPEG_SEQUENCE_HEADER, MFNominalRange_16_235, MFSampleExtension_CleanPoint,
+    MFSampleExtension_DecodeTimestamp, MFT_CATEGORY_VIDEO_ENCODER, MFVideoFormat_H264,
+    MFVideoFormat_HEVC, MFVideoPrimaries_BT709, MFVideoTransFunc_709, MFVideoTransferMatrix_BT709,
+    eAVEncCommonRateControlMode_Quality, eAVEncCommonRateControlMode_UnconstrainedVBR,
 };
 use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_UI4};
 use windows_core::{GUID, Interface};
@@ -143,10 +143,13 @@ fn no_rate_control(
 }
 
 /// Sets `values` on `transform`'s `ICodecAPI`, `hardware` being the
-/// setting. A property it does not take is skipped (Task 1: Microsoft's
-/// software MFT refuses `LowLatency`, NVIDIA's `BPictureCount` too), except
-/// the rate-control mode, and the bitrate in bitrate mode, which refuse the
-/// transform: the next candidate is tried (deviation 78).
+/// setting. It runs before the media types are set: Microsoft's H.264
+/// encoder takes `BPictureCount` only then, and NVIDIA's MFTs ignore the
+/// rate control and GOP set after them (PR 801's review, measured). A
+/// property it does not take is skipped (NVIDIA's MFTs and the HEVC Video
+/// Extensions' encoder refuse `BPictureCount`), except the rate-control
+/// mode, and the bitrate in bitrate mode, which refuse the transform: the
+/// next candidate is tried (deviation 78).
 fn apply_codec_settings(
     transform: &Transform,
     values: &[CodecSetting],
@@ -205,7 +208,9 @@ fn apply_codec_settings(
             }
             CodecSetting::LowLatency(low) => {
                 if let Some(codec) = &codec {
-                    set_value(codec, &CODECAPI_AVEncCommonLowLatency, &variant_bool(low));
+                    // `CODECAPI_AVLowLatencyMode` (`MF_LOW_LATENCY`), which
+                    // the H.264 and H.265 encoder pages document.
+                    set_value(codec, &CODECAPI_AVLowLatencyMode, &variant_bool(low));
                 }
             }
         }

@@ -182,9 +182,9 @@ pub(crate) enum Profile {
 
 /// One `ICodecAPI` value a video encoder's settings set:
 /// `CODECAPI_AVEncCommonRateControlMode` with `CODECAPI_AVEncCommonQuality`
-/// (0 to 100) or `CODECAPI_AVEncCommonMeanBitRate` (bit/s),
+/// (1 to 100) or `CODECAPI_AVEncCommonMeanBitRate` (bit/s),
 /// `CODECAPI_AVEncMPVGOPSize` (frames), `CODECAPI_AVEncMPVDefaultBPictureCount`,
-/// and `CODECAPI_AVEncCommonLowLatency`.
+/// and `CODECAPI_AVLowLatencyMode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CodecSetting {
     RateControlQuality(u32),
@@ -218,7 +218,12 @@ pub(crate) fn codec_settings(
     if text(&settings, "rateControl") == "bitrate" {
         values.extend(whole(&settings, "bitrate").map(CodecSetting::RateControlMeanBitRate));
     } else {
-        values.extend(whole(&settings, "quality").map(CodecSetting::RateControlQuality));
+        // Microsoft's encoders take quality 1 to 100 (its H.264 encoder's
+        // page): 0 is sent as 1, which the software MFTs make of it anyway.
+        values.extend(
+            whole(&settings, "quality")
+                .map(|quality| CodecSetting::RateControlQuality(quality.max(1))),
+        );
     }
     values.extend(whole(&settings, "keyframeInterval").map(CodecSetting::GopSize));
     let b_frames = profile != Profile::H264Baseline
@@ -387,7 +392,8 @@ fn compression_settings() -> Vec<SettingField> {
         "rateControl",
         "quality",
     );
-    quality.description = Some("Higher is better quality and larger.".to_owned());
+    quality.description =
+        Some("Higher is better quality and larger. 0 encodes as 1, the lowest.".to_owned());
     let bitrate = when(
         in_group(
             field(
@@ -893,6 +899,14 @@ mod tests {
             codec_settings(VideoCodec::H264, &interval).unwrap().1[..2],
             [RateControlQuality(35), GopSize(60)]
         );
+        // The encoders take 1 to 100; 0 is their lowest, 1.
+        for codec in VideoCodec::ALL {
+            let lowest = settings(&[("quality", SettingValue::Number(0.0))]);
+            assert_eq!(
+                codec_settings(codec, &lowest).unwrap().1[0],
+                RateControlQuality(1)
+            );
+        }
         for (profile, expected) in [
             ("main", Profile::H264Main),
             ("baseline", Profile::H264Baseline),
