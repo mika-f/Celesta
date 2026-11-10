@@ -124,8 +124,10 @@ color, select, boolean and path rows keep their gpui-kit controls.
   row's commit flow does today. A number followed by the field's own unit
   (`120px`, `120 px`) is read without it; anything else that is not a
   number gets today's error.
-- **Keyboard:** Tab focuses it (P7a's thin inner focus line); Enter starts
-  typing; Escape while typing returns to the resting display.
+- **Keyboard:** Tab moves to it and opens it for typing, as Tab moves
+  between fields today. Escape while typing returns to the resting
+  display, which keeps the focus (P7a's thin inner line); Enter opens it
+  again.
 - **Locked:** muted, not draggable, not clickable, with today's lock icon
   and reason. Between keyframes and `--props` keys behave the same. No drag
   while playing, as today.
