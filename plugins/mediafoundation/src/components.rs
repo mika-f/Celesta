@@ -656,6 +656,20 @@ mod tests {
         assert_eq!(aac.settings, AudioCodec::Aac.settings());
     }
 
+    /// Task 1 ruled B (deviation 71): the plugin ships no muxer, and its
+    /// encoders go into `ffmpeg/mp4`.
+    #[test]
+    fn the_plugin_declares_no_muxer() {
+        assert_eq!(manifest().muxers, []);
+        let described = describe_from(Ok(()), &EVERY_ENCODER);
+        assert!(
+            described
+                .iter()
+                .all(|component| component.kind != ComponentKind::Muxer),
+            "{described:?}"
+        );
+    }
+
     #[test]
     fn a_missing_encoder_has_a_reason() {
         let described = describe_from(

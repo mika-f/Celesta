@@ -43,3 +43,17 @@ fn the_program_describes_what_the_library_does() {
         MfCodec::new().describe().unwrap()
     );
 }
+
+#[test]
+fn the_plugin_declares_no_muxer() {
+    // Task 1 ruled B (deviation 71): the encoders go into `ffmpeg/mp4`.
+    let mut codec = MfCodec::new();
+    assert!(
+        codec
+            .describe()
+            .unwrap()
+            .iter()
+            .all(|component| component.kind != ComponentKind::Muxer)
+    );
+    assert!(codec.muxer().is_none());
+}
