@@ -19,7 +19,7 @@ Celesta looks for plugins in this order, and of several plugins with the same id
 3. In the desktop app, the open project's own plugin folders, once you trust it (see [Plugins that come with a project](#plugins-that-come-with-a-project)).
 4. Your user plugin folder.
 5. Folders you added in the desktop app's [Plugins tab](#the-plugins-tab).
-6. The plugin folder that comes with Celesta: `plugins` beside the executable on Windows, `Contents/PlugIns` in the macOS app, and `../lib/celesta/plugins` from the executable's folder elsewhere.
+6. The plugin folder that comes with Celesta: `plugins` beside the executable on Windows, `Contents/Resources/PlugIns` in the macOS app, and `../lib/celesta/plugins` from the executable's folder elsewhere.
 
 A plugin says which versions of Celesta it works with. Celesta skips a plugin made for other versions, or one that does not say, and tells you why in the Problems tab, the [Plugins tab](#the-plugins-tab), and the output of `celesta-exporter` and the MCP server; get a release of the plugin made for your Celesta. A skipped plugin does not hide another one with the same id found later in this order, so a media plugin made for your Celesta further down the list is used instead. Neither does a plugin you turned off in the [Plugins tab](#the-plugins-tab).
 

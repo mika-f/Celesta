@@ -178,7 +178,8 @@ The official Windows and macOS packages, and the Linux container image, ship
 the media plugin built against an FFmpeg with the `x264` encoder enabled, which
 is GPL-2.0-or-later licensed. That makes the media plugin's program, as
 distributed, subject to GPL-2.0-or-later; it sits in its own plugin folder
-(`plugins/ffmpeg`, or `Contents/PlugIns/ffmpeg` in the macOS app) with
+(`plugins/ffmpeg`, or `Contents/Resources/PlugIns/ffmpeg` in the macOS app)
+with
 [`LICENSE-GPL-2.0`](LICENSE-GPL-2.0) and the corresponding-source offer in
 [`packaging/GPL-SOURCE-OFFER.md`](packaging/GPL-SOURCE-OFFER.md). Its own
 source code is MIT OR Apache-2.0 like the rest of the repository. The same

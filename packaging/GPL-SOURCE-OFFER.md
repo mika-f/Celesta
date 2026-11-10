@@ -7,8 +7,8 @@ file in a package) and is always available at <https://github.com/mika-f/celesta
 Celesta's own executables link no FFmpeg. The official Windows and macOS
 binary packages, and the Linux container image, additionally bundle Celesta's
 codec plugin, `celesta-codec-ffmpeg`: a separate program, in its own plugin
-folder (`plugins/ffmpeg`, or `Contents/PlugIns/ffmpeg` in the macOS app), that
-links an FFmpeg build compiled with the `x264` encoder enabled. `x264` is
+folder (`plugins/ffmpeg`, or `Contents/Resources/PlugIns/ffmpeg` in the macOS
+app), that links an FFmpeg build compiled with the `x264` encoder enabled. `x264` is
 licensed under the GNU General Public License version 2 or later
 (GPL-2.0-or-later), and FFmpeg itself is dual-licensed LGPL/GPL, becoming
 GPL-licensed as a whole once a GPL-only component such as `x264` is enabled.
