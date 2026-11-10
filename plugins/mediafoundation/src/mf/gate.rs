@@ -86,9 +86,9 @@ mod tests {
         // `MFStartup` failed: every component, the decoder first, says why.
         let error = "MFStartup failed: 0x80004005".to_owned();
         let none = Encoders {
-            h264: false,
-            hevc: false,
-            aac: false,
+            h264: Ok(false),
+            hevc: Ok(false),
+            aac: Ok(false),
         };
         let described = describe_from(Err(error.clone()), &none);
         for id in ["mediafoundation", "h264", "aac"] {
@@ -102,9 +102,9 @@ mod tests {
         let described = describe_from(
             Ok(()),
             &Encoders {
-                h264: true,
-                hevc: false,
-                aac: true,
+                h264: Ok(true),
+                hevc: Ok(false),
+                aac: Ok(true),
             },
         );
         assert_eq!(

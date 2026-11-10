@@ -290,16 +290,34 @@ impl AudioCodec {
     }
 }
 
+/// Whether `MFTEnumEx` lists an encoder (`Ok`), or why the list could not
+/// be read (`Err`: the failed call and its HRESULT).
+pub(crate) type Listed = Result<bool, String>;
+
 /// Which encoders `MFTEnumEx` lists on this system: what `describe` needs
 /// of Media Foundation besides whether it started.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Encoders {
     /// An NV12 to H.264 encoder.
-    pub h264: bool,
+    pub h264: Listed,
     /// An NV12 to HEVC encoder.
-    pub hevc: bool,
+    pub hevc: Listed,
     /// A PCM to AAC encoder.
-    pub aac: bool,
+    pub aac: Listed,
+}
+
+/// `Ok` when `listed` says `MFTEnumEx` lists the encoder, else why not:
+/// `missing`, or, when the list could not be read, that and why (P5's
+/// `video_availability` rule), so a failed enumeration does not read as
+/// "no such encoder".
+pub(crate) fn availability(listed: &Listed, missing: &str) -> Result<(), String> {
+    match listed {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(missing.to_owned()),
+        Err(reason) => Err(format!(
+            "Media Foundation could not list its encoders: {reason}"
+        )),
+    }
 }
 
 /// What `describe` answers, from whether Media Foundation started
@@ -318,31 +336,35 @@ pub(crate) fn describe_from(
     components.extend(VideoCodec::ALL.map(|codec| {
         let kind = ComponentKind::VideoEncoder;
         let listed = match codec {
-            VideoCodec::H264 => encoders.h264,
-            VideoCodec::Hevc => encoders.hevc,
+            VideoCodec::H264 => &encoders.h264,
+            VideoCodec::Hevc => &encoders.hevc,
         };
         match &startup {
             Err(error) => not_started(kind, codec.id(), error),
-            Ok(()) if listed => ComponentDescription {
-                settings: codec.settings(),
-                input_formats: codec.input_formats(),
-                transports: vec!["sharedMemory".to_owned(), "pipe".to_owned()],
-                ..available(kind, codec.id())
+            Ok(()) => match availability(listed, codec.missing_reason()) {
+                Ok(()) => ComponentDescription {
+                    settings: codec.settings(),
+                    input_formats: codec.input_formats(),
+                    transports: vec!["sharedMemory".to_owned(), "pipe".to_owned()],
+                    ..available(kind, codec.id())
+                },
+                Err(reason) => ComponentDescription::unavailable(kind, codec.id(), reason),
             },
-            Ok(()) => ComponentDescription::unavailable(kind, codec.id(), codec.missing_reason()),
         }
     }));
     components.extend(AudioCodec::ALL.map(|codec| {
         let kind = ComponentKind::AudioEncoder;
         match &startup {
             Err(error) => not_started(kind, codec.id(), error),
-            Ok(()) if encoders.aac => ComponentDescription {
-                settings: codec.settings(),
-                sample_rates: Some(SampleRates::Only(vec![44_100, 48_000])),
-                channels: vec![1, 2],
-                ..available(kind, codec.id())
+            Ok(()) => match availability(&encoders.aac, codec.missing_reason()) {
+                Ok(()) => ComponentDescription {
+                    settings: codec.settings(),
+                    sample_rates: Some(SampleRates::Only(vec![44_100, 48_000])),
+                    channels: vec![1, 2],
+                    ..available(kind, codec.id())
+                },
+                Err(reason) => ComponentDescription::unavailable(kind, codec.id(), reason),
             },
-            Ok(()) => ComponentDescription::unavailable(kind, codec.id(), codec.missing_reason()),
         }
     }));
     components
@@ -516,9 +538,9 @@ mod tests {
     };
 
     const EVERY_ENCODER: Encoders = Encoders {
-        h264: true,
-        hevc: true,
-        aac: true,
+        h264: Ok(true),
+        hevc: Ok(true),
+        aac: Ok(true),
     };
 
     fn strings(values: &[&str]) -> Vec<String> {
@@ -683,9 +705,9 @@ mod tests {
         let described = describe_from(
             Ok(()),
             &Encoders {
-                h264: true,
-                hevc: false,
-                aac: false,
+                h264: Ok(true),
+                hevc: Ok(false),
+                aac: Ok(false),
             },
         );
         let reason = |kind: ComponentKind, id: &str| {
@@ -716,7 +738,7 @@ mod tests {
         let no_h264 = describe_from(
             Ok(()),
             &Encoders {
-                h264: false,
+                h264: Ok(false),
                 ..EVERY_ENCODER
             },
         );
@@ -724,6 +746,39 @@ mod tests {
         assert_eq!(
             h264.and_then(|component| component.reason.as_deref()),
             Some("Media Foundation has no H.264 encoder on this system")
+        );
+    }
+
+    #[test]
+    fn a_failed_enumeration_says_so() {
+        // `MFTEnumEx` failing is not "no such encoder" (P5's `3e4a1573`).
+        let failed = "MFTEnumEx failed: 0x80004005".to_owned();
+        let described = describe_from(
+            Ok(()),
+            &Encoders {
+                h264: Err(failed.clone()),
+                hevc: Ok(false),
+                aac: Err(failed),
+            },
+        );
+        let reason = |id: &str| {
+            let component = described
+                .iter()
+                .find(|component| component.id == id)
+                .unwrap();
+            assert!(!component.available, "{component:?}");
+            component.reason.clone().unwrap()
+        };
+        let expected = "Media Foundation could not list its encoders: MFTEnumEx failed: 0x80004005";
+        assert_eq!(reason("h264"), expected);
+        assert_eq!(reason("aac"), expected);
+        assert_eq!(reason("hevc"), VideoCodec::Hevc.missing_reason());
+        // The decoder needs no encoder list.
+        assert!(described[0].available, "{:?}", described[0]);
+        assert_eq!(availability(&Ok(true), "missing"), Ok(()));
+        assert_eq!(
+            availability(&Ok(false), "missing"),
+            Err("missing".to_owned())
         );
     }
 

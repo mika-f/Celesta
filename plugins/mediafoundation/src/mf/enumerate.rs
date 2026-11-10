@@ -1,6 +1,6 @@
 //! `MFTEnumEx`: which encoders this system has.
 
-use crate::components::Encoders;
+use crate::components::{Encoders, Listed};
 use crate::mf::mft::candidates;
 use windows::Win32::Media::MediaFoundation::{
     MFAudioFormat_AAC, MFAudioFormat_PCM, MFT_CATEGORY_AUDIO_ENCODER, MFT_CATEGORY_VIDEO_ENCODER,
@@ -31,7 +31,9 @@ pub(crate) fn encoders() -> Encoders {
 }
 
 /// Whether `MFTEnumEx` lists a transform of `category` from `input` to
-/// `output`, with the hardware flags; a failed enumeration lists none.
-fn lists(category: GUID, input: GUID, output: GUID) -> bool {
-    candidates(category, input, output, true).is_ok_and(|listed| !listed.is_empty())
+/// `output`, with the hardware flags, or how the enumeration failed.
+fn lists(category: GUID, input: GUID, output: GUID) -> Listed {
+    candidates(category, input, output, true)
+        .map(|listed| !listed.is_empty())
+        .map_err(|error| error.to_string())
 }

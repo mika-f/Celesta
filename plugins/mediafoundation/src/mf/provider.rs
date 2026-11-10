@@ -145,9 +145,9 @@ impl MediaProvider for MfCodec {
             Err(error) => components::describe_from(
                 Err(error.clone()),
                 &components::Encoders {
-                    h264: false,
-                    hevc: false,
-                    aac: false,
+                    h264: Ok(false),
+                    hevc: Ok(false),
+                    aac: Ok(false),
                 },
             ),
         })
