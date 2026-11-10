@@ -78,6 +78,10 @@ fn apply_palette(colors: &mut ThemeColor) {
     colors.button_active = band_pressed;
 
     colors.popover = popover;
+    // Hover on ghost buttons (at half strength) and menu items, and the
+    // keyboard-selected menu item: a step above the popover.
+    colors.accent = rgb(0x3a3a3a).into();
+    colors.accent_foreground = text;
 
     colors.border = border;
     colors.input = border;
@@ -208,6 +212,11 @@ mod tests {
             assert_eq!(theme.tab_active, theme.sidebar);
             assert_eq!(theme.tab_bar, theme.title_bar);
             assert_eq!(theme.status_bar, theme.title_bar);
+            // Hover and the keyboard-selected menu item use `accent`: lighter
+            // than the popover it highlights, and visible at half strength
+            // over the band a ghost button sits on.
+            assert!(l(theme.accent) > l(theme.popover));
+            assert!(l(theme.accent) - l(theme.title_bar) >= 0.06);
             // One neutral family: no hue drift between steps.
             for c in [theme.background, theme.sidebar, theme.title_bar, theme.popover] {
                 assert!(c.s < 0.02, "{c:?} is not neutral");
