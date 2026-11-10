@@ -276,8 +276,8 @@ struct Plugin {
 }
 
 /// What a request in flight was sent for: its stage, and a video frame's
-/// index (counted from 0), which an error the plugin answers it with
-/// names, as it arrives requests later.
+/// composition frame (counted from 0), which an error the plugin answers it
+/// with names, as it arrives requests later.
 #[derive(Clone, Copy, Debug)]
 struct Sent {
     stage: &'static str,
@@ -308,7 +308,7 @@ impl Plugin {
         }
     }
 
-    /// Sends frame `index`, shown at `pts`.
+    /// Sends composition frame `index`, shown at `pts`.
     fn send_video_frame(
         &mut self,
         session: SessionId,
@@ -380,9 +380,8 @@ impl Plugin {
         Ok(())
     }
 
-    /// The oldest request's answer, and the stage it was sent for. The
-    /// plugin's own error for a video frame names the frame.
-    fn receive(&mut self) -> (&'static str, Result<Answered, MediaError>) {
+    /// The oldest request's answer, and what it was sent for.
+    fn receive(&mut self) -> (Sent, Result<Answered, MediaError>) {
         let answer = match self.provider.pipeline() {
             Some(pipeline) => pipeline.receive(),
             None => self
@@ -394,13 +393,7 @@ impl Plugin {
             stage: VIDEO_STAGE,
             frame: None,
         });
-        let answer = match (answer, sent.frame) {
-            (Err(MediaError::Codec(message)), Some(index)) => {
-                Err(MediaError::Codec(format!("frame {index}: {message}")))
-            }
-            (answer, _) => answer,
-        };
-        (sent.stage, answer)
+        (sent, answer)
     }
 }
 
@@ -424,6 +417,8 @@ pub(crate) struct ExportSession {
     processes: HashMap<usize, Plugin>,
     /// The frame size the video encoder's ring is sized for.
     frame: (u32, u32),
+    /// The composition frame the first video frame is.
+    first_frame: u64,
     resolved: Option<ResolvedOutput>,
     video: Option<VideoTrack>,
     audio: AudioTrack,
@@ -525,6 +520,7 @@ impl ExportSession {
             kill: cancellation.plugins(),
             processes: HashMap::new(),
             frame: (0, 0),
+            first_frame: 0,
             resolved: None,
             video: None,
             audio: AudioTrack::Undecided,
@@ -592,6 +588,12 @@ impl ExportSession {
         self.resolved
             .as_ref()
             .is_some_and(|resolved| resolved.audio.is_some())
+    }
+
+    /// Sets the composition frame the export starts at, which names the
+    /// frames an encoder fails on.
+    pub(crate) fn set_first_frame(&mut self, frame: u64) {
+        self.first_frame = frame;
     }
 
     /// The frames sent to the video encoder so far.
@@ -681,8 +683,15 @@ impl ExportSession {
         let Some(process) = self.processes.get_mut(&plugin) else {
             return Ok(());
         };
-        let (stage, answer) = process.receive();
-        match answer.map_err(|source| self.error(stage, source))? {
+        let (sent, answer) = process.receive();
+        let answer = answer.map_err(|source| {
+            let error = self.error(sent.stage, source);
+            match sent.frame {
+                Some(frame) => error.at_frame(frame),
+                None => error,
+            }
+        })?;
+        match answer {
             Answered::VideoFrame(encoded) => self.take_video(encoded)?,
             Answered::Audio(encoded) => self.take_audio(encoded),
             Answered::Packets => {}
@@ -808,8 +817,8 @@ impl ExportSession {
         self.flush(false)
     }
 
-    /// The video encoder's plugin and session, and the next frame's index
-    /// and pts.
+    /// The video encoder's plugin and session, and the next frame's
+    /// composition frame and pts.
     fn next_frame(&self) -> Result<(usize, SessionId, u64, i64), MediaError> {
         let plugin = self.resolved()?.video.plugin;
         let video = self
@@ -824,7 +833,7 @@ impl ExportSession {
             .checked_mul(u64::from(video.frame_rate.denominator))
             .and_then(|pts| i64::try_from(pts).ok())
             .ok_or_else(|| MediaError::Codec("the video is too long".to_owned()))?;
-        Ok((plugin, session, video.frames_sent, pts))
+        Ok((plugin, session, self.first_frame + video.frames_sent, pts))
     }
 
     /// Keeps the video's first config and stages its packets.
@@ -2464,11 +2473,26 @@ mod tests {
         assert!(
             matches!(
                 &result,
-                Err(ExportError::Codec { stage: VIDEO_STAGE, source })
-                    if source.to_string() == "frame 1: boom"
+                Err(ExportError::Frame(failure)) if failure.frame == 1
+                    && matches!(&failure.error, ExportError::Codec { stage: VIDEO_STAGE, source }
+                        if source.to_string() == "boom")
             ),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn a_refused_frame_is_named_by_its_composition_frame() {
+        let (mut session, _, _) = piped_session(Receiving::FailsSecond);
+        session.set_first_frame(30);
+        open(&mut session);
+        frames(&mut session, 4);
+        let result = session.encode_pixels(vec![4; 16]);
+        assert!(
+            matches!(&result, Err(ExportError::Frame(failure)) if failure.frame == 31),
+            "{result:?}"
+        );
+        assert!(result.unwrap_err().to_string().starts_with("frame 31: "));
     }
 
     /// Which answer the [`Joint`] fake refuses.
@@ -2829,10 +2853,12 @@ mod tests {
         };
 
         let (pipelined, path) = test_codec_export(process, &directory.path().join("p.ctst"));
-        assert!(
-            matches!(path, FramePath::Ring(3) | FramePath::Pipe(3)),
-            "{path:?}"
-        );
+        // The ring where the platform has one, else the pipe.
+        if cfg!(any(unix, windows)) {
+            assert_eq!(path, FramePath::Ring(3));
+        } else {
+            assert_eq!(path, FramePath::Pipe(3));
+        }
         let (one_at_a_time, path) = test_codec_export(in_process, &directory.path().join("o.ctst"));
         assert_eq!(path, FramePath::InProcess);
         assert!(pipelined == one_at_a_time, "the files differ");

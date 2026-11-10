@@ -37,6 +37,8 @@ impl Exporter {
             ..
         } = window;
         let frame_rate = project.settings.frame_rate;
+        session
+            .set_first_frame(u64::try_from(start_frame).map_err(|_| ExportError::TimelineTooLong)?);
         let mut reported_warnings = ReportedWarnings::default();
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         for frame_index in 0..frame_count {
@@ -97,6 +99,7 @@ impl Exporter {
             audio: react_audio,
             subtitles: react_subtitles,
         } = request;
+        session.set_first_frame(start_frame);
 
         let project_evaluator = project
             .map(|(project, _)| Evaluator::new(project))
