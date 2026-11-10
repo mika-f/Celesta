@@ -1381,3 +1381,20 @@ fn typing_follows_the_fields_focus() {
     typing.on(&ControlEvent::Edited);
     assert!(typing.open(false, false));
 }
+
+#[test]
+fn a_layer_row_rests_with_its_message_once_its_text_is_restored() {
+    // Text that did not parse was put back on blur; the message stays as a
+    // line under the resting value, which can be dragged again.
+    assert!(!element_row_open(RowTyping::default(), false));
+    assert!(element_row_open(RowTyping::default(), true));
+    let mut typing = RowTyping::default();
+    typing.on(&ControlEvent::Focused);
+    assert!(element_row_open(typing, false));
+}
+
+#[test]
+fn a_refused_value_press_opens_typing_and_a_refused_label_drag_says_why() {
+    assert_eq!(refused_press(ScrubOrigin::Value), RefusedPress::Type);
+    assert_eq!(refused_press(ScrubOrigin::Label), RefusedPress::Say);
+}

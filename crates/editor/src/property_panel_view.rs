@@ -2,7 +2,7 @@
 //! the commit flow live in `property_panel.rs`.
 
 use crate::element_edit::schema_field;
-use crate::element_rows_view::number_text;
+use crate::element_rows_view::{field_unit, number_text};
 use crate::inspector::InspectorRow;
 use crate::property_controls::{Control, ControlKind, number_hint, render_control, text_input};
 use crate::property_panel::{
@@ -165,6 +165,7 @@ impl EditorView {
                 input.clone(),
             )
             .text(number_text(&text, Some(&field)))
+            .unit(field_unit(Some(&field)))
             .typing(typing)
             .locked(locked)
             .on_press(move |x, window, cx| {

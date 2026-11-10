@@ -14,7 +14,7 @@ use crate::property_controls::{Control, ControlKind, number_hint, render_control
 use crate::scope::{
     SceneCalls, Scope, ScopedRow, component_section_note, gesture_lock, remove_tooltip, scoped_row,
 };
-use crate::scrub_value::{ScrubOrigin, ScrubValue, display_number, with_unit};
+use crate::scrub_value::{ScrubOrigin, ScrubValue, display_number};
 use crate::view::EditorView;
 use celesta_editor_theme::metrics;
 use celesta_react_bridge::{PrimitivePropertyField, SourcePos};
@@ -72,21 +72,28 @@ fn sections(targets: &ElementTargets) -> Vec<(String, Vec<&(PropKey, Target)>)> 
         .collect()
 }
 
-/// A number row's resting text: the shown value with as many places as the
-/// field's step has, then its unit; text that is not a number as it is.
+/// A number row's resting number: the shown value with as many places as
+/// the field's step has; text that is not a number as it is.
 pub(crate) fn number_text(text: &str, field: Option<&PrimitivePropertyField>) -> String {
-    let (step, integer, unit) = match field {
-        Some(PrimitivePropertyField::Number {
-            step,
-            integer,
-            unit,
-            ..
-        }) => (*step, integer.unwrap_or(false), unit.as_deref()),
-        _ => (None, false, None),
+    let (step, integer) = match field {
+        Some(PrimitivePropertyField::Number { step, integer, .. }) => {
+            (*step, integer.unwrap_or(false))
+        }
+        _ => (None, false),
     };
     match text.trim().parse::<f64>() {
-        Ok(value) => with_unit(&display_number(value, step, integer), unit),
+        Ok(value) => display_number(value, step, integer),
         Err(_) => text.to_owned(),
+    }
+}
+
+/// The unit a number field declares.
+pub(crate) fn field_unit(field: Option<&PrimitivePropertyField>) -> Option<SharedString> {
+    match field {
+        Some(PrimitivePropertyField::Number {
+            unit: Some(unit), ..
+        }) => Some(unit.clone().into()),
+        _ => None,
     }
 }
 
@@ -348,6 +355,7 @@ impl EditorView {
                         input.clone(),
                     )
                     .text(number_text(&text, field))
+                    .unit(field_unit(field))
                     .placeholder(placeholder)
                     .typing(typing)
                     .locked(locked)

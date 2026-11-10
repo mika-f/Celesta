@@ -482,6 +482,18 @@ impl PropertyPanelState {
     }
 }
 
+/// Whether `update` replaces a row's text: `UnlessFocused` leaves it only
+/// while the person types in it (`focused` and `typing`); a resting number
+/// keeps its field's focus after Enter or Escape and still takes a loaded
+/// value.
+pub(crate) fn replaces_text(update: TextUpdate, focused: bool, typing: bool) -> bool {
+    match update {
+        TextUpdate::Keep => false,
+        TextUpdate::UnlessFocused => !(focused && typing),
+        TextUpdate::Always => true,
+    }
+}
+
 /// Puts `value` into a row's controls.
 fn update_controls(
     row: &mut PropertyRow,
@@ -490,11 +502,11 @@ fn update_controls(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let replace = match text {
-        TextUpdate::Keep => false,
-        TextUpdate::UnlessFocused => !row.control.text_focused(window, cx),
-        TextUpdate::Always => true,
-    };
+    let replace = replaces_text(
+        text,
+        row.control.text_focused(window, cx),
+        row.state.typing_open(row.invalid.is_some()),
+    );
     if replace && row.control.set_text(value_text(&value), window, cx) {
         row.invalid = None;
         row.state.text_replaced();
@@ -1323,5 +1335,15 @@ mod tests {
             Some((json!(12), TextUpdate::UnlessFocused)),
             "the typed text is replaced only if the field lost its focus"
         );
+    }
+
+    #[test]
+    fn a_resting_row_takes_a_loaded_value_though_it_holds_the_focus() {
+        // After Enter or Escape the resting value keeps the field's focus.
+        assert!(replaces_text(TextUpdate::UnlessFocused, true, false));
+        assert!(!replaces_text(TextUpdate::UnlessFocused, true, true));
+        assert!(replaces_text(TextUpdate::UnlessFocused, false, true));
+        assert!(!replaces_text(TextUpdate::Keep, false, false));
+        assert!(replaces_text(TextUpdate::Always, true, true));
     }
 }

@@ -747,6 +747,8 @@ impl EditorView {
         next.loop_playback = self.loop_playback;
         next.show_safe_areas = self.show_safe_areas;
         next.right_tab = self.right_tab;
+        // Sections stay collapsed for the session, across reloads and opens.
+        next.collapsed_sections = std::mem::take(&mut self.collapsed_sections);
         // The new project's first render closes the previous one's toasts.
         next.toasted_sources = std::mem::take(&mut self.toasted_sources);
         next.interactive = self.interactive;

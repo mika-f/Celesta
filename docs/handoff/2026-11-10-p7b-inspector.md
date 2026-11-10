@@ -32,22 +32,27 @@ Pie's start and end angles; `s` for a video's startFrom. Ratios
   `EditorView::section(id, title, cx)`. Ids: `inspector/<name>`,
   `react/<name>`, `properties/<group lowercased>`, `properties/component`,
   `properties/properties`, `properties/layer`, `properties/called-from`.
+  `replace_contents` (open, reload) carries the state to the new view.
 
-**`scrub_value.rs`.** `ScrubValue` (resting text with unit; a press
+**`scrub_value.rs`.** `ScrubValue` (resting number, then its unit muted
+in its own lane so a narrow lane cuts the number, not the unit; a press
 reports its x; Enter on the focused resting value asks to type; while typing
 it shows the panel's escapable text input), `drag_distance` (3px threshold,
 counted from the threshold), `display_number` (integer, step places, else as
-written), `with_unit`, `ScrubOrigin`, `ScrubEnd`, `RowTyping`. The resting
+written), `ScrubOrigin`, `ScrubEnd`, `RowTyping`, `refused_press` (a value
+press the scope refuses opens typing; a refused label drag says why). The resting
 value tracks the input's focus handle, so Tab opens a row for typing.
 
 **Layer rows.** `Scrub` has an origin and the threshold; `finish()` decides
-`Write`, `Nothing` or `Type`. A value press while playing, or on a row that
+`Write`, `Nothing` or `Type`. A row whose bad text was put back on blur
+rests with its message as a sub-line (`element_row_open`). A value press while playing, or on a row that
 types but does not scrub (input rows), opens typing directly. A release
 outside the window never opens typing.
 
 **Props-file rows.** `PropertyScrub` (same helpers) shows the dragged value
 and writes once on release through `commit_property`; the preview follows
-after the reload. Reset to default is the trailing `RotateCcw` button.
+after the reload. A resting row that still holds its field's focus takes a
+loaded value (`replaces_text`). Reset to default is the trailing `RotateCcw` button.
 
 **Read-only rows.** Every tab uses `InspectorSection` + `fact`; the React
 Preview facts are a "Composition" section with Entry as a wrapping row.
@@ -76,7 +81,7 @@ keeps them out.
 
 ## How it was checked
 
-- `cargo test -p celesta-editor -p celesta-editor-theme` (795 + 7),
+- `cargo test -p celesta-editor -p celesta-editor-theme` (799 + 7),
   `cargo test -p celesta-react-bridge --lib`, clippy `-D warnings`,
   `cargo fmt --all --check`, the two Vitest files.
 - Screenshots (in the PR, not committed): the editor from the P7a tip and
@@ -86,6 +91,15 @@ keeps them out.
 - Zoom: not rerun. Every size P7b adds is on the `rem` (tokens and GPUI
   helpers), so lanes and text scale together; P7a's zoom check covered the
   pixel-sized parts.
+
+## Final review
+
+A fresh reviewer read the whole branch. Fixed: the unit was cut with the
+number and not muted; a refused value press showed the refusal as an error
+in an unfocused field; a layer row with a stale message stayed a field; a
+resting props-file row kept a stale value while holding the focus; the
+collapse state was lost on open and reload. Deferred minors are listed in
+the PR.
 
 ## Known limits
 

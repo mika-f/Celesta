@@ -16,7 +16,9 @@ use crate::property_controls::{
 };
 use crate::property_panel::field_label;
 use crate::scope::{CommitGate, HeldOrigin, SceneCalls, Scope, ScopedRow, scoped_row};
-use crate::scrub_value::{RowTyping, ScrubEnd, ScrubOrigin, drag_distance};
+use crate::scrub_value::{
+    RefusedPress, RowTyping, ScrubEnd, ScrubOrigin, drag_distance, refused_press,
+};
 use crate::transform_drag::override_sites;
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -731,6 +733,13 @@ fn entry_value(
     shown_value(name, &target.path, &target.target, field, props).0
 }
 
+/// Whether a layer number row shows its field: while typing, or holding
+/// typed text. Text that did not parse is put back on blur, so a message
+/// alone leaves the row resting, the message under it.
+pub(crate) fn element_row_open(typing: RowTyping, edited: bool) -> bool {
+    typing.open(edited, false)
+}
+
 /// One row's control and what it shows.
 pub(crate) struct ElementRow {
     pub(crate) kind: ControlKind,
@@ -759,7 +768,7 @@ pub(crate) struct ElementRow {
 impl ElementRow {
     /// Whether a number row shows its text field.
     pub(crate) fn typing_open(&self) -> bool {
-        self.typing.open(self.edited, self.invalid.is_some())
+        element_row_open(self.typing, self.edited)
     }
 
     /// The switch state: the shown value, else the placeholder.
@@ -1749,7 +1758,10 @@ impl EditorView {
         // write the row, or would not show it in this scene, or the scenes
         // are being scanned) says why instead.
         if let Some(refusal) = self.gesture_refusal(key) {
-            self.set_row_message(key, refusal, cx);
+            match refused_press(origin) {
+                RefusedPress::Type => type_instead(self, window, cx),
+                RefusedPress::Say => self.set_row_message(key, refusal, cx),
+            }
             return;
         }
         if self.transform_drag_active() {

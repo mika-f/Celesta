@@ -47,14 +47,6 @@ pub(crate) fn display_number(value: f64, step: Option<f64>, integer: bool) -> St
     }
 }
 
-/// `number` followed by its unit after one space, or alone.
-pub(crate) fn with_unit(number: &str, unit: Option<&str>) -> String {
-    match unit {
-        Some(unit) => format!("{number} {unit}"),
-        None => number.to_owned(),
-    }
-}
-
 /// What a press on a row started from: its label drags only; its value
 /// drags, or opens typing when released without a drag.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -103,6 +95,24 @@ impl RowTyping {
     }
 }
 
+/// What a press does when the scope refuses its drag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefusedPress {
+    /// A value pressed: open its field to type; a typed commit is held or
+    /// refused as any typed commit is.
+    Type,
+    /// A label pressed: say why under the row.
+    Say,
+}
+
+/// See [`RefusedPress`].
+pub(crate) fn refused_press(origin: ScrubOrigin) -> RefusedPress {
+    match origin {
+        ScrubOrigin::Value => RefusedPress::Type,
+        ScrubOrigin::Label => RefusedPress::Say,
+    }
+}
+
 type Press = Rc<dyn Fn(f32, &mut Window, &mut App)>;
 type Type = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -114,6 +124,7 @@ pub(crate) struct ScrubValue {
     input: Entity<InputState>,
     field: Option<AnyElement>,
     text: String,
+    unit: Option<SharedString>,
     placeholder: bool,
     typing: bool,
     locked: bool,
@@ -128,6 +139,7 @@ impl ScrubValue {
             input,
             field: None,
             text: String::new(),
+            unit: None,
             placeholder: false,
             typing: false,
             locked: false,
@@ -136,9 +148,16 @@ impl ScrubValue {
         }
     }
 
-    /// The resting text, the number with its unit.
+    /// The resting number.
     pub(crate) fn text(mut self, text: String) -> Self {
         self.text = text;
+        self
+    }
+
+    /// The unit after the number, muted; a narrow lane cuts the number, not
+    /// the unit.
+    pub(crate) fn unit(mut self, unit: Option<SharedString>) -> Self {
+        self.unit = unit;
         self
     }
 
@@ -205,12 +224,12 @@ impl RenderOnce for ScrubValue {
             })
             .flex()
             .items_center()
+            .gap_1()
             .w_full()
             .h_6()
             .px_2()
             .overflow_hidden()
             .whitespace_nowrap()
-            .text_ellipsis()
             .font_family(theme.mono_font_family.clone())
             .text_base()
             .text_color(if locked || self.placeholder {
@@ -242,7 +261,25 @@ impl RenderOnce for ScrubValue {
                     }
                 })
             })
-            .child(self.text)
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(self.text),
+            )
+            .when_some(self.unit, |rest, unit| {
+                rest.child(
+                    div()
+                        .flex_none()
+                        .text_color(theme.muted_foreground)
+                        .debug_selector({
+                            let id = id.clone();
+                            move || format!("{id}-unit")
+                        })
+                        .child(unit),
+                )
+            })
             .into_any_element()
     }
 }
@@ -268,14 +305,12 @@ mod tests {
     }
 
     #[test]
-    fn numbers_show_their_steps_places_and_unit() {
+    fn numbers_show_their_steps_places() {
         assert_eq!(display_number(3.0, None, true), "3");
         assert_eq!(display_number(1.234, Some(0.01), false), "1.23");
         assert_eq!(display_number(0.5, Some(0.5), false), "0.5");
         assert_eq!(display_number(400.0, Some(100.0), false), "400");
         assert_eq!(display_number(0.125, None, false), "0.125");
-        assert_eq!(with_unit("120", Some("px")), "120 px");
-        assert_eq!(with_unit("1.00", None), "1.00");
     }
 
     #[test]
@@ -304,7 +339,8 @@ mod tests {
             let typed = self.typed.clone();
             div().size_full().child(
                 ScrubValue::new("v", self.input.clone())
-                    .text("120 px".to_owned())
+                    .text("120".to_owned())
+                    .unit(Some("px".into()))
                     .typing(self.typing)
                     .locked(self.locked)
                     .on_press(move |x, _, _| pressed.set(Some(x)))
@@ -406,5 +442,39 @@ mod tests {
         cx.simulate_event(KeyUpEvent { keystroke });
         cx.run_until_parked();
         assert!(host.read_with(cx, |host, _| host.typed.get()));
+    }
+
+    struct Narrow {
+        input: Entity<InputState>,
+    }
+
+    impl Render for Narrow {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(90.)).child(
+                ScrubValue::new("n", self.input.clone())
+                    .text("123456789.123456".to_owned())
+                    .unit(Some("px".into())),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn a_narrow_value_cuts_the_number_before_its_unit(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            celesta_editor_theme::init(cx);
+        });
+        let handle = cx.open_window(size(px(300.), px(100.)), |window, cx| {
+            let host = cx.new(|cx| Narrow {
+                input: cx.new(|cx| InputState::new(window, cx)),
+            });
+            Root::new(host, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        let rest = cx.debug_bounds("n-rest").expect("the resting value");
+        let unit = cx.debug_bounds("n-unit").expect("the unit");
+        assert!(unit.size.width > px(0.), "the unit keeps its width");
+        assert!(unit.origin.x + unit.size.width <= rest.origin.x + rest.size.width);
     }
 }
