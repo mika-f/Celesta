@@ -158,27 +158,29 @@ every still export P3 wrote is byte-identical (see Checks).
 
 ## Implementation
 
-The branch sits on `claude/media-components-p3` at `c88f2634`, a docs-only
-commit of P3's handoff note on top of `61f44451`: P3 rebased onto P2c
-(BT.709) after P2c's review fixes were force-pushed, with P2b's review
-fixes below them. It was rebased there from `a53a0c11`, P3's earlier
-tip, and before that from `8c0ad423`. The hashes below are the rebased
-commits, matched to the ones before this rebase by subject (that hash in
-parentheses). `b096b115` keeps only its `progress.rs` change: P3's
-`c68f2a19` already gives the listing tests' `run` an empty home, so the
-rebase kept P3's version of that function.
+The branch sits on `claude/media-components-p3` at `daf2a5cb`, P3's fix
+of the warnings that called the last export a preset (with tests of the
+dialog's open and reopen), on `aed13a25`, P3's handoff note. GitHub
+rebased the whole stack there, so every commit has a new hash; the
+hashes below are the current ones, matched by subject to the ones pushed
+before at `a18c1550` (in parentheses). Before that, the branch moved
+with P3 as P3 was rebased onto P2c (BT.709) and P2b's and P2c's review
+fixes. `54292a0d` keeps only its `progress.rs` change: P3's `00fdd347`
+already gives the listing tests' `run` an empty home, so the rebase kept
+P3's version of that function.
 
 | Commit | Task |
 | --- | --- |
-| `bc967de2` (`174bfc39`) | `MediaOrigin::BuiltIn`, `FFMPEG_PLUGIN_ID`, `default_rank`, the decoder order, and the editor's rank. |
-| `3b9f717b` (`1c7f5236`) | `crates/media-image`: the encoders, the muxers, `codec_for_extension`, `sequence_path`. |
-| `b29d534c` (`3124d739`) | `with_builtin`, `serves_video`, the video refusal, `check_opened` shared, the editor's container filter, the listings. |
-| `c389b7de` (`0255a1dd`) | `still_output.rs`; `stills.rs` loses its encoders; `celesta_remote::publish_path`; `png`, `image`, and `webp` move to the exporter's dev-dependencies. |
-| `36ad15b0` (`977eae1f`) | Straight `rgba8` (`readback_for`, `encoder_pixels`), and sequences publishing the frames of the packets written. |
-| `50906374` (`93442dac`) | The CLI's, MCP's, and the TS package's still component options. |
-| `9ea51acf`, `3d0076c7` (`74a70d4c`, `c1b3b525`) | The docs, and `plugins/Cargo.lock`. |
-| `11686fd5`, `47014052`, `cc8e1726`, `97a9c75f`, `7336f608` (`b27684ae`, `dd2ffbff`, `dea91885`, `3d3f2ade`, `afc05b0a`) | The first review's fixes: MCP's string select settings, no `fsync` per frame, the straight `rgba8` dither, staging after open, partial flushes, stills with no media plugin, and their docs. |
-| `aeee722b`, `e15f8fe9`, `aa227386`, `b096b115` (`00d45157`, `2fbb4649`, `83e6c364`, `954451cd`) | The second review's fixes (#795), below. |
+| `5d0b26fd` (`bc967de2`) | `MediaOrigin::BuiltIn`, `FFMPEG_PLUGIN_ID`, `default_rank`, the decoder order, and the editor's rank. |
+| `67e3e621` (`3b9f717b`) | `crates/media-image`: the encoders, the muxers, `codec_for_extension`, `sequence_path`. |
+| `18d816ce` (`b29d534c`) | `with_builtin`, `serves_video`, the video refusal, `check_opened` shared, the editor's container filter, the listings. |
+| `0f7ab0b8` (`c389b7de`) | `still_output.rs`; `stills.rs` loses its encoders; `celesta_remote::publish_path`; `png`, `image`, and `webp` move to the exporter's dev-dependencies. |
+| `1b1da036` (`36ad15b0`) | Straight `rgba8` (`readback_for`, `encoder_pixels`), and sequences publishing the frames of the packets written. |
+| `b03f1049` (`50906374`) | The CLI's, MCP's, and the TS package's still component options. |
+| `6dcf1f5a`, `8accad7e` (`9ea51acf`, `3d0076c7`) | The docs, and `plugins/Cargo.lock`. |
+| `3a7785de`, `11851c73`, `5efac6b7`, `da815d8e`, `f963ba18` (`11686fd5`, `47014052`, `cc8e1726`, `97a9c75f`, `7336f608`) | The first review's fixes: MCP's string select settings, no `fsync` per frame, the straight `rgba8` dither, staging after open, partial flushes, stills with no media plugin, and their docs. |
+| `aba87b78`, `cc00820c`, `413812ab`, `54292a0d` (`aeee722b`, `e15f8fe9`, `aa227386`, `b096b115`) | The second review's fixes (#795), below. |
+| `d6abf7af` | The third review's fix (#795): the one-file muxer's path check, below. |
 
 ## Deviations from the spec
 
@@ -404,16 +406,37 @@ The second review's findings, each checked against the code first:
   manual one below is redone instead), and tying the CPU dither to the
   WGSL in code.
 
+The third review (#795, at `a18c1550`) found no blockers:
+
+- **Fixed:** the one-file muxer's check that its answer names the staged
+  file makes both paths absolute before comparing, as `published_files`
+  does on the video path. A plugin is handed `std::path::absolute(output)`,
+  which on Windows collapses `..`, so `--muxer plugin/png ..\out\a.png`
+  could have failed after rendering. No in-tree plugin has a one-file
+  image muxer and Unix keeps `..`, so no test reaches the difference;
+  the existing one-file muxer tests still pass. This note's provenance
+  is corrected too.
+- **Recorded:** a staging folder that fails to be removed is still
+  silent, as on the video path. The live cancel test
+  (`a_cancelled_still_or_contact_sheet_leaves_no_file`) is stopped by the
+  older check after rendering (`stills.rs`), so only the unit test
+  `a_cancel_before_finish_publishes_no_image` pins the check before
+  publishing.
+
 ## Checks
 
 On macOS 26.6.2, Apple M4, Metal, with `PKG_CONFIG_PATH` at Homebrew's
-`ffmpeg@8`, at `53fdac62` (the branch rebased onto P3's `61f44451`)
-plus this note's commit. The branch was then rebased onto `c88f2634`,
-which changes only P3's handoff note, so the code checked is the same.
-A GPU adapter was available, so the live still
-tests ran. (Earlier rounds ran at `954451cd`, on P3's `a53a0c11`, and at
-`a2a79905`, before the first rebase and the first review's fixes; their
-numbers are replaced by these.)
+`ffmpeg@8`. A GPU adapter was available, so the live still tests ran.
+
+The Rust workspace's checks (`cargo fmt`, `cargo clippy --workspace`,
+`cargo test --workspace`, below) ran again at `d6abf7af`, on P3's
+`daf2a5cb`, after the third review's fix. The rest (the byte comparison,
+the plugins workspace, the JS and website tests) ran at the commit
+pushed as `53fdac62` (now `8494655c`), on P3's `61f44451`. Since then P3
+added `aed13a25` (its handoff note) and `daf2a5cb` (the last export's
+warnings, the dialog, `presets.rs` and `resolve.rs`' preset paths, none
+of which a still takes), and P4 added docs and the one-file muxer's path
+check. Earlier rounds' numbers are replaced by these.
 
 **Against P3, byte for byte.** P3's exporter was built in a detached
 worktree of `61f44451` (`claude/media-components-p3`, which contains
@@ -455,9 +478,9 @@ the codegen inputs), so it was whole and the React and MCP live tests
 ran.
 
 - `cargo build -p celesta-codec-test`, then `cargo test --workspace`:
-  2,797 passed, 0 failed, 1 ignored as before
-  (`builtin_effect::write_web_effect_fixtures`); the 15 more than the
-  previous round's 2,782 come with the rebased base. On P3's `a53a0c11`,
+  2,800 passed, 0 failed, 1 ignored as before
+  (`builtin_effect::write_web_effect_fixtures`) at `d6abf7af`; the run at
+  `53fdac62` had 2,797, and the 3 more are P3's `daf2a5cb` tests. On P3's `a53a0c11`,
   a first run failed three
   `cli_formats` tests: two listing tests read the developer's own
   `settings.json`, whose `pluginFolders` names another worktree's FFmpeg
@@ -465,7 +488,7 @@ ran.
   `failure` already did; P3's `c68f2a19` now makes the same change), and
   `a_plugins_refusal_is_an_invalid_option` saw the test codec's process
   exit once under the full run's load; it passed alone and in the later
-  full run. The run at `53fdac62` passed first time.
+  full run. Later runs passed first time.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` and
   `cargo fmt --all -- --check`: clean.
 - `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`
