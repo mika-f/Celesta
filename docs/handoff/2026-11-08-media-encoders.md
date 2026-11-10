@@ -457,11 +457,15 @@ in the table under Checks.
 - **A performance re-run on a quiet machine** (ruling R25): the
   measurement above ran at load averages of 17–102, so it shows parity
   with `main` only within about 10%, while the spec asks for "not slower".
-  It waits until the P2b session stops building on this machine, and is
-  owed before #786 leaves draft: the five export rows and the two encode
-  bench rows, release, six interleaved runs, replacing or added beside the
-  table above. Until then parity stands as "within `main`'s range under
-  load".
+  R25 made it owed before #786 left draft. #786 left draft without it:
+  since then the sessions for P2b through P7 have been building on this
+  machine in parallel, and no quiet window has come (P2b's note on #793
+  measured at load 9–78, and the load read 37 when this was written). The
+  condition is moved, not dropped: the run is owed before #786 merges.
+  It covers the five export rows and the two encode bench rows, release,
+  six interleaved runs, replacing or added beside the table above. Until
+  then parity stands as "within `main`'s range under load", for P2a and
+  for P2b alike.
 - **The frame pool is not capped**: a frame-threaded encoder keeps as
   many frames as it has in flight, and the session keeps them until it
   ends. For ProRes 4444 at 4K that is about eleven `yuva444p10le` frames
