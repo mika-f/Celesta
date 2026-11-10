@@ -112,6 +112,9 @@ pub(crate) struct EditorView {
     /// Every error and warning, and the log since this project opened.
     pub(crate) problems: Problems,
     pub(crate) right_tab: RightTab,
+    /// The Inspector sections collapsed this session, by section id.
+    #[allow(dead_code)] // Read once the tabs use `InspectorSection` (P7b tasks 5-7).
+    pub(crate) collapsed_sections: crate::inspector::CollapsedSections,
     /// History rows the user expanded, by `LogEntry::id`.
     pub(crate) expanded_log_entries: HashSet<u64>,
     /// Sources whose error or warning toast this window shows; each closes
@@ -502,6 +505,7 @@ impl EditorView {
             opening: false,
             problems: Problems::default(),
             right_tab: RightTab::Details,
+            collapsed_sections: crate::inspector::CollapsedSections::default(),
             expanded_log_entries: HashSet::new(),
             toasted_sources: HashSet::new(),
             #[cfg(not(target_os = "macos"))]

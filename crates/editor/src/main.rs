@@ -36,6 +36,7 @@ mod helpers;
 mod impact;
 mod inline_text;
 mod inline_text_view;
+mod inspector;
 mod layer_panel;
 mod layer_select;
 mod lifecycle;
