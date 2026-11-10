@@ -339,6 +339,16 @@ RTX 4070 with driver 610.88 (`32.0.16.1088`):
   and padding attributes are absent (`0xC00D36E6`). While a reader holds a
   file, opening it for writing fails (os error 32) but `remove_file`
   succeeds.
+- **The reader's video times differ between Windows builds** (the PR's
+  first CI run, at `1ebb075d`). On CI's `windows-latest` (Windows Server
+  2025) the reader gives the first frame of FFmpeg's B-frame MP4 and MOV
+  time 0, not its composition time (2002/30000), so three decode tests got
+  every frame two frames early (a grey ramp's 63 for 27, 168 for 132), and
+  a 10 fps file one frame early. Audio there agrees with this machine. The
+  decoder now reads each run's first frame on opening, and shifts its
+  media times by the file's first shown composition time (`stts` and
+  `ctts`, `edit_list.rs`) less that frame's time: 0 here, the edit's media
+  time on CI.
 - **Colour in the SPS** (Task 7's review): setting
   `CODECAPI_AVEncVideoOutputColorPrimaries`, `…TransferFunction`,
   `…TransferMatrix`, and `…ColorNominalRange` does not make the software

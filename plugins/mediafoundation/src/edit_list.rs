@@ -4,7 +4,8 @@
 //!
 //! MP4 and MOV share the boxes read: `moov/mvhd`'s timescale, and for each
 //! `trak` its `mdia/hdlr` handler type, `mdia/mdhd` timescale and
-//! duration, and `edts/elst`. The top-level boxes are walked, seeking past `mdat` and the
+//! duration, `edts/elst`, and its first samples' times in
+//! `mdia/minf/stbl/stts` and `ctts`. The top-level boxes are walked, seeking past `mdat` and the
 //! rest, and only `moov` is read. It takes any `Read + Seek`, so it is
 //! tested everywhere.
 
@@ -31,7 +32,16 @@ pub(crate) struct TrackEdit {
     /// the coarser `mvhd` units, so the decoder also stops at the media's
     /// end.
     pub(crate) media_duration: Option<i64>,
+    /// When the track's first shown sample is shown, in `mdhd` units: the
+    /// earliest composition time of its first [`FIRST_SAMPLES`] samples;
+    /// `None` without `stts` samples (a fragmented file), or without `mdhd`.
+    /// The decoder compares it with the reader's time for the same frame.
+    pub(crate) first_composition: Option<i64>,
 }
+
+/// How many of a track's first samples [`TrackEdit::first_composition`]
+/// looks at: more than any reorder depth.
+pub(crate) const FIRST_SAMPLES: usize = 64;
 
 fn malformed(what: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, format!("malformed {what}"))
@@ -136,6 +146,69 @@ fn edit_entries(payload: &[u8]) -> Option<Vec<(u64, i64)>> {
     )
 }
 
+/// The `(count, value)` runs of `stts` or `ctts`'s payload, the value read
+/// as signed when `signed` (as FFmpeg reads `ctts` of either version).
+fn runs(payload: &[u8], signed: bool) -> Option<Vec<(u32, i64)>> {
+    let count = u32_at(payload, 4)? as usize;
+    let entries = payload.get(8..)?;
+    if entries.len() / 8 < count {
+        return None;
+    }
+    Some(
+        entries
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .take(count)
+            .map(|entry| {
+                let [count, value] = [&entry[..4], &entry[4..]]
+                    .map(|half| u32::from_be_bytes(half.try_into().expect("four bytes")));
+                let value = if signed {
+                    i64::from(value as i32)
+                } else {
+                    i64::from(value)
+                };
+                (count, value)
+            })
+            .collect(),
+    )
+}
+
+/// The earliest composition time of `stbl`'s first [`FIRST_SAMPLES`]
+/// samples: their decode times from `stts`, from 0, plus `ctts`'s offsets
+/// (none without `ctts`). `None` without samples, or with a malformed
+/// `stts` or `ctts`.
+fn first_composition(stbl: &[u8]) -> Option<i64> {
+    let mut decode = Vec::with_capacity(FIRST_SAMPLES);
+    let mut time = 0i64;
+    'stts: for (count, delta) in runs(child(stbl, b"stts")?, false)? {
+        for _ in 0..count {
+            if decode.len() == FIRST_SAMPLES {
+                break 'stts;
+            }
+            decode.push(time);
+            time = time.saturating_add(delta);
+        }
+    }
+    let mut offsets = Vec::with_capacity(decode.len());
+    if let Some(ctts) = child(stbl, b"ctts") {
+        'ctts: for (count, offset) in runs(ctts, true)? {
+            for _ in 0..count {
+                if offsets.len() == decode.len() {
+                    break 'ctts;
+                }
+                offsets.push(offset);
+            }
+        }
+    }
+    offsets.resize(decode.len(), 0);
+    decode
+        .iter()
+        .zip(&offsets)
+        .map(|(decode, offset)| decode.saturating_add(*offset))
+        .min()
+}
+
 /// The edit of `trak`'s payload, whose movie timescale is `movie`; none
 /// when the track has no handler type, so cannot be told video from sound.
 /// A track whose `mdhd` or `elst` is malformed is kept, with no edit, so
@@ -150,6 +223,7 @@ fn track_edit(trak: &[u8], movie: u32) -> Option<TrackEdit> {
         start_delay: 0.0,
         duration: None,
         media_duration: None,
+        first_composition: None,
     };
     let Some((timescale, media_duration)) = child(mdia, b"mdhd").and_then(timescale_and_duration)
     else {
@@ -157,6 +231,9 @@ fn track_edit(trak: &[u8], movie: u32) -> Option<TrackEdit> {
     };
     edit.timescale = timescale;
     edit.media_duration = media_duration;
+    edit.first_composition = child(mdia, b"minf")
+        .and_then(|minf| child(minf, b"stbl"))
+        .and_then(first_composition);
     let Some(entries) = child(trak, b"edts")
         .and_then(|edts| child(edts, b"elst"))
         .and_then(edit_entries)
@@ -348,6 +425,7 @@ mod tests {
                 start_delay: 0.5,
                 duration: Some(10.0),
                 media_duration: Some(302_302),
+                first_composition: None,
             },
             TrackEdit {
                 handler: *b"soun",
@@ -356,6 +434,7 @@ mod tests {
                 start_delay: 0.0,
                 duration: Some(1.0),
                 media_duration: Some(49_024),
+                first_composition: None,
             },
         ]
     }
@@ -380,6 +459,7 @@ mod tests {
                 start_delay: 0.0,
                 duration: Some(1.0),
                 media_duration: Some(49_024),
+                first_composition: None,
             }]
         );
     }
@@ -421,6 +501,7 @@ mod tests {
                 start_delay: 0.0,
                 duration: None,
                 media_duration: None,
+                first_composition: None,
             }]
         );
     }
@@ -518,5 +599,77 @@ mod tests {
         file.extend(b"mdat");
         let error = track_edits(&mut Cursor::new(file)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// `stts` or `ctts` of version `version` with `(count, value)` runs.
+    fn table(kind: &[u8; 4], version: u8, runs: &[(u32, i32)]) -> Vec<u8> {
+        let mut payload = vec![version, 0, 0, 0];
+        payload.extend((runs.len() as u32).to_be_bytes());
+        for (count, value) in runs {
+            payload.extend(count.to_be_bytes());
+            payload.extend(value.to_be_bytes());
+        }
+        atom(kind, &payload)
+    }
+
+    /// A video `trak` at 30000 whose sample table is `tables`.
+    fn trak_with_samples(tables: &[Vec<u8>]) -> Vec<u8> {
+        let mut hdlr = vec![0; 4];
+        hdlr.extend(b"vide");
+        hdlr.extend([0; 13]);
+        let mut mdia = header(b"mdhd", 30_000, 30_030);
+        mdia.extend(full(b"hdlr", &hdlr));
+        mdia.extend(atom(b"minf", &atom(b"stbl", &tables.concat())));
+        let mut payload = full(b"tkhd", &[0; 80]);
+        payload.extend(atom(b"mdia", &mdia));
+        atom(b"trak", &payload)
+    }
+
+    fn first_composition_of(tables: &[Vec<u8>]) -> Option<i64> {
+        let mut file = ftyp(b"isom");
+        file.extend(moov(1_000, &[trak_with_samples(tables)]));
+        edits_of(file)[0].first_composition
+    }
+
+    #[test]
+    fn the_first_shown_sample_is_found() {
+        let stts = table(b"stts", 0, &[(30, 1_001)]);
+        // libx264's B-frames at 30000/1001: I P B b P …, the I shown at 2002.
+        let ctts = table(
+            b"ctts",
+            0,
+            &[
+                (1, 2_002),
+                (1, 5_005),
+                (1, 2_002),
+                (1, 0),
+                (1, 1_001),
+                (25, 2_002),
+            ],
+        );
+        assert_eq!(first_composition_of(&[stts.clone(), ctts]), Some(2_002));
+        // Without `ctts`, the first sample at 0.
+        assert_eq!(first_composition_of(&[stts]), Some(0));
+        // Version 1's negative offsets.
+        let stts = table(b"stts", 0, &[(2, 1_001)]);
+        let ctts = table(b"ctts", 1, &[(1, 1_001), (1, -1_001)]);
+        assert_eq!(first_composition_of(&[stts, ctts]), Some(0));
+    }
+
+    #[test]
+    fn a_track_without_samples_has_no_first_shown_one() {
+        // A fragmented file's `stts` is empty.
+        assert_eq!(first_composition_of(&[table(b"stts", 0, &[])]), None);
+        // An `stts` cut short is ignored.
+        let mut cut = table(b"stts", 0, &[(30, 1_001)]);
+        cut.truncate(cut.len() - 4);
+        cut[3] = cut.len() as u8;
+        assert_eq!(first_composition_of(&[cut]), None);
+        // Only the first samples count: a later one shown earlier is not.
+        let stts = table(b"stts", 0, &[(100, 1_000)]);
+        let mut runs = vec![(64, 100_000)];
+        runs.push((36, -99_000));
+        let ctts = table(b"ctts", 1, &runs);
+        assert_eq!(first_composition_of(&[stts, ctts]), Some(100_000));
     }
 }

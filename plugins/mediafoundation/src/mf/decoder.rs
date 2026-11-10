@@ -21,6 +21,12 @@
 //!   times are mapped into the media's, and audio drops its leading
 //!   `media_time`, gains its empty edits as silence, and keeps at most its
 //!   edit's duration.
+//! - The reader's video times are not always the media's: Windows 11 26H2's
+//!   give a frame its composition time, and Windows Server 2025's (CI's)
+//!   give it that less the edit's `media_time`, so every frame came two
+//!   frames early there. A run reads its first frame on opening and
+//!   compares its time with the file's first shown composition time
+//!   ([`reader_shift`]); media times are shifted by the difference.
 //!
 //! Files are not held: the edit lists are read, and the file closed, before
 //! a reader opens, and every reader is released before the request is
@@ -128,6 +134,23 @@ struct VideoTrack {
     /// The reader's stream index.
     stream: u32,
     edit: Edit,
+    /// When the file says its first shown frame is shown, in seconds of
+    /// media time; none when its sample table does not say.
+    first_shown: Option<f64>,
+}
+
+/// The reader's video times differ from the media's by less than this when
+/// they agree: hns rounding.
+const SHIFT_TOLERANCE: f64 = 1e-4;
+
+/// How much earlier than the media's the reader's video times are: the
+/// file's first shown composition time less the time the reader gives the
+/// first frame; 0 when either is unknown, or when they agree.
+fn reader_shift(first_shown: Option<f64>, reader_first: Option<f64>) -> f64 {
+    match (first_shown, reader_first) {
+        (Some(file), Some(reader)) if (file - reader).abs() > SHIFT_TOLERANCE => file - reader,
+        _ => 0.0,
+    }
 }
 
 /// The first audio stream.
@@ -298,6 +321,14 @@ fn open_source(path: &Path) -> Result<Source, MediaError> {
             .collect()
     };
     let (video_edits, audio_edits) = (of_handler(b"vide"), of_handler(b"soun"));
+    let video_first_shown = edits
+        .iter()
+        .find(|edit| &edit.handler == b"vide")
+        .and_then(|edit| {
+            let timescale = f64::from(edit.timescale.max(1));
+            edit.first_composition
+                .map(|composition| composition as f64 / timescale)
+        });
     let full = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
     // SAFETY: plain COM calls on live interfaces; the attribute store is
     // made before it is set and given.
@@ -333,7 +364,11 @@ fn open_source(path: &Path) -> Result<Source, MediaError> {
                 && let Some(found) = video_stream(stream, &native, edit)
             {
                 probe.video = Some(found);
-                video = Some(VideoTrack { stream, edit });
+                video = Some(VideoTrack {
+                    stream,
+                    edit,
+                    first_shown: video_first_shown,
+                });
             }
         } else if major == Some(MFMediaType_Audio) {
             let edit = audio_edits
@@ -497,6 +532,9 @@ struct Run {
     source: Source,
     stream: u32,
     edit: Edit,
+    /// How much earlier the reader's times are than the media's
+    /// ([`reader_shift`]).
+    shift: f64,
     layout: Layout,
     /// The last frame shown by the last request.
     current: Option<Shown>,
@@ -513,7 +551,7 @@ impl Run {
         let Some(video) = &source.video else {
             return Err(MediaError::NoVideoStream(path.to_owned()));
         };
-        let (stream, edit) = (video.stream, video.edit);
+        let (stream, edit, first_shown) = (video.stream, video.edit, video.first_shown);
         let current = select_output(
             &source.reader,
             stream,
@@ -521,18 +559,33 @@ impl Run {
             MFVideoFormat_RGB32,
         )?;
         let layout = Layout::of(&current)?;
-        Ok(Self {
+        let mut run = Self {
             source,
             stream,
             edit,
+            shift: 0.0,
             layout,
             current: None,
             next: None,
             ended: false,
-        })
+        };
+        if first_shown.is_some() {
+            // The reader is at the start: its first frame, kept for a walk
+            // from there, tells how its times run.
+            run.next = run.read()?;
+            run.shift = reader_shift(first_shown, run.next.as_ref().map(|first| first.seconds));
+        }
+        Ok(run)
     }
 
-    /// Seeks to `media` seconds of media time, forgetting what was read.
+    /// The reader's time for presentation time `time`: its media time, less
+    /// the reader's [`shift`](Self::shift).
+    fn reader_seconds(&self, time: f64) -> f64 {
+        self.edit.media_seconds(time) - self.shift
+    }
+
+    /// Seeks to `media` seconds of the reader's time, forgetting what was
+    /// read.
     fn seek(&mut self, media: f64) -> Result<(), MediaError> {
         seek(&self.source.reader, media, self.source.probe.duration)?;
         self.current = None;
@@ -565,7 +618,8 @@ impl Run {
     }
 
     /// Walks the reader forward to the last frame shown by `media` seconds
-    /// of media time; the first frame when the reader's first is later.
+    /// of the reader's time; the first frame when the reader's first is
+    /// later.
     fn walk(&mut self, media: f64) -> Result<(), MediaError> {
         loop {
             if self.next.is_none() && !self.ended {
@@ -582,7 +636,7 @@ impl Run {
 
     /// The frame shown at presentation time `time` (clamped to the file).
     fn frame_at(&mut self, time: f64, path: &Path) -> Result<VideoFrame, MediaError> {
-        let media = self.edit.media_seconds(time);
+        let media = self.reader_seconds(time);
         self.walk(media)?;
         if self.current.is_none() {
             // A seek past the last frame gives none: read the file through,
@@ -731,7 +785,7 @@ impl MfDecoder {
         let Some(sequential) = request.sequential else {
             let mut run = Run::open(path)?;
             let time = clamped(time, &run.source);
-            let media = run.edit.media_seconds(time);
+            let media = run.reader_seconds(time);
             if media > 0.0 {
                 run.seek(media)?;
             }
@@ -752,7 +806,7 @@ impl MfDecoder {
                 self.sessions.remove(&key);
                 let mut run = Run::open(path)?;
                 let time = clamped(time, &run.source);
-                let media = run.edit.media_seconds(time);
+                let media = run.reader_seconds(time);
                 if media > 0.0 {
                     run.seek(media)?;
                 }
@@ -963,6 +1017,22 @@ fn mix_channels(samples: &[f32], from: usize, to: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_reader_shift_is_the_difference_of_the_first_frames() {
+        // Windows 11 26H2: the reader gives FFmpeg's B-frame MP4 its
+        // composition times, from 2002/30000.
+        assert_eq!(
+            reader_shift(Some(2_002.0 / 30_000.0), Some(0.066_733_3)),
+            0.0
+        );
+        // Windows Server 2025: from 0.
+        let shift = reader_shift(Some(2_002.0 / 30_000.0), Some(0.0));
+        assert!((shift - 2_002.0 / 30_000.0).abs() < 1e-12);
+        // Unknown either way: none.
+        assert_eq!(reader_shift(None, Some(0.0)), 0.0);
+        assert_eq!(reader_shift(Some(0.1), None), 0.0);
+    }
 
     #[test]
     fn edits_map_times_into_the_media() {
