@@ -3,7 +3,9 @@
 Phase P3 of the media components design
 (`docs/superpowers/specs/2026-11-08-media-components-design.md`, #782;
 plan `docs/superpowers/plans/2026-11-08-media-components-p3.md`), on top
-of P2b (`docs/handoff/2026-11-08-media-pipelining.md`). An export can take
+of P2c (`claude/media-components-p2c` at `0b374c23`, P2c's head when this
+branch was rebased onto it; P2c in turn is on P2b,
+`docs/handoff/2026-11-08-media-pipelining.md`). An export can take
 a named choice of muxer, encoders, and settings from an
 `export-presets.json`, the user's or the project's, by name or as the
 project's `default`; the CLI, MCP, and `@celesta.studio/exporter` look
@@ -39,17 +41,24 @@ back; an explicit value stays strict.
   (`invalid_presets`, deviation 42). `load_if_present` is `None` for a
   missing file. `save` writes pretty JSON (two spaces) and a trailing
   newline through a `NamedTempFile` in the same folder, renamed over the
-  target; a failure leaves the old file. `update_presets(path, change)`
+  target; a failure leaves the old file. A symbolic link is followed to
+  its target (`link_target`, relative links against their folder, a
+  dangling one too), which is written and keeps the link; on Unix the
+  temporary file takes the target's mode, or `0644` for a new file
+  (review fixes 3 and 4). `update_presets(path, change)`
   loads (or starts) a file, applies `change`, and saves; `put` replaces a
   preset of the same name in place or appends it.
 - **Lookup** (`PresetLookup { file, project, user }`,
   `PresetLookup::for_source(source, preset_file)`). `find(name)` tries
   `--preset-file`, then the project file, then the user file, and the
-  first match wins. A missing file is skipped; a file the lookup reaches
-  and cannot read is `invalid_presets`, so a broken user file does not fail
-  an export that names no preset in a project without a `default`. A
-  project match also reads the user file and warns
-  ``the project's preset `{name}` hides the user preset of the same name``.
+  first match wins. A missing file is skipped; a file the lookup has to
+  find the name in and cannot read is `invalid_presets`, so a broken user
+  file does not fail an export that names no preset in a project without a
+  `default`. A project match also reads the user file and warns
+  ``the project's preset `{name}` hides the user preset of the same name``;
+  a user file that cannot be read there is a warning, not an error
+  (review fix 1): ``your presets file {path} could not be read, so it was
+  not checked for a preset of the same name: {message}``.
   `project_default()` reads the project file's `default`. `FoundPreset {
   preset, source: PresetSource::{File, Project, User}, path, warnings }`.
 - **Resolving** (`resolve_output(choice, output, registry, presets,
@@ -525,16 +534,108 @@ Not run: Linux and Windows (CI), the dialog by hand with a mouse (the
 tests drive Enter and the model's controls), and a project plugin's
 components in the dialog.
 
+**Rebase onto P2c.** The branch was rebased onto
+`claude/media-components-p2c` at `0b374c23` (P2c's head then; P2c and P3
+both touch `encode.rs`, `HANDOFF.md`, the spec, the en/ja `09-export.md`,
+and the Skill), and `a53a0c11` gave P2b's new session tests the
+`PresetLookup` argument. The review of mika-f/Celesta#794 said commit
+`90deba44` (the model) alone does not compile `celesta-editor` because it
+calls `settings::effective` before `bacee4ff` makes it `pub`; checked here
+with `cargo check -p celesta-editor --all-targets` on a `90deba44`
+checkout, it compiles: that commit's `model.rs` carries its own private
+`effective`, which `bacee4ff` replaces with the public one.
+
+**Review fixes** (mika-f/Celesta#794, two reviews), each test seen
+failing on the old code first unless it says it pins existing behavior:
+
+- A broken user presets file no longer fails an export whose preset (or
+  project `default`) the project file answers: `PresetLookup::find`'s
+  shadow check warns instead. `a_broken_file_is_read_only_when_the_lookup_reaches_it`
+  now expects the warning and still fails a name the lookup has to find in
+  the user file; `resolve::a_broken_user_file_does_not_fail_a_project_preset`
+  covers `--preset` and the project `default`.
+- `update_presets_never_writes_over_a_file_it_cannot_read`: invalid JSON
+  and a `"version": 2` file both fail and stay byte-identical, with no
+  temporary file left (pins the existing guard; passed on the old code).
+- `save` keeps a file's mode on Unix and makes a new one `0644`
+  (`a_save_keeps_the_files_mode_and_makes_new_files_readable`, 0644 and
+  0640 kept), and writes through a symbolic link, a dangling one too
+  (`a_save_writes_through_a_symlink`).
+- The dialog: `ExportDialogModel::saved` takes the written file, selects
+  the preset, and sets what counts as chosen as picking it would
+  (`preset_chosen`, shared with `apply`), so a container change after
+  Save as preset… keeps x264 and its CRF
+  (`a_saved_preset_is_chosen_as_picking_it_would_be`). `Export…` (the
+  dialog's `Confirm`) always exports; Enter in the save form's name saves
+  through `InputEvent::PressEnter`, and a wrapper's `Confirm` handler stops
+  the action the single-line input propagates, which would otherwise also
+  export (`export_exports_while_the_preset_name_has_the_focus` clicks the
+  real button, found by its `debug_selector`, with the name focused, then
+  presses Enter in the name; without the wrapper Enter exported too). A
+  failed first resolve keeps the opening warnings under Preset
+  (`a_failed_first_resolve_keeps_the_opening_warnings`). Reopening a kept
+  dialog (`ExportDialog::reopen`, from `request_export`) describes again
+  each plugin whose description has no available component
+  (`ExportDialogModel::recheck_failed`, `a_failed_describe_is_checked_again`)
+  and retries a first choice that failed. Warnings about `last` name it
+  "your last export" (`LAST_EXPORT`,
+  `warnings_about_last_call_it_your_last_export`); the CLI is unchanged.
+- `celesta_media::settings::drop_hidden` holds the fixed-point drop that
+  `layer` and the dialog's `set_setting` each had
+  (`drop_hidden_repeats_until_nothing_is_hidden`).
+- Tests no longer read the developer's files: `home_env` sets `HOME`,
+  `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `APPDATA`, and `plain_failure`,
+  `run` (the component listings, which listed an installed FFmpeg plugin
+  here), and MCP's project-preset test (`client_with_test_codec_in`) use
+  it.
+- New coverage (passed on the old code): a choice naming the preset's own
+  encoder keeps its options
+  (`naming_the_presets_own_encoder_keeps_its_options`), a project
+  `default` found only in the user file
+  (`a_project_default_is_found_in_the_user_file`), and audio set aside by
+  a container without audio coming back with its bitrate
+  (`audio_set_aside_comes_back_with_its_settings`; the model's AAC fixture
+  gained a bitrate field).
+- Docs: the en/ja export guide and troubleshooting, the Skill's
+  `export.md` and `errors.md` (the takes-no-audio warning is no longer
+  called stale; rows for the ignored audio options and the unreadable
+  user file), the spec's deviation 42, and `HANDOFF.md`.
+
+Checks after these fixes, at `f6ddc37b` on the same machine (this
+note's commit only adds the note): `cargo build -p celesta-codec-test`,
+then `cargo test --workspace --no-fail-fast` 2,731 passed, 0 failed, 1
+ignored. A first full run, at `c0921b1b`, failed two `cli_formats`
+listing tests (`json_lists_the_test_codecs_components`,
+`the_plain_listing_has_a_line_per_component`: 14 components listed for
+4), because `run` gave the exporter the developer's home and an FFmpeg
+plugin is installed in its user plugin folder here; `f6ddc37b` gives
+`run` an empty home, the `integration` target then passed 60 of 60, and
+the full run above is after it. No test-codec test failed under load
+this time. `cargo clippy --workspace --all-targets --locked -- -D
+warnings` and `cargo fmt --all -- --check` clean; `pnpm --dir
+packages/website test` 52 passed, `pnpm --dir packages/exporter test` 24
+passed; `git diff --check` clean. The plugins workspace and `pnpm run
+test:runtime` were not rerun (nothing under `plugins/` or the runtime
+packages changed). P2c's branch has since moved to `8fb118d0`; this
+branch was not rebased onto it.
+
 ## Not done
 
-- **P2c's rebase.** When P2c (BT.709) lands in the stack, this branch is
-  rebased onto it (never merged) and the PR's base changed; nothing here
-  touches color.
 - **Presets files.**
-  - Saved files are created `0600` (`NamedTempFile`'s mode), so a
-    project's `export-presets.json` written by the app loses group and
-    other read; keeping the existing file's mode, or the umask default,
-    would suit a file meant for a repository.
+  - Misspelled structural keys are kept silently as unknown keys (every
+    level flattens unknown keys into `other` for forward compatibility):
+    `"audio": {"componet": …}` reads as no component, the default AAC. A
+    warning for an unknown key under a known object would catch typos
+    (review, kept).
+  - A malformed entry (`"audio": "ffmpeg/aac"`, `"crf": null`) fails the
+    whole file with serde's untagged-enum message ("data did not match any
+    variant of untagged enum PresetAudio"), naming neither the preset nor
+    the key, while an out-of-range value is sanitized with a warning; a
+    `default` in the user file or a `last` in the project file is ignored
+    without a word (review, kept).
+  - `update_presets` is load-modify-save with no lock, so two editor
+    windows can lose each other's write (one's `last` against the other's
+    Save as preset) (review, kept).
   - The failed-save test does not assert that the temporary file is gone.
   - A missing `--preset-file` is skipped silently by `PresetLookup`; the
     CLI and MCP check it first (usage error), but a library caller is not
@@ -543,10 +644,16 @@ components in the dialog.
     carry serde's message without a line and column, since the shape is
     read from an already-parsed `serde_json::Value`.
 - **Resolving.**
+  - A preset's muxer wins over the output's extension with only a warning
+    (`--preset web out.mov` with an MP4 preset writes MP4 into `out.mov`);
+    the spec's Resolving an output step 2 says "the explicit or preset
+    muxer", so letting the extension win, or failing on the CLI, is a spec
+    decision for the user (review, kept).
   - `layer` drops a base value hidden by another base value silently, so a
     plugin that adds a `visibleWhen` hides a stale value without a
-    warning; its doc comment says "hidden by the layered values", and no
-    test covers its repeated drops.
+    warning; its doc comment says "hidden by the layered values". Its
+    repeated drops are now `settings::drop_hidden`'s, which
+    `drop_hidden_repeats_until_nothing_is_hidden` covers.
   - A preset-muxer fallback warning is lost when the extension's default
     then fails.
   - `resolve_preset_output` names its base `""` when it has none (never
@@ -572,6 +679,17 @@ components in the dialog.
   does nothing. Untested: `output_choice`'s error for an unavailable
   component, and `set_setting`'s drop of a hidden value.
 - **The dialog.**
+  - Re-confirming "None" in the preset list resets every edit, as
+    re-picking any preset does, though "None" also labels the edited state
+    (review, a design question, kept).
+  - Simplifications the review offered and this branch keeps: the dead
+    `PresetSource::File` arm in `choose_preset`, the preset passed as
+    `base`, `selected`, and `Asked::Preset` with nothing tying them, presets
+    written with `sync_all` on the UI thread, `resolve.rs` shadowing
+    `base_audio` and matching `PresetAudio::Encode` twice, `save_preset`
+    matching `SaveTarget` twice, the `Export` event not carrying the
+    muxer's extensions, and the warnings-then-plan block repeated in
+    `exporter.rs` and `react_entry.rs`. (`drop_hidden` was the one taken.)
   - Reopening the dialog does not re-read the presets files: a file edited
     by hand, or by another window, shows after Reload Plugins or another
     project.
