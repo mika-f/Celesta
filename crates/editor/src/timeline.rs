@@ -782,19 +782,33 @@ impl EditorView {
         let fps = nominal_fps(frame_rate);
         let lane_width = self.lane_width();
         let pixels_per_frame = f64::from(lane_width) * view.zoom / view.end_frame;
-        let scale = ruler_scale(pixels_per_frame, fps, 104.0, 7.0);
+        let scale = ruler_scale(
+            pixels_per_frame,
+            fps,
+            f64::from(geometry.label_spacing),
+            f64::from(geometry.minor_tick_spacing),
+        );
         let first_frame = (view.view_start * view.end_frame).floor() as i64;
         let last_frame = ((view.view_start + 1.0 / view.zoom) * view.end_frame).ceil() as i64;
-        let ticks: Vec<(f32, bool)> = (first_frame.div_euclid(scale.minor)
+        let tier = |frame: i64| {
+            if frame % scale.major == 0 {
+                Tier::Major
+            } else if scale.mid.is_some_and(|mid| frame % mid == 0) {
+                Tier::Mid
+            } else {
+                Tier::Minor
+            }
+        };
+        let ticks: Vec<(f32, Tier)> = (first_frame.div_euclid(scale.minor)
             ..=last_frame.div_euclid(scale.minor) + 1)
             .map(|index| index * scale.minor)
             .filter(|frame| (0..=self.clock.end_frame()).contains(frame))
-            .map(|frame| (view.x(view.frame_fraction(frame)), frame % scale.major == 0))
+            .map(|frame| (view.x(view.frame_fraction(frame)), tier(frame)))
             .filter(|(x, _)| (-0.01..=1.01).contains(x))
             .collect();
         let labels = ticks
             .iter()
-            .filter(|(_, major)| *major)
+            .filter(|(_, tier)| *tier == Tier::Major)
             .map(|(x, _)| *x)
             .map(|x| {
                 let frame =
@@ -804,6 +818,7 @@ impl EditorView {
                     .top(rems(0.125))
                     .left(relative(x))
                     .ml_1()
+                    .font_family(cx.theme().mono_font_family.clone())
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .whitespace_nowrap()
@@ -869,20 +884,16 @@ impl EditorView {
             .w_full()
             .border_b_1()
             .border_color(cx.theme().border)
+            // The corner above the track headers: the playhead's timecode
+            // shows once, under the viewer.
             .child(
                 div()
-                    .flex()
                     .flex_none()
-                    .items_center()
                     .w(metrics::track_header_width())
                     .h_full()
-                    .px_3()
                     .border_r_1()
                     .border_color(cx.theme().border)
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_base()
-                    .text_color(theme::accent())
-                    .child(format_timecode(self.clock.frame(), frame_rate)),
+                    .debug_selector(|| "timeline-ruler-corner".into()),
             )
             .child(ruler)
     }
@@ -1896,10 +1907,19 @@ impl EditorView {
     }
 }
 
-/// Ruler ticks (tall for labelled marks) and the playhead's head.
+/// A ruler tick's tier: labelled, between labels, or the finest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tier {
+    Major,
+    Mid,
+    Minor,
+}
+
+/// Ruler ticks (the ruler's full height for labelled marks, half for mid
+/// ticks, short for the rest) and the playhead's head.
 fn paint_ruler(
     bounds: Bounds<Pixels>,
-    ticks: &[(f32, bool)],
+    ticks: &[(f32, Tier)],
     playhead_x: f32,
     tick_color: Hsla,
     geometry: TimelineGeometry,
@@ -1907,11 +1927,11 @@ fn paint_ruler(
 ) {
     let width = bounds.size.width;
     let bottom = bounds.origin.y + bounds.size.height;
-    for (x, major) in ticks {
-        let height = if *major {
-            bounds.size.height
-        } else {
-            geometry.minor_tick
+    for (x, tier) in ticks {
+        let height = match tier {
+            Tier::Major => bounds.size.height,
+            Tier::Mid => bounds.size.height / 2.0,
+            Tier::Minor => geometry.minor_tick,
         };
         window.paint_quad(fill(
             Bounds::new(
