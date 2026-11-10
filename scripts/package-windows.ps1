@@ -134,7 +134,7 @@ try {
     # the package does not bundle (VRM), so only the codec and what its normal
     # and build dependencies reach in the resolve graph are listed; a
     # dependency it has only for its tests is not shipped. package-macos.py's
-    # codec_packages does the same.
+    # bundled_packages does the same.
     $pluginsText = & cargo metadata --manifest-path "$root/plugins/Cargo.toml" --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed for the plugins workspace' }
     $plugins = $pluginsText | ConvertFrom-Json

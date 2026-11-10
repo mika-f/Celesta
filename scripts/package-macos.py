@@ -158,8 +158,8 @@ def collect_licenses(resources, target):
     flags = ("--locked", "--format-version", "1", "--filter-platform", target)
     # The release build downloads only the crates it compiles, so a crate the
     # lockfile holds for tests alone (celesta-codec-test's lz4_flex) may not be
-    # downloaded yet: neither workspace is read --offline. The codec plugin's
-    # crates are in the plugins workspace, and only the bundled plugins' are listed.
+    # downloaded yet: neither workspace is read --offline. The bundled plugins'
+    # crates are in the plugins workspace, and only theirs are listed.
     root = json.loads(run("cargo", "metadata", *flags, capture=True))
     plugins = json.loads(run("cargo", "metadata", "--manifest-path", ROOT / "plugins/Cargo.toml", *flags, capture=True))
     packages = {}
