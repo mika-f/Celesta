@@ -1,0 +1,47 @@
+[package]
+name = "celesta-codec-mediafoundation"
+description = "Celesta's Windows media plugin: Media Foundation encoders and decoder, in a process of its own."
+# Celesta's version, which plugin.json gives too; both are bumped with the
+# root's by `node scripts/plugins/bump-version.mts`.
+version = "0.9.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mika-f/celesta"
+rust-version = "1.89"
+
+# It builds on every system, so the plugins workspace does, but serves
+# media on Windows only: plugin.json's `os` has `build.mts` skip it
+# elsewhere, and everything that reaches Media Foundation is behind
+# `cfg(windows)`.
+[dependencies]
+# Celesta's crates, pinned to Celesta's version for crates.io; the pins are
+# bumped by `node scripts/plugins/bump-version.mts`.
+celesta-composition = { path = "../../crates/composition", version = "=0.9.0" }
+celesta-media = { path = "../../crates/media", version = "=0.9.0" }
+celesta-plugin-host = { path = "../../crates/plugin-host", version = "=0.9.0" }
+# plugin.json, read for the components the plugin declares.
+serde_json = "1.0.154"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+] }
+windows-core = "0.62.2"
+
+# The FFmpeg plugin decodes and muxes what the encoders give, in the tests.
+[target.'cfg(windows)'.dev-dependencies]
+celesta-codec-ffmpeg = { path = "../ffmpeg", version = "=0.9.0" }
+# The exports that combine this plugin's components with the FFmpeg plugin's.
+celesta-exporter = { path = "../../crates/exporter", version = "=0.9.0" }
+celesta-gpu-renderer = { path = "../../crates/gpu-renderer", version = "=0.9.0" }
+celesta-project = { path = "../../crates/project", version = "=0.9.0" }
+# The FFmpeg plugin's bindings, for reading decoded frames' planes.
+ffmpeg-sys-next = "8.1.0"
+# The export tests' images.
+png = "0.18.1"
+tempfile = "3.23.0"

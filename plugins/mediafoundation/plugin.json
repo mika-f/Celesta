@@ -1,0 +1,22 @@
+{
+  "id": "mediafoundation",
+  "version": "0.9.0",
+  "cargoPackage": "celesta-codec-mediafoundation",
+  "roles": ["media"],
+  "os": ["windows"],
+  "media": {
+    "decoders": [
+      { "id": "mediafoundation", "name": "Media Foundation", "extensions": ["mp4", "mov", "m4a"] }
+    ],
+    "videoEncoders": [
+      { "id": "h264", "name": "H.264 (Media Foundation)", "codecs": ["avc1"],
+        "inputFormats": ["nv12", "rgba8"] },
+      { "id": "hevc", "name": "HEVC (Media Foundation)", "codecs": ["hvc1"],
+        "inputFormats": ["nv12", "p010", "rgba16", "rgba8"] }
+    ],
+    "audioEncoders": [
+      { "id": "aac", "name": "AAC (Media Foundation)", "codecs": ["mp4a"] }
+    ]
+  },
+  "licenses": ["../../LICENSE-MIT", "../../LICENSE-APACHE"]
+}

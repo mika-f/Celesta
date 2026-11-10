@@ -30,6 +30,9 @@ const files: Record<string, string> = {
   'plugins/ffmpeg/Cargo.toml':
     '[package]\nversion = "0.9.0"\n\n[dependencies]\nfoo = { path = "../../x", version = "=0.9.0" }\n',
   'plugins/ffmpeg/plugin.json': '{\n  "id": "ffmpeg",\n  "version": "0.9.0"\n}\n',
+  'plugins/mediafoundation/Cargo.toml':
+    '[package]\nversion = "0.9.0"\n\n[dependencies]\nfoo = { path = "../../x", version = "=0.9.0" }\n',
+  'plugins/mediafoundation/plugin.json': '{\n  "id": "mediafoundation",\n  "version": "0.9.0"\n}\n',
 };
 
 let root: string;
@@ -86,6 +89,12 @@ describe('bump-version.mts', () => {
     );
     expect(read('plugins/ffmpeg/Cargo.toml')).toBe(files['plugins/ffmpeg/Cargo.toml'].replaceAll('0.9.0', '0.9.1'));
     expect(read('plugins/ffmpeg/plugin.json')).toBe(files['plugins/ffmpeg/plugin.json'].replace('0.9.0', '0.9.1'));
+    expect(read('plugins/mediafoundation/Cargo.toml')).toBe(
+      files['plugins/mediafoundation/Cargo.toml'].replaceAll('0.9.0', '0.9.1'),
+    );
+    expect(read('plugins/mediafoundation/plugin.json')).toBe(
+      files['plugins/mediafoundation/plugin.json'].replace('0.9.0', '0.9.1'),
+    );
     expect(result.stdout).toContain('Bump packages/*/package.json and templates/package.json by hand.');
   });
 
@@ -172,7 +181,8 @@ describe('bump-version.mts', () => {
     expect(result.stderr).toContain('could not write plugins/ffmpeg/plugin.json');
     expect(result.stderr).toContain(
       'written: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml; ' +
-        'failed: plugins/ffmpeg/plugin.json; not written: none',
+        'failed: plugins/ffmpeg/plugin.json; ' +
+        'not written: plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json',
     );
     expect(result.stderr).toContain('the bump was undone, every file is as it was');
     expect(existsSync(join(root, 'ran-update'))).toBe(false);
@@ -204,7 +214,8 @@ describe('bump-version.mts', () => {
     expect(result.stderr).toContain('the bump was undone only in part');
     expect(result.stderr).toContain(
       'restored: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, ' +
-        'plugins/ffmpeg/Cargo.toml, Cargo.lock, plugins/Cargo.lock',
+        'plugins/ffmpeg/Cargo.toml, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, ' +
+        'Cargo.lock, plugins/Cargo.lock',
     );
     expect(result.stderr).toMatch(/not restored: plugins\/ffmpeg\/plugin\.json \(.+\)/);
     expect(read('plugins/ffmpeg/plugin.json')).toBe(files['plugins/ffmpeg/plugin.json'].replace('0.9.0', '0.9.1'));

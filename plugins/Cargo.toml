@@ -10,4 +10,4 @@
 # in its own Cargo.toml, or is listed in `exclude` here.
 [workspace]
 resolver = "3"
-members = ["avfoundation", "ffmpeg", "vrm"]
+members = ["avfoundation", "ffmpeg", "mediafoundation", "vrm"]

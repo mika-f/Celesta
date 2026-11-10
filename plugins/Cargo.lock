@@ -359,6 +359,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-codec-mediafoundation"
+version = "0.9.0"
+dependencies = [
+ "celesta-codec-ffmpeg",
+ "celesta-composition",
+ "celesta-exporter",
+ "celesta-gpu-renderer",
+ "celesta-media",
+ "celesta-plugin-host",
+ "celesta-project",
+ "ffmpeg-sys-next",
+ "png",
+ "serde_json",
+ "tempfile",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "celesta-composition"
 version = "0.9.0"
 dependencies = [
