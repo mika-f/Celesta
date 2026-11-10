@@ -218,7 +218,12 @@ mod tests {
             assert!(l(theme.accent) > l(theme.popover));
             assert!(l(theme.accent) - l(theme.title_bar) >= 0.06);
             // One neutral family: no hue drift between steps.
-            for c in [theme.background, theme.sidebar, theme.title_bar, theme.popover] {
+            for c in [
+                theme.background,
+                theme.sidebar,
+                theme.title_bar,
+                theme.popover,
+            ] {
                 assert!(c.s < 0.02, "{c:?} is not neutral");
             }
         });
