@@ -743,8 +743,8 @@ fn audio_and_muxer_settings_are_checked() {
         MediaError::Codec("webm does not take theora".into()).to_string()
     );
     assert!(!output.exists());
-    // So is a track color libavutil does not name, by its field, in every
-    // container.
+    // So is a track color no file may carry (libavutil's `reserved`, H.273's
+    // reserved matrix), by its field, in every container.
     for (component, file, codec_string) in [
         ("mp4", "clip.mp4", "avc1.42c00a"),
         ("mov", "clip.mov", "apch"),

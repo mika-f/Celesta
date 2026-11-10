@@ -292,8 +292,8 @@ pub enum PixelFormat {
     Yuv420p,
     /// [`PixelFormat::Yuv420p`] with 10 bits in 16-bit little-endian samples.
     Yuv420p10,
-    /// A Y plane, then U and V interleaved in one plane, chroma halved both
-    /// ways.
+    /// A BT.709 limited-range Y plane, then U and V interleaved in one
+    /// plane, chroma halved both ways.
     Nv12,
     /// [`PixelFormat::Nv12`] with 10 bits in the high bits of 16-bit
     /// little-endian samples.

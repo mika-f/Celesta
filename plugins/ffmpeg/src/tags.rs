@@ -27,9 +27,12 @@ fn unknown(field: &str, name: &str) -> MediaError {
 
 /// The enumerator of a bindgen enum whose value libavutil returned, or none
 /// for one the bindings lack (a libavutil newer than their headers), so no
-/// integer is ever reinterpreted as an enum it may not be. The lists leave
-/// out H.273's reserved and unspecified values, which libavutil names
-/// `reserved` and `unknown`, so neither name reaches a file.
+/// integer is ever reinterpreted as an enum it may not be. The lists hold
+/// H.273's 8-bit codes only: they leave out its reserved and unspecified
+/// values, which libavutil names `reserved` and `unknown`, and libavutil's
+/// extensions from 256 (`vgamut`, `vlog`), which an 8-bit field such as
+/// ProRes's frame header would truncate to the reserved 0. None of these
+/// reaches a file.
 macro_rules! enumerator {
     ($function:ident, $enum:ident { $($variant:ident),* $(,)? }) => {
         fn $function(value: c_int) -> Option<$enum> {
@@ -54,7 +57,6 @@ enumerator!(
         AVCOL_PRI_SMPTE431,
         AVCOL_PRI_SMPTE432,
         AVCOL_PRI_EBU3213,
-        AVCOL_PRI_EXT_BASE,
     }
 );
 
@@ -77,7 +79,6 @@ enumerator!(
         AVCOL_TRC_SMPTE2084,
         AVCOL_TRC_SMPTE428,
         AVCOL_TRC_ARIB_STD_B67,
-        AVCOL_TRC_EXT_BASE,
     }
 );
 
@@ -338,6 +339,16 @@ mod tests {
             (
                 color("bt709", "bt709", "unknown", "limited"),
                 "unknown color matrix `unknown`",
+            ),
+            // libavutil's extensions past H.273's 8-bit codes, which an
+            // 8-bit field (ProRes's frame header) would truncate to 0.
+            (
+                color("vgamut", "bt709", "bt709", "limited"),
+                "unknown color primaries `vgamut`",
+            ),
+            (
+                color("bt709", "vlog", "bt709", "limited"),
+                "unknown color transfer `vlog`",
             ),
         ] {
             let Err(MediaError::Codec(refusal)) = AvColor::from_color(&given) else {

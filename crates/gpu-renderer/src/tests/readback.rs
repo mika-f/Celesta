@@ -212,8 +212,10 @@ fn nv12_and_p010_match_a_cpu_reference() {
     let Some(mut renderer) = black_renderer() else {
         return;
     };
-    // Columns on whole 2x2 blocks, then shifted a pixel, so every block
-    // straddles two colors and its chroma is their mean, not either one.
+    // Columns on whole 2x2 blocks, then shifted a pixel, so most blocks
+    // straddle two colors side by side and their chroma is the mean, not
+    // either one. The columns run the full height, so this checks the
+    // horizontal half of the 2x2 mean only.
     for (left, scene) in [0.0, 1.0].map(|left| (left, columns_from(left, &REFERENCE_COLORS, false)))
     {
         let rgba = renderer.render(&scene).unwrap().pixels().to_vec();
