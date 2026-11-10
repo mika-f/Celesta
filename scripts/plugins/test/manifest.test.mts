@@ -9,6 +9,36 @@ const celesta = '>=0.9.0, <0.10.0';
 const component = { name: 'Vrm', label: 'VRM avatar', src: 'model', extensions: ['vrm'], aspect: 1.7777778 };
 
 describe('pluginManifest', () => {
+  const media = { decoders: [{ id: 'ffmpeg', name: 'FFmpeg', extensions: ['mp4'] }] };
+
+  it('copies media and speaks protocol 2', () => {
+    const manifest = pluginManifest(
+      { id: 'ffmpeg', version: '0.9.0', cargoPackage: 'celesta-codec-ffmpeg', roles: ['media'], media },
+      { celestaVersion, cargoVersion: '0.9.0', executable: { 'macos-aarch64': 'bin/macos-aarch64/celesta-codec-ffmpeg' } },
+      sourcePath,
+    );
+    expect(manifest.protocol).toBe(2);
+    expect(manifest.media).toEqual(media);
+    expect(manifest.roles).toEqual(['media']);
+  });
+
+  it('keeps protocol 1 for content', () => {
+    const content = pluginManifest({ id: 'vrm', version: '0.1.0', roles: ['content'], module: 'js/index.ts' }, { celestaVersion }, sourcePath);
+    const rolesless = pluginManifest({ id: 'vrm', version: '0.1.0', module: 'js/index.ts' }, { celestaVersion }, sourcePath);
+    expect(content.protocol).toBe(1);
+    expect(rolesless.protocol).toBe(1);
+  });
+
+  it('rejects content and media together', () => {
+    expect(() =>
+      pluginManifest({ id: 'x', version: '0.1.0', module: 'js/index.ts', roles: ['content', 'media'], media }, { celestaVersion }, sourcePath),
+    ).toThrow(`${sourcePath}: a plugin is either content or media`);
+  });
+
+  it('rejects the reserved id builtin', () => {
+    expect(() => checkPluginSource({ id: 'builtin', version: '0.1.0', module: 'js/index.ts' }, sourcePath)).toThrow(/reserved/);
+  });
+
   it("writes the version of a plugin with a Cargo package when it is the package's", () => {
     const manifest = pluginManifest(
       {
@@ -172,7 +202,7 @@ describe('checkPluginSource', () => {
   it('refuses a key plugin.json may not have, listing the keys it may', () => {
     const source = { id: 'x', version: '0.1.0', module: 'js/index.ts', modules: 'js/index.ts', exe: 'x' };
     expect(() => checkPluginSource(source, sourcePath)).toThrow(
-      `${sourcePath}: unknown keys modules, exe; plugin.json may have id, version, cargoPackage, module, roles, licenses, components`,
+      `${sourcePath}: unknown keys modules, exe; plugin.json may have id, version, cargoPackage, module, roles, licenses, components, media`,
     );
   });
 });

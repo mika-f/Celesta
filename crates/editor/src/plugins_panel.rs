@@ -10,8 +10,9 @@ use crate::helpers::{PathPick, pick_one_path};
 use crate::plugins::FoundPlugins;
 use crate::problems::{Source, error_chain};
 use crate::view::EditorView;
+use celesta_media::DecoderUse;
 use celesta_plugin_host::{
-    PluginEntry, SettingsError, UserSettings, create_private_dir_all, user_plugin_dir,
+    PluginEntry, PluginSource, SettingsError, UserSettings, create_private_dir_all, user_plugin_dir,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::switch::Switch;
@@ -90,6 +91,23 @@ impl PluginRow {
             "Runs on this computer"
         } else {
             "Not built for this computer"
+        }
+    }
+
+    /// How many files this project plugin's decoders read, when it is one
+    /// and has read any.
+    pub(crate) fn decoder_uses(&self, uses: &[DecoderUse]) -> Option<String> {
+        if self.entry.source != PluginSource::Project {
+            return None;
+        }
+        let count = uses
+            .iter()
+            .filter(|used| used.decoder.plugin == self.entry.manifest.id)
+            .count();
+        match count {
+            0 => None,
+            1 => Some("Decodes 1 file in this project".to_owned()),
+            count => Some(format!("Decodes {count} files in this project")),
         }
     }
 
@@ -179,11 +197,10 @@ impl EditorView {
                     cx,
                 ))
             })
-            .children(
-                rows.into_iter()
-                    .enumerate()
-                    .map(|(index, row)| self.plugin_row(index, row, cx)),
-            )
+            .children(rows.into_iter().enumerate().map(|(index, row)| {
+                let decoder_uses = row.decoder_uses(self.decoder_notice.uses());
+                self.plugin_row(index, row, decoder_uses, cx)
+            }))
             .child(heading("Added folders", cx))
             .when(folders.is_empty(), |panel| {
                 panel.child(note(
@@ -231,7 +248,13 @@ impl EditorView {
             })
     }
 
-    fn plugin_row(&self, index: usize, row: PluginRow, cx: &mut Context<Self>) -> AnyElement {
+    fn plugin_row(
+        &self,
+        index: usize,
+        row: PluginRow,
+        decoder_uses: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let warning = cx.theme().warning;
         let manifest = &row.entry.manifest;
@@ -331,6 +354,7 @@ impl EditorView {
                     .child(switch),
             )
             .child(div().text_xs().text_color(muted).child(detail))
+            .children(decoder_uses.map(|text| div().text_xs().text_color(muted).child(text)))
             .child(
                 div()
                     .text_xs()
@@ -503,6 +527,7 @@ mod tests {
                 types: None,
                 components: Vec::new(),
                 roles: vec![celesta_plugin_host::PluginRole::Content],
+                media: None,
             },
             directory: PathBuf::from("plugins").join(id),
             source,
@@ -547,6 +572,37 @@ mod tests {
                 ("zeta", "On"),
             ]
         );
+    }
+
+    #[test]
+    fn a_project_plugin_row_shows_its_decoder_uses() {
+        let used = |plugin: &str, path: &str| DecoderUse {
+            decoder: format!("{plugin}/dec").parse().unwrap(),
+            origin: celesta_plugin_host::MediaOrigin::Project,
+            path: PathBuf::from(path),
+        };
+        let row = |source| PluginRow {
+            entry: entry("proj", source, &[]),
+            state: PluginState::On,
+        };
+        let uses = [
+            used("proj", "/a"),
+            used("proj", "/b"),
+            used("other", "/c"),
+            used("proj", "/d"),
+        ];
+        assert_eq!(
+            row(PluginSource::Project).decoder_uses(&uses).as_deref(),
+            Some("Decodes 3 files in this project")
+        );
+        assert_eq!(
+            row(PluginSource::Project)
+                .decoder_uses(&uses[..1])
+                .as_deref(),
+            Some("Decodes 1 file in this project")
+        );
+        assert_eq!(row(PluginSource::Project).decoder_uses(&[]), None);
+        assert_eq!(row(PluginSource::User).decoder_uses(&uses), None);
     }
 
     #[test]

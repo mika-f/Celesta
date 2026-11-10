@@ -1,7 +1,6 @@
 use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, ExportedFile};
 use crate::error::{ExportError, FrameFailure};
 use crate::exporter::Exporter;
-use crate::options::{BitDepth, ColorConversion, VideoFormat};
 use crate::output;
 use crate::project::{absolutize_fonts, absolutize_layers};
 use crate::range::{ExportRange, resolve_window};
@@ -119,7 +118,7 @@ pub enum StillFormat {
 }
 
 impl StillFormat {
-    /// The name `--output-format` takes.
+    /// Its lowercase name, such as `jpeg`, which is also its extension.
     pub fn as_str(self) -> &'static str {
         self.into()
     }
@@ -678,14 +677,7 @@ impl Exporter {
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         // Stills keep an MP4 export's opaque background, read back as
         // 8-bit RGBA.
-        let mut renderer = self.export_renderer(
-            asset_root,
-            frame_rate,
-            VideoFormat::Mp4,
-            ColorConversion::Encoder,
-            BitDepth::Eight,
-            cancellation,
-        )?;
+        let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation)?;
         render_stills(
             &frames,
             destination,
@@ -809,14 +801,7 @@ impl Exporter {
 
         // Stills keep an MP4 export's opaque background, read back as
         // 8-bit RGBA.
-        let mut renderer = self.export_renderer(
-            asset_root,
-            metadata.frame_rate,
-            VideoFormat::Mp4,
-            ColorConversion::Encoder,
-            BitDepth::Eight,
-            cancellation,
-        )?;
+        let mut renderer = self.export_renderer(asset_root, metadata.frame_rate, cancellation)?;
         render_stills(
             &frames,
             destination,

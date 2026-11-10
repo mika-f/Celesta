@@ -1,7 +1,8 @@
 use crate::error::ExportError;
-use crate::options::VideoFormat;
+use crate::resolve::OutputPlan;
 use crate::subtitles::SubtitleFormat;
 use celesta_composition::Rational;
+use celesta_media::ComponentRef;
 use celesta_plugin_host::PluginKillSwitch;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,6 +13,9 @@ pub enum ExportProgress {
     /// The composition being exported, reported once as soon as it is known
     /// (before the export range or frame selection is checked against it).
     Composition(CompositionInfo),
+    /// The muxer and encoders the video is written with, reported once
+    /// they are chosen and before any frame renders.
+    Output(OutputPlan),
     /// All roots and the selected ID of a React entry.
     ReactCompositions {
         selected: String,
@@ -47,17 +51,29 @@ pub struct CompositionInfo {
 
 /// A file an export wrote. Frame numbers are zero-based composition frames.
 #[derive(Clone, Debug, PartialEq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one is reported per file written, and matching it is plainer unboxed"
+)]
 pub enum ExportedFile {
     /// A video of `frames` frames starting at composition frame `first_frame`.
     Video {
         path: PathBuf,
         first_frame: u64,
         frames: u64,
-        /// Whether the file has an audio stream.
-        audio: bool,
+        /// The muxer that wrote it.
+        muxer: ComponentRef,
+        video: TrackInfo,
+        /// The audio track, when the file has one.
+        audio: Option<TrackInfo>,
+        /// Whether the encoded video keeps the composition's alpha, as its
+        /// encoder answered.
+        alpha: bool,
+        /// Every file the muxer wrote, where they are now: `path` for a
+        /// single file.
+        files: Vec<PathBuf>,
         /// The loudness of the mix as it was encoded, when there is one.
         loudness: Option<AudioLoudness>,
-        format: VideoFormat,
     },
     /// A subtitle file, with its number of cues and their language when
     /// the composition names one.
@@ -75,6 +91,14 @@ pub enum ExportedFile {
         frames: Vec<u64>,
         columns: u32,
     },
+}
+
+/// The encoder of one track of an exported video, and the codec string it
+/// gave the track (`avc1.640028`, `lpcm.f32le`, …).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrackInfo {
+    pub component: ComponentRef,
+    pub codec: String,
 }
 
 /// The loudness of an exported video's mix, measured on the samples handed

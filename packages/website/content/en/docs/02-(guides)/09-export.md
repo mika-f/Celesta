@@ -31,7 +31,7 @@ Use PowerShell. Replace `C:\path\to\Celesta` with your installed or extracted Ce
 :::
 ::::
 
-Add `--overwrite` to replace an existing output file. Use `--from` and `--to` to select a time range:
+The output's extension picks the kind of file: `.mp4` for H.264 video with AAC audio, `.mov` or `.webm` for transparent video (see Transparent video below), or `.png`, `.jpg`, or `.webp` for still frames (see Still frames and contact sheets below). Add `--overwrite` to replace an existing output file. Use `--from` and `--to` to select a time range:
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]
@@ -90,30 +90,70 @@ const cues = parseSubtitles(captions, { fps: 30 });
 
 To write timed data of your own, use `formatSubtitles(cues, { fps, format: 'srt' })`.
 
-## Encoding quality and speed
+## Choosing encoders and settings
 
-MP4 uses libx264 with --preset medium and --crf 18 by default. Faster presets such as veryfast reduce encoding time but usually increase file size at similar quality. CRF accepts 0–51; lower values give higher quality and larger files. --color-conversion accepts auto, gpu, or encoder. --render-quality draft speeds up timing checks by skipping scaled-text re-rasterization; use final (the default) to judge the finished image. --bit-depth 10 encodes 10-bit H.264 (High 10), which keeps dark gradients smoother but plays on fewer devices; the default is 8.
+Celesta writes a video with three media components: a muxer, which writes the file, a video encoder, and an audio encoder. Each is named `<plugin>/<component>`, such as `ffmpeg/libx264`. The output's extension picks the muxer, and the muxer's default codecs pick the encoders:
+
+| Extension | Muxer | Video encoder | Audio encoder |
+| --- | --- | --- | --- |
+| `.mp4`, `.m4v` | `ffmpeg/mp4` | `ffmpeg/libx264` (H.264) | `ffmpeg/aac` (AAC) |
+| `.mov` | `ffmpeg/mov` | `ffmpeg/prores` (ProRes 4444) | `ffmpeg/pcm` (24-bit PCM) |
+| `.webm` | `ffmpeg/webm` | `ffmpeg/vp9` (VP9 with alpha) | `ffmpeg/opus` (Opus, 48 kHz) |
+
+`--list-components` lists every installed component with its kind and plugin; add `--check` to ask each plugin whether its components work on this computer, which starts each plugin once. `--describe <plugin/id>` shows one component's settings: each key with its type, default, and choices or range. Both print JSON with `--json`, and neither takes a source or an output.
+
+`--video-encoder` and `--audio-encoder` choose an encoder other than the muxer's default, and `--muxer` a muxer other than the extension's. `--audio-encoder none` writes a video without audio, and cannot be given with `--audio-option`; nor can `--audio-option` be given when the muxer takes no audio and no audio encoder is named. `--video-option key=value` and `--audio-option key=value` set the chosen encoder's settings, read by each setting's type; repeat them for more settings. A key the encoder does not have, or a value it does not take, fails before anything renders. The FFmpeg plugin that comes with Celesta has these settings in this release (`--describe` shows those of any installed component):
+
+| Component | Key | Values (default) |
+| --- | --- | --- |
+| `ffmpeg/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, or `veryslow` (`medium`) |
+| | `rateControl` | `crf` for constant quality or `vbr` for an average bitrate (`crf`) |
+| | `crf` | 0–51, with `rateControl=crf`; lower is higher quality and larger (18) |
+| | `bitrate` | bits per second, with `rateControl=vbr` (8000000) |
+| | `bitDepth` | `8`, or `10` for 10-bit H.264 (High 10) (`8`) |
+| | `tune` | an x264 tune, such as `film` or `animation` (none) |
+| `ffmpeg/prores` | `profile` | `4444`, or `hq` for 422 HQ without alpha (`4444`) |
+| `ffmpeg/vp9` | `crf` | 0–63 (20) |
+| | `alpha` | `true` or `false` (`true`) |
+| `ffmpeg/aac`, `ffmpeg/opus` | `bitrate` | 32000–512000 bits per second (192000) |
+| `ffmpeg/pcm` | `format` | `s16le`, `s24le`, or `f32le` (`s24le`) |
+
+Muxers keep their defaults: MP4 and MOV are written with `faststart`, which puts the index first so a browser can start playing before the download ends.
+
+Faster x264 presets such as `veryfast` reduce encoding time but usually make larger files at similar quality. `bitDepth=10` keeps dark gradients smoother, but plays on fewer devices. `--render-quality draft` speeds up timing checks by skipping scaled-text re-rasterization; use `final` (the default) to judge the finished image. Celesta converts RGB to YUV on the GPU whenever the encoder takes YUV and the renderer is not a software one; otherwise the encoder converts.
+
+`--preset <name>` names an export preset, a saved set of these choices. Presets come in a later release, so for now every name fails with the error code `unknown_preset`. x264's preset is the setting above: `--preset veryfast` fails, and its hint says to use `--video-option preset=veryfast`. Without `--json`, an error's hint is printed on a `hint:` line after its message.
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]
 
 ```sh title="Export with a faster encoder preset"
-"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --preset veryfast --crf 18 first-scene.tsx draft.mp4
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+```
+
+```sh title="List the installed components"
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --list-components --check
 ```
 
 :::
 :::tab[Windows]
 
 ```sh title="Export with a faster encoder preset"
-& "C:\path\to\Celesta\Celesta-export.exe" --react --preset veryfast --crf 18 first-scene.tsx draft.mp4
+& "C:\path\to\Celesta\Celesta-export.exe" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+```
+
+```sh title="List the installed components"
+& "C:\path\to\Celesta\Celesta-export.exe" --list-components --check
 ```
 
 :::
 ::::
 
+The MCP `export_video` tool and `@celesta.studio/exporter` take the same choices as `muxer`, `videoEncoder` (`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`), and `audioEncoder` (the same shape, or `"none"`). MCP checks each option's type, so `crf` must be a number there; the package passes its options to the exporter as `--video-option` and `--audio-option` text, which is read by each setting's type as on the command line, so `"18"` works there too. MCP's `list_components` and `describe_component` tools, and the package's `listComponents()` and `describeComponent()`, list and describe the components.
+
 ## Videos that play on repeat
 
-Shorts and TikTok play a video on repeat. When its last frame runs into its first, add `--loop` so the sound does too. An AAC encoder starts from silence, so without it a hit on the first frame, such as a kick, comes out smeared for about 10 ms, and the player repeats that on every pass. With `--loop`, the encoder first takes the end of the soundtrack, and the MP4's edit list hides that lead-in: the sound still lasts exactly as long as the video. The soundtrack itself must loop, with anything that rings past the end mixed into the start. `--loop` applies to MP4 only; a `.mov`'s PCM audio loops without it.
+Shorts and TikTok play a video on repeat. When its last frame runs into its first, add `--loop` so the sound does too. An AAC encoder starts from silence, so without it a hit on the first frame, such as a kick, comes out smeared for about 10 ms, and the player repeats that on every pass. With `--loop`, the encoder first takes the end of the soundtrack, and the MP4's edit list hides that lead-in: the sound still lasts exactly as long as the video. The soundtrack itself must loop, with anything that rings past the end mixed into the start. `--loop` is accepted for any video: MP4 and MOV hide the lead-in, while a muxer that cannot hide it, such as WebM's, ignores `--loop`. A `.mov`'s PCM audio loops without it, since PCM has no encoder delay.
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]
@@ -159,11 +199,11 @@ The loudness is measured and set on the soundtrack before it is encoded. A `.mov
 
 ## Transparent video
 
-The file extension picks the video format. A `.mp4` file is H.264 with AAC audio, as above. A `.mov` file is ProRes 4444 (`yuva444p10le`) with 24-bit PCM audio, and a `.webm` file is VP9 with alpha (`yuva420p`, CRF 20) with 48 kHz Opus audio. In the app, choose the extension in the save dialog; there is no separate format menu. On the command line, run the same command as above with an output such as `overlay.mov` or `overlay.webm`. `--output-format mp4|mov|webm` states the format explicitly; one that disagrees with the extension is a usage error.
+The file extension picks the video format. A `.mp4` file is H.264 with AAC audio, as above. A `.mov` file is ProRes 4444 (`yuva444p10le`) with 24-bit PCM audio, and a `.webm` file is VP9 with alpha (`yuva420p`, CRF 20) with 48 kHz Opus audio. In the app, choose the extension in the save dialog; there is no separate format menu. On the command line, run the same command as above with an output such as `overlay.mov` or `overlay.webm`. The encoder decides whether the video keeps alpha: ProRes 4444 and VP9 do, unless you give `--video-option profile=hq` or `--video-option alpha=false`, and H.264 never does.
 
-Only areas nothing draws on are transparent, so a layer that fills the whole frame, such as a full-frame background, makes the output opaque. The alpha is straight (unassociated), and colors are converted and tagged as BT.709 (limited range). `--preset`, `--crf`, `--bit-depth`, `--color-conversion`, and `--loop` apply to MP4 only and are usage errors with `.mov` or `.webm`.
+Only areas nothing draws on are transparent, so a layer that fills the whole frame, such as a full-frame background, makes the output opaque. The alpha is straight (unassociated), and colors are converted and tagged as BT.709 (limited range).
 
-Celesta encodes through its [codec plugin](/en/docs/plugins/#the-codec-plugin). If the plugin's FFmpeg build lacks the encoder for the chosen format, the export fails with the error code `encoder_unavailable`; without a codec plugin, it fails with `no_codec`.
+Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, such as an LGPL build without libx264, the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
 
 ## Still frames and contact sheets
 
@@ -225,7 +265,7 @@ Add `--debug-guides` to draw a React composition's `<DebugOverlay>` and `<DebugB
 
 ## Select the graphics API
 
-Both the editor and exporter accept --driver auto (default), vulkan, dx12 (Windows), metal (macOS), or gl. Auto chooses an available adapter in wgpu’s backend order: Vulkan, Metal, DX12, then OpenGL. A specific driver must be available in the build and supported by the machine. This chooses the rendering API; MP4 encoding still uses libx264.
+Both the editor and exporter accept --driver auto (default), vulkan, dx12 (Windows), metal (macOS), or gl. Auto chooses an available adapter in wgpu’s backend order: Vulkan, Metal, DX12, then OpenGL. A specific driver must be available in the build and supported by the machine. This chooses the rendering API; encoding still goes through the media components.
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]
@@ -244,7 +284,7 @@ Both the editor and exporter accept --driver auto (default), vulkan, dx12 (Windo
 :::
 ::::
 
-For scripts and AI agents, add `--json`. The exporter then prints no progress, only one line of JSON when it finishes: the status, every file it wrote, warnings, the composition's size, fps and frame count once the exporter has loaded it, and on failure an error code and message. Each video entry in the list of written files has `"format"` (`mp4`, `mov`, or `webm`) and `"alpha"` (`true` or `false`), and a video with sound has `"loudness"`: `"integratedLufs"`, `"truePeakDbtp"`, and with `--loudness` the `"gainDb"` it applied. When the arguments are rejected, the JSON has only the status and the error.
+For scripts and AI agents, add `--json`. The exporter then prints no progress, only one line of JSON when it finishes: the status, every file it wrote, warnings, the composition's size, fps and frame count once the exporter has loaded it, and on failure an error code and message. Each video entry in the list of written files has `"muxer"` (such as `"ffmpeg/mp4"`), `"video"` and `"audio"` (the encoder's `"component"` and the `"codec"` string it wrote, such as `"avc1.64001F"`; `"audio"` is `null` for a video without sound), `"alpha"` (`true` or `false`), and `"files"`, every file the muxer wrote. A video with sound has `"loudness"`: `"integratedLufs"`, `"truePeakDbtp"`, and with `--loudness` the `"gainDb"` it applied. The error codes about components are `unsupported_output` (no muxer writes the output's extension), `component_unavailable` (a component is not installed or does not work here, with the reason), `incompatible_components` (the muxer does not take the encoder's codec), `invalid_option` (a setting the encoder does not have or a value it does not take), and `unknown_preset`. When the arguments are rejected, the JSON has only the status and the error.
 
 Using a source build? The [developer instructions](/en/docs/build-from-source/) include the equivalent Cargo command.
 
@@ -266,7 +306,7 @@ cargo run -p celesta-exporter --release -- --react --driver vulkan packages/cli/
 
 Minimal containers often have no fonts installed, and text cannot be drawn without at least one. Install some, such as `fonts-dejavu-core` (and `fonts-noto-cjk` for Japanese), or load font files with `<Font>`.
 
-On a software renderer, `--color-conversion auto` leaves the RGB-to-YUV conversion to the encoder. `--render-quality draft` is quicker for checking timing, but not pixels. To export in a container without building Celesta yourself, build the [Linux container image](https://github.com/mika-f/Celesta/tree/main/packaging/linux) from the repository root, then run it from your project folder, which is mounted at `/work`. `--user` makes the output belong to you instead of root:
+On a software renderer, the encoder converts RGB to YUV, which is faster there than converting on the renderer. `--render-quality draft` is quicker for checking timing, but not pixels. To export in a container without building Celesta yourself, build the [Linux container image](https://github.com/mika-f/Celesta/tree/main/packaging/linux) from the repository root, then run it from your project folder, which is mounted at `/work`. `--user` makes the output belong to you instead of root:
 
 ```sh title="Build the container image"
 docker build -f packaging/linux/Dockerfile -t celesta-exporter .

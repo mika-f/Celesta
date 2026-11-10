@@ -21,7 +21,7 @@ Celesta looks for plugins in this order, and of several plugins with the same id
 5. Folders you added in the desktop app's [Plugins tab](#the-plugins-tab).
 6. The plugin folder that comes with Celesta: `plugins` beside the executable on Windows, `Contents/PlugIns` in the macOS app, and `../lib/celesta/plugins` from the executable's folder elsewhere.
 
-A plugin says which versions of Celesta it works with. Celesta skips a plugin made for other versions, or one that does not say, and tells you why in the Problems tab, the [Plugins tab](#the-plugins-tab), and the output of `celesta-exporter` and the MCP server; get a release of the plugin made for your Celesta. A skipped plugin does not hide another one with the same id found later in this order, so a codec plugin made for your Celesta further down the list is used instead. Neither does a plugin you turned off in the [Plugins tab](#the-plugins-tab).
+A plugin says which versions of Celesta it works with. Celesta skips a plugin made for other versions, or one that does not say, and tells you why in the Problems tab, the [Plugins tab](#the-plugins-tab), and the output of `celesta-exporter` and the MCP server; get a release of the plugin made for your Celesta. A skipped plugin does not hide another one with the same id found later in this order, so a media plugin made for your Celesta further down the list is used instead. Neither does a plugin you turned off in the [Plugins tab](#the-plugins-tab).
 
 A folder in 1, 2, 3, or 5 may be a plugin itself or hold several. Give `CELESTA_PLUGIN_PATH` absolute paths: a relative entry is skipped, since the folder it names would depend on where Celesta is started.
 
@@ -109,15 +109,75 @@ Project TypeScript support copies each plugin's declarations into `.celesta/plug
 
 In the desktop app, a plugin can also offer its components in the **Add** menu, after Celesta's own elements. Choosing one adds it like an Image or a Rect: a component that takes a file asks for it first, and you drag where it goes. A component that takes a model file, such as a VRM avatar, accepts only the file types it lists (`Choose a .vrm file`) and draws its box at its layer's shape. The app writes the element with the plugin's import, such as `import { Flag } from '@celesta-plugin/flag'`.
 
-## The codec plugin
+## Media plugins
 
-Celesta reads and writes video and audio files through a codec plugin rather than linking a codec library itself. The macOS and Windows packages come with one, `ffmpeg`, in the plugin folder that comes with Celesta: it probes, decodes, encodes, and muxes with FFmpeg. That FFmpeg build includes libx264, which is GPL licensed, so the codec plugin alone is distributed under the GPL; the app, `celesta-exporter`, and `Celesta-mcp` are MIT or Apache-2.0.
+Celesta reads and writes video and audio files through media plugins rather than linking a codec library itself. The macOS and Windows packages come with one, `ffmpeg`, in the plugin folder that comes with Celesta: it probes, decodes, encodes, and muxes with FFmpeg. That FFmpeg build includes libx264, which is GPL licensed, so the media plugin alone is distributed under the GPL; the app, `celesta-exporter`, and `Celesta-mcp` are MIT or Apache-2.0.
 
-A codec plugin's manifest has `"roles": ["codec"]`. Of the plugins Celesta may run, it uses the first codec in the order above; when there is none, it runs a `celesta-codec-ffmpeg` program beside its own executable, as `cargo install` leaves it, but not when that executable is in a Cargo build folder such as `target/release`: a source build uses the codec plugin you build (see [Build from source](/en/docs/build-from-source/)). If you install Celesta with `cargo install`, install the codec too, so it lands beside the app; installing only `celesta-editor` or `celesta-exporter` leaves no codec. Until `celesta-codec-ffmpeg` is published to crates.io, install it from the repository with `cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` (FFmpeg 8.1.x development libraries are needed, as in [Build from source](/en/docs/build-from-source/)). Without a codec, video and audio cannot be shown or exported: the app says so in Problems, and an export fails with the error code `no_codec`.
+A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and lists the components the plugin offers under `media`, each with an `id` and a `name` to show:
 
-Decoded video frames reach Celesta through memory it shares with the codec plugin's process, which no other process or user can open, rather than through the plugin's output pipe, when the plugin supports it (the `ffmpeg` plugin does from Celesta 0.10); a plugin that does not, and frames larger than 4096×2560, go through the pipe. If a codec plugin misbehaves with it, set the environment variable `CELESTA_CODEC_SHARED_MEMORY=0` where you start Celesta to keep every frame in the pipe.
+- `decoders` read files. Each lists the file types it reads in `extensions` (without the dot).
+- `videoEncoders` and `audioEncoders` compress pictures and sound. Each lists the codecs it writes in `codecs`, as the part of a WebCodecs codec string before its first dot (`avc1` for H.264, `mp4a` for AAC), and a video encoder may list the pixel formats it takes in `inputFormats`.
+- `muxers` write files. Each lists the `extensions` it writes, the codecs it takes in `video` and `audio` (a muxer without `audio` writes no sound), the codecs it writes by default in `defaultVideo` and `defaultAudio`, and `"trimsLeadingAudio": true` when it can hide sound placed before the start, which `--loop` uses.
 
-To use another FFmpeg build, such as an LGPL-only one, point `PKG_CONFIG_PATH` at its `lib/pkgconfig` folder (on Windows, set `VCPKG_ROOT` to a vcpkg checkout that has that FFmpeg installed) and, from the repository root, run `node scripts/plugins/build.mts plugins/ffmpeg --out <your user plugin folder>`. That builds the codec against your FFmpeg and lays it out as the plugin `ffmpeg` in that folder, which Celesta searches before the plugin folder that comes with it. The app asks before it runs it, as for any plugin from that folder. Its `licenses/` folder holds four files: `LICENSE-MIT` and `LICENSE-APACHE`, which cover Celesta's code, and `LICENSE-GPL-2.0` and `GPL-SOURCE-OFFER.md`, the GPL and its source offer for the official GPL build. Before you share the plugin, replace only the GPL text and the source offer with the terms of your FFmpeg build, and keep the MIT and Apache texts.
+```json
+{
+  "id": "ffmpeg",
+  "version": "0.9.0",
+  "celesta": ">=0.9.0, <0.10.0",
+  "protocol": 2,
+  "roles": ["media"],
+  "executable": { "macos-aarch64": "bin/celesta-codec-ffmpeg" },
+  "media": {
+    "decoders": [
+      { "id": "ffmpeg", "name": "FFmpeg", "extensions": ["mp4", "mov", "webm", "mp3", "wav"] }
+    ],
+    "videoEncoders": [
+      { "id": "libx264", "name": "H.264 (x264)", "codecs": ["avc1"], "inputFormats": ["yuv420p", "rgba8"] }
+    ],
+    "audioEncoders": [
+      { "id": "aac", "name": "AAC", "codecs": ["mp4a"] }
+    ],
+    "muxers": [
+      { "id": "mp4", "name": "MP4", "extensions": ["mp4"], "video": ["avc1"], "audio": ["mp4a"],
+        "defaultVideo": "avc1", "defaultAudio": "mp4a", "trimsLeadingAudio": true }
+    ]
+  }
+}
+```
+
+A component's `id` follows the rules for a plugin's id (see [Write a plugin](#write-a-plugin)) and is not used by another component of the same kind in the same plugin; Celesta skips a component that breaks this, says why, and keeps the plugin's other components. Components are named `<plugin>/<component>`, such as `ffmpeg/libx264`. When a plugin runs, Celesta asks it to describe its components: whether each works on this computer (an FFmpeg built without libx264 says so, with the reason) and its settings. A plugin is either a media plugin or a content plugin: a manifest with both roles is skipped. A plugin made for the older `"roles": ["codec"]` is ignored, and Celesta reads no media through it: install a release of it made for your Celesta, or, in a source build, build `plugins/ffmpeg` again.
+
+### Which decoder reads a file
+
+Celesta uses every media plugin it may run, not only the first. To read a file, it asks the decoders that list the file's extension, in this order:
+
+1. The decoders of plugins you installed: those from `--plugin-dir`, `CELESTA_PLUGIN_PATH`, your user plugin folder, and folders you added.
+2. The decoders of the plugins that come with Celesta.
+3. The decoders of a project's own plugins, once you trust the project and allow them.
+
+Within each group, plugins go in the search order above, and a plugin's decoders in the order its manifest lists them. A file whose extension no decoder lists, or that has none, goes to every decoder in this order. Project plugins come last, so a project's decoder gets a file only when the decoders before it that list the file's extension do not read it; a file whose extension only a project's decoders list goes to them alone. For the same reason, a project's media plugin cannot replace Celesta's bundled one: a project plugin with the id of a media plugin that comes with Celesta is not used.
+
+When a decoder says the file is not one it reads, fails to read it, or its program does not start, Celesta asks the next one. A decoder whose program does not answer in time, or one stopped because you cancelled an export, ends the search: the file fails with that error, and no later decoder is asked. The first decoder that reads the file keeps it: its frames and audio come from that decoder from then on, and a later error there does not move on to another. A file that is known not to exist fails before any plugin starts; a path Celesta cannot check (for example, one that goes through a file as if it were a folder) is passed to the decoders. When no decoder reads a file, the error says the most it can: that the file was not found, that it has no video stream, or the first other error a decoder gave; when every decoder only said the file is not one it reads, the error names the decoders it tried, such as `no decoder could read <file> (tried ffmpeg/ffmpeg)`, and an export fails with the error code `unsupported_media`.
+
+When a project's own plugin decodes files, the desktop app tells you: the Problems tab lists it as information, such as `my-decoder decodes 2 files in this project`, with the files, and the plugin's row in the [Plugins tab](#the-plugins-tab) says how many files it decodes.
+
+### Which components write a video
+
+An export takes its muxer from the output's extension, unless you name one with `--muxer`: the first muxer listing that extension among the plugins that come with Celesta, then among the plugins you installed, in the search order above. Its `defaultVideo` and `defaultAudio` codecs then pick the encoders, unless you name them with `--video-encoder` and `--audio-encoder`: the first encoder that writes that codec and works on this computer, from the muxer's own plugin, then the plugins that come with Celesta, then the plugins you installed. A project's own components are used only when you name them (or, for its encoders, when you name its muxer). `--list-components` lists every installed component, and `--describe <plugin/id>` one component's settings; see [Choosing encoders and settings](/en/docs/export/#choosing-encoders-and-settings).
+
+### With `cargo install`
+
+When none of the plugins Celesta found is `ffmpeg`, other than a project's own, it also uses a `celesta-codec-ffmpeg` program beside its own executable, where `cargo install` leaves it, and counts it among the plugins that come with Celesta, so a project's `ffmpeg` cannot replace it either; it asks that program for its manifest with `celesta-codec-ffmpeg --manifest`. It does not when that executable is in a Cargo build folder such as `target/release`: a source build uses the media plugin you build (see [Build from source](/en/docs/build-from-source/)). If you install Celesta with `cargo install`, install the media plugin too, so it lands beside the app; installing only `celesta-editor` or `celesta-exporter` leaves none. Until `celesta-codec-ffmpeg` is published to crates.io, install it from the repository with `cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` (FFmpeg 8.1.x development libraries are needed, as in [Build from source](/en/docs/build-from-source/)).
+
+### Without a decoder
+
+Without any media decoder, video and audio cannot be shown or exported. The Problems tab shows **No media decoder can run** and says why: a media plugin has no program for this computer, waits for your approval, or is turned off, the media plugins found declare no decoder, or none was found. With no media plugin at all, no muxer writes a video, so a video export fails at once with the error code `unsupported_output` and a hint to install the media plugin; a still export, or a video export whose media plugins have no decoder, fails with `no_decoder` when it reads a video or audio file.
+
+### Shared memory and other FFmpeg builds
+
+Video frames cross memory Celesta shares with the media plugin's process, which no other process or user can open, rather than the plugin's pipes, when the plugin supports it (the `ffmpeg` plugin does from Celesta 0.10): the frames a decoder sends Celesta, and the frames an export sends a video encoder. An export sends its video encoder up to three frames ahead, in shared memory or through the pipe, so Celesta renders the next frames while the plugin encodes the earlier ones; for very large frames, such as 8K, it sends fewer, so that the frames waiting stay within 256 MiB. A plugin or video encoder that does not support it and decoded frames larger than 4096×2560 go through the pipe. So do exported frames of more than about 33 megapixels (such as 8192×4320): the shared memory holds a frame in the largest format the encoder accepts (16-bit RGBA for the `ffmpeg` plugin's encoders) and stays within 256 MiB. When Celesta cannot set up the shared memory itself (the system refuses to create it or to hand it to the plugin's process), the frames go through the pipe, and Celesta prints `celesta: frames go through the pipe:` with the reason once on stderr. If a media plugin misbehaves with it, set the environment variable `CELESTA_CODEC_SHARED_MEMORY=0` where you start Celesta to keep every frame, decoded or exported, in the pipe.
+
+To use another FFmpeg build, such as an LGPL-only one, point `PKG_CONFIG_PATH` at its `lib/pkgconfig` folder (on Windows, set `VCPKG_ROOT` to a vcpkg checkout that has that FFmpeg installed) and, from the repository root, run `node scripts/plugins/build.mts plugins/ffmpeg --out <your user plugin folder>`. That builds the media plugin against your FFmpeg and lays it out as the plugin `ffmpeg` in that folder, which Celesta searches before the plugin folder that comes with it. The app asks before it runs it, as for any plugin from that folder. Its `licenses/` folder holds four files: `LICENSE-MIT` and `LICENSE-APACHE`, which cover Celesta's code, and `LICENSE-GPL-2.0` and `GPL-SOURCE-OFFER.md`, the GPL and its source offer for the official GPL build. Before you share the plugin, replace only the GPL text and the source offer with the terms of your FFmpeg build, and keep the MIT and Apache texts.
 
 ## Samples
 
@@ -132,12 +192,12 @@ The repository's `examples/plugins` has three plugins to start from:
 ```sh
 pnpm install && pnpm run build:runtime       # once, at the repository root
 node scripts/plugins/build.mts examples/plugins/flag examples/plugins/turntable examples/plugins/beep-voice
-node scripts/plugins/build.mts plugins/ffmpeg   # the codec plugin, which writes the MP4
+node scripts/plugins/build.mts plugins/ffmpeg   # the media plugin, which writes the MP4
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist --plugin-dir plugins/dist
 ```
 
-The second `--plugin-dir` gives the exporter the codec plugin, whose build needs the FFmpeg development libraries (see [Build from source](/en/docs/build-from-source/)).
+The second `--plugin-dir` gives the exporter the media plugin, whose build needs the FFmpeg development libraries (see [Build from source](/en/docs/build-from-source/)).
 
 ## The VRM plugin
 
@@ -148,7 +208,7 @@ pnpm install && pnpm run build:runtime       # once, at the repository root
 node scripts/plugins/build.mts plugins/vrm   # writes plugins/dist/vrm
 ```
 
-Copy `plugins/dist/vrm` into your user plugin folder, or pass `plugins/dist` to the exporter with `--plugin-dir`. Building needs Rust and Node.js, as building Celesta does. To export video with a source build of the exporter, build the codec plugin into the same folder too, `node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg`, so that `--plugin-dir plugins/dist` gives the exporter both; the codec needs the FFmpeg development libraries.
+Copy `plugins/dist/vrm` into your user plugin folder, or pass `plugins/dist` to the exporter with `--plugin-dir`. Building needs Rust and Node.js, as building Celesta does. To export video with a source build of the exporter, build the media plugin into the same folder too, `node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg`, so that `--plugin-dir plugins/dist` gives the exporter both; the media plugin needs the FFmpeg development libraries.
 
 ```tsx
 import { Composition } from '@celesta.studio/react';
@@ -251,8 +311,8 @@ To offer components in the desktop app's Add menu, list them in the manifest's `
 
 `name` is the component the module exports: a capital letter, then letters, digits, or `_`. `label` is what the menu says (the name when absent). With `src` (`"image"` or `"video"`), the component is added like an Image: the app asks for a file and writes `src`, `x`, `y`, and `width`. `"src": "model"` is for a file the plugin reads itself, such as a 3D model: list the file types it takes in `extensions` (lowercase letters and digits without the dot, each once, such as `["glb"]`), and give its layer's width over its height in `aspect` (from 1/16384 to 16384; required) so the app draws the box at that shape. The app then accepts only a file of those types and writes `src`, `x`, `y`, and `width` as for an Image. Since it writes no `height`, the component's own default aspect must equal `aspect`, or the layer will not match the box that was drawn. Without `src`, the component is drawn as a box and gets `x`, `y`, `width`, and `height`. `props` are written after those: names made of letters, digits, and `_`, with strings, numbers, and booleans as values, and none of the props the drawing writes. A manifest with `components` needs a `module`.
 
-Every manifest gives `celesta`, the Celesta versions the plugin works with, as a Cargo version range such as `">=0.9.0, <0.10.0"`. It covers what the program relies on beyond the protocol (`protocol` is the format of its messages alone, and stays `1` while features such as 3D scenes are added on top of it) and the `react` and `@celesta.studio/*` APIs the module uses, which come with Celesta at its version. A pre-release of Celesta, such as `0.10.0-beta.1`, is in a range only when a bound of the range names a pre-release of the same version, as in `">=0.10.0-beta.1, <0.11.0"`. The repository's `scripts/plugins/build.mts` writes the range for you, from the Celesta it builds against up to that Celesta's next minor release (before 1.0) or next major release.
+Every manifest gives `celesta`, the Celesta versions the plugin works with, as a Cargo version range such as `">=0.9.0, <0.10.0"`. It covers what the program relies on beyond the protocol (`protocol` is the format of its messages alone: `1` for a content plugin, which stays `1` while features such as 3D scenes are added on top of it, and `2` for a [media plugin](#media-plugins)) and the `react` and `@celesta.studio/*` APIs the module uses, which come with Celesta at its version. A pre-release of Celesta, such as `0.10.0-beta.1`, is in a range only when a bound of the range names a pre-release of the same version, as in `">=0.10.0-beta.1, <0.11.0"`. The repository's `scripts/plugins/build.mts` writes the range for you, from the Celesta it builds against up to that Celesta's next minor release (before 1.0) or next major release.
 
-A plugin's id uses lowercase letters, digits, `-`, `_`, and `.`, and starts with a letter or digit. Every file its manifest names is a relative path inside the plugin's folder, without `..` and without a link that leads out of it. Celesta skips a plugin that breaks these rules, has no `celesta` range or a range that leaves out the running Celesta, gives a `protocol` other than `1`, or has a component that breaks the rules above, and says why.
+A plugin's id uses lowercase letters, digits, `-`, `_`, and `.`, and starts with a letter or digit; `builtin` is reserved for what Celesta has built in. Every file its manifest names is a relative path inside the plugin's folder, without `..` and without a link that leads out of it. Celesta skips a plugin that breaks these rules, has no `celesta` range or a range that leaves out the running Celesta, gives a `protocol` other than its role's, has both the content and media roles, or has a component that breaks the rules above, and says why.
 
 The samples' READMEs walk through both parts. The repository's `docs/handoff/2026-11-01-plugin-system.md` describes the manifest and the protocol, the `docs/handoff/2026-11-02-plugin-*.md` notes describe what came later (such as `components`), `docs/handoff/2026-11-03-plugin-scene-content.md` describes 3D scenes and notices, `docs/handoff/2026-11-03-plugin-scene-materials.md` describes materials in WGSL, lights, render queues, and outlines, and `docs/handoff/2026-11-03-plugin-vrm.md` describes the VRM plugin and components that take a model file.

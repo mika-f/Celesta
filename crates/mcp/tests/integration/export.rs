@@ -55,8 +55,7 @@ async fn export_video_writes_an_mp4_with_progress() {
     // Only the test codec's own files read back: the server used it.
     let media = celesta_codec_test::read(&output).unwrap();
     assert_eq!(media.video.unwrap().frames.len(), 60);
-    // `Container` is `celesta-media`'s, which this crate does not depend on.
-    assert_eq!(serde_json::to_value(media.container).unwrap(), "mp4");
+    assert_eq!(media.extension.as_deref(), Some("mp4"));
 
     let mut notifications = Vec::new();
     while let Ok(notification) = progress.try_recv() {

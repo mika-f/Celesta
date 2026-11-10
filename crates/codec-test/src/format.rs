@@ -5,20 +5,24 @@
 //! the JSON header ([`Header`]), then chunks. Each chunk is a tag byte, a
 //! `u32` little-endian payload length, and the payload, compressed with
 //! `lz4_flex::block::compress_prepend_size`: `V` one video frame (the bytes
-//! the encoder was given), `A` the whole audio as interleaved `f32`
-//! little-endian samples (the lead-in included), and `E` the end, with an
-//! empty payload. The frame count is the number of `V` chunks; a file
-//! without its `E` is unfinished and is refused.
+//! the encoder was given; a video packet's bytes are this payload as they
+//! are), `A` the whole audio as interleaved `f32` little-endian samples (the
+//! lead-in included), and `E` the end, with an empty payload. The frame count
+//! is the number of `V` chunks; a file without its `E` is unfinished and is
+//! refused. Version 2 replaced the header's `container` with the output's
+//! `extension`; version 1 files are not read.
 
+use crate::{AUDIO_CODEC, VIDEO_CODEC};
 use celesta_composition::Rational;
-use celesta_media::{Container, MediaError, PixelFormat};
+use celesta_media::{MediaError, PixelFormat, Track, TrackPacket};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 const MAGIC: &[u8; 8] = b"CLSTTEST";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const VIDEO: u8 = b'V';
 const AUDIO: u8 = b'A';
 const END: u8 = b'E';
@@ -26,9 +30,9 @@ const END: u8 = b'E';
 /// What a test codec file holds, as [`read`] gives it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TestMedia {
-    /// The container it was written as; `None` for a file written with
-    /// [`write_rgba_video`] or [`write_audio`].
-    pub container: Option<Container>,
+    /// The extension of the output the muxer wrote, as given; `None` for a
+    /// file written with [`write_rgba_video`] or [`write_audio`].
+    pub extension: Option<String>,
     pub video: Option<StoredVideo>,
     pub audio: Option<StoredAudio>,
 }
@@ -73,10 +77,10 @@ impl StoredAudio {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Header {
-    pub container: Option<Container>,
+    pub extension: Option<String>,
     pub video: Option<VideoHeader>,
     pub audio: Option<AudioHeader>,
 }
@@ -126,8 +130,8 @@ pub(crate) enum Kind {
     Wav,
 }
 
-/// Opens `path` and tells what it is, refusing what the codec does not
-/// read.
+/// Opens `path` and tells what it is: a test codec file or a WAV file, and
+/// [`MediaError::Unsupported`] for any other.
 pub(crate) fn sniff(path: &Path) -> Result<(Kind, File), MediaError> {
     let mut file = open(path)?;
     let mut head = Vec::with_capacity(12);
@@ -142,10 +146,10 @@ pub(crate) fn sniff(path: &Path) -> Result<(Kind, File), MediaError> {
     } else if head.len() == 12 && &head[..4] == b"RIFF" && &head[8..] == b"WAVE" {
         Kind::Wav
     } else {
-        return Err(invalid(
-            path,
-            "is neither a test codec file nor a WAV file, the only files the test codec reads",
-        ));
+        return Err(MediaError::Unsupported {
+            path: path.to_owned(),
+            tried: Vec::new(),
+        });
     };
     Ok((kind, file))
 }
@@ -159,14 +163,16 @@ pub(crate) fn frame_len(format: PixelFormat, width: u32, height: u32) -> Option<
     let bytes = match format {
         PixelFormat::Rgba8 => pixels.checked_mul(4)?,
         PixelFormat::Rgba16 => pixels.checked_mul(8)?,
-        PixelFormat::Yuv420p => pixels.checked_add(chroma.checked_mul(2)?)?,
-        PixelFormat::Yuv420p10 => pixels.checked_add(chroma.checked_mul(2)?)?.checked_mul(2)?,
+        PixelFormat::Yuv420p | PixelFormat::Nv12 => pixels.checked_add(chroma.checked_mul(2)?)?,
+        PixelFormat::Yuv420p10 | PixelFormat::P010 => {
+            pixels.checked_add(chroma.checked_mul(2)?)?.checked_mul(2)?
+        }
     };
     usize::try_from(bytes).ok()
 }
 
 /// The frame size of `video`, refusing what cannot be written or read.
-fn checked_video(path: &Path, video: &VideoHeader) -> Result<usize, MediaError> {
+pub(crate) fn checked_video(path: &Path, video: &VideoHeader) -> Result<usize, MediaError> {
     if video.width == 0 || video.height == 0 {
         return Err(invalid(
             path,
@@ -240,66 +246,25 @@ impl Writer {
     }
 
     /// Writes the end and makes the file durable.
-    fn finish(mut self) -> Result<(), MediaError> {
+    fn finish(&mut self) -> Result<(), MediaError> {
         self.chunk(END, &[])?;
-        let file = self
-            .file
-            .into_inner()
-            .map_err(|error| write_error(&self.path, error.into_error()))?;
-        file.sync_all()
+        self.file
+            .flush()
+            .map_err(|error| write_error(&self.path, error))?;
+        self.file
+            .get_ref()
+            .sync_all()
             .map_err(|error| write_error(&self.path, error))
     }
 }
 
-/// A video file frames are pushed to, as an encoder writes it.
-pub(crate) struct VideoWriter {
-    writer: Writer,
-    video: VideoHeader,
-    frame_len: usize,
+/// One frame as the `V` chunk stores it: compressed, with its length first.
+fn compressed_frame(frame: &[u8]) -> Vec<u8> {
+    lz4_flex::block::compress_prepend_size(frame)
 }
 
-impl VideoWriter {
-    pub(crate) fn create(
-        path: &Path,
-        container: Option<Container>,
-        video: VideoHeader,
-    ) -> Result<Self, MediaError> {
-        let frame_len = checked_video(path, &video)?;
-        let header = Header {
-            container,
-            video: Some(video),
-            audio: None,
-        };
-        Ok(Self {
-            writer: Writer::create(path, &header)?,
-            video,
-            frame_len,
-        })
-    }
-
-    pub(crate) fn push(&mut self, frame: &[u8]) -> Result<(), MediaError> {
-        if frame.len() != self.frame_len {
-            let VideoHeader {
-                width,
-                height,
-                format,
-                ..
-            } = self.video;
-            return Err(MediaError::Codec(format!(
-                "a {width}x{height} {format:?} frame is {} bytes, not {}",
-                self.frame_len,
-                frame.len()
-            )));
-        }
-        self.writer.compressed(VIDEO, frame)
-    }
-
-    pub(crate) fn finish(self) -> Result<(), MediaError> {
-        self.writer.finish()
-    }
-}
-
-/// Writes an RGBA8 video, as an encoder opened without a container would.
+/// Writes an RGBA8 video, as an encoder and muxer would for a video with no
+/// audio, but with no extension.
 pub fn write_rgba_video(
     path: &Path,
     width: u32,
@@ -307,20 +272,38 @@ pub fn write_rgba_video(
     frame_rate: Rational,
     frames: &[Vec<u8>],
 ) -> Result<(), MediaError> {
-    let mut writer = VideoWriter::create(
-        path,
-        None,
-        VideoHeader {
-            width,
-            height,
-            frame_rate,
-            format: PixelFormat::Rgba8,
-        },
-    )?;
+    let video = VideoHeader {
+        width,
+        height,
+        frame_rate,
+        format: PixelFormat::Rgba8,
+    };
+    let frame_len = checked_video(path, &video)?;
+    let header = Header {
+        extension: None,
+        video: Some(video),
+        audio: None,
+    };
+    let mut writer = Writer::create(path, &header)?;
     for frame in frames {
-        writer.push(frame)?;
+        if frame.len() != frame_len {
+            return Err(wrong_frame_len(&video, frame_len, frame.len()));
+        }
+        writer.chunk(VIDEO, &compressed_frame(frame))?;
     }
     writer.finish()
+}
+
+fn wrong_frame_len(video: &VideoHeader, expected: usize, actual: usize) -> MediaError {
+    let VideoHeader {
+        width,
+        height,
+        format,
+        ..
+    } = video;
+    MediaError::Codec(format!(
+        "a {width}x{height} {format:?} frame is {expected} bytes, not {actual}"
+    ))
 }
 
 /// Writes an audio-only file of interleaved `samples`.
@@ -338,7 +321,7 @@ pub fn write_audio(
         });
     }
     let header = Header {
-        container: None,
+        extension: None,
         video: None,
         audio: Some(AudioHeader {
             sample_rate,
@@ -351,7 +334,7 @@ pub fn write_audio(
     writer.finish()
 }
 
-fn samples_bytes(samples: &[f32]) -> Vec<u8> {
+pub(crate) fn samples_bytes(samples: &[f32]) -> Vec<u8> {
     samples
         .iter()
         .flat_map(|sample| sample.to_le_bytes())
@@ -363,80 +346,201 @@ fn bytes_samples(bytes: &[u8]) -> Vec<f32> {
     samples.iter().copied().map(f32::from_le_bytes).collect()
 }
 
-/// Writes `output`: `video`'s frames as they are stored, with `pcm` (raw
-/// interleaved `f32` little-endian samples) as its audio.
-pub(crate) fn mux(
-    video_path: &Path,
-    pcm_path: &Path,
-    output: &Path,
-    container: Container,
-    audio: AudioHeader,
-) -> Result<(), MediaError> {
-    let mut source = match sniff(video_path)? {
-        (Kind::Test, file) => Scanned::new(video_path, file)?,
-        (Kind::Wav, _) => return Err(MediaError::NoVideoStream(video_path.to_owned())),
-    };
-    let Some(video) = source.header.video else {
-        return Err(MediaError::NoVideoStream(video_path.to_owned()));
-    };
-    if source.header.audio.is_some() {
-        return Err(invalid(video_path, "already has audio"));
-    }
-    if let Some(written) = source.header.container
-        && written != container
-    {
-        return Err(invalid(
-            video_path,
-            format_args!("is a {written:?} video, so it cannot be muxed into {container:?}"),
-        ));
-    }
-    // Read before the output is created, which may be the same file.
-    let frames = source
-        .frames
-        .clone()
-        .into_iter()
-        .map(|chunk| source.raw(chunk))
-        .collect::<Result<Vec<_>, _>>()?;
-    checked_audio(audio.sample_rate, audio.channels)?;
-    let mut pcm = Vec::new();
-    open(pcm_path)?
-        .read_to_end(&mut pcm)
-        .map_err(|error| read_error(pcm_path, error))?;
-    if !pcm.len().is_multiple_of(4) {
-        return Err(invalid(
-            pcm_path,
-            format_args!("{} bytes are not whole f32 samples", pcm.len()),
-        ));
-    }
-    let samples = pcm.len() / 4;
-    if !samples.is_multiple_of(usize::from(audio.channels)) {
-        return Err(MediaError::InvalidAudioSampleCount {
-            samples,
-            channels: audio.channels,
-        });
-    }
-    let sample_frames = samples / usize::from(audio.channels);
-    if audio.lead_in_frames > sample_frames {
-        return Err(invalid(
-            pcm_path,
-            format_args!(
-                "has {sample_frames} sample frames, fewer than its lead-in of {}",
-                audio.lead_in_frames
-            ),
-        ));
+/// What a muxer track is, by its index in the open request.
+#[derive(Clone, Copy)]
+enum Slot {
+    Video,
+    Audio,
+}
+
+/// The file a muxer writes: video packets go to it as they arrive, audio
+/// packets wait for [`Self::finish`].
+pub(crate) struct MuxWriter {
+    writer: Writer,
+    slots: Vec<Slot>,
+    video: Option<(VideoHeader, usize)>,
+    audio: Option<AudioHeader>,
+    /// `(pts, bytes)` of each audio packet.
+    audio_packets: Vec<(i64, Vec<u8>)>,
+}
+
+impl MuxWriter {
+    /// Creates `output` for `tracks`: at most one video track of
+    /// [`VIDEO_CODEC`], whose description names its pixel format, and one
+    /// audio track of [`AUDIO_CODEC`], whose lead-in is its delay and
+    /// `leading_audio`.
+    pub(crate) fn create(
+        output: &Path,
+        tracks: &[Track],
+        leading_audio: u64,
+    ) -> Result<Self, MediaError> {
+        let mut slots = Vec::new();
+        let mut video = None;
+        let mut audio = None;
+        for track in tracks {
+            match track {
+                Track::Video {
+                    config,
+                    width,
+                    height,
+                    frame_rate,
+                    ..
+                } => {
+                    if video.is_some() {
+                        return Err(invalid(output, "a test codec file has one video track"));
+                    }
+                    if config.codec != VIDEO_CODEC {
+                        return Err(MediaError::Codec(format!(
+                            "the test muxer takes {VIDEO_CODEC} video, not {:?}",
+                            config.codec
+                        )));
+                    }
+                    let format = config
+                        .description
+                        .as_deref()
+                        .and_then(|name| std::str::from_utf8(name).ok())
+                        .and_then(|name| PixelFormat::from_str(name).ok())
+                        .ok_or_else(|| {
+                            MediaError::Codec(format!(
+                                "a {VIDEO_CODEC} track's description is its pixel format's name"
+                            ))
+                        })?;
+                    let header = VideoHeader {
+                        width: *width,
+                        height: *height,
+                        frame_rate: *frame_rate,
+                        format,
+                    };
+                    let frame_len = checked_video(output, &header)?;
+                    video = Some((header, frame_len));
+                    slots.push(Slot::Video);
+                }
+                Track::Audio {
+                    config,
+                    sample_rate,
+                    channels,
+                    delay,
+                    ..
+                } => {
+                    if audio.is_some() {
+                        return Err(invalid(output, "a test codec file has one audio track"));
+                    }
+                    if config.codec != AUDIO_CODEC {
+                        return Err(MediaError::Codec(format!(
+                            "the test muxer takes {AUDIO_CODEC} audio, not {:?}",
+                            config.codec
+                        )));
+                    }
+                    checked_audio(*sample_rate, *channels)?;
+                    let lead_in_frames = delay
+                        .checked_add(leading_audio)
+                        .and_then(|frames| usize::try_from(frames).ok())
+                        .ok_or_else(|| invalid(output, "has a lead-in that is too long"))?;
+                    audio = Some(AudioHeader {
+                        sample_rate: *sample_rate,
+                        channels: *channels,
+                        lead_in_frames,
+                    });
+                    slots.push(Slot::Audio);
+                }
+            }
+        }
+        if slots.is_empty() {
+            return Err(invalid(output, "has no tracks to write"));
+        }
+        let header = Header {
+            extension: output
+                .extension()
+                .map(|extension| extension.to_string_lossy().into_owned()),
+            video: video.map(|(video, _)| video),
+            audio,
+        };
+        Ok(Self {
+            writer: Writer::create(output, &header)?,
+            slots,
+            video,
+            audio,
+            audio_packets: Vec::new(),
+        })
     }
 
-    let header = Header {
-        container: Some(container),
-        video: Some(video),
-        audio: Some(audio),
-    };
-    let mut writer = Writer::create(output, &header)?;
-    for frame in frames {
-        writer.chunk(VIDEO, &frame)?;
+    /// Writes a video packet's bytes, already compressed, or keeps an audio
+    /// packet for [`Self::finish`].
+    pub(crate) fn write(&mut self, packet: &TrackPacket) -> Result<(), MediaError> {
+        let Some(slot) = self.slots.get(packet.track) else {
+            return Err(MediaError::Codec(format!(
+                "no track {} in {}",
+                packet.track,
+                self.writer.path.display()
+            )));
+        };
+        match slot {
+            Slot::Video => {
+                let (video, frame_len) = self.video.expect("a video slot has a video header");
+                let decompressed = lz4_flex::block::decompress_size_prepended(&packet.packet.bytes)
+                    .map_err(|error| {
+                        MediaError::Codec(format!("a video packet is not LZ4 data: {error}"))
+                    })?;
+                if decompressed.len() != frame_len {
+                    return Err(wrong_frame_len(&video, frame_len, decompressed.len()));
+                }
+                self.writer.chunk(VIDEO, &packet.packet.bytes)
+            }
+            Slot::Audio => {
+                self.audio_packets
+                    .push((packet.packet.pts, packet.packet.bytes.clone()));
+                Ok(())
+            }
+        }
     }
-    writer.compressed(AUDIO, &pcm)?;
-    writer.finish()
+
+    /// Writes the audio in `pts` order and the end. On failure the writer is left as it
+    /// was, so [`Self::abort`] can still remove the file.
+    pub(crate) fn finish(&mut self) -> Result<PathBuf, MediaError> {
+        if let Some(audio) = &self.audio {
+            // Stable, so packets at one time stay in the order they came.
+            self.audio_packets.sort_by_key(|(pts, _)| *pts);
+            let pcm: Vec<u8> = self
+                .audio_packets
+                .iter()
+                .flat_map(|(_, bytes)| bytes.iter().copied())
+                .collect();
+            let frame_bytes = 4 * usize::from(audio.channels);
+            if !pcm.len().is_multiple_of(frame_bytes) {
+                return Err(invalid(
+                    &self.writer.path,
+                    format_args!(
+                        "has {} bytes of audio, not whole frames of {} f32 channels",
+                        pcm.len(),
+                        audio.channels
+                    ),
+                ));
+            }
+            if audio.lead_in_frames > pcm.len() / frame_bytes {
+                return Err(invalid(
+                    &self.writer.path,
+                    format_args!(
+                        "has {} sample frames, fewer than its lead-in of {}",
+                        pcm.len() / frame_bytes,
+                        audio.lead_in_frames
+                    ),
+                ));
+            }
+            self.writer.compressed(AUDIO, &pcm)?;
+        }
+        let path = self.writer.path.clone();
+        self.writer.finish()?;
+        Ok(path)
+    }
+
+    /// Drops the writer and removes the file.
+    pub(crate) fn abort(self) -> PathBuf {
+        let Self { writer, .. } = self;
+        let Writer { file, path } = writer;
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        path
+    }
 }
 
 /// The next `len` bytes of `reader`.
@@ -482,10 +586,11 @@ impl Scanned {
         }
         let version = u32::from_le_bytes(fixed[8..12].try_into().expect("four bytes"));
         if version != VERSION {
-            return Err(invalid(
-                path,
-                format_args!("is version {version} of the test codec's format, not {VERSION}"),
-            ));
+            // Not a file this codec reads, as a foreign one is not.
+            return Err(MediaError::Unsupported {
+                path: path.to_owned(),
+                tried: Vec::new(),
+            });
         }
         let header_len = u32::from_le_bytes(fixed[12..16].try_into().expect("four bytes"));
         if 16 + u64::from(header_len) > file_len {
@@ -662,7 +767,7 @@ pub fn read(path: &Path) -> Result<TestMedia, MediaError> {
         None => None,
     };
     Ok(TestMedia {
-        container: scanned.header.container,
+        extension: scanned.header.extension.clone(),
         video,
         audio: scanned.audio()?,
     })

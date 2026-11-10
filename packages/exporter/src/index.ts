@@ -1,10 +1,13 @@
-import { compositionArgs, stillsArgs, videoArgs } from './args.js';
+import { componentsArgs, compositionArgs, describeArgs, stillsArgs, videoArgs } from './args.js';
 import { runExporter } from './run.js';
 import type {
+  ComponentDescription,
+  ComponentInfo,
   CompositionInfo,
   CompositionOptions,
   ExportReport,
   ExportResult,
+  RunOptions,
   StillsOptions,
   VideoOptions,
 } from './types.js';
@@ -16,7 +19,7 @@ export type { ResolveExporterOptions } from './resolve.js';
 export { CANCEL_TIMEOUT_MS } from './run.js';
 export type * from './types.js';
 
-/** Exports a video (MP4, MOV or WebM), or with only `subtitles`, just the subtitle files. */
+/** Exports a video (the muxers and encoders installed: MP4, MOV and WebM by default), or with only `subtitles`, just the subtitle files. */
 export async function exportVideo(options: VideoOptions): Promise<ExportResult> {
   return result(await runExporter(videoArgs(options), options));
 }
@@ -37,6 +40,25 @@ export async function getComposition(options: CompositionOptions): Promise<Compo
       ? {}
       : { compositionId: report.compositionId, compositions: report.compositions }),
   };
+}
+
+/**
+ * Lists the installed media components (`--list-components`). With `check`,
+ * each plugin is started and the entries say whether they are `available`.
+ */
+export async function listComponents(
+  options: Omit<RunOptions, 'onProgress'> & { check?: boolean } = {},
+): Promise<ComponentInfo[]> {
+  const report = await runExporter<{ components: ComponentInfo[] }>(componentsArgs(options), options);
+  return report.components;
+}
+
+/** Asks a component's plugin for its settings and capabilities (`--describe`). */
+export async function describeComponent(
+  id: string,
+  options: Omit<RunOptions, 'onProgress'> = {},
+): Promise<ComponentDescription> {
+  return runExporter<ComponentDescription>(describeArgs(id), options);
 }
 
 function result(report: ExportReport): ExportResult {

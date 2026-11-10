@@ -1,5 +1,5 @@
 //! Video color tags. Converting HDR or wide-gamut video to the 8-bit sRGB
-//! frames the renderers composite is the codec plugin's work.
+//! frames the renderers composite is the media plugin's work.
 
 use serde::{Deserialize, Serialize};
 

@@ -6949,3 +6949,19 @@ fn a_mask_off_the_children_draws_nothing_unless_inverted() {
     // The mask itself never draws, inverted or not.
     assert_eq!(pixel_at(&shown, 34, 34), background);
 }
+
+#[test]
+fn set_background_clears_later_frames_to_the_new_color() {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(10, 20, 30, 255),
+        ..GpuRenderOptions::default()
+    }) else {
+        return;
+    };
+    let before = renderer.render(&empty_scene(4, 2)).unwrap();
+    assert_eq!(before.pixels(), [10, 20, 30, 255].repeat(8));
+    renderer.set_background(Color::TRANSPARENT);
+    assert_eq!(renderer.options().background, Color::TRANSPARENT);
+    let after = renderer.render(&empty_scene(4, 2)).unwrap();
+    assert_eq!(after.pixels(), [0; 4].repeat(8));
+}

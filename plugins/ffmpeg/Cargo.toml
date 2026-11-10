@@ -14,10 +14,13 @@ rust-version = "1.89"
 # bumped by `node scripts/plugins/bump-version.mts`, here and below.
 celesta-composition = { path = "../../crates/composition", version = "=0.9.0" }
 celesta-media = { path = "../../crates/media", version = "=0.9.0" }
+celesta-plugin-host = { path = "../../crates/plugin-host", version = "=0.9.0" }
 ez-ffmpeg = "0.19"
 # The same FFmpeg bindings ez-ffmpeg links, for reading decoded frames.
 ffmpeg-sys-next = "8.1.0"
 rayon = "1.12.0"
+# plugin.json, read for the decoders and printed for `--manifest`.
+serde_json = "1.0.154"
 
 # macOS packages bundle Homebrew dylibs; retain static linking elsewhere.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
@@ -28,7 +31,6 @@ celesta-exporter = { path = "../../crates/exporter", version = "=0.9.0" }
 celesta-gpu-renderer = { path = "../../crates/gpu-renderer", version = "=0.9.0" }
 celesta-project = { path = "../../crates/project", version = "=0.9.0" }
 png = "0.18.1"
-strum = { version = "0.28.0", features = ["derive"] }
 tempfile = "3.23.0"
 
 # The codec bench's CPU times (examples/codec-bench.rs).

@@ -102,7 +102,6 @@ pub(crate) struct ReactVideoRequest<'a> {
     pub(crate) start_frame: u64,
     /// Number of frames to render (the whole composition unless a range is set).
     pub(crate) frame_count: u64,
-    pub(crate) asset_root: &'a Path,
     pub(crate) project: Option<(&'a Project, &'a Path)>,
     /// Every frame's reported `<Audio>` clips accumulate here (one entry per
     /// clip per frame; duplicates are merged afterwards — see

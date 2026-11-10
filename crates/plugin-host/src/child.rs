@@ -1,6 +1,6 @@
 //! A plugin's process, as Celesta runs every plugin: content plugins for the
-//! renderer ([`crate::PluginHost`]) and the codec plugin for media
-//! (`celesta_media::CodecProcess`).
+//! renderer ([`crate::PluginHost`]) and media plugins for media
+//! (`celesta_media::MediaProvider`).
 //!
 //! - On Windows it starts without a console window of its own, which a
 //!   console program started by the GUI editor would otherwise get.
@@ -8,8 +8,8 @@
 //!   request has a deadline, even one whose payload a hung plugin would never
 //!   read. A plugin that misses it is killed.
 //! - Another thread can kill it through a [`PluginKillHandle`] (or a
-//!   [`crate::PluginKillSwitch`] it is registered with): the request it was
-//!   waiting on returns at once.
+//!   [`crate::PluginKillSwitch`] it is registered with): every request in
+//!   flight fails at once.
 //! - Its stderr is passed through to Celesta's and its last lines kept, so an
 //!   error for a process that went away says what it last printed.
 //! - An answer must be of the kind its request expects: a plugin that falls
@@ -25,6 +25,7 @@ use celesta_plugin::protocol::{
 };
 use celesta_plugin::shared::SharedMemory;
 use serde_json::{Map, Value, json};
+use std::collections::VecDeque;
 use std::io::{self, BufReader, BufWriter};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -66,9 +67,28 @@ impl RequestError {
     }
 }
 
-/// A running plugin process, one request at a time. Dropping it closes the
-/// plugin's stdin, which asks it to exit, and kills it if it has not within
-/// half a second.
+/// Where a request's deadline starts counting: when it was sent, or (for a
+/// request queued behind others) when the request ahead of it was answered,
+/// whichever is later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeadlineFrom {
+    Sent,
+    PreviousAnswer,
+}
+
+/// A request sent and not yet answered.
+struct Pending {
+    kind: String,
+    expected: String,
+    timeout: Duration,
+    from: DeadlineFrom,
+    sent: Instant,
+}
+
+/// A running plugin process. Requests may be sent several at a time
+/// ([`Self::send`]); the plugin answers them in order ([`Self::receive`]).
+/// Dropping it closes the plugin's stdin, which asks it to exit, and kills it
+/// if it has not within half a second.
 pub struct PluginChild {
     child: Arc<Mutex<SharedChild>>,
     /// What [`Self::request`] writes; dropping it ends the writer thread,
@@ -80,6 +100,10 @@ pub struct PluginChild {
     /// Disconnects once the plugin's stderr has been read to its end.
     stderr_closed: Receiver<()>,
     name: String,
+    /// The requests sent and not yet answered, oldest first.
+    pending: VecDeque<Pending>,
+    /// When the last answer arrived (the process's start before any).
+    last_answered: Instant,
 }
 
 impl PluginChild {
@@ -89,13 +113,14 @@ impl PluginChild {
     }
 
     /// [`Self::start`], passing `shared` on to the process, and the handle
-    /// the process maps it by (for its `hello`), or `None` when it could not
-    /// be passed on (the process then runs without it).
+    /// the process maps it by (for its `hello`): `None` without `shared`,
+    /// and the error when it could not be passed on (the process then runs
+    /// without it).
     pub fn start_sharing(
         executable: &Path,
         directory: &Path,
         shared: Option<&SharedMemory>,
-    ) -> Result<(Self, Option<u64>), String> {
+    ) -> Result<(Self, Option<io::Result<u64>>), String> {
         let name = executable.display().to_string();
         let mut command = Command::new(executable);
         command
@@ -110,7 +135,7 @@ impl PluginChild {
         let mut child = command
             .spawn()
             .map_err(|error| format!("could not start {name}: {error}"))?;
-        let shared_handle = shared.and_then(|shared| shared.handle_for(&child).ok());
+        let shared_handle = shared.map(|shared| shared.handle_for(&child));
         let started = (|| -> io::Result<_> {
             let mut input = BufWriter::new(child.stdin.take().expect("piped"));
             let mut output = BufReader::new(child.stdout.take().expect("piped"));
@@ -174,6 +199,8 @@ impl PluginChild {
                 stderr,
                 stderr_closed,
                 name,
+                pending: VecDeque::new(),
+                last_answered: Instant::now(),
             },
             shared_handle,
         ))
@@ -192,14 +219,25 @@ impl PluginChild {
 
     /// [`Self::hello`], the request also carrying the fields of `offer`
     /// (what a role offers the plugin, such as a codec's shared memory),
-    /// which cannot replace `type` or `protocol`.
-    pub fn hello_with(&mut self, mut offer: Map<String, Value>) -> Result<Message, RequestError> {
+    /// which cannot replace `type` or `protocol`. A content plugin speaks
+    /// protocol 1 (see [`Self::hello_as`]).
+    pub fn hello_with(&mut self, offer: Map<String, Value>) -> Result<Message, RequestError> {
+        self.hello_as(PROTOCOL_VERSION, offer)
+    }
+
+    /// [`Self::hello_with`] in `protocol`, which the answer must speak too:
+    /// a media plugin speaks [`celesta_plugin::MEDIA_PROTOCOL_VERSION`].
+    pub fn hello_as(
+        &mut self,
+        protocol: u32,
+        mut offer: Map<String, Value>,
+    ) -> Result<Message, RequestError> {
         offer.insert("type".to_owned(), json!("hello"));
-        offer.insert("protocol".to_owned(), json!(PROTOCOL_VERSION));
+        offer.insert("protocol".to_owned(), json!(protocol));
         let hello = self.request(Message::new(Value::Object(offer)), "hello", HELLO_TIMEOUT)?;
-        if hello.header["protocol"].as_u64() != Some(u64::from(PROTOCOL_VERSION)) {
+        if hello.header["protocol"].as_u64() != Some(u64::from(protocol)) {
             return Err(RequestError::Refused(error_message(format!(
-                "{} speaks protocol {}, not {PROTOCOL_VERSION}",
+                "{} speaks protocol {}, not {protocol}",
                 self.name, hello.header["protocol"]
             ))));
         }
@@ -211,12 +249,35 @@ impl PluginChild {
     /// deadline, answers with another kind, or whose stream fails is killed;
     /// an `error` answer leaves it running. One killed through its
     /// [`PluginKillHandle`] while this waits makes it return at once.
+    ///
+    /// Only with nothing in flight ([`Self::in_flight`] is 0): otherwise
+    /// the answer taken would be the oldest request's, not this one's.
     pub fn request(
         &mut self,
         request: Message,
         expected: &str,
         timeout: Duration,
     ) -> Result<Message, RequestError> {
+        debug_assert!(
+            self.pending.is_empty(),
+            "`{}` was asked with {} requests in flight",
+            request.kind(),
+            self.pending.len()
+        );
+        self.send(request, expected, timeout, DeadlineFrom::Sent)?;
+        self.receive()
+    }
+
+    /// Sends `request` without waiting; its answer (of the kind `expected`,
+    /// or an `error`) is taken by [`Self::receive`], in the order requests
+    /// were sent. `timeout` counts from `from`.
+    pub fn send(
+        &mut self,
+        request: Message,
+        expected: &str,
+        timeout: Duration,
+        from: DeadlineFrom,
+    ) -> Result<(), RequestError> {
         let kind = request.kind().to_owned();
         let sent = self
             .requests
@@ -225,7 +286,53 @@ impl PluginChild {
         if !sent {
             return Err(self.gone(&kind, "it stopped reading requests"));
         }
-        let answer = match self.answers.recv_timeout(timeout) {
+        self.pending.push_back(Pending {
+            kind,
+            expected: expected.to_owned(),
+            timeout,
+            from,
+            sent: Instant::now(),
+        });
+        Ok(())
+    }
+
+    /// How many requests are sent and not yet answered.
+    pub fn in_flight(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Waits for the answer to the oldest request in flight, with the rules
+    /// of [`Self::request`]. Once the process is stopped, each request still
+    /// in flight fails without waiting.
+    pub fn receive(&mut self) -> Result<Message, RequestError> {
+        let Some(Pending {
+            kind,
+            expected,
+            timeout,
+            from,
+            sent,
+        }) = self.pending.pop_front()
+        else {
+            return Err(RequestError::Unavailable(format!(
+                "{} is unavailable: no request is in flight",
+                self.name
+            )));
+        };
+        if self.requests.is_none() {
+            let reason = format!("it was stopped before it answered `{kind}`");
+            let message = self.explain(&reason);
+            return Err(if lock(&self.child).killed {
+                RequestError::Stopped(message)
+            } else {
+                RequestError::Unavailable(message)
+            });
+        }
+        let start = match from {
+            DeadlineFrom::Sent => sent,
+            DeadlineFrom::PreviousAnswer => sent.max(self.last_answered),
+        };
+        let wait = (start + timeout).saturating_duration_since(Instant::now());
+        let answer = match self.answers.recv_timeout(wait) {
             Ok(Ok(answer)) => answer,
             Ok(Err(reason)) => return Err(self.gone(&kind, &reason)),
             Err(RecvTimeoutError::Disconnected) => {
@@ -240,6 +347,7 @@ impl PluginChild {
                 ))));
             }
         };
+        self.last_answered = Instant::now();
         match answer.kind() {
             "error" => Err(RequestError::Refused(answer)),
             found if found == expected => Ok(answer),
@@ -319,10 +427,33 @@ mod tests {
 
     /// A plugin made of a shell script.
     fn script(directory: &Path, body: &str) -> std::path::PathBuf {
+        // A sibling test forking while the file is open for writing here
+        // inherits the descriptor, and exec of the script then fails with
+        // ETXTBSY until that child execs or exits. Writing under another
+        // name and renaming does not prevent it (the rename keeps the
+        // inode the forked child still holds open for writing); the tests
+        // start the script through `start_retrying`, which waits it out.
         let path = directory.join("plugin.sh");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let staging = directory.join("plugin.sh.new");
+        std::fs::write(&staging, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&staging, &path).unwrap();
         path
+    }
+
+    /// [`PluginChild::start`], tried again while the script is still open
+    /// for writing in a sibling test's forked child (ETXTBSY).
+    fn start_retrying(executable: &Path, directory: &Path) -> Result<PluginChild, String> {
+        let mut attempts = 0;
+        loop {
+            match PluginChild::start(executable, directory) {
+                Err(error) if attempts < 20 && error.contains("busy") => {
+                    attempts += 1;
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                other => return other,
+            }
+        }
     }
 
     /// Waits until the script has run as far as touching `marker`, as
@@ -344,6 +475,27 @@ mod tests {
     }
 
     #[test]
+    fn hello_as_checks_the_answered_protocol() {
+        let directory = tempfile::tempdir().unwrap();
+        // A plugin that answers `hello` with protocol 1 whatever it is asked.
+        let answer = directory.path().join("answer.bin");
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &hello()).unwrap();
+        std::fs::write(&answer, bytes).unwrap();
+        let program = script(
+            directory.path(),
+            &format!("cat '{}'\nexec sleep 30", answer.display()),
+        );
+        let mut child = start_retrying(&program, directory.path()).unwrap();
+        let error = child.hello_as(2, Map::new()).unwrap_err();
+        let RequestError::Refused(refusal) = error else {
+            panic!("{error:?}");
+        };
+        let message = refusal.header["message"].as_str().unwrap();
+        assert!(message.contains("speaks protocol 1, not 2"), "{message}");
+    }
+
+    #[test]
     fn a_plugin_that_does_not_answer_in_time_is_stopped() {
         let directory = tempfile::tempdir().unwrap();
         let started = directory.path().join("started");
@@ -354,7 +506,7 @@ mod tests {
                 started.display()
             ),
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         wait_for(&started);
         let started = Instant::now();
         let error = child
@@ -385,7 +537,7 @@ mod tests {
                 started.display()
             ),
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let switch = crate::PluginKillSwitch::new();
         switch.register(child.kill_handle());
         wait_for(&started);
@@ -420,7 +572,7 @@ mod tests {
     fn a_switch_killed_already_kills_what_is_registered_later() {
         let directory = tempfile::tempdir().unwrap();
         let program = script(directory.path(), "exec sleep 30");
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let switch = crate::PluginKillSwitch::new();
         switch.kill();
         assert!(switch.is_killed());
@@ -436,7 +588,7 @@ mod tests {
     fn a_plugin_that_exits_says_what_it_printed() {
         let directory = tempfile::tempdir().unwrap();
         let program = script(directory.path(), "echo 'boom: no libavcodec' >&2\nexit 3");
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let error = child
             .request(hello(), "hello", Duration::from_secs(5))
             .unwrap_err();
@@ -456,7 +608,7 @@ mod tests {
             r#"printf '\014\000\000\000{"type":"x"}\000\000\000\000'
 exec cat >/dev/null"#,
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let error = child
             .request(hello(), "hello", Duration::from_secs(5))
             .unwrap_err();
@@ -475,7 +627,7 @@ exec cat >/dev/null"#,
             directory.path(),
             "printf '\\004\\000\\000\\000nope'\nexec sleep 30",
         );
-        let mut child = PluginChild::start(&program, directory.path()).unwrap();
+        let mut child = start_retrying(&program, directory.path()).unwrap();
         let error = child
             .request(hello(), "hello", Duration::from_secs(5))
             .unwrap_err();
@@ -496,12 +648,220 @@ exec cat >/dev/null"#,
                 marker.display()
             ),
         );
-        let child = PluginChild::start(&program, directory.path()).unwrap();
+        let child = start_retrying(&program, directory.path()).unwrap();
         wait_for(&started);
         drop(child);
         assert!(
             marker.exists(),
             "the plugin saw its stdin close and finished"
         );
+    }
+
+    fn kind(kind: &str) -> Message {
+        Message::new(json!({ "type": kind }))
+    }
+
+    /// The bytes of `messages` as a plugin would write them.
+    fn canned(directory: &Path, name: &str, messages: &[Message]) -> std::path::PathBuf {
+        let path = directory.join(name);
+        let mut bytes = Vec::new();
+        for message in messages {
+            write_message(&mut bytes, message).unwrap();
+        }
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    const LONG: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn answers_come_back_in_order_through_the_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let answers = canned(
+            directory.path(),
+            "answers.bin",
+            &[kind("x"), kind("y"), kind("z")],
+        );
+        let program = script(
+            directory.path(),
+            &format!("cat '{}'\nexec cat >/dev/null", answers.display()),
+        );
+        let mut child = start_retrying(&program, directory.path()).unwrap();
+        for (request, expected) in [("a", "x"), ("b", "y"), ("c", "z")] {
+            child
+                .send(kind(request), expected, LONG, DeadlineFrom::Sent)
+                .unwrap();
+        }
+        assert_eq!(child.in_flight(), 3);
+        for expected in ["x", "y", "z"] {
+            assert_eq!(child.receive().unwrap().kind(), expected);
+        }
+        assert_eq!(child.in_flight(), 0);
+    }
+
+    #[test]
+    fn a_wrong_kind_in_the_window_stops_the_plugin() {
+        let directory = tempfile::tempdir().unwrap();
+        let answers = canned(directory.path(), "answers.bin", &[kind("x"), kind("z")]);
+        let program = script(
+            directory.path(),
+            &format!("cat '{}'\nexec cat >/dev/null", answers.display()),
+        );
+        let mut child = start_retrying(&program, directory.path()).unwrap();
+        for (request, expected) in [("a", "x"), ("b", "y"), ("c", "w")] {
+            child
+                .send(kind(request), expected, LONG, DeadlineFrom::Sent)
+                .unwrap();
+        }
+        assert_eq!(child.receive().unwrap().kind(), "x");
+        let RequestError::Unavailable(message) = child.receive().unwrap_err() else {
+            panic!("expected Unavailable");
+        };
+        assert!(message.contains("with `z`, not `y`"), "{message}");
+        assert!(exited(&child), "it was killed");
+        let RequestError::Unavailable(message) = child.receive().unwrap_err() else {
+            panic!("expected Unavailable");
+        };
+        assert!(
+            message.contains("stopped before it answered `c`"),
+            "{message}"
+        );
+    }
+
+    /// `sleep 1; x; sleep 0.5; y`, the second answer 1.5 s after the start.
+    fn slow_pair(directory: &Path) -> std::path::PathBuf {
+        let x = canned(directory, "x.bin", &[kind("x")]);
+        let y = canned(directory, "y.bin", &[kind("y")]);
+        script(
+            directory,
+            &format!(
+                "sleep 1\ncat '{}'\nsleep 0.5\ncat '{}'\nexec sleep 30",
+                x.display(),
+                y.display()
+            ),
+        )
+    }
+
+    #[test]
+    fn a_deadline_from_the_previous_answer_waits_for_the_queue() {
+        let directory = tempfile::tempdir().unwrap();
+        let program = slow_pair(directory.path());
+        let mut child = start_retrying(&program, directory.path()).unwrap();
+        let begun = Instant::now();
+        child
+            .send(kind("a"), "x", LONG, DeadlineFrom::Sent)
+            .unwrap();
+        child
+            .send(
+                kind("b"),
+                "y",
+                Duration::from_millis(800),
+                DeadlineFrom::PreviousAnswer,
+            )
+            .unwrap();
+        assert_eq!(child.receive().unwrap().kind(), "x");
+        assert_eq!(child.receive().unwrap().kind(), "y");
+        assert!(
+            begun.elapsed() > Duration::from_millis(1200),
+            "a deadline from the send would have passed"
+        );
+    }
+
+    #[test]
+    fn a_deadline_from_send_counts_the_queue() {
+        let directory = tempfile::tempdir().unwrap();
+        let program = slow_pair(directory.path());
+        let mut child = start_retrying(&program, directory.path()).unwrap();
+        child
+            .send(kind("a"), "x", LONG, DeadlineFrom::Sent)
+            .unwrap();
+        child
+            .send(
+                kind("b"),
+                "y",
+                Duration::from_millis(800),
+                DeadlineFrom::Sent,
+            )
+            .unwrap();
+        assert_eq!(child.receive().unwrap().kind(), "x");
+        let RequestError::Stopped(message) = child.receive().unwrap_err() else {
+            panic!("expected Stopped");
+        };
+        assert!(message.contains("did not answer `b`"), "{message}");
+        assert!(exited(&child), "it was killed");
+    }
+
+    #[test]
+    fn an_error_answer_leaves_the_window_running() {
+        let directory = tempfile::tempdir().unwrap();
+        let answers = canned(
+            directory.path(),
+            "answers.bin",
+            &[error_message("no"), kind("y")],
+        );
+        let program = script(
+            directory.path(),
+            &format!("cat '{}'\nexec cat >/dev/null", answers.display()),
+        );
+        let mut child = start_retrying(&program, directory.path()).unwrap();
+        child
+            .send(kind("a"), "x", LONG, DeadlineFrom::Sent)
+            .unwrap();
+        child
+            .send(kind("b"), "y", LONG, DeadlineFrom::Sent)
+            .unwrap();
+        let error = child.receive().unwrap_err();
+        let RequestError::Refused(_) = &error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(error.message(), "no");
+        assert_eq!(child.receive().unwrap().kind(), "y");
+        assert!(!exited(&child));
+    }
+
+    #[test]
+    fn receive_without_a_request_in_flight_is_an_error_not_a_kill() {
+        let directory = tempfile::tempdir().unwrap();
+        let program = script(directory.path(), "exec cat >/dev/null");
+        let mut child = start_retrying(&program, directory.path()).unwrap();
+        let RequestError::Unavailable(message) = child.receive().unwrap_err() else {
+            panic!("expected Unavailable");
+        };
+        assert!(message.contains("no request is in flight"), "{message}");
+        assert!(!exited(&child));
+    }
+
+    #[test]
+    fn killing_the_switch_fails_every_request_in_flight() {
+        let directory = tempfile::tempdir().unwrap();
+        let started = directory.path().join("started");
+        let program = script(
+            directory.path(),
+            &format!("touch '{}'\nexec sleep 30", started.display()),
+        );
+        let mut child = start_retrying(&program, directory.path()).unwrap();
+        let switch = crate::PluginKillSwitch::new();
+        switch.register(child.kill_handle());
+        wait_for(&started);
+        child
+            .send(kind("a"), "x", Duration::from_secs(30), DeadlineFrom::Sent)
+            .unwrap();
+        child
+            .send(kind("b"), "y", Duration::from_secs(30), DeadlineFrom::Sent)
+            .unwrap();
+        let killer = {
+            let switch = switch.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(200));
+                switch.kill();
+            })
+        };
+        let begun = Instant::now();
+        let first = child.receive().unwrap_err();
+        let second = child.receive().unwrap_err();
+        killer.join().unwrap();
+        assert!(begun.elapsed() < Duration::from_secs(10));
+        assert!(matches!(first, RequestError::Stopped(_)), "{first:?}");
+        assert!(matches!(second, RequestError::Stopped(_)), "{second:?}");
     }
 }

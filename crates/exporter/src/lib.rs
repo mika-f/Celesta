@@ -1,11 +1,14 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
-mod codec;
+pub mod components;
 mod control;
+mod encode;
 mod error;
 mod exporter;
+mod interleave;
 mod job;
 mod loudness;
+mod media;
 mod options;
 mod output;
 mod project;
@@ -14,25 +17,27 @@ mod react;
 mod react_entry;
 mod render;
 pub mod report;
+mod resolve;
 mod subtitles;
 #[cfg(test)]
 mod tests;
 mod timecode;
 
 pub use celesta_media::{LoudnessTarget, PeakHandling};
-pub use codec::{use_codec, use_installed_codec};
 pub use control::{
-    AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile,
+    AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile, TrackInfo,
 };
 pub use error::{ExportError, FrameFailure};
 pub use exporter::Exporter;
 pub use job::ExportJob;
-pub use options::{
-    BitDepth, ColorConversion, EncoderPreset, ExportOptions, UnknownBitDepth,
-    UnknownColorConversion, UnknownEncoderPreset, UnknownVideoFormat, VideoEncoding, VideoFormat,
-};
+pub use media::{media_registry, use_installed_media, use_media};
+pub use options::{AudioChoice, EncoderChoice, ExportOptions, OutputChoice, SettingInput};
 pub use range::ExportRange;
 pub use react::{CompanionProject, ReactRuntimeOptions};
+pub use resolve::{
+    EncoderPlan, OutputPlan, ResolvedEncoder, ResolvedMuxer, ResolvedOutput, X264_PRESETS,
+    encoding_label, resolve_output,
+};
 pub use subtitles::SubtitleFormat;
 pub use timecode::{TimecodeError, parse_timecode};
 

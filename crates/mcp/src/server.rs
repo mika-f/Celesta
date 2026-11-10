@@ -1,9 +1,15 @@
 //! The MCP tool router: argument types, validation, and dispatch.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
-use celesta_exporter::report;
+use celesta_exporter::components::{
+    describe_component, description_json, list_components, listing_json,
+};
+use celesta_exporter::media_registry;
+use celesta_exporter::report::{self, HintStyle};
+use celesta_media::{MediaRegistry, RegisteredPlugin};
+use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
 use celesta_react_bridge::{
     TemplateError, initialize_project, list_templates, project_templates_dir, runtime_paths,
 };
@@ -17,7 +23,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-use crate::args::{ContactSheetArgs, ExportVideoArgs, RenderFramesArgs};
+use crate::args::{
+    ContactSheetArgs, DescribeComponentArgs, ExportVideoArgs, ListComponentsArgs, RenderFramesArgs,
+};
 use crate::docs;
 use crate::export::{self, Run};
 use crate::frames::{OutputDirs, image_blocks};
@@ -29,16 +37,74 @@ pub struct CelestaServer {
     /// Held by every tool that renders, so they take turns on the GPU.
     render_lock: Arc<Mutex<()>>,
     outputs: Arc<OutputDirs>,
+    media: Arc<SharedMedia>,
 }
 
 impl CelestaServer {
-    pub fn new() -> std::io::Result<Self> {
+    /// A server whose tools share `media`, the registry its exports use.
+    pub fn new(media: Arc<MediaRegistry>) -> std::io::Result<Self> {
         Ok(Self {
             tool_router: Self::tool_router(),
             render_lock: Arc::new(Mutex::new(())),
             outputs: Arc::new(OutputDirs::new()?),
+            media: Arc::new(SharedMedia::new(media)),
         })
     }
+}
+
+/// The one media registry the tools share, so a plugin's `describe` answer
+/// is cached across calls.
+struct SharedMedia(std::sync::Mutex<Arc<MediaRegistry>>);
+
+impl SharedMedia {
+    fn new(registry: Arc<MediaRegistry>) -> Self {
+        Self(std::sync::Mutex::new(registry))
+    }
+
+    /// The registry, after discovering the plugins again: the one held while
+    /// they are the same plugins, else a new one, which exports then use too.
+    fn current(&self) -> Arc<MediaRegistry> {
+        let found = media_registry(&InstalledPlugins::find_reporting(&[], &[]));
+        let (registry, _) = self.update(found, |registry| {
+            celesta_media::set_registry(Some(registry.clone()));
+        });
+        registry
+    }
+
+    /// The held registry, unless `found` lists other plugins: then `found`,
+    /// which replaces it (and `true`) and is handed to `publish` while the
+    /// lock is held, so concurrent calls publish in the order they replace.
+    fn update(
+        &self,
+        found: Arc<MediaRegistry>,
+        publish: impl FnOnce(&Arc<MediaRegistry>),
+    ) -> (Arc<MediaRegistry>, bool) {
+        let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let same = held.plugins().len() == found.plugins().len()
+            && held
+                .plugins()
+                .iter()
+                .zip(found.plugins())
+                .all(|(a, b)| same_plugin(a, b));
+        if same {
+            return (held.clone(), false);
+        }
+        *held = found.clone();
+        publish(&found);
+        (found, true)
+    }
+}
+
+/// Whether `a` and `b` are the same plugin, as discovery found it. A
+/// program rebuilt in place is still the same: the registry's `describe`
+/// cache notices that itself.
+fn same_plugin(a: &RegisteredPlugin, b: &RegisteredPlugin) -> bool {
+    a.id == b.id
+        && a.version == b.version
+        && a.origin == b.origin
+        && a.directory == b.directory
+        && a.executable == b.executable
+        && a.media == b.media
 }
 
 /// A rendering tool's result: the stills it wrote as images, then its report.
@@ -239,7 +305,7 @@ impl CelestaServer {
     }
 
     #[tool(
-        description = "Export a React entry or JSON project as an H.264/AAC MP4, a ProRes 4444 MOV or a VP9 WebM (both transparent where nothing is drawn), all of it or the start/end span, optionally with its whole mix brought to a loudness target (`loudness`: -14 LUFS for streaming) and with SRT/WebVTT subtitle files timed like it (several paths, or {lang} in a path for one file per language); without output it writes only the subtitle files, evaluating frames without rendering them. Sends progress notifications when the request has a progress token, and stops when the request is cancelled. The result's video output reports the mix's integrated loudness (LUFS) and true peak. Use it for the final file or to check audio; check pictures with render_frames."
+        description = "Export a React entry or JSON project as a video: by the output's extension an H.264/AAC MP4, a ProRes 4444 MOV or a VP9 WebM (both transparent where nothing is drawn), or with `muxer`, `videoEncoder` and `audioEncoder` any installed media components (see list_components and describe_component) and their options; all of it or the start/end span, optionally with its whole mix brought to a loudness target (`loudness`: -14 LUFS for streaming) and with SRT/WebVTT subtitle files timed like it (several paths, or {lang} in a path for one file per language); without output it writes only the subtitle files, evaluating frames without rendering them. Sends progress notifications when the request has a progress token, and stops when the request is cancelled. The result's video output reports the mix's integrated loudness (LUFS) and true peak. Use it for the final file or to check audio; check pictures with render_frames."
     )]
     async fn export_video(
         &self,
@@ -250,6 +316,55 @@ impl CelestaServer {
             Ok(job) => rendered(export::run(job, &self.render_lock, &context).await),
             Err(message) => usage_error(&message),
         }
+    }
+
+    #[tool(
+        description = "List the installed media components (muxers, video and audio encoders, decoders) as `<plugin>/<component>` references with their kind, name, and plugin; export_video takes the muxers and encoders. With `check`, each plugin is also asked whether its components are available here (a plugin is started to answer). describe_component shows one component's options."
+    )]
+    async fn list_components(
+        &self,
+        Parameters(args): Parameters<ListComponentsArgs>,
+    ) -> CallToolResult {
+        let media = self.media.clone();
+        blocking(move || {
+            let registry = media.current();
+            let listed = list_components(
+                &registry,
+                args.check.unwrap_or(false),
+                &PluginKillSwitch::new(),
+            );
+            let value = listing_json(&listed);
+            success(value.to_string(), value)
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Describe one installed media component from list_components: whether it is available, its options (`settings`: key, type, default, range) for export_video's `videoEncoder.options` and `audioEncoder.options`, and for an encoder the input formats, sample rates, and channels it takes. A component that is not installed is an error with code component_unavailable."
+    )]
+    async fn describe_component(
+        &self,
+        Parameters(args): Parameters<DescribeComponentArgs>,
+    ) -> CallToolResult {
+        let reference = match args.component.parse() {
+            Ok(reference) => reference,
+            Err(error) => return usage_error(&format!("{error}")),
+        };
+        let media = self.media.clone();
+        blocking(move || {
+            let registry = media.current();
+            match describe_component(&registry, &reference, &PluginKillSwitch::new()) {
+                Ok((info, description)) => {
+                    let value = description_json(&info, &description);
+                    success(value.to_string(), value)
+                }
+                Err(error) => CallToolResult::structured_error(
+                    serde_json::to_value(report::failure(&error, HintStyle::Mcp))
+                        .expect("reports serialize"),
+                ),
+            }
+        })
+        .await
     }
 }
 
@@ -275,5 +390,46 @@ impl ServerHandler for CelestaServer {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("celesta", env!("CARGO_PKG_VERSION")))
             .with_instructions(include_str!("instructions.md"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registry(plugins: Vec<RegisteredPlugin>) -> Arc<MediaRegistry> {
+        Arc::new(MediaRegistry::new(plugins))
+    }
+
+    #[test]
+    fn the_same_plugins_keep_the_registry_and_its_cache() {
+        let held = registry(vec![celesta_codec_test::registered()]);
+        let media = SharedMedia::new(held.clone());
+        let described = held.describe(0, &PluginKillSwitch::new());
+        let (current, replaced) =
+            media.update(registry(vec![celesta_codec_test::registered()]), |_| {});
+        assert!(!replaced);
+        assert!(Arc::ptr_eq(&current, &held));
+        assert!(Arc::ptr_eq(
+            &current.describe(0, &PluginKillSwitch::new()),
+            &described
+        ));
+    }
+
+    #[test]
+    fn other_plugins_replace_the_registry() {
+        let media = SharedMedia::new(registry(vec![celesta_codec_test::registered()]));
+        let found = registry(Vec::new());
+        let (current, replaced) = media.update(found.clone(), |_| {});
+        assert!(replaced);
+        assert!(Arc::ptr_eq(&current, &found));
+        let mut renamed = celesta_codec_test::registered();
+        renamed.version.push_str("-next");
+        let (current, replaced) = media.update(registry(vec![renamed]), |_| {});
+        assert!(replaced);
+        assert_eq!(
+            current.plugins()[0].version,
+            celesta_codec_test::registered().version + "-next"
+        );
     }
 }

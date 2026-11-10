@@ -1,11 +1,11 @@
 //! Times the editor preview's per-frame cost for a standalone React entry,
 //! split into the Node round-trip and the GPU render, with and without the
-//! sequential video decoder. Frames are decoded by the codec plugin's
+//! sequential video decoder. Frames are decoded by a media plugin's
 //! process, as in the editor, so the times include sending them across it:
-//! the first codec plugin found, as Celesta finds it. Without one it exits
-//! with "no codec plugin found". In a source checkout, build the codec into
-//! `plugins/dist` and pass that folder's absolute path. The entry runs on
-//! `packages/cli/dist/cli.js`, so build the runtime first:
+//! the media plugins found, as Celesta finds them. Without one it exits
+//! with "no media plugin found". In a source checkout, build the FFmpeg
+//! plugin into `plugins/dist` and pass that folder's absolute path. The
+//! entry runs on `packages/cli/dist/cli.js`, so build the runtime first:
 //!
 //! ```text
 //! pnpm install && pnpm run build:runtime
@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use celesta_composition::Time;
 use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
-use celesta_media::{CodecProcess, MediaBackend};
+use celesta_media::MediaBackend;
 use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::ReactBridge;
 
@@ -30,17 +30,15 @@ fn main() {
     let frames: i64 = args
         .next()
         .map_or(30, |value| value.parse().expect("frames must be a number"));
-    let Some(codec) = InstalledPlugins::find_reporting(&[], &[]).codec() else {
+    let plugins = InstalledPlugins::find_reporting(&[], &[]);
+    if plugins.media().is_empty() {
         eprintln!(
-            "no codec plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
+            "no media plugin found: build one with node scripts/plugins/build.mts plugins/ffmpeg \
              and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH"
         );
         process::exit(1);
-    };
-    celesta_media::set_codec(Some(CodecProcess::factory(
-        codec.executable,
-        codec.directory,
-    )));
+    }
+    celesta_exporter::use_media(&plugins);
     let sequential = env::var("SEQUENTIAL").is_ok();
 
     let cli_script =

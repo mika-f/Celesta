@@ -5,27 +5,28 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MediaError {
-    /// What the codec plugin said went wrong (such as an FFmpeg error), or
+    /// What the media plugin said went wrong (such as an FFmpeg error), or
     /// what it answered that does not fit the request.
     #[error("{0}")]
     Codec(String),
-    /// No codec plugin is installed (see [`crate::set_codec`]).
-    #[error("no codec plugin is installed, so video and audio files cannot be read or written")]
-    NoCodec,
-    /// The codec plugin's process could not be started, went away, or fell
+    /// No media decoder is installed (see [`crate::set_registry`]).
+    #[error("no media decoder is installed, so video and audio files cannot be read")]
+    NoDecoder,
+    /// No decoder reads `path`: the decoders `tried` (as `<plugin>/<decoder>`
+    /// references, in order) each answered that it is not a file they read.
+    /// A plugin's answer names none; routing fills them in.
+    #[error("no decoder could read {path} (tried {tried})", path = path.display(), tried = tried.join(", "))]
+    Unsupported { path: PathBuf, tried: Vec<String> },
+    /// The media plugin's process could not be started, went away, or fell
     /// out of step with its requests.
-    #[error("the codec plugin is unavailable: {0}")]
+    #[error("the media plugin is unavailable: {0}")]
     CodecUnavailable(String),
-    /// The codec plugin's process was stopped on purpose: it missed a
+    /// The media plugin's process was stopped on purpose: it missed a
     /// request's deadline, or its kill switch was killed (an export's
     /// Cancel). Unlike [`Self::CodecUnavailable`], the request is not sent
     /// again to a new process; a later request starts one.
-    #[error("the codec plugin was stopped: {0}")]
+    #[error("the media plugin was stopped: {0}")]
     CodecStopped(String),
-    /// The codec plugin cannot write a format, as an FFmpeg build without
-    /// one of its encoders cannot.
-    #[error("the codec plugin has no {encoder} encoder")]
-    EncoderUnavailable { encoder: String },
     #[error("media file {0} was not found")]
     NotFound(PathBuf),
     #[error("{0} has no video stream")]
@@ -52,6 +53,15 @@ pub enum MediaError {
     InvalidAudioFormat { sample_rate: u32, channels: u16 },
     #[error("decoded audio has {samples} samples, not divisible by {channels} channels")]
     InvalidAudioSampleCount { samples: usize, channels: u16 },
+    /// A component's settings that it refused: `key` and why, for a
+    /// combination only the plugin can judge, or one that failed Celesta's
+    /// validation against the component's schema.
+    #[error("{key}: {message}")]
+    InvalidSettings { key: String, message: String },
+    /// A component that turned out unusable, at `open` or when it was
+    /// described.
+    #[error("{component} is unavailable: {reason}")]
+    ComponentUnavailable { component: String, reason: String },
 }
 
 #[derive(Debug, thiserror::Error)]

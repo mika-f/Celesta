@@ -43,7 +43,7 @@ WAV と MP4 はリポジトリ全体の設定で Git の管理対象外です。
 ```sh
 python3 examples/prism/make-score.py
 node skills/celesta/scripts/inspect.mjs examples/prism/film.tsx --every 15
-target/release/celesta-exporter --preset medium --crf 17 \
+target/release/celesta-exporter --video-option crf=17 \
   --react examples/prism/film.tsx examples/prism/prism.mp4
 ```
 

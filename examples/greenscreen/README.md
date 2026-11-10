@@ -37,7 +37,8 @@ To make the footage again after changing `footage.tsx`:
 
 ```sh
 cargo run -p celesta-exporter -- --react examples/greenscreen/footage.tsx \
-  --crf 22 --preset slow --overwrite examples/greenscreen/assets/footage.mp4
+  --video-option crf=22 --video-option preset=slow --overwrite \
+  examples/greenscreen/assets/footage.mp4
 cargo run -p celesta-exporter -- --react examples/greenscreen/footage.tsx \
   --frame 45 --overwrite still.png
 sips -s format jpeg -s formatOptions 85 still.png --out examples/greenscreen/assets/still.jpg

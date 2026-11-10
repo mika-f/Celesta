@@ -31,7 +31,7 @@ PowerShell を使います。`C:\path\to\Celesta` を Celesta のインストー
 :::
 ::::
 
-既存の出力ファイルを置き換えるには `--overwrite` を追加します。`--from` と `--to` で時間範囲を指定できます。
+出力の拡張子で書き出すファイルの種類が決まります。`.mp4` は H.264 映像と AAC 音声、`.mov` と `.webm` は透過動画（後述の「透過動画」）、`.png`、`.jpg`、`.webp` は静止画（後述の「静止画とコンタクトシート」）です。既存の出力ファイルを置き換えるには `--overwrite` を追加します。`--from` と `--to` で時間範囲を指定できます。
 
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]
@@ -90,30 +90,70 @@ const cues = parseSubtitles(captions, { fps: 30 });
 
 時刻付きのデータを自分で書き出すときは `formatSubtitles(cues, { fps, format: 'srt' })` を使います。
 
-## 画質と書き出し速度
+## エンコーダーと設定を選ぶ
 
-MP4 は libx264 を使い、既定では --preset medium、--crf 18 で書き出します。veryfast などの速いプリセットは、画質をほぼ保ちながらエンコード時間を短縮しますが、ファイルは大きくなる傾向があります。CRF は 0〜51 で、小さいほど高画質・大容量になります。--color-conversion は auto、gpu、encoder を指定できます。--render-quality draft は拡大した文字の再描画を省略して動きの確認を速くします。仕上がりの確認には既定の final を使ってください。--bit-depth 10 は 10 bit の H.264（High 10）で書き出し、暗いグラデーションをより滑らかに保てますが、再生できる環境は限られます。既定は 8 です。
+Celesta は動画を 3 つのメディアコンポーネントで書き出します。ファイルを書くマルチプレクサー（muxer）、映像エンコーダー、音声エンコーダーです。どれも `ffmpeg/libx264` のように `<プラグイン>/<コンポーネント>` という名前を持ちます。出力の拡張子でマルチプレクサーが決まり、マルチプレクサーの既定のコーデックでエンコーダーが決まります。
+
+| 拡張子 | マルチプレクサー | 映像エンコーダー | 音声エンコーダー |
+| --- | --- | --- | --- |
+| `.mp4`、`.m4v` | `ffmpeg/mp4` | `ffmpeg/libx264`（H.264） | `ffmpeg/aac`（AAC） |
+| `.mov` | `ffmpeg/mov` | `ffmpeg/prores`（ProRes 4444） | `ffmpeg/pcm`（24 bit PCM） |
+| `.webm` | `ffmpeg/webm` | `ffmpeg/vp9`（アルファ付き VP9） | `ffmpeg/opus`（Opus、48 kHz） |
+
+`--list-components` は、入っているコンポーネントを種類とプラグインとともに一覧にします。`--check` を加えると、各プラグインにそのコンポーネントがこのコンピューターで使えるかを尋ねます（プラグインを 1 回ずつ起動します）。`--describe <プラグイン/id>` は、ひとつのコンポーネントの設定を、キーごとに型、既定値、選択肢または範囲とともに表示します。どちらも `--json` で JSON を出力し、ソースも出力も取りません。
+
+`--video-encoder` と `--audio-encoder` はマルチプレクサーの既定とは別のエンコーダーを、`--muxer` は拡張子とは別のマルチプレクサーを選びます。`--audio-encoder none` は音声のない動画を書き出します。`--audio-option` とは一緒に指定できません。マルチプレクサーが音声を受け付けず、音声エンコーダーも指定していないときも、`--audio-option` は指定できません。`--video-option key=value` と `--audio-option key=value` は選んだエンコーダーの設定を指定し、値はその設定の型で読まれます。複数の設定は繰り返して指定します。エンコーダーにないキーや受け付けない値は、描画を始める前に失敗します。Celesta に同梱の FFmpeg プラグインには、このリリースでは次の設定があります（入っているコンポーネントの設定は `--describe` で確認できます）。
+
+| コンポーネント | キー | 値（既定値） |
+| --- | --- | --- |
+| `ffmpeg/libx264` | `preset` | `ultrafast`、`superfast`、`veryfast`、`faster`、`fast`、`medium`、`slow`、`slower`、`veryslow`（`medium`） |
+| | `rateControl` | 品質一定の `crf`、平均ビットレートの `vbr`（`crf`） |
+| | `crf` | 0〜51、`rateControl=crf` のとき。小さいほど高画質・大容量（18） |
+| | `bitrate` | ビット毎秒、`rateControl=vbr` のとき（8000000） |
+| | `bitDepth` | `8`、または 10 bit の H.264（High 10）の `10`（`8`） |
+| | `tune` | `film` や `animation` などの x264 の tune（なし） |
+| `ffmpeg/prores` | `profile` | `4444`、またはアルファのない 422 HQ の `hq`（`4444`） |
+| `ffmpeg/vp9` | `crf` | 0〜63（20） |
+| | `alpha` | `true` または `false`（`true`） |
+| `ffmpeg/aac`、`ffmpeg/opus` | `bitrate` | 32000〜512000 ビット毎秒（192000） |
+| `ffmpeg/pcm` | `format` | `s16le`、`s24le`、`f32le`（`s24le`） |
+
+マルチプレクサーは既定の設定のままです。MP4 と MOV は `faststart` 付きで書き出し、インデックスを先頭に置くので、ブラウザーはダウンロードが終わる前に再生を始められます。
+
+`veryfast` などの速い x264 のプリセットは、画質をほぼ保ちながらエンコード時間を短縮しますが、ファイルは大きくなる傾向があります。`bitDepth=10` は暗いグラデーションをより滑らかに保てますが、再生できる環境は限られます。`--render-quality draft` は拡大した文字の再描画を省略して動きの確認を速くします。仕上がりの確認には既定の `final` を使ってください。エンコーダーが YUV を受け取り、描画がソフトウェアでないときは、Celesta が GPU で RGB から YUV に変換します。それ以外ではエンコーダーが変換します。
+
+`--preset <名前>` は書き出しプリセット（これらの選択をまとめて保存したもの）を指定します。プリセットは今後のリリースで加わるため、今はどの名前もエラーコード `unknown_preset` で失敗します。x264 のプリセットは上の設定です。`--preset veryfast` は失敗し、そのヒントは `--video-option preset=veryfast` を使うよう伝えます。`--json` を付けないときは、エラーのヒントはメッセージのあとの `hint:` の行に表示されます。
 
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]
 
 ```sh title="速いプリセットで書き出す"
-"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --preset veryfast --crf 18 first-scene.tsx draft.mp4
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+```
+
+```sh title="入っているコンポーネントを一覧にする"
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --list-components --check
 ```
 
 :::
 :::tab[Windows]
 
 ```sh title="速いプリセットで書き出す"
-& "C:\path\to\Celesta\Celesta-export.exe" --react --preset veryfast --crf 18 first-scene.tsx draft.mp4
+& "C:\path\to\Celesta\Celesta-export.exe" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+```
+
+```sh title="入っているコンポーネントを一覧にする"
+& "C:\path\to\Celesta\Celesta-export.exe" --list-components --check
 ```
 
 :::
 ::::
 
+MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選択を `muxer`、`videoEncoder`（`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`）、`audioEncoder`（同じ形、または `"none"`）で受け取ります。MCP は各オプションの型を確かめるので、`crf` は数値で渡します。パッケージはオプションを `--video-option` と `--audio-option` のテキストとして書き出しツールに渡し、コマンドラインと同じく各設定の型で読むので、`"18"` でも受け付けます。MCP の `list_components` と `describe_component` ツール、パッケージの `listComponents()` と `describeComponent()` で、コンポーネントを一覧にしたり、その設定を確認したりできます。
+
 ## 繰り返し再生する動画
 
-Shorts や TikTok は動画を繰り返し再生します。最後のフレームが最初のフレームへつながる動画では、`--loop` を付けて音もつながるようにします。AAC のエンコーダーは無音から符号化を始めるので、付けないと最初のフレームのキックなどの立ち上がりが約 10 ms にじみ、繰り返すたびにそれが鳴ります。`--loop` を付けると、エンコーダーは先にサウンドトラックの末尾を符号化し、その分は MP4 の edit list で隠します。音声の長さは映像とちょうど同じままです。サウンドトラック自体はループしている必要があり、末尾からはみ出す響きは先頭に重ねておきます。`--loop` は MP4 専用です。`.mov` の PCM 音声は付けなくてもつながります。
+Shorts や TikTok は動画を繰り返し再生します。最後のフレームが最初のフレームへつながる動画では、`--loop` を付けて音もつながるようにします。AAC のエンコーダーは無音から符号化を始めるので、付けないと最初のフレームのキックなどの立ち上がりが約 10 ms にじみ、繰り返すたびにそれが鳴ります。`--loop` を付けると、エンコーダーは先にサウンドトラックの末尾を符号化し、その分は MP4 の edit list で隠します。音声の長さは映像とちょうど同じままです。サウンドトラック自体はループしている必要があり、末尾からはみ出す響きは先頭に重ねておきます。`--loop` はどの動画にも付けられます。MP4 と MOV はその分を隠し、WebM のようにそれを隠せないマルチプレクサーでは `--loop` は何も変えません。`.mov` の PCM 音声にはエンコーダーの遅延がないので、付けなくてもつながります。
 
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]
@@ -159,11 +199,11 @@ Shorts や TikTok は動画を繰り返し再生します。最後のフレー�
 
 ## 透過動画
 
-動画の形式は拡張子で決まります。`.mp4` は上記のとおり H.264 映像と AAC 音声です。`.mov` は ProRes 4444（`yuva444p10le`）と 24 bit PCM 音声、`.webm` はアルファ付きの VP9（`yuva420p`、CRF 20）と 48 kHz の Opus 音声です。アプリでは保存ダイアログで拡張子を選びます。形式を選ぶ別のメニューはありません。コマンドラインでは、上記と同じコマンドの出力を `overlay.mov` や `overlay.webm` にします。`--output-format mp4|mov|webm` で形式を明示でき、拡張子と食い違うと使い方のエラーになります。
+動画の形式は拡張子で決まります。`.mp4` は上記のとおり H.264 映像と AAC 音声です。`.mov` は ProRes 4444（`yuva444p10le`）と 24 bit PCM 音声、`.webm` はアルファ付きの VP9（`yuva420p`、CRF 20）と 48 kHz の Opus 音声です。アプリでは保存ダイアログで拡張子を選びます。形式を選ぶ別のメニューはありません。コマンドラインでは、上記と同じコマンドの出力を `overlay.mov` や `overlay.webm` にします。アルファを残すかどうかはエンコーダーが決めます。ProRes 4444 と VP9 は、`--video-option profile=hq` や `--video-option alpha=false` を指定しない限りアルファを残し、H.264 は残しません。
 
-何も描かれていない領域だけが透明になるため、フレーム全体を覆うレイヤー（全面の背景など）があると出力は不透明になります。アルファはストレート（非乗算済み）で、色は BT.709（リミテッドレンジ）に変換されてタグ付けされます。`--preset`、`--crf`、`--bit-depth`、`--color-conversion`、`--loop` は MP4 専用で、`.mov` や `.webm` と併用すると使い方のエラーになります。
+何も描かれていない領域だけが透明になるため、フレーム全体を覆うレイヤー（全面の背景など）があると出力は不透明になります。アルファはストレート（非乗算済み）で、色は BT.709（リミテッドレンジ）に変換されてタグ付けされます。
 
-Celesta は[コーデックプラグイン](/ja/docs/plugins/#コーデックプラグイン)でエンコードします。プラグインの FFmpeg のビルドに選んだ形式のエンコーダーがない場合、書き出しはエラーコード `encoder_unavailable` で失敗します。コーデックプラグインがない場合は `no_codec` で失敗します。
+Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)でエンコードします。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがない場合（libx264 のない LGPL ビルドなど）、書き出しはエラーコード `component_unavailable` で、その理由とともに失敗します。メディアプラグインがない場合は、その拡張子を書けるマルチプレクサーがないため、プラグインの入れ方のヒント付きで `unsupported_output` で失敗します。
 
 ## 静止画とコンタクトシート
 
@@ -225,7 +265,7 @@ Celesta は[コーデックプラグイン](/ja/docs/plugins/#コーデックプ
 
 ## 描画に使う API を選ぶ
 
-アプリと書き出しツールの両方で、--driver に auto（既定）、vulkan、dx12（Windows）、metal（macOS）、gl を指定できます。auto は wgpu の順序（Vulkan、Metal、DX12、OpenGL）で利用可能な描画アダプタを探します。明示した API は、そのビルドと実行環境の両方で利用できる必要があります。これは描画用 API の選択で、MP4 のエンコードには引き続き libx264 を使います。
+アプリと書き出しツールの両方で、--driver に auto（既定）、vulkan、dx12（Windows）、metal（macOS）、gl を指定できます。auto は wgpu の順序（Vulkan、Metal、DX12、OpenGL）で利用可能な描画アダプタを探します。明示した API は、そのビルドと実行環境の両方で利用できる必要があります。これは描画用 API の選択で、エンコードは引き続きメディアコンポーネントで行います。
 
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]
@@ -244,7 +284,7 @@ Celesta は[コーデックプラグイン](/ja/docs/plugins/#コーデックプ
 :::
 ::::
 
-スクリプトや AI エージェント向けには `--json` を追加します。進捗は表示されず、完了時に JSON を 1 行だけ出力します。状態、生成ファイル、警告、読み込み後のサイズ・fps・フレーム数、失敗時のエラーコードとメッセージが含まれます。生成ファイルのうち動画には `"format"`（`mp4`、`mov`、`webm`）と `"alpha"`（`true` または `false`）が付き、音声のある動画には `"loudness"`（`"integratedLufs"`、`"truePeakDbtp"`、`--loudness` を付けたときは掛けたゲインの `"gainDb"`）も付きます。引数が拒否された場合は、状態とエラーのみです。
+スクリプトや AI エージェント向けには `--json` を追加します。進捗は表示されず、完了時に JSON を 1 行だけ出力します。状態、生成ファイル、警告、読み込み後のサイズ・fps・フレーム数、失敗時のエラーコードとメッセージが含まれます。生成ファイルのうち動画には `"muxer"`（`"ffmpeg/mp4"` など）、`"video"` と `"audio"`（エンコーダーの `"component"` と書き出したコーデック文字列の `"codec"`、たとえば `"avc1.64001F"`。音声のない動画では `"audio"` は `null`）、`"alpha"`（`true` または `false`）、マルチプレクサーが書いたすべてのファイルの `"files"` が付きます。音声のある動画には `"loudness"`（`"integratedLufs"`、`"truePeakDbtp"`、`--loudness` を付けたときは掛けたゲインの `"gainDb"`）も付きます。コンポーネントに関するエラーコードは、`unsupported_output`（出力の拡張子を書けるマルチプレクサーがない）、`component_unavailable`（コンポーネントが入っていないか、ここでは使えない。理由付き）、`incompatible_components`（マルチプレクサーがエンコーダーのコーデックを受け付けない）、`invalid_option`（エンコーダーにない設定や受け付けない値）、`unknown_preset` です。引数が拒否された場合は、状態とエラーのみです。
 
 ソースビルドを使う場合は、[開発者向け手順](/ja/docs/build-from-source/)に対応する Cargo コマンドがあります。
 
@@ -266,7 +306,7 @@ cargo run -p celesta-exporter --release -- --react --driver vulkan packages/cli/
 
 最小構成のコンテナにはフォントがないことがあり、少なくとも 1 つなければテキストは描けません。`fonts-dejavu-core`（日本語には `fonts-noto-cjk`）などをインストールするか、`<Font>` でファイルを読み込んでください。
 
-ソフトウェア描画で `--color-conversion auto` を使うと RGB から YUV への変換をエンコーダーに任せます。`--render-quality draft` はタイミング確認には速いですが、ピクセル確認には不向きです。自分で Celesta をビルドせずコンテナから書き出すには、ルートで [Linux コンテナイメージ](https://github.com/mika-f/Celesta/tree/main/packaging/linux)を作り、`/work` にマウントするプロジェクトのフォルダから実行します。`--user` で出力の所有者を root ではなく自分にします。
+ソフトウェア描画では、RGB から YUV への変換はエンコーダーが行います。そのほうが描画側で変換するより速いためです。`--render-quality draft` はタイミング確認には速いですが、ピクセル確認には不向きです。自分で Celesta をビルドせずコンテナから書き出すには、ルートで [Linux コンテナイメージ](https://github.com/mika-f/Celesta/tree/main/packaging/linux)を作り、`/work` にマウントするプロジェクトのフォルダから実行します。`--user` で出力の所有者を root ではなく自分にします。
 
 ```sh title="コンテナイメージをビルド"
 docker build -f packaging/linux/Dockerfile -t celesta-exporter .

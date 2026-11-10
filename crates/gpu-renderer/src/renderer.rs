@@ -23,8 +23,8 @@ use crate::transform::{CLIP_ENTRY_SIZE, ClipEntry, Walk};
 #[cfg(target_os = "macos")]
 use crate::types::NativePreviewFrame;
 use crate::types::{
-    GpuFrame, GpuRenderOptions, GpuRenderTarget, PreviewFrame, PreviewFrameStatus, ReadbackFormat,
-    RenderQuality,
+    Color, GpuFrame, GpuRenderOptions, GpuRenderTarget, PreviewFrame, PreviewFrameStatus,
+    ReadbackFormat, RenderQuality,
 };
 use crate::yuv::YuvConverter;
 use crate::{BYTES_PER_PIXEL, PIPELINE_DEPTH};
@@ -549,6 +549,14 @@ impl GpuRenderer {
         }
         self.readback_format = format;
         Ok(())
+    }
+
+    /// Chooses the colour frames from now on are cleared to: transparent for
+    /// an export whose encoder keeps alpha, the default opaque background
+    /// otherwise. Frames already in flight keep the one they were submitted
+    /// with.
+    pub fn set_background(&mut self, color: Color) {
+        self.options.background = color;
     }
 
     pub fn with_asset_root(mut self, asset_root: impl Into<PathBuf>) -> Self {

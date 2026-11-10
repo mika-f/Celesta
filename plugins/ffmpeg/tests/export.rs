@@ -4,23 +4,25 @@
 //! own tests run on the test codec; these hold the contract with FFmpeg.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use celesta_codec_ffmpeg::{FfmpegBackend, FfmpegCodec};
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{
-    AudioLoudness, BitDepth, ColorConversion, EncoderPreset, ExportCancellation, ExportError,
-    ExportOptions, ExportProgress, ExportedFile, Exporter, LoudnessTarget, VideoEncoding,
-    VideoFormat,
+    AudioChoice, AudioLoudness, EncoderChoice, ExportCancellation, ExportError, ExportOptions,
+    ExportProgress, ExportedFile, Exporter, LoudnessTarget, OutputChoice, SettingInput,
 };
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{AudioDecoder, CodecProvider, VideoFrameDecoder, measure_loudness};
+use celesta_media::{
+    AudioDecoder, AudioEncoder, ComponentKind, ComponentRef, Decoder, Encoded, MediaError,
+    MediaProvider, MediaRegistry, Muxer, PixelFormat, RegisteredPlugin, SessionId, VideoEncoder,
+    VideoEncoderOpened, VideoEncoderRequest, VideoFrameDecoder, measure_loudness,
+};
 use celesta_project::{
     Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
 };
 use ez_ffmpeg::stream_info::{StreamInfo, find_audio_stream_info, find_video_stream_info};
 use ez_ffmpeg::{FfmpegContext, Input, Output};
-use strum::VariantArray;
 
 /// GPU devices made at once in one process are unsafe on some drivers:
 /// Mesa's lavapipe, which Linux CI renders with, crashes the test binary
@@ -80,12 +82,37 @@ fn minimal_project() -> Project {
 
 #[test]
 fn the_ffmpeg_codec_has_every_format_encoder() {
-    let mut codec = FfmpegCodec::new();
-    for &format in VideoFormat::VARIANTS {
-        codec
-            .check_encoder(format.container())
-            .unwrap_or_else(|error| panic!("{format}: {error}"));
+    let described = FfmpegCodec::new().describe().unwrap();
+    for (kind, id) in [
+        (ComponentKind::VideoEncoder, "libx264"),
+        (ComponentKind::VideoEncoder, "prores"),
+        (ComponentKind::VideoEncoder, "vp9"),
+        (ComponentKind::AudioEncoder, "aac"),
+        (ComponentKind::AudioEncoder, "opus"),
+        (ComponentKind::AudioEncoder, "pcm"),
+        (ComponentKind::Muxer, "mp4"),
+        (ComponentKind::Muxer, "mov"),
+        (ComponentKind::Muxer, "webm"),
+    ] {
+        let component = described
+            .iter()
+            .find(|component| component.kind == kind && component.id == id)
+            .unwrap_or_else(|| panic!("{id} is described"));
+        assert!(component.available, "{id}: {:?}", component.reason);
     }
+}
+
+/// `plugin/component` as a reference.
+fn component(text: &str) -> ComponentRef {
+    text.parse().unwrap()
+}
+
+/// Options given as command-line text.
+fn options(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, SettingInput> {
+    pairs
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), SettingInput::Text((*value).to_owned())))
+        .collect()
 }
 
 #[test]
@@ -182,6 +209,7 @@ fn exports_frame_exact_mp4_with_silent_audio() {
         panic!("exported file has no (silent) audio stream");
     };
     assert_eq!((sample_rate, nb_channels), (8_000, 2));
+    assert_eq!(audio_stream(&url).0, "aac");
 
     // The two rendered frames are distinct decoded frames carrying the
     // testsrc2 pattern (not a flat fill).
@@ -217,6 +245,97 @@ fn exports_frame_exact_mp4_with_silent_audio() {
     );
     assert!(matches!(result, Err(ExportError::Cancelled)));
     assert!(!cancelled_output.exists());
+}
+
+/// What a video encoder was offered and what it chose.
+type Opened = Arc<Mutex<Vec<(Vec<PixelFormat>, PixelFormat)>>>;
+
+/// The FFmpeg plugin, noting in `opened` what each video encoder was offered
+/// and chose. With `rgba_only`, it sees what a renderer that reads back no
+/// YUV offers: only the RGBA formats, so libx264 converts them itself.
+struct Watched {
+    codec: FfmpegCodec,
+    rgba_only: bool,
+    opened: Opened,
+}
+
+impl MediaProvider for Watched {
+    fn describe(&mut self) -> Result<Vec<celesta_media::ComponentDescription>, MediaError> {
+        self.codec.describe()
+    }
+
+    fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+        self.codec.decoder()
+    }
+
+    fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
+        Some(self)
+    }
+
+    fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
+        self.codec.audio_encoder()
+    }
+
+    fn muxer(&mut self) -> Option<&mut dyn Muxer> {
+        self.codec.muxer()
+    }
+}
+
+impl VideoEncoder for Watched {
+    fn open_video(
+        &mut self,
+        request: &VideoEncoderRequest<'_>,
+    ) -> Result<VideoEncoderOpened, MediaError> {
+        let offered: Vec<PixelFormat> = request
+            .offered
+            .iter()
+            .copied()
+            .filter(|format| {
+                !self.rgba_only || matches!(format, PixelFormat::Rgba8 | PixelFormat::Rgba16)
+            })
+            .collect();
+        let opened = self.codec.open_video(&VideoEncoderRequest {
+            offered: &offered,
+            ..*request
+        })?;
+        self.opened
+            .lock()
+            .unwrap()
+            .push((request.offered.to_vec(), opened.input));
+        Ok(opened)
+    }
+
+    fn encode_video(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        frame: Vec<u8>,
+    ) -> Result<Encoded, MediaError> {
+        self.codec.encode_video(session, pts, frame)
+    }
+
+    fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+        self.codec.finish_video(session)
+    }
+
+    fn abort_video(&mut self, session: SessionId) {
+        self.codec.abort_video(session);
+    }
+}
+
+/// Makes a [`Watched`] FFmpeg plugin the media plugin of every export.
+fn watch(rgba_only: bool, opened: &Opened) {
+    let opened = opened.clone();
+    celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(vec![RegisteredPlugin {
+        factory: Arc::new(move |_, _| {
+            Ok(Box::new(Watched {
+                codec: FfmpegCodec::new(),
+                rgba_only,
+                opened: opened.clone(),
+            }) as Box<_>)
+        }),
+        ..celesta_codec_ffmpeg::registered()
+    }]))));
 }
 
 #[test]
@@ -274,44 +393,63 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
     });
 
     // Lossless encodes, so any difference comes from the conversion itself.
-    let export = |color_conversion, bit_depth, name: &str| {
+    let export = |bit_depth: &str, name: &str| {
         let output = directory.path().join(name);
-        let result = exporter(ExportOptions {
-            video: VideoEncoding {
-                preset: EncoderPreset::Ultrafast,
-                crf: 0,
-                color_conversion,
-                bit_depth,
+        Exporter::new(ExportOptions {
+            output: OutputChoice {
+                video: EncoderChoice {
+                    component: Some(component("ffmpeg/libx264")),
+                    options: options(&[
+                        ("preset", "ultrafast"),
+                        ("crf", "0"),
+                        ("bitDepth", bit_depth),
+                    ]),
+                },
+                ..OutputChoice::default()
             },
             ..ExportOptions::default()
         })
-        .export_project(&project, directory.path(), &output);
-        result.map(|()| output)
+        .export_project(&project, directory.path(), &output)
+        .map(|()| output)
+    };
+    // The GPU's conversion when the renderer offers YUV; libswscale's of
+    // RGBA when it is not offered. Each export answers the input libx264
+    // chose and what it was offered.
+    let watched = |rgba_only: bool, bit_depth: &str, name: &str| {
+        let opened = Opened::default();
+        watch(rgba_only, &opened);
+        let result = export(bit_depth, name);
+        celesta_codec_ffmpeg::install();
+        let mut opened = opened.lock().unwrap();
+        assert!(opened.len() <= 1, "{opened:?}");
+        result.map(|output| (output, opened.pop().expect("libx264 was opened")))
     };
     let mut pixel_formats: Vec<i32> = Vec::new();
-    for &bit_depth in BitDepth::VARIANTS {
-        let on_gpu = match export(
-            ColorConversion::Gpu,
-            bit_depth,
-            &format!("gpu-{bit_depth}.mp4"),
-        ) {
-            Ok(output) => output,
-            Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
-                skip_without_gpu(&error);
-                return;
-            }
-            Err(ExportError::Render(GpuRenderError::UnsupportedReadbackFormat(_))) => {
-                eprintln!("skipping GPU color conversion test: not supported here");
-                return;
-            }
-            Err(error) => panic!("GPU conversion export failed: {error}"),
-        };
-        let in_encoder = export(
-            ColorConversion::Encoder,
-            bit_depth,
-            &format!("encoder-{bit_depth}.mp4"),
-        )
-        .unwrap();
+    for (bit_depth, yuv, rgba) in [
+        ("8", PixelFormat::Yuv420p, PixelFormat::Rgba8),
+        ("10", PixelFormat::Yuv420p10, PixelFormat::Rgba16),
+    ] {
+        let (on_gpu, (offered, input)) =
+            match watched(false, bit_depth, &format!("gpu-{bit_depth}.mp4")) {
+                Ok(exported) => exported,
+                Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+                    skip_without_gpu(&error);
+                    return;
+                }
+                Err(error) => panic!("GPU conversion export failed: {error}"),
+            };
+        if !offered.contains(&yuv) {
+            // A software renderer, such as CI's lavapipe, reads back no YUV
+            // (deviation 18): there is no GPU conversion to compare.
+            eprintln!(
+                "skipping GPU color conversion test: the renderer offers no YUV ({offered:?})"
+            );
+            return;
+        }
+        assert_eq!(input, yuv, "{bit_depth}-bit on the GPU");
+        let (in_encoder, (_, input)) =
+            watched(true, bit_depth, &format!("encoder-{bit_depth}.mp4")).unwrap();
+        assert_eq!(input, rgba, "{bit_depth}-bit in the encoder");
 
         let mut decoder = FfmpegBackend::new();
         for time in [0.0, 0.5] {
@@ -410,21 +548,27 @@ fn transparent_project(dir: &Path) -> Project {
     project
 }
 
-/// Exports `project` as `format` to `name` in `dir`, or `None` without a GPU.
-fn export_as(project: &Project, dir: &Path, format: VideoFormat, name: &str) -> Option<PathBuf> {
+/// Exports `project` to `name` in `dir`, whose extension picks the muxer, or
+/// `None` without a GPU.
+fn export_as(project: &Project, dir: &Path, name: &str) -> Option<PathBuf> {
+    export_with(project, dir, name, ExportOptions::default())
+}
+
+/// [`export_as`] with `options`.
+fn export_with(
+    project: &Project,
+    dir: &Path,
+    name: &str,
+    options: ExportOptions,
+) -> Option<PathBuf> {
     let output = dir.join(name);
-    match exporter(ExportOptions {
-        video_format: format,
-        ..ExportOptions::default()
-    })
-    .export_project(project, dir, &output)
-    {
+    match exporter(options).export_project(project, dir, &output) {
         Ok(()) => Some(output),
         Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
             skip_without_gpu(&error);
             None
         }
-        Err(error) => panic!("{format} export failed: {error}"),
+        Err(error) => panic!("{name} export failed: {error}"),
     }
 }
 
@@ -558,7 +702,7 @@ fn exports_transparent_prores_4444() {
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
-    let Some(output) = export_as(&project, directory.path(), VideoFormat::Mov, "clip.mov") else {
+    let Some(output) = export_as(&project, directory.path(), "clip.mov") else {
         return;
     };
 
@@ -576,7 +720,7 @@ fn exports_transparent_vp9_webm() {
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
-    let Some(output) = export_as(&project, directory.path(), VideoFormat::Webm, "clip.webm") else {
+    let Some(output) = export_as(&project, directory.path(), "clip.webm") else {
         return;
     };
 
@@ -602,19 +746,15 @@ fn every_format_muxes_audio_as_long_as_the_video() {
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
-    for (format, name) in [
-        (VideoFormat::Mp4, "clip.mp4"),
-        (VideoFormat::Mov, "clip.mov"),
-        (VideoFormat::Webm, "clip.webm"),
-    ] {
-        let Some(output) = export_as(&project, directory.path(), format, name) else {
+    for name in ["clip.mp4", "clip.mov", "clip.webm"] {
+        let Some(output) = export_as(&project, directory.path(), name) else {
             return;
         };
         // AAC rounds the last frame up to 1024 samples (0.128 s at 8 kHz).
         let seconds = decoded_audio_seconds(&output);
         assert!(
             (0.999..1.129).contains(&seconds),
-            "{format}: {seconds} s of audio"
+            "{name}: {seconds} s of audio"
         );
     }
 }
@@ -821,17 +961,13 @@ fn brings_the_mix_to_a_loudness_target() {
         "aevalsrc=exprs='0.02*sin(2*PI*440*t)+0.5*sin(2*PI*2000*t)*lt(mod(t,0.25),0.005)':sample_rate=48000:duration=1",
         "tone.wav",
     );
-    let options = |format| ExportOptions {
-        video_format: format,
+    let options = || ExportOptions {
         loudness: Some(LoudnessTarget::STREAMING),
         ..ExportOptions::default()
     };
-    let Some((first, reported, warnings)) = export_reporting(
-        &project,
-        directory.path(),
-        options(VideoFormat::Mov),
-        "first.mov",
-    ) else {
+    let Some((first, reported, warnings)) =
+        export_reporting(&project, directory.path(), options(), "first.mov")
+    else {
         return;
     };
     assert!(warnings.is_empty(), "{warnings:?}");
@@ -852,26 +988,227 @@ fn brings_the_mix_to_a_loudness_target() {
     assert!(source.true_peak_dbtp.unwrap() + gain > 0.0, "{gain} dB");
 
     // The same project comes out the same.
-    let (second, ..) = export_reporting(
-        &project,
-        directory.path(),
-        options(VideoFormat::Mov),
-        "second.mov",
-    )
-    .unwrap();
+    let (second, ..) =
+        export_reporting(&project, directory.path(), options(), "second.mov").unwrap();
     assert!(decode(&second).samples == decoded.samples);
 
     // AAC moves the loudness by a few hundredths.
-    let (mp4, ..) = export_reporting(
-        &project,
-        directory.path(),
-        options(VideoFormat::Mp4),
-        "film.mp4",
-    )
-    .unwrap();
+    let (mp4, ..) = export_reporting(&project, directory.path(), options(), "film.mp4").unwrap();
     let integrated = measure_loudness(&decode(&mp4)).integrated_lufs.unwrap();
     assert!(
         (integrated + 14.0).abs() <= 0.3,
         "{integrated} LUFS after AAC"
     );
+}
+
+#[test]
+fn mov_and_webm_stay_tagged_bt709_and_mp4_untagged() {
+    let _gpu = gpu();
+    let directory = tempfile::tempdir().unwrap();
+    let project = transparent_project(directory.path());
+    // AVCOL_SPC_BT709, AVCOL_PRI_BT709 and AVCOL_TRC_BT709 are all 1; the
+    // unspecified values (AVCOL_SPC_UNSPECIFIED, AVCOL_PRI_UNSPECIFIED,
+    // AVCOL_TRC_UNSPECIFIED) all 2 (deviation 8).
+    for (name, colors) in [
+        ("clip.mov", (1, 1, 1)),
+        ("clip.webm", (1, 1, 1)),
+        ("clip.mp4", (2, 2, 2)),
+    ] {
+        let Some(output) = export_as(&project, directory.path(), name) else {
+            return;
+        };
+        let (_, tagged, _) = video_stream(&output.to_string_lossy());
+        assert_eq!(tagged, colors, "{name}");
+    }
+}
+
+/// The hits of `a_looping_mp4_starts_its_sound_from_its_end`, at 48 kHz.
+fn hits_project(dir: &Path) -> Project {
+    let mut project = transparent_project(dir);
+    project.settings.sample_rate = 48_000;
+    with_audio(
+        project,
+        dir,
+        "aevalsrc=exprs='0.2*exp(-40*mod(t,0.25))*(cos(2*PI*1000*mod(t,0.25))+sin(2*PI*2500*mod(t,0.25))+sin(2*PI*4400*mod(t,0.25))+cos(2*PI*6000*mod(t,0.25)))':sample_rate=48000:duration=1",
+        "hits.wav",
+    )
+}
+
+#[test]
+fn a_looping_webm_is_written_as_without_loop() {
+    let _gpu = gpu();
+    let directory = tempfile::tempdir().unwrap();
+    let project = hits_project(directory.path());
+    let export = |looping, name| {
+        export_with(
+            &project,
+            directory.path(),
+            name,
+            ExportOptions {
+                looping,
+                ..ExportOptions::default()
+            },
+        )
+    };
+    let (Some(once), Some(looped)) = (export(false, "once.webm"), export(true, "looped.webm"))
+    else {
+        return;
+    };
+    let decode = |path: &Path| FfmpegBackend::new().decode_audio(path, 48_000, 2).unwrap();
+    assert!(decode(&once).samples == decode(&looped).samples);
+}
+
+#[test]
+fn a_looping_mov_decodes_as_without_loop() {
+    let _gpu = gpu();
+    let directory = tempfile::tempdir().unwrap();
+    let project = hits_project(directory.path());
+    let export = |looping, name| {
+        export_with(
+            &project,
+            directory.path(),
+            name,
+            ExportOptions {
+                looping,
+                ..ExportOptions::default()
+            },
+        )
+    };
+    let (Some(once), Some(looped)) = (export(false, "once.mov"), export(true, "looped.mov")) else {
+        return;
+    };
+    assert_eq!(
+        audio_stream(&looped.to_string_lossy()),
+        ("pcm_s24le".to_owned(), 48_000)
+    );
+    // The edit list hides the PCM lead-in: the sound still starts at 0 and
+    // lasts exactly the video's second.
+    let Some(StreamInfo::Audio {
+        start_time,
+        duration,
+        time_base,
+        ..
+    }) = find_audio_stream_info(looped.to_string_lossy().into_owned()).unwrap()
+    else {
+        panic!("the looping export has no audio stream");
+    };
+    assert_eq!(start_time, 0);
+    assert_eq!(
+        duration * i64::from(time_base.num),
+        i64::from(time_base.den),
+        "the sound lasts {duration} x {}/{} s",
+        time_base.num,
+        time_base.den
+    );
+    // The looping file holds the lead-in, ...
+    assert_ne!(
+        std::fs::read(&once).unwrap(),
+        std::fs::read(&looped).unwrap(),
+        "the looping MOV has no lead-in"
+    );
+    // ... which decodes to nothing: PCM has no priming to smear, so the
+    // rest is the same samples.
+    let decode = |path: &Path| FfmpegBackend::new().decode_audio(path, 48_000, 2).unwrap();
+    let (once, looped) = (decode(&once), decode(&looped));
+    assert_eq!(looped.frame_count(), once.frame_count());
+    assert!(looped.samples == once.samples);
+}
+
+/// The sample frames of the mix of `project`'s one sound: its source,
+/// decoded at the project's rate in stereo, as the mixer reads it.
+fn mix_frames(dir: &Path, name: &str, sample_rate: u32) -> celesta_media::AudioBuffer {
+    FfmpegBackend::new()
+        .decode_audio(&dir.join(name), sample_rate, 2)
+        .unwrap()
+}
+
+#[test]
+fn mp4_and_mov_start_with_an_edit_list_hiding_the_delay() {
+    let _gpu = gpu();
+    let directory = tempfile::tempdir().unwrap();
+    let project = hits_project(directory.path());
+    let mix = mix_frames(directory.path(), "hits.wav", 48_000);
+    // The MOV with AAC too, so both hide AAC's 1024 priming samples.
+    let aac = || ExportOptions {
+        output: OutputChoice {
+            audio: AudioChoice::Encode(EncoderChoice {
+                component: Some(component("ffmpeg/aac")),
+                options: Default::default(),
+            }),
+            ..OutputChoice::default()
+        },
+        ..ExportOptions::default()
+    };
+    for name in ["clip.mp4", "clip.mov"] {
+        let Some(output) = export_with(&project, directory.path(), name, aac()) else {
+            return;
+        };
+        let Some(StreamInfo::Audio {
+            codec_name,
+            start_time,
+            ..
+        }) = find_audio_stream_info(output.to_string_lossy().into_owned()).unwrap()
+        else {
+            panic!("{name} has no audio stream");
+        };
+        assert_eq!(codec_name, "aac", "{name}");
+        assert_eq!(start_time, 0, "{name}");
+        let decoded = FfmpegBackend::new()
+            .decode_audio(&output, 48_000, 2)
+            .unwrap();
+        assert_eq!(decoded.frame_count(), mix.frame_count(), "{name}");
+    }
+}
+
+#[test]
+fn opus_webm_declares_its_codec_delay() {
+    let _gpu = gpu();
+    let directory = tempfile::tempdir().unwrap();
+    let project = hits_project(directory.path());
+    let mix = mix_frames(directory.path(), "hits.wav", 48_000);
+    let Some(output) = export_as(&project, directory.path(), "clip.webm") else {
+        return;
+    };
+    assert_eq!(
+        audio_stream(&output.to_string_lossy()),
+        ("opus".to_owned(), 48_000)
+    );
+    // Without CodecDelay the decoder would keep libopus's 312 priming
+    // samples.
+    let decoded = FfmpegBackend::new()
+        .decode_audio(&output, 48_000, 2)
+        .unwrap();
+    let difference = decoded.frame_count().abs_diff(mix.frame_count());
+    assert!(
+        difference < 960,
+        "{} decoded frames for a mix of {}",
+        decoded.frame_count(),
+        mix.frame_count()
+    );
+}
+
+#[test]
+fn pcm_mov_decodes_to_the_mix_exactly() {
+    let _gpu = gpu();
+    let directory = tempfile::tempdir().unwrap();
+    let project = hits_project(directory.path());
+    let mix = mix_frames(directory.path(), "hits.wav", 48_000);
+    let Some(output) = export_as(&project, directory.path(), "clip.mov") else {
+        return;
+    };
+    assert_eq!(
+        audio_stream(&output.to_string_lossy()),
+        ("pcm_s24le".to_owned(), 48_000)
+    );
+    let decoded = FfmpegBackend::new()
+        .decode_audio(&output, 48_000, 2)
+        .unwrap();
+    assert_eq!(decoded.samples.len(), mix.samples.len());
+    let worst = decoded
+        .samples
+        .iter()
+        .zip(&mix.samples)
+        .map(|(decoded, mixed)| (decoded - mixed).abs())
+        .fold(0.0, f32::max);
+    assert!(worst <= 1.0 / 8_388_608.0, "off by up to {worst}");
 }

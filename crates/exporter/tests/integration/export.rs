@@ -5,17 +5,16 @@ use celesta_codec_test::{
 };
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{
-    AudioLoudness, BitDepth, ColorConversion, ExportCancellation, ExportError, ExportJob,
+    AudioChoice, AudioLoudness, EncoderChoice, ExportCancellation, ExportError, ExportJob,
     ExportOptions, ExportProgress, ExportRange, ExportedFile, Exporter, LoudnessTarget,
-    ReactRuntimeOptions, VideoEncoding, VideoFormat,
+    OutputChoice, ReactRuntimeOptions, SettingInput,
 };
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{CodecProvider, Container, PixelFormat, measure_loudness};
+use celesta_media::{Decoder, MediaError, PixelFormat, measure_loudness};
 use celesta_project::{
     Animatable, AnimatablePoint, Asset, AssetSource, DuckGroups, Project, ProjectDuck,
     TimelineContent, TimelineItem, Track, TrackKind, Transform,
 };
-use strum::VariantArray;
 
 /// Reports a test skipped for want of a GPU adapter, or fails it when
 /// `CELESTA_REQUIRE_GPU=1` says the machine has one.
@@ -39,6 +38,29 @@ fn stored_video(media: &TestMedia) -> &StoredVideo {
 
 fn stored_audio(media: &TestMedia) -> &StoredAudio {
     media.audio.as_ref().expect("the export has audio")
+}
+
+/// The default components, with the test codec's video encoder given
+/// `options` (`input`, `alpha`) as command-line text.
+fn video_options(options: &[(&str, &str)]) -> OutputChoice {
+    OutputChoice {
+        video: EncoderChoice {
+            component: None,
+            options: options
+                .iter()
+                .map(|&(key, value)| (key.to_owned(), SettingInput::Text(value.to_owned())))
+                .collect(),
+        },
+        ..OutputChoice::default()
+    }
+}
+
+/// The names of the files in `directory`.
+fn files_in(directory: &Path) -> Vec<String> {
+    std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect()
 }
 
 /// A 64x64, 2 fps, 8 kHz project whose only item plays `source.ctc`, a 64x64
@@ -141,13 +163,15 @@ fn exports_frame_exact_mp4_with_silent_audio() {
     let exporter = crate::exporter(ExportOptions {
         overwrite: false,
         range: None,
-        video: VideoEncoding {
-            color_conversion: ColorConversion::Encoder,
-            ..VideoEncoding::default()
-        },
+        output: video_options(&[("input", "rgba8")]),
         ..ExportOptions::default()
     });
-    match exporter.export_project(&project, directory.path(), &output) {
+    let mut written = Vec::new();
+    match exporter.export_project_with_progress(&project, directory.path(), &output, |event| {
+        if let ExportProgress::Wrote(file) = event {
+            written.push(file);
+        }
+    }) {
         Ok(()) => {}
         Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
             skip_without_gpu(&error);
@@ -155,10 +179,26 @@ fn exports_frame_exact_mp4_with_silent_audio() {
         }
         Err(error) => panic!("export failed: {error}"),
     }
+    let [
+        ExportedFile::Video {
+            muxer,
+            video,
+            audio,
+            alpha,
+            ..
+        },
+    ] = &written[..]
+    else {
+        panic!("{written:?}");
+    };
+    assert_eq!(muxer.to_string(), "celesta-test-codec/file");
+    assert_eq!(video.codec, "ctst");
+    assert!(audio.is_some());
+    assert!(!alpha);
 
     // The encoder gets each frame as rendered: the source's colors, opaque.
     let media = read(&output);
-    assert_eq!(media.container, Some(Container::Mp4));
+    assert_eq!(media.extension.as_deref(), Some("mp4"));
     let video = stored_video(&media);
     assert_eq!(
         (video.width, video.height, video.frame_rate, video.format),
@@ -323,69 +363,50 @@ fn workspace_root() -> PathBuf {
 }
 
 #[test]
-fn color_conversion_decides_the_frames_the_encoder_gets() {
+fn the_encoder_chooses_the_frames_it_gets() {
     let directory = tempfile::tempdir().unwrap();
     let project = solid_video_project(directory.path(), &[[200, 40, 90, 255], [30, 160, 220, 255]]);
 
-    let export = |color_conversion, bit_depth, name: &str| {
-        let output = directory.path().join(name);
+    // 4:2:0 YUV comes from the GPU (64x64 luma and two 32x32 chroma planes,
+    // 16 bits a sample for 10 bits); RGBA is read back for the encoder to
+    // convert. A software renderer offers no YUV, which the encoder then
+    // refuses.
+    for (input, format, bytes) in [
+        ("yuv420p", PixelFormat::Yuv420p, 6_144),
+        ("yuv420p10", PixelFormat::Yuv420p10, 12_288),
+        ("rgba16", PixelFormat::Rgba16, 32_768),
+        ("rgba8", PixelFormat::Rgba8, 16_384),
+    ] {
+        let output = directory.path().join(format!("{input}.mp4"));
         let result = crate::exporter(ExportOptions {
-            video: VideoEncoding {
-                color_conversion,
-                bit_depth,
-                ..VideoEncoding::default()
-            },
+            output: video_options(&[("input", input)]),
             ..ExportOptions::default()
         })
         .export_project(&project, directory.path(), &output);
-        result.map(|()| output)
-    };
-    for &bit_depth in BitDepth::VARIANTS {
-        let on_gpu = match export(
-            ColorConversion::Gpu,
-            bit_depth,
-            &format!("gpu-{bit_depth}.mp4"),
-        ) {
-            Ok(output) => output,
+        match result {
+            Ok(()) => {}
             Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
                 skip_without_gpu(&error);
                 return;
             }
-            Err(ExportError::Render(GpuRenderError::UnsupportedReadbackFormat(_))) => {
-                eprintln!("skipping GPU color conversion test: not supported here");
-                return;
+            Err(ExportError::Codec {
+                source: MediaError::InvalidSettings { key, .. },
+                ..
+            }) if key == "input" && input.starts_with("yuv") => {
+                eprintln!("skipping {input}: this renderer does not offer it");
+                continue;
             }
-            Err(error) => panic!("GPU conversion export failed: {error}"),
-        };
-        let in_encoder = export(
-            ColorConversion::Encoder,
-            bit_depth,
-            &format!("encoder-{bit_depth}.mp4"),
-        )
-        .unwrap();
-
-        // On the GPU the frames arrive as 4:2:0 YUV (64x64 luma and two 32x32
-        // chroma planes, 16 bits a sample for 10 bits); else as RGBA of enough
-        // bits for the depth, for the encoder to convert.
-        let (gpu_format, gpu_bytes, encoder_format, encoder_bytes) = match bit_depth {
-            BitDepth::Eight => (PixelFormat::Yuv420p, 6_144, PixelFormat::Rgba8, 16_384),
-            BitDepth::Ten => (PixelFormat::Yuv420p10, 12_288, PixelFormat::Rgba16, 32_768),
-        };
-        for (output, format, bytes) in [
-            (&on_gpu, gpu_format, gpu_bytes),
-            (&in_encoder, encoder_format, encoder_bytes),
-        ] {
-            let media = read(output);
-            let video = stored_video(&media);
-            let name = output.file_name().unwrap().display();
-            assert_eq!(video.format, format, "{name}");
-            assert_eq!(video.frames.len(), 2, "{name}");
-            assert!(
-                video.frames.iter().all(|frame| frame.len() == bytes),
-                "{name}: frames of {:?} bytes, not {bytes}",
-                video.frames.iter().map(Vec::len).collect::<Vec<_>>()
-            );
+            Err(error) => panic!("{input} export failed: {error}"),
         }
+        let media = read(&output);
+        let video = stored_video(&media);
+        assert_eq!(video.format, format, "{input}");
+        assert_eq!(video.frames.len(), 2, "{input}");
+        assert!(
+            video.frames.iter().all(|frame| frame.len() == bytes),
+            "{input}: frames of {:?} bytes, not {bytes}",
+            video.frames.iter().map(Vec::len).collect::<Vec<_>>()
+        );
     }
 }
 
@@ -449,22 +470,29 @@ fn transparent_project(dir: &Path) -> Project {
     project
 }
 
-/// Exports `project` as `format` to `name` in `dir`, or `None` without a GPU.
-fn export_as(project: &Project, dir: &Path, format: VideoFormat, name: &str) -> Option<PathBuf> {
-    let output = dir.join(name);
+/// Exports `project` with `output`'s components to `name` in `dir`, or
+/// `None` without a GPU.
+fn export_with(project: &Project, dir: &Path, output: OutputChoice, name: &str) -> Option<PathBuf> {
+    let path = dir.join(name);
     match crate::exporter(ExportOptions {
-        video_format: format,
+        output,
         ..ExportOptions::default()
     })
-    .export_project(project, dir, &output)
+    .export_project(project, dir, &path)
     {
-        Ok(()) => Some(output),
+        Ok(()) => Some(path),
         Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
             skip_without_gpu(&error);
             None
         }
-        Err(error) => panic!("{format} export failed: {error}"),
+        Err(error) => panic!("{name} export failed: {error}"),
     }
+}
+
+/// Exports `project` with the default components to `name` in `dir`, or
+/// `None` without a GPU.
+fn export_as(project: &Project, dir: &Path, name: &str) -> Option<PathBuf> {
+    export_with(project, dir, OutputChoice::default(), name)
 }
 
 /// The pixel at `(x, y)` of a 64x64 `Rgba16` frame.
@@ -478,15 +506,15 @@ fn rgba16_pixel(frame: &[u8], x: usize, y: usize) -> [u16; 4] {
 fn alpha_formats_store_straight_16_bit_frames() {
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
-    for (format, name, container) in [
-        (VideoFormat::Mov, "clip.mov", Container::Mov),
-        (VideoFormat::Webm, "clip.webm", Container::Webm),
-    ] {
-        let Some(output) = export_as(&project, directory.path(), format, name) else {
+    // An encoder that keeps alpha takes straight 16-bit RGBA, whatever the
+    // renderer offers first.
+    for (format, name) in [("mov", "clip.mov"), ("webm", "clip.webm")] {
+        let choice = video_options(&[("input", "rgba16"), ("alpha", "true")]);
+        let Some(output) = export_with(&project, directory.path(), choice, name) else {
             return;
         };
         let media = read(&output);
-        assert_eq!(media.container, Some(container), "{format}");
+        assert_eq!(media.extension.as_deref(), Some(format));
         let video = stored_video(&media);
         assert_eq!(video.format, PixelFormat::Rgba16, "{format}");
 
@@ -529,7 +557,7 @@ fn sine(frequency: f64, sample_rate: u32, seconds: f64) -> Vec<f32> {
 /// `path`'s sound from the video's start, decoded to mono at `sample_rate`.
 fn decoded_audio(path: &Path, sample_rate: u32) -> Vec<f32> {
     TestCodec::new()
-        .decode_audio(path, sample_rate, 1)
+        .decode_audio(celesta_codec_test::DECODER_ID, path, sample_rate, 1)
         .unwrap()
         .samples
 }
@@ -593,7 +621,7 @@ fn exports_a_pitched_audio_clip() {
             effects: None,
         }],
     });
-    let Some(output) = export_as(&project, directory.path(), VideoFormat::Mp4, "clip.mp4") else {
+    let Some(output) = export_as(&project, directory.path(), "clip.mp4") else {
         return;
     };
 
@@ -616,12 +644,9 @@ fn exports_a_pitched_audio_clip() {
 fn every_format_stores_the_mix_as_long_as_the_video() {
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
-    for (format, name) in [
-        (VideoFormat::Mp4, "clip.mp4"),
-        (VideoFormat::Mov, "clip.mov"),
-        (VideoFormat::Webm, "clip.webm"),
-    ] {
-        let Some(output) = export_as(&project, directory.path(), format, name) else {
+    for format in ["mp4", "mov", "webm"] {
+        let name = format!("clip.{format}");
+        let Some(output) = export_as(&project, directory.path(), &name) else {
             return;
         };
         // One second at 8 kHz, with nothing before the video's start.
@@ -707,7 +732,7 @@ fn exports_an_audio_clip_with_fades() {
     };
     *fade_in = Some(Time::new(1, 4));
     *fade_out = Some(Time::new(1, 2));
-    let Some(output) = export_as(&project, directory.path(), VideoFormat::Mp4, "clip.mp4") else {
+    let Some(output) = export_as(&project, directory.path(), "clip.mp4") else {
         return;
     };
 
@@ -774,7 +799,7 @@ fn exports_a_bed_ducked_under_a_voice() {
         hold_gap: None,
     });
     track.items.push(voice);
-    let Some(output) = export_as(&project, directory.path(), VideoFormat::Mp4, "ducked.mp4") else {
+    let Some(output) = export_as(&project, directory.path(), "ducked.mp4") else {
         return;
     };
 
@@ -912,7 +937,6 @@ fn brings_the_mix_to_a_loudness_target() {
         "tone.ctc",
     );
     let options = ExportOptions {
-        video_format: VideoFormat::Mov,
         loudness: Some(LoudnessTarget::STREAMING),
         ..ExportOptions::default()
     };
@@ -923,7 +947,11 @@ fn brings_the_mix_to_a_loudness_target() {
     };
     assert!(warnings.is_empty(), "{warnings:?}");
     let reported = reported.expect("a video with sound reports its loudness");
-    let decode = |path: &Path| TestCodec::new().decode_audio(path, 48_000, 2).unwrap();
+    let decode = |path: &Path| {
+        TestCodec::new()
+            .decode_audio(celesta_codec_test::DECODER_ID, path, 48_000, 2)
+            .unwrap()
+    };
     let decoded = decode(&first);
     let measured = measure_loudness(&decoded);
 
@@ -982,6 +1010,35 @@ fn a_silent_mix_reports_no_loudness_and_is_left_alone() {
     );
 }
 
+/// With no audio track there is no mix to bring to a loudness target, which
+/// the export says rather than ignoring the target.
+#[test]
+fn a_loudness_target_without_an_audio_track_is_a_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = transparent_project(directory.path());
+    let Some((output, measured, warnings)) = export_reporting(
+        &project,
+        directory.path(),
+        ExportOptions {
+            output: OutputChoice {
+                audio: AudioChoice::None,
+                ..OutputChoice::default()
+            },
+            loudness: Some(LoudnessTarget::STREAMING),
+            ..ExportOptions::default()
+        },
+        "silent.mp4",
+    ) else {
+        return;
+    };
+    assert_eq!(measured, None);
+    assert_eq!(
+        warnings,
+        ["the output has no audio track, so there is no loudness to bring to the target"]
+    );
+    assert!(read(&output).audio.is_none());
+}
+
 #[test]
 fn exports_a_silent_react_entry_to_webm() {
     let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
@@ -1007,7 +1064,6 @@ export default function Root() {
     let (mut written, mut warnings) = (Vec::new(), Vec::new());
     // Without sound, a loudness target has nothing to adjust.
     match crate::exporter(ExportOptions {
-        video_format: VideoFormat::Webm,
         loudness: Some(LoudnessTarget::STREAMING),
         ..ExportOptions::default()
     })
@@ -1030,15 +1086,14 @@ export default function Root() {
     }
 
     let media = read(&output);
-    assert_eq!(media.container, Some(Container::Webm));
+    assert_eq!(media.extension.as_deref(), Some("webm"));
     assert!(media.audio.is_none());
     assert!(
         matches!(
             written[..],
             [ExportedFile::Video {
-                audio: false,
+                audio: None,
                 loudness: None,
-                format: VideoFormat::Webm,
                 ..
             }]
         ),
@@ -1048,6 +1103,69 @@ export default function Root() {
         warnings.len() == 1 && warnings[0].contains("no sound"),
         "{warnings:?}"
     );
+}
+
+/// A React entry of two 64x64 frames at 2 fps with no sound, written to
+/// `film.tsx` in a new directory under `packages/cli`; `None` until
+/// `packages/cli` is built.
+fn silent_react_entry() -> Option<(tempfile::TempDir, PathBuf, PathBuf)> {
+    let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
+    if !runtime_path.exists() {
+        eprintln!("skipping React export test: build packages/cli first");
+        return None;
+    }
+    let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
+    let entry = directory.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        r##"
+import { Composition, Rect } from '@celesta.studio/react';
+export default function Root() {
+  return <Composition width={64} height={64} fps={2} durationInFrames={2}>
+    <Rect width={32} height={32} fill="#ff0000" />
+  </Composition>;
+}
+"##,
+    )
+    .unwrap();
+    Some((directory, entry, runtime_path))
+}
+
+/// Without a mix there is no pre-roll to send, so a looping React entry
+/// with no sound gets a video-only file.
+#[test]
+fn a_silent_react_entry_with_loop_has_no_audio_track() {
+    let Some((directory, entry, runtime_path)) = silent_react_entry() else {
+        return;
+    };
+    let output = directory.path().join("film.mp4");
+    let mut written = Vec::new();
+    match crate::exporter(ExportOptions {
+        looping: true,
+        ..ExportOptions::default()
+    })
+    .export_react_entry_with_progress(
+        &entry,
+        &ReactRuntimeOptions::new("node", runtime_path),
+        &output,
+        |event| {
+            if let ExportProgress::Wrote(file) = event {
+                written.push(file);
+            }
+        },
+    ) {
+        Ok(()) => {}
+        Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+            skip_without_gpu(&error);
+            return;
+        }
+        Err(error) => panic!("React export failed: {error}"),
+    }
+    assert!(
+        matches!(written[..], [ExportedFile::Video { audio: None, .. }]),
+        "{written:?}"
+    );
+    assert!(read(&output).audio.is_none());
 }
 
 #[test]
@@ -1411,4 +1529,318 @@ export default function Root() {
         .unwrap()
         .success();
     assert!(!running, "the plugin's process was stopped");
+}
+
+/// The muxer writes a staged file; once it is published, the report names
+/// the published path, and no staged file is left beside it.
+#[test]
+fn a_written_file_is_named_by_its_published_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = transparent_project(directory.path());
+    let output = directory.path().join("film.mp4");
+    let mut written = Vec::new();
+    match crate::exporter(ExportOptions::default()).export_project_with_progress(
+        &project,
+        directory.path(),
+        &output,
+        |event| {
+            if let ExportProgress::Wrote(file) = event {
+                written.push(file);
+            }
+        },
+    ) {
+        Ok(()) => {}
+        Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+            skip_without_gpu(&error);
+            return;
+        }
+        Err(error) => panic!("export failed: {error}"),
+    }
+    let [ExportedFile::Video { files, .. }] = &written[..] else {
+        panic!("{written:?}");
+    };
+    assert_eq!(files.as_slice(), std::slice::from_ref(&output));
+    assert!(output.exists());
+    let names = files_in(directory.path());
+    assert!(
+        names.iter().all(|name| !name.starts_with(".celesta-")),
+        "{names:?}"
+    );
+}
+
+/// Cancelling while frames are encoded leaves no file in the output's
+/// directory: not the staged output, and not a spill file.
+#[test]
+fn cancel_during_encoding_leaves_no_files() {
+    let assets = tempfile::tempdir().unwrap();
+    let project = transparent_project(assets.path());
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("cancelled.mp4");
+    let cancellation = ExportCancellation::default();
+    let canceller = cancellation.clone();
+    let result = crate::exporter(ExportOptions::default()).export_project_cancellable(
+        &project,
+        assets.path(),
+        &output,
+        &cancellation,
+        move |event| {
+            if matches!(event, ExportProgress::Rendering { frame: 1, .. }) {
+                canceller.cancel();
+            }
+        },
+    );
+    if let Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) = &result {
+        skip_without_gpu(error);
+        return;
+    }
+    assert!(matches!(result, Err(ExportError::Cancelled)), "{result:?}");
+    assert_eq!(files_in(directory.path()), Vec::<String>::new());
+
+    #[cfg(unix)]
+    cancel_ends_a_frame_waiting_on_a_media_plugin_that_hangs(&project, assets.path());
+}
+
+/// The folder of the media plugin `hang` [`hanging_media_plugin`] writes:
+/// one per test process, under Cargo's temporary folder for tests.
+#[cfg(unix)]
+fn hanging_media_folder() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("hang-media-{}", std::process::id()))
+}
+
+/// Writes the media plugin `hang` and registers it: a video encoder
+/// `video` writing `ctst`, which the test codec's muxer takes, whose
+/// program answers `hello`, `describe` and `openVideoEncoder`, each once it
+/// is asked, then never answers `encodeVideoFrame`. The program writes its
+/// process id to `pid` once it has read that first `encodeVideoFrame`.
+#[cfg(unix)]
+pub fn hanging_media_plugin() -> celesta_media::RegisteredPlugin {
+    use celesta_media::{ComponentDescription, ComponentKind};
+    use celesta_plugin::protocol::{Message, write_message};
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = hanging_media_folder();
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(directory.join("bin")).unwrap();
+    std::fs::write(
+        directory.join(celesta_plugin_host::MANIFEST),
+        serde_json::json!({
+            "id": "hang",
+            "version": "1.0.0",
+            "protocol": 2,
+            "celesta": concat!("=", env!("CARGO_PKG_VERSION")),
+            "roles": ["media"],
+            "executable": { celesta_plugin_host::platform().0: "bin/p" },
+            "media": {
+                "videoEncoders": [{ "id": "video", "name": "Hang", "codecs": ["ctst"] }],
+            },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let video = ComponentDescription {
+        available: true,
+        reason: None,
+        input_formats: vec![PixelFormat::Rgba8],
+        transports: vec!["pipe".to_owned()],
+        ..ComponentDescription::unavailable(ComponentKind::VideoEncoder, "video", "")
+    };
+    // Each answer waits for its request. A message is a header and a
+    // payload, each after its length as a little-endian u32; `dd bs=1` reads
+    // exactly the bytes asked for, so nothing past the request is taken.
+    let answers = [
+        (
+            "hello",
+            serde_json::json!({ "type": "hello", "protocol": 2, "roles": ["media"] }),
+        ),
+        (
+            "described",
+            serde_json::json!({ "type": "described", "components": [video] }),
+        ),
+        (
+            "opened",
+            serde_json::json!({
+                "type": "videoEncoderOpened", "session": 1, "input": "rgba8", "alpha": false,
+            }),
+        ),
+    ];
+    let mut script = String::from(
+        "#!/bin/sh\n\
+         part() {\n\
+         \x20 n=$(dd bs=1 count=4 2>/dev/null | od -An -tu4 | tr -d ' ')\n\
+         \x20 if [ \"${n:-0}\" -gt 0 ]; then dd bs=1 count=\"$n\" of=/dev/null 2>/dev/null; fi\n\
+         }\n",
+    );
+    for (name, answer) in answers {
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &Message::new(answer)).unwrap();
+        std::fs::write(directory.join(name), bytes).unwrap();
+        script.push_str(&format!("part; part; cat {name}\n"));
+    }
+    // The pid appears once the first `encodeVideoFrame`'s header is read:
+    // from then on a frame waits on the plugin.
+    script.push_str(&format!(
+        "part; echo $$ > '{}'\nexec sleep 60\n",
+        directory.join("pid").display()
+    ));
+    let program = directory.join("bin/p");
+    std::fs::write(&program, script).unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let (plugins, errors) = celesta_plugin_host::discover(&[directory]);
+    assert!(errors.is_empty(), "{errors:?}");
+    let installed = celesta_plugin_host::InstalledPlugins {
+        plugins,
+        ..Default::default()
+    };
+    let registry = celesta_exporter::media_registry(&installed);
+    assert_eq!(registry.plugins().len(), 1);
+    registry.plugin(0).clone()
+}
+
+/// Cancel kills an export's media plugins: a frame waiting on an encoder
+/// that never answers returns at once, the session's abort does not wait
+/// beyond its 5 s deadline, and nothing is left in the output's directory.
+#[cfg(unix)]
+fn cancel_ends_a_frame_waiting_on_a_media_plugin_that_hangs(project: &Project, assets: &Path) {
+    use std::time::{Duration, Instant};
+
+    let pid = hanging_media_folder().join("pid");
+    let _ = std::fs::remove_file(&pid);
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("hang.mp4");
+    let cancellation = ExportCancellation::default();
+    let canceller = {
+        let cancellation = cancellation.clone();
+        let pid = pid.clone();
+        std::thread::spawn(move || {
+            // Once the plugin has read the frame, the export waits on it.
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !pid.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            cancellation.cancel();
+        })
+    };
+    let begun = Instant::now();
+    let result = crate::exporter(ExportOptions {
+        output: OutputChoice {
+            video: EncoderChoice {
+                component: Some("hang/video".parse().unwrap()),
+                ..EncoderChoice::default()
+            },
+            ..OutputChoice::default()
+        },
+        ..ExportOptions::default()
+    })
+    .export_project_cancellable(project, assets, &output, &cancellation, |_| {});
+    let elapsed = begun.elapsed();
+    canceller.join().unwrap();
+    assert!(matches!(result, Err(ExportError::Cancelled)), "{result:?}");
+    assert!(
+        elapsed < Duration::from_secs(5 + 2),
+        "the export took {elapsed:?}, past the abort deadline"
+    );
+    let pid = std::fs::read_to_string(&pid).unwrap();
+    let running = std::process::Command::new("kill")
+        .args(["-0", pid.trim()])
+        .status()
+        .unwrap()
+        .success();
+    assert!(!running, "the plugin's process was stopped");
+    assert_eq!(files_in(directory.path()), Vec::<String>::new());
+    let _ = std::fs::remove_dir_all(hanging_media_folder());
+}
+
+/// A React entry playing a `<Video>` and an `<Audio>` exported by the
+/// `celesta-exporter` program with the test codec's program as its media
+/// plugin writes the same file whether its frames go through the program's
+/// ring of shared slots or through the pipe, and the timing line says which
+/// they went through.
+#[test]
+fn an_export_through_the_programs_ring_is_byte_identical_to_the_pipe() {
+    use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
+    use celesta_media::SHARED_MEMORY_VARIABLE;
+    use std::process::Command;
+
+    let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
+    if !runtime_path.exists() {
+        eprintln!("skipping the ring export test: build packages/cli first");
+        return;
+    }
+    let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
+    let colors: [[u8; 4]; 4] = [
+        [255, 0, 0, 255],
+        [0, 255, 0, 255],
+        [0, 0, 255, 255],
+        [255, 255, 0, 255],
+    ];
+    let frames: Vec<Vec<u8>> = colors.iter().map(|color| color.repeat(64 * 64)).collect();
+    write_rgba_video(
+        &directory.path().join("clip.ctc"),
+        64,
+        64,
+        Rational::new(2, 1),
+        &frames,
+    )
+    .unwrap();
+    write_audio(
+        &directory.path().join("tone.ctc"),
+        48_000,
+        1,
+        &sine(440.0, 48_000, 2.0),
+    )
+    .unwrap();
+    let entry = directory.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        r##"
+import { Composition, Video, Audio } from '@celesta.studio/react';
+export default function Root() {
+  return <Composition width={64} height={64} fps={2} durationInFrames={4}>
+    <Video src="./clip.ctc" width={64} height={64} />
+    <Audio src="./tone.ctc" />
+  </Composition>;
+}
+"##,
+    )
+    .unwrap();
+
+    let plugin = TestCodecPlugin::new();
+    let export = |shared: &str| {
+        let output = directory.path().join(format!("film-{shared}.mp4"));
+        let result = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
+            .env_remove(PLUGIN_PATH_ENV)
+            .env(SHARED_MEMORY_VARIABLE, shared)
+            .env("CELESTA_EXPORT_TIMING", "1")
+            .arg("--plugin-dir")
+            .arg(plugin.folder())
+            .arg("--react")
+            .arg(&entry)
+            .arg(&output)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&result.stderr).into_owned();
+        (result.status.success(), stderr, output)
+    };
+    let (ok, stderr, through_ring) = export("1");
+    if !ok && stderr.contains("adapter") {
+        skip_without_gpu(&stderr);
+        return;
+    }
+    assert!(ok, "through the ring: {stderr}");
+    if cfg!(any(unix, windows)) {
+        assert!(stderr.contains("; frames ring 3 deep"), "{stderr}");
+    }
+    let (ok, stderr, through_pipe) = export("0");
+    assert!(ok, "through the pipe: {stderr}");
+    assert!(stderr.contains("; frames pipe 3 deep"), "{stderr}");
+
+    let media = read(&through_ring);
+    assert_eq!(stored_video(&media).frames.len(), 4);
+    assert!(media.audio.is_some(), "the export has the tone");
+    assert!(
+        std::fs::read(&through_ring).unwrap() == std::fs::read(&through_pipe).unwrap(),
+        "the files differ"
+    );
 }

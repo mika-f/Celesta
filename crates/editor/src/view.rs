@@ -12,7 +12,7 @@ use crate::layer_select::{InstanceDue, PendingInstance, PickMode, SourceLookup};
 use crate::media_probe::{MediaAssetInfo, MediaProbeWorker, spawn_media_probe};
 use crate::meter::MasterLevels;
 use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
-use crate::plugins::{FoundPlugins, trusted_root};
+use crate::plugins::{DecoderNotice, FoundPlugins, trusted_root};
 use crate::preview::{
     AudioPreview, PreviewWorker, ReactPreview, ShownPreview, TextOverride, spawn_preview,
 };
@@ -404,6 +404,8 @@ pub(crate) struct EditorView {
     /// about in this window, so "Not Now" is not asked again until they
     /// change.
     pub(crate) asked_plugins: HashSet<(PathBuf, String)>,
+    /// The project-decoder files shown in Problems.
+    pub(crate) decoder_notice: DecoderNotice,
 }
 
 impl EditorView {
@@ -615,6 +617,7 @@ impl EditorView {
             add: AddState::default(),
             plugins: InstalledPlugins::default(),
             found_plugins: FoundPlugins::default(),
+            decoder_notice: DecoderNotice::default(),
             asked_plugins: HashSet::new(),
         };
         editor.set_plugins(plugins);

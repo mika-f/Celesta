@@ -20,7 +20,7 @@ how the user previews your work.
 | macOS app | `/Applications/Celesta.app/Contents/MacOS/Celesta` | `/Applications/Celesta.app/Contents/MacOS/Celesta-export` | `…/Contents/Helpers/node` | `…/Contents/Resources/react/dist/cli.js` |
 | Windows installer | `%LOCALAPPDATA%\Programs\Celesta\Celesta.exe` | `…\Celesta-export.exe` | `…\runtime\node.exe` | `…\runtime\react\dist\cli.js` |
 | Windows portable ZIP | `<extracted folder>\Celesta.exe` | `…\Celesta-export.exe` | `…\runtime\node.exe` | `…\runtime\react\dist\cli.js` |
-| Source checkout (video and audio need [the codec plugin](plugins.md#the-codec-plugin)) | `cargo run -p celesta-editor --release --` | `cargo run -p celesta-exporter --release --` | `node` on PATH | `packages/cli/dist/cli.js` |
+| Source checkout (video and audio need [the media plugin](plugins.md#media-plugins)) | `cargo run -p celesta-editor --release --` | `cargo run -p celesta-exporter --release --` | `node` on PATH | `packages/cli/dist/cli.js` |
 | Linux container image | — | `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter …` | inside the image | inside the image |
 
 - The packaged apps name the executables `Celesta` and `Celesta-export`;
@@ -50,7 +50,7 @@ report progress for long exports.
 | --- | --- |
 | macOS app | `/Applications/Celesta.app/Contents/MacOS/Celesta-mcp` |
 | Windows | `<install folder>\Celesta-mcp.exe` (next to `Celesta.exe`) |
-| Source checkout | `target/release/celesta-mcp` after `cargo build -p celesta-mcp --release`; exporting video or audio needs [the codec plugin](plugins.md#the-codec-plugin) |
+| Source checkout | `target/release/celesta-mcp` after `cargo build -p celesta-mcp --release`; exporting video or audio needs [the media plugin](plugins.md#media-plugins) |
 | Linux container image | `docker run --rm -i -v "$PWD:/work" --entrypoint /opt/celesta/celesta-mcp celesta-exporter` |
 
 For example, with Claude Code:
@@ -64,7 +64,9 @@ claude mcp add celesta -- /Applications/Celesta.app/Contents/MacOS/Celesta-mcp
 | `node inspect.mjs <entry> [--frames …] [--loop] [--timeout …]` | `inspect` (`entry`, `frames`, `every`, `loop`, `timeout`) |
 | `Celesta-export --json … --frame/--frames/--every … out.png` | `render_frames` (returns the images; `format`: `png`, `jpeg`, `webp`) |
 | `Celesta-export --json … --every N --contact-sheet out.png` | `contact_sheet` (`output` extension or `format` picks the image format) |
-| `Celesta-export --json … out.mp4` | `export_video` |
+| `Celesta-export --json … out.mp4` | `export_video` (`--muxer`, `--video-encoder`/`--video-option`, `--audio-encoder`/`--audio-option` → `muxer`, `videoEncoder: {id, options}`, `audioEncoder` or `"none"`) |
+| `Celesta-export --list-components [--check]` | `list_components` (`check`) |
+| `Celesta-export --describe <plugin/id>` | `describe_component` (`component`) |
 | `Celesta --init <folder> [--template <name>]` | `init_project` |
 | `Celesta --list-templates` | `list_templates` |
 | reading these references | `read_docs` (`topic`: `setup`, `animation`, …) |

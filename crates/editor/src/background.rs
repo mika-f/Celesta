@@ -239,6 +239,7 @@ impl EditorView {
             // stage until then.
             ExportEvent::Progress(
                 ExportProgress::Composition(_)
+                | ExportProgress::Output(_)
                 | ExportProgress::ReactCompositions { .. }
                 | ExportProgress::Wrote(_),
             ) => {}

@@ -24,7 +24,7 @@ From the repository root, for the installed macOS app:
 python3 examples/perfect-loop/make-score.py
 node skills/celesta/scripts/inspect.mjs examples/perfect-loop/film.tsx --frames 0,239,480,959
 npx --yes --package typescript@5.9.3 tsc --noEmit -p examples/perfect-loop
-/Applications/Celesta.app/Contents/MacOS/Celesta-export --json --react --crf 16 \
+/Applications/Celesta.app/Contents/MacOS/Celesta-export --json --react --video-option crf=16 \
   examples/perfect-loop/film.tsx examples/perfect-loop/perfect-loop.mp4
 ```
 

@@ -696,6 +696,7 @@ fn a_plugin_that_cannot_open_is_not_started_for_every_frame() {
                 types: None,
                 components: Vec::new(),
                 roles: vec![PluginRole::Content],
+                media: None,
             },
             directory: dir.path().to_owned(),
             source: PluginSource::Explicit,

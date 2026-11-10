@@ -12,6 +12,7 @@ stands for its path.
 
 - [Commands](#commands)
 - [Options](#options)
+- [Encoders and settings](#encoders-and-settings)
 - [Transparent video](#transparent-video)
 - [Looping video](#looping-video)
 - [Loudness](#loudness)
@@ -37,7 +38,7 @@ file's) folder, not the current directory.
 A fast check of one second around the part you changed:
 
 ```sh
-Celesta-export --json --overwrite --preset ultrafast --from 2 --to 3 \
+Celesta-export --json --overwrite --video-option preset=ultrafast --from 2 --to 3 \
   --react scene.tsx /tmp/celesta-check.mp4
 ```
 
@@ -61,11 +62,13 @@ Celesta-export --json --react scene.tsx out.mp4
 | `--from <t>`, `--to <t>` | Export only this span (`--to` exclusive); the output starts at 00:00. Times are seconds, `MM:SS.mmm`, or `HH:MM:SS.mmm`. |
 | `--subtitles <file>` | Also write the video's subtitles (`<Subtitles>` cues, `<Dialogue>` lines, a project's dialogue items) as `.srt` or `.vtt`, timed like the video. Repeatable; `{lang}` in the path writes one file per language. Without an output video, writes only the subtitles, without rendering. See [subtitles.md](subtitles.md#write-the-subtitle-file-on-export). |
 | `--overwrite` | Replace an existing output file. |
-| `--preset <p>` | libx264 preset, `ultrafast` … `veryslow` (default `medium`). Encoding speed against file size only; it does not change what is rendered. MP4 only. |
-| `--crf <n>` | 0–51, lower is better quality (default 18). MP4 only. |
-| `--color-conversion <w>` | `auto` (default), `gpu`, or `encoder`: where RGB becomes YUV. MP4 only. |
-| `--bit-depth <n>` | `8` (default) or `10`. `10` encodes H.264 High 10 (`yuv420p10le`): smoother dark gradients, but fewer players decode it; keep `8` for files meant for phones, browsers, or social media. MP4 only. |
-| `--loop` | The video plays in a loop (Shorts, TikTok): the AAC sound is encoded to run from its end into its start. MP4 only. See [Looping video](#looping-video). |
+| `--video-option <key=value>` | A setting of the video encoder, read by its type; repeatable. For H.264: `preset=ultrafast` … `veryslow` (default `medium`; encoding speed against file size only, it does not change what is rendered), `crf=0`…`51` (default 18, lower is better quality), `bitDepth=10`. See [Encoders and settings](#encoders-and-settings). |
+| `--audio-option <key=value>` | A setting of the audio encoder, such as `bitrate=128000`; repeatable. |
+| `--video-encoder <plugin/id>`, `--audio-encoder <plugin/id>` | An encoder other than the muxer's default; `--audio-encoder none` writes no audio and refuses `--audio-option`, as does a muxer that takes no audio. |
+| `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. |
+| `--list-components [--check]`, `--describe <plugin/id>` | List the installed media components, or show one's settings; take no source or output. See [Encoders and settings](#encoders-and-settings). |
+| `--preset <name>` | An export preset. Presets are not available yet: every name fails with `unknown_preset`. x264's preset is `--video-option preset=<name>`. |
+| `--loop` | The video plays in a loop (Shorts, TikTok): the AAC sound is encoded to run from its end into its start. Any video output; WebM ignores it. See [Looping video](#looping-video). |
 | `--loudness <l>` | Bring the whole mix to an integrated loudness: LUFS from -70 to -5, `streaming` (-14), or `broadcast` (-23). Video only. See [Loudness](#loudness). |
 | `--true-peak <db>` | The highest true peak `--loudness` may leave, -9 to 0 dBTP (default -1). |
 | `--peak-handling <h>` | `limit` (default): a limiter holds peaks at `--true-peak`. `lower`: the gain stops short of the target instead. |
@@ -75,11 +78,77 @@ Celesta-export --json --react scene.tsx out.mp4
 | `--stdin-cancel` | Cancel the export when stdin reads a `cancel` line or closes. |
 | `--info` | Report the composition's size, frame rate, length, and a React entry's compositions without rendering; takes no output. With `--json`, the result has `outputs: []`. |
 | `--no-ui` | Plain text progress instead of the terminal dashboard (automatic when stderr is not a terminal). |
-| `--output-format <f>` | `png`, `jpeg`, `webp`, `mp4`, `mov`, or `webm`. Normally implied by the output extension; one that disagrees with it is a usage error. |
 | `--frame`, `--frames`, `--every`, `--contact-sheet`, `--columns`, `--tile-width`, `--debug-guides` | Still output; see [Still images](#still-images) and [verify.md](verify.md#look-at-real-frames). |
 | `--quality <n>` | 1–100, JPEG and WebP stills only (default 90). Higher is sharper and larger. |
 
-Video export needs non-zero, even `width` and `height`.
+Video export needs non-zero, even `width` and `height`. The output's
+extension picks a video (`.mp4`, `.mov`, `.webm`) or, with a frame
+selection, stills (`.png`, `.jpg`, `.jpeg`, `.webp`).
+
+## Encoders and settings
+
+A video is written by three media components, each named
+`<plugin>/<component>`: a muxer (the file), a video encoder, and an audio
+encoder. The output's extension picks the muxer and the muxer's default
+codecs pick the encoders, so most exports need none of these flags:
+
+| Extension | Muxer | Video encoder | Audio encoder |
+| --- | --- | --- | --- |
+| `.mp4`, `.m4v` | `ffmpeg/mp4` | `ffmpeg/libx264` | `ffmpeg/aac` |
+| `.mov` | `ffmpeg/mov` | `ffmpeg/prores` | `ffmpeg/pcm` |
+| `.webm` | `ffmpeg/webm` | `ffmpeg/vp9` | `ffmpeg/opus` |
+
+There is no codec-neutral quality setting: a non-default export uses the
+chosen encoder's own keys. The bundled FFmpeg plugin's, as of this release:
+
+| Component | Key | Values (default) |
+| --- | --- | --- |
+| `ffmpeg/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow` (`medium`) |
+| | `rateControl` | `crf` (constant quality) or `vbr` (average bitrate) (`crf`) |
+| | `crf` | 0–51, lower is better; only with `rateControl=crf` (18) |
+| | `bitrate` | bit/s, at least 100000; only with `rateControl=vbr` (8000000) |
+| | `bitDepth` | `8` or `10` (`8`). `10` is H.264 High 10: smoother dark gradients, but fewer players decode it; keep `8` for phones, browsers, and social media. |
+| | `tune` | an x264 tune such as `film` or `animation` (empty) |
+| `ffmpeg/prores` | `profile` | `4444` (with alpha) or `hq` (422 HQ, opaque) (`4444`) |
+| `ffmpeg/vp9` | `crf` | 0–63 (20) |
+| | `alpha` | `true` or `false` (`true`) |
+| `ffmpeg/aac`, `ffmpeg/opus` | `bitrate` | 32000–512000 bit/s (192000) |
+| `ffmpeg/pcm` | `format` | `s16le`, `s24le`, `f32le` (`s24le`) |
+
+Muxers keep their defaults (MP4 and MOV: `faststart` on). For any other
+component, or to confirm these, ask the exporter first:
+
+```sh
+Celesta-export --list-components --check          # every component; --check starts each plugin to say whether it works
+Celesta-export --json --describe ffmpeg/libx264   # its settings: key, type, default, options or range, visibleWhen
+Celesta-export --json --overwrite --video-option preset=slow --video-option crf=20 \
+  --audio-option bitrate=256000 --react scene.tsx out.mp4
+Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.mp4
+```
+
+- `--video-option` and `--audio-option` values are read by the field's type
+  (`crf=20` is a number, `bitDepth=10` a choice). An unknown key, a value of
+  the wrong type or out of range, or a field hidden by another's value
+  (`crf` with `rateControl=vbr`) fails with `invalid_option` before
+  anything renders.
+- `--preset` no longer means x264's preset: `--preset ultrafast` fails with
+  `unknown_preset`, and its hint (the `--json` report's `hint`, or a
+  `hint:` line after the message without `--json`) says
+  `use --video-option preset=ultrafast`.
+- The renderer converts RGB to YUV on the GPU when the encoder takes YUV
+  and the renderer is not a software one; otherwise the encoder converts.
+  There is no flag for it.
+- The MCP `export_video` tool takes `muxer`, `videoEncoder`
+  (`{"id": "ffmpeg/libx264", "options": {"preset": "slow", "crf": 20}}`;
+  `id` may be left out for the muxer's default), and `audioEncoder` (the
+  same shape, or `"none"`), with typed option values. MCP's
+  `list_components` (`check`) and `describe_component` (`component`) tools
+  answer as `--list-components` and `--describe` do.
+  `@celesta.studio/exporter` takes the same `muxer`, `videoEncoder`, and
+  `audioEncoder` in `exportVideo` (its option values go to the CLI as
+  `--video-option`/`--audio-option` text, read by each setting's type, so
+  it takes `"18"` where MCP wants `18`), and has
+  `listComponents({ check })` and `describeComponent(id)`.
 
 ## Transparent video
 
@@ -87,7 +156,7 @@ The output extension picks the video format:
 
 | Extension | Video | Audio |
 | --- | --- | --- |
-| `.mp4` | H.264 (`yuv420p`; `yuv420p10le` with `--bit-depth 10`) | AAC |
+| `.mp4` | H.264 (`yuv420p`; `yuv420p10le` with `--video-option bitDepth=10`) | AAC |
 | `.mov` | ProRes 4444 with alpha (`yuva444p10le`) | 24-bit PCM |
 | `.webm` | VP9 with alpha (`yuva420p`, CRF 20) | Opus, 48 kHz |
 
@@ -99,18 +168,19 @@ Celesta-export --json --react scene.tsx overlay.mov
   layer makes the output opaque.
 - Alpha is straight (unassociated). Color is converted and tagged BT.709
   (limited range).
-- `--preset`, `--crf`, `--bit-depth`, `--color-conversion`, and `--loop`
-  apply to MP4 only; with `.mov` or `.webm` they are usage errors.
-- The MCP `export_video` tool takes the same three extensions in `output`;
-  `preset`, `crf`, `bitDepth`, and `loop` are rejected with `.mov` and
-  `.webm`.
-- Celesta encodes through its codec plugin (`ffmpeg`, bundled with the app).
+- The encoder decides the alpha (the JSON output's `alpha`): ProRes 4444
+  and VP9 keep it unless given `profile=hq` or `alpha=false`; H.264 never
+  does.
+- The MCP `export_video` tool takes the same three extensions in `output`.
+- Celesta encodes through its media plugin (`ffmpeg`, bundled with the app).
   A source build makes it with `node scripts/plugins/build.mts plugins/ffmpeg`
   and finds it once `CELESTA_PLUGIN_PATH` is the absolute path of
   `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the
-  repository root). A plugin
-  whose FFmpeg lacks the needed encoder fails with `encoder_unavailable`; no
-  codec plugin at all fails with `no_codec`.
+  repository root). A plugin whose FFmpeg lacks a needed encoder fails with
+  `component_unavailable` and the reason (such as `this FFmpeg build has no
+  libx264`); no media plugin at all fails with `unsupported_output` and the
+  install hint (a still export, which encodes nothing, fails with
+  `no_decoder` once it reads a video or audio file).
 
 ## Looping video
 
@@ -131,9 +201,11 @@ Celesta-export --json --loop --react film.tsx film.mp4
 - The soundtrack itself must loop: sound that rings past the end belongs at
   the start ([loops.md](loops.md#sound)). `--loop` does not fold it there.
 - With `--from`/`--to`, the span's own end leads into its start.
-- MP4 only. A `.mov`'s PCM runs from its end into its start without help,
-  and `--loop` with `.mov`, `.webm`, stills, or no output video is a usage
-  error. The MCP `export_video` tool takes `loop: true`.
+- Any video output takes it. MP4 and MOV hide the lead-in; WebM's muxer
+  cannot, so there `--loop` changes nothing. A `.mov`'s PCM has no encoder
+  delay and runs from its end into its start without help. `--loop` with
+  stills or no output video is a usage error. The MCP `export_video` tool
+  takes `loop: true`.
 - Without `--loop`, the export is unchanged: right for a video that plays
   once, where silence does come before the start.
 
@@ -234,12 +306,14 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 - `outputs` lists the files that exist after the export, with absolute
   paths. Read these paths; do not work out file names yourself. Each entry
   has a `type`:
-  - `video`: `firstFrame`, `frames`, `start`, `duration`, and `audio`
-    (whether the file has an audio stream), `format` (`"mp4"`, `"mov"`, or
-    `"webm"`), and `alpha` (`true` when the format carries transparency:
-    `mov` and `webm`). With audio, `loudness` has `integratedLufs` and
-    `truePeakDbtp` (`null` for silence), and with `--loudness` the `gainDb`
-    it applied ([Loudness](#loudness));
+  - `video`: `firstFrame`, `frames`, `start`, `duration`, `muxer`
+    (`"ffmpeg/mp4"`), `video` (`{"component": "ffmpeg/libx264", "codec":
+    "avc1.64001F"}`), `audio` (the same shape, or `null` when the file has
+    no audio stream), `alpha` (`true` when the encoder kept transparency:
+    ProRes 4444 and VP9 by default), and `files` (every file the muxer
+    wrote; the video's path for one file). With audio, `loudness` has
+    `integratedLufs` and `truePeakDbtp` (`null` for silence), and with
+    `--loudness` the `gainDb` it applied ([Loudness](#loudness));
   - `frame`: one still image, with `frame` and `time`;
   - `subtitles`: one `--subtitles` file (a `{lang}` path lists one per
     language), with `format` (`"srt"` or `"vtt"`), the number of `cues`,
@@ -248,9 +322,10 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
     reading order.
 - `stats.renderFps` is the average speed of the whole export in frames per
   second: rendering and video encoding run side by side, so it is the speed
-  of whichever is slower. At large sizes the default `--preset medium` can
+  of whichever is slower. At large sizes x264's default `medium` preset can
   encode slower than Celesta renders, and `renderFps` then shows the encoding
-  speed. To compare rendering speeds, export an `.mp4` with `--preset ultrafast`
+  speed. To compare rendering speeds, export an `.mp4` with
+  `--video-option preset=ultrafast`
   ([performance.md](performance.md#find-slow-parts)).
 - On failure, `status` is `"error"` and `error` has a stable `code`, the
   `message`, and sometimes a `hint`. `outputs` still lists the images written
@@ -282,9 +357,13 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `output_exists` | An output file exists; add `--overwrite` only if you may replace it. |
 | `invalid_selection` | A frame is out of range or repeated, the selection or contact sheet is too large, or a still output is not `.png`, `.jpg`, `.jpeg`, or `.webp`. |
 | `empty_range` | `--from`/`--to` cover no frames of the composition. |
-| `unsupported_output` | The output is not a `.mp4`, `.mov`, or `.webm` path and no frame selection (`--frame`, `--frames`, `--every`) makes it a still export. |
-| `encoder_unavailable` | The codec plugin's FFmpeg lacks an encoder the format needs (video: H.264, ProRes, or VP9; audio: AAC, PCM, or Opus). |
-| `no_codec` | No codec plugin was found, so no video or audio could be decoded or encoded. Reinstall the app, or in a source build run `node scripts/plugins/build.mts plugins/ffmpeg` and `export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root, in the shell that runs Celesta. |
+| `unsupported_output` | No installed muxer writes the output's extension (normally `.mp4`, `.m4v`, `.mov`, `.webm`), and no frame selection (`--frame`, `--frames`, `--every`) makes it a still export; the hint lists the extensions there are. With no media plugin at all, the hint says how to install it (as for `no_decoder`). |
+| `component_unavailable` | A named component is not installed (check `--list-components`), or a chosen one does not work here; `message` has the reason, such as `this FFmpeg build has no libx264`. |
+| `incompatible_components` | The named encoder writes no codec the muxer takes (H.264 in `.webm`, for example). |
+| `invalid_option` | A `--video-option`/`--audio-option` key the encoder does not have, a value of the wrong type or out of range, or a hidden field; or the plugin refused the combination. Check with `--describe`. |
+| `unknown_preset` | `--preset` names no preset (presets are not available yet). For an x264 name, the hint says to use `--video-option preset=<name>`. |
+| `no_decoder` | No media decoder can run (no media plugin was found, or those found declare no decoder or have no program for this computer), so the entry's video and audio files could not be read (still exports, and video exports whose media plugins have no decoder; a video export with no media plugin at all fails with `unsupported_output` first). Reinstall the app, or in a source build run `node scripts/plugins/build.mts plugins/ffmpeg` and `export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root, in the shell that runs Celesta. A `plugins/dist/ffmpeg` with `"roles": ["codec"]` is from an older checkout and is ignored: build it again. |
+| `unsupported_media` | Media plugins were found, but none of their decoders reads a file the entry uses (`message` names the file and the decoders tried). Convert it to a format the `ffmpeg` plugin reads, such as MP4 or WAV. |
 | `unsupported_dimensions` | Video needs non-zero even width and height. |
 | `unsupported_subtitles` | The `--subtitles` path is not a `.srt` or `.vtt` file. |
 | `mixed_subtitle_languages` | Subtitles in several languages would share a `--subtitles` path without `{lang}`; see [subtitles.md](subtitles.md#several-languages). |
@@ -292,7 +371,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `project_validation` | The project is invalid; `error.issues` lists each `{path, message}`. |
 | `react` | The React entry failed to load or render; read `message` and look it up in [errors.md](errors.md). |
 | `frames_failed` | A contact sheet was written, but the frames in `error.failedFrames` failed and show as `FAILED` tiles. |
-| `evaluation`, `render`, `audio`, `codec`, `io`, `time` | The export failed at that stage (`codec`: the codec plugin failed while checking encoders, encoding, or muxing); read `message`. |
+| `evaluation`, `render`, `audio`, `codec`, `io`, `time` | The export failed at that stage (`codec`: the media plugin failed while describing, encoding, or muxing); read `message`. |
 | `cancelled` | The export was cancelled (`--stdin-cancel`); what it was writing was removed. |
 
 The exit status is 0 on success, 1 when the export fails (a contact sheet
@@ -310,13 +389,16 @@ none:
 ```json
 {"event":"compositions","compositionId":"default","compositions":[{"id":"default","width":1920,"height":1080,"frameRate":{"numerator":30,"denominator":1},"durationInFrames":150}]}
 {"event":"composition","composition":{"width":1920,"height":1080,"fps":30.0,"frames":150,"duration":5.0}}
+{"event":"output","muxer":"ffmpeg/mp4","muxerName":"MP4","video":{"component":"ffmpeg/libx264","name":"H.264 (x264)","settings":["Slow","CRF 20"]},"audio":{"component":"ffmpeg/aac","name":"AAC","settings":[]}}
 {"event":"rendering","frame":1,"total":150}
 {"event":"warning","message":"…"}
 {"event":"mixingAudio"}
 {"event":"muxing"}
-{"event":"wrote","output":{"type":"video","path":"/work/out.mp4","firstFrame":0,"frames":150,"start":0.0,"duration":5.0,"audio":true,"loudness":{"integratedLufs":-16.1,"truePeakDbtp":-1.67},"format":"mp4","alpha":false}}
+{"event":"wrote","output":{"type":"video","path":"/work/out.mp4","firstFrame":0,"frames":150,"start":0.0,"duration":5.0,"muxer":"ffmpeg/mp4","video":{"component":"ffmpeg/libx264","codec":"avc1.640028"},"audio":{"component":"ffmpeg/aac","codec":"mp4a.40.2"},"loudness":{"integratedLufs":-16.1,"truePeakDbtp":-1.67},"alpha":false,"files":["/work/out.mp4"]}}
 ```
 
+`output` names the muxer and encoders, with the settings that differ from
+their defaults, once they are chosen and before any frame renders.
 `rendering` counts from 1 the frame that has started; `total` is the number
 of frames the export renders (the selected stills, for a still export). The
 `composition`, `compositions`, `warning`, and `wrote` events carry what the
@@ -343,9 +425,9 @@ muxing
 ```
 
 Warnings (missing fonts, missing glyphs) are printed as `warning: …` lines;
-a plugin's informational notice is printed as a `note: …` line.
-A failure prints `Celesta export: <message>` and
-exits non-zero; see [errors.md](errors.md). The rendering count can reach
+a plugin's informational notice is printed as a `note: …` line. A failure is
+printed as `Celesta export: <message>`, then `hint: …` when the error has a
+hint (the same one `--json` reports), and the exporter exits non-zero; see [errors.md](errors.md). The rendering count can reach
 the total while audio mixing and muxing are still running; wait for the
 process to exit.
 

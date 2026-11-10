@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import { CelestaExportError, exportStills, exportVideo, getComposition } from '../src/index.js';
+import { CelestaExportError, describeComponent, exportStills, exportVideo, getComposition, listComponents } from '../src/index.js';
 
 const exporter = fileURLToPath(new URL('./fixtures/fake-exporter.mjs', import.meta.url));
 const run = (mode: string) => ({ exporter, env: { ...process.env, FAKE_MODE: mode } });
@@ -25,6 +25,33 @@ test('progress events reach the callback and the report resolves', { skip }, asy
   assert.equal((result as { status?: unknown }).status, undefined);
   // The fake echoes its arguments as warnings.
   assert.ok(result.warnings.includes('--json-progress'));
+});
+
+test('a video output carries its tracks', { skip }, async () => {
+  const events: unknown[] = [];
+  const result = await exportVideo({
+    source: 'film.tsx',
+    output: 'film.mp4',
+    ...run('video'),
+    onProgress: (event) => events.push(event),
+  });
+  const output = result.outputs[0]!;
+  assert.equal(output.type, 'video');
+  if (output.type !== 'video') return;
+  assert.equal(output.muxer, 'ffmpeg/mp4');
+  assert.equal(output.video.codec, 'avc1.64001f');
+  assert.equal(output.audio, null);
+  assert.deepEqual(output.files, ['/work/film.mp4']);
+  assert.deepEqual((events[0] as { event: string; muxerName: string }).muxerName, 'MP4');
+});
+
+test('component listings resolve without a status', { skip }, async () => {
+  const listed = await listComponents({ check: true, ...run('components') });
+  assert.equal(listed[0]!.id, 'ffmpeg/mp4');
+  assert.deepEqual(listed[0]!.args, ['--json', '--list-components', '--check']);
+  const described = await describeComponent('ffmpeg/libx264', run('components'));
+  assert.equal(described.kind, 'videoEncoder');
+  assert.deepEqual(described.settings, []);
 });
 
 test('a failed export rejects with the report error', { skip }, async () => {
@@ -86,4 +113,20 @@ test('a missing exporter is exporter_not_found', async () => {
   await assert.rejects(getComposition({ source: 'film.tsx', exporter: '/nonexistent/celesta-exporter' }), {
     code: 'exporter_not_found',
   });
+});
+
+test('aborting a listing kills the exporter at once', { skip }, async () => {
+  const controller = new AbortController();
+  const started = Date.now();
+  const listing = listComponents({ ...run('hang'), signal: controller.signal });
+  setTimeout(() => controller.abort(), 100);
+  await assert.rejects(listing, { code: 'cancelled' });
+  assert.ok(Date.now() - started < 5000);
+  const describing = describeComponent('ffmpeg/libx264', { ...run('hang'), signal: AbortSignal.timeout(100) });
+  await assert.rejects(describing, { code: 'cancelled' });
+});
+
+test('a component error report rejects', { skip }, async () => {
+  await assert.rejects(listComponents(run('component-error')), { code: 'component_unavailable' });
+  await assert.rejects(describeComponent('ffmpeg/nope', run('component-error')), { code: 'component_unavailable' });
 });

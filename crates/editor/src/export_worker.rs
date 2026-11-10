@@ -2,7 +2,7 @@ use crate::problems::error_chain;
 use crate::worker::Worker;
 use celesta_exporter::{
     AudioLoudness, ExportCancellation, ExportError, ExportOptions, ExportProgress, ExportRange,
-    ExportedFile, Exporter, GpuDriver, LoudnessTarget, ReactRuntimeOptions, VideoFormat,
+    ExportedFile, Exporter, GpuDriver, LoudnessTarget, OutputChoice, ReactRuntimeOptions,
 };
 use celesta_plugin_host::InstalledPlugins;
 use celesta_project::Project;
@@ -12,8 +12,8 @@ use std::path::PathBuf;
 pub(crate) struct ExportRequest {
     pub(crate) source: ExportSource,
     pub(crate) asset_root: PathBuf,
+    /// The video to write; its extension picks the muxer.
     pub(crate) output: PathBuf,
-    pub(crate) format: VideoFormat,
     pub(crate) range: Option<ExportRange>,
     /// The loudness to bring the mix to; `None` leaves it as it is.
     pub(crate) loudness: Option<LoudnessTarget>,
@@ -38,6 +38,10 @@ pub(crate) enum ExportSource {
     },
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a few events per frame at most, matched by value where they arrive"
+)]
 pub(crate) enum ExportEvent {
     Progress(ExportProgress),
     Finished {
@@ -108,12 +112,13 @@ pub(crate) fn spawn_export() -> anyhow::Result<ExportWorker> {
 }
 
 /// The exporter settings for one request: the editor always overwrites the
-/// file the save panel already confirmed.
+/// file the save panel already confirmed, and writes it with the default
+/// components of its extension's muxer.
 pub(crate) fn export_options(request: &ExportRequest) -> ExportOptions {
     ExportOptions {
         overwrite: true,
         range: request.range,
-        video_format: request.format,
+        output: OutputChoice::default(),
         driver: request.driver,
         loudness: request.loudness,
         plugins: Some(request.plugins.clone()),

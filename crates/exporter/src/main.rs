@@ -4,20 +4,26 @@ use std::process::ExitCode;
 
 use clap::error::ErrorKind;
 use clap::parser::ValueSource;
-use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use clap::{CommandFactory, FromArgMatches, Parser};
 
 mod inspect;
 mod json;
 mod progress;
 
 use celesta_composition::Time;
-use celesta_exporter::{
-    AudioLoudness, BitDepth, ColorConversion, ContactSheet, EncoderPreset, ExportCancellation,
-    ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
-    LoudnessTarget, PeakHandling, ReactRuntimeOptions, RenderQuality, StillExport, StillFormat,
-    VideoEncoding, VideoFormat, parse_timecode,
+use celesta_exporter::components::{
+    ListedComponent, describe_component, description_json, kind_label, list_components,
+    listing_json, origin_label,
 };
-use celesta_plugin_host::InstalledPlugins;
+use celesta_exporter::report::{self, HintStyle};
+use celesta_exporter::{
+    AudioChoice, AudioLoudness, ContactSheet, EncoderChoice, ExportCancellation, ExportError,
+    ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
+    LoudnessTarget, OutputChoice, PeakHandling, ReactRuntimeOptions, RenderQuality, SettingInput,
+    StillExport, StillFormat, parse_timecode,
+};
+use celesta_media::{ComponentRef, SettingKind, SettingValue};
+use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
 use celesta_react_bridge::{PropsFileChoice, resolve_props_file};
 
 const AFTER_HELP: &str = "\
@@ -52,15 +58,22 @@ defineProjectProperties(). Highest precedence first: --props, --props-file,
 the --project file's properties, the declared defaults. Every value is
 checked against the declaration before anything renders.
 
-A .mov output is ProRes 4444 with 24-bit PCM audio and a .webm output VP9
+The output's extension picks the muxer that writes it, with that muxer's
+default encoders: with Celesta's media plugin, a .mp4 output is H.264 with
+AAC, a .mov output ProRes 4444 with 24-bit PCM audio and a .webm output VP9
 with Opus; both keep transparency where nothing is drawn (straight alpha,
-BT.709). --preset, --crf, --bit-depth and --color-conversion apply to MP4 only.
+BT.709). --muxer, --video-encoder and --audio-encoder (none for no audio)
+choose components by <plugin>/<component>, and --video-option and
+--audio-option set an encoder's settings as KEY=VALUE, repeatable.
+--list-components shows what is installed (with --check, whether each
+component is available) and --describe <plugin>/<component> shows one
+component's settings; both take --json.
 
 --loop is for a video played in a loop, as Shorts and TikTok play one: the
-MP4's AAC encoder starts from the end of the soundtrack instead of silence,
-so the first hit is not smeared on every pass. The decoded sound is still
-exactly as long as the video. It applies to MP4 only; a .mov's PCM already
-runs from its end into its start unchanged.
+audio encoder starts from the end of the soundtrack instead of silence, so
+the first hit is not smeared on every pass. The decoded sound is still
+exactly as long as the video. Muxers that hide leading audio (MP4 and MOV)
+use it; others (WebM) are written as without it.
 
 --loudness brings the whole mix to an integrated loudness (ITU-R BS.1770,
 as FFmpeg's ebur128 filter measures it): a number of LUFS from -70 to -5,
@@ -97,11 +110,12 @@ line on stdout; skills/celesta/scripts/inspect.mjs --native drives it.";
 )]
 struct Cli {
     /// The project (.celesta.json), or with --react the entry (.tsx), to export.
-    source: PathBuf,
+    #[arg(required_unless_present_any = ["list_components", "describe"])]
+    source: Option<PathBuf>,
     /// The .mp4, .mov (ProRes 4444 with alpha) or .webm (VP9 with alpha) file to
     /// write, or the .png, .jpg/.jpeg or .webp file for frame exports. Leave
     /// it out to write only the --subtitles files.
-    #[arg(required_unless_present_any = ["inspect", "info", "subtitles"])]
+    #[arg(required_unless_present_any = ["inspect", "info", "subtitles", "list_components", "describe"])]
     output: Option<PathBuf>,
     /// Evaluate frames requested on stdin as JSON lines instead of exporting.
     #[arg(
@@ -109,9 +123,8 @@ struct Cli {
         requires = "react",
         conflicts_with_all = [
             "output", "project", "overwrite", "from", "to", "frames", "every",
-            "contact_sheet", "columns", "tile_width", "output_format", "quality", "preset",
-            "crf", "color_conversion", "bit_depth", "render_quality", "driver", "no_ui",
-            "json", "debug_guides", "subtitles", "looping", "loudness", "true_peak",
+            "contact_sheet", "columns", "tile_width", "quality", "render_quality", "driver",
+            "no_ui", "json", "debug_guides", "subtitles", "looping", "loudness", "true_peak",
             "peak_handling", "info", "stdin_cancel",
         ]
     )]
@@ -122,8 +135,7 @@ struct Cli {
         long,
         conflicts_with_all = [
             "output", "overwrite", "from", "to", "frames", "every", "contact_sheet",
-            "columns", "tile_width", "output_format", "quality", "preset", "crf",
-            "color_conversion", "bit_depth", "render_quality", "driver", "debug_guides",
+            "columns", "tile_width", "quality", "render_quality", "driver", "debug_guides",
             "subtitles", "looping", "loudness", "true_peak", "peak_handling",
         ]
     )]
@@ -216,42 +228,41 @@ struct Cli {
         default_value_t = non_zero(ContactSheet::DEFAULT_TILE_WIDTH)
     )]
     tile_width: NonZeroU32,
-    /// Output format; the output's extension implies it, and must match it when
-    /// it is a known one. A still format requires a frame selection.
-    #[arg(long, value_enum)]
-    output_format: Option<OutputFormat>,
-    /// libx264 preset: faster presets encode faster but produce larger files.
-    #[arg(
-        long,
-        default_value_t = EncoderPreset::default(),
-        value_enum
-    )]
-    preset: EncoderPreset,
-    /// Constant rate factor, 0-51; lower is higher quality.
-    #[arg(
-        long,
-        default_value_t = VideoEncoding::default().crf,
-        value_parser = clap::value_parser!(u8).range(..=i64::from(VideoEncoding::MAX_CRF))
-    )]
-    crf: u8,
-    /// Where RGB frames become YUV: auto uses the GPU unless it is a software renderer.
-    #[arg(
-        long,
-        value_name = "WHERE",
-        default_value_t = ColorConversion::default(),
-        value_enum
-    )]
-    color_conversion: ColorConversion,
-    /// Bits per sample of the MP4: 10 encodes yuv420p10le (H.264 High 10),
-    /// which keeps dark gradients smooth but plays on fewer devices.
-    #[arg(
-        long,
-        value_name = "BITS",
-        default_value_t = BitDepth::default(),
-        value_enum
-    )]
-    bit_depth: BitDepth,
-    /// The MP4 plays in a loop: encode its sound to run from its end into
+    /// A preset's name. Presets are not available yet: every name fails
+    /// with unknown_preset.
+    #[arg(long, value_name = "NAME")]
+    preset: Option<String>,
+    /// An export-presets.json, checked to be a JSON object; nothing is
+    /// looked up in it yet.
+    #[arg(long, value_name = "PATH")]
+    preset_file: Option<PathBuf>,
+    /// The muxer that writes the video, instead of the output's extension's.
+    #[arg(long, value_name = "PLUGIN/ID", value_parser = parse_component)]
+    muxer: Option<ComponentRef>,
+    /// The video encoder, instead of the muxer's default.
+    #[arg(long, value_name = "PLUGIN/ID", value_parser = parse_component)]
+    video_encoder: Option<ComponentRef>,
+    /// A video encoder setting; repeatable.
+    #[arg(long, value_name = "KEY=VALUE", value_parser = parse_option)]
+    video_option: Vec<(String, String)>,
+    /// The audio encoder, instead of the muxer's default, or none for a
+    /// video without audio.
+    #[arg(long, value_name = "PLUGIN/ID|none", value_parser = parse_audio_encoder)]
+    audio_encoder: Option<AudioEncoderArg>,
+    /// An audio encoder setting; repeatable.
+    #[arg(long, value_name = "KEY=VALUE", value_parser = parse_option)]
+    audio_option: Vec<(String, String)>,
+    /// List the installed media components and exit.
+    #[arg(long, conflicts_with = "describe")]
+    list_components: bool,
+    /// With --list-components, ask each plugin whether its components are
+    /// available.
+    #[arg(long, requires = "list_components")]
+    check: bool,
+    /// Show one component's settings and exit.
+    #[arg(long, value_name = "PLUGIN/ID", value_parser = parse_component)]
+    describe: Option<ComponentRef>,
+    /// The video plays in a loop: encode its sound to run from its end into
     /// its start.
     #[arg(long = "loop")]
     looping: bool,
@@ -309,7 +320,71 @@ struct Cli {
     stdin_cancel: bool,
 }
 
+/// `--audio-encoder`: a component, or `none`.
+#[derive(Clone, Debug, PartialEq)]
+enum AudioEncoderArg {
+    None,
+    Component(ComponentRef),
+}
+
+fn parse_component(value: &str) -> Result<ComponentRef, String> {
+    value
+        .parse()
+        .map_err(|error: celesta_media::InvalidComponentRef| error.to_string())
+}
+
+fn parse_audio_encoder(value: &str) -> Result<AudioEncoderArg, String> {
+    if value == "none" {
+        Ok(AudioEncoderArg::None)
+    } else {
+        parse_component(value).map(AudioEncoderArg::Component)
+    }
+}
+
+/// `--video-option` and `--audio-option`: `KEY=VALUE`, split at the first `=`.
+fn parse_option(value: &str) -> Result<(String, String), String> {
+    match value.split_once('=') {
+        Some((key, text)) if !key.is_empty() => Ok((key.to_owned(), text.to_owned())),
+        _ => Err(format!("`{value}` is not KEY=VALUE")),
+    }
+}
+
+fn options(given: &[(String, String)]) -> std::collections::BTreeMap<String, SettingInput> {
+    given
+        .iter()
+        .map(|(key, text)| (key.clone(), SettingInput::Text(text.clone())))
+        .collect()
+}
+
 impl Cli {
+    /// The project or entry to export; clap requires it unless a listing
+    /// was asked for.
+    fn source(&self) -> &Path {
+        self.source
+            .as_deref()
+            .expect("clap requires a source unless a component listing was asked for")
+    }
+
+    /// The muxer and encoders the component flags name.
+    fn output_choice(&self) -> OutputChoice {
+        let encoder = |component: Option<ComponentRef>, given: &[(String, String)]| EncoderChoice {
+            component,
+            options: options(given),
+        };
+        OutputChoice {
+            preset: self.preset.clone(),
+            muxer: self.muxer.clone(),
+            video: encoder(self.video_encoder.clone(), &self.video_option),
+            audio: match &self.audio_encoder {
+                Some(AudioEncoderArg::None) => AudioChoice::None,
+                Some(AudioEncoderArg::Component(component)) => {
+                    AudioChoice::Encode(encoder(Some(component.clone()), &self.audio_option))
+                }
+                None => AudioChoice::Encode(encoder(None, &self.audio_option)),
+            },
+        }
+    }
+
     /// The video or PNG output; `None` writes only subtitles.
     fn output(&self) -> Option<&Path> {
         self.output.as_deref()
@@ -322,47 +397,6 @@ impl Cli {
             peak_handling: self.peak_handling.unwrap_or(target.peak_handling),
             ..target
         })
-    }
-
-    fn video(&self) -> VideoEncoding {
-        VideoEncoding {
-            preset: self.preset,
-            crf: self.crf,
-            color_conversion: self.color_conversion,
-            bit_depth: self.bit_depth,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum OutputFormat {
-    Png,
-    Jpeg,
-    Webp,
-    Mp4,
-    Mov,
-    Webm,
-}
-
-impl OutputFormat {
-    /// The video format this names, or `None` for a still format.
-    fn video(self) -> Option<VideoFormat> {
-        match self {
-            Self::Png | Self::Jpeg | Self::Webp => None,
-            Self::Mp4 => Some(VideoFormat::Mp4),
-            Self::Mov => Some(VideoFormat::Mov),
-            Self::Webm => Some(VideoFormat::Webm),
-        }
-    }
-
-    /// The still format this names, or `None` for a video format.
-    fn still(self) -> Option<StillFormat> {
-        match self {
-            Self::Png => Some(StillFormat::Png),
-            Self::Jpeg => Some(StillFormat::Jpeg),
-            Self::Webp => Some(StillFormat::Webp),
-            Self::Mp4 | Self::Mov | Self::Webm => None,
-        }
     }
 }
 
@@ -414,6 +448,10 @@ fn main() -> ExitCode {
         .try_get_matches()
         .unwrap_or_else(|error| parse_failed(error));
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| parse_failed(error));
+    // A listing wins over an export the line also describes.
+    if cli.list_components || cli.describe.is_some() {
+        return components(&cli);
+    }
     if cli.inspect {
         return inspect(&cli);
     }
@@ -433,37 +471,40 @@ fn main() -> ExitCode {
     // JSON projects carry their own properties, so only React exports have a props file.
     let props_file = cli
         .react
-        .then(|| resolve_props_file(&cli.source, cli.props_file.as_deref()))
+        .then(|| resolve_props_file(cli.source(), cli.props_file.as_deref()))
         .flatten();
     if cli.info {
         return info(&cli, props_file);
     }
     let explicit = |id: &str| matches.value_source(id) == Some(ValueSource::CommandLine);
-    let format = output_choice(&cli, &explicit)
+    let kind = output_kind(&cli, &explicit)
         .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ArgumentConflict, &error));
+    if let Some(path) = &cli.preset_file
+        && let Err(error) = read_preset_file(path)
+    {
+        usage_error(cli.json, ErrorKind::ValueValidation, &error);
+    }
     let range = export_range(cli.from, cli.to)
         .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ValueValidation, &error));
     let export = |on_progress: &mut dyn FnMut(ExportProgress)| {
-        job(&cli, format, range).run(&cancellation, on_progress)
+        job(&cli, &kind, range).run(&cancellation, on_progress)
     };
     if cli.json {
-        return if json::run(&cli.source, props_file, cli.json_progress, export) {
+        return if json::run(cli.source(), props_file, cli.json_progress, export) {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
         };
     }
-    let result = match (cli.output(), format) {
-        (Some(output), OutputChoice::Video(_) | OutputChoice::Stills) => {
+    let result = match (cli.output(), &kind) {
+        (Some(output), OutputKind::Video(_) | OutputKind::Stills) => {
             let settings = progress::Settings {
-                source: &cli.source,
+                source: cli.source(),
                 output,
                 react: cli.react,
-                still: (format == OutputChoice::Stills)
+                still: (kind == OutputKind::Stills)
                     .then(|| StillFormat::from_extension(output).unwrap_or_default()),
                 still_quality: cli.quality.unwrap_or(StillExport::DEFAULT_QUALITY),
-                format: format.video().unwrap_or_default(),
-                video: cli.video(),
                 render_quality: cli.render_quality,
                 props: props_file.as_ref().map(props_label),
             };
@@ -501,17 +542,179 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Celesta export: {error}");
+            print_error("Celesta export", &error);
             ExitCode::FAILURE
         }
     }
 }
 
+/// `--preset-file`: a readable JSON object. Presets arrive with P3, so
+/// nothing reads names from it yet.
+fn read_preset_file(path: &Path) -> Result<(), String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read --preset-file {}: {error}", path.display()))?;
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(serde_json::Value::Object(_)) => Ok(()),
+        Ok(_) => Err(format!(
+            "--preset-file {} is not a JSON object",
+            path.display()
+        )),
+        Err(error) => Err(format!(
+            "--preset-file {} is not valid JSON: {error}",
+            path.display()
+        )),
+    }
+}
+
+/// `--list-components` and `--describe`: what is installed, from the
+/// manifests (and with `--check` from each plugin), as JSON with `--json`.
+fn components(cli: &Cli) -> ExitCode {
+    let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir, &cli.allow_plugin);
+    let registry = celesta_exporter::media_registry(&plugins);
+    let kill = PluginKillSwitch::new();
+    if let Some(reference) = &cli.describe {
+        return match describe_component(&registry, reference, &kill) {
+            Ok((info, description)) if cli.json => {
+                print_json(&description_json(&info, &description));
+                ExitCode::SUCCESS
+            }
+            Ok((info, description)) => {
+                print!("{}", describe_text(&info, &description));
+                ExitCode::SUCCESS
+            }
+            Err(error) if cli.json => {
+                json::failure(&error);
+                ExitCode::FAILURE
+            }
+            Err(error) => {
+                print_error("Celesta export", &error);
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let listed = list_components(&registry, cli.check, &kill);
+    if cli.json {
+        print_json(&listing_json(&listed));
+    } else {
+        print!("{}", listing_text(&listed));
+    }
+    ExitCode::SUCCESS
+}
+
+/// `<context>: <error>` on stderr, then what to change, as `--json`'s
+/// report would hint it.
+fn print_error(context: &str, error: &ExportError) {
+    eprintln!("{context}: {error}");
+    if let Some(hint) = report::hint(error, HintStyle::Cli) {
+        eprintln!("hint: {hint}");
+    }
+}
+
+fn print_json(value: &serde_json::Value) {
+    println!("{value}");
+}
+
+/// One line per component: `<id>  <kind>  <name>  (<origin>)`, then with a
+/// check `available` or `unavailable: <reason>`.
+fn listing_text(listed: &[ListedComponent]) -> String {
+    let mut text = String::new();
+    for component in listed {
+        let info = &component.info;
+        text.push_str(&format!(
+            "{}  {}  {}  ({})",
+            info.reference,
+            kind_label(info.kind),
+            info.name,
+            origin_label(info.origin)
+        ));
+        match (component.available, &component.reason) {
+            (Some(true), _) => text.push_str("  available"),
+            (Some(false), Some(reason)) => text.push_str(&format!("  unavailable: {reason}")),
+            (Some(false), None) => text.push_str("  unavailable"),
+            (None, _) => {}
+        }
+        text.push('\n');
+    }
+    text
+}
+
+/// The header line, then each setting as `<key>  <type>  default <value>
+/// <label>` and its range or options.
+fn describe_text(
+    info: &celesta_media::MediaComponentInfo,
+    description: &celesta_media::ComponentDescription,
+) -> String {
+    let mut text = format!(
+        "{}  {}  {}  ({})",
+        info.reference,
+        kind_label(info.kind),
+        info.name,
+        origin_label(info.origin)
+    );
+    if description.available {
+        text.push_str("  available\n");
+    } else {
+        let reason = description.reason.as_deref().unwrap_or("no reason given");
+        text.push_str(&format!("  unavailable: {reason}\n"));
+    }
+    for field in &description.settings {
+        let (kind, detail) = match &field.kind {
+            SettingKind::Select { options } => (
+                "select",
+                Some(format!(
+                    "options: {}",
+                    options
+                        .iter()
+                        .map(|option| format!("{} ({})", option.value, option.label))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            ),
+            SettingKind::Number {
+                min,
+                max,
+                integer,
+                unit,
+                ..
+            } => {
+                let mut range = Vec::new();
+                if let Some(min) = min {
+                    range.push(format!("min {min}"));
+                }
+                if let Some(max) = max {
+                    range.push(format!("max {max}"));
+                }
+                if let Some(unit) = unit {
+                    range.push(format!("unit {unit}"));
+                }
+                (
+                    if *integer { "integer" } else { "number" },
+                    (!range.is_empty()).then(|| format!("range: {}", range.join(", "))),
+                )
+            }
+            SettingKind::Boolean => ("boolean", None),
+            SettingKind::String => ("string", None),
+        };
+        let default = match &field.default {
+            SettingValue::String(value) => value.clone(),
+            other => other.to_string(),
+        };
+        text.push_str(&format!(
+            "{}  {kind}  default {default}  {}\n",
+            field.key, field.label
+        ));
+        if let Some(detail) = detail {
+            text.push_str(&format!("    {detail}\n"));
+        }
+    }
+    text
+}
+
 /// `--info`: reports the composition, as JSON with `--json`.
 fn info(cli: &Cli, props_file: Option<PropsFileChoice>) -> ExitCode {
-    let job = job(cli, OutputChoice::SubtitlesOnly, None);
+    let job = job(cli, &OutputKind::SubtitlesOnly, None);
     if cli.json {
-        let ok = json::run(&cli.source, props_file, cli.json_progress, |on_progress| {
+        let ok = json::run(cli.source(), props_file, cli.json_progress, |on_progress| {
             job.describe(on_progress)
         });
         return if ok {
@@ -555,7 +758,7 @@ fn info(cli: &Cli, props_file: Option<PropsFileChoice>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Celesta export: {error}");
+            print_error("Celesta export", &error);
             ExitCode::FAILURE
         }
     }
@@ -577,15 +780,15 @@ fn cancel_on_stdin(cancellation: ExportCancellation) {
 
 fn inspect(cli: &Cli) -> ExitCode {
     let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir, &cli.allow_plugin);
-    // The React runtime's media probes go through the codec.
-    celesta_exporter::use_codec(&plugins);
+    // The React runtime's media probes go through the media plugins.
+    celesta_exporter::use_media(&plugins);
     let result = match ReactRuntimeOptions::for_entry(
-        &cli.source,
+        cli.source(),
         cli.props_file.as_deref(),
         cli.props.as_deref(),
     ) {
         Ok(runtime) => inspect::run(
-            &cli.source,
+            cli.source(),
             &ReactRuntimeOptions {
                 node: cli.node.clone().unwrap_or(runtime.node),
                 cli_script: cli.runtime.clone().unwrap_or(runtime.cli_script),
@@ -641,40 +844,39 @@ fn usage_error(json: bool, kind: ErrorKind, message: &str) -> ! {
 }
 
 /// What an export writes besides any subtitle files.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OutputChoice {
-    Video(VideoFormat),
+#[derive(Clone, Debug, PartialEq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "there is one, made once from the command line"
+)]
+enum OutputKind {
+    /// A video, with these components.
+    Video(OutputChoice),
     Stills,
     /// Nothing: only the subtitle files.
     SubtitlesOnly,
 }
 
-impl OutputChoice {
-    const fn video(self) -> Option<VideoFormat> {
-        match self {
-            Self::Video(format) => Some(format),
-            Self::Stills | Self::SubtitlesOnly => None,
-        }
-    }
-}
+/// The flags that choose a video's components, by argument id.
+const COMPONENT_FLAGS: [(&str, &str); 7] = [
+    ("preset", "--preset"),
+    ("preset_file", "--preset-file"),
+    ("muxer", "--muxer"),
+    ("video_encoder", "--video-encoder"),
+    ("video_option", "--video-option"),
+    ("audio_encoder", "--audio-encoder"),
+    ("audio_option", "--audio-option"),
+];
 
-/// What `cli` exports, checking the combinations of selection, format and
-/// encoder flags clap cannot express. `explicit` tells whether the argument
-/// with that id was given on the command line.
-fn output_choice(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputChoice, String> {
+/// What `cli` exports, checking the combinations of selection and output
+/// flags clap cannot express. `explicit` tells whether the argument with
+/// that id was given on the command line.
+fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind, String> {
     let Some(output) = cli.output() else {
         return subtitles_only_choice(explicit);
     };
     let selected = !cli.frames.is_empty() || cli.every.is_some();
-    let named = cli.output_format.and_then(OutputFormat::video);
-    let named_still = cli.output_format.and_then(OutputFormat::still);
-    if (selected || cli.contact_sheet) && named.is_some() {
-        return Err(
-            "--frame/--frames/--every/--contact-sheet require still output (PNG, JPEG or WebP)"
-                .into(),
-        );
-    }
-    let stills = selected || cli.contact_sheet || named_still.is_some();
+    let stills = selected || cli.contact_sheet;
     if stills && !selected {
         return Err("still output requires --frame, --frames or --every".into());
     }
@@ -682,11 +884,14 @@ fn output_choice(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputCho
         if !cli.subtitles.is_empty() {
             return Err("--subtitles applies to video output, not still frames".into());
         }
-        if cli.bit_depth != BitDepth::Eight {
-            return Err("--bit-depth applies to MP4 output; stills are 8-bit".into());
-        }
         if cli.looping {
-            return Err("--loop applies to MP4 output, not still frames".into());
+            return Err("--loop applies to video output, not still frames".into());
+        }
+        if let Some(flag) = COMPONENT_FLAGS.iter().find(|(id, _)| explicit(id)) {
+            return Err(format!(
+                "{} applies to video output, not still frames",
+                flag.1
+            ));
         }
         if cli.loudness.is_some() {
             return Err("--loudness applies to video output, not still frames".into());
@@ -694,19 +899,10 @@ fn output_choice(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputCho
         // An output with no still extension is left to the exporter, which
         // reports it as `invalid_selection`.
         let format = StillFormat::from_extension(output);
-        if let (Some(named), Some(format)) = (named_still, format)
-            && named != format
-        {
-            let extension = output.extension().unwrap_or_default();
-            return Err(format!(
-                "--output-format {named} does not match the .{} output",
-                extension.to_string_lossy()
-            ));
-        }
         if cli.quality.is_some() && format == Some(StillFormat::Png) {
             return Err("--quality applies to JPEG and WebP output; PNG is lossless".into());
         }
-        return Ok(OutputChoice::Stills);
+        return Ok(OutputKind::Stills);
     }
     if cli.quality.is_some() {
         return Err("--quality applies to JPEG and WebP stills, not video".into());
@@ -716,82 +912,52 @@ fn output_choice(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputCho
             "--debug-guides applies to still output; video exports never draw debug guides".into(),
         );
     }
-    // An output with no video extension is left to the exporter, which reports
-    // it as `unsupported_output`; only a video extension that contradicts
-    // `--output-format` is a usage error.
-    let format = match VideoFormat::from_extension(output) {
-        Some(format) => {
-            if let Some(named) = named.filter(|&named| named != format) {
-                return Err(format!(
-                    "--output-format {named} does not match the .{format} output"
-                ));
-            }
-            format
-        }
-        None => named.unwrap_or_default(),
-    };
-    if format.has_alpha() {
-        if cli.looping {
-            return Err(format!(
-                "--loop applies to MP4 (AAC) output; .{format} output does not use it"
-            ));
-        }
-        for (id, flag) in [
-            ("preset", "--preset"),
-            ("crf", "--crf"),
-            ("bit_depth", "--bit-depth"),
-            ("color_conversion", "--color-conversion"),
-        ] {
-            if explicit(id) {
-                return Err(format!(
-                    "{flag} applies to H.264 (MP4) output; .{format} output does not use it"
-                ));
-            }
-        }
+    // Options for no encoder would be dropped unchecked, typos and all.
+    if matches!(cli.audio_encoder, Some(AudioEncoderArg::None)) && !cli.audio_option.is_empty() {
+        return Err(
+            "--audio-option needs an audio encoder; --audio-encoder none writes no audio".into(),
+        );
     }
-    Ok(OutputChoice::Video(format))
+    // The exporter picks the muxer by the output's extension, and reports
+    // one no muxer writes as `unsupported_output`.
+    Ok(OutputKind::Video(cli.output_choice()))
 }
 
 /// Checks a command line with no <OUTPUT>, which clap allows only with
 /// --subtitles: flags about rendering or encoding a picture have nothing to
 /// apply to.
-fn subtitles_only_choice(explicit: &dyn Fn(&str) -> bool) -> Result<OutputChoice, String> {
-    for (id, flag) in [
+fn subtitles_only_choice(explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind, String> {
+    for (id, flag) in COMPONENT_FLAGS.into_iter().chain([
         ("frames", "--frame"),
         ("every", "--every"),
         ("contact_sheet", "--contact-sheet"),
         ("debug_guides", "--debug-guides"),
-        ("output_format", "--output-format"),
         ("quality", "--quality"),
-        ("preset", "--preset"),
-        ("crf", "--crf"),
-        ("bit_depth", "--bit-depth"),
-        ("color_conversion", "--color-conversion"),
         ("looping", "--loop"),
         ("loudness", "--loudness"),
         ("render_quality", "--render-quality"),
         ("driver", "--driver"),
-    ] {
+    ]) {
         if explicit(id) {
             return Err(format!(
                 "{flag} needs an <OUTPUT>; without one only the --subtitles files are written"
             ));
         }
     }
-    Ok(OutputChoice::SubtitlesOnly)
+    Ok(OutputKind::SubtitlesOnly)
 }
 
 /// The export `cli` describes.
-fn job(cli: &Cli, format: OutputChoice, range: Option<ExportRange>) -> ExportJob {
+fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
     ExportJob {
-        source: cli.source.clone(),
+        source: cli.source().to_owned(),
         react: cli.react,
         composition_id: cli.composition.clone(),
         companion: cli.project.clone(),
         props_file: cli.props_file.clone(),
         props: cli.props.clone(),
         output: cli.output.clone(),
-        stills: (format == OutputChoice::Stills).then(|| StillExport {
+        stills: (*kind == OutputKind::Stills).then(|| StillExport {
             frames: match cli.every {
                 Some(step) => FrameSelection::Every(step.get()),
                 None => FrameSelection::Frames(cli.frames.clone()),
@@ -806,8 +972,10 @@ fn job(cli: &Cli, format: OutputChoice, range: Option<ExportRange>) -> ExportJob
         options: ExportOptions {
             overwrite: cli.overwrite,
             range,
-            video_format: format.video().unwrap_or_default(),
-            video: cli.video(),
+            output: match kind {
+                OutputKind::Video(choice) => choice.clone(),
+                OutputKind::Stills | OutputKind::SubtitlesOnly => OutputChoice::default(),
+            },
             render_quality: cli.render_quality,
             driver: cli.driver,
             subtitles: cli.subtitles.clone(),
@@ -859,6 +1027,7 @@ fn export_range(start: Option<Time>, end: Option<Time>) -> Result<Option<ExportR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::ValueEnum;
 
     /// `--help` lists, and clap accepts, the names the library parses.
     #[test]
@@ -869,15 +1038,12 @@ mod tests {
                 assert_eq!(name.get_name(), (*value).into());
             }
         }
-        names_match::<EncoderPreset>();
-        names_match::<ColorConversion>();
-        names_match::<BitDepth>();
         names_match::<PeakHandling>();
         names_match::<RenderQuality>();
         names_match::<GpuDriver>();
     }
 
-    fn choice(args: &[&str]) -> Result<OutputChoice, String> {
+    fn choice(args: &[&str]) -> Result<OutputKind, String> {
         let matches = Cli::command()
             .try_get_matches_from(
                 ["celesta-exporter", "project.celesta.json"]
@@ -886,7 +1052,7 @@ mod tests {
             )
             .unwrap();
         let cli = Cli::from_arg_matches(&matches).unwrap();
-        output_choice(&cli, &|id| {
+        output_kind(&cli, &|id| {
             matches.value_source(id) == Some(ValueSource::CommandLine)
         })
     }
@@ -895,96 +1061,36 @@ mod tests {
         choice(args).expect_err("the arguments should be rejected")
     }
 
-    #[test]
-    fn the_output_extension_selects_the_video_format() {
-        assert_eq!(
-            choice(&["out.mov"]),
-            Ok(OutputChoice::Video(VideoFormat::Mov))
-        );
-        assert_eq!(
-            choice(&["out.WEBM"]),
-            Ok(OutputChoice::Video(VideoFormat::Webm))
-        );
-        assert_eq!(
-            choice(&["out.mp4"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
-        assert_eq!(
-            choice(&["--output-format", "webm", "out.webm"]),
-            Ok(OutputChoice::Video(VideoFormat::Webm))
-        );
+    fn video() -> Result<OutputKind, String> {
+        Ok(OutputKind::Video(OutputChoice::default()))
     }
 
     #[test]
-    fn an_output_format_must_match_the_extension() {
-        assert!(error(&["--output-format", "mp4", "out.mov"]).contains("does not match"));
-    }
-
-    #[test]
-    fn an_unknown_extension_is_left_to_the_exporter() {
-        // The library reports it as `unsupported_output`, with its PNG hint.
-        assert_eq!(
-            choice(&["out.gif"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
-        assert_eq!(
-            choice(&["out.png"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
-        assert_eq!(
-            choice(&["--output-format", "webm", "out.gif"]),
-            Ok(OutputChoice::Video(VideoFormat::Webm))
-        );
-    }
-
-    #[test]
-    fn h264_flags_are_rejected_for_alpha_formats() {
-        for (args, flag) in [
-            (["out.mov", "--crf", "20"], "--crf"),
-            (["out.webm", "--preset", "fast"], "--preset"),
-            (["out.mov", "--bit-depth", "10"], "--bit-depth"),
-            (
-                ["out.webm", "--color-conversion", "gpu"],
-                "--color-conversion",
-            ),
-        ] {
-            let message = error(&args);
-            assert!(message.contains(flag), "{message}");
-            assert!(message.contains("H.264"), "{message}");
+    fn every_video_takes_the_default_components() {
+        // The exporter picks the muxer by the extension, and reports one no
+        // muxer writes as `unsupported_output`, with its PNG hint.
+        for output in ["out.mov", "out.WEBM", "out.mp4", "out.gif", "out.png"] {
+            assert_eq!(choice(&[output]), video(), "{output}");
         }
-        assert_eq!(
-            choice(&["out.mp4", "--crf", "20"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
     }
 
     #[test]
-    fn video_formats_conflict_with_frame_selections() {
-        for args in [
-            ["--output-format", "webm", "--frame", "0", "out.png"].as_slice(),
-            &[
-                "--output-format",
-                "mov",
-                "--contact-sheet",
-                "--every",
-                "5",
-                "out.png",
-            ],
+    fn the_removed_encoder_flags_are_unknown() {
+        for flags in [
+            ["--output-format", "mp4"].as_slice(),
+            &["--crf", "20"],
+            &["--bit-depth", "10"],
+            &["--color-conversion", "gpu"],
         ] {
-            assert!(error(args).contains("require still output"));
+            let args = [&["project.celesta.json", "out.mp4"][..], flags].concat();
+            assert!(!parses(&args), "{flags:?}");
         }
     }
 
     #[test]
     fn still_selections_keep_their_rules() {
-        assert_eq!(
-            choice(&["--frame", "0", "out.png"]),
-            Ok(OutputChoice::Stills)
-        );
-        assert!(error(&["--output-format", "png", "out.png"]).contains("requires --frame"));
-        assert!(error(&["--output-format", "jpeg", "out.jpg"]).contains("requires --frame"));
-        assert!(error(&["--frame", "0", "--bit-depth", "10", "out.png"]).contains("--bit-depth"));
-        assert!(error(&["--frame", "0", "--bit-depth", "10", "out.jpg"]).contains("--bit-depth"));
+        assert_eq!(choice(&["--frame", "0", "out.png"]), Ok(OutputKind::Stills));
+        assert!(error(&["--contact-sheet", "out.png"]).contains("requires --frame"));
     }
 
     #[test]
@@ -992,39 +1098,27 @@ mod tests {
         for output in ["out.jpg", "out.JPEG", "out.webp"] {
             assert_eq!(
                 choice(&["--frame", "0", output]),
-                Ok(OutputChoice::Stills),
+                Ok(OutputKind::Stills),
                 "{output}"
             );
         }
         assert_eq!(
-            choice(&["--output-format", "jpeg", "--frame", "0", "out.jpg"]),
-            Ok(OutputChoice::Stills)
-        );
-        assert_eq!(
-            choice(&["--output-format", "webp", "--every", "2", "out.WebP"]),
-            Ok(OutputChoice::Stills)
-        );
-        let message = error(&["--output-format", "png", "--frame", "0", "out.webp"]);
-        assert!(
-            message.contains("--output-format png does not match the .webp output"),
-            "{message}"
+            choice(&["--every", "2", "out.WebP"]),
+            Ok(OutputKind::Stills)
         );
         // An unknown extension is left to the exporter, as for video.
-        assert_eq!(
-            choice(&["--frame", "0", "out.gif"]),
-            Ok(OutputChoice::Stills)
-        );
+        assert_eq!(choice(&["--frame", "0", "out.gif"]), Ok(OutputKind::Stills));
     }
 
     #[test]
     fn quality_applies_to_jpeg_and_webp_stills_only() {
         assert_eq!(
             choice(&["--frame", "0", "--quality", "70", "out.jpg"]),
-            Ok(OutputChoice::Stills)
+            Ok(OutputKind::Stills)
         );
         assert_eq!(
             choice(&["--every", "3", "--quality", "1", "out.webp"]),
-            Ok(OutputChoice::Stills)
+            Ok(OutputKind::Stills)
         );
         let message = error(&["--frame", "0", "--quality", "70", "out.png"]);
         assert!(message.contains("PNG is lossless"), "{message}");
@@ -1038,20 +1132,172 @@ mod tests {
     }
 
     #[test]
-    fn loop_applies_to_mp4_only() {
-        assert_eq!(
-            choice(&["out.mp4", "--loop"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
+    fn loop_applies_to_every_video() {
+        // A muxer that does not hide leading audio writes it as without.
+        for output in ["out.mp4", "out.mov", "out.webm"] {
+            assert_eq!(choice(&[output, "--loop"]), video(), "{output}");
+        }
         for args in [
-            ["out.mov", "--loop"].as_slice(),
-            &["out.webm", "--loop"],
-            &["--frame", "0", "--loop", "out.png"],
+            ["--frame", "0", "--loop", "out.png"].as_slice(),
             &["--subtitles", "a.srt", "--loop"],
         ] {
             let message = error(args);
             assert!(message.contains("--loop"), "{message}");
         }
+    }
+
+    fn reference(text: &str) -> ComponentRef {
+        text.parse().unwrap()
+    }
+
+    #[test]
+    fn component_flags_build_the_choice() {
+        assert_eq!(
+            choice(&[
+                "out.mp4",
+                "--muxer",
+                "ffmpeg/mp4",
+                "--video-encoder",
+                "ffmpeg/libx264",
+                "--video-option",
+                "crf=20",
+                "--video-option",
+                "preset=slow",
+                "--audio-encoder",
+                "none",
+            ]),
+            Ok(OutputKind::Video(OutputChoice {
+                muxer: Some(reference("ffmpeg/mp4")),
+                video: EncoderChoice {
+                    component: Some(reference("ffmpeg/libx264")),
+                    options: [
+                        ("crf".to_owned(), SettingInput::Text("20".into())),
+                        ("preset".to_owned(), SettingInput::Text("slow".into())),
+                    ]
+                    .into(),
+                },
+                audio: AudioChoice::None,
+                preset: None,
+            }))
+        );
+        // An audio encoder takes its options; a preset is carried to resolve.
+        assert_eq!(
+            choice(&[
+                "out.mp4",
+                "--audio-encoder",
+                "ffmpeg/aac",
+                "--audio-option",
+                "bitrate=128000",
+                "--preset",
+                "web",
+            ]),
+            Ok(OutputKind::Video(OutputChoice {
+                preset: Some("web".into()),
+                audio: AudioChoice::Encode(EncoderChoice {
+                    component: Some(reference("ffmpeg/aac")),
+                    options: [("bitrate".to_owned(), SettingInput::Text("128000".into()))].into(),
+                }),
+                ..OutputChoice::default()
+            }))
+        );
+    }
+
+    #[test]
+    fn no_audio_takes_no_audio_options() {
+        assert_eq!(
+            error(&[
+                "out.mp4",
+                "--audio-encoder",
+                "none",
+                "--audio-option",
+                "bitrate=96000",
+            ]),
+            "--audio-option needs an audio encoder; --audio-encoder none writes no audio"
+        );
+    }
+
+    #[test]
+    fn a_video_option_needs_an_equals_sign() {
+        let error = Cli::command()
+            .try_get_matches_from([
+                "celesta-exporter",
+                "project.celesta.json",
+                "out.mp4",
+                "--video-option",
+                "crf",
+            ])
+            .expect_err("a bare key is not an option");
+        assert!(error.to_string().contains("KEY=VALUE"), "{error}");
+    }
+
+    #[test]
+    fn a_bad_component_reference_is_a_usage_error() {
+        assert!(!parses(&[
+            "film.tsx",
+            "out.mp4",
+            "--video-encoder",
+            "libx264"
+        ]));
+        assert!(!parses(&["film.tsx", "out.mp4", "--audio-encoder", "aac/"]));
+        assert!(parses(&["film.tsx", "out.mp4", "--audio-encoder", "none"]));
+    }
+
+    #[test]
+    fn component_flags_need_a_video_output() {
+        for (flags, flag) in [
+            (
+                &["--video-encoder", "ffmpeg/libx264"][..],
+                "--video-encoder",
+            ),
+            (&["--muxer", "ffmpeg/mp4"], "--muxer"),
+            (&["--video-option", "crf=20"], "--video-option"),
+            (&["--audio-encoder", "none"], "--audio-encoder"),
+            (&["--audio-option", "bitrate=1"], "--audio-option"),
+            (&["--preset", "web"], "--preset"),
+            (&["--preset-file", "presets.json"], "--preset-file"),
+        ] {
+            let stills = error(&[&["--frame", "0", "out.png"][..], flags].concat());
+            assert!(stills.contains(flag), "{stills}");
+            let subtitles = error(&[&["--subtitles", "a.srt"][..], flags].concat());
+            assert!(subtitles.contains(flag), "{subtitles}");
+        }
+        assert!(error(&["--frame", "0", "--loop", "out.png"]).contains("--loop"));
+        assert_eq!(choice(&["out.webm", "--loop"]), video());
+    }
+
+    #[test]
+    fn list_components_needs_no_source() {
+        for args in [
+            ["celesta-exporter", "--list-components"].as_slice(),
+            &["celesta-exporter", "--list-components", "--check", "--json"],
+            &["celesta-exporter", "--describe", "ffmpeg/libx264"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert_eq!(cli.source, None, "{args:?}");
+            assert_eq!(cli.output, None, "{args:?}");
+        }
+        let cli = Cli::try_parse_from([
+            "celesta-exporter",
+            "--list-components",
+            "--check",
+            "film.tsx",
+            "out.mp4",
+        ])
+        .unwrap();
+        assert!(cli.list_components && cli.check);
+        assert!(Cli::try_parse_from(["celesta-exporter", "--check"]).is_err());
+        assert!(
+            Cli::try_parse_from(["celesta-exporter", "film.tsx", "out.mp4", "--check"]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "celesta-exporter",
+                "--list-components",
+                "--describe",
+                "ffmpeg/mp4"
+            ])
+            .is_err()
+        );
     }
 
     fn loudness(args: &[&str]) -> Result<Option<LoudnessTarget>, clap::Error> {
@@ -1097,10 +1343,7 @@ mod tests {
 
     #[test]
     fn loudness_applies_to_video_only() {
-        assert_eq!(
-            choice(&["out.webm", "--loudness", "-14"]),
-            Ok(OutputChoice::Video(VideoFormat::Webm))
-        );
+        assert_eq!(choice(&["out.webm", "--loudness", "-14"]), video());
         for args in [
             ["--frame", "0", "--loudness", "-14", "out.png"].as_slice(),
             &["--subtitles", "a.srt", "--loudness", "-14"],
@@ -1112,10 +1355,7 @@ mod tests {
 
     #[test]
     fn subtitles_go_with_video_only() {
-        assert_eq!(
-            choice(&["out.mp4", "--subtitles", "out.srt"]),
-            Ok(OutputChoice::Video(VideoFormat::Mp4))
-        );
+        assert_eq!(choice(&["out.mp4", "--subtitles", "out.srt"]), video());
         assert!(
             error(&["--frame", "0", "--subtitles", "out.srt", "out.png"]).contains("--subtitles")
         );
@@ -1144,10 +1384,10 @@ mod tests {
         assert_eq!(cli.output, None);
         assert_eq!(
             choice(&["--subtitles", "film.srt", "--from", "1"]),
-            Ok(OutputChoice::SubtitlesOnly)
+            Ok(OutputKind::SubtitlesOnly)
         );
         for (args, flag) in [
-            (["--subtitles", "a.srt", "--crf", "20"], "--crf"),
+            (["--subtitles", "a.srt", "--quality", "70"], "--quality"),
             (["--subtitles", "a.srt", "--every", "5"], "--every"),
             (["--subtitles", "a.srt", "--driver", "metal"], "--driver"),
         ] {
@@ -1183,7 +1423,7 @@ mod tests {
         assert!(parses(&["project.celesta.json", "--info", "--json"]));
         for args in [
             ["film.tsx", "--info", "out.mp4"].as_slice(),
-            &["film.tsx", "--info", "--crf", "20"],
+            &["film.tsx", "--info", "--quality", "70"],
             &["film.tsx", "--info", "--frame", "0"],
             &["film.tsx", "--info", "--subtitles", "film.srt"],
             &["film.tsx", "--info", "--loop"],

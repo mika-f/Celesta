@@ -30,17 +30,21 @@ export interface RunOptions {
 
 export type RenderQuality = 'draft' | 'final';
 export type GpuDriver = 'auto' | 'vulkan' | 'dx12' | 'metal' | 'gl';
-export type EncoderPreset =
-  | 'ultrafast'
-  | 'superfast'
-  | 'veryfast'
-  | 'faster'
-  | 'fast'
-  | 'medium'
-  | 'slow'
-  | 'slower'
-  | 'veryslow';
-export type ColorConversion = 'auto' | 'gpu' | 'encoder';
+/** A component setting's value. */
+export type SettingValue = string | number | boolean;
+
+/** An encoder component and the settings to give it. */
+export interface EncoderOptions {
+  /** `<plugin>/<id>`; the muxer's default or the preset's when left out. */
+  id?: string;
+  /**
+   * Setting values by key; each is checked against the component's settings.
+   * They reach the exporter as `--video-option KEY=VALUE` text, read by the
+   * setting's type as on the command line, so `'18'` sets a number setting to 18.
+   */
+  options?: Record<string, SettingValue>;
+}
+
 /** What gives where the loudness gain would take a true peak over `truePeak`. */
 export type PeakHandling = 'limit' | 'lower';
 
@@ -62,22 +66,22 @@ interface RenderOptions {
 export interface VideoOptions extends SourceOptions, RunOptions, RenderOptions {
   /** The `.mp4`, `.mov` or `.webm` file. Leave it out to write only `subtitles`. */
   output?: string;
-  /** The video format; the output's extension implies it. */
-  format?: 'mp4' | 'mov' | 'webm';
   /** Export from this time. */
   from?: Timecode;
   /** Export up to (excluding) this time. */
   to?: Timecode;
   /** `.srt` or `.vtt` files to write beside the video; `{lang}` writes one per language. */
   subtitles?: string | string[];
-  /** libx264 preset (MP4 only). */
-  preset?: EncoderPreset;
-  /** Constant rate factor, 0-51 (MP4 only). */
-  crf?: number;
-  /** 10 encodes H.264 High 10 (MP4 only). */
-  bitDepth?: 8 | 10;
-  /** Where RGB frames become YUV (MP4 only). */
-  colorConversion?: ColorConversion;
+  /** A named bundle of component choices and settings (`--preset`). */
+  preset?: string;
+  /** A JSON file of presets (`--preset-file`). */
+  presetFile?: string;
+  /** The muxer component, `<plugin>/<id>`; the output's extension picks one when left out. */
+  muxer?: string;
+  /** The video encoder component and its settings. */
+  videoEncoder?: EncoderOptions;
+  /** The audio encoder component and its settings, or `'none'` for a silent video. */
+  audioEncoder?: EncoderOptions | 'none';
   /**
    * Bring the whole mix to this integrated loudness: LUFS from -70 to -5,
    * `streaming` (-14) or `broadcast` (-23). Every video reports its mix's
@@ -104,8 +108,6 @@ export interface StillsOptions extends SourceOptions, RunOptions, RenderOptions 
   from?: Timecode;
   /** With `every`, stop before this time. */
   to?: Timecode;
-  /** The still format; the output's extension implies it. */
-  format?: 'png' | 'jpeg' | 'webp';
   /** JPEG and WebP quality, 1-100. */
   quality?: number;
   /** Write the frames as one labelled grid image. */
@@ -160,11 +162,16 @@ export type ExportOutput =
       frames: number;
       start: number;
       duration: number;
-      audio: boolean;
+      /** The muxer component that wrote it. */
+      muxer: string;
+      video: { component: string; codec: string };
+      /** The audio track, or `null` for a silent video. */
+      audio: { component: string; codec: string } | null;
       /** The mix's loudness, when the video has sound. */
       loudness?: Loudness;
-      format: 'mp4' | 'mov' | 'webm';
       alpha: boolean;
+      /** Every file written for the output, absolute. */
+      files: string[];
     }
   | { type: 'frame'; path: string; frame: number; time: number }
   | { type: 'subtitles'; path: string; format: 'srt' | 'vtt'; cues: number; lang?: string }
@@ -246,4 +253,61 @@ export type ProgressEvent =
   | { event: 'mixingAudio' }
   | { event: 'muxing' }
   | { event: 'warning'; message: string }
+  /** The components the export resolved, sent before rendering starts. */
+  | {
+      event: 'output';
+      muxer: string;
+      muxerName: string;
+      video: { component: string; name: string; settings: string[] };
+      audio: { component: string; name: string; settings: string[] } | null;
+    }
   | { event: 'wrote'; output: ExportOutput };
+
+/** One installed media component, as `--list-components --json` reports it. */
+export interface ComponentInfo {
+  /** `<plugin>/<id>`. */
+  id: string;
+  kind: 'decoder' | 'videoEncoder' | 'audioEncoder' | 'muxer';
+  name: string;
+  plugin: string;
+  origin: 'user' | 'bundled' | 'project';
+  /** With `check`: whether the plugin could start and offers the component. */
+  available?: boolean;
+  /** With `check`: why it is not available. */
+  reason?: string;
+  /** The rest of the plugin manifest's entry for the component. */
+  [manifest: string]: unknown;
+}
+
+/** One setting a component declares. */
+export interface SettingField {
+  key: string;
+  type: 'select' | 'number' | 'boolean' | 'string';
+  label: string;
+  default: SettingValue;
+  description?: string;
+  group?: string;
+  advanced?: boolean;
+  /** `select`: the choices. */
+  options?: { value: string; label: string }[];
+  /** `number`: limits, step and unit. */
+  min?: number;
+  max?: number;
+  step?: number;
+  integer?: boolean;
+  unit?: string;
+  /** Shown only while every listed key holds one of its values. */
+  visibleWhen?: Record<string, SettingValue[]>;
+}
+
+/** A component with what its plugin says about it (`--describe --json`). */
+export interface ComponentDescription extends ComponentInfo {
+  available: boolean;
+  settings: SettingField[];
+  /** Encoders: the pixel formats a video encoder takes. */
+  inputFormats?: string[];
+  transports?: string[];
+  /** Audio encoders: `'any'` or the rates they take. */
+  sampleRates?: 'any' | number[];
+  channels?: number[];
+}

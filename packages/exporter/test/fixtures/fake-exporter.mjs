@@ -15,7 +15,46 @@ const ok = (extra = {}) => ({
 });
 const error = (code, message, hint) => ({ status: 'error', source: '/work/film.tsx', error: { code, message, ...(hint ? { hint } : {}) } });
 
+const video = {
+  type: 'video',
+  path: '/work/film.mp4',
+  firstFrame: 0,
+  frames: 30,
+  start: 0,
+  duration: 1,
+  muxer: 'ffmpeg/mp4',
+  video: { component: 'ffmpeg/libx264', codec: 'avc1.64001f' },
+  audio: null,
+  alpha: false,
+  files: ['/work/film.mp4'],
+};
+
 switch (process.env.FAKE_MODE) {
+  case 'hang':
+    setInterval(() => {}, 1000);
+    break;
+  case 'component-error':
+    line(error('component_unavailable', 'no such component: ffmpeg/nope'));
+    process.exitCode = 1;
+    break;
+  case 'video':
+    line({
+      event: 'output',
+      muxer: 'ffmpeg/mp4',
+      muxerName: 'MP4',
+      video: { component: 'ffmpeg/libx264', name: 'H.264 (x264)', settings: ['CRF 20'] },
+      audio: null,
+    });
+    line(ok({ outputs: [video] }));
+    break;
+  case 'components':
+    // The listings print their result without a status.
+    line(
+      process.argv.includes('--describe')
+        ? { id: 'ffmpeg/libx264', kind: 'videoEncoder', name: 'H.264', plugin: 'ffmpeg', origin: 'bundled', available: true, settings: [] }
+        : { components: [{ id: 'ffmpeg/mp4', kind: 'muxer', name: 'MP4', plugin: 'ffmpeg', origin: 'bundled', args: process.argv.slice(2) }] },
+    );
+    break;
   case 'progress':
     line({ event: 'composition', composition });
     line({ event: 'rendering', frame: 1, total: 30 });

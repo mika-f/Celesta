@@ -15,6 +15,7 @@ use celesta_composition::{
 };
 use std::collections::HashMap;
 
+mod backend;
 mod loudness;
 
 #[test]
@@ -1007,7 +1008,7 @@ fn audible_end_follows_a_keyframed_rate() {
 
 #[test]
 fn timestamps_match_within_a_tenth_of_a_microsecond_or_a_part_in_a_billion() {
-    use crate::codec::timestamps_match;
+    use crate::provider::timestamps_match;
 
     assert!(timestamps_match(1.0, 1.0 + 0.9e-7));
     assert!(!timestamps_match(1.0, 1.0 + 1.1e-7));

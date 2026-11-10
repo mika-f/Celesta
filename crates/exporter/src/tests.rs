@@ -1,17 +1,10 @@
 use crate::DEFAULT_REACT_AUDIO_SAMPLE_RATE;
-use crate::control::ExportCancellation;
+use crate::encode::{LOOP_LEAD_IN_FRAMES, loop_lead_in};
 use crate::error::ExportError;
-use crate::options::{
-    BitDepth, ColorConversion, EncoderPreset, UnknownBitDepth, UnknownEncoderPreset, VideoEncoding,
-    VideoFormat,
-};
 use crate::project::absolutize_layers;
 use crate::project::build_audio_graph;
 use crate::range::{ExportRange, resolve_window, shifted_audio_graph};
-use crate::render::{
-    LOOP_LEAD_IN_FRAMES, frame_count, loop_lead_in, open_video_writer, validate_dimensions,
-    validate_output,
-};
+use crate::render::{frame_count, validate_dimensions, validate_output};
 use crate::timecode::{TimecodeError, parse_timecode};
 use celesta_composition::{
     AssetLocation, EvaluatedTransform, F32Column, GroupMask, InstanceShape, Layer, LayerContent,
@@ -19,14 +12,12 @@ use celesta_composition::{
 };
 use celesta_composition::{AudioDuck, DuckGroups, DuckLevel};
 use celesta_evaluator::Evaluator;
-use celesta_gpu_renderer::ReadbackFormat;
 use celesta_project::Project;
 use celesta_react_bridge::{ReactAudioClipDescriptor, ReactDuck, merge_react_audio_clips};
 use std::fs;
 use std::path::Path;
 
 use celesta_composition::{Animatable, Keyframe, KeyframeAnimation, KeyframeAnimationType};
-use strum::VariantArray;
 
 fn static_clip(src: &str, start: f64, duration: f64, volume: f64) -> ReactAudioClipDescriptor {
     ReactAudioClipDescriptor {
@@ -212,70 +203,6 @@ fn parses_timecodes_of_every_length() {
 }
 
 #[test]
-fn encoder_presets_and_color_conversions_round_trip_through_their_names() {
-    for &preset in EncoderPreset::VARIANTS {
-        assert_eq!(preset.as_str().parse::<EncoderPreset>(), Ok(preset));
-    }
-    assert_eq!(VideoEncoding::default().preset, EncoderPreset::Medium);
-    assert_eq!(VideoEncoding::default().crf, 18);
-    for &conversion in ColorConversion::VARIANTS {
-        assert_eq!(
-            conversion.as_str().parse::<ColorConversion>(),
-            Ok(conversion)
-        );
-    }
-    assert_eq!(
-        VideoEncoding::default().color_conversion,
-        ColorConversion::Auto
-    );
-    assert_eq!(
-        "Medium".parse::<EncoderPreset>(),
-        Err(UnknownEncoderPreset("Medium".to_owned()))
-    );
-    assert_eq!(
-        UnknownEncoderPreset("Medium".to_owned()).to_string(),
-        "unknown encoder preset 'Medium' (expected one of ultrafast superfast veryfast \
-         faster fast medium slow slower veryslow)"
-    );
-    assert_eq!(
-        "cpu".parse::<ColorConversion>().unwrap_err().to_string(),
-        "unknown color conversion 'cpu' (expected auto, gpu, or encoder)"
-    );
-    for &depth in BitDepth::VARIANTS {
-        assert_eq!(depth.as_str().parse::<BitDepth>(), Ok(depth));
-    }
-    assert_eq!(VideoEncoding::default().bit_depth, BitDepth::Eight);
-    assert_eq!(BitDepth::Ten.bits(), 10);
-    assert_eq!(
-        "12".parse::<BitDepth>(),
-        Err(UnknownBitDepth("12".to_owned()))
-    );
-    assert_eq!(
-        UnknownBitDepth("12".to_owned()).to_string(),
-        "unknown bit depth '12' (expected 8 or 10)"
-    );
-}
-
-#[test]
-fn rejects_an_out_of_range_crf_before_encoding() {
-    let directory = tempfile::tempdir().unwrap();
-    let result = open_video_writer(
-        64,
-        64,
-        Rational::new(30, 1),
-        VideoFormat::Mp4,
-        VideoEncoding {
-            crf: VideoEncoding::MAX_CRF + 1,
-            ..VideoEncoding::default()
-        },
-        ReadbackFormat::Rgba8,
-        &directory.path().join("video.mp4"),
-        &ExportCancellation::default(),
-    );
-    assert!(matches!(result, Err(ExportError::InvalidCrf(52))));
-}
-
-#[test]
 fn resolve_window_clamps_and_snaps_to_frames() {
     let rate = Rational::new(30, 1);
     let duration = Time::new(10, 1);
@@ -401,33 +328,19 @@ fn companion_project_visuals_keep_dialogue_but_skip_audio() {
 }
 
 #[test]
-fn refuses_unmatched_and_existing_outputs() {
+fn refuses_existing_outputs_and_odd_sizes() {
     let directory = tempfile::tempdir().unwrap();
     let existing = directory.path().join("existing.mp4");
     fs::write(&existing, []).unwrap();
     assert!(matches!(
-        validate_output(&existing, VideoFormat::Mp4, false),
+        validate_output(&existing, false),
         Err(ExportError::OutputExists(_))
     ));
-    assert!(validate_output(&existing, VideoFormat::Mp4, true).is_ok());
-    for name in ["video.mov", "VIDEO.MOV"] {
-        assert!(validate_output(&directory.path().join(name), VideoFormat::Mov, false).is_ok());
+    assert!(validate_output(&existing, true).is_ok());
+    // Which muxer writes an extension is the resolver's to say.
+    for name in ["video.mov", "VIDEO.MOV", "video.gif"] {
+        assert!(validate_output(&directory.path().join(name), false).is_ok());
     }
-    assert!(matches!(
-        validate_output(&directory.path().join("video.mov"), VideoFormat::Mp4, false),
-        Err(ExportError::UnsupportedOutput {
-            format: VideoFormat::Mp4,
-            ..
-        })
-    ));
-    assert!(matches!(
-        validate_output(
-            &directory.path().join("video.webm"),
-            VideoFormat::Mov,
-            false
-        ),
-        Err(ExportError::UnsupportedOutput { .. })
-    ));
     assert!(matches!(
         validate_dimensions(63, 64),
         Err(ExportError::UnsupportedDimensions {
@@ -536,40 +449,6 @@ fn absolutizes_an_instance_image() {
         AssetLocation::File {
             path: root.join("spark.png").to_string_lossy().into_owned()
         }
-    );
-}
-
-#[test]
-fn video_formats_follow_the_extension() {
-    assert_eq!(
-        VideoFormat::from_extension(Path::new("a.mp4")),
-        Some(VideoFormat::Mp4)
-    );
-    assert_eq!(
-        VideoFormat::from_extension(Path::new("a.MOV")),
-        Some(VideoFormat::Mov)
-    );
-    assert_eq!(
-        VideoFormat::from_extension(Path::new("a.WebM")),
-        Some(VideoFormat::Webm)
-    );
-    assert_eq!(VideoFormat::from_extension(Path::new("a.gif")), None);
-    assert!(
-        !VideoFormat::Mp4.has_alpha()
-            && VideoFormat::Mov.has_alpha()
-            && VideoFormat::Webm.has_alpha()
-    );
-}
-
-#[test]
-fn video_format_names_round_trip() {
-    for &format in VideoFormat::VARIANTS {
-        assert_eq!(format.as_str().parse::<VideoFormat>(), Ok(format));
-        assert_eq!(format.to_string(), format.as_str());
-    }
-    assert_eq!(
-        "gif".parse::<VideoFormat>().unwrap_err().to_string(),
-        "unknown video format 'gif' (expected one of mp4 mov webm)"
     );
 }
 

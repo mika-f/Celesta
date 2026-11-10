@@ -4,7 +4,7 @@
 //! child's own environment), it makes the child read and write media with
 //! the test codec.
 
-use crate::{PLUGIN_ID, PROGRAM};
+use crate::{PLUGIN_ID, PROGRAM, components};
 use celesta_plugin_host::MANIFEST;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -76,9 +76,10 @@ impl TestCodecPlugin {
         let manifest = serde_json::json!({
             "id": PLUGIN_ID,
             "version": env!("CARGO_PKG_VERSION"),
-            "protocol": 1,
+            "protocol": 2,
             "celesta": format!("={}", celesta_plugin_host::CELESTA_VERSION),
-            "roles": ["codec"],
+            "roles": ["media"],
+            "media": components::manifest_json(),
             "executable": { std::env::consts::OS: name },
         });
         std::fs::write(folder.path().join(MANIFEST), manifest.to_string())

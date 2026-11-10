@@ -35,6 +35,11 @@ pub fn usage_error(message: &str) {
     print(&report::usage(message));
 }
 
+/// Prints the report of an error outside an export, such as `--describe`'s.
+pub fn failure(error: &ExportError) {
+    print(&report::failure(error, HintStyle::Cli));
+}
+
 fn print(line: &impl serde::Serialize) {
     let mut stdout = io::stdout().lock();
     // A closed stdout leaves nobody to report to.

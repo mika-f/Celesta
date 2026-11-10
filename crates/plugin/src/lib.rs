@@ -13,7 +13,9 @@ pub mod scene;
 pub mod shared;
 
 pub use mesh::{MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState, TextureSource};
-pub use protocol::{PROTOCOL_VERSION, serve, serve_requests};
+pub use protocol::{
+    MEDIA_PROTOCOL_VERSION, PROTOCOL_VERSION, protocol_for_roles, serve, serve_requests,
+};
 pub use provider::{
     ContentFrame, ContentModel, ContentProvider, ModelId, Notice, NoticeLevel, Opened, PluginError,
 };
@@ -23,3 +25,4 @@ pub use scene::{
     MorphTarget, OutlinePass, Projection, Sampler, SceneFrame, SceneModel, SceneShader,
     SceneTexture, ShaderTexture, Skin, TextureRef, TextureTransform, UnlitMaterial, Wrap,
 };
+pub use shared::{Ring, RingLayout};

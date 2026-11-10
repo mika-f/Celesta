@@ -14,11 +14,13 @@ export interface PluginSource {
   cargoPackage?: string;
   /** The component module's entry, relative to the plugin's folder. */
   module?: string;
-  /** What the plugin is to Celesta (`content` when absent, `codec`). */
+  /** What the plugin is to Celesta (`content` when absent, or `media`). */
   roles?: string[];
   /** Files, relative to the plugin's folder, copied by name into licenses/. */
   licenses?: string[];
   components?: object[];
+  /** What a media plugin offers: its decoders, copied as they are. */
+  media?: object;
 }
 
 /** What the build made. */
@@ -38,7 +40,8 @@ export interface Built {
 export interface PluginManifest {
   id: string;
   version: string;
-  protocol: 1;
+  /** 2 for a plugin with the `media` role, 1 for the rest. */
+  protocol: 1 | 2;
   /** The Celesta versions it works with: {@link celestaRange} of the one it was built against. */
   celesta: string;
   roles?: string[];
@@ -46,10 +49,11 @@ export interface PluginManifest {
   module?: 'js/index.js';
   types?: 'js/index.d.ts';
   components?: object[];
+  media?: object;
 }
 
 /** The keys plugin.json may have, as PluginSource lists them. */
-const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components'];
+const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components', 'media'];
 
 /**
  * Celesta's rule for a plugin id (`is_valid_id` in
@@ -62,11 +66,13 @@ const PLUGIN_ID = /^[a-z0-9][a-z0-9._-]*$/;
 /**
  * Checks that the plugin `source` (read from `sourcePath`, which errors name)
  * has only the keys PluginSource lists, so a misspelt one is not skipped
- * without a word, has an `id` Celesta accepts (see {@link PLUGIN_ID}), has
- * `components`, if any, as a list of objects, and has something to build: a
- * module, a Cargo package, or both, and a module for any components, since
- * Celesta skips a plugin listing components it cannot import (an empty
- * `components` list, which Celesta accepts, needs none).
+ * without a word, has an `id` Celesta accepts (see {@link PLUGIN_ID}) other
+ * than `builtin`, which Celesta keeps for its built-in components, does not
+ * take both the `content` and `media` roles, has `components`, if any, as a
+ * list of objects, and has something to build: a module, a Cargo package, or
+ * both, and a module for any components, since Celesta skips a plugin
+ * listing components it cannot import (an empty `components` list, which
+ * Celesta accepts, needs none).
  */
 export function checkPluginSource(source: PluginSource, sourcePath: string): void {
   const unknown = Object.keys(source).filter((key) => !PLUGIN_SOURCE_KEYS.includes(key));
@@ -84,6 +90,12 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
     throw new Error(
       `${sourcePath}: id ${JSON.stringify(id)} may have only lowercase ASCII letters, digits, -, _, and ., starting with a letter or digit`,
     );
+  }
+  if (id === 'builtin') {
+    throw new Error(`${sourcePath}: the id "builtin" is reserved for the components Celesta has built in`);
+  }
+  if (source.roles?.includes('content') && source.roles.includes('media')) {
+    throw new Error(`${sourcePath}: a plugin is either content or media`);
   }
   const components: unknown = source.components;
   if (
@@ -114,12 +126,13 @@ export function pluginManifest(
   return {
     id: source.id,
     version: pluginVersion(source, cargoVersion, sourcePath),
-    protocol: 1,
+    protocol: source.roles?.includes('media') ? 2 : 1,
     celesta: celestaRange(celestaVersion),
     ...(source.roles ? { roles: source.roles } : {}),
     ...(executable ? { executable } : {}),
     ...(source.module !== undefined ? { module: 'js/index.js', types: 'js/index.d.ts' } : {}),
     ...(source.components ? { components: source.components } : {}),
+    ...(source.media ? { media: source.media } : {}),
   };
 }
 
