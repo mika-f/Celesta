@@ -206,7 +206,9 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
   `bt2020nc` …). A file AVFoundation cannot open, one with no audio and
   no video track, or one with a video track it cannot describe (no format
   description or size), is `Unsupported`, so another decoder may read it;
-  a missing one `NotFound`. Loading a file's keys gives up after 60 s. Frames are
+  a missing one `NotFound`. Loading a file's keys gives up after 60 s,
+  which only bounds a direct open: on the probe path the host's own 60 s
+  deadline, started earlier, fires first. Frames are
   the ones shown at the requested time (`timestamps_match`), the last past
   the end, as 8-bit BGRA with `AVVideoColorPropertiesKey` BT.709 turned
   into RGBA and rotated upright (deviation 64). A sequential session keeps
@@ -215,8 +217,11 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
   first audio track through `AVAssetReaderAudioMixOutput` as interleaved
   `f32`.
 - **Building elsewhere** (Task 1). `plugin.json`'s optional `os` is a list
-  of `std::env::consts::OS` names; `checkPluginSource` rejects anything
-  else (`os must be a list of operating systems, such as ["macos"]`), it
+  of `std::env::consts::OS` names; `checkPluginSource` rejects a value
+  that is not a list of strings (`os must be a list of operating systems,
+  such as ["macos"]`) and a name it does not know (`os "mac" is not an
+  operating system Rust names (std::env::consts::OS), such as "macos",
+  "linux", or "windows"`), it
   is not copied into `celesta-plugin.json`, and `build.mts` skips a plugin
   whose `os` leaves out the host (or `--target`'s) system: `avfoundation:
   skipped, it is built for macos only`, writing nothing for it. CI's
@@ -299,7 +304,10 @@ before planning (kept outside the repository):
   `roll` group and FFmpeg finds the click 2112 frames late (6912); with
   the two attachments and negative `pts`, both FFmpeg and AVFoundation
   find it at 4800, the edit list's media time is 18496 (2112 + 16384),
-  and the `sgpd` `roll` is −1.
+  and the `sgpd` `roll` is −1. The same holds for a foreign encoder's
+  priming: FFmpeg's `aac` (1024 frames) muxed through `avfoundation/mp4`
+  and `avfoundation/mov` puts the click at 4800 for both readers
+  (`ffmpeg_aac_delay_and_preroll_are_hidden_for_every_reader`).
 
 ## Docs
 
@@ -468,9 +476,18 @@ until `TURBO_FORCE=1 pnpm run build:runtime` rebuilt them.
   (under its 45 GiB free-space minimum). `test_package_macos.py` passes,
   and `test-package.mjs`'s new block was only syntax-checked; CI's
   Package job, or a run with more free disk, must check it. CI's Package
-  job now also runs when CI is dispatched by hand (`if: github.event_name
-  != 'pull_request'`: unsigned, nothing released, no cache saved off
-  `main`), so a branch's packages can be built before it merges.
+  job now also runs when CI is dispatched by hand (`if:
+  github.event_name == 'push' || github.event_name ==
+  'workflow_dispatch'`: unsigned, nothing released, no cache saved off
+  `main`), so a branch's packages can be built before it merges. The
+  dispatched run on `085512b6` (42760950871) failed at `codesign` on
+  `Contents/PlugIns/ffmpeg/licenses/LICENSE-APACHE`, a failure `main`
+  has too; #803 fixes it by moving the bundled plugins to
+  `Contents/Resources/PlugIns`. Once #803 is on `main` and this stack is
+  rebased onto it, AVFoundation's packaging moves there as well
+  (`package-macos.py`, `test-package.mjs`, `packaging/macos/README.md`,
+  HANDOFF.md, this note, and the spec's As built), and a dispatched run
+  has to pass before this merges.
 - **P6** (`plugins/mediafoundation`, Windows), in its own session.
 - **GPU texture sharing** (`transports: ioSurface`): frames still cross
   shared memory or the pipe and are copied into a CoreVideo pool buffer.

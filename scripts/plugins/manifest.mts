@@ -131,25 +131,49 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
   }
 }
 
-/** The values `std::env::consts::OS` takes, which `os` lists. */
+/**
+ * The `std::env::consts::OS` values `os` may list: a hand-kept copy of Rust's,
+ * which a new value Rust adds has to be added to.
+ */
 const OPERATING_SYSTEMS: ReadonlySet<string> = new Set([
   'aix',
   'android',
+  'cygwin',
   'dragonfly',
+  'emscripten',
+  'espidf',
   'freebsd',
   'fuchsia',
   'haiku',
+  'hermit',
+  'horizon',
+  'hurd',
   'illumos',
   'ios',
+  'l4re',
   'linux',
   'macos',
   'netbsd',
+  'nto',
+  'nuttx',
   'openbsd',
+  'psp',
+  'redox',
+  'rtems',
   'solaris',
+  'solid_asp3',
+  'teeos',
+  'trusty',
   'tvos',
+  'uefi',
   'visionos',
+  'vita',
+  'vxworks',
+  'wasi',
   'watchos',
   'windows',
+  'xous',
+  'zkvm',
 ]);
 
 /** Whether `source` builds on the operating system `os` (`std::env::consts::OS`): it does without an `os` list. */
