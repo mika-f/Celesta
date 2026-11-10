@@ -1250,8 +1250,8 @@ impl EditorView {
                 div()
                     .flex()
                     .flex_none()
-                    // physical: lines up with the timeline's ruler, which is in pixels.
-                    .h(px(crate::timeline::RULER_HEIGHT))
+                    // On the ruler's line.
+                    .h(metrics::ruler_height())
                     .items_center()
                     .justify_between()
                     .px_3()

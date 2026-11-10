@@ -111,3 +111,33 @@ fn text_sizes_stay_on_the_type_roles() {
         found.join("\n")
     );
 }
+
+/// Files whose layout is on `rem` tokens: a `px(` there is a physical size
+/// (a hairline, a hit tolerance, measured pixels) and says so on its line.
+const PIXEL_FREE: &[&str] = &["timeline.rs", "timeline_header.rs", "timeline_clip.rs"];
+
+#[test]
+fn pixel_layout_stays_out_of_the_timeline() {
+    let src = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+    let mut found = Vec::new();
+    for name in PIXEL_FREE {
+        let path = src.join(name);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for (number, line) in text.lines().enumerate() {
+            if line == "#[cfg(test)]" {
+                break;
+            }
+            if line.contains("px(") && !line.contains("physical:") {
+                found.push(format!("{}:{}", path.display(), number + 1));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{} pixel sizes without `physical:`:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
