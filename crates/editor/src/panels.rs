@@ -1,4 +1,5 @@
 use crate::helpers::clip_kind_label;
+use crate::inspector::fact;
 use crate::panel_header::PanelHeader;
 use crate::problems::{Source, flow_line_breaks};
 use crate::problems_panel::show_in_problems_row;
@@ -6,9 +7,7 @@ use crate::react_audio::react_audio_clip_id;
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
 use crate::waveform::{clip_local_time, format_media_asset_info};
-use crate::widgets::{
-    inspector_note, inspector_row, inspector_section, json_display, property_display,
-};
+use crate::widgets::{json_display, property_display};
 use celesta_composition::{Animatable, evaluate_f64};
 use celesta_editor_core::{
     CharacterSummary, ClipSummary, ComponentClipSummary, DialogueClipSummary,
@@ -302,20 +301,42 @@ impl EditorView {
             .w_full()
             .overflow_x_hidden()
             .overflow_y_scroll()
-            .child(inspector_row("Canvas", self.dimensions.clone(), cx))
-            .child(inspector_row(
-                "Frame rate",
-                self.frame_rate_label.clone(),
-                cx,
-            ))
-            .child(inspector_row(
-                "Duration",
-                format_timecode(self.clock.end_frame(), self.frame_rate_value),
-                cx,
-            ))
-            .when_some(self.document.react_entry(), |panel, entry| {
-                panel.child(inspector_row("React entry", entry.to_owned(), cx))
-            })
+            .child(
+                self.section("inspector/composition", "Composition", cx)
+                    .child(fact(
+                        "inspector-canvas",
+                        "Canvas",
+                        self.dimensions.clone(),
+                        true,
+                        cx,
+                    ))
+                    .child(fact(
+                        "inspector-frame-rate",
+                        "Frame rate",
+                        self.frame_rate_label.clone(),
+                        true,
+                        cx,
+                    ))
+                    .child(fact(
+                        "inspector-duration",
+                        "Duration",
+                        format_timecode(self.clock.end_frame(), self.frame_rate_value),
+                        true,
+                        cx,
+                    ))
+                    .when_some(self.document.react_entry(), |section, entry| {
+                        section.child(
+                            fact(
+                                "inspector-entry",
+                                "React entry",
+                                entry.to_owned(),
+                                false,
+                                cx,
+                            )
+                            .top_aligned(true),
+                        )
+                    }),
+            )
             .when_some(
                 self.problems.active(Source::Schemas).cloned(),
                 |panel, active| {
@@ -352,16 +373,28 @@ impl EditorView {
                     (false, Some(Err(error))) => Some(format!("Probe failed: {error}")),
                     (false, None) => None,
                 };
-                panel
-                    .child(inspector_section("Asset", cx))
-                    .child(inspector_row("ID", asset.id.clone(), cx))
-                    .child(inspector_row("Type", asset.kind.to_string(), cx))
-                    .when_some(asset.path.clone(), |panel, path| {
-                        panel.child(inspector_row("File", path.display().to_string(), cx))
-                    })
-                    .when_some(media, |panel, media| {
-                        panel.child(inspector_row("Media", media, cx))
-                    })
+                panel.child(
+                    self.section("inspector/asset", "Asset", cx)
+                        .child(fact("asset-id", "ID", asset.id.clone(), true, cx))
+                        .child(fact(
+                            "asset-type",
+                            "Type",
+                            asset.kind.to_string(),
+                            false,
+                            cx,
+                        ))
+                        .when_some(asset.path.clone(), |section, path| {
+                            let path = path.display().to_string();
+                            section.child(
+                                fact("asset-file", "File", path, false, cx).top_aligned(true),
+                            )
+                        })
+                        .when_some(media, |section, media| {
+                            section.child(
+                                fact("asset-media", "Media", media, false, cx).top_aligned(true),
+                            )
+                        }),
+                )
             })
             .when_some(selected_track, |panel, track| {
                 let mut state = vec![if track.enabled { "Enabled" } else { "Disabled" }];
@@ -374,31 +407,60 @@ impl EditorView {
                 if track.solo {
                     state.push("Solo");
                 }
-                panel
-                    .child(inspector_section("Track", cx))
-                    .child(inspector_row("Name", track.name.clone(), cx))
-                    .child(inspector_row("ID", track.id.clone(), cx))
-                    .child(inspector_row("Type", format!("{:?}", track.kind), cx))
-                    .child(inspector_row("State", state.join(" · "), cx))
-                    .child(inspector_row("Clips", track.item_count.to_string(), cx))
+                panel.child(
+                    self.section("inspector/track", "Track", cx)
+                        .child(fact("track-name", "Name", track.name.clone(), false, cx))
+                        .child(fact("track-id", "ID", track.id.clone(), true, cx))
+                        .child(fact(
+                            "track-type",
+                            "Type",
+                            format!("{:?}", track.kind),
+                            false,
+                            cx,
+                        ))
+                        .child(fact("track-state", "State", state.join(" · "), false, cx))
+                        .child(fact(
+                            "track-clips",
+                            "Clips",
+                            track.item_count.to_string(),
+                            true,
+                            cx,
+                        )),
+                )
             })
             .when_some(selected_clip, |panel, clip| {
                 panel
-                    .child(inspector_section("Clip", cx))
-                    .child(inspector_row("Name", clip.name.clone(), cx))
-                    .child(inspector_row("Type", clip_kind_label(clip.kind), cx))
-                    .child(inspector_row("Start", self.timecode_for(clip.start), cx))
-                    .child(inspector_row(
-                        "Length",
-                        self.timecode_for(clip.duration),
-                        cx,
-                    ))
-                    .when(!clip.enabled, |panel| {
-                        panel.child(inspector_row("State", "Disabled", cx))
-                    })
-                    .when_some(self.clip_volume_label(&clip), |panel, volume| {
-                        panel.child(inspector_row("Volume", volume, cx))
-                    })
+                    .child(
+                        self.section("inspector/clip", "Clip", cx)
+                            .child(fact("clip-name", "Name", clip.name.clone(), false, cx))
+                            .child(fact(
+                                "clip-type",
+                                "Type",
+                                clip_kind_label(clip.kind),
+                                false,
+                                cx,
+                            ))
+                            .child(fact(
+                                "clip-start",
+                                "Start",
+                                self.timecode_for(clip.start),
+                                true,
+                                cx,
+                            ))
+                            .child(fact(
+                                "clip-length",
+                                "Length",
+                                self.timecode_for(clip.duration),
+                                true,
+                                cx,
+                            ))
+                            .when(!clip.enabled, |section| {
+                                section.child(fact("clip-state", "State", "Disabled", false, cx))
+                            })
+                            .when_some(self.clip_volume_label(&clip), |section, volume| {
+                                section.child(fact("clip-volume", "Volume", volume, true, cx))
+                            }),
+                    )
                     .when_some(clip.component.clone(), |panel, component| {
                         self.render_component_props(panel, &component, cx)
                     })
@@ -453,10 +515,23 @@ impl EditorView {
             Some((summary, clip))
         });
         let panel = match selected_track {
-            Some(track) => panel
-                .child(inspector_section("Track", cx))
-                .child(inspector_row("Name", track.name.clone(), cx))
-                .child(inspector_row("Clips", track.item_count.to_string(), cx)),
+            Some(track) => panel.child(
+                self.section("react/track", "Track", cx)
+                    .child(fact(
+                        "react-track-name",
+                        "Name",
+                        track.name.clone(),
+                        false,
+                        cx,
+                    ))
+                    .child(fact(
+                        "react-track-clips",
+                        "Clips",
+                        track.item_count.to_string(),
+                        true,
+                        cx,
+                    )),
+            ),
             None => panel,
         };
         let Some((summary, clip)) = selected_clip else {
@@ -468,27 +543,44 @@ impl EditorView {
                 format!("{} keyframes", animation.keyframes.len())
             }
         };
-        panel
-            .child(inspector_section("Clip", cx))
-            .child(inspector_row("Source", clip.asset.id.clone(), cx))
-            .child(inspector_row("Start", self.timecode_for(summary.start), cx))
-            .child(inspector_row(
-                "Length",
-                self.timecode_for(summary.duration),
-                cx,
-            ))
-            .child(inspector_row(
-                "Starts in the file at",
-                format!("{} s", clip.source_start.as_seconds().unwrap_or(0.0)),
-                cx,
-            ))
-            .when_some(self.clip_volume_label(summary), |panel, volume| {
-                panel.child(inspector_row("Volume", volume, cx))
-            })
-            .child(inspector_row("Playback rate", rate, cx))
-            .when(clip.muted, |panel| {
-                panel.child(inspector_row("State", "Muted", cx))
-            })
+        panel.child(
+            self.section("react/clip", "Clip", cx)
+                .child(fact(
+                    "react-clip-source",
+                    "Source",
+                    clip.asset.id.clone(),
+                    true,
+                    cx,
+                ))
+                .child(fact(
+                    "react-clip-start",
+                    "Start",
+                    self.timecode_for(summary.start),
+                    true,
+                    cx,
+                ))
+                .child(fact(
+                    "react-clip-length",
+                    "Length",
+                    self.timecode_for(summary.duration),
+                    true,
+                    cx,
+                ))
+                .child(fact(
+                    "react-clip-offset",
+                    "Starts in the file at",
+                    format!("{} s", clip.source_start.as_seconds().unwrap_or(0.0)),
+                    true,
+                    cx,
+                ))
+                .when_some(self.clip_volume_label(summary), |section, volume| {
+                    section.child(fact("react-clip-volume", "Volume", volume, true, cx))
+                })
+                .child(fact("react-clip-rate", "Playback rate", rate, true, cx))
+                .when(clip.muted, |section| {
+                    section.child(fact("react-clip-state", "State", "Muted", false, cx))
+                }),
+        )
     }
 
     pub(crate) fn render_characters<E: ParentElement + Sized>(
@@ -497,11 +589,12 @@ impl EditorView {
         characters: &[CharacterSummary],
         cx: &mut Context<Self>,
     ) -> E {
-        let panel = panel.child(inspector_section(
+        let section = self.section(
+            "inspector/characters",
             format!("Characters ({})", characters.len()),
             cx,
-        ));
-        characters.iter().fold(panel, |panel, character| {
+        );
+        panel.child(characters.iter().fold(section, |panel, character| {
             panel.child(
                 div()
                     .flex()
@@ -544,7 +637,7 @@ impl EditorView {
                         )
                     }),
             )
-        })
+        }))
     }
 
     pub(crate) fn render_dialogue_fields<E: ParentElement + Sized>(
@@ -562,34 +655,50 @@ impl EditorView {
             .clone()
             .or_else(|| character.and_then(|character| character.default_expression.clone()))
             .unwrap_or_else(|| "Default".to_owned());
-        panel
-            .child(inspector_section("Dialogue", cx))
-            .child(inspector_row("Text", dialogue.text.clone(), cx))
-            .child(inspector_row(
-                "Character",
-                character.map_or_else(
-                    || dialogue.character.clone(),
-                    |character| character.name.clone(),
-                ),
-                cx,
-            ))
-            .child(inspector_row("Expression", expression, cx))
-            .child(inspector_row(
-                "Voice",
-                dialogue.audio.clone().unwrap_or_else(|| "None".to_owned()),
-                cx,
-            ))
-            .children(dialogue.audio.is_some().then(|| {
-                inspector_row(
-                    "Lip sync",
-                    if dialogue.lip_sync_cue_count == 0 {
-                        "None".to_owned()
-                    } else {
-                        format!("{} mouth cues", dialogue.lip_sync_cue_count)
-                    },
-                    cx,
+        panel.child(
+            self.section("inspector/dialogue", "Dialogue", cx)
+                .child(
+                    fact("dialogue-text", "Text", dialogue.text.clone(), false, cx)
+                        .top_aligned(true),
                 )
-            }))
+                .child(fact(
+                    "dialogue-character",
+                    "Character",
+                    character.map_or_else(
+                        || dialogue.character.clone(),
+                        |character| character.name.clone(),
+                    ),
+                    false,
+                    cx,
+                ))
+                .child(fact(
+                    "dialogue-expression",
+                    "Expression",
+                    expression,
+                    false,
+                    cx,
+                ))
+                .child(fact(
+                    "dialogue-voice",
+                    "Voice",
+                    dialogue.audio.clone().unwrap_or_else(|| "None".to_owned()),
+                    false,
+                    cx,
+                ))
+                .children(dialogue.audio.is_some().then(|| {
+                    fact(
+                        "dialogue-lip-sync",
+                        "Lip sync",
+                        if dialogue.lip_sync_cue_count == 0 {
+                            "None".to_owned()
+                        } else {
+                            format!("{} mouth cues", dialogue.lip_sync_cue_count)
+                        },
+                        false,
+                        cx,
+                    )
+                })),
+        )
     }
 
     /// One row per field of a registered component's property schema, or the
@@ -600,21 +709,41 @@ impl EditorView {
         component: &ComponentClipSummary,
         cx: &mut Context<Self>,
     ) -> E {
-        let panel = panel
-            .child(inspector_section("Component", cx))
-            .child(inspector_row("Registered as", component.name.clone(), cx));
-        match self.component_schemas.get(&component.name) {
-            Some(schema) => schema.iter().fold(panel, |panel, (key, entry)| {
+        let section = self
+            .section("inspector/component", "Component", cx)
+            .child(fact(
+                "component-name",
+                "Registered as",
+                component.name.clone(),
+                false,
+                cx,
+            ));
+        let section = match self.component_schemas.get(&component.name) {
+            Some(schema) => schema.iter().fold(section, |section, (key, entry)| {
                 let (label, value) = property_display(key, &entry.field, component.props.get(key));
-                panel.child(inspector_row(label, value, cx))
+                section.child(fact(format!("component-{key}"), label, value, false, cx))
             }),
-            None if self.component_schema_worker.pending() => {
-                panel.child(inspector_note("Loading property schema…", cx))
-            }
-            None => component.props.iter().fold(panel, |panel, (key, value)| {
-                panel.child(inspector_row(key.clone(), json_display(value), cx))
-            }),
-        }
+            None if self.component_schema_worker.pending() => section.child(
+                div()
+                    .px(theme::metrics::panel_padding())
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Loading property schema…"),
+            ),
+            None => component
+                .props
+                .iter()
+                .fold(section, |section, (key, value)| {
+                    section.child(fact(
+                        format!("component-{key}"),
+                        key.clone(),
+                        json_display(value),
+                        false,
+                        cx,
+                    ))
+                }),
+        };
+        panel.child(section)
     }
 
     /// The entry-declared project properties with their current values.
@@ -626,14 +755,14 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> E {
         match self.project_property_schema.as_ref() {
-            Some(schema) if !schema.is_empty() => schema.iter().fold(
-                panel.child(inspector_section("Project properties", cx)),
-                |panel, (key, field)| {
+            Some(schema) if !schema.is_empty() => panel.child(schema.iter().fold(
+                self.section("inspector/project-properties", "Project properties", cx),
+                |section, (key, field)| {
                     let (label, value) =
                         property_display(key, field, self.document.project_properties().get(key));
-                    panel.child(inspector_row(label, value, cx))
+                    section.child(fact(format!("project-{key}"), label, value, false, cx))
                 },
-            ),
+            )),
             _ => panel,
         }
     }
@@ -760,10 +889,7 @@ impl EditorView {
             })
             .collect::<Vec<_>>();
         Some(
-            div()
-                .flex()
-                .flex_col()
-                .child(inspector_section("Chapters", cx))
+            self.section("react/chapters", "Chapters", cx)
                 .child(
                     div()
                         .flex()
@@ -788,14 +914,11 @@ impl EditorView {
         let muted = cx.theme().muted_foreground;
         let impact = self.selection_impact();
         let layer = self.layer_section(cx).unwrap_or_else(|| {
-            div()
-                .flex()
-                .flex_col()
-                .child(inspector_section("Layer", cx))
+            self.section("properties/layer", "Layer", cx)
                 .child(
                     div()
                         .px_3()
-                        .py_2()
+                        .py_1()
                         .text_sm()
                         .text_color(muted)
                         .child("Select a layer in the preview"),
@@ -845,61 +968,76 @@ impl EditorView {
         properties: String,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let label_color = cx.theme().muted_foreground;
-        let value_color = cx.theme().foreground;
-        let row = move |label: &str, value: String| {
-            div()
-                .flex()
-                .justify_between()
-                .gap_2()
-                .text_sm()
-                .child(div().text_color(label_color).child(label.to_owned()))
-                .child(div().text_color(value_color).text_right().child(value))
-        };
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .child(div().text_sm().text_color(label_color).child("Entry"))
-            .child(div().text_sm().text_color(value_color).child(entry))
-            .child(div().h_1())
-            .child(row("Size", self.dimensions.to_string()))
-            .child(row("Frame rate", self.frame_rate_label.to_string()))
-            .child(row(
+        let facts = self
+            .section("react/composition", "Composition", cx)
+            .child(fact("react-entry", "Entry", entry, false, cx).top_aligned(true))
+            .child(fact(
+                "react-size",
+                "Size",
+                self.dimensions.to_string(),
+                true,
+                cx,
+            ))
+            .child(fact(
+                "react-frame-rate",
+                "Frame rate",
+                self.frame_rate_label.to_string(),
+                true,
+                cx,
+            ))
+            .child(fact(
+                "react-duration",
                 "Duration",
                 format_timecode(self.clock.end_frame(), self.frame_rate_value),
+                true,
+                cx,
             ))
-            .child(row("Renderer", self.gpu_name.to_string()))
-            .child(row("Values from", properties))
-            .child(div().h_1())
-            .child(
-                Button::new("reload-react-entry")
-                    .w_full()
-                    .label("Reload composition")
-                    .on_click(cx.listener(Self::reload_react_click)),
-            )
-            .when(!self.problems.preview_warnings().is_empty(), |panel| {
-                panel.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .mt_2()
-                        .rounded(cx.theme().radius)
-                        .border_1()
-                        .border_color(cx.theme().warning.opacity(0.5))
-                        .bg(cx.theme().warning.opacity(0.12))
-                        .p_2()
-                        .text_sm()
-                        .text_color(cx.theme().warning)
-                        .children(
-                            self.preview_warnings_summary(
+            .child(fact(
+                "react-renderer",
+                "Renderer",
+                self.gpu_name.to_string(),
+                false,
+                cx,
+            ))
+            .child(fact(
+                "react-values-from",
+                "Values from",
+                properties,
+                false,
+                cx,
+            ));
+        div().flex().flex_col().child(facts).child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .child(
+                    Button::new("reload-react-entry")
+                        .w_full()
+                        .label("Reload composition")
+                        .on_click(cx.listener(Self::reload_react_click)),
+                )
+                .when(!self.problems.preview_warnings().is_empty(), |panel| {
+                    panel.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .mt_2()
+                            .rounded(cx.theme().radius)
+                            .border_1()
+                            .border_color(cx.theme().warning.opacity(0.5))
+                            .bg(cx.theme().warning.opacity(0.12))
+                            .p_2()
+                            .text_sm()
+                            .text_color(cx.theme().warning)
+                            .children(self.preview_warnings_summary(
                                 "react-preview-warnings-show-problems",
                                 cx,
-                            ),
-                        ),
-                )
-            })
+                            )),
+                    )
+                }),
+        )
     }
 }

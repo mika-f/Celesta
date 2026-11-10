@@ -3,10 +3,6 @@
 //! label, the value, a trailing icon lane), so every tab of the right dock
 //! lines its labels and values up on the same edges.
 
-// The tabs move onto these pieces over P7b's tasks 5 to 7; the last one
-// removes this.
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -234,6 +230,24 @@ pub(crate) struct InspectorRow {
     top_aligned: bool,
     sub_lines: Vec<AnyElement>,
     label_press: Option<LabelPress>,
+}
+
+/// A read-only row: `label` and `value` as text, the value in monospace
+/// (`mono`) when it is a number, a size, a timecode or an identifier. A long
+/// value wraps; `top_aligned` keeps the label on its first line.
+pub(crate) fn fact(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    value: impl Into<SharedString>,
+    mono: bool,
+    cx: &App,
+) -> InspectorRow {
+    let value = div()
+        .when(mono, |value| {
+            value.font_family(cx.theme().mono_font_family.clone())
+        })
+        .child(value.into());
+    InspectorRow::new(id, label).value(value)
 }
 
 /// How far an indented row's label moves in.

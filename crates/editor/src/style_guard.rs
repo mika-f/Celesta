@@ -210,3 +210,43 @@ fn transport_icon_buttons_have_accessible_names() {
         found.join("\n")
     );
 }
+
+/// Calls of the Inspector's old row and section helpers, which the shared
+/// `InspectorRow` and `InspectorSection` replaced.
+fn old_helper_calls(dir: &Path, found: &mut Vec<String>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            old_helper_calls(&path, found);
+        } else if path.extension().is_some_and(|ext| ext == "rs")
+            && path
+                .file_name()
+                .is_some_and(|name| name != "style_guard.rs" && name != "inspector.rs")
+        {
+            let text = std::fs::read_to_string(&path).unwrap();
+            for (number, line) in text.lines().enumerate() {
+                if ["inspector_row(", "inspector_section(", "inspector_note("]
+                    .iter()
+                    .any(|pattern| line.contains(pattern))
+                {
+                    found.push(format!("{}:{}", path.display(), number + 1));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn old_inspector_helpers_are_gone() {
+    let mut found = Vec::new();
+    old_helper_calls(
+        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src")),
+        &mut found,
+    );
+    assert!(
+        found.is_empty(),
+        "{} uses of the old inspector helpers:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}

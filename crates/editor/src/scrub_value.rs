@@ -6,9 +6,6 @@
 //! scrub) and a request to type. The panel owns the scrub, decides between a
 //! drag and a click on release, and says whether the row is typing.
 
-// The rows move onto this over P7b's tasks 5 and 6; task 7 removes this.
-#![allow(dead_code)]
-
 use std::rc::Rc;
 
 use crate::widgets::format_component_number;

@@ -9,6 +9,7 @@ use crate::element_rows::row_label;
 use crate::impact::{
     ImpactFilter, ImpactView, counted_scenes, impact_line, impact_view, other_scenes_label,
 };
+use crate::inspector::fact;
 use crate::layer_select::{
     SourceLookup, display_path, launch_outcome_applies, parent_layer_id, source_position,
 };
@@ -18,7 +19,6 @@ use crate::scope::{
 };
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
-use crate::widgets::{inspector_row, inspector_section};
 use celesta_editor_theme::metrics;
 use celesta_react_bridge::{ElementKind, LayerSource, LayerSourceReport, SourcePos};
 use celesta_source_edit::EditTarget;
@@ -639,11 +639,10 @@ impl EditorView {
         let note = |text: SharedString, color: Hsla| {
             div().px_3().py_2().text_sm().text_color(color).child(text)
         };
-        let section = div()
-            .flex()
-            .flex_col()
-            .child(inspector_section("Layer", cx))
-            .child(inspector_row("ID", layer, cx));
+        let mut called_from = None;
+        let section = self
+            .section("properties/layer", "Layer", cx)
+            .child(fact("layer-id", "ID", layer, true, cx));
         let section = match &self.source_lookup {
             Some(SourceLookup::Found(report)) => {
                 let (source, callers) = report.chain.split_first()?;
@@ -673,15 +672,15 @@ impl EditorView {
                             ),
                     )
                     .when(open, |section| {
-                        section
-                            .child(self.source_row("Source", 0, source, &entry_dir, cx))
-                            .when(!callers.is_empty(), |section| {
-                                section
-                                    .child(inspector_section("Called from", cx))
+                        if !callers.is_empty() {
+                            called_from = Some(
+                                self.section("properties/called-from", "Called from", cx)
                                     .children(callers.iter().enumerate().map(|(index, caller)| {
                                         self.source_row("", index + 1, caller, &entry_dir, cx)
-                                    }))
-                            })
+                                    })),
+                            );
+                        }
+                        section.child(self.source_row("Source", 0, source, &entry_dir, cx))
                     })
             }
             Some(SourceLookup::NotInFrame) => {
@@ -698,7 +697,14 @@ impl EditorView {
             }
         };
         // A failed open shows under the selection header's position.
-        Some(section.into_any_element())
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .child(section)
+                .children(called_from)
+                .into_any_element(),
+        )
     }
 
     /// One position in the chain: `<name>  <file>:<line>:<column>` as a
