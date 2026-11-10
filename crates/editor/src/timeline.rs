@@ -32,6 +32,7 @@ use crate::impact::ImpactView;
 use crate::layer_select::display_path;
 use crate::scene_entries::SceneEdge;
 use crate::timecode::{format_timecode, nominal_fps, ruler_scale};
+use crate::timeline_clip::ClipBlock;
 use crate::timeline_drag::{BandGrip, BandGrips, draggable_band, edge_width};
 use crate::timeline_geometry::TimelineGeometry;
 use crate::timeline_header::{MixButtons, TrackHeader};
@@ -1016,7 +1017,6 @@ impl EditorView {
         let duration = view.time_fraction(clip.duration, total_seconds);
         let clip_id = clip.id.clone();
         let selected = self.selected_clip_id.as_deref() == Some(clip.id.as_str());
-        let label_color = theme::waveform();
         // Keep the name readable when the clip starts left of the view.
         let label_offset = if duration > 0.0 {
             ((view.view_start - start) / duration).clamp(0.0, 1.0) as f32
@@ -1029,52 +1029,29 @@ impl EditorView {
             waveform_segment(peaks, 0.0, 1.0, bars)
         });
         div()
-            .id(SharedString::from(format!("timeline-clip-{clip_id}")))
             .absolute()
             .left(relative(view.x(start)))
             .top(metrics::clip_inset())
             .bottom(metrics::clip_inset())
             .w(relative(view.width(duration)))
             .min_w(px(2.0)) // physical: the narrowest visible clip
-            .overflow_hidden()
-            .rounded_sm()
-            .bg(rgb(theme::clip_fill(kind)))
-            .when(selected, |block| {
-                block.border_2().border_color(theme::clip_selected_border())
-            })
-            .when(!clip.enabled, |clip| clip.opacity(0.4))
-            .when_some(waveform.filter(|bars| !bars.is_empty()), |block, bars| {
-                block.child(
-                    canvas(
-                        |_, _, _| (),
-                        move |bounds, _, window, _| {
-                            paint_waveform(bounds, &bars, label_color.opacity(0.45), window)
-                        },
-                    )
-                    .absolute()
-                    .top(metrics::clip_label_height())
-                    .bottom(rems(0.125))
-                    .left_0()
-                    .right_0(),
-                )
-            })
             .child(
-                div()
-                    .absolute()
-                    .top(rems(0.0625))
-                    .left(relative(label_offset))
-                    .px_1()
-                    .text_sm()
-                    .text_color(label_color)
-                    .whitespace_nowrap()
-                    .child(clip.name.clone()),
+                ClipBlock::new(
+                    SharedString::from(format!("timeline-clip-{clip_id}")),
+                    clip.name.clone(),
+                    kind,
+                )
+                .label_offset(label_offset)
+                .selected(selected)
+                .enabled(clip.enabled)
+                .when_some(waveform, |block, bars| block.waveform(bars))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.selected_clip_id = Some(clip_id.clone());
+                    this.selected_asset_id = None;
+                    cx.notify();
+                })),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.selected_clip_id = Some(clip_id.clone());
-                this.selected_asset_id = None;
-                cx.notify();
-            }))
     }
 
     /// The single row a standalone React composition shows: it has no
@@ -1161,12 +1138,17 @@ impl EditorView {
                             .bottom(metrics::clip_inset())
                             .left(relative(view.x(0.0)))
                             .w(relative(view.width(1.0)))
-                            .rounded_sm()
-                            .bg(rgb(theme::clip_fill(TrackKind::Overlay)))
-                            .px_1()
-                            .text_sm()
-                            .text_color(theme::waveform())
-                            .when(set_timing.is_none(), |block| block.child(entry)),
+                            // With "Set timing" shown, the overlay draws the
+                            // name beside its button.
+                            .child(ClipBlock::new(
+                                "composition-block",
+                                if set_timing.is_none() {
+                                    entry
+                                } else {
+                                    String::new()
+                                },
+                                TrackKind::Overlay,
+                            )),
                     )
                     .children(bands)
                     .children(grips)
@@ -1322,7 +1304,11 @@ impl EditorView {
             .flex()
             .flex_col()
             .child(
+                // On the composition block's name strip.
                 div()
+                    .flex()
+                    .items_center()
+                    .h(metrics::clip_label_height())
                     .px_1()
                     .text_sm()
                     .text_color(theme::waveform())
@@ -1396,7 +1382,6 @@ impl EditorView {
             .left(relative(left))
             .w(relative(width))
             .min_w(px(2.0)) // physical: the narrowest visible band
-            .rounded_sm()
             .map(|block| {
                 if band.filled {
                     block.bg(theme::accent().opacity(0.42))
@@ -1574,7 +1559,6 @@ impl EditorView {
                     .w(relative(view.width(duration)))
                     .min_w(px(2.0)) // physical: the narrowest visible chapter
                     .overflow_hidden()
-                    .rounded_sm()
                     .border_l_2()
                     .when(appears_in.contains(&chapter.id), |block| block.border_b_2())
                     .border_color(theme::accent())
@@ -1832,24 +1816,6 @@ fn paint_ruler(
     head.close();
     if let Ok(path) = head.build() {
         window.paint_path(path, accent);
-    }
-}
-
-/// Mirrored peak bars centered on the clip's midline.
-fn paint_waveform(bounds: Bounds<Pixels>, bars: &[f32], color: Hsla, window: &mut Window) {
-    let count = bars.len().max(1) as f32;
-    let step = bounds.size.width / count;
-    let bar_width = (step - px(1.0)).max(px(1.0)); // physical: one-pixel gaps
-    let middle = bounds.origin.y + bounds.size.height / 2.0;
-    for (index, amplitude) in bars.iter().enumerate() {
-        let height = (bounds.size.height * amplitude.clamp(0.02, 1.0)).max(px(1.0)); // physical: at least a pixel
-        window.paint_quad(fill(
-            Bounds::new(
-                point(bounds.origin.x + step * index as f32, middle - height / 2.0),
-                size(bar_width, height),
-            ),
-            color,
-        ));
     }
 }
 

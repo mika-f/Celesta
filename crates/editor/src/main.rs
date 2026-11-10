@@ -87,6 +87,7 @@ mod icons;
 mod meter;
 mod timecode;
 mod timeline;
+mod timeline_clip;
 mod timeline_drag;
 mod timeline_geometry;
 mod timeline_header;
