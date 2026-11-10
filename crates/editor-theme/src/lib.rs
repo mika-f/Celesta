@@ -45,16 +45,16 @@ pub fn apply(cx: &mut App) {
 /// bands, then popovers. `primary` is a restrained blue for selection, focus
 /// and the primary action; the brand orange ([`ACCENT`]) is not a UI color.
 fn apply_palette(colors: &mut ThemeColor) {
-    let ground: Hsla = rgb(0x16_16_16).into();
-    let panel: Hsla = rgb(0x1c_1c_1c).into();
-    let band: Hsla = rgb(0x23_23_23).into();
-    let band_hover: Hsla = rgb(0x2c_2c_2c).into();
-    let band_pressed: Hsla = rgb(0x1a_1a_1a).into();
-    let popover: Hsla = rgb(0x2a_2a_2a).into();
-    let border: Hsla = rgb(0x2e_2e_2e).into();
-    let text: Hsla = rgb(0xe6_e6_e6).into();
-    let muted_text: Hsla = rgb(0x9a_9a_9a).into();
-    let primary: Hsla = rgb(0x4a_7f_d6).into();
+    let ground: Hsla = rgb(0x161616).into();
+    let panel: Hsla = rgb(0x1c1c1c).into();
+    let band: Hsla = rgb(0x232323).into();
+    let band_hover: Hsla = rgb(0x2c2c2c).into();
+    let band_pressed: Hsla = rgb(0x1a1a1a).into();
+    let popover: Hsla = rgb(0x2a2a2a).into();
+    let border: Hsla = rgb(0x2e2e2e).into();
+    let text: Hsla = rgb(0xe6e6e6).into();
+    let muted_text: Hsla = rgb(0x9a9a9a).into();
+    let primary: Hsla = rgb(0x4a7fd6).into();
 
     colors.background = ground;
 
@@ -96,9 +96,9 @@ fn apply_palette(colors: &mut ThemeColor) {
     colors.tab_foreground = muted_text;
 
     colors.primary = primary;
-    colors.primary_hover = rgb(0x5a_8b_e0).into();
-    colors.primary_active = rgb(0x3f_72_c4).into();
-    colors.primary_foreground = rgb(0xff_ff_ff).into();
+    colors.primary_hover = rgb(0x5a8be0).into();
+    colors.primary_active = rgb(0x3f72c4).into();
+    colors.primary_foreground = rgb(0xffffff).into();
     colors.ring = primary;
     colors.list_active_border = primary;
     colors.table_active_border = primary;

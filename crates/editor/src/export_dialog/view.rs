@@ -27,7 +27,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FontWeight, Hsla, SharedString, Subscription, Task, Window,
-    div, px,
+    div,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -854,7 +854,7 @@ mod tests {
     use celesta_exporter::SettingInput;
     use gpui_kit::component::Root;
     use gpui_kit::{
-        Focusable as _, Modifiers, TestAppContext, VisualTestContext, WindowHandle, size,
+        Focusable as _, Modifiers, TestAppContext, VisualTestContext, WindowHandle, px, size,
     };
     use std::cell::RefCell;
     use std::rc::Rc;
