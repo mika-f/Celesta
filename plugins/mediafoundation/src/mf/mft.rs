@@ -44,6 +44,10 @@ pub(crate) const STALL: Duration = Duration::from_secs(60);
 /// How often an asynchronous transform's events are polled.
 const POLL: Duration = Duration::from_millis(1);
 
+/// How many stream changes in a row one `ProcessOutput` may answer before
+/// the transform is taken to be changing its output type for ever.
+const STREAM_CHANGES: u32 = 8;
+
 /// The flags that list hardware and software transforms, best first.
 pub(crate) const HARDWARE_FLAGS: MFT_ENUM_FLAG = MFT_ENUM_FLAG(
     MFT_ENUM_FLAG_HARDWARE.0
@@ -240,26 +244,39 @@ pub(crate) fn wait_for<T>(
 /// The first of `candidates` that `try_one` accepts, tried in order: what
 /// it gave, or, when none accepts, the most specific refusal. That is the
 /// last `MediaError::InvalidSettings` (a candidate that refused a setting
-/// the user can change, such as its rate control: deviation 78), else the
-/// last refusal. Whatever `try_one` made of a refused candidate is dropped
-/// before the next is tried.
+/// the user can change, such as its rate control: deviation 78); else
+/// `component` is unavailable, with every refusal in the reason (Task 1:
+/// `MFTEnumEx` lists the DX12 encoders, which refuse every output type, so
+/// a listed encoder may still open none). Whatever `try_one` made of a
+/// refused candidate is dropped before the next is tried.
 pub(crate) fn first_accepting<C, S>(
+    component: &str,
     candidates: &[C],
     mut try_one: impl FnMut(&C) -> Result<S, MediaError>,
 ) -> Result<S, MediaError> {
-    let settings = |error: &MediaError| matches!(error, MediaError::InvalidSettings { .. });
-    let mut refusal: Option<MediaError> = None;
+    let mut settings = None;
+    let mut refusals = Vec::new();
     for candidate in candidates {
         match try_one(candidate) {
             Ok(session) => return Ok(session),
-            Err(error) => {
-                if !(refusal.as_ref().is_some_and(settings) && !settings(&error)) {
-                    refusal = Some(error);
-                }
-            }
+            Err(error @ MediaError::InvalidSettings { .. }) => settings = Some(error),
+            Err(error) => refusals.push(error.to_string()),
         }
     }
-    Err(refusal.unwrap_or_else(|| MediaError::Codec("there was no transform to try".to_owned())))
+    if let Some(error) = settings {
+        return Err(error);
+    }
+    Err(MediaError::ComponentUnavailable {
+        component: component.to_owned(),
+        reason: if refusals.is_empty() {
+            "Media Foundation listed no transform to try".to_owned()
+        } else {
+            format!(
+                "every transform Media Foundation lists refused: {}",
+                refusals.join("; ")
+            )
+        },
+    })
 }
 
 /// `activate`'s friendly name (`MFT_FRIENDLY_NAME_Attribute`).
@@ -288,6 +305,18 @@ pub(crate) fn named(name: &str, error: MediaError) -> MediaError {
         }
         other => other,
     }
+}
+
+/// Counts one more stream change in a row of the transform `name` into
+/// `changes`: an error once there are more than [`STREAM_CHANGES`].
+fn count_stream_change(changes: &mut u32, name: &str) -> Result<(), MediaError> {
+    *changes += 1;
+    if *changes > STREAM_CHANGES {
+        return Err(MediaError::Codec(format!(
+            "{name} kept changing its output type"
+        )));
+    }
+    Ok(())
 }
 
 /// What an asynchronous transform's event asks.
@@ -546,8 +575,10 @@ impl Transform {
     }
 
     /// One `ProcessOutput`: a sample, or none when it needs more input. A
-    /// stream change renegotiates the output type and asks again.
+    /// stream change renegotiates the output type and asks again, up to
+    /// [`STREAM_CHANGES`] times in a row.
     fn pull(&mut self) -> Result<Option<IMFSample>, MediaError> {
+        let mut changes = 0;
         loop {
             let allocated = if self.provides {
                 None
@@ -582,6 +613,7 @@ impl Transform {
                 Ok(()) => return Ok(sample),
                 Err(error) if error.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
                 Err(error) if error.code() == MF_E_TRANSFORM_STREAM_CHANGE => {
+                    count_stream_change(&mut changes, &self.name)?;
                     self.renegotiate()?;
                 }
                 Err(error) => return Err(failed("IMFTransform::ProcessOutput", &error)),
@@ -709,7 +741,7 @@ mod tests {
     fn a_refusing_candidate_falls_back() {
         let candidates = ["first", "second", "third"];
         let mut tried = Vec::new();
-        let opened = first_accepting(&candidates, |name| {
+        let opened = first_accepting("h264", &candidates, |name| {
             tried.push(*name);
             if *name == "third" {
                 Ok(format!("{name}'s session"))
@@ -720,14 +752,26 @@ mod tests {
         assert_eq!(opened.unwrap(), "third's session");
         assert_eq!(tried, candidates);
 
-        let refused: Result<(), MediaError> = first_accepting(&candidates, |name| {
+        // None accepts: the component is unavailable, every refusal said.
+        let refused: Result<(), MediaError> = first_accepting("h264", &candidates, |name| {
             Err(MediaError::Codec(format!("{name} refused")))
         });
-        assert!(matches!(refused, Err(MediaError::Codec(message)) if message == "third refused"));
+        assert!(
+            matches!(&refused, Err(MediaError::ComponentUnavailable { component, reason })
+                if component == "h264"
+                    && reason == "every transform Media Foundation lists refused: first refused; second refused; third refused"),
+            "{refused:?}"
+        );
+        let none: Result<(), MediaError> = first_accepting("aac", &[] as &[&str], |_| Ok(()));
+        assert!(
+            matches!(&none, Err(MediaError::ComponentUnavailable { component, reason })
+                if component == "aac" && reason == "Media Foundation listed no transform to try"),
+            "{none:?}"
+        );
 
         // The first that accepts wins; the rest are not tried.
         let mut tried = 0;
-        let opened = first_accepting(&candidates, |name| {
+        let opened = first_accepting("h264", &candidates, |name| {
             tried += 1;
             Ok(*name)
         });
@@ -747,7 +791,7 @@ mod tests {
         // A GPU's MFT refuses the rate control, a DX12 one its output type:
         // the user is told what to change, not the DX12 error.
         let candidates = ["GPU MFT", "DX12 MFT"];
-        let refused: Result<(), MediaError> = first_accepting(&candidates, |name| {
+        let refused: Result<(), MediaError> = first_accepting("h264", &candidates, |name| {
             if *name == "GPU MFT" {
                 Err(no_quality_mode(name))
             } else {
@@ -763,7 +807,7 @@ mod tests {
         );
         // A later settings refusal replaces an earlier one, as any refusal does.
         let refused: Result<(), MediaError> =
-            first_accepting(&candidates, |name| Err(no_quality_mode(name)));
+            first_accepting("h264", &candidates, |name| Err(no_quality_mode(name)));
         assert!(
             matches!(&refused, Err(MediaError::InvalidSettings { message, .. }) if message.starts_with("DX12 MFT")),
             "{refused:?}"
@@ -774,7 +818,7 @@ mod tests {
     fn a_rate_control_refusal_falls_back() {
         // Deviation 78: the next candidate (Microsoft's software MFT) opens.
         let candidates = ["GPU MFT", "H264 Encoder MFT"];
-        let opened = first_accepting(&candidates, |name| {
+        let opened = first_accepting("h264", &candidates, |name| {
             if *name == "GPU MFT" {
                 Err(no_quality_mode(name))
             } else {
@@ -782,6 +826,18 @@ mod tests {
             }
         });
         assert_eq!(opened.unwrap(), "H264 Encoder MFT's session");
+    }
+
+    #[test]
+    fn stream_changes_in_a_row_are_capped() {
+        let mut changes = 0;
+        for _ in 0..STREAM_CHANGES {
+            count_stream_change(&mut changes, "Restless MFT").unwrap();
+        }
+        assert!(matches!(
+            count_stream_change(&mut changes, "Restless MFT"),
+            Err(MediaError::Codec(message)) if message == "Restless MFT kept changing its output type"
+        ));
     }
 
     #[test]

@@ -83,6 +83,20 @@ pub(crate) struct ParameterSets {
     pub pps: Vec<u8>,
 }
 
+impl ParameterSets {
+    /// Whether the sets a later access unit carries (`later`) repeat these:
+    /// its SPS and PPS, and its VPS when it has one, as HEVC may repeat its
+    /// SPS and PPS without its VPS.
+    pub(crate) fn repeated_by(&self, later: &Self) -> bool {
+        later.sps == self.sps
+            && later.pps == self.pps
+            && later
+                .vps
+                .as_ref()
+                .is_none_or(|vps| Some(vps) == self.vps.as_ref())
+    }
+}
+
 /// The first parameter sets in an Annex B access unit (None unless it has
 /// both an SPS and a PPS), and the access unit as a sample: each remaining
 /// NAL unit behind its 4-byte big-endian length, without delimiters or
@@ -350,6 +364,27 @@ mod tests {
         let mut expected = (idr.len() as u32).to_be_bytes().to_vec();
         expected.extend(idr);
         assert_eq!(sample, expected);
+    }
+
+    #[test]
+    fn repeated_sets_are_compared_as_far_as_they_go() {
+        let first = hevc_sets();
+        assert!(first.repeated_by(&first.clone()));
+        // An access unit that repeats the SPS and PPS without the VPS.
+        let without_vps = ParameterSets {
+            vps: None,
+            ..first.clone()
+        };
+        assert!(first.repeated_by(&without_vps));
+        // A changed set is not a repeat, the VPS included.
+        let mut changed = first.clone();
+        changed.pps.push(0x80);
+        assert!(!first.repeated_by(&changed));
+        let mut changed = first.clone();
+        changed.vps.as_mut().unwrap().push(0x80);
+        assert!(!first.repeated_by(&changed));
+        assert!(avc_sets().repeated_by(&avc_sets()));
+        assert!(!avc_sets().repeated_by(&first));
     }
 
     #[test]

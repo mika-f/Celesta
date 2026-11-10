@@ -107,7 +107,7 @@ pub(crate) fn open(
             reason: AudioCodec::Aac.missing_reason().to_owned(),
         });
     }
-    let transform = first_accepting(&listed, |activate| {
+    let transform = first_accepting(AudioCodec::Aac.id(), &listed, |activate| {
         let try_one = || {
             let mut transform = Transform::activate(activate)?;
             let output = aac_output(rate, u32::from(channels), bitrate)?;

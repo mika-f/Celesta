@@ -891,8 +891,10 @@ impl MfDecoder {
 /// The edit list is the file's, so not trusted: an edit whose start delay
 /// is longer than the presentation (`presentation` seconds, the probe's
 /// `MF_PD_DURATION`; none when unknown) is treated as no edit, and the
-/// silence it asks for is never allocated. A silence whose size overflows
-/// is refused.
+/// silence it asks for is never allocated. A silence longer than
+/// [`MAX_START_DELAY`] (a hostile `mvhd` may give any presentation), or
+/// one that cannot be allocated, is refused rather than aborting the
+/// process.
 fn apply_edit(
     samples: Vec<f32>,
     channels: usize,
@@ -915,18 +917,31 @@ fn apply_edit(
             .map_or(usize::MAX, |end| frames(end).saturating_sub(skip));
         frames(duration).min(rest).min(total - skip)
     });
+    let too_long = || {
+        MediaError::Codec(format!(
+            "the file's edit list delays its audio by {} s, more than can be held",
+            edit.start_delay
+        ))
+    };
+    if edit.start_delay > MAX_START_DELAY {
+        return Err(too_long());
+    }
+    let kept = &samples[skip * channels..(skip + keep) * channels];
     let silence = frames(edit.start_delay)
         .checked_mul(channels)
-        .ok_or_else(|| {
-            MediaError::Codec(format!(
-                "the file's edit list delays its audio by {} s, more than can be held",
-                edit.start_delay
-            ))
-        })?;
-    let mut edited = vec![0.0; silence];
-    edited.extend_from_slice(&samples[skip * channels..(skip + keep) * channels]);
+        .ok_or_else(too_long)?;
+    let mut edited = Vec::new();
+    edited
+        .try_reserve_exact(silence.checked_add(kept.len()).ok_or_else(too_long)?)
+        .map_err(|_| too_long())?;
+    edited.resize(silence, 0.0);
+    edited.extend_from_slice(kept);
     Ok(edited)
 }
+
+/// The longest start delay an edit may give a track's audio, in seconds: a
+/// day.
+const MAX_START_DELAY: f64 = 24.0 * 60.0 * 60.0;
 
 /// Interleaved `samples` of `from` channels as `to` (1 or 2): mono is the
 /// channels' mean, stereo from mono duplicates it, and stereo from more
@@ -1033,15 +1048,25 @@ mod tests {
             apply_edit(samples.clone(), 2, 48_000, edit, Some(f64::MAX)).unwrap(),
             samples
         );
-        // A delay the presentation allows but whose size overflows.
+        // Delays the presentation allows (a hostile `mvhd` may give any)
+        // but longer than a day: refused, never allocated.
+        for start_delay in [1e300, MAX_START_DELAY + 1.0, 1e9] {
+            let edit = Edit {
+                start_delay,
+                ..Edit::default()
+            };
+            assert!(matches!(
+                apply_edit(samples.clone(), 2, 48_000, edit, Some(f64::MAX)),
+                Err(MediaError::Codec(message)) if message.contains("more than can be held")
+            ));
+        }
+        // A day exactly is taken.
         let edit = Edit {
-            start_delay: 1e300,
+            start_delay: MAX_START_DELAY,
             ..Edit::default()
         };
-        assert!(matches!(
-            apply_edit(samples, 2, 48_000, edit, Some(f64::MAX)),
-            Err(MediaError::Codec(_))
-        ));
+        let edited = apply_edit(samples.clone(), 2, 1, edit, Some(f64::MAX)).unwrap();
+        assert_eq!(edited.len(), 86_400 * 2 + samples.len());
     }
 
     #[test]

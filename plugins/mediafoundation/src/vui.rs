@@ -79,7 +79,8 @@ fn hevc_sps_to_vui_flag(sps: &[u8]) -> Option<Bits> {
     }
     bits.ue()?; // bit_depth_luma_minus8
     bits.ue()?; // bit_depth_chroma_minus8
-    let poc_bits = bits.ue()? + 4; // log2_max_pic_order_cnt_lsb
+    // log2_max_pic_order_cnt_lsb_minus4; a hostile SPS's may not fit.
+    let poc_bits = bits.ue()?.checked_add(4)?;
     let all_layers = bits.flag()?; // sps_sub_layer_ordering_info_present_flag
     for _ in (if all_layers { 0 } else { max_sub_layers_minus1 })..=max_sub_layers_minus1 {
         bits.ue()?;
@@ -116,11 +117,12 @@ fn hevc_sps_to_vui_flag(sps: &[u8]) -> Option<Bits> {
         } else {
             let negative = bits.ue()?;
             let positive = bits.ue()?;
-            for _ in 0..negative + positive {
+            let size = negative.checked_add(positive)?;
+            for _ in 0..size {
                 bits.ue()?; // delta_poc_sX_minus1
                 bits.bit()?; // used_by_curr_pic_sX_flag
             }
-            negative + positive
+            size
         };
         sizes.push(size);
     }
@@ -155,7 +157,8 @@ enum Signal {
     /// No `video_signal_type`; the flag is at this bit.
     Absent(usize),
     /// A `video_signal_type` with no colour description; its
-    /// `colour_description_present_flag` is at this bit.
+    /// `video_full_range_flag` is at this bit, and its
+    /// `colour_description_present_flag` at the next.
     NoDescription(usize),
     Described(VuiColour),
 }
@@ -175,8 +178,8 @@ fn read_signal(bits: &mut Bits) -> Option<Signal> {
         return Some(Signal::Absent(at));
     }
     bits.skip(3)?; // video_format
-    let full_range = bits.flag()?;
     let at = bits.position;
+    let full_range = bits.flag()?;
     if !bits.flag()? {
         return Some(Signal::NoDescription(at));
     }
@@ -290,9 +293,11 @@ fn rewritten(codec: Codec, sps: &[u8]) -> Option<Vec<u8>> {
                 (at, 1, insert)
             }
             Signal::NoDescription(at) => {
-                insert.bit(true);
+                // Limited range, whatever the flag said, and a description.
+                insert.bit(false); // video_full_range_flag
+                insert.bit(true); // colour_description_present_flag
                 description(&mut insert);
-                (at, 1, insert)
+                (at, 2, insert)
             }
         }
     } else {
@@ -533,6 +538,118 @@ mod tests {
         read_signal(&mut tail).unwrap();
         assert_eq!(tail.bits(7).unwrap(), 0);
         assert_eq!(tail.bits(2).unwrap(), 0b01);
+    }
+
+    /// `sps` (with a VUI and no signal type) with `signal` in place of its
+    /// `video_signal_type_present_flag`.
+    fn with_signal_bits(codec: Codec, sps: &[u8], signal: &[u8]) -> Vec<u8> {
+        let mut bits = to_vui_flag(codec, sps).unwrap();
+        assert!(bits.flag().unwrap());
+        let Some(Signal::Absent(at)) = read_signal(&mut bits) else {
+            panic!("the SPS has a signal type");
+        };
+        let payload = &bits.bytes;
+        let last = payload.iter().rposition(|&byte| byte != 0).unwrap();
+        let end = last * 8 + 8 - payload[last].trailing_zeros() as usize;
+        let bit = |position: usize| payload[position / 8] >> (7 - position % 8) & 1 == 1;
+        let mut writer = BitWriter::default();
+        (0..at).for_each(|position| writer.bit(bit(position)));
+        signal.iter().for_each(|&value| writer.bit(value == 1));
+        (at + 1..end).for_each(|position| writer.bit(bit(position)));
+        let mut out = sps[..header_length(codec)].to_vec();
+        out.extend(escaped(&writer.bytes));
+        out
+    }
+
+    #[test]
+    fn a_signal_type_without_a_description_gets_one_in_limited_range() {
+        for (codec, text) in [(Codec::H264, AVC_SOFTWARE), (Codec::Hevc, HEVC_SOFTWARE)] {
+            let sps = hex(text);
+            for full_range in [1, 0] {
+                // video_signal_type_present_flag, video_format 5,
+                // video_full_range_flag, colour_description_present_flag 0.
+                let signal = with_signal_bits(codec, &sps, &[1, 1, 0, 1, full_range, 0]);
+                assert_eq!(sps_colour(codec, &signal), None, "{text}");
+                let rewritten = with_bt709(codec, &signal);
+                assert_eq!(
+                    sps_colour(codec, &rewritten),
+                    Some(BT709_LIMITED),
+                    "{text}, full range {full_range}"
+                );
+                if codec == Codec::H264 {
+                    assert_eq!(
+                        avc_codec_string(&avc_record(&rewritten)).unwrap(),
+                        avc_codec_string(&avc_record(&sps)).unwrap()
+                    );
+                    assert_eq!(avc_reorder_depth(&avc_record(&rewritten)).unwrap(), Some(1));
+                } else {
+                    assert_eq!(hevc_sps_info(&rewritten), hevc_sps_info(&sps));
+                }
+            }
+        }
+    }
+
+    /// Writes `value` as an unsigned Exp-Golomb code.
+    fn write_ue(writer: &mut BitWriter, value: u32) {
+        let code = u64::from(value) + 1;
+        let length = 64 - code.leading_zeros();
+        for _ in 1..length {
+            writer.bit(false);
+        }
+        for shift in (0..length).rev() {
+            writer.bit(code >> shift & 1 == 1);
+        }
+    }
+
+    /// An HEVC SPS (header included) of one sub-layer, 4:2:0 and 8 bits,
+    /// with `log2_max_pic_order_cnt_lsb_minus4` of `poc` and one short-term
+    /// set of `negative` and `positive` pictures, cut short after them.
+    fn hevc_sps_with(poc: u32, negative: u32, positive: u32) -> Vec<u8> {
+        let mut writer = BitWriter::default();
+        writer.bits(0, 4); // sps_video_parameter_set_id
+        writer.bits(0, 3); // sps_max_sub_layers_minus1
+        writer.bit(true); // sps_temporal_id_nesting_flag
+        for _ in 0..3 {
+            writer.bits(0, 32); // profile_tier_level: 96 bits for one sub-layer
+        }
+        write_ue(&mut writer, 0); // sps_seq_parameter_set_id
+        write_ue(&mut writer, 1); // chroma_format_idc
+        write_ue(&mut writer, 64); // pic_width_in_luma_samples
+        write_ue(&mut writer, 36); // pic_height_in_luma_samples
+        writer.bit(false); // conformance_window_flag
+        write_ue(&mut writer, 0); // bit_depth_luma_minus8
+        write_ue(&mut writer, 0); // bit_depth_chroma_minus8
+        write_ue(&mut writer, poc);
+        writer.bit(true); // sps_sub_layer_ordering_info_present_flag
+        for _ in 0..3 + 6 {
+            write_ue(&mut writer, 0); // ordering info, block sizes, depths
+        }
+        writer.bits(0, 4); // scaling lists, amp, sao, pcm: all off
+        write_ue(&mut writer, 1); // num_short_term_ref_pic_sets
+        write_ue(&mut writer, negative);
+        write_ue(&mut writer, positive);
+        writer.bit(true); // a stop bit
+        let mut sps = vec![0x42, 0x01];
+        sps.extend(escaped(&writer.bytes));
+        sps
+    }
+
+    #[test]
+    fn hostile_counts_are_malformed_not_overflows() {
+        // The largest ue(v) reads.
+        const HOSTILE: u32 = u32::MAX - 1;
+        // With small counts it reads past them, and is cut short later.
+        let mut fine = hevc_sps_with(0, 1, 0);
+        fine.extend([0x80; 8]);
+        assert!(hevc_sps_to_vui_flag(&fine).is_some());
+        for hostile in [
+            hevc_sps_with(HOSTILE, 0, 0),
+            hevc_sps_with(0, HOSTILE, HOSTILE),
+        ] {
+            assert!(hevc_sps_to_vui_flag(&hostile).is_none());
+            assert_eq!(sps_colour(Codec::Hevc, &hostile), None);
+            assert_eq!(with_bt709(Codec::Hevc, &hostile), hostile);
+        }
     }
 
     #[test]

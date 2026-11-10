@@ -12,8 +12,10 @@
 //!   output's time less the first input's (Task 1: Microsoft's software
 //!   H.264 MFT delays every sample by its reorder depth when it reorders).
 //! - `dts` is `MFSampleExtension_DecodeTimestamp` when the sample has it,
-//!   else its `pts`, shifted back by the reorder depth whenever the stream
-//!   may reorder, as P5's VideoToolbox encoders do.
+//!   else the time of the earliest input not yet answered (an encoder
+//!   answers its inputs in decode order, so these never go back), shifted
+//!   back by the reorder depth whenever the stream may reorder, as P5's
+//!   VideoToolbox encoders do.
 
 use crate::annexb::{self, ParameterSets, split_sample};
 use crate::color::check_color;
@@ -33,6 +35,7 @@ use crate::params::{
 };
 use crate::vui::with_bt709;
 use celesta_media::{Encoded, MediaError, Packet, PixelFormat, TrackConfig, VideoEncoderRequest};
+use std::collections::VecDeque;
 use windows::Win32::Foundation::VARIANT_BOOL;
 use windows::Win32::Media::MediaFoundation::{
     CODECAPI_AVEncCommonLowLatency, CODECAPI_AVEncCommonMeanBitRate, CODECAPI_AVEncCommonQuality,
@@ -70,6 +73,9 @@ pub(crate) struct VideoSession {
     depth: i64,
     /// The first input's time, in hns.
     first_input: Option<i64>,
+    /// The times, in the timescale, of the inputs fed and not yet answered,
+    /// earliest first.
+    fed: VecDeque<i64>,
     /// The transform's own delay, in hns: the first output's time less the
     /// first input's.
     delay: Option<i64>,
@@ -304,7 +310,7 @@ pub(crate) fn open(
         });
     }
     // Each refusal names its transform, so the one kept says which refused.
-    let transform = first_accepting(&listed, |activate| {
+    let transform = first_accepting(codec.id(), &listed, |activate| {
         let try_one = || {
             let mut transform = Transform::activate(activate)?;
             apply_codec_settings(&transform, &values, hardware)?;
@@ -327,10 +333,19 @@ pub(crate) fn open(
         sets: None,
         depth: 0,
         first_input: None,
+        fed: VecDeque::new(),
         delay: None,
         last_dts: None,
     };
     Ok((session, input))
+}
+
+/// A packet's decode time, in the timescale: the transform's decode
+/// timestamp (`stamped`) when it gave one, else the time of the earliest
+/// input not yet answered (`fed`), else the time it is shown (`shown`);
+/// shifted back by `shift`, the reorder depth's ticks.
+fn decode_time_of(stamped: Option<i64>, fed: Option<i64>, shown: i64, shift: i64) -> i64 {
+    stamped.or(fed).unwrap_or(shown) - shift
 }
 
 impl VideoSession {
@@ -359,8 +374,9 @@ impl VideoSession {
         };
         let time = to_hns(pts, self.timescale);
         let sample = make_sample(&bytes, time, to_hns(self.frame, self.timescale))?;
-        // Before the push: a transform may answer the first frame at once.
+        // Before the push: a transform may answer the frame at once.
         self.first_input.get_or_insert(time);
+        self.fed.push_back(pts);
         let outputs = self.transform.push(&sample)?;
         self.packets(outputs)
     }
@@ -458,7 +474,7 @@ impl VideoSession {
                 };
                 encoded.config = Some(self.configure(sets)?);
             }
-            (Some(first), Some(sets)) if *first != sets => {
+            (Some(first), Some(sets)) if !first.repeated_by(&sets) => {
                 return Err(MediaError::Codec(format!(
                     "{name} changed its parameter sets mid-stream"
                 )));
@@ -470,7 +486,12 @@ impl VideoSession {
         let shown = time - delay;
         let pts = from_hns(shown, self.timescale);
         let depth = self.depth;
-        let dts = from_hns(decode_time.unwrap_or(shown), self.timescale) - depth * self.frame;
+        let dts = decode_time_of(
+            decode_time.map(|time| from_hns(time, self.timescale)),
+            self.fed.pop_front(),
+            pts,
+            depth * self.frame,
+        );
         if dts > pts {
             return Err(MediaError::Codec(format!(
                 "{name} gave a frame shown at {pts} that decodes at {dts}, after it is shown, \
@@ -506,6 +527,24 @@ mod tests {
             MediaError::InvalidSettings { key, message } => (key, message),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn unstamped_decode_times_follow_the_inputs() {
+        // An encoder with a reorder depth of one that stamps no decode time
+        // answers I0 P3 B1 B2 for inputs fed at 0, 1, 2, 3 frames.
+        let frame = 1_001;
+        let mut fed: VecDeque<i64> = (0..4).map(|index| index * frame).collect();
+        let dts: Vec<i64> = [0, 3, 1, 2]
+            .map(|index| decode_time_of(None, fed.pop_front(), index * frame, frame))
+            .into();
+        // Never back, never after the frame is shown; `pts - depth` would
+        // give -1001, 2002, 0, 1001.
+        assert_eq!(dts, [-1_001, 0, 1_001, 2_002]);
+        // A decode timestamp the encoder gives wins, shifted the same.
+        assert_eq!(decode_time_of(Some(5), Some(9), 7, 2), 3);
+        // Nothing fed left: the time shown.
+        assert_eq!(decode_time_of(None, None, 7, 2), 5);
     }
 
     #[test]
