@@ -205,7 +205,7 @@ impl EditorView {
                 component_section_note(state.as_ref()).map(|note| component_note_line(note, cx));
             let mut section_rows: Vec<AnyElement> = vec![
                 div()
-                    .px(metrics::panel_padding())
+                    .px(metrics::inspector_padding())
                     .pb_1()
                     .flex()
                     .flex_col()

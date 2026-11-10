@@ -16,8 +16,15 @@ cornerRadius, strokeWidth and the shapes' sizes; `°` for rotation and a
 Pie's start and end angles; `s` for a video's startFrom. Ratios
 (scale, anchors, opacity, playbackRate, volume) have none.
 
-**Tokens.** `metrics::inspector_label_width()` (7rem) and
-`metrics::inspector_trailing_width()` (1.25rem).
+**Tokens.** `metrics::inspector_label_width()` (7rem),
+`metrics::inspector_trailing_width()` (1.25rem), and, after the user's
+spacing review, `inspector_row_height()` (2rem, rows and section headers)
+and `inspector_padding()` (1rem, their leading and trailing padding).
+`panel_header_height()` went from 1.875rem to 2.5rem so gpui-kit's medium
+`Tab` (32px) fits the band; the dock's tabs get `px_2` more each side, and
+Reload composition is a medium button with 1.5rem above and below. The
+shared `panel_padding()` and `list_row_height()`, which the timeline uses,
+are unchanged.
 
 **`inspector.rs`.**
 - `InspectorSection`: a band header (`title_bar`, `list_row_height()`, one
@@ -26,7 +33,8 @@ Pie's start and end angles; `s` for a video's startFrom. Ratios
   button (its own focus handle), so a field inside blurs and submits.
 - `InspectorRow`: label lane (fixed width, ellipsis, tooltip, optional
   `on_label_press`), value lane, trailing lane (always present); sub-lines
-  start at the value lane's edge; `indented` and `top_aligned`.
+  start at the value lane's edge; `indented` (1rem, so the lanes snap to
+  the same pixel) and `top_aligned`.
 - `fact(id, label, value, mono, cx)`: a read-only row.
 - `CollapsedSections` on `EditorView::collapsed_sections`, toggled by
   `EditorView::section(id, title, cx)`. Ids: `inspector/<name>`,

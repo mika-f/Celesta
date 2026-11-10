@@ -10,7 +10,8 @@ use gpui_kit::{Pixels, Rems, px, rems};
 /// gpui-kit's `font_size`, in pixels: body text, and the window's `rem`.
 pub const BASE_FONT_SIZE: f32 = 13.0;
 
-/// Height of a panel's header band (the editor's `PanelHeader` and the right dock's tabs).
+/// Height of a panel's header band (the editor's `PanelHeader` and the right
+/// dock's tabs): it holds gpui-kit's medium `Tab` (32px) without overhang.
 pub fn panel_header_height() -> Rems {
     rems(2.5)
 }
@@ -35,6 +36,17 @@ pub fn inspector_label_width() -> Rems {
 /// remove button), kept on rows without one so the lanes stay aligned.
 pub fn inspector_trailing_width() -> Rems {
     rems(1.25)
+}
+
+/// Height of an Inspector row and a section's header: a step roomier than
+/// a list row.
+pub fn inspector_row_height() -> Rems {
+    rems(2.0)
+}
+
+/// Leading and trailing padding of the Inspector's rows and sections.
+pub fn inspector_padding() -> Rems {
+    rems(1.0)
 }
 
 /// A size that was designed in pixels against gpui-kit's default 16px `rem`,
@@ -116,6 +128,16 @@ mod tests {
         assert!(inspector_label_width().0 > list_row_height().0);
         // An xsmall icon button is 1rem (`size_4`).
         assert!(inspector_trailing_width().0 >= 1.0);
+    }
+
+    #[test]
+    fn the_inspector_is_roomier_than_a_list() {
+        // Rows and padding a step up from a list's, so labels and values
+        // breathe in a long Inspector.
+        assert!(inspector_row_height().0 > list_row_height().0);
+        assert!(inspector_padding().0 > panel_padding().0);
+        // gpui-kit's medium `Tab` is 32px tall: the band holds it.
+        assert!(panel_header_height().0 * BASE_FONT_SIZE >= 32.0);
     }
 
     #[test]

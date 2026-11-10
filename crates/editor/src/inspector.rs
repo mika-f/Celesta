@@ -110,11 +110,11 @@ impl RenderOnce for InspectorSection {
             .flex_none()
             .items_center()
             .gap_1()
-            .h(metrics::list_row_height())
+            .h(metrics::inspector_row_height())
             // The button's own `px_1` makes up the panel padding, so the
             // chevron starts on the rows' label edge.
-            .pl(metrics::panel_padding() - rems(0.25))
-            .pr(metrics::panel_padding())
+            .pl(metrics::inspector_padding() - rems(0.25))
+            .pr(metrics::inspector_padding())
             .bg(theme.title_bar)
             .border_b_1()
             .border_color(theme.border)
@@ -250,9 +250,10 @@ pub(crate) fn fact(
     InspectorRow::new(id, label).value(value)
 }
 
-/// How far an indented row's label moves in.
+/// How far an indented row's label moves in: a whole rem, so the label lane
+/// it takes from and the padding it adds snap to the same pixel.
 fn indent() -> gpui_kit::Rems {
-    rems(0.75)
+    rems(1.0)
 }
 
 impl InspectorRow {
@@ -345,7 +346,7 @@ impl RenderOnce for InspectorRow {
             .child(self.label);
         let line = div()
             .flex()
-            .min_h(metrics::list_row_height())
+            .min_h(metrics::inspector_row_height())
             .when(self.top_aligned, |line| line.items_start().py_1())
             .when(!self.top_aligned, |line| line.items_center())
             .gap_2()
@@ -375,11 +376,11 @@ impl RenderOnce for InspectorRow {
         div()
             .flex()
             .flex_col()
-            .pr(metrics::panel_padding())
+            .pr(metrics::inspector_padding())
             .when(self.indented, |row| {
-                row.pl(metrics::panel_padding() + indent())
+                row.pl(metrics::inspector_padding() + indent())
             })
-            .when(!self.indented, |row| row.pl(metrics::panel_padding()))
+            .when(!self.indented, |row| row.pl(metrics::inspector_padding()))
             .child(line)
             .when(has_sub_lines, |row| {
                 row.child(

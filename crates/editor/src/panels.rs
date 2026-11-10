@@ -347,7 +347,7 @@ impl EditorView {
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .px_3()
+                            .px(theme::metrics::inspector_padding())
                             .py_2()
                             .text_sm()
                             .text_color(cx.theme().danger)
@@ -600,7 +600,7 @@ impl EditorView {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .px_3()
+                    .px(theme::metrics::inspector_padding())
                     .py_2()
                     .border_b_1()
                     .border_color(cx.theme().border)
@@ -725,7 +725,7 @@ impl EditorView {
             }),
             None if self.component_schema_worker.pending() => section.child(
                 div()
-                    .px(theme::metrics::panel_padding())
+                    .px(theme::metrics::inspector_padding())
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child("Loading property schema…"),
@@ -861,9 +861,10 @@ impl EditorView {
                     .id(SharedString::from(format!("react-chapter-{}", chapter.id)))
                     .flex()
                     .items_center()
+                    .min_h(theme::metrics::inspector_row_height())
                     .justify_between()
                     .gap_2()
-                    .px_3()
+                    .px(theme::metrics::inspector_padding())
                     .py_1()
                     .text_sm()
                     .cursor_pointer()
@@ -894,7 +895,7 @@ impl EditorView {
                     div()
                         .flex()
                         .justify_between()
-                        .px_3()
+                        .px(theme::metrics::inspector_padding())
                         .py_1()
                         .text_sm()
                         .text_color(muted)
@@ -917,7 +918,7 @@ impl EditorView {
             self.section("properties/layer", "Layer", cx)
                 .child(
                     div()
-                        .px_3()
+                        .px(theme::metrics::inspector_padding())
                         .py_1()
                         .text_sm()
                         .text_color(muted)
@@ -1011,7 +1012,9 @@ impl EditorView {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .p_3()
+                .px(theme::metrics::inspector_padding())
+                // Room above and below the button, apart from the rows.
+                .py_6()
                 .child(
                     Button::new("reload-react-entry")
                         .w_full()

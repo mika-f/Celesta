@@ -61,7 +61,7 @@ impl EditorView {
             .section("properties/properties", "Properties", cx)
             .children(general.into_iter().map(|message| {
                 div()
-                    .px(celesta_editor_theme::metrics::panel_padding())
+                    .px(celesta_editor_theme::metrics::inspector_padding())
                     .text_sm()
                     .text_color(danger)
                     .child(message)
