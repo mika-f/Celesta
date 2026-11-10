@@ -72,6 +72,10 @@ const MAX_VIDEO_SESSIONS: usize = 16;
 /// Media Foundation's time unit, 100 ns, in a second.
 const HNS_PER_SECOND: f64 = 10_000_000.0;
 
+/// The most stream indexes the probe asks the reader about: a file whose
+/// streams keep failing is not walked forever.
+const MAX_STREAMS: u32 = 64;
+
 /// The tail every subtype GUID made from a FourCC or a `WAVE_FORMAT` tag
 /// has: `{fourcc}-0000-0010-8000-00AA00389B71`.
 const FOURCC_TAIL: (u16, u16, [u8; 8]) = (
@@ -316,15 +320,11 @@ fn open_source(path: &Path) -> Result<Source, MediaError> {
         audio: Vec::new(),
     };
     let (mut video, mut audio) = (None, None);
-    let mut stream = 0;
-    loop {
+    for stream in 0..MAX_STREAMS {
         let native = match native_type(&reader, stream) {
             Ok(Some(native)) => native,
             Ok(None) => break,
-            Err(()) => {
-                stream += 1;
-                continue;
-            }
+            Err(()) => continue,
         };
         let major = guid_of(&native, &MF_MT_MAJOR_TYPE);
         if major == Some(MFMediaType_Video) {
@@ -343,7 +343,6 @@ fn open_source(path: &Path) -> Result<Source, MediaError> {
             probe.audio.push(audio_stream(stream, &native, edit));
             audio.get_or_insert(AudioTrack { stream, edit });
         }
-        stream += 1;
     }
     if probe.video.is_none() && probe.audio.is_empty() {
         return Err(unsupported(path));
@@ -468,11 +467,13 @@ struct Shown {
     frame: Option<VideoFrame>,
 }
 
-/// The size and row order of the frames a reader gives.
+/// The size, row pitch, and row order of the frames a reader gives.
 #[derive(Clone, Copy)]
 struct Layout {
     width: u32,
     height: u32,
+    /// `|MF_MT_DEFAULT_STRIDE|` in bytes, when the type gives it.
+    stride: Option<usize>,
     bottom_up: bool,
 }
 
@@ -485,6 +486,7 @@ impl Layout {
         Ok(Self {
             width,
             height,
+            stride: stride.map(|stride| stride.unsigned_abs() as usize),
             bottom_up: stride.is_some_and(|stride| stride < 0),
         })
     }
@@ -613,17 +615,26 @@ fn convert(sample: &IMFSample, layout: Layout) -> Result<VideoFrame, MediaError>
     let Layout {
         width,
         height,
+        stride,
         bottom_up,
     } = layout;
     let bytes = sample_bytes(sample)?;
     let expected = frame_byte_len(width, height)?;
     let row = width as usize * 4;
-    // A buffer may pad its rows; each is at least a row of pixels.
-    let stride = if height == 0 {
-        0
-    } else {
-        bytes.len() / height as usize
-    };
+    // A buffer may pad its rows: the type's stride when it gives one that
+    // the buffer holds, else the buffer's length over the rows.
+    let stride = stride
+        .filter(|stride| *stride >= row)
+        .filter(|stride| {
+            stride
+                .checked_mul(height as usize)
+                .is_some_and(|whole| whole <= bytes.len())
+        })
+        .unwrap_or(if height == 0 {
+            0
+        } else {
+            bytes.len() / height as usize
+        });
     if stride < row || height == 0 {
         return Err(MediaError::UnexpectedFrameSize {
             width,
@@ -827,6 +838,13 @@ impl MfDecoder {
                 "the source reader's float audio type has no rate or channels".to_owned(),
             ));
         }
+        let presentation = source
+            .probe
+            .duration
+            .and_then(|duration| duration.as_seconds().ok());
+        // The samples are taken back to back: the reader's timestamps are
+        // not read for audio, so a gap or a first sample after 0 is not
+        // kept, and a type changed mid-stream is not looked at.
         let mut samples = Vec::new();
         loop {
             let read = read_sample(&source.reader, stream, "decode the audio")?;
@@ -852,7 +870,7 @@ impl MfDecoder {
                 channels: file_channels as u16,
             });
         }
-        let samples = apply_edit(samples, file_channels, file_rate, edit);
+        let samples = apply_edit(samples, file_channels, file_rate, edit, presentation)?;
         let samples = mix_channels(&samples, file_channels, usize::from(channels));
         resample_audio(
             &AudioBuffer {
@@ -869,7 +887,25 @@ impl MfDecoder {
 /// `media_start` dropped, at most `duration` kept (and nothing past the
 /// media's end), then `start_delay` of silence before. Without an edit's
 /// duration, the samples are kept to the last.
-fn apply_edit(samples: Vec<f32>, channels: usize, rate: u32, edit: Edit) -> Vec<f32> {
+///
+/// The edit list is the file's, so not trusted: an edit whose start delay
+/// is longer than the presentation (`presentation` seconds, the probe's
+/// `MF_PD_DURATION`; none when unknown) is treated as no edit, and the
+/// silence it asks for is never allocated. A silence whose size overflows
+/// is refused.
+fn apply_edit(
+    samples: Vec<f32>,
+    channels: usize,
+    rate: u32,
+    edit: Edit,
+    presentation: Option<f64>,
+) -> Result<Vec<f32>, MediaError> {
+    let delay_fits = edit.start_delay.is_finite()
+        && (edit.start_delay == 0.0
+            || presentation.is_some_and(|presentation| edit.start_delay <= presentation));
+    if !delay_fits {
+        return Ok(samples);
+    }
     let frames = |seconds: f64| (seconds * f64::from(rate)).round().max(0.0) as usize;
     let total = samples.len() / channels;
     let skip = frames(edit.media_start).min(total);
@@ -879,14 +915,22 @@ fn apply_edit(samples: Vec<f32>, channels: usize, rate: u32, edit: Edit) -> Vec<
             .map_or(usize::MAX, |end| frames(end).saturating_sub(skip));
         frames(duration).min(rest).min(total - skip)
     });
-    let mut edited = vec![0.0; frames(edit.start_delay) * channels];
+    let silence = frames(edit.start_delay)
+        .checked_mul(channels)
+        .ok_or_else(|| {
+            MediaError::Codec(format!(
+                "the file's edit list delays its audio by {} s, more than can be held",
+                edit.start_delay
+            ))
+        })?;
+    let mut edited = vec![0.0; silence];
     edited.extend_from_slice(&samples[skip * channels..(skip + keep) * channels]);
-    edited
+    Ok(edited)
 }
 
 /// Interleaved `samples` of `from` channels as `to` (1 or 2): mono is the
 /// channels' mean, stereo from mono duplicates it, and stereo from more
-/// keeps the first two (left and right).
+/// keeps the first two (left and right; FFmpeg would downmix the rest in).
 fn mix_channels(samples: &[f32], from: usize, to: usize) -> Vec<f32> {
     if from == to {
         return samples.to_vec();
@@ -929,7 +973,7 @@ mod tests {
             media_end: None,
         };
         assert_eq!(
-            apply_edit(samples.clone(), 2, 10, edit),
+            apply_edit(samples.clone(), 2, 10, edit, Some(1.0)).unwrap(),
             [0.0, 0.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0, 6.0]
         );
         // The media ends before the edit's duration does.
@@ -938,7 +982,7 @@ mod tests {
             ..edit
         };
         assert_eq!(
-            apply_edit(samples.clone(), 2, 10, short),
+            apply_edit(samples.clone(), 2, 10, short, Some(1.0)).unwrap(),
             [0.0, 0.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0]
         );
         // A duration past the media keeps what there is.
@@ -946,8 +990,58 @@ mod tests {
             duration: Some(5.0),
             ..Edit::default()
         };
-        assert_eq!(apply_edit(samples.clone(), 2, 10, long), samples);
-        assert_eq!(apply_edit(samples.clone(), 2, 10, Edit::default()), samples);
+        assert_eq!(
+            apply_edit(samples.clone(), 2, 10, long, None).unwrap(),
+            samples
+        );
+        assert_eq!(
+            apply_edit(samples.clone(), 2, 10, Edit::default(), None).unwrap(),
+            samples
+        );
+    }
+
+    #[test]
+    fn hostile_start_delays_allocate_nothing() {
+        let samples: Vec<f32> = (0..10).flat_map(|frame| [frame as f32; 2]).collect();
+        // An empty edit of 0xFFFFFFFF at a movie timescale of 1000 (`elst`
+        // version 0), and of u64::MAX (version 1): longer than the
+        // presentation, so no edit.
+        for start_delay in [
+            1e12,
+            f64::from(u32::MAX) / 1_000.0,
+            u64::MAX as f64 / 1_000.0,
+        ] {
+            let edit = Edit {
+                start_delay,
+                ..Edit::default()
+            };
+            assert_eq!(
+                apply_edit(samples.clone(), 2, 48_000, edit, Some(1.0)).unwrap(),
+                samples
+            );
+            // Without a known presentation, no delay is taken either.
+            assert_eq!(
+                apply_edit(samples.clone(), 2, 48_000, edit, None).unwrap(),
+                samples
+            );
+        }
+        let edit = Edit {
+            start_delay: f64::INFINITY,
+            ..Edit::default()
+        };
+        assert_eq!(
+            apply_edit(samples.clone(), 2, 48_000, edit, Some(f64::MAX)).unwrap(),
+            samples
+        );
+        // A delay the presentation allows but whose size overflows.
+        let edit = Edit {
+            start_delay: 1e300,
+            ..Edit::default()
+        };
+        assert!(matches!(
+            apply_edit(samples, 2, 48_000, edit, Some(f64::MAX)),
+            Err(MediaError::Codec(_))
+        ));
     }
 
     #[test]

@@ -136,24 +136,35 @@ fn edit_entries(payload: &[u8]) -> Option<Vec<(u64, i64)>> {
     )
 }
 
-/// The edit of `trak`'s payload, whose movie timescale is `movie`.
+/// The edit of `trak`'s payload, whose movie timescale is `movie`; none
+/// when the track has no handler type, so cannot be told video from sound.
+/// A track whose `mdhd` or `elst` is malformed is kept, with no edit, so
+/// the tracks after it still line up with the reader's streams.
 fn track_edit(trak: &[u8], movie: u32) -> Option<TrackEdit> {
     let mdia = child(trak, b"mdia")?;
     let handler: [u8; 4] = child(mdia, b"hdlr")?.get(8..12)?.try_into().ok()?;
-    let (timescale, media_duration) = timescale_and_duration(child(mdia, b"mdhd")?)?;
     let mut edit = TrackEdit {
         handler,
-        timescale,
+        timescale: movie,
         media_time: 0,
         start_delay: 0.0,
         duration: None,
-        media_duration,
+        media_duration: None,
     };
-    let Some(elst) = child(trak, b"edts").and_then(|edts| child(edts, b"elst")) else {
+    let Some((timescale, media_duration)) = child(mdia, b"mdhd").and_then(timescale_and_duration)
+    else {
+        return Some(edit);
+    };
+    edit.timescale = timescale;
+    edit.media_duration = media_duration;
+    let Some(entries) = child(trak, b"edts")
+        .and_then(|edts| child(edts, b"elst"))
+        .and_then(edit_entries)
+    else {
         return Some(edit);
     };
     let seconds = |duration: u64| duration as f64 / f64::from(movie);
-    for (segment_duration, media_time) in edit_entries(elst)? {
+    for (segment_duration, media_time) in entries {
         if media_time == -1 {
             edit.start_delay += seconds(segment_duration);
         } else {
@@ -166,7 +177,9 @@ fn track_edit(trak: &[u8], movie: u32) -> Option<TrackEdit> {
 }
 
 /// The edit of every `trak` in `file`'s `moov`, in file order; none when it
-/// has no `moov`. Only `moov` is read: every other top-level box is sought
+/// has no `moov`, or when a `trak` has no handler type (the decoder matches
+/// edits to streams by their order among each kind, which such a track
+/// would shift). Only `moov` is read: every other top-level box is sought
 /// past.
 pub(crate) fn track_edits(file: &mut (impl Read + Seek)) -> io::Result<Vec<TrackEdit>> {
     file.seek(SeekFrom::Start(0))?;
@@ -206,8 +219,9 @@ pub(crate) fn track_edits(file: &mut (impl Read + Seek)) -> io::Result<Vec<Track
                 .ok_or_else(|| malformed("mvhd"))?;
             return Ok(children(&moov)
                 .filter(|child| &child.kind == b"trak")
-                .filter_map(|trak| track_edit(trak.payload, movie))
-                .collect());
+                .map(|trak| track_edit(trak.payload, movie))
+                .collect::<Option<Vec<_>>>()
+                .unwrap_or_default());
         }
         match length {
             None => return Ok(Vec::new()),
@@ -448,6 +462,51 @@ mod tests {
         assert_eq!(edits_of(Vec::new()), []);
         let mut file = ftyp(b"isom");
         file.extend(atom(b"mdat", &[0; 64]));
+        assert_eq!(edits_of(file), []);
+    }
+
+    #[test]
+    fn a_malformed_track_keeps_its_place() {
+        // The first sound track's `elst` says two entries and holds one.
+        let mut broken = elst(&[(1_000, 2_048)]);
+        let count = broken.windows(4).position(|w| w == b"elst").unwrap() + 8;
+        broken[count..count + 4].copy_from_slice(&2u32.to_be_bytes());
+        let mut file = ftyp(b"isom");
+        file.extend(moov(
+            1_000,
+            &[
+                trak(b"soun", header(b"mdhd", 48_000, 0), Some(broken)),
+                trak(
+                    b"soun",
+                    header(b"mdhd", 48_000, 0),
+                    Some(elst(&[(1_000, 1_024)])),
+                ),
+            ],
+        ));
+        let edits = edits_of(file);
+        assert_eq!(edits.len(), 2);
+        assert_eq!((edits[0].media_time, edits[0].duration), (0, None));
+        assert_eq!(edits[1].media_time, 1_024);
+        assert_eq!(edits[1].duration, Some(1.0));
+    }
+
+    #[test]
+    fn a_track_without_a_handler_drops_every_edit() {
+        let mut nameless = full(b"tkhd", &[0; 80]);
+        nameless.extend(atom(b"edts", &elst(&[(1_000, 1_024)])));
+        nameless.extend(atom(b"mdia", &header(b"mdhd", 48_000, 0)));
+        let mut file = ftyp(b"isom");
+        file.extend(moov(
+            1_000,
+            &[
+                atom(b"trak", &nameless),
+                trak(
+                    b"soun",
+                    header(b"mdhd", 48_000, 0),
+                    Some(elst(&[(1_000, 1_024)])),
+                ),
+            ],
+        ));
         assert_eq!(edits_of(file), []);
     }
 

@@ -628,7 +628,10 @@ fn refuses_what_it_cannot_read() {
                 peak(&decoded.samples, 2)
             );
             assert_eq!(probe.audio.len(), 1);
-            assert!(decoded.frame_count() > 0);
+            // Its length is not FFmpeg's (48648 frames, not 48000: Media
+            // Foundation applies neither Opus's pre-skip nor its trim), so
+            // only the click is checked.
+            assert_eq!(peak(&decoded.samples, 2), CLICK);
         }
         refused => unsupported(refused, &webm_file),
     }
@@ -857,7 +860,9 @@ fn probing_does_not_lock_the_file() {
             .unwrap();
     }
     println!("released after {requests} requests to another file");
-    assert!(requests > IDLE_SESSION_FRAMES, "released after {requests}");
+    // P5's rule: a session closes once it is unasked for longer than
+    // IDLE_SESSION_FRAMES times the sessions open, here two.
+    assert_eq!(requests, 2 * IDLE_SESSION_FRAMES + 1);
     assert_eq!(std::fs::metadata(&output).unwrap().len(), size);
 }
 
@@ -917,6 +922,23 @@ fn edit_lists_are_honoured() {
         "0 s: {:?}, not FFmpeg's {:?}",
         rgb(&first, 0, 0),
         rgb(&references[0], 0, 0)
+    );
+    // One frame in: unmapped, the reader's first frame (at 2002) would still
+    // be the one shown, so this needs the edit applied.
+    assert!(!is_like(&references[0], &references[1]));
+    let second = decoder
+        .decode_video(DECODER_ID, &request(&mov, 1_001.0 / 30_000.0))
+        .unwrap();
+    println!(
+        "x264 MOV one frame in: {:?}, FFmpeg's {:?}",
+        rgb(&second, 0, 0),
+        rgb(&references[1], 0, 0)
+    );
+    assert!(
+        is_like(&second, &references[1]),
+        "one frame in: {:?}, not FFmpeg's {:?}",
+        rgb(&second, 0, 0),
+        rgb(&references[1], 0, 0)
     );
 
     // This plugin's AAC, its packets moved to start at 0, through
