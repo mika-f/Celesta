@@ -41,6 +41,7 @@ mod layer_select;
 mod lifecycle;
 mod media_probe;
 mod occurrences;
+mod panel_header;
 mod panels;
 mod playback;
 mod plugins;
@@ -57,6 +58,8 @@ mod render;
 mod scene_entries;
 mod scope;
 mod source;
+#[cfg(test)]
+mod style_guard;
 #[cfg(test)]
 mod tests;
 mod timing;
@@ -243,6 +246,7 @@ fn run() -> anyhow::Result<()> {
         })
         .detach();
 
+        // physical: platform window sizes.
         let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
         cx.open_window(
             WindowOptions {

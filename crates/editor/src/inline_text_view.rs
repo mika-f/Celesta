@@ -3,6 +3,9 @@
 //! it, a press places the caret, and every way an edit ends goes through
 //! [`edit_end`]. The caret, the selection and the marked text are painted
 //! over the frame.
+//!
+//! physical: caret, selection and marked-text geometry is in the frame's
+//! pixel space, scaled onto the viewer.
 
 use crate::element_edit::{
     ElementTargets, PropKey, edit_value, editable, inner_target, reason_text,

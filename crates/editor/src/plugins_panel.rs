@@ -10,6 +10,7 @@ use crate::helpers::{PathPick, pick_one_path};
 use crate::plugins::FoundPlugins;
 use crate::problems::{Source, error_chain};
 use crate::view::EditorView;
+use crate::widgets::CompactLabel as _;
 use celesta_media::DecoderUse;
 use celesta_plugin_host::{
     PluginEntry, PluginSource, SettingsError, UserSettings, create_private_dir_all, user_plugin_dir,
@@ -160,7 +161,7 @@ impl EditorView {
                 Button::new("plugins-reload")
                     .xsmall()
                     .outline()
-                    .label("Reload Plugins")
+                    .compact_label("Reload Plugins")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.reload_plugins_action(&ReloadPlugins, window, cx);
                     })),
@@ -169,7 +170,7 @@ impl EditorView {
                 Button::new("plugins-add-folder")
                     .xsmall()
                     .ghost()
-                    .label("Add Folder…")
+                    .compact_label("Add Folder…")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.add_plugin_folder(window, cx);
                     })),
@@ -178,7 +179,7 @@ impl EditorView {
                 Button::new("plugins-open-user-folder")
                     .xsmall()
                     .ghost()
-                    .label("Open Plugin Folder")
+                    .compact_label("Open Plugin Folder")
                     .on_click(cx.listener(|this, _, _, cx| this.open_user_plugin_folder(cx))),
             );
         div()
@@ -215,12 +216,12 @@ impl EditorView {
                     .py_1()
                     .gap_2()
                     .justify_between()
-                    .child(div().min_w_0().text_xs().text_color(muted).child(shown))
+                    .child(div().min_w_0().text_sm().text_color(muted).child(shown))
                     .child(
                         Button::new(("plugins-remove-folder", index))
                             .xsmall()
                             .ghost()
-                            .label("Remove")
+                            .compact_label("Remove")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 let folder = folder.clone();
                                 this.change_plugin_settings(
@@ -241,7 +242,7 @@ impl EditorView {
                         div()
                             .px_3()
                             .py_1()
-                            .text_xs()
+                            .text_sm()
                             .text_color(muted)
                             .child(reason)
                     }))
@@ -274,7 +275,7 @@ impl EditorView {
             Button::new(("plugin-turn-off", index))
                 .xsmall()
                 .ghost()
-                .label("Turn Off")
+                .compact_label("Turn Off")
                 .on_click(cx.listener(move |this, _, window, cx| {
                     let (id, directory) = (id.clone(), directory.clone());
                     this.change_plugin_settings(
@@ -295,7 +296,7 @@ impl EditorView {
                     Button::new(("plugin-allow", index))
                         .xsmall()
                         .primary()
-                        .label("Allow")
+                        .compact_label("Allow")
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let (id, directory, fingerprint) =
                                 (id.clone(), directory.clone(), fingerprint.clone());
@@ -337,7 +338,7 @@ impl EditorView {
             Button::new(("plugin-show-folder", index))
                 .xsmall()
                 .ghost()
-                .label("Show Folder")
+                .compact_label("Show Folder")
                 .on_click(cx.listener(move |_, _, _, cx| cx.open_with_system(&directory)))
         };
         v_flex()
@@ -350,20 +351,20 @@ impl EditorView {
                 h_flex()
                     .justify_between()
                     .gap_2()
-                    .child(div().text_sm().child(title))
+                    .child(div().text_base().child(title))
                     .child(switch),
             )
-            .child(div().text_xs().text_color(muted).child(detail))
-            .children(decoder_uses.map(|text| div().text_xs().text_color(muted).child(text)))
+            .child(div().text_sm().text_color(muted).child(detail))
+            .children(decoder_uses.map(|text| div().text_sm().text_color(muted).child(text)))
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(muted)
                     .child(row.entry.directory.display().to_string()),
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .when(row.state == PluginState::Off, |label| {
                         label.text_color(muted)
                     })
@@ -375,7 +376,7 @@ impl EditorView {
             .when(internet, |column| {
                 column.child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().danger)
                         .child("Downloaded from the internet."),
                 )
@@ -491,7 +492,7 @@ fn heading(title: &'static str, cx: &App) -> impl IntoElement {
         .px_3()
         .pt_3()
         .pb_1()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(title)
 }
@@ -500,7 +501,7 @@ fn note(text: &'static str, cx: &App) -> impl IntoElement {
     div()
         .px_3()
         .pb_2()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(text)
 }

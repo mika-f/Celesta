@@ -16,6 +16,7 @@ use crate::scope::{
 };
 use crate::view::EditorView;
 use crate::widgets::inspector_section;
+use celesta_editor_theme::metrics;
 use celesta_react_bridge::{PrimitivePropertyField, SourcePos};
 use celesta_source_edit::{EditTarget, LockReason};
 use gpui_kit::assets::IconName;
@@ -24,7 +25,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, CursorStyle, Div, ElementId, MouseButton, MouseDownEvent, SharedString,
-    div, px,
+    div,
 };
 use std::path::Path;
 
@@ -102,7 +103,7 @@ fn icon_line(icon: IconName, cx: &Context<EditorView>) -> Div {
         .flex()
         .items_center()
         .gap_1()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(Icon::new(icon).xsmall())
 }
@@ -111,7 +112,7 @@ impl EditorView {
     /// The selected layer's property sections, or why there are none yet.
     pub(crate) fn element_sections(&self, cx: &mut Context<Self>) -> AnyElement {
         let note =
-            |text: SharedString, color| div().px_3().py_2().text_xs().text_color(color).child(text);
+            |text: SharedString, color| div().px_3().py_2().text_sm().text_color(color).child(text);
         let muted = cx.theme().muted_foreground;
         let resolved = self.element_edit.resolved(self.selected_layer.as_deref());
         let Some((resolved, current)) = resolved else {
@@ -327,7 +328,7 @@ impl EditorView {
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .text_xs()
+                .text_sm()
                 .text_color(muted)
                 .child(text)
                 .into_any_element()
@@ -350,13 +351,13 @@ impl EditorView {
             .element_rows
             .saving(self.selected_layer.as_deref(), key);
         let message = match row.and_then(|row| row.invalid.clone()) {
-            Some(message) => Some(div().text_xs().text_color(cx.theme().danger).child(message)),
+            Some(message) => Some(div().text_sm().text_color(cx.theme().danger).child(message)),
             None => saving.then(|| {
                 // Waiting for the scenes to be scanned says so.
                 let note = row
                     .and_then(|row| row.held_note.clone())
                     .unwrap_or_else(|| "Saving…".to_owned());
-                div().text_xs().text_color(muted).child(note)
+                div().text_sm().text_color(muted).child(note)
             }),
         };
         let remove = can_remove.then(|| {
@@ -402,11 +403,11 @@ impl EditorView {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(label_width))
+                            .w(metrics::scaled(label_width))
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_xs()
+                            .text_sm()
                             .text_color(muted)
                             .when(scrubbable, |label| {
                                 let key = key.clone();
@@ -472,7 +473,7 @@ impl EditorView {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(reason_text(reason)),
             )

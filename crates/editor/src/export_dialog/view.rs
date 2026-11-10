@@ -10,6 +10,7 @@
 
 use super::model::{Asked, CHECKING, ExportDialogModel, InitialBase, PresetFileState, Track};
 use crate::helpers::ExportLoudness;
+use celesta_editor_theme::metrics;
 use celesta_exporter::{
     OutputChoice, Preset, PresetOutput, PresetSource, PresetsFile, resolve_preset_output,
 };
@@ -25,8 +26,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, Entity, EventEmitter, FontWeight, Hsla, Pixels, SharedString, Subscription, Task,
-    Window, div, px,
+    App, Context, Entity, EventEmitter, FontWeight, Hsla, SharedString, Subscription, Task, Window,
+    div,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,7 +42,8 @@ fn preset_label(name: &str) -> String {
 }
 
 /// Wide enough for a component's label and its plugin beside a field.
-const EXPORT_DIALOG_WIDTH: Pixels = px(560.);
+/// Designed against a 16px `rem`; see [`metrics::scaled`].
+const EXPORT_DIALOG_WIDTH: f32 = 560.;
 
 mod choice;
 mod fields;
@@ -556,7 +558,7 @@ fn problem_line(text: impl Into<SharedString>, color: Hsla) -> impl IntoElement 
     h_flex()
         .items_start()
         .gap_1()
-        .text_xs()
+        .text_sm()
         .text_color(color)
         .child(
             Icon::new(IconName::TriangleAlert)
@@ -594,7 +596,7 @@ fn plain(text: &str) -> String {
 
 fn muted_line(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
     div()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(text.into())
 }
@@ -611,7 +613,7 @@ fn separated(section: impl IntoElement, border: Hsla) -> impl IntoElement {
 /// A section's label above its control.
 fn section_label(label: &'static str, cx: &App) -> impl IntoElement {
     div()
-        .text_sm()
+        .text_base()
         .font_weight(FontWeight::MEDIUM)
         .text_color(cx.theme().foreground)
         .child(label)
@@ -721,7 +723,7 @@ impl ExportDialog {
         let range = match &self.range {
             Some(range) => h_flex()
                 .gap_2()
-                .child(div().text_sm().child(range.clone()))
+                .child(div().text_base().child(range.clone()))
                 .child(
                     Button::new("export-range-clear")
                         .ghost()
@@ -733,7 +735,7 @@ impl ExportDialog {
                 )
                 .into_any_element(),
             None => div()
-                .text_sm()
+                .text_base()
                 .child("Whole composition")
                 .into_any_element(),
         };
@@ -839,7 +841,7 @@ pub(crate) fn open_export_dialog(dialog: &Entity<ExportDialog>, window: &mut Win
         let confirm = dialog.clone();
         shell
             .title("Export")
-            .w(EXPORT_DIALOG_WIDTH)
+            .w(metrics::scaled_px(EXPORT_DIALOG_WIDTH))
             .footer(footer(&dialog, cx))
             .child(dialog)
             .on_ok(move |_, _, cx| confirm.update(cx, |this, cx| this.export(cx)))
@@ -852,7 +854,7 @@ mod tests {
     use celesta_exporter::SettingInput;
     use gpui_kit::component::Root;
     use gpui_kit::{
-        Focusable as _, Modifiers, TestAppContext, VisualTestContext, WindowHandle, size,
+        Focusable as _, Modifiers, TestAppContext, VisualTestContext, WindowHandle, px, size,
     };
     use std::cell::RefCell;
     use std::rc::Rc;

@@ -1,4 +1,5 @@
 use crate::helpers::clip_kind_label;
+use crate::panel_header::PanelHeader;
 use crate::problems::{Source, flow_line_breaks};
 use crate::problems_panel::show_in_problems_row;
 use crate::react_audio::react_audio_clip_id;
@@ -6,7 +7,7 @@ use crate::timecode::format_timecode;
 use crate::view::EditorView;
 use crate::waveform::{clip_local_time, format_media_asset_info};
 use crate::widgets::{
-    inspector_note, inspector_row, inspector_section, json_display, panel_header, property_display,
+    inspector_note, inspector_row, inspector_section, json_display, property_display,
 };
 use celesta_composition::{Animatable, evaluate_f64};
 use celesta_editor_core::{
@@ -40,8 +41,13 @@ impl EditorView {
         });
         let leading = leading
             .child(
+                // A long name ellipsizes rather than pushing the composition
+                // picker out of the title bar.
                 div()
-                    .text_sm()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .text_base()
                     .text_color(cx.theme().foreground)
                     .whitespace_nowrap()
                     .child(self.project_name.clone()),
@@ -49,7 +55,8 @@ impl EditorView {
             .when(self.is_react_preview(), |leading| {
                 leading.child(
                     div()
-                        .text_xs()
+                        .flex_none()
+                        .text_sm()
                         .text_color(muted)
                         .whitespace_nowrap()
                         .child("React composition"),
@@ -64,10 +71,10 @@ impl EditorView {
                 let selected = react.composition_id.clone();
                 let view = cx.entity().downgrade();
                 leading.child(
-                    div().occlude().child(
+                    div().flex_none().occlude().child(
                         Button::new("select-composition")
                             .small()
-                            .outline()
+                            .ghost()
                             .label(format!("Composition: {}", selected))
                             .loading(self.react_reloads.is_running())
                             .icon(IconName::ChevronDown)
@@ -139,7 +146,7 @@ impl EditorView {
                 } else {
                     Button::new("export-project")
                         .small()
-                        .outline()
+                        .ghost()
                         .label("Export…")
                         .disabled(
                             self.choosing_export_path
@@ -180,11 +187,12 @@ impl EditorView {
                 .cursor_pointer()
                 .when(selected, |row| row.bg(cx.theme().list_active))
                 .hover(|style| style.bg(cx.theme().list_hover))
-                .text_sm()
+                .text_base()
                 .text_color(cx.theme().foreground)
                 .child(
                     div()
                         .flex_none()
+                        // physical: the thumbnail's raster size.
                         .w(px(44.0))
                         .h(px(26.0))
                         .rounded_sm()
@@ -199,7 +207,7 @@ impl EditorView {
                             }
                             None => slot.child(
                                 div()
-                                    .text_xs()
+                                    .text_sm()
                                     .text_color(theme::accent())
                                     .child(asset.kind.to_string().to_uppercase()),
                             ),
@@ -215,7 +223,7 @@ impl EditorView {
                         .when_some(media_detail, |column, detail| {
                             column.child(
                                 div()
-                                    .text_xs()
+                                    .text_sm()
                                     .text_color(if asset.missing {
                                         missing_color
                                     } else {
@@ -256,7 +264,7 @@ impl EditorView {
             .min_h_0()
             .w_full()
             .bg(cx.theme().sidebar)
-            .child(panel_header("Assets", self.assets.len(), cx))
+            .child(PanelHeader::new("assets-header", "Assets").count(self.assets.len()))
             .child(contents)
     }
 
@@ -318,7 +326,7 @@ impl EditorView {
                             .gap_1()
                             .px_3()
                             .py_2()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().danger)
                             .child(div().line_clamp(2).text_ellipsis().child(format!(
                                 "{}: {}",
@@ -503,13 +511,13 @@ impl EditorView {
                     .border_color(cx.theme().border)
                     .child(
                         div()
-                            .text_sm()
+                            .text_base()
                             .text_color(cx.theme().foreground)
                             .child(character.name.clone()),
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!(
                                 "{} · {} expression(s)",
@@ -520,7 +528,7 @@ impl EditorView {
                     .when_some(character.lip_sync.clone(), |details, lip_sync| {
                         details.child(
                             div()
-                                .text_xs()
+                                .text_sm()
                                 .text_color(cx.theme().muted_foreground)
                                 .child(format!(
                                     "Lip sync: a={} i={} u={} e={} o={} closed={}",
@@ -726,7 +734,7 @@ impl EditorView {
                     .gap_2()
                     .px_3()
                     .py_1()
-                    .text_xs()
+                    .text_sm()
                     .cursor_pointer()
                     .when(is_current, |row| row.bg(cx.theme().list_active))
                     .hover(|row| row.bg(cx.theme().list_hover))
@@ -760,7 +768,7 @@ impl EditorView {
                         .justify_between()
                         .px_3()
                         .py_1()
-                        .text_xs()
+                        .text_sm()
                         .text_color(muted)
                         .child("Name")
                         .child("Start  Length"),
@@ -786,7 +794,7 @@ impl EditorView {
                     div()
                         .px_3()
                         .py_2()
-                        .text_xs()
+                        .text_sm()
                         .text_color(muted)
                         .child("Select a layer in the preview"),
                 )
@@ -842,7 +850,7 @@ impl EditorView {
                 .flex()
                 .justify_between()
                 .gap_2()
-                .text_xs()
+                .text_sm()
                 .child(div().text_color(label_color).child(label.to_owned()))
                 .child(div().text_color(value_color).text_right().child(value))
         };
@@ -851,9 +859,9 @@ impl EditorView {
             .flex_col()
             .gap_2()
             .p_3()
-            .child(div().text_xs().text_color(label_color).child("Entry"))
-            .child(div().text_xs().text_color(value_color).child(entry))
-            .child(div().h(px(4.0)))
+            .child(div().text_sm().text_color(label_color).child("Entry"))
+            .child(div().text_sm().text_color(value_color).child(entry))
+            .child(div().h_1())
             .child(row("Size", self.dimensions.to_string()))
             .child(row("Frame rate", self.frame_rate_label.to_string()))
             .child(row(
@@ -862,7 +870,7 @@ impl EditorView {
             ))
             .child(row("Renderer", self.gpu_name.to_string()))
             .child(row("Values from", properties))
-            .child(div().h(px(4.0)))
+            .child(div().h_1())
             .child(
                 Button::new("reload-react-entry")
                     .small()
@@ -882,7 +890,7 @@ impl EditorView {
                         .border_color(cx.theme().warning.opacity(0.5))
                         .bg(cx.theme().warning.opacity(0.12))
                         .p_2()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().warning)
                         .children(
                             self.preview_warnings_summary(

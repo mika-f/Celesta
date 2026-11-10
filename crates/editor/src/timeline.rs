@@ -5,7 +5,12 @@
 //! of the composition at the lane's leading edge and the lane shows
 //! `1 / zoom` of it. Pointer positions map onto the lane through its painted
 //! bounds, recorded each frame in `timeline_lane_bounds`.
+//!
+//! physical: the timeline's geometry stays in pixels for now. Track heights,
+//! lane positions, the ruler, hit tests and painting share these numbers, so
+//! they move onto tokens together (P7c), not one `px()` at a time.
 
+use crate::widgets::CompactLabel as _;
 use celesta_editor_core::{ClipSummary, TrackSummary};
 use celesta_project::TrackKind;
 use celesta_react_bridge::{ReactChapter, SourcePos, chapter_at, scenes_of};
@@ -796,7 +801,7 @@ impl EditorView {
                     .top(px(3.0))
                     .left(relative(x))
                     .ml(px(4.0))
-                    .text_size(px(10.0))
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .whitespace_nowrap()
                     .child(format_timecode(frame, frame_rate))
@@ -872,7 +877,7 @@ impl EditorView {
                     .border_r_1()
                     .border_color(cx.theme().border)
                     .font_family(cx.theme().mono_font_family.clone())
-                    .text_sm()
+                    .text_base()
                     .text_color(theme::accent())
                     .child(format_timecode(self.clock.frame(), frame_rate)),
             )
@@ -921,7 +926,7 @@ impl EditorView {
                     .flex_none()
                     .w(px(22.0))
                     .font_family(cx.theme().mono_font_family.clone())
-                    .text_xs()
+                    .text_sm()
                     .text_color(muted)
                     .child(row.label.clone()),
             )
@@ -939,7 +944,7 @@ impl EditorView {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_sm()
+                    .text_base()
                     .text_color(if track.enabled {
                         cx.theme().foreground
                     } else {
@@ -996,7 +1001,7 @@ impl EditorView {
                             Button::new(SharedString::from(format!("track-mute-{}", track.id)))
                                 .xsmall()
                                 .ghost()
-                                .label("M")
+                                .compact_label("M")
                                 .selected(track.muted)
                                 .tooltip("Mute in the preview")
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1008,7 +1013,7 @@ impl EditorView {
                             Button::new(SharedString::from(format!("track-solo-{}", track.id)))
                                 .xsmall()
                                 .ghost()
-                                .label("S")
+                                .compact_label("S")
                                 .selected(track.solo)
                                 .tooltip("Solo in the preview")
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1134,7 +1139,7 @@ impl EditorView {
                     .top(px(1.0))
                     .left(relative(label_offset))
                     .px_1()
-                    .text_xs()
+                    .text_sm()
                     .text_color(label_color)
                     .whitespace_nowrap()
                     .child(clip.name.clone()),
@@ -1218,7 +1223,7 @@ impl EditorView {
                         div()
                             .w(px(22.0))
                             .font_family(cx.theme().mono_font_family.clone())
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child("V1"),
                     )
@@ -1230,7 +1235,7 @@ impl EditorView {
                     )
                     .child(
                         div()
-                            .text_sm()
+                            .text_base()
                             .text_color(cx.theme().foreground)
                             .child("Composition"),
                     ),
@@ -1256,7 +1261,7 @@ impl EditorView {
                             .rounded_sm()
                             .bg(rgb(theme::clip_fill(TrackKind::Overlay)))
                             .px_1()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme::waveform())
                             .when(set_timing.is_none(), |block| block.child(entry)),
                     )
@@ -1276,7 +1281,7 @@ impl EditorView {
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().popover)
-                    .text_xs()
+                    .text_sm()
                     .whitespace_nowrap()
                     .map(|label| {
                         if notice {
@@ -1387,7 +1392,7 @@ impl EditorView {
         let lane_width = self.lane_width();
         let button = Button::new("timeline-set-timing")
             .xsmall()
-            .label("Set timing");
+            .compact_label("Set timing");
         let action = match offer {
             SetTimingOffer::Hidden => return None,
             // The button keeps its tooltip when disabled, and lays the
@@ -1416,7 +1421,7 @@ impl EditorView {
             .child(
                 div()
                     .px_1()
-                    .text_xs()
+                    .text_sm()
                     .text_color(theme::waveform())
                     .whitespace_nowrap()
                     .child(SharedString::from(entry.to_owned())),
@@ -1676,7 +1681,7 @@ impl EditorView {
                             .top(px(1.0))
                             .left(relative(label_offset))
                             .px_1()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().foreground)
                             .whitespace_nowrap()
                             .child(chapter.name.clone()),
@@ -1711,13 +1716,13 @@ impl EditorView {
                     .child(div().size(px(8.0)).rounded_sm().bg(theme::accent()))
                     .child(
                         div()
-                            .text_sm()
+                            .text_base()
                             .text_color(cx.theme().foreground)
                             .child("Chapters"),
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(chapters.len().to_string()),
                     ),
@@ -1750,7 +1755,7 @@ impl EditorView {
                         .border_1()
                         .border_color(cx.theme().border)
                         .bg(cx.theme().popover)
-                        .text_xs()
+                        .text_sm()
                         .whitespace_nowrap()
                         .map(|label| {
                             if notice {
@@ -1814,7 +1819,7 @@ impl EditorView {
                         Button::new("timeline-zoom-fit")
                             .xsmall()
                             .ghost()
-                            .label("Fit")
+                            .compact_label("Fit")
                             .disabled(fitted)
                             .tooltip_with_action("Zoom to fit", &ZoomTimelineToFit, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.zoom_timeline_to_fit(cx))),
@@ -1823,7 +1828,7 @@ impl EditorView {
                         div()
                             .ml_auto()
                             .font_family(cx.theme().mono_font_family.clone())
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("{:.1}×", view.zoom)),
                     ),

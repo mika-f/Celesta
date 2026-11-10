@@ -4,6 +4,9 @@
 //! Levels come from the same buffer the preview plays, so the meter shows
 //! what is heard (before the monitor volume, like a mixer's bus meter) and
 //! reads the same while playing, scrubbing, or paused.
+//!
+//! physical: the meter is painted; its scale column, ticks and bars share
+//! pixel geometry with `paint`, and the column beside the timeline matches it.
 
 use celesta_media::AudioBuffer;
 use gpui_kit::component::ActiveTheme as _;
@@ -148,7 +151,7 @@ pub fn audio_meter(reading: Option<MeterReading>, cx: &App) -> impl IntoElement 
                 .right_0()
                 .top(relative(1.0 - scale_position(*db)))
                 .mt(px(-6.0))
-                .text_size(px(9.0))
+                .text_size(px(9.0)) // physical: the painted scale's tick spacing
                 .line_height(px(12.0))
                 .text_color(muted)
                 .child(format!("{}", db.abs() as i32))
@@ -176,7 +179,7 @@ pub fn audio_meter(reading: Option<MeterReading>, cx: &App) -> impl IntoElement 
                 .gap_1()
                 .pl(px(26.0))
                 .font_family(mono)
-                .text_size(px(9.0))
+                .text_size(px(9.0)) // physical: the painted scale's tick spacing
                 .children(reading.hold.iter().map(|hold| {
                     div()
                         .flex_1()

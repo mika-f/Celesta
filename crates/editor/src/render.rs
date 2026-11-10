@@ -2,6 +2,7 @@ use crate::helpers::export_progress_label;
 use crate::inline_text_view::EditEvent;
 use crate::timeline_drag::{BandDrag, SceneDrag};
 use crate::view::EditorView;
+use celesta_editor_theme::metrics;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
@@ -172,6 +173,10 @@ impl EditorView {
         let dock_state = self.dock_split.clone();
         let body_state = self.body_split.clone();
         let border = cx.theme().border;
+        // physical: the docks' and the timeline's split sizes stay in pixels.
+        // The window does not shrink with the rem, so keeping the regions'
+        // sizes is what lets the denser type show more in them (and the
+        // timeline's pixel geometry keeps the same number of tracks).
         let dock_row = h_resizable("celesta-dock-row")
             .when_some(dock_state.as_ref(), |group, state| group.with_state(state))
             .child(
@@ -258,10 +263,13 @@ impl EditorView {
     }
 
     pub(crate) fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mono = cx.theme().mono_font_family.clone();
         StatusBar::new()
+            .h(metrics::toolbar_row_height())
             .left(
                 div()
-                    .text_xs()
+                    .font_family(mono.clone())
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(format!(
                         "{}  ·  {}  ·  {}",
@@ -274,6 +282,7 @@ impl EditorView {
                         .flex()
                         .items_center()
                         .gap_1()
+                        .text_sm()
                         .child(Spinner::new().xsmall())
                         .child(label),
                 )
@@ -283,7 +292,8 @@ impl EditorView {
                 |bar, label| {
                     bar.right(
                         div()
-                            .text_xs()
+                            .font_family(mono.clone())
+                            .text_sm()
                             .text_color(cx.theme().foreground)
                             .child(label),
                     )

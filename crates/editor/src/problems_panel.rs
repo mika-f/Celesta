@@ -4,6 +4,8 @@ use crate::actions::ShowProblems;
 use crate::problems::first_line;
 use crate::problems::{ActiveProblem, LogEntry, Severity, Source, fenced};
 use crate::view::{EditorView, RightTab};
+use crate::widgets::CompactLabel as _;
+use celesta_editor_theme::metrics;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::clipboard::Clipboard;
 use gpui_kit::component::notification::{Notification, NotificationType};
@@ -23,21 +25,35 @@ impl EditorView {
         let count = self.problems.error_count() + self.problems.warning_count();
         let waiting = self.found_plugins.pending.len();
         let muted = cx.theme().muted_foreground;
+        let mono = cx.theme().mono_font_family.clone();
+        // Classic tabs: the selected one takes the panel's color and joins the
+        // content; the band matches `PanelHeader` so both docks share a line.
         let tabs = TabBar::new("right-dock-tabs")
-            .underline()
             // Four tabs outgrow a narrow dock; the rest stay a click away.
             .menu(true)
-            .px_3()
+            .h(metrics::panel_header_height())
             .selected_index(offered.iter().position(|tab| *tab == shown).unwrap_or(0))
             .children(offered.iter().map(|tab| match tab {
                 RightTab::Details if react_preview => Tab::new().label("React Preview"),
                 RightTab::Details => Tab::new().label("Inspector"),
                 RightTab::Properties => Tab::new().label("Properties"),
                 RightTab::Plugins => Tab::new().label("Plugins").when(waiting > 0, |tab| {
-                    tab.suffix(div().text_xs().text_color(muted).child(waiting.to_string()))
+                    tab.suffix(
+                        div()
+                            .font_family(mono.clone())
+                            .text_sm()
+                            .text_color(muted)
+                            .child(waiting.to_string()),
+                    )
                 }),
                 RightTab::Problems => Tab::new().label("Problems").when(count > 0, |tab| {
-                    tab.suffix(div().text_xs().text_color(muted).child(count.to_string()))
+                    tab.suffix(
+                        div()
+                            .font_family(mono.clone())
+                            .text_sm()
+                            .text_color(muted)
+                            .child(count.to_string()),
+                    )
                 }),
             }))
             .on_click(cx.listener(move |this, index: &usize, _, cx| {
@@ -92,7 +108,7 @@ impl EditorView {
                     div()
                         .px_3()
                         .pb_3()
-                        .text_xs()
+                        .text_sm()
                         .text_color(muted)
                         .child("No problems"),
                 )
@@ -137,7 +153,7 @@ impl EditorView {
                                     Button::new("copy-history")
                                         .xsmall()
                                         .ghost()
-                                        .label("Copy all")
+                                        .compact_label("Copy all")
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             cx.write_to_clipboard(ClipboardItem::new_string(
                                                 this.problems.history_text(),
@@ -148,7 +164,7 @@ impl EditorView {
                                     Button::new("clear-history")
                                         .xsmall()
                                         .ghost()
-                                        .label("Clear")
+                                        .compact_label("Clear")
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.problems.clear_history();
                                             this.expanded_log_entries.clear();
@@ -163,7 +179,7 @@ impl EditorView {
                     div()
                         .px_3()
                         .pb_3()
-                        .text_xs()
+                        .text_sm()
                         .text_color(muted)
                         .child("Nothing logged yet"),
                 )
@@ -197,7 +213,7 @@ impl EditorView {
                     .gap_2()
                     .px_3()
                     .py_1()
-                    .text_xs()
+                    .text_sm()
                     .when(has_detail, |row| {
                         row.hover(|row| row.bg(cx.theme().list_hover))
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -296,7 +312,8 @@ impl EditorView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_xs()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_sm()
                     .child(count(IconName::CircleX, cx.theme().danger, errors))
                     .child(count(IconName::TriangleAlert, cx.theme().warning, warnings)),
             )
@@ -361,7 +378,7 @@ impl EditorView {
                         Button::new("show-in-problems")
                             .xsmall()
                             .outline()
-                            .label("Show in Problems")
+                            .compact_label("Show in Problems")
                             .on_click(move |_, _, cx| {
                                 view.update(cx, |this, cx| this.show_problems(cx)).ok();
                             })
@@ -384,7 +401,7 @@ fn section_heading(title: &'static str, cx: &App) -> impl IntoElement {
         .px_3()
         .pt_3()
         .pb_1()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(title)
 }
@@ -418,7 +435,7 @@ fn problem_block(
                 .flex()
                 .items_center()
                 .gap_2()
-                .text_xs()
+                .text_sm()
                 .text_color(cx.theme().foreground)
                 .child(icon)
                 .child(div().flex_1().min_w_0().child(heading)),
@@ -436,7 +453,7 @@ pub(crate) fn show_in_problems_row(
         Button::new(id)
             .xsmall()
             .outline()
-            .label("Show in Problems")
+            .compact_label("Show in Problems")
             .on_click(cx.listener(|this, _, _, cx| this.show_problems(cx))),
     )
 }

@@ -5,6 +5,7 @@
 
 use celesta_composition::Point;
 use celesta_editor_theme as theme;
+use celesta_editor_theme::metrics;
 use celesta_gpu_renderer::hit_test;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -128,7 +129,7 @@ fn mode_toggle(
     let slot = div()
         .id(note_id)
         .flex_none()
-        .w(px(NOTE_SLOT_WIDTH))
+        .w(metrics::scaled(NOTE_SLOT_WIDTH))
         .h_full()
         .flex()
         .items_center()
@@ -145,7 +146,7 @@ fn mode_toggle(
         .flex()
         .flex_none()
         .items_center()
-        .p(px(TAB_LIST_INSET))
+        .p(metrics::scaled(TAB_LIST_INSET))
         .rounded_md()
         .bg(theme.background)
         .children(tabs.map(|tab| {
@@ -156,11 +157,11 @@ fn mode_toggle(
                 .flex_none()
                 .items_center()
                 .justify_center()
-                .w(px(TAB_WIDTH))
-                .h(px(TAB_HEIGHT))
+                .w(metrics::scaled(TAB_WIDTH))
+                .h(metrics::scaled(TAB_HEIGHT))
                 .rounded_sm()
                 .border_1()
-                .text_xs()
+                .text_sm()
                 .cursor_pointer()
                 // Both tabs carry a hover style, the chosen one restating its
                 // own colors: GPUI tracks a div's hover flag (by its id, one
@@ -206,7 +207,7 @@ fn tool_group(label: &'static str, toggle: impl IntoElement, cx: &App) -> impl I
         .gap_2()
         .child(
             div()
-                .text_xs()
+                .text_sm()
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
@@ -531,13 +532,14 @@ impl EditorView {
             .children(label.into_iter().chain(inline_note).map(|(beside, label)| {
                 div()
                     .absolute()
+                    // physical: offset from a canvas-space element's bounds.
                     .left(beside.origin.x + beside.size.width + px(8.0))
                     .top(beside.origin.y)
                     .px_1()
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().popover)
-                    .text_xs()
+                    .text_sm()
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_color(cx.theme().foreground)
                     .whitespace_nowrap()
@@ -554,7 +556,7 @@ impl EditorView {
                         .border_1()
                         .border_color(cx.theme().border)
                         .bg(cx.theme().popover)
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(notice),
                 )
@@ -626,7 +628,7 @@ impl EditorView {
                             .flex_none()
                             .items_center()
                             .gap_2()
-                            .text_sm()
+                            .text_base()
                             .text_color(cx.theme().danger)
                             .child(Icon::new(IconName::CircleX).small())
                             .child(active.problem.title.clone()),
@@ -671,6 +673,7 @@ impl EditorView {
             .map(|active| active.time);
         if time != self.preview_error_time {
             self.preview_error_time = time;
+            // physical: the scroll origin.
             self.preview_error_scroll.set_offset(point(px(0.), px(0.)));
         }
     }
@@ -690,7 +693,7 @@ impl EditorView {
             .border_color(cx.theme().warning.opacity(0.5))
             .bg(cx.theme().warning.opacity(0.12))
             .p_2()
-            .text_xs()
+            .text_sm()
             .text_color(cx.theme().warning)
             .children(self.preview_warnings_summary("preview-warnings-show-problems", cx))
     }
@@ -768,7 +771,7 @@ impl EditorView {
                     .child(format_timecode(self.clock.frame(), frame_rate)),
             )
             .when(full, |timecode| {
-                timecode.child(div().text_xs().text_color(muted).child(format!(
+                timecode.child(div().text_sm().text_color(muted).child(format!(
                     "/ {}",
                     format_timecode(self.clock.end_frame(), frame_rate)
                 )))
@@ -884,7 +887,7 @@ impl EditorView {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .font_family(mono.clone())
-                            .text_xs()
+                            .text_sm()
                             .child(div().text_color(cx.theme().foreground).child(format!(
                                 "{} – {}",
                                 mark(self.export_in_frame),
@@ -938,7 +941,7 @@ impl EditorView {
             .relative()
             .flex()
             .flex_none()
-            .h(px(44.0))
+            .h(metrics::scaled(44.0))
             .w_full()
             .items_center()
             .gap_3()
@@ -1059,7 +1062,7 @@ impl EditorView {
             .flex_none()
             .items_center()
             .gap_6()
-            .h(px(TOOL_ROW_HEIGHT))
+            .h(metrics::scaled(TOOL_ROW_HEIGHT))
             .w_full()
             // A narrow viewer clips the row rather than painting it over
             // the dock beside it.
@@ -1191,7 +1194,7 @@ impl EditorView {
                     div()
                         .min_w_0()
                         .overflow_hidden()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .whitespace_nowrap()
                         .text_ellipsis()
@@ -1237,6 +1240,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .flex_none()
+            // physical: sized with the painted meter it holds (see `meter`).
             .w(px(AUDIO_PANEL_WIDTH))
             .h_full()
             .bg(cx.theme().secondary)
@@ -1246,13 +1250,14 @@ impl EditorView {
                 div()
                     .flex()
                     .flex_none()
+                    // physical: lines up with the timeline's ruler, which is in pixels.
                     .h(px(crate::timeline::RULER_HEIGHT))
                     .items_center()
                     .justify_between()
                     .px_3()
                     .border_b_1()
                     .border_color(cx.theme().border)
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().foreground)
                     .child("Master"),
             )
@@ -1279,7 +1284,7 @@ impl EditorView {
                     .py_2()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(
                         div()
@@ -1292,6 +1297,8 @@ impl EditorView {
             )
     }
 
+    /// physical: the slider's track, thumb and the thumb's position share pixel
+    /// geometry (and `waveform` reads `VOLUME_SLIDER_WIDTH`).
     fn volume_slider(&self, volume: f64, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("preview-volume-slider")
@@ -1612,11 +1619,18 @@ impl EditorView {
 }
 
 fn transport_separator(cx: &Context<EditorView>) -> impl IntoElement {
-    div().mx_1().w(px(1.0)).h(px(16.0)).bg(cx.theme().border)
+    // physical: a one-pixel separator.
+    div()
+        .mx_1()
+        .w(px(1.0))
+        .h(metrics::scaled(16.0))
+        .bg(cx.theme().border)
 }
 
 /// Action-safe (90 %) and title-safe (80 %) frames plus a center cross,
 /// drawn over the letterboxed frame rather than the whole viewer.
+// physical: from here on, painting and hit testing on the canvas, in the
+// frame's pixel space scaled onto the viewer.
 fn paint_safe_areas(
     bounds: Bounds<Pixels>,
     (frame_width, frame_height): (f32, f32),

@@ -421,7 +421,7 @@ fn text_input(
         .small()
         .disabled(locked)
         .when_some(hint, |input, hint| {
-            input.suffix(div().text_xs().text_color(muted).child(hint))
+            input.suffix(div().text_sm().text_color(muted).child(hint))
         });
     escapable(input, cx, on)
 }

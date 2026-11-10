@@ -19,6 +19,7 @@ use crate::scope::{
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
 use crate::widgets::{inspector_row, inspector_section};
+use celesta_editor_theme::metrics;
 use celesta_react_bridge::{ElementKind, LayerSource, LayerSourceReport, SourcePos};
 use celesta_source_edit::EditTarget;
 use gpui_kit::assets::IconName;
@@ -27,7 +28,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, ClickEvent, Context, Div, Hsla, SharedString, Window, div, px};
+use gpui_kit::{AnyElement, App, ClickEvent, Context, Div, Hsla, SharedString, Window, div};
 use std::path::{Path, PathBuf};
 
 /// The label column of the header rows and the property rows, so the labels
@@ -170,7 +171,7 @@ fn scope_tabs(tabs: [ScopeTab; 2], cx: &App) -> impl IntoElement {
         .flex()
         .w_full()
         .items_center()
-        .p(px(TAB_LIST_INSET))
+        .p(metrics::scaled(TAB_LIST_INSET))
         .rounded_md()
         .bg(theme.background)
         .children(tabs.map(|tab| {
@@ -190,10 +191,10 @@ fn scope_tabs(tabs: [ScopeTab; 2], cx: &App) -> impl IntoElement {
                 .min_w_0()
                 .items_center()
                 .justify_center()
-                .h(px(TAB_HEIGHT))
+                .h(metrics::scaled(TAB_HEIGHT))
                 .rounded_sm()
                 .border_1()
-                .text_xs()
+                .text_sm()
                 .whitespace_nowrap()
                 .overflow_hidden()
                 // Every tab carries a hover style, the chosen and the locked
@@ -240,7 +241,7 @@ fn labelled(label: &'static str, value: impl IntoElement, cx: &App) -> Div {
         .child(
             div()
                 .flex_none()
-                .w(px(LABEL_WIDTH))
+                .w(metrics::scaled(LABEL_WIDTH))
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
@@ -257,7 +258,7 @@ fn scope_box(cx: &App) -> Div {
         .py_2()
         .border_b_1()
         .border_color(cx.theme().border)
-        .text_xs()
+        .text_sm()
 }
 
 impl EditorView {
@@ -321,11 +322,11 @@ impl EditorView {
             div()
                 .flex()
                 .gap_2()
-                .text_xs()
+                .text_sm()
                 .child(
                     div()
                         .flex_none()
-                        .w(px(LABEL_WIDTH))
+                        .w(metrics::scaled(LABEL_WIDTH))
                         .text_color(muted)
                         .child(label),
                 )
@@ -351,7 +352,7 @@ impl EditorView {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_sm()
+                    .text_base()
                     .text_color(foreground)
                     .child(source.name.clone()),
             )
@@ -361,7 +362,7 @@ impl EditorView {
                     .flex_none()
                     .items_center()
                     .gap_1()
-                    .text_xs()
+                    .text_sm()
                     .text_color(muted)
                     .children(owner_label(report))
                     // The reloaded code has not answered yet; the rows show
@@ -463,7 +464,7 @@ impl EditorView {
                 // While a drag runs: the scope it writes with.
                 .children(
                     self.transform_drag_in_effect()
-                        .map(|in_effect| div().text_xs().text_color(foreground).child(in_effect)),
+                        .map(|in_effect| div().text_sm().text_color(foreground).child(in_effect)),
                 )
                 .child(position)
                 .child(row("Appears in", appears_in))
@@ -475,7 +476,7 @@ impl EditorView {
                     )
                 }))
                 .when_some(self.launch_error.clone(), |header, error| {
-                    header.child(div().text_xs().text_color(cx.theme().danger).child(error))
+                    header.child(div().text_sm().text_color(cx.theme().danger).child(error))
                 })
                 .into_any_element(),
         )
@@ -587,7 +588,7 @@ impl EditorView {
             .py_2()
             .border_b_1()
             .border_color(cx.theme().border)
-            .text_xs()
+            .text_sm()
             .when(warn, |line| {
                 line.bg(cx.theme().warning.opacity(0.12))
                     .text_color(cx.theme().warning)
@@ -622,7 +623,7 @@ impl EditorView {
                             div()
                                 .px_3()
                                 .py_2()
-                                .text_xs()
+                                .text_sm()
                                 .text_color(cx.theme().danger)
                                 .child(error),
                         )
@@ -640,7 +641,7 @@ impl EditorView {
         let entry_dir = self.entry_dir();
         let muted = cx.theme().muted_foreground;
         let note = |text: SharedString, color: Hsla| {
-            div().px_3().py_2().text_xs().text_color(color).child(text)
+            div().px_3().py_2().text_sm().text_color(color).child(text)
         };
         let section = div()
             .flex()
@@ -728,7 +729,7 @@ impl EditorView {
             .border_b_1()
             .border_color(cx.theme().border)
             .when(!label.is_empty(), |row| {
-                row.child(div().text_xs().text_color(muted).child(label))
+                row.child(div().text_sm().text_color(muted).child(label))
             })
             .when_some(parent, |row, parent| {
                 row.child(

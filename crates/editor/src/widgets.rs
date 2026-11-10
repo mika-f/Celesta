@@ -1,30 +1,8 @@
 use celesta_react_bridge::ComponentPropertyField;
 use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::button::Button;
 use gpui_kit::prelude::*;
-use gpui_kit::{App, SharedString, div, px};
-
-pub(crate) fn panel_header(title: &'static str, count: usize, cx: &App) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_none()
-        .h(px(40.0))
-        .items_center()
-        .justify_between()
-        .px_3()
-        .border_b_1()
-        .border_color(cx.theme().border)
-        .text_sm()
-        .text_color(cx.theme().foreground)
-        .child(title)
-        .when(count > 0, |header| {
-            header.child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(count.to_string()),
-            )
-        })
-}
+use gpui_kit::{App, SharedString, div};
 
 pub(crate) fn inspector_row(
     label: impl Into<SharedString>,
@@ -41,13 +19,13 @@ pub(crate) fn inspector_row(
         .border_color(cx.theme().border)
         .child(
             div()
-                .text_xs()
+                .text_sm()
                 .text_color(cx.theme().muted_foreground)
                 .child(label.into()),
         )
         .child(
             div()
-                .text_sm()
+                .text_base()
                 .text_color(cx.theme().foreground)
                 .child(value.into()),
         )
@@ -61,7 +39,7 @@ pub(crate) fn inspector_section(title: impl Into<SharedString>, cx: &App) -> imp
         .border_t_1()
         .border_b_1()
         .border_color(cx.theme().border)
-        .text_sm()
+        .text_base()
         .text_color(cx.theme().foreground)
         .child(title.into())
 }
@@ -70,7 +48,7 @@ pub(crate) fn inspector_note(text: &'static str, cx: &App) -> impl IntoElement {
     div()
         .px_3()
         .py_2()
-        .text_xs()
+        .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(text)
 }
@@ -151,5 +129,20 @@ pub(crate) fn format_component_number(value: f64) -> String {
         format!("{value:.0}")
     } else {
         format!("{value}")
+    }
+}
+
+/// A label for an `xsmall` button at the `text_sm` floor. gpui-kit sizes an
+/// xsmall button's label `text_xs` (9.75px at the editor's 13px base); this
+/// keeps the button's height and reads the label at `text_sm`.
+pub(crate) trait CompactLabel {
+    fn compact_label(self, label: impl Into<SharedString>) -> Self;
+}
+
+impl CompactLabel for Button {
+    fn compact_label(self, label: impl Into<SharedString>) -> Self {
+        let label = label.into();
+        self.accessibility_label(label.clone())
+            .child(div().text_sm().child(label))
     }
 }
