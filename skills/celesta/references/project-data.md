@@ -69,8 +69,10 @@ export default function Card() {
 }
 ```
 
-`min`, `max`, `step`, and `unit` are Inspector hints; they are not
-enforced, and `unit` is shown after the value, never converted.
+`min`, `max`, `step`, and `unit` guide the Inspector: it refuses a typed
+value outside `min`/`max` and stops a drag at them, a drag moves by `step`,
+and `unit` is shown after the value, never converted. The runtime checks
+none of them, so props passed in code or `--props` are not limited.
 
 ## Pass values from the command line
 

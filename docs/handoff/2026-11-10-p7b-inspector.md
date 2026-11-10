@@ -21,14 +21,14 @@ Pie's start and end angles; `s` for a video's startFrom. Ratios
 spacing review, `inspector_row_height()` (2rem, rows and section headers)
 and `inspector_padding()` (1rem, their leading and trailing padding).
 `panel_header_height()` went from 1.875rem to 2.5rem so gpui-kit's medium
-`Tab` (32px) fits the band; the dock's tabs get `px_2` more each side, and
+`Tab` (32px) fits the band (P7a's `PanelHeader` grows with it); the dock's tabs get `px_2` more each side, and
 Reload composition is a medium button with 1.5rem above and below. The
 shared `panel_padding()` and `list_row_height()`, which the timeline uses,
 are unchanged.
 
 **`inspector.rs`.**
-- `InspectorSection`: a band header (`title_bar`, `list_row_height()`, one
-  hairline) holding a full-width ghost `Button` with a chevron and the title;
+- `InspectorSection`: a band header (`title_bar`, `inspector_row_height()`,
+  one hairline) holding a full-width ghost `Button` with a chevron and the title;
   a trailing slot (the props file's spinner). Collapsing focuses the header
   button (its own focus handle), so a field inside blurs and submits.
 - `InspectorRow`: label lane (fixed width, ellipsis, tooltip, optional
@@ -89,7 +89,8 @@ keeps them out.
 
 ## How it was checked
 
-- `cargo test -p celesta-editor -p celesta-editor-theme` (799 + 7),
+- `cargo test -p celesta-editor -p celesta-editor-theme` (803 + 8 at
+  `f1042736`; see "Review round 2" for the count after it),
   `cargo test -p celesta-react-bridge --lib`, clippy `-D warnings`,
   `cargo fmt --all --check`, the two Vitest files.
 - Screenshots (in the PR, not committed): the editor from the P7a tip and
@@ -114,3 +115,55 @@ the PR.
 - Dragging a props-file row does not move the preview until release (props
   reach the runtime only through the file).
 - Collapse state is per session, not saved.
+
+## Review round 2 (hinaloe on `f1042736`)
+
+Fixed, each with a test that failed first:
+
+- Space on a focused section header started playback: the editor's
+  `space` binding ran before the button's own keys. The header carries the
+  `InspectorHeader` key context, and the binding is
+  `CelestaEditor && !Input && !InspectorHeader`. The bindings moved into
+  `key_bindings()` in `main.rs`, so
+  `inspector::tests::space_toggles_a_focused_header` binds the editor's own
+  keys.
+- A failed props-file write after a drag, pick or reset left the row open
+  as a field that no longer dragged. `RowState` remembers whether the last
+  commit was typed (`TextUpdate::Keep`); only typed text stays as an edit
+  for a retry, otherwise the row rests on the file's value
+  (`a_failed_drag_write_rests_the_row_on_the_file_value`).
+- Drags wrote float noise (`0.5700000000000001`): `scrub_value` rounds to
+  the places of the step or the start, whichever has more (at most 12)
+  (`a_scrub_lands_on_its_steps_places`).
+- The layer panel's scope box, selection header, impact line and notes
+  were padded `px_3` beside the label lane, about 3px off the rows' value
+  edge: they use `inspector_padding()`, and
+  `style_guard::inspector_lines_share_the_row_padding` keeps `px_3` out of
+  the Inspector's files. `old_inspector_helpers_are_gone` now matches
+  `LABEL_WIDTH` too.
+- The window coming back to the front reopened a focused resting value:
+  `RowTyping` remembers that Enter or Escape closed the row with the focus
+  kept, and only a blur clears that
+  (`a_resting_row_with_the_focus_opens_only_on_request`).
+- Tab into a number row is pinned by
+  `scrub_value::tests::tab_opens_a_resting_number_for_typing` (checked to
+  fail without the resting value's `track_focus`).
+- The component section's "Registered as" row and a prop called `name`
+  shared the id `component-name`: the prop rows are `component-prop-<key>`.
+
+Docs: the guide (en, ja) says props-file rows drag by their value only, ↺
+removes the key, which rows show units, that the Inspector and React
+Preview tabs collapse too, and Space or Enter toggles a focused header;
+the ja guide calls the gesture 数値のドラッグ. The skill says the editor
+enforces `min`/`max` and the runtime doesn't.
+
+Checked: `cargo test -p celesta-editor -p celesta-editor-theme` (808 + 8),
+clippy `-D warnings`, `cargo fmt --all --check`.
+
+Not changed (suggestions, recorded on the PR): the duplicated drag and
+typing helpers between the layer and props-file panels, `fact`'s bare
+`mono` flag, `InspectorSection` built by hand rather than on gpui-kit's
+`Collapsible`, the drag threshold compared after rounding (2.5px in
+effect), a props-file drag starting from the default when the file holds
+a non-number, and the extra unit-path tests.
+
