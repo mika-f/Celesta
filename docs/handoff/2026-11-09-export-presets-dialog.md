@@ -663,8 +663,9 @@ test` 52 passed; `git diff --check` clean.
   - A preset's muxer wins over the output's extension with only a warning
     (`--preset web out.mov` with an MP4 preset writes MP4 into `out.mov`);
     the spec's Resolving an output step 2 says "the explicit or preset
-    muxer", so letting the extension win, or failing on the CLI, is a spec
-    decision for the user (review, kept).
+    muxer", and the user chose to keep it (2026-11-10, after the review of
+    mika-f/Celesta#794): the extension does not win, and the CLI does not
+    fail.
   - `layer` drops a base value hidden by another base value silently, so a
     plugin that adds a `visibleWhen` hides a stale value without a
     warning; its doc comment says "hidden by the layered values". Its
