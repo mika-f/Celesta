@@ -11,20 +11,20 @@
 //! placed or painted by pixels. A remaining pixel size says why on its line
 //! (`physical:`).
 
+use std::rc::Rc;
+
 use crate::widgets::CompactLabel as _;
 use celesta_editor_core::{ClipSummary, TrackSummary};
 use celesta_project::TrackKind;
 use celesta_react_bridge::{ReactChapter, SourcePos, chapter_at, scenes_of};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _,
-};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _};
 use gpui_kit::{
-    Bounds, Context, CursorStyle, Hsla, IntoElement, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Point, Rems, ScrollDelta,
-    ScrollEvent, SharedString, TouchPhase, Window, canvas, div, fill, point, prelude::*, px,
-    relative, rems, rgb, size,
+    Bounds, ClickEvent, Context, CursorStyle, Hsla, IntoElement, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Point,
+    Rems, ScrollDelta, ScrollEvent, SharedString, TouchPhase, Window, canvas, div, fill, point,
+    prelude::*, px, relative, rems, rgb, size,
 };
 
 use crate::actions::{ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit};
@@ -34,6 +34,7 @@ use crate::scene_entries::SceneEdge;
 use crate::timecode::{format_timecode, nominal_fps, ruler_scale};
 use crate::timeline_drag::{BandGrip, BandGrips, draggable_band, edge_width};
 use crate::timeline_geometry::TimelineGeometry;
+use crate::timeline_header::{MixButtons, TrackHeader};
 use crate::timing::{SET_TIMING_NOTE, SetTimingOffer};
 use crate::view::EditorView;
 use crate::waveform::{level_at_time, waveform_segment};
@@ -900,7 +901,6 @@ impl EditorView {
 
     fn track_header(&self, row: &TimelineRow<'_>, cx: &mut Context<Self>) -> impl IntoElement {
         let track = row.track;
-        let muted = cx.theme().muted_foreground;
         let current_time = self.current_time();
         let track_level = track
             .clips
@@ -913,130 +913,41 @@ impl EditorView {
             .fold(0.0_f32, f32::max)
             .sqrt()
             .clamp(0.0, 1.0);
-        let mute_track_id = track.id.clone();
-        let solo_track_id = track.id.clone();
-        let state_icon = |id: String, icon: Icon, tooltip: &'static str| {
-            div()
-                .id(SharedString::from(id))
-                .flex_none()
-                .tooltip(move |window, cx| {
-                    gpui_kit::component::tooltip::Tooltip::new(tooltip).build(window, cx)
-                })
-                .child(icon.size_3().text_color(muted))
-        };
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_2()
-            .w(metrics::track_header_width())
-            .h_full()
-            .pl_3()
-            .pr_2()
-            .border_r_1()
-            .border_color(cx.theme().border)
-            .child(
-                div()
-                    .flex_none()
-                    .w(rems(2.0))
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_sm()
-                    .text_color(muted)
-                    .child(row.label.clone()),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .size(rems(0.5))
-                    .rounded_sm()
-                    .bg(rgb(theme::clip_fill(track.kind))),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_base()
-                    .text_color(if track.enabled {
-                        cx.theme().foreground
-                    } else {
-                        muted
-                    })
-                    .child(track.name.clone()),
-            )
-            .when(!track.enabled, |header| {
-                header.child(state_icon(
-                    format!("track-disabled-{}", track.id),
-                    Icon::new(IconName::EyeOff),
-                    "Disabled in the project",
-                ))
-            })
-            .when(track.locked, |header| {
-                header.child(state_icon(
-                    format!("track-locked-{}", track.id),
-                    Icon::new(IconName::Lock),
-                    "Locked in the project",
-                ))
-            })
-            // A React video's sound plays, and meters, on its audio track.
-            .when(
-                track.kind != TrackKind::Overlay
-                    && !(self.is_react_preview() && track.kind != TrackKind::Audio),
-                |header| {
-                    header.child(
-                        div()
-                            .flex_none()
-                            .w(rems(0.25))
-                            .h(rems(1.25))
-                            .rounded_sm()
-                            .overflow_hidden()
-                            .flex()
-                            .flex_col()
-                            .justify_end()
-                            .bg(cx.theme().background)
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(relative(track_level))
-                                    .bg(theme::meter(track_level)),
-                            ),
-                    )
-                },
-            )
-            // Mute and solo change the project; a React composition's tracks
-            // are only a view of its source.
-            .when(
-                track.kind != TrackKind::Overlay && !self.is_react_preview(),
-                |header| {
-                    header
-                        .child(
-                            Button::new(SharedString::from(format!("track-mute-{}", track.id)))
-                                .xsmall()
-                                .ghost()
-                                .compact_label("M")
-                                .selected(track.muted)
-                                .tooltip("Mute in the preview")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_track_mute(&mute_track_id, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new(SharedString::from(format!("track-solo-{}", track.id)))
-                                .xsmall()
-                                .ghost()
-                                .compact_label("S")
-                                .selected(track.solo)
-                                .tooltip("Solo in the preview")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_track_solo(&solo_track_id, cx);
-                                })),
-                        )
-                },
-            )
+        let react = self.is_react_preview();
+        // A React video's sound plays, and meters, on its audio track.
+        let metered =
+            track.kind != TrackKind::Overlay && !(react && track.kind != TrackKind::Audio);
+        // Mute and solo change the project; a React composition's tracks
+        // are only a view of its source.
+        let mix = (track.kind != TrackKind::Overlay && !react).then(|| {
+            let mute_track_id = track.id.clone();
+            let solo_track_id = track.id.clone();
+            MixButtons {
+                mute_id: SharedString::from(format!("track-mute-{}", track.id)),
+                solo_id: SharedString::from(format!("track-solo-{}", track.id)),
+                muted: track.muted,
+                solo: track.solo,
+                on_mute: Rc::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_track_mute(&mute_track_id, cx);
+                })),
+                on_solo: Rc::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_track_solo(&solo_track_id, cx);
+                })),
+            }
+        });
+        TrackHeader::new(
+            format!("track-{}", track.id),
+            row.label.clone(),
+            track.name.clone(),
+            rgb(theme::clip_fill(track.kind)).into(),
+        )
+        .disabled(!track.enabled)
+        .locked(track.locked)
+        .level(metered.then_some(track_level))
+        .mix(mix)
+        .mix_lane(!react)
     }
 
     fn track_row(
@@ -1224,36 +1135,13 @@ impl EditorView {
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap_2()
-                    .w(metrics::track_header_width())
-                    .h_full()
-                    .pl_3()
-                    .border_r_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .w(rems(2.0))
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("V1"),
-                    )
-                    .child(
-                        div()
-                            .size(rems(0.5))
-                            .rounded_sm()
-                            .bg(rgb(theme::clip_fill(TrackKind::Overlay))),
-                    )
-                    .child(
-                        div()
-                            .text_base()
-                            .text_color(cx.theme().foreground)
-                            .child("Composition"),
-                    ),
+                TrackHeader::new(
+                    "composition",
+                    "V1",
+                    "Composition",
+                    rgb(theme::clip_fill(TrackKind::Overlay)).into(),
+                )
+                .mix_lane(false),
             )
             .child(
                 div()
@@ -1719,30 +1607,9 @@ impl EditorView {
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap_2()
-                    .w(metrics::track_header_width())
-                    .h_full()
-                    .pl_3()
-                    .border_r_1()
-                    .border_color(cx.theme().border)
-                    .child(div().w(rems(2.0)))
-                    .child(div().size(rems(0.5)).rounded_sm().bg(theme::accent()))
-                    .child(
-                        div()
-                            .text_base()
-                            .text_color(cx.theme().foreground)
-                            .child("Chapters"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(chapters.len().to_string()),
-                    ),
+                TrackHeader::new("chapters", "", "Chapters", theme::accent())
+                    .count(chapters.len())
+                    .mix_lane(!self.is_react_preview()),
             )
             .child(
                 div()
