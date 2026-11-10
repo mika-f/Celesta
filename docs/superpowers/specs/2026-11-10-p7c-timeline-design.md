@@ -256,12 +256,16 @@ Rust, `cargo test`:
 - `style_guard`: `px(` in `timeline.rs` and `meter.rs` only on lines that say
   `physical:`.
 - UI integration tests (`VisualTestContext`, `debug_selector`; gpui-kit's
-  `test-support` feature conflicts on taffy, as P7a found):
-  - the playhead timecode is drawn once, under the viewer, and the ruler's
-    corner has none;
+  `test-support` feature conflicts on taffy, as P7a found). An `EditorView`
+  cannot be built in a test window, so the track header and the clip block
+  become `RenderOnce` components (`timeline_header.rs`, `timeline_clip.rs`)
+  and are tested on their own:
   - a disabled and locked track and a plain track put their names, M and S
     buttons at the same x (fixed lanes);
-  - a clip's name strip is `clip_label_height()` × `rem` tall.
+  - a clip's name strip is `clip_label_height()` × `rem` tall, and stays
+    inside a clip narrower than its name.
+
+  That the timecode shows once is checked by the screenshots.
 
 ## Verification
 
@@ -270,7 +274,8 @@ Rust, `cargo test`:
   window, captured with `screencapture -x -o -l <window id>`. The "before"
   was taken from the P7a branch tip (`34a92a5b`) while this spec was written.
 - A second before/after pair on `examples/36-days/film.tsx`, which shows the
-  Chapters row and the score's audio track with its waveform. Its
+  score's audio track with its waveform (it has no Chapters row: its scenes
+  are not chapters; the Chapters row's header is covered by the header test). Its
   `score.wav` is generated first with `python3 examples/36-days/make-score.py`
   (standard library only; the file is gitignored).
 - Interface zoom: `BASE_FONT_SIZE` temporarily 12 and 16 (not committed).
