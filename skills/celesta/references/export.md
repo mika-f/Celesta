@@ -305,7 +305,7 @@ Celesta-export --json --overwrite --video-encoder mediafoundation/hevc \
 - Speed and size (RTX 4070, 4K, defaults): the GPU's H.264 and HEVC
   export about 2x as fast as x264's defaults, files about 15% smaller at
   0.5–1.1 dB lower PSNR (about x264's size at 1080p). `hardware=false`
-  (Microsoft's software encoders) is slower and 10–50% larger than x264.
+  (Microsoft's software encoders) is slower and 10–54% larger than x264.
   Name the GPU's for fast drafts on Windows; keep x264 for the best
   quality per byte.
 - `bFrames` is a request: NVIDIA's encoder and the HEVC Video Extensions'

@@ -270,7 +270,7 @@ Windows のアプリには `mediafoundation` メディアプラグインも入�
 | `mediafoundation/hevc` | 映像エンコーダー | HEVC（8 bit または 10 bit） |
 | `mediafoundation/aac` | 音声エンコーダー | 44.1 kHz または 48 kHz の AAC |
 
-NVIDIA GeForce RTX 4070 では、GPU の H.264 と HEVC のエンコーダーは、4K の作品を既定の設定の x264 の約 2 倍の速さで書き出しました。それぞれの既定の設定では、ファイルは x264 より約 15% 小さく画質はわずかに低く、1080p ではほぼ同じ大きさでした。Microsoft のソフトウェアエンコーダー（`hardware=false`）は GPU のものより時間がかかり、ファイルは x264 より 10〜50% 大きくなりました。
+NVIDIA GeForce RTX 4070 では、GPU の H.264 と HEVC のエンコーダーは、4K の作品を既定の設定の x264 の約 2 倍の速さで書き出しました。それぞれの既定の設定では、ファイルは x264 より約 15% 小さく画質はわずかに低く、1080p ではほぼ同じ大きさでした。Microsoft のソフトウェアエンコーダー（`hardware=false`）は GPU のものより時間がかかり、ファイルは x264 より 10〜54% 大きくなりました。
 
 このリリースでの設定は次のとおりです（`--describe mediafoundation/hevc` でも確認できます）。
 

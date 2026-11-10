@@ -86,7 +86,10 @@ FFmpeg's MP4, FFmpeg's x264 with Media Foundation's AAC in FFmpeg's MP4.
   refusal outranks later generic ones (`InvalidSettings` on `rateControl`
   or `bitrate`: `{name} has no constant quality mode; choose Average
   bitrate`, with `, or turn Hardware off` when that MFT is a hardware one
-  and `hardware` is on). Any other `ICodecAPI` property whose
+  and `hardware` is on); without one, the component is
+  `ComponentUnavailable`, every refusal in its reason (the DX12 encoders
+  `MFTEnumEx` lists always refuse with `0x80041000`). The fallback covers
+  `open` only. Any other `ICodecAPI` property whose
   `IsSupported` or `SetValue` fails is skipped. An MFT is asynchronous when
   `MF_TRANSFORM_ASYNC` says so once activated; it is unlocked
   (`MF_TRANSFORM_ASYNC_UNLOCK`), fed on `METransformNeedInput`, and read on
@@ -95,7 +98,8 @@ FFmpeg's MP4, FFmpeg's x264 with Media Foundation's AAC in FFmpeg's MP4.
   `{name} stopped answering`. Draining sends `MFT_MESSAGE_COMMAND_DRAIN`
   and reads until `METransformDrainComplete`. `MFT_OUTPUT_STREAM_PROVIDES_SAMPLES`
   is honoured; `MF_E_TRANSFORM_STREAM_CHANGE` renegotiates from
-  `GetOutputAvailableType(0)`, refusing another subtype. Each try is a
+  `GetOutputAvailableType(0)`, refusing another subtype, and more than 8 in
+  a row are `{name} kept changing its output type`. Each try is a
   `Transform` that shuts the MFT down when dropped.
 - **Video.** The output type (subtype, size, rate, square pixels,
   progressive, bitrate, `MF_MT_MPEG2_PROFILE`, colour) is set before the
@@ -239,9 +243,11 @@ No deviation beyond 79 was needed. The rulings taken while building, in
 short: `hardware_encoders_keep_the_invariants` and
 `hevc_10_bit_from_p010_is_main10` run at 160x90, since NVIDIA's MFTs refuse
 64x36; the reordering checks print `skipping … the encoder did not reorder`
-for encoders that do not reorder rather than assert that one does; `dts`
-falls back to the `pts` when an MFT gives no `DecodeTimestamp` (none here
-does); and a WebM Windows can read is accepted, as above.
+for encoders that do not reorder, except that Microsoft's software H.264
+MFT with B-frames must reorder (the final review); without a
+`DecodeTimestamp` (no MFT here lacks one), `dts` is the earliest input time
+not yet answered, less the reorder depth, so it never goes back; and a WebM
+Windows can read is accepted, as above.
 
 ## Decisions
 
@@ -387,6 +393,18 @@ edits (the branch changes no root workspace code: `git diff 88ba9809 HEAD
     `a_runtime_stop_ends_a_prepare_that_never_resolves_when_node_is_available`
     (about 13 minutes). The root crates after them were not run.
 
+After the final review's fixes (`5bae5023`, `625aa621`, `3aeb5639`), on
+the same machine: `cargo test --manifest-path plugins/Cargo.toml
+--workspace --locked` passed 617 tests (none failed or ignored), once as it
+is and once with `CELESTA_REQUIRE_MEDIA_FOUNDATION=1`; both printed only the
+three allowed `skipping` lines above. The workspace Clippy, `cargo fmt
+--check`, and `git diff --check` passed. The Linux cross-check still stops
+at `ring` and `signalsmith-stretch`; in its place, a throwaway build turned
+every `cfg(windows)` outside `src/mf` off (as on Linux and macOS) and ran
+the crate's Clippy with `--all-targets -D warnings`. Before the fixes it
+found `VideoCodec::display_name` and `params::record_sps` dead in the test
+build; after them it is clean. The edit was reverted.
+
 The tests that pin the plan's review focus: `probing_does_not_lock_the_file`;
 `h264_and_hevc_decode_times_precede_presentation` and
 `mediafoundation_h264_with_ffmpeg_aac_in_ffmpeg_mp4`;
@@ -465,14 +483,23 @@ does not change. No build or test of mine ran during the exports.
   `Install-WindowsFeature Server-Media-Foundation` to `ci.yml`; if that
   needs a reboot or does not help, every Media Foundation test there skips
   with the `describe` reason, which "Report skipped tests" lists, and this
-  machine stays the only full run. The cross-OS `cargo check --target
-  x86_64-unknown-linux-gnu` could not run here (`ring` and
-  `signalsmith-stretch` need a Linux C compiler), so the crate's gating
-  off Windows was checked by reading; CI's Linux and macOS jobs check it.
+  machine stays the only full run. The skips go through one gate
+  (`src/mf/gate.rs`): with `CELESTA_REQUIRE_MEDIA_FOUNDATION=1` a missing
+  Media Foundation or component fails the test instead, as
+  `CELESTA_REQUIRE_GPU=1` does a missing adapter. This machine runs with it
+  set; CI does not set it until Media Foundation on `windows-latest` is
+  proven. The cross-OS `cargo check --target x86_64-unknown-linux-gnu`
+  could not run here (`ring` and `signalsmith-stretch` need a Linux C
+  compiler), so the crate's gating off Windows was checked by reading and
+  by a throwaway build with every `cfg(windows)` outside `src/mf` off (see
+  Checks); CI's Linux and macOS jobs check it.
 - **GPU texture sharing** (`transports: dxgiShared`): frames still cross
   shared memory or the pipe and are copied into an `IMFSample`; the GPU
   MFTs get system memory, and the DX12 encoders, which want a D3D manager,
   are passed over.
+- **A hardware MFT that fails after `open`**: the fallback to the next
+  candidate covers `open` only, so a hardware MFT that accepts the types
+  but fails its first `ProcessInput` fails the export.
 - **A muxer of its own**, under ruling B: the MPEG-4 sink would need an
   edit list it cannot write. `ffmpeg/mp4` muxes the plugin's packets.
 - **HDR**: no PQ or HLG encoding; the decoder takes Media Foundation's
@@ -483,8 +510,9 @@ does not change. No build or test of mine ran during the exports.
 - **HEVC reordering is never exercised on this machine**: neither NVIDIA's
   MFT nor the HEVC Video Extensions' encoder makes B-frames, so the HEVC
   reorder depth (`sps_max_num_reorder_pics`) is covered only by unit tests
-  on recorded parameter sets, and the stream-change renegotiation and the
-  `dts` fallback without `DecodeTimestamp` are untested.
+  on recorded parameter sets, and the stream-change renegotiation is
+  untested (its cap and the `dts` fallback without `DecodeTimestamp` only by
+  unit tests).
 - **Not checked by a CPU renderer export**: no test can pick the software
   renderer, so the `rgba8` path is covered by the encoder test that feeds
   RGBA (`rgba8_input_is_converted_with_bt709`), not by an export.
@@ -501,14 +529,11 @@ does not change. No build or test of mine ran during the exports.
   rather than `−depth × frame`; `reorders` stays true when `BPictureCount`
   was refused; the `avcC` High-profile tail is written for profiles 100,
   110, 122, and 144 but not 244; `vui.rs` counts `dPoc`-0 entries in
-  `inter_set_size`, has no re-parse check after a rewrite, and its
-  no-description branch keeps the original full-range flag; the decoder's
-  stream duration is `None` for files without `edts`, any reader-open
-  failure is `Unsupported` (an I/O cause is hidden), `apply_edit` is
-  bounded only by the file's own presentation duration (a hostile `mvhd`
-  plus an empty edit can still ask for a large buffer), and an unknown
-  `MF_PD_DURATION` drops any start delay; the decoder reads audio back to
-  back, ignoring the reader's timestamps (gaps), and stereo from more than
-  two channels keeps the first two; about 500 lines of export-test helpers
-  are copied from P5's tests; `test-package.mjs` has two overlapping
-  licence assertions.
+  `inter_set_size` and has no re-parse check after a rewrite; the
+  decoder's stream duration is `None` for files without `edts`, any
+  reader-open failure is `Unsupported` (an I/O cause is hidden), and an
+  unknown `MF_PD_DURATION` drops any start delay; the decoder reads audio
+  back to back, ignoring the reader's timestamps (gaps), and stereo from
+  more than two channels keeps the first two; about 500 lines of
+  export-test helpers are copied from P5's tests; `test-package.mjs` has
+  two overlapping licence assertions.

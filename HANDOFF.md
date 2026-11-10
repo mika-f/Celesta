@@ -524,9 +524,15 @@ pnpm --dir packages/react test
 
 Live bridge tests require Node and built React runtime dependencies/output;
 check for skipped integration tests. GPU tests need an available backend, and
-native UI checks need a display and suitable platform permissions. Record
-actual checks and environment limitations in the task's dated note rather
-than carrying historical test counts or machine-specific results here.
+native UI checks need a display and suitable platform permissions. The Media
+Foundation plugin's tests skip, through one gate (`src/mf/gate.rs`), when
+Windows lacks Media Foundation or a component;
+`CELESTA_REQUIRE_MEDIA_FOUNDATION=1` makes that a failure, as
+`CELESTA_REQUIRE_GPU=1` does a missing adapter. Set it on a Windows machine
+known to have them; CI does not set it until Media Foundation on
+`windows-latest` is proven. Record actual checks and environment limitations
+in the task's dated note rather than carrying historical test counts or
+machine-specific results here.
 
 ## Working conventions
 

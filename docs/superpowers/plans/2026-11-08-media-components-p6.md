@@ -177,7 +177,11 @@ the conversation that wrote it.
   - A test whose component describes unavailable prints
     `skipping <test>: <reason>` and passes; CI's "Report skipped tests"
     lists it. Export tests also skip without a GPU, as the FFmpeg plugin's
-    do.
+    do. One gate (`mf/gate.rs`, final review) does it for every test; with
+    `CELESTA_REQUIRE_MEDIA_FOUNDATION=1` a missing Media Foundation or
+    component fails the test instead, as `CELESTA_REQUIRE_GPU=1` does a
+    missing adapter. The user's machine sets it; CI does not until Media
+    Foundation on `windows-latest` is proven.
   - On the user's Windows machine, only hardware-encoder tests may skip,
     and only where no hardware MFT is listed.
 - **Hardware-dependent tests** (P5's lesson, `4c4875ad`, `37ce1a2b`,
@@ -191,8 +195,10 @@ the conversation that wrote it.
   - every input `pts` answered.
   A check that holds only when the encoder reorders runs only when some
   packet has `dts ≠ pts`, and otherwise prints `skipping …: the encoder did
-  not reorder`. Tests of `hardware: true` check only the hard invariants,
-  and colour within 16 codes.
+  not reorder`, except `h264` with `hardware: false` and B-frames on,
+  which must reorder (Task 1: Microsoft's software MFT does). Tests of
+  `hardware: true` check only the hard invariants, and colour within 16
+  codes.
 - **Windows file semantics** (P2a's Windows CI failure, test
   `a_muxer_whose_finish_failed_can_still_be_aborted`, now `#[cfg(unix)]`).
   A file still open cannot be replaced or opened for writing. Media
@@ -276,8 +282,14 @@ edit and the handoff note.
     `MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_LOCALMFT | MFT_ENUM_FLAG_SORTANDFILTER`;
     with `false`, only `MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER`.
   - Candidates are tried in order. One that fails to activate, or refuses
-    the output or input type, is released, and the next is tried. The last
-    refusal is the error.
+    the output or input type, is released, and the next is tried. When
+    every one refuses, a settings refusal is the error (deviation 78);
+    otherwise the component is `MediaError::ComponentUnavailable`, every
+    refusal in its reason (the DX12 encoders, which `MFTEnumEx` lists,
+    always refuse with `0x80041000`).
+  - The fallback covers `open` only: a hardware MFT that accepts the types
+    but fails its first `ProcessInput` fails the export, with no retry on
+    the next candidate.
   - An asynchronous MFT is unlocked (`MF_TRANSFORM_ASYNC_UNLOCK`) and fed
     on `METransformNeedInput`, its output taken on `METransformHaveOutput`.
     Draining sends `MFT_MESSAGE_COMMAND_DRAIN` and reads until
@@ -290,7 +302,8 @@ edit and the handoff note.
   - `MFT_OUTPUT_STREAM_PROVIDES_SAMPLES` is honoured; otherwise output
     samples are allocated at `GetOutputStreamInfo().cbSize`.
   - `MF_E_TRANSFORM_STREAM_CHANGE` renegotiates the output type, from
-    `GetOutputAvailableType(0)` with the same subtype.
+    `GetOutputAvailableType(0)` with the same subtype; more than 8 in a row
+    is `MediaError::Codec("{name} kept changing its output type")`.
   - The MFT's friendly name (`MFT_FRIENDLY_NAME_Attribute`) is kept for
     errors and for tests to print.
 - **H.264 and HEVC.** The output type is set before the input type, with:
@@ -349,11 +362,15 @@ edit and the handoff note.
     types 35, 32, 33, 34). Every other NAL unit, SEI included, is kept.
   - A later parameter set that differs from the first is
     `MediaError::Codec("{name} changed its parameter sets mid-stream")`.
+    Only the sets a later access unit carries are compared: HEVC may repeat
+    its SPS and PPS without its VPS.
   - The codec string comes from the record (P5's `avc_codec_string`,
     `hevc_codec_string`).
 - **DTS.**
   - `dts` comes from `MFSampleExtension_DecodeTimestamp` when the sample
-    has it, else from the sample time.
+    has it, else from the times of the inputs fed, in order (the earliest
+    not yet answered), so it never goes back (final review; it was the
+    `pts`).
   - Then, as P5 does, it is shifted back by the reorder depth whenever the
     stream reorders: `dts = dts − depth × frame duration`. `depth` comes
     from the SPS (P5's `avc_reorder_depth`, `hevc_reorder_depth`), else 16;
@@ -779,9 +796,9 @@ Every other number below is a probe's output.
     `depth` comes from its SPS.
   - It delays its sample times by that depth.
   - NVIDIA's MFT never reorders (no `BPictureCount`).
-  - So Task 4's reordering checks run with `hardware: false`. With
-    `hardware: true` they print "the encoder did not reorder" on this
-    machine.
+  - So Task 4's reordering checks run with `hardware: false`, where `h264`
+    must reorder (final review). With `hardware: true` they print "the
+    encoder did not reorder" on this machine.
 - **Ruling B: no muxer.** 5(b) fails: the sink writes no edit list
   whatever it is given, and drops negative times. 5(c) fails: the reorder
   delay is shown, or the IDR is lost. 5(d) passes. Task 6 and Task 7 follow

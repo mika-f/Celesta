@@ -270,7 +270,7 @@ The Windows app also comes with the `mediafoundation` media plugin. It encodes H
 | `mediafoundation/hevc` | Video encoder | HEVC, 8-bit or 10-bit |
 | `mediafoundation/aac` | Audio encoder | AAC at 44.1 or 48 kHz |
 
-On an NVIDIA GeForce RTX 4070, the GPU's H.264 and HEVC encoders exported a 4K film about twice as fast as x264 with its defaults. At their own defaults, their files came out about 15% smaller than x264's at slightly lower quality, and about the same size at 1080p. Microsoft's software encoders (`hardware=false`) took longer than the GPU's and wrote files 10–50% larger than x264's.
+On an NVIDIA GeForce RTX 4070, the GPU's H.264 and HEVC encoders exported a 4K film about twice as fast as x264 with its defaults. At their own defaults, their files came out about 15% smaller than x264's at slightly lower quality, and about the same size at 1080p. Microsoft's software encoders (`hardware=false`) took longer than the GPU's and wrote files 10–54% larger than x264's.
 
 Their settings in this release (`--describe mediafoundation/hevc` shows them too):
 
