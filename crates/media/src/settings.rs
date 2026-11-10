@@ -313,13 +313,19 @@ pub fn layer(
 ) -> Result<Settings, InvalidSetting> {
     let mut merged = base.clone();
     merged.extend(over.iter().map(|(key, value)| (key.clone(), value.clone())));
-    // Dropping one base value can hide another (its `visibleWhen` named
-    // the first), so drop until none is hidden.
+    drop_hidden(schema, &mut merged, |key| over.contains_key(key));
+    validate(schema, &merged)
+}
+
+/// Drops from `settings` each value whose field the others hide, except
+/// the keys `keep` holds to. Dropping one value can hide another (its
+/// `visibleWhen` named the first), so it drops until none is hidden.
+pub fn drop_hidden(schema: &[SettingField], settings: &mut Settings, keep: impl Fn(&str) -> bool) {
     loop {
-        let values = effective(schema, &merged);
-        let hidden: Vec<String> = merged
+        let values = effective(schema, settings);
+        let hidden: Vec<String> = settings
             .keys()
-            .filter(|key| !over.contains_key(*key))
+            .filter(|key| !keep(key))
             .filter(|key| {
                 schema
                     .iter()
@@ -332,10 +338,9 @@ pub fn layer(
             break;
         }
         for key in hidden {
-            merged.remove(&key);
+            settings.remove(&key);
         }
     }
-    validate(schema, &merged)
 }
 
 /// Reads command-line text as the field's type: a number or a boolean
@@ -626,6 +631,36 @@ mod tests {
 
         let error = layer(&schema, &base, &given(json!({ "crf": 99 }))).unwrap_err();
         assert_eq!(error.key, "crf");
+    }
+
+    #[test]
+    fn drop_hidden_repeats_until_nothing_is_hidden() {
+        // `pass` shows only for `vbr`, and `lookahead` only for two passes.
+        let mut schema = schema();
+        schema.extend(
+            [
+                json!({ "key": "pass", "type": "number", "default": 1, "label": "Passes",
+                    "visibleWhen": { "rateControl": "vbr" } }),
+                json!({ "key": "lookahead", "type": "boolean", "default": false,
+                    "label": "Look ahead", "visibleWhen": { "pass": 2 } }),
+            ]
+            .map(|field| serde_json::from_value::<SettingField>(field).unwrap()),
+        );
+        let mut settings = given(json!({ "rateControl": "crf", "pass": 2, "lookahead": true,
+            "tune": "film" }));
+        drop_hidden(&schema, &mut settings, |_| false);
+        assert_eq!(
+            settings,
+            given(json!({ "rateControl": "crf", "tune": "film" }))
+        );
+
+        // A kept key stays, and keeps what it shows.
+        let mut settings = given(json!({ "rateControl": "crf", "pass": 2, "lookahead": true }));
+        drop_hidden(&schema, &mut settings, |key| key == "pass");
+        assert_eq!(
+            settings,
+            given(json!({ "rateControl": "crf", "pass": 2, "lookahead": true }))
+        );
     }
 
     #[test]
