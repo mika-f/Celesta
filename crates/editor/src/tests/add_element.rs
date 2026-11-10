@@ -17,16 +17,7 @@ const SCENE: &str = "import { Group, Text } from '@celesta.studio/react';\n\nexp
 const ADDED: &str = "import { Group, Rect, Sequence, Text } from '@celesta.studio/react';\n\nexport const Intro = () => (\n  <Group>\n    <Text>Hi</Text>\n    <Sequence from={45} durationInFrames={75}>\n      <Rect x={120} y={80} width={320} height={180} fill=\"#4F7CFF\" />\n    </Sequence>\n  </Group>\n);\n";
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "celesta-add-{name}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    crate::scratch::scratch_dir(&format!("add-{name}"))
 }
 
 fn at(file: &Path, line: u32, column: u32) -> SourcePos {

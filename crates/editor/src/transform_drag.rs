@@ -1396,7 +1396,6 @@ mod tests {
     use celesta_source_edit::{EditValue, ElementRef, LiteralForm, LockReason, Span};
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn at(x: f64, y: f64) -> Point {
         Point { x, y }
@@ -2371,15 +2370,7 @@ mod tests {
     /// A one-element scene `source` written to a fresh directory, and the
     /// report of its element `name` with the props the runtime saw.
     fn one_file(source: &str, name: &str, props: ReceivedProps) -> (PathBuf, LayerSourceReport) {
-        let dir = std::env::temp_dir().join(format!(
-            "celesta-resize-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::scratch_dir("resize");
         let scene = dir.join("scene.tsx");
         fs::write(&scene, source).unwrap();
         let report = LayerSourceReport {
@@ -2609,15 +2600,7 @@ mod tests {
 
     #[test]
     fn a_two_file_center_rotation_is_one_undo() {
-        let dir = std::env::temp_dir().join(format!(
-            "celesta-center-rotation-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::scratch_dir("center-rotation");
         let (component, scene) = (dir.join("component.tsx"), dir.join("scene.tsx"));
         fs::write(&component, COMPONENT).unwrap();
         fs::write(&scene, SCENE).unwrap();

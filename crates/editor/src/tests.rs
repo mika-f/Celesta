@@ -77,7 +77,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 mod add_element;
 mod element_edit;
@@ -275,12 +275,7 @@ fn the_suggested_name_takes_the_muxers_extension() {
 
 #[test]
 fn a_failed_last_survives_the_export_it_goes_on_with() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("celesta-editor-last-{unique}"));
-    fs::create_dir_all(&root).unwrap();
+    let root = crate::scratch::scratch_dir("editor-last");
     let last = PresetOutput {
         muxer: Some("b/mp4".into()),
         ..PresetOutput::default()
@@ -698,15 +693,7 @@ fn audio_decoder_reuses_session_pcm_cache() {
 
 #[test]
 fn audio_decoder_reuses_pcm_cache_across_sessions() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "celesta-editor-disk-cache-{}-{unique}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&root).unwrap();
+    let root = crate::scratch::scratch_dir("editor-disk-cache");
     let path = root.join("voice.wav");
     fs::write(&path, b"not valid audio; cache must be used").unwrap();
     let expected = AudioBuffer {

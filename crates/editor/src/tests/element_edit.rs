@@ -1499,15 +1499,7 @@ fn a_text_with_outer_spaces_is_written_in_braces() {
 
 #[test]
 fn a_font_row_beside_a_style_object_inserts_the_shorthand() {
-    let dir = std::env::temp_dir().join(format!(
-        "celesta-font-row-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).unwrap();
+    let dir = crate::scratch::scratch_dir("font-row");
     let file = dir.join("scene.tsx");
     let text = "export const Scene = () => (\n  <Text style={{ fontWeight: 700 }}>A</Text>\n);\n";
     fs::write(&file, text).unwrap();
@@ -1744,15 +1736,7 @@ fn no_component_section_without_a_call_site() {
 
 #[test]
 fn removing_a_prop_is_one_undoable_write() {
-    let dir = std::env::temp_dir().join(format!(
-        "celesta-remove-prop-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).unwrap();
+    let dir = crate::scratch::scratch_dir("remove-prop");
     let file = dir.join("scene.tsx");
     let (text, _, mut report) = removable_rect();
     fs::write(&file, &text).unwrap();

@@ -57,6 +57,8 @@ mod refresh;
 mod render;
 mod scene_entries;
 mod scope;
+#[cfg(test)]
+mod scratch;
 mod source;
 #[cfg(test)]
 mod style_guard;
