@@ -1,5 +1,5 @@
 use crate::actions::{ClearExportRange, ExportProject, SetExportIn, SetExportOut};
-use crate::export_dialog::view::{ExportDialog, ExportDialogEvent, open_export_dialog};
+use crate::export_page::view::{ExportPage, ExportPageEvent, open_export_dialog};
 use crate::export_worker::{ExportRequest, ExportSource};
 use crate::helpers::{ExportLoudness, export_output, export_range_for, export_suggested_name};
 use crate::inline_text_view::EditEvent;
@@ -38,7 +38,7 @@ impl EditorView {
         self.request_export(window, cx);
     }
 
-    /// Export…: opens the export dialog (as it was left, within a
+    /// Export…: opens the export page (as it was left, within a
     /// session); its `Export…` asks where to write the file.
     pub(crate) fn request_export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.choosing_export_path
@@ -52,10 +52,10 @@ impl EditorView {
         let project_file = self
             .export_source_path()
             .map(|source| project_root(source).join(PRESETS_FILE));
-        // A dialog is kept for the project file it read; an untitled
+        // A page is kept for the project file it read; an untitled
         // document saved since, or another file, reads its own.
         let kept = self
-            .export_dialog
+            .export_page
             .as_ref()
             .filter(|(dialog, _)| dialog.read(cx).project_file() == project_file.as_deref());
         let dialog = match kept {
@@ -66,7 +66,7 @@ impl EditorView {
             }
             None => {
                 // Without a registry yet no media plugin can export: the
-                // dialog lists none and says why Export… cannot run.
+                // page lists none and says why Export… cannot run.
                 let registry = self
                     .found_plugins
                     .registry
@@ -74,7 +74,7 @@ impl EditorView {
                     .unwrap_or_else(|| Arc::new(MediaRegistry::new(Vec::new())));
                 let loudness = self.export_loudness;
                 let dialog = cx.new(|cx| {
-                    ExportDialog::new(
+                    ExportPage::new(
                         registry,
                         project_file,
                         user_presets_path(),
@@ -84,7 +84,7 @@ impl EditorView {
                     )
                 });
                 let events = cx.subscribe_in(&dialog, window, Self::export_dialog_event);
-                self.export_dialog = Some((dialog.clone(), events));
+                self.export_page = Some((dialog.clone(), events));
                 dialog
             }
         };
@@ -103,7 +103,7 @@ impl EditorView {
         }
     }
 
-    /// The in- and out-points as the dialog shows them, when they mark
+    /// The in- and out-points as the page shows them, when they mark
     /// what is exported; a React entry always exports all of it.
     fn export_range_label(&self) -> Option<SharedString> {
         if self.react_preview.is_some() {
@@ -124,13 +124,13 @@ impl EditorView {
 
     fn export_dialog_event(
         &mut self,
-        dialog: &Entity<ExportDialog>,
-        event: &ExportDialogEvent,
+        dialog: &Entity<ExportPage>,
+        event: &ExportPageEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            ExportDialogEvent::Export {
+            ExportPageEvent::Export {
                 choice,
                 extension,
                 last,
@@ -138,8 +138,8 @@ impl EditorView {
                 remember_last(&mut self.problems, user_presets_path().as_deref(), last);
                 self.choose_export_path(choice.clone(), extension, window, cx);
             }
-            ExportDialogEvent::Loudness(loudness) => self.set_export_loudness(*loudness, cx),
-            ExportDialogEvent::ClearRange => {
+            ExportPageEvent::Loudness(loudness) => self.set_export_loudness(*loudness, cx),
+            ExportPageEvent::ClearRange => {
                 self.clear_export_range(cx);
                 dialog.update(cx, |dialog, cx| dialog.set_range(None, cx));
             }
@@ -349,7 +349,7 @@ impl EditorView {
     }
 }
 
-/// Saves the dialog's choice as `last` in the user presets file at `path`
+/// Saves the page's choice as `last` in the user presets file at `path`
 /// (none on a platform without a settings folder), creating its folder
 /// readable by the user alone. A failure is reported under
 /// [`Source::ExportPresets`], which the export that goes on does not

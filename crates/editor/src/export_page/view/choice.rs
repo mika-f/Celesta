@@ -1,4 +1,4 @@
-//! The lists the dialog's Selects show: a choice per row, sections for
+//! The lists the page's Selects show: a choice per row, sections for
 //! the preset list, and the components as their plugins described them.
 
 use super::super::model::{CHECKING, ComponentOption, OptionState};

@@ -5,7 +5,7 @@ use crate::drag_session::DragSession;
 use crate::edit_history::EditHistory;
 use crate::element_edit::{ElementEdit, ScopeCache};
 use crate::element_rows::ElementRows;
-use crate::export_dialog::view::ExportDialog;
+use crate::export_page::view::ExportPage;
 use crate::export_worker::{ExportWorker, spawn_export};
 use crate::helpers::ExportLoudness;
 use crate::inline_text_view::{EditEvent, InlineTextSession, KeptOverride};
@@ -257,10 +257,10 @@ pub(crate) struct EditorView {
     pub(crate) export_in_frame: Option<i64>,
     pub(crate) export_out_frame: Option<i64>,
     pub(crate) choosing_export_path: bool,
-    /// The export dialog, kept with its state between openings until the
+    /// The export page, kept with its state between openings until the
     /// media plugins change (Reload Plugins, another project), and the
     /// subscription to what it asks for.
-    pub(crate) export_dialog: Option<(Entity<ExportDialog>, Subscription)>,
+    pub(crate) export_page: Option<(Entity<ExportPage>, Subscription)>,
     /// The loudness Export… brings the mix to, for the rest of the session.
     pub(crate) export_loudness: ExportLoudness,
     pub(crate) gpu_name: SharedString,
@@ -572,7 +572,7 @@ impl EditorView {
             export_in_frame: None,
             export_out_frame: None,
             choosing_export_path: false,
-            export_dialog: None,
+            export_page: None,
             export_loudness: ExportLoudness::default(),
             gpu_name,
             driver,

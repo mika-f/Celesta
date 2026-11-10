@@ -17,7 +17,7 @@ pub(crate) struct ExportRequest {
     pub(crate) range: Option<ExportRange>,
     /// The loudness to bring the mix to; `None` leaves it as it is.
     pub(crate) loudness: Option<LoudnessTarget>,
-    /// The muxer and encoders the export dialog chose, with their options.
+    /// The muxer and encoders the export page chose, with their options.
     pub(crate) output_choice: OutputChoice,
     pub(crate) cancellation: ExportCancellation,
     pub(crate) driver: GpuDriver,
@@ -115,7 +115,7 @@ pub(crate) fn spawn_export() -> anyhow::Result<ExportWorker> {
 
 /// The exporter settings for one request: the editor always overwrites the
 /// file the save panel already confirmed, and writes it with the components
-/// the export dialog chose.
+/// the export page chose.
 pub(crate) fn export_options(request: &ExportRequest) -> ExportOptions {
     ExportOptions {
         overwrite: true,

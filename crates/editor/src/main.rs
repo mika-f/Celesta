@@ -30,7 +30,7 @@ mod element_edit;
 mod element_rows;
 mod element_rows_view;
 mod export_control;
-mod export_dialog;
+mod export_page;
 mod export_worker;
 mod helpers;
 mod impact;

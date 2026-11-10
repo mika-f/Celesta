@@ -3,7 +3,7 @@
 
 use super::super::model::SaveTarget;
 use super::choice::Choice;
-use super::{ExportDialog, blocked_line, problem_line, section_label};
+use super::{ExportPage, blocked_line, problem_line, section_label};
 use celesta_exporter::{Preset, update_presets};
 use celesta_plugin_host::create_private_dir_all;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -25,7 +25,7 @@ pub(super) struct SaveForm {
     _subscriptions: [Subscription; 2],
 }
 
-impl ExportDialog {
+impl ExportPage {
     pub(super) fn open_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.save.is_some() {
             return;
@@ -139,8 +139,8 @@ impl ExportDialog {
 }
 
 /// The open form, drawn above the footer's buttons so it stays in view
-/// however far the dialog's body is scrolled; `None` while it is closed.
-pub(super) fn save_section(dialog: &Entity<ExportDialog>, cx: &App) -> Option<impl IntoElement> {
+/// however far the page's body is scrolled; `None` while it is closed.
+pub(super) fn save_section(dialog: &Entity<ExportPage>, cx: &App) -> Option<impl IntoElement> {
     let this = dialog.read(cx);
     let save = this.save.as_ref()?;
     let request = this.save_request(cx);
@@ -187,7 +187,7 @@ pub(super) fn save_section(dialog: &Entity<ExportDialog>, cx: &App) -> Option<im
                                 div()
                                     // Enter in the name saves (its
                                     // `PressEnter`); the input passes the
-                                    // key on as the dialog's `Confirm`,
+                                    // key on as the page's `Confirm`,
                                     // which would also export, so it
                                     // stops here. `Export…` dispatches
                                     // its own `Confirm` from the footer.

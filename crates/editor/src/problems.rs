@@ -21,7 +21,7 @@ pub(crate) enum Source {
     Preview,
     Schemas,
     Export,
-    /// The export dialog's choice could not be remembered; unlike
+    /// The export page's choice could not be remembered; unlike
     /// [`Source::Export`], starting an export does not clear it.
     ExportPresets,
     TypeScript,

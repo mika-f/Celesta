@@ -3,7 +3,7 @@
 
 use super::super::model::{FieldRow, Track};
 use super::choice::Choice;
-use super::{ExportDialog, muted_line, problem_line, track_id};
+use super::{ExportPage, muted_line, problem_line, track_id};
 use crate::property_controls::parse_number_input;
 use crate::widgets::format_component_number;
 use celesta_media::{ComponentRef, SettingKind, SettingValue};
@@ -39,7 +39,7 @@ pub(super) struct FieldControl {
     _subscription: Option<Subscription>,
 }
 
-impl ExportDialog {
+impl ExportPage {
     /// Typing in a text field: a string is taken as typed, a number once
     /// it parses (until then the field says why not).
     fn typed(&mut self, track: Track, key: &str, window: &mut Window, cx: &mut Context<Self>) {

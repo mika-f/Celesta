@@ -1,14 +1,14 @@
-//! The export dialog: what Export… shows before the save panel. From top
+//! The export page: what Export… shows before the save panel. From top
 //! to bottom it holds the preset, the container, the video encoder and its
 //! fields, the audio encoder (or none) and its fields, the range and the
 //! loudness. The footer holds `Save as preset…`, `Cancel`, and `Export…`,
 //! and above them, once asked for, the inline "Save as preset…" form.
 //!
 //! The view owns the controls and the work in flight; what they show and
-//! edit is [`ExportDialogModel`]'s. A preset or container change is resolved
+//! edit is [`ExportModel`]'s. A preset or container change is resolved
 //! on the background executor, each plugin's `describe` too.
 
-use super::model::{Asked, CHECKING, ExportDialogModel, InitialBase, PresetFileState, Track};
+use super::model::{Asked, CHECKING, ExportModel, InitialBase, PresetFileState, Track};
 use crate::helpers::ExportLoudness;
 use celesta_editor_theme::metrics;
 use celesta_exporter::{
@@ -53,12 +53,12 @@ use choice::{Choice, Sections, component_choice, sync_select};
 use fields::{FieldControl, Widget};
 use save::{SaveForm, save_section};
 
-/// What the dialog tells its owner.
+/// What the page tells its owner.
 #[expect(
     clippy::large_enum_variant,
     reason = "one event per click, matched by reference where it arrives"
 )]
-pub(crate) enum ExportDialogEvent {
+pub(crate) enum ExportPageEvent {
     /// `Export…`: the choice, the muxer's first extension for the save
     /// panel, and the choice as `last` saves it.
     Export {
@@ -66,13 +66,13 @@ pub(crate) enum ExportDialogEvent {
         extension: String,
         last: PresetOutput,
     },
-    /// The loudness was changed, for the export and the next dialog.
+    /// The loudness was changed, for the export and the next page.
     Loudness(ExportLoudness),
     /// The range's `Clear`: drop the in- and out-points.
     ClearRange,
 }
 
-/// The part of the dialog a resolve was asked from, under which its
+/// The part of the page a resolve was asked from, under which its
 /// warnings or failure show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
@@ -83,8 +83,8 @@ enum Section {
 /// A preset in the list: `None` for "None", the defaults.
 type PresetKey = Option<(PresetSource, String)>;
 
-pub(crate) struct ExportDialog {
-    model: ExportDialogModel,
+pub(crate) struct ExportPage {
+    model: ExportModel,
     registry: Arc<MediaRegistry>,
     kill: PluginKillSwitch,
     preset: Entity<SelectState<Sections<PresetKey>>>,
@@ -110,15 +110,15 @@ pub(crate) struct ExportDialog {
     _subscriptions: Vec<Subscription>,
 }
 
-impl EventEmitter<ExportDialogEvent> for ExportDialog {}
+impl EventEmitter<ExportPageEvent> for ExportPage {}
 
-impl Drop for ExportDialog {
+impl Drop for ExportPage {
     fn drop(&mut self) {
         self.kill.kill();
     }
 }
 
-/// A presets file as the dialog reads it: `None` when there is no path.
+/// A presets file as the page reads it: `None` when there is no path.
 fn read_presets(path: Option<PathBuf>) -> PresetFileState {
     let file = match &path {
         Some(path) => PresetsFile::load_if_present(path).map_err(|error| error.to_string()),
@@ -134,8 +134,8 @@ fn track_id(track: Track) -> &'static str {
     }
 }
 
-impl ExportDialog {
-    /// A dialog over `registry`'s media plugins, with the presets of
+impl ExportPage {
+    /// A page over `registry`'s media plugins, with the presets of
     /// `project_file` (none for an untitled document) and `user_file`;
     /// starts describing each plugin and resolving the first choice.
     pub(crate) fn new(
@@ -146,7 +146,7 @@ impl ExportDialog {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let model = ExportDialogModel::new(
+        let model = ExportModel::new(
             &registry,
             read_presets(project_file),
             read_presets(user_file),
@@ -198,7 +198,7 @@ impl ExportDialog {
             }),
             cx.subscribe_in(&loudness, window, |_, _, event, _, cx| {
                 if let SelectEvent::Confirm(Some(loudness)) = event {
-                    cx.emit(ExportDialogEvent::Loudness(*loudness));
+                    cx.emit(ExportPageEvent::Loudness(*loudness));
                 }
             }),
         ];
@@ -289,10 +289,10 @@ impl ExportDialog {
         );
     }
 
-    /// The dialog is shown again: a plugin whose `describe` failed (none
+    /// The page is shown again: a plugin whose `describe` failed (none
     /// of its components available) is described again, and a first
     /// choice that could not be resolved is resolved again, so a passing
-    /// failure does not keep `Export…` blocked while the dialog is kept.
+    /// failure does not keep `Export…` blocked while the page is kept.
     pub(crate) fn reopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let failed = self.model.recheck_failed();
         self.describe(failed, window, cx);
@@ -304,7 +304,7 @@ impl ExportDialog {
         self.sync(window, cx);
     }
 
-    /// The project presets file this dialog read; `None` for an untitled
+    /// The project presets file this page read; `None` for an untitled
     /// document.
     pub(crate) fn project_file(&self) -> Option<&Path> {
         self.model.project.path.as_deref()
@@ -531,10 +531,10 @@ impl ExportDialog {
         self.model.output_choice().err()
     }
 
-    /// `Export…` or Enter (the dialog's `Confirm`; Enter in the save
+    /// `Export…` or Enter (the page's `Confirm`; Enter in the save
     /// form's name saves instead, and never reaches it): emits
-    /// [`ExportDialogEvent::Export`] when the choice can be exported.
-    /// `true` closes the dialog.
+    /// [`ExportPageEvent::Export`] when the choice can be exported.
+    /// `true` closes the page.
     fn export(&mut self, cx: &mut Context<Self>) -> bool {
         if self.export_blocked().is_some() {
             return false;
@@ -543,7 +543,7 @@ impl ExportDialog {
         else {
             return false;
         };
-        cx.emit(ExportDialogEvent::Export {
+        cx.emit(ExportPageEvent::Export {
             choice,
             extension,
             last: self.model.saved_output(),
@@ -579,7 +579,7 @@ fn blocked_line(reason: String, cx: &App) -> impl IntoElement {
     }
 }
 
-/// A resolve's warning or error as the dialog shows it: the exporter's
+/// A resolve's warning or error as the page shows it: the exporter's
 /// `code` quoting (the CLI's) becomes typographic quotes.
 fn plain(text: &str) -> String {
     let mut open = false;
@@ -619,7 +619,7 @@ fn section_label(label: &'static str, cx: &App) -> impl IntoElement {
         .child(label)
 }
 
-impl ExportDialog {
+impl ExportPage {
     fn failure_under(&self, section: Section, cx: &App) -> Option<impl IntoElement> {
         let (failed, message) = self.failure.as_ref()?;
         (*failed == section).then(|| problem_line(plain(message), cx.theme().danger))
@@ -730,7 +730,7 @@ impl ExportDialog {
                         .small()
                         .label("Clear")
                         .on_click(cx.listener(|_, _, _, cx| {
-                            cx.emit(ExportDialogEvent::ClearRange);
+                            cx.emit(ExportPageEvent::ClearRange);
                         })),
                 )
                 .into_any_element(),
@@ -756,7 +756,7 @@ impl ExportDialog {
     }
 }
 
-impl Render for ExportDialog {
+impl Render for ExportPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().border;
         v_flex()
@@ -778,7 +778,7 @@ impl Render for ExportDialog {
 /// The footer: the open "Save as preset…" form, then `Save as preset…`
 /// leading, `Cancel` and `Export…` (the Enter default) trailing, and why
 /// `Export…` is disabled under them.
-fn footer(dialog: &Entity<ExportDialog>, cx: &App) -> impl IntoElement {
+fn footer(dialog: &Entity<ExportPage>, cx: &App) -> impl IntoElement {
     let this = dialog.read(cx);
     let blocked = this.export_blocked();
     let disabled = blocked.is_some();
@@ -832,7 +832,7 @@ fn footer(dialog: &Entity<ExportDialog>, cx: &App) -> impl IntoElement {
 
 /// Shows `dialog` as the window's dialog. Escape and `Cancel` close it and
 /// keep its state; `Export…` (or Enter) emits its choice and closes it.
-pub(crate) fn open_export_dialog(dialog: &Entity<ExportDialog>, window: &mut Window, cx: &mut App) {
+pub(crate) fn open_export_dialog(dialog: &Entity<ExportPage>, window: &mut Window, cx: &mut App) {
     let dialog = dialog.downgrade();
     window.open_dialog(cx, move |shell, _, cx| {
         let Some(dialog) = dialog.upgrade() else {
@@ -876,7 +876,7 @@ mod tests {
     fn window_with_dialog(
         cx: &mut TestAppContext,
         plugins: Vec<celesta_media::RegisteredPlugin>,
-    ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
+    ) -> (WindowHandle<Root>, Entity<ExportPage>) {
         window_with_user_file(cx, plugins, None)
     }
 
@@ -885,7 +885,7 @@ mod tests {
         cx: &mut TestAppContext,
         plugins: Vec<celesta_media::RegisteredPlugin>,
         user_file: Option<PathBuf>,
-    ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
+    ) -> (WindowHandle<Root>, Entity<ExportPage>) {
         window_with_files(cx, plugins, None, user_file)
     }
 
@@ -896,13 +896,13 @@ mod tests {
         plugins: Vec<celesta_media::RegisteredPlugin>,
         project_file: Option<PathBuf>,
         user_file: Option<PathBuf>,
-    ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
+    ) -> (WindowHandle<Root>, Entity<ExportPage>) {
         cx.update(gpui_kit::init);
         let registry = Arc::new(MediaRegistry::new(plugins));
         let mut dialog = None;
         let handle = cx.open_window(size(px(800.), px(1000.)), |window, cx| {
             dialog = Some(cx.new(|cx| {
-                ExportDialog::new(
+                ExportPage::new(
                     registry,
                     project_file,
                     user_file,
@@ -1008,8 +1008,8 @@ mod tests {
         std::fs::remove_dir_all(folder).unwrap();
     }
 
-    /// The test codec's video `input` the dialog's choice has.
-    fn video_input(dialog: &ExportDialog) -> Option<SettingValue> {
+    /// The test codec's video `input` the page's choice has.
+    fn video_input(dialog: &ExportPage) -> Option<SettingValue> {
         let choice = dialog.model.choice()?;
         choice.video.settings.get("input").cloned()
     }
@@ -1147,8 +1147,8 @@ mod tests {
         let exported = Rc::new(RefCell::new(0));
         cx.update(|cx| {
             let exported = exported.clone();
-            cx.subscribe(&dialog, move |_, event: &ExportDialogEvent, _| {
-                if let ExportDialogEvent::Export { .. } = event {
+            cx.subscribe(&dialog, move |_, event: &ExportPageEvent, _| {
+                if let ExportPageEvent::Export { .. } = event {
                     *exported.borrow_mut() += 1;
                 }
             })
@@ -1383,8 +1383,8 @@ mod tests {
         let exported = Rc::new(RefCell::new(Vec::new()));
         cx.update(|cx| {
             let exported = exported.clone();
-            cx.subscribe(&dialog, move |_, event: &ExportDialogEvent, _| {
-                if let ExportDialogEvent::Export {
+            cx.subscribe(&dialog, move |_, event: &ExportPageEvent, _| {
+                if let ExportPageEvent::Export {
                     choice, extension, ..
                 } = event
                 {
@@ -1397,7 +1397,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
 
-        // Enter, the dialog's default, does nothing while the plugin is
+        // Enter, the page's default, does nothing while the plugin is
         // being described and the first choice resolved.
         cx.update(|window, cx| open_export_dialog(&dialog, window, cx));
         cx.update(|_, cx| {
@@ -1444,7 +1444,7 @@ mod tests {
             assert_eq!(input, Some(Some("rgba8".to_owned())));
         });
 
-        // Enter dispatches the dialog's confirm, as a click on Export… does.
+        // Enter dispatches the page's confirm, as a click on Export… does.
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
 
