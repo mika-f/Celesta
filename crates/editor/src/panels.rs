@@ -41,7 +41,12 @@ impl EditorView {
         });
         let leading = leading
             .child(
+                // A long name ellipsizes rather than pushing the composition
+                // picker out of the title bar.
                 div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
                     .text_base()
                     .text_color(cx.theme().foreground)
                     .whitespace_nowrap()
@@ -50,6 +55,7 @@ impl EditorView {
             .when(self.is_react_preview(), |leading| {
                 leading.child(
                     div()
+                        .flex_none()
                         .text_sm()
                         .text_color(muted)
                         .whitespace_nowrap()
@@ -65,7 +71,7 @@ impl EditorView {
                 let selected = react.composition_id.clone();
                 let view = cx.entity().downgrade();
                 leading.child(
-                    div().occlude().child(
+                    div().flex_none().occlude().child(
                         Button::new("select-composition")
                             .small()
                             .ghost()
