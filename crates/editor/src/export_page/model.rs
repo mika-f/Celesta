@@ -965,7 +965,11 @@ mod tests {
     fn plugin(id: &str, origin: MediaOrigin, media: MediaManifest) -> RegisteredPlugin {
         RegisteredPlugin {
             id: id.into(),
-            name: id.into(),
+            name: match id {
+                "b" => "Bundled".into(),
+                "p" => "Project plugin".into(),
+                other => other.into(),
+            },
             version: "1.0.0".into(),
             origin,
             directory: PathBuf::from(format!("/plugins/{id}")),
@@ -1163,7 +1167,11 @@ mod tests {
         let registry = registry();
         assert_eq!(
             labels(&model(&registry).muxer_options()),
-            ["MP4 · b", "IVF · b", "MP4 · p (project)"]
+            [
+                "MP4 · Bundled",
+                "IVF · Bundled",
+                "MP4 · Project plugin (project)"
+            ]
         );
     }
 
@@ -1171,7 +1179,10 @@ mod tests {
     fn still_muxers_are_not_containers() {
         let registry = celesta_exporter::with_builtin(vec![bundled()]);
         let model = model(&registry);
-        assert_eq!(labels(&model.muxer_options()), ["MP4 · b", "IVF · b"]);
+        assert_eq!(
+            labels(&model.muxer_options()),
+            ["MP4 · Bundled", "IVF · Bundled"]
+        );
     }
 
     #[test]
@@ -1230,12 +1241,21 @@ mod tests {
         let mp4 = resolved_model(&registry, "export.mp4");
         assert_eq!(
             labels(&mp4.encoder_options(Track::Video)),
-            ["H.264 (x264) · b", "H.264 (project) · p (project)"]
+            [
+                "H.264 (x264) · Bundled",
+                "H.264 (project) · Project plugin (project)"
+            ]
         );
-        assert_eq!(labels(&mp4.encoder_options(Track::Audio)), ["AAC · b"]);
+        assert_eq!(
+            labels(&mp4.encoder_options(Track::Audio)),
+            ["AAC · Bundled"]
+        );
 
         let ivf = resolved_model(&registry, "export.ivf");
-        assert_eq!(labels(&ivf.encoder_options(Track::Video)), ["VP9 · b"]);
+        assert_eq!(
+            labels(&ivf.encoder_options(Track::Video)),
+            ["VP9 · Bundled"]
+        );
         assert!(ivf.encoder_options(Track::Audio).is_empty());
         assert_eq!(ivf.extension().as_deref(), Some("ivf"));
     }
@@ -1276,7 +1296,7 @@ mod tests {
         assert!(crf.error.is_some());
         assert_eq!(
             model.output_choice(),
-            Err("H.264 (x264) · b: CRF must be at most 51".to_owned())
+            Err("H.264 (x264) · Bundled: CRF must be at most 51".to_owned())
         );
     }
 

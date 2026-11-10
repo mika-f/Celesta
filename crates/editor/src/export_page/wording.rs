@@ -264,6 +264,38 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_other_file_is_worded_neutrally() {
+        assert_eq!(
+            model().warning_text(&PageWarning::UnreadableFile {
+                source: PresetSource::File,
+                message: "m".into(),
+            }),
+            "The presets file couldn’t be read, so its presets aren’t listed. m"
+        );
+    }
+
+    #[test]
+    fn text_that_is_no_reference_is_worded_as_written() {
+        assert_eq!(
+            text(ResolveWarning::Unavailable {
+                base: "preset `web`".into(),
+                kind: ComponentKind::VideoEncoder,
+                text: "x264".into(),
+                reason: "not installed".into(),
+            }),
+            "x264 is unavailable: not installed. The default encoder is used."
+        );
+        assert_eq!(
+            text(ResolveWarning::NoAudio {
+                base: "preset `web`".into(),
+                text: "aac".into(),
+                muxer: reference(MUXER),
+            }),
+            "aac is not used: Test muxer · Test codec takes no audio. The audio is left out."
+        );
+    }
+
+    #[test]
     fn an_unknown_default_names_the_preset() {
         assert_eq!(
             model().warning_text(&PageWarning::UnknownDefault { name: "Web".into() }),
