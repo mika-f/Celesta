@@ -142,24 +142,39 @@ impl PresetsFile {
 
     /// Writes the file whole through a temporary file in the same folder,
     /// renamed over `path`, so a reader never sees half of it and a failure
-    /// leaves the old file and nothing else. The folder must exist.
+    /// leaves the old file and nothing else. The folder must exist. A
+    /// symbolic link at `path` is written through, to the file it points
+    /// at; on Unix the file keeps its mode, and a new one is `0644`.
     pub fn save(&self, path: &Path) -> Result<(), ExportError> {
         let fail =
             |error: &dyn std::fmt::Display| invalid(path, format!("cannot be written: {error}"));
-        let folder = match path.parent() {
+        let target = link_target(path);
+        let folder = match target.parent() {
             Some(folder) if !folder.as_os_str().is_empty() => folder,
             _ => Path::new("."),
         };
         let text = serde_json::to_string_pretty(self).map_err(|error| fail(&error))?;
         let mut temporary =
             tempfile::NamedTempFile::new_in(folder).map_err(|error| fail(&error))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&target)
+                .ok()
+                .filter(std::fs::Metadata::is_file)
+                .map_or(0o644, |held| held.permissions().mode() & 0o7777);
+            temporary
+                .as_file()
+                .set_permissions(std::fs::Permissions::from_mode(mode))
+                .map_err(|error| fail(&error))?;
+        }
         temporary
             .write_all(text.as_bytes())
             .and_then(|()| temporary.write_all(b"\n"))
             .and_then(|()| temporary.as_file().sync_all())
             .map_err(|error| fail(&error))?;
         temporary
-            .persist(path)
+            .persist(&target)
             .map_err(|error| fail(&error.error))?;
         Ok(())
     }
@@ -187,6 +202,23 @@ impl PresetsFile {
             }
         }
     }
+}
+
+/// The file `path` names, following symbolic links (each relative one
+/// against its link's folder), even to a file that does not exist yet.
+/// `path` itself when it is no link; a loop stops after 40 links.
+fn link_target(path: &Path) -> PathBuf {
+    let mut target = path.to_path_buf();
+    for _ in 0..40 {
+        let Ok(link) = std::fs::read_link(&target) else {
+            break;
+        };
+        target = match target.parent() {
+            Some(folder) => folder.join(link),
+            None => link,
+        };
+    }
+    target
 }
 
 /// Loads `path` (or starts a new file when there is none), applies
@@ -247,7 +279,9 @@ impl PresetLookup {
     /// The first file (file, project, user) holding `name`. Missing files
     /// are skipped; a file that is reached and cannot be read is
     /// [`ExportError::InvalidPresets`]. A match in the project file also
-    /// reads the user file, to warn when it hides a preset there.
+    /// reads the user file, to warn when it hides a preset there; a user
+    /// file that cannot be read is then a warning, so a broken personal
+    /// file does not fail an export that the project's file answers.
     pub fn find(&self, name: &str) -> Result<Option<FoundPreset>, ExportError> {
         let candidates = [
             (PresetSource::File, &self.file),
@@ -265,12 +299,23 @@ impl PresetLookup {
             let mut warnings = Vec::new();
             if source == PresetSource::Project
                 && let Some(user) = &self.user
-                && let Some(held) = PresetsFile::load_if_present(user)?
-                && held.find(name).is_some()
             {
-                warnings.push(format!(
-                    "the project's preset `{name}` hides the user preset of the same name"
-                ));
+                match PresetsFile::load_if_present(user) {
+                    Ok(Some(held)) if held.find(name).is_some() => warnings.push(format!(
+                        "the project's preset `{name}` hides the user preset of the same name"
+                    )),
+                    Ok(_) => {}
+                    Err(error) => {
+                        let reason = match error {
+                            ExportError::InvalidPresets { message, .. } => message,
+                            other => other.to_string(),
+                        };
+                        warnings.push(format!(
+                            "your presets file {} could not be read, so it was not checked for a preset of the same name: {reason}",
+                            user.display()
+                        ));
+                    }
+                }
             }
             return Ok(Some(FoundPreset {
                 preset: preset.clone(),
@@ -506,10 +551,22 @@ mod tests {
         );
         assert_eq!(lookup.project_default().unwrap(), None);
 
-        // A project match reads the user file for the shadow check.
+        // A project match reads the user file only for the shadow check, so
+        // a broken one is a warning there.
         lookup.file = None;
         write(&project, &file_with(&["x"]));
-        let (path, _) = message(lookup.find("x").unwrap_err());
+        let found = lookup.find("x").unwrap().unwrap();
+        assert_eq!(found.source, PresetSource::Project);
+        let (_, reason) = message(PresetsFile::load(&user).unwrap_err());
+        assert_eq!(
+            found.warnings,
+            [format!(
+                "your presets file {} could not be read, so it was not checked for a preset of the same name: {reason}",
+                user.display()
+            )]
+        );
+        // A name the lookup has to find in it still fails.
+        let (path, _) = message(lookup.find("y").unwrap_err());
         assert_eq!(path, user);
     }
 
@@ -575,6 +632,89 @@ mod tests {
         })
         .unwrap();
         assert_eq!(PresetsFile::load(&path).unwrap().presets.len(), 2);
+    }
+
+    #[test]
+    fn update_presets_never_writes_over_a_file_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let (broken, newer) = (
+            dir.path().join("broken.json"),
+            dir.path().join("newer.json"),
+        );
+        write(&broken, "{ \"version\": 1, ");
+        write(&newer, r#"{"version":2,"profiles":{"web":{}}}"#);
+        for path in [&broken, &newer] {
+            let before = std::fs::read(path).unwrap();
+            let (named_path, _) = message(
+                update_presets(path, |file| {
+                    file.put(named("a"));
+                })
+                .unwrap_err(),
+            );
+            assert_eq!(&named_path, path);
+            assert_eq!(std::fs::read(path).unwrap(), before, "{}", path.display());
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_save_keeps_the_files_mode_and_makes_new_files_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("fresh.json");
+        PresetsFile::new().save(&fresh).unwrap();
+        assert_eq!(mode(&fresh), 0o644);
+
+        let held = dir.path().join("held.json");
+        for kept in [0o644, 0o640] {
+            write(&held, &file_with(&[]));
+            std::fs::set_permissions(&held, std::fs::Permissions::from_mode(kept)).unwrap();
+            update_presets(&held, |file| {
+                file.put(named("a"));
+            })
+            .unwrap();
+            assert_eq!(mode(&held), kept);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_save_writes_through_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target_dir = dir.path().join("dotfiles");
+        std::fs::create_dir(&target_dir).unwrap();
+        let target = target_dir.join(PRESETS_FILE);
+        write(&target, &file_with(&["a"]));
+        let link = dir.path().join(PRESETS_FILE);
+        std::os::unix::fs::symlink("dotfiles/export-presets.json", &link).unwrap();
+
+        update_presets(&link, |file| {
+            file.put(named("b"));
+        })
+        .unwrap();
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(PresetsFile::load(&target).unwrap().presets.len(), 2);
+        assert_eq!(std::fs::read_dir(&target_dir).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+
+        // A link to a file not made yet makes it.
+        let dangling = dir.path().join("later.json");
+        std::os::unix::fs::symlink("dotfiles/later.json", &dangling).unwrap();
+        PresetsFile::new().save(&dangling).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&dangling)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(PresetsFile::load(&target_dir.join("later.json")).is_ok());
     }
 
     #[test]

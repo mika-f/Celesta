@@ -1854,6 +1854,59 @@ mod tests {
     }
 
     #[test]
+    fn a_broken_user_file_does_not_fail_a_project_preset() {
+        let registry = all();
+        let (dir, presets) = lookup(Some(presets_file(json!([web()]), Some("web"))), None);
+        let user = dir.path().join("user.json");
+        std::fs::write(&user, "{").unwrap();
+        let expected = format!(
+            "your presets file {} could not be read, so it was not checked for a preset of the same name: is not valid JSON: EOF while parsing an object at line 1 column 1",
+            user.display()
+        );
+        for choice in [named_preset("web"), OutputChoice::default()] {
+            let resolved = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap();
+            assert_eq!(resolved.video.settings["crf"], num(20.0), "{choice:?}");
+            assert_eq!(resolved.warnings, [expected.as_str()], "{choice:?}");
+        }
+
+        // A name only the user file could hold still fails on it.
+        let error =
+            resolve_with(&registry, &named_preset("other"), "film.mp4", &presets).unwrap_err();
+        assert!(
+            matches!(&error, ExportError::InvalidPresets { path, .. } if *path == user),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn naming_the_presets_own_encoder_keeps_its_options() {
+        let registry = all();
+        let (_dir, presets) = user_presets(json!([web()]));
+        let mut choice = with_video("b/x264");
+        choice.preset = Some("web".into());
+        let resolved = resolve_with(&registry, &choice, "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.reference, reference("b/x264"));
+        assert_eq!(resolved.video.settings["crf"], num(20.0));
+        assert_eq!(resolved.video.settings["preset"], string("slow"));
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+    }
+
+    #[test]
+    fn a_project_default_is_found_in_the_user_file() {
+        let registry = all();
+        let (_dir, presets) = lookup(
+            Some(presets_file(json!([]), Some("web"))),
+            Some(presets_file(json!([web()]), None)),
+        );
+        let resolved =
+            resolve_with(&registry, &OutputChoice::default(), "film.mp4", &presets).unwrap();
+        assert_eq!(resolved.video.settings["crf"], num(20.0));
+        assert_eq!(resolved.video.settings["preset"], string("slow"));
+        assert_eq!(resolved.audio, None);
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+    }
+
+    #[test]
     fn audio_options_without_audio_are_ignored() {
         let registry = all();
         let (_dir, presets) = user_presets(json!([web()]));
