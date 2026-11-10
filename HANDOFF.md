@@ -43,7 +43,7 @@ Per-task specifications, implementation details, and validation results live in
   is built for macos only`); on Linux and Windows its crate builds a stub
   program that exits with an error, so the plugins workspace still builds
   on both. CI lints it on Linux and macOS (the Plugins job's Clippy step
-  skips Windows). The macOS package puts it in `Contents/PlugIns` beside
+  skips Windows). The macOS package puts it in `Contents/Resources/PlugIns` beside
   `ffmpeg` (`scripts/package-macos.py`, no `dylibbundler`); see
   [`docs/handoff/2026-11-09-media-avfoundation.md`](docs/handoff/2026-11-09-media-avfoundation.md).
 - Linux: `scripts/build-ffmpeg-linux.sh` builds static FFmpeg 8.1.x libraries

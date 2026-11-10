@@ -227,7 +227,7 @@ FFmpeg's x264 with AudioToolbox's AAC in AVFoundation's MP4.
   skipped, it is built for macos only`, writing nothing for it. CI's
   Plugins Clippy step now runs on macOS as well as Linux.
 - **Packaging** (Task 9). `scripts/package-macos.py` builds
-  `plugins/avfoundation` with `build.mts` into `Contents/PlugIns` after
+  `plugins/avfoundation` with `build.mts` into `Contents/Resources/PlugIns` after
   FFmpeg (no `dylibbundler`: it links system frameworks only), checks its
   program as it checks the others' Mach-O files (architectures, only
   system dependencies, signing), and adds its crates to the licence
@@ -483,11 +483,10 @@ until `TURBO_FORCE=1 pnpm run build:runtime` rebuilt them.
   dispatched run on `085512b6` (42760950871) failed at `codesign` on
   `Contents/PlugIns/ffmpeg/licenses/LICENSE-APACHE`, a failure `main`
   has too; #803 fixes it by moving the bundled plugins to
-  `Contents/Resources/PlugIns`. Once #803 is on `main` and this stack is
-  rebased onto it, AVFoundation's packaging moves there as well
-  (`package-macos.py`, `test-package.mjs`, `packaging/macos/README.md`,
-  HANDOFF.md, this note, and the spec's As built), and a dispatched run
-  has to pass before this merges.
+  `Contents/Resources/PlugIns`. After the rebase onto `main` with #803,
+  AVFoundation's plugin is bundled there too (`package-macos.py`,
+  `test-package.mjs`, `packaging/macos/README.md`, HANDOFF.md, this note,
+  and the spec), and a dispatched run has to pass before this merges.
 - **P6** (`plugins/mediafoundation`, Windows), in its own session.
 - **GPU texture sharing** (`transports: ioSurface`): frames still cross
   shared memory or the pipe and are copied into a CoreVideo pool buffer.

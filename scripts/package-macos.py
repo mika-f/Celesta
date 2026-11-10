@@ -21,9 +21,9 @@ ROOT = Path(__file__).resolve().parent.parent
 # Homebrew's unversioned ffmpeg formula is FFmpeg 9, which Celesta does not support yet.
 FFMPEG_FORMULA = "ffmpeg@8"
 # The Cargo packages, in the plugins workspace, of the plugins the package
-# bundles into Contents/Resources/PlugIns, whose dependencies the license inventory
-# lists. The AVFoundation plugin links system frameworks only, so it needs no
-# dylibbundler.
+# bundles into Contents/Resources/PlugIns, whose dependencies the license
+# inventory lists. The AVFoundation plugin links system frameworks only, so it
+# needs no dylibbundler.
 BUNDLED_PACKAGES = {"ffmpeg": "celesta-codec-ffmpeg", "avfoundation": "celesta-codec-avfoundation"}
 MACHO_MAGIC = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
