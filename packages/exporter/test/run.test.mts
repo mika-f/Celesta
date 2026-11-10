@@ -49,6 +49,9 @@ test('component listings resolve without a status', { skip }, async () => {
   const listed = await listComponents({ check: true, ...run('components') });
   assert.equal(listed[0]!.id, 'ffmpeg/mp4');
   assert.deepEqual(listed[0]!.args, ['--json', '--list-components', '--check']);
+  const builtIn = listed.find((component) => component.origin === 'built-in');
+  assert.equal(builtIn?.id, 'builtin/png');
+  assert.equal(builtIn?.plugin, 'builtin');
   const described = await describeComponent('ffmpeg/libx264', run('components'));
   assert.equal(described.kind, 'videoEncoder');
   assert.deepEqual(described.settings, []);

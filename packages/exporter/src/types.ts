@@ -265,7 +265,11 @@ export type ProgressEvent =
   | { event: 'mixingAudio' }
   | { event: 'muxing' }
   | { event: 'warning'; message: string }
-  /** The components the export resolved, sent before rendering starts. */
+  /**
+   * The components the export resolved, sent before rendering starts. A
+   * still export sends it too, with its image muxer and encoder and
+   * `audio: null`.
+   */
   | {
       event: 'output';
       muxer: string;
@@ -282,7 +286,8 @@ export interface ComponentInfo {
   kind: 'decoder' | 'videoEncoder' | 'audioEncoder' | 'muxer';
   name: string;
   plugin: string;
-  origin: 'user' | 'bundled' | 'project';
+  /** Where the plugin comes from; `built-in` for the image components inside the exporter. */
+  origin: 'user' | 'bundled' | 'project' | 'built-in';
   /** With `check`: whether the plugin could start and offers the component. */
   available?: boolean;
   /** With `check`: why it is not available. */

@@ -94,7 +94,7 @@ than working out file names.
 | --- | --- |
 | `compositions` | `compositionId`, `compositions` (React entries) |
 | `composition` | `composition` (`width`, `height`, `fps`, `frames`, `duration`) |
-| `output` | `muxer`, `muxerName`, `video` and `audio` (`component`, `name`, `settings` labels, or `audio: null`), sent before rendering |
+| `output` | `muxer`, `muxerName`, `video` and `audio` (`component`, `name`, `settings` labels, or `audio: null`), sent before rendering; a still export names its image muxer and encoder, with `audio: null` |
 | `rendering` | `frame` (counting from 1) of `total` |
 | `mixingAudio`, `muxing` | none |
 | `warning` | `message` |
