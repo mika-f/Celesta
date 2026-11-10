@@ -41,6 +41,9 @@ and short (minor).
 **Transport and footer.** Mark In and Mark Out are icon buttons
 (`ArrowRightFromLine`, `ArrowRightToLine`), zoom to fit is
 `UnfoldHorizontal`; all three are added to `LucideIcons` in `icons.rs`.
+Every icon button in the transport bar and the timeline footer sets
+`accessibility_label` (a tooltip only describes a button), which
+`style_guard::transport_icon_buttons_have_accessible_names` keeps.
 `transport_layout(width, rem)` compares in rems: everything at ≥ 51.25rem,
 the In/Out buttons at ≥ 37.5rem (820px and 600px at a 16px rem).
 
