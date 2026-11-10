@@ -5,9 +5,15 @@ use std::process::Command;
 
 use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
 
-/// The variables the user's settings folder is found from, all at `home`.
-fn home_env(home: &std::path::Path) -> [(&'static str, &std::path::Path); 3] {
-    [("HOME", home), ("XDG_CONFIG_HOME", home), ("APPDATA", home)]
+/// The variables the user's settings and plugin folders are found from,
+/// all at `home`.
+fn home_env(home: &std::path::Path) -> [(&'static str, &std::path::Path); 4] {
+    [
+        ("HOME", home),
+        ("XDG_CONFIG_HOME", home),
+        ("XDG_DATA_HOME", home),
+        ("APPDATA", home),
+    ]
 }
 
 /// Runs the exporter with `--json` on the minimal example and returns its one
@@ -173,9 +179,7 @@ fn plain_failure(plugin_dir: &std::path::Path, args: &[&str]) -> String {
     let home = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
         .env_remove(PLUGIN_PATH_ENV)
-        .env("HOME", home.path())
-        .env("XDG_DATA_HOME", home.path())
-        .env("APPDATA", home.path())
+        .envs(home_env(home.path()))
         .arg("--plugin-dir")
         .arg(plugin_dir)
         .arg("--no-ui")

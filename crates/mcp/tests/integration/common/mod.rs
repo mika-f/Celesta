@@ -78,6 +78,21 @@ pub async fn client_with_test_codec(
     serve(command).await
 }
 
+/// [`client_with_test_codec`] with the user's folders (`HOME`,
+/// `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `APPDATA`) all at `home`, so the
+/// server reads no presets file or plugin of the developer's.
+pub async fn client_with_test_codec_in(
+    plugin: &TestCodecPlugin,
+    home: &Path,
+) -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
+    let mut command = server();
+    command.env(PLUGIN_PATH_ENV, plugin.folder());
+    for variable in ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "APPDATA"] {
+        command.env(variable, home);
+    }
+    serve(command).await
+}
+
 pub fn params(name: &'static str, args: Value) -> CallToolRequestParams {
     let Value::Object(args) = args else {
         panic!("tool arguments must be an object")

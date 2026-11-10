@@ -4,7 +4,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::common::{
-    call, client, client_with_test_codec, entry, is_error, params, runtime_built, structured, text,
+    call, client, client_with_test_codec, client_with_test_codec_in, entry, is_error, params,
+    runtime_built, structured, text,
 };
 use celesta_codec_test::TestCodecPlugin;
 use rmcp::model::{ClientRequest, Request, ServerResult};
@@ -125,9 +126,10 @@ async fn export_video_uses_a_project_preset() {
     )
     .unwrap();
     let output = dir.path().join("preset.mp4");
+    let home = tempfile::tempdir().unwrap();
     // Bound before the client, so it drops after it.
     let plugin = TestCodecPlugin::new();
-    let (client, _) = client_with_test_codec(&plugin).await;
+    let (client, _) = client_with_test_codec_in(&plugin, home.path()).await;
     let result = call(
         &client,
         "export_video",
