@@ -180,6 +180,37 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn a_long_title_gives_way_to_the_count_and_the_menu(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            celesta_editor_theme::init(cx);
+        });
+        let handle = cx.open_window(size(px(160.), px(100.)), |window, cx| {
+            let build: Rc<dyn Fn() -> PanelHeader> = Rc::new(|| {
+                PanelHeader::new("h", "A panel title far too long for its band")
+                    .count(12)
+                    .options(|menu, _, _| menu)
+            });
+            let host = cx.new(|_| Host { build });
+            Root::new(host, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        let options = cx.debug_bounds("h-options").expect("the menu button");
+        let count = cx.debug_bounds("h-count").expect("the count");
+        let title = cx.debug_bounds("h-title").expect("the title");
+        assert!(
+            options.origin.x + options.size.width <= px(160.),
+            "the menu stays in the band"
+        );
+        assert!(count.origin.x + count.size.width <= options.origin.x);
+        assert!(
+            title.origin.x + title.size.width <= count.origin.x,
+            "the title truncates"
+        );
+    }
+
+    #[gpui_kit::test]
     fn options_open_and_escape_closes_them(cx: &mut TestAppContext) {
         let handle = window_with(cx, || {
             PanelHeader::new("h", "Assets").options(|menu, _, _| {

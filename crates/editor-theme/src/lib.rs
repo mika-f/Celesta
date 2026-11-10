@@ -41,9 +41,12 @@ pub fn apply(cx: &mut App) {
 }
 
 /// One neutral grey family, darkest first: the window ground (also the
-/// viewer's surround and input fields), panel bodies, header and toolbar
-/// bands, then popovers. `primary` is a restrained blue for selection, focus
-/// and the primary action; the brand orange ([`ACCENT`]) is not a UI color.
+/// viewer's surround), panel bodies, header and toolbar bands, then
+/// popovers. Inputs keep gpui-kit's fill, `input` at 30% over the surface
+/// behind them, a little lighter than a panel body. `primary` is a
+/// restrained blue for selection, focus and the primary action; the brand
+/// orange ([`ACCENT`]) marks the wordmark, the playhead and the timeline's
+/// own markers, not controls.
 fn apply_palette(colors: &mut ThemeColor) {
     let ground: Hsla = rgb(0x161616).into();
     let panel: Hsla = rgb(0x1c1c1c).into();
@@ -103,6 +106,12 @@ fn apply_palette(colors: &mut ThemeColor) {
     colors.primary_hover = rgb(0x5a8be0).into();
     colors.primary_active = rgb(0x3f72c4).into();
     colors.primary_foreground = rgb(0xffffff).into();
+    // Filled `primary` buttons read their own roles; a theme update does not
+    // derive them from `primary*` (loading a theme config does).
+    colors.button_primary = colors.primary;
+    colors.button_primary_hover = colors.primary_hover;
+    colors.button_primary_active = colors.primary_active;
+    colors.button_primary_foreground = colors.primary_foreground;
     colors.ring = primary;
     colors.list_active_border = primary;
     colors.table_active_border = primary;
@@ -206,6 +215,12 @@ mod tests {
             init(cx);
             let theme = Theme::global(cx);
             let l = |c: Hsla| c.l;
+            // Filled primary buttons read `button_primary*`, which a theme
+            // update does not derive from `primary*`.
+            assert_eq!(theme.button_primary, theme.primary);
+            assert_eq!(theme.button_primary_hover, theme.primary_hover);
+            assert_eq!(theme.button_primary_active, theme.primary_active);
+            assert_eq!(theme.button_primary_foreground, theme.primary_foreground);
             assert!(l(theme.background) < l(theme.sidebar));
             assert!(l(theme.sidebar) < l(theme.title_bar));
             assert!(l(theme.title_bar) < l(theme.popover));

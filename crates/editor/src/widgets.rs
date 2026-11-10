@@ -1,5 +1,6 @@
 use celesta_react_bridge::ComponentPropertyField;
 use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::button::Button;
 use gpui_kit::prelude::*;
 use gpui_kit::{App, SharedString, div};
 
@@ -128,5 +129,20 @@ pub(crate) fn format_component_number(value: f64) -> String {
         format!("{value:.0}")
     } else {
         format!("{value}")
+    }
+}
+
+/// A label for an `xsmall` button at the `text_sm` floor. gpui-kit sizes an
+/// xsmall button's label `text_xs` (9.75px at the editor's 13px base); this
+/// keeps the button's height and reads the label at `text_sm`.
+pub(crate) trait CompactLabel {
+    fn compact_label(self, label: impl Into<SharedString>) -> Self;
+}
+
+impl CompactLabel for Button {
+    fn compact_label(self, label: impl Into<SharedString>) -> Self {
+        let label = label.into();
+        self.accessibility_label(label.clone())
+            .child(div().text_sm().child(label))
     }
 }

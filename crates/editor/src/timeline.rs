@@ -10,6 +10,7 @@
 //! lane positions, the ruler, hit tests and painting share these numbers, so
 //! they move onto tokens together (P7c), not one `px()` at a time.
 
+use crate::widgets::CompactLabel as _;
 use celesta_editor_core::{ClipSummary, TrackSummary};
 use celesta_project::TrackKind;
 use celesta_react_bridge::{ReactChapter, SourcePos, chapter_at, scenes_of};
@@ -1000,7 +1001,7 @@ impl EditorView {
                             Button::new(SharedString::from(format!("track-mute-{}", track.id)))
                                 .xsmall()
                                 .ghost()
-                                .label("M")
+                                .compact_label("M")
                                 .selected(track.muted)
                                 .tooltip("Mute in the preview")
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1012,7 +1013,7 @@ impl EditorView {
                             Button::new(SharedString::from(format!("track-solo-{}", track.id)))
                                 .xsmall()
                                 .ghost()
-                                .label("S")
+                                .compact_label("S")
                                 .selected(track.solo)
                                 .tooltip("Solo in the preview")
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1391,7 +1392,7 @@ impl EditorView {
         let lane_width = self.lane_width();
         let button = Button::new("timeline-set-timing")
             .xsmall()
-            .label("Set timing");
+            .compact_label("Set timing");
         let action = match offer {
             SetTimingOffer::Hidden => return None,
             // The button keeps its tooltip when disabled, and lays the
@@ -1818,7 +1819,7 @@ impl EditorView {
                         Button::new("timeline-zoom-fit")
                             .xsmall()
                             .ghost()
-                            .label("Fit")
+                            .compact_label("Fit")
                             .disabled(fitted)
                             .tooltip_with_action("Zoom to fit", &ZoomTimelineToFit, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.zoom_timeline_to_fit(cx))),

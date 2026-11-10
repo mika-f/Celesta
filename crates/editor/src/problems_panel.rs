@@ -4,6 +4,7 @@ use crate::actions::ShowProblems;
 use crate::problems::first_line;
 use crate::problems::{ActiveProblem, LogEntry, Severity, Source, fenced};
 use crate::view::{EditorView, RightTab};
+use crate::widgets::CompactLabel as _;
 use celesta_editor_theme::metrics;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::clipboard::Clipboard;
@@ -152,7 +153,7 @@ impl EditorView {
                                     Button::new("copy-history")
                                         .xsmall()
                                         .ghost()
-                                        .label("Copy all")
+                                        .compact_label("Copy all")
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             cx.write_to_clipboard(ClipboardItem::new_string(
                                                 this.problems.history_text(),
@@ -163,7 +164,7 @@ impl EditorView {
                                     Button::new("clear-history")
                                         .xsmall()
                                         .ghost()
-                                        .label("Clear")
+                                        .compact_label("Clear")
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.problems.clear_history();
                                             this.expanded_log_entries.clear();
@@ -377,7 +378,7 @@ impl EditorView {
                         Button::new("show-in-problems")
                             .xsmall()
                             .outline()
-                            .label("Show in Problems")
+                            .compact_label("Show in Problems")
                             .on_click(move |_, _, cx| {
                                 view.update(cx, |this, cx| this.show_problems(cx)).ok();
                             })
@@ -452,7 +453,7 @@ pub(crate) fn show_in_problems_row(
         Button::new(id)
             .xsmall()
             .outline()
-            .label("Show in Problems")
+            .compact_label("Show in Problems")
             .on_click(cx.listener(|this, _, _, cx| this.show_problems(cx))),
     )
 }

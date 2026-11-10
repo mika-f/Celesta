@@ -7,6 +7,7 @@ use crate::property_panel::{
     property_control_handler, value_text,
 };
 use crate::view::EditorView;
+use crate::widgets::CompactLabel as _;
 use celesta_react_bridge::{ComponentPropertyField, EffectiveValue, ValueSource, effective_values};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::spinner::Spinner;
@@ -115,7 +116,7 @@ impl EditorView {
                     Button::new(row_id("reset", key))
                         .ghost()
                         .xsmall()
-                        .label("Reset to default")
+                        .compact_label("Reset to default")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.commit_property(&reset_key, None, TextUpdate::Always, cx);
                         })),

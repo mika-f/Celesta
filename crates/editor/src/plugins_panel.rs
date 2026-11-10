@@ -10,6 +10,7 @@ use crate::helpers::{PathPick, pick_one_path};
 use crate::plugins::FoundPlugins;
 use crate::problems::{Source, error_chain};
 use crate::view::EditorView;
+use crate::widgets::CompactLabel as _;
 use celesta_media::DecoderUse;
 use celesta_plugin_host::{
     PluginEntry, PluginSource, SettingsError, UserSettings, create_private_dir_all, user_plugin_dir,
@@ -160,7 +161,7 @@ impl EditorView {
                 Button::new("plugins-reload")
                     .xsmall()
                     .outline()
-                    .label("Reload Plugins")
+                    .compact_label("Reload Plugins")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.reload_plugins_action(&ReloadPlugins, window, cx);
                     })),
@@ -169,7 +170,7 @@ impl EditorView {
                 Button::new("plugins-add-folder")
                     .xsmall()
                     .ghost()
-                    .label("Add Folder…")
+                    .compact_label("Add Folder…")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.add_plugin_folder(window, cx);
                     })),
@@ -178,7 +179,7 @@ impl EditorView {
                 Button::new("plugins-open-user-folder")
                     .xsmall()
                     .ghost()
-                    .label("Open Plugin Folder")
+                    .compact_label("Open Plugin Folder")
                     .on_click(cx.listener(|this, _, _, cx| this.open_user_plugin_folder(cx))),
             );
         div()
@@ -220,7 +221,7 @@ impl EditorView {
                         Button::new(("plugins-remove-folder", index))
                             .xsmall()
                             .ghost()
-                            .label("Remove")
+                            .compact_label("Remove")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 let folder = folder.clone();
                                 this.change_plugin_settings(
@@ -274,7 +275,7 @@ impl EditorView {
             Button::new(("plugin-turn-off", index))
                 .xsmall()
                 .ghost()
-                .label("Turn Off")
+                .compact_label("Turn Off")
                 .on_click(cx.listener(move |this, _, window, cx| {
                     let (id, directory) = (id.clone(), directory.clone());
                     this.change_plugin_settings(
@@ -295,7 +296,7 @@ impl EditorView {
                     Button::new(("plugin-allow", index))
                         .xsmall()
                         .primary()
-                        .label("Allow")
+                        .compact_label("Allow")
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let (id, directory, fingerprint) =
                                 (id.clone(), directory.clone(), fingerprint.clone());
@@ -337,7 +338,7 @@ impl EditorView {
             Button::new(("plugin-show-folder", index))
                 .xsmall()
                 .ghost()
-                .label("Show Folder")
+                .compact_label("Show Folder")
                 .on_click(cx.listener(move |_, _, _, cx| cx.open_with_system(&directory)))
         };
         v_flex()

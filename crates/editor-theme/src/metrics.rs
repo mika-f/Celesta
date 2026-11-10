@@ -55,8 +55,10 @@ mod tests {
 
     #[test]
     fn scaled_px_is_scaled_at_the_base_font_size() {
-        assert_eq!(scaled_px(16.0), px(BASE_FONT_SIZE));
-        assert_eq!(scaled_px(520.0), px(422.5));
+        // The same length as `scaled` at the base, whatever the base is.
+        for design in [16.0, 520.0] {
+            assert_eq!(scaled_px(design), px(scaled(design).0 * BASE_FONT_SIZE));
+        }
     }
 
     #[test]
