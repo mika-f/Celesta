@@ -1180,10 +1180,6 @@ mod tests {
             ExportError::Render(GpuRenderError::Media(unsupported())),
             ExportError::Audio(AudioMixError::Media(unsupported())),
             ExportError::Render(GpuRenderError::Media(unsupported())).at_frame(3),
-            ExportError::Codec {
-                stage: "video encoding",
-                source: unsupported(),
-            },
         ];
         for error in errors {
             let value = serde_json::to_value(
@@ -1199,6 +1195,25 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    #[test]
+    fn an_encoder_that_cannot_write_is_unsupported_media() {
+        let error = ExportError::Codec {
+            stage: "video encoding",
+            source: MediaError::Unsupported {
+                path: PathBuf::from("/tmp/clip.xyz"),
+                tried: vec!["ffmpeg/main".to_owned()],
+            },
+        };
+        let value = serde_json::to_value(
+            build(Path::new("/tmp/film.tsx"), None, HintStyle::Cli, |_| {
+                Err(error)
+            })
+            .0,
+        )
+        .unwrap();
+        assert_eq!(value["error"]["code"], "unsupported_media", "{value}");
     }
 
     fn classified(error: &ExportError, hints: HintStyle) -> (&'static str, Option<String>) {

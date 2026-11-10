@@ -99,8 +99,9 @@ impl MediaBackend {
     /// candidate whose probe reads it, with that probe cached.
     ///
     /// A missing file fails with [`MediaError::NotFound`] before any plugin
-    /// starts; one that cannot be checked is left to the decoders. A candidate that answers [`MediaError::Unsupported`] moves
-    /// on to the next, as does one with any other error, which is kept; but
+    /// starts; one that cannot be checked is left to the decoders. A
+    /// candidate that answers [`MediaError::Unsupported`] moves on to the
+    /// next, as does one with any other error, which is kept; but
     /// [`MediaError::CodecStopped`] (a deadline missed, or the kill switch)
     /// ends routing. When no candidate reads the file, the error is the
     /// most specific one kept (see [`specificity`]), the first among equals,

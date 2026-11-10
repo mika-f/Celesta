@@ -181,7 +181,8 @@ staged by `build.mts` on `CELESTA_PLUGIN_PATH`:
 - Unit and integration tests cover the rest (Tasks 1–9): protocol per role
   and `hello`; manifests with `media`, bad and duplicate decoder ids, both
   roles, `builtin`, and the old `codec` role; the sibling's `--manifest`
-  (timeouts, bad output, caching); routing by extension and origin,
+  (timeouts, bad output; its caching is not tested, see P2b's Not done);
+  routing by extension and origin,
   fallback, pinning, `NotFound` before any process starts, `CodecStopped`,
   and the error ranking; the exporter's codes; the editor's problem,
   notice, and Plugins row; the FFmpeg plugin's `unsupported` probe and
