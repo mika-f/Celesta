@@ -123,12 +123,14 @@ try {
     # VCPKGRS_TRIPLET to its release-only triplet.
     $triplet = if ($env:VCPKGRS_TRIPLET) { $env:VCPKGRS_TRIPLET } else { 'x64-windows-static-md' }
     Copy-Item -LiteralPath "$env:VCPKG_ROOT/installed/$triplet/share" -Destination "$licenses/native" -Recurse
-    $metadataText = & cargo metadata --locked --offline --format-version 1 --filter-platform x86_64-pc-windows-msvc
+    # The release build downloads only the crates it compiles, so a crate the
+    # lockfile holds for tests alone (celesta-codec-test's lz4_flex) may not be
+    # downloaded yet: neither workspace is read with --offline.
+    $metadataText = & cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
     $metadata = $metadataText | ConvertFrom-Json
     # The codec plugin and its crates are in the plugins workspace. Packaging
-    # builds only the codec there, so that workspace's other crates may not be
-    # downloaded yet: no --offline for it. That workspace also holds plugins
+    # builds only the codec there. That workspace also holds plugins
     # the package does not bundle (VRM), so only the codec and what its normal
     # and build dependencies reach in the resolve graph are listed; a
     # dependency it has only for its tests is not shipped. package-macos.py's

@@ -141,8 +141,8 @@ fn user_plugin_dir_from(os: &str, var: impl Fn(&str) -> Option<OsString>) -> Opt
 /// The plugin folder that comes with Celesta. A package build may fix it
 /// with `CELESTA_SYSTEM_PLUGIN_DIR` at build time (such as
 /// `/usr/lib/celesta/plugins`); otherwise it is found from the running
-/// executable: `plugins` beside it on Windows, `Contents/PlugIns` in a macOS
-/// app bundle, and `../lib/celesta/plugins` from its folder elsewhere (so
+/// executable: `plugins` beside it on Windows, `Contents/Resources/PlugIns`
+/// in a macOS app bundle, and `../lib/celesta/plugins` from its folder elsewhere (so
 /// `/opt/celesta/bin/celesta` uses `/opt/celesta/lib/celesta/plugins`).
 /// `None` when the executable cannot be found; the current directory is
 /// never used instead.
@@ -167,7 +167,10 @@ fn bundled_plugin_dir_for(os: &str, executable: &Path) -> Option<PathBuf> {
         && let Some(contents) = folder.parent()
         && contents.file_name().is_some_and(|name| name == "Contents")
     {
-        return Some(contents.join("PlugIns"));
+        // Not `Contents/PlugIns`: codesign treats everything there as nested
+        // code, and a plugin folder also holds its manifest, licenses, and
+        // scripts, so the app could not be signed.
+        return Some(contents.join("Resources").join("PlugIns"));
     }
     Some(folder.parent()?.join("lib").join("celesta").join("plugins"))
 }
@@ -296,7 +299,9 @@ mod tests {
                     "macos",
                     Path::new("/Applications/Celesta.app/Contents/MacOS/celesta")
                 ),
-                Some(PathBuf::from("/Applications/Celesta.app/Contents/PlugIns"))
+                Some(PathBuf::from(
+                    "/Applications/Celesta.app/Contents/Resources/PlugIns"
+                ))
             );
             // Outside an app bundle, macOS lays out like other Unixes.
             assert_eq!(

@@ -1,10 +1,11 @@
 name: Package
 
 # Builds the Windows and macOS packages. package.yml calls it to sign and
-# publish a release; ci.yml calls it on every push to main with nothing
-# signed, which checks packaging and saves the release-profile Rust cache on
-# main. A tag's run can restore caches from main but cannot share its own
-# with the next tag, so without that a release compiles everything from scratch.
+# publish a release; ci.yml calls it with nothing signed on every push to
+# main, which checks packaging and saves the release-profile Rust cache on
+# main, and on a manual run of CI, which checks a branch's packaging. A tag's
+# run can restore caches from main but cannot share its own with the next
+# tag, so without that a release compiles everything from scratch.
 
 on:
   workflow_call:

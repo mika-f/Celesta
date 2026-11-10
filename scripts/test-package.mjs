@@ -67,7 +67,7 @@ export default function Root() {
   assert.ok(messages[1].scene);
   // Celesta links no FFmpeg: the MP4 below is written by the bundled media
   // plugin, which carries the GPL its libx264 needs.
-  const codec = join(packageDirectory, mac ? 'Contents/PlugIns/ffmpeg' : 'plugins/ffmpeg');
+  const codec = join(packageDirectory, mac ? 'Contents/Resources/PlugIns/ffmpeg' : 'plugins/ffmpeg');
   assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the media plugin');
   const codecManifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
   assert.ok(codecManifest.roles?.includes('media'), 'The media plugin must have the media role');
@@ -158,7 +158,8 @@ export default function Root() {
     .trim().split(/\r?\n/).map((line) => JSON.parse(line));
   const tools = mcpReplies.find((reply) => reply.id === 2).result.tools.map((tool) => tool.name).sort();
   assert.deepEqual(tools, [
-    'contact_sheet', 'export_video', 'init_project', 'inspect', 'list_templates', 'read_docs', 'render_frames',
+    'contact_sheet', 'describe_component', 'export_video', 'init_project', 'inspect', 'list_components',
+    'list_templates', 'read_docs', 'render_frames',
   ]);
   console.log('Package smoke test passed: bundled React hooks, Celesta packages, Code, VOICEVOX, AivisSpeech, TypeScript support, export, and the MCP server, without Node.js on PATH.');
 } finally {

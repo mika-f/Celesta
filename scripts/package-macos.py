@@ -105,7 +105,7 @@ def validate_dependencies(binary, contents, listing):
         if dependency.startswith("@executable_path/"):
             if binary.suffix != ".dylib":
                 executable_directory = binary.parent
-            elif binary.parent.parent.parent.name == "PlugIns":
+            elif binary.parent.parent.parent == contents / "Resources/PlugIns":
                 # A plugin's libraries, in <plugin>/Frameworks, load for the
                 # program its manifest names.
                 executable_directory = plugin_program(binary.parent.parent).parent
@@ -150,10 +150,11 @@ def collect_licenses(resources, target):
         shutil.copy2(path, licenses / path.name)
     shutil.copy2(ROOT / "packaging" / "GPL-SOURCE-OFFER.md", licenses / "GPL-SOURCE-OFFER.md")
     flags = ("--locked", "--format-version", "1", "--filter-platform", target)
-    # The codec plugin and its crates are in the plugins workspace. Packaging
-    # builds only the codec there, so that workspace's other crates may not be
-    # downloaded yet: no --offline for it, and only the codec's are listed.
-    root = json.loads(run("cargo", "metadata", "--offline", *flags, capture=True))
+    # The release build downloads only the crates it compiles, so a crate the
+    # lockfile holds for tests alone (celesta-codec-test's lz4_flex) may not be
+    # downloaded yet: neither workspace is read --offline. The codec plugin's
+    # crates are in the plugins workspace, and only the codec's are listed.
+    root = json.loads(run("cargo", "metadata", *flags, capture=True))
     plugins = json.loads(run("cargo", "metadata", "--manifest-path", ROOT / "plugins/Cargo.toml", *flags, capture=True))
     packages = {}
     for package in (*root["packages"], *codec_packages(plugins)):
@@ -300,10 +301,16 @@ def main():
     # script builds it in the plugins workspace (plugins/target, so not with
     # CARGO_TARGET_DIR; with --skip-build Cargo finds it current) and lays the
     # folder out; --target matches CARGO_BUILD_TARGET, where the script looks.
-    codec = contents / "PlugIns" / "ffmpeg"
+    # Plugins go in Resources/PlugIns, not Contents/PlugIns: codesign takes
+    # everything in Contents/PlugIns for nested code, and a plugin folder also
+    # holds its manifest and licenses, so the app could not be signed there.
+    # In Resources they are sealed as resources, and their Mach-O files are
+    # signed one by one below like the app's other executables.
+    plugins = resources / "PlugIns"
+    codec = plugins / "ffmpeg"
     codec_env = {name: value for name, value in build_env.items() if name != "CARGO_TARGET_DIR"}
     run(helpers / "node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins/ffmpeg",
-        "--out", contents / "PlugIns", "--target", target, env=codec_env)
+        "--out", plugins, "--target", target, env=codec_env)
     program = plugin_program(codec)
     frameworks_from_program = os.path.relpath(codec / "Frameworks", program.parent)
     run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", program,

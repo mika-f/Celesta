@@ -54,14 +54,14 @@ Celesta.app/
       esbuild
     Frameworks/
       (non-system shared libraries Celesta's own executables need, if any)
-    PlugIns/
-      ffmpeg/
-        celesta-plugin.json
-        bin/macos-<arch>/celesta-codec-ffmpeg
-        Frameworks/
-          (FFmpeg and its non-system shared-library dependencies)
-        licenses/
     Resources/
+      PlugIns/
+        ffmpeg/
+          celesta-plugin.json
+          bin/macos-<arch>/celesta-codec-ffmpeg
+          Frameworks/
+            (FFmpeg and its non-system shared-library dependencies)
+          licenses/
       react/
       examples/
       licenses/
@@ -76,8 +76,8 @@ Native esbuild lives in Helpers so all executable code can be signed explicitly.
 
 macOS uses dynamically linked FFmpeg libraries, which only the codec plugin
 loads. `dylibbundler` copies their dependency closure into the plugin's own
-`PlugIns/ffmpeg/Frameworks` and rewrites its load paths. Packaging rejects
-remaining external or unresolved library dependencies. Existing static linking
+`Resources/PlugIns/ffmpeg/Frameworks` and rewrites its load paths. Packaging
+rejects remaining external or unresolved library dependencies. Existing static linking
 on Windows is preserved.
 
 The minimum macOS version in Info.plist is the highest minimum required by any
@@ -153,13 +153,20 @@ inventories, plus the repository's root `LICENSE*` files (copied automatically)
 and `packaging/GPL-SOURCE-OFFER.md`.
 
 Celesta's own executables link no FFmpeg. The codec plugin goes in
-`Contents/PlugIns/ffmpeg`, laid out by the shared plugin build script
+`Contents/Resources/PlugIns/ffmpeg`, laid out by the shared plugin build script
 (`scripts/plugins/build.mts`, which builds `plugins/ffmpeg` in the plugins
 workspace): its program in `bin/macos-<arch>/` (`macos-aarch64` on Apple
 Silicon), the Homebrew libraries it loads in `Frameworks/` (the packaging script
 bundles them there with dylibbundler, apart from the app's own
 `Contents/Frameworks`), and the GPL text and source offer in `licenses/`. The
 script fails if Celesta's own executables link FFmpeg.
+
+Plugins are not in `Contents/PlugIns`: `codesign` takes everything there for
+nested code, and a plugin folder also holds `celesta-plugin.json`,
+`licenses/`, and an optional `js/`, so signing the app fails with `code object
+is not signed at all`. In `Contents/Resources/PlugIns` those files are sealed
+as the app's resources, and the plugin's program and libraries are signed one
+by one with the app's other Mach-O files.
 
 Homebrew's `ffmpeg@8` formula enables the `x264` encoder by default, which is
 GPL-2.0-or-later licensed and makes the codec plugin's program, as

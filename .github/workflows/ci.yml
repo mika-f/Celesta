@@ -403,8 +403,10 @@ jobs:
 
   # Packages for Windows and macOS without signing them, so packaging breaks
   # here rather than at release time, and saves the release-profile Rust cache
-  # on main for the next release tag to restore.
+  # on main for the next release tag to restore. A manual run of CI on a branch
+  # builds them too (unsigned, nothing released), to check a packaging change
+  # before it merges; pull requests skip it.
   package:
     name: Package
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/package-build.yml
