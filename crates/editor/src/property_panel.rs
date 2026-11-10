@@ -539,6 +539,8 @@ impl EditorView {
             }
             ControlEvent::Submit { blur } => self.submit_property_text(key, blur, cx),
             ControlEvent::Escape => self.restore_property_text(key, cx),
+            // Tasks 5 and 6 of P7b open a number row for typing here.
+            ControlEvent::Focused => {}
             ControlEvent::Toggled(checked) => {
                 let value = Some(Value::Bool(checked));
                 self.commit_property(key, value, TextUpdate::Keep, cx);

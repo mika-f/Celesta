@@ -61,7 +61,7 @@ impl ExportPage {
         };
         let text = input.read(cx).value().to_string();
         let value = if *number {
-            match parse_number_input(&text) {
+            match parse_number_input(&text, None) {
                 Ok(value) => SettingValue::Number(value),
                 Err(error) => {
                     *typo = Some(error);
@@ -302,7 +302,9 @@ fn show_value(control: &mut FieldControl, value: &SettingValue, window: &mut Win
             }
             let text = input.read(cx).value();
             let shown = match (number, value) {
-                (true, SettingValue::Number(value)) => parse_number_input(&text) == Ok(*value),
+                (true, SettingValue::Number(value)) => {
+                    parse_number_input(&text, None) == Ok(*value)
+                }
                 _ => text.as_ref() == value.to_string(),
             };
             if !shown {

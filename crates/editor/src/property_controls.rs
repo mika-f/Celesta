@@ -20,10 +20,14 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// A typed number: surrounding spaces are ignored, and only finite values
-/// count (`1e3` is fine, `NaN`, `inf`, and `1,5` are not).
-pub(crate) fn parse_number_input(text: &str) -> Result<f64, String> {
-    text.trim()
-        .parse::<f64>()
+/// count (`1e3` is fine, `NaN`, `inf`, and `1,5` are not). The field's own
+/// `unit` may follow, with or without a space (`120px`, `120 px`).
+pub(crate) fn parse_number_input(text: &str, unit: Option<&str>) -> Result<f64, String> {
+    let text = text.trim();
+    let text = unit
+        .and_then(|unit| text.strip_suffix(unit))
+        .map_or(text, str::trim_end);
+    text.parse::<f64>()
         .ok()
         .filter(|value| value.is_finite())
         .ok_or_else(|| "Enter a number".to_owned())
@@ -123,6 +127,9 @@ pub(crate) enum ControlEvent {
     ChoosePath,
     /// `None` on a path control.
     ClearPath,
+    /// The text gained the focus: a click on a resting number, Tab, or a
+    /// field of another kind clicked.
+    Focused,
 }
 
 /// The control a row edits its value with.
@@ -301,7 +308,7 @@ fn subscribe_text<S: EventEmitter<InputEvent>>(
                 InputEvent::Change => ControlEvent::Edited,
                 InputEvent::PressEnter { shift, .. } => enter_event(multi_line, *shift),
                 InputEvent::Blur => ControlEvent::Submit { blur: true },
-                InputEvent::Focus => return,
+                InputEvent::Focus => ControlEvent::Focused,
             };
             on(this, event, window, cx);
         },
@@ -409,7 +416,7 @@ pub(crate) fn render_control(
 }
 
 /// A single-line text input with `hint` as its dimmed suffix.
-fn text_input(
+pub(crate) fn text_input(
     input: Input,
     locked: bool,
     hint: Option<String>,
@@ -503,11 +510,14 @@ mod tests {
 
     #[test]
     fn number_input_accepts_finite_numbers_only() {
-        assert_eq!(parse_number_input("1.5"), Ok(1.5));
-        assert_eq!(parse_number_input(" 2 "), Ok(2.0));
-        assert_eq!(parse_number_input("1e3"), Ok(1000.0));
+        assert_eq!(parse_number_input("1.5", None), Ok(1.5));
+        assert_eq!(parse_number_input(" 2 ", None), Ok(2.0));
+        assert_eq!(parse_number_input("1e3", None), Ok(1000.0));
         for text in ["1,5", "", "NaN", "inf"] {
-            assert!(parse_number_input(text).is_err(), "{text:?} was accepted");
+            assert!(
+                parse_number_input(text, None).is_err(),
+                "{text:?} was accepted"
+            );
         }
     }
 

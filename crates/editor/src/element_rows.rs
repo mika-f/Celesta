@@ -220,13 +220,17 @@ pub(crate) fn parse_field_number(
     field: Option<&PrimitivePropertyField>,
     text: &str,
 ) -> Result<f64, String> {
-    let value = parse_number_input(text)?;
-    let (min, max, integer) = match field {
+    let (min, max, integer, unit) = match field {
         Some(PrimitivePropertyField::Number {
-            min, max, integer, ..
-        }) => (*min, *max, integer.unwrap_or(false)),
-        _ => (None, None, false),
+            min,
+            max,
+            integer,
+            unit,
+            ..
+        }) => (*min, *max, integer.unwrap_or(false), unit.as_deref()),
+        _ => (None, None, false, None),
     };
+    let value = parse_number_input(text, unit)?;
     let inside = min.is_none_or(|min| value >= min)
         && max.is_none_or(|max| value <= max)
         && (!integer || value.fract() == 0.0);
@@ -1158,6 +1162,8 @@ impl EditorView {
             }
             ControlEvent::Submit { blur } => self.submit_element_row(key, blur, cx),
             ControlEvent::Escape => self.restore_element_row(key, true, cx),
+            // Tasks 5 and 6 of P7b open a number row for typing here.
+            ControlEvent::Focused => {}
             ControlEvent::Toggled(checked) => {
                 self.commit_element_row(key, Some(EditValue::Bool(checked)), cx);
             }
