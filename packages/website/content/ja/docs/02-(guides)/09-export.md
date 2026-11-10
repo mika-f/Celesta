@@ -276,7 +276,7 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 
 --frame / --frames で、0 から始まるフレーム番号を指定します。複数指定すると check-000090.png のような名前で保存されます。--every N は --from/--to の範囲（省略時は全体）から N フレームごとと最後のフレームを選びます。--contact-sheet を加えると、番号付きの一覧画像を作れます。列数は --columns、各画像の幅は --tile-width で指定します。フレーム番号の直接指定は --every、--from、--to と併用できません。
 
-画像の形式は拡張子で決まります。書き出すのは Celesta に組み込みの画像コンポーネントなので、静止画にはメディアプラグインは要りません。`.png` は可逆圧縮の PNG（`builtin/png`）、`.jpg` と `.jpeg` は JPEG（`builtin/jpeg`）、`.webp` は非可逆圧縮の WebP（`builtin/webp`）です。JPEG と WebP はファイルが小さく、サムネイルに向きます。`--quality` で品質を 1〜100（既定値 90）の範囲で指定でき、PNG には指定できません。フレームは MP4 と同じ不透明な背景の上に描くため、透過チャンネルを持たない JPEG でも失われるものはありません。WebP は一辺 16383 ピクセルまでのため、それより大きいコンタクトシートは描画前に `invalid_option` で失敗します。
+画像の形式は拡張子で決まります。書き出すのは Celesta に組み込みの画像コンポーネントなので、静止画にはメディアプラグインは要りません。`.png` は可逆圧縮の PNG（`builtin/png`）、`.jpg` と `.jpeg` は JPEG（`builtin/jpeg`）、`.webp` は WebP（`builtin/webp`）で、後述の `lossless=true` を指定しない限り非可逆圧縮です。JPEG と WebP はファイルが小さく、サムネイルに向きます。`--quality` で品質を 1〜100（既定値 90）の範囲で指定でき、PNG には指定できません。既定では、フレームは MP4 と同じ不透明な背景の上に描くため、透過チャンネルを持たない JPEG でも失われるものはありません。PNG と WebP は、後述の `transparent=true` で透過を残せます。コンタクトシートは一辺 16384 ピクセルまでで、それより大きいものは描画前に `invalid_selection` で失敗します。WebP は一辺 16383 ピクセルまでのため、幅か高さが 16384 ピクセルの WebP のシートも、描画前に `invalid_option` で失敗します。
 
 `--video-option key=value` で、動画のエンコーダーと同じように画像エンコーダーの設定を指定できます。設定は `--describe builtin/png` などで確認できます。
 

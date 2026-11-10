@@ -335,7 +335,7 @@ instead of a video. The output extension picks the image format:
 | --- | --- | --- | --- |
 | `.png` | Lossless RGBA, 8-bit (16-bit with `depth=16`) | `builtin/png` | not accepted |
 | `.jpg`, `.jpeg` | Baseline JPEG | `builtin/jpeg` | 1–100, default 90 |
-| `.webp` | Lossy WebP | `builtin/webp` | 1–100, default 90 |
+| `.webp` | WebP, lossy (lossless with `lossless=true`) | `builtin/webp` | 1–100, default 90 |
 
 The built-in components run inside the exporter, so stills need no media
 plugin. One file (one frame or a contact sheet) is written by the muxer
@@ -361,16 +361,19 @@ Celesta-export --json --react scene.tsx --frame 90 --video-option depth=16 maste
 Celesta-export --json --react scene.tsx --frames 0,90 --video-option lossless=true check.webp
 ```
 
-- Stills are drawn over the same opaque background as an MP4, so they have
-  no transparent pixels; a JPEG, which has no alpha channel, loses nothing.
+- By default, stills are drawn over the same opaque background as an MP4,
+  so they have no transparent pixels; a JPEG, which has no alpha channel,
+  loses nothing.
   With `transparent=true` (PNG, WebP), areas nothing draws on stay
   transparent, with straight alpha, as in a transparent video; a full-frame
   background layer still makes the image opaque. A contact sheet shows them
   over a gray checkerboard and is itself opaque.
 - Several frames are written as `thumbnail-000090.jpg` and so on, keeping
   the output's extension.
-- WebP holds at most 16383 pixels on each side; a larger contact sheet
-  fails with `invalid_option` before rendering.
+- A contact sheet is at most 16384 pixels on each side; a larger one fails
+  with `invalid_selection` before rendering. WebP holds at most 16383, so a
+  WebP sheet 16384 pixels wide or high fails with `invalid_option`, also
+  before rendering.
 - A plugin's image components (another format, or its own PNG writer) are
   used only when named: `--muxer <plugin/id>` and `--video-encoder
   <plugin/id>`. A muxer that writes one image takes one frame or a contact
@@ -518,7 +521,9 @@ none:
 ```
 
 `output` names the muxer and encoders, with the settings that differ from
-their defaults, once they are chosen and before any frame renders.
+their defaults, once they are chosen and before any frame renders; a still
+export sends it too, naming its image muxer and encoder (such as
+`builtin/image` and `builtin/png`) with `"audio":null`.
 `rendering` counts from 1 the frame that has started; `total` is the number
 of frames the export renders (the selected stills, for a still export). The
 `composition`, `compositions`, `warning`, and `wrote` events carry what the
