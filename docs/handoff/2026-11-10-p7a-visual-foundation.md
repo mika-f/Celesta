@@ -25,6 +25,7 @@ resets it).
   | header and toolbar band | `#232323` | `title_bar`, `tab_bar`, `tab`, `status_bar`, `secondary`, `muted`, `list_head`, `table_head` |
   | band hover / pressed | `#2c2c2c` / `#1a1a1a` | `secondary_hover`, `list_hover` / `secondary_active`, `button_active` |
   | popover | `#2a2a2a` | `popover` |
+  | hover and menu highlight | `#3a3a3a` | `accent` (ghost-button hover at half strength, hovered and keyboard-selected menu items) |
   | border | `#2e2e2e` | `border`, `input` and the bar, sidebar, table and window borders |
   | text | `#e6e6e6` / `#9a9a9a` | `foreground` and friends / `muted_foreground`, `tab_foreground` |
   | primary | `#4a7fd6` (hover `#5a8be0`, active `#3f72c4`) | `primary*`, `ring`, active borders |
@@ -33,8 +34,7 @@ resets it).
   `list_row_height()` (1.75rem), `toolbar_row_height()` (2rem),
   `panel_padding()` (0.75rem), `scaled(design_px) -> Rems` and
   `scaled_px(design_px) -> Pixels` for sizes designed against a 16px `rem`
-  (`scaled_px` for APIs that take only `Pixels`: `Dialog::w`, gpui-base's
-  resizable `size`/`size_range`).
+  (`scaled_px` for APIs that take only `Pixels`, such as `Dialog::w`).
 
 **`PanelHeader` (`crates/editor/src/panel_header.rs`).** The header band
 every panel shares: band color, one hairline, the title (`text_base`,
@@ -48,7 +48,8 @@ the panel header's height, so its band lines up with Assets. Counts are
 monospace. A hand-built strip was not needed.
 
 **Title bar.** The composition picker and Export… are `ghost` (were
-`outline`); the project name is `text_base`.
+`outline`); the project name is `text_base` and ellipsizes, so a long name
+no longer pushes the composition picker out of the bar.
 
 **Status bar.** A toolbar row tall; every child sets `text_sm` (gpui-kit's
 `StatusBar` defaults to `text_xs`, ≈9.75px at this base); numbers and
@@ -71,7 +72,10 @@ was left as is.
   Physical ones stay with a `physical:` note: the timeline (module docs),
   the meter and its column, the volume slider, the canvas painting in
   `viewer.rs` and `inline_text_view.rs`, the asset thumbnail, the platform
-  window sizes. The timeline's geometry moves onto tokens in P7c.
+  window sizes, and the docks' and timeline's resizable split sizes (the
+  window does not shrink with the rem, so the regions keep their size and
+  the denser type shows more in them). The timeline's geometry moves onto
+  tokens in P7c.
 
 ## Tests
 
