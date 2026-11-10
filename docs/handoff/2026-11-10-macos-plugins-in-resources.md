@@ -34,9 +34,11 @@ branch.
   published). The release-profile cache is still saved from `main` alone.
   Pull requests still skip it. `package.yml`, the release workflow, is
   unchanged.
-- The MCP tool list in `scripts/test-package.mjs` matches `main`'s server
-  (no `list_components` / `describe_component` yet), so it is unchanged here;
-  the media-components stack updates it when it lands.
+- **The package smoke test expects the MCP server's component tools.**
+  `scripts/test-package.mjs`'s expected `tools/list` now includes
+  `list_components` and `describe_component`, which the media-components
+  stack added to the server (as `crates/mcp/tests/integration/server.rs`
+  already expects).
 
 ## Implementation
 
@@ -45,7 +47,7 @@ branch.
 | `crates/plugin-host/src/locations.rs` | `bundled_plugin_dir_for("macos", …/Contents/MacOS/x)` returns `Contents/Resources/PlugIns`; its test expects that. |
 | `scripts/package-macos.py` | The plugin build script lays plugins out in `resources / "PlugIns"`. `validate_dependencies` takes a `.dylib` as a plugin library when it is in `Contents/Resources/PlugIns/<plugin>/Frameworks` (the full path, not just a parent named `PlugIns`). Root `cargo metadata` without `--offline`. |
 | `scripts/package-windows.ps1` | Root `cargo metadata` without `--offline`. |
-| `scripts/test_package_macos.py`, `scripts/test-package.mjs` | The codec plugin's macOS path. |
+| `scripts/test_package_macos.py`, `scripts/test-package.mjs` | The media plugin's macOS path; the smoke test's MCP tool list. |
 | `.github/workflows/ci.yml`, `package-build.yml` | Package job on a manual run; header comment. |
 | Docs | `README.md`, `packaging/GPL-SOURCE-OFFER.md`, `packaging/macos/README.md` (layout tree, and why not `Contents/PlugIns`), and the en/ja website pages `05-(more)/04-troubleshooting.md` and `05-plugins.md`. The Celesta Agent Skill does not name the macOS path, so it is unchanged. Older handoff notes keep the path they described. |
 

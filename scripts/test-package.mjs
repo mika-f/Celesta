@@ -158,7 +158,8 @@ export default function Root() {
     .trim().split(/\r?\n/).map((line) => JSON.parse(line));
   const tools = mcpReplies.find((reply) => reply.id === 2).result.tools.map((tool) => tool.name).sort();
   assert.deepEqual(tools, [
-    'contact_sheet', 'export_video', 'init_project', 'inspect', 'list_templates', 'read_docs', 'render_frames',
+    'contact_sheet', 'describe_component', 'export_video', 'init_project', 'inspect', 'list_components',
+    'list_templates', 'read_docs', 'render_frames',
   ]);
   console.log('Package smoke test passed: bundled React hooks, Celesta packages, Code, VOICEVOX, AivisSpeech, TypeScript support, export, and the MCP server, without Node.js on PATH.');
 } finally {
