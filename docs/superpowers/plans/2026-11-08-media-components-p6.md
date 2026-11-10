@@ -111,7 +111,7 @@ the conversation that wrote it.
    - `gh` (GitHub CLI), signed in, and the `gh stack` extension, which the
      stack is managed with.
 2. **Branch.** Work on `claude/media-components-p6`, the planning branch,
-   which carries this plan on top of P5's head (`88ba9809` when it was
+   which carries this plan on top of P5's head (`d15155fa` when it was
    written). Run `git fetch origin`, then
    `git switch -c claude/media-components-p6 origin/claude/media-components-p6`.
    If `origin` has no such branch, the plan was not pushed; ask the user.
@@ -181,8 +181,8 @@ the conversation that wrote it.
     do.
   - On the user's Windows machine, only hardware-encoder tests may skip,
     and only where no hardware MFT is listed.
-- **Hardware-dependent tests** (P5's lesson, `ee1c6b24`, `09c55936`,
-  `88ba9809`). A test that compares decoded values or bitstream structure
+- **Hardware-dependent tests** (P5's lesson, `4c4875ad`, `37ce1a2b`,
+  `d2ebdd1c`). A test that compares decoded values or bitstream structure
   sets `hardware: false`, pinning Microsoft's software MFT. It still allows
   a few code values of tolerance: 2 for 8-bit codes, 4 for 10-bit codes,
   as P5 started. Widen a tolerance only with the measured values in the
@@ -1141,7 +1141,7 @@ impl MfDecoder {
       missing path gives `NotFound`.
     - `rotated_video_is_displayed_upright`: FFmpeg's MP4 with a 90° display
       matrix probes as 36x64. Each corner is judged by its nearest quadrant
-      colour (P5's `88ba9809` rule).
+      colour (P5's `d2ebdd1c` rule).
     - `probing_does_not_lock_the_file`: after `probe`, and after a
       non-sequential `decode`, `std::fs::remove_file` succeeds. After a
       sequential decode, it succeeds once the session goes idle
