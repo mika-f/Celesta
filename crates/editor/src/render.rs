@@ -8,7 +8,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, CursorStyle, KeyDownEvent, MouseButton, Window, canvas, div};
+use gpui_kit::{Context, CursorStyle, KeyDownEvent, MouseButton, Window, canvas, div, px};
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -173,12 +173,16 @@ impl EditorView {
         let dock_state = self.dock_split.clone();
         let body_state = self.body_split.clone();
         let border = cx.theme().border;
+        // physical: the docks' and the timeline's split sizes stay in pixels.
+        // The window does not shrink with the rem, so keeping the regions'
+        // sizes is what lets the denser type show more in them (and the
+        // timeline's pixel geometry keeps the same number of tracks).
         let dock_row = h_resizable("celesta-dock-row")
             .when_some(dock_state.as_ref(), |group, state| group.with_state(state))
             .child(
                 resizable_panel()
-                    .size(metrics::scaled_px(260.0))
-                    .size_range(metrics::scaled_px(200.0)..metrics::scaled_px(440.0))
+                    .size(px(260.0))
+                    .size_range(px(200.0)..px(440.0))
                     .visible(!react)
                     .child(
                         // A flex column, so the panel's `flex_1` / `min_h_0`
@@ -197,8 +201,8 @@ impl EditorView {
             .child(resizable_panel().child(self.viewer_panel(cx)))
             .child(
                 resizable_panel()
-                    .size(metrics::scaled_px(300.0))
-                    .size_range(metrics::scaled_px(240.0)..metrics::scaled_px(520.0))
+                    .size(px(300.0))
+                    .size_range(px(240.0)..px(520.0))
                     .child(
                         // A flex column, so the panel's `flex_1` / `min_h_0`
                         // bound its height and its list scrolls.
@@ -225,8 +229,8 @@ impl EditorView {
                     .child(resizable_panel().child(dock_row))
                     .child(
                         resizable_panel()
-                            .size(metrics::scaled_px(300.0))
-                            .size_range(metrics::scaled_px(180.0)..metrics::scaled_px(640.0))
+                            .size(px(300.0))
+                            .size_range(px(180.0)..px(640.0))
                             .child(
                                 div()
                                     .flex()
