@@ -137,6 +137,11 @@ describe('checkPluginSource', () => {
         'p: os must be a list of operating systems, such as ["macos"]',
       );
     }
+    for (const os of ['macOS', 'darwin', 'no-such-os']) {
+      expect(() => checkPluginSource({ ...base, os: ['linux', os] }, 'p')).toThrow(
+        `p: os ${JSON.stringify(os)} is not an operating system Rust names (std::env::consts::OS), such as "macos", "linux", or "windows"`,
+      );
+    }
     expect(buildsOn({ id: 'a', os: ['macos'] }, 'linux')).toBe(false);
     expect(buildsOn({ id: 'a', os: ['macos'] }, 'macos')).toBe(true);
     expect(buildsOn({ id: 'a' }, 'linux')).toBe(true);

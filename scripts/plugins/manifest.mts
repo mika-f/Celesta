@@ -114,6 +114,14 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
   if (os !== undefined && !(Array.isArray(os) && os.length > 0 && os.every((name) => typeof name === 'string' && name !== ''))) {
     throw new Error(`${sourcePath}: os must be a list of operating systems, such as ["macos"]`);
   }
+  // A misspelt system ("macOS", "darwin") would match no host and drop the
+  // plugin from every build without a word.
+  const unknownOs = (os as string[] | undefined)?.find((name) => !OPERATING_SYSTEMS.has(name));
+  if (unknownOs !== undefined) {
+    throw new Error(
+      `${sourcePath}: os ${JSON.stringify(unknownOs)} is not an operating system Rust names (std::env::consts::OS), such as "macos", "linux", or "windows"`,
+    );
+  }
   const noComponents = source.components === undefined || source.components.length === 0;
   if (source.module === undefined && !noComponents) {
     throw new Error(`${sourcePath}: components need a module to import them from`);
@@ -122,6 +130,27 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
     throw new Error(`${sourcePath}: it has neither a module nor a cargoPackage to build`);
   }
 }
+
+/** The values `std::env::consts::OS` takes, which `os` lists. */
+const OPERATING_SYSTEMS: ReadonlySet<string> = new Set([
+  'aix',
+  'android',
+  'dragonfly',
+  'freebsd',
+  'fuchsia',
+  'haiku',
+  'illumos',
+  'ios',
+  'linux',
+  'macos',
+  'netbsd',
+  'openbsd',
+  'solaris',
+  'tvos',
+  'visionos',
+  'watchos',
+  'windows',
+]);
 
 /** Whether `source` builds on the operating system `os` (`std::env::consts::OS`): it does without an `os` list. */
 export function buildsOn(source: PluginSource, os: string): boolean {
