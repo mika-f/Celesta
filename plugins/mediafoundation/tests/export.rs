@@ -1,7 +1,6 @@
 //! Exports through the real exporter that combine this plugin's components
-//! with the FFmpeg plugin's, both in this process and registered as Celesta
-//! finds them (this plugin's folder first): what each file holds, and what
-//! FFmpeg decodes of it.
+//! with the FFmpeg plugin's, both in this process and bundled, this plugin
+//! registered first: what each file holds, and what FFmpeg decodes of it.
 #![cfg(windows)]
 
 use std::path::{Path, PathBuf};
@@ -50,8 +49,10 @@ fn gpu() -> MutexGuard<'static, ()> {
     GPU.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Makes both plugins, in this process, the media plugins of every export:
-/// This plugin first, as its folder sorts before FFmpeg's, both bundled.
+/// Makes both plugins, in this process, the media plugins of every export,
+/// both bundled. Celesta takes bundled plugins in their folders' order, in
+/// which "ffmpeg" sorts first; this plugin is registered first instead, the
+/// stronger case for FFmpeg's staying the default.
 fn install() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
@@ -529,29 +530,24 @@ fn assert_audio_lasts_the_video(path: &Path) {
     );
 }
 
-/// Whether this system's Media Foundation has the HEVC encoder, which needs
-/// a GPU driver's or the Store's extension; prints why `test` skips when it
-/// has not.
-fn hevc_available(test: &str) -> bool {
-    use celesta_media::{ComponentKind, MediaProvider};
-    let described = celesta_codec_mediafoundation::MfCodec::new()
-        .describe()
-        .unwrap();
-    let hevc = described
-        .iter()
-        .find(|component| component.kind == ComponentKind::VideoEncoder && component.id == "hevc")
-        .expect("hevc is described");
-    if !hevc.available {
-        eprintln!(
-            "skipping {test}: {}",
-            hevc.reason.as_deref().unwrap_or("no reason")
-        );
-    }
-    hevc.available
+/// Whether this system's Media Foundation describes every one of
+/// `components` as available; when not, `test` skips through the gate.
+fn available(components: &[&str], test: &str) -> bool {
+    celesta_codec_mediafoundation::gate::available(
+        &mut celesta_codec_mediafoundation::MfCodec::new(),
+        components,
+        test,
+    )
 }
 
 #[test]
 fn mediafoundation_h264_with_ffmpeg_aac_in_ffmpeg_mp4() {
+    if !available(
+        &["h264"],
+        "mediafoundation_h264_with_ffmpeg_aac_in_ffmpeg_mp4",
+    ) {
+        return;
+    }
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = with_audio(
@@ -586,6 +582,12 @@ fn mediafoundation_h264_with_ffmpeg_aac_in_ffmpeg_mp4() {
 
 #[test]
 fn ffmpeg_x264_with_mediafoundation_aac_in_ffmpeg_mp4() {
+    if !available(
+        &["aac"],
+        "ffmpeg_x264_with_mediafoundation_aac_in_ffmpeg_mp4",
+    ) {
+        return;
+    }
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = with_audio(
@@ -621,7 +623,7 @@ fn ffmpeg_x264_with_mediafoundation_aac_in_ffmpeg_mp4() {
 #[test]
 fn mediafoundation_hevc_with_ffmpeg_opus_in_ffmpeg_mp4() {
     const TEST: &str = "mediafoundation_hevc_with_ffmpeg_opus_in_ffmpeg_mp4";
-    if !hevc_available(TEST) {
+    if !available(&["hevc"], TEST) {
         return;
     }
     let _gpu = gpu();
@@ -660,6 +662,9 @@ fn mediafoundation_hevc_with_ffmpeg_opus_in_ffmpeg_mp4() {
 
 #[test]
 fn mediafoundation_alone_with_ffmpeg_mp4() {
+    if !available(&["h264", "aac"], "mediafoundation_alone_with_ffmpeg_mp4") {
+        return;
+    }
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = with_audio(
@@ -694,6 +699,12 @@ fn mediafoundation_alone_with_ffmpeg_mp4() {
 
 #[test]
 fn a_looping_export_with_mediafoundation_aac_starts_from_its_end() {
+    if !available(
+        &["aac"],
+        "a_looping_export_with_mediafoundation_aac_starts_from_its_end",
+    ) {
+        return;
+    }
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     // The FFmpeg plugin's hits: four a second, each a chord at full

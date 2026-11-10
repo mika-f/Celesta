@@ -2,33 +2,33 @@
 //! built `celesta-codec-mediafoundation` program as Celesta starts it.
 #![cfg(windows)]
 
-use celesta_codec_mediafoundation::MfCodec;
+use celesta_codec_mediafoundation::{DECODER_ID, MfCodec, gate};
 use celesta_media::{ComponentKind, MediaProcess, MediaProvider, ProviderUse};
 use std::path::PathBuf;
 
 #[test]
 fn this_machine_lists_the_basic_encoders() {
-    let described = MfCodec::new().describe().unwrap();
-    let state = |kind: ComponentKind, id: &str| {
-        let component = described
-            .iter()
-            .find(|component| component.kind == kind && component.id == id)
-            .unwrap_or_else(|| panic!("{id} is not described"));
-        (component.available, component.reason.clone())
-    };
-    // Windows 10 and 11 ship Microsoft's software H.264 and AAC encoders.
-    for (kind, id) in [
-        (ComponentKind::VideoEncoder, "h264"),
-        (ComponentKind::AudioEncoder, "aac"),
-    ] {
-        let (available, reason) = state(kind, id);
-        assert!(available, "{id} is unavailable: {reason:?}");
+    // Windows 10 and 11 ship Microsoft's software H.264 and AAC encoders, so
+    // with `CELESTA_REQUIRE_MEDIA_FOUNDATION=1` they must be available; a
+    // system without Media Foundation skips.
+    let mut codec = MfCodec::new();
+    if !gate::available(
+        &mut codec,
+        &[DECODER_ID, "h264", "aac"],
+        "this_machine_lists_the_basic_encoders",
+    ) {
+        return;
     }
-    let (available, reason) = state(ComponentKind::Decoder, "mediafoundation");
-    assert!(available, "the decoder is unavailable: {reason:?}");
     // HEVC needs a GPU driver or the Store's extension, so it may be missing.
-    let (available, reason) = state(ComponentKind::VideoEncoder, "hevc");
-    println!("hevc: available = {available}, reason = {reason:?}");
+    let described = codec.describe().unwrap();
+    let hevc = described
+        .iter()
+        .find(|component| component.kind == ComponentKind::VideoEncoder && component.id == "hevc")
+        .expect("hevc is described");
+    println!(
+        "hevc: available = {}, reason = {:?}",
+        hevc.available, hevc.reason
+    );
 }
 
 #[test]

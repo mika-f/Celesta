@@ -290,6 +290,7 @@ impl AudioEncoder for MfCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mf::gate;
     use celesta_composition::Rational;
     use celesta_media::{Color, PixelFormat, SettingValue, Settings};
 
@@ -333,6 +334,13 @@ mod tests {
     #[test]
     fn no_software_encoder_asks_for_hardware() {
         let mut codec = MfCodec::new();
+        if !gate::available(
+            &mut codec,
+            &[DECODER_ID],
+            "no_software_encoder_asks_for_hardware",
+        ) {
+            return;
+        }
         let color = Color::bt709_limited();
         // No software MFT takes P010 (Task 1); a system whose does opens it.
         let ten_bit: Settings = [
@@ -357,6 +365,13 @@ mod tests {
     #[test]
     fn sessions_share_one_count_and_abort_alone() {
         let mut codec = MfCodec::new();
+        if !gate::available(
+            &mut codec,
+            &["h264"],
+            "sessions_share_one_count_and_abort_alone",
+        ) {
+            return;
+        }
         let software: Settings = [("hardware".to_owned(), SettingValue::Boolean(false))].into();
         let color = Color::bt709_limited();
         let first = codec
@@ -414,6 +429,13 @@ mod tests {
     #[test]
     fn the_decoder_answers_for_its_own_id() {
         let mut codec = MfCodec::new();
+        if !gate::available(
+            &mut codec,
+            &[DECODER_ID],
+            "the_decoder_answers_for_its_own_id",
+        ) {
+            return;
+        }
         let missing = Path::new("no such file.mp4");
         assert!(matches!(
             codec.probe(DECODER_ID, missing),

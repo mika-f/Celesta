@@ -113,6 +113,11 @@ mod mf;
 #[cfg(windows)]
 pub use mf::provider::{MfCodec, install, registered};
 
+/// The tests' gate on Media Foundation and its components.
+#[cfg(windows)]
+#[doc(hidden)]
+pub use mf::gate;
+
 /// The colour description in the SPS of a track config's `avcC` (`hevc`
 /// false) or `hvcC` record: whether its range is full, and its primaries,
 /// transfer characteristics, and matrix coefficients as H.273 numbers. None

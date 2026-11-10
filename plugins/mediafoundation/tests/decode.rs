@@ -6,12 +6,12 @@
 #![cfg(windows)]
 
 use celesta_codec_ffmpeg::FfmpegCodec;
-use celesta_codec_mediafoundation::{DECODER_ID, MfCodec};
+use celesta_codec_mediafoundation::{DECODER_ID, MfCodec, gate};
 use celesta_composition::Rational;
 use celesta_media::{
-    AudioBuffer, AudioEncoderRequest, Color, ComponentKind, Encoded, MediaError, MediaProbe,
-    MediaProvider, MuxerRequest, Packet, PixelFormat, Sequential, SettingValue, Settings, Track,
-    TrackConfig, TrackPacket, VideoEncoderRequest, VideoFrame, VideoRequest,
+    AudioBuffer, AudioEncoderRequest, Color, Encoded, MediaError, MediaProbe, MediaProvider,
+    MuxerRequest, Packet, PixelFormat, Sequential, SettingValue, Settings, Track, TrackConfig,
+    TrackPacket, VideoEncoderRequest, VideoFrame, VideoRequest,
 };
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
@@ -39,27 +39,10 @@ const COLORS: [[u8; 3]; 4] = [
 ];
 
 /// Whether this system's Media Foundation describes the decoder and the
-/// encoders the tests write with; prints why `test` skips when it does not.
+/// encoders the tests write with as available; when not, `test` skips
+/// through the gate.
 fn available(test: &str) -> bool {
-    let described = MfCodec::new().describe().unwrap();
-    for (kind, id) in [
-        (ComponentKind::Decoder, DECODER_ID),
-        (ComponentKind::VideoEncoder, "h264"),
-        (ComponentKind::AudioEncoder, "aac"),
-    ] {
-        let component = described
-            .iter()
-            .find(|component| component.kind == kind && component.id == id)
-            .unwrap_or_else(|| panic!("{id} is not described"));
-        if !component.available {
-            println!(
-                "skipping {test}: {}",
-                component.reason.as_deref().unwrap_or("no reason")
-            );
-            return false;
-        }
-    }
-    true
+    gate::available(&mut MfCodec::new(), &[DECODER_ID, "h264", "aac"], test)
 }
 
 /// A 64x36 NV12 frame of one colour.

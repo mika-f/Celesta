@@ -9,12 +9,12 @@
 #![cfg(windows)]
 
 use celesta_codec_ffmpeg::FfmpegCodec;
-use celesta_codec_mediafoundation::MfCodec;
+use celesta_codec_mediafoundation::{MfCodec, gate};
 use celesta_composition::Rational;
 use celesta_media::{
-    AudioBuffer, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentKind, Encoded,
-    MediaError, MediaProvider, MuxerRequest, Packet, PixelFormat, SessionId, SettingValue,
-    Settings, Track, TrackConfig, TrackPacket, VideoEncoderOpened, VideoEncoderRequest,
+    AudioBuffer, AudioEncoderOpened, AudioEncoderRequest, Color, Encoded, MediaError,
+    MediaProvider, MuxerRequest, Packet, PixelFormat, SessionId, SettingValue, Settings, Track,
+    TrackConfig, TrackPacket, VideoEncoderOpened, VideoEncoderRequest,
 };
 use ffmpeg_sys_next as ff;
 use std::ffi::CString;
@@ -60,24 +60,10 @@ fn software(pairs: &[(&str, SettingValue)]) -> Settings {
     given
 }
 
-/// Whether this system's Media Foundation describes `component`; prints why
-/// `test` skips when it does not. H.264 has a software encoder on every
-/// Windows 10 and 11, so its absence fails.
+/// Whether this system's Media Foundation describes `component` as
+/// available; when not, `test` skips through the gate.
 fn available(codec: &mut MfCodec, component: &str, test: &str) -> bool {
-    let described = codec.describe().unwrap();
-    let description = described
-        .iter()
-        .find(|description| {
-            description.kind == ComponentKind::VideoEncoder && description.id == component
-        })
-        .unwrap_or_else(|| panic!("no video encoder {component}"));
-    if description.available {
-        return true;
-    }
-    let reason = description.reason.as_deref().unwrap_or("no reason");
-    assert_ne!(component, "h264", "{reason}");
-    println!("skipping {test}: {reason}");
-    false
+    gate::available(codec, &[component], test)
 }
 
 /// Opens `component` at `(width, height)` and 29.97 fps, BT.709 limited.
@@ -113,9 +99,9 @@ fn open(
     open_sized(codec, component, given, offered, SIZE)
 }
 
-/// [`open`], or None after printing why `test` skips when the open answers
-/// that the component is unavailable (no software HEVC encoder, say).
-/// H.264 always opens.
+/// [`open`], or None when the open answers that the component is
+/// unavailable (no software HEVC encoder, say, or every transform refused)
+/// and `test` skips through the gate.
 fn open_or_skip(
     codec: &mut MfCodec,
     component: &str,
@@ -126,8 +112,8 @@ fn open_or_skip(
 ) -> Option<VideoEncoderOpened> {
     match open_sized(codec, component, given, offered, size) {
         Ok(opened) => Some(opened),
-        Err(MediaError::ComponentUnavailable { reason, .. }) if component != "h264" => {
-            println!("skipping {test}: {reason}");
+        Err(MediaError::ComponentUnavailable { reason, .. }) => {
+            gate::skip(test, &reason);
             None
         }
         Err(error) => panic!("{component} did not open: {error:?}"),
@@ -458,6 +444,9 @@ fn through_mp4(config: &TrackConfig, size: (u32, u32), packets: &[Packet]) -> (T
 #[test]
 fn h264_from_nv12_keeps_bt709_codes() {
     let mut codec = MfCodec::new();
+    if !available(&mut codec, "h264", "h264_from_nv12_keeps_bt709_codes") {
+        return;
+    }
     let opened = open(&mut codec, "h264", &software(&[]), &PixelFormat::OFFERABLE).unwrap();
     assert_eq!(opened.input, PixelFormat::Nv12);
     assert!(!opened.alpha);
@@ -475,6 +464,9 @@ fn h264_from_nv12_keeps_bt709_codes() {
 #[test]
 fn rgba8_input_is_converted_with_bt709() {
     let mut codec = MfCodec::new();
+    if !available(&mut codec, "h264", "rgba8_input_is_converted_with_bt709") {
+        return;
+    }
     let opened = open(
         &mut codec,
         "h264",
@@ -517,6 +509,16 @@ fn h264_and_hevc_decode_times_precede_presentation() {
         );
         let (packets, config) = packets_and_config(answers);
         assert_invariants(component, &packets, 30);
+        // Microsoft's software H.264 MFT reorders with B-frames on (Task 1),
+        // so H.264 must; whether the HEVC extension's does is its own choice.
+        assert!(
+            component != "h264" || reorders(&packets),
+            "h264 with B-frames did not reorder: {:?}",
+            packets
+                .iter()
+                .map(|packet| (packet.pts, packet.dts))
+                .collect::<Vec<_>>()
+        );
         if reorders(&packets) {
             // Decode times are shifted back by the reorder depth, so the
             // first frame decodes before it is shown.
@@ -550,6 +552,9 @@ fn average_bitrate_mode_encodes() {
     // The bitrate mode and its bitrate refuse a transform that does not take
     // them (deviation 78), so Microsoft's software MFT must take both.
     let mut codec = MfCodec::new();
+    if !available(&mut codec, "h264", "average_bitrate_mode_encodes") {
+        return;
+    }
     let by_bitrate = software(&[
         ("rateControl", text("bitrate")),
         ("bitrate", SettingValue::Number(2_000_000.0)),
@@ -567,6 +572,9 @@ fn average_bitrate_mode_encodes() {
 #[test]
 fn every_input_pts_comes_back() {
     let mut codec = MfCodec::new();
+    if !available(&mut codec, "h264", "every_input_pts_comes_back") {
+        return;
+    }
     let opened = open(&mut codec, "h264", &software(&[]), &[PixelFormat::Nv12]).unwrap();
     let answers = encode_frames(
         &mut codec,
@@ -699,6 +707,15 @@ fn video_streams_carry_bt709_in_the_sps() {
 #[test]
 fn odd_sizes_are_refused() {
     let mut codec = MfCodec::new();
+    // Refused before any transform is listed: Media Foundation need only
+    // have started, as it has when the decoder is available.
+    if !gate::available(
+        &mut codec,
+        &[celesta_codec_mediafoundation::DECODER_ID],
+        "odd_sizes_are_refused",
+    ) {
+        return;
+    }
     let offers: [&[PixelFormat]; 2] = [
         &PixelFormat::OFFERABLE,
         &[PixelFormat::Rgba16, PixelFormat::Rgba8],
@@ -720,6 +737,9 @@ fn odd_sizes_are_refused() {
 #[test]
 fn a_frame_of_the_wrong_size_is_refused() {
     let mut codec = MfCodec::new();
+    if !available(&mut codec, "h264", "a_frame_of_the_wrong_size_is_refused") {
+        return;
+    }
     let opened = open(&mut codec, "h264", &software(&[]), &[PixelFormat::Nv12]).unwrap();
     let encoder = codec.video_encoder().unwrap();
     let short = PixelFormat::Nv12.frame_bytes(SIZE.0, SIZE.1 - 2);
@@ -828,24 +848,10 @@ const CLICK: usize = 4_800;
 /// The loop pre-roll of the hidden-pre-roll test, in sample frames.
 const PRE_ROLL: usize = 16_384;
 
-/// Whether this system's Media Foundation describes `aac`; prints why
-/// `test` skips when it does not.
+/// Whether this system's Media Foundation describes `aac` as available;
+/// when not, `test` skips through the gate.
 fn aac_available(codec: &mut MfCodec, test: &str) -> bool {
-    let described = codec.describe().unwrap();
-    let aac = described
-        .iter()
-        .find(|description| {
-            description.kind == ComponentKind::AudioEncoder && description.id == "aac"
-        })
-        .expect("the plugin has the audio encoder aac");
-    if aac.available {
-        return true;
-    }
-    println!(
-        "skipping {test}: {}",
-        aac.reason.as_deref().unwrap_or("no reason")
-    );
-    false
+    gate::available(codec, &["aac"], test)
 }
 
 /// Opens `aac` for a mix at `sample_rate` with `channels`.

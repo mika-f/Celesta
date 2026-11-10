@@ -3,6 +3,7 @@
 pub(crate) mod audio;
 pub(crate) mod decoder;
 pub(crate) mod enumerate;
+pub mod gate;
 pub(crate) mod media_type;
 pub(crate) mod mft;
 pub(crate) mod provider;

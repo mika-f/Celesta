@@ -267,7 +267,7 @@ pub(crate) fn pcm_input(sample_rate: u32, channels: u32) -> Result<IMFMediaType,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mf::startup::Started;
+    use crate::mf::gate;
 
     fn u32_of(media_type: &IMFMediaType, key: &GUID) -> u32 {
         // SAFETY: a plain COM call on a live interface.
@@ -303,7 +303,9 @@ mod tests {
 
     #[test]
     fn video_types_carry_the_decisions() {
-        let _started = Started::new().unwrap();
+        let Some(_started) = gate::started("video_types_carry_the_decisions") else {
+            return;
+        };
         let rate = Rational::new(30_000, 1_001);
         let output = encoder_output(
             VideoCodec::Hevc,
@@ -349,7 +351,9 @@ mod tests {
 
     #[test]
     fn audio_types_carry_the_decisions() {
-        let _started = Started::new().unwrap();
+        let Some(_started) = gate::started("audio_types_carry_the_decisions") else {
+            return;
+        };
         let output = aac_output(48_000, 2, 192_000).unwrap();
         assert_eq!(guid_of(&output, &MF_MT_MAJOR_TYPE), MFMediaType_Audio);
         assert_eq!(guid_of(&output, &MF_MT_SUBTYPE), MFAudioFormat_AAC);
