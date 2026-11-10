@@ -2297,6 +2297,7 @@ fn number_field(default_value: Option<f64>) -> PrimitivePropertyField {
         max: None,
         step: None,
         integer: None,
+        unit: None,
     }
 }
 
@@ -2309,6 +2310,7 @@ fn stepped_field(default_value: f64, step: f64) -> PrimitivePropertyField {
         max: None,
         step: Some(step),
         integer: None,
+        unit: None,
     }
 }
 
@@ -2351,6 +2353,7 @@ fn rect_table() -> PrimitivePropertyTable {
                         max: Some(1.0),
                         step: None,
                         integer: None,
+                        unit: None,
                     },
                 ),
             ],
@@ -2539,6 +2542,7 @@ fn schema_number(
         max,
         step: None,
         integer: None,
+        unit: None,
     }
 }
 

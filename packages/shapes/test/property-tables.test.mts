@@ -52,10 +52,11 @@ test('shape numbers stop where the shapes reject them', () => {
   assert.deepEqual(field('Star', 'points'), { type: 'number', required: true, min: 3, integer: true });
   // A stroke must be wider than nothing.
   for (const name of ['Ellipse', 'Circle', 'Triangle', 'Polygon', 'Star', 'Pie', 'Heart']) {
-    assert.deepEqual(field(name, 'strokeWidth'), { type: 'number', defaultValue: 2, min: 0.1 }, name);
+    assert.deepEqual(field(name, 'strokeWidth'), { type: 'number', defaultValue: 2, min: 0.1, unit: 'px' }, name);
   }
   // Angles take any number.
-  assert.deepEqual(field('Pie', 'startAngle'), { type: 'number', defaultValue: 0 });
+  assert.deepEqual(field('Pie', 'startAngle'), { type: 'number', defaultValue: 0, unit: '°' });
+  assert.equal((field('Circle', 'radius') as { unit?: string } | undefined)?.unit, 'px');
 });
 
 test('shape transforms scrub scale and anchors finely', () => {

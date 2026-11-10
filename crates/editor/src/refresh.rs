@@ -947,6 +947,7 @@ mod property_outcome {
                         max: None,
                         step: None,
                         integer: None,
+                        unit: None,
                     },
                     required: false,
                 }],

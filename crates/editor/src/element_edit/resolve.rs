@@ -49,6 +49,7 @@ pub(crate) fn schema_field(field: &ComponentPropertyField) -> PrimitivePropertyF
             max,
             step,
             integer,
+            unit,
             ..
         } => PrimitivePropertyField::Number {
             default_value: Some(*default_value),
@@ -56,6 +57,7 @@ pub(crate) fn schema_field(field: &ComponentPropertyField) -> PrimitivePropertyF
             max: *max,
             step: *step,
             integer: *integer,
+            unit: unit.clone(),
         },
         ComponentPropertyField::Boolean { default_value, .. } => PrimitivePropertyField::Boolean {
             default_value: Some(*default_value),

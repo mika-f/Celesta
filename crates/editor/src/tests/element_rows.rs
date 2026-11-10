@@ -141,6 +141,7 @@ fn num_range(default: f64, min: f64, max: f64) -> PrimitivePropertyField {
         max: Some(max),
         step: None,
         integer: None,
+        unit: None,
     }
 }
 
@@ -408,6 +409,7 @@ fn a_component_schema_can_ask_for_whole_numbers() {
             max: None,
             step: None,
             integer: Some(true),
+            unit: None,
         });
     assert_eq!(
         parse_row_value(&ControlKind::Number, Some(&field), "2.5"),
@@ -495,6 +497,7 @@ fn scrub_steps() {
         max: Some(1.0),
         step: Some(0.1),
         integer: None,
+        unit: None,
     };
     near(scrub_value(0.5, 2.0, Some(&coarse), false), 0.7);
 
@@ -511,6 +514,7 @@ fn scrub_steps() {
                 max: Some(100.0),
                 step: Some(5.0),
                 integer: None,
+                unit: None,
             }
             .into(),
         )]),
@@ -1043,6 +1047,7 @@ fn whole_field(min: Option<f64>, max: Option<f64>) -> PrimitivePropertyField {
         max,
         step: None,
         integer: Some(true),
+        unit: None,
     }
 }
 

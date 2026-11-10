@@ -111,6 +111,7 @@ fn deserializes_component_schemas_from_the_ready_message() {
                 max: Some(999.0),
                 step: None,
                 integer: Some(true),
+                unit: None,
             },
             required: false,
         })
@@ -206,6 +207,7 @@ fn ready_message_carries_primitive_tables_in_order() {
             max: Some(1.0),
             step: None,
             integer: None,
+            unit: None,
         }
     );
     assert_eq!(
@@ -216,6 +218,7 @@ fn ready_message_carries_primitive_tables_in_order() {
             max: None,
             step: Some(0.01),
             integer: None,
+            unit: None,
         }
     );
     assert_eq!(
@@ -226,6 +229,7 @@ fn ready_message_carries_primitive_tables_in_order() {
             max: None,
             step: None,
             integer: None,
+            unit: None,
         }
     );
     // `required` rides in the field and is lifted onto the row; a field
@@ -253,6 +257,7 @@ fn ready_message_carries_primitive_tables_in_order() {
             max: None,
             step: None,
             integer: Some(true),
+            unit: None,
         }
     );
     assert_eq!(rect.groups[2].fields[0].field, PrimitivePropertyField::Path);
@@ -433,6 +438,7 @@ fn deserializes_the_project_property_schema_from_the_ready_message() {
             max: Some(1.0),
             step: None,
             integer: None,
+            unit: None,
         })
     );
     assert_eq!(
@@ -1937,4 +1943,17 @@ fn a_stray_write_before_a_message_is_a_protocol_error() {
 
     let error = read_message(&mut std::io::Cursor::new(framed(b"")), &mut Vec::new()).unwrap_err();
     assert!(matches!(error, ReactBridgeError::Protocol(_)), "{error:?}");
+}
+
+#[test]
+fn a_number_field_keeps_its_unit_and_loads_without_one() {
+    let with: PrimitivePropertyField =
+        serde_json::from_str(r#"{"type":"number","unit":"px"}"#).unwrap();
+    assert!(matches!(with, PrimitivePropertyField::Number { unit: Some(ref u), .. } if u == "px"));
+    let without: ComponentPropertyField =
+        serde_json::from_str(r#"{"type":"number","defaultValue":1}"#).unwrap();
+    assert!(matches!(
+        without,
+        ComponentPropertyField::Number { unit: None, .. }
+    ));
 }

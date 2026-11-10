@@ -839,6 +839,7 @@ mod tests {
             max: None,
             step: None,
             integer: None,
+            unit: None,
         };
         assert!(!differs_from_default(&number, &json!(1)));
         assert!(!differs_from_default(&number, &json!(1.0)));
@@ -862,6 +863,7 @@ mod tests {
             max: Some(10.0),
             step: None,
             integer: Some(true),
+            unit: None,
         };
         assert_eq!(parse_property_text(&count, "4"), Ok(json!(4)));
         let refused = Err("Enter a whole number from 1 to 10".to_owned());

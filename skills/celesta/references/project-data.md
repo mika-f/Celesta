@@ -36,7 +36,7 @@ it at module level.
 defineProjectProperties({
   title:  { type: 'string',  label: 'Title',  defaultValue: 'Celesta' },
   accent: { type: 'color',   label: 'Accent', defaultValue: '#ff8800' },
-  size:   { type: 'number',  label: 'Size',   defaultValue: 48, min: 8, max: 200, step: 2 },
+  size:   { type: 'number',  label: 'Size',   defaultValue: 48, min: 8, max: 200, step: 2, unit: 'px' },
   sub:    { type: 'boolean', label: 'Subtitle', defaultValue: false },
   weight: { type: 'select',  label: 'Weight', defaultValue: 'bold', options: ['bold', 'light'] },
   data:   { type: 'path',    label: 'Data',   defaultValue: './data/sample.json' },
@@ -69,8 +69,8 @@ export default function Card() {
 }
 ```
 
-`min`, `max`, and `step` are Inspector hints; they are not enforced. The
-app's Inspector is read-only.
+`min`, `max`, `step`, and `unit` are Inspector hints; they are not
+enforced, and `unit` is shown after the value, never converted.
 
 ## Pass values from the command line
 

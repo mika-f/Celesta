@@ -301,6 +301,7 @@ static SCALE_WITHOUT_TABLE: PrimitivePropertyField = PrimitivePropertyField::Num
     max: None,
     step: Some(0.01),
     integer: None,
+    unit: None,
 };
 
 /// The table field of the row `key`, or a component prop's registered
