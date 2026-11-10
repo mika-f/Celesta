@@ -720,6 +720,7 @@ mod tests {
         let media = PluginEntry {
             manifest: celesta_plugin_host::Manifest {
                 id: "ffmpeg".into(),
+                name: None,
                 version: "1.0.0".into(),
                 protocol: 2,
                 celesta: Some("*".into()),
@@ -940,6 +941,7 @@ mod tests {
         PluginEntry {
             manifest: celesta_plugin_host::Manifest {
                 id: "ffmpeg".into(),
+                name: None,
                 version: "1.0.0".into(),
                 protocol: 2,
                 celesta: Some("*".into()),

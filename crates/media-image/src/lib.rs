@@ -95,6 +95,7 @@ pub fn manifest() -> MediaManifest {
 pub fn registered() -> RegisteredPlugin {
     RegisteredPlugin {
         id: RESERVED_PLUGIN_ID.to_owned(),
+        name: "Built-in".to_owned(),
         version: CELESTA_VERSION.to_owned(),
         origin: MediaOrigin::BuiltIn,
         directory: PathBuf::new(),

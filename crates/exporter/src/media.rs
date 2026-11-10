@@ -12,6 +12,7 @@ pub fn media_registry(plugins: &InstalledPlugins) -> Arc<MediaRegistry> {
         .media()
         .into_iter()
         .map(|plugin| RegisteredPlugin {
+            name: plugin.name,
             id: plugin.id,
             version: plugin.version,
             origin: plugin.origin,

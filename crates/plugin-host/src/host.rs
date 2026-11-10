@@ -786,6 +786,7 @@ mod failure_tests {
         PluginEntry {
             manifest: Manifest {
                 id: "p".into(),
+                name: None,
                 version: "1".into(),
                 protocol: PROTOCOL_VERSION,
                 celesta: None,
@@ -985,6 +986,7 @@ mod out_of_step {
         PluginEntry {
             manifest: Manifest {
                 id: ID.into(),
+                name: None,
                 version: "1".into(),
                 protocol: PROTOCOL_VERSION,
                 celesta: Some("*".into()),

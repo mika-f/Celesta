@@ -684,6 +684,7 @@ fn a_plugin_that_cannot_open_is_not_started_for_every_frame() {
         let entry = PluginEntry {
             manifest: Manifest {
                 id: "p".into(),
+                name: None,
                 version: "1".into(),
                 protocol: PROTOCOL_VERSION,
                 celesta: None,

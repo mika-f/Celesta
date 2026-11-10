@@ -517,6 +517,7 @@ mod tests {
         PluginEntry {
             manifest: Manifest {
                 id: id.into(),
+                name: None,
                 version: "1.0.0".into(),
                 protocol: 1,
                 celesta: Some("*".into()),

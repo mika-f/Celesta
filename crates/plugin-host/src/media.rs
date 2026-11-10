@@ -172,6 +172,8 @@ impl From<PluginSource> for MediaOrigin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MediaPlugin {
     pub id: String,
+    /// The manifest's display name ([`Manifest::display_name`]).
+    pub name: String,
     pub version: String,
     pub executable: PathBuf,
     /// Where it runs.
@@ -374,6 +376,8 @@ pub(crate) fn media_problems(text: &str) -> Vec<String> {
 #[derive(Deserialize)]
 struct PrintedManifest {
     id: String,
+    #[serde(default)]
+    name: Option<String>,
     version: String,
     #[serde(default)]
     roles: Vec<PluginRole>,
@@ -496,6 +500,7 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
         );
     }
     Ok(MediaPlugin {
+        name: printed.name.unwrap_or_else(|| printed.id.clone()),
         id: printed.id,
         version: printed.version,
         executable: program.to_path_buf(),
@@ -562,6 +567,7 @@ impl InstalledPlugins {
 fn media_plugin(entry: &PluginEntry) -> Option<MediaPlugin> {
     Some(MediaPlugin {
         id: entry.manifest.id.clone(),
+        name: entry.manifest.display_name().to_owned(),
         version: entry.manifest.version.clone(),
         executable: entry.executable()?,
         directory: entry.directory.clone(),
@@ -658,6 +664,7 @@ mod tests {
             installed(plugins).media_with_sibling(None),
             [MediaPlugin {
                 id: "ffmpeg".into(),
+                name: "ffmpeg".into(),
                 version: "1.0.0".into(),
                 executable: directory.join("bin").join("media"),
                 directory: directory.clone(),
@@ -1250,6 +1257,7 @@ mod tests {
             let (program, executable) = printing_its_manifest(root.path());
             let sibling = MediaPlugin {
                 id: "ffmpeg".into(),
+                name: "ffmpeg".into(),
                 version: "0.10.0".into(),
                 executable: program,
                 directory: root.path().to_path_buf(),

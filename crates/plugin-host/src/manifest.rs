@@ -82,6 +82,10 @@ pub fn celesta_range_for(version: &semver::Version) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
     pub id: String,
+    /// The plugin's display name, as the editor shows it; the `id` when
+    /// absent.
+    #[serde(default)]
+    pub name: Option<String>,
     pub version: String,
     /// The wire format its process speaks, which `hello` checks: features
     /// added on top of it are what `celesta` covers.
@@ -150,6 +154,11 @@ fn content_roles() -> Vec<PluginRole> {
 }
 
 impl Manifest {
+    /// Its `name`, else its `id`.
+    pub fn display_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.id)
+    }
+
     /// Its `celesta` range, or why it has none Celesta can read.
     fn celesta_range(&self) -> Result<semver::VersionReq, String> {
         let Some(range) = &self.celesta else {
@@ -1047,11 +1056,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_manifest_reads_its_display_name() {
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "id": "ffmpeg", "name": "FFmpeg", "version": "1", "protocol": 1,
+        }))
+        .unwrap();
+        assert_eq!(manifest.display_name(), "FFmpeg");
+    }
+
+    #[test]
+    fn a_manifest_without_a_name_shows_its_id() {
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "id": "ffmpeg", "version": "1", "protocol": 1,
+        }))
+        .unwrap();
+        assert_eq!(manifest.name, None);
+        assert_eq!(manifest.display_name(), "ffmpeg");
+    }
+
+    #[test]
     fn prefers_the_executable_for_this_architecture() {
         let (os, arch) = platform();
         let entry = |keys: &[(String, &str)]| PluginEntry {
             manifest: Manifest {
                 id: "p".into(),
+                name: None,
                 version: "1".into(),
                 protocol: 1,
                 celesta: Some(COMPATIBLE.into()),
@@ -1807,6 +1836,7 @@ pub(crate) mod tests {
         // This Celesta is in the range it suggests.
         let manifest = |celesta: Option<&str>| Manifest {
             id: "p".into(),
+            name: None,
             version: "1".into(),
             protocol: 1,
             celesta: celesta.map(Into::into),
@@ -1827,6 +1857,7 @@ pub(crate) mod tests {
         let works_with = |celesta: &str, version: &str| {
             Manifest {
                 id: "p".into(),
+                name: None,
                 version: "1".into(),
                 protocol: 1,
                 celesta: Some(celesta.into()),

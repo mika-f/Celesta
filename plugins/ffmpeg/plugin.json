@@ -1,5 +1,6 @@
 {
   "id": "ffmpeg",
+  "name": "FFmpeg",
   "version": "0.9.0",
   "cargoPackage": "celesta-codec-ffmpeg",
   "roles": ["media"],
@@ -7,6 +8,7 @@
     "decoders": [
       {
         "id": "ffmpeg",
+  "name": "FFmpeg",
         "name": "FFmpeg",
         "extensions": [
           "mp4", "m4v", "mov", "webm", "mkv", "avi", "mpg", "mpeg", "ts", "m2ts", "mts", "ogv", "gif",

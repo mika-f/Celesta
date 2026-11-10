@@ -122,6 +122,7 @@ A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and list
 ```json
 {
   "id": "ffmpeg",
+  "name": "FFmpeg",
   "version": "0.9.0",
   "celesta": ">=0.9.0, <0.10.0",
   "protocol": 2,
@@ -145,7 +146,7 @@ A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and list
 }
 ```
 
-A component's `id` follows the rules for a plugin's id (see [Write a plugin](#write-a-plugin)) and is not used by another component of the same kind in the same plugin; Celesta skips a component that breaks this, says why, and keeps the plugin's other components. Components are named `<plugin>/<component>`, such as `ffmpeg/libx264`. When a plugin runs, Celesta asks it to describe its components: whether each works on this computer (an FFmpeg built without libx264 says so, with the reason) and its settings. A plugin is either a media plugin or a content plugin: a manifest with both roles is skipped. A plugin made for the older `"roles": ["codec"]` is ignored, and Celesta reads no media through it: install a release of it made for your Celesta, or, in a source build, build `plugins/ffmpeg` again.
+The plugin's own `name` is optional: the display name the editor's export page shows beside a component, the plugin's `id` when absent. A component's `id` follows the rules for a plugin's id (see [Write a plugin](#write-a-plugin)) and is not used by another component of the same kind in the same plugin; Celesta skips a component that breaks this, says why, and keeps the plugin's other components. Components are named `<plugin>/<component>`, such as `ffmpeg/libx264`. When a plugin runs, Celesta asks it to describe its components: whether each works on this computer (an FFmpeg built without libx264 says so, with the reason) and its settings. A plugin is either a media plugin or a content plugin: a manifest with both roles is skipped. A plugin made for the older `"roles": ["codec"]` is ignored, and Celesta reads no media through it: install a release of it made for your Celesta, or, in a source build, build `plugins/ffmpeg` again.
 
 ### Which decoder reads a file
 

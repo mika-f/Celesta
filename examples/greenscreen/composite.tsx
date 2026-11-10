@@ -16,7 +16,7 @@ export default function Composite() {
       <Skyline frame={frame} />
       <Video
         src="./assets/footage.mp4"
-        x={120}
+        x={120.18}
         y={180}
         width={960}
         chromaKey={{ color: KEY, tolerance: 0.2, softness: 0.1, spill }}

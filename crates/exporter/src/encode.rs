@@ -1765,6 +1765,7 @@ mod tests {
         let (log, uses, name) = (log.clone(), uses.clone(), id.to_owned());
         RegisteredPlugin {
             id: id.to_owned(),
+            name: id.to_owned(),
             version: "1.0.0".to_owned(),
             origin: MediaOrigin::Bundled,
             directory: PathBuf::new(),
@@ -2671,6 +2672,7 @@ mod tests {
         let (encoder_log, encoder_dropped) = (log.clone(), dropped.clone());
         let encoder = RegisteredPlugin {
             id: "v".to_owned(),
+            name: "v".to_owned(),
             version: "1.0.0".to_owned(),
             origin: MediaOrigin::Bundled,
             directory: PathBuf::new(),
@@ -3096,6 +3098,7 @@ mod tests {
         let joint_log = log.clone();
         let plugin = RegisteredPlugin {
             id: "joint".to_owned(),
+            name: "joint".to_owned(),
             version: "1.0.0".to_owned(),
             origin: MediaOrigin::Bundled,
             directory: PathBuf::new(),

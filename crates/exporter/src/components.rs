@@ -220,6 +220,7 @@ mod tests {
         };
         MediaRegistry::new(vec![RegisteredPlugin {
             id: "plug".into(),
+            name: "plug".into(),
             version: "1.2.3".into(),
             origin: MediaOrigin::User,
             directory: PathBuf::from("plug"),

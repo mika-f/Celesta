@@ -939,6 +939,7 @@ mod tests {
     fn plugin(id: &str, origin: MediaOrigin, media: MediaManifest) -> RegisteredPlugin {
         RegisteredPlugin {
             id: id.into(),
+            name: id.into(),
             version: "1.0.0".into(),
             origin,
             directory: PathBuf::from(format!("/plugins/{id}")),
