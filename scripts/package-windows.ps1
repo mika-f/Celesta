@@ -98,11 +98,7 @@ try {
         }
     } finally { $zip.Dispose() }
     Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/stage-react-runtime.mjs", "$runtime/react")
-    # FFmpeg, and the GPL libx264 with it, is linked into the codec plugin's
-    # program alone, in the bundled plugin folder beside Celesta.exe. Windows
-    # looks for its DLLs beside the program, so it gets its own CRT copies.
-    # The shared build script builds it in the plugins workspace (Cargo finds
-    # it current when it is) and lays the folder out.
+    # Only the standard plugin is bundled. Optional encoders have separate ZIPs.
     $codec = Join-Path $package 'plugins/ffmpeg'
     Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/plugins/build.mts", "$root/plugins/ffmpeg", '--out', "$package/plugins")
     $codecManifest = Get-Content -Raw -LiteralPath "$codec/celesta-plugin.json" | ConvertFrom-Json
@@ -123,8 +119,7 @@ try {
 
     $licenses = Join-Path $package 'licenses'
     New-Item -ItemType Directory $licenses | Out-Null
-    Copy-Item -Path "$root/LICENSE*" -Destination $licenses
-    Copy-Item -LiteralPath "$root/packaging/GPL-SOURCE-OFFER.md" -Destination $licenses
+    Copy-Item -LiteralPath "$root/LICENSE-MIT", "$root/LICENSE-APACHE" -Destination $licenses
     if (-not $env:VCPKG_ROOT) { throw 'VCPKG_ROOT is required to collect native library licenses.' }
     # The triplet the vcpkg crate linked: CI's FFmpeg package sets
     # VCPKGRS_TRIPLET to its release-only triplet.

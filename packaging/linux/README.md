@@ -27,7 +27,7 @@ image's entry point is `celesta-exporter`, so the arguments are the same as in
 `--user` makes the output files belong to you instead of root:
 
 ```sh
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx film.mp4
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx film.mov
 ```
 
 Check a single frame first; it is much faster than a full export:
@@ -60,15 +60,19 @@ Software rendering is much slower than a GPU; see
 
 ## License
 
-`celesta-exporter` and `celesta-mcp` link no FFmpeg. The image's codec plugin,
-the `ffmpeg` folder in the bundled plugin folder `/opt/celesta/plugins` (which
-the build sets with `CELESTA_SYSTEM_PLUGIN_DIR`), links an FFmpeg build with `libx264` enabled,
-which is GPL-2.0-or-later licensed, and the image installs `libx264` itself.
-Distributing the image (for example, pushing it to a public registry)
-therefore distributes GPL-licensed software, whose terms apply to those parts;
-see [License](../../README.md#license).
+`celesta-exporter` and `celesta-mcp` link no FFmpeg. The image bundles only the
+standard LGPL `ffmpeg` process under `/opt/celesta/plugins`, for decoding,
+ProRes/MOV, AAC/PCM and muxing. It installs no optional x264, libopus or libvpx
+runtime packages. The standard plugin carries the [LGPL source notice](../FFMPEG-SOURCE.md).
 
-The same FFmpeg build links `libvpx` and `libopus` (BSD-3-Clause), the WebM
-encoders, as shared libraries from the Debian packages `libvpx9` and
-`libopus0`. Their copyright files ship in the image under
-`/usr/share/doc/libvpx9` and `/usr/share/doc/libopus0`.
+MP4 needs the separate Linux `ffmpeg-x264` ZIP; WebM needs `ffmpeg-vpx` and
+`ffmpeg-opus`. Extract matching release downloads into a host folder and mount
+it separately, preserving the image's standard plugin:
+
+```sh
+docker run --rm -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter \
+  --plugin-dir /plugins --react film.tsx film.mp4
+```
+
+The separate ZIPs include native codec libraries. See [plugin packaging](../plugins/README.md)
+and the root [license](../../README.md#license).

@@ -395,7 +395,7 @@ struct PrintedManifest {
 /// plugins from the plugin folders, so a program an older build left there is
 /// never picked up. The answer is kept for as long as the program's file
 /// stays the same.
-fn sibling_media(executable: &Path) -> Option<MediaPlugin> {
+fn sibling_media(executable: &Path, program_name: &str) -> Option<MediaPlugin> {
     type Key = (PathBuf, u64, SystemTime);
     static SIBLINGS: OnceLock<Mutex<HashMap<Key, Option<MediaPlugin>>>> = OnceLock::new();
 
@@ -403,7 +403,7 @@ fn sibling_media(executable: &Path) -> Option<MediaPlugin> {
     if directory.join(".fingerprint").is_dir() || directory.join(".cargo-lock").is_file() {
         return None;
     }
-    let program = directory.join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX));
+    let program = directory.join(format!("{program_name}{}", std::env::consts::EXE_SUFFIX));
     let metadata = std::fs::metadata(&program).ok().filter(|m| m.is_file())?;
     let key = (program.clone(), metadata.len(), metadata.modified().ok()?);
     let siblings = SIBLINGS.get_or_init(Default::default);
@@ -540,24 +540,32 @@ impl InstalledPlugins {
             .filter(|entry| entry.has_role(PluginRole::Media))
             .filter_map(media_plugin)
             .collect();
-        if let Some(sibling) = executable.and_then(sibling_media)
-            && !media
-                .iter()
-                .any(|plugin| plugin.id == sibling.id && plugin.origin != MediaOrigin::Project)
-        {
-            media.retain(|plugin| {
-                let replaces = plugin.id == sibling.id;
-                if replaces {
-                    eprintln!(
-                        "celesta: skipped the media plugin {}: a project plugin cannot replace \
+        for program in [
+            CODEC_PROGRAM,
+            "celesta-codec-ffmpeg-x264",
+            "celesta-codec-ffmpeg-opus",
+            "celesta-codec-ffmpeg-vpx",
+        ] {
+            if let Some(sibling) =
+                executable.and_then(|executable| sibling_media(executable, program))
+                && !media
+                    .iter()
+                    .any(|plugin| plugin.id == sibling.id && plugin.origin != MediaOrigin::Project)
+            {
+                media.retain(|plugin| {
+                    let replaces = plugin.id == sibling.id;
+                    if replaces {
+                        eprintln!(
+                            "celesta: skipped the media plugin {}: a project plugin cannot replace \
                          Celesta's bundled media plugin {}",
-                        plugin.directory.display(),
-                        plugin.id
-                    );
-                }
-                !replaces
-            });
-            media.push(sibling);
+                            plugin.directory.display(),
+                            plugin.id
+                        );
+                    }
+                    !replaces
+                });
+                media.push(sibling);
+            }
         }
         media
     }
@@ -1234,6 +1242,26 @@ mod tests {
                 directory,
                 &format!("[ \"$1\" = {MANIFEST_FLAG} ] || exit 2\nprintf '%s\\n' '{PRINTED}'"),
             )
+        }
+
+        #[test]
+        fn optional_builds_are_discovered_independently() {
+            let root = tempfile::tempdir().unwrap();
+            let (_, executable) = printing_its_manifest(root.path());
+            for id in ["ffmpeg-x264", "ffmpeg-opus", "ffmpeg-vpx"] {
+                let printed = serde_json::json!({
+                    "id": id, "version": "0.10.0", "roles": ["media"], "media": {},
+                });
+                let scratch = tempfile::tempdir().unwrap();
+                let (program, _) =
+                    fake_sibling(scratch.path(), &format!("printf '%s\\n' '{printed}'"));
+                std::fs::rename(program, root.path().join(format!("celesta-codec-{id}"))).unwrap();
+            }
+            let listed = InstalledPlugins::default().media_with_sibling(Some(&executable));
+            assert_eq!(
+                ids(&listed),
+                ["ffmpeg", "ffmpeg-x264", "ffmpeg-opus", "ffmpeg-vpx"]
+            );
         }
 
         #[test]

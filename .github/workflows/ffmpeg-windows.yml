@@ -1,15 +1,8 @@
 name: FFmpeg for Windows
 
-# Builds the FFmpeg libraries Celesta links on Windows and publishes them to
-# GitHub Packages as the Celesta.FFmpeg.Windows NuGet package, which
-# .github/actions/setup-ffmpeg downloads. Built in every job, vcpkg rebuilt
-# FFmpeg, x264, libvpx, and libopus (about 35 minutes) whenever its cache was
-# gone or a runner image brought a newer MSVC, which changes vcpkg's package
-# hashes. A published package keeps working on newer images: MSVC links
-# static libraries that an older MSVC built.
-#
-# Run it after changing the vcpkg release or FFmpeg's features, then pin the
-# version it reports in .github/actions/setup-ffmpeg.
+# Optional prebuilt archives of each independent native configuration.
+# setup-ffmpeg builds/caches the same configurations directly; these NuGet
+# artifacts can be consumed separately, with one installation root per variant.
 
 on:
   workflow_dispatch:
@@ -22,11 +15,29 @@ env:
   # A vcpkg release whose ffmpeg port is 8.1.x; vcpkg master ships FFmpeg 9,
   # which Celesta does not support yet.
   VCPKG_TAG: '2026.07.29'
-  PACKAGE_ID: Celesta.FFmpeg.Windows
 
 jobs:
   build:
     name: Build and publish
+    strategy:
+      matrix:
+        include:
+          - variant: Standard
+            features: zlib
+            license: LGPL-2.1-or-later
+          - variant: X264
+            features: x264
+            license: GPL-2.0-or-later
+          - variant: Opus
+            features: opus
+            license: LGPL-2.1-or-later
+          - variant: Vpx
+            features: vpx
+            license: LGPL-2.1-or-later
+    env:
+      PACKAGE_ID: Celesta.FFmpeg.Windows.${{ matrix.variant }}
+      FFMPEG_FEATURES: ${{ matrix.features }}
+      FFMPEG_LICENSE: ${{ matrix.license }}
     runs-on: windows-latest
     timeout-minutes: 150
     defaults:
@@ -45,8 +56,8 @@ jobs:
           & "$root/bootstrap-vcpkg.bat" -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
           & "$root/vcpkg.exe" install --clean-after-build `
-            'ffmpeg[x264,vpx,opus]:x64-windows-static-md-release' `
-            'ffmpeg[x264,vpx,opus]:x64-windows-release'
+            "ffmpeg[$env:FFMPEG_FEATURES]:x64-windows-static-md-release" `
+            "ffmpeg[$env:FFMPEG_FEATURES]:x64-windows-release"
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg install failed' }
           "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
 
@@ -68,8 +79,8 @@ jobs:
               <id>$env:PACKAGE_ID</id>
               <version>$version</version>
               <authors>$env:GITHUB_REPOSITORY_OWNER</authors>
-              <description>FFmpeg with libx264, libvpx, and libopus, built by vcpkg $env:VCPKG_TAG for x64-windows-static-md-release and x64-windows-release.</description>
-              <license type="expression">GPL-2.0-or-later</license>
+              <description>FFmpeg $env:FFMPEG_FEATURES variant, built by vcpkg $env:VCPKG_TAG for x64-windows-static-md-release and x64-windows-release.</description>
+              <license type="expression">$env:FFMPEG_LICENSE</license>
               <repository type="git" url="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY" commit="$env:GITHUB_SHA" />
             </metadata>
             <files>
@@ -110,7 +121,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'dotnet nuget push failed' }
           $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:PACKAGE_PATH).Hash.ToLowerInvariant()
           @(
-            "Published ``$env:PACKAGE_ID`` ``$env:PACKAGE_VERSION``. Pin both values in ``.github/actions/setup-ffmpeg/action.yml``:"
+            "Published ``$env:PACKAGE_ID`` ``$env:PACKAGE_VERSION``. Use this version and hash only for the matching native variant:"
             ''
             '```yaml'
             "PACKAGE_VERSION: '$env:PACKAGE_VERSION'"

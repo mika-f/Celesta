@@ -94,27 +94,31 @@ A video is written by three media components, each named
 encoder. The output's extension picks the muxer and the muxer's default
 codecs pick the encoders, so most exports need none of these flags:
 
+The app bundles only standard `ffmpeg`: ProRes/MOV works immediately. For MP4,
+install the separate `ffmpeg-x264` download; for WebM, install both `ffmpeg-vpx`
+and `ffmpeg-opus`. See [plugins.md](plugins.md) for ZIP names and installation.
+
 | Extension | Muxer | Video encoder | Audio encoder |
 | --- | --- | --- | --- |
-| `.mp4`, `.m4v` | `ffmpeg/mp4` | `ffmpeg/libx264` | `ffmpeg/aac` |
+| `.mp4`, `.m4v` | `ffmpeg/mp4` | `ffmpeg-x264/libx264` | `ffmpeg/aac` |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores` | `ffmpeg/pcm` |
-| `.webm` | `ffmpeg/webm` | `ffmpeg/vp9` | `ffmpeg/opus` |
+| `.webm` | `ffmpeg/webm` | `ffmpeg-vpx/vp9` | `ffmpeg-opus/opus` |
 
 There is no codec-neutral quality setting: a non-default export uses the
-chosen encoder's own keys. The bundled FFmpeg plugin's, as of this release:
+chosen encoder's own keys. The standard and optional FFmpeg plugins offer these settings:
 
 | Component | Key | Values (default) |
 | --- | --- | --- |
-| `ffmpeg/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow` (`medium`) |
+| `ffmpeg-x264/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow` (`medium`) |
 | | `rateControl` | `crf` (constant quality) or `vbr` (average bitrate) (`crf`) |
 | | `crf` | 0–51, lower is better; only with `rateControl=crf` (18) |
 | | `bitrate` | bit/s, at least 100000; only with `rateControl=vbr` (8000000) |
 | | `bitDepth` | `8` or `10` (`8`). `10` is H.264 High 10: smoother dark gradients, but fewer players decode it; keep `8` for phones, browsers, and social media. |
 | | `tune` | an x264 tune such as `film` or `animation` (empty) |
 | `ffmpeg/prores` | `profile` | `4444` (with alpha) or `hq` (422 HQ, opaque) (`4444`) |
-| `ffmpeg/vp9` | `crf` | 0–63 (20) |
+| `ffmpeg-vpx/vp9` | `crf` | 0–63 (20) |
 | | `alpha` | `true` or `false` (`true`) |
-| `ffmpeg/aac`, `ffmpeg/opus` | `bitrate` | 32000–512000 bit/s (192000) |
+| `ffmpeg/aac`, `ffmpeg-opus/opus` | `bitrate` | 32000–512000 bit/s (192000) |
 | `ffmpeg/pcm` | `format` | `s16le`, `s24le`, `f32le` (`s24le`) |
 
 Muxers keep their defaults (MP4 and MOV: `faststart` on). For any other
@@ -122,7 +126,7 @@ component, or to confirm these, ask the exporter first:
 
 ```sh
 Celesta-export --list-components --check          # every component; --check starts each plugin to say whether it works
-Celesta-export --json --describe ffmpeg/libx264   # its settings: key, type, default, options or range, visibleWhen
+Celesta-export --json --describe ffmpeg-x264/libx264   # its settings: key, type, default, options or range, visibleWhen
 Celesta-export --json --overwrite --video-option preset=slow --video-option crf=20 \
   --audio-option bitrate=256000 --react scene.tsx out.mp4
 Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.mp4
@@ -146,7 +150,7 @@ Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.
   and the renderer is not a software one; otherwise the encoder converts.
   There is no flag for it.
 - The MCP `export_video` tool takes `muxer`, `videoEncoder`
-  (`{"id": "ffmpeg/libx264", "options": {"preset": "slow", "crf": 20}}`;
+  (`{"id": "ffmpeg-x264/libx264", "options": {"preset": "slow", "crf": 20}}`;
   `id` may be left out for the muxer's default), and `audioEncoder` (the
   same shape, or `"none"`), with typed option values, and `preset` and
   `presetFile` as `--preset` and `--preset-file`. MCP's
@@ -174,7 +178,7 @@ and remembers its last choice in the user file's `last`.
   "presets": [
     { "name": "YouTube 1080p",
       "muxer": "ffmpeg/mp4",
-      "video": { "component": "ffmpeg/libx264", "options": { "crf": 18, "preset": "slow" } },
+      "video": { "component": "ffmpeg-x264/libx264", "options": { "crf": 18, "preset": "slow" } },
       "audio": { "component": "ffmpeg/aac", "options": { "bitrate": 192000 } } },
     { "name": "Silent", "muxer": "ffmpeg/mp4", "audio": "none" }
   ],
@@ -208,7 +212,7 @@ and remembers its last choice in the user file's `last`.
   left out, a bad value reset to its default, a missing or unusable
   component replaced by the default (without its options). Each is a
   warning in the result's `warnings` (and a `warning:` line without
-  `--json`), such as `` preset `Web`: ffmpeg/libx264 has no setting `speed`; it is
+  `--json`), such as `` preset `Web`: ffmpeg-x264/libx264 has no setting `speed`; it is
   left out ``. A value given with `--video-option`/`--audio-option`
   (or MCP/TS `options`) is still strict: `invalid_option`. The exception:
   `--audio-option` with a preset that leaves the audio out (`"audio":
@@ -530,7 +534,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
   paths. Read these paths; do not work out file names yourself. Each entry
   has a `type`:
   - `video`: `firstFrame`, `frames`, `start`, `duration`, `muxer`
-    (`"ffmpeg/mp4"`), `video` (`{"component": "ffmpeg/libx264", "codec":
+    (`"ffmpeg/mp4"`), `video` (`{"component": "ffmpeg-x264/libx264", "codec":
     "avc1.64001F"}`), `audio` (the same shape, or `null` when the file has
     no audio stream), `alpha` (`true` when the encoder kept transparency:
     ProRes 4444 and VP9 by default), and `files` (every file the muxer
@@ -613,12 +617,12 @@ none:
 ```json
 {"event":"compositions","compositionId":"default","compositions":[{"id":"default","width":1920,"height":1080,"frameRate":{"numerator":30,"denominator":1},"durationInFrames":150}]}
 {"event":"composition","composition":{"width":1920,"height":1080,"fps":30.0,"frames":150,"duration":5.0}}
-{"event":"output","muxer":"ffmpeg/mp4","muxerName":"MP4","video":{"component":"ffmpeg/libx264","name":"H.264 (x264)","settings":["Slow","CRF 20"]},"audio":{"component":"ffmpeg/aac","name":"AAC","settings":[]}}
+{"event":"output","muxer":"ffmpeg/mp4","muxerName":"MP4","video":{"component":"ffmpeg-x264/libx264","name":"H.264 (x264)","settings":["Slow","CRF 20"]},"audio":{"component":"ffmpeg/aac","name":"AAC","settings":[]}}
 {"event":"rendering","frame":1,"total":150}
 {"event":"warning","message":"…"}
 {"event":"mixingAudio"}
 {"event":"muxing"}
-{"event":"wrote","output":{"type":"video","path":"/work/out.mp4","firstFrame":0,"frames":150,"start":0.0,"duration":5.0,"muxer":"ffmpeg/mp4","video":{"component":"ffmpeg/libx264","codec":"avc1.640028"},"audio":{"component":"ffmpeg/aac","codec":"mp4a.40.2"},"loudness":{"integratedLufs":-16.1,"truePeakDbtp":-1.67},"alpha":false,"files":["/work/out.mp4"]}}
+{"event":"wrote","output":{"type":"video","path":"/work/out.mp4","firstFrame":0,"frames":150,"start":0.0,"duration":5.0,"muxer":"ffmpeg/mp4","video":{"component":"ffmpeg-x264/libx264","codec":"avc1.640028"},"audio":{"component":"ffmpeg/aac","codec":"mp4a.40.2"},"loudness":{"integratedLufs":-16.1,"truePeakDbtp":-1.67},"alpha":false,"files":["/work/out.mp4"]}}
 ```
 
 `output` names the muxer and encoders, with the settings that differ from
@@ -670,7 +674,7 @@ Every video export is BT.709 with limited range, converted on the GPU or by
 the encoder when it takes RGB, and tagged in the file (H.264's VUI, MP4 and
 MOV `colr`, WebM `Colour`), so players show the colors as rendered. Earlier
 releases wrote untagged MP4s with BT.601 coefficients, which players that
-assume BT.709 for HD showed slightly off. `--describe ffmpeg/libx264` shows
+assume BT.709 for HD showed slightly off. `--describe ffmpeg-x264/libx264` shows
 no color option: there is nothing to choose.
 
 For speed problems, see [performance.md](performance.md).

@@ -8,8 +8,6 @@ on:
 
 permissions:
   contents: read
-  # setup-ffmpeg downloads Windows' FFmpeg from GitHub Packages.
-  packages: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -140,7 +138,7 @@ jobs:
       # They mock no Apple tool, so they run anywhere; Linux runs them once.
       - name: Test the macOS packaging checks
         if: runner.os == 'Linux'
-        run: python3 scripts/test_package_macos.py
+        run: python3 -B -m unittest scripts/test_package_macos.py scripts/test_package_media_plugins.py
 
       # Type checks have no timeouts, so they run beside the Rust build and
       # use the cores it leaves idle while it links.
@@ -371,7 +369,7 @@ jobs:
         run: |
           while read -r workspace packages; do
             [ -n "$workspace" ] || continue
-            (cd "$workspace" && cargo clippy $packages --all-targets --locked -- -D warnings) < /dev/null
+            node scripts/plugins/run-cargo.mts "$workspace" clippy $packages --all-targets --locked -- -D warnings < /dev/null
           done <<< "$CARGO_WORKSPACES"
 
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
@@ -387,7 +385,7 @@ jobs:
         run: |
           while read -r workspace packages; do
             [ -n "$workspace" ] || continue
-            (cd "$workspace" && cargo test $packages --locked --no-fail-fast -- --show-output) < /dev/null 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log"
+            node scripts/plugins/run-cargo.mts "$workspace" test $packages --locked --no-fail-fast -- --show-output < /dev/null 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log"
           done <<< "$CARGO_WORKSPACES"
 
       # A test that cannot run here (on macOS or Windows, or without

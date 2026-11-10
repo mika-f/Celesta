@@ -8,9 +8,10 @@ Users do not need Node.js, pnpm, Rust, or FFmpeg installed.
 ## Prerequisites
 
 - The `x86_64-pc-windows-msvc` Rust toolchain and Visual Studio C++ build tools.
-- FFmpeg built with `vcpkg install ffmpeg[x264,vpx,opus]:x64-windows-static-md` and
-  `VCPKG_ROOT` pointing to that installation. Use a vcpkg release whose
-  `ffmpeg` port is 8.1.x, such as `2026.07.29`.
+- A standard LGPL vcpkg FFmpeg 8.1.x install: `ffmpeg[zlib]` with
+  `x64-windows-static-md`, using vcpkg `2026.07.29`. Set `VCPKG_ROOT` to this
+  install. Do not add x264, Opus or VPX to it. Separate codec ZIPs use their
+  own native roots; see [plugin packaging](../plugins/README.md).
 - Node.js and pnpm for building the React package.
 - [Inno Setup 6.3 or later](https://jrsoftware.org/isdl.php) for the setup EXE.
   Use `-ZipOnly` if you only need a portable ZIP.
@@ -57,7 +58,7 @@ globally, or associate project file extensions.
 ## Verification
 
 Before creating the archives, the script automatically runs a React composition
-with hooks and exports a short MP4 using only the bundled executables. The test
+with hooks and exports a short ProRes/MOV using only the bundled executables. The test
 uses a separate directory containing spaces and Japanese characters, removes
 Node.js from PATH, and checks that runtime files contain no pnpm symlinks.
 Re-run it against an extracted package:
@@ -76,26 +77,21 @@ before publishing. The automated export check does not replace a GUI check.
 These are unsigned development packages. Code signing is not configured.
 The package collects Node.js and JavaScript license texts, native vcpkg notices,
 and available Rust license texts plus a dependency inventory, and includes the
-repository's root `LICENSE*` files plus `packaging/GPL-SOURCE-OFFER.md`.
+Celesta's `LICENSE-MIT` and `LICENSE-APACHE` in the package-wide license folder.
+FFmpeg license texts and source notices stay in the corresponding plugin's
+`licenses/` folder.
 
-Celesta's own executables link no FFmpeg. FFmpeg is linked statically into the
-codec plugin's program, `plugins\ffmpeg\bin\windows-x86_64\celesta-codec-ffmpeg.exe`,
-which gets its own copies of the MSVC runtime DLLs beside it and carries the
-GPL text and source offer in `plugins\ffmpeg\licenses`. The shared plugin build
-script (`scripts/plugins/build.mts`) builds `plugins/ffmpeg` in the plugins
-workspace and lays that folder out.
+Celesta's own executables link no FFmpeg. Only the standard LGPL process
+lives under `plugins/ffmpeg`, with its own CRT DLLs. The app package's native
+notices come only from the standard installation under `licenses/native`, and
+its Rust inventory excludes optional codec crates. The smoke test checks that
+x264, Opus and VPX were not bundled and exports MOV/ProRes.
 
-The x264-enabled FFmpeg configuration is GPL-2.0-or-later licensed, which makes
-the codec plugin's program, as distributed, GPL-licensed; Celesta's executables
-stay under MIT/Apache-2.0. See [`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md)
-and the root [`README.md`](../../README.md#license) for details. That file's
-written offer, together with `LICENSE-GPL-2.0`, is how this package satisfies
-GPLv2 Section 3 without bundling full FFmpeg/x264 source in every download.
-
-The same FFmpeg build links libvpx and libopus (BSD-3-Clause), the WebM
-encoders. The `vcpkg install` line above builds them, and their copyright files
-ship under `licenses/native` with the other native notices (the packaging script
-copies vcpkg's whole `share` tree).
+Optional codec archives are separate assets on the same GitHub release, built
+with [`package-media-plugins.py`](../../scripts/package-media-plugins.py). Each
+contains one installable plugin folder with its CRT, native libraries, license
+texts and notices. Only x264 carries the [GPL offer](../GPL-SOURCE-OFFER.md).
+See [plugin packaging](../plugins/README.md) for build and installation details.
 
 `plugins\mediafoundation` holds the Media Foundation plugin
 (`celesta-codec-mediafoundation`): the H.264, HEVC and AAC encoders and the

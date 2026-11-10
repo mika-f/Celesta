@@ -44,6 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { cargoMetadata } from './cargo.mts';
+import { ffmpegEnvironment } from './ffmpeg.mts';
 import { licenseFiles } from './licenses.mts';
 import { buildsOn, celestaRange, checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
 import type { Built, PluginManifest, PluginSource } from './manifest.mts';
@@ -163,9 +164,17 @@ function buildExecutable(source: string, out: string, cargoPackage: string, targ
   const manifest = join(source, 'Cargo.toml');
   const args = ['build', '--release', '--locked', '--manifest-path', manifest, '--bin', cargoPackage];
   if (values.target) args.push('--target', values.target);
-  run(cargo, args, { cwd: source });
+  run(cargo, args, { cwd: source, env: ffmpegEnvironment(cargoPackage) });
   const built = join(targetDirectory, ...(values.target ? [values.target] : []), 'release', binary);
   if (!existsSync(built)) fail(`${built} was not built`);
+  // This binary checks every loaded FFmpeg library before answering. Check
+  // before copying it so a GPL-linked default plugin is never staged.
+  if (['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-opus', 'celesta-codec-ffmpeg-vpx'].includes(cargoPackage)) {
+    const host = orFail(() => rustPlatform({ cwd: source }));
+    if (host.os === os && host.arch === arch) {
+      run(built, ['--manifest'], { stdio: ['ignore', 'ignore', 'inherit'] });
+    }
+  }
   mkdirSync(join(out, 'bin', `${os}-${arch}`), { recursive: true });
   copyFileSync(built, join(out, 'bin', `${os}-${arch}`, binary));
   return { [`${os}-${arch}`]: `bin/${os}-${arch}/${binary}` };

@@ -4,7 +4,7 @@
 // together. The rewrites are line by line, so every other byte stays.
 
 /** The plugin folders, relative to the repository root, that give Celesta's version. */
-export const FOLLOWS_CELESTA = ['plugins/avfoundation', 'plugins/ffmpeg', 'plugins/mediafoundation'];
+export const FOLLOWS_CELESTA = ['plugins/avfoundation', 'plugins/ffmpeg', 'plugins/ffmpeg-x264', 'plugins/ffmpeg-opus', 'plugins/ffmpeg-vpx', 'plugins/mediafoundation'];
 
 const HEADER = /^\s*\[\[?\s*([^\]]*?)\s*\]\]?\s*(?:#.*)?$/;
 const VERSION = /^(\s*version\s*=\s*")([^"]*)(".*)$/s;

@@ -4,6 +4,10 @@ Open the [web editor](/en/#playground), change or open a TSX composition, and ch
 
 ## From the app
 
+App packages bundle the standard `ffmpeg` plugin only. Choose **QuickTime · ffmpeg**
+for ProRes/MOV export without additional downloads. Install **ffmpeg-x264** for
+MP4, or **both ffmpeg-vpx and ffmpeg-opus** for WebM; see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads).
+
 Choose **Export** in the title bar, or **File → Export…** (`⌘ Shift E`, `Ctrl Shift E`), to open the export page. It replaces the Assets panel on the left. The viewer, the right dock, and the timeline stay where they are, so you can keep looking at the composition while you choose. To leave the page, choose **Export** again, press the panel's X, or press Escape. What you chose is kept. From top to bottom, the page has:
 
 - **Preset**: **None** for Celesta's defaults, then the project's presets under **This project** and yours under **My presets** (see Export presets below).
@@ -106,13 +110,13 @@ To write timed data of your own, use `formatSubtitles(cues, { fps, format: 'srt'
 
 ## Choosing encoders and settings
 
-Celesta writes a video with three media components: a muxer, which writes the file, a video encoder, and an audio encoder. Each is named `<plugin>/<component>`, such as `ffmpeg/libx264`. The output's extension picks the muxer, and the muxer's default codecs pick the encoders:
+Celesta writes a video with three media components: a muxer, which writes the file, a video encoder, and an audio encoder. Each is named `<plugin>/<component>`, such as `ffmpeg-x264/libx264`. The output's extension picks the muxer, and the muxer's default codecs pick the encoders:
 
 | Extension | Muxer | Video encoder | Audio encoder |
 | --- | --- | --- | --- |
-| `.mp4`, `.m4v` | `ffmpeg/mp4` | `ffmpeg/libx264` (H.264) | `ffmpeg/aac` (AAC) |
+| `.mp4`, `.m4v` | `ffmpeg/mp4` | `ffmpeg-x264/libx264` (H.264) | `ffmpeg/aac` (AAC) |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores` (ProRes 4444) | `ffmpeg/pcm` (24-bit PCM) |
-| `.webm` | `ffmpeg/webm` | `ffmpeg/vp9` (VP9 with alpha) | `ffmpeg/opus` (Opus, 48 kHz) |
+| `.webm` | `ffmpeg/webm` | `ffmpeg-vpx/vp9` (VP9 with alpha) | `ffmpeg-opus/opus` (Opus, 48 kHz) |
 
 `--list-components` lists every installed component with its kind and plugin, including Celesta's built-in image components (`builtin/png` and the others, shown as `built-in`), which write still frames only (see Still frames and contact sheets below); add `--check` to ask each plugin whether its components work on this computer, which starts each plugin once. `--describe <plugin/id>` shows one component's settings: each key with its type, default, and choices or range. Both print JSON with `--json`, and neither takes a source or an output.
 
@@ -120,16 +124,16 @@ Celesta writes a video with three media components: a muxer, which writes the fi
 
 | Component | Key | Values (default) |
 | --- | --- | --- |
-| `ffmpeg/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, or `veryslow` (`medium`) |
+| `ffmpeg-x264/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, or `veryslow` (`medium`) |
 | | `rateControl` | `crf` for constant quality or `vbr` for an average bitrate (`crf`) |
 | | `crf` | 0–51, with `rateControl=crf`; lower is higher quality and larger (18) |
 | | `bitrate` | bits per second, with `rateControl=vbr` (8000000) |
 | | `bitDepth` | `8`, or `10` for 10-bit H.264 (High 10) (`8`) |
 | | `tune` | an x264 tune, such as `film` or `animation` (none) |
 | `ffmpeg/prores` | `profile` | `4444`, or `hq` for 422 HQ without alpha (`4444`) |
-| `ffmpeg/vp9` | `crf` | 0–63 (20) |
+| `ffmpeg-vpx/vp9` | `crf` | 0–63 (20) |
 | | `alpha` | `true` or `false` (`true`) |
-| `ffmpeg/aac`, `ffmpeg/opus` | `bitrate` | 32000–512000 bits per second (192000) |
+| `ffmpeg/aac`, `ffmpeg-opus/opus` | `bitrate` | 32000–512000 bits per second (192000) |
 | `ffmpeg/pcm` | `format` | `s16le`, `s24le`, or `f32le` (`s24le`) |
 
 Muxers keep their defaults: MP4 and MOV are written with `faststart`, which puts the index first so a browser can start playing before the download ends.
@@ -163,7 +167,7 @@ Every video export is BT.709 with limited range. Celesta converts on the GPU, or
 :::
 ::::
 
-The MCP `export_video` tool and `@celesta.studio/exporter` take the same choices as `muxer`, `videoEncoder` (`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`), and `audioEncoder` (the same shape, or `"none"`), and an export preset as `preset` and `presetFile` (see Export presets below). MCP checks each option's type, so `crf` must be a number there; the package passes its options to the exporter as `--video-option` and `--audio-option` text, which is read by each setting's type as on the command line, so `"18"` works there too. MCP's `list_components` and `describe_component` tools, and the package's `listComponents()` and `describeComponent()`, list and describe the components.
+The MCP `export_video` tool and `@celesta.studio/exporter` take the same choices as `muxer`, `videoEncoder` (`{ "id": "ffmpeg-x264/libx264", "options": { "preset": "veryfast", "crf": 18 } }`), and `audioEncoder` (the same shape, or `"none"`), and an export preset as `preset` and `presetFile` (see Export presets below). MCP checks each option's type, so `crf` must be a number there; the package passes its options to the exporter as `--video-option` and `--audio-option` text, which is read by each setting's type as on the command line, so `"18"` works there too. MCP's `list_components` and `describe_component` tools, and the package's `listComponents()` and `describeComponent()`, list and describe the components.
 
 ## Export presets
 
@@ -180,7 +184,7 @@ The app's **Save as preset…** writes both, and you can also write them by hand
   "presets": [
     { "name": "YouTube 1080p",
       "muxer": "ffmpeg/mp4",
-      "video": { "component": "ffmpeg/libx264", "options": { "crf": 18, "preset": "slow" } },
+      "video": { "component": "ffmpeg-x264/libx264", "options": { "crf": 18, "preset": "slow" } },
       "audio": { "component": "ffmpeg/aac", "options": { "bitrate": 192000 } } },
     { "name": "Silent", "muxer": "ffmpeg/mp4", "audio": "none" }
   ],
@@ -350,7 +354,7 @@ The file extension picks the video format. A `.mp4` file is H.264 with AAC audio
 
 Only areas nothing draws on are transparent, so a layer that fills the whole frame, such as a full-frame background, makes the output opaque. The alpha is straight (unassociated), and colors are converted and tagged as BT.709 (limited range).
 
-Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, such as an LGPL build without libx264, the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
+Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, or an optional encoder plugin is missing (H.264 needs `ffmpeg-x264`; WebM needs `ffmpeg-vpx` and `ffmpeg-opus`), the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
 
 ## Still frames and contact sheets
 

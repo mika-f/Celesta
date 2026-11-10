@@ -14,7 +14,7 @@ const directory = mkdtempSync(join(tmpdir(), 'Celesta package 日本語 '));
 const entry = join(directory, 'test.tsx');
 const env = { ...process.env, PATH: mac ? '/usr/bin:/bin' : join(process.env.SystemRoot, 'System32') };
 // Plugin folders searched before the bundled one would let another media
-// plugin write the MP4 below: CELESTA_PLUGIN_PATH, and the user's plugin folder and
+// plugin write the MOV below: CELESTA_PLUGIN_PATH, and the user's plugin folder and
 // settings (which can add folders), found from these. Windows names
 // variables in any case.
 const userFolders = ['APPDATA', 'HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME'];
@@ -65,30 +65,21 @@ export default function Root() {
   const messages = protocol.trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.ok(messages[0].config);
   assert.ok(messages[1].scene);
-  // Celesta links no FFmpeg: the MP4 below is written by the bundled media
-  // plugin, which carries the GPL its libx264 needs.
-  const codec = join(packageDirectory, mac ? 'Contents/Resources/PlugIns/ffmpeg' : 'plugins/ffmpeg');
-  assert.ok(existsSync(join(codec, 'celesta-plugin.json')), 'Package must include the media plugin');
-  const codecManifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
-  assert.ok(codecManifest.roles?.includes('media'), 'The media plugin must have the media role');
-  assert.ok(codecManifest.media?.decoders?.length > 0, 'The media plugin must offer at least one decoder');
-  for (const kind of ['videoEncoders', 'audioEncoders', 'muxers']) {
-    assert.ok(codecManifest.media?.[kind]?.length > 0, `The media plugin must offer at least one of ${kind}`);
+  // Each build is a separate process with the license files its source declares.
+  for (const id of ['ffmpeg']) {
+    const codec = join(packageDirectory, mac ? `Contents/Resources/PlugIns/${id}` : `plugins/${id}`);
+    const manifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
+    assert.deepEqual(manifest.roles, ['media']);
+    for (const kind of ['decoders', 'videoEncoders', 'audioEncoders', 'muxers']) {
+      assert.ok(manifest.media?.[kind]?.length > 0, `The standard plugin must offer ${kind}`);
+    }
+    const programs = Object.values(manifest.executable ?? {});
+    assert.equal(programs.length, 1);
+    assert.ok(existsSync(join(codec, programs[0])));
+    const source = JSON.parse(readFileSync(new URL(`../plugins/${id}/plugin.json`, import.meta.url), 'utf8'));
+    assert.deepEqual(readdirSync(join(codec, 'licenses')).sort(),
+      source.licenses.map((license) => basename(license)).sort());
   }
-  const programs = Object.values(codecManifest.executable ?? {});
-  assert.equal(programs.length, 1, 'The media plugin must name exactly one executable');
-  assert.ok(existsSync(join(codec, programs[0])), `The media plugin's program ${programs[0]} must exist`);
-  for (const license of ['LICENSE-GPL-2.0', 'GPL-SOURCE-OFFER.md']) {
-    assert.ok(existsSync(join(codec, 'licenses', license)), `The media plugin must carry ${license}`);
-  }
-  // The build script copies the files plugin.json lists, by name, and
-  // nothing else.
-  const codecSource = JSON.parse(readFileSync(new URL('../plugins/ffmpeg/plugin.json', import.meta.url), 'utf8'));
-  assert.deepEqual(
-    readdirSync(join(codec, 'licenses')).sort(),
-    codecSource.licenses.map((license) => basename(license)).sort(),
-    "The media plugin's licenses/ must hold exactly the files plugins/ffmpeg/plugin.json lists",
-  );
   // The media plugin's crates are in the plugins workspace, whose licenses
   // the package collects with the root's: the media plugin's alone, not
   // those of the plugins it does not bundle.
@@ -98,12 +89,16 @@ export default function Root() {
   for (const crate of ['ez-ffmpeg', 'celesta-codec-ffmpeg']) {
     assert.ok(rustPackages.includes(crate), `licenses/rust-packages.json must name ${crate}`);
   }
+  for (const id of ['ffmpeg-x264', 'ffmpeg-opus', 'ffmpeg-vpx']) {
+    assert.ok(!existsSync(join(packageDirectory, mac ? `Contents/Resources/PlugIns/${id}` : `plugins/${id}`)), `${id} must be a separate download`);
+    assert.ok(!rustPackages.includes(`celesta-codec-${id}`), `${id} must not enter the app's Rust inventory`);
+  }
   assert.ok(!rustPackages.includes('celesta-plugin-vrm'), 'licenses/rust-packages.json must not name the unbundled VRM plugin');
-  const output = join(directory, 'test.mp4');
+  const output = join(directory, 'test.mov');
   run(exporter, ['--react', entry, output]);
-  const mp4 = readFileSync(output);
-  assert.equal(mp4.toString('ascii', 4, 8), 'ftyp');
-  assert.ok(mp4.length > 100);
+  const mov = readFileSync(output);
+  assert.ok(mov.includes(Buffer.from('moov')));
+  assert.ok(mov.length > 100);
   if (mac) {
     // The AVFoundation plugin links system frameworks only, so it ships no
     // Frameworks/ and carries MIT/Apache-2.0 alone.
@@ -232,8 +227,8 @@ export default function Root() {
     .trim().split(/\r?\n/).map((line) => JSON.parse(line));
   const tools = mcpReplies.find((reply) => reply.id === 2).result.tools.map((tool) => tool.name).sort();
   assert.deepEqual(tools, [
-    'contact_sheet', 'describe_component', 'export_video', 'init_project', 'inspect', 'list_components',
-    'list_templates', 'read_docs', 'render_frames',
+    'contact_sheet', 'describe_component', 'export_video', 'init_project', 'inspect',
+    'list_components', 'list_templates', 'read_docs', 'render_frames',
   ]);
   console.log('Package smoke test passed: bundled React hooks, Celesta packages, Code, VOICEVOX, AivisSpeech, TypeScript support, export, and the MCP server, without Node.js on PATH.');
 } finally {

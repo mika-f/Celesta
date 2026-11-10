@@ -1,6 +1,6 @@
 name: Package
 
-# Builds the Windows and macOS packages. package.yml calls it to sign and
+# Builds the standard app packages and separate native codec downloads. package.yml calls it to sign and
 # publish a release; ci.yml calls it with nothing signed on every push to
 # main, which checks packaging and saves the release-profile Rust cache on
 # main, and on a manual run of CI, which checks a branch's packaging. A tag's
@@ -21,8 +21,6 @@ on:
 
 permissions:
   contents: read
-  # setup-ffmpeg downloads Windows' FFmpeg from GitHub Packages.
-  packages: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -86,15 +84,29 @@ jobs:
         shell: pwsh
         env:
           VERSION: ${{ inputs.version }}
-        run: pwsh -File scripts/package-windows.ps1 -Version $env:VERSION -IsccPath $env:ISCC_PATH
+          RELEASE: ${{ inputs.release }}
+        run: |
+          pwsh -File scripts/package-windows.ps1 -Version $env:VERSION -IsccPath $env:ISCC_PATH
+          if ($LASTEXITCODE -ne 0) { throw 'App packaging failed' }
+          $arguments = @('scripts/package-media-plugins.py')
+          if ($env:RELEASE -eq 'true') { $arguments += @('--version', $env:VERSION) }
+          & python @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Optional plugin packaging failed' }
 
       - if: inputs.release
         uses: actions/upload-artifact@v7.0.2
         with:
           name: celesta-windows-x64
           path: |
-            target/packages/Celesta-*-windows-x64.zip
-            target/packages/Celesta-*-windows-x64-setup.exe
+            target/packages/Celesta-${{ inputs.version }}-windows-x64.zip
+            target/packages/Celesta-${{ inputs.version }}-windows-x64-setup.exe
+          if-no-files-found: error
+
+      - if: inputs.release
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: celesta-codecs-windows-x64
+          path: target/packages/Celesta-plugin-ffmpeg-*-windows-x64.zip
           if-no-files-found: error
 
   macos:
@@ -180,6 +192,9 @@ jobs:
             signing=(--sign-identity "$SIGN_IDENTITY" --notary-profile celesta-notary)
           fi
           python3 scripts/package-macos.py --version "$VERSION" "${signing[@]}"
+          optional=()
+          if [[ "$RELEASE" == "true" ]]; then optional=(--version "$VERSION"); fi
+          python3 scripts/package-media-plugins.py "${optional[@]}" "${signing[@]}"
 
       - name: Remove signing keychain
         if: always() && env.SIGNING_KEYCHAIN != ''
@@ -190,4 +205,49 @@ jobs:
         with:
           name: celesta-macos-${{ matrix.arch }}
           path: target/packages/Celesta-*-macos-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+      - if: inputs.release
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: celesta-codecs-macos-${{ matrix.arch }}
+          path: target/packages/Celesta-plugin-ffmpeg-*-macos-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+  linux-plugins:
+    name: Linux x64 codec downloads
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: $/.github/actions/setup-ffmpeg
+      - name: Install ELF packaging tools
+        run: sudo apt-get install -y --no-install-recommends patchelf
+      - name: Isolate Rust toolchain
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.99.1
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: plugins -> target
+          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: jdx/mise-action@v5.2.7
+        with:
+          version: 2026.11.4
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build optional codec archives
+        env:
+          VERSION: ${{ inputs.version }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          optional=()
+          if [[ "$RELEASE" == "true" ]]; then optional=(--version "$VERSION"); fi
+          python3 scripts/package-media-plugins.py "${optional[@]}"
+      - if: inputs.release
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: celesta-codecs-linux-x64
+          path: target/packages/Celesta-plugin-ffmpeg-*-linux-x64.zip
           if-no-files-found: error

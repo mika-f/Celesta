@@ -1,0 +1,20 @@
+[package]
+name = "celesta-codec-ffmpeg-vpx"
+description = "Celesta's optional FFmpeg vpx encoder."
+version = "0.9.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mika-f/celesta"
+rust-version = "1.89"
+
+[dependencies]
+celesta-codec-ffmpeg = { path = "../ffmpeg", version = "=0.9.0" }
+celesta-media = { path = "../../crates/media", version = "=0.9.0" }
+celesta-plugin-host = { path = "../../crates/plugin-host", version = "=0.9.0" }
+serde_json = "1.0.154"
+
+
+[dev-dependencies]
+celesta-composition = { path = "../../crates/composition", version = "=0.9.0" }
+ez-ffmpeg = "0.19"
+tempfile = "3.23.0"

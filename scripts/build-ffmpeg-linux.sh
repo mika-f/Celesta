@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Builds the FFmpeg 8.1.x libraries Celesta links against from source and
-# installs them into a prefix, for Linux distributions that do not package
-# FFmpeg 8.1.x (Ubuntu 24.04 LTS ships 6.1).
+# Builds FFmpeg 8.1.x on Linux or macOS, with separate LGPL/GPL prefixes.
+# FFMPEG_VARIANT=standard (default), x264, opus or vpx selects the build.
+# Each variant needs its own prefix; only x264 enables GPL code.
+# macOS builds dylibs; Linux builds static archives.
 #
 #   scripts/build-ffmpeg-linux.sh [PREFIX]    # PREFIX defaults to /opt/ffmpeg8
 #
@@ -19,7 +20,23 @@ set -euo pipefail
 
 version="${FFMPEG_VERSION:-8.1.3}"
 # Absolute, because configure and make install run from the temporary source tree.
-prefix="$(realpath -m "${1:-/opt/ffmpeg8}")"
+mkdir -p "${1:-/opt/ffmpeg8}"
+prefix="$(cd "${1:-/opt/ffmpeg8}" && pwd)"
+variant="${FFMPEG_VARIANT:-standard}"
+case "$variant" in
+  standard) codec_flags=(--disable-gpl --disable-nonfree --enable-zlib) ;;
+  x264) codec_flags=(--enable-gpl --disable-nonfree --enable-libx264) ;;
+  opus) codec_flags=(--disable-gpl --disable-nonfree --enable-libopus) ;;
+  vpx) codec_flags=(--disable-gpl --disable-nonfree --enable-libvpx) ;;
+  *) echo "FFMPEG_VARIANT must be standard, x264, opus or vpx" >&2; exit 2 ;;
+esac
+if [[ "$(uname -s)" == Darwin ]]; then
+  link_flags=(--enable-shared --disable-static)
+  jobs="$(sysctl -n hw.ncpu)"
+else
+  link_flags=(--enable-static --disable-shared)
+  jobs="$(nproc)"
+fi
 url="${FFMPEG_URL:-https://ffmpeg.org/releases/ffmpeg-$version.tar.xz}"
 
 work="$(mktemp -d)"
@@ -35,18 +52,14 @@ cd "$work/src"
 # the extra libraries to link. --disable-autodetect keeps the build from
 # picking up whatever optional libraries (X11, ALSA, VA-API, ...) happen to be
 # installed; zlib is enabled explicitly because the PNG decoder needs it.
-# libx264 is GPL, which makes the build GPL as a whole. libvpx and libopus
-# (the WebM encoders) are BSD-licensed and add no further terms.
+# GPL and LGPL libraries must never be installed into the same prefix.
 ./configure \
   --prefix="$prefix" \
-  --enable-gpl \
-  --enable-libx264 \
-  --enable-libvpx \
-  --enable-libopus \
-  --enable-zlib \
+  "${codec_flags[@]}" \
+  "${link_flags[@]}" \
   --enable-pic \
   --disable-autodetect \
   --disable-programs \
   --disable-doc
-make -j"$(nproc)"
+make -j"${FFMPEG_JOBS:-$jobs}"
 make install

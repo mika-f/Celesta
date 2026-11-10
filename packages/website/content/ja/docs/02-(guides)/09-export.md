@@ -4,6 +4,10 @@
 
 ## アプリから
 
+アプリに同梱するのは標準の `ffmpeg` だけです。追加ダウンロードなしでは
+**QuickTime · ffmpeg** を選んで ProRes／MOV を書き出せます。MP4 には **ffmpeg-x264**、
+WebM には **ffmpeg-vpx と ffmpeg-opus の両方**を入れてください。[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)をご覧ください。
+
 タイトルバーの **Export**、または **File → Export…**（`⌘ Shift E`、`Ctrl Shift E`）で書き出しページを開きます。ページは左側の Assets パネルと入れ替わり、ビューアー、右のドック、タイムラインはそのまま残るので、コンポジションを見ながら設定できます。ページを閉じるには、もう一度 **Export** を押すか、パネルの X を押すか、Escape を押します。選んだ内容は残ります。上から順に次の項目があります。
 
 - **Preset**：Celesta の既定の設定を使う **None** に続いて、プロジェクトのプリセットが **This project**、自分のプリセットが **My presets** の下に並びます（後述の「書き出しプリセット」）。
@@ -106,30 +110,30 @@ const cues = parseSubtitles(captions, { fps: 30 });
 
 ## エンコーダーと設定を選ぶ
 
-Celesta は動画を 3 つのメディアコンポーネントで書き出します。ファイルを書くマルチプレクサー（muxer）、映像エンコーダー、音声エンコーダーです。どれも `ffmpeg/libx264` のように `<プラグイン>/<コンポーネント>` という名前を持ちます。出力の拡張子でマルチプレクサーが決まり、マルチプレクサーの既定のコーデックでエンコーダーが決まります。
+Celesta は動画を 3 つのメディアコンポーネントで書き出します。ファイルを書くマルチプレクサー（muxer）、映像エンコーダー、音声エンコーダーです。どれも `ffmpeg-x264/libx264` のように `<プラグイン>/<コンポーネント>` という名前を持ちます。出力の拡張子でマルチプレクサーが決まり、マルチプレクサーの既定のコーデックでエンコーダーが決まります。
 
 | 拡張子 | マルチプレクサー | 映像エンコーダー | 音声エンコーダー |
 | --- | --- | --- | --- |
-| `.mp4`、`.m4v` | `ffmpeg/mp4` | `ffmpeg/libx264`（H.264） | `ffmpeg/aac`（AAC） |
+| `.mp4`、`.m4v` | `ffmpeg/mp4` | `ffmpeg-x264/libx264`（H.264） | `ffmpeg/aac`（AAC） |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores`（ProRes 4444） | `ffmpeg/pcm`（24 bit PCM） |
-| `.webm` | `ffmpeg/webm` | `ffmpeg/vp9`（アルファ付き VP9） | `ffmpeg/opus`（Opus、48 kHz） |
+| `.webm` | `ffmpeg/webm` | `ffmpeg-vpx/vp9`（アルファ付き VP9） | `ffmpeg-opus/opus`（Opus、48 kHz） |
 
 `--list-components` は、入っているコンポーネントを種類とプラグインとともに一覧にします。Celesta に組み込みの画像コンポーネント（`builtin/png` など。`built-in` と表示されます）も含まれ、これらは静止画だけを書き出します（後述の「静止画とコンタクトシート」）。`--check` を加えると、各プラグインにそのコンポーネントがこのコンピューターで使えるかを尋ねます（プラグインを 1 回ずつ起動します）。`--describe <プラグイン/id>` は、ひとつのコンポーネントの設定を、キーごとに型、既定値、選択肢または範囲とともに表示します。どちらも `--json` で JSON を出力し、ソースも出力も取りません。
 
-`--video-encoder` と `--audio-encoder` はマルチプレクサーの既定とは別のエンコーダーを、`--muxer` は拡張子とは別のマルチプレクサーを選びます。そのマルチプレクサーが出力の拡張子を挙げていなくてもファイルは書き出され、`ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway` のような警告が出ます。`--audio-encoder none` は音声のない動画を書き出します。`--audio-option` とは一緒に指定できません。マルチプレクサーが音声を受け付けず、音声エンコーダーも指定していないときも、`--audio-option` は指定できません。`--video-option key=value` と `--audio-option key=value` は選んだエンコーダーの設定を指定し、値はその設定の型で読まれます。複数の設定は繰り返して指定します。エンコーダーにないキーや受け付けない値は、描画を始める前に失敗します。Celesta に同梱の FFmpeg プラグインには、このリリースでは次の設定があります。書き出しページではそれぞれラベルで表示され、たとえば x264 の `preset` は **Speed preset**、`rateControl` は **Mode** です（入っているコンポーネントの設定は `--describe` で確認できます）。
+`--video-encoder` と `--audio-encoder` はマルチプレクサーの既定とは別のエンコーダーを、`--muxer` は拡張子とは別のマルチプレクサーを選びます。そのマルチプレクサーが出力の拡張子を挙げていなくてもファイルは書き出され、`ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway` のような警告が出ます。`--audio-encoder none` は音声のない動画を書き出します。`--audio-option` とは一緒に指定できません。マルチプレクサーが音声を受け付けず、音声エンコーダーも指定していないときも、`--audio-option` は指定できません。`--video-option key=value` と `--audio-option key=value` は選んだエンコーダーの設定を指定し、値はその設定の型で読まれます。複数の設定は繰り返して指定します。エンコーダーにないキーや受け付けない値は、描画を始める前に失敗します。Celesta の標準・追加 FFmpeg プラグインには、このリリースでは次の設定があります。書き出しページではそれぞれラベルで表示され、たとえば x264 の `preset` は **Speed preset**、`rateControl` は **Mode** です（入っているコンポーネントの設定は `--describe` で確認できます）。
 
 | コンポーネント | キー | 値（既定値） |
 | --- | --- | --- |
-| `ffmpeg/libx264` | `preset` | `ultrafast`、`superfast`、`veryfast`、`faster`、`fast`、`medium`、`slow`、`slower`、`veryslow`（`medium`） |
+| `ffmpeg-x264/libx264` | `preset` | `ultrafast`、`superfast`、`veryfast`、`faster`、`fast`、`medium`、`slow`、`slower`、`veryslow`（`medium`） |
 | | `rateControl` | 品質一定の `crf`、平均ビットレートの `vbr`（`crf`） |
 | | `crf` | 0〜51、`rateControl=crf` のとき。小さいほど高画質・大容量（18） |
 | | `bitrate` | ビット毎秒、`rateControl=vbr` のとき（8000000） |
 | | `bitDepth` | `8`、または 10 bit の H.264（High 10）の `10`（`8`） |
 | | `tune` | `film` や `animation` などの x264 の tune（なし） |
 | `ffmpeg/prores` | `profile` | `4444`、またはアルファのない 422 HQ の `hq`（`4444`） |
-| `ffmpeg/vp9` | `crf` | 0〜63（20） |
+| `ffmpeg-vpx/vp9` | `crf` | 0〜63（20） |
 | | `alpha` | `true` または `false`（`true`） |
-| `ffmpeg/aac`、`ffmpeg/opus` | `bitrate` | 32000〜512000 ビット毎秒（192000） |
+| `ffmpeg/aac`、`ffmpeg-opus/opus` | `bitrate` | 32000〜512000 ビット毎秒（192000） |
 | `ffmpeg/pcm` | `format` | `s16le`、`s24le`、`f32le`（`s24le`） |
 
 マルチプレクサーは既定の設定のままです。MP4 と MOV は `faststart` 付きで書き出し、インデックスを先頭に置くので、ブラウザーはダウンロードが終わる前に再生を始められます。
@@ -163,7 +167,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 :::
 ::::
 
-MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選択を `muxer`、`videoEncoder`（`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`）、`audioEncoder`（同じ形、または `"none"`）で受け取り、書き出しプリセットを `preset` と `presetFile` で受け取ります（後述の「書き出しプリセット」）。MCP は各オプションの型を確かめるので、`crf` は数値で渡します。パッケージはオプションを `--video-option` と `--audio-option` のテキストとして書き出しツールに渡し、コマンドラインと同じく各設定の型で読むので、`"18"` でも受け付けます。MCP の `list_components` と `describe_component` ツール、パッケージの `listComponents()` と `describeComponent()` で、コンポーネントを一覧にしたり、その設定を確認したりできます。
+MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選択を `muxer`、`videoEncoder`（`{ "id": "ffmpeg-x264/libx264", "options": { "preset": "veryfast", "crf": 18 } }`）、`audioEncoder`（同じ形、または `"none"`）で受け取り、書き出しプリセットを `preset` と `presetFile` で受け取ります（後述の「書き出しプリセット」）。MCP は各オプションの型を確かめるので、`crf` は数値で渡します。パッケージはオプションを `--video-option` と `--audio-option` のテキストとして書き出しツールに渡し、コマンドラインと同じく各設定の型で読むので、`"18"` でも受け付けます。MCP の `list_components` と `describe_component` ツール、パッケージの `listComponents()` と `describeComponent()` で、コンポーネントを一覧にしたり、その設定を確認したりできます。
 
 ## 書き出しプリセット
 
@@ -180,7 +184,7 @@ MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選�
   "presets": [
     { "name": "YouTube 1080p",
       "muxer": "ffmpeg/mp4",
-      "video": { "component": "ffmpeg/libx264", "options": { "crf": 18, "preset": "slow" } },
+      "video": { "component": "ffmpeg-x264/libx264", "options": { "crf": 18, "preset": "slow" } },
       "audio": { "component": "ffmpeg/aac", "options": { "bitrate": 192000 } } },
     { "name": "Silent", "muxer": "ffmpeg/mp4", "audio": "none" }
   ],
@@ -350,7 +354,7 @@ Shorts や TikTok は動画を繰り返し再生します。最後のフレー�
 
 何も描かれていない領域だけが透明になるため、フレーム全体を覆うレイヤー（全面の背景など）があると出力は不透明になります。アルファはストレート（非乗算済み）で、色は BT.709（リミテッドレンジ）に変換されてタグ付けされます。
 
-Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)でエンコードします。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがない場合（libx264 のない LGPL ビルドなど）、書き出しはエラーコード `component_unavailable` で、その理由とともに失敗します。メディアプラグインがない場合は、その拡張子を書けるマルチプレクサーがないため、プラグインの入れ方のヒント付きで `unsupported_output` で失敗します。
+Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)でエンコードします。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがない場合、または追加のエンコーダープラグインがない場合（H.264 は `ffmpeg-x264`、WebM は `ffmpeg-vpx` と `ffmpeg-opus` が必要）、書き出しはエラーコード `component_unavailable` で、その理由とともに失敗します。メディアプラグインがない場合は、その拡張子を書けるマルチプレクサーがないため、プラグインの入れ方のヒント付きで `unsupported_output` で失敗します。
 
 ## 静止画とコンタクトシート
 

@@ -6,6 +6,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+mod support {
+    include!("support/mod.rs");
+    pub mod registry;
+}
 use celesta_codec_ffmpeg::{FfmpegBackend, FfmpegCodec};
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{
@@ -36,10 +40,16 @@ fn gpu() -> MutexGuard<'static, ()> {
     GPU.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+fn install() {
+    celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(
+        support::registry::plugins(),
+    ))));
+}
+
 /// An exporter that reads and writes media with the FFmpeg codec in this
 /// process, so the tests need no codec plugin installed.
 fn exporter(options: ExportOptions) -> Exporter {
-    celesta_codec_ffmpeg::install();
+    install();
     Exporter::new(options)
 }
 
@@ -82,7 +92,10 @@ fn minimal_project() -> Project {
 
 #[test]
 fn the_ffmpeg_codec_has_every_format_encoder() {
-    let described = FfmpegCodec::new().describe().unwrap();
+    let mut described = FfmpegCodec::new().describe().unwrap();
+    described.extend(FfmpegCodec::x264().describe().unwrap());
+    described.extend(support::process("ffmpeg-opus").describe().unwrap());
+    described.extend(support::process("ffmpeg-vpx").describe().unwrap());
     for (kind, id) in [
         (ComponentKind::VideoEncoder, "libx264"),
         (ComponentKind::VideoEncoder, "prores"),
@@ -326,16 +339,19 @@ impl VideoEncoder for Watched {
 /// Makes a [`Watched`] FFmpeg plugin the media plugin of every export.
 fn watch(rgba_only: bool, opened: &Opened) {
     let opened = opened.clone();
-    celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(vec![RegisteredPlugin {
+    let mut plugins = support::registry::plugins();
+    plugins.retain(|plugin| plugin.id != "ffmpeg-x264");
+    plugins.push(RegisteredPlugin {
         factory: Arc::new(move |_, _| {
             Ok(Box::new(Watched {
-                codec: FfmpegCodec::new(),
+                codec: FfmpegCodec::x264(),
                 rgba_only,
                 opened: opened.clone(),
             }) as Box<_>)
         }),
-        ..celesta_codec_ffmpeg::registered()
-    }]))));
+        ..celesta_codec_ffmpeg_x264::registered()
+    });
+    celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(plugins))));
 }
 
 /// Runs `export` with a [`Watched`] FFmpeg plugin, then restores the plain
@@ -347,7 +363,7 @@ fn watching<T>(
     let opened = Opened::default();
     watch(rgba_only, &opened);
     let result = export();
-    celesta_codec_ffmpeg::install();
+    install();
     let mut opened = opened.lock().unwrap();
     assert!(opened.len() <= 1, "{opened:?}");
     result.map(|value| (value, opened.pop().expect("libx264 was opened")))
@@ -413,7 +429,7 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
         Exporter::new(ExportOptions {
             output: OutputChoice {
                 video: EncoderChoice {
-                    component: Some(component("ffmpeg/libx264")),
+                    component: Some(component("ffmpeg-x264/libx264")),
                     options: options(&[
                         ("preset", "ultrafast"),
                         ("crf", "0"),
@@ -931,7 +947,11 @@ fn exports_transparent_vp9_webm() {
     // `mux_audio` always resamples Opus to 48 kHz.
     assert_eq!(audio_stream(&url), ("opus".to_owned(), 48_000));
     // 4:2:0 chroma blurs the quadrant's color a little more.
-    assert_transparent_quadrant(&decode_rgba64(&output, Some("libvpx-vp9")), 6 * 257);
+    // The encoder's alpha bitstream must survive muxing as BlockAdditions.
+    // libvpx itself is confined to its plugin, so this test process uses
+    // FFmpeg's built-in decoder, which does not decode the alpha stream.
+    let bytes = std::fs::read(&output).unwrap();
+    assert!(bytes.windows(2).any(|bytes| bytes == [0x75, 0xa1]));
 }
 
 #[test]
@@ -1252,7 +1272,7 @@ fn mp4_colors_hold_bt709_code_values() {
                 Exporter::new(ExportOptions {
                     output: OutputChoice {
                         video: EncoderChoice {
-                            component: Some(component("ffmpeg/libx264")),
+                            component: Some(component("ffmpeg-x264/libx264")),
                             options: options(&[
                                 ("preset", "ultrafast"),
                                 ("crf", "0"),
@@ -1515,4 +1535,31 @@ fn pcm_mov_decodes_to_the_mix_exactly() {
         .map(|(decoded, mixed)| (decoded - mixed).abs())
         .fold(0.0, f32::max);
     assert!(worst <= 1.0 / 8_388_608.0, "off by up to {worst}");
+}
+
+#[test]
+fn prores_and_webm_export_without_the_x264_plugin() {
+    let _gpu = gpu();
+    let directory = tempfile::tempdir().unwrap();
+    let project = transparent_project(directory.path());
+    for name in ["without-x264.mov", "without-x264.webm"] {
+        let mut plugins = support::registry::plugins();
+        plugins.retain(|plugin| plugin.id != "ffmpeg-x264");
+        celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(plugins))));
+        let path = directory.path().join(name);
+        let result = Exporter::new(ExportOptions::default()).export_project(
+            &project,
+            directory.path(),
+            &path,
+        );
+        install();
+        match result {
+            Ok(()) => assert!(path.is_file()),
+            Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+                skip_without_gpu(&error);
+                return;
+            }
+            Err(error) => panic!("export without x264 failed: {error}"),
+        }
+    }
 }

@@ -3,14 +3,9 @@
 //! libavcodec and libavformat through `ffmpeg-sys-next` for encoding and
 //! muxing).
 //!
-//! The `celesta-codec-ffmpeg` program serves [`FfmpegCodec`] over the media
-//! role of the plugin protocol (`celesta_media::protocol`), so Celesta
-//! itself links no FFmpeg: an FFmpeg build with GPL components (such as
-//! libx264) makes only this program GPL licensed. Its one decoder,
-//! [`DECODER_ID`], reads whatever FFmpeg does; its video encoders are
-//! `libx264`, `prores`, and `vp9`, its audio encoders `aac`, `opus`, and
-//! `pcm`, and its muxers `mp4`, `mov`, and `webm`. Tests and tools may also
-//! use [`FfmpegCodec`] in their own process, through [`install`].
+//! The default provider serves decoding, ProRes, AAC/PCM and muxing on LGPL
+//! FFmpeg. [`FfmpegCodec::x264`] shares the implementation with the separate
+//! `ffmpeg-x264` process, which alone exposes libx264 and links GPL FFmpeg.
 
 mod audio_encoder;
 mod color;
@@ -54,9 +49,19 @@ pub const DECODER_ID: &str = "ffmpeg";
 /// The plugin's manifest source, which declares its components.
 const PLUGIN_JSON: &str = include_str!("../plugin.json");
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Profile {
+    #[default]
+    Standard,
+    X264,
+    Opus,
+    Vpx,
+}
+
 /// A [`MediaProvider`] on the linked FFmpeg libraries.
 #[derive(Default)]
 pub struct FfmpegCodec {
+    profile: Profile,
     decoder: FfmpegBackend,
     video: HashMap<SessionId, VideoSession>,
     audio: HashMap<SessionId, AudioSession>,
@@ -68,6 +73,30 @@ pub struct FfmpegCodec {
 impl FfmpegCodec {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The encoder-only provider used by the separate `ffmpeg-x264` program.
+    pub fn x264() -> Self {
+        Self {
+            profile: Profile::X264,
+            ..Self::default()
+        }
+    }
+
+    /// The encoder-only provider for the separate libopus build.
+    pub fn opus() -> Self {
+        Self {
+            profile: Profile::Opus,
+            ..Self::default()
+        }
+    }
+
+    /// The encoder-only provider for the separate libvpx build.
+    pub fn vpx() -> Self {
+        Self {
+            profile: Profile::Vpx,
+            ..Self::default()
+        }
     }
 
     /// A [`ProviderFactory`] making an [`FfmpegCodec`] in this process,
@@ -175,28 +204,59 @@ fn decoded<T>(result: Result<T, MediaError>) -> Result<T, MediaError> {
 
 impl MediaProvider for FfmpegCodec {
     fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
-        Ok(components::describe())
+        use celesta_media::ComponentKind;
+        Ok(components::describe()
+            .into_iter()
+            .filter(|component| {
+                let profile = match (component.kind, component.id.as_str()) {
+                    (ComponentKind::VideoEncoder, "libx264") => Profile::X264,
+                    (ComponentKind::VideoEncoder, "vp9") => Profile::Vpx,
+                    (ComponentKind::AudioEncoder, "opus") => Profile::Opus,
+                    _ => Profile::Standard,
+                };
+                profile == self.profile
+            })
+            .collect())
     }
 
     fn decoder(&mut self) -> Option<&mut dyn Decoder> {
-        Some(self)
+        if self.profile == Profile::Standard {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
-        Some(self)
+        if self.profile == Profile::Opus {
+            None
+        } else {
+            Some(self)
+        }
     }
 
     fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
-        Some(self)
+        if matches!(self.profile, Profile::Standard | Profile::Opus) {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn muxer(&mut self) -> Option<&mut dyn Muxer> {
-        Some(self)
+        if self.profile == Profile::Standard {
+            Some(self)
+        } else {
+            None
+        }
     }
 }
 
 impl Decoder for FfmpegCodec {
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
+        if self.profile != Profile::Standard {
+            return Err(no_component("decoder", decoder));
+        }
         check_decoder(decoder)?;
         self.decoder.probe(path).cloned()
     }
@@ -206,6 +266,9 @@ impl Decoder for FfmpegCodec {
         decoder: &str,
         request: &VideoRequest<'_>,
     ) -> Result<VideoFrame, MediaError> {
+        if self.profile != Profile::Standard {
+            return Err(no_component("decoder", decoder));
+        }
         check_decoder(decoder)?;
         decoded(match request.sequential {
             Some(sequential) => self.decoder.decode_sequential(
@@ -225,6 +288,9 @@ impl Decoder for FfmpegCodec {
         sample_rate: u32,
         channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
+        if self.profile != Profile::Standard {
+            return Err(no_component("decoder", decoder));
+        }
         check_decoder(decoder)?;
         decoded(self.decoder.decode_audio(path, sample_rate, channels))
     }
@@ -237,6 +303,14 @@ impl VideoEncoder for FfmpegCodec {
     ) -> Result<VideoEncoderOpened, MediaError> {
         let codec = VideoCodec::from_id(request.component)
             .ok_or_else(|| no_component("video encoder", request.component))?;
+        let profile = match codec {
+            VideoCodec::X264 => Profile::X264,
+            VideoCodec::Vp9 => Profile::Vpx,
+            VideoCodec::ProRes => Profile::Standard,
+        };
+        if profile != self.profile {
+            return Err(no_component("video encoder", request.component));
+        }
         let opened = video_encoder::open(codec, request)?;
         let session = self.next_session();
         self.video.insert(session, opened.session);
@@ -276,6 +350,14 @@ impl AudioEncoder for FfmpegCodec {
     ) -> Result<AudioEncoderOpened, MediaError> {
         let codec = AudioCodec::from_id(request.component)
             .ok_or_else(|| no_component("audio encoder", request.component))?;
+        let profile = if codec == AudioCodec::Opus {
+            Profile::Opus
+        } else {
+            Profile::Standard
+        };
+        if profile != self.profile {
+            return Err(no_component("audio encoder", request.component));
+        }
         let opened = audio_encoder::open(codec, request)?;
         let session = self.next_session();
         self.audio.insert(session, opened.session);
@@ -313,6 +395,9 @@ impl AudioEncoder for FfmpegCodec {
 
 impl Muxer for FfmpegCodec {
     fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
+        if self.profile != Profile::Standard {
+            return Err(no_component("muxer", request.component));
+        }
         let format = MuxerFormat::from_id(request.component)
             .ok_or_else(|| no_component("muxer", request.component))?;
         let opened = muxer::open(format, request)?;
@@ -353,4 +438,31 @@ impl Muxer for FfmpegCodec {
 
 pub(crate) fn ffmpeg_error(error: ez_ffmpeg::error::Error) -> MediaError {
     MediaError::Codec(format!("FFmpeg operation failed: {error}"))
+}
+
+/// Refuses GPL/nonfree libraries in the default plugin, including `--manifest`.
+/// Checks the loaded libraries so replacing a dylib cannot silently change it.
+pub fn check_lgpl() -> Result<(), String> {
+    use std::ffi::CStr;
+    // SAFETY: FFmpeg returns static, NUL-terminated license strings.
+    let licenses = unsafe {
+        [
+            ffmpeg_sys_next::avcodec_license(),
+            ffmpeg_sys_next::avformat_license(),
+            ffmpeg_sys_next::avfilter_license(),
+            ffmpeg_sys_next::avdevice_license(),
+            ffmpeg_sys_next::avutil_license(),
+            ffmpeg_sys_next::swscale_license(),
+            ffmpeg_sys_next::swresample_license(),
+        ]
+        .map(|license| CStr::from_ptr(license).to_string_lossy())
+    };
+    if licenses
+        .iter()
+        .all(|license| license.starts_with("LGPL version"))
+    {
+        Ok(())
+    } else {
+        Err("ffmpeg requires LGPL FFmpeg libraries; build GPL encoders as plugins/ffmpeg-x264 with a separate FFmpeg prefix".to_owned())
+    }
 }

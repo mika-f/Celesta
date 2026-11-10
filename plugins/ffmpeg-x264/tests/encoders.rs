@@ -3,6 +3,7 @@
 //! encoder answers, the packets and track config they give, and what
 //! `describe` says of every component.
 
+mod support;
 use celesta_codec_ffmpeg::FfmpegCodec;
 use celesta_composition::Rational;
 use celesta_media::{
@@ -37,7 +38,7 @@ fn text(value: &str) -> SettingValue {
 
 /// Opens `component` at 32x16 and 10 fps.
 fn open(
-    codec: &mut FfmpegCodec,
+    codec: &mut dyn MediaProvider,
     component: &str,
     given: &Settings,
     offered: &[PixelFormat],
@@ -47,7 +48,7 @@ fn open(
 
 /// [`open`] with `color`.
 fn open_colored(
-    codec: &mut FfmpegCodec,
+    codec: &mut dyn MediaProvider,
     component: &str,
     given: &Settings,
     offered: &[PixelFormat],
@@ -157,7 +158,10 @@ fn solid(format: PixelFormat, rgb: [u8; 3]) -> Vec<u8> {
 
 /// Ten frames through `opened`'s session and its finish: every packet, and
 /// the config of the first answer with packets.
-fn encode_all(codec: &mut FfmpegCodec, opened: VideoEncoderOpened) -> (Vec<Packet>, TrackConfig) {
+fn encode_all(
+    codec: &mut dyn MediaProvider,
+    opened: VideoEncoderOpened,
+) -> (Vec<Packet>, TrackConfig) {
     let frames = (0..FRAMES).map(|index| frame(opened.input, index));
     encode_frames(codec, opened.session, frames)
 }
@@ -165,7 +169,7 @@ fn encode_all(codec: &mut FfmpegCodec, opened: VideoEncoderOpened) -> (Vec<Packe
 /// `frames` through `session` and its finish: every packet, and the config
 /// of the first answer with packets.
 fn encode_frames(
-    codec: &mut FfmpegCodec,
+    codec: &mut dyn MediaProvider,
     session: SessionId,
     frames: impl IntoIterator<Item = Vec<u8>>,
 ) -> (Vec<Packet>, TrackConfig) {
@@ -193,7 +197,7 @@ fn encode_frames(
 
 #[test]
 fn libx264_packets_carry_an_avcc_and_a_codec_string() {
-    let mut codec = FfmpegCodec::new();
+    let mut codec = FfmpegCodec::x264();
     let opened = open(
         &mut codec,
         "libx264",
@@ -227,7 +231,7 @@ fn libx264_packets_carry_an_avcc_and_a_codec_string() {
 
 #[test]
 fn ten_bit_h264_picks_yuv420p10_when_offered() {
-    let mut codec = FfmpegCodec::new();
+    let mut codec = FfmpegCodec::x264();
     let opened = open(
         &mut codec,
         "libx264",
@@ -366,7 +370,7 @@ fn decode_h264(config: &TrackConfig, packets: &[Packet]) -> Vec<Decoded> {
 
 #[test]
 fn rgba_input_is_converted() {
-    let mut codec = FfmpegCodec::new();
+    let mut codec = FfmpegCodec::x264();
     let opened = open(
         &mut codec,
         "libx264",
@@ -387,7 +391,7 @@ fn rgba_input_is_converted() {
 #[test]
 fn software_offers_pick_rgba_by_bit_depth() {
     let offered = [PixelFormat::Rgba16, PixelFormat::Rgba8];
-    let mut codec = FfmpegCodec::new();
+    let mut codec = FfmpegCodec::x264();
     let eight = open(
         &mut codec,
         "libx264",
@@ -450,6 +454,7 @@ fn software_offers_pick_rgba_by_bit_depth() {
             "needs yuv420p10, p010, rgba16, or rgba8".to_owned()
         )
     );
+    let mut codec = FfmpegCodec::new();
     let error = open(
         &mut codec,
         "prores",
@@ -500,9 +505,9 @@ fn sessions_are_unique_across_kinds() {
     let offered = [PixelFormat::Rgba16];
     let first = open(
         &mut codec,
-        "libx264",
+        "prores",
         &Settings::new(),
-        &[PixelFormat::Rgba8],
+        &[PixelFormat::Rgba16],
     )
     .unwrap();
     let second = open(&mut codec, "prores", &Settings::new(), &offered).unwrap();
@@ -556,7 +561,7 @@ fn refused<T: std::fmt::Debug>(result: Result<T, MediaError>) -> (String, String
 
 /// Opens audio encoder `component` for a mix at `sample_rate`.
 fn open_audio(
-    codec: &mut FfmpegCodec,
+    codec: &mut dyn MediaProvider,
     component: &str,
     given: &Settings,
     sample_rate: u32,
@@ -590,7 +595,7 @@ fn aac_track() -> Track {
 /// `frames` sample frames of a quiet stereo tone through `opened`, in the
 /// exporter's chunks, then the finish: every packet and the config.
 fn encode_audio(
-    codec: &mut FfmpegCodec,
+    codec: &mut dyn MediaProvider,
     opened: &AudioEncoderOpened,
     frames: usize,
 ) -> (Vec<Packet>, TrackConfig) {
@@ -648,7 +653,7 @@ fn aac_takes_the_mixs_rate_when_it_can() {
 
 #[test]
 fn opus_always_takes_48_khz() {
-    let mut codec = FfmpegCodec::new();
+    let mut codec = support::process("ffmpeg-opus");
     let opened = open_audio(&mut codec, "opus", &Settings::new(), 44_100, 2).unwrap();
     assert_eq!((opened.sample_rate, opened.channels), (48_000, 2));
     assert!(opened.delay > 0, "libopus primes its output");
@@ -813,7 +818,7 @@ fn prores_4444_keeps_alpha_and_hq_does_not() {
 
 #[test]
 fn vp9_alpha_rides_as_block_additions() {
-    let mut codec = FfmpegCodec::new();
+    let mut codec = support::process("ffmpeg-vpx");
     let offered = [PixelFormat::Rgba16, PixelFormat::Rgba8];
     for alpha in [true, false] {
         let opened = open(
@@ -847,7 +852,7 @@ const BLUE: [u8; 3] = [0, 0, 255];
 
 #[test]
 fn libx264_writes_bt709_vui() {
-    let mut codec = FfmpegCodec::new();
+    let mut codec = FfmpegCodec::x264();
     let opened = open(
         &mut codec,
         "libx264",
@@ -878,7 +883,7 @@ fn libx264_writes_bt709_vui() {
 
 #[test]
 fn rgba_input_is_converted_with_bt709() {
-    let mut codec = FfmpegCodec::new();
+    let mut codec = FfmpegCodec::x264();
     // libswscale's BT.709 limited-range codes of red, green, and blue, as
     // measured on arm64 (Apple M4); every decoded sample is within 1 of
     // them, since x86_64's SIMD paths may round differently. At 10 bits,
@@ -928,7 +933,7 @@ fn rgba_input_is_converted_with_bt709() {
 
 #[test]
 fn libx264_takes_nv12_and_p010() {
-    let mut codec = FfmpegCodec::new();
+    let mut codec = FfmpegCodec::x264();
     for (depth, planar, interleaved) in [
         ("8", PixelFormat::Yuv420p, PixelFormat::Nv12),
         ("10", PixelFormat::Yuv420p10, PixelFormat::P010),
@@ -974,9 +979,10 @@ fn prores_and_vp9_are_tagged_bt709() {
         );
     }
 
+    let mut codec = support::process("ffmpeg-vpx");
     let opened = open(&mut codec, "vp9", &Settings::new(), &[PixelFormat::Rgba16]).unwrap();
     let (packets, _) = encode_all(&mut codec, opened);
-    let frames = decode("libvpx-vp9", None, &packets);
+    let frames = decode("vp9", None, &packets);
     assert_eq!(frames.len(), FRAMES as usize);
     for frame in &frames {
         assert_eq!(
@@ -996,7 +1002,6 @@ fn prores_and_vp9_are_tagged_bt709() {
 
 #[test]
 fn an_unknown_color_name_is_refused() {
-    let mut codec = FfmpegCodec::new();
     let colors = [
         (
             Color {
@@ -1018,8 +1023,21 @@ fn an_unknown_color_name_is_refused() {
         ("prores", PixelFormat::Rgba16),
         ("vp9", PixelFormat::Rgba16),
     ] {
+        let mut codec: Box<dyn MediaProvider> = if component == "libx264" {
+            Box::new(FfmpegCodec::x264()) as Box<dyn MediaProvider>
+        } else if component == "vp9" {
+            Box::new(support::process("ffmpeg-vpx"))
+        } else {
+            Box::new(FfmpegCodec::new())
+        };
         for (color, expected) in &colors {
-            let result = open_colored(&mut codec, component, &Settings::new(), &[offered], color);
+            let result = open_colored(
+                codec.as_mut(),
+                component,
+                &Settings::new(),
+                &[offered],
+                color,
+            );
             match result {
                 Err(MediaError::Codec(message)) => {
                     assert!(message.contains(expected), "{component}: {message}");
@@ -1032,7 +1050,7 @@ fn an_unknown_color_name_is_refused() {
 
 #[test]
 fn an_rgb_matrix_libswscale_cannot_convert_to_is_refused() {
-    let mut codec = FfmpegCodec::new();
+    let mut codec = FfmpegCodec::x264();
     let ycgco = Color {
         matrix: "ycgco".into(),
         ..Color::bt709_limited()
@@ -1042,7 +1060,20 @@ fn an_rgb_matrix_libswscale_cannot_convert_to_is_refused() {
         ("prores", PixelFormat::Rgba16),
         ("vp9", PixelFormat::Rgba16),
     ] {
-        let result = open_colored(&mut codec, component, &Settings::new(), &[offered], &ycgco);
+        let mut codec: Box<dyn MediaProvider> = if component == "libx264" {
+            Box::new(FfmpegCodec::x264()) as Box<dyn MediaProvider>
+        } else if component == "vp9" {
+            Box::new(support::process("ffmpeg-vpx"))
+        } else {
+            Box::new(FfmpegCodec::new())
+        };
+        let result = open_colored(
+            codec.as_mut(),
+            component,
+            &Settings::new(),
+            &[offered],
+            &ycgco,
+        );
         match result {
             Err(MediaError::Codec(message)) => assert_eq!(
                 message, "libswscale cannot convert RGB to the `ycgco` matrix",
@@ -1065,7 +1096,7 @@ fn an_rgb_matrix_libswscale_cannot_convert_to_is_refused() {
 
 #[test]
 fn describe_lists_six_inputs_for_libx264() {
-    let described = FfmpegCodec::new().describe().unwrap();
+    let described = FfmpegCodec::x264().describe().unwrap();
     let libx264 = described
         .iter()
         .find(|component| {
@@ -1095,17 +1126,29 @@ fn describe_lists_six_inputs_for_libx264() {
 /// The ids `plugin.json` declares under `key`.
 fn manifest_ids(key: &str) -> BTreeSet<String> {
     let manifest: serde_json::Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
+    let base: serde_json::Value =
+        serde_json::from_str(include_str!("../../ffmpeg/plugin.json")).unwrap();
+    let opus: serde_json::Value =
+        serde_json::from_str(include_str!("../../ffmpeg-opus/plugin.json")).unwrap();
+    let vpx: serde_json::Value =
+        serde_json::from_str(include_str!("../../ffmpeg-vpx/plugin.json")).unwrap();
     manifest["media"][key]
         .as_array()
-        .unwrap_or_else(|| panic!("plugin.json declares {key}"))
-        .iter()
+        .into_iter()
+        .flatten()
+        .chain(base["media"][key].as_array().into_iter().flatten())
+        .chain(opus["media"][key].as_array().into_iter().flatten())
+        .chain(vpx["media"][key].as_array().into_iter().flatten())
         .map(|entry| entry["id"].as_str().unwrap().to_owned())
         .collect()
 }
 
 #[test]
 fn describe_names_every_manifest_component() {
-    let described = FfmpegCodec::new().describe().unwrap();
+    let mut described = FfmpegCodec::new().describe().unwrap();
+    described.extend(FfmpegCodec::x264().describe().unwrap());
+    described.extend(support::process("ffmpeg-opus").describe().unwrap());
+    described.extend(support::process("ffmpeg-vpx").describe().unwrap());
     for (kind, key) in [
         (ComponentKind::Decoder, "decoders"),
         (ComponentKind::VideoEncoder, "videoEncoders"),
@@ -1192,4 +1235,63 @@ fn describe_names_every_manifest_component() {
     }
     assert!(muxer("webm").available);
     assert!(muxer("webm").settings.is_empty());
+}
+
+#[test]
+fn x264_ntsc_packets_use_the_requested_timescale() {
+    let mut codec = FfmpegCodec::x264();
+    let opened = codec
+        .video_encoder()
+        .unwrap()
+        .open_video(&VideoEncoderRequest {
+            component: "libx264",
+            settings: &Settings::new(),
+            width: WIDTH,
+            height: HEIGHT,
+            frame_rate: Rational::new(30_000, 1001),
+            timescale: 30_000,
+            offered: &[PixelFormat::Yuv420p],
+            color: &Color::bt709_limited(),
+        })
+        .unwrap();
+    let encoder = codec.video_encoder().unwrap();
+    let mut packets = Vec::new();
+    for index in 0..10 {
+        packets.extend(
+            encoder
+                .encode_video(
+                    opened.session,
+                    index * 1001,
+                    frame(PixelFormat::Yuv420p, index),
+                )
+                .unwrap()
+                .packets,
+        );
+    }
+    packets.extend(encoder.finish_video(opened.session).unwrap().packets);
+    let mut times: Vec<_> = packets.iter().map(|packet| packet.pts).collect();
+    times.sort_unstable();
+    assert_eq!(times, (0..10).map(|index| index * 1001).collect::<Vec<_>>());
+    assert!(
+        packets
+            .iter()
+            .all(|packet| packet.duration == 1001 && packet.dts % 1001 == 0)
+    );
+}
+
+#[test]
+fn an_unknown_x264_tune_is_refused_before_encoding() {
+    let mut codec = FfmpegCodec::x264();
+    let result = open(
+        &mut codec,
+        "libx264",
+        &settings(&[("tune", text("cinema"))]),
+        &[PixelFormat::Rgba8],
+    );
+    assert!(matches!(result, Err(MediaError::InvalidSettings { key, .. }) if key == "tune"));
+}
+
+#[test]
+fn the_gpl_build_cannot_serve_as_the_standard_plugin() {
+    assert!(celesta_codec_ffmpeg::check_lgpl().is_err());
 }

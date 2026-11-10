@@ -6,44 +6,40 @@ To build Celesta, install **Rust 1.89 or later**, your platform’s native build
 
 ## 1. Prepare your platform
 
-::::tabs[Source build platform]{default="macOS"}
-:::tab[macOS]
+The media plugins use four independent FFmpeg 8.1.x builds. `ffmpeg` is the
+standard LGPL build (decoding, ProRes, AAC, PCM and muxing). The optional
+`ffmpeg-x264`, `ffmpeg-opus` and `ffmpeg-vpx` builds add H.264, Opus and VP9.
+Only x264 enables GPL code. Never install these builds into the same prefix.
 
-Install the Xcode Command Line Tools and Homebrew. Then install the libraries and point `pkg-config` at the keg-only FFmpeg package in the shell where you build the media plugin (step 4).
+On macOS, install `pkg-config`, `nasm`, `x264`, `libvpx` and `opus` with Homebrew.
+On Linux, install `build-essential nasm pkg-config curl xz-utils zlib1g-dev
+libx264-dev libvpx-dev libopus-dev libclang-dev`; the editor also needs
+`libasound2-dev libxkbcommon-x11-dev libfontconfig-dev`.
+After cloning the repository in step 2, run from its root:
 
-```sh title="macOS dependencies"
-xcode-select --install
-brew install ffmpeg@8 pkg-config
-export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"
+```sh
+# macOS: external codec libraries for pkg-config
+# export PKG_CONFIG_PATH="$(brew --prefix x264)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig:$(brew --prefix libvpx)/lib/pkgconfig"
+for variant in standard x264 opus vpx; do
+  FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
+done
+export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
+export FFMPEG_X264_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/x264/lib/pkgconfig"
+export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfig"
+export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 ```
 
-:::
-:::tab[Windows]
+The script builds dylibs on macOS and static archives on Linux. Homebrew's
+GPL `ffmpeg@8` can be used for `ffmpeg-x264`, but cannot build the standard plugin.
+Keep these environment variables in the shell that builds plugins.
 
-Install the MSVC C++ build tools and vcpkg. Set `VCPKG_ROOT` to your vcpkg checkout, then install the FFmpeg package below. Run Cargo from a shell configured for the MSVC toolchain.
-
-```sh title="Windows dependencies"
-vcpkg install ffmpeg[x264,vpx,opus]:x64-windows-static-md
-```
-
-Use a vcpkg release with FFmpeg 8.1.x, such as 2026.07.29. Newer ports may provide unsupported FFmpeg 9.
-
-:::
-:::tab[Linux]
-
-Most distributions, including Ubuntu 24.04 LTS, do not package FFmpeg 8.1.x, so build it from source with the repository’s `scripts/build-ffmpeg-linux.sh` after you get the source in step 2. It builds static libraries with `libx264`, `libvpx`, and `libopus` into `/opt/ffmpeg8`, which takes about 5 minutes on 4 cores. Cargo uses `libclang-dev` to generate the FFmpeg bindings. On Debian and Ubuntu, run these from the repository root:
-
-```sh title="Linux dependencies"
-sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libvpx-dev libopus-dev libclang-dev
-sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev
-sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
-export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
-```
-
-Set `PKG_CONFIG_PATH` in the shell where you build the media plugin (`node scripts/plugins/build.mts plugins/ffmpeg`, step 4); Celesta's own crates link no FFmpeg. FFmpeg is linked into the media plugin’s program, so `LD_LIBRARY_PATH` is not needed. If your distribution does provide FFmpeg 8.1.x, install `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`, `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development packages instead of running the script. To export without a GPU, see [Export a video](/en/docs/export/).
-
-:::
-::::
+On Windows, use vcpkg 2026.07.29 (FFmpeg 8.1.x) and the MSVC build tools.
+Use separate vcpkg installation roots for `ffmpeg[zlib]` (standard),
+`ffmpeg[x264]`, `ffmpeg[opus]`, and `ffmpeg[vpx]`, with the
+`x64-windows-static-md` triplet. Set `VCPKG_ROOT` to the standard root and
+`FFMPEG_X264_VCPKG_ROOT`, `FFMPEG_OPUS_VCPKG_ROOT`, and `FFMPEG_VPX_VCPKG_ROOT`
+to the optional roots. The repository's setup-ffmpeg CI action shows a complete
+Windows setup. Adding x264 to the standard root makes that build GPL and is rejected.
 
 ## 2. Get the source
 
@@ -66,7 +62,7 @@ pnpm run build:runtime
 Build the media plugins once, and again after updating the source. Celesta reads and writes video and audio through them, and finds them through `CELESTA_PLUGIN_PATH`, which must be an absolute path. `plugins/avfoundation` (VideoToolbox and AVFoundation) builds on macOS only, and `plugins/mediafoundation` (Media Foundation) on Windows only. On any other system the script prints `avfoundation: skipped, it is built for macos only` or `mediafoundation: skipped, it is built for windows only` and builds the rest, so Linux builds FFmpeg alone. Set the variable in every shell where you run Celesta:
 
 ```sh title="Build the media plugins"
-node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation plugins/mediafoundation
+node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264 plugins/ffmpeg-opus plugins/ffmpeg-vpx plugins/avfoundation plugins/mediafoundation
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 

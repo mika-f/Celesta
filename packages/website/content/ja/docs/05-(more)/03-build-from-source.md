@@ -6,44 +6,40 @@
 
 ## 1. OS の準備
 
-::::tabs[ソースをビルドする OS]{default="macOS"}
-:::tab[macOS]
+メディアプラグインは FFmpeg 8.1.x をビルド単位で分けます。`ffmpeg` は標準の
+LGPL ビルド（デコード、ProRes、AAC、PCM、muxer）です。追加の `ffmpeg-x264`、
+`ffmpeg-opus`、`ffmpeg-vpx` はそれぞれ H.264、Opus、VP9 を提供し、GPL を有効にするのは
+x264 だけです。ビルド先の prefix は必ず別々にしてください。
 
-Xcode Command Line Tools と Homebrew をインストールします。続いてライブラリを入れ、メディアプラグインをビルドするシェル（手順 4）で `pkg-config` に keg-only の FFmpeg パッケージを指定します。
+macOS では Homebrew で `pkg-config nasm x264 libvpx opus` をインストールします。
+Linux では `build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev
+libvpx-dev libopus-dev libclang-dev` が必要です。エディターには
+`libasound2-dev libxkbcommon-x11-dev libfontconfig-dev` も必要です。
+手順 2 でソースを取得した後、リポジトリのルートで実行します。
 
-```sh title="macOS の依存関係"
-xcode-select --install
-brew install ffmpeg@8 pkg-config
-export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"
+```sh
+# macOS: external codec libraries for pkg-config
+# export PKG_CONFIG_PATH="$(brew --prefix x264)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig:$(brew --prefix libvpx)/lib/pkgconfig"
+for variant in standard x264 opus vpx; do
+  FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
+done
+export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
+export FFMPEG_X264_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/x264/lib/pkgconfig"
+export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfig"
+export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 ```
 
-:::
-:::tab[Windows]
+スクリプトは macOS では dylib、Linux では静的ライブラリをビルドします。
+Homebrew の GPL 構成の `ffmpeg@8` は `ffmpeg-x264` に利用できますが、標準プラグインには
+使えません。プラグインをビルドするシェルで、上記の環境変数を保持してください。
 
-MSVC の C++ ビルドツールと vcpkg をインストールします。`VCPKG_ROOT` に vcpkg のチェックアウト先を設定し、以下の FFmpeg パッケージをインストールします。MSVC ツールチェーンを設定したシェルで Cargo を実行してください。
-
-```sh title="Windows の依存関係"
-vcpkg install ffmpeg[x264,vpx,opus]:x64-windows-static-md
-```
-
-vcpkg は、FFmpeg 8.1.x を提供するリリース（例：2026.07.29）を使ってください。新しいポートでは、未対応の FFmpeg 9 が提供される場合があります。
-
-:::
-:::tab[Linux]
-
-Ubuntu 24.04 LTS を含む多くのディストリビューションでは FFmpeg 8.1.x が提供されないため、手順 2 でソースを取得した後、リポジトリの `scripts/build-ffmpeg-linux.sh` でビルドします。`libx264`、`libvpx`、`libopus` を含む静的ライブラリを `/opt/ffmpeg8` に構築し、4 コアで約 5 分かかります。Cargo は `libclang-dev` で FFmpeg のバインディングを生成します。Debian と Ubuntu では、リポジトリのルートで以下を実行します。
-
-```sh title="Linux の依存関係"
-sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libvpx-dev libopus-dev libclang-dev
-sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev
-sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
-export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
-```
-
-メディアプラグインをビルドするシェル（手順 4 の `node scripts/plugins/build.mts plugins/ffmpeg`）で `PKG_CONFIG_PATH` を設定します。Celesta 本体のクレートは FFmpeg をリンクしません。FFmpeg はメディアプラグインのプログラムにリンクされるので `LD_LIBRARY_PATH` は不要です。ディストリビューションが FFmpeg 8.1.x を提供する場合は、スクリプトの代わりに `pkg-config` と `libavcodec`、`libavformat`、`libavfilter`、`libavdevice`、`libavutil`、`libswscale`、`libswresample` の開発パッケージをインストールしてください。GPU なしでの書き出しは、[動画の書き出し](/ja/docs/export/)をご覧ください。
-
-:::
-::::
+Windows では vcpkg 2026.07.29（FFmpeg 8.1.x）と MSVC のビルドツールを使います。
+`ffmpeg[zlib]`（標準）、`ffmpeg[x264]`、`ffmpeg[opus]`、`ffmpeg[vpx]` を
+`x64-windows-static-md` triplet で、それぞれ別の vcpkg インストール先に構築します。
+`VCPKG_ROOT` に標準版のルート、`FFMPEG_X264_VCPKG_ROOT`、`FFMPEG_OPUS_VCPKG_ROOT`、
+`FFMPEG_VPX_VCPKG_ROOT` に追加版のルートを指定します。完全な設定例はリポジトリの
+setup-ffmpeg CI アクションにあります。標準版のルートに x264 を追加すると GPL 構成に
+変わるため、標準プラグインは起動を拒否します。
 
 ## 2. ソースを取得
 
@@ -66,7 +62,7 @@ pnpm run build:runtime
 メディアプラグインを一度ビルドします（ソースを更新したらもう一度）。Celesta は動画と音声をこれらで読み書きし、`CELESTA_PLUGIN_PATH` から見つけます。`plugins/avfoundation`（VideoToolbox と AVFoundation）は macOS でだけ、`plugins/mediafoundation`（Media Foundation）は Windows でだけビルドされます。それ以外の OS ではスクリプトが `avfoundation: skipped, it is built for macos only` または `mediafoundation: skipped, it is built for windows only` と表示して残りをビルドするので、Linux では FFmpeg だけがビルドされます。この変数には絶対パスを指定し、Celesta を実行する各シェルで設定してください。
 
 ```sh title="メディアプラグインをビルド"
-node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation plugins/mediafoundation
+node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264 plugins/ffmpeg-opus plugins/ffmpeg-vpx plugins/avfoundation plugins/mediafoundation
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 

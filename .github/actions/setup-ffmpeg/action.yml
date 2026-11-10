@@ -1,134 +1,89 @@
 name: Set up FFmpeg 8.1
-description: >
-  Installs the FFmpeg 8.1.x development libraries Celesta links against:
-  vcpkg ffmpeg[x264,vpx,opus]:x64-windows-static-md-release on Windows, from the
-  Celesta.FFmpeg.Windows package (VCPKG_ROOT and VCPKGRS_TRIPLET are exported),
-  Homebrew ffmpeg@8 on macOS, and a source build by scripts/build-ffmpeg-linux.sh
-  on Linux (PKG_CONFIG_PATH is exported on both).
-
+# Cargo features unify; use independent native installs and select one per binary.
+description: Build standard, x264 (GPL), Opus and VPX FFmpeg variants in separate prefixes.
 runs:
   using: composite
   steps:
-    # ffmpeg-sys-next's build script reruns only when PKG_CONFIG_*/VCPKG_* change, so a
-    # restored target/ would keep link flags from before libvpx and libopus were enabled.
-    # Exposing the configuration changes the Rust cache key (rust-cache `env-vars`).
-    - name: Name the FFmpeg configuration
+    - name: Name FFmpeg builds
       shell: bash
-      run: echo "FFMPEG_FEATURES=x264,vpx,opus" >> "$GITHUB_ENV"
-
-    # Windows downloads the FFmpeg that .github/workflows/ffmpeg-windows.yml
-    # builds with vcpkg and publishes to GitHub Packages. Building it here took
-    # about 35 minutes whenever vcpkg's cache was gone or a runner image
-    # brought a newer MSVC. The package is vcpkg's installed/ tree, which the
-    # vcpkg crate reads through VCPKG_ROOT.
-    - name: Download FFmpeg (GitHub Packages)
-      if: runner.os == 'Windows'
-      shell: pwsh
-      env:
-        # The version and SHA-256 that ffmpeg-windows.yml reports in its job
-        # summary; update both after publishing.
-        PACKAGE_VERSION: '8.1.2-1'
-        PACKAGE_SHA256: '2d9fceb98906dc086c4e34e894aaf5504eae6ac7ce4b17a937b4862f987ed951'
-        PACKAGE_ID: celesta.ffmpeg.windows
-        GITHUB_TOKEN: ${{ github.token }}
       run: |
-        if (-not $env:PACKAGE_SHA256) { throw 'Pin the FFmpeg package SHA-256 that ffmpeg-windows.yml reports.' }
-        # The progress bar slows down large downloads.
-        $ProgressPreference = 'SilentlyContinue'
-        $credentials = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("token:$env:GITHUB_TOKEN"))
-        $headers = @{ Authorization = "Basic $credentials" }
-        $index = Invoke-RestMethod -Headers $headers "https://nuget.pkg.github.com/$env:GITHUB_REPOSITORY_OWNER/index.json"
-        $base = ($index.resources | Where-Object { $_.'@type' -like 'PackageBaseAddress/3.0.0*' } | Select-Object -First 1).'@id'
-        if (-not $base) { throw 'GitHub Packages lists no package base address' }
-        $version = $env:PACKAGE_VERSION.ToLowerInvariant()
-        $nupkg = Join-Path $env:RUNNER_TEMP "$env:PACKAGE_ID.$version.nupkg"
-        Invoke-WebRequest -Headers $headers -OutFile $nupkg "$($base.TrimEnd('/'))/$env:PACKAGE_ID/$version/$env:PACKAGE_ID.$version.nupkg"
-        # The pinned hash makes the build use exactly the package that was
-        # published, even if that version is deleted and published again.
-        $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $nupkg).Hash.ToLowerInvariant()
-        if ($sha256 -ne $env:PACKAGE_SHA256.ToLowerInvariant()) {
-          throw "FFmpeg package $version has SHA-256 $sha256, not the pinned $env:PACKAGE_SHA256"
-        }
-        $root = Join-Path $env:RUNNER_TEMP 'ffmpeg-windows'
-        New-Item -ItemType Directory -Force $root | Out-Null
-        tar -xf $nupkg -C $root
-        if ($LASTEXITCODE -ne 0) { throw 'could not extract the FFmpeg package' }
-        $vcpkg = Join-Path $root 'vcpkg'
-        if (-not (Test-Path -LiteralPath (Join-Path $vcpkg 'installed/x64-windows-static-md-release/lib/avcodec.lib'))) {
-          throw 'the FFmpeg package lacks avcodec.lib'
-        }
-        # NuGet leaves out dotfiles and empty directories, and the vcpkg crate
-        # needs the .vcpkg-root marker and the status updates directory.
-        New-Item -ItemType File -Force (Join-Path $vcpkg '.vcpkg-root') | Out-Null
-        New-Item -ItemType Directory -Force (Join-Path $vcpkg 'installed/vcpkg/updates') | Out-Null
-        "VCPKG_ROOT=$vcpkg" >> $env:GITHUB_ENV
-        "VCPKGRS_TRIPLET=x64-windows-static-md-release" >> $env:GITHUB_ENV
-        # A different build changes cached build output, so expose the version
-        # for the Rust cache key (rust-cache `env-vars`).
-        "FFMPEG_VERSION=$env:PACKAGE_VERSION" >> $env:GITHUB_ENV
+        if [[ "$RUNNER_OS" == Windows ]]; then version=8.1.2; else version=8.1.3; fi
+        echo "FFMPEG_VERSION=$version" >> "$GITHUB_ENV"
+        echo "FFMPEG_FEATURES=standard,x264,opus,vpx-v2" >> "$GITHUB_ENV"
+        echo "FFMPEG_PREFIX=$RUNNER_TEMP/ffmpeg-variants" >> "$GITHUB_ENV"
 
-    - name: Install FFmpeg (Homebrew)
+    - name: Install macOS build dependencies
       if: runner.os == 'macOS'
       shell: bash
       env:
-        # Otherwise upgrading a dependency (ca-certificates) also upgrades the
-        # image's unrelated tools that depend on it, and every install cleans up.
         HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
         HOMEBREW_NO_INSTALL_CLEANUP: '1'
-      run: |
-        # The runner image's formula index can predate ffmpeg@8.
-        brew update
-        # ffmpeg@8 now depends on openssl@4, and pouring it in the same brew
-        # process that is upgrading ca-certificates trips over the openssl@3
-        # lock the process already holds. Install it on its own first.
-        brew install openssl@4
-        brew install ffmpeg@8 pkg-config
-        # The versioned Cellar path ends up in cached build output, so expose the
-        # version for the Rust cache key (rust-cache `env-vars`).
-        echo "FFMPEG_VERSION=$(brew list --versions ffmpeg@8)" >> "$GITHUB_ENV"
-        # ffmpeg@8 is keg-only.
-        echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@8)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+      run: brew install pkg-config nasm x264 libvpx opus
 
-    # Ubuntu's FFmpeg is 6.1, so Linux builds FFmpeg 8.1.x from source and
-    # caches the installed libraries.
-    - name: Install FFmpeg build dependencies (apt)
+    - name: Install Linux build dependencies
       if: runner.os == 'Linux'
       shell: bash
-      env:
-        FFMPEG_VERSION: '8.1.3'
       run: |
         sudo apt-get update
-        # libclang-dev is for bindgen in ffmpeg-sys-next, not for FFmpeg itself.
         sudo apt-get install -y --no-install-recommends nasm zlib1g-dev libx264-dev libvpx-dev libopus-dev libclang-dev
-        # The prefix ends up in cached build output, so expose the version for
-        # the Rust cache key (rust-cache `env-vars`).
-        echo "FFMPEG_VERSION=$FFMPEG_VERSION" >> "$GITHUB_ENV"
-        # ImageOS is a runner process variable, which the env context omits.
-        echo "FFMPEG_IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
-        echo "FFMPEG_PREFIX=$RUNNER_TEMP/ffmpeg-$FFMPEG_VERSION" >> "$GITHUB_ENV"
 
-    - name: Restore FFmpeg build cache
-      id: ffmpeg-cache
-      if: runner.os == 'Linux'
+    - name: Restore native FFmpeg libraries
+      id: cache
       uses: actions/cache/restore@v6.1.0
       with:
         path: ${{ env.FFMPEG_PREFIX }}
-        key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_IMAGE_OS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
+        key: ffmpeg-variants-${{ runner.os }}-${{ runner.arch }}-${{ env.FFMPEG_VERSION }}-vcpkg-2026.07.29-${{ hashFiles('scripts/build-ffmpeg-linux.sh', '.github/actions/setup-ffmpeg/action.yml') }}
 
-    - name: Build FFmpeg
-      if: runner.os == 'Linux' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+    - name: Build Unix FFmpeg libraries
+      if: runner.os != 'Windows' && steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: '"$GITHUB_WORKSPACE/scripts/build-ffmpeg-linux.sh" "$FFMPEG_PREFIX"'
+      run: |
+        if [[ "$RUNNER_OS" == macOS ]]; then
+          export PKG_CONFIG_PATH="$(brew --prefix x264)/lib/pkgconfig:$(brew --prefix libvpx)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig"
+        fi
+        for variant in standard x264 opus vpx; do
+          FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$FFMPEG_PREFIX/$variant"
+        done
 
-    # Save right away so a later build or test failure does not discard FFmpeg.
-    - name: Save FFmpeg build cache
-      if: runner.os == 'Linux' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+    - name: Build Windows FFmpeg libraries
+      if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $vcpkg = Join-Path $env:RUNNER_TEMP 'vcpkg-build'
+        git clone --quiet --depth 1 --branch 2026.07.29 https://github.com/microsoft/vcpkg $vcpkg
+        if ($LASTEXITCODE -ne 0) { throw 'vcpkg clone failed' }
+        & "$vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+        if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
+        foreach ($variant in @('standard', 'x264', 'opus', 'vpx')) {
+          $root = Join-Path $env:FFMPEG_PREFIX $variant
+          $features = if ($variant -eq 'standard') { 'zlib' } else { $variant }
+          & "$vcpkg/vcpkg.exe" install --clean-after-build "--x-install-root=$root/installed" "ffmpeg[$features]:x64-windows-static-md-release"
+          if ($LASTEXITCODE -ne 0) { throw "FFmpeg $variant build failed" }
+          New-Item -ItemType File -Force (Join-Path $root '.vcpkg-root') | Out-Null
+        }
+
+    - name: Save native FFmpeg libraries
+      if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v6.1.0
       with:
         path: ${{ env.FFMPEG_PREFIX }}
-        key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_IMAGE_OS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
+        key: ffmpeg-variants-${{ runner.os }}-${{ runner.arch }}-${{ env.FFMPEG_VERSION }}-vcpkg-2026.07.29-${{ hashFiles('scripts/build-ffmpeg-linux.sh', '.github/actions/setup-ffmpeg/action.yml') }}
 
-    - name: Use FFmpeg
-      if: runner.os == 'Linux'
+    - name: Select Unix FFmpeg libraries
+      if: runner.os != 'Windows'
       shell: bash
-      run: echo "PKG_CONFIG_PATH=$FFMPEG_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+      run: |
+        echo "PKG_CONFIG_PATH=$FFMPEG_PREFIX/standard/lib/pkgconfig" >> "$GITHUB_ENV"
+        for variant in x264 opus vpx; do
+          echo "FFMPEG_$(echo "$variant" | tr '[:lower:]' '[:upper:]')_PKG_CONFIG_PATH=$FFMPEG_PREFIX/$variant/lib/pkgconfig" >> "$GITHUB_ENV"
+        done
+
+    - name: Select Windows FFmpeg libraries
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        "VCPKG_ROOT=$env:FFMPEG_PREFIX/standard" >> $env:GITHUB_ENV
+        "VCPKGRS_TRIPLET=x64-windows-static-md-release" >> $env:GITHUB_ENV
+        foreach ($variant in @('x264', 'opus', 'vpx')) {
+          "FFMPEG_$($variant.ToUpper())_VCPKG_ROOT=$env:FFMPEG_PREFIX/$variant" >> $env:GITHUB_ENV
+        }

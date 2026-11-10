@@ -6,7 +6,7 @@
 #
 # and export with the current directory mounted at /work:
 #
-#   docker run --rm -v "$PWD:/work" celesta-exporter --react film.tsx film.mp4
+#   docker run --rm -v "$PWD:/work" celesta-exporter --react film.tsx film.mov
 #
 # The image renders with Mesa's software Vulkan driver (lavapipe), so it needs
 # no GPU. See packaging/linux/README.md.
@@ -17,15 +17,15 @@ FROM ubuntu:26.04 AS build
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    build-essential ca-certificates curl nasm pkg-config xz-utils zlib1g-dev libx264-dev libvpx-dev libopus-dev libclang-dev \
+    build-essential ca-certificates curl nasm pkg-config xz-utils zlib1g-dev libclang-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # Override with --build-arg to pick another 8.1.x release or source mirror.
 ARG FFMPEG_VERSION=8.1.3
 ARG FFMPEG_URL
 COPY scripts/build-ffmpeg-linux.sh /tmp/build-ffmpeg-linux.sh
-RUN /tmp/build-ffmpeg-linux.sh /opt/ffmpeg8
-ENV PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
+RUN /tmp/build-ffmpeg-linux.sh /opt/ffmpeg8-standard
+ENV PKG_CONFIG_PATH=/opt/ffmpeg8-standard/lib/pkgconfig
 
 # Rust and Node.js come from their official images. Keep Rust in step with the
 # toolchain CI uses (.github/workflows/ci.yml). The exporter bundles this same
@@ -64,14 +64,14 @@ RUN mkdir -p /out/runtime \
 # --- Runtime stage ----------------------------------------------------------
 FROM ubuntu:26.04
 
-# libx264, libvpx, and libopus are linked dynamically; FFmpeg itself is linked into the codec plugin.
+# Only the standard LGPL FFmpeg plugin is bundled; optional codecs are separate downloads.
 # mesa-vulkan-drivers provides lavapipe, a CPU implementation of Vulkan. Text
 # needs at least one installed font: DejaVu for Latin text and Noto CJK for
 # Japanese, Chinese, and Korean. Load other fonts with <Font>.
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    ca-certificates libx264-164 libvpx9 libopus0 libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-noto-cjk \
+    ca-certificates libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-noto-cjk \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out /opt/celesta

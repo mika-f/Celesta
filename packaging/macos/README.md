@@ -13,12 +13,14 @@ and packaging dependencies:
 
 ```sh
 xcode-select --install
-brew install ffmpeg@8 pkg-config dylibbundler
-export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"
+brew install pkg-config nasm dylibbundler
+scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/standard"
+export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
 ```
 
-`ffmpeg@8` is keg-only, so `PKG_CONFIG_PATH` must point at it for the build.
-Homebrew's unversioned `ffmpeg` formula is FFmpeg 9, which is not supported yet.
+Run the commands from the repository root. The app bundles only the standard LGPL FFmpeg plugin. Additional codecs are
+separate downloads; see [plugin packaging](../plugins/README.md). The default
+plugin rejects a GPL FFmpeg build.
 
 From the repository root:
 
@@ -153,38 +155,19 @@ notarization still require validation on a Mac.
 
 ## Redistribution
 
-The bundle includes available Rust and Homebrew license notices and dependency
-inventories, plus the repository's root `LICENSE*` files (copied automatically)
-and `packaging/GPL-SOURCE-OFFER.md`.
+The bundle includes available Rust license notices and a dependency inventory. The package-wide license folder contains Celesta's `LICENSE-MIT`
+and `LICENSE-APACHE`; FFmpeg license texts and source notices stay in the
+corresponding plugin's `licenses/` folder.
 
-Celesta's own executables link no FFmpeg. The codec plugin goes in
-`Contents/Resources/PlugIns/ffmpeg`, laid out by the shared plugin build script
-(`scripts/plugins/build.mts`, which builds `plugins/ffmpeg` in the plugins
-workspace): its program in `bin/macos-<arch>/` (`macos-aarch64` on Apple
-Silicon), the Homebrew libraries it loads in `Frameworks/` (the packaging script
-bundles them there with dylibbundler, apart from the app's own
-`Contents/Frameworks`), and the GPL text and source offer in `licenses/`. The
-script fails if Celesta's own executables link FFmpeg.
-
-Plugins are not in `Contents/PlugIns`: `codesign` takes everything there for
-nested code, and a plugin folder also holds `celesta-plugin.json`,
-`licenses/`, and an optional `js/`, so signing the app fails with `code object
-is not signed at all`. In `Contents/Resources/PlugIns` those files are sealed
-as the app's resources, and the plugin's program and libraries are signed one
-by one with the app's other Mach-O files.
-
-Homebrew's `ffmpeg@8` formula enables the `x264` encoder by default, which is
-GPL-2.0-or-later licensed and makes the codec plugin's program, as
-distributed, GPL-licensed; Celesta's executables stay under MIT/Apache-2.0 (see
-[`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md) and the root
-[`README.md`](../../README.md#license)). That file's written offer, together
-with `LICENSE-GPL-2.0`, is how the package satisfies GPLv2 Section 3 without
-bundling full FFmpeg/x264 source in every download. This is the same release
-concern described in the Windows packaging guide.
-
-The formula also links libvpx and libopus (BSD-3-Clause), the WebM encoders, so
-`ffmpeg@8` already includes them; their notices are collected with the other
-Homebrew license files.
+Celesta's own executables link no FFmpeg. Only `ffmpeg` (standard LGPL) is
+staged under `Contents/Resources/PlugIns`, with its own `Frameworks/` and `licenses/`.
+The app's Rust/native inventory excludes the optional codecs. The package
+smoke test exports ProRes/MOV and rejects accidentally bundled x264/Opus/VPX
+plugins. Optional codec ZIPs are built separately by
+[`package-media-plugins.py`](../../scripts/package-media-plugins.py), signed and
+notarized in release builds, and attached to the same release; see
+[plugin packaging](../plugins/README.md). Their licenses remain in their own
+folders. The app stays MIT/Apache-2.0 with LGPL FFmpeg.
 
 `Contents/Resources/PlugIns/avfoundation` holds the AVFoundation plugin
 (`plugins/avfoundation`, built by the same script after FFmpeg). It is
