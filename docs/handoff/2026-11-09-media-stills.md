@@ -158,14 +158,22 @@ every still export P3 wrote is byte-identical (see Checks).
 
 ## Implementation
 
+The branch was rebased onto `claude/media-components-p3` at `a53a0c11`,
+which already contains P2c (BT.709), from `8c0ad423`; the hashes below are
+the rebased commits, matched to the old ones by subject (old hash in
+parentheses).
+
 | Commit | Task |
 | --- | --- |
-| `03a09586` | `MediaOrigin::BuiltIn`, `FFMPEG_PLUGIN_ID`, `default_rank`, the decoder order, and the editor's rank. |
-| `c2ca205d` | `crates/media-image`: the encoders, the muxers, `codec_for_extension`, `sequence_path`. |
-| `caab95e2` | `with_builtin`, `serves_video`, the video refusal, `check_opened` shared, the editor's container filter, the listings. |
-| `b422a2d7` | `still_output.rs`; `stills.rs` loses its encoders; `celesta_remote::publish_path`; `png`, `image`, and `webp` move to the exporter's dev-dependencies. |
-| `f558b847` | Straight `rgba8` (`readback_for`, `encoder_pixels`), and sequences publishing the frames of the packets written. |
-| `a2a79905` | The CLI's, MCP's, and the TS package's still component options. |
+| `174bfc39` (`03a09586`) | `MediaOrigin::BuiltIn`, `FFMPEG_PLUGIN_ID`, `default_rank`, the decoder order, and the editor's rank. |
+| `1c7f5236` (`c2ca205d`) | `crates/media-image`: the encoders, the muxers, `codec_for_extension`, `sequence_path`. |
+| `3124d739` (`caab95e2`) | `with_builtin`, `serves_video`, the video refusal, `check_opened` shared, the editor's container filter, the listings. |
+| `0255a1dd` (`b422a2d7`) | `still_output.rs`; `stills.rs` loses its encoders; `celesta_remote::publish_path`; `png`, `image`, and `webp` move to the exporter's dev-dependencies. |
+| `977eae1f` (`f558b847`) | Straight `rgba8` (`readback_for`, `encoder_pixels`), and sequences publishing the frames of the packets written. |
+| `93442dac` (`a2a79905`) | The CLI's, MCP's, and the TS package's still component options. |
+| `74a70d4c`, `c1b3b525` | The docs, and `plugins/Cargo.lock`. |
+| `b27684ae`, `dd2ffbff`, `dea91885`, `3d3f2ade`, `afc05b0a` | The first review's fixes: MCP's string select settings, no `fsync` per frame, the straight `rgba8` dither, staging after open, partial flushes, stills with no media plugin, and their docs. |
+| `00d45157`, `2fbb4649`, `83e6c364` | The second review's fixes (#795), below. |
 
 ## Deviations from the spec
 
@@ -314,7 +322,8 @@ it is.
   `transparent`, `quality`, `lossless`) with `--describe builtin/png`,
   `--quality` against `--video-option quality=`, transparent stills
   (straight alpha, JPEG has none, the contact sheet's checkerboard), that a
-  WebP over 16383 pixels fails with `invalid_option`, naming a plugin's
+  contact sheet over 16384 pixels a side fails with `invalid_selection` and
+  a WebP sheet of 16384 with `invalid_option`, naming a plugin's
   image components with `--muxer` and `--video-encoder` and the one-image
   and sequence muxers, that stills take no preset or audio flags, that
   separate files already written stay on failure or cancel while a
@@ -339,24 +348,79 @@ it is.
 - Examples: unchanged. No example exports stills with settings P4 adds,
   and none is superseded.
 
+## Review fixes (#795)
+
+The second review's findings, each checked against the code first:
+
+- **Terminal labels.** A still export sends `ExportProgress::Output` with
+  its resolved components (`StillOutput::plan`) once `StillOutput::open`
+  has resolved them, before rendering, and `progress.rs` names a still by
+  them (`Image · JPEG · Quality 40`, `Image · WebP · Lossless`; the plain
+  output's `format:` line too), with `resolving…` until then. The labels
+  built from `StillFormat` and `--quality` are gone (`Settings::still` is
+  a `bool`), and the profile's "Alpha opaque background" line is now the
+  muxer's name, since `transparent=true` makes it wrong. `--json-progress`
+  therefore also prints an `output` event for stills, with `audio: null`;
+  the Skill, the TS type, and the package README say so.
+- **Finish checks.** `StillOutput::finish` fails at the muxer stage when a
+  selected frame of a sequence was never published (`<muxer> wrote no
+  file for frame N`, in selection order), and when a one-file muxer's
+  `finish_muxer` list leaves out the staged file (`<muxer> wrote no image
+  file`). A cancel after the last frame rendered but before a one-file
+  still or contact sheet is published leaves nothing (the check
+  `publish_video` has). A publish I/O error names the destination file.
+- **Types and docs.** The TS `ComponentInfo.origin` takes `'built-in'`;
+  stale doc comments (`StillFormat`, `write_whole`, `default_muxer`, the
+  editor's muxer filter, MCP's `quality`, the CLI's `.png` quality check)
+  and the CLI help, guide (en, ja), and Skill on opaque-by-default stills,
+  lossless WebP, and the oversized contact sheet (`invalid_selection` from
+  the sheet layout over 16384 a side; only WebP's 16383 is
+  `invalid_option`).
+- **Tests.** An in-process fake plugin (`FakeImage`) with a `sequence:
+  true` muxer and a one-file muxer covers a plugin's sequence (frames 2
+  then 0), "wrote no file for frame N", "is not one this export writes", a
+  sequence missing a frame at finish, a one-file plugin muxer, and one
+  whose answer leaves out its file; Ruling 5 is tested in
+  `a_cancel_before_finish_publishes_no_image` and the live
+  `a_cancelled_still_or_contact_sheet_leaves_no_file` and
+  `a_failed_still_or_contact_sheet_leaves_no_file_of_its_own`;
+  `a_failed_publish_names_the_image_and_leaves_no_staging`;
+  `a_transparent_contact_sheet_shows_a_checkerboard_and_is_opaque`;
+  `lossy_transparent_webp_keeps_alpha` (VP8X with ALPH, decoded alpha
+  within 8); `png_takes_sixteen_bits_and_compression` now checks each
+  level's `png::Compression` and that `none` is larger than `high` on flat
+  pixels; `stills_name_the_components_they_resolve` and the live
+  `the_progress_names_the_components_a_still_resolves`; and the TS
+  listing fixture has a `built-in` entry.
+- **Declined:** the optional type and simplification refactors, a `Drop`
+  that aborts (explicit abort stays the convention), removing
+  `MediaOrigin`'s `Ord` derive, a test of FFmpeg-first encoder choice for
+  a third plugin's muxer, an end-to-end byte comparison in the suite (the
+  manual one below is redone instead), and tying the CPU dither to the
+  WGSL in code.
+
 ## Checks
 
 On macOS 26.6.2, Apple M4, Metal, with `PKG_CONFIG_PATH` at Homebrew's
-`ffmpeg@8`, at `a2a79905` plus this note's commit. A GPU adapter was
-available, so the live still tests ran.
+`ffmpeg@8`, at `954451cd` (the branch rebased onto `a53a0c11`, with the
+second review's fixes) plus this note's commit. A GPU adapter was
+available, so the live still tests ran. (The first round ran at the old
+`a2a79905`, before the rebase and the first review's fixes; its numbers
+are replaced by these.)
 
 **Against P3, byte for byte.** P3's exporter was built in a detached
-worktree of `8c0ad423` (`claude/media-components-p3`) in the session's
-scratch folder (`git worktree add --detach <scratch>/p3 8c0ad423`, then
-`cargo build --release -p celesta-exporter`, and `pnpm install && pnpm
-run build:runtime` there for its own `packages/cli/dist`), and this
-branch's with the same command. Both ran from this worktree on the same
+worktree of `a53a0c11` (`claude/media-components-p3`, which contains
+P2c) in the session's scratch folder (`git worktree add --detach
+<scratch>/p3 a53a0c11`, then `cargo build --release -p celesta-exporter`,
+and `pnpm install` and `turbo run build --filter "@celesta.studio/cli..."
+--force` there for its own `packages/cli/dist`), and this branch's with
+the same `cargo` command. Both ran from this worktree on the same
 sources, into separate folders, with `--json`:
 
 ```sh
-# S is the source; OUT the binary's own folder
+# S is the source; OUT the binary's own folder; LAST its last frame
 celesta-exporter --json [--react] $S --frame 0 $OUT/a.png
-celesta-exporter --json [--react] $S --frames 0,12,599 $OUT/b.png     # React: --frames 0,12
+celesta-exporter --json [--react] $S --frames 0,12,$LAST $OUT/b.png
 celesta-exporter --json [--react] $S --every 15 $OUT/c.jpg --quality 70
 celesta-exporter --json [--react] $S --every 30 $OUT/d.webp
 celesta-exporter --json [--react] $S --every 10 --contact-sheet $OUT/e.png
@@ -364,50 +428,42 @@ celesta-exporter --json [--react] $S --every 10 --contact-sheet $OUT/f.webp
 ```
 
 - `examples/editor-demo.celesta.json` (JSON, 1280×720, 60 fps, 600
-  frames): 68 files from each binary (`a.png`, 3 `b-*.png`, 41 `c-*.jpg`,
-  21 `d-*.webp`, `e.png`, `f.webp`), the same names, and `cmp` finds all
-  68 identical.
-- `examples/path-motion/film.tsx` (React, 1920×1080, 30 fps, 180 frames):
-  25 files from each (`a.png`, 2 `b-*.png`, 13 `c-*.jpg`, 7 `d-*.webp`,
-  `e.png`, `f.webp`), the same names, and `cmp` finds all 25 identical.
+  frames, `LAST` 599): 68 files from each binary (`a.png`, 3 `b-*.png`,
+  41 `c-*.jpg`, 21 `d-*.webp`, `e.png`, `f.webp`), the same names, and
+  `cmp` finds all 68 identical.
+- `examples/path-motion/film.tsx` (React, 1920×1080, 30 fps, 180 frames,
+  `LAST` 179): 26 files from each (`a.png`, 3 `b-*.png`, 13 `c-*.jpg`, 7
+  `d-*.webp`, `e.png`, `f.webp`), the same names, and `cmp` finds all 26
+  identical.
 - The 12 `--json` reports are identical once each binary's output folder
-  is replaced by one name and `stats` (elapsed time, render rate) is
-  removed: the same `outputs` in the same order, `composition`, and
-  `warnings`.
-- The brief's `--frames 0,12,-1` is not a valid selection on either
-  branch: both reject it identically (`usage`, "invalid value '-1' for
-  '--frame <N,...>': invalid digit found in string"), so the JSON project
-  used its last frame, 599.
+  is replaced by one name and `stats` is removed.
 
-The P3 worktree was removed afterwards (`git worktree remove`).
+The local build cache (`mbx`) removed a release `target` twice during the
+run; each binary was rebuilt from the same tree, and this branch's last
+command (`f.webp`, React) ran from a byte-identical copy of its binary,
+which reproduces its `e.png`. The P3 worktree was removed afterwards
+(`git worktree remove`).
 
-**Full verification.** The JS packages were built first (`pnpm install`, `pnpm
-run build:runtime`), so `packages/cli/dist` was whole and the React and
-MCP live tests ran; a GPU adapter was available, so none of the GPU tests
-returned early.
+**Full verification.** The JS runtime was built first, so
+`packages/cli/dist` was whole and the React and MCP live tests ran.
 
 - `cargo build -p celesta-codec-test`, then `cargo test --workspace
-  --no-fail-fast`: 2,757 passed, 0 failed, 1 ignored as before
-  (`builtin_effect::write_web_effect_fixtures`). MCP's
-  `server::init_project_creates_a_project`, which failed in Tasks 4 and 5
-  on a partly built `packages/cli/dist`, passes with the runtime built.
+  --no-fail-fast`: 2,782 passed, 0 failed, 1 ignored as before
+  (`builtin_effect::write_web_effect_fixtures`). A first run failed three
+  `cli_formats` tests: two listing tests read the developer's own
+  `settings.json`, whose `pluginFolders` names another worktree's FFmpeg
+  build (`run` now gives the exporter an empty settings folder, as
+  `failure` already did), and `a_plugins_refusal_is_an_invalid_option`
+  saw the test codec's process exit once under the full run's load; it
+  passed alone and in the later full run.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` and
   `cargo fmt --all -- --check`: clean.
 - `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`
-  (468 passed, 0 failed) and `cargo clippy --manifest-path
-  plugins/Cargo.toml --all-targets --locked -- -D warnings` (clean). The
-  first run failed under `--locked`: `plugins/ffmpeg` depends on
-  `celesta-exporter` by path, and `plugins/Cargo.lock` still listed the
-  exporter's old `image`, `png`, and `webp` dependencies and lacked
-  `celesta-media-image` (Tasks 2 and 4 updated only the root
-  `Cargo.lock`). The fix round regenerated it offline (`cargo metadata
-  --manifest-path plugins/Cargo.toml --offline`, a 15-line diff) and
-  committed it.
-- `pnpm run test:runtime` (17 packages, 1,046 tests, all passed;
-  `@celesta.studio/cli` 119, `@celesta.studio/components` 179),
+  (482 passed, 0 failed) and `cargo clippy --manifest-path
+  plugins/Cargo.toml --all-targets --locked -- -D warnings`: clean.
+- `pnpm run test:runtime` (17 packages, 1,046 tests, all passed),
   `pnpm --dir packages/exporter test` (25 passed), `pnpm --dir
-  packages/website test` (52 passed), and `git diff --check`: clean. No
-  test was skipped.
+  packages/website test` (52 passed), and `git diff --check`: clean.
 
 This changes no rendering of an opaque export (the comparison above is
 byte-identical), so there is no before/after screenshot pair (AGENTS.md);
@@ -452,10 +508,6 @@ TS package's stills arguments).
 
 ## Not done
 
-- **P2c's rebase.** When P2c (BT.709) lands in the stack, P3 and then this
-  branch are rebased onto it (never merged); P4 touches neither
-  `readback_of` nor `PixelFormat::OFFERABLE`, so expect conflicts only in
-  docs and the spec's deviation lists.
 - **The built-in crate.**
   - `imageSequence`'s frame is `pts / duration`, truncating; that `pts` is
     a multiple of the frame rate's denominator is assumed, not documented.
@@ -470,7 +522,8 @@ TS package's stills arguments).
 - **Stills.**
   - A named plugin muxer's process may first start at the first write,
     after rendering, when its `describe` is cached.
-  - One-file publish and finish errors no longer carry `.at_frame(frame)`;
+  - One-file publish and finish errors no longer carry `.at_frame(frame)`
+    (a publish error names the file instead);
     the one-file finish reports frame 0 when nothing was muxed
     (unreachable), and a negative `pts` maps to frame 0 in `mux`.
   - Error precedence changed: `output_exists` now comes before the
@@ -479,7 +532,8 @@ TS package's stills arguments).
     tests a non-PNG output.
   - `--frames 3,0` sends decreasing `pts` to the encoder and muxer; the
     built-ins accept it, and the spec (deviation 53) now tells a plugin's
-    sequence muxer to; nothing checks a plugin does.
+    sequence muxer to; the in-process fake plugin's test sends 2 then 0,
+    but nothing checks a real plugin does.
   - The one-file staged name `.celesta-XXXX.png` matches `*.png` globs
     during the render (`staged.rs` documents `.tmp` for that reason).
   - "renderer read back no frame" is filed under the image stage's `codec`
