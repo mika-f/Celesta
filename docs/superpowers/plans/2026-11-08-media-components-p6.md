@@ -39,9 +39,9 @@ FFmpeg's components in one export.
     and the avcC or hvcC that every Celesta muxer takes.
   - The AAC encoder converts `f32` to `s16` and drives Microsoft's AAC MFT
     synchronously.
-  - The muxer converts back to Annex B and appends samples to an
-    `IMFSinkWriter` with the MPEG-4 container type, passing each stream
-    through without re-encoding.
+  - There is no muxer (Task 1's ruling B, deviation 71). The MPEG-4 sink
+    cannot hide the delay, so the encoders' packets go into another
+    plugin's muxer, `ffmpeg/mp4` by the bundled ranking.
 - **Selection.** Nothing changes in Celesta's core. P4's `default_rank`
   (deviation 58) keeps FFmpeg first among bundled plugins, so Media
   Foundation's components are used only when named or in a preset. The
@@ -65,7 +65,7 @@ FFmpeg's components in one export.
 **Spec:** `docs/superpowers/specs/2026-11-08-media-components-design.md`.
 Read these sections with this plan:
 - OS-native plugins (P5, P6), including the P6 paragraph and deviations
-  70–76;
+  70–77;
 - Phases (P5, P6);
 - Manifest; Protocol 2; Capability discovery; Settings schema;
 - Transport; Pixel formats and color;
@@ -151,11 +151,9 @@ the conversation that wrote it.
   - video encoders `h264` "H.264 (Media Foundation)" `["avc1"]` and `hevc`
     "HEVC (Media Foundation)" `["hvc1"]`;
   - audio encoder `aac` "AAC (Media Foundation)" `["mp4a"]`;
-  - muxer `mp4` "MP4 (Media Foundation)": `extensions ["mp4", "m4v"]`,
-    `video ["avc1", "hvc1"]`, `audio ["mp4a"]`, `defaultVideo "avc1"`,
-    `defaultAudio "mp4a"`, `trimsLeadingAudio: true`. This only if Task 1
-    rules A; under ruling B the manifest has no `muxers` (deviation 71).
-    **Task 1 ruled B**: Task 2 still declares it, and Task 6 removes it.
+  - no muxer. Task 1 ruled B, so the manifest has no `muxers`, and
+    `describe` lists none, from Task 2 on (deviation 71). The ruling-A
+    muxer would have been `mp4` "MP4 (Media Foundation)".
 - **`inputFormats`**, in the manifest and `describe`, best first:
   `h264` `["nv12", "rgba8"]`; `hevc` `["nv12", "p010", "rgba16", "rgba8"]`.
   - Both video encoders describe `transports: ["sharedMemory", "pipe"]`.
@@ -168,8 +166,7 @@ the conversation that wrote it.
   - `MF_MT_TRANSFER_FUNCTION = MFVideoTransFunc_709`;
   - `MF_MT_YUV_MATRIX = MFVideoTransferMatrix_BT709`;
   - `MF_MT_VIDEO_NOMINAL_RANGE = MFNominalRange_16_235`.
-  Every encoder input and output type, and every muxer video type, carries
-  them.
+  Every encoder input and output type carries them.
 - **Linking.** No Celesta crate links FFmpeg (HANDOFF.md), and this plugin
   links none. `celesta-codec-ffmpeg` is a `cfg(windows)` **dev**-dependency.
 - **Tests.** Rust tests stay in Rust. Script tests use Vitest, written in
@@ -198,12 +195,14 @@ the conversation that wrote it.
   and colour within 16 codes.
 - **Windows file semantics** (P2a's Windows CI failure, test
   `a_muxer_whose_finish_failed_can_still_be_aborted`, now `#[cfg(unix)]`).
-  A file still open cannot be deleted or replaced.
-  - Every session releases its COM objects (`IMFSinkWriter`,
-    `IMFSourceReader`, `IMFByteStream`) before answering the paths of a
-    finish or an abort.
+  A file still open cannot be replaced or opened for writing. Media
+  Foundation's reader opens files with delete sharing, so
+  `std::fs::remove_file` succeeds even while a reader is alive (Task 1);
+  only write access shows a file still held.
+  - Every session releases its COM objects (`IMFSourceReader`,
+    `IMFByteStream`) before it answers.
   - Tests that delete or overwrite files do so only after the plugin has
-    answered.
+    answered. A test that checks a file is not held opens it for writing.
 - **Commits.** Never amend; each task ends in a new commit. Stage files
   explicitly; never commit `.superpowers/`, `plugins/dist`, or scratch
   files. Commits are signed (see How to start); never bypass signing.
@@ -236,18 +235,24 @@ the conversation that wrote it.
 
 ## Deviations from the spec
 
-Deviations 70–76 are in the spec's P6 paragraph (OS-native plugins), which
+Deviations 70–77 are in the spec's P6 paragraph (OS-native plugins), which
 Task 10 rewrites as built. In short:
 - 70: no ProRes and no `mov`.
-- 71: the `mp4` muxer only under Task 1's ruling A.
+- 71: the `mp4` muxer only under Task 1's ruling A. Task 1 ruled B, so
+  there is no muxer.
 - 72: RGB converted in the plugin.
-- 73: AAC is 16-bit, at 44.1 or 48 kHz, at four bitrates, with a measured
-  delay.
+- 73: AAC is 16-bit, at 44.1 or 48 kHz, at four bitrates. Its delay is the
+  plugin's lead-in (77): the MFT primes nothing (Task 1).
 - 74: hardware first, with the `hardware` setting.
-- 75: the decoder converts as Media Foundation does and drops alpha.
+- 75: the decoder converts as Media Foundation does and drops alpha. The
+  reader rotates (Task 1).
 - 76: no file is held open between requests.
+- 77 (Task 1): `aac` feeds 1024 frames of silence before the mix, and
+  answers them as its delay (`AAC_DELAY = AAC_LEAD_IN = 1024`). Microsoft's
+  AAC MFT has no priming, but it loses up to the first 700 frames it is
+  given.
 
-A new deviation gets the next number (77 on) and goes in Task 10's spec
+A new deviation gets the next number (78 on) and goes in Task 10's spec
 edit and the handoff note.
 
 ## Decisions the spec left to this plan
@@ -301,10 +306,14 @@ edit and the handoff note.
   - `CODECAPI_AVEncMPVDefaultBPictureCount` = 2 with `bFrames`, else 0;
   - `CODECAPI_AVEncCommonLowLatency` = false.
 
-  A property the MFT reports unsupported (`IsSupported` false) is skipped,
-  and so is one whose `SetValue` answers `E_NOTIMPL` (Microsoft's software
-  MFT does for `LowLatency`, Task 1), except the rate-control mode. An
-  unsupported mode is
+  For every property except the rate-control mode, an `IsSupported` that
+  fails, or a `SetValue` that fails (`E_NOTIMPL`, `E_INVALIDARG`, …),
+  skips the property. Task 1 saw both:
+  - Microsoft's software MFT: `SetValue` `E_NOTIMPL` for `LowLatency`;
+  - NVIDIA's: `IsSupported` `0x80004001` and `SetValue` `0x80070057` for
+    `BPictureCount` and `LowLatency`.
+
+  An unsupported mode is
   `MediaError::InvalidSettings { key: "rateControl", message: "{name} has no constant quality mode; choose Average bitrate, or turn Hardware off" }`
   (and likewise for bitrate).
   - Profiles: `h264` `high` → `eAVEncH264VProfile_High`, `main` →
@@ -403,8 +412,9 @@ edit and the handoff note.
     (Main 10)", default `8`), and `hardware`.
   - `aac`: `bitrate` select `96000` "96 kbit/s" / `128000` / `160000` /
     `192000`, default `192000`.
-  - `mp4` (ruling A only): `faststart` boolean, default `true`, label "Fast
-    start", which sets `MF_MPEG4SINK_MOOV_BEFORE_MDAT`.
+  - `mp4` (ruling A only; not built, Task 1 ruled B): `faststart` boolean,
+    default `true`, label "Fast start", which sets
+    `MF_MPEG4SINK_MOOV_BEFORE_MDAT`.
 - **Availability** (`describe`).
   - When `MFStartup` failed, every component is unavailable with "Media
     Foundation is not available on this system (MFStartup failed:
@@ -430,8 +440,9 @@ edit and the handoff note.
     (for `describe`) rather than failing.
   - `Drop` calls `MFShutdown` and `CoUninitialize` for what succeeded.
   - The program serves on its main thread; no COM object crosses threads.
-- **Output path.** Celesta stages its output as an empty file beside the
-  final path (`stage_beside`) before `openMuxer`. The muxer accepts an
+- **Output path** (ruling A; *not built, Task 1 ruled B*). Celesta stages
+  its output as an empty file beside the final path (`stage_beside`)
+  before `openMuxer`. The muxer accepts an
   empty regular file at `output`, which the sink writer overwrites. It
   refuses anything else with `MediaError::Codec("{output} already exists")`,
   as P5 does.
@@ -463,12 +474,44 @@ edit and the handoff note.
     comes out at the displayed size, upright), so the plugin does not
     rotate. It reads the native type's rotation (0, 90, 180, 270) only to
     give the probe's displayed size.
-  - **The reader ignores MP4 and MOV edit lists** (Task 1). An AAC track's
-    delay comes out as leading samples, and a reordered video track starts
-    late by its reorder delay. Media Foundation does not expose the delay
-    either. *Open, to settle before Task 8 starts:* how the decoder applies
-    the first edit's media time of each track. It might read the `elst`
-    itself, or accept the offset as a deviation.
+  - **Edit lists: the decoder honours them itself.** Task 1 found that the
+    reader ignores MP4 and MOV edit lists, and exposes no delay attribute.
+    Without them an AAC track's delay comes out as leading samples, and a
+    reordered video track starts late by its reorder delay. This is in
+    scope because this plugin's own AAC in `ffmpeg/mp4` always has an
+    `elst` of 1024 (its lead-in, deviation 77).
+    - `src/edit_list.rs` is platform-independent and tested everywhere.
+      MP4 and MOV share the boxes. It reads `moov/mvhd`'s timescale and,
+      for each `trak`:
+      - `mdia/hdlr`'s handler type;
+      - `mdia/mdhd`'s timescale;
+      - `edts/elst`.
+    - The module walks the top-level boxes, seeking past `mdat`, and
+      closes the file before the decoder opens its reader.
+    - What it gives each track:
+      - `media_time`: the first non-empty edit's, in the `mdhd` timescale.
+      - `start_delay`: the empty edits (`media_time` −1) before it, whose
+        `segment_duration`s are in the `mvhd` timescale. They delay the
+        track's start.
+      - `duration`: the non-empty edit's `segment_duration`, in the `mvhd`
+        timescale.
+      - A track without `edts` is `media_time` 0, no delay, and no
+        duration: unchanged.
+    - The decoder takes the first `vide` and the first `soun` track. These
+      are the ones `MF_SOURCE_READER_FIRST_VIDEO_STREAM` and
+      `FIRST_AUDIO_STREAM` read.
+    - **Video:** a requested time `t` maps to the reader's media time
+      `t − start_delay + media_time / timescale`. A `t` before
+      `start_delay` gives the first frame. Frames are then matched in
+      media time.
+    - **Audio:**
+      - At the file's rate, before resampling, it drops the leading
+        `round(media_time × rate / timescale)` frames.
+      - It prepends `round(start_delay × rate)` frames of silence.
+      - It keeps at most `duration` worth of frames, when an edit gives
+        one.
+    - This is what the spec asks of a decoder (the frame shown at a time),
+      so it is not a deviation.
   - `SetCurrentPosition` seeks; the reader then reads forward to the frame.
   - A sequential session keeps its reader while requests move forward. It
     reopens on a backward jump or a forward jump of more than
@@ -503,10 +546,13 @@ edit and the handoff note.
 ### Verified on Windows (Task 1)
 
 Measured on 2026-11-10 with throwaway probes outside the repository
-(`windows` 0.62.2, Rust 1.99.1), on Windows 11 build 26300.9818 (`ver`
-10.0.26300.9818, DisplayVersion 26H2, Home), an Intel i7-13700F, and an
-NVIDIA GeForce RTX 4070 (driver 610.88, `32.0.16.1088`). Every number below
-is a probe's output.
+(`windows` 0.62.2, Rust 1.99.1).
+- The machine, as the controller gave it: Windows 11 10.0.26300, an Intel
+  i7-13700F, and an NVIDIA GeForce RTX 4070 with driver 610.88.
+- `ver` printed 10.0.26300.9818, and the registry gave DisplayVersion 26H2
+  and edition Home. `Win32_VideoController` gave driver `32.0.16.1088`.
+
+Every other number below is a probe's output.
 
 1. **Start-up.** `MFStartup(MF_VERSION = 0x00020070, MFSTARTUP_FULL)`
    answers `S_OK`.
@@ -537,8 +583,12 @@ is a probe's output.
    the Decisions' types and `BPictureCount = 2`:
    - **Microsoft's software MFT.** Rate control `Quality`, quality 70, GOP
      250, and `BPictureCount` 2 answer `S_OK` to `IsSupported` and
-     `SetValue` (`GetValue` reads 2 back). `LowLatency = false` answers
-     `S_OK` to `IsSupported` but `0x80004001` (`E_NOTIMPL`) to `SetValue`.
+     `SetValue` (`GetValue` reads 2 back). `LowLatency = false` passes
+     `IsSupported` but answers `0x80004001` (`E_NOTIMPL`) to `SetValue`.
+     In `windows` 0.62, `ICodecAPI::IsSupported` returns `Result<()>`, so
+     `S_FALSE` cannot be told from `S_OK`. This "pass" may be `S_FALSE`:
+     the plugin cannot rely on `IsSupported` alone, hence the Decisions'
+     rule on a failing `SetValue`.
      - It reorders (I P B B: decode order 0, 3, 1, 2, 6, 4, 5, …). Every
        sample has `MFSampleExtension_DecodeTimestamp`, and `dts ≠ pts`.
      - `DecodeTimestamp` is the input times in order (0, 333667, 667333 hns,
@@ -569,6 +619,10 @@ is a probe's output.
      at 64x36, 160x90, and 640x360 with the ICodecAPI settings, and at
      640x360 without them. It presumably wants a D3D manager, which the
      plugin does not give it; the candidate loop passes it over.
+   - **Not probed:** the HEVC software extension encoder
+     ("HEVCVideoExtensionEncoder", what 8-bit `hevc` with `hardware: false`
+     opens). Its `BPictureCount`, `DecodeTimestamp`, and MFT delay are
+     unknown, and Task 4's tests are the first check.
 4. **AAC.** Microsoft's AAC MFT at 48 kHz stereo and 192 kbit/s
    (`MF_MT_AUDIO_AVG_BYTES_PER_SECOND` 24000), fed 1 s of silence with a
    click (1.0, as 32767) at frame 4800, in chunks of 16384 frames.
@@ -660,10 +714,14 @@ is a probe's output.
    - **Rotation is applied by the reader.** Take an FFmpeg MP4 with
      `-display_rotation 90` (`tkhd` matrix [0, −65536, 65536, 0], ffprobe
      rotation 90). Its native type has `MF_MT_VIDEO_ROTATION` 270. The
-     RGB32 type is **36x64, and the pixels are already upright**: a frame
-     red on the left and blue on the right comes out blue on top and red
-     below, as FFmpeg's autorotation shows it. The current type has no
-     rotation attribute.
+     RGB32 type is **36x64, and the pixels are already upright**. The test
+     frame is red on the left and blue on the right (BGR corners of the
+     unrotated file: top-left `00 00 fe`, top-right `ff 00 00`).
+     - Rotated, the reader gives top-left and top-right `ff 00 00` (blue),
+       and bottom-left and bottom-right `00 00 fe` (red).
+     - FFmpeg's autorotated frame agrees: RGB top-left `0000fe`,
+       bottom-left `fd0000`.
+     - The current type has no rotation attribute.
    - **Float at the native rate: yes.** 48000 Hz × 2 for the MP4 and MOV,
      44100 Hz × 1 for the M4A, 32 bits.
    - **The reader ignores edit lists.**
@@ -675,13 +733,14 @@ is a probe's output.
        `MF_SD_AUDIO_ENCODER_PADDING` answers `0xC00D36E6`
        (`MF_E_ATTRIBUTENOTFOUND`).
    - **The file can be removed while the reader is alive.** Opening the
-     file for writing then fails (os error 32), but `std::fs::remove_file`
-     **succeeds**, against the expectation. Media Foundation opens files
-     with delete sharing, and std deletes with POSIX semantics. The name
-     goes at once, and the reader keeps reading. After the release, the
-     file opens for writing.
-7. **CI** (Step 2): not run on a throwaway branch; checked by the PR's CI
-   run (ruling in the SDD ledger).
+     file for writing then fails with os error 32, with or without
+     truncation. Yet `std::fs::remove_file` **succeeds**, against the
+     expectation: Media Foundation opens files with delete sharing, and
+     std deletes with POSIX semantics. The name goes at once, and the
+     reader keeps reading all 30 frames and the audio.
+     After the release, the file opens for writing (without truncation),
+     and its size is unchanged.
+7. **CI** (Step 2): not run; deferred to the PR's CI (controller ruling).
 
 **Rulings.**
 - **`AAC_DELAY = 1024`, with a lead-in.** The MFT's own priming is 0, but
@@ -704,8 +763,9 @@ is a probe's output.
   delay is shown, or the IDR is lost. 5(d) passes. Task 6 and Task 7 follow
   ruling B. The spec's deviation 71 records the outcome.
 - **CI.** No `Server-Media-Foundation` step yet.
-  - If the PR's CI shows `MFStartup` failing on `windows-latest`, Task 2's
-    CI change adds `Install-WindowsFeature Server-Media-Foundation`.
+  - The PR is pushed only after Task 10. If its first CI run shows
+    `MFStartup` failing on `windows-latest`, a follow-up commit adds the
+    `Install-WindowsFeature Server-Media-Foundation` step to `ci.yml`.
   - If that needs a reboot, or does not help, every Media Foundation test
     there skips with the `describe` reason. The handoff note then says so,
     and this machine is the only full run.
@@ -713,18 +773,20 @@ is a probe's output.
     tests" step.
 - **Consequences for later tasks.**
   - Task 4:
-    - `SetValue` answering `E_NOTIMPL` skips that property, as an
-      `IsSupported` refusal does (rate control excepted).
+    - A failing `IsSupported` or `SetValue` skips the property (rate
+      control excepted).
+    - `hevc_10_bit_from_p010_is_main10` runs with `hardware: true`, since
+      no software MFT takes P010.
     - Asynchrony is `MF_TRANSFORM_ASYNC`.
     - `hardware_encoders_keep_the_invariants` runs at 160x90, since
       NVIDIA's MFT refuses 64x36.
   - Task 8:
     - The plugin does not rotate (the reader has); it uses the native
       `MF_MT_VIDEO_ROTATION` only for the probe's displayed size.
-    - The reader's ignored edit lists are an open item, below in the
-      Decisions' decoder bullet.
-    - `probing_does_not_lock_the_file` checks write access, not
-      `remove_file`.
+    - The decoder honours edit lists itself, through `src/edit_list.rs`
+      (Decisions, Decoder).
+    - `probing_does_not_lock_the_file` checks write access (without
+      truncation), not `remove_file`.
 
 ## Review focus
 
@@ -809,10 +871,9 @@ outside the repository, in a scratch Cargo project depending on `windows`
      - `MFAudioFormat_Float` output at the native rate;
      - and whether `std::fs::remove_file` succeeds while the reader is
        alive (expected: no) and after it is released (expected: yes).
-- [x] **Step 2: Probe CI.** CI's Windows runner is `windows-latest`, a
-  Windows Server image. *Not run on a throwaway branch: checked by the
-  PR's own CI run instead (the ruling is in the SDD ledger, and under
-  [Verified on Windows](#verified-on-windows-task-1)).*
+- [ ] **Step 2: Probe CI.** CI's Windows runner is `windows-latest`, a
+  Windows Server image. *Not run; deferred to the PR's CI (controller
+  ruling; see [Verified on Windows](#verified-on-windows-task-1)).*
   - Ask the user before pushing anything. With their yes, push a throwaway
     branch whose workflow runs probe 1 (`MFStartup`) and probe 2
     (`MFTEnumEx`) on `windows-latest`.
@@ -863,7 +924,9 @@ outside the repository, in a scratch Cargo project depending on `windows`
   - `.github/workflows/ci.yml`: the Plugins job's Clippy step runs on every
     system. Its `if` becomes `steps.affected.outputs.cargo != ''`, and its
     comment says each OS-native plugin is linted only on its own system.
-    Add Task 1's `Server-Media-Foundation` step if ruled, as
+    No `Server-Media-Foundation` step now (Task 1). If the PR's first CI
+    run, after Task 10, shows `MFStartup` failing on `windows-latest`, a
+    follow-up commit adds it to `ci.yml` as
     `if: steps.affected.outputs.any == 'true' && runner.os == 'Windows'`.
   - `.github/workflows/package.yml`: the plugin-version loop becomes
     `for plugin in ffmpeg avfoundation mediafoundation`.
@@ -878,9 +941,9 @@ outside the repository, in a scratch Cargo project depending on `windows`
   - `[package]`: `name = "celesta-codec-mediafoundation"`,
     `version = "0.9.0"`, edition 2024, `license = "MIT OR Apache-2.0"`,
     `rust-version = "1.89"`, description "Celesta's Windows media plugin:
-    Media Foundation encoders, muxer, and decoder, in a process of its
-    own.", and the comments P5's `Cargo.toml` has (it builds everywhere;
-    `os` skips it elsewhere).
+    Media Foundation encoders and decoder, in a process of its own.", and
+    the comments P5's `Cargo.toml` has (it builds everywhere; `os` skips it
+    elsewhere).
   - `[dependencies]`: `celesta-composition`, `celesta-media`, and
     `celesta-plugin-host` (path, `=0.9.0`), and `serde_json`.
   - `[target.'cfg(windows)'.dependencies]`: `windows = { version = "0.62.2", features = [...] }`,
@@ -897,7 +960,7 @@ outside the repository, in a scratch Cargo project depending on `windows`
   ```rust
   pub const PLUGIN_ID: &str = "mediafoundation";
   pub const DECODER_ID: &str = "mediafoundation";
-  mod components;   // + annexb, convert, hns, params, aac_user_data, color, names (Tasks 3, 8), cfg_attr(expect(dead_code)) off Windows as P5's lib.rs
+  mod components;   // + annexb, convert, hns, params, aac_user_data, color (Task 3), names, edit_list (Task 8), cfg_attr(expect(dead_code)) off Windows as P5's lib.rs
   #[cfg(windows)] mod mf;           // not `windows`, which would shadow the `windows` crate
   #[cfg(windows)] pub use mf::provider::{MfCodec, install, registered};
   ```
@@ -905,18 +968,18 @@ outside the repository, in a scratch Cargo project depending on `windows`
   ```rust
   pub(crate) enum VideoCodec { H264, Hevc }      // ids "h264", "hevc"; ALL; from_id; input_formats(); settings()
   pub(crate) enum AudioCodec { Aac }             // id "aac"; settings()
-  pub(crate) enum MuxerFormat { Mp4 }            // id "mp4"; settings()   (ruling B: removed in Task 6)
   pub(crate) struct Encoders { pub h264: bool, pub hevc: bool, pub aac: bool }   // what MFTEnumEx listed
   pub(crate) fn describe_from(startup: Result<(), String>, encoders: &Encoders) -> Vec<ComponentDescription>
   ```
-  The settings schemas and the availability reasons are the Decisions'.
-  Copy P5's private `field`, `select`, `integer`, `when`, and `in_group`
-  helpers.
+  There is no `MuxerFormat`: Task 1 ruled B, so the plugin declares no
+  muxer, in `plugin.json` or in `describe`. The settings schemas and the
+  availability reasons are the Decisions'. Copy P5's private `field`,
+  `select`, `integer`, `when`, and `in_group` helpers.
 - `mf/provider.rs`:
   ```rust
   pub struct MfCodec { /* startup: Result<Started, String>, decoder, sessions by SessionId, one counter */ }
   impl MfCodec { pub fn new() -> Self; pub fn factory() -> ProviderFactory }
-  impl MediaProvider for MfCodec   // describe = describe_from(startup, enumerate::encoders()); every kind Some(self)
+  impl MediaProvider for MfCodec   // describe = describe_from(startup, enumerate::encoders()); decoder and encoders Some(self), muxer None
   pub fn registered() -> RegisteredPlugin   // Bundled, from plugin.json's media, factory making MfCodec in process
   pub fn install()
   ```
@@ -947,7 +1010,7 @@ outside the repository, in a scratch Cargo project depending on `windows`
     - `settings_follow_the_decisions`: the keys, in order: `h264`'s
       `profile, rateControl, quality, bitrate, keyframeInterval, bFrames, hardware`;
       `hevc`'s `rateControl, quality, bitrate, keyframeInterval, bFrames, bitDepth, hardware`;
-      `aac`'s `bitrate`; `mp4`'s `faststart`. And
+      `aac`'s `bitrate`. And
       `celesta_media::settings::validate` of `{}` fills the defaults.
   - `tests/describe.rs`, on Windows:
     - `this_machine_lists_the_basic_encoders`: `h264` and `aac` are
@@ -1101,7 +1164,8 @@ impl VideoSession {
   frame is converted first (Task 3).
 - Output samples go through Task 3's `split_sample`. The first parameter
   sets give `Encoded.config`; `key` is `MFSampleExtension_CleanPoint`;
-  `pts = from_hns(sample time)`; `dts` follows the Decisions.
+  `pts = from_hns(sample time − the MFT's delay)` (Decisions, DTS); `dts`
+  follows the Decisions.
 - Packets are answered as soon as the MFT gives them.
 - A frame whose length is not `input.frame_bytes(width, height)` is
   `MediaError::Codec`.
@@ -1139,13 +1203,17 @@ impl VideoSession {
     - `h264_and_hevc_decode_times_precede_presentation`: 30 frames of a
       moving pattern. The Global constraints' hard invariants hold, and the
       reordering checks run only when the stream reorders. With
-      `bFrames: false`, every `dts == pts`. HEVC runs when it is available,
-      otherwise it prints `skipping`.
+      `bFrames: false`, every `dts == pts`. HEVC runs when it is available.
+      Otherwise, and when `open` with `hardware: false` answers "no
+      software HEVC encoder", the HEVC part prints `skipping` with the
+      reason.
     - `every_input_pts_comes_back`: 300 frames at 30000/1001 give 300
       packets whose `pts` are exactly `k × 1001`.
-    - `hevc_10_bit_from_p010_is_main10`, when HEVC is available:
-      `config.codec` starts `"hvc1.2."`, and the decoded codes are within 4
-      of (250, 409, 960).
+    - `hevc_10_bit_from_p010_is_main10`: `hardware: true`, since no
+      software MFT takes P010 (Task 1). The hard invariants hold,
+      `config.codec` starts `"hvc1.2."`, and the decoded codes are within
+      16 of (250, 409, 960), the hardware tolerance. When no P010 HEVC
+      encoder exists, it prints `skipping` with the open error.
     - `packets_come_with_the_config`: the first answer with packets carries
       `config`, and no later one does.
     - `odd_sizes_are_refused`: 63x35 gives `Err(Codec(m))` with `m`
@@ -1224,18 +1292,20 @@ It drops samples with negative times without an error, the IDR of a
 reordered stream among them ([Verified on Windows](#verified-on-windows-task-1), 5).
 So this plugin ships no muxer, and its encoders go into `ffmpeg/mp4`. The
 Decisions' Muxer bullet stays as the design a later muxer would start from;
-its tests are not written. This task:
+its tests are not written.
 
-- removes `muxers` from `plugin.json`, and `MuxerFormat` with its tests;
-- answers `None` from `MediaProvider::muxer`;
-- adds a test, `the_plugin_declares_no_muxer`: the manifest and
-  `describe` have none.
+Task 2 already declares no muxer: there are no `muxers` in `plugin.json`,
+no `MuxerFormat`, and `MediaProvider::muxer` returns `None`. This task
+only pins that with a test.
 
-- [ ] **Step 1: Write the failing test** `the_plugin_declares_no_muxer`.
-- [ ] **Step 2:** It fails.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4:** The tests and Clippy pass.
-- [ ] **Step 5: Commit:** `feat(codec-mediafoundation): no muxer of its own (deviation 71)`.
+- [ ] **Step 1: Write the test** `the_plugin_declares_no_muxer`, in
+  `components.rs` (every platform) and `tests/describe.rs` (Windows). The
+  manifest's `media` has no muxers. `describe` has no `Muxer`
+  description, and `MfCodec::muxer()` is `None`.
+- [ ] **Step 2:** It passes at once, since Task 2 declared none. If it
+  fails, fix Task 2's code, not the test.
+- [ ] **Step 3:** The tests and Clippy pass.
+- [ ] **Step 4: Commit:** `test(codec-mediafoundation): no muxer of its own (deviation 71)`.
 
 ### Task 7: The program, the ring, and exports across plugins
 
@@ -1301,12 +1371,17 @@ its tests are not written. This task:
 ### Task 8: The SourceReader decoder (`plugins/mediafoundation`)
 
 **Files:**
-- Create: `src/names.rs` (every platform: subtype and colour enums to
-  FFmpeg's names), `src/mf/decoder.rs`.
-- Modify: `src/mf/provider.rs` (`Decoder` for `MfCodec`). (Under ruling
-  B, Task 6 has no test helper reader for the decoder to replace.)
-- Test: `names.rs` tests; `plugins/mediafoundation/tests/decode.rs`
-  (Windows).
+- Create:
+  - `src/names.rs` (every platform: subtype and colour enums to FFmpeg's
+    names);
+  - `src/edit_list.rs` (every platform: each track's edit, Decisions,
+    Decoder);
+  - `src/mf/decoder.rs`.
+- Modify: `src/lib.rs` (the two modules), `src/mf/provider.rs`
+  (`Decoder` for `MfCodec`). Under ruling B, Task 6 has no test helper
+  reader for the decoder to replace.
+- Test: `names.rs` and `edit_list.rs` tests (every platform);
+  `plugins/mediafoundation/tests/decode.rs` (Windows).
 
 **Interfaces:**
 ```rust
@@ -1315,6 +1390,15 @@ pub(crate) fn codec_name(fourcc: u32) -> String;              // H264/avc1 → "
 pub(crate) fn primaries_name(value: u32) -> Option<&'static str>;   // MFVideoPrimaries_*: BT709 → "bt709", BT2020 → "bt2020", SMPTE170M → "smpte170m", EBU3213 → "bt470bg", DCI_P3 → "smpte431"
 pub(crate) fn transfer_name(value: u32) -> Option<&'static str>;    // MFVideoTransFunc_*: 709 → "bt709", 2084 → "smpte2084", HLG → "arib-std-b67", sRGB → "iec61966-2-1", 10 → "linear"
 pub(crate) fn matrix_name(value: u32) -> Option<&'static str>;      // MFVideoTransferMatrix_*: BT709 → "bt709", BT601 → "smpte170m", BT2020_10/12 → "bt2020nc"
+// edit_list.rs: plain Read + Seek, so it is tested everywhere
+pub(crate) struct TrackEdit {
+    pub(crate) handler: [u8; 4],     // hdlr: *b"vide", *b"soun", …
+    pub(crate) timescale: u32,       // mdhd
+    pub(crate) media_time: i64,      // the first non-empty edit's, in mdhd units; 0 without edts
+    pub(crate) start_delay: f64,     // seconds of empty edits (media_time −1) before it, from mvhd units; 0.0 without
+    pub(crate) duration: Option<f64>, // seconds of that edit's segment_duration (mvhd units); None without edts
+}
+pub(crate) fn track_edits(file: &mut (impl Read + Seek)) -> std::io::Result<Vec<TrackEdit>>;   // one per trak, in file order
 // mf/decoder.rs
 pub(crate) struct MfDecoder;
 impl MfDecoder {
@@ -1331,6 +1415,16 @@ impl MfDecoder {
   Its size is the displayed one (90 and 270 swap), its duration
   `MF_PD_DURATION`, and its colour comes from the native type's
   attributes. There is one `AudioStream` per audio stream.
+- Edit lists are applied as the Decisions' Decoder bullet says.
+  - `track_edits` reads the file, and closes it, before the reader opens.
+  - The first `vide` and the first `soun` track give the video and audio
+    edits.
+  - Audio drops the leading `media_time` frames at the file's rate, before
+    resampling, prepends `start_delay` as silence, and keeps at most
+    `duration`.
+  - Video maps a requested `t` to media time
+    `t − start_delay + media_time / timescale`.
+  - Files without `edts` are read as they are.
 - Audio: mono is the channels' mean, and stereo from mono duplicates.
   Then `celesta_media::resample_audio` when the rates differ.
 - A frame request on a file without video is `NoVideoStream`; a negative
@@ -1339,11 +1433,23 @@ impl MfDecoder {
 - [ ] **Step 1: Write failing tests.**
   - `names.rs`: one assertion per mapping, and an unknown value gives
     `None`.
+  - `edit_list.rs`, on every platform, over hand-built `moov`s in a
+    `Cursor`:
+    - `an_edit_list_gives_its_media_time`: a `soun` track at timescale
+      48000 with an `elst` of media time 1024 gives `media_time` 1024,
+      `start_delay` 0.0, and the edit's duration.
+    - `an_empty_edit_delays_the_start`: an empty edit (media time −1) of
+      half a second at `mvhd` timescale 1000, then media time 2002 at 30000,
+      gives `start_delay` 0.5 and `media_time` 2002.
+    - `no_edit_list_changes_nothing`: a `trak` without `edts` gives
+      `media_time` 0, `start_delay` 0.0, and `duration` `None`.
+    - A `moov` after a large `mdat`, and a MOV's `moov`, read the same.
   - `tests/decode.rs`. The files are written in the test by Tasks 4–5's
     encoders in `FfmpegCodec`'s muxers, or by `FfmpegCodec` alone; a WebM
     by `FfmpegCodec`. Those MP4s carry edit lists, which the reader
-    ignores (Task 1): `decodes_audio_as_ffmpeg_does` and the frame-time
-    tests depend on the open item in the Decisions' Decoder bullet.
+    ignores (Task 1), and the decoder applies (`edit_list.rs`). So the
+    expected values are FFmpeg's: the click at 4800, and frames at
+    FFmpeg's times.
     - `probes_what_it_wrote`: a 10-frame 64x36 `h264` + `aac` MP4 at
       30000/1001 gives codec `h264`, 64x36, `Rational::new(30000, 1001)`,
       colour `bt709` ×3, and one audio stream at 48000 Hz, 2 channels,
@@ -1365,13 +1471,23 @@ impl MfDecoder {
       matrix probes as 36x64. Each corner is judged by its nearest quadrant
       colour (P5's `d2ebdd1c` rule).
     - `probing_does_not_lock_the_file`: after `probe`, and after a
-      non-sequential `decode`, the file opens for writing with truncation
-      (`OpenOptions::new().write(true).truncate(true)`). After a sequential
+      non-sequential `decode`, the file opens for writing, without
+      truncation (`OpenOptions::new().write(true)`), so the fixture stays
+      whole between checks. The sharing violation comes from the share
+      mode, not from truncation (Task 1). After a sequential
       decode, it opens once the session goes idle (`IDLE_SESSION_FRAMES`
       requests to another path). Task 1 found that `std::fs::remove_file`
       succeeds even while a reader is alive, so it cannot catch a leaked
       reader; opening for writing fails then (os error 32).
-- [ ] **Step 2:** `--test decode` and `names` fail.
+    - `edit_lists_are_honoured`: Task 1's two cases.
+      - FFmpeg's own `aac` in an `.m4a` (`elst` 1024): the click at 4800,
+        not 5824.
+      - An FFmpeg MOV of libx264 with B-frames (`elst` 2002): time `0.0`
+        gives the frame FFmpeg's decoder gives at 0.
+      - FFmpeg's `mp4` with `delay: 0`, whose `elst` has media time 0
+        (Task 1's box dump): unchanged. The unit tests cover a file with
+        no `edts`.
+- [ ] **Step 2:** `--test decode`, `names`, and `edit_list` fail.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4:** The tests and Clippy pass.
 - [ ] **Step 5: Commit:** `feat(codec-mediafoundation): SourceReader decoder`.
@@ -1435,7 +1551,7 @@ impl MfDecoder {
     `plugin.json`'s `os`, and the Windows prerequisites of How to start;
   - the Windows package's `plugins\mediafoundation`.
 - Modify `docs/superpowers/specs/2026-11-08-media-components-design.md`:
-  rewrite the P6 paragraph as built, with deviations 70–76 (and any
+  rewrite the P6 paragraph as built, with deviations 70–77 (and any
   later ones) and Task 1's verified answers; Phases → P6 as built.
 - Create: `docs/handoff/<date>-media-windows.md`.
 
