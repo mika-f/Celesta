@@ -173,7 +173,7 @@ parentheses).
 | `93442dac` (`a2a79905`) | The CLI's, MCP's, and the TS package's still component options. |
 | `74a70d4c`, `c1b3b525` | The docs, and `plugins/Cargo.lock`. |
 | `b27684ae`, `dd2ffbff`, `dea91885`, `3d3f2ade`, `afc05b0a` | The first review's fixes: MCP's string select settings, no `fsync` per frame, the straight `rgba8` dither, staging after open, partial flushes, stills with no media plugin, and their docs. |
-| `00d45157`, `2fbb4649`, `83e6c364` | The second review's fixes (#795), below. |
+| `00d45157`, `2fbb4649`, `83e6c364`, `954451cd` | The second review's fixes (#795), below. |
 
 ## Deviations from the spec
 
