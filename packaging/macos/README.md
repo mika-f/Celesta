@@ -62,6 +62,10 @@ Celesta.app/
           Frameworks/
             (FFmpeg and its non-system shared-library dependencies)
           licenses/
+        avfoundation/
+          celesta-plugin.json
+          bin/macos-<arch>/celesta-codec-avfoundation
+          licenses/
       react/
       examples/
       licenses/
@@ -86,8 +90,9 @@ newer Mac does not establish compatibility
 with older macOS releases; test on the oldest version you intend to support.
 
 `--skip-build` reuses the current `target/<native Rust target>/release` binaries
-and the built `packages/*/dist` runtime; the codec plugin is always built, which
-costs nothing when `plugins/target` is current. Run the normal script once before using it. Downloads
+and the built `packages/*/dist` runtime; the bundled media plugins (FFmpeg and
+AVFoundation) are always built, which costs nothing when `plugins/target` is
+current. Run the normal script once before using it. Downloads
 are cached in `target/package-downloads`; each run gets a new staging directory.
 Existing DMGs are never overwritten.
 
@@ -180,6 +185,12 @@ concern described in the Windows packaging guide.
 The formula also links libvpx and libopus (BSD-3-Clause), the WebM encoders, so
 `ffmpeg@8` already includes them; their notices are collected with the other
 Homebrew license files.
+
+`Contents/Resources/PlugIns/avfoundation` holds the AVFoundation plugin
+(`plugins/avfoundation`, built by the same script after FFmpeg). It is
+MIT/Apache-2.0 licensed and links only system frameworks, so it has no
+`Frameworks/` folder, needs no dylibbundler, and its `licenses/` holds
+`LICENSE-MIT` and `LICENSE-APACHE` alone.
 
 References: [Apple's notarization guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution),
 [code signing in depth](https://developer.apple.com/library/archive/technotes/tn2206/),

@@ -87,13 +87,19 @@ impl Drop for OutputContext {
 }
 
 /// libavformat's codec id for `config`'s codec, and the codec tag it must
-/// be stored with (ProRes's profile), or why `muxer` cannot store it.
+/// be stored with (ProRes's profile; H.264's and HEVC's sample entry as
+/// the codec string spells it, since libavformat's MP4 would otherwise
+/// write `hev1`, which QuickTime does not play), or why `muxer` cannot
+/// store it.
 fn codec_id(muxer: &str, config: &TrackConfig) -> Result<(AVCodecID, u32), MediaError> {
     let family = codec_family(&config.codec);
     let tag = |name: &[u8; 4]| u32::from_le_bytes(*name);
+    let spelled = config.codec.split('.').next().unwrap_or_default();
     Ok(match (family.as_str(), config.codec.as_str()) {
-        ("avc1", _) => (AVCodecID::AV_CODEC_ID_H264, 0),
-        ("hvc1", _) => (AVCodecID::AV_CODEC_ID_HEVC, 0),
+        ("avc1", _) if spelled == "avc3" => (AVCodecID::AV_CODEC_ID_H264, tag(b"avc3")),
+        ("avc1", _) => (AVCodecID::AV_CODEC_ID_H264, tag(b"avc1")),
+        ("hvc1", _) if spelled == "hev1" => (AVCodecID::AV_CODEC_ID_HEVC, tag(b"hev1")),
+        ("hvc1", _) => (AVCodecID::AV_CODEC_ID_HEVC, tag(b"hvc1")),
         ("av01", _) => (AVCodecID::AV_CODEC_ID_AV1, 0),
         ("vp09", _) => (AVCodecID::AV_CODEC_ID_VP9, 0),
         ("ap4h", _) => (AVCodecID::AV_CODEC_ID_PRORES, tag(b"ap4h")),
@@ -516,6 +522,31 @@ mod tests {
         assert_eq!(opus_samples(&[(3 << 3) | 1]), Some(5760));
         assert_eq!(opus_samples(&[(16 << 3) | 3, 3]), Some(360));
         assert_eq!(opus_samples(&[]), None);
+    }
+
+    #[test]
+    fn hevc_keeps_its_sample_entry_spelling() {
+        let config = |codec: &str| TrackConfig {
+            codec: codec.to_owned(),
+            description: None,
+        };
+        let tag = |name: &[u8; 4]| u32::from_le_bytes(*name);
+        assert_eq!(
+            codec_id("mp4", &config("hvc1.1.6.L93.B0")).unwrap(),
+            (AVCodecID::AV_CODEC_ID_HEVC, tag(b"hvc1"))
+        );
+        assert_eq!(
+            codec_id("mp4", &config("hev1.1.6.L93.B0")).unwrap(),
+            (AVCodecID::AV_CODEC_ID_HEVC, tag(b"hev1"))
+        );
+        assert_eq!(
+            codec_id("mp4", &config("avc1.64001F")).unwrap(),
+            (AVCodecID::AV_CODEC_ID_H264, tag(b"avc1"))
+        );
+        assert_eq!(
+            codec_id("mov", &config("avc3.64001F")).unwrap(),
+            (AVCodecID::AV_CODEC_ID_H264, tag(b"avc3"))
+        );
     }
 
     #[test]

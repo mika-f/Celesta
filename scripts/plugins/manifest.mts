@@ -21,6 +21,12 @@ export interface PluginSource {
   components?: object[];
   /** What a media plugin offers: its decoders, copied as they are. */
   media?: object;
+  /**
+   * The operating systems it builds for, as `std::env::consts::OS` names
+   * (such as `["macos"]`); on any other the build skips it. Absent, it builds
+   * everywhere. Not copied into the manifest.
+   */
+  os?: string[];
 }
 
 /** What the build made. */
@@ -53,7 +59,7 @@ export interface PluginManifest {
 }
 
 /** The keys plugin.json may have, as PluginSource lists them. */
-const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components', 'media'];
+const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components', 'media', 'os'];
 
 /**
  * Celesta's rule for a plugin id (`is_valid_id` in
@@ -104,6 +110,18 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
   ) {
     throw new Error(`${sourcePath}: components must be a list of objects`);
   }
+  const os: unknown = source.os;
+  if (os !== undefined && !(Array.isArray(os) && os.length > 0 && os.every((name) => typeof name === 'string' && name !== ''))) {
+    throw new Error(`${sourcePath}: os must be a list of operating systems, such as ["macos"]`);
+  }
+  // A misspelt system ("macOS", "darwin") would match no host and drop the
+  // plugin from every build without a word.
+  const unknownOs = (os as string[] | undefined)?.find((name) => !OPERATING_SYSTEMS.has(name));
+  if (unknownOs !== undefined) {
+    throw new Error(
+      `${sourcePath}: os ${JSON.stringify(unknownOs)} is not an operating system Rust names (std::env::consts::OS), such as "macos", "linux", or "windows"`,
+    );
+  }
   const noComponents = source.components === undefined || source.components.length === 0;
   if (source.module === undefined && !noComponents) {
     throw new Error(`${sourcePath}: components need a module to import them from`);
@@ -111,6 +129,56 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
   if (source.module === undefined && source.cargoPackage === undefined) {
     throw new Error(`${sourcePath}: it has neither a module nor a cargoPackage to build`);
   }
+}
+
+/**
+ * The `std::env::consts::OS` values `os` may list: a hand-kept copy of Rust's,
+ * which a new value Rust adds has to be added to.
+ */
+const OPERATING_SYSTEMS: ReadonlySet<string> = new Set([
+  'aix',
+  'android',
+  'cygwin',
+  'dragonfly',
+  'emscripten',
+  'espidf',
+  'freebsd',
+  'fuchsia',
+  'haiku',
+  'hermit',
+  'horizon',
+  'hurd',
+  'illumos',
+  'ios',
+  'l4re',
+  'linux',
+  'macos',
+  'netbsd',
+  'nto',
+  'nuttx',
+  'openbsd',
+  'psp',
+  'redox',
+  'rtems',
+  'solaris',
+  'solid_asp3',
+  'teeos',
+  'trusty',
+  'tvos',
+  'uefi',
+  'visionos',
+  'vita',
+  'vxworks',
+  'wasi',
+  'watchos',
+  'windows',
+  'xous',
+  'zkvm',
+]);
+
+/** Whether `source` builds on the operating system `os` (`std::env::consts::OS`): it does without an `os` list. */
+export function buildsOn(source: PluginSource, os: string): boolean {
+  return source.os === undefined || source.os.includes(os);
 }
 
 /**

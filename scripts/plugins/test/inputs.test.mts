@@ -477,8 +477,8 @@ describe('repositoryPlugins in a scratch pnpm workspace', () => {
 describe("the repository's plugins", () => {
   it('are found with their inputs', () => {
     const plugins = repositoryPlugins(root);
-    expect(plugins.map(({ id }) => id)).toEqual(['ffmpeg', 'vrm']);
-    const [ffmpeg, vrm] = plugins;
+    expect(plugins.map(({ id }) => id)).toEqual(['avfoundation', 'ffmpeg', 'vrm']);
+    const [avfoundation, ffmpeg, vrm] = plugins;
 
     expect(vrm).toMatchObject({
       directory: 'plugins/vrm',
@@ -521,6 +521,19 @@ describe("the repository's plugins", () => {
       ]),
     );
     for (const input of ['packages/cli', 'crates/editor', 'templates']) expect(ffmpeg.inputs).not.toContain(input);
+
+    expect(avfoundation).toMatchObject({
+      directory: 'plugins/avfoundation',
+      workspace: 'plugins',
+      cargoPackage: 'celesta-codec-avfoundation',
+      jsPackage: null,
+    });
+    expect(avfoundation.inputs).toEqual(
+      expect.arrayContaining(['plugins/avfoundation', 'crates/media', 'LICENSE-MIT', 'LICENSE-APACHE']),
+    );
+    for (const input of ['packages/cli', 'crates/editor', 'LICENSE-GPL-2.0']) {
+      expect(avfoundation.inputs).not.toContain(input);
+    }
 
     for (const { inputs } of plugins) {
       expect(inputs).toEqual([...new Set(inputs)].sort());

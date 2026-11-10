@@ -218,6 +218,48 @@ A preset saved with an older version of a plugin may name a setting the encoder 
 
 The MCP `export_video` tool and `@celesta.studio/exporter` take `preset` and `presetFile`, which are looked up the same way, and use the project's default preset in the same cases; their reports carry the same warnings.
 
+## AVFoundation components on macOS
+
+The macOS app also comes with the `avfoundation` media plugin. It encodes with Apple's VideoToolbox and AudioToolbox, on the Mac's media engine where it has one, and writes MP4 and MOV files with AVFoundation. FFmpeg stays the default: an export uses these components only when you name them, with `--muxer`, `--video-encoder`, and `--audio-encoder` or in an export preset (`"muxer": "avfoundation/mp4"`, `"video": { "component": "avfoundation/hevc" }`). They mix with FFmpeg's, so `--video-encoder avfoundation/hevc` alone writes VideoToolbox's HEVC into `ffmpeg/mp4` with `ffmpeg/aac`. The plugin runs on macOS only; Windows and Linux do not have it.
+
+| Component | Kind | Writes |
+| --- | --- | --- |
+| `avfoundation/h264` | Video encoder | H.264 |
+| `avfoundation/hevc` | Video encoder | HEVC, 8-bit or 10-bit |
+| `avfoundation/prores` | Video encoder | ProRes 4444 with alpha, or 422 HQ |
+| `avfoundation/aac` | Audio encoder | AAC at a constant bitrate |
+| `avfoundation/mp4` | Muxer | `.mp4` and `.m4v`: H.264 or HEVC, and AAC. By default `avfoundation/h264` and `avfoundation/aac` |
+| `avfoundation/mov` | Muxer | `.mov`: H.264, HEVC, or ProRes, and AAC or PCM. By default `avfoundation/prores` (4444) and `avfoundation/aac` |
+
+On an Apple M4, VideoToolbox's H.264 and HEVC exported a 4K film about three times as fast as x264 with its defaults. At their own defaults, its H.264 files came out about 10–20% larger than x264's at slightly lower quality, and its HEVC files about 15–30% smaller at about the same quality; HEVC plays on fewer devices than H.264.
+
+Their settings in this release (`--describe avfoundation/hevc` shows them too):
+
+| Component | Key | Values (default) |
+| --- | --- | --- |
+| `avfoundation/h264` | `profile` | `high`, `main`, or `baseline` (`high`) |
+| | `rateControl` | `quality` for constant quality or `bitrate` for an average bitrate (`quality`) |
+| | `quality` | 0–100, with `rateControl=quality`; higher is better quality and larger (70) |
+| | `bitrate` | bits per second, at least 100000, with `rateControl=bitrate` (8000000) |
+| | `keyframeInterval` | 1–1000, the most frames between keyframes (250) |
+| | `bFrames` | `true` or `false`: reordered frames compress better; turn them off for players that cannot decode them (`true`). Baseline never has them |
+| `avfoundation/hevc` | `rateControl`, `quality`, `bitrate`, `keyframeInterval`, `bFrames` | as for `avfoundation/h264` |
+| | `bitDepth` | `8` for Main, or `10` for Main 10 (`8`) |
+| `avfoundation/prores` | `profile` | `4444`, or `hq` for 422 HQ without alpha (`4444`) |
+| `avfoundation/aac` | `bitrate` | 32000–320000 bits per second (192000) |
+
+AudioToolbox takes fewer bitrates than the setting's range, depending on the sample rate and the channels: at 44.1 and 48 kHz, 32000–256000 for mono and 64000–320000 for stereo, and less at lower rates. A bitrate outside them fails with `invalid_option` when the encoder opens, once the soundtrack is mixed, and the message gives the range. The default, 192000, is too high for stereo below 32 kHz and for mono below 44.1 kHz, so give a soundtrack mixed at such a rate a lower `bitrate`. The muxers keep their defaults, `faststart` among them, as FFmpeg's do.
+
+`avfoundation/mov` writes AAC by default, where `ffmpeg/mov` writes PCM; give `--audio-encoder ffmpeg/pcm` for PCM. `--loop` works with both muxers: the lead-in and AAC's own delay are hidden so that FFmpeg-based players and Apple's play the sound from the same sample. Colors are BT.709 with limited range and tagged, as with FFmpeg. When VideoToolbox on a Mac has no encoder for a codec, the component reports that it does not work here (`VideoToolbox has no HEVC encoder on this Mac`), and naming it fails with `component_unavailable`; `--list-components --check` shows which work.
+
+The plugin also has a decoder, `avfoundation/avfoundation`, for MP4, MOV, and M4A files. FFmpeg's decoder goes first, so it reads only the files FFmpeg cannot, or every such file when the `ffmpeg` plugin is turned off. It takes AVFoundation's own conversion to BT.709 colors, so an HDR video read through it is not tone-mapped as FFmpeg's decoder does it and can look different.
+
+```sh title="Export HEVC with VideoToolbox"
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --muxer avfoundation/mp4 --video-encoder avfoundation/hevc --video-option quality=80 --audio-option bitrate=256000 first-scene.tsx output.mp4
+```
+
+The MCP `export_video` tool and `@celesta.studio/exporter` take the same names: `"muxer": "avfoundation/mp4"` and `"videoEncoder": { "id": "avfoundation/hevc", "options": { "quality": 80 } }`.
+
 ## Videos that play on repeat
 
 Shorts and TikTok play a video on repeat. When its last frame runs into its first, add `--loop` so the sound does too. An AAC encoder starts from silence, so without it a hit on the first frame, such as a kick, comes out smeared for about 10 ms, and the player repeats that on every pass. With `--loop`, the encoder first takes the end of the soundtrack, and the MP4's edit list hides that lead-in: the sound still lasts exactly as long as the video. The soundtrack itself must loop, with anything that rings past the end mixed into the start. `--loop` is accepted for any video: MP4 and MOV hide the lead-in, while a muxer that cannot hide it, such as WebM's, ignores `--loop`. A `.mov`'s PCM audio loops without it, since PCM has no encoder delay.

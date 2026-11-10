@@ -231,6 +231,53 @@ resolved against the server's working directory), and
 `@celesta.studio/exporter`'s `exportVideo` takes `preset` and `presetFile`;
 both use the project's `default` in the same cases.
 
+### AVFoundation components (macOS)
+
+The macOS app also bundles the `avfoundation` media plugin (VideoToolbox,
+AudioToolbox, AVFoundation; macOS only). FFmpeg stays the default: its
+components are used only when named (`--muxer`, `--video-encoder`,
+`--audio-encoder`, MCP's and the package's `muxer` / `videoEncoder` /
+`audioEncoder`, or a preset), and they mix with FFmpeg's
+(`--video-encoder avfoundation/hevc` alone gives `ffmpeg/mp4` +
+`avfoundation/hevc` + `ffmpeg/aac`).
+
+| Component | Writes | Keys (default) |
+| --- | --- | --- |
+| `avfoundation/h264` | H.264 | `profile` `high`/`main`/`baseline` (`high`); `rateControl` `quality`/`bitrate` (`quality`); `quality` 0–100, higher is better (70); `bitrate` bit/s, at least 100000 (8000000); `keyframeInterval` 1–1000 (250); `bFrames` (`true`; Baseline never reorders) |
+| `avfoundation/hevc` | HEVC | as `h264` without `profile`, plus `bitDepth` `8` (Main) or `10` (Main 10) (`8`) |
+| `avfoundation/prores` | ProRes | `profile` `4444` (alpha) or `hq` (422 HQ, opaque) (`4444`) |
+| `avfoundation/aac` | AAC-LC, constant bitrate | `bitrate` 32000–320000 bit/s (192000) |
+| `avfoundation/mp4` | `.mp4`, `.m4v`: `avc1`/`hvc1` + `mp4a`; defaults `h264` + `aac` | `faststart` (`true`), which the exporter keeps: muxers take their defaults |
+| `avfoundation/mov` | `.mov`: `avc1`/`hvc1`/`ap4h`/`apch` + `mp4a`/`lpcm`; defaults `prores` 4444 + `aac` (not PCM: name `ffmpeg/pcm` for PCM) | `faststart` (`true`), as `mp4` |
+
+```sh
+Celesta-export --json --overwrite --muxer avfoundation/mp4 --video-encoder avfoundation/hevc \
+  --video-option quality=80 --react scene.tsx out.mp4
+```
+
+- Speed and size (Apple M4, 4K, defaults): VideoToolbox's H.264 and HEVC
+  export about 3x as fast as x264's defaults; its H.264 files are about
+  10–20% larger than x264's CRF 18, its HEVC files about 15–30% smaller,
+  within 0.5 dB PSNR. Name them for fast drafts on a Mac; keep x264
+  for the smallest widely playable H.264.
+- AAC's bitrate must also be one AudioToolbox takes at the mix's rate and
+  channels (44.1/48 kHz: mono 32000–256000, stereo 64000–320000; less
+  below); one it does not take is `invalid_option` naming the range, when
+  the encoder opens after the mix (for a React entry, after the render).
+  The default 192000 is refused for stereo below 32 kHz and mono below
+  44.1 kHz: give such a mix a lower `bitrate`.
+- H.264 and HEVC need even dimensions, as every video export does; a
+  software renderer's RGB-only offer is converted by VideoToolbox.
+- `--loop` works with both muxers; FFmpeg and AVFoundation decode the
+  sound from the same sample.
+- A codec VideoToolbox lacks on this Mac is `component_unavailable`
+  (`VideoToolbox has no HEVC encoder on this Mac`); check with
+  `--list-components --check`.
+- The decoder `avfoundation/avfoundation` (`mp4`, `mov`, `m4a`) reads
+  only files FFmpeg's decoder does not (or all, with `ffmpeg` turned off),
+  with AVFoundation's own colour conversion (HDR is not tone-mapped as
+  FFmpeg's decoder does).
+
 ## Transparent video
 
 The output extension picks the video format:

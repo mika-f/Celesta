@@ -20,8 +20,10 @@ Per-task specifications, implementation details, and validation results live in
 - FFmpeg 8.1.x development libraries must be available for `ez-ffmpeg` /
   `ffmpeg-sys-next` to link against. They are needed only for the FFmpeg
   media plugin, `plugins/ffmpeg` (`celesta-codec-ffmpeg`), and its tests, which
-  the plugins workspace's `--workspace` checks include; the root workspace
-  and the VRM plugin link no FFmpeg. Celesta's own crates
+  the plugins workspace's `--workspace` checks include. On macOS the
+  AVFoundation plugin's tests (`plugins/avfoundation`) need them too: they
+  read its files back with the FFmpeg plugin and libavformat. The root
+  workspace and the VRM plugin link no FFmpeg. Celesta's own crates
   read and write media through the plugin's process, and their tests use the
   lossless test codec (`celesta-codec-test`) instead (see
   [`docs/handoff/2026-11-05-codec-plugin.md`](docs/handoff/2026-11-05-codec-plugin.md),
@@ -33,6 +35,17 @@ Per-task specifications, implementation details, and validation results live in
 - macOS: `brew install ffmpeg@8 pkg-config`, then
   `export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"` (the
   formula is keg-only); desktop packaging bundles the required dylibs.
+- The AVFoundation media plugin, `plugins/avfoundation`
+  (`celesta-codec-avfoundation`), builds on macOS only and links only
+  Apple's frameworks (no FFmpeg; `celesta-codec-ffmpeg` is a macOS-only
+  dev-dependency of its tests). Its `plugin.json` has `"os": ["macos"]`, so
+  `scripts/plugins/build.mts` skips it elsewhere (`avfoundation: skipped, it
+  is built for macos only`); on Linux and Windows its crate builds a stub
+  program that exits with an error, so the plugins workspace still builds
+  on both. CI lints it on Linux and macOS (the Plugins job's Clippy step
+  skips Windows). The macOS package puts it in `Contents/Resources/PlugIns` beside
+  `ffmpeg` (`scripts/package-macos.py`, no `dylibbundler`); see
+  [`docs/handoff/2026-11-09-media-avfoundation.md`](docs/handoff/2026-11-09-media-avfoundation.md).
 - Linux: `scripts/build-ffmpeg-linux.sh` builds static FFmpeg 8.1.x libraries
   with libx264, libvpx, and libopus. Point `PKG_CONFIG_PATH` at
   `<prefix>/lib/pkgconfig`; bindgen
@@ -106,6 +119,7 @@ compositions: no package a composition imports depends on them, though
 | `celesta-media` | Media through plugins: probing, exact-time video frames, and audio decoding (`MediaBackend`, decoder routing), the component model (`MediaRegistry` with its `describe` cache, `MediaProvider` and the `Decoder`, `VideoEncoder`, `AudioEncoder`, and `Muxer` traits, `MediaProcess`, plugin protocol 2's messages), pipelined export requests (`Pipeline`, `PIPE_WINDOW`, and the ring of frame slots an export process gets, `ProviderUse::Export { ring }` sized by `ring_layout`), the settings schema and its validation, and audio resampling; plus the audio mix, ducking, time stretching, and loudness. Links no codec library. |
 | `celesta-media-image` | The built-in image components, registered in every exporter registry by `celesta_exporter::with_builtin` (plugin id `builtin`, `MediaOrigin::BuiltIn`, no folder or process): the video encoders `builtin/png` (`compression`, `depth`, `transparent`), `builtin/jpeg` (`quality`), and `builtin/webp` (`lossless`, `quality`, `transparent`), and the muxers `builtin/image` (one file) and `builtin/imageSequence` (`sequence: true`, one file per frame from a `frame-%06d.<ext>` pattern), which serve still exports only; see [`docs/handoff/2026-11-09-media-stills.md`](docs/handoff/2026-11-09-media-stills.md). |
 | `celesta-codec-ffmpeg` | `plugins/ffmpeg`, the FFmpeg media plugin: a program serving protocol 2 (its decoder `ffmpeg/ffmpeg`, with HDR tone mapping; video encoders `libx264`, `prores`, `vp9`; audio encoders `aac`, `opus`, `pcm`; muxers `mp4`, `mov`, `webm`, on libavcodec and libavformat) and answering `--manifest` for the `cargo install` sibling, and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. A member of the plugins workspace, `plugins/Cargo.toml`, with Celesta's version; built into a plugin directory by `scripts/plugins/build.mts`. |
+| `celesta-codec-avfoundation` | `plugins/avfoundation`, the macOS media plugin: a program serving protocol 2 with VideoToolbox's video encoders `h264`, `hevc`, and `prores`, AudioToolbox's `aac`, AVAssetWriter's muxers `mp4` and `mov`, and an AVAssetReader decoder `avfoundation/avfoundation` (`mp4`, `mov`, `m4a`), through `objc2` bindings; `AvfCodec`, through which its own tests drive the exporter. MIT or Apache-2.0; `plugin.json`'s `"os": ["macos"]`. FFmpeg ranks before it among bundled plugins, so its components serve exports only when named. A member of the plugins workspace with Celesta's version. |
 | `celesta-codec-test` | The lossless test media plugin the core's tests read and write media with, in-process (`install`) or as the program `celesta-codec-test` in a temporary plugin folder (`TestCodecPlugin`): a decoder, `celesta-test-codec/test`, which lists no extensions and reads test codec and WAV files of any name, a lossless video encoder, a PCM audio encoder, and its own muxer; not published. |
 | `celesta-budoux` | Japanese phrase segmentation for text line breaking. |
 | `celesta-renderer` | CPU reference renderer, PNG output, and shared text/path rasterization. |
@@ -177,10 +191,12 @@ React entry ─> React bridge ┘
 - Media probing, decoding, caching, and UI state stay outside the persisted
   project contract.
 - No Celesta crate but `celesta-codec-ffmpeg` links FFmpeg (or any codec
-  library), even optionally: media goes through `celesta_media::MediaBackend`
-  and the media plugins' processes, so the editor, exporter, and MCP server
-  stay MIT/Apache-2.0 when packages ship a GPL FFmpeg. The core's tests use
-  `celesta-codec-test`; only `celesta-codec-ffmpeg`'s own tests link FFmpeg.
+  library; `celesta-codec-avfoundation` uses only the operating system's
+  frameworks, and links FFmpeg only in its tests), even optionally: media
+  goes through `celesta_media::MediaBackend` and the media plugins'
+  processes, so the editor, exporter, and MCP server stay MIT/Apache-2.0
+  when packages ship a GPL FFmpeg. The core's tests use
+  `celesta-codec-test`; only the media plugins' own tests link FFmpeg.
 - GPU preview and audio decoding/mixing run on background workers. Requests
   carry generations, queued work coalesces to the latest request, stale
   results are discarded, and superseded mixing checks cancellation.

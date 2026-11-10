@@ -118,6 +118,30 @@ describe('build.mts', () => {
     expect(readdirSync(join(out, 'licenses'))).toEqual(['LICENSE-A']);
   });
 
+  it('skips a plugin built for another system', () => {
+    writeFileSync(
+      join(plugin, 'plugin.json'),
+      JSON.stringify({ id: 'demo', version: '0.1.0', cargoPackage: 'no-such-package', os: ['macos'] }),
+    );
+    rmSync(out, { recursive: true, force: true });
+    const result = build(LINUX);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('skipped, it is built for macos only');
+    expect(existsSync(join(tree, 'ran-build'))).toBe(false);
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('builds a plugin for a system it lists', () => {
+    writeFileSync(
+      join(plugin, 'plugin.json'),
+      JSON.stringify({ id: 'demo', version: '0.1.0', cargoPackage: 'demo-plugin', os: ['macos', 'linux'] }),
+    );
+    const result = build(LINUX);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('skipped');
+    expect(readFileSync(join(out, 'bin', 'linux-x86_64', 'demo-plugin'), 'utf8')).toBe(LINUX);
+  });
+
   it("keeps the first platform's executable on a run for another target", () => {
     expect(build(LINUX).status).toBe(0);
     const result = build(MACOS);

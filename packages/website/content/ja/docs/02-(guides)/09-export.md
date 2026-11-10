@@ -218,6 +218,48 @@ MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選�
 
 MCP の `export_video` ツールと `@celesta.studio/exporter` は `preset` と `presetFile` を受け取り、同じ順に探します。プロジェクトの既定のプリセットも同じ場合に使い、結果には同じ警告が入ります。
 
+## macOS の AVFoundation コンポーネント
+
+macOS のアプリには `avfoundation` メディアプラグインも入っています。Apple の VideoToolbox と AudioToolbox で（Mac にメディアエンジンがあればそれを使って）エンコードし、AVFoundation で MP4 と MOV のファイルを書きます。既定は FFmpeg のままです。これらのコンポーネントは、`--muxer`、`--video-encoder`、`--audio-encoder` や書き出しプリセット（`"muxer": "avfoundation/mp4"`、`"video": { "component": "avfoundation/hevc" }`）で名前を指定したときだけ使われます。FFmpeg のコンポーネントと組み合わせることもでき、`--video-encoder avfoundation/hevc` だけを指定すると、VideoToolbox の HEVC を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。このプラグインは macOS 専用で、Windows と Linux にはありません。
+
+| コンポーネント | 種類 | 書き出すもの |
+| --- | --- | --- |
+| `avfoundation/h264` | 映像エンコーダー | H.264 |
+| `avfoundation/hevc` | 映像エンコーダー | HEVC（8 bit または 10 bit） |
+| `avfoundation/prores` | 映像エンコーダー | アルファ付きの ProRes 4444、または 422 HQ |
+| `avfoundation/aac` | 音声エンコーダー | 固定ビットレートの AAC |
+| `avfoundation/mp4` | マルチプレクサー | `.mp4` と `.m4v`。H.264 または HEVC と、AAC。既定は `avfoundation/h264` と `avfoundation/aac` |
+| `avfoundation/mov` | マルチプレクサー | `.mov`。H.264、HEVC、ProRes のいずれかと、AAC または PCM。既定は `avfoundation/prores`（4444）と `avfoundation/aac` |
+
+Apple M4 では、VideoToolbox の H.264 と HEVC は、4K の作品を既定の設定の x264 の約 3 倍の速さで書き出しました。それぞれの既定の設定では、H.264 のファイルは x264 より約 10〜20% 大きく画質はわずかに低く、HEVC のファイルはほぼ同じ画質で約 15〜30% 小さくなりました。ただし、HEVC は H.264 より再生できる機器が限られます。
+
+このリリースでの設定は次のとおりです（`--describe avfoundation/hevc` でも確認できます）。
+
+| コンポーネント | キー | 値（既定値） |
+| --- | --- | --- |
+| `avfoundation/h264` | `profile` | `high`、`main`、`baseline`（`high`） |
+| | `rateControl` | 品質一定の `quality`、平均ビットレートの `bitrate`（`quality`） |
+| | `quality` | 0〜100、`rateControl=quality` のとき。大きいほど高画質・大容量（70） |
+| | `bitrate` | ビット毎秒、100000 以上、`rateControl=bitrate` のとき（8000000） |
+| | `keyframeInterval` | 1〜1000、キーフレームの間隔の最大フレーム数（250） |
+| | `bFrames` | `true` または `false`。フレームを並べ替えると圧縮率が上がります。デコードできないプレーヤー向けには無効にします（`true`）。Baseline では常に使いません |
+| `avfoundation/hevc` | `rateControl`、`quality`、`bitrate`、`keyframeInterval`、`bFrames` | `avfoundation/h264` と同じ |
+| | `bitDepth` | Main の `8`、または Main 10 の `10`（`8`） |
+| `avfoundation/prores` | `profile` | `4444`、またはアルファのない 422 HQ の `hq`（`4444`） |
+| `avfoundation/aac` | `bitrate` | 32000〜320000 ビット毎秒（192000） |
+
+AudioToolbox が受け付けるビットレートは、サンプリングレートとチャンネル数によってこの範囲より狭くなります。44.1 kHz と 48 kHz では、モノラルが 32000〜256000、ステレオが 64000〜320000 で、それより低いレートではさらに狭くなります。範囲外のビットレートは、音声をミックスし終えてエンコーダーを開くときにエラーコード `invalid_option` で失敗し、メッセージに範囲が示されます。既定値の 192000 は、32 kHz 未満のステレオと 44.1 kHz 未満のモノラルでは高すぎるため、そのレートでミックスする音声には低い `bitrate` を指定します。マルチプレクサーは FFmpeg のものと同じく既定の設定（`faststart` など）のままです。
+
+`avfoundation/mov` は、PCM を書く `ffmpeg/mov` と違い、既定で AAC を書きます。PCM にするには `--audio-encoder ffmpeg/pcm` を指定します。`--loop` はどちらのマルチプレクサーでも使えます。先頭に入れた音声と AAC 自体の遅延は隠されるので、FFmpeg を使うプレーヤーでも Apple のプレーヤーでも、同じサンプルから音が鳴ります。色は FFmpeg と同じく、リミテッドレンジの BT.709 で、タグも付きます。Mac の VideoToolbox にそのコーデックのエンコーダーがないときは、コンポーネントはこの Mac では使えないと答え（`VideoToolbox has no HEVC encoder on this Mac`）、指定するとエラーコード `component_unavailable` で失敗します。どれが使えるかは `--list-components --check` で確認できます。
+
+このプラグインには、MP4、MOV、M4A のファイルを読むデコーダー `avfoundation/avfoundation` もあります。FFmpeg のデコーダーが先に読むので、これが読むのは FFmpeg が読めないファイルだけです（`ffmpeg` プラグインをオフにしたときは、これらのファイルをすべて読みます）。色は AVFoundation 自身の変換で BT.709 にするため、HDR の動画は FFmpeg のデコーダーのようなトーンマッピングを通らず、見え方が異なることがあります。
+
+```sh title="VideoToolbox で HEVC を書き出す"
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --muxer avfoundation/mp4 --video-encoder avfoundation/hevc --video-option quality=80 --audio-option bitrate=256000 first-scene.tsx output.mp4
+```
+
+MCP の `export_video` ツールと `@celesta.studio/exporter` も同じ名前を受け取ります。`"muxer": "avfoundation/mp4"`、`"videoEncoder": { "id": "avfoundation/hevc", "options": { "quality": 80 } }` のように指定します。
+
 ## 繰り返し再生する動画
 
 Shorts や TikTok は動画を繰り返し再生します。最後のフレームが最初のフレームへつながる動画では、`--loop` を付けて音もつながるようにします。AAC のエンコーダーは無音から符号化を始めるので、付けないと最初のフレームのキックなどの立ち上がりが約 10 ms にじみ、繰り返すたびにそれが鳴ります。`--loop` を付けると、エンコーダーは先にサウンドトラックの末尾を符号化し、その分は MP4 の edit list で隠します。音声の長さは映像とちょうど同じままです。サウンドトラック自体はループしている必要があり、末尾からはみ出す響きは先頭に重ねておきます。`--loop` はどの動画にも付けられます。MP4 と MOV はその分を隠し、WebM のようにそれを隠せないマルチプレクサーでは `--loop` は何も変えません。`.mov` の PCM 音声にはエンコーダーの遅延がないので、付けなくてもつながります。
