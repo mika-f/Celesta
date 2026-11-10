@@ -344,8 +344,8 @@ example scene covers export codecs, so none is updated.
 
 On Windows 11 Home 10.0.26300 (26H2), an Intel Core i7-13700F, and an
 NVIDIA GeForce RTX 4070 with driver 610.88, Rust 1.99.1, `VCPKG_ROOT` at
-vcpkg's FFmpeg 8.1.2 (x264, vpx, opus), at `9d1fc5c0` plus this note's
-edits (the branch changes no root workspace code: `git diff 88ba9809 HEAD
+vcpkg's FFmpeg 8.1.2 (x264, vpx, opus), at `9c8f69ac` plus this note's
+edits (the branch changes no root workspace code: `git diff d15155fa HEAD
 -- crates Cargo.toml Cargo.lock packages/cli packages/react` is empty):
 
 - `cargo test --manifest-path plugins/Cargo.toml --workspace --locked`
@@ -393,7 +393,7 @@ edits (the branch changes no root workspace code: `git diff 88ba9809 HEAD
     `a_runtime_stop_ends_a_prepare_that_never_resolves_when_node_is_available`
     (about 13 minutes). The root crates after them were not run.
 
-After the final review's fixes (`5bae5023`, `625aa621`, `3aeb5639`), on
+After the final review's fixes (`1058e682`, `58487e48`, `78bf2d47`), on
 the same machine: `cargo test --manifest-path plugins/Cargo.toml
 --workspace --locked` passed 617 tests (none failed or ignored), once as it
 is and once with `CELESTA_REQUIRE_MEDIA_FOUNDATION=1`; both printed only the
@@ -404,6 +404,16 @@ every `cfg(windows)` outside `src/mf` off (as on Linux and macOS) and ran
 the crate's Clippy with `--all-targets -D warnings`. Before the fixes it
 found `VideoCodec::display_name` and `params::record_sps` dead in the test
 build; after them it is clean. The edit was reverted.
+
+After P5 was restacked (its head is now `d15155fa`, and this branch was
+rebased onto it, so the hashes in this note are the rebased ones), on the
+same machine: `cargo test --manifest-path plugins/Cargo.toml --workspace
+--locked` passed 618 tests (none failed or ignored), once as it is and once
+with `CELESTA_REQUIRE_MEDIA_FOUNDATION=1`; both printed only the three
+allowed `skipping` lines above. The workspace Clippy, `cargo fmt --check`,
+`pnpm --dir scripts/plugins test` (220 passed, 6 skipped), `pnpm --dir
+packages/website test` (52), `node scripts/plugins/build.mts
+plugins/mediafoundation`, and `git diff --check` passed.
 
 The tests that pin the plan's review focus: `probing_does_not_lock_the_file`;
 `h264_and_hevc_decode_times_precede_presentation` and
