@@ -3,8 +3,8 @@
 Phase P3 of the media components design
 (`docs/superpowers/specs/2026-11-08-media-components-design.md`, #782;
 plan `docs/superpowers/plans/2026-11-08-media-components-p3.md`), on top
-of P2c (`claude/media-components-p2c` at `0b374c23`, P2c's head when this
-branch was rebased onto it; P2c in turn is on P2b,
+of P2c (`claude/media-components-p2c` at `8fb118d0`, P2c's head when this
+branch was last rebased onto it; P2c in turn is on P2b,
 `docs/handoff/2026-11-08-media-pipelining.md`). An export can take
 a named choice of muxer, encoders, and settings from an
 `export-presets.json`, the user's or the project's, by name or as the
@@ -616,8 +616,24 @@ warnings` and `cargo fmt --all -- --check` clean; `pnpm --dir
 packages/website test` 52 passed, `pnpm --dir packages/exporter test` 24
 passed; `git diff --check` clean. The plugins workspace and `pnpm run
 test:runtime` were not rerun (nothing under `plugins/` or the runtime
-packages changed). P2c's branch has since moved to `8fb118d0`; this
-branch was not rebased onto it.
+packages changed).
+
+**Rebase onto P2c's review fixes.** P2c was then force-pushed with its
+review fixes on the new P2b (`8fb118d0`), and this branch was rebased with
+`git rebase --onto 8fb118d0 0b374c23`. The conflicts: `resolve.rs`, where
+P2b now refuses audio options for a muxer that takes no audio when no
+audio encoder is named (`needs an audio encoder, and … takes no audio`),
+kept inside P3's preset-aware audio step (a preset leaving the audio out
+still only warns about them); the en/ja `09-export.md` and the Skill's
+`export.md`, merged to keep both sides' sentences; and `cli_formats.rs`,
+where P2b had given `run` an empty home too, now through `home_env`. On
+the rebased branch: `cargo build -p celesta-codec-test`, then `cargo test
+--workspace --no-fail-fast` 2,733 passed, 0 failed, 1 ignored; `cargo
+clippy --workspace --all-targets --locked -- -D warnings` and `cargo fmt
+--all -- --check` clean; the plugins workspace 482 passed and its clippy
+clean; `pnpm run test:runtime` (17 packages; `@celesta.studio/cli` 119),
+`pnpm --dir packages/exporter test` 24, and `pnpm --dir packages/website
+test` 52 passed; `git diff --check` clean.
 
 ## Not done
 
