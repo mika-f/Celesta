@@ -299,6 +299,9 @@ pub(crate) struct EditorView {
     /// Width of the transport bar as last painted; a narrow viewer drops its
     /// secondary controls (they stay in the menus and on the keyboard).
     pub(crate) transport_width: Rc<Cell<Option<Pixels>>>,
+    /// Height of the master meter's bars as last painted; it picks how many
+    /// scale labels fit.
+    pub(crate) meter_height: Rc<Cell<Option<Pixels>>>,
     /// Scroll position of the preview error's detail over the viewer.
     pub(crate) preview_error_scroll: ScrollHandle,
     /// When the preview error that scroll position belongs to was set.
@@ -587,6 +590,7 @@ impl EditorView {
             timeline_overview_bounds: Rc::default(),
             timeline_geometry: Cell::default(),
             transport_width: Rc::default(),
+            meter_height: Rc::default(),
             preview_error_scroll: ScrollHandle::new(),
             preview_error_time: None,
             selected_layer: None,

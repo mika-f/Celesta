@@ -114,7 +114,12 @@ fn text_sizes_stay_on_the_type_roles() {
 
 /// Files whose layout is on `rem` tokens: a `px(` there is a physical size
 /// (a hairline, a hit tolerance, measured pixels) and says so on its line.
-const PIXEL_FREE: &[&str] = &["timeline.rs", "timeline_header.rs", "timeline_clip.rs"];
+const PIXEL_FREE: &[&str] = &[
+    "timeline.rs",
+    "timeline_header.rs",
+    "timeline_clip.rs",
+    "meter.rs",
+];
 
 #[test]
 fn pixel_layout_stays_out_of_the_timeline() {

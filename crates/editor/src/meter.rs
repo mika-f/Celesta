@@ -5,14 +5,17 @@
 //! what is heard (before the monitor volume, like a mixer's bus meter) and
 //! reads the same while playing, scrubbing, or paused.
 //!
-//! physical: the meter is painted; its scale column, ticks and bars share
-//! pixel geometry with `paint`, and the column beside the timeline matches it.
+//! The column and its labels are on `rem`; the painted bars keep their
+//! one-pixel lines (`physical:`).
 
 use celesta_media::AudioBuffer;
 use gpui_kit::component::ActiveTheme as _;
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gpui_kit::{
     App, Bounds, Hsla, IntoElement, ParentElement as _, Pixels, Styled as _, canvas, div, fill,
-    point, px, relative, size,
+    point, px, relative, rems, size,
 };
 
 use celesta_editor_theme as theme;
@@ -27,8 +30,11 @@ const PEAK_WINDOW: usize = 5;
 /// The hold line shows the loudest peak over this many buckets.
 const HOLD_WINDOW: usize = 150;
 
-/// Scale marks drawn beside the bars, in dBFS.
-const SCALE_MARKS: [f32; 8] = [0.0, -6.0, -12.0, -18.0, -24.0, -36.0, -48.0, -60.0];
+/// Scale marks drawn beside the bars, in dBFS, densest first; see
+/// [`scale_marks`].
+const DENSE: [f32; 8] = [0.0, -6.0, -12.0, -18.0, -24.0, -36.0, -48.0, -60.0];
+const TWELVE: [f32; 6] = [0.0, -12.0, -24.0, -36.0, -48.0, -60.0];
+const SPARSE: [f32; 3] = [0.0, -30.0, -60.0];
 
 /// Above this the bar turns warm, above [`HOT_DB`] it turns hot.
 const WARM_DB: f32 = -12.0;
@@ -125,16 +131,40 @@ pub fn format_peak(amplitude: f32) -> String {
     }
 }
 
+/// The densest of [`DENSE`], [`TWELVE`] and [`SPARSE`] whose labels, on a
+/// scale `height` tall, stay at least `line_height` apart.
+pub fn scale_marks(height: Pixels, line_height: Pixels) -> &'static [f32] {
+    for marks in [&DENSE[..], &TWELVE[..]] {
+        let gap_db = marks
+            .windows(2)
+            .map(|pair| pair[0] - pair[1])
+            .fold(f32::INFINITY, f32::min);
+        if height * (gap_db / -FLOOR_DB) >= line_height {
+            return marks;
+        }
+    }
+    &SPARSE
+}
+
 /// Two vertical bars with a dBFS scale. `reading` is `None` while there is no
-/// mixed audio to meter.
-pub fn audio_meter(reading: Option<MeterReading>, cx: &App) -> impl IntoElement {
+/// mixed audio to meter. `measured` holds the bars' height as last painted,
+/// which picks how many scale labels fit; labels are `line_height` tall.
+pub fn audio_meter(
+    reading: Option<MeterReading>,
+    measured: Rc<Cell<Option<Pixels>>>,
+    line_height: Pixels,
+    cx: &App,
+) -> impl IntoElement {
     let reading = reading.unwrap_or_default();
     let track = cx.theme().background;
     let hold_color = cx.theme().foreground;
     let muted = cx.theme().muted_foreground;
     let mono = cx.theme().mono_font_family.clone();
+    let marks = measured
+        .get()
+        .map_or(&TWELVE[..], |height| scale_marks(height, line_height));
     let bars = canvas(
-        |_, _, _| (),
+        move |bounds, _, _| measured.set(Some(bounds.size.height)),
         move |bounds, _, window, _| {
             paint_bars(bounds, reading, track, hold_color, window);
         },
@@ -143,17 +173,18 @@ pub fn audio_meter(reading: Option<MeterReading>, cx: &App) -> impl IntoElement 
     let scale = div()
         .relative()
         .flex_none()
-        .w(px(22.0))
+        .w(rems(1.75))
         .h_full()
-        .children(SCALE_MARKS.iter().map(|db| {
+        .font_family(mono.clone())
+        .text_sm()
+        .text_color(muted)
+        .children(marks.iter().map(|db| {
             div()
                 .absolute()
                 .right_0()
                 .top(relative(1.0 - scale_position(*db)))
-                .mt(px(-6.0))
-                .text_size(px(9.0)) // physical: the painted scale's tick spacing
-                .line_height(px(12.0))
-                .text_color(muted)
+                .mt(-line_height / 2.0)
+                .line_height(line_height)
                 .child(format!("{}", db.abs() as i32))
         }));
     div()
@@ -169,7 +200,7 @@ pub fn audio_meter(reading: Option<MeterReading>, cx: &App) -> impl IntoElement 
                 .min_h_0()
                 .gap_1()
                 // Keep the 0 and -60 labels inside the column.
-                .py(px(6.0))
+                .py(line_height / 2.0)
                 .child(scale)
                 .child(div().flex_1().h_full().child(bars)),
         )
@@ -177,9 +208,9 @@ pub fn audio_meter(reading: Option<MeterReading>, cx: &App) -> impl IntoElement 
             div()
                 .flex()
                 .gap_1()
-                .pl(px(26.0))
+                .pl(rems(2.0))
                 .font_family(mono)
-                .text_size(px(9.0)) // physical: the painted scale's tick spacing
+                .text_sm()
                 .children(reading.hold.iter().map(|hold| {
                     div()
                         .flex_1()
@@ -201,7 +232,7 @@ fn paint_bars(
     hold_color: Hsla,
     window: &mut gpui_kit::Window,
 ) {
-    let gap = px(3.0);
+    let gap = px(3.0); // physical: the gap between the painted bars
     let width = (bounds.size.width - gap) / 2.0;
     let height = bounds.size.height;
     let zones = [
@@ -231,7 +262,7 @@ fn paint_bars(
         if hold > 0.0 {
             let y = bounds.origin.y + height * (1.0 - scale_position(amplitude_db(hold)));
             window.paint_quad(fill(
-                Bounds::new(point(left, y), size(width, px(1.0))),
+                Bounds::new(point(left, y), size(width, px(1.0))), // physical: a one-pixel hold line
                 hold_color.opacity(0.8),
             ));
         }
@@ -240,8 +271,12 @@ fn paint_bars(
 
 #[cfg(test)]
 mod tests {
-    use super::{FLOOR_DB, MasterLevels, amplitude_db, format_peak, scale_position};
+    use super::{
+        DENSE, FLOOR_DB, MasterLevels, SPARSE, TWELVE, amplitude_db, format_peak, scale_marks,
+        scale_position,
+    };
     use celesta_media::AudioBuffer;
+    use gpui_kit::px;
 
     fn stereo(sample_rate: u32, frames: &[[f32; 2]]) -> AudioBuffer {
         AudioBuffer {
@@ -290,6 +325,17 @@ mod tests {
             MasterLevels::from_buffer(&buffer).reading(0.01).peak,
             [0.8, 0.8]
         );
+    }
+
+    #[test]
+    fn scale_marks_thin_with_the_column() {
+        let line = px(16.0);
+        // 6 dB is a tenth of the scale: 20 px at 200 px.
+        assert_eq!(scale_marks(px(200.0), line), &DENSE);
+        // 6 dB = 12 px, 12 dB = 24 px.
+        assert_eq!(scale_marks(px(120.0), line), &TWELVE);
+        assert_eq!(scale_marks(px(60.0), line), &SPARSE);
+        assert_eq!(scale_marks(px(10.0), line), &SPARSE);
     }
 
     #[test]

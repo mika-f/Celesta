@@ -52,13 +52,6 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 
 const KEY_CONTEXT: Option<&str> = Some("CelestaEditor");
 
-/// Width of the preview-volume slider; `master_volume_from_drag` maps drags
-/// across it onto 0–200 %.
-pub(crate) const VOLUME_SLIDER_WIDTH: f32 = 88.0;
-
-/// Width of the audio monitor column beside the timeline.
-pub(crate) const AUDIO_PANEL_WIDTH: f32 = 112.0;
-
 /// The transport bar's layout at `width` at a `rem`: whether the In/Out
 /// readout and the duration show (`full`), then whether the In/Out buttons
 /// do; below these widths they give way to the playback controls.
@@ -1232,7 +1225,8 @@ impl EditorView {
 
     /// The master meter over the preview volume. Sits at the timeline's
     /// trailing edge, as a mixer's master strip does.
-    pub(crate) fn audio_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn audio_panel(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let line_height = window.rem_size() * 1.25;
         let volume = self.monitor_volume.clamp(0.0, 2.0);
         let reading = self
             .master_levels
@@ -1243,8 +1237,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .flex_none()
-            // physical: sized with the painted meter it holds (see `meter`).
-            .w(px(AUDIO_PANEL_WIDTH))
+            .w(metrics::meter_column_width())
             .h_full()
             .bg(cx.theme().secondary)
             .border_l_1()
@@ -1275,7 +1268,12 @@ impl EditorView {
                     .when(!has_audio && !self.audio_pending(), |body| {
                         body.opacity(0.5)
                     })
-                    .child(audio_meter(reading, cx)),
+                    .child(audio_meter(
+                        reading,
+                        self.meter_height.clone(),
+                        line_height,
+                        cx,
+                    )),
             )
             .child(
                 div()
@@ -1290,24 +1288,24 @@ impl EditorView {
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .child("Volume")
-                            .child(format!("{}%", (volume * 100.0).round() as i32)),
+                        div().flex().justify_between().child("Volume").child(
+                            div()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .child(format!("{}%", (volume * 100.0).round() as i32)),
+                        ),
                     )
                     .child(self.volume_slider(volume, cx)),
             )
     }
 
-    /// physical: the slider's track, thumb and the thumb's position share pixel
-    /// geometry (and `waveform` reads `VOLUME_SLIDER_WIDTH`).
+    /// The preview volume, 0–200 % across `metrics::volume_slider_width()`:
+    /// the thumb's center runs between the track's inset ends.
     fn volume_slider(&self, volume: f64, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("preview-volume-slider")
             .relative()
-            .w(px(VOLUME_SLIDER_WIDTH))
-            .h(px(20.0))
+            .w(metrics::volume_slider_width())
+            .h(rems(1.5))
             .rounded(cx.theme().radius)
             .bg(cx.theme().background)
             .tooltip(|window, cx| {
@@ -1321,10 +1319,10 @@ impl EditorView {
             .child(
                 div()
                     .absolute()
-                    .left(px(5.0))
-                    .right(px(5.0))
-                    .top(px(8.0))
-                    .h(px(4.0))
+                    .left(rems(0.375))
+                    .right(rems(0.375))
+                    .top(rems(0.625))
+                    .h(rems(0.25))
                     .rounded_full()
                     .overflow_hidden()
                     .bg(cx.theme().border)
@@ -1339,11 +1337,20 @@ impl EditorView {
             .child(
                 div()
                     .absolute()
-                    .left(px((volume / 2.0) as f32 * (VOLUME_SLIDER_WIDTH - 10.0)))
-                    .top(px(5.0))
-                    .size(px(10.0))
-                    .rounded_full()
-                    .bg(cx.theme().foreground),
+                    .left(rems(0.375))
+                    .right(rems(0.375))
+                    .top_0()
+                    .bottom_0()
+                    .child(
+                        div()
+                            .absolute()
+                            .left(relative((volume / 2.0) as f32))
+                            .ml(rems(-0.375))
+                            .top(rems(0.375))
+                            .size(rems(0.75))
+                            .rounded_full()
+                            .bg(cx.theme().foreground),
+                    ),
             )
             .on_mouse_down(
                 MouseButton::Left,

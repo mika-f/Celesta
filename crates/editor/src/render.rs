@@ -238,7 +238,7 @@ impl EditorView {
                                     .border_t_1()
                                     .border_color(border)
                                     .child(self.timeline(window, cx))
-                                    .child(self.audio_panel(cx)),
+                                    .child(self.audio_panel(window, cx)),
                             ),
                     ),
             )

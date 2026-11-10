@@ -670,9 +670,11 @@ fn track_levels_follow_the_active_clip_and_master_drag_is_clamped() {
     assert_eq!(level_at_time(&[0.2, 0.8], &clip, Time::new(10, 1)), 0.2);
     assert_eq!(level_at_time(&[0.2, 0.8], &clip, Time::new(11, 1)), 0.8);
     assert_eq!(level_at_time(&[0.2, 0.8], &clip, Time::new(12, 1)), 0.0);
-    assert_eq!(master_volume_from_drag(1.0, 22.0), 1.5);
-    assert_eq!(master_volume_from_drag(1.0, -100.0), 0.0);
-    assert_eq!(master_volume_from_drag(1.0, 100.0), 2.0);
+    assert_eq!(master_volume_from_drag(1.0, 22.0, 88.0), 1.5);
+    assert_eq!(master_volume_from_drag(1.0, -100.0, 88.0), 0.0);
+    assert_eq!(master_volume_from_drag(1.0, 100.0, 88.0), 2.0);
+    // A wider slider moves less per pixel.
+    assert_eq!(master_volume_from_drag(1.0, 22.0, 176.0), 1.25);
 }
 
 #[test]
