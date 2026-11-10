@@ -30,11 +30,14 @@ pub fn format_timecode(frame: i64, frame_rate: Rational) -> String {
     )
 }
 
-/// Ruler spacing in frames: a labelled `major` mark and unlabelled `minor`
-/// ticks between them. `minor == major` means no subdivision.
+/// Ruler spacing in frames: a labelled `major` mark, unlabelled `minor`
+/// ticks between them, and a `mid` tier between the two when one divides
+/// the major and is a multiple of the minor. `minor == major` means no
+/// subdivision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RulerScale {
     pub major: i64,
+    pub mid: Option<i64>,
     pub minor: i64,
 }
 
@@ -87,7 +90,12 @@ pub fn ruler_scale(
         .take_while(|step| *step < major)
         .find(|step| major % step == 0 && *step as f64 * pixels_per_frame >= min_tick_px)
         .unwrap_or(major);
-    RulerScale { major, minor }
+    let mid = steps
+        .iter()
+        .copied()
+        .filter(|step| minor < *step && *step < major && major % step == 0 && step % minor == 0)
+        .max();
+    RulerScale { major, mid, minor }
 }
 
 #[cfg(test)]
@@ -128,6 +136,7 @@ mod tests {
             scale,
             RulerScale {
                 major: 60,
+                mid: Some(30),
                 minor: 5
             }
         );
@@ -136,6 +145,7 @@ mod tests {
             scale,
             RulerScale {
                 major: 60,
+                mid: None,
                 minor: 30
             }
         );
@@ -144,7 +154,14 @@ mod tests {
     #[test]
     fn ruler_reaches_single_frames_when_zoomed_in() {
         let scale = ruler_scale(40.0, 30, 100.0, 8.0);
-        assert_eq!(scale, RulerScale { major: 5, minor: 1 });
+        assert_eq!(
+            scale,
+            RulerScale {
+                major: 5,
+                mid: None,
+                minor: 1
+            }
+        );
     }
 
     #[test]
@@ -156,5 +173,44 @@ mod tests {
         assert!(scale.major as f64 * pixels_per_frame >= 100.0);
         // Degenerate scales stop at the largest representable step.
         assert!(ruler_scale(1e-30, 30, 100.0, 8.0).major > 0);
+    }
+
+    fn scale(major: i64, mid: Option<i64>, minor: i64) -> RulerScale {
+        RulerScale { major, mid, minor }
+    }
+
+    #[test]
+    fn mid_ticks_split_the_major() {
+        // 12rem labels and 0.75rem ticks at the 13px base.
+        assert_eq!(
+            ruler_scale(1000.0 / 600.0, 60, 156.0, 9.75),
+            scale(120, Some(60), 10)
+        );
+        assert_eq!(ruler_scale(0.3, 60, 156.0, 9.75), scale(600, Some(300), 60));
+        assert_eq!(ruler_scale(3.0, 60, 156.0, 9.75), scale(60, Some(30), 5));
+    }
+
+    #[test]
+    fn a_ten_second_composition_labels_every_two_seconds() {
+        // 10 s at 60 fps across a 1000 px lane.
+        assert_eq!(ruler_scale(1000.0 / 600.0, 60, 156.0, 9.75).major, 120);
+    }
+
+    #[test]
+    fn no_mid_when_minor_is_the_major() {
+        assert_eq!(ruler_scale(3.0, 60, 156.0, 156.0), scale(60, None, 60));
+    }
+
+    #[test]
+    fn long_and_single_frame_rulers_stay_valid() {
+        for (pixels_per_frame, fps) in [(1000.0 / 108_000.0, 30), (40.0, 30)] {
+            let RulerScale { major, mid, minor } = ruler_scale(pixels_per_frame, fps, 156.0, 9.75);
+            assert!(major as f64 * pixels_per_frame >= 156.0);
+            assert_eq!(major % minor, 0);
+            assert!(mid.is_none_or(|mid| major % mid == 0
+                && mid % minor == 0
+                && mid > minor
+                && mid < major));
+        }
     }
 }

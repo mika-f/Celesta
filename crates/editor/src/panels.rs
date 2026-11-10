@@ -873,7 +873,6 @@ impl EditorView {
             .child(div().h_1())
             .child(
                 Button::new("reload-react-entry")
-                    .small()
                     .w_full()
                     .label("Reload composition")
                     .on_click(cx.listener(Self::reload_react_click)),

@@ -36,6 +36,8 @@ pub(crate) struct AudioMixOutput {
 pub(crate) struct MasterVolumeDrag {
     pub(crate) pointer_x: Pixels,
     pub(crate) start_volume: f64,
+    /// The slider's width in pixels, which spans 0–200 %.
+    pub(crate) slider_width: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

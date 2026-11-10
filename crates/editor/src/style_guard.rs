@@ -111,3 +111,102 @@ fn text_sizes_stay_on_the_type_roles() {
         found.join("\n")
     );
 }
+
+/// Files whose layout is on `rem` tokens: a `px(` there is a physical size
+/// (a hairline, a hit tolerance, measured pixels) and says so on its line.
+const PIXEL_FREE: &[&str] = &[
+    "timeline.rs",
+    "timeline_header.rs",
+    "timeline_clip.rs",
+    "meter.rs",
+];
+
+#[test]
+fn pixel_layout_stays_out_of_the_timeline() {
+    let src = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+    let mut found = Vec::new();
+    for name in PIXEL_FREE {
+        let path = src.join(name);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for (number, line) in text.lines().enumerate() {
+            if line == "#[cfg(test)]" {
+                break;
+            }
+            if line.contains("px(") && !line.contains("physical:") {
+                found.push(format!("{}:{}", path.display(), number + 1));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{} pixel sizes without `physical:`:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
+
+/// The body of `fn <name>(` in `text`: from its line to the next line that
+/// starts another method at the same indent.
+fn function_body<'a>(text: &'a str, name: &str) -> Vec<(usize, &'a str)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let head = format!("fn {name}(");
+    let Some(start) = lines.iter().position(|line| line.contains(&head)) else {
+        return Vec::new();
+    };
+    let indent = lines[start].len() - lines[start].trim_start().len();
+    lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take_while(|(index, line)| {
+            *index == start
+                || !(line.len() - line.trim_start().len() == indent
+                    && (line.trim_start().starts_with("fn ")
+                        || line.trim_start().starts_with("pub(crate) fn ")))
+        })
+        .map(|(index, line)| (index + 1, *line))
+        .collect()
+}
+
+/// Icon-only buttons in the transport bar and the timeline footer carry an
+/// accessible name: a tooltip only describes a button.
+#[test]
+fn transport_icon_buttons_have_accessible_names() {
+    let src = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+    let mut found = Vec::new();
+    for (file, function) in [
+        ("viewer.rs", "transport_bar"),
+        ("timeline.rs", "timeline_footer"),
+    ] {
+        let text = std::fs::read_to_string(src.join(file)).unwrap();
+        let body = function_body(&text, function);
+        assert!(!body.is_empty(), "{file}: no fn {function}");
+        for (offset, (number, line)) in body.iter().enumerate() {
+            if !line.contains("Button::new(") {
+                continue;
+            }
+            let chain: Vec<&str> = body[offset..]
+                .iter()
+                .take(25)
+                .enumerate()
+                .take_while(|(index, (_, line))| *index == 0 || !line.contains("Button::new("))
+                .map(|(_, (_, line))| *line)
+                .collect();
+            if chain.iter().any(|line| line.contains(".icon("))
+                && !chain
+                    .iter()
+                    .any(|line| line.contains(".accessibility_label("))
+            {
+                found.push(format!("{file}:{number}"));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{} icon buttons without an accessible name:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}

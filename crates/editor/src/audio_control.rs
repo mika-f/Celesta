@@ -4,6 +4,7 @@ use crate::react_audio::{ReactAudioRequest, react_tracks};
 use crate::view::EditorView;
 use crate::waveform::master_volume_from_drag;
 use celesta_composition::AudioClip;
+use celesta_editor_theme::metrics;
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
 use gpui_kit::{Context, KeyDownEvent, MouseDownEvent, MouseMoveEvent, Window};
 use std::collections::HashMap;
@@ -128,6 +129,7 @@ impl EditorView {
         self.master_volume_drag = Some(MasterVolumeDrag {
             pointer_x: event.position.x,
             start_volume: self.monitor_volume,
+            slider_width: f64::from(window.rem_size() * metrics::volume_slider_width().0),
         });
         cx.notify();
     }
@@ -151,6 +153,7 @@ impl EditorView {
         let volume = master_volume_from_drag(
             drag.start_volume,
             f64::from(event.position.x - drag.pointer_x),
+            drag.slider_width,
         );
         if (volume - self.monitor_volume).abs() >= f64::EPSILON {
             self.set_master_volume(volume, cx);

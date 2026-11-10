@@ -143,6 +143,18 @@ pub const fn clip_fill(kind: TrackKind) -> u32 {
     }
 }
 
+/// A clip's name strip, by the kind of track the clip sits on: its
+/// [`clip_fill`] one step darker, so the name reads apart from the body.
+pub fn clip_label_fill(kind: TrackKind) -> Hsla {
+    let hex = match kind {
+        TrackKind::Video => 0x3a_60_b8,
+        TrackKind::Audio => 0x1d_7d_51,
+        TrackKind::Overlay => 0x77_44_8c,
+        TrackKind::Dialogue => 0xb0_6c_1d,
+    };
+    rgb(hex).into()
+}
+
 /// Level-meter color for a normalized 0..1 audio level: green until it runs
 /// warm, amber as it approaches unity, red at the top.
 pub fn meter(level: f32) -> Hsla {
@@ -180,6 +192,19 @@ pub fn export_range_border() -> Hsla {
 mod tests {
     use super::*;
     use gpui_kit::TestAppContext;
+
+    #[test]
+    fn clip_labels_are_darker_than_their_clips() {
+        for kind in [
+            TrackKind::Video,
+            TrackKind::Audio,
+            TrackKind::Overlay,
+            TrackKind::Dialogue,
+        ] {
+            let fill: Hsla = rgb(clip_fill(kind)).into();
+            assert!(clip_label_fill(kind).l < fill.l, "{kind:?}");
+        }
+    }
 
     #[gpui_kit::test]
     fn init_sets_the_editor_scale(cx: &mut TestAppContext) {

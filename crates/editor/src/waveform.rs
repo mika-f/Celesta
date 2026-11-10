@@ -1,5 +1,4 @@
 use crate::media_probe::MediaAssetInfo;
-use crate::viewer;
 use celesta_composition::{Animatable, AudioClip, Time, evaluate_f64, integrate_f64};
 use celesta_media::{AudioBuffer, DynamicRange, MediaProbe};
 
@@ -184,8 +183,13 @@ pub(crate) fn clip_level_envelope(
         .collect()
 }
 
-pub(crate) fn master_volume_from_drag(start_volume: f64, delta_pixels: f64) -> f64 {
-    let slider_width = f64::from(viewer::VOLUME_SLIDER_WIDTH);
+/// The volume after a drag of `delta_pixels` across a slider
+/// `slider_width` pixels wide, which spans 0–200 %.
+pub(crate) fn master_volume_from_drag(
+    start_volume: f64,
+    delta_pixels: f64,
+    slider_width: f64,
+) -> f64 {
     ((start_volume + delta_pixels / slider_width * 2.0).clamp(0.0, 2.0) * 100.0).round() / 100.0
 }
 

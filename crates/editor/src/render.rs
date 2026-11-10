@@ -49,13 +49,13 @@ impl Render for EditorView {
         // `Root` mounts the dialog and notification layers beside this view,
         // outside the `CelestaEditor` key context, so editor shortcuts (Space,
         // arrows, ⌘N…) don't fire from inside an overlay or behind a dialog.
-        self.editor_shell(cx)
+        self.editor_shell(window, cx)
     }
 }
 
 impl EditorView {
     /// The editor itself, with its shortcuts and focus.
-    fn editor_shell(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn editor_shell(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("CelestaEditor")
             .on_action(cx.listener(Self::open_project_action))
@@ -141,7 +141,7 @@ impl EditorView {
             .bg(cx.theme().background)
             .font_family(".SystemUIFont")
             .child(self.title_bar(cx))
-            .child(self.workspace(cx))
+            .child(self.workspace(window, cx))
             .child(self.status_bar(cx))
             // A scrub or a band or scene drag keeps its cursor wherever the
             // pointer goes.
@@ -168,7 +168,7 @@ impl EditorView {
     /// stacked above the timeline and its master audio meter. In
     /// React-preview mode the asset list is hidden and the right dock shows
     /// composition facts instead of the inspector.
-    pub(crate) fn workspace(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn workspace(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let react = self.is_react_preview();
         let dock_state = self.dock_split.clone();
         let body_state = self.body_split.clone();
@@ -198,7 +198,7 @@ impl EditorView {
                             .child(self.asset_panel(cx)),
                     ),
             )
-            .child(resizable_panel().child(self.viewer_panel(cx)))
+            .child(resizable_panel().child(self.viewer_panel(window, cx)))
             .child(
                 resizable_panel()
                     .size(px(300.0))
@@ -237,8 +237,8 @@ impl EditorView {
                                     .size_full()
                                     .border_t_1()
                                     .border_color(border)
-                                    .child(self.timeline(cx))
-                                    .child(self.audio_panel(cx)),
+                                    .child(self.timeline(window, cx))
+                                    .child(self.audio_panel(window, cx)),
                             ),
                     ),
             )

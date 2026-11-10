@@ -52,25 +52,20 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 
 const KEY_CONTEXT: Option<&str> = Some("CelestaEditor");
 
-/// Width of the preview-volume slider; `master_volume_from_drag` maps drags
-/// across it onto 0–200 %.
-pub(crate) const VOLUME_SLIDER_WIDTH: f32 = 88.0;
-
-/// Width of the audio monitor column beside the timeline.
-pub(crate) const AUDIO_PANEL_WIDTH: f32 = 112.0;
-
-/// The transport bar's layout at `width` (viewer pixels): whether the In/Out
+/// The transport bar's layout at `width` at a `rem`: whether the In/Out
 /// readout and the duration show (`full`), then whether the In/Out buttons
 /// do; below these widths they give way to the playback controls.
-fn transport_layout(width: f32) -> (bool, bool) {
+fn transport_layout(width: Pixels, rem: Pixels) -> (bool, bool) {
+    let width = width / rem;
     (
         width >= TRANSPORT_FULL_WIDTH,
         width >= TRANSPORT_MARKS_WIDTH,
     )
 }
 
-const TRANSPORT_FULL_WIDTH: f32 = 820.0;
-const TRANSPORT_MARKS_WIDTH: f32 = 600.0;
+/// The breakpoints in rems: 820px and 600px designed against a 16px rem.
+const TRANSPORT_FULL_WIDTH: f32 = 51.25;
+const TRANSPORT_MARKS_WIDTH: f32 = 37.5;
 
 /// Whether the canvas-tool row shows above the viewer: in a React preview's
 /// interactive mode (Select layers on), selected layer or not, so the
@@ -215,7 +210,7 @@ fn tool_group(label: &'static str, toggle: impl IntoElement, cx: &App) -> impl I
 }
 
 impl EditorView {
-    pub(crate) fn viewer_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn viewer_panel(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = &self.document.project().settings;
         let frame_size = (settings.width as f32, settings.height as f32);
         let overlay_color = cx.theme().foreground.opacity(0.55);
@@ -589,7 +584,7 @@ impl EditorView {
                 panel.child(self.tool_row(pivot_note, cx))
             })
             .child(canvas_area)
-            .child(self.transport_bar(cx))
+            .child(self.transport_bar(window, cx))
     }
 
     /// The active preview error, centered in the space above the warnings
@@ -734,15 +729,16 @@ impl EditorView {
     }
 
     /// Playhead timecode, transport controls, and the In/Out marks.
-    fn transport_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn transport_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frame_rate = self.frame_rate_value;
         let mono = cx.theme().mono_font_family.clone();
         let muted = cx.theme().muted_foreground;
+        let rem = window.rem_size();
         let width = self
             .transport_width
             .get()
-            .map_or(TRANSPORT_FULL_WIDTH, f32::from);
-        let (full, show_marks) = transport_layout(width);
+            .unwrap_or(rem * TRANSPORT_FULL_WIDTH);
+        let (full, show_marks) = transport_layout(width, rem);
         let has_range = full && (self.export_in_frame.is_some() || self.export_out_frame.is_some());
         let mark = |frame: Option<i64>| {
             frame.map_or_else(
@@ -787,8 +783,9 @@ impl EditorView {
                         Button::new("mark-in")
                             .small()
                             .ghost()
-                            .label("In")
+                            .icon(IconName::ArrowRightFromLine)
                             .selected(self.export_in_frame.is_some())
+                            .accessibility_label("Mark In")
                             .tooltip_with_action("Mark In", &SetExportIn, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.set_export_in(cx))),
                     )
@@ -796,8 +793,9 @@ impl EditorView {
                         Button::new("mark-out")
                             .small()
                             .ghost()
-                            .label("Out")
+                            .icon(IconName::ArrowRightToLine)
                             .selected(self.export_out_frame.is_some())
+                            .accessibility_label("Mark Out")
                             .tooltip_with_action("Mark Out", &SetExportOut, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.set_export_out(cx))),
                     )
@@ -808,6 +806,7 @@ impl EditorView {
                     .small()
                     .ghost()
                     .icon(IconName::SkipBack)
+                    .accessibility_label("Go to start")
                     .tooltip_with_action("Go to start", &GoToStart, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.go_to_frame(0, cx))),
             )
@@ -816,6 +815,7 @@ impl EditorView {
                     .small()
                     .ghost()
                     .icon(IconName::ChevronLeft)
+                    .accessibility_label("Previous frame")
                     .tooltip_with_action("Previous frame", &PreviousFrame, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.step_frames(-1, cx))),
             )
@@ -823,23 +823,20 @@ impl EditorView {
                 let button = Button::new("toggle-playback").small();
                 // Waiting for the preview audio: still clickable, to cancel.
                 let button = if self.play_when_audio_ready {
-                    button.icon(Spinner::new()).tooltip_with_action(
-                        "Preparing audio…",
-                        &TogglePlayback,
-                        KEY_CONTEXT,
-                    )
+                    button
+                        .icon(Spinner::new())
+                        .accessibility_label("Preparing audio…")
+                        .tooltip_with_action("Preparing audio…", &TogglePlayback, KEY_CONTEXT)
                 } else if self.playing {
-                    button.icon(IconName::Pause).tooltip_with_action(
-                        "Pause",
-                        &TogglePlayback,
-                        KEY_CONTEXT,
-                    )
+                    button
+                        .icon(IconName::Pause)
+                        .accessibility_label("Pause")
+                        .tooltip_with_action("Pause", &TogglePlayback, KEY_CONTEXT)
                 } else {
-                    button.icon(IconName::Play).tooltip_with_action(
-                        "Play",
-                        &TogglePlayback,
-                        KEY_CONTEXT,
-                    )
+                    button
+                        .icon(IconName::Play)
+                        .accessibility_label("Play")
+                        .tooltip_with_action("Play", &TogglePlayback, KEY_CONTEXT)
                 };
                 button.on_click(cx.listener(Self::toggle_playback))
             })
@@ -848,6 +845,7 @@ impl EditorView {
                     .small()
                     .ghost()
                     .icon(IconName::ChevronRight)
+                    .accessibility_label("Next frame")
                     .tooltip_with_action("Next frame", &NextFrame, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.step_frames(1, cx))),
             )
@@ -856,6 +854,7 @@ impl EditorView {
                     .small()
                     .ghost()
                     .icon(IconName::SkipForward)
+                    .accessibility_label("Go to end")
                     .tooltip_with_action("Go to end", &GoToEnd, KEY_CONTEXT)
                     .on_click(
                         cx.listener(|this, _, _, cx| this.go_to_frame(this.clock.end_frame(), cx)),
@@ -868,6 +867,7 @@ impl EditorView {
                     .ghost()
                     .icon(IconName::Repeat)
                     .selected(self.loop_playback)
+                    .accessibility_label("Loop playback")
                     .tooltip_with_action("Loop playback", &ToggleLoop, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_loop(cx))),
             );
@@ -902,6 +902,7 @@ impl EditorView {
                             .xsmall()
                             .ghost()
                             .icon(IconName::Close)
+                            .accessibility_label("Clear In and Out")
                             .tooltip_with_action("Clear In and Out", &ClearExportRange, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.clear_export_range(cx))),
                     )
@@ -912,6 +913,7 @@ impl EditorView {
                     .ghost()
                     .icon(IconName::Scan)
                     .selected(self.show_safe_areas)
+                    .accessibility_label("Safe areas")
                     .tooltip_with_action("Safe areas", &ToggleSafeAreas, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_safe_areas(cx))),
             )
@@ -923,14 +925,18 @@ impl EditorView {
                 // Leaving waits for held commits: still on, and clickable to
                 // stay.
                 let button = if self.element_rows.leaving_interactive {
-                    button.icon(Spinner::new()).tooltip_with_action(
-                        "Turning off Select layers once saved…",
-                        &ToggleInteractive,
-                        KEY_CONTEXT,
-                    )
+                    button
+                        .icon(Spinner::new())
+                        .accessibility_label("Turning off Select layers once saved…")
+                        .tooltip_with_action(
+                            "Turning off Select layers once saved…",
+                            &ToggleInteractive,
+                            KEY_CONTEXT,
+                        )
                 } else {
                     button
                         .icon(IconName::MousePointerClick)
+                        .accessibility_label("Select layers")
                         .tooltip_with_action("Select layers", &ToggleInteractive, KEY_CONTEXT)
                 };
                 bar.child(
@@ -941,7 +947,7 @@ impl EditorView {
             .relative()
             .flex()
             .flex_none()
-            .h(metrics::scaled(44.0))
+            .h(rems(3.0))
             .w_full()
             .items_center()
             .gap_3()
@@ -1229,7 +1235,8 @@ impl EditorView {
 
     /// The master meter over the preview volume. Sits at the timeline's
     /// trailing edge, as a mixer's master strip does.
-    pub(crate) fn audio_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn audio_panel(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let line_height = window.rem_size() * 1.25;
         let volume = self.monitor_volume.clamp(0.0, 2.0);
         let reading = self
             .master_levels
@@ -1240,8 +1247,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .flex_none()
-            // physical: sized with the painted meter it holds (see `meter`).
-            .w(px(AUDIO_PANEL_WIDTH))
+            .w(metrics::meter_column_width())
             .h_full()
             .bg(cx.theme().secondary)
             .border_l_1()
@@ -1250,11 +1256,11 @@ impl EditorView {
                 div()
                     .flex()
                     .flex_none()
-                    // physical: lines up with the timeline's ruler, which is in pixels.
-                    .h(px(crate::timeline::RULER_HEIGHT))
+                    // On the ruler's line.
+                    .h(metrics::ruler_height())
                     .items_center()
                     .justify_between()
-                    .px_3()
+                    .px_4()
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .text_sm()
@@ -1267,12 +1273,17 @@ impl EditorView {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .px_3()
-                    .py_2()
+                    .px_4()
+                    .py_3()
                     .when(!has_audio && !self.audio_pending(), |body| {
                         body.opacity(0.5)
                     })
-                    .child(audio_meter(reading, cx)),
+                    .child(audio_meter(
+                        reading,
+                        self.meter_height.clone(),
+                        line_height,
+                        cx,
+                    )),
             )
             .child(
                 div()
@@ -1280,31 +1291,31 @@ impl EditorView {
                     .flex_col()
                     .flex_none()
                     .gap_1()
-                    .px_3()
+                    .px_4()
                     .py_2()
                     .border_t_1()
                     .border_color(cx.theme().border)
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .child("Volume")
-                            .child(format!("{}%", (volume * 100.0).round() as i32)),
+                        div().flex().justify_between().child("Volume").child(
+                            div()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .child(format!("{}%", (volume * 100.0).round() as i32)),
+                        ),
                     )
                     .child(self.volume_slider(volume, cx)),
             )
     }
 
-    /// physical: the slider's track, thumb and the thumb's position share pixel
-    /// geometry (and `waveform` reads `VOLUME_SLIDER_WIDTH`).
+    /// The preview volume, 0–200 % across `metrics::volume_slider_width()`:
+    /// the thumb's center runs between the track's inset ends.
     fn volume_slider(&self, volume: f64, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("preview-volume-slider")
             .relative()
-            .w(px(VOLUME_SLIDER_WIDTH))
-            .h(px(20.0))
+            .w(metrics::volume_slider_width())
+            .h(rems(1.5))
             .rounded(cx.theme().radius)
             .bg(cx.theme().background)
             .tooltip(|window, cx| {
@@ -1318,10 +1329,10 @@ impl EditorView {
             .child(
                 div()
                     .absolute()
-                    .left(px(5.0))
-                    .right(px(5.0))
-                    .top(px(8.0))
-                    .h(px(4.0))
+                    .left(rems(0.375))
+                    .right(rems(0.375))
+                    .top(rems(0.625))
+                    .h(rems(0.25))
                     .rounded_full()
                     .overflow_hidden()
                     .bg(cx.theme().border)
@@ -1336,11 +1347,20 @@ impl EditorView {
             .child(
                 div()
                     .absolute()
-                    .left(px((volume / 2.0) as f32 * (VOLUME_SLIDER_WIDTH - 10.0)))
-                    .top(px(5.0))
-                    .size(px(10.0))
-                    .rounded_full()
-                    .bg(cx.theme().foreground),
+                    .left(rems(0.375))
+                    .right(rems(0.375))
+                    .top_0()
+                    .bottom_0()
+                    .child(
+                        div()
+                            .absolute()
+                            .left(relative((volume / 2.0) as f32))
+                            .ml(rems(-0.375))
+                            .top(rems(0.375))
+                            .size(rems(0.75))
+                            .rounded_full()
+                            .bg(cx.theme().foreground),
+                    ),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -1972,9 +1992,14 @@ mod tests {
     fn the_transport_bar_collapses_at_its_own_widths() {
         // The canvas tools sit in a row above the viewer, not in the bar:
         // its breakpoints are the bar's own.
-        assert_eq!(transport_layout(820.0), (true, true));
-        assert_eq!(transport_layout(819.0), (false, true));
-        assert_eq!(transport_layout(600.0), (false, true));
-        assert_eq!(transport_layout(599.0), (false, false));
+        // In rems: they keep their proportion to the content.
+        let rem = px(13.0);
+        assert_eq!(transport_layout(px(666.25), rem), (true, true));
+        assert_eq!(transport_layout(px(666.0), rem), (false, true));
+        assert_eq!(transport_layout(px(487.5), rem), (false, true));
+        assert_eq!(transport_layout(px(487.0), rem), (false, false));
+        let rem = px(16.0);
+        assert_eq!(transport_layout(px(820.0), rem), (true, true));
+        assert_eq!(transport_layout(px(819.0), rem), (false, true));
     }
 }

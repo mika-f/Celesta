@@ -6,9 +6,12 @@
 //! `1 / zoom` of it. Pointer positions map onto the lane through its painted
 //! bounds, recorded each frame in `timeline_lane_bounds`.
 //!
-//! physical: the timeline's geometry stays in pixels for now. Track heights,
-//! lane positions, the ruler, hit tests and painting share these numbers, so
-//! they move onto tokens together (P7c), not one `px()` at a time.
+//! Sizes come from `celesta_editor_theme::metrics` for layout and from
+//! [`TimelineGeometry`] (the same tokens at the window's `rem`) for what is
+//! placed or painted by pixels. A remaining pixel size says why on its line
+//! (`physical:`).
+
+use std::rc::Rc;
 
 use crate::widgets::CompactLabel as _;
 use celesta_editor_core::{ClipSummary, TrackSummary};
@@ -16,14 +19,12 @@ use celesta_project::TrackKind;
 use celesta_react_bridge::{ReactChapter, SourcePos, chapter_at, scenes_of};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _,
-};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _};
 use gpui_kit::{
-    Bounds, Context, CursorStyle, Hsla, IntoElement, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Point, ScrollDelta,
-    ScrollEvent, SharedString, TouchPhase, Window, canvas, div, fill, point, prelude::*, px,
-    relative, rgb, size,
+    Bounds, ClickEvent, Context, CursorStyle, Hsla, IntoElement, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Point,
+    Rems, ScrollDelta, ScrollEvent, SharedString, TouchPhase, Window, canvas, div, fill, point,
+    prelude::*, px, relative, rems, rgb, size,
 };
 
 use crate::actions::{ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit};
@@ -31,24 +32,22 @@ use crate::impact::ImpactView;
 use crate::layer_select::display_path;
 use crate::scene_entries::SceneEdge;
 use crate::timecode::{format_timecode, nominal_fps, ruler_scale};
+use crate::timeline_clip::ClipBlock;
 use crate::timeline_drag::{BandGrip, BandGrips, draggable_band, edge_width};
+use crate::timeline_geometry::TimelineGeometry;
+use crate::timeline_header::{MixButtons, TrackHeader};
 use crate::timing::{SET_TIMING_NOTE, SetTimingOffer};
 use crate::view::EditorView;
 use crate::waveform::{level_at_time, waveform_segment};
 use celesta_editor_theme as theme;
+use celesta_editor_theme::metrics;
 use gpui_kit::assets::IconName;
 
 const KEY_CONTEXT: Option<&str> = Some("CelestaEditor");
 
-pub(crate) const TRACK_HEADER_WIDTH: f32 = 220.0;
 /// Space kept clear at the lane's trailing edge for the vertical scrollbar.
+/// physical: gpui-base's scrollbar is pixel-sized (a 6px thumb inset 4px).
 pub(crate) const LANE_GUTTER: f32 = 10.0;
-pub(crate) const RULER_HEIGHT: f32 = 30.0;
-const VIDEO_TRACK_HEIGHT: f32 = 40.0;
-/// Height of one lane of the Chapters row.
-const CHAPTER_LANE_HEIGHT: f32 = 22.0;
-const AUDIO_TRACK_HEIGHT: f32 = 52.0;
-const FOOTER_HEIGHT: f32 = 26.0;
 /// The most zoomed-in view shows this many pixels per frame.
 const MAX_PIXELS_PER_FRAME: f64 = 24.0;
 /// Lane width assumed before the lane has been painted once.
@@ -303,9 +302,10 @@ impl EditorView {
     /// Window x of composition frame `frame` on the lanes, which may lie
     /// outside them.
     pub(crate) fn frame_x(&self, frame: f64) -> f32 {
-        let left = self
-            .lane_bounds()
-            .map_or(TRACK_HEADER_WIDTH, |bounds| f32::from(bounds.origin.x));
+        let left = self.lane_bounds().map_or(
+            f32::from(self.timeline_geometry.get().track_header_width),
+            |bounds| f32::from(bounds.origin.x),
+        );
         let view = self.lane_view();
         left + view.x(frame / view.end_frame) * self.lane_width()
     }
@@ -318,11 +318,13 @@ impl EditorView {
 
     /// Composition fraction under window position `x`.
     fn timeline_fraction_at(&self, x: Pixels) -> f64 {
-        let (left, width) = self
-            .lane_bounds()
-            .map_or((TRACK_HEADER_WIDTH, FALLBACK_LANE_WIDTH), |bounds| {
-                (f32::from(bounds.origin.x), f32::from(bounds.size.width))
-            });
+        let (left, width) = self.lane_bounds().map_or(
+            (
+                f32::from(self.timeline_geometry.get().track_header_width),
+                FALLBACK_LANE_WIDTH,
+            ),
+            |bounds| (f32::from(bounds.origin.x), f32::from(bounds.size.width)),
+        );
         let local = ((f32::from(x) - left) / width.max(1.0)).clamp(0.0, 1.0) as f64;
         let (zoom, view_start) = self.timeline_view();
         (view_start + local / zoom).clamp(0.0, 1.0)
@@ -466,7 +468,7 @@ impl EditorView {
     fn scroll_tracks_pixels(&mut self, delta_pixels: f32) {
         let offset = self.timeline_tracks_scroll.offset();
         let max = self.timeline_tracks_scroll.max_offset();
-        let y = (offset.y + px(delta_pixels)).clamp(-max.y, px(0.0));
+        let y = (offset.y + px(delta_pixels)).clamp(-max.y, px(0.0)); // physical: scroll offset
         self.timeline_tracks_scroll.set_offset(point(offset.x, y));
     }
 
@@ -616,7 +618,9 @@ impl EditorView {
         self.timeline_view_start = (grab_view_start + delta).clamp(0.0, 1.0);
     }
 
-    pub(crate) fn timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn timeline(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.timeline_geometry
+            .set(TimelineGeometry::new(window.rem_size()));
         let view = self.lane_view();
         let react = self.is_react_preview();
         let (visual, audio) = timeline_rows(self.timeline_tracks(), usize::from(react));
@@ -635,7 +639,7 @@ impl EditorView {
             );
         }
         rows.extend(visual.iter().map(|row| {
-            self.track_row(row, VIDEO_TRACK_HEIGHT, view, cx)
+            self.track_row(row, metrics::video_track_height(), view, cx)
                 .into_any_element()
         }));
         // A React composition's own row is V1, under its videos.
@@ -651,13 +655,13 @@ impl EditorView {
                 div()
                     .flex_none()
                     .w_full()
-                    .h(px(3.0))
+                    .h(rems(0.25))
                     .bg(border)
                     .into_any_element(),
             );
         }
         rows.extend(audio.iter().map(|row| {
-            self.track_row(row, AUDIO_TRACK_HEIGHT, view, cx)
+            self.track_row(row, metrics::audio_track_height(), view, cx)
                 .into_any_element()
         }));
         if !rows.is_empty() {
@@ -668,12 +672,12 @@ impl EditorView {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .child(div().flex_none().w(px(TRACK_HEADER_WIDTH)))
+                    .child(div().flex_none().w(metrics::track_header_width()))
                     .child(
                         div()
                             .id("timeline-empty-lane")
                             .flex_1()
-                            .mr(px(LANE_GUTTER))
+                            .mr(px(LANE_GUTTER)) // physical: clear of the pixel-sized scrollbar
                             .on_scroll(cx.listener(Self::lane_wheel))
                             .on_pinch(cx.listener(Self::lane_pinch))
                             .on_mouse_down(
@@ -723,8 +727,8 @@ impl EditorView {
                         .absolute()
                         .top_0()
                         .bottom_0()
-                        .left(px(TRACK_HEADER_WIDTH))
-                        .right(px(LANE_GUTTER))
+                        .left(metrics::track_header_width())
+                        .right(px(LANE_GUTTER)) // physical: clear of the pixel-sized scrollbar
                         .overflow_hidden()
                         .when_some(self.export_range_fractions(), |layer, (start, end)| {
                             layer.child(
@@ -743,7 +747,7 @@ impl EditorView {
                                 .top_0()
                                 .bottom_0()
                                 .left(relative(view.x(self.playhead_fraction())))
-                                .w(px(1.0))
+                                .w(px(1.0)) // physical: the playhead line
                                 .bg(theme::accent()),
                         ),
                 ),
@@ -775,32 +779,48 @@ impl EditorView {
     }
 
     fn ruler_row(&self, view: LaneView, cx: &mut Context<Self>) -> impl IntoElement {
+        let geometry = self.timeline_geometry.get();
         let frame_rate = self.frame_rate_value;
         let fps = nominal_fps(frame_rate);
         let lane_width = self.lane_width();
         let pixels_per_frame = f64::from(lane_width) * view.zoom / view.end_frame;
-        let scale = ruler_scale(pixels_per_frame, fps, 104.0, 7.0);
+        let scale = ruler_scale(
+            pixels_per_frame,
+            fps,
+            f64::from(geometry.label_spacing),
+            f64::from(geometry.minor_tick_spacing),
+        );
         let first_frame = (view.view_start * view.end_frame).floor() as i64;
         let last_frame = ((view.view_start + 1.0 / view.zoom) * view.end_frame).ceil() as i64;
-        let ticks: Vec<(f32, bool)> = (first_frame.div_euclid(scale.minor)
+        let tier = |frame: i64| {
+            if frame % scale.major == 0 {
+                Tier::Major
+            } else if scale.mid.is_some_and(|mid| frame % mid == 0) {
+                Tier::Mid
+            } else {
+                Tier::Minor
+            }
+        };
+        let ticks: Vec<(f32, Tier)> = (first_frame.div_euclid(scale.minor)
             ..=last_frame.div_euclid(scale.minor) + 1)
             .map(|index| index * scale.minor)
             .filter(|frame| (0..=self.clock.end_frame()).contains(frame))
-            .map(|frame| (view.x(view.frame_fraction(frame)), frame % scale.major == 0))
+            .map(|frame| (view.x(view.frame_fraction(frame)), tier(frame)))
             .filter(|(x, _)| (-0.01..=1.01).contains(x))
             .collect();
         let labels = ticks
             .iter()
-            .filter(|(_, major)| *major)
+            .filter(|(_, tier)| *tier == Tier::Major)
             .map(|(x, _)| *x)
             .map(|x| {
                 let frame =
                     ((view.view_start + f64::from(x) / view.zoom) * view.end_frame).round() as i64;
                 div()
                     .absolute()
-                    .top(px(3.0))
+                    .top(rems(0.375))
                     .left(relative(x))
-                    .ml(px(4.0))
+                    .ml(rems(0.375))
+                    .font_family(cx.theme().mono_font_family.clone())
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .whitespace_nowrap()
@@ -818,7 +838,7 @@ impl EditorView {
             .relative()
             .flex_1()
             .h_full()
-            .mr(px(LANE_GUTTER))
+            .mr(px(LANE_GUTTER)) // physical: clear of the pixel-sized scrollbar
             .overflow_hidden()
             .cursor(CursorStyle::ResizeLeftRight)
             .on_scroll(cx.listener(Self::ruler_wheel))
@@ -829,7 +849,7 @@ impl EditorView {
                     div()
                         .absolute()
                         .bottom_0()
-                        .h(px(6.0))
+                        .h(rems(0.375))
                         .left(relative(view.x(start)))
                         .w(relative(view.width(end - start)))
                         .bg(theme::export_range_fill())
@@ -843,14 +863,14 @@ impl EditorView {
                     .top_0()
                     .bottom_0()
                     .left(relative(x))
-                    .w(px(1.0))
+                    .w(px(1.0)) // physical: a mark line
                     .bg(theme::export_range_border())
             }))
             .child(
                 canvas(
                     move |bounds, _, _| lane_bounds.set(Some(bounds)),
                     move |bounds, _, window, _| {
-                        paint_ruler(bounds, &ticks, playhead_x, tick_color, window)
+                        paint_ruler(bounds, &ticks, playhead_x, tick_color, geometry, window)
                     },
                 )
                 .absolute()
@@ -862,31 +882,26 @@ impl EditorView {
         div()
             .flex()
             .flex_none()
-            .h(px(RULER_HEIGHT))
+            .h(metrics::ruler_height())
             .w_full()
             .border_b_1()
             .border_color(cx.theme().border)
+            // The corner above the track headers: the playhead's timecode
+            // shows once, under the viewer.
             .child(
                 div()
-                    .flex()
                     .flex_none()
-                    .items_center()
-                    .w(px(TRACK_HEADER_WIDTH))
+                    .w(metrics::track_header_width())
                     .h_full()
-                    .px_3()
                     .border_r_1()
                     .border_color(cx.theme().border)
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_base()
-                    .text_color(theme::accent())
-                    .child(format_timecode(self.clock.frame(), frame_rate)),
+                    .debug_selector(|| "timeline-ruler-corner".into()),
             )
             .child(ruler)
     }
 
     fn track_header(&self, row: &TimelineRow<'_>, cx: &mut Context<Self>) -> impl IntoElement {
         let track = row.track;
-        let muted = cx.theme().muted_foreground;
         let current_time = self.current_time();
         let track_level = track
             .clips
@@ -899,136 +914,47 @@ impl EditorView {
             .fold(0.0_f32, f32::max)
             .sqrt()
             .clamp(0.0, 1.0);
-        let mute_track_id = track.id.clone();
-        let solo_track_id = track.id.clone();
-        let state_icon = |id: String, icon: Icon, tooltip: &'static str| {
-            div()
-                .id(SharedString::from(id))
-                .flex_none()
-                .tooltip(move |window, cx| {
-                    gpui_kit::component::tooltip::Tooltip::new(tooltip).build(window, cx)
-                })
-                .child(icon.size_3().text_color(muted))
-        };
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_2()
-            .w(px(TRACK_HEADER_WIDTH))
-            .h_full()
-            .pl_3()
-            .pr_2()
-            .border_r_1()
-            .border_color(cx.theme().border)
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(22.0))
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_sm()
-                    .text_color(muted)
-                    .child(row.label.clone()),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .size(px(8.0))
-                    .rounded_sm()
-                    .bg(rgb(theme::clip_fill(track.kind))),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_base()
-                    .text_color(if track.enabled {
-                        cx.theme().foreground
-                    } else {
-                        muted
-                    })
-                    .child(track.name.clone()),
-            )
-            .when(!track.enabled, |header| {
-                header.child(state_icon(
-                    format!("track-disabled-{}", track.id),
-                    Icon::new(IconName::EyeOff),
-                    "Disabled in the project",
-                ))
-            })
-            .when(track.locked, |header| {
-                header.child(state_icon(
-                    format!("track-locked-{}", track.id),
-                    Icon::new(IconName::Lock),
-                    "Locked in the project",
-                ))
-            })
-            // A React video's sound plays, and meters, on its audio track.
-            .when(
-                track.kind != TrackKind::Overlay
-                    && !(self.is_react_preview() && track.kind != TrackKind::Audio),
-                |header| {
-                    header.child(
-                        div()
-                            .flex_none()
-                            .w(px(4.0))
-                            .h(px(18.0))
-                            .rounded_sm()
-                            .overflow_hidden()
-                            .flex()
-                            .flex_col()
-                            .justify_end()
-                            .bg(cx.theme().background)
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(relative(track_level))
-                                    .bg(theme::meter(track_level)),
-                            ),
-                    )
-                },
-            )
-            // Mute and solo change the project; a React composition's tracks
-            // are only a view of its source.
-            .when(
-                track.kind != TrackKind::Overlay && !self.is_react_preview(),
-                |header| {
-                    header
-                        .child(
-                            Button::new(SharedString::from(format!("track-mute-{}", track.id)))
-                                .xsmall()
-                                .ghost()
-                                .compact_label("M")
-                                .selected(track.muted)
-                                .tooltip("Mute in the preview")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_track_mute(&mute_track_id, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new(SharedString::from(format!("track-solo-{}", track.id)))
-                                .xsmall()
-                                .ghost()
-                                .compact_label("S")
-                                .selected(track.solo)
-                                .tooltip("Solo in the preview")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_track_solo(&solo_track_id, cx);
-                                })),
-                        )
-                },
-            )
+        let react = self.is_react_preview();
+        // A React video's sound plays, and meters, on its audio track.
+        let metered =
+            track.kind != TrackKind::Overlay && !(react && track.kind != TrackKind::Audio);
+        // Mute and solo change the project; a React composition's tracks
+        // are only a view of its source.
+        let mix = (track.kind != TrackKind::Overlay && !react).then(|| {
+            let mute_track_id = track.id.clone();
+            let solo_track_id = track.id.clone();
+            MixButtons {
+                mute_id: SharedString::from(format!("track-mute-{}", track.id)),
+                solo_id: SharedString::from(format!("track-solo-{}", track.id)),
+                muted: track.muted,
+                solo: track.solo,
+                on_mute: Rc::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_track_mute(&mute_track_id, cx);
+                })),
+                on_solo: Rc::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_track_solo(&solo_track_id, cx);
+                })),
+            }
+        });
+        TrackHeader::new(
+            format!("track-{}", track.id),
+            row.label.clone(),
+            track.name.clone(),
+            rgb(theme::clip_fill(track.kind)).into(),
+        )
+        .disabled(!track.enabled)
+        .locked(track.locked)
+        .level(metered.then_some(track_level))
+        .mix(mix)
+        .mix_lane(!react)
     }
 
     fn track_row(
         &self,
         row: &TimelineRow<'_>,
-        height: f32,
+        height: Rems,
         view: LaneView,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1048,7 +974,7 @@ impl EditorView {
             .id(SharedString::from(format!("timeline-track-{}", track.id)))
             .flex()
             .flex_none()
-            .h(px(height))
+            .h(height)
             .w_full()
             .border_b_1()
             .border_color(cx.theme().border)
@@ -1070,7 +996,7 @@ impl EditorView {
                     .relative()
                     .flex_1()
                     .h_full()
-                    .mr(px(LANE_GUTTER))
+                    .mr(px(LANE_GUTTER)) // physical: clear of the pixel-sized scrollbar
                     .overflow_hidden()
                     .on_scroll(cx.listener(Self::lane_wheel))
                     .on_pinch(cx.listener(Self::lane_pinch))
@@ -1091,7 +1017,6 @@ impl EditorView {
         let duration = view.time_fraction(clip.duration, total_seconds);
         let clip_id = clip.id.clone();
         let selected = self.selected_clip_id.as_deref() == Some(clip.id.as_str());
-        let label_color = theme::waveform();
         // Keep the name readable when the clip starts left of the view.
         let label_offset = if duration > 0.0 {
             ((view.view_start - start) / duration).clamp(0.0, 1.0) as f32
@@ -1104,52 +1029,29 @@ impl EditorView {
             waveform_segment(peaks, 0.0, 1.0, bars)
         });
         div()
-            .id(SharedString::from(format!("timeline-clip-{clip_id}")))
             .absolute()
             .left(relative(view.x(start)))
-            .top(px(3.0))
-            .bottom(px(3.0))
+            .top(metrics::clip_inset())
+            .bottom(metrics::clip_inset())
             .w(relative(view.width(duration)))
-            .min_w(px(2.0))
-            .overflow_hidden()
-            .rounded_sm()
-            .bg(rgb(theme::clip_fill(kind)))
-            .when(selected, |block| {
-                block.border_2().border_color(theme::clip_selected_border())
-            })
-            .when(!clip.enabled, |clip| clip.opacity(0.4))
-            .when_some(waveform.filter(|bars| !bars.is_empty()), |block, bars| {
-                block.child(
-                    canvas(
-                        |_, _, _| (),
-                        move |bounds, _, window, _| {
-                            paint_waveform(bounds, &bars, label_color.opacity(0.45), window)
-                        },
-                    )
-                    .absolute()
-                    .top(px(14.0))
-                    .bottom(px(2.0))
-                    .left_0()
-                    .right_0(),
-                )
-            })
+            .min_w(px(2.0)) // physical: the narrowest visible clip
             .child(
-                div()
-                    .absolute()
-                    .top(px(1.0))
-                    .left(relative(label_offset))
-                    .px_1()
-                    .text_sm()
-                    .text_color(label_color)
-                    .whitespace_nowrap()
-                    .child(clip.name.clone()),
+                ClipBlock::new(
+                    SharedString::from(format!("timeline-clip-{clip_id}")),
+                    clip.name.clone(),
+                    kind,
+                )
+                .label_offset(label_offset)
+                .selected(selected)
+                .enabled(clip.enabled)
+                .when_some(waveform, |block, bars| block.waveform(bars))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.selected_clip_id = Some(clip_id.clone());
+                    this.selected_asset_id = None;
+                    cx.notify();
+                })),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.selected_clip_id = Some(clip_id.clone());
-                this.selected_asset_id = None;
-                cx.notify();
-            }))
     }
 
     /// The single row a standalone React composition shows: it has no
@@ -1163,6 +1065,7 @@ impl EditorView {
         label_above: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let geometry = self.timeline_geometry.get();
         let entry = self
             .react_preview
             .as_ref()
@@ -1204,41 +1107,18 @@ impl EditorView {
             .relative()
             .flex()
             .flex_none()
-            .h(px(VIDEO_TRACK_HEIGHT))
+            .h(metrics::video_track_height())
             .w_full()
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap_2()
-                    .w(px(TRACK_HEADER_WIDTH))
-                    .h_full()
-                    .pl_3()
-                    .border_r_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .w(px(22.0))
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("V1"),
-                    )
-                    .child(
-                        div()
-                            .size(px(8.0))
-                            .rounded_sm()
-                            .bg(rgb(theme::clip_fill(TrackKind::Overlay))),
-                    )
-                    .child(
-                        div()
-                            .text_base()
-                            .text_color(cx.theme().foreground)
-                            .child("Composition"),
-                    ),
+                TrackHeader::new(
+                    "composition",
+                    "V1",
+                    "Composition",
+                    rgb(theme::clip_fill(TrackKind::Overlay)).into(),
+                )
+                .mix_lane(false),
             )
             .child(
                 div()
@@ -1246,7 +1126,7 @@ impl EditorView {
                     .relative()
                     .flex_1()
                     .h_full()
-                    .mr(px(LANE_GUTTER))
+                    .mr(px(LANE_GUTTER)) // physical: clear of the pixel-sized scrollbar
                     .overflow_hidden()
                     .on_scroll(cx.listener(Self::lane_wheel))
                     .on_pinch(cx.listener(Self::lane_pinch))
@@ -1254,16 +1134,21 @@ impl EditorView {
                     .child(
                         div()
                             .absolute()
-                            .top(px(3.0))
-                            .bottom(px(3.0))
+                            .top(metrics::clip_inset())
+                            .bottom(metrics::clip_inset())
                             .left(relative(view.x(0.0)))
                             .w(relative(view.width(1.0)))
-                            .rounded_sm()
-                            .bg(rgb(theme::clip_fill(TrackKind::Overlay)))
-                            .px_1()
-                            .text_sm()
-                            .text_color(theme::waveform())
-                            .when(set_timing.is_none(), |block| block.child(entry)),
+                            // With "Set timing" shown, the overlay draws the
+                            // name beside its button.
+                            .child(ClipBlock::new(
+                                "composition-block",
+                                if set_timing.is_none() {
+                                    entry
+                                } else {
+                                    String::new()
+                                },
+                                TrackKind::Overlay,
+                            )),
                     )
                     .children(bands)
                     .children(grips)
@@ -1275,7 +1160,7 @@ impl EditorView {
                     (view.x(at / view.end_frame) * self.lane_width()).clamp(0.0, self.lane_width());
                 let label = div()
                     .absolute()
-                    .left(px(TRACK_HEADER_WIDTH + x))
+                    .left(geometry.track_header_width + px(x)) // physical: x is measured lane pixels
                     .px_2()
                     .py_1()
                     .border_1()
@@ -1296,9 +1181,9 @@ impl EditorView {
                 // Over the row above when there is one in the scroll area,
                 // else over the band.
                 row.child(if label_above {
-                    label.bottom(px(VIDEO_TRACK_HEIGHT))
+                    label.bottom(metrics::video_track_height())
                 } else {
-                    label.top(px(3.0))
+                    label.top(metrics::clip_inset())
                 })
             })
     }
@@ -1322,9 +1207,9 @@ impl EditorView {
         let edge = edge_width((view.width(length) * self.lane_width()).max(2.0));
         let zone = |grip: BandGrip| {
             let (id, zone) = match grip {
-                BandGrip::Start => ("band-grip-start", div().left_0().w(px(edge))),
-                BandGrip::End => ("band-grip-end", div().right_0().w(px(edge))),
-                BandGrip::Body => ("band-grip-body", div().left(px(edge)).right(px(edge))),
+                BandGrip::Start => ("band-grip-start", div().left_0().w(px(edge))), // physical: hit tolerance
+                BandGrip::End => ("band-grip-end", div().right_0().w(px(edge))), // physical: hit tolerance
+                BandGrip::Body => ("band-grip-body", div().left(px(edge)).right(px(edge))), // physical: hit tolerance
             };
             let zone = zone.id(id).absolute().top_0().bottom_0();
             match (grips.lock(grip).map(str::to_owned), grip) {
@@ -1340,7 +1225,7 @@ impl EditorView {
                             .absolute()
                             .top_0()
                             .bottom_0()
-                            .w(px(2.0))
+                            .w(px(2.0)) // physical: the edge bar
                             .when(grip == BandGrip::Start, |bar| bar.left_0())
                             .when(grip == BandGrip::End, |bar| bar.right_0())
                             .bg(theme::accent()),
@@ -1350,11 +1235,11 @@ impl EditorView {
         div()
             .id("band-grips")
             .absolute()
-            .top(px(3.0))
-            .bottom(px(3.0))
+            .top(metrics::clip_inset())
+            .bottom(metrics::clip_inset())
             .left(relative(view.x(start)))
             .w(relative(view.width(length)))
-            .min_w(px(2.0))
+            .min_w(px(2.0)) // physical: the narrowest visible band
             .child(zone(BandGrip::Start))
             .child(zone(BandGrip::Body))
             .child(zone(BandGrip::End))
@@ -1419,20 +1304,24 @@ impl EditorView {
             .flex()
             .flex_col()
             .child(
+                // On the composition block's name strip.
                 div()
-                    .px_1()
+                    .flex()
+                    .items_center()
+                    .h(metrics::clip_label_height())
+                    .px_2()
                     .text_sm()
                     .text_color(theme::waveform())
                     .whitespace_nowrap()
                     .child(SharedString::from(entry.to_owned())),
             )
-            .child(div().w(px(view.width(start) * lane_width)))
-            .child(div().w(px((-view.x(0.0) * lane_width).max(0.0))));
+            .child(div().w(px(view.width(start) * lane_width))) // physical: measured lane pixels
+            .child(div().w(px((-view.x(0.0) * lane_width).max(0.0)))); // physical: measured lane pixels
         Some(
             div()
                 .absolute()
-                .top(px(3.0))
-                .bottom(px(3.0))
+                .top(metrics::clip_inset())
+                .bottom(metrics::clip_inset())
                 .left(relative(view.x(0.0)))
                 .flex()
                 .child(offset)
@@ -1488,12 +1377,11 @@ impl EditorView {
         div()
             .id(SharedString::from(id))
             .absolute()
-            .top(px(3.0))
-            .bottom(px(3.0))
+            .top(metrics::clip_inset())
+            .bottom(metrics::clip_inset())
             .left(relative(left))
             .w(relative(width))
-            .min_w(px(2.0))
-            .rounded_sm()
+            .min_w(px(2.0)) // physical: the narrowest visible band
             .map(|block| {
                 if band.filled {
                     block.bg(theme::accent().opacity(0.42))
@@ -1551,6 +1439,7 @@ impl EditorView {
         view: LaneView,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
+        let geometry = self.timeline_geometry.get();
         let edge = edge_width((view.width(duration) * self.lane_width()).max(2.0));
         let dragged = self
             .scene_drag
@@ -1566,7 +1455,7 @@ impl EditorView {
             .top_0()
             .bottom_0()
             .right_0()
-            .w(px(edge));
+            .w(px(edge)); // physical: hit tolerance
         let zone = match self.scene_edge(&chapter.id) {
             SceneEdge::Locked(reason) => {
                 zone.cursor(CursorStyle::OperationNotAllowed)
@@ -1601,10 +1490,10 @@ impl EditorView {
         div()
             .absolute()
             .left(relative(view.x(start)))
-            .top(px(3.0 + lane as f32 * CHAPTER_LANE_HEIGHT))
-            .h(px(CHAPTER_LANE_HEIGHT - 2.0))
+            .top(geometry.clip_inset + geometry.chapter_lane_height * lane as f32)
+            .h(geometry.chapter_lane_height - geometry.rem * 0.125)
             .w(relative(view.width(duration)))
-            .min_w(px(2.0))
+            .min_w(px(2.0)) // physical: the narrowest visible chapter
             .child(zone)
             .into_any_element()
     }
@@ -1623,6 +1512,7 @@ impl EditorView {
         view: LaneView,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let geometry = self.timeline_geometry.get();
         let frame = u64::try_from(self.clock.frame()).unwrap_or(0);
         let current = chapter_at(chapters, frame).map(|chapter| chapter.id.clone());
         let appears_in: &[String] = match impact {
@@ -1664,12 +1554,11 @@ impl EditorView {
                     )))
                     .absolute()
                     .left(relative(view.x(start)))
-                    .top(px(3.0 + lane as f32 * CHAPTER_LANE_HEIGHT))
-                    .h(px(CHAPTER_LANE_HEIGHT - 2.0))
+                    .top(geometry.clip_inset + geometry.chapter_lane_height * lane as f32)
+                    .h(geometry.chapter_lane_height - geometry.rem * 0.125)
                     .w(relative(view.width(duration)))
-                    .min_w(px(2.0))
+                    .min_w(px(2.0)) // physical: the narrowest visible chapter
                     .overflow_hidden()
-                    .rounded_sm()
                     .border_l_2()
                     .when(appears_in.contains(&chapter.id), |block| block.border_b_2())
                     .border_color(theme::accent())
@@ -1678,9 +1567,9 @@ impl EditorView {
                     .child(
                         div()
                             .absolute()
-                            .top(px(1.0))
+                            .top(rems(0.0625))
                             .left(relative(label_offset))
-                            .px_1()
+                            .px_2()
                             .text_sm()
                             .text_color(cx.theme().foreground)
                             .whitespace_nowrap()
@@ -1697,35 +1586,14 @@ impl EditorView {
             .relative()
             .flex()
             .flex_none()
-            .h(px(6.0 + lane_count as f32 * CHAPTER_LANE_HEIGHT))
+            .h(geometry.clip_inset * 2.0 + geometry.chapter_lane_height * lane_count as f32)
             .w_full()
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap_2()
-                    .w(px(TRACK_HEADER_WIDTH))
-                    .h_full()
-                    .pl_3()
-                    .border_r_1()
-                    .border_color(cx.theme().border)
-                    .child(div().w(px(22.0)))
-                    .child(div().size(px(8.0)).rounded_sm().bg(theme::accent()))
-                    .child(
-                        div()
-                            .text_base()
-                            .text_color(cx.theme().foreground)
-                            .child("Chapters"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(chapters.len().to_string()),
-                    ),
+                TrackHeader::new("chapters", "", "Chapters", theme::accent())
+                    .count(chapters.len())
+                    .mix_lane(!self.is_react_preview()),
             )
             .child(
                 div()
@@ -1733,7 +1601,7 @@ impl EditorView {
                     .relative()
                     .flex_1()
                     .h_full()
-                    .mr(px(LANE_GUTTER))
+                    .mr(px(LANE_GUTTER)) // physical: clear of the pixel-sized scrollbar
                     .overflow_hidden()
                     .on_scroll(cx.listener(Self::lane_wheel))
                     .on_pinch(cx.listener(Self::lane_pinch))
@@ -1749,8 +1617,8 @@ impl EditorView {
                 row.child(
                     div()
                         .absolute()
-                        .left(px(TRACK_HEADER_WIDTH + x + 4.0))
-                        .top(px(3.0))
+                        .left(geometry.track_header_width + px(x) + geometry.rem * 0.25) // physical: x is measured lane pixels
+                        .top(metrics::clip_inset())
                         .px_2()
                         .border_1()
                         .border_color(cx.theme().border)
@@ -1779,7 +1647,7 @@ impl EditorView {
         div()
             .flex()
             .flex_none()
-            .h(px(FOOTER_HEIGHT))
+            .h(metrics::toolbar_row_height())
             .w_full()
             .border_t_1()
             .border_color(cx.theme().border)
@@ -1789,7 +1657,7 @@ impl EditorView {
                     .flex_none()
                     .items_center()
                     .gap_1()
-                    .w(px(TRACK_HEADER_WIDTH))
+                    .w(metrics::track_header_width())
                     .h_full()
                     .px_2()
                     .border_r_1()
@@ -1800,6 +1668,7 @@ impl EditorView {
                             .ghost()
                             .icon(IconName::Minus)
                             .disabled(fitted)
+                            .accessibility_label("Zoom out")
                             .tooltip_with_action("Zoom out", &ZoomTimelineOut, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.zoom_timeline_by(1.0 / ZOOM_STEP, cx)
@@ -1810,6 +1679,7 @@ impl EditorView {
                             .xsmall()
                             .ghost()
                             .icon(IconName::Plus)
+                            .accessibility_label("Zoom in")
                             .tooltip_with_action("Zoom in", &ZoomTimelineIn, KEY_CONTEXT)
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.zoom_timeline_by(ZOOM_STEP, cx)),
@@ -1819,8 +1689,9 @@ impl EditorView {
                         Button::new("timeline-zoom-fit")
                             .xsmall()
                             .ghost()
-                            .compact_label("Fit")
+                            .icon(IconName::UnfoldHorizontal)
                             .disabled(fitted)
+                            .accessibility_label("Zoom to fit")
                             .tooltip_with_action("Zoom to fit", &ZoomTimelineToFit, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.zoom_timeline_to_fit(cx))),
                     )
@@ -1839,7 +1710,7 @@ impl EditorView {
                     .relative()
                     .flex_1()
                     .h_full()
-                    .mr(px(LANE_GUTTER))
+                    .mr(px(LANE_GUTTER)) // physical: clear of the pixel-sized scrollbar
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::begin_overview_drag))
                     .child(
                         canvas(
@@ -1855,8 +1726,8 @@ impl EditorView {
                         bar.child(
                             div()
                                 .absolute()
-                                .top(px(9.0))
-                                .h(px(6.0))
+                                .top(rems(0.8125))
+                                .h(rems(0.375))
                                 .left(relative(start as f32))
                                 .w(relative((end - start) as f32))
                                 .bg(theme::export_range_fill()),
@@ -1865,11 +1736,11 @@ impl EditorView {
                     .child(
                         div()
                             .absolute()
-                            .top(px(6.0))
-                            .bottom(px(6.0))
+                            .top(rems(0.4375))
+                            .bottom(rems(0.4375))
                             .left(relative(view.view_start as f32))
                             .w(relative((1.0 / view.zoom) as f32))
-                            .min_w(px(12.0))
+                            .min_w(rems(1.0))
                             .rounded(cx.theme().radius)
                             .bg(if matches!(self.ruler_drag, RulerDrag::Overview { .. }) {
                                 cx.theme().scrollbar_thumb_hover
@@ -1880,32 +1751,46 @@ impl EditorView {
                     .child(
                         div()
                             .absolute()
-                            .top(px(4.0))
-                            .bottom(px(4.0))
+                            .top(rems(0.3125))
+                            .bottom(rems(0.3125))
                             .left(relative(self.playhead_fraction() as f32))
-                            .w(px(1.0))
+                            .w(px(1.0)) // physical: the playhead line
                             .bg(theme::accent()),
                     ),
             )
     }
 }
 
-/// Ruler ticks (tall for labelled marks) and the playhead's head.
+/// A ruler tick's tier: labelled, between labels, or the finest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tier {
+    Major,
+    Mid,
+    Minor,
+}
+
+/// Ruler ticks (the ruler's full height for labelled marks, half for mid
+/// ticks, short for the rest) and the playhead's head.
 fn paint_ruler(
     bounds: Bounds<Pixels>,
-    ticks: &[(f32, bool)],
+    ticks: &[(f32, Tier)],
     playhead_x: f32,
     tick_color: Hsla,
+    geometry: TimelineGeometry,
     window: &mut Window,
 ) {
     let width = bounds.size.width;
     let bottom = bounds.origin.y + bounds.size.height;
-    for (x, major) in ticks {
-        let height = if *major { bounds.size.height } else { px(6.0) };
+    for (x, tier) in ticks {
+        let height = match tier {
+            Tier::Major => bounds.size.height,
+            Tier::Mid => bounds.size.height / 2.0,
+            Tier::Minor => geometry.minor_tick,
+        };
         window.paint_quad(fill(
             Bounds::new(
                 point(bounds.origin.x + width * *x, bottom - height),
-                size(px(1.0), height),
+                size(px(1.0), height), // physical: a one-pixel tick
             ),
             tick_color,
         ));
@@ -1916,39 +1801,24 @@ fn paint_ruler(
     let x = bounds.origin.x + width * playhead_x;
     let accent = theme::accent();
     window.paint_quad(fill(
-        Bounds::new(point(x, bounds.origin.y), size(px(1.0), bounds.size.height)),
+        Bounds::new(point(x, bounds.origin.y), size(px(1.0), bounds.size.height)), // physical: the playhead line
         accent,
     ));
     // A downward pentagon at the bottom of the ruler, pointing into the lanes.
     let mut head = PathBuilder::fill();
-    let half = px(6.0);
-    let top = bottom - px(12.0);
-    head.move_to(point(x - half + px(0.5), top));
-    head.line_to(point(x + half + px(0.5), top));
-    head.line_to(point(x + half + px(0.5), bottom - px(5.0)));
-    head.line_to(point(x + px(0.5), bottom));
-    head.line_to(point(x - half + px(0.5), bottom - px(5.0)));
+    let half = geometry.playhead_cap_half;
+    let top = bottom - geometry.playhead_cap_height;
+    let shoulder = bottom - geometry.playhead_cap_shoulder;
+    // physical: the cap's points sit on the playhead line's pixel center.
+    let center = px(0.5); // physical: half the one-pixel line
+    head.move_to(point(x - half + center, top));
+    head.line_to(point(x + half + center, top));
+    head.line_to(point(x + half + center, shoulder));
+    head.line_to(point(x + center, bottom));
+    head.line_to(point(x - half + center, shoulder));
     head.close();
     if let Ok(path) = head.build() {
         window.paint_path(path, accent);
-    }
-}
-
-/// Mirrored peak bars centered on the clip's midline.
-fn paint_waveform(bounds: Bounds<Pixels>, bars: &[f32], color: Hsla, window: &mut Window) {
-    let count = bars.len().max(1) as f32;
-    let step = bounds.size.width / count;
-    let bar_width = (step - px(1.0)).max(px(1.0));
-    let middle = bounds.origin.y + bounds.size.height / 2.0;
-    for (index, amplitude) in bars.iter().enumerate() {
-        let height = (bounds.size.height * amplitude.clamp(0.02, 1.0)).max(px(1.0));
-        window.paint_quad(fill(
-            Bounds::new(
-                point(bounds.origin.x + step * index as f32, middle - height / 2.0),
-                size(bar_width, height),
-            ),
-            color,
-        ));
     }
 }
 
