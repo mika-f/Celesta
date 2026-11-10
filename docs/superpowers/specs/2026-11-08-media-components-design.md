@@ -684,6 +684,7 @@ Deviations in P2b (`docs/handoff/2026-11-08-media-pipelining.md`):
 - **Color.** Every `openVideoEncoder` and video `Track` carries `{ "primaries": "bt709", "transfer": "bt709", "matrix": "bt709", "range": "limited" }`.
   - `matrix` and `range` describe the YUV conversion and how the encoded stream is tagged. They do not describe the input frames. `Color` binds video codecs only: an image encoder follows its format's own convention (JPEG's JFIF is full-range BT.601; PNG and WebP keep RGB).
   - RGB inputs (`rgba8`, `rgba16`) are always full-range sRGB-encoded values. An encoder converting them applies `matrix` and `range` itself.
+  - YUV inputs (`yuv420p`, `yuv420p10`, `nv12`, `p010`) are always BT.709 limited range, as the GPU converts them. An encoder taking them as they are only tags them, so a host offering YUV sends the `Color` it rendered.
   - The GPU conversion changes from BT.601 to BT.709 (`yuv420p.wgsl`).
   - Encoders converting RGBA themselves must use the given matrix and range (FFmpeg's `BT709_FILTER` already does).
   - Every encoder and muxer tags its stream (H.264 VUI, `colr` atoms, WebM `Colour`).

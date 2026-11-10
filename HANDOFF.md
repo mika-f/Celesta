@@ -296,8 +296,8 @@ covered by the dated handoff notes.
   fails with `unknown_preset` until presets land). libx264's `preset` and
   `crf` default to `medium` and 18; `bitDepth=10` encodes yuv420p10le
   (High 10). Celesta offers the encoder `yuv420p`, `yuv420p10`, `nv12`, and
-  `p010`, which the GPU converts (`ReadbackFormat::Yuv420p10`, `Nv12`, and
-  `P010`), unless the renderer is software, then `rgba16`
+  `p010`, which the GPU converts (`ReadbackFormat::Yuv420p`, `Yuv420p10`,
+  `Nv12`, and `P010`), unless the renderer is software, then `rgba16`
   (`ReadbackFormat::Rgba16Straight`, straight-alpha rgba64le) and `rgba8`,
   which the encoder converts. GPU readback returns I420 or NV12 at 1.5
   bytes/pixel, or their 10-bit forms (`yuv420p10`, `p010`) at 3, in BT.709
