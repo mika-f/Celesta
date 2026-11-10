@@ -186,6 +186,7 @@ impl EditorView {
                 .child(
                     div()
                         .flex_none()
+                        // physical: the thumbnail's raster size.
                         .w(px(44.0))
                         .h(px(26.0))
                         .rounded_sm()
@@ -854,7 +855,7 @@ impl EditorView {
             .p_3()
             .child(div().text_sm().text_color(label_color).child("Entry"))
             .child(div().text_sm().text_color(value_color).child(entry))
-            .child(div().h(px(4.0)))
+            .child(div().h_1())
             .child(row("Size", self.dimensions.to_string()))
             .child(row("Frame rate", self.frame_rate_label.to_string()))
             .child(row(
@@ -863,7 +864,7 @@ impl EditorView {
             ))
             .child(row("Renderer", self.gpu_name.to_string()))
             .child(row("Values from", properties))
-            .child(div().h(px(4.0)))
+            .child(div().h_1())
             .child(
                 Button::new("reload-react-entry")
                     .small()

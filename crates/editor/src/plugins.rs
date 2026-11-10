@@ -13,6 +13,7 @@
 use crate::problems::{Problem, Problems, Source, error_chain};
 use crate::source::PropertyArgs;
 use crate::view::EditorView;
+use celesta_editor_theme::metrics;
 use celesta_media::{DecoderUse, MediaRegistry};
 use celesta_plugin_host::{
     InstalledPlugins, PendingPlugin, PluginEntry, PluginRole, SettingsError, UserSettings,
@@ -22,12 +23,13 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
 use gpui_kit::component::{ActiveTheme as _, WindowExt as _, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, Pixels, Window, div, px};
+use gpui_kit::{Context, Window, div};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// Wide enough for a plugin's folder on one or two lines.
-const PLUGIN_DIALOG_WIDTH: Pixels = px(560.);
+/// Designed against a 16px `rem`; see [`metrics::scaled`].
+const PLUGIN_DIALOG_WIDTH: f32 = 560.;
 
 /// What one discovery found.
 #[derive(Clone, Debug, Default)]
@@ -453,7 +455,7 @@ impl EditorView {
             let request = request.clone();
             dialog
                 .title("Trust this project?")
-                .w(PLUGIN_DIALOG_WIDTH)
+                .w(metrics::scaled_px(PLUGIN_DIALOG_WIDTH))
                 .child(
                     v_flex()
                         .gap_3()
@@ -590,7 +592,7 @@ impl EditorView {
                 } else {
                     "Allow these plugins to run?"
                 })
-                .w(PLUGIN_DIALOG_WIDTH)
+                .w(metrics::scaled_px(PLUGIN_DIALOG_WIDTH))
                 .child(
                     v_flex()
                         .gap_3()

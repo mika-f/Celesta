@@ -9,6 +9,7 @@ use crate::problems::{Source, error_chain};
 use crate::source::PropertyArgs;
 use crate::source::load_source;
 use crate::view::EditorView;
+use celesta_editor_theme::metrics;
 use celesta_plugin_host::UserSettings;
 use celesta_react_bridge::{
     DEFAULT_TEMPLATE, ProjectTsconfig, ProjectTypesSetup, TemplateInfo, initialize_project,
@@ -21,16 +22,18 @@ use gpui_kit::component::radio::Radio;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Root, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, ClickEvent, Context, Entity, Pixels, ScrollHandle, Window, div, px};
+use gpui_kit::{App, ClickEvent, Context, Entity, ScrollHandle, Window, div};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
 /// Wide enough for a two-line Japanese description per template.
-const TEMPLATE_DIALOG_WIDTH: Pixels = px(520.);
+/// Designed against a 16px `rem`; see [`metrics::scaled`].
+const TEMPLATE_DIALOG_WIDTH: f32 = 520.;
 /// About four templates; more scroll inside the dialog.
-const TEMPLATE_LIST_MAX_HEIGHT: Pixels = px(360.);
+/// Designed against a 16px `rem`; see [`metrics::scaled`].
+const TEMPLATE_LIST_MAX_HEIGHT: f32 = 360.;
 
 /// How often closing, quitting, or reloading looks whether a committed
 /// text's write finished.
@@ -185,7 +188,7 @@ impl EditorView {
             let view = view.clone();
             dialog
                 .title("Create New Project")
-                .w(TEMPLATE_DIALOG_WIDTH)
+                .w(metrics::scaled_px(TEMPLATE_DIALOG_WIDTH))
                 .child(
                     v_flex()
                         .gap_3()
@@ -206,7 +209,7 @@ impl EditorView {
                                 .child(
                                     v_flex()
                                         .id("project-templates")
-                                        .max_h(TEMPLATE_LIST_MAX_HEIGHT)
+                                        .max_h(metrics::scaled(TEMPLATE_LIST_MAX_HEIGHT))
                                         .gap_3()
                                         .overflow_y_scroll()
                                         .track_scroll(&list_scroll)

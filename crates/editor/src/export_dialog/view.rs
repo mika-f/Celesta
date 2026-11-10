@@ -10,6 +10,7 @@
 
 use super::model::{Asked, CHECKING, ExportDialogModel, InitialBase, PresetFileState, Track};
 use crate::helpers::ExportLoudness;
+use celesta_editor_theme::metrics;
 use celesta_exporter::{
     OutputChoice, Preset, PresetOutput, PresetSource, PresetsFile, resolve_preset_output,
 };
@@ -25,8 +26,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, Entity, EventEmitter, FontWeight, Hsla, Pixels, SharedString, Subscription, Task,
-    Window, div, px,
+    App, Context, Entity, EventEmitter, FontWeight, Hsla, SharedString, Subscription, Task, Window,
+    div, px,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,7 +42,8 @@ fn preset_label(name: &str) -> String {
 }
 
 /// Wide enough for a component's label and its plugin beside a field.
-const EXPORT_DIALOG_WIDTH: Pixels = px(560.);
+/// Designed against a 16px `rem`; see [`metrics::scaled`].
+const EXPORT_DIALOG_WIDTH: f32 = 560.;
 
 mod choice;
 mod fields;
@@ -839,7 +841,7 @@ pub(crate) fn open_export_dialog(dialog: &Entity<ExportDialog>, window: &mut Win
         let confirm = dialog.clone();
         shell
             .title("Export")
-            .w(EXPORT_DIALOG_WIDTH)
+            .w(metrics::scaled_px(EXPORT_DIALOG_WIDTH))
             .footer(footer(&dialog, cx))
             .child(dialog)
             .on_ok(move |_, _, cx| confirm.update(cx, |this, cx| this.export(cx)))

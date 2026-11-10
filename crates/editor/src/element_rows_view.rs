@@ -16,6 +16,7 @@ use crate::scope::{
 };
 use crate::view::EditorView;
 use crate::widgets::inspector_section;
+use celesta_editor_theme::metrics;
 use celesta_react_bridge::{PrimitivePropertyField, SourcePos};
 use celesta_source_edit::{EditTarget, LockReason};
 use gpui_kit::assets::IconName;
@@ -24,7 +25,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, CursorStyle, Div, ElementId, MouseButton, MouseDownEvent, SharedString,
-    div, px,
+    div,
 };
 use std::path::Path;
 
@@ -402,7 +403,7 @@ impl EditorView {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(label_width))
+                            .w(metrics::scaled(label_width))
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()

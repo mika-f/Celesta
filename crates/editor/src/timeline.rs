@@ -5,6 +5,10 @@
 //! of the composition at the lane's leading edge and the lane shows
 //! `1 / zoom` of it. Pointer positions map onto the lane through its painted
 //! bounds, recorded each frame in `timeline_lane_bounds`.
+//!
+//! physical: the timeline's geometry stays in pixels for now. Track heights,
+//! lane positions, the ruler, hit tests and painting share these numbers, so
+//! they move onto tokens together (P7c), not one `px()` at a time.
 
 use celesta_editor_core::{ClipSummary, TrackSummary};
 use celesta_project::TrackKind;

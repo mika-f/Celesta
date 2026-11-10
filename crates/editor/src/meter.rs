@@ -4,6 +4,9 @@
 //! Levels come from the same buffer the preview plays, so the meter shows
 //! what is heard (before the monitor volume, like a mixer's bus meter) and
 //! reads the same while playing, scrubbing, or paused.
+//!
+//! physical: the meter is painted; its scale column, ticks and bars share
+//! pixel geometry with `paint`, and the column beside the timeline matches it.
 
 use celesta_media::AudioBuffer;
 use gpui_kit::component::ActiveTheme as _;
