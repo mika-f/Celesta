@@ -25,6 +25,18 @@ pub fn toolbar_row_height() -> Rems {
     rems(2.0)
 }
 
+/// Width of an inspector row's label lane, the same for every row so labels
+/// and values share one edge; wide enough for "Corner radius".
+pub fn inspector_label_width() -> Rems {
+    rems(7.0)
+}
+
+/// Width of an inspector row's trailing lane (a state icon, a reset or
+/// remove button), kept on rows without one so the lanes stay aligned.
+pub fn inspector_trailing_width() -> Rems {
+    rems(1.25)
+}
+
 /// A size that was designed in pixels against gpui-kit's default 16px `rem`,
 /// in `rem`s, so it keeps its proportion to the text at the editor's base.
 pub fn scaled(design_px: f32) -> Rems {
@@ -97,6 +109,14 @@ pub fn inspector_label_width() -> Rems {
 mod tests {
     use super::*;
     use gpui_kit::{Rems, rems};
+
+    #[test]
+    fn inspector_lanes_fit_their_contents() {
+        assert_eq!(inspector_label_width(), rems(7.0));
+        assert!(inspector_label_width().0 > list_row_height().0);
+        // An xsmall icon button is 1rem (`size_4`).
+        assert!(inspector_trailing_width().0 >= 1.0);
+    }
 
     #[test]
     fn scaled_keeps_a_16px_design_in_proportion() {
