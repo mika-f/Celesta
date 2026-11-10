@@ -10,7 +10,7 @@
 pub mod metrics;
 
 use celesta_project::TrackKind;
-use gpui_kit::component::{Theme, ThemeMode};
+use gpui_kit::component::{Theme, ThemeColor, ThemeMode};
 use gpui_kit::{Anchor, App, Hsla, px, rgb, rgba};
 
 /// Forces the NLE-standard dark appearance. gpui-component's dark theme still
@@ -36,7 +36,72 @@ pub fn apply(cx: &mut App) {
         // of over the panel headers at the top right.
         theme.notification.placement = Anchor::BottomRight;
         theme.notification.margins.bottom = px(metrics::BASE_FONT_SIZE * (2.0 + 0.75));
+        apply_palette(&mut theme.colors);
     });
+}
+
+/// One neutral grey family, darkest first: the window ground (also the
+/// viewer's surround and input fields), panel bodies, header and toolbar
+/// bands, then popovers. `primary` is a restrained blue for selection, focus
+/// and the primary action; the brand orange ([`ACCENT`]) is not a UI color.
+fn apply_palette(colors: &mut ThemeColor) {
+    let ground: Hsla = rgb(0x16_16_16).into();
+    let panel: Hsla = rgb(0x1c_1c_1c).into();
+    let band: Hsla = rgb(0x23_23_23).into();
+    let band_hover: Hsla = rgb(0x2c_2c_2c).into();
+    let band_pressed: Hsla = rgb(0x1a_1a_1a).into();
+    let popover: Hsla = rgb(0x2a_2a_2a).into();
+    let border: Hsla = rgb(0x2e_2e_2e).into();
+    let text: Hsla = rgb(0xe6_e6_e6).into();
+    let muted_text: Hsla = rgb(0x9a_9a_9a).into();
+    let primary: Hsla = rgb(0x4a_7f_d6).into();
+
+    colors.background = ground;
+
+    colors.sidebar = panel;
+    colors.tab_active = panel;
+    colors.list = panel;
+    colors.table = panel;
+    colors.group_box = panel;
+
+    colors.title_bar = band;
+    colors.tab_bar = band;
+    colors.tab = band;
+    colors.status_bar = band;
+    colors.secondary = band;
+    colors.muted = band;
+    colors.list_head = band;
+    colors.table_head = band;
+    colors.secondary_hover = band_hover;
+    colors.list_hover = band_hover;
+    colors.secondary_active = band_pressed;
+    colors.button_active = band_pressed;
+
+    colors.popover = popover;
+
+    colors.border = border;
+    colors.input = border;
+    colors.title_bar_border = border;
+    colors.status_bar_border = border;
+    colors.sidebar_border = border;
+    colors.table_row_border = border;
+    colors.window_border = border;
+
+    colors.foreground = text;
+    colors.popover_foreground = text;
+    colors.sidebar_foreground = text;
+    colors.tab_active_foreground = text;
+    colors.secondary_foreground = text;
+    colors.muted_foreground = muted_text;
+    colors.tab_foreground = muted_text;
+
+    colors.primary = primary;
+    colors.primary_hover = rgb(0x5a_8b_e0).into();
+    colors.primary_active = rgb(0x3f_72_c4).into();
+    colors.primary_foreground = rgb(0xff_ff_ff).into();
+    colors.ring = primary;
+    colors.list_active_border = primary;
+    colors.table_active_border = primary;
 }
 
 /// celesta's brand accent (the "Celesta" wordmark, the timeline playhead). It is a
@@ -127,6 +192,26 @@ mod tests {
             apply(cx);
             assert_eq!(Theme::global(cx).font_size, px(metrics::BASE_FONT_SIZE));
             assert_eq!(Theme::global(cx).radius, px(0.));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn surfaces_step_from_ground_to_popover(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let theme = Theme::global(cx);
+            let l = |c: Hsla| c.l;
+            assert!(l(theme.background) < l(theme.sidebar));
+            assert!(l(theme.sidebar) < l(theme.title_bar));
+            assert!(l(theme.title_bar) < l(theme.popover));
+            assert_eq!(theme.tab_active, theme.sidebar);
+            assert_eq!(theme.tab_bar, theme.title_bar);
+            assert_eq!(theme.status_bar, theme.title_bar);
+            // One neutral family: no hue drift between steps.
+            for c in [theme.background, theme.sidebar, theme.title_bar, theme.popover] {
+                assert!(c.s < 0.02, "{c:?} is not neutral");
+            }
         });
     }
 }
