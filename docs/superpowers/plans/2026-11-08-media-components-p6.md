@@ -324,14 +324,52 @@ edit and the handoff note.
     `CODECAPI_AVEncCommonMeanBitRate` = `bitrate`;
   - `CODECAPI_AVEncMPVGOPSize` = `keyframeInterval`;
   - `CODECAPI_AVEncMPVDefaultBPictureCount` = 2 with `bFrames`, else 0;
-  - `CODECAPI_AVEncCommonLowLatency` = false.
+  - `CODECAPI_AVLowLatencyMode` = false: the GUID of `MF_LOW_LATENCY`,
+    which Microsoft's H.264 and H.265 encoder pages document (PR 801's
+    review). It was `CODECAPI_AVEncCommonLowLatency`, which neither page
+    lists and which every MFT here refused.
+
+  The properties are set before the media types (`apply_codec_settings`,
+  then `set_types`): Microsoft's H.264 encoder page requires that for
+  `BPictureCount`.
 
   For every property except the rate-control mode, an `IsSupported` that
   fails, or a `SetValue` that fails (`E_NOTIMPL`, `E_INVALIDARG`, …),
   skips the property. Task 1 saw both:
-  - Microsoft's software MFT: `SetValue` `E_NOTIMPL` for `LowLatency`;
+  - Microsoft's software MFT: `SetValue` `E_NOTIMPL` for
+    `CODECAPI_AVEncCommonLowLatency`;
   - NVIDIA's: `IsSupported` `0x80004001` and `SetValue` `0x80070057` for
-    `BPictureCount` and `LowLatency`.
+    `BPictureCount` and `CODECAPI_AVEncCommonLowLatency`.
+
+  Measured for PR 801's review, at 320x180 and 30 fps, 60 frames, on the
+  four MFTs Task 1 lists (the DX12 ones refuse every type):
+  - **Order.** The software H.264 MFT reorders with `BPictureCount` 2
+    set before the types; it also takes it after them. NVIDIA's MFTs
+    **ignore** the rate control and the GOP set after the types: they read
+    back 0 (CBR) and 90 instead of 3 (Quality) and 250. So the order above
+    is required, not only documented.
+  - **`BPictureCount` 2** on the HEVC Video Extensions' encoder
+    ("HEVCVideoExtensionEncoder", the software HEVC MFT here) answers
+    `0x80070057` before the types as after them, and it reads back 0: the
+    order does not change it, and it never reorders. NVIDIA's answer
+    `0x80004001` / `0x80070057` either way.
+  - **`CODECAPI_AVLowLatencyMode` false** answers `S_OK` on all four and
+    reads back false. `CODECAPI_AVEncCommonLowLatency` answers `E_NOTIMPL`
+    on the two software MFTs and `0x80070057` on NVIDIA's.
+- **H.265 on Microsoft's encoder.** Microsoft's H.265 encoder page gives
+  Main (8-bit) only, no P010 input, and every rate-control mode other than
+  CBR and Quality turned into CBR. Here:
+  - No software MFT takes P010 (Task 1), so `hevc` with `bitDepth 10` and
+    `hardware: false` is `componentUnavailable` at `open`, "no software
+    HEVC encoder; turn Hardware on" (below; `provider.rs`
+    `no_software_encoder_asks_for_hardware`).
+  - Bitrate mode stays `eAVEncCommonRateControlMode_UnconstrainedVBR`.
+    The software HEVC MFT here, the HEVC Video Extensions' encoder, keeps
+    it: it reads back 2 after the types, and the same 60 frames at 1 Mbit/s
+    come out as 385,696 bytes in it against 609,556 in CBR. An encoder that
+    turns it into CBR still encodes at the average bitrate asked, which is
+    all the "Average bitrate" setting promises, so the plugin does not
+    choose CBR for it.
 
   An unsupported mode (or, in bitrate mode, a refused
   `CODECAPI_AVEncCommonMeanBitRate`) refuses the candidate, like a refused
@@ -412,7 +450,15 @@ edit and the handoff note.
     primes nothing, but it loses up to the first 700 frames it is given.
     So the plugin feeds it `AAC_LEAD_IN = 1024` frames of silence (0) at
     `open`, before the mix, and that lead-in is the delay readers hide.
-    The `k`-th packet has `pts = 1024·k − AAC_DELAY`, `duration = 1024`.
+    The `k`-th packet has `pts = first + 1024·k − AAC_DELAY`, `duration =
+    1024`, where `first` is the `pts` of the first mix frame given: a
+    looping export's starts at −16384 (`LOOP_LEAD_IN_FRAMES`), so its first
+    packet is at `−(16384 + AAC_DELAY)` (PR 801's review; as P5's
+    `first + 1024·k − delay`).
+  - Every input sample, the lead-in's included, has a sample time (the
+    frames fed before it) and a non-zero duration (its frames, at most
+    1024 × 16): Microsoft's AAC encoder fails `ProcessInput` without
+    them. An empty chunk is never fed.
     The last packet has the duration it covers,
     `frames + delay − 1024 × (packets − 1)`, as in P5 (`frames` counts the
     mix's frames: 48000 frames give 48 packets, the last of 896).
@@ -428,7 +474,10 @@ edit and the handoff note.
       "Average bitrate", default `quality`, group "Rate control".
     - `quality` integer 0–100, step 1, default 70, group "Rate control",
       `visibleWhen {rateControl: quality}`, description "Higher is better
-      quality and larger."
+      quality and larger. 0 encodes as 1, the lowest." Microsoft's H.264
+      encoder page gives 1–100, so 0 is sent as 1 (PR 801's review: the
+      two software MFTs read 0 back as 1, and all four encode 0 exactly as
+      1).
     - `bitrate` integer, minimum 100000, unit `bit/s`, default 8000000,
       `visibleWhen {rateControl: bitrate}`.
     - `keyframeInterval` integer 1–1000, default 250, advanced, description
@@ -461,6 +510,10 @@ edit and the handoff note.
       HEVC Video Extensions".
     - `aac` likewise for `MFAudioFormat_PCM` → `MFAudioFormat_AAC`, else
       "Media Foundation has no AAC encoder on this system".
+    - When `MFTEnumEx` itself fails, the encoder is unavailable with
+      "Media Foundation could not list its encoders: MFTEnumEx failed:
+      0x{hresult:08X}", not "no such encoder" (PR 801's review; P5's
+      `3e4a1573`).
     - The decoder is always available. (There is no muxer: Task 1 ruled
       B.)
   - `hardware: false` with no software encoder listed (HEVC usually) is
@@ -803,15 +856,20 @@ Every other number below is a probe's output.
   whatever it is given, and drops negative times. 5(c) fails: the reorder
   delay is shown, or the IDR is lost. 5(d) passes. Task 6 and Task 7 follow
   ruling B. The spec's deviation 71 records the outcome.
-- **CI.** No `Server-Media-Foundation` step yet.
-  - The PR is pushed only after Task 10. If its first CI run shows
-    `MFStartup` failing on `windows-latest`, a follow-up commit adds the
-    `Install-WindowsFeature Server-Media-Foundation` step to `ci.yml`.
-  - If that needs a reboot, or does not help, every Media Foundation test
-    there skips with the `describe` reason. The handoff note then says so,
-    and this machine is the only full run.
-  - Either way, CI shows the skips through the existing "Report skipped
-    tests" step.
+- **CI.** No `Server-Media-Foundation` step (PR 801's review): the
+  Plugins job's shell is bash, so an `Install-WindowsFeature` step would
+  not run as written, and Microsoft lists its H.264 and H.265 encoders as
+  "Minimum supported server: None supported", so the feature would not
+  give them anyway.
+  - Every Media Foundation test, `this_machine_lists_the_basic_encoders`
+    included, goes through one gate (`src/mf/gate.rs`, Ruling 17): when
+    Media Foundation or a component it needs is unavailable it skips with
+    the `describe` reason, and only with
+    `CELESTA_REQUIRE_MEDIA_FOUNDATION=1` (set on this machine, not on CI)
+    does it fail instead.
+  - CI shows the skips through the existing "Report skipped tests" step,
+    and this machine is the only full run until CI's runner has Media
+    Foundation.
 - **Consequences for later tasks.**
   - Task 4:
     - A failing `IsSupported` or `SetValue` skips the property (rate
@@ -918,8 +976,8 @@ outside the repository, in a scratch Cargo project depending on `windows`
   - Ask the user before pushing anything. With their yes, push a throwaway
     branch whose workflow runs probe 1 (`MFStartup`) and probe 2
     (`MFTEnumEx`) on `windows-latest`.
-  - If `MFStartup` fails, add a step `Install-WindowsFeature Server-Media-Foundation`
-    and run again.
+  - Add no `Install-WindowsFeature` step (see CI under Verified on
+    Windows: bash shell, and no H.264 or H.265 encoder on Windows Server).
   - Record whether it works without a reboot, and which encoders the
     runner lists (expected: software H.264 and AAC, no HEVC).
   - Delete the throwaway branch afterwards (ask first).
@@ -1009,7 +1067,8 @@ outside the repository, in a scratch Cargo project depending on `windows`
   ```rust
   pub(crate) enum VideoCodec { H264, Hevc }      // ids "h264", "hevc"; ALL; from_id; input_formats(); settings()
   pub(crate) enum AudioCodec { Aac }             // id "aac"; settings()
-  pub(crate) struct Encoders { pub h264: bool, pub hevc: bool, pub aac: bool }   // what MFTEnumEx listed
+  pub(crate) type Listed = Result<bool, String>;   // Err: the failed MFTEnumEx and its HRESULT
+  pub(crate) struct Encoders { pub h264: Listed, pub hevc: Listed, pub aac: Listed }   // what MFTEnumEx listed
   pub(crate) fn describe_from(startup: Result<(), String>, encoders: &Encoders) -> Vec<ComponentDescription>
   ```
   There is no `MuxerFormat`: Task 1 ruled B, so the plugin declares no
@@ -1042,8 +1101,11 @@ outside the repository, in a scratch Cargo project depending on `windows`
       available description per manifest component, in manifest order.
       Video encoders have both transports and the manifest's
       `input_formats`; `aac` has `[44100, 48000]` and `[1, 2]`.
-    - `a_missing_encoder_has_a_reason`: `hevc: false` gives the HEVC
+    - `a_missing_encoder_has_a_reason`: `hevc: Ok(false)` gives the HEVC
       reason.
+    - `a_failed_enumeration_says_so`: `Err("MFTEnumEx failed: 0x80004005")`
+      gives "Media Foundation could not list its encoders: …" with the
+      HRESULT.
     - `a_failed_startup_makes_everything_unavailable`:
       `describe_from(Err("MFStartup failed: 0xC00D36E3".into()), ..)` makes
       every component unavailable, with a reason containing `MFStartup
@@ -1054,8 +1116,10 @@ outside the repository, in a scratch Cargo project depending on `windows`
       `aac`'s `bitrate`. And
       `celesta_media::settings::validate` of `{}` fills the defaults.
   - `tests/describe.rs`, on Windows:
-    - `this_machine_lists_the_basic_encoders`: `h264` and `aac` are
-      available. Print `hevc`'s state.
+    - `this_machine_lists_the_basic_encoders`: through the shared gate,
+      the decoder, `h264`, and `aac` are available, or the test skips with
+      the `describe` reason unless `CELESTA_REQUIRE_MEDIA_FOUNDATION=1`
+      (CI's Windows Server runner may lack them). Print `hevc`'s state.
     - `the_program_describes_what_the_library_does`: through
       `MediaProcess::factory` with `ProviderUse::Describe` and
       `env!("CARGO_BIN_EXE_celesta-codec-mediafoundation")`.
@@ -1145,8 +1209,9 @@ a malformed {what}")`.
     - `alpha_is_ignored`.
     - `sizes`: output length equals
       `PixelFormat::Nv12.frame_bytes(w, h)` / `P010`'s for 64x36.
-- [ ] **Step 2:** `cargo test --manifest-path plugins/Cargo.toml -p celesta-codec-mediafoundation annexb hns aac_user_data convert`
-  fails.
+- [ ] **Step 2:** `cargo test --manifest-path plugins/Cargo.toml -p celesta-codec-mediafoundation --lib -- annexb hns aac_user_data convert`
+  fails. (Cargo takes one test-name filter; several go to the test binary
+  after `--`.)
 - [ ] **Step 3: Implement.** The copied files keep P5's tests that apply.
 - [ ] **Step 4:** The tests and Clippy pass, on Windows and through CI's
   Linux and macOS jobs.
@@ -1568,7 +1633,11 @@ impl MfDecoder {
   `packaging/windows/README.md` for its parameters), then
   `node scripts/test-package.mjs <package folder>`. If the build needs what
   this machine lacks, say so in the report and leave it to CI's Package
-  job, which runs on `push`.
+  job. That job runs on pushes to `main` (after the merge) and on a manual
+  run of the CI workflow (`ci.yml`, `workflow_dispatch`) on the branch,
+  never on pull requests. To package before merging, run CI manually on
+  the branch. Never dispatch `package.yml`: it is the Release workflow
+  (signing, `gh release`, deploy).
 - [ ] **Step 3: Commit:** `feat(packaging): bundle the Media Foundation plugin in the Windows package`.
 
 ### Task 10: Measurements, docs, the spec, HANDOFF.md, and the handoff note

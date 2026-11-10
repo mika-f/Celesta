@@ -806,7 +806,7 @@ Deviations in P4 (`docs/handoff/2026-11-09-media-stills.md`):
   - A decoder on AVFoundation (`AVAssetReader`) for `mp4`, `mov`, and `m4a`.
 
   It is written in Rust with `objc2` bindings, and builds on macOS only (manifest `executable` for `macos-*`).
-- **P6, Windows** (`plugins/mediafoundation`): the same component set on Media Foundation (encoder MFTs, SinkWriter with compressed input, SourceReader). As P6's Task 1 found, the SinkWriter muxer is not shipped (deviation 71). It cannot be run on the macOS development machine, so it is a separate session, verified by CI and on a Windows machine.
+- **P6, Windows** (`plugins/mediafoundation`): P5's component set less ProRes and the muxers (deviation 70), on Media Foundation: the video encoders `h264` and `hevc` and the audio encoder `aac` on encoder MFTs, and a decoder on the SourceReader. As built, there is no muxer (deviation 71): P6's Task 1 found that the MPEG-4 sink (SinkWriter with compressed input) writes no edit list, for the encoder's delay or a loop's pre-roll, and drops negative sample times, so the encoders go into FFmpeg's `mp4`, whose edit lists hide both. It cannot be run on the macOS development machine, so it was a separate session, verified on a Windows machine; CI's Windows runner skips what needs Media Foundation when it lacks it.
 
 These prove the design: an independent plugin, combined with FFmpeg's
 (for example AVFoundation's HEVC with FFmpeg's Opus in FFmpeg's MP4).

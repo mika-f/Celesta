@@ -56,7 +56,10 @@ FFmpeg's MP4, FFmpeg's x264 with Media Foundation's AAC in FFmpeg's MP4.
   lists an NV12 → H.264 or NV12 → HEVC encoder, otherwise `Media Foundation
   has no H.264 encoder on this system` or `Media Foundation has no HEVC
   encoder on this system; install a GPU driver with one or the HEVC Video
-  Extensions`; `aac` when it lists PCM → AAC. The decoder is available
+  Extensions`; `aac` when it lists PCM → AAC. When `MFTEnumEx` itself
+  fails, the encoder is unavailable with `Media Foundation could not list
+  its encoders: MFTEnumEx failed: 0x…` rather than "no such encoder"
+  (PR 801's review, as P5's `3e4a1573`). The decoder is available
   whenever Media Foundation started. When `MFStartup` fails, every
   component is unavailable with `Media Foundation is not available on this
   system (MFStartup failed: 0x…); on Windows Server add the Media
@@ -64,13 +67,17 @@ FFmpeg's MP4, FFmpeg's x264 with Media Foundation's AAC in FFmpeg's MP4.
 - **Settings** (keys follow P5's):
   - `h264`: `profile` `high` / `main` / `baseline` (`high`); `rateControl`
     `quality` / `bitrate` (`quality`, group "Rate control"); `quality`
-    0–100 (70; `CODECAPI_AVEncCommonQuality`); `bitrate` at least 100000
+    0–100 (70; `CODECAPI_AVEncCommonQuality`, where 0 is sent as 1, since
+    Microsoft's encoders take 1–100); `bitrate` at least 100000
     bit/s (8000000; `CODECAPI_AVEncCommonMeanBitRate` in
     `eAVEncCommonRateControlMode_UnconstrainedVBR`); `keyframeInterval`
     1–1000 (250, advanced; `CODECAPI_AVEncMPVGOPSize`); `bFrames` (`true`,
     advanced; `CODECAPI_AVEncMPVDefaultBPictureCount` 2, else 0; Baseline
     is always 0); `hardware` (`true`, advanced, "Hardware encoder").
-    `CODECAPI_AVEncCommonLowLatency` is set false. The output type's
+    `CODECAPI_AVLowLatencyMode` (`MF_LOW_LATENCY`, which the H.264 and
+    H.265 encoder pages document; PR 801's review) is set false. Every
+    `ICodecAPI` property is set before the media types, as the H.264 page
+    requires for `BPictureCount`. The output type's
     `MF_MT_AVG_BITRATE` is `bitrate`, or 8000000 in quality mode, since the
     MFT requires one.
   - `hevc`: the same without `profile`, plus `bitDepth` `8` (Main) / `10`
@@ -268,14 +275,15 @@ RTX 4070 with driver 610.88 (`32.0.16.1088`):
   and `0x6` for DX12's, but all four answer `MF_TRANSFORM_ASYNC = 1` once
   activated.
 - **Microsoft's software H.264 MFT** takes quality mode, quality 70, GOP
-  250, and `BPictureCount` 2; `LowLatency` answers `E_NOTIMPL` to
-  `SetValue`. With B-frames it reorders (decode order 0, 3, 1, 2, 6, 4, 5,
+  250, and `BPictureCount` 2; `CODECAPI_AVEncCommonLowLatency` answers
+  `E_NOTIMPL` to `SetValue`. With B-frames it reorders (decode order 0, 3, 1, 2, 6, 4, 5,
   …), its SPS says `max_num_reorder_frames` 1, `DecodeTimestamp` is the
   input times in order, and **every sample time is the input's plus one
   frame** (333667 hns at 30000/1001). Without B-frames it does not reorder
   and keeps the input times. Its SPS has no `video_signal_type`.
-- **NVIDIA's MFTs** refuse `BPictureCount` and `LowLatency`
-  (`IsSupported` `0x80004001`, `SetValue` `0x80070057`) and never reorder;
+- **NVIDIA's MFTs** refuse `BPictureCount` and
+  `CODECAPI_AVEncCommonLowLatency` (`IsSupported` `0x80004001`, `SetValue`
+  `0x80070057`) and never reorder;
   they refuse 64x36, 128x72, 144x80, 144x90, 146x48, and 160x36 at
   `SetOutputType` (`0xC00D6D76`, `MF_E_UNSUPPORTED_D3D_TYPE`) and accept
   146x50, 160x90, and larger; their SPS carries 1/1/1 limited.
@@ -283,6 +291,26 @@ RTX 4070 with driver 610.88 (`32.0.16.1088`):
   presumably wanting a D3D manager, and are passed over. **The HEVC Video
   Extensions' encoder** refuses `BPictureCount` 2 (`0x80070057`) and so
   never reorders (Task 4).
+- **Encoder properties, for PR 801's review** (320x180, 30 fps, 60
+  frames, half static and half noise):
+  - NVIDIA's MFTs ignore the rate control and the GOP set after the media
+    types (they read back CBR and 90), so setting them before the types,
+    as the plugin does, is required. The software H.264 MFT reorders with
+    `BPictureCount` 2 set either way. The HEVC Video Extensions' encoder
+    refuses `BPictureCount` 2 (`0x80070057`) before the types as after
+    them, so the order does not make it reorder.
+  - `CODECAPI_AVLowLatencyMode` false answers `S_OK` on all four MFTs,
+    where `CODECAPI_AVEncCommonLowLatency` was refused by all four.
+  - Quality 0 reads back as 1 on both software MFTs, and on all four it
+    encodes byte for byte as quality 1; the plugin now sends 1.
+  - The HEVC Video Extensions' encoder keeps
+    `eAVEncCommonRateControlMode_UnconstrainedVBR` (it reads back 2, and
+    1 Mbit/s gives 385,696 bytes against 609,556 in CBR), unlike the
+    in-box H.265 encoder Microsoft documents, which turns it into CBR.
+    Either way the average bitrate asked is the target, so bitrate mode
+    keeps it. That encoder takes no P010 either, and 10-bit `hevc` with
+    `hardware: false` is `componentUnavailable` ("no software HEVC
+    encoder; turn Hardware on").
 - **AAC.** At 48 kHz stereo and 192 kbit/s the output type's
   `MF_MT_USER_DATA` is `00 00 29 00 00 00 00 00 00 00 00 00 11 90` and
   there is no `MF_SD_AUDIO_ENCODER_DELAY`. One second of silence with a
@@ -489,11 +517,13 @@ does not change. No build or test of mine ran during the exports.
 
 - **CI on `windows-latest` is unproven.** Task 1's CI probe was not run
   (it needs a push); the PR's first CI run will show whether Media
-  Foundation starts there. If `MFStartup` fails, a follow-up adds
-  `Install-WindowsFeature Server-Media-Foundation` to `ci.yml`; if that
-  needs a reboot or does not help, every Media Foundation test there skips
-  with the `describe` reason, which "Report skipped tests" lists, and this
-  machine stays the only full run. The skips go through one gate
+  Foundation starts there. No `Install-WindowsFeature` step is added
+  (PR 801's review): the Plugins job's shell is bash, and Microsoft lists
+  its H.264 and H.265 encoders as unsupported on Windows Server, so the
+  feature would not give them. Where Media Foundation or an encoder is
+  missing, every Media Foundation test there skips with the `describe`
+  reason, which "Report skipped tests" lists, and this machine stays the
+  only full run. The skips go through one gate
   (`src/mf/gate.rs`): with `CELESTA_REQUIRE_MEDIA_FOUNDATION=1` a missing
   Media Foundation or component fails the test instead, as
   `CELESTA_REQUIRE_GPU=1` does a missing adapter. This machine runs with it
@@ -527,9 +557,12 @@ does not change. No build or test of mine ran during the exports.
   renderer, so the `rgba8` path is covered by the encoder test that feeds
   RGBA (`rgba8_input_is_converted_with_bt709`), not by an export.
 - **The package build ran with `-ZipOnly`** (Task 9): the Inno Setup
-  installer was not built here.
-- **Deferred minors from review**: a failed `MFTEnumEx` reads as "no …
-  encoder" with its HRESULT lost; the AAC `finish` does not check that the
+  installer was not built here. CI's Package job builds both packages, but
+  only on pushes to `main` (after the merge) and on a manual run of the CI
+  workflow (`ci.yml`) on a branch, never on pull requests: to package this
+  branch before merging, run CI manually on it. Never dispatch
+  `package.yml`, the Release workflow (signing, `gh release`, deploy).
+- **Deferred minors from review**: the AAC `finish` does not check that the
   MFT gave every packet (`last.pts + duration == end`), a zero-frame finish
   leaves a lone lead-in packet, and a failed feed mid-encode leaves the
   session unusable; a refused `MeanBitRate` says "has no average bitrate

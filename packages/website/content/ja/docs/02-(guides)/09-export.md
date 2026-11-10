@@ -278,7 +278,7 @@ NVIDIA GeForce RTX 4070 では、GPU の H.264 と HEVC のエンコーダーは
 | --- | --- | --- |
 | `mediafoundation/h264` | `profile` | `high`、`main`、`baseline`（`high`） |
 | | `rateControl` | 品質一定の `quality`、平均ビットレートの `bitrate`（`quality`） |
-| | `quality` | 0〜100、`rateControl=quality` のとき。大きいほど高画質・大容量（70） |
+| | `quality` | 0〜100、`rateControl=quality` のとき。大きいほど高画質・大容量で、0 は Microsoft のエンコーダーが受け付ける最低の 1 として扱います（70） |
 | | `bitrate` | ビット毎秒、100000 以上、`rateControl=bitrate` のとき（8000000） |
 | | `keyframeInterval` | 1〜1000、キーフレームの間隔の最大フレーム数（250） |
 | | `bFrames` | `true` または `false`。フレームを並べ替えると圧縮率が上がります。デコードできないプレーヤー向けには無効にします（`true`）。Baseline では常に使いません |

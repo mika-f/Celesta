@@ -278,7 +278,7 @@ Their settings in this release (`--describe mediafoundation/hevc` shows them too
 | --- | --- | --- |
 | `mediafoundation/h264` | `profile` | `high`, `main`, or `baseline` (`high`) |
 | | `rateControl` | `quality` for constant quality or `bitrate` for an average bitrate (`quality`) |
-| | `quality` | 0–100, with `rateControl=quality`; higher is better quality and larger (70) |
+| | `quality` | 0–100, with `rateControl=quality`; higher is better quality and larger, and 0 encodes as 1, the lowest Microsoft's encoders take (70) |
 | | `bitrate` | bits per second, at least 100000, with `rateControl=bitrate` (8000000) |
 | | `keyframeInterval` | 1–1000, the most frames between keyframes (250) |
 | | `bFrames` | `true` or `false`: reordered frames compress better; turn them off for players that cannot decode them (`true`). Baseline never has them |
