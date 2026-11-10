@@ -85,8 +85,9 @@ fn check_tracks(component: &str, request: &MuxerRequest<'_>) -> Result<i64, Medi
     Ok(i64::from(frame_rate.denominator))
 }
 
-/// Creates `path` with `bytes`, whole on disk when it returns; `files`
-/// gains it once it exists.
+/// Creates `path` with `bytes`, written whole and closed when it returns
+/// (not synced to disk: it is published by a rename); `files` gains it once
+/// it exists.
 fn write_whole(path: &Path, bytes: &[u8], files: &mut Vec<PathBuf>) -> Result<(), MediaError> {
     let failed = |operation: &str, error: std::io::Error| {
         MediaError::Codec(format!("could not {operation} {}: {error}", path.display()))

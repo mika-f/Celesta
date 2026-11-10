@@ -639,7 +639,8 @@ pub(crate) const STILL_MUXER_REASON: &str =
     "it writes still images; select frames to export stills";
 
 /// The first muxer writing `output`'s extension (ignoring case): by
-/// [`default_rank`], then in search order; never a project's.
+/// [`default_rank`], then in search order; never a project's, and only one
+/// that [`serves_video`] (no built-in or sequence muxer).
 fn default_muxer<'a>(
     registry: &MediaRegistry,
     components: &'a [MediaComponentInfo],

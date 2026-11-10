@@ -653,6 +653,47 @@ mod tests {
         for other in ["fastest", "fast", "balanced"] {
             assert_eq!(decode_png(&level(other)).1, frame, "{other}");
         }
+        // Each level is the `png` crate's of that name; `balanced`, the
+        // default, leaves the crate's default alone.
+        for (level, expected) in [
+            ("none", Some("NoCompression")),
+            ("fastest", Some("Fastest")),
+            ("fast", Some("Fast")),
+            ("balanced", None),
+            ("high", Some("High")),
+        ] {
+            let settings = settings(&[("compression", text(level))]);
+            let request = VideoEncoderRequest {
+                component: "png",
+                settings: &settings,
+                width: WIDTH,
+                height: HEIGHT,
+                frame_rate: Rational::new(30_000, 1_001),
+                timescale: 30_000,
+                offered: &BOTH,
+                color: &Color::bt709_limited(),
+            };
+            let Ok((Format::Png { compression, .. }, _, _)) = open(&request) else {
+                panic!("{level}");
+            };
+            assert_eq!(
+                compression.map(|chosen| format!("{chosen:?}")).as_deref(),
+                expected,
+                "{level}"
+            );
+        }
+        // And on compressible pixels, no compression is the larger file.
+        let flat = [10, 20, 30, 255].repeat(64 * 64);
+        let flat_level = |level: &str| {
+            let mut provider = ImageComponents::default();
+            let settings = settings(&[("compression", text(level))]);
+            let opened = open_sized(&mut provider, "png", &settings, (64, 64), &BOTH).unwrap();
+            let encoded = provider
+                .encode_video(opened.session, 0, flat.clone())
+                .unwrap();
+            encoded.packets[0].bytes.len()
+        };
+        assert!(flat_level("none") > flat_level("high"));
 
         let mut provider = ImageComponents::default();
         let only = |provider: &mut ImageComponents, settings: &Settings, offered| {

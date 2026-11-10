@@ -196,7 +196,7 @@ impl ExportDialogModel {
             .components()
             .into_iter()
             .filter(|info| info.kind != ComponentKind::Decoder)
-            // The built-in image muxers write stills, not a video.
+            // Built-in and sequence muxers write stills, not a video.
             .filter(|info| info.kind != ComponentKind::Muxer || serves_video(info))
             .collect();
         // Stable: search order, then manifest order, within an origin.

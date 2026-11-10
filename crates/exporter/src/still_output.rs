@@ -13,7 +13,8 @@ use crate::encode::{IMAGE_STAGE, MUXER_STAGE, check_opened};
 use crate::error::ExportError;
 use crate::options::{AudioChoice, OutputChoice, SettingInput};
 use crate::output;
-use crate::resolve::{ResolvedOutput, resolve_preset_output};
+use crate::render::ensure_not_cancelled;
+use crate::resolve::{OutputPlan, ResolvedOutput, resolve_preset_output};
 use celesta_composition::Rational;
 use celesta_media::{
     Color as MediaColor, ComponentDescription, ComponentEntry, ComponentKind, ComponentRef,
@@ -24,8 +25,8 @@ use celesta_media::{
 use celesta_media_image::{IMAGE, IMAGE_SEQUENCE, codec_for_extension, sequence_path};
 use celesta_plugin_host::{MediaOrigin, PluginKillSwitch, RESERVED_PLUGIN_ID, codec_family};
 use celesta_remote::{StagedFile, publish_path};
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -49,12 +50,14 @@ enum Staging {
     /// One file beside the output, published at `path` by `finish`.
     One { file: StagedFile, path: PathBuf },
     /// A hidden folder beside the output holding the muxer's `pattern`;
-    /// `names` are the final names by composition frame.
+    /// `names` are the final names by composition frame, and `order` the
+    /// frames in selection order.
     Sequence {
         /// Kept until the export ends, then removed with what is left in it.
         _folder: tempfile::TempDir,
         pattern: PathBuf,
         names: HashMap<u64, PathBuf>,
+        order: Vec<u64>,
     },
 }
 
@@ -83,6 +86,8 @@ pub(crate) struct StillOutput {
     config: Option<TrackConfig>,
     /// The last composition frame written to one file.
     written: Option<u64>,
+    /// The sequence's frames published so far.
+    published: HashSet<u64>,
     size: (u32, u32),
     frame_rate: Rational,
     overwrite: bool,
@@ -348,6 +353,7 @@ impl StillOutput {
             muxer: None,
             config: None,
             written: None,
+            published: HashSet::new(),
             size,
             frame_rate,
             overwrite,
@@ -360,6 +366,12 @@ impl StillOutput {
     /// alpha.
     pub(crate) fn opened(&self) -> &VideoEncoderOpened {
         &self.opened
+    }
+
+    /// The components it writes with, as the progress display names them:
+    /// the muxer and the encoder with its changed settings, and no audio.
+    pub(crate) fn plan(&self) -> OutputPlan {
+        self.resolved.plan()
     }
 
     fn error(&self, stage: &'static str, source: MediaError) -> ExportError {
@@ -464,6 +476,7 @@ impl StillOutput {
         }
         for frame in frames {
             published.push((frame, self.publish_frame(frame)?));
+            self.published.insert(frame);
         }
         Ok(())
     }
@@ -537,16 +550,8 @@ impl StillOutput {
         if !staged.is_file() {
             return Err(not_written());
         }
-        publish_path(&staged, name, self.overwrite).map_err(|source| {
-            if source.kind() == io::ErrorKind::AlreadyExists {
-                ExportError::OutputExists(name.clone())
-            } else {
-                ExportError::Io {
-                    operation: "publish image",
-                    source,
-                }
-            }
-        })?;
+        publish_path(&staged, name, self.overwrite)
+            .map_err(|source| publish_failed(source, name))?;
         Ok(name.clone())
     }
 
@@ -554,13 +559,19 @@ impl StillOutput {
     /// adding it to `published`: one file, under the frame written to it,
     /// or the sequence's files of the frames the flush gave, in packet
     /// order, each as it is published. A failure aborts what is still open.
+    /// The muxer must have written one file's staged file, or a file for
+    /// every frame of a sequence. One file is not published once the export
+    /// is cancelled.
     pub(crate) fn finish(mut self, published: &mut Vec<(u64, PathBuf)>) -> Result<(), ExportError> {
         if let Err(error) = self.try_finish(published) {
             self.abort();
             return Err(error);
         }
         if let Staging::One { file, path } = self.staging {
-            output::publish(file, &path, self.overwrite, "publish image")?;
+            // The staged file goes with `file` when this returns early.
+            ensure_not_cancelled(&self.cancellation)?;
+            file.publish(&path, self.overwrite)
+                .map_err(|source| publish_failed(source, &path))?;
             published.push((self.written.unwrap_or(0), path));
         }
         Ok(())
@@ -590,7 +601,8 @@ impl StillOutput {
         };
         let plugin = self.resolved.muxer.plugin;
         let registry = self.registry.clone();
-        self.provider(plugin)
+        let files = self
+            .provider(plugin)
             .and_then(|provider| {
                 provider
                     .muxer()
@@ -598,7 +610,19 @@ impl StillOutput {
                     .finish_muxer(session)
             })
             .map_err(|source| self.error(MUXER_STAGE, source))?;
-        Ok(())
+        let muxer = &self.resolved.muxer.reference;
+        let unwritten = match &self.staging {
+            Staging::One { file, .. } => (!files.iter().any(|written| written == file.path()))
+                .then(|| format!("{muxer} wrote no image file")),
+            Staging::Sequence { order, .. } => order
+                .iter()
+                .find(|frame| !self.published.contains(frame))
+                .map(|frame| format!("{muxer} wrote no file for frame {frame}")),
+        };
+        match unwritten {
+            Some(message) => Err(self.error(MUXER_STAGE, MediaError::Codec(message))),
+            None => Ok(()),
+        }
     }
 
     /// Ends the sessions still open; staged files go, published ones stay.
@@ -621,6 +645,18 @@ impl StillOutput {
             muxer.abort_muxer(session);
         }
         // The staged file or folder goes with `self`.
+    }
+}
+
+/// A failure to publish an image at `name`, naming it.
+fn publish_failed(source: io::Error, name: &Path) -> ExportError {
+    if source.kind() == io::ErrorKind::AlreadyExists {
+        ExportError::OutputExists(name.to_owned())
+    } else {
+        ExportError::Io {
+            operation: "publish image",
+            source: io::Error::new(source.kind(), format!("{}: {source}", name.display())),
+        }
     }
 }
 
@@ -659,6 +695,7 @@ fn stage(files: StillFiles, output: &Path) -> Result<Staging, ExportError> {
             Ok(Staging::Sequence {
                 _folder: folder,
                 pattern,
+                order: named.iter().map(|(frame, _)| *frame).collect(),
                 names: named.into_iter().collect(),
             })
         }
@@ -1554,5 +1591,450 @@ mod tests {
         assert_eq!(fs::read(named(0)).unwrap(), pixel(0));
         assert_eq!(fs::read(named(1)).unwrap(), b"keep");
         assert_eq!(names(dir.path()), ["c-000000.png", "c-000001.png"]);
+    }
+
+    /// How [`FakeImage`] misbehaves.
+    #[derive(Clone, Copy, Default)]
+    struct Mode {
+        /// Added to each packet's timestamp.
+        shift: i64,
+        /// A composition frame the encoder gives no packet for.
+        drop: Option<u64>,
+        /// A composition frame the sequence muxer writes no file for.
+        skip: Option<u64>,
+        /// Whether `finish_muxer` leaves the files out of its answer.
+        unlisted: bool,
+    }
+
+    /// A plugin's image components: `raw`, an encoder writing `png` whose
+    /// packets are the frame's pixels, and two muxers writing `.png`:
+    /// `frames` (a sequence) and `single` (one file). Each writes a
+    /// packet's bytes as they are.
+    #[derive(Default)]
+    struct FakeImage {
+        mode: Mode,
+        config_due: bool,
+        output: PathBuf,
+        sequence: bool,
+        files: Vec<PathBuf>,
+    }
+
+    impl MediaProvider for FakeImage {
+        fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+            let describe = |kind, id: &str| ComponentDescription {
+                kind,
+                id: id.to_owned(),
+                available: true,
+                reason: None,
+                settings: Vec::new(),
+                input_formats: if kind == ComponentKind::VideoEncoder {
+                    vec![PixelFormat::Rgba8]
+                } else {
+                    Vec::new()
+                },
+                transports: Vec::new(),
+                sample_rates: None,
+                channels: Vec::new(),
+            };
+            Ok(vec![
+                describe(ComponentKind::VideoEncoder, "raw"),
+                describe(ComponentKind::Muxer, "frames"),
+                describe(ComponentKind::Muxer, "single"),
+            ])
+        }
+
+        fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
+            Some(self)
+        }
+
+        fn muxer(&mut self) -> Option<&mut dyn celesta_media::Muxer> {
+            Some(self)
+        }
+    }
+
+    impl VideoEncoder for FakeImage {
+        fn open_video(
+            &mut self,
+            _: &VideoEncoderRequest<'_>,
+        ) -> Result<VideoEncoderOpened, MediaError> {
+            self.config_due = true;
+            Ok(VideoEncoderOpened {
+                session: SessionId(1),
+                input: PixelFormat::Rgba8,
+                alpha: false,
+            })
+        }
+
+        fn encode_video(
+            &mut self,
+            _: SessionId,
+            pts: i64,
+            frame: Vec<u8>,
+        ) -> Result<Encoded, MediaError> {
+            let config = std::mem::take(&mut self.config_due).then(|| TrackConfig {
+                codec: "png".to_owned(),
+                description: None,
+            });
+            let packets = if self.mode.drop == u64::try_from(pts).ok() {
+                Vec::new()
+            } else {
+                let pts = pts + self.mode.shift;
+                vec![Packet {
+                    pts,
+                    dts: pts,
+                    duration: 1,
+                    key: true,
+                    bytes: frame,
+                    additional: Vec::new(),
+                }]
+            };
+            Ok(Encoded { packets, config })
+        }
+
+        fn finish_video(&mut self, _: SessionId) -> Result<Encoded, MediaError> {
+            Ok(Encoded::default())
+        }
+
+        fn abort_video(&mut self, _: SessionId) {}
+    }
+
+    impl celesta_media::Muxer for FakeImage {
+        fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
+            self.output = request.output.to_owned();
+            self.sequence = request.component == "frames";
+            Ok(SessionId(2))
+        }
+
+        fn write_packets(
+            &mut self,
+            _: SessionId,
+            packets: &[TrackPacket],
+        ) -> Result<(), MediaError> {
+            for packet in packets {
+                // These tests run at 4 fps: a timestamp is its frame.
+                let frame = packet.packet.pts as u64;
+                let path = if self.sequence {
+                    if self.mode.skip == Some(frame) {
+                        continue;
+                    }
+                    sequence_path(&self.output, frame)?
+                } else {
+                    self.output.clone()
+                };
+                fs::write(&path, &packet.packet.bytes)
+                    .map_err(|error| MediaError::Codec(error.to_string()))?;
+                if !self.files.contains(&path) {
+                    self.files.push(path);
+                }
+            }
+            Ok(())
+        }
+
+        fn finish_muxer(&mut self, _: SessionId) -> Result<Vec<PathBuf>, MediaError> {
+            let files = std::mem::take(&mut self.files);
+            Ok(if self.mode.unlisted {
+                Vec::new()
+            } else {
+                files
+            })
+        }
+
+        fn abort_muxer(&mut self, _: SessionId) -> Vec<PathBuf> {
+            std::mem::take(&mut self.files)
+        }
+    }
+
+    fn fake_image_plugin(mode: Mode) -> celesta_media::RegisteredPlugin {
+        let muxer = |id: &str, sequence| celesta_plugin_host::MediaMuxerEntry {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            extensions: vec!["png".to_owned()],
+            video: vec!["png".to_owned()],
+            audio: None,
+            default_video: Some("png".to_owned()),
+            default_audio: None,
+            trims_leading_audio: false,
+            sequence,
+        };
+        celesta_media::RegisteredPlugin {
+            id: "fake".to_owned(),
+            version: "1.0.0".to_owned(),
+            origin: MediaOrigin::User,
+            directory: PathBuf::new(),
+            executable: None,
+            media: celesta_plugin_host::MediaManifest {
+                decoders: Vec::new(),
+                video_encoders: vec![celesta_plugin_host::MediaVideoEncoderEntry {
+                    id: "raw".to_owned(),
+                    name: "Raw".to_owned(),
+                    codecs: vec!["png".to_owned()],
+                    input_formats: Some(vec!["rgba8".to_owned()]),
+                }],
+                audio_encoders: Vec::new(),
+                muxers: vec![muxer("frames", true), muxer("single", false)],
+            },
+            factory: Arc::new(move |_, _| {
+                Ok(Box::new(FakeImage {
+                    mode,
+                    ..FakeImage::default()
+                }) as Box<dyn MediaProvider>)
+            }),
+        }
+    }
+
+    /// Opens `muxer` of [`FakeImage`] for `files` of `output`, 1x1 at 4 fps.
+    fn open_fake(
+        mode: Mode,
+        muxer: &str,
+        files: StillFiles,
+        output: &Path,
+        cancellation: &ExportCancellation,
+    ) -> StillOutput {
+        StillOutput::open(
+            with_builtin(vec![fake_image_plugin(mode)]),
+            &naming(muxer),
+            None,
+            files,
+            output,
+            false,
+            (1, 1),
+            Rational::new(4, 1),
+            false,
+            cancellation,
+        )
+        .unwrap()
+        .0
+    }
+
+    fn sequence_of(dir: &Path, frames: &[u64]) -> (PathBuf, StillFiles) {
+        let named = |frame: u64| (frame, dir.join(format!("c-{frame:06}.png")));
+        (
+            dir.join("c.png"),
+            StillFiles::Sequence(frames.iter().map(|&frame| named(frame)).collect()),
+        )
+    }
+
+    fn pixel(value: u8) -> Vec<u8> {
+        vec![value, value, value, 255]
+    }
+
+    fn muxer_message(error: &ExportError) -> String {
+        match error {
+            ExportError::Codec {
+                stage,
+                source: MediaError::Codec(message),
+            } if *stage == MUXER_STAGE => message.clone(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_plugins_sequence_muxer_writes_each_frame_before_it_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let (output, files) = sequence_of(dir.path(), &[2, 0]);
+        let mut still = open_fake(
+            Mode::default(),
+            "fake/frames",
+            files,
+            &output,
+            &ExportCancellation::default(),
+        );
+        // The muxer's own plugin brings the encoder of its default codec.
+        assert_eq!(still.resolved.video.reference, reference("fake/raw"));
+        let named = |frame: u64| dir.path().join(format!("c-{frame:06}.png"));
+        assert_eq!(write(&mut still, 2, pixel(2)).unwrap(), [(2, named(2))]);
+        assert_eq!(fs::read(named(2)).unwrap(), pixel(2));
+        assert_eq!(write(&mut still, 0, pixel(0)).unwrap(), [(0, named(0))]);
+        assert_eq!(finish(still).unwrap(), []);
+        assert_eq!(fs::read(named(0)).unwrap(), pixel(0));
+        assert_eq!(names(dir.path()), ["c-000000.png", "c-000002.png"]);
+    }
+
+    #[test]
+    fn a_frame_the_sequence_muxer_did_not_write_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let (output, files) = sequence_of(dir.path(), &[0, 1]);
+        let mode = Mode {
+            skip: Some(1),
+            ..Mode::default()
+        };
+        let mut still = open_fake(
+            mode,
+            "fake/frames",
+            files,
+            &output,
+            &ExportCancellation::default(),
+        );
+        write(&mut still, 0, pixel(0)).unwrap();
+        let error = write(&mut still, 1, pixel(1)).unwrap_err();
+        assert_eq!(
+            muxer_message(&error),
+            "fake/frames wrote no file for frame 1"
+        );
+        still.abort();
+        assert_eq!(names(dir.path()), ["c-000000.png"]);
+    }
+
+    #[test]
+    fn a_packet_for_a_frame_not_selected_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let (output, files) = sequence_of(dir.path(), &[0, 1]);
+        let mode = Mode {
+            shift: 10,
+            ..Mode::default()
+        };
+        let mut still = open_fake(
+            mode,
+            "fake/frames",
+            files,
+            &output,
+            &ExportCancellation::default(),
+        );
+        let error = write(&mut still, 0, pixel(0)).unwrap_err();
+        assert_eq!(
+            muxer_message(&error),
+            "frame 10 is not one this export writes"
+        );
+        still.abort();
+        assert!(names(dir.path()).is_empty(), "{:?}", names(dir.path()));
+    }
+
+    #[test]
+    fn a_sequence_missing_a_frame_fails_at_finish() {
+        let dir = tempfile::tempdir().unwrap();
+        let (output, files) = sequence_of(dir.path(), &[0, 1, 2]);
+        let mode = Mode {
+            drop: Some(1),
+            ..Mode::default()
+        };
+        let mut still = open_fake(
+            mode,
+            "fake/frames",
+            files,
+            &output,
+            &ExportCancellation::default(),
+        );
+        for frame in 0..3 {
+            write(&mut still, frame, pixel(frame as u8)).unwrap();
+        }
+        let mut published = Vec::new();
+        let error = still.finish(&mut published).unwrap_err();
+        assert_eq!(
+            muxer_message(&error),
+            "fake/frames wrote no file for frame 1"
+        );
+        assert!(published.is_empty());
+        // The frames written stay, and the staging folder goes.
+        assert_eq!(names(dir.path()), ["c-000000.png", "c-000002.png"]);
+    }
+
+    #[test]
+    fn a_plugins_one_file_muxer_publishes_its_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("a.png");
+        let mut still = open_fake(
+            Mode::default(),
+            "fake/single",
+            one(&output),
+            &output,
+            &ExportCancellation::default(),
+        );
+        assert_eq!(write(&mut still, 3, pixel(3)).unwrap(), []);
+        assert!(!output.exists());
+        assert_eq!(finish(still).unwrap(), [(3, output.clone())]);
+        assert_eq!(fs::read(&output).unwrap(), pixel(3));
+        assert_eq!(names(dir.path()), ["a.png"]);
+    }
+
+    #[test]
+    fn a_one_file_muxer_must_answer_with_the_staged_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("a.png");
+        let mode = Mode {
+            unlisted: true,
+            ..Mode::default()
+        };
+        let mut still = open_fake(
+            mode,
+            "fake/single",
+            one(&output),
+            &output,
+            &ExportCancellation::default(),
+        );
+        write(&mut still, 0, pixel(0)).unwrap();
+        let error = finish(still).unwrap_err();
+        assert_eq!(muxer_message(&error), "fake/single wrote no image file");
+        assert!(names(dir.path()).is_empty(), "{:?}", names(dir.path()));
+    }
+
+    #[test]
+    fn a_cancel_before_finish_publishes_no_image() {
+        for sheet in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let output = dir.path().join("a.png");
+            let cancellation = ExportCancellation::default();
+            let (mut still, _) = StillOutput::open(
+                registry(),
+                &OutputChoice::default(),
+                None,
+                one(&output),
+                &output,
+                sheet,
+                (8, 8),
+                Rational::new(4, 1),
+                false,
+                &cancellation,
+            )
+            .unwrap();
+            write(&mut still, 0, opaque(8, 8, [0, 255, 0])).unwrap();
+            cancellation.cancel();
+            let error = finish(still).unwrap_err();
+            assert!(matches!(error, ExportError::Cancelled), "{sheet}: {error}");
+            assert!(
+                names(dir.path()).is_empty(),
+                "{sheet}: {:?}",
+                names(dir.path())
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_publish_names_the_image_and_leaves_no_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder where the image would go: the publish cannot replace it.
+        let output = dir.path().join("a.png");
+        let (mut still, _) = StillOutput::open(
+            registry(),
+            &OutputChoice::default(),
+            None,
+            one(&output),
+            &output,
+            false,
+            (8, 8),
+            Rational::new(4, 1),
+            true,
+            &ExportCancellation::default(),
+        )
+        .unwrap();
+        write(&mut still, 0, opaque(8, 8, [0, 255, 0])).unwrap();
+        fs::create_dir(&output).unwrap();
+        fs::write(output.join("keep"), b"keep").unwrap();
+        let error = finish(still).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                ExportError::Io {
+                    operation: "publish image",
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert!(
+            error.to_string().contains(&output.display().to_string()),
+            "{error}"
+        );
+        assert_eq!(names(dir.path()), ["a.png"]);
+        assert_eq!(names(&output), ["keep"]);
     }
 }

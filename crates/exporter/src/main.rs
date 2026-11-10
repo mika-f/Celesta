@@ -41,14 +41,15 @@ Without <OUTPUT>, only the subtitle files are written: the frames are
 evaluated but not rendered or encoded.
 
 Still images are selected by --frame/--frames or --every and written as PNG
-(.png), JPEG (.jpg, .jpeg) or lossy WebP (.webp) by the output's extension;
+(.png), JPEG (.jpg, .jpeg) or WebP (.webp) by the output's extension;
 --quality sets JPEG and WebP quality, 1-100 (default 90). --video-option
 sets the image encoder's settings: compression=none|fastest|fast|balanced|high,
 depth=16 and transparent=true for PNG; lossless=true and transparent=true for
 WebP (--describe builtin/png lists them). --muxer and --video-encoder name a
-plugin's image components. Stills are drawn
-over the export's opaque background, as an MP4 is, so JPEG's missing alpha
-channel loses nothing. Multiple frames use output-000090.png names with the
+plugin's image components. WebP is lossy unless
+lossless=true. By default, stills are drawn over the export's opaque
+background, as an MP4 is, so JPEG's missing alpha channel loses nothing;
+transparent=true keeps PNG and WebP transparent. Multiple frames use output-000090.png names with the
 output's extension; frame numbers are zero-based. --every <n> picks frames
 0, n, 2n, ... of the --from/--to span (or the whole composition) plus its
 last frame. --contact-sheet writes the selection as one labelled grid image
@@ -506,9 +507,7 @@ fn main() -> ExitCode {
                 source: cli.source(),
                 output,
                 react: cli.react,
-                still: (kind == OutputKind::Stills)
-                    .then(|| StillFormat::from_extension(output).unwrap_or_default()),
-                still_quality: cli.quality.unwrap_or(StillExport::DEFAULT_QUALITY),
+                still: kind == OutputKind::Stills,
                 render_quality: cli.render_quality,
                 props: props_file.as_ref().map(props_label),
             };
@@ -897,8 +896,11 @@ fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind,
         if cli.loudness.is_some() {
             return Err("--loudness applies to video output, not still frames".into());
         }
-        // An output with no still extension is left to the exporter, which
-        // reports it as `invalid_selection`.
+        // The extension is the exporter's to check once the components are
+        // named: one the built-in muxers do not write is
+        // `invalid_selection`, and a plugin's muxer may write others. A
+        // quality for `.png` is refused here only when no encoder is named;
+        // a named one says what it takes.
         let format = StillFormat::from_extension(output);
         if cli.quality.is_some() && cli.video_encoder.is_none() && format == Some(StillFormat::Png)
         {

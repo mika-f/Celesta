@@ -4,8 +4,8 @@ use std::process::Command;
 use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{
-    ExportCancellation, ExportError, ExportOptions, ExportProgress, FrameSelection, OutputChoice,
-    ReactRuntimeOptions, SettingInput, StillExport,
+    ContactSheet, ExportCancellation, ExportError, ExportOptions, ExportProgress, FrameSelection,
+    OutputChoice, ReactRuntimeOptions, SettingInput, StillExport,
 };
 use celesta_project::{
     Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
@@ -1247,6 +1247,94 @@ fn transparent_png_and_webp_keep_alpha() {
     assert_eq!(&at(&pixels, channels, 8, 4)[..3], [255, 0, 0]);
 }
 
+/// Exports frame 0 of `source` as a one-column contact sheet of 64 px
+/// tiles, with these `--video-option`s.
+fn export_sheet_with(source: &Path, output: &Path, options: &[(&str, &str)]) {
+    let project = Project::load(source).unwrap();
+    let mut choice = OutputChoice::default();
+    for (key, value) in options {
+        choice
+            .video
+            .options
+            .insert((*key).to_owned(), SettingInput::Text((*value).to_owned()));
+    }
+    crate::exporter(ExportOptions {
+        output: choice,
+        ..ExportOptions::default()
+    })
+    .export_project_stills_with(
+        &project,
+        source.parent().unwrap(),
+        &StillExport {
+            frames: FrameSelection::Frames(vec![0]),
+            contact_sheet: Some(ContactSheet {
+                columns: 1,
+                tile_width: 64,
+            }),
+            debug_guides: false,
+            quality: None,
+        },
+        output,
+        &ExportCancellation::default(),
+        |_| {},
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_transparent_contact_sheet_shows_a_checkerboard_and_is_opaque() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = half_covered_project(dir.path());
+    // The tile is drawn 8 px in from the sheet's corner, at full size.
+    const GAP: usize = 8;
+    let at = |pixels: &[u8], width: u32, x: usize, y: usize| {
+        pixels[((GAP + y) * width as usize + GAP + x) * 4..][..4].to_vec()
+    };
+
+    let transparent = dir.path().join("transparent.png");
+    export_sheet_with(&source, &transparent, &[("transparent", "true")]);
+    let (width, _, pixels) = decode(&transparent);
+    assert!(pixels.chunks(4).all(|pixel| pixel[3] == 255));
+    assert_eq!(at(&pixels, width, 8, 4), [255, 0, 0, 255]);
+    // Nothing covers the top-right quadrant: the checkerboard's 8 px
+    // squares show through, alternating 0x99 and 0x66.
+    assert_eq!(at(&pixels, width, 48, 4), [0x99, 0x99, 0x99, 255]);
+    assert_eq!(at(&pixels, width, 56, 4), [0x66, 0x66, 0x66, 255]);
+    assert_eq!(at(&pixels, width, 56, 12), [0x99, 0x99, 0x99, 255]);
+
+    // Without it, the frame's opaque background fills the same place.
+    let opaque = dir.path().join("opaque.png");
+    export_sheet_with(&source, &opaque, &[]);
+    let (width, _, pixels) = decode(&opaque);
+    assert!(pixels.chunks(4).all(|pixel| pixel[3] == 255));
+    let background = at(&pixels, width, 56, 4);
+    assert_eq!(at(&pixels, width, 48, 4), background);
+    assert_ne!(background, [0x66, 0x66, 0x66, 255]);
+}
+
+#[test]
+fn lossy_transparent_webp_keeps_alpha() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = half_covered_project(dir.path());
+    let at = |pixels: &[u8], x: usize, y: usize| pixels[(y * 64 + x) * 4..][..4].to_vec();
+    let lossy = dir.path().join("lossy.webp");
+    export_still_with(&source, &lossy, &[("transparent", "true")]);
+    let bytes = std::fs::read(&lossy).unwrap();
+    // A lossy WebP with alpha is VP8X: VP8 for the colour, ALPH for the alpha.
+    assert_eq!(&bytes[12..16], b"VP8X");
+    assert!(bytes.windows(4).any(|chunk| chunk == b"ALPH"));
+    let (width, height, channels, pixels) = decode_webp(&lossy);
+    assert_eq!((width, height, channels), (64, 36, 4));
+    // Lossy colour, but the alpha is near what was drawn: opaque, clear, and
+    // half covered.
+    let red = at(&pixels, 8, 4);
+    assert!(near(&red, &[255, 0, 0, 255], 8), "{red:?}");
+    assert!(at(&pixels, 56, 4)[3] <= 8, "{:?}", at(&pixels, 56, 4));
+    assert!(at(&pixels, 8, 30)[3] <= 8, "{:?}", at(&pixels, 8, 30));
+    let half = at(&pixels, 56, 30);
+    assert!((120..=136).contains(&half[3]), "{half:?}");
+}
+
 #[test]
 fn sixteen_bit_png() {
     let dir = tempfile::tempdir().unwrap();
@@ -1341,6 +1429,141 @@ fn a_cancelled_sequence_leaves_later_names_alone() {
         b"keep"
     );
     assert_eq!(staging_in(dir.path()), Vec::<String>::new());
+}
+
+/// Exports `frames` of the tiny project to `output`, one image (a single
+/// frame or a contact sheet), with `event` seeing each progress event.
+fn export_one_image(
+    dir: &Path,
+    frames: &[u64],
+    contact_sheet: bool,
+    output: &Path,
+    cancellation: &ExportCancellation,
+    mut event: impl FnMut(&ExportProgress),
+) -> ExportError {
+    let source = tiny_project(dir);
+    let project = Project::load(&source).unwrap();
+    crate::exporter(ExportOptions::default())
+        .export_project_stills_with(
+            &project,
+            dir,
+            &StillExport {
+                frames: FrameSelection::Frames(frames.to_vec()),
+                contact_sheet: contact_sheet.then(ContactSheet::default),
+                debug_guides: false,
+                quality: None,
+            },
+            output,
+            cancellation,
+            |progress| event(&progress),
+        )
+        .unwrap_err()
+}
+
+/// The names in `dir` but the tiny project's file.
+fn outputs_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "project.celesta.json")
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_cancelled_still_or_contact_sheet_leaves_no_file() {
+    for (frames, sheet) in [(&[1][..], false), (&[0, 1, 2][..], true)] {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("out.png");
+        let cancellation = ExportCancellation::default();
+        let error = export_one_image(dir.path(), frames, sheet, &output, &cancellation, |event| {
+            if matches!(event, ExportProgress::Rendering { frame, .. } if *frame as usize == frames.len())
+            {
+                cancellation.cancel();
+            }
+        });
+        assert!(matches!(error, ExportError::Cancelled), "{sheet}: {error}");
+        assert_eq!(outputs_in(dir.path()), Vec::<String>::new(), "{sheet}");
+    }
+}
+
+#[test]
+fn a_failed_still_or_contact_sheet_leaves_no_file_of_its_own() {
+    for (frames, sheet) in [(&[1][..], false), (&[0, 1, 2][..], true)] {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("out.png");
+        // Taken once rendering started, after the checks before it: the
+        // image is not published, and its staged file goes.
+        let error = export_one_image(
+            dir.path(),
+            frames,
+            sheet,
+            &output,
+            &ExportCancellation::default(),
+            |event| {
+                if matches!(event, ExportProgress::Rendering { frame: 1, .. }) {
+                    std::fs::write(&output, b"keep").unwrap();
+                }
+            },
+        );
+        assert!(
+            matches!(&error, ExportError::OutputExists(path) if *path == output),
+            "{sheet}: {error}"
+        );
+        assert_eq!(std::fs::read(&output).unwrap(), b"keep", "{sheet}");
+        assert_eq!(outputs_in(dir.path()), ["out.png"], "{sheet}");
+    }
+}
+
+#[test]
+fn the_progress_names_the_components_a_still_resolves() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = tiny_project(dir.path());
+    for (args, name, line) in [
+        (
+            &["--no-ui", "--frame", "0", "--video-option", "quality=40"][..],
+            "a.jpg",
+            "format: Image · JPEG · Quality 40",
+        ),
+        (
+            &[
+                "--no-ui",
+                "--frames",
+                "0,1",
+                "--video-option",
+                "lossless=true",
+            ][..],
+            "b.webp",
+            "format: Image sequence · WebP · Lossless",
+        ),
+        (
+            &["--no-ui", "--frame", "0", "--video-option", "depth=16"][..],
+            "c.png",
+            "format: Image · PNG · 16 bits per channel",
+        ),
+    ] {
+        let result = export(&source, args, &dir.path().join(name));
+        assert!(result.status.success(), "{}", stderr(&result));
+        assert!(stderr(&result).contains(line), "{}", stderr(&result));
+    }
+    let result = export(
+        &source,
+        &["--json", "--json-progress", "--frame", "0"],
+        &dir.path().join("d.png"),
+    );
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(result.status.success(), "{stdout}");
+    let event = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|line| line["event"] == "output")
+        .unwrap_or_else(|| panic!("no output event: {stdout}"));
+    assert_eq!(event["muxer"], "builtin/image");
+    assert_eq!(event["muxerName"], "Image");
+    assert_eq!(event["video"]["component"], "builtin/png");
+    assert_eq!(event["video"]["settings"], serde_json::json!([]));
+    assert_eq!(event["audio"], serde_json::Value::Null);
 }
 
 #[test]

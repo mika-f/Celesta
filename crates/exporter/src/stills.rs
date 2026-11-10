@@ -119,12 +119,14 @@ pub const MAX_STILL_FILES: usize = 1_000;
 )]
 #[strum(serialize_all = "lowercase")]
 pub enum StillFormat {
-    /// Lossless 8-bit RGBA.
+    /// Lossless PNG: 8-bit by default, 16-bit with the built-in encoder's
+    /// `depth=16`; RGBA, opaque unless `transparent=true`.
     #[default]
     Png,
     /// Baseline JPEG, `.jpg` or `.jpeg`.
     Jpeg,
-    /// Lossy WebP (VP8).
+    /// WebP: lossy (VP8) by default, lossless (VP8L) with the built-in
+    /// encoder's `lossless=true`.
     Webp,
 }
 
@@ -605,7 +607,8 @@ impl Exporter {
     }
 
     /// Validates the selection and opens the components ([`Destination::prepare`]),
-    /// reporting the resolution's warnings.
+    /// reporting the resolution's warnings, then the components
+    /// ([`ExportProgress::Output`]), before anything renders.
     #[allow(clippy::too_many_arguments)]
     fn still_destination(
         &self,
@@ -636,6 +639,7 @@ impl Exporter {
         for warning in warnings {
             progress(ExportProgress::Warning(warning));
         }
+        progress(ExportProgress::Output(destination.output.plan()));
         Ok(destination)
     }
 

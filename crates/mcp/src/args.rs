@@ -54,7 +54,8 @@ pub struct RenderFramesArgs {
     /// `jpeg`, or `webp`.
     format: Option<ImageFormat>,
     /// JPEG or WebP quality, 1–100 (default 90); higher is sharper and
-    /// larger. Not accepted for PNG.
+    /// larger. Not accepted for PNG unless `videoEncoder` names an encoder,
+    /// which then says whether it takes one.
     quality: Option<u8>,
     /// The muxer that writes the image, as `<plugin>/<component>` (see
     /// `list_components`), instead of the built-in one the format names.
@@ -95,7 +96,8 @@ pub struct ContactSheetArgs {
     /// output's extension.
     format: Option<ImageFormat>,
     /// JPEG or WebP quality, 1–100 (default 90); higher is sharper and
-    /// larger. Not accepted for PNG.
+    /// larger. Not accepted for PNG unless `videoEncoder` names an encoder,
+    /// which then says whether it takes one.
     quality: Option<u8>,
     /// The muxer that writes the image, as `<plugin>/<component>` (see
     /// `list_components`), instead of the built-in one the format names.
