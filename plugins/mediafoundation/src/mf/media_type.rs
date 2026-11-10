@@ -193,7 +193,6 @@ pub(crate) fn encoder_input(
 
 /// The AAC encoder's output type: raw AAC (no ADTS) of 16-bit `channels`
 /// at `sample_rate`, `bitrate` bit/s.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 5's AAC encoder uses it"))]
 pub(crate) fn aac_output(
     sample_rate: u32,
     channels: u32,
@@ -230,7 +229,6 @@ pub(crate) fn aac_output(
 
 /// The AAC encoder's input type: interleaved 16-bit PCM of `channels` at
 /// `sample_rate`.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 5's AAC encoder uses it"))]
 pub(crate) fn pcm_input(sample_rate: u32, channels: u32) -> Result<IMFMediaType, MediaError> {
     let made = media_type(MFMediaType_Audio, MFAudioFormat_PCM)?;
     set_u32(

@@ -23,6 +23,13 @@ pub(crate) fn asc_from_user_data(user_data: &[u8]) -> Result<Vec<u8>, MediaError
     }
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only the decoder's reader will use it outside its tests"
+    )
+)]
 /// User data for `asc`: raw payload (type 0), profile-level `0xFE` (none
 /// given), struct type 0, the reserved fields zero, then `asc`.
 pub(crate) fn user_data_from_asc(asc: &[u8]) -> Vec<u8> {

@@ -12,9 +12,9 @@ use celesta_codec_ffmpeg::FfmpegCodec;
 use celesta_codec_mediafoundation::MfCodec;
 use celesta_composition::Rational;
 use celesta_media::{
-    Color, ComponentKind, Encoded, MediaError, MediaProvider, MuxerRequest, Packet, PixelFormat,
-    SessionId, SettingValue, Settings, Track, TrackConfig, TrackPacket, VideoEncoderOpened,
-    VideoEncoderRequest,
+    AudioBuffer, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentKind, Encoded,
+    MediaError, MediaProvider, MuxerRequest, Packet, PixelFormat, SessionId, SettingValue,
+    Settings, Track, TrackConfig, TrackPacket, VideoEncoderOpened, VideoEncoderRequest,
 };
 use ffmpeg_sys_next as ff;
 use std::ffi::CString;
@@ -776,5 +776,360 @@ fn hardware_encoders_keep_the_invariants() {
         assert_eq!(tags, BT709_LIMITED);
         assert_eq!(decoded.len(), 10);
         assert_codes(&name, &decoded, HARDWARE_SIZE, RED_8, 16);
+    }
+}
+
+/// The AAC tests' rate: Microsoft's AAC encoder takes it, so `aac` answers
+/// it.
+const AAC_RATE: u32 = 48_000;
+/// `AAC_DELAY` and `AAC_LEAD_IN`: the silent frames the plugin feeds first.
+const AAC_DELAY: u64 = 1_024;
+/// The frame of the click in [`click`].
+const CLICK: usize = 4_800;
+/// The loop pre-roll of the hidden-pre-roll test, in sample frames.
+const PRE_ROLL: usize = 16_384;
+
+/// Whether this system's Media Foundation describes `aac`; prints why
+/// `test` skips when it does not.
+fn aac_available(codec: &mut MfCodec, test: &str) -> bool {
+    let described = codec.describe().unwrap();
+    let aac = described
+        .iter()
+        .find(|description| {
+            description.kind == ComponentKind::AudioEncoder && description.id == "aac"
+        })
+        .expect("the plugin has the audio encoder aac");
+    if aac.available {
+        return true;
+    }
+    println!(
+        "skipping {test}: {}",
+        aac.reason.as_deref().unwrap_or("no reason")
+    );
+    false
+}
+
+/// Opens `aac` for a mix at `sample_rate` with `channels`.
+fn open_aac(
+    codec: &mut MfCodec,
+    given: &Settings,
+    sample_rate: u32,
+    channels: u16,
+) -> Result<AudioEncoderOpened, MediaError> {
+    codec
+        .audio_encoder()
+        .expect("the plugin has audio encoders")
+        .open_audio(&AudioEncoderRequest {
+            component: "aac",
+            settings: given,
+            sample_rate,
+            channels,
+        })
+}
+
+/// A second of stereo silence at 48 kHz with a click (1.0) at `frame`.
+fn click_at(frame: usize) -> Vec<f32> {
+    let mut samples = vec![0.0; AAC_RATE as usize * 2];
+    samples[frame * 2] = 1.0;
+    samples[frame * 2 + 1] = 1.0;
+    samples
+}
+
+/// [`click_at`] [`CLICK`].
+fn click() -> Vec<f32> {
+    click_at(CLICK)
+}
+
+/// Interleaved stereo `samples` through `session` from `first` in the
+/// exporter's chunks of 1024 x 16 frames, then its finish: every answer,
+/// the finish's last.
+fn encode_aac(
+    codec: &mut MfCodec,
+    session: SessionId,
+    first: i64,
+    samples: &[f32],
+) -> Vec<Encoded> {
+    let encoder = codec.audio_encoder().unwrap();
+    let mut answers: Vec<Encoded> = samples
+        .chunks(1024 * 16 * 2)
+        .scan(first, |pts, chunk| {
+            let answer = encoder.encode_audio(session, *pts, chunk).unwrap();
+            *pts += (chunk.len() / 2) as i64;
+            Some(answer)
+        })
+        .collect();
+    answers.push(encoder.finish_audio(session).unwrap());
+    answers
+}
+
+/// `samples` from `first` through a new `aac` session: the packets, the
+/// config, and the delay it opened with.
+fn encode_aac_track(
+    codec: &mut MfCodec,
+    first: i64,
+    samples: &[f32],
+) -> (Vec<Packet>, TrackConfig, u64) {
+    let opened = open_aac(codec, &Settings::new(), AAC_RATE, 2).unwrap();
+    let (packets, config) = packets_and_config(encode_aac(codec, opened.session, first, samples));
+    (packets, config, opened.delay)
+}
+
+/// `packets` of a 48 kHz stereo AAC track of `config`, delayed by `delay`
+/// with `leading_audio` frames of pre-roll, written by the FFmpeg plugin's
+/// `mp4` into `directory` and decoded by its decoder at 48 kHz stereo.
+fn through_ffmpegs_mp4(
+    directory: &Path,
+    config: TrackConfig,
+    delay: u64,
+    leading_audio: u64,
+    packets: Vec<Packet>,
+) -> AudioBuffer {
+    let output = directory.join("audio.mp4");
+    let mut ffmpeg = FfmpegCodec::new();
+    let muxer = ffmpeg.muxer().unwrap();
+    let track = Track::Audio {
+        config,
+        timescale: AAC_RATE,
+        sample_rate: AAC_RATE,
+        channels: 2,
+        delay,
+    };
+    let session = muxer
+        .open_muxer(&MuxerRequest {
+            component: "mp4",
+            settings: &Settings::new(),
+            output: &output,
+            tracks: &[track],
+            leading_audio,
+        })
+        .unwrap();
+    let packets: Vec<TrackPacket> = packets
+        .into_iter()
+        .map(|packet| TrackPacket { track: 0, packet })
+        .collect();
+    muxer.write_packets(session, &packets).unwrap();
+    muxer.finish_muxer(session).unwrap();
+    ffmpeg
+        .decoder()
+        .unwrap()
+        .decode_audio(celesta_codec_ffmpeg::DECODER_ID, &output, AAC_RATE, 2)
+        .unwrap()
+}
+
+/// The frame of `decoded`'s left channel with the largest magnitude, and
+/// that magnitude.
+fn peak(decoded: &AudioBuffer) -> (usize, f32) {
+    decoded
+        .samples
+        .iter()
+        .step_by(2)
+        .map(|sample| sample.abs())
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .unwrap()
+}
+
+#[test]
+fn aac_opens_at_a_rate_it_takes() {
+    const TEST: &str = "aac_opens_at_a_rate_it_takes";
+    let mut codec = MfCodec::new();
+    if !aac_available(&mut codec, TEST) {
+        return;
+    }
+    for (asked, answered) in [
+        ((48_000, 2), (48_000, 2, AAC_DELAY)),
+        ((44_100, 1), (44_100, 1, AAC_DELAY)),
+        ((96_000, 2), (48_000, 2, AAC_DELAY)),
+        ((32_000, 2), (48_000, 2, AAC_DELAY)),
+    ] {
+        let opened = open_aac(&mut codec, &Settings::new(), asked.0, asked.1).unwrap();
+        assert_eq!(
+            (opened.sample_rate, opened.channels, opened.delay),
+            answered,
+            "{asked:?}"
+        );
+        codec.audio_encoder().unwrap().abort_audio(opened.session);
+    }
+}
+
+#[test]
+fn aac_packets_start_before_zero() {
+    const TEST: &str = "aac_packets_start_before_zero";
+    let mut codec = MfCodec::new();
+    if !aac_available(&mut codec, TEST) {
+        return;
+    }
+    let (packets, config, _) = encode_aac_track(&mut codec, 0, &click());
+    assert_eq!(
+        config,
+        TrackConfig {
+            codec: "mp4a.40.2".to_owned(),
+            description: Some(vec![0x11, 0x90]),
+        }
+    );
+    assert_eq!(packets.len(), 48);
+    let pts: Vec<i64> = packets.iter().map(|packet| packet.pts).collect();
+    assert_eq!(pts[..4], [-1_024, 0, 1_024, 2_048]);
+    for (index, packet) in packets.iter().enumerate() {
+        assert_eq!(packet.pts, 1_024 * index as i64 - AAC_DELAY as i64);
+        assert_eq!(packet.dts, packet.pts);
+        assert!(packet.key);
+        assert!(!packet.bytes.is_empty());
+    }
+    let (last, rest) = packets.split_last().unwrap();
+    assert!(rest.iter().all(|packet| packet.duration == 1_024));
+    assert_eq!(last.duration, 896);
+    assert_eq!(last.pts + last.duration, 48_000);
+}
+
+#[test]
+fn aac_audio_must_follow_the_audio_before_it() {
+    const TEST: &str = "aac_audio_must_follow_the_audio_before_it";
+    let mut codec = MfCodec::new();
+    if !aac_available(&mut codec, TEST) {
+        return;
+    }
+    let opened = open_aac(&mut codec, &Settings::new(), AAC_RATE, 2).unwrap();
+    let encoder = codec.audio_encoder().unwrap();
+    encoder
+        .encode_audio(opened.session, 0, &[0.0; 2 * 512])
+        .unwrap();
+    assert!(matches!(
+        encoder.encode_audio(opened.session, 1_024, &[0.0; 2 * 512]),
+        Err(MediaError::Codec(_))
+    ));
+    // Not whole frames of two channels.
+    assert!(matches!(
+        encoder.encode_audio(opened.session, 512, &[0.0; 3]),
+        Err(MediaError::Codec(_))
+    ));
+    encoder
+        .encode_audio(opened.session, 512, &[0.0; 2 * 512])
+        .unwrap();
+    encoder.finish_audio(opened.session).unwrap();
+    assert!(encoder.finish_audio(opened.session).is_err());
+}
+
+#[test]
+fn aac_takes_each_bitrate_and_refuses_others() {
+    const TEST: &str = "aac_takes_each_bitrate_and_refuses_others";
+    let mut codec = MfCodec::new();
+    if !aac_available(&mut codec, TEST) {
+        return;
+    }
+    let mut sizes = Vec::new();
+    for bitrate in ["96000", "128000", "160000", "192000"] {
+        let given = settings(&[("bitrate", text(bitrate))]);
+        let opened = open_aac(&mut codec, &given, AAC_RATE, 2).unwrap();
+        let (packets, _) = packets_and_config(encode_aac(
+            &mut codec,
+            opened.session,
+            0,
+            &vec![0.1; AAC_RATE as usize * 2],
+        ));
+        sizes.push(
+            packets
+                .iter()
+                .map(|packet| packet.bytes.len())
+                .sum::<usize>(),
+        );
+    }
+    assert!(sizes.windows(2).all(|pair| pair[0] < pair[1]), "{sizes:?}");
+    let bad = settings(&[("bitrate", text("100000"))]);
+    assert!(matches!(
+        open_aac(&mut codec, &bad, AAC_RATE, 2),
+        Err(MediaError::InvalidSettings { key, .. }) if key == "bitrate"
+    ));
+}
+
+#[test]
+fn aac_keeps_its_first_frames() {
+    const TEST: &str = "aac_keeps_its_first_frames";
+    let mut codec = MfCodec::new();
+    if !aac_available(&mut codec, TEST) {
+        return;
+    }
+    // Without the lead-in, Microsoft's encoder loses these (Task 1).
+    for frame in [0, 100] {
+        let (packets, config, delay) = encode_aac_track(&mut codec, 0, &click_at(frame));
+        let directory = tempfile::tempdir().unwrap();
+        let decoded = through_ffmpegs_mp4(directory.path(), config, delay, 0, packets);
+        let (at, level) = peak(&decoded);
+        assert_eq!(at, frame, "a click at {frame}");
+        assert!(level >= 0.5, "a click at {frame} decodes at {level}");
+    }
+}
+
+#[test]
+fn aac_through_ffmpegs_mp4_is_aligned() {
+    const TEST: &str = "aac_through_ffmpegs_mp4_is_aligned";
+    let mut codec = MfCodec::new();
+    if !aac_available(&mut codec, TEST) {
+        return;
+    }
+    let (packets, config, delay) = encode_aac_track(&mut codec, 0, &click());
+    let directory = tempfile::tempdir().unwrap();
+    let decoded = through_ffmpegs_mp4(directory.path(), config, delay, 0, packets);
+    let frames = decoded.frame_count();
+    assert!(frames.abs_diff(48_000) <= 1_024, "{frames} frames");
+    assert_eq!(peak(&decoded).0, CLICK);
+}
+
+#[test]
+fn aac_preroll_is_hidden_in_ffmpegs_mp4() {
+    const TEST: &str = "aac_preroll_is_hidden_in_ffmpegs_mp4";
+    let mut codec = MfCodec::new();
+    if !aac_available(&mut codec, TEST) {
+        return;
+    }
+    // A loop's pre-roll, a constant, before the mix from frame 0.
+    let mut samples = vec![0.25; PRE_ROLL * 2];
+    samples.extend(click());
+    let (packets, config, delay) = encode_aac_track(&mut codec, -(PRE_ROLL as i64), &samples);
+    assert_eq!(packets[0].pts, -((PRE_ROLL as u64 + AAC_DELAY) as i64));
+    let directory = tempfile::tempdir().unwrap();
+    let decoded = through_ffmpegs_mp4(directory.path(), config, delay, PRE_ROLL as u64, packets);
+    let frames = decoded.frame_count();
+    assert!(frames.abs_diff(48_000) <= 1_024, "{frames} frames");
+    assert_eq!(peak(&decoded).0, CLICK);
+    let early = decoded.samples[..4_000 * 2]
+        .iter()
+        .fold(0.0_f32, |most, sample| most.max(sample.abs()));
+    assert!(early < 0.1, "the first 4000 frames reach {early}");
+}
+
+#[test]
+fn clipping_saturates() {
+    const TEST: &str = "clipping_saturates";
+    let mut codec = MfCodec::new();
+    if !aac_available(&mut codec, TEST) {
+        return;
+    }
+    // Left at +2.0 and right at -2.0, a second of each.
+    let loud: Vec<f32> = (0..AAC_RATE as usize).flat_map(|_| [2.0, -2.0]).collect();
+    let (packets, config, delay) = encode_aac_track(&mut codec, 0, &loud);
+    // Saturated, not wrapped: the very packets full scale gives.
+    let full: Vec<f32> = (0..AAC_RATE as usize).flat_map(|_| [1.0, -1.0]).collect();
+    let (full_packets, ..) = encode_aac_track(&mut codec, 0, &full);
+    assert_eq!(
+        packets
+            .iter()
+            .map(|packet| &packet.bytes)
+            .collect::<Vec<_>>(),
+        full_packets
+            .iter()
+            .map(|packet| &packet.bytes)
+            .collect::<Vec<_>>()
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let decoded = through_ffmpegs_mp4(directory.path(), config, delay, 0, packets);
+    for (channel, expected) in [(0, 1.0_f32), (1, -1.0)] {
+        for frame in 12_000..36_000 {
+            let sample = decoded.samples[frame * 2 + channel];
+            assert!(
+                (sample - expected).abs() <= 0.01,
+                "frame {frame}, channel {channel}: {sample}"
+            );
+        }
     }
 }

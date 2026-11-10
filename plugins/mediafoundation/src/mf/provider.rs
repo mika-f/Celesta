@@ -3,10 +3,11 @@
 //!
 //! It describes every component, from what this system's Media Foundation
 //! lists. Its encoder sessions, of every kind, are numbered from one counter.
-//! Until the AAC encoder and the decoder are built, they answer that the
-//! component is not available.
+//! Until the decoder is built, it answers that the component is not
+//! available.
 
 use crate::components::{self, AudioCodec, VideoCodec};
+use crate::mf::audio::{self, AudioSession};
 use crate::mf::video::{self, VideoSession};
 use crate::mf::{enumerate, startup::Started};
 use crate::{DECODER_ID, PLUGIN_ID};
@@ -29,6 +30,8 @@ pub struct MfCodec {
     /// The open video encoder sessions. Declared before `startup`, so they
     /// are released before Media Foundation shuts down.
     video: HashMap<SessionId, VideoSession>,
+    /// The open audio encoder sessions, likewise.
+    audio: HashMap<SessionId, AudioSession>,
     /// The last session number given, one count for every kind.
     last: u64,
     /// COM and Media Foundation as started, or why they did not: `describe`
@@ -41,6 +44,7 @@ impl MfCodec {
     pub fn new() -> Self {
         Self {
             video: HashMap::new(),
+            audio: HashMap::new(),
             last: 0,
             startup: Started::new(),
         }
@@ -246,26 +250,43 @@ impl AudioEncoder for MfCodec {
     ) -> Result<AudioEncoderOpened, MediaError> {
         AudioCodec::from_id(request.component)
             .ok_or_else(|| no_component("audio encoder", request.component))?;
-        Err(not_implemented(request.component))
+        self.started(request.component)?;
+        let (opened, sample_rate, channels, delay) = audio::open(request)?;
+        let session = self.next_session();
+        self.audio.insert(session, opened);
+        Ok(AudioEncoderOpened {
+            session,
+            sample_rate,
+            channels,
+            delay,
+        })
     }
 
     fn encode_audio(
         &mut self,
         session: SessionId,
-        _pts: i64,
-        _samples: &[f32],
+        pts: i64,
+        samples: &[f32],
     ) -> Result<Encoded, MediaError> {
-        Err(no_session("audio encoder", session))
+        self.audio
+            .get_mut(&session)
+            .ok_or_else(|| no_session("audio encoder", session))?
+            .encode(pts, samples)
     }
 
     fn finish_audio(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
-        Err(no_session("audio encoder", session))
+        self.audio
+            .remove(&session)
+            .ok_or_else(|| no_session("audio encoder", session))?
+            .finish()
     }
 
-    /// Ends an audio encoder session without flushing it; a session of
-    /// another kind, such as a video encoder's, is left alone. None is open
-    /// yet.
-    fn abort_audio(&mut self, _session: SessionId) {}
+    /// Ends an audio encoder session without flushing it (dropping it shuts
+    /// the transform down); a session of another kind, such as a video
+    /// encoder's, is left alone.
+    fn abort_audio(&mut self, session: SessionId) {
+        drop(self.audio.remove(&session));
+    }
 }
 
 #[cfg(test)]

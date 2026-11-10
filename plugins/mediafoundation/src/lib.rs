@@ -25,10 +25,8 @@ pub const DECODER_ID: &str = "mediafoundation";
 )]
 mod components;
 
-// Nothing outside its tests calls it yet: Task 5's Windows AAC encoder
-// does, and then this narrows to `not(any(windows, test))`.
 #[cfg_attr(
-    not(test),
+    not(any(windows, test)),
     expect(
         dead_code,
         reason = "only the Windows AAC encoder uses it outside its tests"

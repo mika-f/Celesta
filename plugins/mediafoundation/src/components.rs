@@ -108,6 +108,22 @@ pub(crate) fn checked_settings(
         .map_err(|InvalidSetting { key, message }| MediaError::InvalidSettings { key, message })
 }
 
+/// The settings `given` for the audio encoder `codec`, checked against its
+/// schema, with the defaults of those not given.
+pub(crate) fn checked_audio_settings(
+    codec: AudioCodec,
+    given: &Settings,
+) -> Result<Settings, MediaError> {
+    validate(&codec.settings(), given)
+        .map_err(|InvalidSetting { key, message }| MediaError::InvalidSettings { key, message })
+}
+
+/// The AAC bitrate (bit/s) of settings checked by [`checked_audio_settings`]:
+/// 96000, 128000, 160000, or 192000 (the default).
+pub(crate) fn aac_bitrate(settings: &Settings) -> u32 {
+    text(settings, "bitrate").parse().unwrap_or(192_000)
+}
+
 fn text<'a>(settings: &'a Settings, key: &str) -> &'a str {
     match settings.get(key) {
         Some(SettingValue::String(value)) => value,
@@ -241,6 +257,14 @@ impl AudioCodec {
         Self::ALL.into_iter().find(|codec| codec.id() == id)
     }
 
+    /// Why `describe` calls it unavailable when `MFTEnumEx` lists no encoder
+    /// for it.
+    pub(crate) const fn missing_reason(self) -> &'static str {
+        match self {
+            Self::Aac => "Media Foundation has no AAC encoder on this system",
+        }
+    }
+
     /// Its settings schema.
     pub(crate) fn settings(self) -> Vec<SettingField> {
         match self {
@@ -311,11 +335,7 @@ pub(crate) fn describe_from(
                 channels: vec![1, 2],
                 ..available(kind, codec.id())
             },
-            Ok(()) => ComponentDescription::unavailable(
-                kind,
-                codec.id(),
-                "Media Foundation has no AAC encoder on this system",
-            ),
+            Ok(()) => ComponentDescription::unavailable(kind, codec.id(), codec.missing_reason()),
         }
     }));
     components
@@ -932,5 +952,24 @@ mod tests {
         assert_eq!(VideoCodec::ALL.map(VideoCodec::id), ["h264", "hevc"]);
         assert_eq!(VideoCodec::from_id("libx264"), None);
         assert_eq!(AudioCodec::from_id("opus"), None);
+    }
+
+    #[test]
+    fn the_aac_bitrate_is_the_checked_selection() {
+        let bitrate = |given: &[(&str, &str)]| {
+            let given: Settings = given
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), text(value)))
+                .collect();
+            checked_audio_settings(AudioCodec::Aac, &given).map(|checked| aac_bitrate(&checked))
+        };
+        assert_eq!(bitrate(&[]).unwrap(), 192_000);
+        for value in [96_000, 128_000, 160_000, 192_000] {
+            assert_eq!(bitrate(&[("bitrate", &value.to_string())]).unwrap(), value);
+        }
+        assert!(matches!(
+            bitrate(&[("bitrate", "100000")]),
+            Err(MediaError::InvalidSettings { key, .. }) if key == "bitrate"
+        ));
     }
 }
