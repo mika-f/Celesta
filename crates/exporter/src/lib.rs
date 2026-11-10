@@ -19,6 +19,7 @@ mod react_entry;
 mod render;
 pub mod report;
 mod resolve;
+mod resolve_warning;
 mod subtitles;
 #[cfg(test)]
 mod tests;
@@ -43,6 +44,7 @@ pub use resolve::{
     EncoderPlan, OutputPlan, ResolvedEncoder, ResolvedMuxer, ResolvedOutput, X264_PRESETS,
     encoding_label, resolve_output, resolve_preset_output, serves_video, writes_any_codec,
 };
+pub use resolve_warning::ResolveWarning;
 pub use subtitles::SubtitleFormat;
 pub use timecode::{TimecodeError, parse_timecode};
 

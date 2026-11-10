@@ -706,7 +706,10 @@ impl ExportSession {
         ];
         self.processes
             .retain(|plugin, _| used.contains(&Some(*plugin)));
-        let warnings = std::mem::take(&mut resolved.warnings);
+        let warnings = std::mem::take(&mut resolved.warnings)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         let plan = resolved.plan();
         self.resolved = Some(resolved);
         Ok((plan, warnings))

@@ -291,7 +291,10 @@ impl StillOutput {
         .map_err(|error| cancellation.settle(error))?;
         let used = [resolved.muxer.plugin, resolved.video.plugin];
         providers.retain(|plugin, _| used.contains(plugin));
-        let warnings = std::mem::take(&mut resolved.warnings);
+        let warnings = std::mem::take(&mut resolved.warnings)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         let offered: &[PixelFormat] = if sheet {
             &[PixelFormat::Rgba8]
         } else {

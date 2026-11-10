@@ -357,7 +357,7 @@ impl ExportDialogModel {
             audio,
         });
         self.selected = selected;
-        self.warnings = resolved.warnings.clone();
+        self.warnings = resolved.warnings.iter().map(ToString::to_string).collect();
         self.error = None;
     }
 
@@ -1299,7 +1299,14 @@ mod tests {
 
         model.set_setting(Track::Video, "preset", string("slow"));
         assert_eq!(model.selected, None);
-        assert_eq!(model.warnings, resolved.warnings);
+        assert_eq!(
+            model.warnings,
+            resolved
+                .warnings
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
