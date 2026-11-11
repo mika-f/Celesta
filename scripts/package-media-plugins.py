@@ -35,7 +35,7 @@ def write_archive(plugin, destination):
 
 def windows_runtime():
     vswhere = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
-    installation = Path(run(vswhere, "-latest", "-products", "*", "-requires",
+    installation = Path(run(vswhere, "-utf8", "-latest", "-products", "*", "-requires",
                             "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath", capture=True))
     redists = sorted((installation / "VC/Redist/MSVC").glob("[0-9]*"), reverse=True)
     for redist in redists:
@@ -114,7 +114,7 @@ def linux_dependencies(plugin, program, variant):
 
 def package_plugin(variant, output, target, system, arch, args):
     plugin_id = f"ffmpeg-{variant}"
-    source = json.loads((ROOT / "plugins" / plugin_id / "plugin.json").read_text())
+    source = json.loads((ROOT / "plugins" / plugin_id / "plugin.json").read_text(encoding="utf-8"))
     version = source["version"]
     if args.version is not None and args.version != version:
         raise RuntimeError(f"Requested version {args.version} differs from {plugin_id} {version}")

@@ -182,3 +182,22 @@ runtime stage. The first local arm64 image build hit an FFmpeg-download TLS
 EOF; CI's image build had already passed that download/compilation. Retry the
 local build from a tracked-files archive to avoid sending unrelated ignored
 developer render output as Docker context.
+
+## Windows metadata encoding follow-up
+
+Manual run `43018182257` passed the Windows app smoke checks and created the
+standard app ZIP/installer, then failed collecting the first optional ZIP's
+Cargo license graph: Cargo's UTF-8 JSON was decoded with Python 3.12's default
+Windows cp1252 encoding. Set the shared command helper's text encoding to
+UTF-8, and pass `-utf8` to vswhere so its captured installation path follows
+the same contract ([official encoding documentation](https://github.com/microsoft/vswhere/wiki/Encoding)).
+A portable regression emits actual UTF-8 JSON through a child process while
+forcing Python's default subprocess encoding to cp1252.
+
+All 15 portable packaging tests pass with this regression. The complete local
+Linux arm64 image also passed the exact final-image smoke script: explicit
+license/encoder checks, component discovery and a real one-frame MOV export.
+Use `git -c tar.umask=0022 archive` for that Docker test context so file modes
+match a checkout; Git archive's default group-write modes are correctly
+rejected by plugin discovery. The manual x64 Docker job hit a transient
+FFmpeg-source TLS connection reset and requires a retry.

@@ -3,8 +3,10 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("package_macos", Path(__file__).with_name("package-macos.py"))
 packaging = importlib.util.module_from_spec(spec)
@@ -12,6 +14,15 @@ spec.loader.exec_module(packaging)
 
 
 class MacPackageValidationTests(unittest.TestCase):
+    def test_captured_unicode_metadata_ignores_the_windows_ansi_code_page(self):
+        payload = json.dumps({"description": "あ / codec"}, ensure_ascii=False).encode("utf-8")
+        # Cargo emits UTF-8 even when Python's Windows default is cp1252.
+        # Exercise the real pipe/decoder rather than mocking a decoded result.
+        with patch("subprocess._text_encoding", return_value="cp1252"):
+            captured = packaging.run(sys.executable, "-c",
+                f"import sys; sys.stdout.buffer.write(bytes.fromhex('{payload.hex()}'))", capture=True)
+        self.assertEqual(json.loads(captured), {"description": "あ / codec"})
+
     def test_reads_modern_and_legacy_minimum_os_versions(self):
         self.assertEqual(packaging.minimum_version(
             "Load command 1\n      cmd LC_BUILD_VERSION\n platform 1\n    minos 14.5\n      sdk 15.0\n"

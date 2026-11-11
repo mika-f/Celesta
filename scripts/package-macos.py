@@ -33,7 +33,7 @@ MACHO_MAGIC = {
 def run(*arguments, capture=False, env=None):
     result = subprocess.run(
         [str(argument) for argument in arguments], check=True, cwd=ROOT,
-        text=True, stdout=subprocess.PIPE if capture else None, env=env,
+        text=True, encoding="utf-8", stdout=subprocess.PIPE if capture else None, env=env,
     )
     return result.stdout.strip() if capture else None
 
