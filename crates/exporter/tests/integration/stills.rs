@@ -145,8 +145,7 @@ fn json_report_lists_every_written_file_or_a_coded_error() {
 #[test]
 fn react_png_preserves_sequence_boundaries_and_prepares_once_without_audio_mix() {
     let runtime_path = root().join("packages/cli/dist/cli.js");
-    if !runtime_path.exists() {
-        eprintln!("skipping React PNG test: build packages/cli first");
+    if !crate::runtime_built(&runtime_path, "React PNG test") {
         return;
     }
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
@@ -208,8 +207,7 @@ export default function Root() {
 #[test]
 fn react_png_runs_a_custom_shader_from_a_wgsl_file() {
     let runtime_path = root().join("packages/cli/dist/cli.js");
-    if !runtime_path.exists() {
-        eprintln!("skipping React shader test: build packages/cli first");
+    if !crate::runtime_built(&runtime_path, "React shader test") {
         return;
     }
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
@@ -253,8 +251,7 @@ export default function Root() {
 #[test]
 fn react_png_draws_a_masked_group() {
     let runtime_path = root().join("packages/cli/dist/cli.js");
-    if !runtime_path.exists() {
-        eprintln!("skipping React mask test: build packages/cli first");
+    if !crate::runtime_built(&runtime_path, "React mask test") {
         return;
     }
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
@@ -739,8 +736,7 @@ fn rejects_quality_where_it_does_not_apply() {
 
 #[test]
 fn react_cli_props_win_over_the_companion_project_and_are_checked_first() {
-    if !root().join("packages/cli/dist/cli.js").exists() {
-        eprintln!("skipping React props test: build packages/cli first");
+    if !crate::runtime_built(&root().join("packages/cli/dist/cli.js"), "React props test") {
         return;
     }
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
@@ -824,8 +820,10 @@ export default function Root() {
 
 #[test]
 fn debug_guides_draw_into_png_frames_and_contact_sheets_only_when_asked() {
-    if !root().join("packages/cli/dist/cli.js").exists() {
-        eprintln!("skipping React debug guide test: build packages/cli first");
+    if !crate::runtime_built(
+        &root().join("packages/cli/dist/cli.js"),
+        "React debug guide test",
+    ) {
         return;
     }
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
@@ -950,8 +948,10 @@ fn json(output: &std::process::Output) -> serde_json::Value {
 
 #[test]
 fn a_contact_sheet_marks_failed_frames_and_names_each_one() {
-    if !root().join("packages/cli/dist/cli.js").exists() {
-        eprintln!("skipping React contact sheet failure test: build packages/cli first");
+    if !crate::runtime_built(
+        &root().join("packages/cli/dist/cli.js"),
+        "React contact sheet failure test",
+    ) {
         return;
     }
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
@@ -1023,8 +1023,10 @@ fn a_contact_sheet_marks_failed_frames_and_names_each_one() {
 
 #[test]
 fn separate_stills_and_videos_name_the_frame_that_failed() {
-    if !root().join("packages/cli/dist/cli.js").exists() {
-        eprintln!("skipping React frame failure test: build packages/cli first");
+    if !crate::runtime_built(
+        &root().join("packages/cli/dist/cli.js"),
+        "React frame failure test",
+    ) {
         return;
     }
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
@@ -1373,8 +1375,10 @@ fn staging_in(dir: &Path) -> Vec<String> {
 
 #[test]
 fn a_failed_sequence_keeps_written_files_and_no_staging() {
-    if !root().join("packages/cli/dist/cli.js").exists() {
-        eprintln!("skipping React sequence failure test: build packages/cli first");
+    if !crate::runtime_built(
+        &root().join("packages/cli/dist/cli.js"),
+        "React sequence failure test",
+    ) {
         return;
     }
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();

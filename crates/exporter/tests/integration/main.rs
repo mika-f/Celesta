@@ -5,6 +5,7 @@ mod export;
 mod inspect;
 mod stills;
 
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use celesta_exporter::{ExportOptions, Exporter};
@@ -16,6 +17,22 @@ use celesta_media::MediaRegistry;
 pub fn exporter(options: ExportOptions) -> Exporter {
     install_media();
     Exporter::new(options)
+}
+
+/// Whether the React runtime `cli` (`packages/cli/dist/cli.js`) is built.
+/// If not, the test skips, or fails when `CELESTA_REQUIRE_RUNTIME=1` says
+/// the runtime was built.
+pub fn runtime_built(cli: &Path, test: &str) -> bool {
+    let built = cli.exists();
+    if !built {
+        assert!(
+            std::env::var("CELESTA_REQUIRE_RUNTIME").as_deref() != Ok("1"),
+            "React tests require the built runtime: {} is missing",
+            cli.display()
+        );
+        eprintln!("skipping {test}: build packages/cli first");
+    }
+    built
 }
 
 /// Makes [`media`] the registry every export in this process uses. Tests

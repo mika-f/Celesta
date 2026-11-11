@@ -12,12 +12,7 @@ fn root() -> PathBuf {
 
 fn runtime() -> Option<PathBuf> {
     let cli = root().join("packages/cli/dist/cli.js");
-    if cli.exists() {
-        Some(cli)
-    } else {
-        eprintln!("skipping inspection test: build packages/cli first");
-        None
-    }
+    crate::runtime_built(&cli, "inspection test").then_some(cli)
 }
 
 /// An entry in a directory where `@celesta.studio/react` resolves.

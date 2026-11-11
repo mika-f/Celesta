@@ -14,10 +14,15 @@ pub fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Whether the React runtime the server spawns has been built.
+/// Whether the React runtime the server spawns has been built. If not, the
+/// test skips, or fails when `CELESTA_REQUIRE_RUNTIME=1` says it was built.
 pub fn runtime_built() -> bool {
     let built = root().join("packages/cli/dist/cli.js").exists();
     if !built {
+        assert!(
+            std::env::var("CELESTA_REQUIRE_RUNTIME").as_deref() != Ok("1"),
+            "React tests require the built runtime: packages/cli/dist/cli.js is missing"
+        );
         eprintln!("skipping: build packages/cli first (pnpm run build:runtime)");
     }
     built

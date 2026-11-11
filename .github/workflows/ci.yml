@@ -168,11 +168,14 @@ jobs:
       # crates/gpu-renderer/src/tests.rs), so under `cargo test` they ran one by
       # one. nextest skips doctests; the workspace has none.
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
+      # Every system built the React runtime above, so a test that cannot
+      # find node or packages/cli/dist/cli.js fails rather than skips.
       # The ci profile (.config/nextest.toml) writes a JUnit report that keeps
       # passing tests' output, where the next step finds self-skipped tests.
       - name: Test
         env:
           CELESTA_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '0' }}
+          CELESTA_REQUIRE_RUNTIME: '1'
         run: cargo nextest run --workspace --locked --no-fail-fast --profile ci
 
       # HANDOFF.md's clippy commands. Linux only: it finishes minutes before
