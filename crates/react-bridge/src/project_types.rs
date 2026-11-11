@@ -218,9 +218,13 @@ pub(crate) mod tests {
 
         /// A scratch folder that no `celesta.config.json` above puts inside
         /// another project, for a test of an entry without one: its project
-        /// root is then its own folder, inside the scratch folder. `None`,
-        /// with a note, when a folder above holds one.
-        pub(crate) fn unmarked(name: &str) -> Option<Self> {
+        /// root is then its own folder, inside the scratch folder.
+        ///
+        /// # Panics
+        ///
+        /// When a folder above holds one: a stray `celesta.config.json` there
+        /// is a mistake on the machine, not a reason to skip.
+        pub(crate) fn unmarked(name: &str) -> Self {
             let scratch = Self::new(name);
             if let Some(marked) = scratch
                 .0
@@ -228,10 +232,13 @@ pub(crate) mod tests {
                 .skip(1)
                 .find(|folder| celesta_plugin_host::has_project_config(folder))
             {
-                eprintln!("skipped: {} holds celesta.config.json", marked.display());
-                return None;
+                panic!(
+                    "{} holds celesta.config.json, so every temporary folder is inside \
+                     that project; remove the file or point TMPDIR elsewhere",
+                    marked.display()
+                );
             }
-            Some(scratch)
+            scratch
         }
     }
 
@@ -295,9 +302,7 @@ pub(crate) mod tests {
 
     #[test]
     fn set_up_installs_support_files_and_creates_a_tsconfig() {
-        let Some(scratch) = Scratch::unmarked("create") else {
-            return;
-        };
+        let scratch = Scratch::unmarked("create");
         let template = template(&scratch.0, "v1");
         let project = scratch.0.join("video");
         write(&project.join("main.tsx"), "");
@@ -352,9 +357,7 @@ pub(crate) mod tests {
 
     #[test]
     fn set_up_does_not_climb_to_a_package_or_tsconfig_above_the_entry() {
-        let Some(scratch) = Scratch::unmarked("package-above") else {
-            return;
-        };
+        let scratch = Scratch::unmarked("package-above");
         let template = template(&scratch.0, "v1");
         // As in a home folder that happens to hold these files.
         write(&scratch.0.join("package.json"), "{}");
@@ -418,9 +421,7 @@ pub(crate) mod tests {
 
     #[test]
     fn refresh_updates_only_projects_set_up_by_another_build() {
-        let Some(scratch) = Scratch::unmarked("refresh") else {
-            return;
-        };
+        let scratch = Scratch::unmarked("refresh");
         let old = template(&scratch.0.join("old"), "v1");
         let new = template(&scratch.0.join("new"), "v2");
         let project = scratch.0.join("video");
@@ -455,9 +456,7 @@ pub(crate) mod tests {
 
     #[test]
     fn refresh_leaves_support_files_above_the_project_root_alone() {
-        let Some(scratch) = Scratch::unmarked("above") else {
-            return;
-        };
+        let scratch = Scratch::unmarked("above");
         let new = template(&scratch.0.join("new"), "v2");
         // Support files another project, or a stray setup, left in a folder
         // above the entry's project root.

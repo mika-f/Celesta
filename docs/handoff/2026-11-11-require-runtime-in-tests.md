@@ -40,8 +40,15 @@ Left out:
   plugin with a JS package, for that package's own build and tests. No test
   in `plugins/` or `examples/plugins/` spawns `packages/cli/dist/cli.js`, so
   the variable would gate nothing there.
-- GPU, font, symlink and the precondition skips (`stills_need_no_media_plugin`,
-  `Scratch::unmarked`), as scoped.
+- GPU, font and symlink skips, and the precondition skip in
+  `stills_need_no_media_plugin`, as scoped.
+
+`Scratch::unmarked` (`crates/react-bridge/src/project_types.rs`, test-only)
+no longer skips: a `celesta.config.json` in a folder above the temporary
+folder is a mistake on the machine, so it now panics everywhere, with or
+without the variable, naming the folder and saying to remove the file or
+point `TMPDIR` elsewhere. It returns `Scratch` instead of `Option<Scratch>`,
+and its four callers lost their `else { return; }`.
 
 CI's `Test (<OS>)` step sets `CELESTA_REQUIRE_RUNTIME: '1'` on Windows, macOS
 and Linux; each builds the runtime in "Build Celesta packages" first.
@@ -67,6 +74,9 @@ celesta-exporter --test integration -p celesta-mcp`.
 - `node` off `PATH` (`PATH=/usr/bin:/bin`, `CELESTA_NODE` unset), one
   fake-runtime test: skips unset, fails with "live Node.js tests require
   Node.js and the built runtime: node was not found" when set.
+- `Scratch::unmarked`: `cargo test -p celesta-react-bridge --lib
+  project_types` passes (10); with `TMPDIR` under a folder holding a
+  `celesta.config.json`, its four callers fail with the new message.
 - `cargo fmt --check`; `cargo clippy -p celesta-react-bridge -p
   celesta-exporter -p celesta-mcp --all-targets -- -D warnings`.
 
