@@ -1066,7 +1066,9 @@ pub(crate) fn element_control_handler(
     key: PropKey,
 ) -> impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + Clone + 'static
 {
-    move |this, event, _, cx| this.element_control_event(&key, event, cx)
+    move |this, event, window, cx| {
+        this.element_control_event(&key, event, window.is_window_active(), cx)
+    }
 }
 
 /// Puts `shown` into `row`'s control.
@@ -1212,12 +1214,13 @@ impl EditorView {
         &mut self,
         key: &PropKey,
         event: ControlEvent,
+        window_active: bool,
         cx: &mut Context<Self>,
     ) {
         // A number row opens for typing with its field's focus and rests
         // again on Enter, a blur or Escape.
         if let Some(row) = self.element_rows.rows.get_mut(key) {
-            row.typing.on(&event);
+            row.typing.on(&event, window_active);
         }
         match event {
             ControlEvent::Edited => {

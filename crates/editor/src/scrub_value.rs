@@ -74,13 +74,21 @@ pub(crate) struct RowTyping {
     /// Enter or Escape closed the row and its field kept the focus: the
     /// focus the window sends again when it comes back to the front does
     /// not reopen it; Enter on the resting value ([`Self::request`]) does.
+    /// Going to the back blurs the field too, so only a blur in the active
+    /// window clears it.
     rests_focused: bool,
 }
 
 impl RowTyping {
     /// Follows the row's field: open once it gains the focus, closed by
-    /// Enter, a blur or Escape.
-    pub(crate) fn on(&mut self, event: &crate::property_controls::ControlEvent) {
+    /// Enter, a blur or Escape. `window_active` is whether the window was
+    /// in front when `event` came: a blur from going to the back does not
+    /// count as the focus leaving the row.
+    pub(crate) fn on(
+        &mut self,
+        event: &crate::property_controls::ControlEvent,
+        window_active: bool,
+    ) {
         use crate::property_controls::ControlEvent;
         match event {
             ControlEvent::Focused if !self.rests_focused => self.open = true,
@@ -90,7 +98,9 @@ impl RowTyping {
             }
             ControlEvent::Submit { blur: true } => {
                 self.open = false;
-                self.rests_focused = false;
+                if window_active {
+                    self.rests_focused = false;
+                }
             }
             _ => {}
         }
@@ -181,10 +191,12 @@ impl ScrubValue {
         self
     }
 
-    /// The field shown while typing (the panel's escapable text input);
-    /// a plain `Input` over the same state without one.
-    pub(crate) fn field(mut self, field: impl IntoElement) -> Self {
-        self.field = Some(field.into_any_element());
+    /// The field shown while typing: `wrap` dresses an `Input` over this
+    /// value's own state (the panel's escapable text input), so the field
+    /// is the one whose focus the resting value tracks. A plain small
+    /// `Input` without one.
+    pub(crate) fn field<E: IntoElement>(mut self, wrap: impl FnOnce(Input) -> E) -> Self {
+        self.field = Some(wrap(Input::new(&self.input)).into_any_element());
         self
     }
 
@@ -471,13 +483,14 @@ mod tests {
                 ScrubValue::new("t", self.input.clone())
                     .text("120".to_owned())
                     .typing(self.row.open(false, false))
-                    .field(Input::new(&self.input)),
+                    .field(|input| input),
             )
         }
     }
 
-    #[gpui_kit::test]
-    fn tab_opens_a_resting_number_for_typing(cx: &mut TestAppContext) {
+    /// A window holding one [`Tabbed`] row, active so focus events reach
+    /// it.
+    fn tabbed_window(cx: &mut TestAppContext) -> gpui_kit::WindowHandle<Root> {
         use crate::property_controls::ControlEvent;
         use gpui_kit::component::input::InputEvent;
         cx.update(|cx| {
@@ -487,15 +500,20 @@ mod tests {
         let handle = cx.open_window(size(px(300.), px(100.)), |window, cx| {
             let host = cx.new(|cx| {
                 let input = cx.new(|cx| InputState::new(window, cx));
-                cx.subscribe(&input, |host: &mut Tabbed, _, event: &InputEvent, cx| {
-                    let event = match event {
-                        InputEvent::Focus => ControlEvent::Focused,
-                        InputEvent::Blur => ControlEvent::Submit { blur: true },
-                        _ => return,
-                    };
-                    host.row.on(&event);
-                    cx.notify();
-                })
+                cx.subscribe_in(
+                    &input,
+                    window,
+                    |host: &mut Tabbed, _, event: &InputEvent, window, cx| {
+                        let event = match event {
+                            InputEvent::Focus => ControlEvent::Focused,
+                            InputEvent::PressEnter { .. } => ControlEvent::Submit { blur: false },
+                            InputEvent::Blur => ControlEvent::Submit { blur: true },
+                            InputEvent::Change => return,
+                        };
+                        host.row.on(&event, window.is_window_active());
+                        cx.notify();
+                    },
+                )
                 .detach();
                 Tabbed {
                     input,
@@ -507,6 +525,12 @@ mod tests {
         handle
             .update(cx, |_, window, _| window.activate_window())
             .expect("the window");
+        handle
+    }
+
+    #[gpui_kit::test]
+    fn tab_opens_a_resting_number_for_typing(cx: &mut TestAppContext) {
+        let handle = tabbed_window(cx);
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
         cx.run_until_parked();
         assert!(cx.debug_bounds("t-input").is_none(), "it rests");
@@ -514,6 +538,31 @@ mod tests {
         cx.update(|window, cx| window.focus_next(cx));
         cx.run_until_parked();
         assert!(cx.debug_bounds("t-input").is_some(), "Tab opens it");
+    }
+
+    #[gpui_kit::test]
+    fn coming_back_to_the_window_leaves_a_resting_number_resting(cx: &mut TestAppContext) {
+        let handle = tabbed_window(cx);
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| window.focus_next(cx));
+        cx.run_until_parked();
+        let keystroke = Keystroke::parse("enter").expect("a keystroke");
+        cx.simulate_event(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(KeyUpEvent { keystroke });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("t-input").is_none(), "Enter rests it");
+
+        // Going to the back blurs the field; coming back focuses it again.
+        cx.deactivate_window();
+        cx.run_until_parked();
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("t-input").is_none(), "it still rests");
     }
 
     struct Narrow {

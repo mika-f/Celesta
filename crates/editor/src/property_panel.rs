@@ -447,7 +447,9 @@ pub(crate) fn property_control_handler(
 ) -> impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + Clone + 'static
 {
     let key = key.to_owned();
-    move |this, event, _, cx| this.property_control_event(&key, event, cx)
+    move |this, event, window, cx| {
+        this.property_control_event(&key, event, window.is_window_active(), cx)
+    }
 }
 
 /// One declared property's controls and what they show.
@@ -630,11 +632,17 @@ impl EditorView {
     }
 
     /// What the person did in the controls of the row for `key`.
-    fn property_control_event(&mut self, key: &str, event: ControlEvent, cx: &mut Context<Self>) {
+    fn property_control_event(
+        &mut self,
+        key: &str,
+        event: ControlEvent,
+        window_active: bool,
+        cx: &mut Context<Self>,
+    ) {
         // A number row opens for typing with its field's focus and rests
         // again on Enter, a blur or Escape.
         if let Some(row) = self.property_panel.rows.get_mut(key) {
-            row.state.typing.on(&event);
+            row.state.typing.on(&event, window_active);
         }
         match event {
             ControlEvent::Edited => {
@@ -1356,7 +1364,7 @@ mod tests {
     fn typing_survives_a_reload() {
         let mut row = RowState::for_field(&gap_field());
         row.offer_loaded(&json!(10), 1, false);
-        row.typing.on(&ControlEvent::Focused);
+        row.typing.on(&ControlEvent::Focused, true);
         row.text_edited();
         // A reload (an own write elsewhere, a file change) offers a value.
         row.offer_loaded(&json!(12), 2, false);

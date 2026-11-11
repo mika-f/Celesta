@@ -174,12 +174,41 @@ fn function_body<'a>(text: &'a str, name: &str) -> Vec<(usize, &'a str)> {
 /// accessible name: a tooltip only describes a button.
 #[test]
 fn transport_icon_buttons_have_accessible_names() {
-    let src = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
-    let mut found = Vec::new();
-    for (file, function) in [
+    let found = icon_buttons_without_names(&[
         ("viewer.rs", "transport_bar"),
         ("timeline.rs", "timeline_footer"),
-    ] {
+    ]);
+    assert!(
+        found.is_empty(),
+        "{} icon buttons without an accessible name:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
+
+/// The Inspector's icon-only buttons (Reset to default, Remove, the
+/// keyframe jumps) carry an accessible name too.
+#[test]
+fn inspector_icon_buttons_have_accessible_names() {
+    let found = icon_buttons_without_names(&[
+        ("property_panel_view.rs", "property_row"),
+        ("element_rows_view.rs", "element_row"),
+        ("element_rows_view.rs", "keyframe_jumps"),
+    ]);
+    assert!(
+        found.is_empty(),
+        "{} icon buttons without an accessible name:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
+
+/// The `Button::new` chains in each `(file, function)` that set an icon
+/// but no `.accessibility_label(`, as `file:line`.
+fn icon_buttons_without_names(functions: &[(&str, &str)]) -> Vec<String> {
+    let src = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+    let mut found = Vec::new();
+    for (file, function) in functions {
         let text = std::fs::read_to_string(src.join(file)).unwrap();
         let body = function_body(&text, function);
         assert!(!body.is_empty(), "{file}: no fn {function}");
@@ -203,12 +232,7 @@ fn transport_icon_buttons_have_accessible_names() {
             }
         }
     }
-    assert!(
-        found.is_empty(),
-        "{} icon buttons without an accessible name:\n{}",
-        found.len(),
-        found.join("\n")
-    );
+    found
 }
 
 /// Calls of the Inspector's old row and section helpers, which the shared

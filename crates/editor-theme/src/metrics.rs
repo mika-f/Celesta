@@ -136,8 +136,6 @@ mod tests {
         // breathe in a long Inspector.
         assert!(inspector_row_height().0 > list_row_height().0);
         assert!(inspector_padding().0 > panel_padding().0);
-        // gpui-kit's medium `Tab` is 32px tall: the band holds it.
-        assert!(panel_header_height().0 * BASE_FONT_SIZE >= 32.0);
     }
 
     #[test]

@@ -73,8 +73,8 @@ impl InspectorSection {
         self
     }
 
-    /// Appended to the header's trailing slot.
-    pub(crate) fn trailing(mut self, element: impl IntoElement) -> Self {
+    /// Appended to the header's trailing slot, after what is there.
+    pub(crate) fn push_trailing(mut self, element: impl IntoElement) -> Self {
         self.trailing.push(element.into_any_element());
         self
     }

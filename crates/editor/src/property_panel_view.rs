@@ -15,7 +15,6 @@ use crate::widgets::format_component_number;
 use celesta_react_bridge::{ComponentPropertyField, EffectiveValue, ValueSource, effective_values};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Input;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::*;
@@ -68,7 +67,7 @@ impl EditorView {
             }))
             .children(rows);
         let section = if busy {
-            section.trailing(Spinner::new().xsmall())
+            section.push_trailing(Spinner::new().xsmall())
         } else {
             section
         };
@@ -98,6 +97,7 @@ impl EditorView {
                 .ghost()
                 .xsmall()
                 .icon(IconName::RotateCcw)
+                .accessibility_label("Reset to default")
                 .tooltip("Reset to default")
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.commit_property(&reset_key, None, TextUpdate::Always, cx);
@@ -180,13 +180,9 @@ impl EditorView {
                     .ok();
             });
             if typing {
-                value = value.field(text_input(
-                    Input::new(input),
-                    locked,
-                    hint,
-                    cx,
-                    property_control_handler(key),
-                ));
+                value = value.field(|input| {
+                    text_input(input, locked, hint, cx, property_control_handler(key))
+                });
             }
             return value.into_any_element();
         }

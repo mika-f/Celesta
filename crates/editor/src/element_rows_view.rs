@@ -21,7 +21,6 @@ use celesta_react_bridge::{PrimitivePropertyField, SourcePos};
 use celesta_source_edit::{EditTarget, LockReason};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Input;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -351,7 +350,6 @@ impl EditorView {
                         ),
                     };
                     let typing = row.typing_open();
-                    let field_input = input.clone();
                     let view = cx.entity().downgrade();
                     let press_key = key.clone();
                     let type_key = key.clone();
@@ -377,13 +375,15 @@ impl EditorView {
                             .ok();
                     });
                     if typing {
-                        value = value.field(text_input(
-                            Input::new(&field_input),
-                            locked,
-                            hint,
-                            cx,
-                            element_control_handler(key.clone()),
-                        ));
+                        value = value.field(|input| {
+                            text_input(
+                                input,
+                                locked,
+                                hint,
+                                cx,
+                                element_control_handler(key.clone()),
+                            )
+                        });
                     }
                     value.into_any_element()
                 }
@@ -449,6 +449,7 @@ impl EditorView {
                         .ghost()
                         .xsmall()
                         .icon(IconName::Close)
+                        .accessibility_label(remove_tooltip)
                         .tooltip(remove_tooltip)
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.remove_element_row(&key, cx)),
@@ -513,11 +514,13 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let jump = |control: &str, icon: IconName, frame: i64, cx: &mut Context<Self>| {
+            let name = format!("Go to frame {frame}");
             Button::new(row_id(control, key))
                 .ghost()
                 .xsmall()
                 .icon(icon)
-                .tooltip(format!("Go to frame {frame}"))
+                .accessibility_label(name.clone())
+                .tooltip(name)
                 .on_click(cx.listener(move |this, _, _, cx| this.go_to_frame(frame, cx)))
         };
         div()

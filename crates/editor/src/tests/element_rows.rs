@@ -1374,22 +1374,22 @@ fn a_drag_back_to_the_start_writes_nothing_and_does_not_type() {
 fn typing_follows_the_fields_focus() {
     let mut typing = RowTyping::default();
     assert!(!typing.open(false, false));
-    typing.on(&ControlEvent::Focused);
+    typing.on(&ControlEvent::Focused, true);
     assert!(typing.open(false, false));
-    typing.on(&ControlEvent::Submit { blur: false });
+    typing.on(&ControlEvent::Submit { blur: false }, true);
     assert!(!typing.open(false, false));
     typing.request();
-    typing.on(&ControlEvent::Escape);
+    typing.on(&ControlEvent::Escape, true);
     assert!(!typing.open(false, false));
     typing.request();
-    typing.on(&ControlEvent::Submit { blur: true });
+    typing.on(&ControlEvent::Submit { blur: true }, true);
     assert!(!typing.open(false, false));
     // Typed text, or text that did not parse, keeps the field open.
     assert!(typing.open(true, false));
     assert!(typing.open(false, true));
     // Other events leave it as it is.
-    typing.on(&ControlEvent::Focused);
-    typing.on(&ControlEvent::Edited);
+    typing.on(&ControlEvent::Focused, true);
+    typing.on(&ControlEvent::Edited, true);
     assert!(typing.open(false, false));
 }
 
@@ -1400,20 +1400,28 @@ fn a_resting_row_with_the_focus_opens_only_on_request() {
     // open the row. Enter (a request) does.
     for closing in [ControlEvent::Escape, ControlEvent::Submit { blur: false }] {
         let mut typing = RowTyping::default();
-        typing.on(&ControlEvent::Focused);
-        typing.on(&closing);
-        typing.on(&ControlEvent::Focused);
+        typing.on(&ControlEvent::Focused, true);
+        typing.on(&closing, true);
+        typing.on(&ControlEvent::Focused, true);
         assert!(!typing.open(false, false), "{closing:?}");
         typing.request();
         assert!(typing.open(false, false));
     }
     // Once the focus left, coming back opens it again (Tab).
     let mut typing = RowTyping::default();
-    typing.on(&ControlEvent::Focused);
-    typing.on(&ControlEvent::Escape);
-    typing.on(&ControlEvent::Submit { blur: true });
-    typing.on(&ControlEvent::Focused);
+    typing.on(&ControlEvent::Focused, true);
+    typing.on(&ControlEvent::Escape, true);
+    typing.on(&ControlEvent::Submit { blur: true }, true);
+    typing.on(&ControlEvent::Focused, true);
     assert!(typing.open(false, false));
+    // The window going to the back blurs the field too: the focus it
+    // sends on coming back still leaves the row resting.
+    let mut typing = RowTyping::default();
+    typing.on(&ControlEvent::Focused, true);
+    typing.on(&ControlEvent::Escape, true);
+    typing.on(&ControlEvent::Submit { blur: true }, false);
+    typing.on(&ControlEvent::Focused, true);
+    assert!(!typing.open(false, false));
 }
 
 #[test]
@@ -1423,7 +1431,7 @@ fn a_layer_row_rests_with_its_message_once_its_text_is_restored() {
     assert!(!element_row_open(RowTyping::default(), false));
     assert!(element_row_open(RowTyping::default(), true));
     let mut typing = RowTyping::default();
-    typing.on(&ControlEvent::Focused);
+    typing.on(&ControlEvent::Focused, true);
     assert!(element_row_open(typing, false));
 }
 
