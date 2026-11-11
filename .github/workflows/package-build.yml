@@ -1,8 +1,8 @@
 name: Package
 
-# Builds the standard app packages and separate native codec downloads. package.yml calls it to sign and
-# publish a release; ci.yml calls it with nothing signed on every push to
-# main, which checks packaging and saves the release-profile Rust cache on
+# Builds the app packages and the optional ffmpeg-x264 download for each
+# system. package.yml calls it to sign and publish a release; ci.yml calls
+# it with nothing signed on every push to main, which checks packaging and saves the release-profile Rust cache on
 # main, and on a manual run of CI, which checks a branch's packaging. A tag's
 # run can restore caches from main but cannot share its own with the next
 # tag, so without that a release compiles everything from scratch.
@@ -21,6 +21,8 @@ on:
 
 permissions:
   contents: read
+  # setup-ffmpeg downloads Windows' FFmpeg from GitHub Packages.
+  packages: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -106,7 +108,7 @@ jobs:
         uses: actions/upload-artifact@v7.0.2
         with:
           name: celesta-codecs-windows-x64
-          path: target/packages/Celesta-plugin-ffmpeg-*-windows-x64.zip
+          path: target/packages/Celesta-plugin-ffmpeg-x264-*-windows-x64.zip
           if-no-files-found: error
 
   macos:
@@ -211,11 +213,11 @@ jobs:
         uses: actions/upload-artifact@v7.0.2
         with:
           name: celesta-codecs-macos-${{ matrix.arch }}
-          path: target/packages/Celesta-plugin-ffmpeg-*-macos-${{ matrix.arch }}.zip
+          path: target/packages/Celesta-plugin-ffmpeg-x264-*-macos-${{ matrix.arch }}.zip
           if-no-files-found: error
 
   linux-plugins:
-    name: Linux x64 codec downloads
+    name: Linux x64 x264 download
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
@@ -237,7 +239,7 @@ jobs:
         with:
           version: 2026.11.4
           cache_save: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build optional codec archives
+      - name: Build the optional x264 archive
         env:
           VERSION: ${{ inputs.version }}
           RELEASE: ${{ inputs.release }}
@@ -249,5 +251,5 @@ jobs:
         uses: actions/upload-artifact@v7.0.2
         with:
           name: celesta-codecs-linux-x64
-          path: target/packages/Celesta-plugin-ffmpeg-*-linux-x64.zip
+          path: target/packages/Celesta-plugin-ffmpeg-x264-*-linux-x64.zip
           if-no-files-found: error

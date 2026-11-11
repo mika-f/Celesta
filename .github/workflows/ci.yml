@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  # setup-ffmpeg downloads Windows' FFmpeg from GitHub Packages.
+  packages: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -282,8 +284,9 @@ jobs:
       # affected: rust-cache keys on FFMPEG_VERSION and FFMPEG_FEATURES, and
       # only main saves, where every plugin runs with FFmpeg; a job without
       # it would hash empty values, miss main's cache, and build cold.
-      # Four native FFmpeg builds are cached independently of Rust. A cold
-      # setup compiles them, so JS packages install meanwhile.
+      # The two native FFmpeg builds (standard and x264) are cached
+      # independently of Rust. A cold setup compiles them, so JS packages
+      # install meanwhile.
       # rust-cache waits for it: a background step's environment reaches
       # later steps only after a wait. It starts after the Linux packages, as
       # both use apt.
@@ -292,10 +295,10 @@ jobs:
         uses: $/.github/actions/setup-ffmpeg
         background: true
 
-      # Windows also compiles four native builds on a cache miss. Keep this
-      # action sequential: a background composite action can fail as the runner
-      # rewrites event.json as each step starts, and two steps starting at
-      # once collide on the file lock (actions/runner#4641).
+      # Windows only downloads the two pre-built packages (about 10 seconds
+      # each), and there a background composite action fails now and then: the
+      # runner rewrites event.json as each step starts, and two steps starting
+      # at once collide on the file lock (actions/runner#4641).
       - if: steps.affected.outputs.any == 'true' && runner.os == 'Windows'
         uses: $/.github/actions/setup-ffmpeg
 
@@ -446,3 +449,6 @@ jobs:
           EOF
           docker run --rm -v "$RUNNER_TEMP:/work" celesta-exporter:check --react check.tsx check.mov
           test -s "$RUNNER_TEMP/check.mov"
+          # WebM (VP9 and Opus) needs only the bundled LGPL plugin.
+          docker run --rm -v "$RUNNER_TEMP:/work" celesta-exporter:check --react check.tsx check.webm
+          test -s "$RUNNER_TEMP/check.webm"
