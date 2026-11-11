@@ -23,9 +23,12 @@ pub const FFMPEG_PLUGIN_ID: &str = "ffmpeg";
 pub const RESERVED_PLUGIN_ID: &str = "builtin";
 
 /// The standard FFmpeg program name. [`InstalledPlugins::media`] recognizes
-/// this and the x264, Opus and VPX programs beside an installed Celesta, as
+/// this and [`X264_CODEC_PROGRAM`] beside an installed Celesta, as
 /// `cargo install` leaves them, never beside a source build in a Cargo folder.
 pub const CODEC_PROGRAM: &str = "celesta-codec-ffmpeg";
+
+/// The optional x264 FFmpeg program name, recognized like [`CODEC_PROGRAM`].
+pub const X264_CODEC_PROGRAM: &str = "celesta-codec-ffmpeg-x264";
 
 /// The flag that has each recognized sibling media program print its manifest
 /// (`id`, `version`, `roles`, and `media`) as JSON and exit without the protocol:
@@ -549,8 +552,8 @@ impl InstalledPlugins {
     /// plugins that is a media plugin with a program for this platform
     /// (discovery leaves out one this Celesta is outside the range of, so the
     /// next one with its id is listed instead), then recognized FFmpeg plugin
-    /// programs beside the running one (standard [`CODEC_PROGRAM`], x264,
-    /// Opus, and VPX), each when that
+    /// programs beside the running one ([`CODEC_PROGRAM`] and
+    /// [`X264_CODEC_PROGRAM`]), each when that
     /// is an installed program rather than a source build in a Cargo build
     /// folder and none of these but a project's has the id it prints. A
     /// project's plugin cannot replace it, as discovery keeps one in the
@@ -572,12 +575,7 @@ impl InstalledPlugins {
             .filter(|entry| entry.has_role(PluginRole::Media))
             .filter_map(media_plugin)
             .collect();
-        for program in [
-            CODEC_PROGRAM,
-            "celesta-codec-ffmpeg-x264",
-            "celesta-codec-ffmpeg-opus",
-            "celesta-codec-ffmpeg-vpx",
-        ] {
+        for program in [CODEC_PROGRAM, X264_CODEC_PROGRAM] {
             if let Some(sibling) =
                 executable.and_then(|executable| sibling_media(executable, program))
                 && !media
@@ -1277,23 +1275,17 @@ mod tests {
         }
 
         #[test]
-        fn optional_builds_are_discovered_independently() {
+        fn the_x264_build_is_discovered_independently() {
             let root = tempfile::tempdir().unwrap();
             let (_, executable) = printing_its_manifest(root.path());
-            for id in ["ffmpeg-x264", "ffmpeg-opus", "ffmpeg-vpx"] {
-                let printed = serde_json::json!({
-                    "id": id, "version": "0.10.0", "roles": ["media"], "media": {},
-                });
-                let scratch = tempfile::tempdir().unwrap();
-                let (program, _) =
-                    fake_sibling(scratch.path(), &format!("printf '%s\\n' '{printed}'"));
-                std::fs::rename(program, root.path().join(format!("celesta-codec-{id}"))).unwrap();
-            }
+            let printed = serde_json::json!({
+                "id": "ffmpeg-x264", "version": "0.10.0", "roles": ["media"], "media": {},
+            });
+            let scratch = tempfile::tempdir().unwrap();
+            let (program, _) = fake_sibling(scratch.path(), &format!("printf '%s\\n' '{printed}'"));
+            std::fs::rename(program, root.path().join(X264_CODEC_PROGRAM)).unwrap();
             let listed = InstalledPlugins::default().media_with_sibling(Some(&executable));
-            assert_eq!(
-                ids(&listed),
-                ["ffmpeg", "ffmpeg-x264", "ffmpeg-opus", "ffmpeg-vpx"]
-            );
+            assert_eq!(ids(&listed), ["ffmpeg", "ffmpeg-x264"]);
         }
 
         #[test]
@@ -1430,12 +1422,12 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let (program, _) = fake_sibling(
                 root.path(),
-                "echo 'ffmpeg-opus: this FFmpeg build has no libopus' >&2\nhead -c 100000 /dev/zero >&2\nexit 1",
+                "echo 'ffmpeg-x264: this FFmpeg build has no libx264' >&2\nhead -c 100000 /dev/zero >&2\nexit 1",
             );
             let reason = printed_manifest(&program).unwrap_err();
             assert!(reason.contains("--manifest failed"), "{reason}");
             assert!(
-                reason.ends_with("ffmpeg-opus: this FFmpeg build has no libopus"),
+                reason.ends_with("ffmpeg-x264: this FFmpeg build has no libx264"),
                 "{reason}"
             );
         }

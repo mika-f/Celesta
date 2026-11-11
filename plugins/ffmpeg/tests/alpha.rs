@@ -1,5 +1,5 @@
-//! VP9 alpha is decoded here, where libvpx is actually linked; other plugin
-//! tests must not rely on libvpx being present in their own FFmpeg build.
+//! VP9 alpha is decoded here, where libvpx is linked into the standard
+//! build; the x264 build's tests must not rely on libvpx being present.
 use celesta_codec_ffmpeg::FfmpegCodec;
 use celesta_composition::Rational;
 use celesta_media::{
@@ -14,7 +14,7 @@ fn alpha_survives_encoding_and_webm_muxing() {
     let path = directory.path().join("alpha.webm");
     let raw = directory.path().join("alpha.rgba");
     let color = Color::bt709_limited();
-    let mut codec = FfmpegCodec::vpx();
+    let mut codec = FfmpegCodec::new();
     let encoder = codec.video_encoder().unwrap();
     let opened = encoder
         .open_video(&VideoEncoderRequest {
@@ -56,8 +56,7 @@ fn alpha_survives_encoding_and_webm_muxing() {
         color,
         alpha: true,
     }];
-    let mut standard = FfmpegCodec::new();
-    let muxer = standard.muxer().unwrap();
+    let muxer = codec.muxer().unwrap();
     let session = muxer
         .open_muxer(&MuxerRequest {
             component: "webm",

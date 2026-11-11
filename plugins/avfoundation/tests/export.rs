@@ -62,12 +62,12 @@ fn install() {
             celesta_codec_avfoundation::registered(),
             celesta_codec_ffmpeg::registered(),
             optional(celesta_codec_ffmpeg_x264::registered()),
-            optional(celesta_codec_ffmpeg_opus::registered()),
         ]))));
     });
 }
 
-/// Optional codecs run in their own native builds and rank as user downloads.
+/// The optional x264 codec runs in its own native build and ranks as a user
+/// download.
 fn optional(mut plugin: celesta_media::RegisteredPlugin) -> celesta_media::RegisteredPlugin {
     let executable = program::executable(&plugin.id);
     let directory = executable.parent().unwrap().to_path_buf();
@@ -548,11 +548,7 @@ fn avfoundation_hevc_with_ffmpeg_opus_in_ffmpeg_mp4() {
         directory.path(),
         "film.mp4",
         ExportOptions {
-            output: choice(
-                "ffmpeg/mp4",
-                Some("avfoundation/hevc"),
-                Some("ffmpeg-opus/opus"),
-            ),
+            output: choice("ffmpeg/mp4", Some("avfoundation/hevc"), Some("ffmpeg/opus")),
             ..ExportOptions::default()
         },
     ) else {
@@ -560,7 +556,7 @@ fn avfoundation_hevc_with_ffmpeg_opus_in_ffmpeg_mp4() {
     };
     assert_eq!(
         reported(&report),
-        ["ffmpeg/mp4", "avfoundation/hevc", "ffmpeg-opus/opus"]
+        ["ffmpeg/mp4", "avfoundation/hevc", "ffmpeg/opus"]
     );
     let codec = report["outputs"][0]["video"]["codec"].as_str().unwrap();
     assert!(codec.starts_with("hvc1."), "{codec}");
@@ -782,10 +778,7 @@ fn native_h264_is_the_default_beside_optional_x264() {
         .iter()
         .map(|plugin| plugin.id.as_str())
         .collect();
-    assert_eq!(
-        ids,
-        ["avfoundation", "ffmpeg", "ffmpeg-x264", "ffmpeg-opus"]
-    );
+    assert_eq!(ids, ["avfoundation", "ffmpeg", "ffmpeg-x264"]);
 
     let directory = tempfile::tempdir().unwrap();
     let project = with_audio(

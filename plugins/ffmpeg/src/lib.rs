@@ -3,8 +3,9 @@
 //! libavcodec and libavformat through `ffmpeg-sys-next` for encoding and
 //! muxing).
 //!
-//! The default provider serves decoding, ProRes, AAC/PCM and muxing on LGPL
-//! FFmpeg. [`FfmpegCodec::x264`] shares the implementation with the separate
+//! The default provider serves decoding, ProRes, VP9, AAC, Opus, PCM, and
+//! muxing on LGPL FFmpeg (with libvpx and libopus, both BSD licensed).
+//! [`FfmpegCodec::x264`] shares the implementation with the separate
 //! `ffmpeg-x264` process, which alone exposes libx264 and links GPL FFmpeg.
 
 mod audio_encoder;
@@ -29,9 +30,9 @@ pub use process::run_plugin;
 use audio_encoder::AudioSession;
 use celesta_media::{
     AudioBuffer, AudioDecoder, AudioEncoder, AudioEncoderOpened, AudioEncoderRequest,
-    ComponentDescription, Decoder, Encoded, MediaError, MediaProbe, MediaProvider, MediaRegistry,
-    Muxer, MuxerRequest, ProviderFactory, RegisteredPlugin, SessionId, TrackPacket, VideoEncoder,
-    VideoEncoderOpened, VideoEncoderRequest, VideoFrame, VideoRequest,
+    ComponentDescription, ComponentKind, Decoder, Encoded, MediaError, MediaProbe, MediaProvider,
+    MediaRegistry, Muxer, MuxerRequest, ProviderFactory, RegisteredPlugin, SessionId, TrackPacket,
+    VideoEncoder, VideoEncoderOpened, VideoEncoderRequest, VideoFrame, VideoRequest,
 };
 use celesta_plugin_host::{MediaManifest, MediaOrigin};
 use components::{AudioCodec, MuxerFormat, VideoCodec};
@@ -51,13 +52,26 @@ pub const DECODER_ID: &str = "ffmpeg";
 /// The plugin's manifest source, which declares its components.
 const PLUGIN_JSON: &str = include_str!("../plugin.json");
 
+/// Which FFmpeg build a program links, and so which components it serves.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Profile {
+    /// LGPL FFmpeg: the decoder, the muxers, and every encoder but libx264.
     #[default]
     Standard,
+    /// GPL FFmpeg with libx264, serving that one encoder.
     X264,
-    Opus,
-    Vpx,
+}
+
+impl Profile {
+    /// The build that serves the component `id` of `kind`: the one place a
+    /// component is assigned to a program.
+    fn of(kind: ComponentKind, id: &str) -> Self {
+        if kind == ComponentKind::VideoEncoder && id == VideoCodec::X264.id() {
+            Self::X264
+        } else {
+            Self::Standard
+        }
+    }
 }
 
 /// A [`MediaProvider`] on the linked FFmpeg libraries.
@@ -85,26 +99,16 @@ impl FfmpegCodec {
         }
     }
 
-    /// The encoder-only provider for the separate libopus build.
-    pub fn opus() -> Self {
-        Self {
-            profile: Profile::Opus,
-            ..Self::default()
-        }
-    }
-
-    /// The encoder-only provider for the separate libvpx build.
-    pub fn vpx() -> Self {
-        Self {
-            profile: Profile::Vpx,
-            ..Self::default()
-        }
-    }
-
     /// A [`ProviderFactory`] making an [`FfmpegCodec`] in this process,
     /// whatever it is for.
     pub fn factory() -> ProviderFactory {
         Arc::new(|_kill, _use| Ok(Box::new(Self::new()) as Box<dyn MediaProvider>))
+    }
+
+    /// Whether this program serves the component `id` of `kind`, or must
+    /// answer that it has no such component.
+    fn serves(&self, kind: ComponentKind, id: &str) -> bool {
+        Profile::of(kind, id) == self.profile
     }
 
     fn next_session(&mut self) -> SessionId {
@@ -206,18 +210,9 @@ fn decoded<T>(result: Result<T, MediaError>) -> Result<T, MediaError> {
 
 impl MediaProvider for FfmpegCodec {
     fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
-        use celesta_media::ComponentKind;
         Ok(components::describe()
             .into_iter()
-            .filter(|component| {
-                let profile = match (component.kind, component.id.as_str()) {
-                    (ComponentKind::VideoEncoder, "libx264") => Profile::X264,
-                    (ComponentKind::VideoEncoder, "vp9") => Profile::Vpx,
-                    (ComponentKind::AudioEncoder, "opus") => Profile::Opus,
-                    _ => Profile::Standard,
-                };
-                profile == self.profile
-            })
+            .filter(|component| self.serves(component.kind, &component.id))
             .collect())
     }
 
@@ -230,15 +225,11 @@ impl MediaProvider for FfmpegCodec {
     }
 
     fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
-        if self.profile == Profile::Opus {
-            None
-        } else {
-            Some(self)
-        }
+        Some(self)
     }
 
     fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
-        if matches!(self.profile, Profile::Standard | Profile::Opus) {
+        if self.profile == Profile::Standard {
             Some(self)
         } else {
             None
@@ -256,7 +247,7 @@ impl MediaProvider for FfmpegCodec {
 
 impl Decoder for FfmpegCodec {
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
-        if self.profile != Profile::Standard {
+        if !self.serves(ComponentKind::Decoder, decoder) {
             return Err(no_component("decoder", decoder));
         }
         check_decoder(decoder)?;
@@ -268,7 +259,7 @@ impl Decoder for FfmpegCodec {
         decoder: &str,
         request: &VideoRequest<'_>,
     ) -> Result<VideoFrame, MediaError> {
-        if self.profile != Profile::Standard {
+        if !self.serves(ComponentKind::Decoder, decoder) {
             return Err(no_component("decoder", decoder));
         }
         check_decoder(decoder)?;
@@ -290,7 +281,7 @@ impl Decoder for FfmpegCodec {
         sample_rate: u32,
         channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
-        if self.profile != Profile::Standard {
+        if !self.serves(ComponentKind::Decoder, decoder) {
             return Err(no_component("decoder", decoder));
         }
         check_decoder(decoder)?;
@@ -304,15 +295,8 @@ impl VideoEncoder for FfmpegCodec {
         request: &VideoEncoderRequest<'_>,
     ) -> Result<VideoEncoderOpened, MediaError> {
         let codec = VideoCodec::from_id(request.component)
+            .filter(|_| self.serves(ComponentKind::VideoEncoder, request.component))
             .ok_or_else(|| no_component("video encoder", request.component))?;
-        let profile = match codec {
-            VideoCodec::X264 => Profile::X264,
-            VideoCodec::Vp9 => Profile::Vpx,
-            VideoCodec::ProRes => Profile::Standard,
-        };
-        if profile != self.profile {
-            return Err(no_component("video encoder", request.component));
-        }
         let opened = video_encoder::open(codec, request)?;
         let session = self.next_session();
         self.video.insert(session, opened.session);
@@ -351,15 +335,8 @@ impl AudioEncoder for FfmpegCodec {
         request: &AudioEncoderRequest<'_>,
     ) -> Result<AudioEncoderOpened, MediaError> {
         let codec = AudioCodec::from_id(request.component)
+            .filter(|_| self.serves(ComponentKind::AudioEncoder, request.component))
             .ok_or_else(|| no_component("audio encoder", request.component))?;
-        let profile = if codec == AudioCodec::Opus {
-            Profile::Opus
-        } else {
-            Profile::Standard
-        };
-        if profile != self.profile {
-            return Err(no_component("audio encoder", request.component));
-        }
         let opened = audio_encoder::open(codec, request)?;
         let session = self.next_session();
         self.audio.insert(session, opened.session);
@@ -397,10 +374,8 @@ impl AudioEncoder for FfmpegCodec {
 
 impl Muxer for FfmpegCodec {
     fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
-        if self.profile != Profile::Standard {
-            return Err(no_component("muxer", request.component));
-        }
         let format = MuxerFormat::from_id(request.component)
+            .filter(|_| self.serves(ComponentKind::Muxer, request.component))
             .ok_or_else(|| no_component("muxer", request.component))?;
         let opened = muxer::open(format, request)?;
         let session = self.next_session();

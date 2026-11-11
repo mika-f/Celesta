@@ -1,4 +1,4 @@
-//! Shared command handling for the four independently linked programs.
+//! Shared command handling for the two independently linked programs.
 
 use crate::{FfmpegCodec, Profile, check_license};
 use celesta_composition::Rational;

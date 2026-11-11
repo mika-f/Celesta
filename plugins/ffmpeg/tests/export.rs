@@ -9,13 +9,11 @@ use celesta_project::{
 use ez_ffmpeg::{FfmpegContext, Input, Output};
 use std::path::Path;
 use std::sync::Arc;
-#[path = "../../ffmpeg/tests/support/program.rs"]
-mod program;
 
 fn transparent_project(dir: &Path) -> Project {
     let mut project = Project::load(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../ffmpeg/tests/fixtures/minimal.celesta.json"),
+            .join("tests/fixtures/minimal.celesta.json"),
     )
     .unwrap();
     project.settings.width = 64;
@@ -77,20 +75,11 @@ fn a_rendered_vp9_webm_preserves_the_transparent_quadrant() {
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
     let path = directory.path().join("rendered.webm");
-    let plugins = [
-        celesta_codec_ffmpeg::registered(),
-        celesta_codec_ffmpeg_opus::registered(),
-        celesta_codec_ffmpeg_vpx::registered(),
-    ]
-    .into_iter()
-    .map(|mut plugin| {
-        let executable = program::executable(&plugin.id);
-        let directory = executable.parent().unwrap().to_path_buf();
-        plugin.factory = MediaProcess::factory(executable, directory);
-        plugin
-    })
-    .collect();
-    celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(plugins))));
+    let mut plugin = celesta_codec_ffmpeg::registered();
+    let executable = std::path::PathBuf::from(env!("CARGO_BIN_EXE_celesta-codec-ffmpeg"));
+    let program_directory = executable.parent().unwrap().to_path_buf();
+    plugin.factory = MediaProcess::factory(executable, program_directory);
+    celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(vec![plugin]))));
     match Exporter::new(ExportOptions::default()).export_project(&project, directory.path(), &path)
     {
         Ok(()) => {}

@@ -5,7 +5,7 @@ use celesta_media::{
 };
 
 #[test]
-fn opus_audio_round_trips_through_the_standard_webm_muxer() {
+fn opus_audio_round_trips_through_the_webm_muxer() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("tone.webm");
     let settings = Settings::new();
@@ -15,7 +15,7 @@ fn opus_audio_round_trips_through_the_standard_webm_muxer() {
             [value, value]
         })
         .collect();
-    let mut codec = FfmpegCodec::opus();
+    let mut codec = FfmpegCodec::new();
     let encoder = codec.audio_encoder().unwrap();
     let opened = encoder
         .open_audio(&AudioEncoderRequest {
@@ -37,8 +37,7 @@ fn opus_audio_round_trips_through_the_standard_webm_muxer() {
         channels: opened.channels,
         delay: opened.delay,
     }];
-    let mut standard = FfmpegCodec::new();
-    let muxer = standard.muxer().unwrap();
+    let muxer = codec.muxer().unwrap();
     let session = muxer
         .open_muxer(&MuxerRequest {
             component: "webm",

@@ -4,9 +4,6 @@
 //! them, and what it refuses.
 #![cfg(target_os = "macos")]
 
-#[path = "../../ffmpeg/tests/support/program.rs"]
-mod program;
-
 use block2::RcBlock;
 use celesta_codec_avfoundation::{AvfCodec, DECODER_ID};
 use celesta_codec_ffmpeg::FfmpegCodec;
@@ -236,15 +233,8 @@ fn click_file(output: &Path) {
 /// A WebM of Opus, which only the FFmpeg plugin writes and reads, at
 /// `output`.
 fn webm(output: &Path) {
-    let executable = program::executable("ffmpeg-opus");
-    let mut opus = celesta_media::MediaProcess::start(
-        &executable,
-        executable.parent().unwrap(),
-        &Default::default(),
-    )
-    .unwrap();
     let mut ffmpeg = FfmpegCodec::new();
-    let (audio, track) = encode_audio(&mut opus, "opus", 0, &click());
+    let (audio, track) = encode_audio(&mut ffmpeg, "opus", 0, &click());
     let packets = interleaved(&[(AUDIO_RATE, &audio)]);
     mux(&mut ffmpeg, "webm", output, &[track], 0, &packets);
 }

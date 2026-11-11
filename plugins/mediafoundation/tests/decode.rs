@@ -293,14 +293,7 @@ fn ffmpeg_mov(output: &Path) {
 /// A WebM of Opus, which only the FFmpeg plugin writes and reads, at
 /// `output`.
 fn webm(output: &Path) {
-    let executable = program::executable("ffmpeg-opus");
-    let mut opus = celesta_media::MediaProcess::start(
-        &executable,
-        executable.parent().unwrap(),
-        &Default::default(),
-    )
-    .unwrap();
-    let (audio, track) = encode_audio(&mut opus, "opus", 0, &click());
+    let (audio, track) = encode_audio(&mut FfmpegCodec::new(), "opus", 0, &click());
     let packets = interleaved(&[(AUDIO_RATE, &audio)]);
     mux("webm", output, &[track], 0, &packets);
 }

@@ -653,7 +653,7 @@ fn aac_takes_the_mixs_rate_when_it_can() {
 
 #[test]
 fn opus_always_takes_48_khz() {
-    let mut codec = support::process("ffmpeg-opus");
+    let mut codec = support::process("ffmpeg");
     let opened = open_audio(&mut codec, "opus", &Settings::new(), 44_100, 2).unwrap();
     assert_eq!((opened.sample_rate, opened.channels), (48_000, 2));
     assert!(opened.delay > 0, "libopus primes its output");
@@ -818,7 +818,7 @@ fn prores_4444_keeps_alpha_and_hq_does_not() {
 
 #[test]
 fn vp9_alpha_rides_as_block_additions() {
-    let mut codec = support::process("ffmpeg-vpx");
+    let mut codec = support::process("ffmpeg");
     let offered = [PixelFormat::Rgba16, PixelFormat::Rgba8];
     for alpha in [true, false] {
         let opened = open(
@@ -979,7 +979,7 @@ fn prores_and_vp9_are_tagged_bt709() {
         );
     }
 
-    let mut codec = support::process("ffmpeg-vpx");
+    let mut codec = support::process("ffmpeg");
     let opened = open(&mut codec, "vp9", &Settings::new(), &[PixelFormat::Rgba16]).unwrap();
     let (packets, _) = encode_all(&mut codec, opened);
     let frames = decode("vp9", None, &packets);
@@ -1026,7 +1026,7 @@ fn an_unknown_color_name_is_refused() {
         let mut codec: Box<dyn MediaProvider> = if component == "libx264" {
             Box::new(FfmpegCodec::x264()) as Box<dyn MediaProvider>
         } else if component == "vp9" {
-            Box::new(support::process("ffmpeg-vpx"))
+            Box::new(support::process("ffmpeg"))
         } else {
             Box::new(FfmpegCodec::new())
         };
@@ -1063,7 +1063,7 @@ fn an_rgb_matrix_libswscale_cannot_convert_to_is_refused() {
         let mut codec: Box<dyn MediaProvider> = if component == "libx264" {
             Box::new(FfmpegCodec::x264()) as Box<dyn MediaProvider>
         } else if component == "vp9" {
-            Box::new(support::process("ffmpeg-vpx"))
+            Box::new(support::process("ffmpeg"))
         } else {
             Box::new(FfmpegCodec::new())
         };
@@ -1128,27 +1128,21 @@ fn manifest_ids(key: &str) -> BTreeSet<String> {
     let manifest: serde_json::Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
     let base: serde_json::Value =
         serde_json::from_str(include_str!("../../ffmpeg/plugin.json")).unwrap();
-    let opus: serde_json::Value =
-        serde_json::from_str(include_str!("../../ffmpeg-opus/plugin.json")).unwrap();
-    let vpx: serde_json::Value =
-        serde_json::from_str(include_str!("../../ffmpeg-vpx/plugin.json")).unwrap();
     manifest["media"][key]
         .as_array()
         .into_iter()
         .flatten()
         .chain(base["media"][key].as_array().into_iter().flatten())
-        .chain(opus["media"][key].as_array().into_iter().flatten())
-        .chain(vpx["media"][key].as_array().into_iter().flatten())
         .map(|entry| entry["id"].as_str().unwrap().to_owned())
         .collect()
 }
 
 #[test]
 fn describe_names_every_manifest_component() {
-    let mut described = FfmpegCodec::new().describe().unwrap();
+    // The standard program, linked against the standard build, serves VP9
+    // and Opus; this test binary links the x264 build.
+    let mut described = support::process("ffmpeg").describe().unwrap();
     described.extend(FfmpegCodec::x264().describe().unwrap());
-    described.extend(support::process("ffmpeg-opus").describe().unwrap());
-    described.extend(support::process("ffmpeg-vpx").describe().unwrap());
     for (kind, key) in [
         (ComponentKind::Decoder, "decoders"),
         (ComponentKind::VideoEncoder, "videoEncoders"),

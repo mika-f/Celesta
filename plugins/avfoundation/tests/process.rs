@@ -5,9 +5,6 @@
 //! kind across the protocol.
 #![cfg(target_os = "macos")]
 
-#[path = "../../ffmpeg/tests/support/program.rs"]
-mod program;
-
 use celesta_codec_avfoundation::AvfCodec;
 use celesta_codec_ffmpeg::FfmpegCodec;
 use celesta_composition::Rational;
@@ -294,15 +291,8 @@ fn errors_keep_their_kind() {
 /// A second of Opus in WebM, which only the FFmpeg plugin writes and
 /// reads, at `output`.
 fn webm(output: &Path) {
-    let executable = program::executable("ffmpeg-opus");
-    let mut opus = celesta_media::MediaProcess::start(
-        &executable,
-        executable.parent().unwrap(),
-        &Default::default(),
-    )
-    .unwrap();
     let mut ffmpeg = FfmpegCodec::new();
-    let encoder = opus.audio_encoder().unwrap();
+    let encoder = ffmpeg.audio_encoder().unwrap();
     let opened = encoder
         .open_audio(&AudioEncoderRequest {
             component: "opus",

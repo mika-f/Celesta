@@ -93,10 +93,8 @@ fn minimal_project() -> Project {
 
 #[test]
 fn the_ffmpeg_codec_has_every_format_encoder() {
-    let mut described = FfmpegCodec::new().describe().unwrap();
+    let mut described = support::process("ffmpeg").describe().unwrap();
     described.extend(FfmpegCodec::x264().describe().unwrap());
-    described.extend(support::process("ffmpeg-opus").describe().unwrap());
-    described.extend(support::process("ffmpeg-vpx").describe().unwrap());
     for (kind, id) in [
         (ComponentKind::VideoEncoder, "libx264"),
         (ComponentKind::VideoEncoder, "prores"),

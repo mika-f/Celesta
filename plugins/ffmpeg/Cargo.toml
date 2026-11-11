@@ -25,3 +25,10 @@ serde_json = "1.0.154"
 # macOS packages bundle FFmpeg dylibs; retain static linking elsewhere.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 ez-ffmpeg = { version = "0.19", features = ["static"] }
+
+[dev-dependencies]
+celesta-exporter = { path = "../../crates/exporter", version = "=0.9.0" }
+celesta-gpu-renderer = { path = "../../crates/gpu-renderer", version = "=0.9.0" }
+celesta-project = { path = "../../crates/project", version = "=0.9.0" }
+png = "0.18.1"
+tempfile = "3.23.0"
