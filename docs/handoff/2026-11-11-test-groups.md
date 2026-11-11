@@ -144,6 +144,10 @@ Costs of the choice:
   the runtime group printed (`skipping live Node.js test: ...`,
   `skipping ...: build packages/cli first`, `skipping: build packages/cli
   first (pnpm run build:runtime)`) are gone with them.
+- The 42 react-bridge tests named `..._when_node_is_available` lost the
+  suffix, which no longer names a condition: every test of the runtime
+  target has `node`, or fails. `docs/performance/react-bridge.md` names one
+  of them; the dated notes and plans keep the old names.
 - Comments naming the moved files: `packages/cli/test/inspect.test.mts`,
   `packages/character/test/lipsync-and-preset.test.mts`,
   `plugins/ffmpeg/tests/decode.rs`.
@@ -153,10 +157,6 @@ Left as they were:
 - The GPU gate (`CELESTA_REQUIRE_GPU`) and the capability skips listed above.
 - `crates/bench`: its React workload returns an error when `cli.js` is
   missing, so a benchmark run already fails; its `#[test]`s need no runtime.
-- Test names: the `_when_node_is_available` suffix of 42 react-bridge tests
-  is no longer a condition (the target always has `node`), but dropping it
-  would rename 42 tests and touch most of the file that #805 also edits, so
-  it stays for a follow-up.
 - The fixture writer keeps its `#[ignore]`.
 
 ## Checks
@@ -211,6 +211,9 @@ Linux x64 container, Rust 1.99.1, cargo-nextest 0.9.146, Node.js 22,
   without the feature. `cargo fmt --all --check`, the fframes and
   `plugins/` (`-p celesta-codec-ffmpeg`) format checks, and
   `git diff --check` pass.
+- After the rename: `cargo test -p celesta-react-bridge --features
+  runtime-tests --test runtime` passes 45, and the CI list is still the
+  same 2829 tests once the suffix is taken off the old names.
 - `git merge-tree` of this branch with `main` and with each open pull
   request: no textual conflict. #805's two added lines land in
   `crates/react-bridge/tests/runtime.rs`, and no open pull request adds a
