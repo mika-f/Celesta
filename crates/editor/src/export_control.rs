@@ -127,8 +127,13 @@ impl EditorView {
     pub(crate) fn open_export_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.choosing_export_path
             || self.export_cancellation.is_some()
+            || self.opening
             || window.has_active_dialog(cx)
         {
+            return;
+        }
+        // Already open it stays as it is, the focus where it was.
+        if self.export_page.is_open() {
             return;
         }
         self.problems.clear(Source::Export);
@@ -186,7 +191,7 @@ impl EditorView {
     }
 
     /// Gives the editor the focus, as when the window opened.
-    fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(focus_handle) = &self.focus_handle {
             focus_handle.focus(window, cx);
         }

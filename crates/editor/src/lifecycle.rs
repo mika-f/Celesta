@@ -687,7 +687,15 @@ impl EditorView {
                 });
                 match result {
                     Ok(next) => {
+                        // An open export page goes with the old project
+                        // (and Reload Plugins' old registry); the editor
+                        // takes back the focus it held, or no shortcut
+                        // works until a click.
+                        let page_was_open = this.export_page.is_open();
                         this.replace_contents(next, cx);
+                        if page_was_open {
+                            this.focus_editor(window, cx);
+                        }
                         this.ask_about_pending_plugins(window, cx);
                     }
                     Err(error) => {

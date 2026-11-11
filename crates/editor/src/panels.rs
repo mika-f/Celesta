@@ -27,7 +27,8 @@ use gpui_kit::{ClickEvent, Context, ObjectFit, SharedString, Window, div, img, p
 impl EditorView {
     /// The window's title bar: the menu bar (outside macOS, which shows it
     /// natively), the open file, and the window-wide commands — Create New
-    /// Project…, Open…, and Export… (or Cancel export).
+    /// Project…, Open…, and the export page's Export toggle (or Cancel
+    /// export).
     pub(crate) fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let exporting = self.export_cancellation.is_some();
         let muted = cx.theme().muted_foreground;

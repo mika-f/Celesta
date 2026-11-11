@@ -96,7 +96,8 @@ impl EditorView {
                 view.track_focus(focus_handle)
             })
             // Escape cancels a canvas drag, a band or scene drag, a row's
-            // scrub or the add mode before any other key handling. Ending
+            // scrub or the add mode before the editor's other key-down
+            // handling (a focused input's Escape action runs first). Ending
             // the add mode also cancels a canvas text edit open with it,
             // which would otherwise take a second Escape. Last, it closes
             // the export page, from one of its text fields too.
@@ -198,8 +199,9 @@ impl EditorView {
         // The window does not shrink with the rem, so keeping the regions'
         // sizes is what lets the denser type show more in them (and the
         // timeline's pixel geometry keeps the same number of tracks). The
-        // export panel's width follows the rem its rows are laid out in:
-        // 26rem, within 22–34rem.
+        // export panel's width starts at 26rem, within 22–34rem, in the
+        // rem of the frame the row is first laid out in; after that a rem
+        // change moves only its range, which the width held is kept in.
         let (row_id, row_state, first_panel) = match export_page {
             Some(page) => {
                 let rem = window.rem_size();
