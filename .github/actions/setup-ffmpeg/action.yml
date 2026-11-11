@@ -6,8 +6,11 @@ runs:
   steps:
     - name: Name FFmpeg builds
       shell: bash
+      env:
+        # Unix source builds track Renovate; Windows uses the pinned vcpkg port.
+        FFMPEG_VERSION: '8.1.3'
       run: |
-        if [[ "$RUNNER_OS" == Windows ]]; then version=8.1.2; else version=8.1.3; fi
+        if [[ "$RUNNER_OS" == Windows ]]; then version=8.1.2; else version="$FFMPEG_VERSION"; fi
         echo "FFMPEG_VERSION=$version" >> "$GITHUB_ENV"
         echo "FFMPEG_FEATURES=standard,x264,opus,vpx-v2" >> "$GITHUB_ENV"
         echo "FFMPEG_PREFIX=$RUNNER_TEMP/ffmpeg-variants" >> "$GITHUB_ENV"
@@ -27,12 +30,25 @@ runs:
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends nasm zlib1g-dev libx264-dev libvpx-dev libopus-dev libclang-dev
 
+    - name: Fingerprint the runner and codec dependencies
+      shell: bash
+      run: |
+        echo "FFMPEG_IMAGE_OS=${ImageOS:-$RUNNER_OS}" >> "$GITHUB_ENV"
+        echo "FFMPEG_IMAGE_VERSION=${ImageVersion:-unknown}" >> "$GITHUB_ENV"
+        case "$RUNNER_OS" in
+          macOS) dependencies="$(brew list --versions x264 libvpx opus)" ;;
+          Linux) dependencies="$(dpkg-query -W libx264-dev libvpx-dev libopus-dev zlib1g-dev)" ;;
+          Windows) dependencies=vcpkg-2026.07.29 ;;
+        esac
+        fingerprint="$(printf '%s' "$dependencies" | openssl dgst -sha256 | awk '{print $NF}')"
+        echo "FFMPEG_DEPS_HASH=$fingerprint" >> "$GITHUB_ENV"
+
     - name: Restore native FFmpeg libraries
       id: cache
       uses: actions/cache/restore@v6.1.0
       with:
         path: ${{ env.FFMPEG_PREFIX }}
-        key: ffmpeg-variants-${{ runner.os }}-${{ runner.arch }}-${{ env.FFMPEG_VERSION }}-vcpkg-2026.07.29-${{ hashFiles('scripts/build-ffmpeg-linux.sh', '.github/actions/setup-ffmpeg/action.yml') }}
+        key: ffmpeg-variants-${{ runner.os }}-${{ runner.arch }}-${{ env.FFMPEG_IMAGE_OS }}-${{ env.FFMPEG_IMAGE_VERSION }}-${{ env.FFMPEG_DEPS_HASH }}-${{ env.FFMPEG_VERSION }}-vcpkg-2026.07.29-${{ hashFiles('scripts/build-ffmpeg-linux.sh', '.github/actions/setup-ffmpeg/action.yml') }}
 
     - name: Build Unix FFmpeg libraries
       if: runner.os != 'Windows' && steps.cache.outputs.cache-hit != 'true'
@@ -67,7 +83,7 @@ runs:
       uses: actions/cache/save@v6.1.0
       with:
         path: ${{ env.FFMPEG_PREFIX }}
-        key: ffmpeg-variants-${{ runner.os }}-${{ runner.arch }}-${{ env.FFMPEG_VERSION }}-vcpkg-2026.07.29-${{ hashFiles('scripts/build-ffmpeg-linux.sh', '.github/actions/setup-ffmpeg/action.yml') }}
+        key: ffmpeg-variants-${{ runner.os }}-${{ runner.arch }}-${{ env.FFMPEG_IMAGE_OS }}-${{ env.FFMPEG_IMAGE_VERSION }}-${{ env.FFMPEG_DEPS_HASH }}-${{ env.FFMPEG_VERSION }}-vcpkg-2026.07.29-${{ hashFiles('scripts/build-ffmpeg-linux.sh', '.github/actions/setup-ffmpeg/action.yml') }}
 
     - name: Select Unix FFmpeg libraries
       if: runner.os != 'Windows'

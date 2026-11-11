@@ -27,7 +27,8 @@ The main executables link no FFmpeg. The bundled plugins\ffmpeg provides the
 standard LGPL build: decoding, ProRes, AAC/PCM and muxing. MOV/ProRes exports
 work without additional downloads, including the example above.
 
-For MP4, download ffmpeg-x264; for WebM, download both ffmpeg-vpx and
+For MP4, use the bundled mediafoundation/h264 when available, or download
+ffmpeg-x264. For WebM, download both ffmpeg-vpx and
 ffmpeg-opus from the same GitHub release as Celesta. Choose the windows-x64
 ZIP, extract it, and copy the whole ffmpeg-<codec> folder into
 %APPDATA%\Celesta\plugins. Open Celesta, reload plugins and allow them.

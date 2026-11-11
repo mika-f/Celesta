@@ -15,21 +15,51 @@ for (let index = 0; index < args.length; index++) {
   } else rest.push(args[index]);
 }
 if (packages.length === 0) throw new Error('expected at least one -p package');
-// The GPL process tests use the default process binary built by its own tests.
+// Cross-plugin tests need independently linked sibling programs.
 packages.sort((a, b) => Number(a === 'celesta-codec-ffmpeg-x264') - Number(b === 'celesta-codec-ffmpeg-x264'));
-for (const name of packages) {
-  if (name === 'celesta-codec-ffmpeg-x264' && command === 'test') {
-    for (const dependency of ['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-opus', 'celesta-codec-ffmpeg-vpx']) {
-      const built = spawnSync(process.env.CARGO ?? 'cargo', ['build', '-p', dependency, '--locked'], {
-        cwd: resolve(workspace), env: ffmpegEnvironment(dependency), stdio: 'inherit',
-      });
-      if (built.error) throw built.error;
-      if (built.status !== 0) process.exit(built.status ?? 1);
-    }
-  }
-  const result = spawnSync(process.env.CARGO ?? 'cargo', [command, '-p', name, ...rest], {
+// Only build flags belong on prerequisite builds, not test filters or libtest args.
+const buildFlags: string[] = [];
+for (let index = 0; index < rest.length && rest[index] !== '--'; index++) {
+  const flag = rest[index];
+  if (['--release', '--locked', '--offline', '--frozen'].includes(flag)) buildFlags.push(flag);
+  else if (['--target', '--profile', '--target-dir', '--config', '--jobs', '-j'].includes(flag)) {
+    const value = rest[++index];
+    if (value === undefined) throw new Error(`${flag} needs a value`);
+    buildFlags.push(flag, value);
+  } else if (/^--(target|profile|target-dir|config|jobs)=/.test(flag)) buildFlags.push(flag);
+}
+const failures = new Set<string>();
+function run(name: string, action: string, flags: string[]): boolean {
+  const result = spawnSync(process.env.CARGO ?? 'cargo', [action, '-p', name, ...flags], {
     cwd: resolve(workspace), env: ffmpegEnvironment(name), stdio: 'inherit',
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.error) console.error(`${name}: ${result.error.message}`);
+  if (result.error || result.status !== 0) {
+    failures.add(name);
+    return false;
+  }
+  return true;
+}
+for (const name of packages) {
+  const crossPluginTests = name === 'celesta-codec-ffmpeg-x264' || name === 'celesta-codec-ffmpeg-vpx'
+    || (name === 'celesta-codec-avfoundation' && process.platform === 'darwin')
+    || (name === 'celesta-codec-mediafoundation' && process.platform === 'win32');
+  if (crossPluginTests && command === 'test') {
+    let ready = true;
+    for (const dependency of (name === 'celesta-codec-ffmpeg-vpx'
+      ? ['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-opus']
+      : ['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-x264', 'celesta-codec-ffmpeg-opus', 'celesta-codec-ffmpeg-vpx'])) {
+      if (!run(dependency, 'build', buildFlags.includes('--locked') ? buildFlags : ['--locked', ...buildFlags])) ready = false;
+    }
+    if (!ready) {
+      console.error(`${name}: prerequisite build failed; continuing with other packages`);
+      failures.add(name);
+      continue;
+    }
+  }
+  run(name, command, rest);
+}
+if (failures.size > 0) {
+  console.error(`Cargo failed for: ${[...failures].join(', ')}`);
+  process.exit(1);
 }

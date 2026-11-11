@@ -55,7 +55,7 @@ jobs:
           workspaces: |
             . -> target
             plugins -> target
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
+          env-vars: FFMPEG_VERSION FFMPEG_FEATURES FFMPEG_IMAGE_OS FFMPEG_IMAGE_VERSION FFMPEG_DEPS_HASH
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Node.js and pnpm as mise.lock pins them.
@@ -139,7 +139,7 @@ jobs:
           workspaces: |
             . -> target
             plugins -> target
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
+          env-vars: FFMPEG_VERSION FFMPEG_FEATURES FFMPEG_IMAGE_OS FFMPEG_IMAGE_VERSION FFMPEG_DEPS_HASH
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: jdx/mise-action@v5.2.7
@@ -231,7 +231,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: plugins -> target
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
+          env-vars: FFMPEG_VERSION FFMPEG_FEATURES FFMPEG_IMAGE_OS FFMPEG_IMAGE_VERSION FFMPEG_DEPS_HASH
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: jdx/mise-action@v5.2.7
         with:

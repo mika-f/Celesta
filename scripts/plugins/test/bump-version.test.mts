@@ -187,7 +187,7 @@ describe('bump-version.mts', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('could not write plugins/ffmpeg/plugin.json');
     expect(result.stderr).toContain(
-      'written: Cargo.toml, plugins/ffmpeg/Cargo.toml; failed: plugins/ffmpeg/plugin.json;',
+      'written: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml; failed: plugins/ffmpeg/plugin.json;',
     );
     expect(result.stderr).toContain('the bump was undone, every file is as it was');
     expect(existsSync(join(root, 'ran-update'))).toBe(false);

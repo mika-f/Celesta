@@ -100,7 +100,7 @@ try {
     Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/stage-react-runtime.mjs", "$runtime/react")
     # Only the standard plugin is bundled. Optional encoders have separate ZIPs.
     $codec = Join-Path $package 'plugins/ffmpeg'
-    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/plugins/build.mts", "$root/plugins/ffmpeg", '--out', "$package/plugins")
+    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/plugins/build.mts", "$root/plugins/ffmpeg", '--distribution', '--out', "$package/plugins")
     $codecManifest = Get-Content -Raw -LiteralPath "$codec/celesta-plugin.json" | ConvertFrom-Json
     $codecProgram = Join-Path $codec $codecManifest.executable.'windows-x86_64'
     Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination (Split-Path $codecProgram -Parent)

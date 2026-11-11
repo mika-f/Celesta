@@ -32,7 +32,10 @@ export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfi
 export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 ```
 
-Homebrew's GPL `ffmpeg@8` can be used for `ffmpeg-x264`, but cannot build the standard plugin.
+For local use, Homebrew's `ffmpeg@8` also works for the standard plugin:
+`brew install ffmpeg@8 pkg-config`, then set
+`PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"`. A system GPL build
+is accepted locally; the standard profile still exposes no libx264/Opus/VP9 encoders.
 
 :::
 :::tab[Windows]
@@ -43,7 +46,9 @@ Use separate vcpkg installation roots for `ffmpeg[zlib]` (standard),
 `x64-windows-static-md` triplet. Set `VCPKG_ROOT` to the standard root and
 `FFMPEG_X264_VCPKG_ROOT`, `FFMPEG_OPUS_VCPKG_ROOT`, and `FFMPEG_VPX_VCPKG_ROOT`
 to the optional roots. The repository's setup-ffmpeg CI action shows a complete
-Windows setup. Adding x264 to the standard root makes that build GPL and is rejected.
+Windows setup. A system FFmpeg 8.1.x with the needed development libraries
+also works locally, including a GPL build. Distribution packages require the
+separate license profiles above.
 
 :::
 :::tab[Linux]
@@ -65,6 +70,12 @@ export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 
 :::
 ::::
+
+Local builds may use a system FFmpeg 8.1.x. To prepare redistribution, pass
+`--distribution` to `scripts/plugins/build.mts`: it opens the encoders and runs
+the explicit `--check-license` command before staging. Standard, Opus and VPX
+distributions require LGPL-only FFmpeg. Run distribution validation on the
+target OS and architecture; cross-compiles cannot bypass the check.
 
 ## 2. Get the source
 

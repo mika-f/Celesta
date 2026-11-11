@@ -16,6 +16,7 @@ mod ffi;
 mod h264;
 mod muxer;
 mod probe;
+mod process;
 mod sequential;
 mod tags;
 #[cfg(test)]
@@ -23,6 +24,7 @@ mod tests;
 mod video_encoder;
 
 pub use decoder::FfmpegBackend;
+pub use process::run_plugin;
 
 use audio_encoder::AudioSession;
 use celesta_media::{
@@ -440,29 +442,41 @@ pub(crate) fn ffmpeg_error(error: ez_ffmpeg::error::Error) -> MediaError {
     MediaError::Codec(format!("FFmpeg operation failed: {error}"))
 }
 
-/// Refuses GPL/nonfree libraries in the default plugin, including `--manifest`.
-/// Checks the loaded libraries so replacing a dylib cannot silently change it.
+/// Checks the libraries loaded by a distribution-validation command.
+/// Local startup does not invoke this check.
 pub fn check_lgpl() -> Result<(), String> {
+    check_license(PLUGIN_ID, false)
+}
+
+/// Validates one profile's distribution license and names the loaded libraries.
+fn check_license(plugin: &str, gpl: bool) -> Result<(), String> {
     use std::ffi::CStr;
     // SAFETY: FFmpeg returns static, NUL-terminated license strings.
     let licenses = unsafe {
         [
-            ffmpeg_sys_next::avcodec_license(),
-            ffmpeg_sys_next::avformat_license(),
-            ffmpeg_sys_next::avfilter_license(),
-            ffmpeg_sys_next::avdevice_license(),
-            ffmpeg_sys_next::avutil_license(),
-            ffmpeg_sys_next::swscale_license(),
-            ffmpeg_sys_next::swresample_license(),
+            ("avcodec", ffmpeg_sys_next::avcodec_license()),
+            ("avformat", ffmpeg_sys_next::avformat_license()),
+            ("avfilter", ffmpeg_sys_next::avfilter_license()),
+            ("avdevice", ffmpeg_sys_next::avdevice_license()),
+            ("avutil", ffmpeg_sys_next::avutil_license()),
+            ("swscale", ffmpeg_sys_next::swscale_license()),
+            ("swresample", ffmpeg_sys_next::swresample_license()),
         ]
-        .map(|license| CStr::from_ptr(license).to_string_lossy())
+        .map(|(name, license)| (name, CStr::from_ptr(license).to_string_lossy()))
     };
-    if licenses
-        .iter()
-        .all(|license| license.starts_with("LGPL version"))
-    {
+    if licenses.iter().all(|(_, license)| {
+        license.starts_with("LGPL version") || (gpl && license.starts_with("GPL version"))
+    }) {
         Ok(())
     } else {
-        Err("ffmpeg requires LGPL FFmpeg libraries; build GPL encoders as plugins/ffmpeg-x264 with a separate FFmpeg prefix".to_owned())
+        let actual = licenses
+            .iter()
+            .map(|(name, license)| format!("{name}: {license}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let expected = if gpl { "GPL/LGPL" } else { "LGPL-only" };
+        Err(format!(
+            "{plugin} distribution requires {expected} FFmpeg libraries; loaded {actual}"
+        ))
     }
 }

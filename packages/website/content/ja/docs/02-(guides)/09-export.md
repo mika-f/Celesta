@@ -4,9 +4,16 @@
 
 ## アプリから
 
-アプリに同梱するのは標準の `ffmpeg` だけです。追加ダウンロードなしでは
-**QuickTime · ffmpeg** を選んで ProRes／MOV を書き出せます。MP4 には **ffmpeg-x264**、
-WebM には **ffmpeg-vpx と ffmpeg-opus の両方**を入れてください。[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)をご覧ください。
+FFmpeg の構成のうち、アプリに同梱するのは標準の `ffmpeg` だけです。
+ProRes／MOV は追加ダウンロードなしで使えます。macOS の `avfoundation/h264`、Windows の
+`mediafoundation/h264` も同梱され、利用可能ならユーザーが追加した x264 より優先して
+MP4 の既定の映像エンコーダーになります。Linux の H.264／MP4 には **ffmpeg-x264** が必要です。
+どの OS でも x264 を選ぶには `ffmpeg-x264/libx264` を明示します。WebM には **ffmpeg-vpx と
+ffmpeg-opus の両方**が必要です。[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)をご覧ください。
+
+保存済みの設定がないとき、ダイアログは既定エンコーダーがインストールされている
+コンテナーを選びます。H.264 があれば MP4、標準版だけなら ProRes／MOV で始まります。
+明示したパスやプリセットの形式は変えません。
 
 タイトルバーの **Export**、または **File → Export…**（`⌘ Shift E`、`Ctrl Shift E`）で書き出しページを開きます。ページは左側の Assets パネルと入れ替わり、ビューアー、右のドック、タイムラインはそのまま残るので、コンポジションを見ながら設定できます。ページを閉じるには、もう一度 **Export** を押すか、パネルの X を押すか、Escape を押します。選んだ内容は残ります。上から順に次の項目があります。
 
@@ -114,7 +121,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 
 | 拡張子 | マルチプレクサー | 映像エンコーダー | 音声エンコーダー |
 | --- | --- | --- | --- |
-| `.mp4`、`.m4v` | `ffmpeg/mp4` | `ffmpeg-x264/libx264`（H.264） | `ffmpeg/aac`（AAC） |
+| `.mp4`、`.m4v` | `ffmpeg/mp4` | `avfoundation/h264`（macOS）、`mediafoundation/h264`（Windows）、`ffmpeg-x264/libx264`（Linux） | `ffmpeg/aac`（AAC） |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores`（ProRes 4444） | `ffmpeg/pcm`（24 bit PCM） |
 | `.webm` | `ffmpeg/webm` | `ffmpeg-vpx/vp9`（アルファ付き VP9） | `ffmpeg-opus/opus`（Opus、48 kHz） |
 
@@ -146,7 +153,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 :::tab[macOS]
 
 ```sh title="速いプリセットで書き出す"
-"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
 ```
 
 ```sh title="入っているコンポーネントを一覧にする"
@@ -157,7 +164,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 :::tab[Windows]
 
 ```sh title="速いプリセットで書き出す"
-& "C:\path\to\Celesta\Celesta-export.exe" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+& "C:\path\to\Celesta\Celesta-export.exe" --react --video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
 ```
 
 ```sh title="入っているコンポーネントを一覧にする"
@@ -223,7 +230,7 @@ MCP の `export_video` ツールと `@celesta.studio/exporter` は `preset` と 
 
 ## macOS の AVFoundation コンポーネント
 
-macOS のアプリには `avfoundation` メディアプラグインも入っています。Apple の VideoToolbox と AudioToolbox で（Mac にメディアエンジンがあればそれを使って）エンコードし、AVFoundation で MP4 と MOV のファイルを書きます。既定は FFmpeg のままです。これらのコンポーネントは、`--muxer`、`--video-encoder`、`--audio-encoder` や書き出しプリセット（`"muxer": "avfoundation/mp4"`、`"video": { "component": "avfoundation/hevc" }`）で名前を指定したときだけ使われます。FFmpeg のコンポーネントと組み合わせることもでき、`--video-encoder avfoundation/hevc` だけを指定すると、VideoToolbox の HEVC を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。このプラグインは macOS 専用で、Windows と Linux にはありません。
+macOS のアプリには `avfoundation` メディアプラグインも入っています。Apple の VideoToolbox と AudioToolbox で（Mac にメディアエンジンがあればそれを使って）エンコードし、AVFoundation で MP4 と MOV のファイルを書きます。H.264 は MP4 の既定エンコーダーになり、ユーザーが追加した x264 より優先されます。muxer と AAC の既定は FFmpeg のままです。それ以外のコンポーネントは、`--muxer`、`--video-encoder`、`--audio-encoder` や書き出しプリセット（`"muxer": "avfoundation/mp4"`、`"video": { "component": "avfoundation/hevc" }`）で名前を指定したときだけ使われます。FFmpeg のコンポーネントと組み合わせることもでき、`--video-encoder avfoundation/hevc` だけを指定すると、VideoToolbox の HEVC を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。このプラグインは macOS 専用で、Windows と Linux にはありません。
 
 | コンポーネント | 種類 | 書き出すもの |
 | --- | --- | --- |
@@ -265,7 +272,7 @@ MCP の `export_video` ツールと `@celesta.studio/exporter` も同じ名前�
 
 ## Windows の Media Foundation コンポーネント
 
-Windows のアプリには `mediafoundation` メディアプラグインも入っています。Windows 自身の Media Foundation で（Windows が GPU の動画エンコーダーを使えるときはそれを使って）H.264、HEVC、AAC をエンコードします。マルチプレクサーは持たず、エンコーダーはほかのプラグインのコンテナーに書きます。コンテナーはいつもどおり出力の拡張子で決まり（`.mp4` なら `ffmpeg/mp4`、`.mov` なら `ffmpeg/mov`）、`--muxer` でも指定できます。既定は FFmpeg のままです。これらのコンポーネントは、`--video-encoder` と `--audio-encoder` や書き出しプリセット（`"video": { "component": "mediafoundation/hevc" }`）で名前を指定したときだけ使われます。`--video-encoder mediafoundation/h264` だけを指定すると、Media Foundation の H.264 を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。アプリの書き出しページでも、映像と音声のエンコーダーの中に表示されます。このプラグインは Windows 専用で、macOS と Linux にはありません。
+Windows のアプリには `mediafoundation` メディアプラグインも入っています。Windows 自身の Media Foundation で（Windows が GPU の動画エンコーダーを使えるときはそれを使って）H.264、HEVC、AAC をエンコードします。マルチプレクサーは持たず、エンコーダーはほかのプラグインのコンテナーに書きます。コンテナーはいつもどおり出力の拡張子で決まり（`.mp4` なら `ffmpeg/mp4`、`.mov` なら `ffmpeg/mov`）、`--muxer` でも指定できます。H.264 は MP4 の既定エンコーダーになり、ユーザーが追加した x264 より優先されます。muxer と AAC の既定は FFmpeg のままです。それ以外のコンポーネントは、`--video-encoder` と `--audio-encoder` や書き出しプリセット（`"video": { "component": "mediafoundation/hevc" }`）で名前を指定したときだけ使われます。`--video-encoder mediafoundation/h264` だけを指定すると、Media Foundation の H.264 を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。アプリの書き出しページでも、映像と音声のエンコーダーの中に表示されます。このプラグインは Windows 専用で、macOS と Linux にはありません。
 
 | コンポーネント | 種類 | 書き出すもの |
 | --- | --- | --- |

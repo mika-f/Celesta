@@ -40,6 +40,8 @@ objc2-video-toolbox = { version = "0.3.2", default-features = false, features = 
 # The FFmpeg plugin decodes and muxes what the encoders give, in the tests.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 celesta-codec-ffmpeg = { path = "../ffmpeg", version = "=0.9.0" }
+celesta-codec-ffmpeg-x264 = { path = "../ffmpeg-x264", version = "=0.9.0" }
+celesta-codec-ffmpeg-opus = { path = "../ffmpeg-opus", version = "=0.9.0" }
 # The exports that combine this plugin's components with the FFmpeg plugin's.
 celesta-exporter = { path = "../../crates/exporter", version = "=0.9.0" }
 celesta-gpu-renderer = { path = "../../crates/gpu-renderer", version = "=0.9.0" }

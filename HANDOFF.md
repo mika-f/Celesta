@@ -20,7 +20,7 @@ Per-task specifications, implementation details, and validation results live in
 - FFmpeg 8.1.x development libraries must be available for `ez-ffmpeg` /
   `ffmpeg-sys-next` to link against. They are needed only for the FFmpeg
   media plugin, `plugins/ffmpeg` (`celesta-codec-ffmpeg`), and its tests, which
-  the plugins workspace's `--workspace` checks include. On macOS the
+  the per-build plugin checks include. On macOS the
   AVFoundation plugin's tests (`plugins/avfoundation`) need them too: they
   read its files back with the FFmpeg plugin and libavformat. The root
   workspace and the VRM plugin link no FFmpeg. Celesta's own crates
@@ -30,8 +30,10 @@ Per-task specifications, implementation details, and validation results live in
   [`docs/handoff/2026-11-08-media-decoders.md`](docs/handoff/2026-11-08-media-decoders.md),
   and [`docs/handoff/2026-11-08-media-encoders.md`](docs/handoff/2026-11-08-media-encoders.md)).
   The `ffmpeg`/`ffprobe` binaries are not used at runtime.
-- Windows: `vcpkg install ffmpeg[x264,vpx,opus]:x64-windows-static-md`, with
-  `VCPKG_ROOT` set. Non-macOS builds enable `ez-ffmpeg`'s `static` feature.
+- Windows: the standard distribution uses `ffmpeg[zlib]:x64-windows-static-md`.
+  Build x264, Opus and VPX into independent vcpkg roots; `VCPKG_ROOT` selects
+  standard, and `FFMPEG_{X264,OPUS,VPX}_VCPKG_ROOT` select the others. The
+  setup action pins vcpkg and shows the complete commands. Non-macOS builds enable `ez-ffmpeg`'s `static` feature.
   Also needed there:
   - Git for Windows with `git config --global core.autocrlf false` before
     cloning (the repository has no `.gitattributes`, and CRLF files fail
@@ -51,7 +53,10 @@ Per-task specifications, implementation details, and validation results live in
     without one.
 - macOS: `brew install ffmpeg@8 pkg-config`, then
   `export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"` (the
-  formula is keg-only); desktop packaging bundles the required dylibs.
+  formula is keg-only) for local use, including its GPL build. Distribution
+  builds instead use independent prefixes from `scripts/build-ffmpeg-linux.sh`
+  with `FFMPEG_VARIANT=standard|x264|opus|vpx`; desktop packages bundle the
+  standard dylibs and optional downloads carry their own.
 - The AVFoundation media plugin, `plugins/avfoundation`
   (`celesta-codec-avfoundation`), builds on macOS only and links only
   Apple's frameworks (no FFmpeg; `celesta-codec-ffmpeg` is a macOS-only
@@ -79,7 +84,8 @@ Per-task specifications, implementation details, and validation results live in
   linted on its own system (rustfmt, Linux only, formats their gated code
   too).
 - Linux: `scripts/build-ffmpeg-linux.sh` builds static FFmpeg 8.1.x libraries
-  with libx264, libvpx, and libopus. Point `PKG_CONFIG_PATH` at
+  with `FFMPEG_VARIANT=standard|x264|opus|vpx`, defaulting to standard.
+  Prefixes default to `/opt/ffmpeg8-<variant>` and must stay separate. Point `PKG_CONFIG_PATH` at
   `<prefix>/lib/pkgconfig`; bindgen
   needs `libclang-dev`. The editor also needs `libasound2-dev`,
   `libxkbcommon-x11-dev`, and `libfontconfig-dev`.
@@ -150,7 +156,7 @@ compositions: no package a composition imports depends on them, though
 | `celesta-evaluator` | Deterministic project-to-`Scene` and project-to-`AudioGraph` evaluation. |
 | `celesta-media` | Media through plugins: probing, exact-time video frames, and audio decoding (`MediaBackend`, decoder routing), the component model (`MediaRegistry` with its `describe` cache, `MediaProvider` and the `Decoder`, `VideoEncoder`, `AudioEncoder`, and `Muxer` traits, `MediaProcess`, plugin protocol 2's messages), pipelined export requests (`Pipeline`, `PIPE_WINDOW`, and the ring of frame slots an export process gets, `ProviderUse::Export { ring }` sized by `ring_layout`), the settings schema and its validation, and audio resampling; plus the audio mix, ducking, time stretching, and loudness. Links no codec library. |
 | `celesta-media-image` | The built-in image components, registered in every exporter registry by `celesta_exporter::with_builtin` (plugin id `builtin`, `MediaOrigin::BuiltIn`, no folder or process): the video encoders `builtin/png` (`compression`, `depth`, `transparent`), `builtin/jpeg` (`quality`), and `builtin/webp` (`lossless`, `quality`, `transparent`), and the muxers `builtin/image` (one file) and `builtin/imageSequence` (`sequence: true`, one file per frame from a `frame-%06d.<ext>` pattern), which serve still exports only; see [`docs/handoff/2026-11-09-media-stills.md`](docs/handoff/2026-11-09-media-stills.md). |
-| `celesta-codec-ffmpeg` | `plugins/ffmpeg`, the FFmpeg media plugin: a program serving protocol 2 (its decoder `ffmpeg/ffmpeg`, with HDR tone mapping; video encoders `libx264`, `prores`, `vp9`; audio encoders `aac`, `opus`, `pcm`; muxers `mp4`, `mov`, `webm`, on libavcodec and libavformat) and answering `--manifest` for the `cargo install` sibling, and `FfmpegCodec`, through which its own tests drive the exporter. The only crate that links FFmpeg. A member of the plugins workspace, `plugins/Cargo.toml`, with Celesta's version; built into a plugin directory by `scripts/plugins/build.mts`. |
+| `celesta-codec-ffmpeg` | Shared FFmpeg implementation and the standard process in `plugins/ffmpeg`: decoder `ffmpeg/ffmpeg`, ProRes, AAC/PCM, MP4/MOV/WebM muxers. App distributions bundle its LGPL build. Optional native builds/processes `celesta-codec-ffmpeg-x264`, `celesta-codec-ffmpeg-opus` and `celesta-codec-ffmpeg-vpx` provide `ffmpeg-x264/libx264`, `ffmpeg-opus/opus` and `ffmpeg-vpx/vp9`; they are separate downloads. Local builds may use a system GPL FFmpeg, while distribution validation explicitly checks licenses and opens encoders. |
 | `celesta-codec-avfoundation` | `plugins/avfoundation`, the macOS media plugin: a program serving protocol 2 with VideoToolbox's video encoders `h264`, `hevc`, and `prores`, AudioToolbox's `aac`, AVAssetWriter's muxers `mp4` and `mov`, and an AVAssetReader decoder `avfoundation/avfoundation` (`mp4`, `mov`, `m4a`), through `objc2` bindings; `AvfCodec`, through which its own tests drive the exporter. MIT or Apache-2.0; `plugin.json`'s `"os": ["macos"]`. FFmpeg ranks before it among bundled plugins, so its components serve exports only when named. A member of the plugins workspace with Celesta's version. |
 | `celesta-codec-mediafoundation` | `plugins/mediafoundation`, the Windows media plugin: a program serving protocol 2 with Media Foundation's encoder MFTs `h264` and `hevc` (hardware first, with a `hardware` setting; RGB converted to BT.709 YUV in the plugin) and `aac` (Microsoft's AAC encoder, with a 1024-frame lead-in as its delay), and an `IMFSourceReader` decoder `mediafoundation/mediafoundation` (`mp4`, `mov`, `m4a`) that applies MP4 and MOV edit lists itself, through the `windows` crate; no muxer, so its encoders write into another plugin's (`ffmpeg/mp4`); `MfCodec`, through which its own tests drive the exporter. MIT or Apache-2.0; `plugin.json`'s `"os": ["windows"]`. FFmpeg ranks before it among bundled plugins, so its components serve exports only when named. A member of the plugins workspace with Celesta's version. |
 | `celesta-codec-test` | The lossless test media plugin the core's tests read and write media with, in-process (`install`) or as the program `celesta-codec-test` in a temporary plugin folder (`TestCodecPlugin`): a decoder, `celesta-test-codec/test`, which lists no extensions and reads test codec and WAV files of any name, a lossless video encoder, a PCM audio encoder, and its own muxer; not published. |
@@ -433,10 +439,10 @@ not a licensed VOICEROID sample.
 Typical preview and export commands, run from the repository root:
 
 ```sh
-node scripts/plugins/build.mts plugins/ffmpeg
+node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation plugins/mediafoundation
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 cargo run -p celesta-editor -- packages/cli/examples/title.tsx
-cargo run -p celesta-exporter -- --react packages/cli/examples/title.tsx output.mp4
+cargo run -p celesta-exporter -- --react packages/cli/examples/title.tsx output.mov
 ```
 
 The editor and exporter find the media plugin through `CELESTA_PLUGIN_PATH`,
@@ -488,11 +494,22 @@ git diff --check
 
 The root `cargo test --workspace` leaves out the first-party plugins'
 workspace; after changing it, a plugin, or the plugin build script, run
-`cargo test --manifest-path plugins/Cargo.toml --workspace --locked`,
-`cargo clippy --manifest-path plugins/Cargo.toml --workspace --all-targets --locked -- -D warnings`,
-`cargo fmt --check` in `plugins/`, and `pnpm --dir scripts/plugins test`.
-The plugins workspace's `--workspace` checks build the media plugin, so they
-need FFmpeg on `PKG_CONFIG_PATH` (or `VCPKG_ROOT` on Windows).
+the per-package runner with independent native builds:
+
+```sh
+node scripts/plugins/run-cargo.mts plugins test -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-opus -p celesta-codec-ffmpeg-vpx -p celesta-codec-ffmpeg-x264 -p celesta-codec-avfoundation -p celesta-codec-mediafoundation -p celesta-plugin-vrm --locked --no-fail-fast
+node scripts/plugins/run-cargo.mts plugins clippy -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-opus -p celesta-codec-ffmpeg-vpx -p celesta-codec-ffmpeg-x264 -p celesta-codec-avfoundation -p celesta-codec-mediafoundation -p celesta-plugin-vrm --all-targets --locked -- -D warnings
+cargo fmt --manifest-path plugins/Cargo.toml --all -- --check
+pnpm --dir scripts/plugins test
+```
+
+`PKG_CONFIG_PATH` selects standard; `FFMPEG_{X264,OPUS,VPX}_PKG_CONFIG_PATH`
+select the optional Unix builds (or the corresponding VCPKG_ROOT variables on
+Windows). Cargo features unify within one invocation, so do not run a single
+`cargo test --workspace` against all codec profiles. `--distribution` on the
+plugin build script checks licenses and encoder opens on the target platform;
+it refuses a cross-compiled distribution it cannot execute locally.
+The per-build checks need FFmpeg on `PKG_CONFIG_PATH` (or `VCPKG_ROOT` on Windows).
 On a pull request, CI's `Plugins (<OS>)` jobs run these checks with `-p` for
 the affected plugins only; a push to `main` and a manual run test every
 plugin. The scripts' own tests run in the root `Test` job. To see which

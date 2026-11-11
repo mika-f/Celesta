@@ -1,5 +1,8 @@
 # FFmpeg plugins by native build
 
+> Distribution policy superseded by [optional codec downloads](2026-11-11-optional-codec-downloads.md): only standard FFmpeg is bundled. Startup license refusal is superseded by the explicit distribution checks in [the review follow-up](2026-11-11-ffmpeg-review.md).
+
+
 ## Specification
 
 Split optional FFmpeg codecs by native build, rather than making the standard
@@ -117,5 +120,5 @@ Checked on macOS arm64:
   `background`, and `wait` syntax in CI/package-build workflows.
 
 Windows/Linux native builds and complete release packaging were not executed
-locally. No commits were created. Screenshots do not apply: this changes codec
+locally. Screenshots do not apply: this changes codec
 registration/build/linking, with no renderer or scene-layout changes.

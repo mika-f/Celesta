@@ -111,18 +111,23 @@ export default function Root() {
 
 ## メディアプラグイン
 
-メディアプラグインは FFmpeg のビルドとプロセスを 4 つに分けます。`ffmpeg` は標準の
-LGPL ビルドで、デコード、ProRes、AAC、PCM、MP4・MOV・WebM の muxer を提供します。
-`ffmpeg-x264` は `ffmpeg-x264/libx264`（GPL の H.264 エンコード）、`ffmpeg-opus` は
-`ffmpeg-opus/opus`、`ffmpeg-vpx` は `ffmpeg-vpx/vp9` だけを追加します。MP4 は標準版と
-x264、WebM は標準版と VPX・Opus を組み合わせて書き出します。アプリのパッケージに
-同梱するのは標準の `ffmpeg` だけです。追加のエンコーダーは個別の ZIP として
-ダウンロードします。標準パッケージだけでも H.264 の読み込みと ProRes／MOV の
-書き出しが使えます。
-既存のプリセットの `ffmpeg/libx264`、`ffmpeg/opus`、`ffmpeg/vp9` は新しい識別子へ
-変更してください。標準版・Opus・VPX は起動時に GPL・nonfree 構成のライブラリを拒否します。
-追加版はそれぞれ別の prefix でビルドします。[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください。
+Celesta 本体の実行ファイルは FFmpeg をリンクしません。FFmpeg の 4 構成のうち、
+アプリと Linux イメージに同梱するのは標準の `ffmpeg`（LGPL）だけです。デコード、
+ProRes、AAC・PCM、MP4・MOV・WebM の muxer を提供します。個別のダウンロードで
+`ffmpeg-x264/libx264`（GPL の H.264）、`ffmpeg-opus/opus`、`ffmpeg-vpx/vp9` を追加できます。
+標準版だけでも H.264 の読み込みと ProRes／MOV の書き出しが使えます。
 
+macOS は `avfoundation`、Windows は `mediafoundation` も同梱します。OS のメディア機能を
+MIT／Apache-2.0 で利用するプラグインです。H.264 のエンコーダーはユーザーが追加した
+x264 より優先され、利用可能なら MP4 の既定の映像エンコーダーになります。
+標準 FFmpeg が muxer と AAC を担当します。Linux の MP4 には `ffmpeg-x264` が必要です。
+どの OS でも x264 を選ぶには `ffmpeg-x264/libx264` を明示します。WebM には VPX と Opus の
+両方が必要です。[書き出しガイド](/ja/docs/export/)もご覧ください。
+
+プリセットの `ffmpeg/libx264`、`ffmpeg/opus`、`ffmpeg/vp9` は新しい識別子へ変更してください。
+ローカルビルドでは GPL 構成を含むシステム FFmpeg 8.1.x も使えます。
+配布用ビルドでライセンスを明示的に検査します。追加版は必要なエンコーダーがないビルドも
+検出します。[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください。
 
 ### 追加コーデックのダウンロード
 
@@ -131,7 +136,7 @@ CPU アーキテクチャに合う ZIP を選びます。
 
 | ダウンロード | 追加する機能 | 必要な用途 |
 | --- | --- | --- |
-| `ffmpeg-x264` | `ffmpeg-x264/libx264`（GPL） | H.264／MP4 の書き出し |
+| `ffmpeg-x264` | `ffmpeg-x264/libx264`（GPL） | libx264 による H.264。Linux の MP4 に必要 |
 | `ffmpeg-opus` | `ffmpeg-opus/opus` | WebM などの Opus 音声 |
 | `ffmpeg-vpx` | `ffmpeg-vpx/vp9` | WebM などの VP9 映像 |
 
@@ -147,7 +152,8 @@ ZIP を展開し、そのフォルダーごと上記のユーザープラグイ�
 `--allow-plugin ffmpeg-x264`（ほかのコーデックも繰り返し指定）を使うか、
 `--plugin-dir` に親フォルダーを指定します。
 
-MP4 には x264、WebM には **VPX と Opus の両方**が必要です。WebM 用には ZIP を
+Linux の MP4 には x264 が必要です。macOS・Windows は同梱の H.264 も使えます。
+WebM には **VPX と Opus の両方**が必要です。WebM 用には ZIP を
 2 つダウンロードします。追加エンコーダーがないときは **QuickTime · ffmpeg** を
 選ぶと ProRes／MOV を書き出せ、静止画も書き出せます。メディアの読み込みは標準版が
 担当します。ブラウザーの MP4 書き出しは WebCodecs を使うため、このプラグインは不要です。

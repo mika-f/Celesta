@@ -70,6 +70,9 @@ export default function Root() {
     const codec = join(packageDirectory, mac ? `Contents/Resources/PlugIns/${id}` : `plugins/${id}`);
     const manifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
     assert.deepEqual(manifest.roles, ['media']);
+    const program = join(codec, Object.values(manifest.executable)[0]);
+    run(program, ['--check-license']);
+    run(program, ['--check-build']);
     for (const kind of ['decoders', 'videoEncoders', 'audioEncoders', 'muxers']) {
       assert.ok(manifest.media?.[kind]?.length > 0, `The standard plugin must offer ${kind}`);
     }

@@ -619,6 +619,26 @@ pub(crate) fn classify(
             Some(unsupported_output_hint(path, extensions, cli)),
         ),
         ExportError::IncompatibleComponents { .. } => ("incompatible_components", None),
+        ExportError::ComponentUnavailable { component, .. }
+            if component.plugin == "ffmpeg" && component.component == "mp4" =>
+        {
+            (
+                "component_unavailable",
+                fixed(
+                    "use an installed H.264 encoder or download ffmpeg-x264 for MP4; choose .mov for ProRes with the standard ffmpeg plugin",
+                ),
+            )
+        }
+        ExportError::ComponentUnavailable { component, .. }
+            if component.plugin == "ffmpeg" && component.component == "webm" =>
+        {
+            (
+                "component_unavailable",
+                fixed(
+                    "download and enable both ffmpeg-vpx and ffmpeg-opus for WebM, or choose .mov for ProRes",
+                ),
+            )
+        }
         ExportError::ComponentUnavailable { .. }
         | ExportError::Codec {
             source: MediaError::ComponentUnavailable { .. },
@@ -1311,6 +1331,28 @@ mod tests {
             classified(&none, HintStyle::Cli),
             ("unsupported_output", Some(NO_DECODER_HINT.to_owned()))
         );
+    }
+
+    #[test]
+    fn missing_default_codecs_name_the_downloads_and_a_standard_format() {
+        for (container, downloads) in [
+            ("mp4", vec!["ffmpeg-x264"]),
+            ("webm", vec!["ffmpeg-vpx", "ffmpeg-opus"]),
+        ] {
+            let error = ExportError::ComponentUnavailable {
+                component: format!("ffmpeg/{container}").parse().unwrap(),
+                reason: "no matching default encoder".into(),
+            };
+            for style in [HintStyle::Cli, HintStyle::Mcp] {
+                let (code, hint) = classified(&error, style);
+                assert_eq!(code, "component_unavailable");
+                let hint = hint.unwrap();
+                assert!(hint.contains(".mov"));
+                for download in &downloads {
+                    assert!(hint.contains(download), "{hint}");
+                }
+            }
+        }
     }
 
     #[test]

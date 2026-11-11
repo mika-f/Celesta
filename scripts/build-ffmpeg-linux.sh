@@ -4,14 +4,14 @@
 # Each variant needs its own prefix; only x264 enables GPL code.
 # macOS builds dylibs; Linux builds static archives.
 #
-#   scripts/build-ffmpeg-linux.sh [PREFIX]    # PREFIX defaults to /opt/ffmpeg8
+#   scripts/build-ffmpeg-linux.sh [PREFIX]    # PREFIX defaults to /opt/ffmpeg8-<variant>
 #
 # Needs a C toolchain, nasm, pkg-config, curl, xz, and the zlib, x264, libvpx,
 # and libopus development files; on Debian and Ubuntu:
 #
 #   sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libvpx-dev libopus-dev
 #
-# Run it as a user that can write to PREFIX (for /opt/ffmpeg8, use sudo), then
+# Run it as a user that can write to PREFIX (for /opt/ffmpeg8-<variant>, use sudo), then
 # build Celesta with PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig".
 #
 # FFMPEG_VERSION selects the 8.1.x release, and FFMPEG_URL overrides where the
@@ -20,8 +20,6 @@ set -euo pipefail
 
 version="${FFMPEG_VERSION:-8.1.3}"
 # Absolute, because configure and make install run from the temporary source tree.
-mkdir -p "${1:-/opt/ffmpeg8}"
-prefix="$(cd "${1:-/opt/ffmpeg8}" && pwd)"
 variant="${FFMPEG_VARIANT:-standard}"
 case "$variant" in
   standard) codec_flags=(--disable-gpl --disable-nonfree --enable-zlib) ;;
@@ -30,6 +28,8 @@ case "$variant" in
   vpx) codec_flags=(--disable-gpl --disable-nonfree --enable-libvpx) ;;
   *) echo "FFMPEG_VARIANT must be standard, x264, opus or vpx" >&2; exit 2 ;;
 esac
+mkdir -p "${1:-/opt/ffmpeg8-$variant}"
+prefix="$(cd "${1:-/opt/ffmpeg8-$variant}" && pwd)"
 if [[ "$(uname -s)" == Darwin ]]; then
   link_flags=(--enable-shared --disable-static)
   jobs="$(sysctl -n hw.ncpu)"

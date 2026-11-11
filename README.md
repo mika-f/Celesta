@@ -176,12 +176,12 @@ the media plugin `celesta-codec-ffmpeg`, which Celesta starts and talks to only
 over its documented plugin protocol on standard input and output. The
 executables are distributed under MIT OR Apache-2.0 alone.
 
-The app packages and Linux image ship only `ffmpeg`, a standard LGPL FFmpeg
+Of the FFmpeg builds, app packages and the Linux image ship only `ffmpeg`, a standard LGPL FFmpeg
 build for decoding, ProRes, AAC, PCM and muxing. Optional encoders are separate
 ZIP downloads on the [release page](https://github.com/mika-f/Celesta/releases/latest):
-`ffmpeg-x264` for MP4, or both `ffmpeg-opus` and `ffmpeg-vpx` for WebM. Copy each
+`ffmpeg-x264` for H.264 on Linux, or both `ffmpeg-opus` and `ffmpeg-vpx` for WebM. Copy each
 extracted plugin folder into the user plugin folder and allow it in Celesta;
-see the [plugin guide](https://celesta.studio/en/docs/plugins/#optional-codec-downloads).
+see the [plugin guide](https://celesta.natsuneko.cat/en/docs/plugins/#optional-codec-downloads).
 The standard package can read H.264 files and export ProRes/MOV without addons.
 `ffmpeg-opus` and `ffmpeg-vpx` use separate LGPL builds for Opus and VP9.
 `ffmpeg-x264` alone links GPL FFmpeg with libx264 and provides H.264 encoding;
@@ -191,7 +191,10 @@ its program is distributed under GPL-2.0-or-later, with
 The LGPL plugins include [`LICENSE-LGPL-2.1`](plugins/ffmpeg/LICENSE-LGPL-2.1) and their
 [source and relinking notice](packaging/FFMPEG-SOURCE.md). Their Celesta source
 remains MIT OR Apache-2.0. Each plugin has its own native FFmpeg prefix and
-process. GPL H.264 encoding is added only by downloading `ffmpeg-x264`;
+process. GPL H.264 encoding is provided by `ffmpeg-x264`;
 H.264 decoding and ProRes need no optional plugin. See the
-[build guide](https://celesta.studio/en/docs/build-from-source/) for native
-library setup; an ordinary GPL Homebrew FFmpeg cannot build the standard plugin.
+[build guide](https://celesta.natsuneko.cat/en/docs/build-from-source/) for native
+library setup. A system FFmpeg 8.1.x, including a GPL build, works for local use.
+Distribution builds use `--distribution` to enforce the separate license profiles.
+macOS and Windows also bundle their system-codec plugins, whose H.264 encoders
+can write MP4 without x264; explicitly name `ffmpeg-x264/libx264` to select it.

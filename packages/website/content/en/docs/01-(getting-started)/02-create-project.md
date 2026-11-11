@@ -12,7 +12,7 @@ With `celesta-editor` on PATH, pass the folder to `--init`. Omit the folder to i
 celesta-editor --init my-video
 cd my-video
 celesta-editor film.tsx
-celesta-exporter --react film.tsx output.mp4
+celesta-exporter --react film.tsx output.mov
 ```
 
 ```sh title="Initialize the current directory"
@@ -49,7 +49,7 @@ For a [source build](/en/docs/build-from-source/), build the React runtime first
 - `film.tsx`: a five-second, 1920 × 1080 composition at 30 fps. The background and title sit in a `<Group>`, which is the parent the editor's Add menu inserts new layers into.
 - `package.json`: a private project with preview, export, and typecheck scripts, and TypeScript `^7.0.2` as a development dependency.
 - `tsconfig.json` and `.celesta/`: configuration and declarations matching Celesta’s bundled runtime.
-- `.gitignore`: ignores `node_modules/` and `output.mp4`. The generated `.celesta/` directory ignores itself.
+- `.gitignore`: ignores `node_modules/` and `output.mov`. The generated `.celesta/` directory ignores itself.
 - `celesta.config.json`: marks the folder as the project root, so the editor remembers that you trust the project. It can also list [plugins that come with the project](/en/docs/plugins/#plugins-that-come-with-a-project).
 
 Preview and export work without installing packages. To use the project’s TypeScript compiler, install Node.js and pnpm separately, then run these commands in the project folder:
@@ -102,9 +102,13 @@ The React examples under `examples/` belong to the pnpm workspace. Run `pnpm ins
 ```sh title="Add a dependency to an example and preview it"
 pnpm --dir examples/versus add ag-psd
 cargo run -p celesta-editor --release -- examples/versus/film.tsx
-cargo run -p celesta-exporter --release -- --react examples/versus/film.tsx output.mp4
+cargo run -p celesta-exporter --release -- --react examples/versus/film.tsx output.mov
 ```
 
 Example manifests use `workspace:*` for local Celesta packages so Node tools can resolve their imports too. Complete the [source-build setup](/en/docs/build-from-source/) before running Cargo commands.
 
 Continue with [your first React composition](/en/docs/react-compositions/), [preview controls](/en/docs/preview/), or [MP4 export](/en/docs/export/).
+
+The generated `export` script writes ProRes/MOV using the standard plugin.
+For MP4, use an installed native H.264 encoder or the `ffmpeg-x264` download;
+see [Export](/en/docs/export/).

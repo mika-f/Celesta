@@ -1,5 +1,5 @@
 //! Media plugins: the decoders a `media` plugin's manifest declares, and
-//! the FFmpeg plugin's program beside Celesta's own.
+//! the recognized FFmpeg build programs beside an installed Celesta.
 
 use crate::console::without_console_window;
 use crate::locations::PluginSource;
@@ -22,14 +22,13 @@ pub const FFMPEG_PLUGIN_ID: &str = "ffmpeg";
 /// which no plugin may take.
 pub const RESERVED_PLUGIN_ID: &str = "builtin";
 
-/// The name of the FFmpeg media plugin's program, which
-/// [`InstalledPlugins::media`] also looks for beside an installed Celesta
-/// program, as `cargo install` leaves it (never beside a source build in a
-/// Cargo build folder).
+/// The standard FFmpeg program name. [`InstalledPlugins::media`] recognizes
+/// this and the x264, Opus and VPX programs beside an installed Celesta, as
+/// `cargo install` leaves them, never beside a source build in a Cargo folder.
 pub const CODEC_PROGRAM: &str = "celesta-codec-ffmpeg";
 
-/// The flag that has [`CODEC_PROGRAM`] print its manifest (`id`, `version`,
-/// `roles`, and `media`) as JSON and exit, without starting the protocol:
+/// The flag that has each recognized sibling media program print its manifest
+/// (`id`, `version`, `roles`, and `media`) as JSON and exit without the protocol:
 /// `cargo install` cannot put a manifest file beside it.
 pub const MANIFEST_FLAG: &str = "--manifest";
 
@@ -147,8 +146,8 @@ pub enum MediaOrigin {
     /// `--plugin-dir`, `CELESTA_PLUGIN_PATH`, the user's plugin folder, or a
     /// folder the user added.
     User,
-    /// The folder that comes with Celesta, or [`CODEC_PROGRAM`] beside
-    /// Celesta's program.
+    /// The folder that comes with Celesta, or a recognized FFmpeg plugin
+    /// program beside an installed Celesta program.
     Bundled,
     /// A folder the open project lists.
     Project,
@@ -385,7 +384,7 @@ struct PrintedManifest {
     media: Value,
 }
 
-/// The FFmpeg media plugin's program beside `executable` (Celesta's own,
+/// A recognized FFmpeg build's `program_name` beside `executable` (Celesta's own,
 /// links resolved), as `cargo install` leaves it, made from what it prints
 /// for [`MANIFEST_FLAG`]. None when there is none, when it does not print a
 /// media plugin's manifest within [`MANIFEST_TIMEOUT`] and exit cleanly (said
@@ -517,8 +516,9 @@ impl InstalledPlugins {
     /// The media plugins to read media with, in search order: each of these
     /// plugins that is a media plugin with a program for this platform
     /// (discovery leaves out one this Celesta is outside the range of, so the
-    /// next one with its id is listed instead), then the FFmpeg media
-    /// plugin's program beside the running one ([`CODEC_PROGRAM`]) when that
+    /// next one with its id is listed instead), then recognized FFmpeg plugin
+    /// programs beside the running one (standard [`CODEC_PROGRAM`], x264,
+    /// Opus, and VPX), each when that
     /// is an installed program rather than a source build in a Cargo build
     /// folder and none of these but a project's has the id it prints. A
     /// project's plugin cannot replace it, as discovery keeps one in the

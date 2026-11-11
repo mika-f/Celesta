@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 spec = importlib.util.spec_from_file_location("package_media_plugins", Path(__file__).with_name("package-media-plugins.py"))
@@ -13,6 +14,26 @@ spec.loader.exec_module(packaging)
 
 
 class PluginArchives(unittest.TestCase):
+    def test_native_inventory_records_downstream_binary_and_source_versions(self):
+        with patch.object(packaging, "run", side_effect=[
+            "libx264-164:amd64: /usr/lib/x86_64-linux-gnu/libx264.so.164",
+            "libx264-164:amd64\t2:0.164-1build2\tamd64\tx264\t2:0.164-1",
+        ]) as run:
+            record = packaging.debian_package("libx264.so.164", "/usr/lib/x86_64-linux-gnu/libx264.so.164")
+        self.assertEqual(record, dict(library="libx264.so.164", package="libx264-164:amd64",
+            version="2:0.164-1build2", architecture="amd64", source_package="x264", source_version="2:0.164-1"))
+        self.assertEqual(run.call_args.args[-1], "libx264-164:amd64")
+
+    def test_a_native_inventory_without_an_exact_source_version_fails(self):
+        with patch.object(packaging, "run", side_effect=["libx264-164:amd64: /codec", "libx264\tversion\tamd64\tx264\t"]):
+            with self.assertRaisesRegex(RuntimeError, "Incomplete native source provenance"):
+                packaging.debian_package("libx264.so.164", "/codec")
+
+    def test_ambiguous_native_package_ownership_fails(self):
+        with patch.object(packaging, "run", return_value="one, two: /codec"):
+            with self.assertRaisesRegex(RuntimeError, "Ambiguous native package owner"):
+                packaging.debian_package("libx264.so.164", "/codec")
+
     def test_archive_is_installable_and_preserves_the_executable_mode(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -60,7 +81,7 @@ class PluginArchives(unittest.TestCase):
                 for name, deps in [
                     (names[0], [("shared", None)]), (names[1], [(names[0], None), ("opus-dev-only", "dev")]),
                     (names[2], [(names[0], None)]), ("opus-dev-only", []), ("shared", [])]]}}
-        picked = packaging.packaging.codec_packages(metadata, {"celesta-codec-ffmpeg-opus"})
+        picked = packaging.packaging.bundled_packages(metadata, {"celesta-codec-ffmpeg-opus"})
         self.assertEqual(sorted(package["name"] for package in picked),
                          ["celesta-codec-ffmpeg", "celesta-codec-ffmpeg-opus", "shared"])
 

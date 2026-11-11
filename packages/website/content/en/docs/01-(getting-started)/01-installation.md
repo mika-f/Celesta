@@ -9,9 +9,11 @@ Looking for another version or architecture? [Browse all releases](celesta:downl
 > **Everything you need to run Celesta**
 > The macOS and Windows packages include the React runtime, Node.js, and the FFmpeg media plugin that reads and writes video and audio. You do not need to install Rust, Node.js, pnpm, or FFmpeg separately to create and export videos.
 
-The app includes the **standard `ffmpeg` plugin only**, for media decoding and
-ProRes/MOV export. H.264/MP4 needs the separate **ffmpeg-x264** download; WebM
-needs **ffmpeg-vpx** and **ffmpeg-opus**. See [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads).
+Of the FFmpeg builds, the app includes only **standard `ffmpeg`**, for media
+decoding and ProRes/MOV. macOS also bundles AVFoundation and Windows Media
+Foundation; their H.264 encoders provide MP4 when available. Linux H.264/MP4
+needs the separate **ffmpeg-x264** download. WebM needs **ffmpeg-vpx** and
+**ffmpeg-opus**. See [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads).
 
 ## 1. Install the app
 

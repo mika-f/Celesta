@@ -20,7 +20,7 @@ export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
 
 Run the commands from the repository root. The app bundles only the standard LGPL FFmpeg plugin. Additional codecs are
 separate downloads; see [plugin packaging](../plugins/README.md). The default
-plugin rejects a GPL FFmpeg build.
+distribution gate rejects a GPL FFmpeg build; local builds may use one.
 
 From the repository root:
 
@@ -133,7 +133,7 @@ Gatekeeper accepts the app. `--sign-identity` alone signs but does not notarize;
 
 Before creating the DMG, the script checks native architectures, dependency load
 paths, minimum OS versions, and signatures. It then runs the shared React hooks
-and MP4 export smoke test with Homebrew and Node.js removed from PATH and without
+and MOV/ProRes export smoke test with Homebrew and Node.js removed from PATH and without
 DYLD environment overrides.
 
 After dragging the app into Applications, run that test against the installed copy:

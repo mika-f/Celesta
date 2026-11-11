@@ -1292,6 +1292,11 @@ fn an_unknown_x264_tune_is_refused_before_encoding() {
 }
 
 #[test]
-fn the_gpl_build_cannot_serve_as_the_standard_plugin() {
-    assert!(celesta_codec_ffmpeg::check_lgpl().is_err());
+fn the_gpl_build_fails_the_standard_distribution_check() {
+    let error = celesta_codec_ffmpeg::check_lgpl().unwrap_err();
+    assert!(
+        error.contains("ffmpeg distribution requires LGPL-only"),
+        "{error}"
+    );
+    assert!(error.contains("avcodec: GPL version"), "{error}");
 }

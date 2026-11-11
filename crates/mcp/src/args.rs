@@ -144,8 +144,9 @@ impl From<ImageFormat> for StillFormat {
 pub struct ExportVideoArgs {
     #[serde(flatten)]
     source: SourceArgs,
-    /// The video to write: its extension picks the muxer (`.mp4` H.264/AAC,
-    /// `.mov` ProRes 4444 with alpha, `.webm` VP9 with alpha) unless `muxer`
+    /// The video to write: its extension picks the muxer (`.mov` ProRes/PCM
+    /// with the standard ffmpeg plugin; `.mp4` H.264/AAC needs a native H.264
+    /// encoder or ffmpeg-x264; `.webm` needs ffmpeg-vpx and ffmpeg-opus) unless `muxer`
     /// names one. Leave it out to write only the `subtitles` files, which
     /// evaluates the frames without rendering or encoding them.
     output: Option<PathBuf>,
@@ -200,7 +201,7 @@ pub struct ExportVideoArgs {
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EncoderArg {
-    /// `<plugin>/<component>`, such as `ffmpeg/libx264`.
+    /// `<plugin>/<component>`, such as `ffmpeg-x264/libx264`.
     id: Option<String>,
     /// Settings by key, as `describe_component` lists them: strings,
     /// numbers, and booleans.
@@ -954,7 +955,7 @@ mod tests {
     fn component_arguments_build_the_choice() {
         let job = video_job(json!({
             "source": "a.tsx", "output": "a.mp4", "muxer": "ffmpeg/mp4",
-            "videoEncoder": { "id": "ffmpeg/libx264", "options": { "crf": 20, "preset": "slow" } },
+            "videoEncoder": { "id": "ffmpeg-x264/libx264", "options": { "crf": 20, "preset": "slow" } },
             "audioEncoder": "none",
         }))
         .unwrap();

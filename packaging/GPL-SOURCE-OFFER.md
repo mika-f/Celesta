@@ -36,25 +36,29 @@ release, for anyone who possesses that release in object/executable form.
 
 To request source under this offer, open an issue at
 <https://github.com/mika-f/celesta/issues> naming the release version (from
-`Celesta.exe`/`Celesta.app`'s About dialog or the package file name) and the
+the plugin ZIP filename or its `celesta-plugin.json`) and the
 platform (Windows, macOS or Linux).
 
 ## Locating the exact build
 
 Corresponding source includes the upstream releases and any build-system
-patches (including those in the pinned vcpkg port), together with the plugin
+patches (including the pinned vcpkg port and Debian/Ubuntu source-package patches), together with the plugin
 and shared implementation. Upstream locations:
 
 - FFmpeg: <https://ffmpeg.org/download.html> (or <https://github.com/FFmpeg/FFmpeg>)
 - x264: <https://code.videolan.org/videolan/x264>
-- libvpx (BSD-3-Clause; vcpkg port `libvpx`): <https://chromium.googlesource.com/webm/libvpx>
-- libopus (BSD-3-Clause; vcpkg port `opus`): <https://opus-codec.org/>
 
 The exact versions and build configuration used for a given release are
 recorded by the build scripts: `FFMPEG_VARIANT=x264` in
 `scripts/build-ffmpeg-linux.sh` (Unix), and the vcpkg `ffmpeg[x264]` build
-in `.github/actions/setup-ffmpeg/action.yml` (Windows). Windows packages
-include its native notices in the plugin's `licenses/native` folder.
+in `.github/actions/setup-ffmpeg/action.yml` (Windows). Each ZIP includes native notices in `licenses/native`: vcpkg's share tree on
+Windows, `homebrew.json` on macOS, and `debian-packages.json` on Linux. The
+Linux inventory records the binary package version and exact source-package
+name/version, including the distribution revision. Its corresponding source
+includes that distribution's patches, not only the upstream x264 tarball.
+Use the recorded distribution and source-package version when requesting
+materials. The x264 build does not link libvpx or libopus; those libraries
+belong to the separate VPX and Opus downloads.
 
 ## Full license text
 

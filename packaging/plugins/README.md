@@ -1,12 +1,12 @@
 # Optional codec downloads
 
-The application packages and Linux image include **only `ffmpeg`**: the standard
+The application packages and Linux image include **only `ffmpeg` among the FFmpeg builds**: the standard
 LGPL decoder, ProRes, AAC/PCM and muxers. x264, Opus and VPX are individual ZIP
 assets on the same GitHub release, not inside the app installer or portable ZIP.
 
 | Plugin | Use |
 | --- | --- |
-| `ffmpeg-x264` | H.264/MP4 export (GPL) |
+| `ffmpeg-x264` | H.264 via libx264 (GPL); required for default MP4 on Linux |
 | `ffmpeg-opus` | Opus audio, needed for WebM |
 | `ffmpeg-vpx` | VP9 video, needed for WebM |
 
@@ -16,7 +16,7 @@ can decode H.264 and export MOV/ProRes or still images without any optional plug
 ## Build the archives
 
 Prepare separate FFmpeg native prefixes as described in the
-[build guide](https://celesta.studio/en/docs/build-from-source/). The standard
+[build guide](https://celesta.natsuneko.cat/en/docs/build-from-source/). The standard
 prefix is `PKG_CONFIG_PATH`; optional prefixes are selected with
 `FFMPEG_X264_PKG_CONFIG_PATH`, `FFMPEG_OPUS_PKG_CONFIG_PATH`, and
 `FFMPEG_VPX_PKG_CONFIG_PATH`. Windows uses matching `*_VCPKG_ROOT` variables
@@ -43,8 +43,14 @@ codec notices, without application-only or other optional plugin dependencies.
 macOS release builds pass `--sign-identity` and `--notary-profile`, signing all
 Mach-O files and notarizing the ZIP. Local builds use ad hoc signatures. ZIPs
 have no stapled ticket; notarization is checked online when required by macOS.
+macOS and Windows also bundle their native system-codec plugin, which can
+encode H.264 without this download. Explicitly name `ffmpeg-x264/libx264` to
+choose the downloaded encoder.
+
 Linux uses static FFmpeg and bundles any dynamically linked codec library with
 a plugin-relative RPATH; glibc and the platform runtime remain system provided.
+`licenses/native/debian-packages.json` records exact binary and source-package
+versions, architecture, and distribution, including downstream revisions.
 Linux release archives are built on the workflow's Ubuntu runner and require a
 compatible glibc. The supported release targets are macOS arm64, Windows x64,
 and Linux x64.
@@ -67,3 +73,9 @@ Extract the ZIP and copy the complete plugin folder into:
 Open Celesta, choose **Reload Plugins**, and allow the new plugin. CLI users
 can allow it in the app first, use `--allow-plugin <id>`, or pass its parent
 folder with `--plugin-dir`. No separate FFmpeg installation is needed.
+
+All release packagers pass `--distribution` to the plugin builder. It opens
+the selected encoders with `--check-build` and checks linked-library licenses
+with `--check-license`. Distribution validation requires the target host; a
+cross-compiled FFmpeg download cannot be staged without executing these checks.
+Local source builds without this flag may use a system GPL FFmpeg 8.1.x.

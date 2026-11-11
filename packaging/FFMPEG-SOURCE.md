@@ -1,7 +1,8 @@
 # FFmpeg LGPL build
 
-The `ffmpeg`, `ffmpeg-opus`, and `ffmpeg-vpx` plugins use FFmpeg under LGPL-2.1-or-later, with GPL and nonfree
-components disabled. Its source is at <https://ffmpeg.org/download.html> and
+The distributed `ffmpeg`, `ffmpeg-opus`, and `ffmpeg-vpx` plugins use FFmpeg under LGPL-2.1-or-later, with GPL and nonfree
+components disabled in distributed builds. Local source builds may use a
+system FFmpeg 8.1.x of either license; `--check-license` validates releases. Its source is at <https://ffmpeg.org/download.html> and
 <https://github.com/FFmpeg/FFmpeg>. Celesta's source and build scripts are at
 <https://github.com/mika-f/celesta> (`plugins/ffmpeg`, `plugins/ffmpeg-opus`, `plugins/ffmpeg-vpx`,
 `scripts/build-ffmpeg-linux.sh`, and `.github/actions/setup-ffmpeg/action.yml`).
@@ -20,3 +21,12 @@ redistributed plugin. The full license is stored at
 `plugins/ffmpeg/LICENSE-LGPL-2.1` in the repository and copied as
 `LICENSE-LGPL-2.1` into each LGPL plugin's `licenses` folder. It describes
 the linked FFmpeg libraries; Celesta's own source remains MIT OR Apache-2.0.
+
+The `ffmpeg-opus` download also links libopus (BSD-3-Clause;
+<https://opus-codec.org/>), and `ffmpeg-vpx` links libvpx (BSD-3-Clause;
+<https://chromium.googlesource.com/webm/libvpx>). Native notices and versions
+are under `licenses/native`: vcpkg's share tree on Windows, `homebrew.json` on
+macOS, and `debian-packages.json` plus distribution copyright files on Linux.
+Source requests include the distribution's patches for the exact recorded
+source-package version. Standalone users can identify a build by the ZIP
+filename or its `celesta-plugin.json`; no app installation is needed.

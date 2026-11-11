@@ -296,13 +296,13 @@ def main():
         shutil.copy2(source, examples / source.name)
     collect_licenses(resources, target)
 
-    # Only the standard plugin is bundled. Optional encoders have separate ZIPs.
+    # Only the standard FFmpeg build is bundled; AVFoundation uses system frameworks.
     # Seal manifests/licenses as resources rather than treating them as nested code.
     plugins = resources / "PlugIns"
     codec = plugins / "ffmpeg"
     codec_env = {name: value for name, value in build_env.items() if name != "CARGO_TARGET_DIR"}
     run(helpers / "node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins/ffmpeg",
-        "--out", plugins, "--target", target, env=codec_env)
+        "--distribution", "--out", plugins, "--target", target, env=codec_env)
     program = plugin_program(codec)
     frameworks_from_program = os.path.relpath(codec / "Frameworks", program.parent)
     run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", program,
@@ -314,7 +314,7 @@ def main():
     # AudioToolbox, AVFoundation), so its folder needs no Frameworks/ and no
     # dylibbundler; the Mach-O check below rejects any other dependency.
     run(helpers / "node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins/avfoundation",
-        "--out", plugins, "--target", target, env=codec_env)
+        "--distribution", "--out", plugins, "--target", target, env=codec_env)
     avfoundation_program = plugin_program(plugins / "avfoundation")
     frameworks = contents / "Frameworks"
     # Main executables and Node are both one directory below Contents.

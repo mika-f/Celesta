@@ -20,29 +20,38 @@ fn alpha_survives_encoding_and_webm_muxing() {
         .open_video(&VideoEncoderRequest {
             component: "vp9",
             settings: &Settings::new(),
-            width: 32,
-            height: 16,
+            width: 64,
+            height: 32,
             frame_rate: Rational::new(1, 1),
             timescale: 1,
             offered: &[PixelFormat::Rgba16],
             color: &color,
         })
         .unwrap();
-    let pixel: Vec<_> = [65535_u16, 0, 0, 128 * 257]
-        .into_iter()
-        .flat_map(u16::to_le_bytes)
+    // Distinct alpha values and positions catch inversion, opacity loss,
+    // and orientation mistakes that a uniform half-alpha frame cannot.
+    let pixels: Vec<_> = (0..32)
+        .flat_map(|y| {
+            (0..64).flat_map(move |x| {
+                let pixel: [u16; 4] = match (x < 32, y < 16) {
+                    (true, true) => [65535, 0, 0, 128 * 257],
+                    (false, true) => [0, 0, 0, 0],
+                    (true, false) => [0, 0, 65535, 65535],
+                    (false, false) => [0, 65535, 0, 64 * 257],
+                };
+                pixel.into_iter().flat_map(u16::to_le_bytes)
+            })
+        })
         .collect();
-    let mut encoded = encoder
-        .encode_video(opened.session, 0, pixel.repeat(32 * 16))
-        .unwrap();
+    let mut encoded = encoder.encode_video(opened.session, 0, pixels).unwrap();
     let finished = encoder.finish_video(opened.session).unwrap();
     encoded.config = encoded.config.or(finished.config);
     encoded.packets.extend(finished.packets);
     let tracks = [Track::Video {
         config: encoded.config.unwrap(),
         timescale: 1,
-        width: 32,
-        height: 16,
+        width: 64,
+        height: 32,
         frame_rate: Rational::new(1, 1),
         color,
         alpha: true,
@@ -81,11 +90,23 @@ fn alpha_survives_encoding_and_webm_muxing() {
         .wait()
         .unwrap();
     let bytes = std::fs::read(raw).unwrap();
-    assert_eq!(bytes.len(), 32 * 16 * 8);
-    for pixel in bytes.as_chunks::<8>().0 {
-        let alpha = u16::from_le_bytes([pixel[6], pixel[7]]);
-        assert!(alpha.abs_diff(128 * 257) <= 2 * 257, "{alpha}");
-        let red = u16::from_le_bytes([pixel[0], pixel[1]]);
-        assert!(red.abs_diff(65535) <= 6 * 257, "{red}");
+    assert_eq!(bytes.len(), 64 * 32 * 8);
+    for (x, y, expected, channel) in [
+        (8, 8, 128 * 257, 0),
+        (48, 8, 0, 0),
+        (8, 24, 65535, 2),
+        (48, 24, 64 * 257, 1),
+    ] {
+        let offset = (y * 64 + x) * 8;
+        let alpha = u16::from_le_bytes([bytes[offset + 6], bytes[offset + 7]]);
+        assert!(
+            alpha.abs_diff(expected) <= 2 * 257,
+            "({x}, {y}): {alpha}, expected {expected}"
+        );
+        if expected != 0 {
+            let color =
+                u16::from_le_bytes([bytes[offset + 2 * channel], bytes[offset + 2 * channel + 1]]);
+            assert!(color.abs_diff(65535) <= 6 * 257, "({x}, {y}): {color}");
+        }
     }
 }

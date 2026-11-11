@@ -4,9 +4,16 @@ Open the [web editor](/en/#playground), change or open a TSX composition, and ch
 
 ## From the app
 
-App packages bundle the standard `ffmpeg` plugin only. Choose **QuickTime · ffmpeg**
-for ProRes/MOV export without additional downloads. Install **ffmpeg-x264** for
-MP4, or **both ffmpeg-vpx and ffmpeg-opus** for WebM; see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads).
+Of the FFmpeg builds, app packages bundle only standard `ffmpeg`. ProRes/MOV
+works without downloads. macOS also bundles `avfoundation/h264`, Windows
+`mediafoundation/h264`; when available, they provide default MP4 video and
+outrank downloaded x264. Linux needs **ffmpeg-x264** for H.264/MP4. Explicitly
+name `ffmpeg-x264/libx264` to select it on any OS. WebM needs **both ffmpeg-vpx
+and ffmpeg-opus**; see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads).
+
+With no saved export settings, the dialog starts with a container whose default
+encoders are installed: MP4 when H.264 is installed, otherwise ProRes/MOV for a
+standard-only installation. Explicit paths and presets keep their chosen format.
 
 Choose **Export** in the title bar, or **File → Export…** (`⌘ Shift E`, `Ctrl Shift E`), to open the export page. It replaces the Assets panel on the left. The viewer, the right dock, and the timeline stay where they are, so you can keep looking at the composition while you choose. To leave the page, choose **Export** again, press the panel's X, or press Escape. What you chose is kept. From top to bottom, the page has:
 
@@ -114,7 +121,7 @@ Celesta writes a video with three media components: a muxer, which writes the fi
 
 | Extension | Muxer | Video encoder | Audio encoder |
 | --- | --- | --- | --- |
-| `.mp4`, `.m4v` | `ffmpeg/mp4` | `ffmpeg-x264/libx264` (H.264) | `ffmpeg/aac` (AAC) |
+| `.mp4`, `.m4v` | `ffmpeg/mp4` | `avfoundation/h264` (macOS), `mediafoundation/h264` (Windows), `ffmpeg-x264/libx264` (Linux) | `ffmpeg/aac` (AAC) |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores` (ProRes 4444) | `ffmpeg/pcm` (24-bit PCM) |
 | `.webm` | `ffmpeg/webm` | `ffmpeg-vpx/vp9` (VP9 with alpha) | `ffmpeg-opus/opus` (Opus, 48 kHz) |
 
@@ -146,7 +153,7 @@ Every video export is BT.709 with limited range. Celesta converts on the GPU, or
 :::tab[macOS]
 
 ```sh title="Export with a faster encoder preset"
-"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
 ```
 
 ```sh title="List the installed components"
@@ -157,7 +164,7 @@ Every video export is BT.709 with limited range. Celesta converts on the GPU, or
 :::tab[Windows]
 
 ```sh title="Export with a faster encoder preset"
-& "C:\path\to\Celesta\Celesta-export.exe" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+& "C:\path\to\Celesta\Celesta-export.exe" --react --video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
 ```
 
 ```sh title="List the installed components"
@@ -223,7 +230,7 @@ The MCP `export_video` tool and `@celesta.studio/exporter` take `preset` and `pr
 
 ## AVFoundation components on macOS
 
-The macOS app also comes with the `avfoundation` media plugin. It encodes with Apple's VideoToolbox and AudioToolbox, on the Mac's media engine where it has one, and writes MP4 and MOV files with AVFoundation. FFmpeg stays the default: an export uses these components only when you name them, with `--muxer`, `--video-encoder`, and `--audio-encoder` or in an export preset (`"muxer": "avfoundation/mp4"`, `"video": { "component": "avfoundation/hevc" }`). They mix with FFmpeg's, so `--video-encoder avfoundation/hevc` alone writes VideoToolbox's HEVC into `ffmpeg/mp4` with `ffmpeg/aac`. The plugin runs on macOS only; Windows and Linux do not have it.
+The macOS app also comes with the `avfoundation` media plugin. It encodes with Apple's VideoToolbox and AudioToolbox, on the Mac's media engine where it has one, and writes MP4 and MOV files with AVFoundation. Its H.264 encoder is the default for MP4 and outranks a user-installed x264 plugin. FFmpeg keeps the default muxer and AAC encoder. Select the other native components explicitly, with `--muxer`, `--video-encoder`, and `--audio-encoder` or in an export preset (`"muxer": "avfoundation/mp4"`, `"video": { "component": "avfoundation/hevc" }`). They mix with FFmpeg's, so `--video-encoder avfoundation/hevc` alone writes VideoToolbox's HEVC into `ffmpeg/mp4` with `ffmpeg/aac`. The plugin runs on macOS only; Windows and Linux do not have it.
 
 | Component | Kind | Writes |
 | --- | --- | --- |
@@ -265,7 +272,7 @@ The MCP `export_video` tool and `@celesta.studio/exporter` take the same names: 
 
 ## Media Foundation components on Windows
 
-The Windows app also comes with the `mediafoundation` media plugin. It encodes H.264, HEVC, and AAC with Windows' own Media Foundation, on the GPU's video encoder where Windows has one. It has no muxer of its own: its encoders write into another plugin's container, which the output's extension picks as usual (`ffmpeg/mp4` for `.mp4`, `ffmpeg/mov` for `.mov`) or `--muxer` names. FFmpeg stays the default: an export uses these components only when you name them, with `--video-encoder` and `--audio-encoder` or in an export preset (`"video": { "component": "mediafoundation/hevc" }`), so `--video-encoder mediafoundation/h264` alone writes Media Foundation's H.264 into `ffmpeg/mp4` with `ffmpeg/aac`. The app's export page lists them among the video and audio encoders. The plugin runs on Windows only; macOS and Linux do not have it.
+The Windows app also comes with the `mediafoundation` media plugin. It encodes H.264, HEVC, and AAC with Windows' own Media Foundation, on the GPU's video encoder where Windows has one. It has no muxer of its own: its encoders write into another plugin's container, which the output's extension picks as usual (`ffmpeg/mp4` for `.mp4`, `ffmpeg/mov` for `.mov`) or `--muxer` names. Its H.264 encoder is the default for MP4 and outranks a user-installed x264 plugin. FFmpeg keeps the default muxer and AAC encoder. Select the other native components explicitly, with `--video-encoder` and `--audio-encoder` or in an export preset (`"video": { "component": "mediafoundation/hevc" }`), so `--video-encoder mediafoundation/h264` alone writes Media Foundation's H.264 into `ffmpeg/mp4` with `ffmpeg/aac`. The app's export page lists them among the video and audio encoders. The plugin runs on Windows only; macOS and Linux do not have it.
 
 | Component | Kind | Writes |
 | --- | --- | --- |
@@ -354,7 +361,7 @@ The file extension picks the video format. A `.mp4` file is H.264 with AAC audio
 
 Only areas nothing draws on are transparent, so a layer that fills the whole frame, such as a full-frame background, makes the output opaque. The alpha is straight (unassociated), and colors are converted and tagged as BT.709 (limited range).
 
-Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, or an optional encoder plugin is missing (H.264 needs `ffmpeg-x264`; WebM needs `ffmpeg-vpx` and `ffmpeg-opus`), the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
+Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, or an optional encoder plugin is missing (H.264 needs a native encoder or `ffmpeg-x264`; WebM needs `ffmpeg-vpx` and `ffmpeg-opus`), the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
 
 ## Still frames and contact sheets
 

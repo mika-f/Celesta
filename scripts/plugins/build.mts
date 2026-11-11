@@ -15,7 +15,7 @@
 // with and whose runtime its module is checked against.
 //
 //   node scripts/plugins/build.mts <plugin directory>...
-//                                  [--out <dir>] [--target <triple>] [--skip-js]
+//                                  [--out <dir>] [--target <triple>] [--skip-js] [--distribution]
 //
 // Each plugin directory resolves against the current directory, as does
 // --out. When a plugin has a module and --skip-js is not given, run
@@ -59,12 +59,15 @@ const { values, positionals } = parseArgs({
     out: { type: 'string' },
     target: { type: 'string' },
     'skip-js': { type: 'boolean', default: false },
+    distribution: { type: 'boolean', default: false },
   },
 });
+// Cargo accepts this without --target; use it for validation and output paths too.
+values.target ??= process.env.CARGO_BUILD_TARGET;
 
 if (positionals.length === 0) {
   console.error(
-    'usage: node scripts/plugins/build.mts <plugin directory>... [--out <dir>] [--target <triple>] [--skip-js]',
+    'usage: node scripts/plugins/build.mts <plugin directory>... [--out <dir>] [--target <triple>] [--skip-js] [--distribution]',
   );
   process.exit(2);
 }
@@ -159,6 +162,12 @@ const fromRuntime = createRequire(join(runtime, 'package.json'));
  */
 function buildExecutable(source: string, out: string, cargoPackage: string, targetDirectory: string): Record<string, string> {
   const { os, arch } = orFail(() => rustPlatform({ target: values.target, cwd: source }));
+  const ffmpeg = ['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-x264', 'celesta-codec-ffmpeg-opus', 'celesta-codec-ffmpeg-vpx'].includes(cargoPackage);
+  const host = ffmpeg ? orFail(() => rustPlatform({ cwd: source })) : undefined;
+  const native = host?.os === os && host?.arch === arch;
+  if (ffmpeg && values.distribution && !native) {
+    fail('FFmpeg distribution validation must run on the target OS and architecture; cross-compiled distributions cannot be staged');
+  }
   const binary = os === 'windows' ? `${cargoPackage}.exe` : cargoPackage;
   const cargo = process.env.CARGO ?? 'cargo';
   const manifest = join(source, 'Cargo.toml');
@@ -167,13 +176,11 @@ function buildExecutable(source: string, out: string, cargoPackage: string, targ
   run(cargo, args, { cwd: source, env: ffmpegEnvironment(cargoPackage) });
   const built = join(targetDirectory, ...(values.target ? [values.target] : []), 'release', binary);
   if (!existsSync(built)) fail(`${built} was not built`);
-  // This binary checks every loaded FFmpeg library before answering. Check
-  // before copying it so a GPL-linked default plugin is never staged.
-  if (['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-opus', 'celesta-codec-ffmpeg-vpx'].includes(cargoPackage)) {
-    const host = orFail(() => rustPlatform({ cwd: source }));
-    if (host.os === os && host.arch === arch) {
-      run(built, ['--manifest'], { stdio: ['ignore', 'ignore', 'inherit'] });
-    }
+  if (ffmpeg && native) {
+    // Local builds may use a system GPL FFmpeg. Distributions must validate
+    // both the actual encoders and the license before copying the binary.
+    run(built, ['--check-build']);
+    if (values.distribution) run(built, ['--check-license']);
   }
   mkdirSync(join(out, 'bin', `${os}-${arch}`), { recursive: true });
   copyFileSync(built, join(out, 'bin', `${os}-${arch}`, binary));

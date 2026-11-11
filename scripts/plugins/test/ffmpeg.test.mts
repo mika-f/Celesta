@@ -67,7 +67,9 @@ describe('native FFmpeg selection', () => {
       writeFileSync(join(tree, 'build.rs'), 'fn main() { println!("cargo:rustc-env=NATIVE_ROOT={}", std::env::var("VCPKG_ROOT").unwrap()); }\n');
       writeFileSync(join(tree, 'src/main.rs'), 'fn main() { println!("{}", env!("NATIVE_ROOT")); }\n');
       const environment = {
-        ...process.env, CARGO_TARGET_DIR: join(tree, 'target'),
+        ...process.env, CARGO_TARGET_DIR: join(tree, 'target'), CARGO_HOME: join(tree, 'cargo-home'),
+        // Exercise Cargo's cache, independent of a developer's compiler cache.
+        RUSTC_WRAPPER: '', RUSTC_WORKSPACE_WRAPPER: '',
         VCPKG_ROOT: join(tree, 'standard root'),
         FFMPEG_OPUS_VCPKG_ROOT: join(tree, 'opus root'),
         FFMPEG_VPX_VCPKG_ROOT: join(tree, 'vpx root'),

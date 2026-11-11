@@ -111,19 +111,23 @@ In the desktop app, a plugin can also offer its components in the **Add** menu, 
 
 ## Media plugins
 
-Media plugins use four separate FFmpeg builds and processes. `ffmpeg` is the
-standard LGPL build: decoding, ProRes, AAC, PCM, MP4/MOV/WebM muxing.
-`ffmpeg-x264` adds only `ffmpeg-x264/libx264` (GPL H.264 encoding),
-`ffmpeg-opus` adds `ffmpeg-opus/opus`, and `ffmpeg-vpx` adds `ffmpeg-vpx/vp9`.
-MP4 combines the standard plugin with x264; WebM combines the standard plugin,
-VPX and Opus. App packages include only the standard `ffmpeg` plugin.
-Optional encoders are separate downloads; the base package can read H.264
-files and export ProRes/MOV without them.
-Existing presets naming `ffmpeg/libx264`, `ffmpeg/opus` or `ffmpeg/vp9` must use
-the new component IDs. The standard, Opus and VPX processes reject GPL/nonfree
-FFmpeg libraries at startup. Each optional build uses its own prefix; see
-[Build from source](/en/docs/build-from-source/).
+Celesta's executables link no FFmpeg. Of the four FFmpeg builds, app packages
+and the Linux image bundle only standard `ffmpeg` (LGPL): decoding, ProRes,
+AAC/PCM and MP4/MOV/WebM muxing. Optional downloads add
+`ffmpeg-x264/libx264` (GPL H.264), `ffmpeg-opus/opus`, and `ffmpeg-vpx/vp9`.
+The base package can decode H.264 and export ProRes/MOV without addons.
 
+macOS also bundles `avfoundation`, and Windows `mediafoundation`, using their
+system media frameworks under MIT/Apache-2.0. Their H.264 encoders outrank a
+user-installed x264 download and provide default MP4 video when available;
+the standard FFmpeg plugin supplies the muxer and AAC. On Linux, MP4 needs
+`ffmpeg-x264`. Explicitly name `ffmpeg-x264/libx264` to choose it on any OS.
+WebM needs both VPX and Opus. See the [export guide](/en/docs/export/).
+
+Presets naming `ffmpeg/libx264`, `ffmpeg/opus` or `ffmpeg/vp9` must use the new
+component IDs. Local builds may link a system FFmpeg 8.1.x, including GPL.
+Distribution builds check the license explicitly; optional programs also
+reject a build missing their encoder. See [Build from source](/en/docs/build-from-source/).
 
 ### Optional codec downloads
 
@@ -132,7 +136,7 @@ choose the ZIP matching your OS and CPU architecture:
 
 | Download | Adds | Needed for |
 | --- | --- | --- |
-| `ffmpeg-x264` | `ffmpeg-x264/libx264` (GPL) | H.264/MP4 export |
+| `ffmpeg-x264` | `ffmpeg-x264/libx264` (GPL) | libx264 H.264; required for MP4 on Linux |
 | `ffmpeg-opus` | `ffmpeg-opus/opus` | Opus audio, including WebM |
 | `ffmpeg-vpx` | `ffmpeg-vpx/vp9` | VP9 video, including WebM |
 
@@ -148,7 +152,8 @@ allow the added plugin when prompted. For command-line use, allow it in the
 app first, pass `--allow-plugin ffmpeg-x264` (repeat for other codecs), or pass
 its parent folder with `--plugin-dir`.
 
-MP4 needs x264. WebM needs **both VPX and Opus**, normally downloaded as two
+Linux MP4 needs x264. macOS/Windows can use bundled native H.264.
+WebM needs **both VPX and Opus**, normally downloaded as two
 ZIPs. Without optional encoders, choose **QuickTime · ffmpeg** for ProRes/MOV,
 or export still images. Media decoding stays in the standard plugin. Browser
 MP4 export uses WebCodecs and does not use these native plugins.

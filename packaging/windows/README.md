@@ -68,7 +68,7 @@ Re-run it against an extracted package:
   scripts/test-package.mjs 'C:\path\to\Celesta'
 ```
 
-GPU access is needed for the MP4 check. Also launch `Celesta.exe` on a clean
+GPU access is needed for the MOV/ProRes check. Also launch `Celesta.exe` on a clean
 Windows machine and check preview, audio, installation, upgrade, and uninstall
 before publishing. The automated export check does not replace a GUI check.
 

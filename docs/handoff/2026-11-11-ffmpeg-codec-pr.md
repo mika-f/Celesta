@@ -8,13 +8,14 @@ optional codec downloads, then open a pull request against main.
 ## Implementation
 
 - Branch: `codex/ffmpeg-codec-downloads`.
-- Rebased the implementation onto main at `a85ab48a` before pushing. Conflict
+- Rebased the implementation onto the then-current main before the initial push. Conflict
   resolution preserves main's macOS `Contents/Resources/PlugIns` layout,
   metadata collection without `--offline`, manual packaging CI support and
   existing MCP component tools in the smoke test. The standard-only bundle
   and separate native ZIP policy remain intact.
-- Commit `d88563ef` contains the implementation and rebase resolutions, with
-  the required Co-Authored-By trailer. No commits were amended.
+- The implementation commit contains the rebase resolutions and required
+  Co-Authored-By trailer; its revision changes on subsequent rebases. No commits
+  were amended.
 - Pull request: https://github.com/mika-f/Celesta/pull/810.
 
 ## Checks after rebase

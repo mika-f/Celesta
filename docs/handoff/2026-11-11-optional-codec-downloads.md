@@ -76,7 +76,6 @@ This supersedes the all-four-bundled policy in the November 10 task note.
   excluded; this notation was already used by the repository.
 
 Windows/Linux native archive builds, Developer ID notarization and a full app
-installer build were not executed locally. No release was published and no
-commits were created. Rust/runtime/rendering code did not change in this
+installer build were not executed locally. No release was published. Rust/runtime/rendering code did not change in this
 follow-up, so the previous codec/GPU tests were not repeated. Screenshots do
 not apply to these distribution changes.

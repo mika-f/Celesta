@@ -282,8 +282,8 @@ jobs:
       # affected: rust-cache keys on FFMPEG_VERSION and FFMPEG_FEATURES, and
       # only main saves, where every plugin runs with FFmpeg; a job without
       # it would hash empty values, miss main's cache, and build cold.
-      # Installing it takes about two minutes on macOS (Homebrew), so the JS
-      # packages install meanwhile.
+      # Four native FFmpeg builds are cached independently of Rust. A cold
+      # setup compiles them, so JS packages install meanwhile.
       # rust-cache waits for it: a background step's environment reaches
       # later steps only after a wait. It starts after the Linux packages, as
       # both use apt.
@@ -292,8 +292,8 @@ jobs:
         uses: $/.github/actions/setup-ffmpeg
         background: true
 
-      # Windows only downloads the pre-built package (about 10 seconds), and
-      # there a background composite action fails now and then: the runner
+      # Windows also compiles four native builds on a cache miss. Keep this
+      # action sequential: a background composite action can fail as the runner
       # rewrites event.json as each step starts, and two steps starting at
       # once collide on the file lock (actions/runner#4641).
       - if: steps.affected.outputs.any == 'true' && runner.os == 'Windows'
@@ -318,7 +318,7 @@ jobs:
         if: steps.affected.outputs.any == 'true'
         with:
           workspaces: plugins -> target
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
+          env-vars: FFMPEG_VERSION FFMPEG_FEATURES FFMPEG_IMAGE_OS FFMPEG_IMAGE_VERSION FFMPEG_DEPS_HASH
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # <Vrm> imports @celesta.studio/react and @celesta.studio/character, and the build

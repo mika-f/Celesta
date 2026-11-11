@@ -12,7 +12,7 @@ PATH にある `celesta-editor` に、`--init` とフォルダ名を渡します
 celesta-editor --init my-video
 cd my-video
 celesta-editor film.tsx
-celesta-exporter --react film.tsx output.mp4
+celesta-exporter --react film.tsx output.mov
 ```
 
 ```sh title="現在のディレクトリを初期化"
@@ -49,7 +49,7 @@ PowerShell を使い、`C:\path\to\Celesta` をアプリのインストール先
 - `film.tsx`：1920 × 1080、30 fps、5 秒のコンポジション。背景とタイトルは `<Group>` の中にあり、エディタの Add メニューはそこへ新しいレイヤーを書き込みます。
 - `package.json`：プレビュー・書き出し・型検査のスクリプトと、開発依存として TypeScript `^7.0.2` を持つ非公開プロジェクト。
 - `tsconfig.json` と `.celesta/`：Celesta の同梱ランタイムに対応する設定と型宣言。
-- `.gitignore`：`node_modules/` と `output.mp4` を除外します。生成される `.celesta/` ディレクトリは自身を除外します。
+- `.gitignore`：`node_modules/` と `output.mov` を除外します。生成される `.celesta/` ディレクトリは自身を除外します。
 - `celesta.config.json`：このフォルダーがプロジェクトのルートであることを示します。これがあるので、エディタはプロジェクトを信頼したことを記憶できます。[プロジェクトに同梱するプラグイン](/ja/docs/plugins/#プロジェクトに同梱するプラグイン)を書くこともできます。
 
 プレビューと書き出しはパッケージをインストールせずに動作します。プロジェクトの TypeScript コンパイラを使うには、Node.js と pnpm を別途インストールし、プロジェクトのフォルダで以下を実行します。
@@ -102,9 +102,13 @@ node prepare-assets.mjs
 ```sh title="サンプルに依存関係を追加してプレビュー"
 pnpm --dir examples/versus add ag-psd
 cargo run -p celesta-editor --release -- examples/versus/film.tsx
-cargo run -p celesta-exporter --release -- --react examples/versus/film.tsx output.mp4
+cargo run -p celesta-exporter --release -- --react examples/versus/film.tsx output.mov
 ```
 
 サンプルのマニフェストはローカルの Celesta パッケージに `workspace:*` を使い、Node のツールからもインポートを解決できます。Cargo コマンドを実行する前に[ソースビルドの準備](/ja/docs/build-from-source/)を済ませてください。
 
 [最初の React コンポジション](/ja/docs/react-compositions/)、[プレビュー操作](/ja/docs/preview/)、[MP4 の書き出し](/ja/docs/export/)へ進みましょう。
+
+生成される `export` スクリプトは標準プラグインで ProRes／MOV を書き出します。
+MP4 には同梱のネイティブ H.264 エンコーダーか `ffmpeg-x264` を使います。
+[書き出し](/ja/docs/export/)もご覧ください。

@@ -141,7 +141,7 @@ pub fn initialize_project(
   "private": true,
   "scripts": {
     "preview": "celesta-editor film.tsx",
-    "export": "celesta-exporter --react --overwrite film.tsx output.mp4",
+    "export": "celesta-exporter --react --overwrite film.tsx output.mov",
     "typecheck": "tsc --project tsconfig.json"
   },
   "devDependencies": {
@@ -152,7 +152,7 @@ pub fn initialize_project(
     )?;
     write_new(
         &setup.root.join(".gitignore"),
-        "node_modules/\noutput.mp4\n",
+        "node_modules/\noutput.mov\n",
     )?;
     // Marks the project root, so the editor remembers that the user
     // trusts it and a project made inside another stays its own.
@@ -332,7 +332,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(project.join(".gitignore")).unwrap(),
-            "node_modules/\noutput.mp4\n"
+            "node_modules/\noutput.mov\n"
         );
         assert_eq!(
             fs::read_to_string(project.join(PROJECT_CONFIG)).unwrap(),

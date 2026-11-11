@@ -147,8 +147,8 @@ fn encode_video(
 }
 
 /// Writes `tracks` and their packets, each track's in turn, to `output`
-/// with `program`'s MP4 muxer.
-fn mux_mp4(_program: &mut dyn MediaProvider, output: &Path, tracks: Vec<(Track, Vec<Packet>)>) {
+/// with the standard FFmpeg process's MP4 muxer.
+fn mux_mp4(output: &Path, tracks: Vec<(Track, Vec<Packet>)>) {
     let (tracks, packets): (Vec<Track>, Vec<Vec<Packet>>) = tracks.into_iter().unzip();
     let mut program = base_program();
     let muxer = program.muxer().expect("the program has muxers");
@@ -313,7 +313,7 @@ fn writes_an_export_through_the_program() {
     };
 
     let output = directory.path().join("film.mp4");
-    mux_mp4(program.as_mut(), &output, vec![video, (audio, packets)]);
+    mux_mp4(&output, vec![video, (audio, packets)]);
     drop(program);
 
     assert_eq!(stream_color(&output), (1, 1, 1, 1));
@@ -429,7 +429,7 @@ fn reads_and_writes_paths_relative_to_celestas_working_directory() {
     ));
     let mut program = started(ProviderUse::Export { ring: None });
     let encoded = encode_video(program.as_mut(), (4, 4), 1);
-    mux_mp4(program.as_mut(), &relative.join("out.mp4"), vec![encoded]);
+    mux_mp4(&relative.join("out.mp4"), vec![encoded]);
     assert!(directory.path().join("out.mp4").is_file());
 }
 
@@ -555,7 +555,7 @@ fn export_pipelined(
         color: Color::bt709_limited(),
         alpha: false,
     };
-    mux_mp4(program, output, vec![(track, packets)]);
+    mux_mp4(output, vec![(track, packets)]);
 }
 
 #[test]

@@ -61,7 +61,7 @@ stills. The output's extension picks the video or still format; to choose
 the components, a video takes:
 
 - `muxer`: a muxer, such as `'ffmpeg/mp4'`.
-- `videoEncoder`: `{ id: 'ffmpeg/libx264', options: { crf: 20, preset: 'slow' } }`;
+- `videoEncoder`: `{ id: 'ffmpeg-x264/libx264', options: { crf: 20, preset: 'slow' } }`;
   each option becomes `--video-option=key=value` and is checked against the
   component's settings (see `describeComponent`).
 - `audioEncoder`: the same shape for audio, or `'none'` for a silent video.

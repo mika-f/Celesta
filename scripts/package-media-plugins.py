@@ -46,10 +46,27 @@ def windows_runtime():
 
 
 def windows_notices(plugin, variant):
-    root = Path(os.environ[f"FFMPEG_{variant.upper()}_VCPKG_ROOT"])
+    variable = f"FFMPEG_{variant.upper()}_VCPKG_ROOT"
+    if not os.environ.get(variable):
+        raise RuntimeError(f"Set {variable} to the native installation used to build this download")
+    root = Path(os.environ[variable])
     triplet = os.environ.get(f"FFMPEG_{variant.upper()}_VCPKGRS_TRIPLET",
                              os.environ.get("VCPKGRS_TRIPLET", "x64-windows-static-md"))
     shutil.copytree(root / "installed" / triplet / "share", plugin / "licenses/native")
+
+
+def debian_package(library, source):
+    """Identify the exact distribution source, including downstream patches."""
+    owners = run("dpkg-query", "--search", Path(source).resolve(), capture=True).splitlines()
+    if len(owners) != 1 or ", " in owners[0].rsplit(": ", 1)[0]:
+        raise RuntimeError(f"Ambiguous native package owner for {source}: {owners}")
+    owner = owners[0].rsplit(": ", 1)[0]
+    record = run("dpkg-query", "--show", "--showformat=${binary:Package}\t${Version}\t${Architecture}\t${source:Package}\t${source:Version}", owner, capture=True).split("\t")
+    if len(record) != 5 or not all(record):
+        raise RuntimeError(f"Incomplete native source provenance for {source}: {record}")
+    package, version, architecture, source_package, source_version = record
+    return dict(library=library, package=package, version=version, architecture=architecture,
+                source_package=source_package, source_version=source_version)
 
 
 def linux_dependencies(plugin, program, variant):
@@ -60,11 +77,23 @@ def linux_dependencies(plugin, program, variant):
     if "not found" in listing:
         raise RuntimeError(f"Unresolved plugin dependencies: {listing}")
     dependencies = re.findall(r"^\s*(\S+)\s+=>\s+(/\S+)\s+\(", listing, re.M)
+    provenance = []
     for name, source in dependencies:
         if name.startswith(prefix):
             directory = plugin / "lib"
             directory.mkdir(exist_ok=True)
             shutil.copy2(Path(source).resolve(), directory / name)
+            # Record the exact binary and distribution source package, not
+            # only its upstream version: Ubuntu/Debian may patch the source.
+            provenance.append(debian_package(name, source))
+    if not provenance:
+        raise RuntimeError(f"Expected a package-owned {prefix} dependency in {program}")
+    native = plugin / "licenses/native"
+    native.mkdir(parents=True, exist_ok=True)
+    (native / "debian-packages.json").write_text(json.dumps({
+        "distribution": Path("/etc/os-release").read_text(), "packages": provenance,
+        "source_instructions": "Retrieve the exact source_package=source_version from this distribution's source archive, including its Debian/Ubuntu patch set; request the matching materials through the bundled source notice.",
+    }, indent=2) + "\n")
     if (plugin / "lib").exists():
         run("patchelf", "--set-rpath", "$ORIGIN/../../lib", program)
     resolved = run("ldd", program, capture=True)
@@ -97,7 +126,7 @@ def package_plugin(variant, output, target, system, arch, args):
         env = dict(os.environ)
         if system == "macos":
             env["RUSTFLAGS"] = env.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-headerpad_max_install_names"
-        run("node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins" / plugin_id, "--out", stage, env=env)
+        run("node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins" / plugin_id, "--distribution", "--out", stage, env=env)
         plugin = stage / plugin_id
         program = packaging.plugin_program(plugin)
         packaging.collect_licenses(plugin, target, names={source["cargoPackage"]}, include_app=False,
@@ -124,6 +153,8 @@ def package_plugin(variant, output, target, system, arch, args):
         # resolve its own native libraries, rather than those on the build host.
         clean_env = {key: value for key, value in os.environ.items()
                      if not key.startswith("DYLD_") and key != "LD_LIBRARY_PATH"}
+        run(program, "--check-license", env=clean_env)
+        run(program, "--check-build", env=clean_env)
         printed = json.loads(run(program, "--manifest", capture=True, env=clean_env))
         if printed["id"] != plugin_id or printed["media"] != source["media"]:
             raise RuntimeError(f"Packaged manifest differs from {plugin_id}")
@@ -136,7 +167,8 @@ def package_plugin(variant, output, target, system, arch, args):
             "Keep celesta-plugin.json, bin, native libraries and licenses together.\n"
             "Open Celesta, reload plugins and allow this plugin when prompted.\n"
             "For CLI use, pass --plugin-dir <parent folder> or --allow-plugin " + plugin_id + ".\n"
-            "MP4 needs ffmpeg-x264; WebM needs ffmpeg-vpx and ffmpeg-opus.\n"
+            "Linux H.264/MP4 needs ffmpeg-x264; macOS/Windows also have system H.264 encoders.\n"
+            "WebM needs ffmpeg-vpx and ffmpeg-opus.\n"
             "The standard ffmpeg plugin comes with Celesta. Use matching releases.\n", encoding="utf-8")
         archive = stage / destination.name
         write_archive(plugin, archive)

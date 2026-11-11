@@ -265,8 +265,8 @@ impl ExportModel {
     /// The output the first resolve takes: `export.` and the first
     /// extension of `base`'s muxer when that muxer is installed, so it
     /// does not warn of another extension; else of the default muxer for
-    /// `.mp4`; else of the first ranked muxer (bundled, then the user's;
-    /// never a project's).
+    /// `.mp4` with matching default encoders; else of the first ranked
+    /// muxer whose default encoders are installed (never a project's).
     pub(crate) fn initial_output(&self, base: Option<&PresetOutput>) -> PathBuf {
         let named = base
             .and_then(|base| base.muxer.as_deref())
@@ -282,6 +282,19 @@ impl ExportModel {
             .filter_map(|info| match &info.entry {
                 ComponentEntry::Muxer(entry) => Some(entry),
                 _ => None,
+            })
+            .filter(|entry| {
+                let installed = |kind, codec: &Option<String>| {
+                    codec.as_ref().is_none_or(|codec| {
+                        self.components.iter().any(|info| {
+                            info.origin != MediaOrigin::Project
+                                && info.kind == kind
+                                && writes_any_codec(info, std::slice::from_ref(codec))
+                        })
+                    })
+                };
+                installed(ComponentKind::VideoEncoder, &entry.default_video)
+                    && installed(ComponentKind::AudioEncoder, &entry.default_audio)
             });
         let writes_mp4 = |entry: &MediaMuxerEntry| {
             entry
@@ -1807,6 +1820,43 @@ mod tests {
         assert_eq!(
             model(&registry).initial_output(None),
             PathBuf::from("export.ivf")
+        );
+    }
+
+    #[test]
+    fn a_standard_only_install_starts_with_a_resolvable_mov_output() {
+        let mut standard = registry_with_mov().plugins()[1].clone();
+        standard
+            .media
+            .video_encoders
+            .retain(|encoder| encoder.id == "prores");
+        // A project's H.264 encoder must not supply the implicit default.
+        let registry = MediaRegistry::new(vec![project(), standard]);
+        let path = model(&registry).initial_output(None);
+        assert_eq!(path, PathBuf::from("export.mov"));
+        let resolved = resolve(
+            &registry,
+            &OutputChoice::default(),
+            None,
+            path.to_str().unwrap(),
+        );
+        assert_eq!(resolved.video.reference, reference("b/prores"));
+    }
+
+    #[test]
+    fn an_installed_native_h264_encoder_keeps_the_mp4_default() {
+        let mut standard = registry_with_mov().plugins()[1].clone();
+        standard
+            .media
+            .video_encoders
+            .retain(|encoder| encoder.id == "prores");
+        let mut native = bundled();
+        native.id = "native".into();
+        native.media.muxers.clear();
+        let registry = MediaRegistry::new(vec![standard, native]);
+        assert_eq!(
+            model(&registry).initial_output(None),
+            PathBuf::from("export.mp4")
         );
     }
 

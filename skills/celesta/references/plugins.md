@@ -86,7 +86,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `inputFormats`), and `muxers` (`id`, `name`, `extensions`, `video`,
   `audio`, `defaultVideo`, `defaultAudio`, `trimsLeadingAudio`); a
   component is `<plugin>/<id>`, such as `ffmpeg-x264/libx264`). The app's packages
-  bundle only `ffmpeg` (standard LGPL: decoder, ProRes, AAC, PCM, muxers).
+  bundle only `ffmpeg` among the FFmpeg variants (standard LGPL: decoder, ProRes, AAC, PCM, muxers).
   `ffmpeg-x264` (GPL: H.264), `ffmpeg-opus` (LGPL: Opus), and `ffmpeg-vpx`
   (LGPL: VP9) are separate native ZIP downloads on the matching GitHub release.
   Files are `Celesta-plugin-ffmpeg-<codec>-<version>-<os>-<arch>.zip`; extract
@@ -94,7 +94,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   allow it in the app (or CLI `--allow-plugin`, `--plugin-dir`). Libraries and
   notices are included, so no separate FFmpeg install is needed.
   The standard package can export ProRes/MOV without addons.
-  MP4 needs standard+x264; WebM needs standard+VPX+Opus. Removing x264 keeps
+  MP4 needs standard+x264 on Linux; bundled native H.264 is the default on
+  macOS/Windows when available. Explicitly name x264 to select the download.
+  WebM needs standard+VPX+Opus. Removing x264 keeps
   H.264 decoding. Old `ffmpeg/libx264`, `ffmpeg/opus`, `ffmpeg/vp9` IDs must
   change to `ffmpeg-x264/libx264`, `ffmpeg-opus/opus`, `ffmpeg-vpx/vp9`.
   A source build makes all four with
@@ -108,7 +110,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `FFMPEG_X264_PKG_CONFIG_PATH`, `FFMPEG_OPUS_PKG_CONFIG_PATH`, and
   `FFMPEG_VPX_PKG_CONFIG_PATH` select the optional builds. Windows uses
   `VCPKG_ROOT` and `FFMPEG_{X264,OPUS,VPX}_VCPKG_ROOT` instead.
-  Standard/Opus/VPX reject GPL or nonfree FFmpeg libraries.
+  Local builds may link a system GPL FFmpeg 8.1.x. `--distribution` validates
+  licenses explicitly: standard/Opus/VPX require LGPL-only libraries. It also
+  opens each encoder and refuses cross-compiles it cannot validate on the host.
   The root `LICENSE-MIT`/`LICENSE-APACHE` cover Celesta's source. FFmpeg
   license texts live at `plugins/ffmpeg/LICENSE-LGPL-2.1` and
   `plugins/ffmpeg-x264/LICENSE-GPL-2.0`; packages keep them and the source

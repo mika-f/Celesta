@@ -46,8 +46,7 @@ fn install() {
     ))));
 }
 
-/// An exporter that reads and writes media with the FFmpeg codec in this
-/// process, so the tests need no codec plugin installed.
+/// An exporter using independently linked sibling codec processes.
 fn exporter(options: ExportOptions) -> Exporter {
     install();
     Exporter::new(options)
@@ -83,11 +82,13 @@ fn generate_source(path: &Path, lavfi: &str, fps: (i32, i32)) {
 }
 
 /// An empty 1920x1080 project, a copy of `examples/minimal.celesta.json`
-/// kept beside these tests so a change to it is a change to this plugin
-/// (which is what decides when CI runs them).
+/// shared under the standard plugin, whose inputs trigger every profile
+/// that depends on it.
 fn minimal_project() -> Project {
-    Project::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/minimal.celesta.json"))
-        .unwrap()
+    Project::load(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../ffmpeg/tests/fixtures/minimal.celesta.json"),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -922,36 +923,6 @@ fn exports_transparent_prores_4444() {
     assert_eq!(colors, (1, 1, 1));
     assert_eq!(audio_stream(&url), ("pcm_s24le".to_owned(), 8_000));
     assert_transparent_quadrant(&decode_rgba64(&output, None), 3 * 257);
-}
-
-#[test]
-fn exports_transparent_vp9_webm() {
-    let _gpu = gpu();
-    let directory = tempfile::tempdir().unwrap();
-    let project = transparent_project(directory.path());
-    let Some(output) = export_as(&project, directory.path(), "clip.webm") else {
-        return;
-    };
-
-    let url = output.to_string_lossy().into_owned();
-    let (codec_name, colors, metadata) = video_stream(&url);
-    assert_eq!(codec_name, "vp9");
-    // Matroska tags read back upper-case (`ALPHA_MODE`).
-    assert!(
-        metadata
-            .iter()
-            .any(|(key, value)| key.eq_ignore_ascii_case("alpha_mode") && value == "1"),
-        "{metadata:?}"
-    );
-    assert_eq!(colors, (1, 1, 1));
-    // `mux_audio` always resamples Opus to 48 kHz.
-    assert_eq!(audio_stream(&url), ("opus".to_owned(), 48_000));
-    // 4:2:0 chroma blurs the quadrant's color a little more.
-    // The encoder's alpha bitstream must survive muxing as BlockAdditions.
-    // libvpx itself is confined to its plugin, so this test process uses
-    // FFmpeg's built-in decoder, which does not decode the alpha stream.
-    let bytes = std::fs::read(&output).unwrap();
-    assert!(bytes.windows(2).any(|bytes| bytes == [0x75, 0xa1]));
 }
 
 #[test]

@@ -32,7 +32,10 @@ export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfi
 export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 ```
 
-Homebrew の GPL 構成の `ffmpeg@8` は `ffmpeg-x264` に利用できますが、標準プラグインには使えません。
+ローカル利用には Homebrew の `ffmpeg@8` も標準プラグインで使えます。
+`brew install ffmpeg@8 pkg-config` の後、
+`PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"` を設定します。
+GPL 構成も利用できますが、標準プロファイルが公開するエンコーダーは ProRes・AAC・PCM のままです。
 
 :::
 :::tab[Windows]
@@ -42,8 +45,8 @@ Windows では vcpkg 2026.07.29（FFmpeg 8.1.x）と MSVC のビルドツール�
 `x64-windows-static-md` triplet で、それぞれ別の vcpkg インストール先に構築します。
 `VCPKG_ROOT` に標準版のルート、`FFMPEG_X264_VCPKG_ROOT`、`FFMPEG_OPUS_VCPKG_ROOT`、
 `FFMPEG_VPX_VCPKG_ROOT` に追加版のルートを指定します。完全な設定例はリポジトリの
-setup-ffmpeg CI アクションにあります。標準版のルートに x264 を追加すると GPL 構成に
-変わるため、標準プラグインは起動を拒否します。
+setup-ffmpeg CI アクションにあります。ローカル利用には開発ライブラリ付きのシステム FFmpeg 8.1.x
+（GPL 構成を含む）も使えます。配布パッケージには上記の構成の分離が必要です。
 
 :::
 :::tab[Linux]
@@ -65,6 +68,12 @@ export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 
 :::
 ::::
+
+ローカルビルドではシステムの FFmpeg 8.1.x も利用できます。配布用には
+`scripts/plugins/build.mts` に `--distribution` を指定します。エンコーダーを実際に開き、
+明示的な `--check-license` コマンドで検査してから配置します。標準版・Opus・VPX の
+配布には LGPL のみの FFmpeg が必要です。配布用の検査は対象 OS・アーキテクチャ上で
+実行してください。クロスビルドで検査を省略することはできません。
 
 ## 2. ソースを取得
 
