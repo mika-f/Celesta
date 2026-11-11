@@ -969,7 +969,7 @@ mod tests {
                 preset: None,
                 muxer: Some(reference("ffmpeg", "mp4")),
                 video: EncoderChoice {
-                    component: Some(reference("ffmpeg", "libx264")),
+                    component: Some(reference("ffmpeg-x264", "libx264")),
                     options: [
                         (
                             "crf".to_owned(),

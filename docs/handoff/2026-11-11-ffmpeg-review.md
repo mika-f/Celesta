@@ -114,3 +114,14 @@ published. The source-package fields follow the
 No rendering algorithm, layout, theme, or visual component changed; the UI
 change is the initial container choice. Model tests cover its standard-only
 fallback and native-H.264 case. Existing keyboard/focus behavior is unchanged.
+
+## CI fixture follow-up
+
+Run `42962808943` exposed one MCP test expectation still naming plugin
+`ffmpeg` after its JSON input example changed to `ffmpeg-x264/libx264`.
+The parsed component correctly uses the new namespace. Update the expected
+ComponentRef to match the migrated example. Full local MCP validation passed:
+56 unit tests and 39 integration tests, with exporter and test-codec programs
+built first. This is an additional test commit; the review commit is not
+amended. The native-library cache is saved before replacing the CI run so
+its cold FFmpeg builds can be reused.
