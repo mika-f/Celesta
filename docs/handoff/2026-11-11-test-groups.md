@@ -63,10 +63,15 @@ Entrances:
 
 A missing runtime fails with "the runtime tests need the built React runtime:
 run `pnpm install && pnpm run build:runtime` first (<path> is missing)", and a
-missing `node` (react-bridge) with "the runtime tests need Node.js: node was
-not found on PATH or at CELESTA_NODE". The exporter's and the MCP server's
-runtime tests do not look for `node` themselves: the exporter and the server
-spawn it, so a missing `node` already fails them.
+missing `node` with "the runtime tests need Node.js: node was not found on
+PATH or at CELESTA_NODE" (react-bridge, whose tests take `CELESTA_NODE` as
+well) or "... node was not found on PATH" (the exporter's and the MCP
+server's, which run `node` from `PATH`, as a source build of the exporter and
+the server does). Each crate checks `node`, `packages/cli/node_modules`, and
+`packages/cli/dist/cli.js` before the test does anything else; the helpers are
+`live_react_runtime()`/`node()`, `runtime()`, and `require_runtime()`. They
+are three copies: the crates share no test-support crate, and adding one for a
+dozen lines did not pay.
 
 ### Why a feature and separate targets
 
@@ -88,12 +93,18 @@ Candidates weighed:
   test). The tests could stay where they were, but a group could not be run
   alone (one binary holds both), and helpers only the runtime tests use
   would be dead code without the feature.
+- **A separate test-only crate** for the runtime tests, left out of
+  `default-members`. `--workspace`, the documented entrance, ignores
+  `default-members`, and a test reaches a program through
+  `CARGO_BIN_EXE_<name>` only in the program's own package, which the
+  exporter's and the MCP server's tests need.
 - **Separate targets with `required-features`** (chosen). Plain
   `cargo test --workspace` builds no runtime target and passes; one group is
   one command for each runner; the feature is the only switch, and a bare
   `--features runtime-tests` with `--workspace` turns it on in every crate
   that has it (Cargo refuses it only when no selected package has it), so a
-  crate that adds a runtime target is in CI's run without a workflow change.
+  crate that adds a runtime target is in CI's run without a change to the
+  Test step.
 
 Costs of the choice:
 
@@ -106,9 +117,12 @@ Costs of the choice:
   compiles the three crates, and the crates depending on them (the editor,
   the bench), once more; both builds then stay in `target/`. CI builds with
   the feature only (the Build step passes it as the Test step does).
-- CI could lose the feature from its Test step and still pass. A step after
-  the tests, "Check that the runtime group ran", fails unless the JUnit
-  report has a `<crate>::runtime` suite.
+- CI could lose the feature from its Test step, or one crate its target's
+  name or required feature, and still pass. A step after the tests, "Check
+  that the runtime group ran", fails unless the JUnit report has each of the
+  suites `celesta-react-bridge::runtime`, `celesta-exporter::runtime`, and
+  `celesta-mcp::runtime`; a crate that adds a runtime target adds its suite
+  to that list.
 
 ## What changed besides the tests
 
@@ -181,7 +195,16 @@ Linux x64 container, Rust 1.99.1, cargo-nextest 0.9.146, Node.js 22,
   `celesta-react-bridge::runtime` (45) in `junit.xml`;
   `report-skipped-tests.mts` lists only the three `yuv420p` skips. A
   `--profile ci` run without the feature (`-E 'package(celesta-mcp)'`, 67
-  tests) leaves no runtime suite in the report, and the check fails.
+  tests) leaves no runtime suite in the report, and the check fails; so does
+  a run of the runtime targets without `celesta-mcp`'s (`-E 'binary(runtime)
+  & not package(celesta-mcp)'`), naming `celesta-mcp::runtime`.
+- Self-review fixes (exporter and MCP check `node` and `node_modules`, the
+  check names each suite): `-E 'binary(runtime)'` with the ci profile passes,
+  93 tests, and the check passes. With `PATH=/usr/bin:/bin`, an exporter and
+  an MCP runtime test fail with "the runtime tests need Node.js: node was not
+  found on PATH"; with `packages/cli/node_modules` moved aside, with "... run
+  `pnpm install && pnpm run build:runtime` first (.../packages/cli/node_modules
+  is missing)".
 - `cargo clippy --workspace --all-targets --features runtime-tests --locked
   -- -D warnings` and the `codegen` clippy command pass; each of the three
   crates also passes `cargo clippy -p <crate> --all-targets -- -D warnings`

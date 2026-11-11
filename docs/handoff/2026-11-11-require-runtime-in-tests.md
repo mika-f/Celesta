@@ -1,5 +1,11 @@
 # Tests: `CELESTA_REQUIRE_RUNTIME=1` fails missing-runtime skips (2026-11-11)
 
+Superseded by [2026-11-11-test-groups.md](2026-11-11-test-groups.md): the
+runtime-dependent tests became a test group of their own, which fails
+without the runtime, and `CELESTA_REQUIRE_RUNTIME`, `skip_without_runtime`,
+`runtime_built`, and `tests/node_integration.rs` no longer exist. This note
+records the stopgap as it was.
+
 ## Problem
 
 Rust cannot mark a test skipped, so the tests that spawn

@@ -510,7 +510,8 @@ with it, and the first without it, compiles them and the crates that depend on
 them again; both builds then stay in `target/`. A new test that starts `node`
 or reads `packages/cli/dist/cli.js` goes in its crate's `runtime` target (a
 crate without one adds the feature and a `[[test]]` named `runtime` with
-`required-features = ["runtime-tests"]`); see
+`required-features = ["runtime-tests"]`, and its suite to CI's "Check that
+the runtime group ran"); see
 [`docs/handoff/2026-11-11-test-groups.md`](docs/handoff/2026-11-11-test-groups.md).
 
 The root `cargo test --workspace` leaves out the first-party plugins'

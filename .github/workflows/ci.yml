@@ -183,14 +183,18 @@ jobs:
         run: cargo nextest run --workspace --features runtime-tests --locked --no-fail-fast --profile ci
 
       # Without --features runtime-tests the runtime targets are not built,
-      # and the Test step passes without them. Each runtime target is a test
-      # suite named <crate>::runtime in the report; fail if none ran.
+      # and the Test step passes without them; so would a crate whose target
+      # lost its name or its required feature. Each runtime target is a test
+      # suite named <crate>::runtime in the report; fail if one is missing.
+      # A crate that adds a runtime target adds its suite here.
       - name: Check that the runtime group ran
         run: |
-          if ! grep -q '<testsuite name="[^"]*::runtime"' target/nextest/ci/junit.xml; then
-            echo "::error::No runtime test ran: the Test step needs --features runtime-tests."
-            exit 1
-          fi
+          for suite in celesta-react-bridge::runtime celesta-exporter::runtime celesta-mcp::runtime; do
+            if ! grep -q "<testsuite name=\"$suite\"" target/nextest/ci/junit.xml; then
+              echo "::error::$suite did not run: the Test step needs --features runtime-tests."
+              exit 1
+            fi
+          done
 
       # HANDOFF.md's clippy commands; --features runtime-tests lints the
       # runtime targets too, which clippy otherwise leaves out without a

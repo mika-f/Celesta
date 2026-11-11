@@ -10,6 +10,7 @@ mod inspect;
 mod stills;
 
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, OnceLock};
 
 use celesta_exporter::{ExportOptions, Exporter};
@@ -26,14 +27,25 @@ pub fn exporter(options: ExportOptions) -> Exporter {
 }
 
 /// The built React runtime, `packages/cli/dist/cli.js`. Every test here
-/// needs it, so a checkout without it fails the test, naming what to build.
+/// runs it with `node` from `PATH`, so a missing `node` or runtime fails the
+/// test, naming what is missing.
 pub fn runtime() -> PathBuf {
-    let cli = common::root().join("packages/cli/dist/cli.js");
+    let works = Command::new("node")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success());
     assert!(
-        cli.is_file(),
-        "the runtime tests need the built React runtime: run \
-         `pnpm install && pnpm run build:runtime` first ({} is missing)",
-        cli.display()
+        works,
+        "the runtime tests need Node.js: node was not found on PATH"
     );
-    cli
+    let package = common::root().join("packages/cli");
+    for required in [package.join("node_modules"), package.join("dist/cli.js")] {
+        assert!(
+            required.exists(),
+            "the runtime tests need the built React runtime: run \
+             `pnpm install && pnpm run build:runtime` first ({} is missing)",
+            required.display()
+        );
+    }
+    package.join("dist/cli.js")
 }

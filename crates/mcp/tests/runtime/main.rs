@@ -25,14 +25,24 @@ pub fn entry(source: &str) -> (tempfile::TempDir, PathBuf) {
     (dir, entry)
 }
 
-/// Fails the test, naming what to build, unless the React runtime the
-/// server spawns, `packages/cli/dist/cli.js`, is built.
+/// Fails the test, naming what is missing, unless the server can start the
+/// React runtime: `node` on `PATH` and the built `packages/cli/dist/cli.js`.
 pub fn require_runtime() {
-    let cli = root().join("packages/cli/dist/cli.js");
+    let works = std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success());
     assert!(
-        cli.is_file(),
-        "the runtime tests need the built React runtime: run \
-         `pnpm install && pnpm run build:runtime` first ({} is missing)",
-        cli.display()
+        works,
+        "the runtime tests need Node.js: node was not found on PATH"
     );
+    let package = root().join("packages/cli");
+    for required in [package.join("node_modules"), package.join("dist/cli.js")] {
+        assert!(
+            required.exists(),
+            "the runtime tests need the built React runtime: run \
+             `pnpm install && pnpm run build:runtime` first ({} is missing)",
+            required.display()
+        );
+    }
 }
