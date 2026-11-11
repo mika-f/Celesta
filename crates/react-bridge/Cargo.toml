@@ -21,3 +21,12 @@ thiserror.workspace = true
 [dev-dependencies]
 # Tests read media with the lossless test codec.
 celesta-codec-test.workspace = true
+
+[features]
+# Builds the runtime test group: tests that need Node.js and the built React
+# runtime (`pnpm run build:runtime`). See docs/handoff/2026-11-11-test-groups.md.
+runtime-tests = []
+
+[[test]]
+name = "runtime"
+required-features = ["runtime-tests"]
