@@ -177,7 +177,7 @@ fn decodes_generated_audio_to_project_pcm() {
 
 /// FFmpeg reads the checked-in voice to the same samples as the test codec
 /// (`crates/codec-test/tests/codec.rs`), which the core's preview-versus-
-/// export spectrum test (`crates/react-bridge/tests/node_integration.rs`)
+/// export spectrum test (`crates/react-bridge/tests/runtime.rs`)
 /// compares with the web preview's reading; this ties that comparison to
 /// the codec an export really uses. The fixture is a copy of
 /// `examples/assets/voices/001.wav`, kept beside these tests so a change to
