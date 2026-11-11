@@ -9,7 +9,7 @@
 #   record-codec-libraries.sh PROGRAM LICENSES LIBRARY...
 #
 # The packager's Dockerfile runs it for the standard ffmpeg plugin with
-# libopus.so and libvpx.so, which the image installs from libopus0 and libvpx9.
+# libopus.so and libvpx.so, which the image installs from libopus0 and libvpx12.
 set -eu
 
 program="$1"

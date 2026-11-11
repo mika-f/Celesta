@@ -498,7 +498,7 @@ docker build -f packaging/linux/Dockerfile -t celesta-exporter .
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mov
 ```
 
-The image bundles only the standard `ffmpeg` plugin, so it writes ProRes/MOV and WebM; its libopus and libvpx come from the image's Ubuntu packages `libopus0` and `libvpx9`. For MP4, extract the Linux `ffmpeg-x264` ZIP (see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads)) into a folder such as `codecs`, mount it, and pass it with `--plugin-dir`:
+The image bundles only the standard `ffmpeg` plugin, so it writes ProRes/MOV and WebM; its libopus and libvpx come from the image's Ubuntu packages `libopus0` and `libvpx12`. For MP4, extract the Linux `ffmpeg-x264` ZIP (see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads)) into a folder such as `codecs`, mount it, and pass it with `--plugin-dir`:
 
 ```sh title="Export MP4 in a container"
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter --plugin-dir /plugins --react first-scene.tsx output.mp4

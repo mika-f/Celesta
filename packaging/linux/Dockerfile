@@ -66,14 +66,14 @@ FROM ubuntu:26.04
 
 # Only the standard LGPL FFmpeg plugin is bundled; ffmpeg-x264 is a separate
 # download. FFmpeg is linked into the plugin's program statically, and
-# libopus and libvpx (both BSD licensed) dynamically, from libopus0 and libvpx9.
+# libopus and libvpx (both BSD licensed) dynamically, from libopus0 and libvpx12.
 # mesa-vulkan-drivers provides lavapipe, a CPU implementation of Vulkan. Text
 # needs at least one installed font: DejaVu for Latin text and Noto CJK for
 # Japanese, Chinese, and Korean. Load other fonts with <Font>.
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    ca-certificates libatomic1 libopus0 libvpx9 libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-noto-cjk \
+    ca-certificates libatomic1 libopus0 libvpx12 libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-noto-cjk \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out /opt/celesta

@@ -40,7 +40,7 @@ Their notices and versions come with each distribution:
   `Celesta.FFmpeg.Windows.Standard` package, in the app's `licenses/native`.
 - macOS: `licenses/homebrew.json` and `licenses/native/<formula>` for the
   Homebrew `opus` and `libvpx` libraries bundled in the plugin's `Frameworks`.
-- Linux image: the Ubuntu packages `libopus0` and `libvpx9`, whose binary and
+- Linux image: the Ubuntu packages `libopus0` and `libvpx12`, whose binary and
   source-package versions are recorded in
   `/opt/celesta/plugins/ffmpeg/licenses/native/debian-packages.json`, with
   their copyright files beside it.

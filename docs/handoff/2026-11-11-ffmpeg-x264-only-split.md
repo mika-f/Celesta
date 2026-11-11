@@ -115,7 +115,7 @@ NuGet packages again.
   `/usr/lib/x86_64-linux-gnu`, so the program links `libopus.so.0` and
   `libvpx.so.9` dynamically (checked with `ldd` here), as `main` did. The image
   keeps that: the build stage installs `libopus-dev libvpx-dev`, the runtime
-  stage `libopus0 libvpx9`, and
+  stage `libopus0 libvpx12` (Ubuntu 26.04's package names; the first manual run caught `libvpx9`, the 24.04 name, once the runners' apt mirrors recovered), and
   `packaging/linux/record-codec-libraries.sh` records each library's binary
   and source package with exact versions in
   `/opt/celesta/plugins/ffmpeg/licenses/native/debian-packages.json` (the
