@@ -35,8 +35,11 @@ CLI's stderr, the JSON report and MCP do not change.
 `export_dialog` became `export_page` (`ExportPage`, `ExportPageEvent`,
 `ExportModel`). `wording.rs` turns warnings into page text (`PageWarning`:
 a resolve warning, an unreadable presets file, an unknown default) with no
-CLI text in it, and labels components `"{name} · {plugin_name}"`
-(`H.264 (x264) · FFmpeg`).
+CLI text in it (an unreadable file's message has its backtick quoting made
+typographic too), and labels components `"{name} · {plugin_name}"`
+(`H.264 (x264) · FFmpeg`). Warnings about the user file's `last` show under
+one muted line, "From your last export:", since no row names it; the
+warnings themselves carry no prefix.
 
 **The Export panel (`export_page/view.rs`, `view/layout.rs`, `view/save.rs`).**
 `PanelHeader` "Export" with an `X` ("Back to editing"). Rows have two lanes
@@ -46,13 +49,19 @@ the label edge. Range shows the In–Out timecodes with Clear, or "Whole
 composition". Loudness is disabled with "No audio is exported." when the
 container takes no audio, but not before the first resolve lands. The
 footer (Save as preset…, Export…) stays pinned while the body scrolls.
-Enter runs Export… (`ConfirmExport` in the "ExportPage" context).
+Enter runs Export… (`ConfirmExport` in the "ExportPage" context). While the
+save panel Export… opened is up, the editor tells the page
+(`ExportPage::set_waiting`): Export… is disabled, with the muted line
+"Choosing where to save…", and Enter does nothing. The editor also ignores
+an `Export` event while the save panel is up or an export runs, so a double
+click cannot start two exports.
 
 **The page in the editor (`export_control.rs`, `render.rs`, `panels.rs`,
 `lifecycle.rs`, `main.rs`).** `ExportPageSlot` holds the page, kept between
 visits. `left_panel(react, export_open)` picks Assets, Export or nothing.
-While the page is open the dock row is `celesta-export-row`, with its own
-`export_split` state and the panel at 26rem (22–34rem). The title bar's
+While the page is open the dock row (`celesta-dock-row` either way, so the
+scroll positions its panels keep by element id survive the switch) takes
+its own `export_split` state and the panel at 26rem (22–34rem). The title bar's
 "Export" is a toggle (`selected`/`toggled`). File → Export… and ⌘⇧E open the
 page and do not pause playback. The toggle, the `X` and Escape (last in the
 editor's Escape chain) close it, keeping its state. The page cannot open
@@ -75,6 +84,12 @@ the timeline update the Range row while the page is open.
 - After an export starts, the editor takes the focus back, as on close.
 - ⌘⇧E with the page already open leaves it as it is (no re-describe, no
   focus change).
+- The "your last export" context is one line above the warnings ("From
+  your last export:"), not a prefix on each warning.
+- An untitled document saved while the page is open is not handled: the
+  editor has no save that gives a document a path in place. A document's
+  path only changes by opening another project, which replaces the view
+  and drops the page.
 
 ## Checks
 
@@ -82,7 +97,7 @@ Commands, all passing on the branch head:
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace --no-fail-fast` (`celesta-editor` 800 tests). One
+- `cargo test --workspace --no-fail-fast` (`celesta-editor` 802 tests). One
   earlier run failed `transform_drag::tests::a_left_edge_resize_is_one_undo`,
   a known flaky test in a file this branch does not touch; it passed alone
   three times and in the next full run.
@@ -137,11 +152,14 @@ that checkout's FFmpeg build, with the old labels. The checks ran with
 - The plugin display name in the Plugins panel (it shows the `id`).
 - While the page is open the dock row has its own split state, so a right
   dock resized while editing returns to its default width on the page, and
-  back on close.
+  back on close. (Scroll positions inside the row are kept: the row's id
+  no longer changes.)
 - The panel's 26rem is its starting width; a later change of the interface
   zoom moves only its range.
 - No test covers the refocus after opening another project or Reload
-  Plugins, since no test in the crate builds an `EditorView`.
+  Plugins, nor the editor ignoring a second `Export` event while the save
+  panel is up, since no test in the crate builds an `EditorView`. The
+  page's side (Export… disabled, Enter ignored while waiting) is tested.
 - The "Export finished" toast has no border or shadow, sits on the Volume
   control and keeps a title-only toast's text at the top. That is P7a's
   toast styling, not changed here; it is being fixed in its own change.
