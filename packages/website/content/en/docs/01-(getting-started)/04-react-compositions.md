@@ -35,7 +35,7 @@ export default () => <>
 </>;
 ```
 
-Choose **Composition: landscape** in the app's title bar to switch the preview and the composition that **Export…** writes. You can also open a specific ID with `Celesta film.tsx --composition portrait`.
+Choose **Composition: landscape** in the app's title bar to switch the preview and the composition the export page writes. You can also open a specific ID with `Celesta film.tsx --composition portrait`.
 
 ```sh
 Celesta-export --react film.tsx --composition portrait output.mp4 --json

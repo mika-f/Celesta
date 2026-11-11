@@ -484,6 +484,8 @@ Deviations in P4 (`docs/handoff/2026-11-09-media-stills.md`):
 
 ### Editor
 
+P7d (`docs/superpowers/specs/2026-11-11-p7d-export-page-design.md`) made the dialog a page.
+
 - Export opens a dialog that replaces today's save panel. From top to bottom:
   - Preset
   - Container (muxer)

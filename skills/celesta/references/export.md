@@ -165,7 +165,7 @@ A preset is a named muxer, encoders, and their options, kept in an
 (`~/Library/Application Support/Celesta` on macOS, `%APPDATA%\Celesta` on
 Windows, `$XDG_CONFIG_HOME/celesta` or `~/.config/celesta` elsewhere), and
 a project's, at its root (the folder holding `celesta.config.json`, else the
-entry's folder). The app's export dialog writes both ("Save as preset…")
+entry's folder). The app's export page writes both ("Save as preset…")
 and remembers its last choice in the user file's `last`.
 
 ```json
