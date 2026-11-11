@@ -126,13 +126,17 @@ After building the runtime, check the area you changed. Common checks are:
 pnpm run test:runtime
 pnpm run typecheck:examples
 cargo test --workspace --locked
+cargo test --workspace --locked --features runtime-tests --test runtime
 ```
 
-Tests that need a GPU adapter, Node.js, or a color emoji font print a line
-starting with `skipping` and pass when it is missing. On a machine with a GPU,
-set `CELESTA_REQUIRE_GPU=1` so a missing adapter fails the GPU tests instead;
-after building the runtime, `CELESTA_REQUIRE_RUNTIME=1` does the same for a
-missing `node` or `packages/cli/dist/cli.js`.
+`cargo test --workspace` needs nothing but the Rust build. The Rust tests that
+need Node.js and the built React runtime are a group of their own, built with
+the `runtime-tests` feature: the last command runs only them, and fails, naming
+what to build, when the runtime is missing. CI runs both groups.
+
+Tests that need a GPU adapter or a color emoji font print a line starting with
+`skipping` and pass when it is missing. On a machine with a GPU, set
+`CELESTA_REQUIRE_GPU=1` so a missing adapter fails the GPU tests instead.
 CI lists the skipped tests in each job's summary.
 
 See the [CI workflow](.github/workflows/ci.yml) for the full checks and platform

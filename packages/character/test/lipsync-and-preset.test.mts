@@ -2,7 +2,7 @@
 // presets.
 //
 // The end-to-end paths (render.ts wiring, the Rust rasterizer) are covered
-// by `crates/react-bridge/tests/node_integration.rs` and
+// by `crates/react-bridge/tests/runtime.rs` and
 // `crates/renderer`'s `rasterize_psd` tests.
 
 import assert from 'node:assert/strict';
