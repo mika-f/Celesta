@@ -20,8 +20,9 @@ Pie's start and end angles; `s` for a video's startFrom. Ratios
 `metrics::inspector_trailing_width()` (1.25rem), and, after the user's
 spacing review, `inspector_row_height()` (2rem, rows and section headers)
 and `inspector_padding()` (1rem, their leading and trailing padding).
-`panel_header_height()` went from 1.875rem to 2.5rem so gpui-kit's medium
-`Tab` (32px) fits the band (P7a's `PanelHeader` grows with it); the dock's tabs get `px_2` more each side, and
+`panel_header_height()` is 2.5rem so gpui-kit's medium `Tab` (32px) fits
+the band; that change came from main with P7c (#808), and this branch only
+rewords its doc comment. The dock's tabs get `px_2` more each side, and
 Reload composition is a medium button with 1.5rem above and below. The
 shared `panel_padding()` and `list_row_height()`, which the timeline uses,
 are unchanged.
@@ -144,7 +145,8 @@ Fixed, each with a test that failed first:
 - The window coming back to the front reopened a focused resting value:
   `RowTyping` remembers that Enter or Escape closed the row with the focus
   kept, and only a blur clears that
-  (`a_resting_row_with_the_focus_opens_only_on_request`).
+  (`a_resting_row_with_the_focus_opens_only_on_request`). Round 3 found
+  this did not hold in a window; see there.
 - Tab into a number row is pinned by
   `scrub_value::tests::tab_opens_a_resting_number_for_typing` (checked to
   fail without the resting value's `track_focus`).
@@ -167,3 +169,40 @@ typing helpers between the layer and props-file panels, `fact`'s bare
 effect), a props-file drag starting from the default when the file holds
 a non-number, and the extra unit-path tests.
 
+## Review round 3 (hinaloe on `e6c59d08`)
+
+Fixed, each with a test that failed first:
+
+- Going to the back blurs the focused field (gpui blurs it on the
+  inactive frame), and that blur cleared `RowTyping`'s resting flag, so
+  the focus sent on coming back reopened the row. `RowTyping::on` takes
+  whether the window is active; a blur in an inactive window leaves the
+  flag. The panels pass `window.is_window_active()` from the control
+  handler. `scrub_value::tests::coming_back_to_the_window_leaves_a_resting_number_resting`
+  presses Enter, deactivates and re-activates the window; the unit test
+  covers the inactive blur too.
+- Reset to default lost its accessible name with `compact_label`; it,
+  the row's Remove and the keyframe jumps set `accessibility_label`.
+  `style_guard::inspector_icon_buttons_have_accessible_names` checks
+  them, on a helper shared with P7c's transport guard.
+
+Also changed: `ScrubValue::field` takes a closure that dresses an `Input`
+over the value's own state, so the field is the one whose focus the
+resting value tracks; `InspectorSection::trailing` is `push_trailing`
+(it appends, `InspectorRow::trailing` replaces); the duplicate 32px
+bound in `the_inspector_is_roomier_than_a_list` is gone (P7c's
+`the_panel_header_holds_a_whole_tab` keeps it).
+
+Known, not changed:
+
+- A mouse collapse leaves the focus on the header, so Space toggles the
+  section again rather than playing; a click on the canvas or the
+  timeline gives Space back to playback.
+- Collapsing a section whose field holds text that does not parse
+  submits it, and the message shows in the hidden body; the header does
+  not show it.
+- Tests still missing: `on_label_press`, the props-file drag clamp, the
+  `sub_line` lane.
+
+Checked: `cargo test -p celesta-editor -p celesta-editor-theme` (824 +
+11), clippy `-D warnings`, `cargo fmt --all --check`.
