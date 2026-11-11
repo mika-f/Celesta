@@ -173,3 +173,12 @@ from the staged manifest using the image's bundled Node.js instead of guessing
 the platform directory. Keep the ongoing native packaging jobs running so
 their checks and native caches are not discarded; repeat the corrected image
 probe on the next pushed revision.
+
+The local Docker check also identified a missing Node.js runtime dependency:
+`ldd /usr/local/bin/node` in the actual x64 `node:26-bookworm-slim` image
+requires `libatomic.so.1`, while the Ubuntu 26.04 base and the final stage's
+installed package set do not include `libatomic1`. Add it explicitly to the
+runtime stage. The first local arm64 image build hit an FFmpeg-download TLS
+EOF; CI's image build had already passed that download/compilation. Retry the
+local build from a tracked-files archive to avoid sending unrelated ignored
+developer render output as Docker context.

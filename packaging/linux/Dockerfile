@@ -71,7 +71,7 @@ FROM ubuntu:26.04
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    ca-certificates libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-noto-cjk \
+    ca-certificates libatomic1 libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-noto-cjk \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out /opt/celesta
