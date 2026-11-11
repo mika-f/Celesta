@@ -606,17 +606,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let entry = dir.join("film.tsx");
-        // Outlast the filesystem's mtime granularity.
-        let tick = || std::thread::sleep(Duration::from_millis(1100));
         std::fs::write(dir.join("props.json"), "{}").unwrap();
-        tick();
-        // The entry is newer, so deleting props.json leaves the newest source mtime alone.
         std::fs::write(&entry, "export default null;").unwrap();
-        tick();
         let args = PropertyArgs::default();
 
         let before = watched_stamp(&entry, &args);
-        tick();
+        // props.json is a source file in the entry's folder, so the sample
+        // loses its entry whatever the filesystem's mtime granularity.
         std::fs::remove_file(dir.join("props.json")).unwrap();
         let after = watched_stamp(&entry, &args);
 
