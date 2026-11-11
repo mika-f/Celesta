@@ -11,7 +11,8 @@ workflows:
         - 'jdx/mise-action@v5.2.7'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.90.2'
-    '.github/workflows/ffmpeg-windows.yml': []
+    '.github/workflows/ffmpeg-windows.yml':
+        - 'actions/checkout@v7.0.1'
     '.github/workflows/package-build.yml':
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
