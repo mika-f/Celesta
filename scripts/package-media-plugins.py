@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build optional media plugins as individually installable native ZIP archives."""
+"""Build the optional ffmpeg-x264 media plugin as an installable native ZIP archive.
+
+The standard ffmpeg plugin (decoding, muxing, ProRes, VP9, AAC, Opus, PCM)
+comes with Celesta; only the GPL libx264 build is a separate download.
+"""
 
 import argparse
 import importlib.util
@@ -20,7 +24,8 @@ packaging = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packaging)
 ROOT = packaging.ROOT
 run = packaging.run
-VARIANTS = {"x264": "x264", "opus": "opus", "vpx": "libvpx"}
+# Each optional variant and the Homebrew formula of its codec library.
+VARIANTS = {"x264": "x264"}
 
 
 def write_archive(plugin, destination):
@@ -70,9 +75,9 @@ def debian_package(library, source):
 
 
 def linux_dependencies(plugin, program, variant):
-    # FFmpeg itself is static on Linux; only the selected external codec may
+    # FFmpeg itself is static on Linux; only the external codec library may
     # need a shared library. glibc and the platform runtime stay system-provided.
-    prefix = {"x264": "libx264.so", "opus": "libopus.so", "vpx": "libvpx.so"}[variant]
+    prefix = {"x264": "libx264.so"}[variant]
     listing = run("ldd", program, capture=True)
     if "not found" in listing:
         raise RuntimeError(f"Unresolved plugin dependencies: {listing}")
@@ -102,7 +107,7 @@ def linux_dependencies(plugin, program, variant):
     for name, source in re.findall(r"^\s*(\S+)\s+=>\s+(/\S+)\s+\(", resolved, re.M):
         if name.startswith(prefix) and not Path(source).resolve().is_relative_to(plugin.resolve()):
             raise RuntimeError(f"Codec dependency was not bundled: {source}")
-    doc = {"x264": "libx264-*", "opus": "libopus[0-9]*", "vpx": "libvpx[0-9]*"}[variant]
+    doc = {"x264": "libx264-*"}[variant]
     notices = list(Path("/usr/share/doc").glob(f"{doc}/copyright"))
     if not notices:
         raise RuntimeError(f"Native codec copyright notice not found: {doc}")
@@ -168,8 +173,8 @@ def package_plugin(variant, output, target, system, arch, args):
             "Open Celesta, reload plugins and allow this plugin when prompted.\n"
             "For CLI use, pass --plugin-dir <parent folder> or --allow-plugin " + plugin_id + ".\n"
             "Linux H.264/MP4 needs ffmpeg-x264; macOS/Windows also have system H.264 encoders.\n"
-            "WebM needs ffmpeg-vpx and ffmpeg-opus.\n"
-            "The standard ffmpeg plugin comes with Celesta. Use matching releases.\n", encoding="utf-8")
+            "The standard ffmpeg plugin comes with Celesta and covers everything else,\n"
+            "WebM (VP9 and Opus) included. Use matching releases.\n", encoding="utf-8")
         archive = stage / destination.name
         write_archive(plugin, archive)
         if args.notary_profile:

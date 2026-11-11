@@ -13,13 +13,15 @@ and packaging dependencies:
 
 ```sh
 xcode-select --install
-brew install pkg-config nasm dylibbundler
-scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/standard"
+brew install pkg-config nasm dylibbundler libvpx opus
+PKG_CONFIG_PATH="$(brew --prefix libvpx)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig" \
+  scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/standard"
 export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
 ```
 
-Run the commands from the repository root. The app bundles only the standard LGPL FFmpeg plugin. Additional codecs are
-separate downloads; see [plugin packaging](../plugins/README.md). The default
+Run the commands from the repository root. The app bundles only the standard
+LGPL FFmpeg plugin (with libopus and libvpx). The x264 encoder is a separate
+download; see [plugin packaging](../plugins/README.md). The default
 distribution gate rejects a GPL FFmpeg build; local builds may use one.
 
 From the repository root:
@@ -133,7 +135,7 @@ Gatekeeper accepts the app. `--sign-identity` alone signs but does not notarize;
 
 Before creating the DMG, the script checks native architectures, dependency load
 paths, minimum OS versions, and signatures. It then runs the shared React hooks
-and MOV/ProRes export smoke test with Homebrew and Node.js removed from PATH and without
+and MOV/ProRes and WebM export smoke test with Homebrew and Node.js removed from PATH and without
 DYLD environment overrides.
 
 After dragging the app into Applications, run that test against the installed copy:
@@ -161,13 +163,16 @@ corresponding plugin's `licenses/` folder.
 
 Celesta's own executables link no FFmpeg. Only `ffmpeg` (standard LGPL) is
 staged under `Contents/Resources/PlugIns`, with its own `Frameworks/` and `licenses/`.
-The app's Rust/native inventory excludes the optional codecs. The package
-smoke test exports ProRes/MOV and rejects accidentally bundled x264/Opus/VPX
-plugins. Optional codec ZIPs are built separately by
-[`package-media-plugins.py`](../../scripts/package-media-plugins.py), signed and
-notarized in release builds, and attached to the same release; see
-[plugin packaging](../plugins/README.md). Their licenses remain in their own
-folders. The app stays MIT/Apache-2.0 with LGPL FFmpeg.
+The plugin's `Frameworks/` holds the FFmpeg dylibs built from source and the
+Homebrew libopus and libvpx (BSD licensed) they link; the app's
+`licenses/homebrew.json` and `licenses/native/` carry those two formulas'
+notices. The app's Rust/native inventory excludes the optional x264 crate.
+The package smoke test exports ProRes/MOV and WebM and rejects an accidentally
+bundled x264 plugin. The optional `ffmpeg-x264` ZIP is built separately by
+[`package-media-plugins.py`](../../scripts/package-media-plugins.py), signed
+and notarized in release builds, and attached to the same release; see
+[plugin packaging](../plugins/README.md). Its licenses remain in its own
+folder. The app stays MIT/Apache-2.0 with LGPL FFmpeg.
 
 `Contents/Resources/PlugIns/avfoundation` holds the AVFoundation plugin
 (`plugins/avfoundation`, built by the same script after FFmpeg). It is

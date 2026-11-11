@@ -8,10 +8,13 @@ Users do not need Node.js, pnpm, Rust, or FFmpeg installed.
 ## Prerequisites
 
 - The `x86_64-pc-windows-msvc` Rust toolchain and Visual Studio C++ build tools.
-- A standard LGPL vcpkg FFmpeg 8.1.x install: `ffmpeg[zlib]` with
-  `x64-windows-static-md`, using vcpkg `2026.07.29`. Set `VCPKG_ROOT` to this
-  install. Do not add x264, Opus or VPX to it. Separate codec ZIPs use their
-  own native roots; see [plugin packaging](../plugins/README.md).
+- A standard LGPL vcpkg FFmpeg 8.1.x install: `ffmpeg[zlib,opus,vpx]` with
+  `x64-windows-static-md`, using the vcpkg release
+  [`ffmpeg-windows.yml`](../../.github/workflows/ffmpeg-windows.yml) names
+  (CI downloads it as the `Celesta.FFmpeg.Windows.Standard` package). Set
+  `VCPKG_ROOT` to this install. Never add x264 to it: the separate
+  `ffmpeg-x264` ZIP uses its own native root (`Celesta.FFmpeg.Windows.X264`);
+  see [plugin packaging](../plugins/README.md).
 - Node.js and pnpm for building the React package.
 - [Inno Setup 6.3 or later](https://jrsoftware.org/isdl.php) for the setup EXE.
   Use `-ZipOnly` if you only need a portable ZIP.
@@ -84,13 +87,14 @@ FFmpeg license texts and source notices stay in the corresponding plugin's
 Celesta's own executables link no FFmpeg. Only the standard LGPL process
 lives under `plugins/ffmpeg`, with its own CRT DLLs. The app package's native
 notices come only from the standard installation under `licenses/native`, and
-its Rust inventory excludes optional codec crates. The smoke test checks that
-x264, Opus and VPX were not bundled and exports MOV/ProRes.
+its Rust inventory excludes the optional x264 crate. The smoke test checks
+that x264 was not bundled and exports MOV/ProRes and WebM (VP9 and Opus).
 
-Optional codec archives are separate assets on the same GitHub release, built
-with [`package-media-plugins.py`](../../scripts/package-media-plugins.py). Each
+The optional `ffmpeg-x264` archive is a separate asset on the same GitHub
+release, built with
+[`package-media-plugins.py`](../../scripts/package-media-plugins.py). It
 contains one installable plugin folder with its CRT, native libraries, license
-texts and notices. Only x264 carries the [GPL offer](../GPL-SOURCE-OFFER.md).
+texts and notices, including the [GPL offer](../GPL-SOURCE-OFFER.md).
 See [plugin packaging](../plugins/README.md) for build and installation details.
 
 `plugins\mediafoundation` holds the Media Foundation plugin

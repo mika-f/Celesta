@@ -24,17 +24,17 @@ runtime/react/node_modules.
 Celesta's own source and main executables are MIT/Apache-2.0 licensed;
 licenses/LICENSE-MIT and licenses/LICENSE-APACHE contain their license texts.
 The main executables link no FFmpeg. The bundled plugins\ffmpeg provides the
-standard LGPL build: decoding, ProRes, AAC/PCM and muxing. MOV/ProRes exports
-work without additional downloads, including the example above.
+standard LGPL build: decoding, ProRes, VP9, AAC, Opus, PCM and muxing.
+MOV/ProRes and WebM exports work without additional downloads, including the
+example above.
 
 For MP4, use the bundled mediafoundation/h264 when available, or download
-ffmpeg-x264. For WebM, download both ffmpeg-vpx and
-ffmpeg-opus from the same GitHub release as Celesta. Choose the windows-x64
-ZIP, extract it, and copy the whole ffmpeg-<codec> folder into
-%APPDATA%\Celesta\plugins. Open Celesta, reload plugins and allow them.
-Keep each plugin's manifest, executable, libraries and licenses together.
-FFmpeg does not need to be installed separately. Each download carries its
-own native and Rust notices; only ffmpeg-x264 includes the GPL source offer.
+ffmpeg-x264 from the same GitHub release as Celesta. Choose the windows-x64
+ZIP, extract it, and copy the whole ffmpeg-x264 folder into
+%APPDATA%\Celesta\plugins. Open Celesta, reload plugins and allow it.
+Keep the plugin's manifest, executable, libraries and licenses together.
+FFmpeg does not need to be installed separately. The download carries its
+own native and Rust notices and the GPL source offer.
 
 The Media Foundation plugin in plugins\mediafoundation
 (plugins\mediafoundation\bin\windows-x86_64\celesta-codec-mediafoundation.exe)

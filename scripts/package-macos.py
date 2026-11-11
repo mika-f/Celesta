@@ -23,6 +23,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # inventory lists. The AVFoundation plugin links system frameworks only, so it
 # needs no dylibbundler.
 BUNDLED_PACKAGES = {"ffmpeg": "celesta-codec-ffmpeg", "avfoundation": "celesta-codec-avfoundation"}
+# The Homebrew formulas of the codec libraries the standard FFmpeg build links
+# (scripts/build-ffmpeg-linux.sh), which dylibbundler copies into the bundled
+# ffmpeg plugin: libopus and libvpx, both BSD licensed. FFmpeg itself is built
+# from source; packaging/FFMPEG-SOURCE.md covers it.
+STANDARD_NATIVE_FORMULAS = ("opus", "libvpx")
 MACHO_MAGIC = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
     b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -180,7 +185,7 @@ def collect_licenses(resources, target, *, names=None, include_app=True, native_
             for name, path in texts.items():
                 shutil.copy2(path, destination / name)
     (licenses / "rust-packages.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
-    # Only standalone optional archives need Homebrew codec notices.
+    # The Homebrew codec libraries a plugin bundles, and what they depend on.
     formulas = sorted({dependency for formula in native_formulas
                        for dependency in [formula, *run("brew", "deps", "--installed", formula, capture=True).splitlines()]})
     if formulas:
@@ -294,7 +299,7 @@ def main():
     for source in (ROOT / "examples/minimal.celesta.json", ROOT / "examples/editor-demo.celesta.json",
                    ROOT / "packages/cli/examples/title.tsx"):
         shutil.copy2(source, examples / source.name)
-    collect_licenses(resources, target)
+    collect_licenses(resources, target, native_formulas=STANDARD_NATIVE_FORMULAS)
 
     # Only the standard FFmpeg build is bundled; AVFoundation uses system frameworks.
     # Seal manifests/licenses as resources rather than treating them as nested code.

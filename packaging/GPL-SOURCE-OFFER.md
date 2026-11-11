@@ -17,8 +17,9 @@ therefore may only be distributed as object/executable code together with
 either the complete corresponding source or a written offer for it. This file
 is that offer; a copy of it ships in the codec plugin's `licenses` folder.
 
-Separate LGPL plugin processes, `ffmpeg-vpx` and `ffmpeg-opus`, provide WebM
-encoding. They do not link the GPL FFmpeg build.
+The bundled `ffmpeg` plugin, which provides decoding, muxing, and every other
+encoder (ProRes, VP9, AAC, Opus, PCM), is a separate LGPL program; it does not
+link the GPL FFmpeg build.
 
 ## The offer
 
@@ -51,7 +52,10 @@ and shared implementation. Upstream locations:
 The exact versions and build configuration used for a given release are
 recorded by the build scripts: `FFMPEG_VARIANT=x264` in
 `scripts/build-ffmpeg-linux.sh` (Unix), and the vcpkg `ffmpeg[x264]` build
-in `.github/actions/setup-ffmpeg/action.yml` (Windows). Each ZIP includes native
+in `.github/workflows/ffmpeg-windows.yml`, published as the
+`Celesta.FFmpeg.Windows.X264` package and pinned in
+`.github/actions/setup-ffmpeg/action.yml` (Windows). That package carries
+this offer beside vcpkg's tree. Each ZIP includes native
 notices: vcpkg's share tree in `licenses/native` on Windows,
 `licenses/homebrew.json` on macOS, and `licenses/native/debian-packages.json` on Linux. The
 Linux inventory records the binary package version and exact source-package
@@ -59,7 +63,7 @@ name/version, including the distribution revision. Its corresponding source
 includes that distribution's patches, not only the upstream x264 tarball.
 Use the recorded distribution and source-package version when requesting
 materials. The x264 build does not link libvpx or libopus; those libraries
-belong to the separate VPX and Opus downloads.
+belong to the bundled LGPL `ffmpeg` plugin.
 
 ## Full license text
 

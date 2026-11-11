@@ -92,16 +92,14 @@ class MacPackageValidationTests(unittest.TestCase):
                                                                         for kind in kinds]}
                 for dependency, *kinds in deps]}
 
-        names = ["celesta-codec-ffmpeg-opus", "celesta-codec-ffmpeg-vpx", "celesta-codec-ffmpeg-x264", "celesta-codec-ffmpeg", "ez-ffmpeg", "ffmpeg-sys-next", "bindgen", "tempfile",
+        names = ["celesta-codec-ffmpeg-x264", "celesta-codec-ffmpeg", "ez-ffmpeg", "ffmpeg-sys-next", "bindgen", "tempfile",
                  "celesta-codec-avfoundation", "objc2-video-toolbox", "objc2", "criterion",
                  "celesta-plugin-vrm", "gltf", "rayon"]
         metadata = {
             "packages": [package(name) for name in names],
             "workspace_members": [package(name)["id"] for name in
-                                  ("celesta-codec-ffmpeg", "celesta-codec-ffmpeg-opus", "celesta-codec-ffmpeg-vpx", "celesta-codec-ffmpeg-x264", "celesta-codec-avfoundation", "celesta-plugin-vrm")],
+                                  ("celesta-codec-ffmpeg", "celesta-codec-ffmpeg-x264", "celesta-codec-avfoundation", "celesta-plugin-vrm")],
             "resolve": {"nodes": [
-                node("celesta-codec-ffmpeg-opus", ("celesta-codec-ffmpeg", None)),
-                node("celesta-codec-ffmpeg-vpx", ("celesta-codec-ffmpeg", None)),
                 node("celesta-codec-ffmpeg-x264", ("celesta-codec-ffmpeg", None)),
                 node("celesta-codec-ffmpeg", ("ez-ffmpeg", None), ("ffmpeg-sys-next", None),
                      ("tempfile", "dev"), ("rayon", None, "dev")),

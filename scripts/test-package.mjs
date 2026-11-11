@@ -65,7 +65,8 @@ export default function Root() {
   const messages = protocol.trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.ok(messages[0].config);
   assert.ok(messages[1].scene);
-  // Each build is a separate process with the license files its source declares.
+  // The bundled FFmpeg plugin is the standard LGPL build, with the license
+  // files its source declares; --check-build opens VP9 and Opus too.
   for (const id of ['ffmpeg']) {
     const codec = join(packageDirectory, mac ? `Contents/Resources/PlugIns/${id}` : `plugins/${id}`);
     const manifest = JSON.parse(readFileSync(join(codec, 'celesta-plugin.json'), 'utf8'));
@@ -92,7 +93,7 @@ export default function Root() {
   for (const crate of ['ez-ffmpeg', 'celesta-codec-ffmpeg']) {
     assert.ok(rustPackages.includes(crate), `licenses/rust-packages.json must name ${crate}`);
   }
-  for (const id of ['ffmpeg-x264', 'ffmpeg-opus', 'ffmpeg-vpx']) {
+  for (const id of ['ffmpeg-x264']) {
     assert.ok(!existsSync(join(packageDirectory, mac ? `Contents/Resources/PlugIns/${id}` : `plugins/${id}`)), `${id} must be a separate download`);
     assert.ok(!rustPackages.includes(`celesta-codec-${id}`), `${id} must not enter the app's Rust inventory`);
   }
@@ -102,6 +103,12 @@ export default function Root() {
   const mov = readFileSync(output);
   assert.ok(mov.includes(Buffer.from('moov')));
   assert.ok(mov.length > 100);
+  // WebM (VP9 and Opus) needs nothing beyond the bundled plugin.
+  const webmOutput = join(directory, 'test.webm');
+  run(exporter, ['--react', entry, webmOutput]);
+  const webm = readFileSync(webmOutput);
+  assert.deepEqual([...webm.subarray(0, 4)], [0x1a, 0x45, 0xdf, 0xa3], 'The WebM output must start with an EBML header');
+  assert.ok(webm.length > 100);
   if (mac) {
     // The AVFoundation plugin links system frameworks only, so it ships no
     // Frameworks/ and carries MIT/Apache-2.0 alone.
