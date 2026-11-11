@@ -5,11 +5,11 @@ Open the [web editor](/en/#playground), change or open a TSX composition, and ch
 ## From the app
 
 Of the FFmpeg builds, app packages bundle only standard `ffmpeg`. ProRes/MOV
-works without downloads. macOS also bundles `avfoundation/h264`, Windows
-`mediafoundation/h264`; when available, they provide default MP4 video and
-outrank downloaded x264. Linux needs **ffmpeg-x264** for H.264/MP4. Explicitly
-name `ffmpeg-x264/libx264` to select it on any OS. WebM needs **both ffmpeg-vpx
-and ffmpeg-opus**; see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads).
+and WebM (VP9 and Opus) work without downloads. macOS also bundles
+`avfoundation/h264`, Windows `mediafoundation/h264`; when available, they
+provide default MP4 video and outrank downloaded x264. Linux needs
+**ffmpeg-x264** for H.264/MP4. Explicitly name `ffmpeg-x264/libx264` to select
+it on any OS; see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads).
 
 With no saved export settings, the dialog starts with a container whose default
 encoders are installed: MP4 when H.264 is installed, otherwise ProRes/MOV for a
@@ -123,7 +123,7 @@ Celesta writes a video with three media components: a muxer, which writes the fi
 | --- | --- | --- | --- |
 | `.mp4`, `.m4v` | `ffmpeg/mp4` | `avfoundation/h264` (macOS), `mediafoundation/h264` (Windows), `ffmpeg-x264/libx264` (Linux) | `ffmpeg/aac` (AAC) |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores` (ProRes 4444) | `ffmpeg/pcm` (24-bit PCM) |
-| `.webm` | `ffmpeg/webm` | `ffmpeg-vpx/vp9` (VP9 with alpha) | `ffmpeg-opus/opus` (Opus, 48 kHz) |
+| `.webm` | `ffmpeg/webm` | `ffmpeg/vp9` (VP9 with alpha) | `ffmpeg/opus` (Opus, 48 kHz) |
 
 `--list-components` lists every installed component with its kind and plugin, including Celesta's built-in image components (`builtin/png` and the others, shown as `built-in`), which write still frames only (see Still frames and contact sheets below); add `--check` to ask each plugin whether its components work on this computer, which starts each plugin once. `--describe <plugin/id>` shows one component's settings: each key with its type, default, and choices or range. Both print JSON with `--json`, and neither takes a source or an output.
 
@@ -138,9 +138,9 @@ Celesta writes a video with three media components: a muxer, which writes the fi
 | | `bitDepth` | `8`, or `10` for 10-bit H.264 (High 10) (`8`) |
 | | `tune` | an x264 tune, such as `film` or `animation` (none) |
 | `ffmpeg/prores` | `profile` | `4444`, or `hq` for 422 HQ without alpha (`4444`) |
-| `ffmpeg-vpx/vp9` | `crf` | 0–63 (20) |
+| `ffmpeg/vp9` | `crf` | 0–63 (20) |
 | | `alpha` | `true` or `false` (`true`) |
-| `ffmpeg/aac`, `ffmpeg-opus/opus` | `bitrate` | 32000–512000 bits per second (192000) |
+| `ffmpeg/aac`, `ffmpeg/opus` | `bitrate` | 32000–512000 bits per second (192000) |
 | `ffmpeg/pcm` | `format` | `s16le`, `s24le`, or `f32le` (`s24le`) |
 
 Muxers keep their defaults: MP4 and MOV are written with `faststart`, which puts the index first so a browser can start playing before the download ends.
@@ -361,7 +361,7 @@ The file extension picks the video format. A `.mp4` file is H.264 with AAC audio
 
 Only areas nothing draws on are transparent, so a layer that fills the whole frame, such as a full-frame background, makes the output opaque. The alpha is straight (unassociated), and colors are converted and tagged as BT.709 (limited range).
 
-Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, or an optional encoder plugin is missing (H.264 needs a native encoder or `ffmpeg-x264`; WebM needs `ffmpeg-vpx` and `ffmpeg-opus`), the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
+Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, or an optional encoder plugin is missing (H.264 needs a native encoder or `ffmpeg-x264`), the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
 
 ## Still frames and contact sheets
 
@@ -495,7 +495,13 @@ docker build -f packaging/linux/Dockerfile -t celesta-exporter .
 ```
 
 ```sh title="Export in a container"
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mp4
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mov
+```
+
+The image bundles only the standard `ffmpeg` plugin, so it writes ProRes/MOV and WebM; its libopus and libvpx come from the image's Ubuntu packages `libopus0` and `libvpx9`. For MP4, extract the Linux `ffmpeg-x264` ZIP (see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads)) into a folder such as `codecs`, mount it, and pass it with `--plugin-dir`:
+
+```sh title="Export MP4 in a container"
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter --plugin-dir /plugins --react first-scene.tsx output.mp4
 ```
 
 > [!NOTE]

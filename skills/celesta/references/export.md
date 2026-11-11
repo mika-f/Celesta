@@ -97,18 +97,17 @@ A video is written by three media components, each named
 encoder. The output's extension picks the muxer and the muxer's default
 codecs pick the encoders, so most exports need none of these flags:
 
-The standard `ffmpeg` supplies ProRes/MOV immediately. macOS also bundles
+The standard `ffmpeg` supplies ProRes/MOV and WebM (VP9, Opus) immediately. macOS also bundles
 `avfoundation/h264`, Windows `mediafoundation/h264`; those bundled H.264
 encoders outrank user-installed x264, so MP4 needs no download when they are
-available. Linux needs the separate `ffmpeg-x264` download for H.264. For
-WebM, install both `ffmpeg-vpx`
-and `ffmpeg-opus`. See [plugins.md](plugins.md) for ZIP names and installation.
+available. Linux needs the separate `ffmpeg-x264` download for H.264. See
+[plugins.md](plugins.md) for the ZIP name and installation.
 
 | Extension | Muxer | Video encoder | Audio encoder |
 | --- | --- | --- | --- |
 | `.mp4`, `.m4v` | `ffmpeg/mp4` | `avfoundation/h264` (macOS), `mediafoundation/h264` (Windows), `ffmpeg-x264/libx264` (Linux) | `ffmpeg/aac` |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores` | `ffmpeg/pcm` |
-| `.webm` | `ffmpeg/webm` | `ffmpeg-vpx/vp9` | `ffmpeg-opus/opus` |
+| `.webm` | `ffmpeg/webm` | `ffmpeg/vp9` | `ffmpeg/opus` |
 
 There is no codec-neutral quality setting: a non-default export uses the
 chosen encoder's own keys. The standard and optional FFmpeg plugins offer these settings:
@@ -122,9 +121,9 @@ chosen encoder's own keys. The standard and optional FFmpeg plugins offer these 
 | | `bitDepth` | `8` or `10` (`8`). `10` is H.264 High 10: smoother dark gradients, but fewer players decode it; keep `8` for phones, browsers, and social media. |
 | | `tune` | an x264 tune such as `film` or `animation` (empty) |
 | `ffmpeg/prores` | `profile` | `4444` (with alpha) or `hq` (422 HQ, opaque) (`4444`) |
-| `ffmpeg-vpx/vp9` | `crf` | 0–63 (20) |
+| `ffmpeg/vp9` | `crf` | 0–63 (20) |
 | | `alpha` | `true` or `false` (`true`) |
-| `ffmpeg/aac`, `ffmpeg-opus/opus` | `bitrate` | 32000–512000 bit/s (192000) |
+| `ffmpeg/aac`, `ffmpeg/opus` | `bitrate` | 32000–512000 bit/s (192000) |
 | `ffmpeg/pcm` | `format` | `s16le`, `s24le`, `f32le` (`s24le`) |
 
 Muxers keep their defaults (MP4 and MOV: `faststart` on). For any other

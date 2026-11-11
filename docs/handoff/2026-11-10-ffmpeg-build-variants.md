@@ -1,5 +1,7 @@
 # FFmpeg plugins by native build
 
+> Superseded in part by [the x264-only split](2026-11-11-ffmpeg-x264-only-split.md): Opus and VP9 are back in the standard `ffmpeg` plugin, and only `ffmpeg-x264` is a separate build and download. The variants are `standard` and `x264`.
+
 > Distribution policy superseded by [optional codec downloads](2026-11-11-optional-codec-downloads.md): only standard FFmpeg is bundled. Startup license refusal is superseded by the explicit distribution checks in [the review follow-up](2026-11-11-ffmpeg-review.md).
 
 

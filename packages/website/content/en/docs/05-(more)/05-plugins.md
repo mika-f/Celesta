@@ -111,23 +111,24 @@ In the desktop app, a plugin can also offer its components in the **Add** menu, 
 
 ## Media plugins
 
-Celesta's executables link no FFmpeg. Of the four FFmpeg builds, app packages
+Celesta's executables link no FFmpeg. Of the two FFmpeg builds, app packages
 and the Linux image bundle only standard `ffmpeg` (LGPL): decoding, ProRes,
-AAC/PCM and MP4/MOV/WebM muxing. Optional downloads add
-`ffmpeg-x264/libx264` (GPL H.264), `ffmpeg-opus/opus`, and `ffmpeg-vpx/vp9`.
-The base package can decode H.264 and export ProRes/MOV without addons.
+VP9, AAC, Opus, PCM and MP4/MOV/WebM muxing. An optional download adds
+`ffmpeg-x264/libx264` (GPL H.264). The base package can decode H.264 and
+export ProRes/MOV and WebM (VP9 with alpha, Opus) without addons.
 
 macOS also bundles `avfoundation`, and Windows `mediafoundation`, using their
 system media frameworks under MIT/Apache-2.0. Their H.264 encoders outrank a
 user-installed x264 download and provide default MP4 video when available;
 the standard FFmpeg plugin supplies the muxer and AAC. On Linux, MP4 needs
 `ffmpeg-x264`. Explicitly name `ffmpeg-x264/libx264` to choose it on any OS.
-WebM needs both VPX and Opus. See the [export guide](/en/docs/export/).
+See the [export guide](/en/docs/export/).
 
-Presets naming `ffmpeg/libx264`, `ffmpeg/opus` or `ffmpeg/vp9` must use the new
-component IDs. Local builds may link a system FFmpeg 8.1.x, including GPL.
-Distribution builds check the license explicitly; optional programs also
-reject a build missing their encoder. See [Build from source](/en/docs/build-from-source/).
+Only `ffmpeg/libx264` moved: presets and commands that name it must use
+`ffmpeg-x264/libx264`, which has no alias. `ffmpeg/opus` and `ffmpeg/vp9` keep
+the IDs they had in earlier releases. Local builds may link a system FFmpeg
+8.1.x, including GPL. Distribution builds check the license explicitly; the
+optional program also rejects a build missing libx264. See [Build from source](/en/docs/build-from-source/).
 
 ### Optional codec downloads
 
@@ -137,25 +138,22 @@ choose the ZIP matching your OS and CPU architecture:
 | Download | Adds | Needed for |
 | --- | --- | --- |
 | `ffmpeg-x264` | `ffmpeg-x264/libx264` (GPL) | libx264 H.264; required for MP4 on Linux |
-| `ffmpeg-opus` | `ffmpeg-opus/opus` | Opus audio, including WebM |
-| `ffmpeg-vpx` | `ffmpeg-vpx/vp9` | VP9 video, including WebM |
 
-Files are named `Celesta-plugin-ffmpeg-<codec>-<version>-<os>-<arch>.zip`
+Files are named `Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip`
 (for example `Celesta-plugin-ffmpeg-x264-0.9.0-macos-arm64.zip`). Use the same
-release as the app. Each ZIP contains one `ffmpeg-<codec>` folder with its
+release as the app. The ZIP contains one `ffmpeg-x264` folder with its
 manifest, executable, native libraries and license notices; no separate FFmpeg
 installation is needed.
 
 Extract it and copy the entire folder into your user plugin folder listed
 above. Keep all files together. Open Celesta, choose **Reload Plugins** and
 allow the added plugin when prompted. For command-line use, allow it in the
-app first, pass `--allow-plugin ffmpeg-x264` (repeat for other codecs), or pass
-its parent folder with `--plugin-dir`.
+app first, pass `--allow-plugin ffmpeg-x264`, or pass its parent folder with
+`--plugin-dir`.
 
-Linux MP4 needs x264. macOS/Windows can use bundled native H.264.
-WebM needs **both VPX and Opus**, normally downloaded as two
-ZIPs. Without optional encoders, choose **QuickTime · ffmpeg** for ProRes/MOV,
-or export still images. Media decoding stays in the standard plugin. Browser
+Linux MP4 needs x264. macOS/Windows can use bundled native H.264. WebM needs
+no download. Without an H.264 encoder, choose **QuickTime · ffmpeg** for
+ProRes/MOV or **WebM · ffmpeg** for VP9, or export still images. Media decoding stays in the standard plugin. Browser
 MP4 export uses WebCodecs and does not use these native plugins.
 
 For other codecs and containers, the standard `ffmpeg` components take priority;
@@ -222,7 +220,7 @@ An export takes its muxer from the output's extension, unless you name one with 
 
 When none of the plugins Celesta found is `ffmpeg`, other than a project's own, it also uses a `celesta-codec-ffmpeg` program beside its own executable, where `cargo install` leaves it, and counts it among the plugins that come with Celesta, so a project's `ffmpeg` cannot replace it either; it asks that program for its manifest with `celesta-codec-ffmpeg --manifest`. It does not when that executable is in a Cargo build folder such as `target/release`: a source build uses the media plugin you build (see [Build from source](/en/docs/build-from-source/)). If you install Celesta with `cargo install`, install the media plugin too, so it lands beside the app; installing only `celesta-editor` or `celesta-exporter` leaves none. Until `celesta-codec-ffmpeg` is published to crates.io, install it from the repository with `cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` (FFmpeg 8.1.x development libraries are needed, as in [Build from source](/en/docs/build-from-source/)).
 
-With `cargo install`, install optional encoders separately with their matching native environment. Celesta also discovers `celesta-codec-ffmpeg-x264`, `celesta-codec-ffmpeg-opus` and `celesta-codec-ffmpeg-vpx` beside its executable. Each answers `--manifest` independently; installing the standard plugin alone does not add H.264 or WebM encoding.
+With `cargo install`, install optional encoders separately with their matching native environment. Celesta also discovers `celesta-codec-ffmpeg-x264` beside its executable. It answers `--manifest` independently; installing the standard plugin alone does not add libx264 H.264 encoding.
 
 ### Without a decoder
 
@@ -232,7 +230,7 @@ Without any media decoder, video and audio cannot be shown or exported. The Prob
 
 Video frames cross memory Celesta shares with the media plugin's process, which no other process or user can open, rather than the plugin's pipes, when the plugin supports it (the `ffmpeg` plugin does from Celesta 0.10): the frames a decoder sends Celesta, and the frames an export sends a video encoder. An export sends its video encoder up to three frames ahead, in shared memory or through the pipe, so Celesta renders the next frames while the plugin encodes the earlier ones; for very large frames, such as 8K, it sends fewer, so that the frames waiting stay within 256 MiB. A plugin or video encoder that does not support it and decoded frames larger than 4096×2560 go through the pipe. So do exported frames of more than about 33 megapixels (such as 8192×4320): the shared memory holds a frame in the largest format the encoder accepts (16-bit RGBA for the `ffmpeg` plugin's encoders) and stays within 256 MiB. When Celesta cannot set up the shared memory itself (the system refuses to create it or to hand it to the plugin's process), the frames go through the pipe, and Celesta prints `celesta: frames go through the pipe:` with the reason once on stderr. If a media plugin misbehaves with it, set the environment variable `CELESTA_CODEC_SHARED_MEMORY=0` where you start Celesta to keep every frame, decoded or exported, in the pipe.
 
-To use your own build, use a separate prefix for each variant and the environment variables in [Build from source](/en/docs/build-from-source/). Build the desired plugin with `node scripts/plugins/build.mts plugins/ffmpeg-x264 --out <your user plugin folder>` (or the standard, Opus, or VPX folder). The user folder is searched before bundled plugins, and the app asks before running them. Only x264 ships `LICENSE-GPL-2.0` and `GPL-SOURCE-OFFER.md`; the other builds ship `LICENSE-LGPL-2.1` and `FFMPEG-SOURCE.md`. Every build retains `LICENSE-MIT` and `LICENSE-APACHE`. The repository root contains only Celesta's MIT/Apache license texts; FFmpeg GPL/LGPL texts live under the relevant plugin folders. In a package, they remain in each plugin's `licenses/` folder and describe the linked FFmpeg build. Update source and relinking materials to match any build you distribute.
+To use your own build, use a separate prefix for each variant and the environment variables in [Build from source](/en/docs/build-from-source/). Build the desired plugin with `node scripts/plugins/build.mts plugins/ffmpeg-x264 --out <your user plugin folder>` (or `plugins/ffmpeg` for the standard build). The user folder is searched before bundled plugins, and the app asks before running them. Only `ffmpeg-x264` ships `LICENSE-GPL-2.0` and `GPL-SOURCE-OFFER.md`; `ffmpeg` ships `LICENSE-LGPL-2.1` and `FFMPEG-SOURCE.md`. Both builds retain `LICENSE-MIT` and `LICENSE-APACHE`. The repository root contains only Celesta's MIT/Apache license texts; FFmpeg GPL/LGPL texts live under the relevant plugin folders. In a package, they remain in each plugin's `licenses/` folder and describe the linked FFmpeg build. Update source and relinking materials to match any build you distribute.
 
 ## Samples
 

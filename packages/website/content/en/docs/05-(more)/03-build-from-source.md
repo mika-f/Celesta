@@ -6,10 +6,11 @@ To build Celesta, install **Rust 1.89 or later**, your platform’s native build
 
 ## 1. Prepare your platform
 
-The media plugins use four independent FFmpeg 8.1.x builds. `ffmpeg` is the
-standard LGPL build (decoding, ProRes, AAC, PCM and muxing). The optional
-`ffmpeg-x264`, `ffmpeg-opus` and `ffmpeg-vpx` builds add H.264, Opus and VP9.
-Only x264 enables GPL code. Never install these builds into the same prefix.
+The media plugins use two independent FFmpeg 8.1.x builds. `ffmpeg` is the
+standard LGPL build (decoding, ProRes, VP9, AAC, Opus, PCM and muxing), linked
+with zlib, libopus and libvpx, which are BSD licensed. The optional
+`ffmpeg-x264` build adds H.264 with libx264 and is the only one that enables
+GPL code. Never install the two builds into the same prefix.
 
 After cloning the repository in step 2, run the commands for your platform
 from its root. Keep these environment variables in the shell that builds plugins.
@@ -23,29 +24,30 @@ dylibs with a separate prefix for each variant:
 ```sh title="Native build dependencies"
 brew install pkg-config nasm x264 libvpx opus
 export PKG_CONFIG_PATH="$(brew --prefix x264)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig:$(brew --prefix libvpx)/lib/pkgconfig"
-for variant in standard x264 opus vpx; do
+for variant in standard x264; do
   FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
 done
 export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
 export FFMPEG_X264_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/x264/lib/pkgconfig"
-export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfig"
-export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 ```
+
+The standard build links Homebrew's `opus` and `libvpx`, and the x264 build
+its `x264`; their `pkgconfig` folders must be on `PKG_CONFIG_PATH` while the
+script runs.
 
 For local use, Homebrew's `ffmpeg@8` also works for the standard plugin:
 `brew install ffmpeg@8 pkg-config`, then set
 `PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"`. A system GPL build
-is accepted locally; the standard profile still exposes no libx264/Opus/VP9 encoders.
+is accepted locally; the standard plugin still exposes no libx264 encoder.
 
 :::
 :::tab[Windows]
 
 On Windows, use vcpkg 2026.07.29 (FFmpeg 8.1.x) and the MSVC build tools.
-Use separate vcpkg installation roots for `ffmpeg[zlib]` (standard),
-`ffmpeg[x264]`, `ffmpeg[opus]`, and `ffmpeg[vpx]`, with the
-`x64-windows-static-md` triplet. Set `VCPKG_ROOT` to the standard root and
-`FFMPEG_X264_VCPKG_ROOT`, `FFMPEG_OPUS_VCPKG_ROOT`, and `FFMPEG_VPX_VCPKG_ROOT`
-to the optional roots. The repository's setup-ffmpeg CI action shows a complete
+Use separate vcpkg installation roots for `ffmpeg[zlib,opus,vpx]` (standard)
+and `ffmpeg[x264]`, with the `x64-windows-static-md` triplet. Set `VCPKG_ROOT`
+to the standard root and `FFMPEG_X264_VCPKG_ROOT` to the x264 root
+(`FFMPEG_X264_VCPKGRS_TRIPLET` optionally names its triplet). The repository's setup-ffmpeg CI action shows a complete
 Windows setup. A system FFmpeg 8.1.x with the needed development libraries
 also works locally, including a GPL build. Distribution packages require the
 separate license profiles above.
@@ -59,22 +61,23 @@ native dependencies and the editor's system libraries first:
 ```sh title="Native build dependencies"
 sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libvpx-dev libopus-dev libclang-dev
 sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev
-for variant in standard x264 opus vpx; do
+for variant in standard x264; do
   FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
 done
 export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
 export FFMPEG_X264_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/x264/lib/pkgconfig"
-export FFMPEG_OPUS_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/opus/lib/pkgconfig"
-export FFMPEG_VPX_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/vpx/lib/pkgconfig"
 ```
+
+The standard build needs `libopus-dev` and `libvpx-dev`; the x264 build needs
+`libx264-dev`.
 
 :::
 ::::
 
 Local builds may use a system FFmpeg 8.1.x. To prepare redistribution, pass
 `--distribution` to `scripts/plugins/build.mts`: it opens the encoders and runs
-the explicit `--check-license` command before staging. Standard, Opus and VPX
-distributions require LGPL-only FFmpeg. Run distribution validation on the
+the explicit `--check-license` command before staging. The standard
+distribution requires LGPL-only FFmpeg. Run distribution validation on the
 target OS and architecture; cross-compiles cannot bypass the check.
 
 ## 2. Get the source
@@ -98,7 +101,7 @@ pnpm run build:runtime
 Build the media plugins once, and again after updating the source. Celesta reads and writes video and audio through them, and finds them through `CELESTA_PLUGIN_PATH`, which must be an absolute path. `plugins/avfoundation` (VideoToolbox and AVFoundation) builds on macOS only, and `plugins/mediafoundation` (Media Foundation) on Windows only. On any other system the script prints `avfoundation: skipped, it is built for macos only` or `mediafoundation: skipped, it is built for windows only` and builds the rest, so Linux builds FFmpeg alone. Set the variable in every shell where you run Celesta:
 
 ```sh title="Build the media plugins"
-node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264 plugins/ffmpeg-opus plugins/ffmpeg-vpx plugins/avfoundation plugins/mediafoundation
+node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264 plugins/avfoundation plugins/mediafoundation
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 

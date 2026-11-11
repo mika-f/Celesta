@@ -1,5 +1,7 @@
 # Repair PR #810's website and Windows native-cache failures
 
+> Superseded by [the x264-only split](2026-11-11-ffmpeg-x264-only-split.md): Windows no longer builds FFmpeg in CI behind `actions/cache`; it downloads two pinned NuGet packages. The per-package `VCPKG_ROOT` fingerprint in `scripts/plugins/ffmpeg.mts` remains, for the standard and x264 roots.
+
 ## Specification and diagnosis
 
 Fix the failures on PR head `50550398` in CI run `42853206899` without

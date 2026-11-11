@@ -1,5 +1,7 @@
 # Optional codecs as separate release downloads
 
+> Superseded by [the x264-only split](2026-11-11-ffmpeg-x264-only-split.md): `ffmpeg-opus` and `ffmpeg-vpx` were folded back into the standard `ffmpeg` plugin; `ffmpeg-x264` is the one optional download, and Windows uses pinned NuGet packages again.
+
 ## Specification
 
 Bundle only the standard LGPL `ffmpeg` plugin in the macOS/Windows app

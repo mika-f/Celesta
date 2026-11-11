@@ -5,11 +5,11 @@
 ## アプリから
 
 FFmpeg の構成のうち、アプリに同梱するのは標準の `ffmpeg` だけです。
-ProRes／MOV は追加ダウンロードなしで使えます。macOS の `avfoundation/h264`、Windows の
+ProRes／MOV と WebM（VP9 と Opus）は追加ダウンロードなしで使えます。macOS の `avfoundation/h264`、Windows の
 `mediafoundation/h264` も同梱され、利用可能ならユーザーが追加した x264 より優先して
 MP4 の既定の映像エンコーダーになります。Linux の H.264／MP4 には **ffmpeg-x264** が必要です。
-どの OS でも x264 を選ぶには `ffmpeg-x264/libx264` を明示します。WebM には **ffmpeg-vpx と
-ffmpeg-opus の両方**が必要です。[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)をご覧ください。
+どの OS でも x264 を選ぶには `ffmpeg-x264/libx264` を明示します。
+[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)をご覧ください。
 
 保存済みの設定がないとき、ダイアログは既定エンコーダーがインストールされている
 コンテナーを選びます。H.264 があれば MP4、標準版だけなら ProRes／MOV で始まります。
@@ -123,7 +123,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 | --- | --- | --- | --- |
 | `.mp4`、`.m4v` | `ffmpeg/mp4` | `avfoundation/h264`（macOS）、`mediafoundation/h264`（Windows）、`ffmpeg-x264/libx264`（Linux） | `ffmpeg/aac`（AAC） |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores`（ProRes 4444） | `ffmpeg/pcm`（24 bit PCM） |
-| `.webm` | `ffmpeg/webm` | `ffmpeg-vpx/vp9`（アルファ付き VP9） | `ffmpeg-opus/opus`（Opus、48 kHz） |
+| `.webm` | `ffmpeg/webm` | `ffmpeg/vp9`（アルファ付き VP9） | `ffmpeg/opus`（Opus、48 kHz） |
 
 `--list-components` は、入っているコンポーネントを種類とプラグインとともに一覧にします。Celesta に組み込みの画像コンポーネント（`builtin/png` など。`built-in` と表示されます）も含まれ、これらは静止画だけを書き出します（後述の「静止画とコンタクトシート」）。`--check` を加えると、各プラグインにそのコンポーネントがこのコンピューターで使えるかを尋ねます（プラグインを 1 回ずつ起動します）。`--describe <プラグイン/id>` は、ひとつのコンポーネントの設定を、キーごとに型、既定値、選択肢または範囲とともに表示します。どちらも `--json` で JSON を出力し、ソースも出力も取りません。
 
@@ -138,9 +138,9 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 | | `bitDepth` | `8`、または 10 bit の H.264（High 10）の `10`（`8`） |
 | | `tune` | `film` や `animation` などの x264 の tune（なし） |
 | `ffmpeg/prores` | `profile` | `4444`、またはアルファのない 422 HQ の `hq`（`4444`） |
-| `ffmpeg-vpx/vp9` | `crf` | 0〜63（20） |
+| `ffmpeg/vp9` | `crf` | 0〜63（20） |
 | | `alpha` | `true` または `false`（`true`） |
-| `ffmpeg/aac`、`ffmpeg-opus/opus` | `bitrate` | 32000〜512000 ビット毎秒（192000） |
+| `ffmpeg/aac`、`ffmpeg/opus` | `bitrate` | 32000〜512000 ビット毎秒（192000） |
 | `ffmpeg/pcm` | `format` | `s16le`、`s24le`、`f32le`（`s24le`） |
 
 マルチプレクサーは既定の設定のままです。MP4 と MOV は `faststart` 付きで書き出し、インデックスを先頭に置くので、ブラウザーはダウンロードが終わる前に再生を始められます。
@@ -361,7 +361,7 @@ Shorts や TikTok は動画を繰り返し再生します。最後のフレー�
 
 何も描かれていない領域だけが透明になるため、フレーム全体を覆うレイヤー（全面の背景など）があると出力は不透明になります。アルファはストレート（非乗算済み）で、色は BT.709（リミテッドレンジ）に変換されてタグ付けされます。
 
-Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)でエンコードします。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがない場合、または追加のエンコーダープラグインがない場合（H.264 は `ffmpeg-x264`、WebM は `ffmpeg-vpx` と `ffmpeg-opus` が必要）、書き出しはエラーコード `component_unavailable` で、その理由とともに失敗します。メディアプラグインがない場合は、その拡張子を書けるマルチプレクサーがないため、プラグインの入れ方のヒント付きで `unsupported_output` で失敗します。
+Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)でエンコードします。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがない場合、または追加のエンコーダープラグインがない場合（H.264 はネイティブのエンコーダーか `ffmpeg-x264` が必要）、書き出しはエラーコード `component_unavailable` で、その理由とともに失敗します。メディアプラグインがない場合は、その拡張子を書けるマルチプレクサーがないため、プラグインの入れ方のヒント付きで `unsupported_output` で失敗します。
 
 ## 静止画とコンタクトシート
 
@@ -495,7 +495,13 @@ docker build -f packaging/linux/Dockerfile -t celesta-exporter .
 ```
 
 ```sh title="コンテナで書き出し"
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mp4
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mov
+```
+
+イメージに入っているのは標準の `ffmpeg` プラグインだけなので、書き出せるのは ProRes／MOV と WebM です。libopus と libvpx はイメージの Ubuntu パッケージ `libopus0` と `libvpx9` のものを使います。MP4 を書き出すには、Linux 用の `ffmpeg-x264` の ZIP（[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)）を `codecs` などのフォルダに展開してマウントし、`--plugin-dir` で指定します。
+
+```sh title="コンテナで MP4 を書き出し"
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter --plugin-dir /plugins --react first-scene.tsx output.mp4
 ```
 
 > [!NOTE]

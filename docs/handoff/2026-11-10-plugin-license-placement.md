@@ -1,5 +1,7 @@
 # Scope third-party license texts to media plugins
 
+> Superseded in part by [the x264-only split](2026-11-11-ffmpeg-x264-only-split.md): the LGPL notice now covers one plugin, `ffmpeg`, which links libopus and libvpx.
+
 ## Specification
 
 Avoid suggesting that all Celesta source is offered under MIT, Apache, GPL

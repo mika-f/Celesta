@@ -312,13 +312,13 @@ See [errors.md](errors.md).
 
 ## Check audio
 
-PNG export skips audio. Export a short MP4 span (see
+PNG export skips audio. Export a short MOV span (see
 [export.md](export.md)) and, if `ffprobe` is installed, inspect its
 streams:
 
 ```sh
 Celesta-export --json --overwrite --from 2 --to 5 --react scene.tsx /tmp/celesta-check.mov
-ffprobe -v error -show_entries format=duration:stream=codec_type -of compact /tmp/celesta-check.mp4
+ffprobe -v error -show_entries format=duration:stream=codec_type -of compact /tmp/celesta-check.mov
 ```
 
 `inspect.mjs` already lists when each audio clip starts and how long it

@@ -111,23 +111,24 @@ export default function Root() {
 
 ## メディアプラグイン
 
-Celesta 本体の実行ファイルは FFmpeg をリンクしません。FFmpeg の 4 構成のうち、
+Celesta 本体の実行ファイルは FFmpeg をリンクしません。FFmpeg の 2 構成のうち、
 アプリと Linux イメージに同梱するのは標準の `ffmpeg`（LGPL）だけです。デコード、
-ProRes、AAC・PCM、MP4・MOV・WebM の muxer を提供します。個別のダウンロードで
-`ffmpeg-x264/libx264`（GPL の H.264）、`ffmpeg-opus/opus`、`ffmpeg-vpx/vp9` を追加できます。
-標準版だけでも H.264 の読み込みと ProRes／MOV の書き出しが使えます。
+ProRes、VP9、AAC、Opus、PCM、MP4・MOV・WebM の muxer を提供します。個別のダウンロードで
+`ffmpeg-x264/libx264`（GPL の H.264）を追加できます。標準版だけでも H.264 の読み込みと、
+ProRes／MOV、WebM（アルファ付き VP9、Opus）の書き出しが使えます。
 
 macOS は `avfoundation`、Windows は `mediafoundation` も同梱します。OS のメディア機能を
 MIT／Apache-2.0 で利用するプラグインです。H.264 のエンコーダーはユーザーが追加した
 x264 より優先され、利用可能なら MP4 の既定の映像エンコーダーになります。
 標準 FFmpeg が muxer と AAC を担当します。Linux の MP4 には `ffmpeg-x264` が必要です。
-どの OS でも x264 を選ぶには `ffmpeg-x264/libx264` を明示します。WebM には VPX と Opus の
-両方が必要です。[書き出しガイド](/ja/docs/export/)もご覧ください。
+どの OS でも x264 を選ぶには `ffmpeg-x264/libx264` を明示します。
+[書き出しガイド](/ja/docs/export/)もご覧ください。
 
-プリセットの `ffmpeg/libx264`、`ffmpeg/opus`、`ffmpeg/vp9` は新しい識別子へ変更してください。
-ローカルビルドでは GPL 構成を含むシステム FFmpeg 8.1.x も使えます。
-配布用ビルドでライセンスを明示的に検査します。追加版は必要なエンコーダーがないビルドも
-検出します。[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください。
+識別子が変わったのは `ffmpeg/libx264` だけです。これを指定するプリセットやコマンドは
+`ffmpeg-x264/libx264` に変更してください（別名はありません）。`ffmpeg/opus` と
+`ffmpeg/vp9` は以前のリリースと同じ識別子です。ローカルビルドでは GPL 構成を含む
+システム FFmpeg 8.1.x も使えます。配布用ビルドでライセンスを明示的に検査します。
+追加版は libx264 がないビルドも検出します。[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください。
 
 ### 追加コーデックのダウンロード
 
@@ -137,25 +138,22 @@ CPU アーキテクチャに合う ZIP を選びます。
 | ダウンロード | 追加する機能 | 必要な用途 |
 | --- | --- | --- |
 | `ffmpeg-x264` | `ffmpeg-x264/libx264`（GPL） | libx264 による H.264。Linux の MP4 に必要 |
-| `ffmpeg-opus` | `ffmpeg-opus/opus` | WebM などの Opus 音声 |
-| `ffmpeg-vpx` | `ffmpeg-vpx/vp9` | WebM などの VP9 映像 |
 
-ファイル名は `Celesta-plugin-ffmpeg-<codec>-<version>-<os>-<arch>.zip` です
+ファイル名は `Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip` です
 （例：`Celesta-plugin-ffmpeg-x264-0.9.0-macos-arm64.zip`）。アプリと同じリリースを
-使ってください。各 ZIP にはマニフェスト、実行ファイル、必要なネイティブライブラリ、
-ライセンス文書をまとめた `ffmpeg-<codec>` フォルダーが 1 つ入ります。
+使ってください。ZIP にはマニフェスト、実行ファイル、必要なネイティブライブラリ、
+ライセンス文書をまとめた `ffmpeg-x264` フォルダーが 1 つ入ります。
 FFmpeg を別途インストールする必要はありません。
 
 ZIP を展開し、そのフォルダーごと上記のユーザープラグインフォルダーへコピーします。
 中のファイルを分けないでください。Celesta を開き、**Reload Plugins** を選んで、
 追加したプラグインの実行を許可します。CLI ではアプリで事前に許可するか、
-`--allow-plugin ffmpeg-x264`（ほかのコーデックも繰り返し指定）を使うか、
+`--allow-plugin ffmpeg-x264` を使うか、
 `--plugin-dir` に親フォルダーを指定します。
 
 Linux の MP4 には x264 が必要です。macOS・Windows は同梱の H.264 も使えます。
-WebM には **VPX と Opus の両方**が必要です。WebM 用には ZIP を
-2 つダウンロードします。追加エンコーダーがないときは **QuickTime · ffmpeg** を
-選ぶと ProRes／MOV を書き出せ、静止画も書き出せます。メディアの読み込みは標準版が
+WebM にはダウンロードは不要です。H.264 のエンコーダーがないときは **QuickTime · ffmpeg** を
+選ぶと ProRes／MOV、**WebM · ffmpeg** を選ぶと VP9 を書き出せ、静止画も書き出せます。メディアの読み込みは標準版が
 担当します。ブラウザーの MP4 書き出しは WebCodecs を使うため、このプラグインは不要です。
 
 ほかのコーデックとコンテナーでは標準の `ffmpeg` が優先され、ネイティブのコンポーネントは名前を指定したときに使われます。H.264 は例外で、利用可能な場合は AVFoundation と Media Foundation が MP4 の既定の映像エンコーダーになります。それらのデコーダーは FFmpeg が読めないファイルを読みます（[macOS の AVFoundation コンポーネント](/ja/docs/export/#macos-の-avfoundation-コンポーネント)と [Windows の Media Foundation コンポーネント](/ja/docs/export/#windows-の-media-foundation-コンポーネント)をご覧ください）。
@@ -217,7 +215,7 @@ Celesta は、最初のひとつだけでなく、実行してよいメディア
 
 見つかったプラグインに（プロジェクトのものを除いて）`ffmpeg` がないときは、`cargo install` で置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` も、Celesta に同梱のプラグインとして使います。そのため、プロジェクトの `ffmpeg` はこれも置き換えられません。このプログラムには `celesta-codec-ffmpeg --manifest` でマニフェストを尋ねます。ただし、実行ファイルが `target/release` のような Cargo のビルドフォルダーにあるときは使いません。ソースビルドでは、自分でビルドしたメディアプラグインを使います（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。`cargo install` で Celesta を入れる場合は、メディアプラグインも入れてアプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもメディアプラグインは入りません。`celesta-codec-ffmpeg` が crates.io に公開されるまでは、`cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` でリポジトリから入れます（[ソースからのビルド](/ja/docs/build-from-source/)と同じく FFmpeg 8.1.x の開発ライブラリが必要です）。
 
-`cargo install` では、追加エンコーダーも対応するライブラリの環境で個別にインストールします。Celesta は実行ファイルの隣にある `celesta-codec-ffmpeg-x264`、`celesta-codec-ffmpeg-opus`、`celesta-codec-ffmpeg-vpx` も、それぞれの `--manifest` で検出します。標準プラグインだけでは H.264 や WebM のエンコードは追加されません。
+`cargo install` では、追加エンコーダーも対応するライブラリの環境で個別にインストールします。Celesta は実行ファイルの隣にある `celesta-codec-ffmpeg-x264` も、その `--manifest` で検出します。標準プラグインだけでは libx264 による H.264 のエンコードは追加されません。
 
 ### デコーダーがないとき
 
@@ -227,7 +225,7 @@ Celesta は、最初のひとつだけでなく、実行してよいメディア
 
 メディアプラグインが対応していれば（`ffmpeg` プラグインは Celesta 0.10 から対応しています）、動画のフレームはプラグインのパイプではなく、Celesta とプラグインのプロセスが共有するメモリーを通ります。デコーダーから Celesta に届くフレームも、書き出しで動画エンコーダーに渡すフレームも同じです。このメモリーはほかのプロセスやユーザーからは開けません。書き出しでは、共有メモリーでもパイプでも、動画エンコーダーに最大 3 フレームを先に送ります。プラグインが前のフレームをエンコードしている間に、Celesta は次のフレームをレンダリングできます。8K のようなとても大きなフレームでは、待っているフレームが 256 MiB に収まるよう、先に送るフレームを減らします。対応していないプラグインや動画エンコーダー、デコードした 4096×2560 より大きなフレームはパイプを通ります。書き出しで約 3300 万画素を超えるフレーム（8192×4320 など）もパイプを通ります。共有メモリーは、エンコーダーが受け取るいちばん大きな形式（`ffmpeg` プラグインのエンコーダーでは 16 ビットの RGBA）のフレームを入れられる大きさで、256 MiB までだからです。Celesta 自身が共有メモリーを用意できないとき（システムが作成やプラグインのプロセスへの受け渡しを拒んだとき）もフレームはパイプを通り、Celesta は標準エラー出力に `celesta: frames go through the pipe:` とその理由を一度だけ表示します。メディアプラグインがこの共有メモリーでうまく動かないときは、Celesta を起動する環境で環境変数 `CELESTA_CODEC_SHARED_MEMORY=0` を設定すると、デコードでも書き出しでも、すべてのフレームがパイプを通ります。
 
-別の FFmpeg ビルドを使う場合も、追加版ごとに prefix を分け、[ソースからのビルド](/ja/docs/build-from-source/)の環境変数を指定します。`node scripts/plugins/build.mts plugins/ffmpeg-x264 --out <ユーザーのプラグインフォルダー>` で目的のプラグインをビルドします（標準版、Opus、VPX では対応するフォルダーを指定します）。ユーザーのフォルダーは同梱版より先に探され、アプリは実行前に確認します。`LICENSE-GPL-2.0` と `GPL-SOURCE-OFFER.md` を含むのは x264 だけです。ほかのビルドには `LICENSE-LGPL-2.1` と `FFMPEG-SOURCE.md` が入り、すべてのビルドに `LICENSE-MIT` と `LICENSE-APACHE` が入ります。リポジトリのルートには Celesta 本体の MIT／Apache のライセンス文だけを置き、FFmpeg の GPL／LGPL 文書は対応するプラグイン配下に置いています。配布時も各プラグインの `licenses/` に含め、リンクした FFmpeg ビルドの条件であることを区別します。配布する構成に合わせて、ソースと再リンク用の資料も用意してください。
+別の FFmpeg ビルドを使う場合も、ビルドごとに prefix を分け、[ソースからのビルド](/ja/docs/build-from-source/)の環境変数を指定します。`node scripts/plugins/build.mts plugins/ffmpeg-x264 --out <ユーザーのプラグインフォルダー>` で目的のプラグインをビルドします（標準版では `plugins/ffmpeg` を指定します）。ユーザーのフォルダーは同梱版より先に探され、アプリは実行前に確認します。`LICENSE-GPL-2.0` と `GPL-SOURCE-OFFER.md` を含むのは `ffmpeg-x264` だけです。`ffmpeg` には `LICENSE-LGPL-2.1` と `FFMPEG-SOURCE.md` が入り、どちらのビルドにも `LICENSE-MIT` と `LICENSE-APACHE` が入ります。リポジトリのルートには Celesta 本体の MIT／Apache のライセンス文だけを置き、FFmpeg の GPL／LGPL 文書は対応するプラグイン配下に置いています。配布時も各プラグインの `licenses/` に含め、リンクした FFmpeg ビルドの条件であることを区別します。配布する構成に合わせて、ソースと再リンク用の資料も用意してください。
 
 ## サンプル
 

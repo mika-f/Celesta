@@ -1,5 +1,7 @@
 # FFmpeg split: PR #810 review follow-up
 
+> Superseded in part by [the x264-only split](2026-11-11-ffmpeg-x264-only-split.md): the Opus and VPX plugins this review covers no longer exist; their strengthened tests live in `plugins/ffmpeg/tests`.
+
 ## Specification
 
 Address the [overall review](https://github.com/mika-f/Celesta/pull/810#pullrequestreview-5846338540)
