@@ -13,7 +13,8 @@ use gpui_kit::{AnyElement, App, ElementId, FontWeight, SharedString, div};
 /// ellipsis with the full text in a tooltip when it does not fit),
 /// `control` in the value lane, and `lines` (a description, a warning, an
 /// error) under the control, from the value lane's edge. The label is
-/// `export-label-{id}` and the value lane `export-control-{id}`.
+/// `export-label-{id}`, the value lane `export-control-{id}`, and an empty
+/// marker right after the control, where it ends, `export-control-end-{id}`.
 pub(super) fn row(
     id: SharedString,
     label: SharedString,
@@ -47,11 +48,18 @@ pub(super) fn row(
                         .child(label),
                 )
                 .child(
-                    div()
+                    h_flex()
                         .debug_selector(|| format!("export-control-{id}"))
                         .flex_1()
                         .min_w_0()
-                        .child(control),
+                        .child(control)
+                        // Placed right after the control, so it is where
+                        // the control ends, inside the lane or past it.
+                        .child(
+                            div()
+                                .debug_selector(|| format!("export-control-end-{id}"))
+                                .flex_none(),
+                        ),
                 ),
         )
         .when(has_lines, |row| {

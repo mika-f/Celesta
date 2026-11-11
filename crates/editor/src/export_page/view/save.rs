@@ -153,6 +153,7 @@ impl ExportPage {
             .as_ref()
             .is_some_and(|(name, target)| self.model.replaces(*target, name));
         let name = div()
+            .w_full()
             // Enter in the name saves (its `PressEnter`); the input passes
             // the key on as the panel's `ConfirmExport`, which would also
             // export, so it stops here. `Export…` exports on its click.

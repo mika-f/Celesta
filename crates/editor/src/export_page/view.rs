@@ -680,6 +680,7 @@ impl ExportPage {
                             .ghost()
                             .small()
                             .label("Clear")
+                            .debug_selector(|| "export-range-clear".to_owned())
                             .on_click(cx.listener(|_, _, _, cx| {
                                 cx.emit(ExportPageEvent::ClearRange);
                             })),
@@ -742,11 +743,21 @@ impl ExportPage {
                             .xsmall()
                             // The icon starts on the labels' edge.
                             .pl_0()
-                            .icon(if open {
-                                IconName::ChevronDown
-                            } else {
-                                IconName::ChevronRight
-                            })
+                            // A child rather than `icon`, so where it starts
+                            // can be measured.
+                            .child(
+                                div()
+                                    .debug_selector(|| format!("{toggle}-icon"))
+                                    .flex_none()
+                                    .child(
+                                        Icon::new(if open {
+                                            IconName::ChevronDown
+                                        } else {
+                                            IconName::ChevronRight
+                                        })
+                                        .xsmall(),
+                                    ),
+                            )
                             .compact_label("Advanced")
                             .debug_selector(|| toggle)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -764,10 +775,11 @@ impl ExportPage {
             })
     }
 
-    /// The loudness, disabled (its value kept) while no audio is exported.
+    /// The loudness, disabled (its value kept) while the chosen output
+    /// exports no audio; before there is a choice it is left as it is.
     fn render_loudness(&self, cx: &App) -> AnyElement {
-        let audio = self.model.exports_audio();
-        let note = (!audio).then(|| {
+        let silent = self.model.choice().is_some() && !self.model.exports_audio();
+        let note = silent.then(|| {
             div()
                 .debug_selector(|| "export-note-loudness".to_owned())
                 .child(muted_line("No audio is exported.", cx))
@@ -780,7 +792,7 @@ impl ExportPage {
                 .id("export-loudness")
                 .small()
                 .accessibility_label("Loudness")
-                .disabled(!audio)
+                .disabled(silent)
                 .into_any_element(),
             note.into_iter().collect(),
             cx,
@@ -851,6 +863,7 @@ impl Render for ExportPage {
             .xsmall()
             .icon(IconName::Close)
             .tooltip("Back to editing")
+            .accessibility_label("Back to editing")
             .debug_selector(|| "export-page-close".to_owned())
             .on_click(cx.listener(|_, _, _, cx| cx.emit(ExportPageEvent::Close)));
         v_flex()
@@ -1567,8 +1580,22 @@ mod tests {
     #[gpui_kit::test]
     fn loudness_is_disabled_without_audio(cx: &mut TestAppContext) {
         let (handle, page) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
-        cx.run_until_parked();
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        // While the first choice is being resolved nothing is known to
+        // have no audio: no note.
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(page.read(cx).model.choice().is_none());
+        });
+        assert!(
+            cx.debug_bounds("export-control-loudness").is_some(),
+            "the loudness row is drawn"
+        );
+        assert!(
+            cx.debug_bounds("export-note-loudness").is_none(),
+            "no note before there is a choice"
+        );
+        cx.run_until_parked();
         cx.update(|window, cx| {
             page.update(cx, |page, cx| {
                 page.choose_encoder(Track::Audio, None, window, cx);
@@ -1651,8 +1678,9 @@ mod tests {
         let encoder = left(cx, "export-label-video-encoder");
         assert_eq!(left(cx, "export-group-video-Rate control"), encoder);
         assert_eq!(left(cx, "export-label-video-input"), encoder);
-        // The disclosure's icon starts the button: no leading padding.
-        assert_eq!(left(cx, "export-video-advanced"), encoder);
+        // The disclosure's icon starts on the labels' edge: the button has
+        // no leading padding.
+        assert_eq!(left(cx, "export-video-advanced-icon"), encoder);
         assert_eq!(left(cx, "export-label-video-alpha"), encoder);
         assert_eq!(left(cx, "export-label-preset"), encoder);
         // Lines under a control start at its lane.
@@ -1707,14 +1735,23 @@ mod tests {
         });
         assert!(ids.len() > 8, "the encoders' fields are listed: {ids:?}");
         for id in ids {
-            let bounds = cx
-                .debug_bounds(selector(format!("export-control-{id}")))
-                .unwrap_or_else(|| panic!("export-control-{id} is drawn"));
+            // The marker after the control: where the control ends.
+            let end = cx
+                .debug_bounds(selector(format!("export-control-end-{id}")))
+                .unwrap_or_else(|| panic!("export-control-end-{id} is drawn"))
+                .left();
             assert!(
-                bounds.right() <= width,
-                "export-control-{id} ends at {:?}, past {width:?}",
-                bounds.right()
+                end <= width,
+                "export-control-{id} ends at {end:?}, past {width:?}"
             );
         }
+        let clear = cx
+            .debug_bounds("export-range-clear")
+            .expect("the range's Clear");
+        assert!(
+            clear.right() <= width,
+            "Clear ends at {:?}, past {width:?}",
+            clear.right()
+        );
     }
 }
