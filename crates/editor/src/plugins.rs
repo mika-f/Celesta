@@ -411,8 +411,8 @@ impl EditorView {
         self.problems.set(Source::Plugins, found.problem());
         self.plugins = found.installed.clone();
         self.found_plugins = found;
-        // The dialog lists the old registry's components.
-        self.export_page = None;
+        // The page lists the old registry's components; an open one closes.
+        self.export_page.clear();
         // A new registry starts its own list.
         self.decoder_notice.reset();
     }

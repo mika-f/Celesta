@@ -282,6 +282,7 @@ fn run() -> anyhow::Result<()> {
                     editor.master_volume_focus = Some(master_volume_focus);
                     editor.inline_text_focus = Some(inline_text_focus);
                     editor.dock_split = Some(cx.new(|_| ResizableState::default()));
+                    editor.export_split = Some(cx.new(|_| ResizableState::default()));
                     editor.body_split = Some(cx.new(|_| ResizableState::default()));
                     #[cfg(not(target_os = "macos"))]
                     {

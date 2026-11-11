@@ -1,3 +1,4 @@
+use crate::export_control::{LeftPanel, left_panel};
 use crate::helpers::export_progress_label;
 use crate::inline_text_view::EditEvent;
 use crate::timeline_drag::{BandDrag, SceneDrag};
@@ -97,8 +98,9 @@ impl EditorView {
             // Escape cancels a canvas drag, a band or scene drag, a row's
             // scrub or the add mode before any other key handling. Ending
             // the add mode also cancels a canvas text edit open with it,
-            // which would otherwise take a second Escape.
-            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+            // which would otherwise take a second Escape. Last, it closes
+            // the export page, from one of its text fields too.
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key != "escape" {
                     return;
                 }
@@ -110,7 +112,11 @@ impl EditorView {
                 if added {
                     this.end_inline_text(EditEvent::Escape, cx);
                 }
-                if escaped || added {
+                let closed = !escaped && !added && this.export_page.is_open();
+                if closed {
+                    this.close_export_page(window, cx);
+                }
+                if escaped || added || closed {
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -167,37 +173,58 @@ impl EditorView {
     /// The resizable shell: the asset list, the viewer, and the inspector,
     /// stacked above the timeline and its master audio meter. In
     /// React-preview mode the asset list is hidden and the right dock shows
-    /// composition facts instead of the inspector.
+    /// composition facts instead of the inspector. While the export page
+    /// is open its panel takes the asset list's place, with a width of its
+    /// own.
     pub(crate) fn workspace(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let react = self.is_react_preview();
-        let dock_state = self.dock_split.clone();
+        let left = left_panel(self.is_react_preview(), self.export_page.is_open());
+        let export_page = match left {
+            LeftPanel::Export => self.export_page.page().cloned(),
+            LeftPanel::Hidden | LeftPanel::Assets => None,
+        };
         let body_state = self.body_split.clone();
         let border = cx.theme().border;
+        // A flex column, so the panel's `flex_1` / `min_h_0` bound its
+        // height and its list scrolls.
+        let left_column = div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h_0()
+            .overflow_hidden()
+            .border_r_1()
+            .border_color(border);
         // physical: the docks' and the timeline's split sizes stay in pixels.
         // The window does not shrink with the rem, so keeping the regions'
         // sizes is what lets the denser type show more in them (and the
-        // timeline's pixel geometry keeps the same number of tracks).
-        let dock_row = h_resizable("celesta-dock-row")
-            .when_some(dock_state.as_ref(), |group, state| group.with_state(state))
-            .child(
+        // timeline's pixel geometry keeps the same number of tracks). The
+        // export panel's width follows the rem its rows are laid out in:
+        // 26rem, within 22–34rem.
+        let (row_id, row_state, first_panel) = match export_page {
+            Some(page) => {
+                let rem = window.rem_size();
+                (
+                    "celesta-export-row",
+                    self.export_split.clone(),
+                    resizable_panel()
+                        .size(rem * 26.0)
+                        .size_range(rem * 22.0..rem * 34.0)
+                        .child(left_column.child(page)),
+                )
+            }
+            None => (
+                "celesta-dock-row",
+                self.dock_split.clone(),
                 resizable_panel()
                     .size(px(260.0))
                     .size_range(px(200.0)..px(440.0))
-                    .visible(!react)
-                    .child(
-                        // A flex column, so the panel's `flex_1` / `min_h_0`
-                        // bound its height and its list scrolls.
-                        div()
-                            .flex()
-                            .flex_col()
-                            .size_full()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .border_r_1()
-                            .border_color(border)
-                            .child(self.asset_panel(cx)),
-                    ),
-            )
+                    .visible(left == LeftPanel::Assets)
+                    .child(left_column.child(self.asset_panel(cx))),
+            ),
+        };
+        let dock_row = h_resizable(row_id)
+            .when_some(row_state.as_ref(), |group, state| group.with_state(state))
+            .child(first_panel)
             .child(resizable_panel().child(self.viewer_panel(window, cx)))
             .child(
                 resizable_panel()

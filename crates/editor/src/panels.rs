@@ -18,7 +18,9 @@ use celesta_project::AssetKind;
 use celesta_react_bridge::{ENTRY_PROPS_FILE, chapter_at, resolve_props_file};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, IconName, Sizable as _, TitleBar};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, TitleBar,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{ClickEvent, Context, ObjectFit, SharedString, Window, div, img, px};
 
@@ -144,16 +146,19 @@ impl EditorView {
                         .disabled(self.export_cancelling)
                         .on_click(cx.listener(Self::cancel_export_click))
                 } else {
+                    // A toggle: "on" while the export page shows.
                     Button::new("export-project")
                         .small()
                         .ghost()
-                        .label("Export…")
+                        .label("Export")
+                        .selected(self.export_page.is_open())
+                        .toggled(self.export_page.is_open())
                         .disabled(
                             self.choosing_export_path
                                 || self.opening
                                 || self.react_reloads.is_running(),
                         )
-                        .on_click(cx.listener(Self::export_project_click))
+                        .on_click(cx.listener(Self::export_page_click))
                 }),
         )
     }

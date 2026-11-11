@@ -719,6 +719,7 @@ impl EditorView {
         next.master_volume_focus = self.master_volume_focus.take();
         next.inline_text_focus = self.inline_text_focus.take();
         next.dock_split = self.dock_split.take();
+        next.export_split = self.export_split.take();
         next.body_split = self.body_split.take();
         #[cfg(not(target_os = "macos"))]
         {
