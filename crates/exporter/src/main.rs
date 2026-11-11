@@ -66,9 +66,8 @@ checked against the declaration before anything renders.
 The output's extension picks the muxer that writes it, with that muxer's
 default encoders: .mp4 is H.264 with AAC, using the bundled system encoder
 on macOS/Windows when available, or the separate ffmpeg-x264 download.
-The standard ffmpeg plugin writes .mov as ProRes 4444 with 24-bit PCM audio.
-A .webm output needs the ffmpeg-vpx and ffmpeg-opus downloads for VP9 with
-Opus. MOV and WebM keep transparency where nothing is drawn (straight alpha,
+The bundled ffmpeg plugin writes .mov as ProRes 4444 with 24-bit PCM audio
+and .webm as VP9 with Opus. MOV and WebM keep transparency where nothing is drawn (straight alpha,
 BT.709). --muxer, --video-encoder and --audio-encoder (none for no audio)
 choose components by <plugin>/<component>, and --video-option and
 --audio-option set an encoder's settings as KEY=VALUE, repeatable.

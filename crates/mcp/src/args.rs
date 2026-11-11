@@ -144,10 +144,10 @@ impl From<ImageFormat> for StillFormat {
 pub struct ExportVideoArgs {
     #[serde(flatten)]
     source: SourceArgs,
-    /// The video to write: its extension picks the muxer (`.mov` ProRes/PCM
-    /// with the standard ffmpeg plugin; `.mp4` H.264/AAC needs a native H.264
-    /// encoder or ffmpeg-x264; `.webm` needs ffmpeg-vpx and ffmpeg-opus) unless `muxer`
-    /// names one. Leave it out to write only the `subtitles` files, which
+    /// The video to write: its extension picks the muxer (`.mov` ProRes 4444
+    /// with alpha, `.webm` VP9 with alpha, both with the bundled ffmpeg
+    /// plugin; `.mp4` H.264/AAC needs a native H.264 encoder or the
+    /// ffmpeg-x264 download) unless `muxer` names one. Leave it out to write only the `subtitles` files, which
     /// evaluates the frames without rendering or encoding them.
     output: Option<PathBuf>,
     /// Replace `output` if it exists.

@@ -633,16 +633,6 @@ pub(crate) fn classify(
                 ),
             )
         }
-        ExportError::ComponentUnavailable { component, .. }
-            if component.plugin == "ffmpeg" && component.component == "webm" =>
-        {
-            (
-                "component_unavailable",
-                fixed(
-                    "download and enable both ffmpeg-vpx and ffmpeg-opus for WebM, or choose .mov for ProRes",
-                ),
-            )
-        }
         ExportError::ComponentUnavailable { .. }
         | ExportError::Codec {
             source: MediaError::ComponentUnavailable { .. },
@@ -1338,13 +1328,8 @@ mod tests {
     }
 
     #[test]
-    fn missing_default_codecs_name_the_downloads_and_a_standard_format() {
-        for (component, downloads) in [
-            ("ffmpeg/mp4", vec!["ffmpeg-x264"]),
-            ("avfoundation/h264", vec!["ffmpeg-x264"]),
-            ("mediafoundation/h264", vec!["ffmpeg-x264"]),
-            ("ffmpeg/webm", vec!["ffmpeg-vpx", "ffmpeg-opus"]),
-        ] {
+    fn missing_default_codecs_name_the_download_and_a_standard_format() {
+        for component in ["ffmpeg/mp4", "avfoundation/h264", "mediafoundation/h264"] {
             let error = ExportError::ComponentUnavailable {
                 component: component.parse().unwrap(),
                 reason: "no matching default encoder".into(),
@@ -1354,9 +1339,7 @@ mod tests {
                 assert_eq!(code, "component_unavailable");
                 let hint = hint.unwrap();
                 assert!(hint.contains(".mov"));
-                for download in &downloads {
-                    assert!(hint.contains(download), "{hint}");
-                }
+                assert!(hint.contains("ffmpeg-x264"), "{hint}");
             }
         }
     }
