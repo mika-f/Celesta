@@ -9,6 +9,7 @@ use crate::actions::ReloadPlugins;
 use crate::helpers::{PathPick, pick_one_path};
 use crate::plugins::FoundPlugins;
 use crate::problems::{Source, error_chain};
+use crate::toast::Toast;
 use crate::view::EditorView;
 use crate::widgets::CompactLabel as _;
 use celesta_media::DecoderUse;
@@ -462,7 +463,10 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         if self.opening {
-            window.push_notification("Wait for the project to open, then try again.", cx);
+            window.push_notification(
+                Toast::note("Wait for the project to open, then try again.", cx),
+                cx,
+            );
             return;
         }
         if !self.can_replace_contents(window, cx) {

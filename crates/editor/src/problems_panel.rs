@@ -3,12 +3,12 @@
 use crate::actions::ShowProblems;
 use crate::problems::first_line;
 use crate::problems::{ActiveProblem, LogEntry, Severity, Source, fenced};
+use crate::toast::{Toast, ToastKind};
 use crate::view::{EditorView, RightTab};
 use crate::widgets::CompactLabel as _;
 use celesta_editor_theme::metrics;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::clipboard::Clipboard;
-use gpui_kit::component::notification::{Notification, NotificationType};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _};
@@ -344,47 +344,25 @@ impl EditorView {
             if entry.severity != Severity::Done && self.problems.active(source).is_none() {
                 continue;
             }
-            let with_message = |note: Notification| {
-                let message = first_line(&entry.problem.detail);
-                if message.is_empty() {
-                    note
-                } else {
-                    note.message(message.to_owned())
-                }
-            };
-            let note = match entry.severity {
-                Severity::Warning => with_message(
-                    Notification::new()
-                        .with_type(NotificationType::Warning)
-                        .title(entry.problem.title.clone()),
-                ),
-                Severity::Info => with_message(
-                    Notification::new()
-                        .with_type(NotificationType::Info)
-                        .title(entry.problem.title.clone()),
-                ),
-                Severity::Done => Notification::new()
-                    .with_type(NotificationType::Success)
-                    .title(entry.problem.title.clone()),
+            let title = entry.problem.title.clone();
+            let message = first_line(&entry.problem.detail).to_owned();
+            let toast = match entry.severity {
+                Severity::Warning => Toast::new(ToastKind::Warning, title).message(message),
+                Severity::Info => Toast::new(ToastKind::Info, title).message(message),
+                // The title says it all; the detail (the output path) is in
+                // Problems.
+                Severity::Done => Toast::new(ToastKind::Success, title),
                 Severity::Error => {
                     let view = view.clone();
-                    with_message(
-                        Notification::new()
-                            .with_type(NotificationType::Error)
-                            .title(entry.problem.title.clone()),
+                    Toast::new(ToastKind::Error, title).message(message).action(
+                        "Show in Problems",
+                        move |_, _, cx| {
+                            view.update(cx, |this, cx| this.show_problems(cx)).ok();
+                        },
                     )
-                    .action(move |_, _, _| {
-                        let view = view.clone();
-                        Button::new("show-in-problems")
-                            .xsmall()
-                            .outline()
-                            .compact_label("Show in Problems")
-                            .on_click(move |_, _, cx| {
-                                view.update(cx, |this, cx| this.show_problems(cx)).ok();
-                            })
-                    })
                 }
             };
+            let note = toast.build(cx);
             // A finished operation's toast replaces the source's earlier one.
             if entry.severity == Severity::Done {
                 self.toasted_sources.remove(&source);
