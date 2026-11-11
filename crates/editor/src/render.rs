@@ -202,11 +202,13 @@ impl EditorView {
         // export panel's width starts at 26rem, within 22–34rem, in the
         // rem of the frame the row is first laid out in; after that a rem
         // change moves only its range, which the width held is kept in.
-        let (row_id, row_state, first_panel) = match export_page {
+        // The row keeps one id either way, so what its panels keep by id
+        // (the right dock's and the viewer's scroll positions) stays; the
+        // split sizes live in the state, one per layout.
+        let (row_state, first_panel) = match export_page {
             Some(page) => {
                 let rem = window.rem_size();
                 (
-                    "celesta-export-row",
                     self.export_split.clone(),
                     resizable_panel()
                         .size(rem * 26.0)
@@ -215,7 +217,6 @@ impl EditorView {
                 )
             }
             None => (
-                "celesta-dock-row",
                 self.dock_split.clone(),
                 resizable_panel()
                     .size(px(260.0))
@@ -224,7 +225,7 @@ impl EditorView {
                     .child(left_column.child(self.asset_panel(cx))),
             ),
         };
-        let dock_row = h_resizable(row_id)
+        let dock_row = h_resizable("celesta-dock-row")
             .when_some(row_state.as_ref(), |group, state| group.with_state(state))
             .child(first_panel)
             .child(resizable_panel().child(self.viewer_panel(window, cx)))

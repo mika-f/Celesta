@@ -19,6 +19,24 @@ pub(crate) enum PageWarning {
     UnknownDefault { name: String },
 }
 
+impl PageWarning {
+    /// What the warning calls the base it is about (``preset `web` ``,
+    /// `your last export`), when it is about one.
+    pub(crate) fn base(&self) -> Option<&str> {
+        let PageWarning::Resolve(warning) = self else {
+            return None;
+        };
+        match warning {
+            ResolveWarning::Unavailable { base, .. }
+            | ResolveWarning::NoAudio { base, .. }
+            | ResolveWarning::AudioOptionsIgnored { base }
+            | ResolveWarning::StaleValue { base, .. }
+            | ResolveWarning::UnknownSetting { base, .. } => Some(base),
+            ResolveWarning::Extension { .. } | ResolveWarning::Lookup(_) => None,
+        }
+    }
+}
+
 /// A resolve's failure or an exporter's text as the page shows it: the
 /// exporter's `code` quoting (the CLI's) becomes typographic quotes.
 pub(crate) fn plain(text: &str) -> String {
@@ -51,7 +69,7 @@ impl ExportModel {
                         "The presets file couldn’t be read, so its presets aren’t listed."
                     }
                 };
-                format!("{which} {message}")
+                format!("{which} {}", plain(message))
             }
             PageWarning::UnknownDefault { name } => {
                 format!("The project’s default preset “{name}” isn’t in any presets file.")
@@ -260,6 +278,18 @@ mod tests {
         assert_eq!(
             warn(PresetSource::User),
             "Your presets file couldn’t be read, so your presets aren’t listed. m"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_file_quotes_its_message_plainly() {
+        assert_eq!(
+            model().warning_text(&PageWarning::UnreadableFile {
+                source: PresetSource::User,
+                message: "preset `Web` is listed twice".into(),
+            }),
+            "Your presets file couldn’t be read, so your presets aren’t listed. \
+             preset “Web” is listed twice"
         );
     }
 

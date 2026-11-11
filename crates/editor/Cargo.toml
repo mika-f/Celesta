@@ -42,7 +42,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-# GPUI's test context, for the export dialog's test in a headless window.
+# GPUI's test context, for the export page's tests in a headless window.
 gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
-# The export dialog's test lists the lossless test codec's components.
+# The export page's tests list the lossless test codec's components.
 celesta-codec-test.workspace = true

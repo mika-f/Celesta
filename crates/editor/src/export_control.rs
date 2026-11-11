@@ -140,8 +140,9 @@ impl EditorView {
         let project_file = self
             .export_source_path()
             .map(|source| project_root(source).join(PRESETS_FILE));
-        // A page is kept for the project file it read; an untitled
-        // document saved since, or another file, reads its own.
+        // A page is kept for the project file it read; another file reads
+        // its own. (A document's path never changes in place: opening
+        // another project replaces the view, and the page with it.)
         let kept = self
             .export_page
             .page()
@@ -248,6 +249,12 @@ impl EditorView {
                 extension,
                 last,
             } => {
+                // A second Export… (a double click, another Enter) while the
+                // save panel is up, or once an export runs, would start a
+                // second export that Cancel export could not reach.
+                if self.choosing_export_path || self.export_cancellation.is_some() {
+                    return;
+                }
                 remember_last(&mut self.problems, user_presets_path().as_deref(), last);
                 self.choose_export_path(choice.clone(), extension, window, cx);
             }
@@ -266,7 +273,7 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.choosing_export_path = true;
+        self.set_choosing_export_path(true, cx);
         let directory = self.document.path().and_then(Path::parent).map_or_else(
             || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             Path::to_path_buf,
@@ -280,7 +287,7 @@ impl EditorView {
                 Ok(Ok(path)) => path,
                 Ok(Err(error)) => {
                     view.update_in(cx, |this, _, cx| {
-                        this.choosing_export_path = false;
+                        this.set_choosing_export_path(false, cx);
                         this.problems.report(
                             Source::Export,
                             "Couldn’t show the save panel",
@@ -293,7 +300,7 @@ impl EditorView {
                 }
                 Err(error) => {
                     view.update_in(cx, |this, _, cx| {
-                        this.choosing_export_path = false;
+                        this.set_choosing_export_path(false, cx);
                         this.problems.report(
                             Source::Export,
                             "The save panel was interrupted",
@@ -306,7 +313,7 @@ impl EditorView {
                 }
             };
             view.update_in(cx, |this, window, cx| {
-                this.choosing_export_path = false;
+                this.set_choosing_export_path(false, cx);
                 // A cancelled save panel leaves the page as it was.
                 let Some(selected_path) = selected_path else {
                     cx.notify();
@@ -323,6 +330,15 @@ impl EditorView {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Marks the save panel `Export…` opened as up or closed, and tells
+    /// the page, whose `Export…` waits for it.
+    fn set_choosing_export_path(&mut self, choosing: bool, cx: &mut Context<Self>) {
+        self.choosing_export_path = choosing;
+        if let Some(page) = self.export_page.page() {
+            page.update(cx, |page, cx| page.set_waiting(choosing, cx));
+        }
     }
 
     /// The extensions `choice`'s muxer writes, the first one first.

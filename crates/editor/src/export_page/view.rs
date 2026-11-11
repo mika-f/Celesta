@@ -39,6 +39,9 @@ use std::sync::Arc;
 /// preset ``preset `web` ``.
 const LAST_EXPORT: &str = "your last export";
 
+/// Why `Export…` waits: the save panel it opened is up.
+const WAITING: &str = "Choosing where to save…";
+
 /// What a warning about the preset `name` calls it.
 fn preset_label(name: &str) -> String {
     format!("preset `{name}`")
@@ -112,6 +115,9 @@ pub(crate) struct ExportPage {
     /// React entry, which always exports all of it.
     range_settable: bool,
     save: Option<SaveForm>,
+    /// Whether the save panel `Export…` opened is up: a second `Export…`
+    /// waits for it.
+    waiting: bool,
     /// The running resolve; replacing it drops a stale one.
     resolving: Option<Task<()>>,
     describing: Vec<Task<()>>,
@@ -238,6 +244,7 @@ impl ExportPage {
             range: None,
             range_settable: true,
             save: None,
+            waiting: false,
             resolving: None,
             describing: Vec::new(),
             _subscriptions: subscriptions,
@@ -331,6 +338,13 @@ impl ExportPage {
     ) {
         self.range = range;
         self.range_settable = settable;
+        cx.notify();
+    }
+
+    /// Whether the save panel `Export…` opened is up; while it is,
+    /// `Export…` is disabled and Enter does nothing.
+    pub(crate) fn set_waiting(&mut self, waiting: bool, cx: &mut Context<Self>) {
+        self.waiting = waiting;
         cx.notify();
     }
 
@@ -528,7 +542,8 @@ impl ExportPage {
     }
 
     /// Why `Export…` cannot run now: a typed number that is not one, a
-    /// resolve still running, or what the model says.
+    /// resolve still running, the save panel it opened still up, or what
+    /// the model says.
     fn export_blocked(&self) -> Option<String> {
         if let Some((label, typo)) = self
             .fields
@@ -544,6 +559,9 @@ impl ExportPage {
         }
         if self.resolving.is_some() {
             return Some(CHECKING.to_owned());
+        }
+        if self.waiting {
+            return Some(WAITING.to_owned());
         }
         self.model.output_choice().err()
     }
@@ -586,10 +604,10 @@ fn problem_line(text: impl Into<SharedString>, color: Hsla) -> impl IntoElement 
         .child(div().min_w_0().child(text.into()))
 }
 
-/// Why `Export…` (and `Save`) cannot run: "Checking…" muted, anything
-/// else as an error.
+/// Why `Export…` (and `Save`) cannot run: "Checking…" and the wait for
+/// the save panel muted, anything else as an error.
 fn blocked_line(reason: String, cx: &App) -> impl IntoElement {
-    if reason.ends_with(CHECKING) {
+    if reason.ends_with(CHECKING) || reason == WAITING {
         muted_line(reason, cx).into_any_element()
     } else {
         problem_line(reason, cx.theme().danger).into_any_element()
@@ -610,17 +628,28 @@ impl ExportPage {
             .then(|| problem_line(plain(message), cx.theme().danger).into_any_element())
     }
 
+    /// The warnings `section` asked for; those about the last export
+    /// under one line that says so, since no row names it.
     fn warnings_under(&self, section: Section, cx: &App) -> Vec<AnyElement> {
         if self.warned != section {
             return Vec::new();
         }
-        self.model
-            .warnings
+        let warnings = &self.model.warnings;
+        let from_last = warnings
             .iter()
-            .map(|warning| {
-                problem_line(self.model.warning_text(warning), cx.theme().warning)
+            .any(|warning| warning.base() == Some(LAST_EXPORT));
+        from_last
+            .then(|| {
+                div()
+                    .debug_selector(|| "export-warnings-from-last".to_owned())
+                    .child(muted_line("From your last export:", cx))
                     .into_any_element()
             })
+            .into_iter()
+            .chain(warnings.iter().map(|warning| {
+                problem_line(self.model.warning_text(warning), cx.theme().warning)
+                    .into_any_element()
+            }))
             .collect()
     }
 
@@ -1072,13 +1101,21 @@ mod tests {
         std::fs::write(
             &user_file,
             r#"{"version":1,"last":{"muxer":"celesta-test-codec/file",
-                "video":{"component":"celesta-test-codec/video","options":{"nope":1}}}}"#,
+                "video":{"component":"celesta-test-codec/video","options":{"nope":1}}},
+                "presets":[{"name":"web","muxer":"celesta-test-codec/file",
+                "video":{"component":"celesta-test-codec/video","options":{"nope":1}}}]}"#,
         )
         .unwrap();
         let (handle, dialog) =
             window_with_user_file(cx, vec![celesta_codec_test::registered()], Some(user_file));
         cx.run_until_parked();
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        // One line above the warnings says they come from the last export.
+        focus_page(&dialog, cx);
+        assert!(
+            cx.debug_bounds("export-warnings-from-last").is_some(),
+            "From your last export: is shown"
+        );
         cx.update(|_, cx| {
             let model = &dialog.read(cx).model;
             assert!(!model.warnings.is_empty());
@@ -1094,6 +1131,24 @@ mod tests {
                 "Test video encoder has no setting “nope”. It is left out."
             );
         });
+
+        // A named preset's warnings sit under the row naming it: no line.
+        cx.update(|window, cx| {
+            dialog.update(cx, |dialog, cx| {
+                dialog.choose_preset(Some((PresetSource::User, "web".to_owned())), window, cx);
+            });
+        });
+        cx.run_until_parked();
+        focus_page(&dialog, cx);
+        cx.update(|_, cx| {
+            let model = &dialog.read(cx).model;
+            assert_eq!(model.selected, Some((PresetSource::User, "web".to_owned())));
+            assert!(!model.warnings.is_empty());
+        });
+        assert!(
+            cx.debug_bounds("export-warnings-from-last").is_none(),
+            "no context line under a named preset"
+        );
         std::fs::remove_dir_all(folder).unwrap();
     }
 
@@ -1552,6 +1607,47 @@ mod tests {
                 "rgba8".to_owned()
             )))
         );
+    }
+
+    #[gpui_kit::test]
+    fn export_waits_for_the_save_panel(cx: &mut TestAppContext) {
+        let (handle, page) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
+        let exported = Rc::new(RefCell::new(0));
+        cx.update(|cx| {
+            let exported = exported.clone();
+            cx.subscribe(&page, move |_, event: &ExportPageEvent, _| {
+                if let ExportPageEvent::Export { .. } = event {
+                    *exported.borrow_mut() += 1;
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        page.update_in(cx, |page, _, cx| page.set_waiting(true, cx));
+        focus_page(&page, cx);
+        cx.update(|_, cx| {
+            assert_eq!(
+                page.read(cx).export_blocked().as_deref(),
+                Some(WAITING),
+                "Export… is disabled while the save panel is up"
+            );
+        });
+        let export = cx
+            .debug_bounds("export-page-export")
+            .expect("the Export… button");
+        cx.simulate_click(export.center(), Modifiers::none());
+        focus_page(&page, cx);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(*exported.borrow(), 0, "nothing exports while waiting");
+
+        // The panel closed, a path chosen or not: Enter exports again.
+        page.update_in(cx, |page, _, cx| page.set_waiting(false, cx));
+        focus_page(&page, cx);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(*exported.borrow(), 1);
     }
 
     #[gpui_kit::test]
