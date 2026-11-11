@@ -220,8 +220,14 @@ From the brief's author, after the first push:
   starting in `ubuntu:26.04` (glibc, the bundled libx264 and its RPATH), the
   image's `ffmpeg` and the mounted `ffmpeg-x264` working together for a real
   MP4 with Docker's default `/dev/shm`, and the command line itself.
-  **Until a manual CI run has passed this step on the branch, the example is
-  unverified.** What reading the code did establish: `--plugin-dir` folders
+  **Verified** in manual CI run 43066002137 on `d7e40ea`: the image built
+  (record script and `--check-build` included), the guide's command printed
+  `format: MP4 · H.264 (x264) · AAC` and `export complete: output.mp4`, and
+  both assertions passed. Under `--user`, Mesa warns once that it cannot
+  create `//.cache` for its shader cache and disables it; the export is not
+  affected. Two earlier manual runs never reached this step: the runners
+  could not reach Ubuntu's apt mirrors, and then the image named `libvpx9`
+  (24.04) where 26.04 has `libvpx12`. What reading the code established: `--plugin-dir` folders
   are `PluginSource::Explicit`, which needs no approval
   (`needs_allowance()`), is not permission-checked (`is_checked()`), and may
   hold plugins in subfolders, so `codecs/ffmpeg-x264/` mounted at `/plugins`
