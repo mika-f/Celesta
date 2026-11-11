@@ -23,7 +23,8 @@ then `eprintln!` the skip line):
   The three fake-runtime tests and `live_react_runtime()` (used by the
   `*_when_node_is_available` tests) go through them. A missing `node` and a
   missing `dist/cli.js` or `packages/cli/node_modules` both fail under the
-  variable.
+  variable, and the message names whichever of the two is missing (it used
+  to name `dist/cli.js` in either case).
 - `crates/exporter/tests/integration/main.rs`: `runtime_built(cli, test)`,
   used by the 14 React tests in `export.rs` and `stills.rs` and by
   `inspect.rs`'s `runtime()`. These tests do not look for `node` themselves:

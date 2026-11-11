@@ -1949,15 +1949,19 @@ fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
 
     let package_root = cli_package_root();
     let cli_script = package_root.join("dist/cli.js");
-    if !package_root.join("node_modules").is_dir() || !cli_script.is_file() {
-        skip_without_runtime(&format!(
-            "run `pnpm install && pnpm run build:runtime` first ({} is missing)",
-            cli_script.display()
-        ));
-        return None;
-    }
-
-    Some((node, cli_script, package_root))
+    let node_modules = package_root.join("node_modules");
+    let missing = if !node_modules.is_dir() {
+        node_modules
+    } else if !cli_script.is_file() {
+        cli_script.clone()
+    } else {
+        return Some((node, cli_script, package_root));
+    };
+    skip_without_runtime(&format!(
+        "run `pnpm install && pnpm run build:runtime` first ({} is missing)",
+        missing.display()
+    ));
+    None
 }
 
 fn cli_package_root() -> PathBuf {
