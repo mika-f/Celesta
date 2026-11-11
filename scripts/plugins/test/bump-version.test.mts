@@ -187,7 +187,9 @@ describe('bump-version.mts', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('could not write plugins/ffmpeg/plugin.json');
     expect(result.stderr).toContain(
-      'written: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml; failed: plugins/ffmpeg/plugin.json;',
+      'written: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml; ' +
+        'failed: plugins/ffmpeg/plugin.json; ' +
+        'not written: plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/ffmpeg-opus/Cargo.toml, plugins/ffmpeg-opus/plugin.json, plugins/ffmpeg-vpx/Cargo.toml, plugins/ffmpeg-vpx/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json',
     );
     expect(result.stderr).toContain('the bump was undone, every file is as it was');
     expect(existsSync(join(root, 'ran-update'))).toBe(false);
@@ -217,8 +219,9 @@ describe('bump-version.mts', () => {
     const result = bump("require('node:fs').chmodSync('plugins/ffmpeg/plugin.json', 0o444);\nprocess.exit(1);\n");
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('the bump was undone only in part');
-    expect(result.stderr).toContain('restored: Cargo.toml, plugins/avfoundation/Cargo.toml,');
-    expect(result.stderr).toContain('Cargo.lock, plugins/Cargo.lock');
+    expect(result.stderr).toContain(
+      'restored: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml, plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/ffmpeg-opus/Cargo.toml, plugins/ffmpeg-opus/plugin.json, plugins/ffmpeg-vpx/Cargo.toml, plugins/ffmpeg-vpx/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, Cargo.lock, plugins/Cargo.lock',
+    );
     expect(result.stderr).toMatch(/not restored: plugins\/ffmpeg\/plugin\.json \(.+\)/);
     expect(read('plugins/ffmpeg/plugin.json')).toBe(files['plugins/ffmpeg/plugin.json'].replace('0.9.0', '0.9.1'));
   });

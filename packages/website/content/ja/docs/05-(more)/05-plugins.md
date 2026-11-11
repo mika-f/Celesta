@@ -158,7 +158,7 @@ WebM には **VPX と Opus の両方**が必要です。WebM 用には ZIP を
 選ぶと ProRes／MOV を書き出せ、静止画も書き出せます。メディアの読み込みは標準版が
 担当します。ブラウザーの MP4 書き出しは WebCodecs を使うため、このプラグインは不要です。
 
-macOS のパッケージには `avfoundation` プラグインも入っています。VideoToolbox と AudioToolbox でエンコードし、AVFoundation で MP4 と MOV のファイルを書き、MP4、MOV、M4A のファイルを読みます。macOS 自身のフレームワークだけを使い、MIT または Apache-2.0 です。Windows のパッケージには `mediafoundation` プラグインも入っています。Media Foundation で（Windows が GPU のエンコーダーを使えるときはそれを使って）H.264、HEVC、AAC をエンコードして `ffmpeg/mp4` などほかのプラグインのコンテナーに書き、MP4、MOV、M4A のファイルを読みます。Windows 自身のライブラリだけを使い、MIT または Apache-2.0 です。Celesta に同梱のプラグインの中では `ffmpeg` が先なので、`avfoundation` と `mediafoundation` のコンポーネントは名前を指定したときだけ動画を書き出し、それらのデコーダーは FFmpeg のデコーダーが読まないファイルだけを読みます（[macOS の AVFoundation コンポーネント](/ja/docs/export/#macos-の-avfoundation-コンポーネント)と [Windows の Media Foundation コンポーネント](/ja/docs/export/#windows-の-media-foundation-コンポーネント)をご覧ください）。
+ほかのコーデックとコンテナーでは標準の `ffmpeg` が優先され、ネイティブのコンポーネントは名前を指定したときに使われます。H.264 は例外で、利用可能な場合は AVFoundation と Media Foundation が MP4 の既定の映像エンコーダーになります。それらのデコーダーは FFmpeg が読めないファイルを読みます（[macOS の AVFoundation コンポーネント](/ja/docs/export/#macos-の-avfoundation-コンポーネント)と [Windows の Media Foundation コンポーネント](/ja/docs/export/#windows-の-media-foundation-コンポーネント)をご覧ください）。
 
 メディアプラグインのマニフェストには `"roles": ["media"]` と `"protocol": 2` があり、プラグインが持つコンポーネントを `media` の下に並べます。どれにも `id` と表示する名前の `name` を書きます。
 

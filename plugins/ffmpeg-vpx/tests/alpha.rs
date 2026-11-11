@@ -75,6 +75,42 @@ fn alpha_survives_encoding_and_webm_muxing() {
     muxer.write_packets(session, &packets).unwrap();
     muxer.finish_muxer(session).unwrap();
 
+    // Check the container's track declaration as well as the decoded pixels:
+    // players use alpha_mode to recognize the separate VP9 alpha payload.
+    let url = std::ffi::CString::new(path.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: libavformat owns the context and streams until close_input.
+    // Copy the tag before closing the context; no borrowed pointer escapes.
+    unsafe {
+        use ffmpeg_sys_next as ff;
+        let mut context = std::ptr::null_mut();
+        assert!(
+            ff::avformat_open_input(
+                &mut context,
+                url.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null_mut()
+            ) >= 0
+        );
+        assert!(ff::avformat_find_stream_info(context, std::ptr::null_mut()) >= 0);
+        let streams =
+            std::slice::from_raw_parts((*context).streams, (*context).nb_streams as usize);
+        let stream = streams
+            .iter()
+            .copied()
+            .find(|&stream| (*(*stream).codecpar).codec_type == ff::AVMediaType::AVMEDIA_TYPE_VIDEO)
+            .expect("video stream");
+        let tag = ff::av_dict_get(
+            (*stream).metadata,
+            c"alpha_mode".as_ptr(),
+            std::ptr::null(),
+            0,
+        );
+        let alpha_mode =
+            (!tag.is_null()).then(|| std::ffi::CStr::from_ptr((*tag).value).to_bytes().to_vec());
+        ff::avformat_close_input(&mut context);
+        assert_eq!(alpha_mode.as_deref(), Some(b"1".as_slice()));
+    }
+
     FfmpegContext::builder()
         .input(Input::from(path.to_string_lossy().into_owned()).set_video_codec("libvpx-vp9"))
         .output(

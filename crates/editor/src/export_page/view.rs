@@ -385,7 +385,7 @@ impl ExportPage {
                         this.failure = None;
                     }
                     Err(error) => {
-                        let message = error.to_string();
+                        let message = super::model::resolution_error(&error);
                         if this.model.choice().is_none() {
                             this.model.error = Some(message.clone());
                         }

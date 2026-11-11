@@ -108,7 +108,9 @@ aliases or changing the standard profile's components.
 
 Full installers, notarization, and Linux/Windows ZIP creation were not run
 locally. The changed Linux provenance code is covered by portable tests; actual
-native linkage and Windows code paths are checked by PR CI. No release was
+native linkage and Windows plugin test paths are checked by PR CI. PR CI skips
+the Package job, so it does not exercise the release builders, relocated ZIP
+checks, installer smoke tests or Debian provenance on a real Linux host. No release was
 published. The source-package fields follow the
 [dpkg-query documentation](https://manpages.debian.org/bookworm/dpkg/dpkg-query.1.en.html).
 No rendering algorithm, layout, theme, or visual component changed; the UI
@@ -125,3 +127,38 @@ ComponentRef to match the migrated example. Full local MCP validation passed:
 built first. This is an additional test commit; the review commit is not
 amended. The native-library cache is saved before replacing the CI run so
 its cold FFmpeg builds can be reused.
+
+
+## Additional review at 31da2ab8
+
+- Correct remaining native-H.264 priority contradictions in both plugin guides
+  and troubleshooting pages, exporter help, Skill starter output and the
+  sibling-program inventory. Correct the macOS notice path to
+  `licenses/homebrew.json`.
+- Native H.264 unavailability now has the same x264/MOV recovery hint as a
+  missing MP4 default. The export dialog includes report hints in its existing
+  inline error text; no controls, layout or rendering algorithm changed.
+- Failed sibling discovery retains the first stderr line (bounded and stripped
+  of control characters), draining stdout/stderr concurrently within the
+  existing timeout. Cover a noisy encoder-missing failure.
+- Check the actual WebM video-stream `alpha_mode=1` metadata alongside decoded
+  alpha pixels. Restore complete rollback file-list assertions in script tests.
+- Keep Windows' image fingerprint for now: vcpkg pins the source, but the runner
+  still supplies MSVC and the Windows SDK. Avoid asserting compiler/SDK cache
+  compatibility without checking it; a future cache change can fingerprint
+  those tools explicitly instead of the whole image.
+- A manual CI dispatch already builds unsigned macOS/Windows apps and all three
+  platforms' optional ZIPs. Add a dispatch-only Docker build with explicit
+  license/encoder checks and a one-frame MOV export from the final image.
+  Neither workflow publishes a release, image or signed distribution.
+
+Additional local checks passed: plugin-host (112, then 8 focused discovery
+regressions after the lint fix), export reports (19), dialog model (28), VPX
+alpha encoding/muxing/metadata/decoding (1), bump-version Vitest (11), script
+TypeScript, website Vitest (52) and content check (75 existing warnings).
+Root editor/exporter/plugin-host and VPX all-target Clippy passed with
+`-D warnings`; root/plugin formatting and whitespace checks passed. The new
+Docker job passed actionlint in isolation; the full existing workflow uses
+repository-specific background/wait syntax that this actionlint version does
+not understand. Manual packaging and Docker checks remain to be observed on
+the pushed branch; PR runs skip both.

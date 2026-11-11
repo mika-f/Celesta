@@ -158,7 +158,12 @@ ZIPs. Without optional encoders, choose **QuickTime · ffmpeg** for ProRes/MOV,
 or export still images. Media decoding stays in the standard plugin. Browser
 MP4 export uses WebCodecs and does not use these native plugins.
 
-The macOS package also comes with `avfoundation`, which encodes with VideoToolbox and AudioToolbox, writes MP4 and MOV files with AVFoundation, and reads MP4, MOV, and M4A files; it uses only macOS's own frameworks and is MIT or Apache-2.0. The Windows package also comes with `mediafoundation`, which encodes H.264, HEVC, and AAC with Media Foundation, on the GPU where Windows has an encoder for it, into another plugin's container such as `ffmpeg/mp4`, and reads MP4, MOV, and M4A files; it uses only Windows' own libraries and is MIT or Apache-2.0. Among the plugins that come with Celesta, `ffmpeg` goes first, so `avfoundation`'s and `mediafoundation`'s components write a video only when you name them, and their decoders read only what FFmpeg's does not (see [AVFoundation components on macOS](/en/docs/export/#avfoundation-components-on-macos) and [Media Foundation components on Windows](/en/docs/export/#media-foundation-components-on-windows)).
+For other codecs and containers, the standard `ffmpeg` components take priority;
+native components are used when explicitly named. H.264 is the exception:
+AVFoundation and Media Foundation provide the default MP4 video when available.
+Their decoders read files that FFmpeg cannot (see
+[AVFoundation components on macOS](/en/docs/export/#avfoundation-components-on-macos)
+and [Media Foundation components on Windows](/en/docs/export/#media-foundation-components-on-windows)).
 
 A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and lists the components the plugin offers under `media`, each with an `id` and a `name` to show:
 

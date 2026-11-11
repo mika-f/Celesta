@@ -29,6 +29,20 @@ use std::sync::Arc;
 /// What a component shows while its plugin's `describe` runs.
 pub(crate) const CHECKING: &str = "Checking…";
 
+/// The resolution error and its recovery action for the dialog's existing
+/// inline error message.
+pub(super) fn resolution_error(error: &ExportError) -> String {
+    let mut message = error.to_string();
+    if matches!(error, ExportError::ComponentUnavailable { .. })
+        && let Some(hint) =
+            celesta_exporter::report::hint(error, celesta_exporter::report::HintStyle::Mcp)
+    {
+        message.push_str(". ");
+        message.push_str(&hint);
+    }
+    message
+}
+
 /// The reason given for an unavailable component the plugin gave none for
 /// (as the registry words it).
 const NO_REASON: &str = "the plugin gave no reason";
@@ -941,6 +955,21 @@ mod tests {
     use celesta_plugin_host::{MediaAudioEncoderEntry, MediaManifest, MediaVideoEncoderEntry};
     use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn unavailable_native_h264_explains_recovery_in_the_dialog() {
+        let error = ExportError::ComponentUnavailable {
+            component: "mediafoundation/h264".parse().unwrap(),
+            reason: "Media Feature Pack is missing".into(),
+        };
+        let message = resolution_error(&error);
+        assert!(
+            message.contains("Media Feature Pack is missing"),
+            "{message}"
+        );
+        assert!(message.contains("ffmpeg-x264/libx264"), "{message}");
+        assert!(message.contains(".mov"), "{message}");
+    }
 
     fn reference(text: &str) -> ComponentRef {
         text.parse().unwrap()

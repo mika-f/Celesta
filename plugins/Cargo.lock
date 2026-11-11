@@ -378,6 +378,7 @@ dependencies = [
  "celesta-plugin-host",
  "celesta-project",
  "ez-ffmpeg",
+ "ffmpeg-sys-next",
  "png",
  "serde_json",
  "tempfile",

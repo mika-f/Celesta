@@ -1,6 +1,6 @@
 # Export in a Linux container
 
-[`Dockerfile`](Dockerfile) builds an Ubuntu 24.04 image that contains only the
+[`Dockerfile`](Dockerfile) builds an Ubuntu 26.04 image that contains only the
 command-line exporter (`celesta-exporter`), Node.js, and the React runtime. It
 renders with Mesa's software Vulkan driver (lavapipe), so it runs on machines
 without a GPU, such as CI runners and cloud containers.

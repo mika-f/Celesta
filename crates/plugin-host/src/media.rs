@@ -436,10 +436,27 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
     let mut child = without_console_window(Command::new(program).arg(MANIFEST_FLAG))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("it could not be started: {error}"))?;
     let mut stdout = child.stdout.take().expect("stdout is piped");
+    let mut stderr = child.stderr.take().expect("stderr is piped");
+    let (send_error, receive_error) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        // Drain independently of stdout so a noisy failure cannot block the
+        // manifest. Retain only a bounded diagnostic, without keeping a
+        // descendant that holds the pipe open on discovery's critical path.
+        let mut buffer = [0; 4096];
+        while let Ok(count) = stderr.read(&mut buffer) {
+            if count == 0 {
+                break;
+            }
+            let retain = count.min(4096 - output.len());
+            output.extend_from_slice(&buffer[..retain]);
+        }
+        let _ = send_error.send(output);
+    });
     // Read on a thread of its own, so a program that never closes its
     // output (or leaves a process that holds it) cannot hold up discovery.
     let (send, receive) = mpsc::channel();
@@ -471,7 +488,22 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
         return Err(timed_out());
     };
     if !status.success() {
-        return Err(format!("{MANIFEST_FLAG} failed ({status})"));
+        let mut reason = format!("{MANIFEST_FLAG} failed ({status})");
+        if let Ok(stderr) =
+            receive_error.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            && let Some(line) = String::from_utf8_lossy(&stderr)
+                .lines()
+                .find(|line| !line.trim().is_empty())
+        {
+            let line: String = line
+                .chars()
+                .filter(|character| !character.is_control())
+                .take(512)
+                .collect();
+            reason.push_str(": ");
+            reason.push_str(&line);
+        }
+        return Err(reason);
     }
     let output = match output {
         Ok(Ok(output)) => output,
@@ -1391,6 +1423,21 @@ mod tests {
                     "{body}"
                 );
             }
+        }
+
+        #[test]
+        fn failed_discovery_keeps_the_first_diagnostic_without_blocking_on_stderr() {
+            let root = tempfile::tempdir().unwrap();
+            let (program, _) = fake_sibling(
+                root.path(),
+                "echo 'ffmpeg-opus: this FFmpeg build has no libopus' >&2\nhead -c 100000 /dev/zero >&2\nexit 1",
+            );
+            let reason = printed_manifest(&program).unwrap_err();
+            assert!(reason.contains("--manifest failed"), "{reason}");
+            assert!(
+                reason.ends_with("ffmpeg-opus: this FFmpeg build has no libopus"),
+                "{reason}"
+            );
         }
 
         #[test]

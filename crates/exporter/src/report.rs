@@ -620,12 +620,16 @@ pub(crate) fn classify(
         ),
         ExportError::IncompatibleComponents { .. } => ("incompatible_components", None),
         ExportError::ComponentUnavailable { component, .. }
-            if component.plugin == "ffmpeg" && component.component == "mp4" =>
+            if (component.plugin == "ffmpeg" && component.component == "mp4")
+                || (matches!(
+                    component.plugin.as_str(),
+                    "avfoundation" | "mediafoundation"
+                ) && component.component == "h264") =>
         {
             (
                 "component_unavailable",
                 fixed(
-                    "use an installed H.264 encoder or download ffmpeg-x264 for MP4; choose .mov for ProRes with the standard ffmpeg plugin",
+                    "use an available H.264 encoder or download ffmpeg-x264 and select ffmpeg-x264/libx264 for MP4; choose .mov for ProRes with the standard ffmpeg plugin",
                 ),
             )
         }
@@ -1335,12 +1339,14 @@ mod tests {
 
     #[test]
     fn missing_default_codecs_name_the_downloads_and_a_standard_format() {
-        for (container, downloads) in [
-            ("mp4", vec!["ffmpeg-x264"]),
-            ("webm", vec!["ffmpeg-vpx", "ffmpeg-opus"]),
+        for (component, downloads) in [
+            ("ffmpeg/mp4", vec!["ffmpeg-x264"]),
+            ("avfoundation/h264", vec!["ffmpeg-x264"]),
+            ("mediafoundation/h264", vec!["ffmpeg-x264"]),
+            ("ffmpeg/webm", vec!["ffmpeg-vpx", "ffmpeg-opus"]),
         ] {
             let error = ExportError::ComponentUnavailable {
-                component: format!("ffmpeg/{container}").parse().unwrap(),
+                component: component.parse().unwrap(),
                 reason: "no matching default encoder".into(),
             };
             for style in [HintStyle::Cli, HintStyle::Mcp] {

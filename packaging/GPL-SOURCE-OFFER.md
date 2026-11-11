@@ -51,8 +51,9 @@ and shared implementation. Upstream locations:
 The exact versions and build configuration used for a given release are
 recorded by the build scripts: `FFMPEG_VARIANT=x264` in
 `scripts/build-ffmpeg-linux.sh` (Unix), and the vcpkg `ffmpeg[x264]` build
-in `.github/actions/setup-ffmpeg/action.yml` (Windows). Each ZIP includes native notices in `licenses/native`: vcpkg's share tree on
-Windows, `homebrew.json` on macOS, and `debian-packages.json` on Linux. The
+in `.github/actions/setup-ffmpeg/action.yml` (Windows). Each ZIP includes native
+notices: vcpkg's share tree in `licenses/native` on Windows,
+`licenses/homebrew.json` on macOS, and `licenses/native/debian-packages.json` on Linux. The
 Linux inventory records the binary package version and exact source-package
 name/version, including the distribution revision. Its corresponding source
 includes that distribution's patches, not only the upstream x264 tarball.

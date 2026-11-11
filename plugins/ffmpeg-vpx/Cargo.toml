@@ -17,6 +17,7 @@ serde_json = "1.0.154"
 [dev-dependencies]
 celesta-composition = { path = "../../crates/composition", version = "=0.9.0" }
 ez-ffmpeg = "0.19"
+ffmpeg-sys-next = "8.1.0"
 tempfile = "3.23.0"
 celesta-codec-ffmpeg-opus = { path = "../ffmpeg-opus", version = "=0.9.0" }
 celesta-exporter = { path = "../../crates/exporter", version = "=0.9.0" }

@@ -412,3 +412,28 @@ jobs:
     name: Package
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/package-build.yml
+
+  # Dispatch checks the final headless image as well as the unsigned desktop
+  # packages. This only builds and tests locally on the runner; nothing is pushed.
+  docker:
+    name: Linux exporter image
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Build exporter image
+        run: docker build --progress=plain -f packaging/linux/Dockerfile -t celesta-exporter:check .
+      - name: Check standard distribution and export
+        run: |
+          docker run --rm --entrypoint /opt/celesta/plugins/ffmpeg/bin/linux-x64/celesta-codec-ffmpeg celesta-exporter:check --check-license
+          docker run --rm --entrypoint /opt/celesta/plugins/ffmpeg/bin/linux-x64/celesta-codec-ffmpeg celesta-exporter:check --check-build
+          docker run --rm celesta-exporter:check --list-components --check --json
+          cat > "$RUNNER_TEMP/check.tsx" <<'EOF'
+          import { Composition, Text } from '@celesta.studio/react';
+          export default function Check() {
+            return <Composition width={64} height={64} fps={1} durationInFrames={1}><Text>Celesta</Text></Composition>;
+          }
+          EOF
+          docker run --rm -v "$RUNNER_TEMP:/work" celesta-exporter:check --react check.tsx check.mov
+          test -s "$RUNNER_TEMP/check.mov"

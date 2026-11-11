@@ -1,4 +1,4 @@
-# Headless Celesta exporter for Linux containers and CI, on Ubuntu 24.04.
+# Headless Celesta exporter for Linux containers and CI, on Ubuntu 26.04.
 #
 # Build from the repository root:
 #
