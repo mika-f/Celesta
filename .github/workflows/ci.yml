@@ -426,8 +426,17 @@ jobs:
         run: docker build --progress=plain -f packaging/linux/Dockerfile -t celesta-exporter:check .
       - name: Check standard distribution and export
         run: |
-          docker run --rm --entrypoint /opt/celesta/plugins/ffmpeg/bin/linux-x64/celesta-codec-ffmpeg celesta-exporter:check --check-license
-          docker run --rm --entrypoint /opt/celesta/plugins/ffmpeg/bin/linux-x64/celesta-codec-ffmpeg celesta-exporter:check --check-build
+          docker run --rm --entrypoint /opt/celesta/runtime/node celesta-exporter:check -e '
+            const { join } = require("node:path");
+            const { execFileSync } = require("node:child_process");
+            const directory = "/opt/celesta/plugins/ffmpeg";
+            const manifest = require(join(directory, "celesta-plugin.json"));
+            const programs = Object.values(manifest.executable);
+            if (programs.length !== 1) throw new Error("Expected one standard FFmpeg program");
+            for (const flag of ["--check-license", "--check-build"]) {
+              execFileSync(join(directory, programs[0]), [flag], { stdio: "inherit" });
+            }
+          '
           docker run --rm celesta-exporter:check --list-components --check --json
           cat > "$RUNNER_TEMP/check.tsx" <<'EOF'
           import { Composition, Text } from '@celesta.studio/react';

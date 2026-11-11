@@ -162,3 +162,14 @@ Docker job passed actionlint in isolation; the full existing workflow uses
 repository-specific background/wait syntax that this actionlint version does
 not understand. Manual packaging and Docker checks remain to be observed on
 the pushed branch; PR runs skip both.
+
+## Docker smoke-check follow-up
+
+Manual run `43011749360` built the complete Linux image, including the standard
+program's distribution license/encoder checks. The final-image probe then
+failed because its newly added hard-coded path used `linux-x64`, whereas the
+plugin builder's executable key/directory is `linux-x86_64`. Resolve the program
+from the staged manifest using the image's bundled Node.js instead of guessing
+the platform directory. Keep the ongoing native packaging jobs running so
+their checks and native caches are not discarded; repeat the corrected image
+probe on the next pushed revision.
