@@ -154,6 +154,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'dotnet nuget push failed' }
           $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:PACKAGE_PATH).Hash.ToLowerInvariant()
           $prefix = $env:VARIANT.ToUpperInvariant()
+          # Also in the log, where the API that reads job logs can find it.
+          Write-Host "${prefix}_PACKAGE_VERSION: '$env:PACKAGE_VERSION'"
+          Write-Host "${prefix}_PACKAGE_SHA256: '$sha256'"
           @(
             "Published ``$env:PACKAGE_ID`` ``$env:PACKAGE_VERSION``. Pin both values in ``.github/actions/setup-ffmpeg/action.yml``:"
             ''
