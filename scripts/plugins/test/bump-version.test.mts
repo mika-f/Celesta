@@ -37,11 +37,6 @@ const files: Record<string, string> = {
   'plugins/mediafoundation/plugin.json': '{\n  "id": "mediafoundation",\n  "version": "0.9.0"\n}\n',
 };
 
-for (const variant of ['opus', 'vpx']) {
-  files[`plugins/ffmpeg-${variant}/Cargo.toml`] = '[package]\nversion = "0.9.0"\n';
-  files[`plugins/ffmpeg-${variant}/plugin.json`] = `{"id":"ffmpeg-${variant}","version":"0.9.0"}\n`;
-}
-
 let root: string;
 
 beforeEach(() => {
@@ -189,7 +184,7 @@ describe('bump-version.mts', () => {
     expect(result.stderr).toContain(
       'written: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml; ' +
         'failed: plugins/ffmpeg/plugin.json; ' +
-        'not written: plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/ffmpeg-opus/Cargo.toml, plugins/ffmpeg-opus/plugin.json, plugins/ffmpeg-vpx/Cargo.toml, plugins/ffmpeg-vpx/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json',
+        'not written: plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json',
     );
     expect(result.stderr).toContain('the bump was undone, every file is as it was');
     expect(existsSync(join(root, 'ran-update'))).toBe(false);
@@ -220,7 +215,7 @@ describe('bump-version.mts', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('the bump was undone only in part');
     expect(result.stderr).toContain(
-      'restored: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml, plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/ffmpeg-opus/Cargo.toml, plugins/ffmpeg-opus/plugin.json, plugins/ffmpeg-vpx/Cargo.toml, plugins/ffmpeg-vpx/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, Cargo.lock, plugins/Cargo.lock',
+      'restored: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml, plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, Cargo.lock, plugins/Cargo.lock',
     );
     expect(result.stderr).toMatch(/not restored: plugins\/ffmpeg\/plugin\.json \(.+\)/);
     expect(read('plugins/ffmpeg/plugin.json')).toBe(files['plugins/ffmpeg/plugin.json'].replace('0.9.0', '0.9.1'));

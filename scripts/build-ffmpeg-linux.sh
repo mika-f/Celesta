@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Builds FFmpeg 8.1.x on Linux or macOS, with separate LGPL/GPL prefixes.
-# FFMPEG_VARIANT=standard (default), x264, opus or vpx selects the build.
-# Each variant needs its own prefix; only x264 enables GPL code.
+# FFMPEG_VARIANT=standard (default) or x264 selects the build. standard is
+# LGPL with zlib, libopus, and libvpx (both BSD licensed); x264 is GPL with
+# libx264 and serves only the optional ffmpeg-x264 plugin. Each variant
+# needs its own prefix.
 # macOS builds dylibs; Linux builds static archives.
 #
 #   scripts/build-ffmpeg-linux.sh [PREFIX]    # PREFIX defaults to /opt/ffmpeg8-<variant>
@@ -22,11 +24,9 @@ version="${FFMPEG_VERSION:-8.1.3}"
 # Absolute, because configure and make install run from the temporary source tree.
 variant="${FFMPEG_VARIANT:-standard}"
 case "$variant" in
-  standard) codec_flags=(--disable-gpl --disable-nonfree --enable-zlib) ;;
+  standard) codec_flags=(--disable-gpl --disable-nonfree --enable-zlib --enable-libopus --enable-libvpx) ;;
   x264) codec_flags=(--enable-gpl --disable-nonfree --enable-libx264) ;;
-  opus) codec_flags=(--disable-gpl --disable-nonfree --enable-libopus) ;;
-  vpx) codec_flags=(--disable-gpl --disable-nonfree --enable-libvpx) ;;
-  *) echo "FFMPEG_VARIANT must be standard, x264, opus or vpx" >&2; exit 2 ;;
+  *) echo "FFMPEG_VARIANT must be standard or x264" >&2; exit 2 ;;
 esac
 mkdir -p "${1:-/opt/ffmpeg8-$variant}"
 prefix="$(cd "${1:-/opt/ffmpeg8-$variant}" && pwd)"

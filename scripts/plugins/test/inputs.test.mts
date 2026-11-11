@@ -477,8 +477,8 @@ describe('repositoryPlugins in a scratch pnpm workspace', () => {
 describe("the repository's plugins", () => {
   it('are found with their inputs', () => {
     const plugins = repositoryPlugins(root);
-    expect(plugins.map(({ id }) => id)).toEqual(['avfoundation', 'ffmpeg', 'ffmpeg-opus', 'ffmpeg-vpx', 'ffmpeg-x264', 'mediafoundation', 'vrm']);
-    const [avfoundation, ffmpeg, , , gpl, mediafoundation, vrm] = plugins;
+    expect(plugins.map(({ id }) => id)).toEqual(['avfoundation', 'ffmpeg', 'ffmpeg-x264', 'mediafoundation', 'vrm']);
+    const [avfoundation, ffmpeg, gpl, mediafoundation, vrm] = plugins;
 
     expect(vrm).toMatchObject({
       directory: 'plugins/vrm',

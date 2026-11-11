@@ -2,7 +2,7 @@
 // Usage: run-cargo.mts <workspace> <test|clippy|build> -p <package>... [Cargo args...]
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { ffmpegEnvironment } from './ffmpeg.mts';
+import { FFMPEG_PACKAGES, FFMPEG_X264_PACKAGE, ffmpegEnvironment } from './ffmpeg.mts';
 const [workspace, command, ...args] = process.argv.slice(2);
 if (!workspace || !command) throw new Error('expected workspace and Cargo command');
 const packages: string[] = [];
@@ -16,7 +16,7 @@ for (let index = 0; index < args.length; index++) {
 }
 if (packages.length === 0) throw new Error('expected at least one -p package');
 // Cross-plugin tests need independently linked sibling programs.
-packages.sort((a, b) => Number(a === 'celesta-codec-ffmpeg-x264') - Number(b === 'celesta-codec-ffmpeg-x264'));
+packages.sort((a, b) => Number(a === FFMPEG_X264_PACKAGE) - Number(b === FFMPEG_X264_PACKAGE));
 // Only build flags belong on prerequisite builds, not test filters or libtest args.
 const buildFlags: string[] = [];
 for (let index = 0; index < rest.length && rest[index] !== '--'; index++) {
@@ -41,14 +41,14 @@ function run(name: string, action: string, flags: string[]): boolean {
   return true;
 }
 for (const name of packages) {
-  const crossPluginTests = name === 'celesta-codec-ffmpeg-x264' || name === 'celesta-codec-ffmpeg-vpx'
+  // These tests start the two FFmpeg programs as sibling processes, each
+  // linked against its own build.
+  const crossPluginTests = name === FFMPEG_X264_PACKAGE
     || (name === 'celesta-codec-avfoundation' && process.platform === 'darwin')
     || (name === 'celesta-codec-mediafoundation' && process.platform === 'win32');
   if (crossPluginTests && command === 'test') {
     let ready = true;
-    for (const dependency of (name === 'celesta-codec-ffmpeg-vpx'
-      ? ['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-opus']
-      : ['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-x264', 'celesta-codec-ffmpeg-opus', 'celesta-codec-ffmpeg-vpx'])) {
+    for (const dependency of FFMPEG_PACKAGES) {
       if (!run(dependency, 'build', buildFlags.includes('--locked') ? buildFlags : ['--locked', ...buildFlags])) ready = false;
     }
     if (!ready) {

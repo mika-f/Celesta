@@ -25,10 +25,10 @@ function run(args: string[], failure: string) {
 }
 
 it('runs later packages after a test failure and returns failure overall', () => {
-  const { status, calls, stderr } = run(['-p', 'celesta-codec-ffmpeg', '-p', 'celesta-codec-ffmpeg-opus', '-p', 'celesta-codec-ffmpeg-x264', '--no-fail-fast'], 'test:celesta-codec-ffmpeg');
+  const { status, calls, stderr } = run(['-p', 'celesta-codec-ffmpeg-x264', '-p', 'celesta-codec-ffmpeg', '-p', 'celesta-plugin-vrm', '--no-fail-fast'], 'test:celesta-codec-ffmpeg');
   expect(status, stderr).toBe(1);
   expect(calls.filter((call) => call.action === 'test').map((call) => call.name)).toEqual([
-    'celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-opus', 'celesta-codec-ffmpeg-x264',
+    'celesta-codec-ffmpeg', 'celesta-plugin-vrm', 'celesta-codec-ffmpeg-x264',
   ]);
   expect(stderr).toContain('Cargo failed for: celesta-codec-ffmpeg');
 });
@@ -37,14 +37,14 @@ it('builds prerequisite programs in the requested profile and target without tes
   const { status, calls, stderr } = run(['-p', 'celesta-codec-ffmpeg-x264', '--locked', '--release', '--target', 'a-target', 'a_test_filter', '--', '--show-output'], '');
   expect(status, stderr).toBe(0);
   const builds = calls.filter((call) => call.action === 'build');
-  expect(builds).toHaveLength(4);
+  expect(builds.map((call) => call.name)).toEqual(['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-x264']);
   for (const call of builds) {
     expect(call.args).toEqual(['-p', call.name, '--locked', '--release', '--target', 'a-target']);
   }
 });
 
 it('refuses tests with failed prerequisites and still reports independent package results', () => {
-  const { status, calls, stderr } = run(['-p', 'celesta-codec-ffmpeg-x264', '-p', 'other'], 'build:celesta-codec-ffmpeg-vpx');
+  const { status, calls, stderr } = run(['-p', 'celesta-codec-ffmpeg-x264', '-p', 'other'], 'build:celesta-codec-ffmpeg');
   expect(status, stderr).toBe(1);
   expect(calls.some((call) => call.action === 'test' && call.name === 'other')).toBe(true);
   expect(calls.some((call) => call.action === 'test' && call.name === 'celesta-codec-ffmpeg-x264')).toBe(false);

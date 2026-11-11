@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { cargoMetadata } from './cargo.mts';
-import { ffmpegEnvironment } from './ffmpeg.mts';
+import { ffmpegEnvironment, isFfmpegPackage } from './ffmpeg.mts';
 import { licenseFiles } from './licenses.mts';
 import { buildsOn, celestaRange, checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
 import type { Built, PluginManifest, PluginSource } from './manifest.mts';
@@ -162,7 +162,7 @@ const fromRuntime = createRequire(join(runtime, 'package.json'));
  */
 function buildExecutable(source: string, out: string, cargoPackage: string, targetDirectory: string): Record<string, string> {
   const { os, arch } = orFail(() => rustPlatform({ target: values.target, cwd: source }));
-  const ffmpeg = ['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-x264', 'celesta-codec-ffmpeg-opus', 'celesta-codec-ffmpeg-vpx'].includes(cargoPackage);
+  const ffmpeg = isFfmpegPackage(cargoPackage);
   const host = ffmpeg ? orFail(() => rustPlatform({ cwd: source })) : undefined;
   const native = host?.os === os && host?.arch === arch;
   if (ffmpeg && values.distribution && !native) {

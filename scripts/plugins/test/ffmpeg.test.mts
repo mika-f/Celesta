@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
-import { ffmpegEnvironment } from '../ffmpeg.mts';
+import { FFMPEG_PACKAGES, ffmpegEnvironment, isFfmpegPackage } from '../ffmpeg.mts';
 
 describe('native FFmpeg selection', () => {
   const environment = {
@@ -20,14 +20,16 @@ describe('native FFmpeg selection', () => {
       ...environment, CARGO_ENCODED_RUSTFLAGS: '-L\x1fnative=/lgpl/installed/base/lib',
     });
   });
-  it.each(['OPUS', 'VPX'])('selects the %s prefix independently', (variant) => {
-    const selected = ffmpegEnvironment(`celesta-codec-ffmpeg-${variant.toLowerCase()}`, {
-      ...environment, [`FFMPEG_${variant}_PKG_CONFIG_PATH`]: `/${variant}/lib/pkgconfig`,
-      [`FFMPEG_${variant}_VCPKG_ROOT`]: `/${variant}`,
+  it('lists the two FFmpeg packages, standard first', () => {
+    expect(FFMPEG_PACKAGES).toEqual(['celesta-codec-ffmpeg', 'celesta-codec-ffmpeg-x264']);
+    expect(isFfmpegPackage('celesta-codec-ffmpeg-opus')).toBe(false);
+  });
+  it('ignores variables of variants that no longer exist', () => {
+    const selected = ffmpegEnvironment('celesta-codec-ffmpeg', {
+      ...environment, FFMPEG_OPUS_VCPKG_ROOT: '/opus', FFMPEG_VPX_PKG_CONFIG_PATH: '/vpx/lib/pkgconfig',
     });
-    expect(selected.PKG_CONFIG_PATH).toBe(`/${variant}/lib/pkgconfig`);
-    expect(selected.VCPKG_ROOT).toBe(`/${variant}`);
-    expect(selected.CARGO_ENCODED_RUSTFLAGS).toBe(`-L\x1fnative=/${variant}/installed/base/lib`);
+    expect(selected.VCPKG_ROOT).toBe('/lgpl');
+    expect(selected.PKG_CONFIG_PATH).toBe('/lgpl/lib/pkgconfig');
   });
   it('switches only the GPL process, without mutating the caller', () => {
     expect(ffmpegEnvironment('celesta-codec-ffmpeg-x264', environment)).toMatchObject({
@@ -71,8 +73,6 @@ describe('native FFmpeg selection', () => {
         // Exercise Cargo's cache, independent of a developer's compiler cache.
         RUSTC_WRAPPER: '', RUSTC_WORKSPACE_WRAPPER: '',
         VCPKG_ROOT: join(tree, 'standard root'),
-        FFMPEG_OPUS_VCPKG_ROOT: join(tree, 'opus root'),
-        FFMPEG_VPX_VCPKG_ROOT: join(tree, 'vpx root'),
         FFMPEG_X264_VCPKG_ROOT: join(tree, 'x264 root'),
       };
       const extra: string[] = [];
@@ -84,8 +84,7 @@ describe('native FFmpeg selection', () => {
         extra.push('--target', host!.trim());
       }
       for (const [variant, nativeRoot] of [
-        ['', environment.VCPKG_ROOT], ['-opus', environment.FFMPEG_OPUS_VCPKG_ROOT],
-        ['-vpx', environment.FFMPEG_VPX_VCPKG_ROOT], ['-x264', environment.FFMPEG_X264_VCPKG_ROOT],
+        ['', environment.VCPKG_ROOT], ['-x264', environment.FFMPEG_X264_VCPKG_ROOT],
         ['', environment.VCPKG_ROOT],
       ]) {
         const result = spawnSync(cargo, ['run', '--quiet', '--offline', ...extra], {
