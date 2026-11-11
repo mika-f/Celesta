@@ -21,6 +21,7 @@ impl Render for EditorView {
         self.settle_added_selection(cx);
         self.watch_occurrence_sweep(cx);
         self.settle_row_requests(cx);
+        self.settle_resting_rows(window, cx);
         self.settle_interactive_mode();
         self.sync_element_targets(cx);
         self.sync_scene_calls(cx);

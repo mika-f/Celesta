@@ -1066,9 +1066,7 @@ pub(crate) fn element_control_handler(
     key: PropKey,
 ) -> impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + Clone + 'static
 {
-    move |this, event, window, cx| {
-        this.element_control_event(&key, event, window.is_window_active(), cx)
-    }
+    move |this, event, window, cx| this.element_control_event(&key, event, window, cx)
 }
 
 /// Puts `shown` into `row`'s control.
@@ -1214,13 +1212,13 @@ impl EditorView {
         &mut self,
         key: &PropKey,
         event: ControlEvent,
-        window_active: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         // A number row opens for typing with its field's focus and rests
         // again on Enter, a blur or Escape.
         if let Some(row) = self.element_rows.rows.get_mut(key) {
-            row.typing.on(&event, window_active);
+            row.typing.follow(&event, window);
         }
         match event {
             ControlEvent::Edited => {
@@ -1919,6 +1917,20 @@ impl EditorView {
         if let Some(row) = self.element_rows.rows.get_mut(key) {
             row.typing.request();
             cx.notify();
+        }
+    }
+
+    /// Each frame: a number row rests only while its field holds the
+    /// window's focus ([`RowTyping::settle`]), here and in the props-file
+    /// rows.
+    pub(crate) fn settle_resting_rows(&mut self, window: &Window, cx: &mut Context<Self>) {
+        for row in self.element_rows.rows.values_mut() {
+            row.typing.settle(row.control.text_focused(window, cx));
+        }
+        for row in self.property_panel.rows.values_mut() {
+            row.state
+                .typing
+                .settle(row.control.text_focused(window, cx));
         }
     }
 

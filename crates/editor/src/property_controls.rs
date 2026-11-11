@@ -292,12 +292,12 @@ pub(crate) fn build_control(
 }
 
 /// Sends a text input's typing, Enter, and blur to `on`.
-fn subscribe_text<S: EventEmitter<InputEvent>>(
+pub(crate) fn subscribe_text<T: 'static, S: EventEmitter<InputEvent>>(
     input: &Entity<S>,
     multi_line: bool,
     window: &mut Window,
-    cx: &mut Context<EditorView>,
-    on: impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + 'static,
+    cx: &mut Context<T>,
+    on: impl Fn(&mut T, ControlEvent, &mut Window, &mut Context<T>) + 'static,
 ) -> Subscription {
     cx.subscribe_in(
         input,
@@ -416,12 +416,12 @@ pub(crate) fn render_control(
 }
 
 /// A single-line text input with `hint` as its dimmed suffix.
-pub(crate) fn text_input(
+pub(crate) fn text_input<T: 'static>(
     input: Input,
     locked: bool,
     hint: Option<String>,
-    cx: &mut Context<EditorView>,
-    on: impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + 'static,
+    cx: &mut Context<T>,
+    on: impl Fn(&mut T, ControlEvent, &mut Window, &mut Context<T>) + 'static,
 ) -> AnyElement {
     let muted = cx.theme().muted_foreground;
     let input = input
@@ -443,10 +443,10 @@ pub(crate) fn field_keeps_key(keystroke: &Keystroke) -> bool {
 
 /// Wraps a text input so Escape in it reaches `on`, and the arrow keys it
 /// passes on stay with it ([`field_keeps_key`]).
-fn escapable(
+fn escapable<T: 'static>(
     input: impl IntoElement,
-    cx: &mut Context<EditorView>,
-    on: impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + 'static,
+    cx: &mut Context<T>,
+    on: impl Fn(&mut T, ControlEvent, &mut Window, &mut Context<T>) + 'static,
 ) -> AnyElement {
     div()
         .w_full()

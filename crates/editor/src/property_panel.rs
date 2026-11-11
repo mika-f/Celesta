@@ -447,9 +447,7 @@ pub(crate) fn property_control_handler(
 ) -> impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + Clone + 'static
 {
     let key = key.to_owned();
-    move |this, event, window, cx| {
-        this.property_control_event(&key, event, window.is_window_active(), cx)
-    }
+    move |this, event, window, cx| this.property_control_event(&key, event, window, cx)
 }
 
 /// One declared property's controls and what they show.
@@ -636,13 +634,13 @@ impl EditorView {
         &mut self,
         key: &str,
         event: ControlEvent,
-        window_active: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         // A number row opens for typing with its field's focus and rests
         // again on Enter, a blur or Escape.
         if let Some(row) = self.property_panel.rows.get_mut(key) {
-            row.state.typing.on(&event, window_active);
+            row.state.typing.follow(&event, window);
         }
         match event {
             ControlEvent::Edited => {

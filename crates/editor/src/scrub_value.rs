@@ -75,7 +75,9 @@ pub(crate) struct RowTyping {
     /// focus the window sends again when it comes back to the front does
     /// not reopen it; Enter on the resting value ([`Self::request`]) does.
     /// Going to the back blurs the field too, so only a blur in the active
-    /// window clears it.
+    /// window clears it, or a frame that finds the window's focus
+    /// elsewhere ([`Self::settle`]); gpui keeps the window's focus while
+    /// it is at the back.
     rests_focused: bool,
 }
 
@@ -106,10 +108,31 @@ impl RowTyping {
         }
     }
 
+    /// [`Self::on`] for an event that came to `window` now.
+    pub(crate) fn follow(
+        &mut self,
+        event: &crate::property_controls::ControlEvent,
+        window: &Window,
+    ) {
+        self.on(event, window.is_window_active());
+    }
+
+    /// Each frame, before its focus events: the row rests only while its
+    /// field is the window's focus. A field that lost the focus while the
+    /// window was at the back, or before the first frame back in front,
+    /// got no blur, so the row learns it here.
+    pub(crate) fn settle(&mut self, focused: bool) {
+        if !focused {
+            self.rests_focused = false;
+        }
+    }
+
     /// Opens the row: a click on its value, a refused press, or Enter on the
-    /// focused resting value.
+    /// focused resting value. It is typing again, so coming back to the
+    /// window opens it as it does a row opened by Tab.
     pub(crate) fn request(&mut self) {
         self.open = true;
+        self.rests_focused = false;
     }
 
     /// Whether the field shows: while typing, and while it holds typed text
@@ -470,29 +493,53 @@ mod tests {
         assert!(host.read_with(cx, |host, _| host.typed.get()));
     }
 
-    /// One `ScrubValue` whose row follows its field's focus as the panels'
-    /// rows do.
+    /// One `ScrubValue` whose row follows its field's focus through the
+    /// panels' own wiring (`subscribe_text`, `text_input`,
+    /// `RowTyping::follow`, `RowTyping::settle` each render), and a second
+    /// field after it.
     struct Tabbed {
         input: Entity<InputState>,
+        other: Entity<InputState>,
         row: RowTyping,
     }
 
+    impl Tabbed {
+        fn event(
+            &mut self,
+            event: crate::property_controls::ControlEvent,
+            window: &mut Window,
+            cx: &mut Context<Self>,
+        ) {
+            self.row.follow(&event, window);
+            cx.notify();
+        }
+
+        fn settle(&mut self, window: &Window, cx: &mut Context<Self>) {
+            self.row
+                .settle(self.input.read(cx).focus_handle(cx).is_focused(window));
+        }
+    }
+
     impl Render for Tabbed {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div().size_full().child(
-                ScrubValue::new("t", self.input.clone())
-                    .text("120".to_owned())
-                    .typing(self.row.open(false, false))
-                    .field(|input| input),
-            )
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            use crate::property_controls::text_input;
+            self.settle(window, cx);
+            div()
+                .size_full()
+                .child(
+                    ScrubValue::new("t", self.input.clone())
+                        .text("120".to_owned())
+                        .typing(self.row.open(false, false))
+                        .field(|input| text_input(input, false, None, cx, Tabbed::event)),
+                )
+                .child(Input::new(&self.other))
         }
     }
 
     /// A window holding one [`Tabbed`] row, active so focus events reach
     /// it.
     fn tabbed_window(cx: &mut TestAppContext) -> gpui_kit::WindowHandle<Root> {
-        use crate::property_controls::ControlEvent;
-        use gpui_kit::component::input::InputEvent;
+        use crate::property_controls::subscribe_text;
         cx.update(|cx| {
             gpui_kit::init(cx);
             celesta_editor_theme::init(cx);
@@ -500,23 +547,10 @@ mod tests {
         let handle = cx.open_window(size(px(300.), px(100.)), |window, cx| {
             let host = cx.new(|cx| {
                 let input = cx.new(|cx| InputState::new(window, cx));
-                cx.subscribe_in(
-                    &input,
-                    window,
-                    |host: &mut Tabbed, _, event: &InputEvent, window, cx| {
-                        let event = match event {
-                            InputEvent::Focus => ControlEvent::Focused,
-                            InputEvent::PressEnter { .. } => ControlEvent::Submit { blur: false },
-                            InputEvent::Blur => ControlEvent::Submit { blur: true },
-                            InputEvent::Change => return,
-                        };
-                        host.row.on(&event, window.is_window_active());
-                        cx.notify();
-                    },
-                )
-                .detach();
+                subscribe_text(&input, false, window, cx, Tabbed::event).detach();
                 Tabbed {
                     input,
+                    other: cx.new(|cx| InputState::new(window, cx)),
                     row: RowTyping::default(),
                 }
             });
@@ -526,6 +560,24 @@ mod tests {
             .update(cx, |_, window, _| window.activate_window())
             .expect("the window");
         handle
+    }
+
+    fn tabbed(cx: &mut VisualTestContext, handle: gpui_kit::WindowHandle<Root>) -> Entity<Tabbed> {
+        handle
+            .read_with(cx, |root, _| root.view().clone().downcast::<Tabbed>())
+            .expect("the window")
+            .expect("the host")
+    }
+
+    fn press(cx: &mut VisualTestContext, key: &'static str) {
+        let keystroke = Keystroke::parse(key).expect("a keystroke");
+        cx.simulate_event(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(KeyUpEvent { keystroke });
+        cx.run_until_parked();
     }
 
     #[gpui_kit::test]
@@ -540,29 +592,63 @@ mod tests {
         assert!(cx.debug_bounds("t-input").is_some(), "Tab opens it");
     }
 
-    #[gpui_kit::test]
-    fn coming_back_to_the_window_leaves_a_resting_number_resting(cx: &mut TestAppContext) {
+    /// Tab, `key` to close the row, then the window to the back and to the
+    /// front again.
+    fn comes_back_resting(cx: &mut TestAppContext, key: &'static str) {
         let handle = tabbed_window(cx);
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
         cx.run_until_parked();
         cx.update(|window, cx| window.focus_next(cx));
         cx.run_until_parked();
-        let keystroke = Keystroke::parse("enter").expect("a keystroke");
-        cx.simulate_event(KeyDownEvent {
-            keystroke: keystroke.clone(),
-            is_held: false,
-            prefer_character_input: false,
-        });
-        cx.simulate_event(KeyUpEvent { keystroke });
-        cx.run_until_parked();
-        assert!(cx.debug_bounds("t-input").is_none(), "Enter rests it");
+        assert!(cx.debug_bounds("t-input").is_some(), "Tab opens it");
+        press(cx, key);
+        assert!(cx.debug_bounds("t-input").is_none(), "{key} rests it");
 
         // Going to the back blurs the field; coming back focuses it again.
         cx.deactivate_window();
         cx.run_until_parked();
         cx.update(|window, _| window.activate_window());
         cx.run_until_parked();
-        assert!(cx.debug_bounds("t-input").is_none(), "it still rests");
+        assert!(
+            cx.debug_bounds("t-input").is_none(),
+            "after {key}, it still rests"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn coming_back_after_enter_leaves_a_resting_number_resting(cx: &mut TestAppContext) {
+        comes_back_resting(cx, "enter");
+    }
+
+    #[gpui_kit::test]
+    fn coming_back_after_escape_leaves_a_resting_number_resting(cx: &mut TestAppContext) {
+        comes_back_resting(cx, "escape");
+    }
+
+    #[gpui_kit::test]
+    fn a_row_left_at_the_back_opens_on_tab_once_the_focus_moved_on(cx: &mut TestAppContext) {
+        let handle = tabbed_window(cx);
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| window.focus_next(cx));
+        cx.run_until_parked();
+        press(cx, "enter");
+        assert!(cx.debug_bounds("t-input").is_none(), "Enter rests it");
+        cx.deactivate_window();
+        cx.run_until_parked();
+
+        // Back in front with the focus on the other field before a frame
+        // is drawn: the row gets neither a focus nor a blur.
+        let other = tabbed(cx, handle).read_with(cx, |host, _| host.other.clone());
+        cx.update(|window, cx| {
+            window.activate_window();
+            other.read(cx).focus_handle(cx).focus(window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| window.focus_prev(cx));
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("t-input").is_some(), "Tab back opens it");
     }
 
     struct Narrow {

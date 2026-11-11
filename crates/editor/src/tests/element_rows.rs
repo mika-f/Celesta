@@ -1425,6 +1425,44 @@ fn a_resting_row_with_the_focus_opens_only_on_request() {
 }
 
 #[test]
+fn a_row_reopened_by_request_comes_back_to_the_window_open() {
+    // Reopened after resting (a click, or Enter on the resting value), it
+    // is typing again: as for a row opened by Tab, the focus the window
+    // sends on coming back opens it.
+    for closing in [ControlEvent::Escape, ControlEvent::Submit { blur: false }] {
+        let mut typing = RowTyping::default();
+        typing.on(&ControlEvent::Focused, true);
+        typing.on(&closing, true);
+        typing.request();
+        typing.on(&ControlEvent::Submit { blur: true }, false);
+        assert!(!typing.open(false, false), "{closing:?}");
+        typing.on(&ControlEvent::Focused, true);
+        assert!(typing.open(false, false), "{closing:?}");
+    }
+}
+
+#[test]
+fn a_row_left_at_the_back_rests_only_while_its_field_holds_the_focus() {
+    let left_at_the_back = || {
+        let mut typing = RowTyping::default();
+        typing.on(&ControlEvent::Focused, true);
+        typing.on(&ControlEvent::Escape, true);
+        typing.on(&ControlEvent::Submit { blur: true }, false);
+        typing
+    };
+    // Back in front with the focus still on the field: it rests.
+    let mut typing = left_at_the_back();
+    typing.settle(true);
+    typing.on(&ControlEvent::Focused, true);
+    assert!(!typing.open(false, false));
+    // The focus moved on before the first frame: the next focus opens it.
+    let mut typing = left_at_the_back();
+    typing.settle(false);
+    typing.on(&ControlEvent::Focused, true);
+    assert!(typing.open(false, false));
+}
+
+#[test]
 fn a_layer_row_rests_with_its_message_once_its_text_is_restored() {
     // Text that did not parse was put back on blur; the message stays as a
     // line under the resting value, which can be dragged again.
