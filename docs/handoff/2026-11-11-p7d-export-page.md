@@ -14,7 +14,8 @@ Plan: `docs/superpowers/plans/2026-11-11-p7d-export-page.md`.
 to `RegisteredPlugin.name` and `MediaComponentInfo.plugin_name`;
 `MediaPlugin.name` comes from the manifest, or from `PrintedManifest.name`
 for the bundled sibling's `--manifest`. The FFmpeg plugin's `plugin.json`
-says `"name": "FFmpeg"`, the test codec "Test codec", and the built-in image
+says `"name": "FFmpeg"`, AVFoundation's "AVFoundation", Media Foundation's
+"Media Foundation", the test codec "Test codec", and the built-in image
 decoder "Built-in". The plugin build (`scripts/plugins/manifest.mts`) accepts
 `name` in `plugin.json` (a non-empty string) and copies it into
 `celesta-plugin.json`. The CLI, MCP and the JSON report keep the references
@@ -97,12 +98,15 @@ Commands, all passing on the branch head:
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace --no-fail-fast` (`celesta-editor` 802 tests). One
+- `cargo test --workspace --no-fail-fast` (`celesta-editor` 816 tests). One
   earlier run failed `transform_drag::tests::a_left_edge_resize_is_one_undo`,
   a known flaky test in a file this branch does not touch; it passed alone
   three times and in the next full run.
-- `cargo test --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg`
-- `pnpm test` in `scripts/plugins` (219 tests)
+- `cargo fmt`, `cargo clippy` and `cargo test --workspace` with
+  `--manifest-path plugins/Cargo.toml`. Media Foundation's `registered()`
+  is Windows-only, so its new `name` line is not compiled on macOS; it is
+  the same line as FFmpeg's and AVFoundation's.
+- `pnpm test` in `scripts/plugins` (228 tests)
 - `pnpm --filter @celesta.studio/website check` (no issues)
 - `node scripts/plugins/build.mts plugins/ffmpeg` builds again. Before the
   fix it refused `name` as an unknown key.
