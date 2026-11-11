@@ -205,26 +205,32 @@ From the brief's author, after the first push:
   `test_distribution_is_the_os_release_id_and_version`,
   `test_a_distribution_without_id_or_version_fails`;
   `packaging/plugins/README.md` describes the field.
-- **The Docker MP4 example** in the export guide (en and ja) and in
-  `packaging/linux/README.md` was checked against the code, not run (no
-  Docker build here):
-  - `--plugin-dir` folders are `PluginSource::Explicit`, which
-    `needs_allowance()` answers `false` for (`crates/plugin-host/src/approval.rs`):
-    no approval step, and no `--allow-plugin` needed.
-  - Explicit sources are not permission-checked: `PluginSource::is_checked()`
-    is `false` for them, so neither `unsafe_plugin` nor the folder check in
-    `discover_in` runs `unsafe_reason` (group/other-writable or foreign-owned
-    files). A read-only mount and an extracted ZIP's modes and owner pass.
-  - `discover_in` takes a folder with `celesta-plugin.json` as one plugin,
-    or else each subfolder that has one, so `codecs/ffmpeg-x264/…` mounted at
-    `/plugins` is found as the `ffmpeg-x264` plugin.
-  - Nothing is written into the plugin folder at run time; frames go through
-    shared memory or pipes.
-  - The ZIP is built on CI's Ubuntu runner, older than the image's 26.04,
-    and carries libx264 with a plugin-relative RPATH.
+- **The Docker MP4 example** in the export guide (en and ja, "Export MP4 in
+  a container") is now an executed check, not only a reading of the code.
+  The dispatch-only `docker` job in `ci.yml` waits for the packages
+  (`needs: package`, and runs even when another system's package failed),
+  downloads the `celesta-codecs-linux-x64` artifact, which
+  `package-build.yml`'s `linux-plugins` job now uploads on manual runs as
+  well as releases, extracts the ZIP into `codecs/`, and runs the guide's
+  command as written (`--user`, the `:ro` mount, `--plugin-dir /plugins`,
+  `--react first-scene.tsx output.mp4`) against the built image. It asserts
+  an `ftyp` MP4 with an `avc1` track, then repeats the command with
+  `--overwrite --json` and asserts the report's
+  `outputs[0].video.component` is `ffmpeg-x264/libx264` with an `avc1` codec.
+  This covers what the code reading could not: the ZIP built on the runner
+  starting in `ubuntu:26.04` (glibc, the bundled libx264 and its RPATH), the
+  image's `ffmpeg` and the mounted `ffmpeg-x264` working together for a real
+  MP4 with Docker's default `/dev/shm`, and the command line itself.
+  **Until a manual CI run has passed this step on the branch, the example is
+  unverified.** What reading the code did establish: `--plugin-dir` folders
+  are `PluginSource::Explicit`, which needs no approval
+  (`needs_allowance()`), is not permission-checked (`is_checked()`), and may
+  hold plugins in subfolders, so `codecs/ffmpeg-x264/` mounted at `/plugins`
+  is found.
 
 Checks: `python3 -B -m unittest scripts/test_package_macos.py
 scripts/test_package_media_plugins.py` (18 passed); the record script run
 against a libavcodec linking libopus and libvpx wrote
-`"distribution": "ubuntu 24.04"` and valid JSON. The guides did not change in
-this round, so the website checks were not rerun.
+`"distribution": "ubuntu 24.04"` and valid JSON; the changed workflows and
+`actions.lock` parse as YAML. The guides did not change in this round, so the
+website checks were not rerun.

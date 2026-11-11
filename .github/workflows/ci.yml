@@ -418,9 +418,12 @@ jobs:
 
   # Dispatch checks the final headless image as well as the unsigned desktop
   # packages. This only builds and tests locally on the runner; nothing is pushed.
+  # It waits for the packages for the Linux ffmpeg-x264 ZIP, and runs even when
+  # another system's package failed; a missing ZIP fails the MP4 step.
   docker:
     name: Linux exporter image
-    if: github.event_name == 'workflow_dispatch'
+    needs: package
+    if: github.event_name == 'workflow_dispatch' && !cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
@@ -452,3 +455,33 @@ jobs:
           # WebM (VP9 and Opus) needs only the bundled LGPL plugin.
           docker run --rm -v "$RUNNER_TEMP:/work" celesta-exporter:check --react check.tsx check.webm
           test -s "$RUNNER_TEMP/check.webm"
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: celesta-codecs-linux-x64
+          path: ${{ runner.temp }}/codec-zip
+      # The export guide's "Export MP4 in a container" example, run as written
+      # (packages/website/content/{en,ja}/docs/02-(guides)/09-export.md): the
+      # extracted ffmpeg-x264 ZIP mounted read-only and passed with --plugin-dir.
+      - name: Export MP4 with the downloaded ffmpeg-x264
+        run: |
+          work="$RUNNER_TEMP/mp4-check"
+          mkdir -p "$work/codecs"
+          unzip -q "$RUNNER_TEMP"/codec-zip/Celesta-plugin-ffmpeg-x264-*-linux-x64.zip -d "$work/codecs"
+          test -f "$work/codecs/ffmpeg-x264/celesta-plugin.json"
+          cp "$RUNNER_TEMP/check.tsx" "$work/first-scene.tsx"
+          cd "$work"
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter:check --plugin-dir /plugins --react first-scene.tsx output.mp4
+          node -e '
+            const mp4 = require("node:fs").readFileSync("output.mp4");
+            if (mp4.toString("ascii", 4, 8) !== "ftyp") throw new Error("output.mp4 is not an MP4");
+            if (!mp4.includes(Buffer.from("avc1"))) throw new Error("output.mp4 has no H.264 track");
+          '
+          # The same command with --json names the encoder that wrote it.
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter:check --plugin-dir /plugins --react first-scene.tsx output.mp4 --overwrite --json > report.json
+          node -e '
+            const report = JSON.parse(require("node:fs").readFileSync("report.json", "utf8"));
+            const video = report.outputs?.[0]?.video;
+            if (video?.component !== "ffmpeg-x264/libx264" || !String(video?.codec).startsWith("avc1")) {
+              throw new Error(`expected ffmpeg-x264/libx264 H.264, got ${JSON.stringify(video)}`);
+            }
+          '

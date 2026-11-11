@@ -247,7 +247,9 @@ jobs:
           optional=()
           if [[ "$RELEASE" == "true" ]]; then optional=(--version "$VERSION"); fi
           python3 scripts/package-media-plugins.py "${optional[@]}"
-      - if: inputs.release
+      # A manual CI run also uploads it: ci.yml's docker job exports MP4 with
+      # it in the image, as the export guide's container example does.
+      - if: inputs.release || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: celesta-codecs-linux-x64
