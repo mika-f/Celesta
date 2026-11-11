@@ -1,6 +1,5 @@
-//! Starts the built `celesta-mcp` and talks to it as an MCP client.
-
-use std::path::{Path, PathBuf};
+//! Starts the built `celesta-mcp` and talks to it as an MCP client: shared
+//! by the `integration` and `runtime` test targets.
 
 use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ProgressNotificationParam};
@@ -9,32 +8,6 @@ use rmcp::transport::TokioChildProcess;
 use rmcp::{ClientHandler, RoleClient, ServiceExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
-
-pub fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-/// Whether the React runtime the server spawns has been built. If not, the
-/// test skips, or fails when `CELESTA_REQUIRE_RUNTIME=1` says it was built.
-pub fn runtime_built() -> bool {
-    let built = root().join("packages/cli/dist/cli.js").exists();
-    if !built {
-        assert!(
-            std::env::var("CELESTA_REQUIRE_RUNTIME").as_deref() != Ok("1"),
-            "React tests require the built runtime: packages/cli/dist/cli.js is missing"
-        );
-        eprintln!("skipping: build packages/cli first (pnpm run build:runtime)");
-    }
-    built
-}
-
-/// An entry in a directory where `@celesta.studio/react` resolves.
-pub fn entry(source: &str) -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
-    let entry = dir.path().join("scene.tsx");
-    std::fs::write(&entry, source).unwrap();
-    (dir, entry)
-}
 
 /// Forwards progress notifications to the test.
 pub struct TestClient {
@@ -53,11 +26,11 @@ impl ClientHandler for TestClient {
 
 pub type Client = RunningService<RoleClient, TestClient>;
 
-fn server() -> tokio::process::Command {
+pub fn server() -> tokio::process::Command {
     tokio::process::Command::new(env!("CARGO_BIN_EXE_celesta-mcp"))
 }
 
-async fn serve(
+pub async fn serve(
     command: tokio::process::Command,
 ) -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
     let (progress, received) = mpsc::unbounded_channel();
@@ -80,21 +53,6 @@ pub async fn client_with_test_codec(
     let mut command = server();
     // Replaces the developer's value rather than adding to it.
     command.env(PLUGIN_PATH_ENV, plugin.folder());
-    serve(command).await
-}
-
-/// [`client_with_test_codec`] with the user's folders (`HOME`,
-/// `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `APPDATA`) all at `home`, so the
-/// server reads no presets file or plugin of the developer's.
-pub async fn client_with_test_codec_in(
-    plugin: &TestCodecPlugin,
-    home: &Path,
-) -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
-    let mut command = server();
-    command.env(PLUGIN_PATH_ENV, plugin.folder());
-    for variable in ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "APPDATA"] {
-        command.env(variable, home);
-    }
     serve(command).await
 }
 

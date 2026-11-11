@@ -1,3 +1,9 @@
+//! The bridge with a real `node`: the built React runtime
+//! (`packages/cli/dist/cli.js`), and fake runtimes that die at chosen points.
+//! This is the runtime test group (see `docs/handoff/2026-11-11-test-groups.md`):
+//! the target builds only with the `runtime-tests` feature, and a missing
+//! `node` or runtime fails its tests.
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -69,10 +75,8 @@ fn all_layers(layers: &[Layer]) -> Vec<&Layer> {
 }
 
 #[test]
-fn evaluates_the_example_composition_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn evaluates_the_example_composition() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/title.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -93,10 +97,8 @@ fn evaluates_the_example_composition_when_node_is_available() {
 }
 
 #[test]
-fn render_text_metrics_match_loaded_fonts_and_component_preview_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn render_text_metrics_match_loaded_fonts_and_component_preview() {
+    let (node, cli_script, package_root) = live_react_runtime();
     let entry = package_root.join("examples/with-text-metrics.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let mut measurer = celesta_renderer::TextRasterizer::new();
@@ -228,10 +230,8 @@ fn render_text_metrics_match_loaded_fonts_and_component_preview_when_node_is_ava
 }
 
 #[test]
-fn pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile() {
+    let (node, cli_script, package_root) = live_react_runtime();
     // Every frame measures text it has not measured before (`最新 ${frame}`),
     // so Node asks for measurements while evaluating frame N + 1, after it
     // was submitted and before frame N is decoded.
@@ -261,10 +261,8 @@ fn pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile_when_no
 }
 
 #[test]
-fn text_boxes_fit_their_captions_with_the_renderer_shaping_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn text_boxes_fit_their_captions_with_the_renderer_shaping() {
+    let (node, cli_script, package_root) = live_react_runtime();
     let entry = package_root.join("examples/with-text-box.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let mut measurer = celesta_renderer::TextRasterizer::new();
@@ -375,10 +373,8 @@ fn text_boxes_fit_their_captions_with_the_renderer_shaping_when_node_is_availabl
 }
 
 #[test]
-fn instances_reach_rust_as_columns_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn instances_reach_rust_as_columns() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-instances.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -403,10 +399,8 @@ fn instances_reach_rust_as_columns_when_node_is_available() {
 }
 
 #[test]
-fn prepare_can_preload_media_metadata_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn prepare_can_preload_media_metadata() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-media-info.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -420,10 +414,8 @@ fn prepare_can_preload_media_metadata_when_node_is_available() {
 }
 
 #[test]
-fn audio_spectrum_is_the_same_in_preview_and_export_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn audio_spectrum_is_the_same_in_preview_and_export() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-audio-spectrum.tsx");
     // Each meter's RMS, then its 8 band levels, from the rects' sizes.
@@ -477,10 +469,8 @@ fn audio_spectrum_is_the_same_in_preview_and_export_when_node_is_available() {
 }
 
 #[test]
-fn animated_images_report_their_length_and_play_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn animated_images_report_their_length_and_play() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-animated-image.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -508,10 +498,8 @@ fn animated_images_report_their_length_and_play_when_node_is_available() {
 }
 
 #[test]
-fn debug_guides_render_in_component_preview_or_when_asked_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn debug_guides_render_in_component_preview_or_when_asked() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-debug.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -561,10 +549,8 @@ fn debug_guides_render_in_component_preview_or_when_asked_when_node_is_available
 }
 
 #[test]
-fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn evaluates_a_psd_character_with_one_selected_mouth_layer() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-psd-character.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -585,10 +571,8 @@ fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_availabl
 }
 
 #[test]
-fn evaluates_a_react_dialogue_as_a_character_and_subtitle_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn evaluates_a_react_dialogue_as_a_character_and_subtitle() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-dialogue.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -609,10 +593,8 @@ fn evaluates_a_react_dialogue_as_a_character_and_subtitle_when_node_is_available
 }
 
 #[test]
-fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn resolves_a_psd_portrait_preset_into_visible_layers() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-psd-preset.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -635,10 +617,8 @@ fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
 }
 
 #[test]
-fn a_runtime_stop_ends_a_prepare_that_never_resolves_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn a_runtime_stop_ends_a_prepare_that_never_resolves() {
+    let (node, cli_script, package_root) = live_react_runtime();
     let dir = tempfile::tempdir_in(&package_root).unwrap();
     let entry = dir.path().join("hang.tsx");
     std::fs::write(
@@ -694,10 +674,8 @@ fn a_runtime_stop_ends_a_prepare_that_never_resolves_when_node_is_available() {
 }
 
 #[test]
-fn a_stray_stdout_write_is_a_protocol_error_when_node_is_available() {
-    let Some((node, cli_script, _)) = live_react_runtime() else {
-        return;
-    };
+fn a_stray_stdout_write_is_a_protocol_error() {
+    let (node, cli_script, _) = live_react_runtime();
     let dir = tempfile::tempdir().unwrap();
     let entry = dir.path().join("chatty.tsx");
     std::fs::write(
@@ -718,10 +696,8 @@ fn a_stray_stdout_write_is_a_protocol_error_when_node_is_available() {
 }
 
 #[test]
-fn reports_imports_of_the_legacy_scope_when_node_is_available() {
-    let Some((node, cli_script, _)) = live_react_runtime() else {
-        return;
-    };
+fn reports_imports_of_the_legacy_scope() {
+    let (node, cli_script, _) = live_react_runtime();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("scenes")).unwrap();
@@ -749,10 +725,8 @@ fn reports_imports_of_the_legacy_scope_when_node_is_available() {
 }
 
 #[test]
-fn reports_the_voice_folder_prepare_read_as_dependencies_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn reports_the_voice_folder_prepare_read_as_dependencies() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-voice-folder.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -792,10 +766,8 @@ fn reports_the_voice_folder_prepare_read_as_dependencies_when_node_is_available(
 }
 
 #[test]
-fn reports_composition_chapters_in_order_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn reports_composition_chapters_in_order() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-chapters.tsx");
     let bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -830,10 +802,8 @@ fn reports_composition_chapters_in_order_when_node_is_available() {
 }
 
 #[test]
-fn generates_a_lip_sync_mouth_track_from_a_wav_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn generates_a_lip_sync_mouth_track_from_a_wav() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-lip-sync.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -863,10 +833,8 @@ fn generates_a_lip_sync_mouth_track_from_a_wav_when_node_is_available() {
 }
 
 #[test]
-fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn computes_video_timing_from_the_composition_clock() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-video.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -886,10 +854,8 @@ fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
 }
 
 #[test]
-fn evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn evaluates_a_rect_with_fill_stroke_and_corner_radius() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-rect.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -926,12 +892,10 @@ fn evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available() 
 }
 
 #[test]
-fn interpolates_rect_text_and_gradient_stop_colors_when_node_is_available() {
+fn interpolates_rect_text_and_gradient_stop_colors() {
     use celesta_composition::{GradientStop, Paint};
 
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-color.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -989,10 +953,8 @@ fn interpolates_rect_text_and_gradient_stop_colors_when_node_is_available() {
 }
 
 #[test]
-fn draws_circles_as_rects_and_ellipses_and_arrows_as_paths_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn draws_circles_as_rects_and_ellipses_and_arrows_as_paths() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-shapes.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1039,10 +1001,8 @@ fn draws_circles_as_rects_and_ellipses_and_arrows_as_paths_when_node_is_availabl
 }
 
 #[test]
-fn a_motion_blur_reaches_rust_as_a_group_of_samples_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn a_motion_blur_reaches_rust_as_a_group_of_samples() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-motion-blur.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1075,10 +1035,8 @@ fn a_motion_blur_reaches_rust_as_a_group_of_samples_when_node_is_available() {
 }
 
 #[test]
-fn reports_audio_clips_per_frame_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn reports_audio_clips_per_frame() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-audio.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1106,10 +1064,8 @@ fn reports_audio_clips_per_frame_when_node_is_available() {
 }
 
 #[test]
-fn batched_audio_graph_matches_full_frame_evaluation_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn batched_audio_graph_matches_full_frame_evaluation() {
+    let (node, cli_script, package_root) = live_react_runtime();
     for fixture in [
         "examples/title.tsx",
         "examples/with-audio.tsx",
@@ -1157,10 +1113,8 @@ fn batched_audio_graph_matches_full_frame_evaluation_when_node_is_available() {
 }
 
 #[test]
-fn collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn collect_audio_graph_sweeps_every_frame_into_one_graph() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     // Bare <Audio>: reported by all 30 frames, merged into a single clip.
     let entry = package_root.join("examples/with-audio.tsx");
@@ -1192,10 +1146,8 @@ fn collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available(
 }
 
 #[test]
-fn shifts_media_inside_sequences_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn shifts_media_inside_sequences() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-sequence.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1247,10 +1199,8 @@ fn shifts_media_inside_sequences_when_node_is_available() {
 }
 
 #[test]
-fn collects_conditionally_rendered_audio_with_keyframed_volume_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn collects_conditionally_rendered_audio_with_keyframed_volume() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-conditional-audio.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1276,10 +1226,8 @@ fn collects_conditionally_rendered_audio_with_keyframed_volume_when_node_is_avai
 }
 
 #[test]
-fn transition_series_overlaps_scenes_and_cross_fades_their_audio_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn transition_series_overlaps_scenes_and_cross_fades_their_audio() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     // Five 60-frame cards joined by a cut and three 20-frame transitions.
     let entry = package_root.join("examples/with-transition-series.tsx");
@@ -1325,10 +1273,8 @@ fn transition_series_overlaps_scenes_and_cross_fades_their_audio_when_node_is_av
 }
 
 #[test]
-fn frame_keyframes_fade_audio_in_the_collected_graph_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn frame_keyframes_fade_audio_in_the_collected_graph() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-volume-fade.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1367,10 +1313,8 @@ fn frame_keyframes_fade_audio_in_the_collected_graph_when_node_is_available() {
 }
 
 #[test]
-fn audio_fades_follow_the_sequence_in_the_collected_graph_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn audio_fades_follow_the_sequence_in_the_collected_graph() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-audio-fade.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1394,10 +1338,8 @@ fn audio_fades_follow_the_sequence_in_the_collected_graph_when_node_is_available
 }
 
 #[test]
-fn resolves_individual_components_through_the_bridge_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn resolves_individual_components_through_the_bridge() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-registered-component.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1435,10 +1377,8 @@ fn resolves_individual_components_through_the_bridge_when_node_is_available() {
 }
 
 #[test]
-fn reports_a_declared_project_property_schema_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn reports_a_declared_project_property_schema() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-properties.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1505,10 +1445,8 @@ fn reports_a_declared_project_property_schema_when_node_is_available() {
 }
 
 #[test]
-fn passes_project_property_inputs_over_the_provider_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn passes_project_property_inputs_over_the_provider() {
+    let (node, cli_script, package_root) = live_react_runtime();
     let entry = package_root.join("examples/with-properties.tsx");
     let text_of = |bridge: &mut ReactBridge| {
         let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
@@ -1552,10 +1490,8 @@ fn passes_project_property_inputs_over_the_provider_when_node_is_available() {
 }
 
 #[test]
-fn resolves_components_against_the_requested_time_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn resolves_components_against_the_requested_time() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-frame-component.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1595,10 +1531,8 @@ fn resolves_components_against_the_requested_time_when_node_is_available() {
 }
 
 #[test]
-fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn embeds_pre_evaluated_project_layers_into_project_timeline() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-project.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1639,10 +1573,8 @@ fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_availa
 }
 
 #[test]
-fn resolves_a_registered_component_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn resolves_a_registered_component() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-registered-component.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1717,10 +1649,8 @@ fn resolves_a_registered_component_when_node_is_available() {
 }
 
 #[test]
-fn reports_a_registered_components_property_schema_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn reports_a_registered_components_property_schema() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-registered-component.tsx");
     let bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1757,10 +1687,8 @@ fn reports_a_registered_components_property_schema_when_node_is_available() {
 }
 
 #[test]
-fn embeds_per_track_layers_for_use_project_track_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn embeds_per_track_layers_for_use_project_track() {
+    let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-project-track.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1844,9 +1772,7 @@ fn assert_exit_shows(error: &ReactBridgeError, lines: &[&str]) {
 
 #[test]
 fn a_runtime_that_dies_before_the_handshake_shows_its_last_output() {
-    let Some(node) = node() else {
-        return;
-    };
+    let node = node();
     let (dir, runtime) = fake_runtime(
         "stderr-handshake",
         "console.error('Error: first line');\nconsole.error('second line');\nprocess.exitCode = 3;\n",
@@ -1860,9 +1786,7 @@ fn a_runtime_that_dies_before_the_handshake_shows_its_last_output() {
 
 #[test]
 fn a_runtime_that_dies_on_a_request_shows_its_last_output() {
-    let Some(node) = node() else {
-        return;
-    };
+    let node = node();
     // Sends a valid handshake, then dies on the first request.
     let (dir, runtime) = fake_runtime(
         "stderr-request",
@@ -1889,9 +1813,7 @@ process.stdin.once('data', () => {{
 
 #[test]
 fn a_runtime_that_dies_while_measuring_text_shows_its_last_output() {
-    let Some(node) = node() else {
-        return;
-    };
+    let node = node();
     // Asks for a text measurement and exits without waiting for the answer,
     // so the bridge usually finds the pipe closed when it replies.
     let (dir, runtime) = fake_runtime(
@@ -1926,27 +1848,16 @@ send({
   config: { width: 16, height: 9, frameRate: { numerator: 30, denominator: 1 }, durationInFrames: 30 },
 });";
 
-/// Reports a live Node.js test skipped, or fails it when
-/// `CELESTA_REQUIRE_RUNTIME=1` says `node` and the built runtime are there.
-fn skip_without_runtime(reason: &str) {
-    assert!(
-        std::env::var("CELESTA_REQUIRE_RUNTIME").as_deref() != Ok("1"),
-        "live Node.js tests require Node.js and the built runtime: {reason}"
-    );
-    eprintln!("skipping live Node.js test: {reason}");
+/// `node`, from `CELESTA_NODE` or `PATH`; without it the test fails.
+fn node() -> PathBuf {
+    find_executable("CELESTA_NODE", "node")
+        .expect("the runtime tests need Node.js: node was not found on PATH or at CELESTA_NODE")
 }
 
-fn node() -> Option<PathBuf> {
-    let node = find_executable("CELESTA_NODE", "node");
-    if node.is_none() {
-        skip_without_runtime("node was not found");
-    }
-    node
-}
-
-fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
-    let node = node()?;
-
+/// `node`, the built `packages/cli/dist/cli.js`, and `packages/cli`; a
+/// runtime that is not built fails the test, naming the file it lacks.
+fn live_react_runtime() -> (PathBuf, PathBuf, PathBuf) {
+    let node = node();
     let package_root = cli_package_root();
     let cli_script = package_root.join("dist/cli.js");
     let node_modules = package_root.join("node_modules");
@@ -1955,13 +1866,13 @@ fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
     } else if !cli_script.is_file() {
         cli_script.clone()
     } else {
-        return Some((node, cli_script, package_root));
+        return (node, cli_script, package_root);
     };
-    skip_without_runtime(&format!(
-        "run `pnpm install && pnpm run build:runtime` first ({} is missing)",
+    panic!(
+        "the runtime tests need the built React runtime: run \
+         `pnpm install && pnpm run build:runtime` first ({} is missing)",
         missing.display()
-    ));
-    None
+    );
 }
 
 fn cli_package_root() -> PathBuf {
@@ -2009,10 +1920,8 @@ fn drawn_layers(layers: &[Layer]) -> Vec<Layer> {
 }
 
 #[test]
-fn static_subtrees_expand_to_the_inline_scene_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn static_subtrees_expand_to_the_inline_scene() {
+    let (node, cli_script, package_root) = live_react_runtime();
     let examples = package_root.join("examples");
     let mut cached = Bridge::spawn(&node, &cli_script, examples.join("with-static.tsx")).unwrap();
     let mut inline =
@@ -2032,10 +1941,8 @@ fn static_subtrees_expand_to_the_inline_scene_when_node_is_available() {
 }
 
 #[test]
-fn pipelined_static_frames_match_serial_ones_when_node_is_available() {
-    let Some((node, cli_script, package_root)) = live_react_runtime() else {
-        return;
-    };
+fn pipelined_static_frames_match_serial_ones() {
+    let (node, cli_script, package_root) = live_react_runtime();
     let entry = package_root.join("examples/with-static.tsx");
     let mut serial = Bridge::spawn(&node, &cli_script, &entry).unwrap();
     let mut pipelined = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -2057,10 +1964,8 @@ fn pipelined_static_frames_match_serial_ones_when_node_is_available() {
 }
 
 #[test]
-fn layer_source_names_the_jsx_of_a_layer_when_node_is_available() {
-    let Some((node, cli_script, _)) = live_react_runtime() else {
-        return;
-    };
+fn layer_source_names_the_jsx_of_a_layer() {
+    let (node, cli_script, _) = live_react_runtime();
     let dir = std::env::temp_dir().join(format!("celesta-layer-source-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     // The Rect is on line 3, column 10 of title.tsx.

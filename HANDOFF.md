@@ -89,8 +89,8 @@ Per-task specifications, implementation details, and validation results live in
   declare Node.js >= 18; development and CI use the versions pinned in
   `mise.toml` (Node.js 26, pnpm 12).
 
-Build the React runtime before using `celesta-exporter --react` or the live
-bridge tests:
+Build the React runtime before using `celesta-exporter --react` or running
+the runtime test group (see "Examples and validation"):
 
 ```sh
 pnpm install
@@ -477,14 +477,42 @@ A `plugins/dist/ffmpeg` staged before the `media` role (its manifest says
 `"roles": ["codec"]`) is ignored too; build it again.
 
 Inspect `git status --short` before editing. Use targeted validation while
-iterating; the Rust baseline is:
+iterating. The root workspace's Rust tests come in two groups, by what they
+need to run:
+
+- the unit group, everything `cargo test --workspace` builds, needs nothing
+  but the Rust build;
+- the runtime group, the `runtime` test target of `celesta-react-bridge`,
+  `celesta-exporter`, and `celesta-mcp`, needs Node.js and the built React
+  runtime (`pnpm install && pnpm run build:runtime`). Each of these crates
+  builds the target only with its `runtime-tests` feature, and there a
+  missing `node` or `packages/cli/dist/cli.js` fails the test with what to
+  build.
+
+Run the unit group anywhere, the runtime group once the runtime is built (or
+leave it to CI, which runs both on every system):
 
 ```sh
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace                                            # unit group
+cargo test --workspace --features runtime-tests --test runtime    # runtime group
+cargo test --workspace --features runtime-tests                   # both, as CI
+cargo clippy --workspace --all-targets --features runtime-tests -- -D warnings
 cargo fmt --all -- --check
 git diff --check
 ```
+
+With nextest, as CI runs them: `cargo nextest run --workspace` (unit),
+`cargo nextest run --workspace --features runtime-tests -E 'binary(runtime)'`
+(runtime), or both with the feature and no filter. Clippy needs the feature
+too: without it, `--all-targets` leaves the runtime targets out without a
+word. The feature changes how those three crates are built, so the first run
+with it, and the first without it, compiles them and the crates that depend on
+them again; both builds then stay in `target/`. A new test that starts `node`
+or reads `packages/cli/dist/cli.js` goes in its crate's `runtime` target (a
+crate without one adds the feature and a `[[test]]` named `runtime` with
+`required-features = ["runtime-tests"]`, and its suite to CI's "Check that
+the runtime group ran"); see
+[`docs/handoff/2026-11-11-test-groups.md`](docs/handoff/2026-11-11-test-groups.md).
 
 The root `cargo test --workspace` leaves out the first-party plugins'
 workspace; after changing it, a plugin, or the plugin build script, run
@@ -522,12 +550,13 @@ pnpm run build:runtime
 pnpm --dir packages/react test
 ```
 
-Live bridge tests require Node and built React runtime dependencies/output;
-without them the react-bridge, exporter, and MCP integration tests that spawn
-`packages/cli/dist/cli.js` skip, and `CELESTA_REQUIRE_RUNTIME=1` makes that a
-failure (CI sets it on every system, which builds the runtime first). Check
-for skipped integration tests. GPU tests need an available backend, and
-native UI checks need a display and suitable platform permissions. The Media
+Tests that need something of the machine rather than of the build print a
+line starting with `skipping` and pass without it, in either group: a GPU
+adapter, or a GPU format such as `yuv420p` or half floats, a color emoji
+font, symbolic links. GPU tests need an available backend, and
+`CELESTA_REQUIRE_GPU=1` makes a missing adapter a failure (CI sets it on
+Linux, which has lavapipe); CI lists the skipped tests in each job's
+summary. Native UI checks need a display and suitable platform permissions. The Media
 Foundation plugin's tests skip, through one gate (`src/mf/gate.rs`), when
 Windows lacks Media Foundation or a component;
 `CELESTA_REQUIRE_MEDIA_FOUNDATION=1` makes that a failure, as

@@ -113,7 +113,8 @@ jobs:
         with:
           tool: nextest@0.9.146
 
-      # celesta-react-bridge and celesta-exporter tests spawn the compiled
+      # The runtime test group (the `runtime` targets of celesta-react-bridge,
+      # celesta-exporter, and celesta-mcp) spawns the compiled
       # packages/cli/dist/cli.js, so build the CLI and every package it serves first.
       # build:runtime runs codegen as well; running it first adds --locked and
       # its timings, and leaves the second run only the tests to repeat.
@@ -158,7 +159,9 @@ jobs:
       - name: Build
         # Compile normal binaries and test targets together so Cargo can schedule
         # them in parallel; the Test step reuses the compiled test targets.
-        run: cargo build --workspace --all-targets --locked --timings
+        # The Test step's features, or it would build the crates the feature
+        # changes (react-bridge, exporter, mcp, and what depends on them) again.
+        run: cargo build --workspace --all-targets --features runtime-tests --locked --timings
 
       # A failed type check fails the job here, before the Rust tests start.
       - wait: typecheck
@@ -168,17 +171,34 @@ jobs:
       # crates/gpu-renderer/src/tests.rs), so under `cargo test` they ran one by
       # one. nextest skips doctests; the workspace has none.
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
-      # Every system built the React runtime above, so a test that cannot
-      # find node or packages/cli/dist/cli.js fails rather than skips.
+      # Every test group runs: the tests that need only the Rust build, and,
+      # with --features runtime-tests, the runtime group, which needs the
+      # React runtime built above (HANDOFF.md, "Examples and validation").
       # The ci profile (.config/nextest.toml) writes a JUnit report that keeps
-      # passing tests' output, where the next step finds self-skipped tests.
+      # passing tests' output, where the next steps find self-skipped tests
+      # and check that the runtime group ran.
       - name: Test
         env:
           CELESTA_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '0' }}
-          CELESTA_REQUIRE_RUNTIME: '1'
-        run: cargo nextest run --workspace --locked --no-fail-fast --profile ci
+        run: cargo nextest run --workspace --features runtime-tests --locked --no-fail-fast --profile ci
 
-      # HANDOFF.md's clippy commands. Linux only: it finishes minutes before
+      # Without --features runtime-tests the runtime targets are not built,
+      # and the Test step passes without them; so would a crate whose target
+      # lost its name or its required feature. Each runtime target is a test
+      # suite named <crate>::runtime in the report; fail if one is missing.
+      # A crate that adds a runtime target adds its suite here.
+      - name: Check that the runtime group ran
+        run: |
+          for suite in celesta-react-bridge::runtime celesta-exporter::runtime celesta-mcp::runtime; do
+            if ! grep -q "<testsuite name=\"$suite\"" target/nextest/ci/junit.xml; then
+              echo "::error::$suite did not run: the Test step needs --features runtime-tests."
+              exit 1
+            fi
+          done
+
+      # HANDOFF.md's clippy commands; --features runtime-tests lints the
+      # runtime targets too, which clippy otherwise leaves out without a
+      # word. Linux only: it finishes minutes before
       # Windows, so the lints add no time to the workflow, and little code is
       # behind a cfg for one OS. Clippy checks rather than builds, so it adds
       # check metadata for the dependencies to target/, which main's
@@ -186,7 +206,7 @@ jobs:
       - name: Clippy
         if: runner.os == 'Linux'
         run: |
-          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo clippy --workspace --all-targets --features runtime-tests --locked -- -D warnings
           cargo clippy -p celesta-composition -p celesta-project --all-targets --features codegen --locked -- -D warnings
 
       # A test that cannot run here passes after printing "skipping ..." or

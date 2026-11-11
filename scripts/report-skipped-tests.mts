@@ -1,8 +1,11 @@
 // Report the tests that skipped themselves in a nextest JUnit report or in a
 // `cargo test -- --show-output` log. The standard test runner cannot mark a
-// test skipped, so a test that cannot run here (no GPU adapter, no Node.js, no
-// color emoji font, ...) prints a line starting with "skipping" or "skipped"
-// and passes.
+// test skipped, so a test that cannot run on this machine (no GPU adapter, a
+// GPU without a format, no color emoji font, no symbolic links, ...) prints a
+// line starting with "skipping" or "skipped" and passes. A missing build
+// prerequisite is not one of them: the tests that need the React runtime are
+// a test group of their own, which fails without it (HANDOFF.md, "Examples
+// and validation").
 // nextest keeps a passing test's output only in the report
 // (`store-success-output` in .config/nextest.toml); `cargo test` prints it
 // with `--show-output` (the plugin job, whose `harness = false` targets
