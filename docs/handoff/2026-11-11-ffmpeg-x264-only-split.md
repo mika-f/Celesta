@@ -189,3 +189,42 @@ Not run here:
   manual CI run (`workflow_dispatch`), as the PR did before.
 - Windows CI: it cannot pass until the owner runs `ffmpeg-windows.yml` and
   the four pins in `setup-ffmpeg` are filled from its job summaries.
+
+## Review follow-up
+
+From the brief's author, after the first push:
+
+- **One `distribution` format.** `scripts/package-media-plugins.py` wrote the
+  whole of `/etc/os-release` into `debian-packages.json`'s `distribution`.
+  It now writes `ID VERSION_ID` (such as `ubuntu 26.04`) through
+  `distribution_release`, as `packaging/linux/record-codec-libraries.sh`
+  does, and packaging fails when either field is missing (the existing
+  "incomplete provenance fails" rule); the script refuses the same with
+  `${ID:?}`/`${VERSION_ID:?}`. No `VERSION_CODENAME` field: `ID VERSION_ID`
+  names the release, and both writers agree. New tests:
+  `test_distribution_is_the_os_release_id_and_version`,
+  `test_a_distribution_without_id_or_version_fails`;
+  `packaging/plugins/README.md` describes the field.
+- **The Docker MP4 example** in the export guide (en and ja) and in
+  `packaging/linux/README.md` was checked against the code, not run (no
+  Docker build here):
+  - `--plugin-dir` folders are `PluginSource::Explicit`, which
+    `needs_allowance()` answers `false` for (`crates/plugin-host/src/approval.rs`):
+    no approval step, and no `--allow-plugin` needed.
+  - Explicit sources are not permission-checked: `PluginSource::is_checked()`
+    is `false` for them, so neither `unsafe_plugin` nor the folder check in
+    `discover_in` runs `unsafe_reason` (group/other-writable or foreign-owned
+    files). A read-only mount and an extracted ZIP's modes and owner pass.
+  - `discover_in` takes a folder with `celesta-plugin.json` as one plugin,
+    or else each subfolder that has one, so `codecs/ffmpeg-x264/…` mounted at
+    `/plugins` is found as the `ffmpeg-x264` plugin.
+  - Nothing is written into the plugin folder at run time; frames go through
+    shared memory or pipes.
+  - The ZIP is built on CI's Ubuntu runner, older than the image's 26.04,
+    and carries libx264 with a plugin-relative RPATH.
+
+Checks: `python3 -B -m unittest scripts/test_package_macos.py
+scripts/test_package_media_plugins.py` (18 passed); the record script run
+against a libavcodec linking libopus and libvpx wrote
+`"distribution": "ubuntu 24.04"` and valid JSON. The guides did not change in
+this round, so the website checks were not rerun.

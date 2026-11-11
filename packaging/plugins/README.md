@@ -48,7 +48,9 @@ choose the downloaded encoder.
 Linux uses static FFmpeg and bundles the dynamically linked libx264 with a
 plugin-relative RPATH; glibc and the platform runtime remain system provided.
 `licenses/native/debian-packages.json` records exact binary and source-package
-versions, architecture, and distribution, including downstream revisions.
+versions and architecture, including downstream revisions, and the
+distribution as os-release's `ID VERSION_ID` (such as `ubuntu 26.04`), the same
+format the Linux image records for the standard plugin.
 Linux release archives are built on the workflow's Ubuntu runner and require a
 compatible glibc. The supported release targets are macOS arm64, Windows x64,
 and Linux x64.

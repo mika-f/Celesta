@@ -23,6 +23,8 @@ if printf '%s\n' "$listing" | grep -q 'not found'; then
 fi
 mkdir -p "$native"
 . /etc/os-release
+# `ID VERSION_ID`, such as `ubuntu 26.04`, as package-media-plugins.py writes it.
+: "${ID:?os-release lacks ID}" "${VERSION_ID:?os-release lacks VERSION_ID}"
 entries=''
 for library in "$@"; do
   path="$(printf '%s\n' "$listing" | awk -v name="$library" 'index($1, name) == 1 { print $3; exit }')"

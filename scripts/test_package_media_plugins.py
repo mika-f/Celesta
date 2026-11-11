@@ -29,6 +29,16 @@ class PluginArchives(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Incomplete native source provenance"):
                 packaging.debian_package("libx264.so.164", "/codec")
 
+    def test_distribution_is_the_os_release_id_and_version(self):
+        self.assertEqual(packaging.distribution_release(
+            'PRETTY_NAME="Ubuntu 26.04 LTS"\nNAME="Ubuntu"\nVERSION_ID="26.04"\nID=ubuntu\nID_LIKE=debian\n'),
+            "ubuntu 26.04")
+
+    def test_a_distribution_without_id_or_version_fails(self):
+        for text in ('VERSION_ID="26.04"\n', "ID=ubuntu\n", 'ID=\nVERSION_ID=""\n'):
+            with self.assertRaisesRegex(RuntimeError, "Incomplete native source provenance"):
+                packaging.distribution_release(text)
+
     def test_ambiguous_native_package_ownership_fails(self):
         with patch.object(packaging, "run", return_value="one, two: /codec"):
             with self.assertRaisesRegex(RuntimeError, "Ambiguous native package owner"):

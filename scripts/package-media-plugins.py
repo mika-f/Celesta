@@ -74,6 +74,19 @@ def debian_package(library, source):
                 source_package=source_package, source_version=source_version)
 
 
+def distribution_release(os_release):
+    """`ID VERSION_ID` from os-release text, such as `ubuntu 26.04`: the same
+    `distribution` the Linux image's record-codec-libraries.sh writes."""
+    fields = {}
+    for line in os_release.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            fields[key.strip()] = value.strip().strip("\"'")
+    if not fields.get("ID") or not fields.get("VERSION_ID"):
+        raise RuntimeError("Incomplete native source provenance: os-release lacks ID or VERSION_ID")
+    return f"{fields['ID']} {fields['VERSION_ID']}"
+
+
 def linux_dependencies(plugin, program, variant):
     # FFmpeg itself is static on Linux; only the external codec library may
     # need a shared library. glibc and the platform runtime stay system-provided.
@@ -96,7 +109,7 @@ def linux_dependencies(plugin, program, variant):
     native = plugin / "licenses/native"
     native.mkdir(parents=True, exist_ok=True)
     (native / "debian-packages.json").write_text(json.dumps({
-        "distribution": Path("/etc/os-release").read_text(), "packages": provenance,
+        "distribution": distribution_release(Path("/etc/os-release").read_text()), "packages": provenance,
         "source_instructions": "Retrieve the exact source_package=source_version from this distribution's source archive, including its Debian/Ubuntu patch set; request the matching materials through the bundled source notice.",
     }, indent=2) + "\n")
     if (plugin / "lib").exists():
