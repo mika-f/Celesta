@@ -1249,6 +1249,18 @@ mod tests {
             assert_eq!(listed[0].media.video_encoders.len(), 3);
             assert_eq!(listed[0].media.audio_encoders.len(), 3);
             assert_eq!(listed[0].media.muxers.len(), 3);
+            // Without a `name` the display name is the id.
+            assert_eq!(listed[0].name, "ffmpeg");
+
+            let named = tempfile::tempdir().unwrap();
+            let printed = serde_json::json!({
+                "id": "ffmpeg", "name": "FFmpeg", "version": "0.10.0", "roles": ["media"],
+                "media": spec_media(),
+            });
+            let (_, executable) =
+                fake_sibling(named.path(), &format!("printf '%s\\n' '{printed}'"));
+            let listed = InstalledPlugins::default().media_with_sibling(Some(&executable));
+            assert_eq!(listed[0].name, "FFmpeg");
         }
 
         #[test]

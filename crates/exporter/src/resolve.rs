@@ -1753,6 +1753,11 @@ mod tests {
             "video": { "component": "b/x264", "options": { "crf": 99, "speed": 1 } } }]));
         let resolved = resolve_with(&registry, &named_preset("old"), "film.mp4", &presets).unwrap();
         assert_eq!(resolved.video.settings["crf"], num(18.0));
+        assert!(
+            matches!(&resolved.warnings[0], ResolveWarning::StaleValue { label, .. } if label == "CRF"),
+            "{:?}",
+            resolved.warnings
+        );
         assert_eq!(
             texts(&resolved.warnings),
             [
@@ -1840,6 +1845,17 @@ mod tests {
         let resolved =
             resolve_with(&registry, &named_preset("stale"), "film.mp4", &presets).unwrap();
         assert_eq!(resolved.muxer.reference, reference("b/mp4"));
+        assert!(
+            matches!(
+                &resolved.warnings[..],
+                [ResolveWarning::Unavailable {
+                    kind: ComponentKind::Muxer,
+                    ..
+                }]
+            ),
+            "{:?}",
+            resolved.warnings
+        );
         assert_eq!(
             texts(&resolved.warnings),
             ["preset `stale`: b/x264 is unavailable (not a muxer); using the default instead"]
