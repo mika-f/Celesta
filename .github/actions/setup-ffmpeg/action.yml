@@ -37,14 +37,12 @@ runs:
       shell: pwsh
       env:
         # The versions and SHA-256s that ffmpeg-windows.yml reports in its job
-        # summary; update each pair after publishing.
-        # WAITING FOR THE OWNER: neither package is published yet. Run
-        # ffmpeg-windows.yml once and pin what its two jobs report; until
-        # then Windows fails here.
-        STANDARD_PACKAGE_VERSION: ''
-        STANDARD_PACKAGE_SHA256: ''
-        X264_PACKAGE_VERSION: ''
-        X264_PACKAGE_SHA256: ''
+        # summary and log; update each pair after publishing. From run
+        # 43048951525 (vcpkg 2026.07.29, FFmpeg 8.1.2).
+        STANDARD_PACKAGE_VERSION: '8.1.2-2'
+        STANDARD_PACKAGE_SHA256: '04e7fc6c5c3d3ca566bf366347208ca49983717cd548ccd1031daa2c053a8850'
+        X264_PACKAGE_VERSION: '8.1.2-2'
+        X264_PACKAGE_SHA256: '5399fca7ed9fae84d0f2eaa08f16cb6f63b0cb616b3250900cae42486ba37054'
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         # The progress bar slows down large downloads.

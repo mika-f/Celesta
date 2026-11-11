@@ -89,12 +89,12 @@ NuGet packages again.
   are gone, so the open review thread on the Windows cache key no longer
   applies. `packages: read` is back in `ci.yml`, `package-build.yml`, and
   `package.yml`.
-- **Waiting for the owner:** the four pins
-  (`STANDARD_PACKAGE_VERSION`/`_SHA256`, `X264_PACKAGE_VERSION`/`_SHA256`) are
-  empty, and the download step fails with "Pin the … version and SHA-256 that
-  ffmpeg-windows.yml reports" until they are filled. Only the owner can run
-  `ffmpeg-windows.yml` (it publishes to GitHub Packages); its two job
-  summaries print the exact lines to paste.
+- **Pinned.** At the owner's request, `ffmpeg-windows.yml` ran on this
+  branch (run 43048951525) and published `Celesta.FFmpeg.Windows.Standard`
+  and `Celesta.FFmpeg.Windows.X264`, both `8.1.2-2`; their SHA-256s, which
+  the Publish step also prints to the job log, are pinned in `setup-ffmpeg`.
+  Running it needed `actions/checkout` added to the workflow's entry in
+  `.github/workflows/actions.lock`.
 
 ### Packaging and notices
 
@@ -187,8 +187,7 @@ Not run here:
 - The Docker image build, macOS and Windows packaging, and the codec ZIPs:
   no Docker daemon run, macOS, or Windows host here. They need PR CI and a
   manual CI run (`workflow_dispatch`), as the PR did before.
-- Windows CI: it cannot pass until the owner runs `ffmpeg-windows.yml` and
-  the four pins in `setup-ffmpeg` are filled from its job summaries.
+- Windows: nothing ran here; PR CI downloads the pinned packages.
 
 ## Review follow-up
 
