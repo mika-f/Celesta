@@ -206,3 +206,38 @@ Known, not changed:
 
 Checked: `cargo test -p celesta-editor -p celesta-editor-theme` (824 +
 11), clippy `-D warnings`, `cargo fmt --all --check`.
+
+## Review round 4 (hinaloe on `2633345b`)
+
+Fixed, each with a test that failed first:
+
+- How a row came back to the window depended on how it was opened: a
+  row reopened by a click or by Enter on the resting value kept the
+  resting flag and came back closed, one opened by Tab came back open.
+  `RowTyping::request` clears the flag, so a reopened row is typing
+  again and comes back open
+  (`a_row_reopened_by_request_comes_back_to_the_window_open`).
+- The flag could stick: with the window at the back, or before the first
+  frame back in front, the focus moving to another field sends this one
+  neither a focus nor a blur, and a later Tab onto it left it resting.
+  `RowTyping::settle` clears the flag once the field is not the window's
+  focus (gpui keeps that focus while the window is at the back), and
+  `EditorView::render` runs it for every row of both panels
+  (`settle_resting_rows`), before the frame's focus events.
+  `scrub_value::tests::a_row_left_at_the_back_opens_on_tab_once_the_focus_moved_on`
+  activates the window and focuses the other field in one update. The
+  first try, a check on the first frame through `on_next_frame`, could not
+  be tested: gpui's test window draws without running next-frame
+  callbacks.
+- The window-active check had no test through the panels' wiring.
+  `subscribe_text` and `text_input` are generic over the view, the active
+  check moved into `RowTyping::follow(&event, window)` (the panels pass
+  the window), and the `Tabbed` test view uses all of them, so
+  `coming_back_after_enter_…` and `coming_back_after_escape_…` drive the
+  production mapping. Making `follow` ignore the window fails both. A
+  real `EditorView` in a test window needs the GPU renderer and the
+  workers, so the panels' two call sites and the render call are not
+  covered.
+
+Checked: `cargo test -p celesta-editor -p celesta-editor-theme` (828 +
+11), clippy `-D warnings`, `cargo fmt --all --check`.
