@@ -175,7 +175,7 @@ Every frame's scene message is byte-identical to `main`'s for NEBULA (600
 frames), SPECTRA (690, with 114 text measurements) and reel (960). Decoded
 video frames could not be compared: two exports of `main` already differ
 in 455 of NEBULA's 600 frames.
-`pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile_when_node_is_available`
+`pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile`
 checks pipelined evaluation against serial evaluation with text measured
 every frame.
 

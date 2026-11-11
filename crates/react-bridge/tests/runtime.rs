@@ -75,7 +75,7 @@ fn all_layers(layers: &[Layer]) -> Vec<&Layer> {
 }
 
 #[test]
-fn evaluates_the_example_composition_when_node_is_available() {
+fn evaluates_the_example_composition() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/title.tsx");
@@ -97,7 +97,7 @@ fn evaluates_the_example_composition_when_node_is_available() {
 }
 
 #[test]
-fn render_text_metrics_match_loaded_fonts_and_component_preview_when_node_is_available() {
+fn render_text_metrics_match_loaded_fonts_and_component_preview() {
     let (node, cli_script, package_root) = live_react_runtime();
     let entry = package_root.join("examples/with-text-metrics.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -230,7 +230,7 @@ fn render_text_metrics_match_loaded_fonts_and_component_preview_when_node_is_ava
 }
 
 #[test]
-fn pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile_when_node_is_available() {
+fn pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile() {
     let (node, cli_script, package_root) = live_react_runtime();
     // Every frame measures text it has not measured before (`最新 ${frame}`),
     // so Node asks for measurements while evaluating frame N + 1, after it
@@ -261,7 +261,7 @@ fn pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile_when_no
 }
 
 #[test]
-fn text_boxes_fit_their_captions_with_the_renderer_shaping_when_node_is_available() {
+fn text_boxes_fit_their_captions_with_the_renderer_shaping() {
     let (node, cli_script, package_root) = live_react_runtime();
     let entry = package_root.join("examples/with-text-box.tsx");
     let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -373,7 +373,7 @@ fn text_boxes_fit_their_captions_with_the_renderer_shaping_when_node_is_availabl
 }
 
 #[test]
-fn instances_reach_rust_as_columns_when_node_is_available() {
+fn instances_reach_rust_as_columns() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-instances.tsx");
@@ -399,7 +399,7 @@ fn instances_reach_rust_as_columns_when_node_is_available() {
 }
 
 #[test]
-fn prepare_can_preload_media_metadata_when_node_is_available() {
+fn prepare_can_preload_media_metadata() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-media-info.tsx");
@@ -414,7 +414,7 @@ fn prepare_can_preload_media_metadata_when_node_is_available() {
 }
 
 #[test]
-fn audio_spectrum_is_the_same_in_preview_and_export_when_node_is_available() {
+fn audio_spectrum_is_the_same_in_preview_and_export() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-audio-spectrum.tsx");
@@ -469,7 +469,7 @@ fn audio_spectrum_is_the_same_in_preview_and_export_when_node_is_available() {
 }
 
 #[test]
-fn animated_images_report_their_length_and_play_when_node_is_available() {
+fn animated_images_report_their_length_and_play() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-animated-image.tsx");
@@ -498,7 +498,7 @@ fn animated_images_report_their_length_and_play_when_node_is_available() {
 }
 
 #[test]
-fn debug_guides_render_in_component_preview_or_when_asked_when_node_is_available() {
+fn debug_guides_render_in_component_preview_or_when_asked() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-debug.tsx");
@@ -549,7 +549,7 @@ fn debug_guides_render_in_component_preview_or_when_asked_when_node_is_available
 }
 
 #[test]
-fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_available() {
+fn evaluates_a_psd_character_with_one_selected_mouth_layer() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-psd-character.tsx");
@@ -571,7 +571,7 @@ fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_availabl
 }
 
 #[test]
-fn evaluates_a_react_dialogue_as_a_character_and_subtitle_when_node_is_available() {
+fn evaluates_a_react_dialogue_as_a_character_and_subtitle() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-dialogue.tsx");
@@ -593,7 +593,7 @@ fn evaluates_a_react_dialogue_as_a_character_and_subtitle_when_node_is_available
 }
 
 #[test]
-fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
+fn resolves_a_psd_portrait_preset_into_visible_layers() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-psd-preset.tsx");
@@ -617,7 +617,7 @@ fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
 }
 
 #[test]
-fn a_runtime_stop_ends_a_prepare_that_never_resolves_when_node_is_available() {
+fn a_runtime_stop_ends_a_prepare_that_never_resolves() {
     let (node, cli_script, package_root) = live_react_runtime();
     let dir = tempfile::tempdir_in(&package_root).unwrap();
     let entry = dir.path().join("hang.tsx");
@@ -674,7 +674,7 @@ fn a_runtime_stop_ends_a_prepare_that_never_resolves_when_node_is_available() {
 }
 
 #[test]
-fn a_stray_stdout_write_is_a_protocol_error_when_node_is_available() {
+fn a_stray_stdout_write_is_a_protocol_error() {
     let (node, cli_script, _) = live_react_runtime();
     let dir = tempfile::tempdir().unwrap();
     let entry = dir.path().join("chatty.tsx");
@@ -696,7 +696,7 @@ fn a_stray_stdout_write_is_a_protocol_error_when_node_is_available() {
 }
 
 #[test]
-fn reports_imports_of_the_legacy_scope_when_node_is_available() {
+fn reports_imports_of_the_legacy_scope() {
     let (node, cli_script, _) = live_react_runtime();
 
     let dir = tempfile::tempdir().unwrap();
@@ -725,7 +725,7 @@ fn reports_imports_of_the_legacy_scope_when_node_is_available() {
 }
 
 #[test]
-fn reports_the_voice_folder_prepare_read_as_dependencies_when_node_is_available() {
+fn reports_the_voice_folder_prepare_read_as_dependencies() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-voice-folder.tsx");
@@ -766,7 +766,7 @@ fn reports_the_voice_folder_prepare_read_as_dependencies_when_node_is_available(
 }
 
 #[test]
-fn reports_composition_chapters_in_order_when_node_is_available() {
+fn reports_composition_chapters_in_order() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-chapters.tsx");
@@ -802,7 +802,7 @@ fn reports_composition_chapters_in_order_when_node_is_available() {
 }
 
 #[test]
-fn generates_a_lip_sync_mouth_track_from_a_wav_when_node_is_available() {
+fn generates_a_lip_sync_mouth_track_from_a_wav() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-lip-sync.tsx");
@@ -833,7 +833,7 @@ fn generates_a_lip_sync_mouth_track_from_a_wav_when_node_is_available() {
 }
 
 #[test]
-fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
+fn computes_video_timing_from_the_composition_clock() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-video.tsx");
@@ -854,7 +854,7 @@ fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
 }
 
 #[test]
-fn evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available() {
+fn evaluates_a_rect_with_fill_stroke_and_corner_radius() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-rect.tsx");
@@ -892,7 +892,7 @@ fn evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available() 
 }
 
 #[test]
-fn interpolates_rect_text_and_gradient_stop_colors_when_node_is_available() {
+fn interpolates_rect_text_and_gradient_stop_colors() {
     use celesta_composition::{GradientStop, Paint};
 
     let (node, cli_script, package_root) = live_react_runtime();
@@ -953,7 +953,7 @@ fn interpolates_rect_text_and_gradient_stop_colors_when_node_is_available() {
 }
 
 #[test]
-fn draws_circles_as_rects_and_ellipses_and_arrows_as_paths_when_node_is_available() {
+fn draws_circles_as_rects_and_ellipses_and_arrows_as_paths() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-shapes.tsx");
@@ -1001,7 +1001,7 @@ fn draws_circles_as_rects_and_ellipses_and_arrows_as_paths_when_node_is_availabl
 }
 
 #[test]
-fn a_motion_blur_reaches_rust_as_a_group_of_samples_when_node_is_available() {
+fn a_motion_blur_reaches_rust_as_a_group_of_samples() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-motion-blur.tsx");
@@ -1035,7 +1035,7 @@ fn a_motion_blur_reaches_rust_as_a_group_of_samples_when_node_is_available() {
 }
 
 #[test]
-fn reports_audio_clips_per_frame_when_node_is_available() {
+fn reports_audio_clips_per_frame() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-audio.tsx");
@@ -1064,7 +1064,7 @@ fn reports_audio_clips_per_frame_when_node_is_available() {
 }
 
 #[test]
-fn batched_audio_graph_matches_full_frame_evaluation_when_node_is_available() {
+fn batched_audio_graph_matches_full_frame_evaluation() {
     let (node, cli_script, package_root) = live_react_runtime();
     for fixture in [
         "examples/title.tsx",
@@ -1113,7 +1113,7 @@ fn batched_audio_graph_matches_full_frame_evaluation_when_node_is_available() {
 }
 
 #[test]
-fn collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available() {
+fn collect_audio_graph_sweeps_every_frame_into_one_graph() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     // Bare <Audio>: reported by all 30 frames, merged into a single clip.
@@ -1146,7 +1146,7 @@ fn collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available(
 }
 
 #[test]
-fn shifts_media_inside_sequences_when_node_is_available() {
+fn shifts_media_inside_sequences() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-sequence.tsx");
@@ -1199,7 +1199,7 @@ fn shifts_media_inside_sequences_when_node_is_available() {
 }
 
 #[test]
-fn collects_conditionally_rendered_audio_with_keyframed_volume_when_node_is_available() {
+fn collects_conditionally_rendered_audio_with_keyframed_volume() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-conditional-audio.tsx");
@@ -1226,7 +1226,7 @@ fn collects_conditionally_rendered_audio_with_keyframed_volume_when_node_is_avai
 }
 
 #[test]
-fn transition_series_overlaps_scenes_and_cross_fades_their_audio_when_node_is_available() {
+fn transition_series_overlaps_scenes_and_cross_fades_their_audio() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     // Five 60-frame cards joined by a cut and three 20-frame transitions.
@@ -1273,7 +1273,7 @@ fn transition_series_overlaps_scenes_and_cross_fades_their_audio_when_node_is_av
 }
 
 #[test]
-fn frame_keyframes_fade_audio_in_the_collected_graph_when_node_is_available() {
+fn frame_keyframes_fade_audio_in_the_collected_graph() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-volume-fade.tsx");
@@ -1313,7 +1313,7 @@ fn frame_keyframes_fade_audio_in_the_collected_graph_when_node_is_available() {
 }
 
 #[test]
-fn audio_fades_follow_the_sequence_in_the_collected_graph_when_node_is_available() {
+fn audio_fades_follow_the_sequence_in_the_collected_graph() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-audio-fade.tsx");
@@ -1338,7 +1338,7 @@ fn audio_fades_follow_the_sequence_in_the_collected_graph_when_node_is_available
 }
 
 #[test]
-fn resolves_individual_components_through_the_bridge_when_node_is_available() {
+fn resolves_individual_components_through_the_bridge() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-registered-component.tsx");
@@ -1377,7 +1377,7 @@ fn resolves_individual_components_through_the_bridge_when_node_is_available() {
 }
 
 #[test]
-fn reports_a_declared_project_property_schema_when_node_is_available() {
+fn reports_a_declared_project_property_schema() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-properties.tsx");
@@ -1445,7 +1445,7 @@ fn reports_a_declared_project_property_schema_when_node_is_available() {
 }
 
 #[test]
-fn passes_project_property_inputs_over_the_provider_when_node_is_available() {
+fn passes_project_property_inputs_over_the_provider() {
     let (node, cli_script, package_root) = live_react_runtime();
     let entry = package_root.join("examples/with-properties.tsx");
     let text_of = |bridge: &mut ReactBridge| {
@@ -1490,7 +1490,7 @@ fn passes_project_property_inputs_over_the_provider_when_node_is_available() {
 }
 
 #[test]
-fn resolves_components_against_the_requested_time_when_node_is_available() {
+fn resolves_components_against_the_requested_time() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-frame-component.tsx");
@@ -1531,7 +1531,7 @@ fn resolves_components_against_the_requested_time_when_node_is_available() {
 }
 
 #[test]
-fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_available() {
+fn embeds_pre_evaluated_project_layers_into_project_timeline() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-project.tsx");
@@ -1573,7 +1573,7 @@ fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_availa
 }
 
 #[test]
-fn resolves_a_registered_component_when_node_is_available() {
+fn resolves_a_registered_component() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-registered-component.tsx");
@@ -1649,7 +1649,7 @@ fn resolves_a_registered_component_when_node_is_available() {
 }
 
 #[test]
-fn reports_a_registered_components_property_schema_when_node_is_available() {
+fn reports_a_registered_components_property_schema() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-registered-component.tsx");
@@ -1687,7 +1687,7 @@ fn reports_a_registered_components_property_schema_when_node_is_available() {
 }
 
 #[test]
-fn embeds_per_track_layers_for_use_project_track_when_node_is_available() {
+fn embeds_per_track_layers_for_use_project_track() {
     let (node, cli_script, package_root) = live_react_runtime();
 
     let entry = package_root.join("examples/with-project-track.tsx");
@@ -1920,7 +1920,7 @@ fn drawn_layers(layers: &[Layer]) -> Vec<Layer> {
 }
 
 #[test]
-fn static_subtrees_expand_to_the_inline_scene_when_node_is_available() {
+fn static_subtrees_expand_to_the_inline_scene() {
     let (node, cli_script, package_root) = live_react_runtime();
     let examples = package_root.join("examples");
     let mut cached = Bridge::spawn(&node, &cli_script, examples.join("with-static.tsx")).unwrap();
@@ -1941,7 +1941,7 @@ fn static_subtrees_expand_to_the_inline_scene_when_node_is_available() {
 }
 
 #[test]
-fn pipelined_static_frames_match_serial_ones_when_node_is_available() {
+fn pipelined_static_frames_match_serial_ones() {
     let (node, cli_script, package_root) = live_react_runtime();
     let entry = package_root.join("examples/with-static.tsx");
     let mut serial = Bridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -1964,7 +1964,7 @@ fn pipelined_static_frames_match_serial_ones_when_node_is_available() {
 }
 
 #[test]
-fn layer_source_names_the_jsx_of_a_layer_when_node_is_available() {
+fn layer_source_names_the_jsx_of_a_layer() {
     let (node, cli_script, _) = live_react_runtime();
     let dir = std::env::temp_dir().join(format!("celesta-layer-source-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
