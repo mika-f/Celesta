@@ -55,7 +55,7 @@ runs:
         $roots = @{}
         $versions = @()
         foreach ($package in @(
-            @{ Variant = 'Standard'; Version = $env:STANDARD_PACKAGE_VERSION; Sha256 = $env:STANDARD_PACKAGE_SHA256; Notice = 'FFMPEG-SOURCE.md'; Ports = @('ffmpeg', 'opus', 'libvpx') },
+            @{ Variant = 'Standard'; Version = $env:STANDARD_PACKAGE_VERSION; Sha256 = $env:STANDARD_PACKAGE_SHA256; Notice = 'FFMPEG-SOURCE.md'; Ports = @('ffmpeg', 'zlib', 'opus', 'libvpx') },
             @{ Variant = 'X264'; Version = $env:X264_PACKAGE_VERSION; Sha256 = $env:X264_PACKAGE_SHA256; Notice = 'GPL-SOURCE-OFFER.md'; Ports = @('ffmpeg', 'x264') })) {
           $id = "celesta.ffmpeg.windows.$($package.Variant.ToLowerInvariant())"
           if (-not $package.Version -or -not $package.Sha256) {
