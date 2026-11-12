@@ -85,12 +85,21 @@ fn manifest() -> MediaManifest {
     manifest
 }
 
+/// The display name `plugin.json` gives the plugin.
+fn plugin_name() -> String {
+    let plugin: serde_json::Value = serde_json::from_str(PLUGIN_JSON).expect("plugin.json is JSON");
+    plugin["name"]
+        .as_str()
+        .expect("plugin.json names the plugin")
+        .to_owned()
+}
+
 /// The plugin as a media plugin made in this process: bundled, with the
 /// components its manifest declares.
 pub fn registered() -> RegisteredPlugin {
     RegisteredPlugin {
         id: PLUGIN_ID.to_owned(),
-        name: PLUGIN_ID.to_owned(),
+        name: plugin_name(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         origin: MediaOrigin::Bundled,
         directory: PathBuf::new(),
@@ -311,6 +320,7 @@ mod tests {
     fn registered_declares_the_manifest() {
         let plugin = registered();
         assert_eq!(plugin.id, PLUGIN_ID);
+        assert_eq!(plugin.name, "AVFoundation");
         assert_eq!(plugin.origin, MediaOrigin::Bundled);
         assert_ne!(plugin.media, MediaManifest::default());
         assert_eq!(plugin.media, manifest());

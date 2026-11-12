@@ -33,10 +33,13 @@ describe('pluginManifest', () => {
     expect(unnamed).not.toHaveProperty('name');
   });
 
-  it('rejects a display name that is not a non-empty string', () => {
+  it('rejects a display name that is not a string with more than blanks in it', () => {
     const source = (name: unknown) => ({ id: 'vrm', name, version: '0.1.0', module: 'js/index.ts' }) as PluginSource;
-    expect(() => checkPluginSource(source(''), sourcePath)).toThrow(`${sourcePath}: name must be a non-empty string`);
-    expect(() => checkPluginSource(source(7), sourcePath)).toThrow(`${sourcePath}: name must be a non-empty string`);
+    for (const name of ['', '   ', 7]) {
+      expect(() => checkPluginSource(source(name), sourcePath)).toThrow(
+        `${sourcePath}: name must be a string with more than blanks in it`,
+      );
+    }
   });
 
   it('keeps protocol 1 for content', () => {

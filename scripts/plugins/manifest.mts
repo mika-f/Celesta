@@ -104,8 +104,8 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
     throw new Error(`${sourcePath}: the id "builtin" is reserved for the components Celesta has built in`);
   }
   const name: unknown = source.name;
-  if (name !== undefined && (typeof name !== 'string' || name === '')) {
-    throw new Error(`${sourcePath}: name must be a non-empty string`);
+  if (name !== undefined && (typeof name !== 'string' || name.trim() === '')) {
+    throw new Error(`${sourcePath}: name must be a string with more than blanks in it`);
   }
   if (source.roles?.includes('content') && source.roles.includes('media')) {
     throw new Error(`${sourcePath}: a plugin is either content or media`);

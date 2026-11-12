@@ -153,10 +153,16 @@ fn content_roles() -> Vec<PluginRole> {
     vec![PluginRole::Content]
 }
 
+/// A plugin's display name: its `name`, else (absent, or only blanks,
+/// which would label its components with nothing) its `id`.
+pub(crate) fn display_name<'a>(name: Option<&'a str>, id: &'a str) -> &'a str {
+    name.filter(|name| !name.trim().is_empty()).unwrap_or(id)
+}
+
 impl Manifest {
-    /// Its `name`, else its `id`.
+    /// Its `name`, else its `id` (see [`display_name`]).
     pub fn display_name(&self) -> &str {
-        self.name.as_deref().unwrap_or(&self.id)
+        display_name(self.name.as_deref(), &self.id)
     }
 
     /// Its `celesta` range, or why it has none Celesta can read.
@@ -1072,6 +1078,18 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(manifest.name, None);
         assert_eq!(manifest.display_name(), "ffmpeg");
+    }
+
+    #[test]
+    fn a_blank_name_shows_the_id() {
+        for name in ["", "   "] {
+            let manifest: Manifest = serde_json::from_value(serde_json::json!({
+                "id": "ffmpeg", "name": name, "version": "1", "protocol": 1,
+            }))
+            .unwrap();
+            assert_eq!(manifest.display_name(), "ffmpeg", "{name:?}");
+        }
+        assert_eq!(display_name(Some(" FFmpeg"), "ffmpeg"), " FFmpeg");
     }
 
     #[test]

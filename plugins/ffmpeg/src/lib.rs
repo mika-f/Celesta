@@ -130,7 +130,10 @@ fn manifest() -> MediaManifest {
 pub fn registered() -> RegisteredPlugin {
     RegisteredPlugin {
         id: PLUGIN_ID.to_owned(),
-        name: PLUGIN_ID.to_owned(),
+        name: plugin_json()["name"]
+            .as_str()
+            .expect("plugin.json names the plugin")
+            .to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         origin: MediaOrigin::Bundled,
         directory: PathBuf::new(),

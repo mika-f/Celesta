@@ -500,7 +500,7 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
         );
     }
     Ok(MediaPlugin {
-        name: printed.name.unwrap_or_else(|| printed.id.clone()),
+        name: crate::manifest::display_name(printed.name.as_deref(), &printed.id).to_owned(),
         id: printed.id,
         version: printed.version,
         executable: program.to_path_buf(),
