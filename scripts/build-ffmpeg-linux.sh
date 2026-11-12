@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds FFmpeg 8.1.x on Linux or macOS, with separate LGPL/GPL prefixes.
 # FFMPEG_VARIANT=standard (default) or x264 selects the build. standard is
-# LGPL with zlib, libopus, and libvpx (both BSD licensed); x264 is GPL with
+# LGPL with zlib (zlib licence), libopus, and libvpx (both BSD licensed); x264 is GPL with
 # libx264 and serves only the optional ffmpeg-x264 plugin. Each variant
 # needs its own prefix.
 # macOS builds dylibs; Linux builds static archives.
@@ -14,14 +14,14 @@
 #   sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libvpx-dev libopus-dev
 #
 # Run it as a user that can write to PREFIX (for /opt/ffmpeg8-<variant>, use sudo), then
-# build Celesta with PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig".
+# build Celesta with PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" for the standard
+# prefix and FFMPEG_X264_PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" for the x264 one.
 #
 # FFMPEG_VERSION selects the 8.1.x release, and FFMPEG_URL overrides where the
 # source tarball is downloaded from.
 set -euo pipefail
 
 version="${FFMPEG_VERSION:-8.1.3}"
-# Absolute, because configure and make install run from the temporary source tree.
 variant="${FFMPEG_VARIANT:-standard}"
 case "$variant" in
   standard) codec_flags=(--disable-gpl --disable-nonfree --enable-zlib --enable-libopus --enable-libvpx) ;;
@@ -29,6 +29,7 @@ case "$variant" in
   *) echo "FFMPEG_VARIANT must be standard or x264" >&2; exit 2 ;;
 esac
 mkdir -p "${1:-/opt/ffmpeg8-$variant}"
+# Absolute, because configure and make install run from the temporary source tree.
 prefix="$(cd "${1:-/opt/ffmpeg8-$variant}" && pwd)"
 if [[ "$(uname -s)" == Darwin ]]; then
   link_flags=(--enable-shared --disable-static)
@@ -47,11 +48,12 @@ mkdir "$work/src"
 tar -xf "$work/ffmpeg.tar" -C "$work/src" --strip-components=1
 cd "$work/src"
 
-# Celesta links these libraries statically (ez-ffmpeg's `static` feature), so
-# configure's default static build is what it needs; the pkg-config files carry
-# the extra libraries to link. --disable-autodetect keeps the build from
-# picking up whatever optional libraries (X11, ALSA, VA-API, ...) happen to be
-# installed; zlib is enabled explicitly because the PNG decoder needs it.
+# On Linux Celesta links these libraries statically (ez-ffmpeg's `static`
+# feature) and the pkg-config files carry the extra libraries to link; on macOS
+# it links the dylibs built here, which packaging bundles. --disable-autodetect
+# keeps the build from picking up whatever optional libraries (X11, ALSA,
+# VA-API, ...) happen to be installed; the standard variant enables zlib
+# explicitly because the PNG decoder needs it.
 # GPL and LGPL libraries must never be installed into the same prefix.
 ./configure \
   --prefix="$prefix" \

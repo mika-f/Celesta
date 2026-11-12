@@ -71,10 +71,11 @@ export FFMPEG_X264_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/x264/lib/pkgconfi
 :::
 ::::
 
-ローカルビルドではシステムの FFmpeg 8.1.x も利用できます。配布用には
-`scripts/plugins/build.mts` に `--distribution` を指定します。エンコーダーを実際に開き、
-明示的な `--check-license` コマンドで検査してから配置します。標準版の
-配布には LGPL のみの FFmpeg が必要です。配布用の検査は対象 OS・アーキテクチャ上で
+ローカルビルドではシステムの FFmpeg 8.1.x も利用できますが、標準版の FFmpeg には
+libvpx と libopus が含まれている必要があります。`scripts/plugins/build.mts` はネイティブ
+ビルドのたびに `--check-build` でエンコーダーを実際に開き、足りなければ停止します。
+`--distribution` を指定すると、配置の前に `--check-license` でライセンスも検査します。
+標準版の配布には LGPL のみの FFmpeg が必要です。配布用の検査は対象 OS・アーキテクチャ上で
 実行してください。クロスビルドで検査を省略することはできません。
 
 ## 2. ソースを取得

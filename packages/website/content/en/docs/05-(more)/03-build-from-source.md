@@ -74,10 +74,11 @@ The standard build needs `libopus-dev` and `libvpx-dev`; the x264 build needs
 :::
 ::::
 
-Local builds may use a system FFmpeg 8.1.x. To prepare redistribution, pass
-`--distribution` to `scripts/plugins/build.mts`: it opens the encoders and runs
-the explicit `--check-license` command before staging. The standard
-distribution requires LGPL-only FFmpeg. Run distribution validation on the
+Local builds may use a system FFmpeg 8.1.x, but the standard plugin's FFmpeg
+must still include libvpx and libopus: every native build of
+`scripts/plugins/build.mts` opens the encoders with `--check-build` and stops
+when one is missing. Pass `--distribution` to also run the `--check-license`
+command before staging; the standard distribution requires LGPL-only FFmpeg. Run distribution validation on the
 target OS and architecture; cross-compiles cannot bypass the check.
 
 ## 2. Get the source

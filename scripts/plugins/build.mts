@@ -177,8 +177,9 @@ function buildExecutable(source: string, out: string, cargoPackage: string, targ
   const built = join(targetDirectory, ...(values.target ? [values.target] : []), 'release', binary);
   if (!existsSync(built)) fail(`${built} was not built`);
   if (ffmpeg && native) {
-    // Local builds may use a system GPL FFmpeg. Distributions must validate
-    // both the actual encoders and the license before copying the binary.
+    // Every native build opens its encoders (--check-build), so a build whose
+    // FFmpeg lacks one fails here. Only a distribution also checks the
+    // licence (--check-license): local builds may use a system GPL FFmpeg.
     run(built, ['--check-build']);
     if (values.distribution) run(built, ['--check-license']);
   }

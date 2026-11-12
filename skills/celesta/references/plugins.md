@@ -101,28 +101,31 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   decoding. Only `ffmpeg/libx264` moved, to `ffmpeg-x264/libx264` (no alias);
   `ffmpeg/opus` and `ffmpeg/vp9` keep their IDs.
   A source build makes both with
-  `node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264`
+  `node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264`.
   The macOS app also bundles `avfoundation`, and the Windows app
   `mediafoundation`; both use system libraries under MIT/Apache-2.0.
   Include `plugins/avfoundation plugins/mediafoundation` in source builds;
-  each is skipped on other systems. Set
-  `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
-  after building two separate native prefixes with
+  each is skipped on other systems.
+  Before building, make two separate native prefixes with
   `FFMPEG_VARIANT=standard|x264 scripts/build-ffmpeg-linux.sh <prefix>`:
   `PKG_CONFIG_PATH` selects standard (LGPL, libopus/libvpx) and
   `FFMPEG_X264_PKG_CONFIG_PATH` the x264 build (GPL). Windows uses
   `VCPKG_ROOT` (`ffmpeg[zlib,opus,vpx]`) and `FFMPEG_X264_VCPKG_ROOT`
   (`ffmpeg[x264]`, optional `FFMPEG_X264_VCPKGRS_TRIPLET`) instead.
+  After building, set `CELESTA_PLUGIN_PATH` at the absolute path of
+  `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the
+  repository root).
   Run tests per package:
   `node scripts/plugins/run-cargo.mts plugins test -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-x264`.
-  Local builds may link a system GPL FFmpeg 8.1.x. `--distribution` validates
-  licenses explicitly: standard requires LGPL-only libraries. It also
-  opens each encoder and refuses cross-compiles it cannot validate on the host.
+  Local builds may link a system GPL FFmpeg 8.1.x, but every native build
+  opens each encoder (`--check-build`), so the standard FFmpeg needs libvpx
+  and libopus. `--distribution` also validates licenses (`--check-license`):
+  standard requires LGPL-only libraries. It refuses cross-compiles it cannot
+  validate on the host.
   The root `LICENSE-MIT`/`LICENSE-APACHE` cover Celesta's source. FFmpeg
   license texts live at `plugins/ffmpeg/LICENSE-LGPL-2.1` and
   `plugins/ffmpeg-x264/LICENSE-GPL-2.0`; packages keep them and the source
   notices in each plugin's `licenses/`, not the package-wide license folder.
-  (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root).
   `cargo install` uses `celesta-codec-ffmpeg` and `celesta-codec-ffmpeg-x264`
   beside Celesta's executables
   (each answers `--manifest`) when no plugin folder other than a project's
