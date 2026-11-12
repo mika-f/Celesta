@@ -1,6 +1,6 @@
 [package]
 name = "celesta-codec-ffmpeg-x264"
-description = "Celesta's optional GPL FFmpeg encoders (libx264)."
+description = "Celesta's optional GPL FFmpeg H.264 encoder (libx264)."
 version = "0.9.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"

@@ -1,4 +1,4 @@
-//! Optional GPL FFmpeg video encoders, served in a separate process.
+//! Optional GPL FFmpeg H.264 video encoder (libx264), served in a separate process.
 //! Shared FFmpeg plumbing has MIT/Apache source; this program links GPL FFmpeg.
 
 use celesta_codec_ffmpeg::FfmpegCodec;
