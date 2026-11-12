@@ -78,7 +78,7 @@ RUN apt-get update \
 
 COPY --from=build /out /opt/celesta
 
-# Record the codec libraries the standard plugin loads from the image
+# Record every library but glibc that the standard plugin loads from the image
 # (packaging/linux/record-codec-libraries.sh), then check that the program
 # opens every encoder, VP9 and Opus included, with what the image installs.
 COPY packaging/linux/record-codec-libraries.sh /tmp/record-codec-libraries.sh

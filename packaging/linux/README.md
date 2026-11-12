@@ -64,8 +64,9 @@ Software rendering is much slower than a GPU; see
 standard LGPL `ffmpeg` process under `/opt/celesta/plugins`, for decoding,
 ProRes/MOV, VP9/Opus WebM, AAC/PCM and muxing. FFmpeg is linked into that
 program statically; libopus and libvpx (both BSD licensed) come from the
-image's `libopus0` and `libvpx12` packages, whose exact binary and
-source-package versions are recorded in
+image's `libopus0` and `libvpx12` packages. The exact binary and
+source-package versions of every shared object the program loads but glibc's
+own (these two, zlib, and the GCC runtime) are recorded in
 `/opt/celesta/plugins/ffmpeg/licenses/native/debian-packages.json` beside
 their copyright files. The standard plugin carries the
 [LGPL source notice](../FFMPEG-SOURCE.md). The image installs no x264.

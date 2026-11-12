@@ -40,10 +40,11 @@ Their notices and versions come with each distribution:
   `Celesta.FFmpeg.Windows.Standard` package, in the app's `licenses/native`.
 - macOS: `licenses/homebrew.json` and `licenses/native/<formula>` for the
   Homebrew `opus` and `libvpx` libraries bundled in the plugin's `Frameworks`.
-- Linux image: the Ubuntu packages `libopus0` and `libvpx12`, whose binary and
-  source-package versions are recorded in
+- Linux image: the Ubuntu packages `libopus0` and `libvpx12`, and the base
+  image's `zlib1g` and `libgcc-s1`. Every shared object the program loads but
+  glibc's own is recorded, with its binary and source-package versions, in
   `/opt/celesta/plugins/ffmpeg/licenses/native/debian-packages.json`, with
-  their copyright files beside it.
+  each package's copyright file beside it.
 
 Source requests include the distribution's patches for the exact recorded
 source-package version.
