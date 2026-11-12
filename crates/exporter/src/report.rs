@@ -17,6 +17,9 @@ use crate::{
     OutputPlan, StillFormat, TrackInfo, X264_PRESETS,
 };
 
+/// The optional x264 encoder, which hints name in full.
+const X264: &str = "ffmpeg-x264/libx264";
+
 /// Whose options an error's hint names: `Celesta-export`'s flags or the MCP
 /// server's tool arguments. Error codes are the same either way.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -605,11 +608,18 @@ pub(crate) fn classify(
             default_in: None,
         } => (
             "unknown_preset",
+            // x264's speed presets are a setting of `ffmpeg-x264/libx264`,
+            // the optional download, not of the default MP4 encoder (a
+            // native H.264 on macOS and Windows), so the hint names it.
             X264_PRESETS.contains(&name.as_str()).then(|| {
                 Cow::Owned(if cli {
-                    format!("use --video-option preset={name}")
+                    format!(
+                        "use --video-encoder {X264} --video-option preset={name} (the optional ffmpeg-x264 plugin)"
+                    )
                 } else {
-                    format!("set videoEncoder.options.preset to {name}")
+                    format!(
+                        "set videoEncoder to {{ id: \"{X264}\", options: {{ preset: \"{name}\" }} }} (the optional ffmpeg-x264 plugin)"
+                    )
                 })
             }),
         ),
@@ -619,6 +629,23 @@ pub(crate) fn classify(
             Some(unsupported_output_hint(path, extensions, cli)),
         ),
         ExportError::IncompatibleComponents { .. } => ("incompatible_components", None),
+        // libx264 named under the standard plugin, as before x264 became a
+        // download, or under ffmpeg-x264 before that download is installed.
+        ExportError::ComponentUnavailable { component, .. }
+            if component.component == "libx264"
+                && matches!(component.plugin.as_str(), "ffmpeg" | "ffmpeg-x264") =>
+        {
+            (
+                "component_unavailable",
+                Some(Cow::Owned(if component.plugin == "ffmpeg" {
+                    format!(
+                        "libx264 moved to the optional ffmpeg-x264 download: install it and name {X264}"
+                    )
+                } else {
+                    "download and install the optional ffmpeg-x264 plugin from the release, or leave the encoder out to use the default H.264 encoder (macOS and Windows) or choose .mov for ProRes".to_owned()
+                })),
+            )
+        }
         ExportError::ComponentUnavailable { component, .. }
             if (component.plugin == "ffmpeg" && component.component == "mp4")
                 || (matches!(
@@ -1325,6 +1352,34 @@ mod tests {
             classified(&none, HintStyle::Cli),
             ("unsupported_output", Some(NO_DECODER_HINT.to_owned()))
         );
+    }
+
+    #[test]
+    fn libx264_by_its_old_or_new_id_names_the_download() {
+        for (component, wanted) in [
+            ("ffmpeg/libx264", "name ffmpeg-x264/libx264"),
+            (
+                "ffmpeg-x264/libx264",
+                "install the optional ffmpeg-x264 plugin",
+            ),
+        ] {
+            let error = ExportError::ComponentUnavailable {
+                component: component.parse().unwrap(),
+                reason: "not installed".into(),
+            };
+            for style in [HintStyle::Cli, HintStyle::Mcp] {
+                let (code, hint) = classified(&error, style);
+                assert_eq!(code, "component_unavailable");
+                let hint = hint.unwrap();
+                assert!(hint.contains(wanted), "{component}: {hint}");
+            }
+        }
+        // Another plugin's libx264 is not the download's.
+        let error = ExportError::ComponentUnavailable {
+            component: "other/libx264".parse().unwrap(),
+            reason: "not installed".into(),
+        };
+        assert_eq!(classified(&error, HintStyle::Cli).1, None);
     }
 
     #[test]

@@ -50,7 +50,7 @@ Celesta は React コンポジションのランタイムと標準出力を通�
 :::
 :::toggle[書き出しが unknown_preset や invalid_presets で失敗する]
 
-`unknown_preset` は、`--preset`（MCP と TypeScript では `preset`）の名前のプリセットが、どのプリセットファイルにもないという意味です。Celesta は `--preset-file`、プロジェクトのルートにある `export-presets.json`、`settings.json` の隣にある自分のファイルの順に探します。名前の大文字と小文字は区別されます。メッセージが `the default preset … is in no presets file` のときは、プロジェクトのファイルの `"default"` が、どのファイルにもないプリセットを指しています。名前を直すか、`"default"` を消してください。`veryfast` のような名前は x264 のプリセットで、これは設定です。ヒントのとおり `--video-option preset=veryfast` を使います。
+`unknown_preset` は、`--preset`（MCP と TypeScript では `preset`）の名前のプリセットが、どのプリセットファイルにもないという意味です。Celesta は `--preset-file`、プロジェクトのルートにある `export-presets.json`、`settings.json` の隣にある自分のファイルの順に探します。名前の大文字と小文字は区別されます。メッセージが `the default preset … is in no presets file` のときは、プロジェクトのファイルの `"default"` が、どのファイルにもないプリセットを指しています。名前を直すか、`"default"` を消してください。`veryfast` のような名前は x264 のプリセットで、別配布の `ffmpeg-x264/libx264` エンコーダーの設定です。`ffmpeg-x264` をインストールしたうえで、ヒントのとおり `--video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast` を使います。
 
 `invalid_presets` は、書き出しが探す必要のあったプリセットファイルを読めないか、JSON として正しくないか、`version` が `1` でないという意味です。メッセージにファイルが表示されるので、直すか削除してください。プロジェクトのプリセットが先に見つかり、壊れているのが自分のファイルだけのときは、同じ名前のプリセットがあるか自分のファイルを確かめられなかったことを警告して、そのまま書き出します。`--preset-file` のファイルに同じ問題があるときは、ほかの引数と同じく引数の誤りとして拒否されます。[書き出しプリセット](/ja/docs/export/#書き出しプリセット)をご覧ください。
 

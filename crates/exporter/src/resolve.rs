@@ -1565,14 +1565,20 @@ mod tests {
             report::classify(&error, HintStyle::Cli, &mut issues),
             (
                 "unknown_preset",
-                Some("use --video-option preset=ultrafast".into())
+                Some(
+                    "use --video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast (the optional ffmpeg-x264 plugin)"
+                        .into()
+                )
             )
         );
         assert_eq!(
             report::classify(&error, HintStyle::Mcp, &mut issues),
             (
                 "unknown_preset",
-                Some("set videoEncoder.options.preset to ultrafast".into())
+                Some(
+                    "set videoEncoder to { id: \"ffmpeg-x264/libx264\", options: { preset: \"ultrafast\" } } (the optional ffmpeg-x264 plugin)"
+                        .into()
+                )
             )
         );
 

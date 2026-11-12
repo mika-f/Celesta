@@ -71,7 +71,7 @@ Use `.mp4` when an H.264 encoder is installed. x264-only options such as
 | `--video-encoder <plugin/id>`, `--audio-encoder <plugin/id>` | An encoder other than the muxer's default; `--audio-encoder none` writes no audio and refuses `--audio-option`, as does a muxer that takes no audio. |
 | `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. One that does not list the output's extension still writes it, with a warning. Stills take it too, with `--video-encoder` and `--video-option` (see [Still images](#still-images)); a video refuses a still muxer (`builtin/…`, or a sequence muxer) with `component_unavailable`. |
 | `--list-components [--check]`, `--describe <plugin/id>` | List the installed media components, or show one's settings; take no source or output. See [Encoders and settings](#encoders-and-settings). |
-| `--preset <name>` | An export preset from `export-presets.json`: looked up in `--preset-file`, then the project's file, then the user's. The other component and option flags go over it. x264's preset is `--video-option preset=<name>`. See [Export presets](#export-presets). |
+| `--preset <name>` | An export preset from `export-presets.json`: looked up in `--preset-file`, then the project's file, then the user's. The other component and option flags go over it. x264's preset is a setting of the optional `ffmpeg-x264/libx264`: `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>`. See [Export presets](#export-presets). |
 | `--preset-file <file>` | An `export-presets.json` to look `--preset` up in first; a missing or invalid one is a `usage` error. |
 | `--loop` | The video plays in a loop (Shorts, TikTok): the AAC sound is encoded to run from its end into its start. Any video output; WebM ignores it. See [Looping video](#looping-video). |
 | `--loudness <l>` | Bring the whole mix to an integrated loudness: LUFS from -70 to -5, `streaming` (-14), or `broadcast` (-23). Video only. See [Loudness](#loudness). |
@@ -146,7 +146,8 @@ Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.
   not x264's preset: `--preset ultrafast` fails with `unknown_preset`
   (unless a presets file has that name), and its hint (the `--json`
   report's `hint`, or a `hint:` line after the message without `--json`)
-  says `use --video-option preset=ultrafast`.
+  says `use --video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast`
+  (x264's presets belong to the optional `ffmpeg-x264` plugin).
 - A `--muxer` (or a preset's muxer) that does not list the output's
   extension still writes the file, and the export warns
   `ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway`.
@@ -594,7 +595,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `component_unavailable` | A named component is not installed (check `--list-components`), or a chosen one does not work here; `message` has the reason, such as `this FFmpeg build has no libx264`. |
 | `incompatible_components` | The named encoder writes no codec the muxer takes (H.264 in `.webm`, for example). |
 | `invalid_option` | A `--video-option`/`--audio-option` key the encoder does not have, a value of the wrong type or out of range, or a hidden field; or the plugin refused the combination. Check with `--describe`. |
-| `unknown_preset` | `--preset` names a preset in no presets file, or the project file's `default` does (`the default preset … is in no presets file`). For an x264 name, the hint says to use `--video-option preset=<name>`. See [Export presets](#export-presets). |
+| `unknown_preset` | `--preset` names a preset in no presets file, or the project file's `default` does (`the default preset … is in no presets file`). For an x264 name, the hint says to use `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>` (the optional `ffmpeg-x264` plugin). See [Export presets](#export-presets). |
 | `invalid_presets` | A presets file the lookup reached cannot be read, is not valid JSON, or has a `version` other than 1; `message` starts with its path. Fix the file; do not delete a user's file without asking. |
 | `no_decoder` | No media decoder can run (no media plugin was found, or those found declare no decoder or have no program for this computer), so the entry's video and audio files could not be read (still exports, and video exports whose media plugins have no decoder; a video export with no media plugin at all fails with `unsupported_output` first). Reinstall the app, or in a source build run `node scripts/plugins/build.mts plugins/ffmpeg` and `export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root, in the shell that runs Celesta. A `plugins/dist/ffmpeg` with `"roles": ["codec"]` is from an older checkout and is ignored: build it again. |
 | `unsupported_media` | Media plugins were found, but none of their decoders reads a file the entry uses (`message` names the file and the decoders tried). Convert it to a format the `ffmpeg` plugin reads, such as MP4 or WAV. |

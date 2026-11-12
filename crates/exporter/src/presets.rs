@@ -346,12 +346,12 @@ mod tests {
   "presets": [
     { "name": "YouTube 1080p",
       "muxer": "ffmpeg/mp4",
-      "video": { "component": "ffmpeg/libx264", "options": { "crf": 18, "preset": "slow" } },
+      "video": { "component": "ffmpeg-x264/libx264", "options": { "crf": 18, "preset": "slow" } },
       "audio": { "component": "ffmpeg/aac", "options": { "bitrate": 192000 } } },
     { "name": "Silent", "muxer": "ffmpeg/mp4", "audio": "none" }
   ],
   "last": { "muxer": "ffmpeg/mp4",
-            "video": { "component": "ffmpeg/libx264", "options": {} },
+            "video": { "component": "ffmpeg-x264/libx264", "options": {} },
             "audio": { "component": "ffmpeg/aac", "options": {} } }
 }"#;
 
@@ -388,7 +388,7 @@ mod tests {
     fn the_spec_example_round_trips() {
         let file: PresetsFile = serde_json::from_str(SPEC).unwrap();
         let video = file.presets[0].output.video.as_ref().unwrap();
-        assert_eq!(video.component.as_deref(), Some("ffmpeg/libx264"));
+        assert_eq!(video.component.as_deref(), Some("ffmpeg-x264/libx264"));
         assert_eq!(video.options["crf"], SettingValue::Number(18.0));
         assert_eq!(video.options["preset"], SettingValue::String("slow".into()));
         assert_eq!(
