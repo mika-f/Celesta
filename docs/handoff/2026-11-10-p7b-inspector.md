@@ -241,3 +241,15 @@ Fixed, each with a test that failed first:
 
 Checked: `cargo test -p celesta-editor -p celesta-editor-theme` (828 +
 11), clippy `-D warnings`, `cargo fmt --all --check`.
+
+## Rebase onto main at `2ece40f8` (P7d, #813)
+
+`main.rs`: main added `export_page::view::key_bindings()` next to the
+editor's list, which this branch had moved into `key_bindings()` (with
+`!InspectorHeader` on Space); both are bound. `metrics.rs`: P7d added the
+same `inspector_label_width()` (7rem) for the export page; the branch's
+copy stays, and P7d's `the_inspector_label_lane_is_7rem` is dropped, as
+`inspector_lanes_fit_their_contents` asserts the same.
+
+Checked: `cargo test -p celesta-editor -p celesta-editor-theme` (852 +
+11), clippy `-D warnings`, `cargo fmt --all --check`.
