@@ -10,8 +10,8 @@ fn installed_binary_manifest_matches_its_source() {
     assert!(output.status.success(), "{:?}", output);
     let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let source: serde_json::Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
-    let expected = serde_json::json!({ "id": source["id"], "version": source["version"],
-        "roles": source["roles"], "media": source["media"] });
+    let expected = serde_json::json!({ "id": source["id"], "name": source["name"],
+        "version": source["version"], "roles": source["roles"], "media": source["media"] });
     assert_eq!(actual, expected);
     assert_eq!(actual["version"], env!("CARGO_PKG_VERSION"));
 }
