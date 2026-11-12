@@ -65,6 +65,7 @@ mod style_guard;
 #[cfg(test)]
 mod tests;
 mod timing;
+mod toast;
 mod transform_drag;
 mod transform_handles;
 mod view;

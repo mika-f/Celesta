@@ -8,6 +8,7 @@ use crate::plugins::{FoundPlugins, trust_request, trusted_root};
 use crate::problems::{Source, error_chain};
 use crate::source::PropertyArgs;
 use crate::source::load_source;
+use crate::toast::Toast;
 use crate::view::EditorView;
 use celesta_editor_theme::metrics;
 use celesta_plugin_host::UserSettings;
@@ -305,7 +306,10 @@ impl EditorView {
                     Ok(setup) => {
                         if setup.tsconfig == ProjectTsconfig::MissingExtends {
                             window.push_notification(
-                                "Add \"extends\": \"./.celesta/tsconfig.json\" to your tsconfig.json to enable Celesta types.",
+                                Toast::note(
+                                    "Add \"extends\": \"./.celesta/tsconfig.json\" to your tsconfig.json to enable Celesta types.",
+                                    cx,
+                                ),
                                 cx,
                             );
                         }
@@ -607,7 +611,10 @@ impl EditorView {
         if self.export_cancellation.is_none() {
             return true;
         }
-        window.push_notification("Cancel the export before opening another file.", cx);
+        window.push_notification(
+            Toast::note("Cancel the export before opening another file.", cx),
+            cx,
+        );
         false
     }
 

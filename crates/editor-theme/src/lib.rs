@@ -33,9 +33,13 @@ pub fn apply(cx: &mut App) {
         // A thin inner line instead of a ring outside the control.
         theme.focus_ring = false;
         // Toasts sit just above the status bar (a toolbar row tall) instead
-        // of over the panel headers at the top right.
+        // of over the panel headers at the top right, inset from the right
+        // edge as far as a panel's content (`metrics::panel_padding`), so a
+        // right-aligned value in the panel below (the mixer's "100%") is
+        // covered whole instead of showing a sliver past the toast.
         theme.notification.placement = Anchor::BottomRight;
         theme.notification.margins.bottom = px(metrics::BASE_FONT_SIZE * (2.0 + 0.75));
+        theme.notification.margins.right = px(metrics::BASE_FONT_SIZE * 0.75);
         apply_palette(&mut theme.colors);
     });
 }
@@ -217,6 +221,11 @@ mod tests {
             assert_eq!(theme.radius_lg, px(0.));
             assert!(!theme.focus_ring);
             assert_eq!(theme.notification.placement, Anchor::BottomRight);
+            assert_eq!(
+                theme.notification.margins.right,
+                px(metrics::BASE_FONT_SIZE * 0.75),
+                "toasts line up with a panel's content inset"
+            );
             assert!(theme.is_dark());
         });
     }
