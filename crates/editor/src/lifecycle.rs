@@ -381,6 +381,11 @@ impl EditorView {
             };
             if let Some(path) = path {
                 view.update_in(cx, |this, window, cx| {
+                    // Checked again: the Open panel does not block the window, so an
+                    // export or a save panel may have started while it was up.
+                    if this.opening || !this.can_replace_contents(window, cx) {
+                        return;
+                    }
                     this.load_path(Some(path), window, cx)
                 })
                 .ok();
