@@ -1,18 +1,27 @@
-//! The built `celesta-codec-ffmpeg` program, driven through
-//! `celesta_media::MediaProcess` as Celesta drives it: its answers equal the
-//! in-process codec's, its errors keep their kind, an export written through
-//! it reads back, and `--manifest` gives its manifest.
+//! The built `celesta-codec-ffmpeg-x264` program, driven through
+//! `celesta_media::MediaProcess` as Celesta drives it beside the standard
+//! `celesta-codec-ffmpeg` program: libx264's errors keep their kind, an
+//! export encoded through it and muxed by the standard program reads back,
+//! frames reach it through the ring, and `--manifest` gives its manifest.
+//! The standard program's own process tests are in `plugins/ffmpeg`.
 
-use celesta_codec_ffmpeg::{DECODER_ID, FfmpegCodec, registered};
+#[path = "../../ffmpeg/tests/support/encoding.rs"]
+mod encoding;
+#[path = "../../ffmpeg/tests/support/files.rs"]
+mod files;
+#[path = "../../ffmpeg/tests/support/program.rs"]
+mod program;
+
+use celesta_codec_ffmpeg::registered;
 use celesta_composition::Rational;
 use celesta_media::{
-    Answered, AudioDecoder, AudioEncoderRequest, Color, ComponentKind, Decoder, Encoded,
-    FrameTransport, MediaBackend, MediaError, MediaProcess, MediaProvider, MediaRegistry,
-    MuxerRequest, Packet, PixelFormat, ProviderFactory, ProviderUse, RegisteredPlugin,
-    SettingValue, Settings, Track, TrackConfig, TrackPacket, VideoEncoderOpened,
-    VideoEncoderRequest, VideoFrameDecoder, ring_layout,
+    Answered, AudioDecoder, AudioEncoderRequest, Color, ComponentKind, Encoded, FrameTransport,
+    MediaBackend, MediaError, MediaProcess, MediaProvider, MediaRegistry, MuxerRequest, Packet,
+    PixelFormat, ProviderUse, RegisteredPlugin, SettingValue, Settings, Track, TrackConfig,
+    TrackPacket, VideoEncoderOpened, VideoEncoderRequest, VideoFrameDecoder, ring_layout,
 };
-use ez_ffmpeg::{FfmpegContext, Input, Output};
+use encoding::{settings, text};
+use files::{generate, stream_color};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -20,40 +29,19 @@ fn executable() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_celesta-codec-ffmpeg-x264"))
 }
 
-// Build/test the LGPL package first; its executable survives the GPL library build.
-fn base_executable() -> PathBuf {
-    let name = if cfg!(windows) {
-        "celesta-codec-ffmpeg.exe"
-    } else {
-        "celesta-codec-ffmpeg"
-    };
-    executable().with_file_name(name)
+/// The standard program, built by its own package against the standard
+/// build, started to export.
+fn base_program() -> Box<dyn MediaProvider> {
+    program::factory("ffmpeg")(&Default::default(), ProviderUse::Export { ring: None }).unwrap()
 }
 
-fn base_program() -> Box<dyn MediaProvider> {
-    let executable = base_executable();
-    let directory = executable.parent().unwrap().to_path_buf();
-    MediaProcess::factory(executable, directory)(
-        &Default::default(),
-        ProviderUse::Export { ring: None },
-    )
-    .unwrap()
-}
+// Build/test the LGPL package first; its executable survives the GPL library build.
 
 /// The program, started as Celesta starts a media plugin for `purpose`.
 fn started(purpose: ProviderUse) -> Box<dyn MediaProvider> {
-    let executable = if matches!(purpose, ProviderUse::Decode) {
-        base_executable()
-    } else {
-        executable()
-    };
+    let executable = executable();
     let directory = executable.parent().unwrap().to_path_buf();
     MediaProcess::factory(executable, directory)(&Default::default(), purpose).unwrap()
-}
-
-/// The program, started to decode.
-fn provider() -> Box<dyn MediaProvider> {
-    started(ProviderUse::Decode)
 }
 
 /// The program started with `transport` for `purpose`.
@@ -68,17 +56,6 @@ fn program_with(transport: FrameTransport, purpose: ProviderUse) -> MediaProcess
         purpose,
     )
     .unwrap()
-}
-
-fn settings(pairs: &[(&str, SettingValue)]) -> Settings {
-    pairs
-        .iter()
-        .map(|(key, value)| ((*key).to_owned(), value.clone()))
-        .collect()
-}
-
-fn text(value: &str) -> SettingValue {
-    SettingValue::String(value.to_owned())
 }
 
 /// Opens libx264 on `program` for `width`x`height` RGBA8 frames at 10 fps.
@@ -175,81 +152,12 @@ fn mux_mp4(output: &Path, tracks: Vec<(Track, Vec<Packet>)>) {
     assert_eq!(written.len(), 1, "{written:?}");
 }
 
-/// A backend on the FFmpeg plugin made by `factory`.
-fn backend(factory: ProviderFactory) -> MediaBackend {
+/// A backend on the standard program, which reads what the tests write.
+fn program_backend() -> MediaBackend {
     MediaBackend::with_registry(Arc::new(MediaRegistry::new(vec![RegisteredPlugin {
-        factory,
+        factory: program::factory("ffmpeg"),
         ..registered()
     }])))
-}
-
-/// A backend on the program.
-fn program_backend() -> MediaBackend {
-    let executable = base_executable();
-    let directory = executable.parent().unwrap().to_path_buf();
-    backend(MediaProcess::factory(executable, directory))
-}
-
-fn generate(path: &Path, lavfi: &str, codec: &str) {
-    FfmpegContext::builder()
-        .input(Input::from(lavfi).set_format("lavfi"))
-        .output(Output::from(path.to_string_lossy().into_owned()).set_video_codec(codec))
-        .build()
-        .unwrap()
-        .start()
-        .unwrap()
-        .wait()
-        .unwrap();
-}
-
-#[test]
-fn the_program_answers_as_the_codec_in_process_does() {
-    let directory = tempfile::tempdir().unwrap();
-    let video = directory.path().join("clip.mkv");
-    generate(&video, "testsrc2=size=16x8:rate=10:duration=1", "ffv1");
-    let audio = directory.path().join("tone.wav");
-    FfmpegContext::builder()
-        .input(Input::from("sine=frequency=440:sample_rate=48000:duration=0.5").set_format("lavfi"))
-        .output(Output::from(audio.to_string_lossy().into_owned()))
-        .build()
-        .unwrap()
-        .start()
-        .unwrap()
-        .wait()
-        .unwrap();
-
-    let mut remote = program_backend().with_sequential_video(Rational::new(10, 1));
-    let mut local = backend(FfmpegCodec::factory()).with_sequential_video(Rational::new(10, 1));
-    assert_eq!(remote.probe(&video).unwrap(), local.probe(&video).unwrap());
-    assert_eq!(remote.probe(&audio).unwrap(), local.probe(&audio).unwrap());
-    // Out of order, and a sequential run moving forward.
-    for time in [0.5, 0.1, 0.2, 0.3, 0.9] {
-        assert_eq!(
-            remote.decode_frame(&video, time).unwrap(),
-            local.decode_frame(&video, time).unwrap(),
-            "{time}"
-        );
-        assert_eq!(
-            remote.decode_frame_for("layer", &video, time).unwrap(),
-            local.decode_frame_for("layer", &video, time).unwrap(),
-            "{time}"
-        );
-    }
-    assert_eq!(
-        remote.decode_audio(&audio, 48_000, 2).unwrap(),
-        local.decode_audio(&audio, 48_000, 2).unwrap()
-    );
-    assert_eq!(remote.video_duration(&video).unwrap(), Some(1.0));
-
-    let missing = directory.path().join("missing.mp4");
-    assert!(matches!(
-        remote.probe(&missing),
-        Err(MediaError::NotFound(path)) if path == missing
-    ));
-    assert!(matches!(
-        remote.decode_frame(&audio, 0.0),
-        Err(MediaError::NoVideoStream(path)) if path == audio
-    ));
 }
 
 #[test]
@@ -332,42 +240,6 @@ fn writes_an_export_through_the_program() {
     assert!((decoded.frame_count() as i64 - 48_000).abs() < 2_048);
 }
 
-/// The video stream's `(color_primaries, color_trc, color_space,
-/// color_range)` as libavformat reads them from the container.
-fn stream_color(path: &Path) -> (i32, i32, i32, i32) {
-    use ffmpeg_sys_next as ff;
-    let url = std::ffi::CString::new(path.to_string_lossy().as_bytes()).unwrap();
-    // SAFETY: the context is opened, read, and closed here; the stream
-    // pointers are valid while it is open.
-    unsafe {
-        let mut context = std::ptr::null_mut();
-        assert!(
-            ff::avformat_open_input(
-                &mut context,
-                url.as_ptr(),
-                std::ptr::null(),
-                std::ptr::null_mut()
-            ) >= 0
-        );
-        assert!(ff::avformat_find_stream_info(context, std::ptr::null_mut()) >= 0);
-        let streams =
-            std::slice::from_raw_parts((*context).streams, (*context).nb_streams as usize);
-        let parameters = streams
-            .iter()
-            .map(|&stream| (*stream).codecpar)
-            .find(|&parameters| (*parameters).codec_type == ff::AVMediaType::AVMEDIA_TYPE_VIDEO)
-            .expect("a video stream");
-        let colors = (
-            (*parameters).color_primaries as i32,
-            (*parameters).color_trc as i32,
-            (*parameters).color_space as i32,
-            (*parameters).color_range as i32,
-        );
-        ff::avformat_close_input(&mut context);
-        colors
-    }
-}
-
 /// The key and message of an [`MediaError::InvalidSettings`].
 fn refused<T: std::fmt::Debug>(result: Result<T, MediaError>) -> String {
     match result {
@@ -390,23 +262,7 @@ fn settings_libx264_cannot_write_are_refused() {
         ("crf", SettingValue::Number(18.0)),
     ]);
     assert_eq!(refused(open_x264(program, &hidden, (2, 2))), "crf");
-    // The bit depth is libx264's alone: ProRes has no such setting.
-    let color = Color::bt709_limited();
-    let mut base = base_program();
-    let prores = base
-        .video_encoder()
-        .unwrap()
-        .open_video(&VideoEncoderRequest {
-            component: "prores",
-            settings: &depth,
-            width: 2,
-            height: 2,
-            frame_rate: Rational::new(1, 1),
-            timescale: 1,
-            offered: &[PixelFormat::Rgba16],
-            color: &color,
-        });
-    assert_eq!(refused(prores), "bitDepth");
+    // ProRes has no bit depth (the standard plugin's test).
 }
 
 #[test]
@@ -431,59 +287,6 @@ fn reads_and_writes_paths_relative_to_celestas_working_directory() {
     let encoded = encode_video(program.as_mut(), (4, 4), 1);
     mux_mp4(&relative.join("out.mp4"), vec![encoded]);
     assert!(directory.path().join("out.mp4").is_file());
-}
-
-#[test]
-fn the_program_answers_the_decoder_it_names() {
-    let directory = tempfile::tempdir().unwrap();
-    let video = directory.path().join("clip.mkv");
-    generate(&video, "color=c=red:s=4x2:r=5:d=1", "ffv1");
-    let mut process = provider();
-    let process = process.decoder().unwrap();
-    let mut local = FfmpegCodec::new();
-    assert_eq!(
-        process.probe(DECODER_ID, &video).unwrap(),
-        local.probe(DECODER_ID, &video).unwrap()
-    );
-    let message = match process.probe("other", &video) {
-        Err(MediaError::Codec(message)) => message,
-        other => panic!("expected a codec error, got {other:?}"),
-    };
-    assert!(message.contains("no decoder"), "{message}");
-}
-
-#[test]
-fn a_text_file_is_unsupported() {
-    let directory = tempfile::tempdir().unwrap();
-    let text = directory.path().join("hello.mp4");
-    std::fs::write(&text, "hello").unwrap();
-
-    // The probe answers that FFmpeg does not read it, in the program as in
-    // this process.
-    assert!(matches!(
-        provider().decoder().unwrap().probe(DECODER_ID, &text),
-        Err(MediaError::Unsupported { path, .. }) if path == text
-    ));
-    let mut local = FfmpegCodec::new();
-    assert!(matches!(
-        local.probe(DECODER_ID, &text),
-        Err(MediaError::Unsupported { path, .. }) if path == text
-    ));
-    // A decode does not: `unsupported` answers only a probe.
-    let request = celesta_media::VideoRequest {
-        path: &text,
-        time: 0.0,
-        sequential: None,
-    };
-    assert!(matches!(
-        local.decode_video(DECODER_ID, &request),
-        Err(MediaError::Codec(_))
-    ));
-    // No other decoder is installed, so Celesta says none could read it.
-    assert!(matches!(
-        program_backend().probe(&text),
-        Err(MediaError::Unsupported { path, tried }) if path == text && tried == ["ffmpeg/ffmpeg"]
-    ));
 }
 
 #[test]

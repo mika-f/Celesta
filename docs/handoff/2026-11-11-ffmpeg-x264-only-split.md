@@ -317,8 +317,14 @@ opened the dialog on MP4's error although MOV would resolve.
   the LGPL build that ships and `cargo test -p celesta-codec-ffmpeg` runs
   them; mixed tests were split. Helpers are shared with `#[path]`. The
   rendered WebM test now checks `alpha_mode=1`, the colour tags, Opus at
-  48 kHz and the whole transparent quadrant, and a `.mp4` hint test runs
-  against the real standard-only registry.
+  48 kHz and every pixel of the 64×64 frame (half alpha and red inside the
+  quadrant, alpha 0 outside). The quadrant's last row only requires red to
+  dominate, since 4:2:0 chroma there blends in the black row below; its
+  alpha is still checked exactly. A `.mp4` hint test exports with only the
+  standard program registered and checks the `component_unavailable` code
+  and the CLI/MCP hints naming `ffmpeg-x264` and `.mov`. Results: standard
+  91 tests, x264 30 (`CELESTA_REQUIRE_GPU=1` on lavapipe), Clippy and fmt
+  clean, avfoundation/mediafoundation `cargo check --tests`.
 - **Banners.** `2026-11-11-ffmpeg-codec-pr.md` is marked superseded, and it
   and `2026-11-10-plugin-license-placement.md` are in this note's list.
 
