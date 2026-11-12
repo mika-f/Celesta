@@ -592,7 +592,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `invalid_selection` | A frame is out of range or repeated, the selection or contact sheet is too large, or a still output is not `.png`, `.jpg`, `.jpeg`, or `.webp`. |
 | `empty_range` | `--from`/`--to` cover no frames of the composition. |
 | `unsupported_output` | No installed muxer writes the output's extension (normally `.mp4`, `.m4v`, `.mov`, `.webm`), and no frame selection (`--frame`, `--frames`, `--every`) makes it a still export; the hint lists the extensions there are. With no media plugin at all, the hint says how to install it (as for `no_decoder`). |
-| `component_unavailable` | A named component is not installed (check `--list-components`), or a chosen one does not work here; `message` has the reason, such as `this FFmpeg build has no libx264`. |
+| `component_unavailable` | A named component is not installed (check `--list-components`), or a chosen one does not work here; `message` has the reason, such as `this FFmpeg build has no libvpx-vp9`. |
 | `incompatible_components` | The named encoder writes no codec the muxer takes (H.264 in `.webm`, for example). |
 | `invalid_option` | A `--video-option`/`--audio-option` key the encoder does not have, a value of the wrong type or out of range, or a hidden field; or the plugin refused the combination. Check with `--describe`. |
 | `unknown_preset` | `--preset` names a preset in no presets file, or the project file's `default` does (`the default preset … is in no presets file`). For an x264 name, the hint says to use `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>` (the optional `ffmpeg-x264` plugin). See [Export presets](#export-presets). |

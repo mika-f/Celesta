@@ -600,6 +600,16 @@ impl Descriptions<'_> {
     }
 }
 
+/// Why a named component is unavailable when no installed (and allowed)
+/// plugin has it.
+pub(crate) const NOT_INSTALLED: &str = "not installed";
+
+/// Why `muxer`'s default codec has no encoder: `kind` is "video encoder"
+/// or "audio encoder", `codec` the muxer's default for it.
+pub(crate) fn no_default_encoder(kind: &str, codec: &str) -> String {
+    format!("no {kind} writes {codec} by default")
+}
+
 /// The `kind` component `reference` names: [`ExportError::ComponentUnavailable`]
 /// when there is none, "not installed" or, when `reference` names another
 /// kind of component, "not a video encoder" and so on.
@@ -617,7 +627,7 @@ fn named<'a>(
         return Ok(info);
     }
     let reason = if !installed {
-        "not installed"
+        NOT_INSTALLED
     } else {
         match kind {
             ComponentKind::Decoder => "not a decoder",
@@ -779,7 +789,7 @@ fn default_encoder<'a>(
         first_reason.unwrap_or_else(|| ExportError::ComponentUnavailable {
             component: muxer.reference.clone(),
             reason: match codec {
-                Some(codec) => format!("no {kind} writes {codec} by default"),
+                Some(codec) => no_default_encoder(kind, codec),
                 None => format!("it names no default {kind} codec"),
             },
         }),
