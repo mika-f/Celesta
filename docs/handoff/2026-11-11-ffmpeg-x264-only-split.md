@@ -358,6 +358,28 @@ opened the dialog on MP4's error although MOV would resolve.
   `.mp4` the first output; it resolves to the bundled MP4 muxer without
   H.264, so the dialog opens on MOV with the warning.
 
+### CI on `9b7c477`
+
+- Manual CI run 43155171307 (dispatch, so the Package and `docker` jobs
+  ran) passed every job: the unsigned macOS and Windows packages (Windows on
+  the pinned NuGet packages, with `setup-ffmpeg`'s zlib check), the Linux
+  x264 ZIP, and the Linux exporter image. In `ubuntu:26.04`
+  `record-codec-libraries.sh` recorded every non-glibc library with its
+  copyright, and the image exported MOV, WebM and the guide's MP4 example.
+  An earlier dispatch on `4898182` (43155058373) was cancelled when the
+  head moved.
+- Before that run, `9b7c477` made the record script find a copyright file
+  through the library's source package: Ubuntu's container images drop
+  `/usr/share/doc/*` except copyright files, which also drops a doc folder
+  that is a symlink to another package of the same source (libgcc-s1 and
+  libstdc++6 to gcc-N-base). Checked locally by hiding `libgcc-s1`'s doc
+  link (the copy came from `gcc-14-base`) and hiding every zlib copyright
+  (the script failed naming zlib1g).
+- PR CI run 43155172673: the first attempt's Test (Windows x64) timed out
+  twice at Vitest's 5 s default in `scripts/plugins` (`build.test.mts`,
+  `run-cargo.test.mts`) on a slow runner; the same job passed in the manual
+  run on the same commit, so the failed job was rerun (attempt 2).
+
 ### Left out (as agreed)
 
 Tarball SHA-256 pinning and the Rust cache key.
