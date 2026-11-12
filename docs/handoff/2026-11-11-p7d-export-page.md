@@ -61,8 +61,8 @@ save panel Export… opened is up, the editor tells the page
 an `Export` event while the save panel is up, an export runs or a project
 opens, so a double click cannot start two exports. The save panel does not
 block the window, so while it is up opening or reloading a project and
-Reload Plugins are refused ("Close the save panel before opening another
-file."), and its answer is dropped if the view's project changed all the
+Reload Plugins are refused ("Close the save panel
+first."), and its answer is dropped if the view's project changed all the
 same (a `session` check).
 
 **The page in the editor (`export_control.rs`, `render.rs`, `panels.rs`,

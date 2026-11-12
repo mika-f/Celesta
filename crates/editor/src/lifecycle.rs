@@ -596,7 +596,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.choosing_export_path {
-            window.push_notification("Close the save panel before opening another file.", cx);
+            window.push_notification("Close the save panel first.", cx);
             return false;
         }
         if self.export_cancellation.is_none() {
