@@ -37,11 +37,15 @@ To make the footage again after changing `footage.tsx`:
 
 ```sh
 cargo run -p celesta-exporter -- --react examples/greenscreen/footage.tsx \
-  --video-option crf=22 --video-option preset=slow --overwrite \
-  examples/greenscreen/assets/footage.mp4
+  --video-encoder ffmpeg-x264/libx264 --video-option crf=22 --video-option preset=slow \
+  --overwrite examples/greenscreen/assets/footage.mp4
 cargo run -p celesta-exporter -- --react examples/greenscreen/footage.tsx \
   --frame 45 --overwrite still.png
 sips -s format jpeg -s formatOptions 85 still.png --out examples/greenscreen/assets/still.jpg
 ```
 
+The footage is encoded with x264's `crf` and `preset`, so it needs the
+optional `ffmpeg-x264` plugin: in this source checkout, build it beside the
+standard one with `node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264`
+(with `CELESTA_PLUGIN_PATH` set to `plugins/dist`, as for the commands above).
 `sips` is macOS's; any converter to JPEG will do.

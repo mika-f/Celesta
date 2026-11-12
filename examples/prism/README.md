@@ -43,10 +43,13 @@ WAV と MP4 はリポジトリ全体の設定で Git の管理対象外です。
 ```sh
 python3 examples/prism/make-score.py
 node skills/celesta/scripts/inspect.mjs examples/prism/film.tsx --every 15
-target/release/celesta-exporter --video-option crf=17 \
+target/release/celesta-exporter \
+  --video-encoder ffmpeg-x264/libx264 --video-option crf=17 \
   --react examples/prism/film.tsx examples/prism/prism.mp4
 ```
 
+x264 の `crf` を使うため、別配布の `ffmpeg-x264` プラグインが必要です。ソースから使う場合は
+`node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264` で標準プラグインと一緒にビルドします。
 既存の出力を置き換える場合は exporter に `--overwrite` を追加します。
 インストール版では `target/release/celesta-exporter` を Celesta-export のパスに
 置き換えてください。書き出しには利用可能な GPU が必要です。

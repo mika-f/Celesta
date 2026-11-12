@@ -44,10 +44,14 @@ From the repository root, with the Celesta exporter and React runtime built:
 python3 examples/afterimage/make-score.py
 node skills/celesta/scripts/inspect.mjs examples/afterimage/film.tsx \
   --frames 0,90,225,315,390,480,630,719
-target/release/celesta-exporter --overwrite --video-option crf=17 \
+target/release/celesta-exporter --overwrite \
+  --video-encoder ffmpeg-x264/libx264 --video-option crf=17 \
   --react examples/afterimage/film.tsx examples/afterimage/afterimage.mp4
 ```
 
+The export, and `render.py` below, use x264's `crf` and `preset`, so they
+need the optional `ffmpeg-x264` plugin, built beside the standard one with
+`node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264`.
 Export requires a working graphics adapter; exporting from Celesta's UI
 works the same way. `--overwrite` replaces the previously generated movie.
 
