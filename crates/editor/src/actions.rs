@@ -10,6 +10,7 @@ actions!(
         CloseWindow,
         Quit,
         ExportProject,
+        ConfirmExport,
         SetExportIn,
         SetExportOut,
         ClearExportRange,

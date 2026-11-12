@@ -1,5 +1,6 @@
 {
   "id": "mediafoundation",
+  "name": "Media Foundation",
   "version": "0.9.0",
   "cargoPackage": "celesta-codec-mediafoundation",
   "roles": ["media"],

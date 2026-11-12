@@ -225,6 +225,7 @@ fn with_decoders(
     });
     RegisteredPlugin {
         id: id.to_owned(),
+        name: id.to_owned(),
         version: "1.0.0".into(),
         origin,
         directory: PathBuf::from("/plugins").join(id),

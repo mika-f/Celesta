@@ -122,6 +122,7 @@ A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and list
 ```json
 {
   "id": "ffmpeg",
+  "name": "FFmpeg",
   "version": "0.9.0",
   "celesta": ">=0.9.0, <0.10.0",
   "protocol": 2,
@@ -145,7 +146,7 @@ A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and list
 }
 ```
 
-A component's `id` follows the rules for a plugin's id (see [Write a plugin](#write-a-plugin)) and is not used by another component of the same kind in the same plugin; Celesta skips a component that breaks this, says why, and keeps the plugin's other components. Components are named `<plugin>/<component>`, such as `ffmpeg/libx264`. When a plugin runs, Celesta asks it to describe its components: whether each works on this computer (an FFmpeg built without libx264 says so, with the reason) and its settings. A plugin is either a media plugin or a content plugin: a manifest with both roles is skipped. A plugin made for the older `"roles": ["codec"]` is ignored, and Celesta reads no media through it: install a release of it made for your Celesta, or, in a source build, build `plugins/ffmpeg` again.
+The plugin's own `name` is optional: the display name the editor's export page shows beside a component, the plugin's `id` when absent. A component's `id` follows the rules for a plugin's id (see [Write a plugin](#write-a-plugin)) and is not used by another component of the same kind in the same plugin; Celesta skips a component that breaks this, says why, and keeps the plugin's other components. Components are named `<plugin>/<component>`, such as `ffmpeg/libx264`. When a plugin runs, Celesta asks it to describe its components: whether each works on this computer (an FFmpeg built without libx264 says so, with the reason) and its settings. A plugin is either a media plugin or a content plugin: a manifest with both roles is skipped. A plugin made for the older `"roles": ["codec"]` is ignored, and Celesta reads no media through it: install a release of it made for your Celesta, or, in a source build, build `plugins/ffmpeg` again.
 
 ### Which decoder reads a file
 
@@ -163,7 +164,7 @@ When a project's own plugin decodes files, the desktop app tells you: the Proble
 
 ### Which components write a video
 
-An export takes its muxer from the output's extension, unless you name one with `--muxer`: the first muxer listing that extension among the plugins that come with Celesta (`ffmpeg` first), then among the plugins you installed, in the search order above. Its `defaultVideo` and `defaultAudio` codecs then pick the encoders, unless you name them with `--video-encoder` and `--audio-encoder`: the first encoder that writes that codec and works on this computer, from the muxer's own plugin, then the plugins that come with Celesta, then the plugins you installed. A project's own components are used only in the app, which loads the project's plugins: when you choose them in the export dialog, which marks them **(project)**, or when the project's [default preset](/en/docs/export/#export-presets) names them (and, for its encoders, when you choose its muxer). The command line and the MCP server never load a project's plugins. `--list-components` lists every installed component, and `--describe <plugin/id>` one component's settings; see [Choosing encoders and settings](/en/docs/export/#choosing-encoders-and-settings).
+An export takes its muxer from the output's extension, unless you name one with `--muxer`: the first muxer listing that extension among the plugins that come with Celesta (`ffmpeg` first), then among the plugins you installed, in the search order above. Its `defaultVideo` and `defaultAudio` codecs then pick the encoders, unless you name them with `--video-encoder` and `--audio-encoder`: the first encoder that writes that codec and works on this computer, from the muxer's own plugin, then the plugins that come with Celesta, then the plugins you installed. A project's own components are used only in the app, which loads the project's plugins: when you choose them on the export page, which marks them **(project)**, or when the project's [default preset](/en/docs/export/#export-presets) names them (and, for its encoders, when you choose its muxer). The command line and the MCP server never load a project's plugins. `--list-components` lists every installed component, and `--describe <plugin/id>` one component's settings; see [Choosing encoders and settings](/en/docs/export/#choosing-encoders-and-settings).
 
 ### With `cargo install`
 

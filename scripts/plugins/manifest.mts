@@ -8,6 +8,8 @@
 /** plugin.json: what a plugin's source has. */
 export interface PluginSource {
   id: string;
+  /** The plugin's display name, as the editor shows it; the `id` when absent. */
+  name?: string;
   /** Required; with `cargoPackage`, that package's version. */
   version?: string;
   /** The Cargo package, and binary, of the plugin's process. */
@@ -45,6 +47,7 @@ export interface Built {
 /** celesta-plugin.json. */
 export interface PluginManifest {
   id: string;
+  name?: string;
   version: string;
   /** 2 for a plugin with the `media` role, 1 for the rest. */
   protocol: 1 | 2;
@@ -59,7 +62,7 @@ export interface PluginManifest {
 }
 
 /** The keys plugin.json may have, as PluginSource lists them. */
-const PLUGIN_SOURCE_KEYS = ['id', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components', 'media', 'os'];
+const PLUGIN_SOURCE_KEYS = ['id', 'name', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components', 'media', 'os'];
 
 /**
  * Celesta's rule for a plugin id (`is_valid_id` in
@@ -99,6 +102,10 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
   }
   if (id === 'builtin') {
     throw new Error(`${sourcePath}: the id "builtin" is reserved for the components Celesta has built in`);
+  }
+  const name: unknown = source.name;
+  if (name !== undefined && (typeof name !== 'string' || name.trim() === '')) {
+    throw new Error(`${sourcePath}: name must be a string with more than blanks in it`);
   }
   if (source.roles?.includes('content') && source.roles.includes('media')) {
     throw new Error(`${sourcePath}: a plugin is either content or media`);
@@ -196,6 +203,7 @@ export function pluginManifest(
     version: pluginVersion(source, cargoVersion, sourcePath),
     protocol: source.roles?.includes('media') ? 2 : 1,
     celesta: celestaRange(celestaVersion),
+    ...(source.name !== undefined ? { name: source.name } : {}),
     ...(source.roles ? { roles: source.roles } : {}),
     ...(executable ? { executable } : {}),
     ...(source.module !== undefined ? { module: 'js/index.js', types: 'js/index.d.ts' } : {}),

@@ -1,15 +1,21 @@
-//! The export dialog: what Export… shows before the save panel. From top
-//! to bottom it holds the preset, the container, the video encoder and its
-//! fields, the audio encoder (or none) and its fields, the range and the
-//! loudness. The footer holds `Save as preset…`, `Cancel`, and `Export…`,
-//! and above them, once asked for, the inline "Save as preset…" form.
+//! The Export panel: what Export… shows beside the viewer before the save
+//! panel. Under its header one column scrolls: the preset, the container
+//! and the range, then the "Video" and "Audio" sections, each with its
+//! encoder and that encoder's fields (the audio's ending with the
+//! loudness). The footer, pinned under it, holds `Save as preset…` and
+//! `Export…`, and above them, once asked for, the inline "Save as
+//! preset…" form. Enter anywhere in the panel runs `Export…`.
 //!
 //! The view owns the controls and the work in flight; what they show and
-//! edit is [`ExportDialogModel`]'s. A preset or container change is resolved
+//! edit is [`ExportModel`]'s. A preset or container change is resolved
 //! on the background executor, each plugin's `describe` too.
 
-use super::model::{Asked, CHECKING, ExportDialogModel, InitialBase, PresetFileState, Track};
+use super::model::{Asked, CHECKING, ExportModel, InitialBase, PresetFileState, Track};
+use super::wording::{PageWarning, plain};
+use crate::actions::ConfirmExport;
 use crate::helpers::ExportLoudness;
+use crate::panel_header::PanelHeader;
+use crate::widgets::CompactLabel as _;
 use celesta_editor_theme::metrics;
 use celesta_exporter::{
     OutputChoice, Preset, PresetOutput, PresetSource, PresetsFile, resolve_preset_output,
@@ -17,17 +23,14 @@ use celesta_exporter::{
 use celesta_media::{ComponentKind, ComponentRef, MediaRegistry, SettingValue};
 use celesta_plugin_host::PluginKillSwitch;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::collapsible::Collapsible;
-use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, IndexPath, Sizable as _, WindowExt as _,
-    h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, IconName, IndexPath, Sizable as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, Entity, EventEmitter, FontWeight, Hsla, SharedString, Subscription, Task, Window,
-    div,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, KeyBinding,
+    SharedString, Subscription, Task, Window, div,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -36,29 +39,30 @@ use std::sync::Arc;
 /// preset ``preset `web` ``.
 const LAST_EXPORT: &str = "your last export";
 
+/// Why `Export…` waits: the save panel it opened is up.
+const WAITING: &str = "Choosing where to save…";
+
 /// What a warning about the preset `name` calls it.
 fn preset_label(name: &str) -> String {
     format!("preset `{name}`")
 }
 
-/// Wide enough for a component's label and its plugin beside a field.
-/// Designed against a 16px `rem`; see [`metrics::scaled`].
-const EXPORT_DIALOG_WIDTH: f32 = 560.;
-
 mod choice;
 mod fields;
+mod layout;
 mod save;
 
 use choice::{Choice, Sections, component_choice, sync_select};
 use fields::{FieldControl, Widget};
-use save::{SaveForm, save_section};
+use layout::{row, section_header};
+use save::SaveForm;
 
-/// What the dialog tells its owner.
+/// What the page tells its owner.
 #[expect(
     clippy::large_enum_variant,
     reason = "one event per click, matched by reference where it arrives"
 )]
-pub(crate) enum ExportDialogEvent {
+pub(crate) enum ExportPageEvent {
     /// `Export…`: the choice, the muxer's first extension for the save
     /// panel, and the choice as `last` saves it.
     Export {
@@ -66,13 +70,15 @@ pub(crate) enum ExportDialogEvent {
         extension: String,
         last: PresetOutput,
     },
-    /// The loudness was changed, for the export and the next dialog.
+    /// The loudness was changed, for the export and the next page.
     Loudness(ExportLoudness),
     /// The range's `Clear`: drop the in- and out-points.
     ClearRange,
+    /// The header's close button: back to editing.
+    Close,
 }
 
-/// The part of the dialog a resolve was asked from, under which its
+/// The part of the page a resolve was asked from, under which its
 /// warnings or failure show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
@@ -83,8 +89,10 @@ enum Section {
 /// A preset in the list: `None` for "None", the defaults.
 type PresetKey = Option<(PresetSource, String)>;
 
-pub(crate) struct ExportDialog {
-    model: ExportDialogModel,
+pub(crate) struct ExportPage {
+    /// The panel's; it takes the focus when shown, so Enter exports.
+    focus_handle: FocusHandle,
+    model: ExportModel,
     registry: Arc<MediaRegistry>,
     kill: PluginKillSwitch,
     preset: Entity<SelectState<Sections<PresetKey>>>,
@@ -103,22 +111,28 @@ pub(crate) struct ExportDialog {
     /// The in- and out-points' timecodes; `None` exports the whole
     /// composition.
     range: Option<SharedString>,
+    /// Whether In and Out can be set for what is exported: not for a
+    /// React entry, which always exports all of it.
+    range_settable: bool,
     save: Option<SaveForm>,
+    /// Whether the save panel `Export…` opened is up: a second `Export…`
+    /// waits for it.
+    waiting: bool,
     /// The running resolve; replacing it drops a stale one.
     resolving: Option<Task<()>>,
     describing: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
-impl EventEmitter<ExportDialogEvent> for ExportDialog {}
+impl EventEmitter<ExportPageEvent> for ExportPage {}
 
-impl Drop for ExportDialog {
+impl Drop for ExportPage {
     fn drop(&mut self) {
         self.kill.kill();
     }
 }
 
-/// A presets file as the dialog reads it: `None` when there is no path.
+/// A presets file as the page reads it: `None` when there is no path.
 fn read_presets(path: Option<PathBuf>) -> PresetFileState {
     let file = match &path {
         Some(path) => PresetsFile::load_if_present(path).map_err(|error| error.to_string()),
@@ -134,8 +148,8 @@ fn track_id(track: Track) -> &'static str {
     }
 }
 
-impl ExportDialog {
-    /// A dialog over `registry`'s media plugins, with the presets of
+impl ExportPage {
+    /// A page over `registry`'s media plugins, with the presets of
     /// `project_file` (none for an untitled document) and `user_file`;
     /// starts describing each plugin and resolving the first choice.
     pub(crate) fn new(
@@ -146,7 +160,7 @@ impl ExportDialog {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let model = ExportDialogModel::new(
+        let model = ExportModel::new(
             &registry,
             read_presets(project_file),
             read_presets(user_file),
@@ -198,7 +212,7 @@ impl ExportDialog {
             }),
             cx.subscribe_in(&loudness, window, |_, _, event, _, cx| {
                 if let SelectEvent::Confirm(Some(loudness)) = event {
-                    cx.emit(ExportDialogEvent::Loudness(*loudness));
+                    cx.emit(ExportPageEvent::Loudness(*loudness));
                 }
             }),
         ];
@@ -214,6 +228,7 @@ impl ExportDialog {
         plugins.dedup();
 
         let mut this = Self {
+            focus_handle: cx.focus_handle(),
             model,
             registry,
             kill,
@@ -227,7 +242,9 @@ impl ExportDialog {
             warned: Section::Preset,
             failure: None,
             range: None,
+            range_settable: true,
             save: None,
+            waiting: false,
             resolving: None,
             describing: Vec::new(),
             _subscriptions: subscriptions,
@@ -289,10 +306,10 @@ impl ExportDialog {
         );
     }
 
-    /// The dialog is shown again: a plugin whose `describe` failed (none
+    /// The page is shown again: a plugin whose `describe` failed (none
     /// of its components available) is described again, and a first
     /// choice that could not be resolved is resolved again, so a passing
-    /// failure does not keep `Export…` blocked while the dialog is kept.
+    /// failure does not keep `Export…` blocked while the page is kept.
     pub(crate) fn reopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let failed = self.model.recheck_failed();
         self.describe(failed, window, cx);
@@ -304,16 +321,30 @@ impl ExportDialog {
         self.sync(window, cx);
     }
 
-    /// The project presets file this dialog read; `None` for an untitled
+    /// The project presets file this page read; `None` for an untitled
     /// document.
     pub(crate) fn project_file(&self) -> Option<&Path> {
         self.model.project.path.as_deref()
     }
 
     /// Shows `range` (the in- and out-points' timecodes) as what is
-    /// exported; `None` is the whole composition.
-    pub(crate) fn set_range(&mut self, range: Option<SharedString>, cx: &mut Context<Self>) {
+    /// exported; `None` is the whole composition, with a note on setting
+    /// In and Out where `settable` (not for a React entry).
+    pub(crate) fn set_range(
+        &mut self,
+        range: Option<SharedString>,
+        settable: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.range = range;
+        self.range_settable = settable;
+        cx.notify();
+    }
+
+    /// Whether the save panel `Export…` opened is up; while it is,
+    /// `Export…` is disabled and Enter does nothing.
+    pub(crate) fn set_waiting(&mut self, waiting: bool, cx: &mut Context<Self>) {
+        self.waiting = waiting;
         cx.notify();
     }
 
@@ -330,7 +361,7 @@ impl ExportDialog {
         output: PathBuf,
         (selected, asked): (Option<(PresetSource, String)>, Asked),
         section: Section,
-        warnings: Vec<String>,
+        warnings: Vec<PageWarning>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -511,7 +542,8 @@ impl ExportDialog {
     }
 
     /// Why `Export…` cannot run now: a typed number that is not one, a
-    /// resolve still running, or what the model says.
+    /// resolve still running, the save panel it opened still up, or what
+    /// the model says.
     fn export_blocked(&self) -> Option<String> {
         if let Some((label, typo)) = self
             .fields
@@ -528,13 +560,16 @@ impl ExportDialog {
         if self.resolving.is_some() {
             return Some(CHECKING.to_owned());
         }
+        if self.waiting {
+            return Some(WAITING.to_owned());
+        }
         self.model.output_choice().err()
     }
 
-    /// `Export…` or Enter (the dialog's `Confirm`; Enter in the save
-    /// form's name saves instead, and never reaches it): emits
-    /// [`ExportDialogEvent::Export`] when the choice can be exported.
-    /// `true` closes the dialog.
+    /// `Export…` or Enter ([`ConfirmExport`]; Enter in the save form's
+    /// name saves instead, and never reaches it): emits
+    /// [`ExportPageEvent::Export`] when the choice can be exported, and
+    /// says whether it did.
     fn export(&mut self, cx: &mut Context<Self>) -> bool {
         if self.export_blocked().is_some() {
             return false;
@@ -543,7 +578,7 @@ impl ExportDialog {
         else {
             return false;
         };
-        cx.emit(ExportDialogEvent::Export {
+        cx.emit(ExportPageEvent::Export {
             choice,
             extension,
             last: self.model.saved_output(),
@@ -569,29 +604,29 @@ fn problem_line(text: impl Into<SharedString>, color: Hsla) -> impl IntoElement 
         .child(div().min_w_0().child(text.into()))
 }
 
-/// Why `Export…` (and `Save`) cannot run: "Checking…" muted, anything
-/// else as an error.
+/// Why `Export…` (and `Save`) cannot run: "Checking…" and the wait for
+/// the save panel muted, anything else as an error.
 fn blocked_line(reason: String, cx: &App) -> impl IntoElement {
-    if reason.ends_with(CHECKING) {
+    if reason.ends_with(CHECKING) || reason == WAITING {
         muted_line(reason, cx).into_any_element()
     } else {
         problem_line(reason, cx.theme().danger).into_any_element()
     }
 }
 
-/// A resolve's warning or error as the dialog shows it: the exporter's
-/// `code` quoting (the CLI's) becomes typographic quotes.
-fn plain(text: &str) -> String {
-    let mut open = false;
-    text.chars()
-        .map(|character| match character {
-            '`' => {
-                open = !open;
-                if open { '“' } else { '”' }
-            }
-            other => other,
-        })
-        .collect()
+/// `warnings` split into the ones listed as they are (an unreadable
+/// presets file, an unknown default, a resolve's about no base or about
+/// another preset) and the resolve's about the last export, which go under
+/// one line naming it.
+fn split_last_export(warnings: &[PageWarning]) -> (Vec<&PageWarning>, Vec<&PageWarning>) {
+    warnings
+        .iter()
+        .partition(|warning| warning.base() != Some(LAST_EXPORT))
+}
+
+/// The page's keys: Enter runs its `Export…` from anywhere in it.
+pub(crate) fn key_bindings() -> [KeyBinding; 1] {
+    [KeyBinding::new("enter", ConfirmExport, Some("ExportPage"))]
 }
 
 fn muted_line(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
@@ -601,282 +636,375 @@ fn muted_line(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
         .child(text.into())
 }
 
-/// A section below a hairline, as far from it as from the section above.
-fn separated(section: impl IntoElement, border: Hsla) -> impl IntoElement {
-    div()
-        .pt_6()
-        .border_t_1()
-        .border_color(border)
-        .child(section)
-}
-
-/// A section's label above its control.
-fn section_label(label: &'static str, cx: &App) -> impl IntoElement {
-    div()
-        .text_base()
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().foreground)
-        .child(label)
-}
-
-impl ExportDialog {
-    fn failure_under(&self, section: Section, cx: &App) -> Option<impl IntoElement> {
+impl ExportPage {
+    fn failure_under(&self, section: Section, cx: &App) -> Option<AnyElement> {
         let (failed, message) = self.failure.as_ref()?;
-        (*failed == section).then(|| problem_line(plain(message), cx.theme().danger))
+        (*failed == section)
+            .then(|| problem_line(plain(message), cx.theme().danger).into_any_element())
     }
 
-    fn warnings_under(&self, section: Section, cx: &App) -> Vec<impl IntoElement> {
+    /// The warnings `section` asked for; those about the last export
+    /// after the rest, under one line that says so, since no row names it.
+    fn warnings_under(&self, section: Section, cx: &App) -> Vec<AnyElement> {
         if self.warned != section {
             return Vec::new();
         }
-        self.model
-            .warnings
-            .iter()
-            .map(|warning| problem_line(plain(warning), cx.theme().warning))
-            .collect()
-    }
-
-    fn render_preset(&self, cx: &App) -> impl IntoElement {
-        v_flex()
-            .gap_1()
-            .child(section_label("Preset", cx))
-            .child(Select::new(&self.preset).id("export-preset"))
-            .children(self.warnings_under(Section::Preset, cx))
-            .children(self.failure_under(Section::Preset, cx))
-    }
-
-    fn render_container(&self, cx: &App) -> impl IntoElement {
-        v_flex()
-            .gap_1()
-            .child(section_label("Container", cx))
-            .child(
-                Select::new(&self.muxer)
-                    .id("export-container")
-                    .placeholder(CHECKING),
-            )
-            .children(self.warnings_under(Section::Container, cx))
-            .children(self.failure_under(Section::Container, cx))
-    }
-
-    /// `track`'s encoder list and its fields: ordinary ones first, by
-    /// group, then the advanced ones under a closed "Advanced".
-    fn render_encoder(&self, track: Track, cx: &mut Context<Self>) -> impl IntoElement {
-        let (label, select) = match track {
-            Track::Video => (
-                "Video encoder",
-                Select::new(&self.video)
-                    .id("export-video-encoder")
-                    .placeholder(CHECKING)
+        let (others, from_last) = split_last_export(&self.model.warnings);
+        let line = |warning: &PageWarning| {
+            problem_line(self.model.warning_text(warning), cx.theme().warning).into_any_element()
+        };
+        let mut lines: Vec<AnyElement> = others.into_iter().map(line).collect();
+        if !from_last.is_empty() {
+            lines.push(
+                div()
+                    .debug_selector(|| "export-warnings-from-last".to_owned())
+                    .child(muted_line("From your last export:", cx))
                     .into_any_element(),
+            );
+            lines.extend(from_last.into_iter().map(line));
+        }
+        lines
+    }
+
+    /// What is wrong with what `section` asked for, under its row.
+    fn problems_under(&self, section: Section, cx: &App) -> Vec<AnyElement> {
+        let mut lines = self.warnings_under(section, cx);
+        lines.extend(self.failure_under(section, cx));
+        lines
+    }
+
+    fn render_preset(&self, cx: &App) -> AnyElement {
+        row(
+            "preset".into(),
+            "Preset".into(),
+            Select::new(&self.preset)
+                .id("export-preset")
+                .small()
+                .accessibility_label("Preset")
+                .into_any_element(),
+            self.problems_under(Section::Preset, cx),
+            cx,
+        )
+    }
+
+    fn render_container(&self, cx: &App) -> AnyElement {
+        row(
+            "container".into(),
+            "Container".into(),
+            Select::new(&self.muxer)
+                .id("export-container")
+                .small()
+                .accessibility_label("Container")
+                .placeholder(CHECKING)
+                .into_any_element(),
+            self.problems_under(Section::Container, cx),
+            cx,
+        )
+    }
+
+    /// The in- and out-points in monospace with `Clear`, or the whole
+    /// composition, with how to set them where they can be.
+    fn render_range(&self, cx: &mut Context<Self>) -> AnyElement {
+        let (control, lines) = match &self.range {
+            Some(range) => (
+                h_flex()
+                    .gap_2()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .text_base()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .child(range.clone()),
+                    )
+                    .child(
+                        Button::new("export-range-clear")
+                            .ghost()
+                            .small()
+                            .label("Clear")
+                            .debug_selector(|| "export-range-clear".to_owned())
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(ExportPageEvent::ClearRange);
+                            })),
+                    )
+                    .into_any_element(),
+                Vec::new(),
             ),
-            Track::Audio => (
-                "Audio encoder",
-                Select::new(&self.audio)
-                    .id("export-audio-encoder")
+            None => (
+                div()
+                    .text_base()
+                    .child("Whole composition")
                     .into_any_element(),
+                self.range_settable
+                    .then(|| muted_line("Set In and Out on the timeline.", cx).into_any_element())
+                    .into_iter()
+                    .collect(),
             ),
         };
+        row("range".into(), "Range".into(), control, lines, cx)
+    }
+
+    /// `track`'s section under its header: the encoder, its fields
+    /// (ungrouped first, then each group), then "Advanced" and, once
+    /// open, the advanced fields; the audio's ends with the loudness.
+    fn render_track(&self, track: Track, cx: &mut Context<Self>) -> impl IntoElement {
+        let id = track_id(track);
+        let select = match track {
+            Track::Video => Select::new(&self.video)
+                .id("export-video-encoder")
+                .small()
+                .accessibility_label("Video encoder")
+                .placeholder(CHECKING)
+                .into_any_element(),
+            Track::Audio => Select::new(&self.audio)
+                .id("export-audio-encoder")
+                .small()
+                .accessibility_label("Audio encoder")
+                .into_any_element(),
+        };
         let open = self.advanced[track as usize];
-        let advanced = self.model.fields(track, true);
-        let toggle = format!("export-{}-advanced", track_id(track));
+        let has_advanced = !self.model.fields(track, true).is_empty();
+        let toggle = format!("export-{id}-advanced");
         v_flex()
-            .gap_3()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(section_label(label, cx))
-                    .child(select),
-            )
+            .w_full()
+            .px(metrics::panel_padding())
+            .py_2()
+            .child(row(
+                format!("{id}-encoder").into(),
+                "Encoder".into(),
+                select,
+                Vec::new(),
+                cx,
+            ))
             .children(self.render_groups(track, false, cx))
-            .when(!advanced.is_empty(), |section| {
+            .when(has_advanced, |section| {
                 section.child(
-                    Collapsible::new()
-                        .gap_3()
-                        .open(open)
-                        .child(
-                            h_flex().child(
-                                Button::new(SharedString::from(toggle))
-                                    .ghost()
-                                    .small()
-                                    .icon(if open {
-                                        IconName::ChevronDown
-                                    } else {
-                                        IconName::ChevronRight
-                                    })
-                                    .label("Advanced")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.advanced[track as usize] = !open;
-                                        cx.notify();
-                                    })),
-                            ),
-                        )
-                        .content(
-                            v_flex()
-                                .gap_3()
-                                .children(self.render_groups(track, true, cx)),
-                        ),
+                    h_flex().min_h(metrics::list_row_height()).child(
+                        Button::new(SharedString::from(toggle.clone()))
+                            .ghost()
+                            .xsmall()
+                            // The icon starts on the labels' edge.
+                            .pl_0()
+                            // A child rather than `icon`, so where it starts
+                            // can be measured.
+                            .child(
+                                div()
+                                    .debug_selector(|| format!("{toggle}-icon"))
+                                    .flex_none()
+                                    .child(
+                                        Icon::new(if open {
+                                            IconName::ChevronDown
+                                        } else {
+                                            IconName::ChevronRight
+                                        })
+                                        .xsmall(),
+                                    ),
+                            )
+                            .compact_label("Advanced")
+                            .debug_selector(|| toggle)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.advanced[track as usize] = !open;
+                                cx.notify();
+                            })),
+                    ),
                 )
+            })
+            .when(has_advanced && open, |section| {
+                section.children(self.render_groups(track, true, cx))
+            })
+            .when(track == Track::Audio, |section| {
+                section.child(self.render_loudness(cx))
             })
     }
 
-    fn render_range_and_loudness(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let range = match &self.range {
-            Some(range) => h_flex()
-                .gap_2()
-                .child(div().text_base().child(range.clone()))
-                .child(
-                    Button::new("export-range-clear")
-                        .ghost()
-                        .small()
-                        .label("Clear")
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            cx.emit(ExportDialogEvent::ClearRange);
-                        })),
-                )
+    /// The loudness, disabled (its value kept) while the chosen output
+    /// exports no audio; before there is a choice it is left as it is.
+    fn render_loudness(&self, cx: &App) -> AnyElement {
+        let silent = self.model.choice().is_some() && !self.model.exports_audio();
+        let note = silent.then(|| {
+            div()
+                .debug_selector(|| "export-note-loudness".to_owned())
+                .child(muted_line("No audio is exported.", cx))
+                .into_any_element()
+        });
+        row(
+            "loudness".into(),
+            "Loudness".into(),
+            Select::new(&self.loudness)
+                .id("export-loudness")
+                .small()
+                .accessibility_label("Loudness")
+                .disabled(silent)
                 .into_any_element(),
-            None => div()
-                .text_base()
-                .child("Whole composition")
-                .into_any_element(),
-        };
-        v_flex()
-            .gap_4()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(section_label("Range", cx))
-                    .child(range),
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(section_label("Loudness", cx))
-                    .child(Select::new(&self.loudness).id("export-loudness")),
-            )
-    }
-}
-
-impl Render for ExportDialog {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let border = cx.theme().border;
-        v_flex()
-            .id("export-dialog")
-            .gap_6()
-            .pb_1()
-            .child(
-                v_flex()
-                    .gap_4()
-                    .child(self.render_preset(cx))
-                    .child(self.render_container(cx)),
-            )
-            .child(separated(self.render_encoder(Track::Video, cx), border))
-            .child(separated(self.render_encoder(Track::Audio, cx), border))
-            .child(separated(self.render_range_and_loudness(cx), border))
-    }
-}
-
-/// The footer: the open "Save as preset…" form, then `Save as preset…`
-/// leading, `Cancel` and `Export…` (the Enter default) trailing, and why
-/// `Export…` is disabled under them.
-fn footer(dialog: &Entity<ExportDialog>, cx: &App) -> impl IntoElement {
-    let this = dialog.read(cx);
-    let blocked = this.export_blocked();
-    let disabled = blocked.is_some();
-    let saving = this.save.is_some();
-    // The open form says it above its `Save`, which it disables too.
-    let reason = blocked
-        .filter(|_| !saving)
-        .map(|reason| h_flex().justify_end().child(blocked_line(reason, cx)));
-    let open_save = dialog.downgrade();
-    v_flex()
-        .w_full()
-        .gap_3()
-        .children(save_section(dialog, cx))
-        .child(
-            DialogFooter::new()
-                .justify_between()
-                .child(
-                    Button::new("export-save-as")
-                        .outline()
-                        .label("Save as preset…")
-                        .disabled(saving)
-                        .on_click(move |_, window, cx| {
-                            open_save
-                                .update(cx, |this, cx| this.open_save(window, cx))
-                                .ok();
-                        }),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            DialogClose::new().child(
-                                Button::new("export-dialog-cancel")
-                                    .outline()
-                                    .label("Cancel"),
-                            ),
-                        )
-                        .child(
-                            DialogAction::new().child(
-                                Button::new("export-dialog-export")
-                                    .primary()
-                                    .label("Export…")
-                                    .disabled(disabled)
-                                    .debug_selector(|| "export-dialog-export".to_owned()),
-                            ),
-                        ),
-                ),
+            note.into_iter().collect(),
+            cx,
         )
-        .children(reason)
+    }
+
+    /// The footer: the open "Save as preset…" form, why `Export…` is
+    /// disabled, then `Save as preset…` leading and `Export…` trailing.
+    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let blocked = self.export_blocked();
+        let disabled = blocked.is_some();
+        let save = self.render_save(cx);
+        let saving = save.is_some();
+        // The open form says it above its `Save`, which it disables too.
+        let reason = blocked
+            .filter(|_| !saving)
+            .map(|reason| blocked_line(reason, cx).into_any_element());
+        let theme = cx.theme();
+        v_flex()
+            .flex_none()
+            .w_full()
+            .gap_2()
+            .p(metrics::panel_padding())
+            .bg(theme.title_bar)
+            .border_t_1()
+            .border_color(theme.border)
+            .children(save)
+            .children(reason)
+            .child(
+                h_flex()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        Button::new("export-save-as")
+                            .ghost()
+                            .small()
+                            .label("Save as preset…")
+                            .disabled(saving)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.open_save(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("export-page-export")
+                            .primary()
+                            .small()
+                            .label("Export…")
+                            .disabled(disabled)
+                            .debug_selector(|| "export-page-export".to_owned())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.export(cx);
+                            })),
+                    ),
+            )
+    }
 }
 
-/// Shows `dialog` as the window's dialog. Escape and `Cancel` close it and
-/// keep its state; `Export…` (or Enter) emits its choice and closes it.
-pub(crate) fn open_export_dialog(dialog: &Entity<ExportDialog>, window: &mut Window, cx: &mut App) {
-    let dialog = dialog.downgrade();
-    window.open_dialog(cx, move |shell, _, cx| {
-        let Some(dialog) = dialog.upgrade() else {
-            return shell;
-        };
-        let confirm = dialog.clone();
-        shell
-            .title("Export")
-            .w(metrics::scaled_px(EXPORT_DIALOG_WIDTH))
-            .footer(footer(&dialog, cx))
-            .child(dialog)
-            .on_ok(move |_, _, cx| confirm.update(cx, |this, cx| this.export(cx)))
-    });
+impl Focusable for ExportPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for ExportPage {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let close = Button::new("export-page-close")
+            .ghost()
+            .xsmall()
+            .icon(IconName::Close)
+            .tooltip("Back to editing")
+            .accessibility_label("Back to editing")
+            .debug_selector(|| "export-page-close".to_owned())
+            .on_click(cx.listener(|_, _, _, cx| cx.emit(ExportPageEvent::Close)));
+        v_flex()
+            .id("export-page")
+            .key_context("ExportPage")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &ConfirmExport, _, cx| {
+                this.export(cx);
+            }))
+            .size_full()
+            .min_h_0()
+            .bg(cx.theme().sidebar)
+            .child(PanelHeader::new("export-page", "Export").action(close))
+            .child(
+                div()
+                    .id("export-page-body")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .px(metrics::panel_padding())
+                                    .py_2()
+                                    .child(self.render_preset(cx))
+                                    .child(self.render_container(cx))
+                                    .child(self.render_range(cx)),
+                            )
+                            .child(section_header("Video", cx))
+                            .child(self.render_track(Track::Video, cx))
+                            .child(section_header("Audio", cx))
+                            .child(self.render_track(Track::Audio, cx)),
+                    ),
+            )
+            .child(self.render_footer(cx))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celesta_exporter::SettingInput;
+    use celesta_exporter::{ResolveWarning, SettingInput};
     use gpui_kit::component::Root;
-    use gpui_kit::{
-        Focusable as _, Modifiers, TestAppContext, VisualTestContext, WindowHandle, px, size,
-    };
+    use gpui_kit::{Modifiers, Pixels, TestAppContext, VisualTestContext, WindowHandle, px, size};
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    /// What the window shows under the dialog.
-    struct Blank;
-
-    impl Render for Blank {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div().size_full()
-        }
-    }
+    /// The test window's height: tall enough for every row.
+    /// physical: a test window's size, not a layout length.
+    const WINDOW_HEIGHT: f32 = 1000.;
+    /// physical: a test window's size, not a layout length.
+    const WINDOW_WIDTH: f32 = 800.;
 
     fn reference(text: &str) -> ComponentRef {
         text.parse().unwrap()
     }
 
-    /// A window holding a dialog over `plugins`, with no presets files.
+    /// A window `width` wide showing a page over `plugins`, with the
+    /// project's and the user's presets files, and the page's Enter bound
+    /// as the editor binds it.
+    fn window_with_page(
+        cx: &mut TestAppContext,
+        width: Pixels,
+        plugins: Vec<celesta_media::RegisteredPlugin>,
+        project_file: Option<PathBuf>,
+        user_file: Option<PathBuf>,
+    ) -> (WindowHandle<Root>, Entity<ExportPage>) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            celesta_editor_theme::init(cx);
+            cx.bind_keys(key_bindings());
+        });
+        let registry = Arc::new(MediaRegistry::new(plugins));
+        let mut page = None;
+        let handle = cx.open_window(size(width, px(WINDOW_HEIGHT)), |window, cx| {
+            let view = cx.new(|cx| {
+                ExportPage::new(
+                    registry,
+                    project_file,
+                    user_file,
+                    ExportLoudness::Off,
+                    window,
+                    cx,
+                )
+            });
+            page = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        (handle, page.unwrap())
+    }
+
+    /// A page over `plugins`, with no presets files.
     fn window_with_dialog(
         cx: &mut TestAppContext,
         plugins: Vec<celesta_media::RegisteredPlugin>,
-    ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
+    ) -> (WindowHandle<Root>, Entity<ExportPage>) {
         window_with_user_file(cx, plugins, None)
     }
 
@@ -885,7 +1013,7 @@ mod tests {
         cx: &mut TestAppContext,
         plugins: Vec<celesta_media::RegisteredPlugin>,
         user_file: Option<PathBuf>,
-    ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
+    ) -> (WindowHandle<Root>, Entity<ExportPage>) {
         window_with_files(cx, plugins, None, user_file)
     }
 
@@ -896,38 +1024,24 @@ mod tests {
         plugins: Vec<celesta_media::RegisteredPlugin>,
         project_file: Option<PathBuf>,
         user_file: Option<PathBuf>,
-    ) -> (WindowHandle<Root>, Entity<ExportDialog>) {
-        cx.update(gpui_kit::init);
-        let registry = Arc::new(MediaRegistry::new(plugins));
-        let mut dialog = None;
-        let handle = cx.open_window(size(px(800.), px(1000.)), |window, cx| {
-            dialog = Some(cx.new(|cx| {
-                ExportDialog::new(
-                    registry,
-                    project_file,
-                    user_file,
-                    ExportLoudness::Off,
-                    window,
-                    cx,
-                )
-            }));
-            let blank = cx.new(|_| Blank);
-            Root::new(blank, window, cx)
-        });
-        (handle, dialog.unwrap())
+    ) -> (WindowHandle<Root>, Entity<ExportPage>) {
+        window_with_page(cx, px(WINDOW_WIDTH), plugins, project_file, user_file)
+    }
+
+    /// Gives the page the focus, as showing it does.
+    fn focus_page(page: &Entity<ExportPage>, cx: &mut VisualTestContext) {
+        cx.update(|window, cx| page.focus_handle(cx).focus(window, cx));
+        cx.run_until_parked();
     }
 
     /// A folder of its own under the system's temporary folder.
     fn scratch(name: &str) -> PathBuf {
-        crate::scratch::scratch_dir(&format!("export-dialog-{name}"))
+        crate::scratch::scratch_dir(&format!("export-page-{name}"))
     }
 
-    #[test]
-    fn warnings_quote_without_code_marks() {
-        assert_eq!(
-            plain("preset `Web`: b/x264 has no setting `speed`; it is left out"),
-            "preset “Web”: b/x264 has no setting “speed”; it is left out"
-        );
+    /// `selector` as [`VisualTestContext::debug_bounds`] takes it.
+    fn selector(text: String) -> &'static str {
+        Box::leak(text.into_boxed_str())
     }
 
     #[gpui_kit::test]
@@ -948,10 +1062,14 @@ mod tests {
             let [warning] = dialog.model.warnings.as_slice() else {
                 panic!("one warning: {:?}", dialog.model.warnings);
             };
+            let PageWarning::UnreadableFile { source, message } = warning else {
+                panic!("an unreadable file: {warning:?}");
+            };
+            assert_eq!(*source, PresetSource::User);
             assert!(
-                warning.starts_with(&user_file.display().to_string())
-                    && warning.contains("is not valid JSON"),
-                "{warning}"
+                message.starts_with(&user_file.display().to_string())
+                    && message.contains("is not valid JSON"),
+                "{message}"
             );
             // The first choice is still made, from the defaults.
             assert_eq!(dialog.export_blocked(), None);
@@ -978,38 +1096,103 @@ mod tests {
                 panic!("one warning: {:?}", dialog.model.warnings);
             };
             assert!(
-                warning.starts_with(&user_file.display().to_string()),
-                "{warning}"
+                matches!(warning, PageWarning::UnreadableFile { message, .. }
+                    if message.starts_with(&user_file.display().to_string())),
+                "{warning:?}"
             );
         });
         std::fs::remove_dir_all(folder).unwrap();
     }
 
     #[gpui_kit::test]
-    fn warnings_about_last_call_it_your_last_export(cx: &mut TestAppContext) {
+    fn warnings_name_no_preset(cx: &mut TestAppContext) {
         let folder = scratch("last");
         let user_file = folder.join("export-presets.json");
         std::fs::write(
             &user_file,
             r#"{"version":1,"last":{"muxer":"celesta-test-codec/file",
-                "video":{"component":"celesta-test-codec/video","options":{"nope":1}}}}"#,
+                "video":{"component":"celesta-test-codec/video","options":{"nope":1}}},
+                "presets":[{"name":"web","muxer":"celesta-test-codec/file",
+                "video":{"component":"celesta-test-codec/video","options":{"nope":1}}}]}"#,
         )
         .unwrap();
         let (handle, dialog) =
             window_with_user_file(cx, vec![celesta_codec_test::registered()], Some(user_file));
         cx.run_until_parked();
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        // One line above the warnings says they come from the last export.
+        focus_page(&dialog, cx);
+        assert!(
+            cx.debug_bounds("export-warnings-from-last").is_some(),
+            "From your last export: is shown"
+        );
         cx.update(|_, cx| {
+            let model = &dialog.read(cx).model;
+            assert!(!model.warnings.is_empty());
+            for warning in &model.warnings {
+                let text = model.warning_text(warning);
+                assert!(
+                    !text.starts_with("preset") && !text.contains("your last export"),
+                    "{text}"
+                );
+            }
             assert_eq!(
-                dialog.read(cx).model.warnings,
-                ["your last export: celesta-test-codec/video has no setting `nope`; it is left out"]
+                model.warning_text(&model.warnings[0]),
+                "Test video encoder has no setting “nope”. It is left out."
             );
         });
+
+        // A named preset's warnings sit under the row naming it: no line.
+        cx.update(|window, cx| {
+            dialog.update(cx, |dialog, cx| {
+                dialog.choose_preset(Some((PresetSource::User, "web".to_owned())), window, cx);
+            });
+        });
+        cx.run_until_parked();
+        focus_page(&dialog, cx);
+        cx.update(|_, cx| {
+            let model = &dialog.read(cx).model;
+            assert_eq!(model.selected, Some((PresetSource::User, "web".to_owned())));
+            assert!(!model.warnings.is_empty());
+        });
+        assert!(
+            cx.debug_bounds("export-warnings-from-last").is_none(),
+            "no context line under a named preset"
+        );
         std::fs::remove_dir_all(folder).unwrap();
     }
 
-    /// The test codec's video `input` the dialog's choice has.
-    fn video_input(dialog: &ExportDialog) -> Option<SettingValue> {
+    #[test]
+    fn only_the_last_exports_warnings_go_under_its_line() {
+        let stale = PageWarning::Resolve(ResolveWarning::AudioOptionsIgnored {
+            base: LAST_EXPORT.to_owned(),
+        });
+        let preset = PageWarning::Resolve(ResolveWarning::AudioOptionsIgnored {
+            base: "preset `web`".to_owned(),
+        });
+        let unknown = PageWarning::UnknownDefault {
+            name: "web".to_owned(),
+        };
+        let unreadable = PageWarning::UnreadableFile {
+            source: PresetSource::User,
+            message: "broken".to_owned(),
+        };
+        let warnings = vec![
+            stale.clone(),
+            preset.clone(),
+            unknown.clone(),
+            unreadable.clone(),
+        ];
+        // The project's default is in no file, so the page opened with the
+        // last export: the opening's own warnings are not about it.
+        assert_eq!(
+            split_last_export(&warnings),
+            (vec![&preset, &unknown, &unreadable], vec![&stale])
+        );
+    }
+
+    /// The test codec's video `input` the page's choice has.
+    fn video_input(dialog: &ExportPage) -> Option<SettingValue> {
         let choice = dialog.model.choice()?;
         choice.video.settings.get("input").cloned()
     }
@@ -1147,8 +1330,8 @@ mod tests {
         let exported = Rc::new(RefCell::new(0));
         cx.update(|cx| {
             let exported = exported.clone();
-            cx.subscribe(&dialog, move |_, event: &ExportDialogEvent, _| {
-                if let ExportDialogEvent::Export { .. } = event {
+            cx.subscribe(&dialog, move |_, event: &ExportPageEvent, _| {
+                if let ExportPageEvent::Export { .. } = event {
                     *exported.borrow_mut() += 1;
                 }
             })
@@ -1157,8 +1340,6 @@ mod tests {
         cx.run_until_parked();
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
         let open_form = |cx: &mut VisualTestContext| {
-            cx.update(|window, cx| open_export_dialog(&dialog, window, cx));
-            cx.run_until_parked();
             cx.update(|window, cx| {
                 dialog.update(cx, |dialog, cx| {
                     dialog.open_save(window, cx);
@@ -1177,13 +1358,12 @@ mod tests {
         // still exports, and saves nothing.
         open_form(cx);
         let export = cx
-            .debug_bounds("export-dialog-export")
+            .debug_bounds("export-page-export")
             .expect("the Export… button");
         cx.simulate_click(export.center(), Modifiers::none());
         cx.run_until_parked();
         assert_eq!(*exported.borrow(), 1);
         assert!(!user_file.exists());
-        cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
 
         // Enter in the name saves, and does not export.
         dialog.update_in(cx, |dialog, _, cx| {
@@ -1197,8 +1377,7 @@ mod tests {
         let saved = PresetsFile::load(&user_file).unwrap();
         assert_eq!(saved.presets.len(), 1);
         assert_eq!(saved.presets[0].name, "Web");
-        cx.update(|window, cx| {
-            assert!(window.has_active_dialog(cx));
+        cx.update(|_, cx| {
             let dialog = dialog.read(cx);
             assert!(dialog.save.is_none());
             assert_eq!(
@@ -1219,7 +1398,6 @@ mod tests {
         );
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
         cx.update(|window, cx| {
-            open_export_dialog(&dialog, window, cx);
             dialog.update(cx, |dialog, cx| {
                 dialog.open_save(window, cx);
                 let name = dialog.save.as_ref().unwrap().name.clone();
@@ -1278,8 +1456,7 @@ mod tests {
         let (handle, dialog) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
         cx.run_until_parked();
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
-        cx.update(|window, cx| {
-            open_export_dialog(&dialog, window, cx);
+        cx.update(|_, cx| {
             // The delay is one of the audio encoder's advanced fields.
             dialog.update(cx, |dialog, cx| {
                 dialog.advanced[Track::Audio as usize] = true;
@@ -1328,8 +1505,7 @@ mod tests {
         let (handle, dialog) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
         cx.run_until_parked();
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
-        cx.update(|window, cx| {
-            open_export_dialog(&dialog, window, cx);
+        cx.update(|_, cx| {
             dialog.update(cx, |dialog, cx| {
                 dialog.advanced[Track::Audio as usize] = true;
                 cx.notify();
@@ -1378,13 +1554,13 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn export_dialog_emits_the_chosen_output(cx: &mut TestAppContext) {
-        let (handle, dialog) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
+    fn enter_in_the_page_exports(cx: &mut TestAppContext) {
+        let (handle, page) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
         let exported = Rc::new(RefCell::new(Vec::new()));
         cx.update(|cx| {
             let exported = exported.clone();
-            cx.subscribe(&dialog, move |_, event: &ExportDialogEvent, _| {
-                if let ExportDialogEvent::Export {
+            cx.subscribe(&page, move |_, event: &ExportPageEvent, _| {
+                if let ExportPageEvent::Export {
                     choice, extension, ..
                 } = event
                 {
@@ -1397,22 +1573,27 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
 
-        // Enter, the dialog's default, does nothing while the plugin is
-        // being described and the first choice resolved.
-        cx.update(|window, cx| open_export_dialog(&dialog, window, cx));
-        cx.update(|_, cx| {
-            let reason = dialog.read(cx).export_blocked();
+        // Enter does nothing while the plugin is being described and the
+        // first choice resolved. The key is handled before the executor
+        // runs the resolve.
+        cx.update(|window, cx| {
+            page.focus_handle(cx).focus(window, cx);
+            window.draw(cx).clear(cx);
+            let reason = page.read(cx).export_blocked();
             assert_eq!(reason.as_deref(), Some(CHECKING));
-            dialog.update(cx, |dialog, cx| assert!(!dialog.export(cx)));
         });
-        assert!(exported.borrow().is_empty());
+        cx.simulate_keystrokes("enter");
+        assert!(
+            exported.borrow().is_empty(),
+            "nothing exports while Checking…"
+        );
 
         cx.run_until_parked();
         cx.update(|_, cx| {
-            let dialog = dialog.read(cx);
-            assert_eq!(dialog.export_blocked(), None);
+            let page = page.read(cx);
+            assert_eq!(page.export_blocked(), None);
             // The container list shows the test codec's muxer, chosen.
-            let muxer = dialog.muxer.read(cx);
+            let muxer = page.muxer.read(cx);
             assert_eq!(
                 muxer.selected_value(),
                 Some(&reference("celesta-test-codec/file"))
@@ -1420,8 +1601,8 @@ mod tests {
         });
         cx.update(|window, cx| {
             // The test codec's video field, set as its Select sets it.
-            dialog.update(cx, |dialog, cx| {
-                dialog.set_setting(
+            page.update(cx, |page, cx| {
+                page.set_setting(
                     Track::Video,
                     "input",
                     SettingValue::String("rgba8".to_owned()),
@@ -1432,7 +1613,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|_, cx| {
-            let input = dialog
+            let input = page
                 .read(cx)
                 .fields
                 .iter()
@@ -1444,7 +1625,8 @@ mod tests {
             assert_eq!(input, Some(Some("rgba8".to_owned())));
         });
 
-        // Enter dispatches the dialog's confirm, as a click on Export… does.
+        // Enter in the focused page runs Export….
+        focus_page(&page, cx);
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
 
@@ -1464,8 +1646,247 @@ mod tests {
                 "rgba8".to_owned()
             )))
         );
-        cx.update(|window, cx| {
-            assert!(!window.has_active_dialog(cx), "Export… closes the dialog");
+    }
+
+    #[gpui_kit::test]
+    fn export_waits_for_the_save_panel(cx: &mut TestAppContext) {
+        let (handle, page) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
+        let exported = Rc::new(RefCell::new(0));
+        cx.update(|cx| {
+            let exported = exported.clone();
+            cx.subscribe(&page, move |_, event: &ExportPageEvent, _| {
+                if let ExportPageEvent::Export { .. } = event {
+                    *exported.borrow_mut() += 1;
+                }
+            })
+            .detach();
         });
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        page.update_in(cx, |page, _, cx| page.set_waiting(true, cx));
+        focus_page(&page, cx);
+        cx.update(|_, cx| {
+            assert_eq!(
+                page.read(cx).export_blocked().as_deref(),
+                Some(WAITING),
+                "Export… is disabled while the save panel is up"
+            );
+        });
+        let export = cx
+            .debug_bounds("export-page-export")
+            .expect("the Export… button");
+        cx.simulate_click(export.center(), Modifiers::none());
+        focus_page(&page, cx);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(*exported.borrow(), 0, "nothing exports while waiting");
+
+        // The panel closed, a path chosen or not: Enter exports again.
+        page.update_in(cx, |page, _, cx| page.set_waiting(false, cx));
+        focus_page(&page, cx);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(*exported.borrow(), 1);
+    }
+
+    #[gpui_kit::test]
+    fn the_close_button_emits_close(cx: &mut TestAppContext) {
+        let (handle, page) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
+        let closed = Rc::new(RefCell::new(0));
+        cx.update(|cx| {
+            let closed = closed.clone();
+            cx.subscribe(&page, move |_, event: &ExportPageEvent, _| {
+                if let ExportPageEvent::Close = event {
+                    *closed.borrow_mut() += 1;
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        let close = cx
+            .debug_bounds("export-page-close")
+            .expect("the header's close button");
+        cx.simulate_click(close.center(), Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(*closed.borrow(), 1);
+    }
+
+    #[gpui_kit::test]
+    fn loudness_is_disabled_without_audio(cx: &mut TestAppContext) {
+        let (handle, page) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        // While the first choice is being resolved nothing is known to
+        // have no audio: no note.
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(page.read(cx).model.choice().is_none());
+        });
+        assert!(
+            cx.debug_bounds("export-control-loudness").is_some(),
+            "the loudness row is drawn"
+        );
+        assert!(
+            cx.debug_bounds("export-note-loudness").is_none(),
+            "no note before there is a choice"
+        );
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            page.update(cx, |page, cx| {
+                page.choose_encoder(Track::Audio, None, window, cx);
+            });
+        });
+        focus_page(&page, cx);
+        assert!(
+            cx.debug_bounds("export-note-loudness").is_some(),
+            "No audio is exported."
+        );
+        // A click on the disabled list neither opens it nor takes the
+        // focus from the page.
+        let loudness = cx
+            .debug_bounds("export-control-loudness")
+            .expect("the loudness row");
+        cx.simulate_click(loudness.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.update(|window, cx| assert!(page.focus_handle(cx).is_focused(window)));
+
+        cx.update(|window, cx| {
+            page.update(cx, |page, cx| {
+                page.choose_encoder(
+                    Track::Audio,
+                    Some(reference("celesta-test-codec/pcm")),
+                    window,
+                    cx,
+                );
+            });
+        });
+        focus_page(&page, cx);
+        assert!(cx.debug_bounds("export-note-loudness").is_none());
+        let loudness = cx
+            .debug_bounds("export-control-loudness")
+            .expect("the loudness row");
+        cx.simulate_click(loudness.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(
+                !page.focus_handle(cx).is_focused(window),
+                "the enabled list takes the click"
+            );
+        });
+    }
+
+    /// Puts the test codec's video `input` in a "Rate control" group, as
+    /// a plugin describing it so would.
+    fn group_the_video_input(page: &Entity<ExportPage>, cx: &mut VisualTestContext) {
+        cx.update(|window, cx| {
+            page.update(cx, |page, cx| {
+                let mut description = (*page.registry.describe(0, &page.kill)).clone();
+                let video = description
+                    .components
+                    .iter_mut()
+                    .find(|component| component.kind == ComponentKind::VideoEncoder)
+                    .expect("the test video encoder");
+                for field in &mut video.settings {
+                    if field.key == "input" {
+                        field.group = Some("Rate control".to_owned());
+                    }
+                }
+                page.model.described(0, Arc::new(description));
+                page.advanced[Track::Video as usize] = true;
+                page.sync(window, cx);
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui_kit::test]
+    fn labels_share_one_edge(cx: &mut TestAppContext) {
+        let (handle, page) = window_with_dialog(cx, vec![celesta_codec_test::registered()]);
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        group_the_video_input(&page, cx);
+        let left = |cx: &mut VisualTestContext, selector: &'static str| {
+            cx.debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} is drawn"))
+                .left()
+        };
+        let encoder = left(cx, "export-label-video-encoder");
+        assert_eq!(left(cx, "export-group-video-Rate control"), encoder);
+        assert_eq!(left(cx, "export-label-video-input"), encoder);
+        // The disclosure's icon starts on the labels' edge: the button has
+        // no leading padding.
+        assert_eq!(left(cx, "export-video-advanced-icon"), encoder);
+        assert_eq!(left(cx, "export-label-video-alpha"), encoder);
+        assert_eq!(left(cx, "export-label-preset"), encoder);
+        // Lines under a control start at its lane.
+        assert_eq!(
+            left(cx, "export-description-video-input"),
+            left(cx, "export-control-video-input")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn controls_fit_the_narrowest_panel(cx: &mut TestAppContext) {
+        // The Export panel's narrowest: 22rem at the editor's 13px `rem`.
+        // physical: a test window's size, not a layout length.
+        let width = px(22. * celesta_editor_theme::metrics::BASE_FONT_SIZE);
+        let (handle, page) = window_with_page(
+            cx,
+            width,
+            vec![celesta_codec_test::registered()],
+            None,
+            None,
+        );
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        group_the_video_input(&page, cx);
+        cx.update(|window, cx| {
+            page.update(cx, |page, cx| {
+                page.advanced = [true; 2];
+                page.set_range(Some("00:00:01:00 – 00:00:02:00".into()), true, cx);
+                page.open_save(window, cx);
+            });
+        });
+        cx.run_until_parked();
+        let mut ids: Vec<String> = [
+            "preset",
+            "container",
+            "range",
+            "video-encoder",
+            "audio-encoder",
+            "loudness",
+            "save-name",
+            "save-target",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        cx.update(|_, cx| {
+            ids.extend(
+                page.read(cx)
+                    .fields
+                    .iter()
+                    .map(|control| format!("{}-{}", track_id(control.track), control.key)),
+            );
+        });
+        assert!(ids.len() > 8, "the encoders' fields are listed: {ids:?}");
+        for id in ids {
+            // The marker after the control: where the control ends.
+            let end = cx
+                .debug_bounds(selector(format!("export-control-end-{id}")))
+                .unwrap_or_else(|| panic!("export-control-end-{id} is drawn"))
+                .left();
+            assert!(
+                end <= width,
+                "export-control-{id} ends at {end:?}, past {width:?}"
+            );
+        }
+        let clear = cx
+            .debug_bounds("export-range-clear")
+            .expect("the range's Clear");
+        assert!(
+            clear.right() <= width,
+            "Clear ends at {:?}, past {width:?}",
+            clear.right()
+        );
     }
 }

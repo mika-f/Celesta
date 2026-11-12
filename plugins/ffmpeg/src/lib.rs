@@ -104,12 +104,13 @@ fn plugin_json() -> Value {
 }
 
 /// What `celesta-codec-ffmpeg --manifest` prints, as one line: the
-/// manifest's `id`, `version`, `roles`, and `media`, for a `cargo install`
+/// manifest's `id`, `name`, `version`, `roles`, and `media`, for a `cargo install`
 /// of the program, which has no manifest file beside it.
 pub fn printed_manifest() -> String {
     let plugin = plugin_json();
     json!({
         "id": plugin["id"],
+        "name": plugin["name"],
         "version": env!("CARGO_PKG_VERSION"),
         "roles": plugin["roles"],
         "media": plugin["media"],
@@ -129,6 +130,10 @@ fn manifest() -> MediaManifest {
 pub fn registered() -> RegisteredPlugin {
     RegisteredPlugin {
         id: PLUGIN_ID.to_owned(),
+        name: plugin_json()["name"]
+            .as_str()
+            .expect("plugin.json names the plugin")
+            .to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         origin: MediaOrigin::Bundled,
         directory: PathBuf::new(),

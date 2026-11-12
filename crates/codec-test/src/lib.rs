@@ -96,6 +96,7 @@ impl TestCodec {
 pub fn registered() -> RegisteredPlugin {
     RegisteredPlugin {
         id: PLUGIN_ID.to_owned(),
+        name: "Test codec".to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         origin: MediaOrigin::Bundled,
         directory: PathBuf::new(),

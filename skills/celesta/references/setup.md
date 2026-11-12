@@ -217,7 +217,8 @@ copied into `assets/`.
 - React entries reload automatically when saved. JSON projects need
   **File → Reload** (Command-R / Ctrl-R).
 - Space plays and pauses; arrow keys step frames; I and O mark an export
-  range; **Export…** writes an MP4.
+  range; **Export** in the title bar (or **File → Export…**) opens the
+  export page beside the viewer, whose **Export…** writes the file.
 - Track mute/solo in the app change what the preview (and an export started
   from the app) plays, and the volume slider is a monitor gain; neither is
   written to the files.

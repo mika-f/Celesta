@@ -162,7 +162,7 @@ compositions: no package a composition imports depends on them, though
 | `celesta-mcp` | `Celesta-mcp`, the MCP server agents use to inspect, render, and export. |
 | `celesta-editor-core` | Read-only document, summaries, scene/audio evaluation, and timeline clock. |
 | `celesta-editor-theme` | Shared desktop theme. |
-| `celesta-editor` | GPUI app: preview, playback, panels, canvas and Properties editing, and export controls, including the export dialog (`export_dialog/`: its model over the registry and the presets files, and the view with its preset, container, encoder fields, range, loudness, and "Save as preset…"). |
+| `celesta-editor` | GPUI app: preview, playback, panels, canvas and Properties editing, and export controls, including the export page (`export_page/`: its model over the registry and the presets files, `wording.rs` for the warnings in the page's words, and `view/`: the rows in `view.rs`, the encoder fields in `fields.rs`, the Select lists in `choice.rs`, the row layout in `layout.rs`, and "Save as preset…" in `save.rs`), shown in place of Assets by `export_control.rs`. |
 | `celesta-source-edit` | Locates JSX elements in user TSX source and applies byte-span edits for the editor's write-back. |
 | `celesta-remote` | Asset path resolution, remote download cache, and stylesheet font discovery. |
 | `celesta-react-bridge` | Long-lived Node process and frame/component requests over stdin/stdout. |
@@ -351,8 +351,8 @@ covered by the dated handoff notes.
   presets file the lookup has to find a name in is `invalid_presets` (a
   broken user file only warns under a project preset). A named or preset
   muxer that does not list the output's extension writes it anyway, with a
-  warning. The editor's Export… opens the export dialog, which reads the
-  same files and exports an explicit choice. libx264's `preset` and
+  warning. The editor's Export (the title bar, File → Export…) opens the
+  export page, which reads the same files and exports an explicit choice. libx264's `preset` and
   `crf` default to `medium` and 18; `bitDepth=10` encodes yuv420p10le
   (High 10). Celesta offers the encoder `yuv420p`, `yuv420p10`, `nv12`, and
   `p010`, which the GPU converts (`ReadbackFormat::Yuv420p`, `Yuv420p10`,

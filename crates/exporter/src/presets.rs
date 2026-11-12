@@ -28,7 +28,7 @@ pub struct PresetsFile {
     pub version: u32,
     #[serde(default)]
     pub presets: Vec<Preset>,
-    /// The export dialog's most recent choice (the user file only).
+    /// The export page's most recent choice (the user file only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last: Option<PresetOutput>,
     /// The preset an export of the project uses when it names no preset and

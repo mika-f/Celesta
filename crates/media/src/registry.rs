@@ -90,6 +90,8 @@ fn decoder_order(plugin: &RegisteredPlugin) -> u8 {
 #[derive(Clone)]
 pub struct RegisteredPlugin {
     pub id: String,
+    /// The display name of its manifest.
+    pub name: String,
     pub version: String,
     pub origin: MediaOrigin,
     pub directory: PathBuf,
@@ -103,6 +105,7 @@ impl fmt::Debug for RegisteredPlugin {
         formatter
             .debug_struct("RegisteredPlugin")
             .field("id", &self.id)
+            .field("name", &self.name)
             .field("version", &self.version)
             .field("origin", &self.origin)
             .field("directory", &self.directory)
@@ -169,6 +172,8 @@ pub struct MediaComponentInfo {
     pub name: String,
     pub origin: MediaOrigin,
     pub plugin: usize,
+    /// Its plugin's display name.
+    pub plugin_name: String,
     pub plugin_version: String,
     pub directory: PathBuf,
     pub entry: ComponentEntry,
@@ -303,6 +308,7 @@ impl MediaRegistry {
                 name: entry.name().to_owned(),
                 origin: plugin.origin,
                 plugin: index,
+                plugin_name: plugin.name.clone(),
                 plugin_version: plugin.version.clone(),
                 directory: plugin.directory.clone(),
                 entry,
@@ -639,6 +645,7 @@ mod tests {
         let starts = starts.clone();
         RegisteredPlugin {
             id: "p".into(),
+            name: "p".into(),
             version: "1.0.0".into(),
             origin: MediaOrigin::User,
             directory: PathBuf::from("/plugins/p"),
@@ -736,6 +743,7 @@ mod tests {
         };
         RegisteredPlugin {
             id: id.into(),
+            name: id.into(),
             origin,
             media: MediaManifest {
                 decoders,
@@ -861,6 +869,19 @@ mod tests {
         assert_eq!(answers[2].components, all_available());
         registry.describe(0, &kill);
         assert_eq!(starts.count(), 3, "the success is cached");
+    }
+
+    #[test]
+    fn components_carry_their_plugins_display_name() {
+        let registry = MediaRegistry::new(vec![RegisteredPlugin {
+            name: "Test codec".into(),
+            ..fake(one_of_each(), None, &Starts::default(), |_| Ok(Vec::new()))
+        }]);
+        let reference: ComponentRef = "p/v".parse().unwrap();
+        let info = registry
+            .component(&reference, ComponentKind::VideoEncoder)
+            .unwrap();
+        assert_eq!(info.plugin_name, "Test codec");
     }
 
     #[test]

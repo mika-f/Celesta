@@ -18,14 +18,17 @@ use celesta_project::AssetKind;
 use celesta_react_bridge::{ENTRY_PROPS_FILE, chapter_at, resolve_props_file};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, IconName, Sizable as _, TitleBar};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, TitleBar,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{ClickEvent, Context, ObjectFit, SharedString, Window, div, img, px};
 
 impl EditorView {
     /// The window's title bar: the menu bar (outside macOS, which shows it
     /// natively), the open file, and the window-wide commands — Create New
-    /// Project…, Open…, and Export… (or Cancel export).
+    /// Project…, Open…, and the export page's Export toggle (or Cancel
+    /// export).
     pub(crate) fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let exporting = self.export_cancellation.is_some();
         let muted = cx.theme().muted_foreground;
@@ -144,16 +147,15 @@ impl EditorView {
                         .disabled(self.export_cancelling)
                         .on_click(cx.listener(Self::cancel_export_click))
                 } else {
+                    // A toggle: "on" while the export page shows.
                     Button::new("export-project")
                         .small()
                         .ghost()
-                        .label("Export…")
-                        .disabled(
-                            self.choosing_export_path
-                                || self.opening
-                                || self.react_reloads.is_running(),
-                        )
-                        .on_click(cx.listener(Self::export_project_click))
+                        .label("Export")
+                        .selected(self.export_page.is_open())
+                        .toggled(self.export_page.is_open())
+                        .disabled(self.export_busy())
+                        .on_click(cx.listener(Self::export_page_click))
                 }),
         )
     }

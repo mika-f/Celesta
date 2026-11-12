@@ -1,5 +1,6 @@
 {
   "id": "ffmpeg",
+  "name": "FFmpeg",
   "version": "0.9.0",
   "cargoPackage": "celesta-codec-ffmpeg",
   "roles": ["media"],

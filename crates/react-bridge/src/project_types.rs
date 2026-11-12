@@ -259,6 +259,7 @@ pub(crate) mod tests {
         let entry = PluginEntry {
             manifest: celesta_plugin_host::Manifest {
                 id: "example".into(),
+                name: None,
                 version: "0.1.0".into(),
                 protocol: 1,
                 celesta: Some("*".into()),

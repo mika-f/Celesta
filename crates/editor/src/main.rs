@@ -30,7 +30,7 @@ mod element_edit;
 mod element_rows;
 mod element_rows_view;
 mod export_control;
-mod export_dialog;
+mod export_page;
 mod export_worker;
 mod helpers;
 mod impact;
@@ -229,6 +229,7 @@ fn run() -> anyhow::Result<()> {
             KeyBinding::new(secondary!("z"), Undo, EDITOR_KEYS),
             KeyBinding::new(secondary!("shift-z"), Redo, EDITOR_KEYS),
         ]);
+        cx.bind_keys(export_page::view::key_bindings());
         // A text edited on the canvas is written first.
         cx.on_action(|_: &Quit, cx| lifecycle::quit_after_inline_commits(cx));
         // macOS shows these in the system menu bar; elsewhere the title bar's
@@ -280,6 +281,7 @@ fn run() -> anyhow::Result<()> {
                     editor.master_volume_focus = Some(master_volume_focus);
                     editor.inline_text_focus = Some(inline_text_focus);
                     editor.dock_split = Some(cx.new(|_| ResizableState::default()));
+                    editor.export_split = Some(cx.new(|_| ResizableState::default()));
                     editor.body_split = Some(cx.new(|_| ResizableState::default()));
                     #[cfg(not(target_os = "macos"))]
                     {

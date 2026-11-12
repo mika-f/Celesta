@@ -88,6 +88,11 @@ pub fn volume_slider_width() -> Rems {
     rems(6.75)
 }
 
+/// Width of an inspector row's label lane, the same for every row so labels and values share one edge; wide enough for "Corner radius".
+pub fn inspector_label_width() -> Rems {
+    rems(7.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +130,11 @@ mod tests {
         // gpui-kit draws a medium `TabVariant::Tab` 32px tall; a shorter
         // band squeezes the right dock's tabs.
         assert!(panel_header_height().0 * BASE_FONT_SIZE >= 32.0);
+    }
+
+    #[test]
+    fn the_inspector_label_lane_is_7rem() {
+        assert_eq!(inspector_label_width(), rems(7.0));
     }
 
     #[test]

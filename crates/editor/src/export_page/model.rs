@@ -1,16 +1,17 @@
-//! What the export dialog shows and edits, without GPUI: the media
+//! What the export page shows and edits, without GPUI: the media
 //! components and what each plugin's `describe` said of them, the chosen
 //! muxer and encoders with the settings given for them, and the presets
 //! files.
 //!
 //! A preset or a container change is resolved by the view through
-//! `resolve_preset_output` and handed to [`ExportDialogModel::apply`];
+//! `resolve_preset_output` and handed to [`ExportModel::apply`];
 //! encoder and field edits change the choice here.
 
+use super::wording::PageWarning;
 use celesta_exporter::{
-    AudioChoice, EncoderChoice, ExportError, NoAudio, OutputChoice, Preset, PresetAudio,
-    PresetEncoder, PresetOutput, PresetSource, PresetsFile, ResolvedEncoder, ResolvedOutput,
-    SettingInput, serves_video, writes_any_codec,
+    AudioChoice, EncoderChoice, NoAudio, OutputChoice, Preset, PresetAudio, PresetEncoder,
+    PresetOutput, PresetSource, PresetsFile, ResolvedEncoder, ResolvedOutput, SettingInput,
+    serves_video, writes_any_codec,
 };
 use celesta_media::settings::{
     differences, drop_hidden, effective, is_visible, sanitize, validate,
@@ -63,7 +64,7 @@ pub(crate) enum OptionState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ComponentOption {
     pub(crate) reference: ComponentRef,
-    /// `"{name} · {plugin id}"`, with ` (project)` for a project plugin's.
+    /// `"{name} · {plugin name}"`, with ` (project)` for a project plugin's.
     pub(crate) label: String,
     pub(crate) state: OptionState,
 }
@@ -76,7 +77,7 @@ pub(crate) struct EncoderPick {
     pub(crate) settings: Settings,
 }
 
-/// The muxer and encoders the dialog exports with; `audio` is `None`
+/// The muxer and encoders the page exports with; `audio` is `None`
 /// when the export has no audio.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DialogChoice {
@@ -85,7 +86,7 @@ pub(crate) struct DialogChoice {
     pub(crate) audio: Option<EncoderPick>,
 }
 
-/// A presets file as the dialog read it: where it is (`None` for an
+/// A presets file as the page read it: where it is (`None` for an
 /// untitled project, or a platform without a settings folder), and its
 /// contents (`None` when there is no file yet), or why it could not be
 /// read.
@@ -111,7 +112,7 @@ pub(crate) struct FieldGroup {
     pub(crate) rows: Vec<FieldRow>,
 }
 
-/// What the dialog first resolves.
+/// What the page first resolves.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum InitialBase {
     /// The project's `default` preset, from the file it was found in.
@@ -132,11 +133,11 @@ pub(crate) enum Asked {
     /// The user file's `last`, or the defaults: nothing counts as chosen
     /// but audio left out where the muxer takes audio.
     Defaults,
-    /// A container change, from [`ExportDialogModel::container_choice`].
+    /// A container change, from [`ExportModel::container_choice`].
     Container,
 }
 
-/// Which encoders were chosen in the dialog or named by the applied
+/// Which encoders were chosen in the page or named by the applied
 /// preset, rather than left to the muxer's defaults.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Chosen {
@@ -168,7 +169,7 @@ pub(crate) enum SaveTarget {
     User,
 }
 
-pub(crate) struct ExportDialogModel {
+pub(crate) struct ExportModel {
     /// The registry's encoders and muxers: bundled plugins' first, then
     /// the user's, then the project's, each in search and manifest order.
     components: Vec<MediaComponentInfo>,
@@ -181,12 +182,12 @@ pub(crate) struct ExportDialogModel {
     /// a field or an encoder is changed.
     pub(crate) selected: Option<(PresetSource, String)>,
     /// The last resolve's warnings, kept until the next one.
-    pub(crate) warnings: Vec<String>,
+    pub(crate) warnings: Vec<PageWarning>,
     /// Why the last resolve failed, which the view sets.
     pub(crate) error: Option<String>,
 }
 
-impl ExportDialogModel {
+impl ExportModel {
     pub(crate) fn new(
         registry: &MediaRegistry,
         project: PresetFileState,
@@ -222,17 +223,17 @@ impl ExportDialogModel {
         self.described.insert(plugin, Described::Done(description));
     }
 
-    /// What the dialog first resolves: the project's default preset,
+    /// What the page first resolves: the project's default preset,
     /// looked up in the project file and then the user's as an export
     /// looks it up, else the user's `last`, else the defaults; and the
     /// warnings to show with it: a project or user file that could not be
     /// read (whose presets the list then leaves out), or a `default`
     /// naming a preset found in no file (an export's `unknown_preset`),
     /// which falls back to `last`.
-    pub(crate) fn initial_base(&self) -> (InitialBase, Vec<String>) {
+    pub(crate) fn initial_base(&self) -> (InitialBase, Vec<PageWarning>) {
         let mut warnings = Vec::new();
-        let project = read(&self.project, &mut warnings);
-        let user = read(&self.user, &mut warnings);
+        let project = read(&self.project, PresetSource::Project, &mut warnings);
+        let user = read(&self.user, PresetSource::User, &mut warnings);
         if let Some(name) = project.and_then(|file| file.default.as_deref()) {
             if let Some(preset) = project.and_then(|file| file.find(name)) {
                 return (
@@ -250,13 +251,9 @@ impl ExportDialogModel {
                     warnings,
                 );
             }
-            warnings.push(
-                ExportError::UnknownPreset {
-                    name: name.to_owned(),
-                    default_in: self.project.path.clone(),
-                }
-                .to_string(),
-            );
+            warnings.push(PageWarning::UnknownDefault {
+                name: name.to_owned(),
+            });
         }
         let base = match user.and_then(|file| file.last.clone()) {
             Some(last) => InitialBase::Last(last),
@@ -305,6 +302,14 @@ impl ExportDialogModel {
     /// The muxer and encoders chosen, once a resolve was applied.
     pub(crate) fn choice(&self) -> Option<&DialogChoice> {
         self.choice.as_ref()
+    }
+
+    /// Whether the export has audio: an audio encoder is chosen and the
+    /// muxer takes audio.
+    pub(crate) fn exports_audio(&self) -> bool {
+        self.choice.as_ref().is_some_and(|choice| {
+            choice.audio.is_some() && self.muxer(&choice.muxer).is_some_and(takes_audio)
+        })
     }
 
     /// Takes a resolve's components, and the settings it chose that are
@@ -357,7 +362,12 @@ impl ExportDialogModel {
             audio,
         });
         self.selected = selected;
-        self.warnings = resolved.warnings.clone();
+        self.warnings = resolved
+            .warnings
+            .iter()
+            .cloned()
+            .map(PageWarning::Resolve)
+            .collect();
         self.error = None;
     }
 
@@ -437,7 +447,7 @@ impl ExportDialogModel {
     }
 
     /// What a container change to `muxer` resolves: each encoder chosen
-    /// in the dialog or named by the applied preset, with its settings,
+    /// in the page or named by the applied preset, with its settings,
     /// when `muxer` takes a codec it writes; else the muxer's default, as
     /// for an encoder that was a default. Audio chosen out stays out;
     /// audio a muxer took none of comes back.
@@ -657,6 +667,23 @@ impl ExportDialogModel {
             .find(|info| info.kind == kind && info.reference == *reference)
     }
 
+    /// The label of the listed component `reference` of `kind`.
+    pub(super) fn component_label(
+        &self,
+        reference: &ComponentRef,
+        kind: ComponentKind,
+    ) -> Option<String> {
+        self.info(reference, kind).map(label)
+    }
+
+    /// The name of the listed component `reference`, of any kind.
+    pub(super) fn component_name(&self, reference: &ComponentRef) -> Option<String> {
+        self.components
+            .iter()
+            .find(|info| info.reference == *reference)
+            .map(|info| info.name.clone())
+    }
+
     /// The manifest entry of the installed muxer `reference`.
     fn muxer(&self, reference: &ComponentRef) -> Option<&MediaMuxerEntry> {
         match &self.info(reference, ComponentKind::Muxer)?.entry {
@@ -819,8 +846,8 @@ fn kind(track: Track) -> ComponentKind {
     }
 }
 
-fn label(info: &MediaComponentInfo) -> String {
-    let mut label = format!("{} · {}", info.name, info.reference.plugin);
+pub(super) fn label(info: &MediaComponentInfo) -> String {
+    let mut label = format!("{} · {}", info.name, info.plugin_name);
     if info.origin == MediaOrigin::Project {
         label.push_str(" (project)");
     }
@@ -831,13 +858,20 @@ fn loaded(state: &PresetFileState) -> Option<&PresetsFile> {
     state.file.as_ref().ok()?.as_ref()
 }
 
-/// [`loaded`], adding the error of a file that could not be read to
+/// [`loaded`], adding a warning for a file that could not be read to
 /// `warnings`.
-fn read<'a>(state: &'a PresetFileState, warnings: &mut Vec<String>) -> Option<&'a PresetsFile> {
+fn read<'a>(
+    state: &'a PresetFileState,
+    source: PresetSource,
+    warnings: &mut Vec<PageWarning>,
+) -> Option<&'a PresetsFile> {
     match &state.file {
         Ok(file) => file.as_ref(),
-        Err(error) => {
-            warnings.push(error.clone());
+        Err(message) => {
+            warnings.push(PageWarning::UnreadableFile {
+                source,
+                message: message.clone(),
+            });
             None
         }
     }
@@ -874,7 +908,7 @@ fn kept_audio(
     }
 }
 
-/// A resolved encoder as the dialog holds it: its settings that differ
+/// A resolved encoder as the page holds it: its settings that differ
 /// from their defaults.
 fn pick(encoder: &ResolvedEncoder) -> EncoderPick {
     EncoderPick {
@@ -939,6 +973,11 @@ mod tests {
     fn plugin(id: &str, origin: MediaOrigin, media: MediaManifest) -> RegisteredPlugin {
         RegisteredPlugin {
             id: id.into(),
+            name: match id {
+                "b" => "Bundled".into(),
+                "p" => "Project plugin".into(),
+                other => other.into(),
+            },
             version: "1.0.0".into(),
             origin,
             directory: PathBuf::from(format!("/plugins/{id}")),
@@ -1091,14 +1130,14 @@ mod tests {
     }
 
     /// A model over [`registry`] with no presets files, nothing described.
-    fn model(registry: &MediaRegistry) -> ExportDialogModel {
+    fn model(registry: &MediaRegistry) -> ExportModel {
         let (project, user) = no_files();
-        ExportDialogModel::new(registry, project, user)
+        ExportModel::new(registry, project, user)
     }
 
     /// [`model`] with every plugin described and `output`'s defaults
     /// applied.
-    fn resolved_model(registry: &MediaRegistry, output: &str) -> ExportDialogModel {
+    fn resolved_model(registry: &MediaRegistry, output: &str) -> ExportModel {
         let mut model = model(registry);
         for plugin in 0..registry.plugins().len() {
             model.described(plugin, description(registry, plugin, &[]));
@@ -1136,7 +1175,11 @@ mod tests {
         let registry = registry();
         assert_eq!(
             labels(&model(&registry).muxer_options()),
-            ["MP4 · b", "IVF · b", "MP4 · p (project)"]
+            [
+                "MP4 · Bundled",
+                "IVF · Bundled",
+                "MP4 · Project plugin (project)"
+            ]
         );
     }
 
@@ -1144,7 +1187,10 @@ mod tests {
     fn still_muxers_are_not_containers() {
         let registry = celesta_exporter::with_builtin(vec![bundled()]);
         let model = model(&registry);
-        assert_eq!(labels(&model.muxer_options()), ["MP4 · b", "IVF · b"]);
+        assert_eq!(
+            labels(&model.muxer_options()),
+            ["MP4 · Bundled", "IVF · Bundled"]
+        );
     }
 
     #[test]
@@ -1203,14 +1249,34 @@ mod tests {
         let mp4 = resolved_model(&registry, "export.mp4");
         assert_eq!(
             labels(&mp4.encoder_options(Track::Video)),
-            ["H.264 (x264) · b", "H.264 (project) · p (project)"]
+            [
+                "H.264 (x264) · Bundled",
+                "H.264 (project) · Project plugin (project)"
+            ]
         );
-        assert_eq!(labels(&mp4.encoder_options(Track::Audio)), ["AAC · b"]);
+        assert_eq!(
+            labels(&mp4.encoder_options(Track::Audio)),
+            ["AAC · Bundled"]
+        );
 
         let ivf = resolved_model(&registry, "export.ivf");
-        assert_eq!(labels(&ivf.encoder_options(Track::Video)), ["VP9 · b"]);
+        assert_eq!(
+            labels(&ivf.encoder_options(Track::Video)),
+            ["VP9 · Bundled"]
+        );
         assert!(ivf.encoder_options(Track::Audio).is_empty());
         assert_eq!(ivf.extension().as_deref(), Some("ivf"));
+    }
+
+    #[test]
+    fn audio_is_exported_with_an_encoder_and_a_muxer_taking_it() {
+        let registry = registry();
+        assert!(!model(&registry).exports_audio(), "nothing chosen yet");
+        let mut mp4 = resolved_model(&registry, "export.mp4");
+        assert!(mp4.exports_audio());
+        mp4.choose_encoder(Track::Audio, None);
+        assert!(!mp4.exports_audio());
+        assert!(!resolved_model(&registry, "export.ivf").exports_audio());
     }
 
     #[test]
@@ -1249,7 +1315,7 @@ mod tests {
         assert!(crf.error.is_some());
         assert_eq!(
             model.output_choice(),
-            Err("H.264 (x264) · b: CRF must be at most 51".to_owned())
+            Err("H.264 (x264) · Bundled: CRF must be at most 51".to_owned())
         );
     }
 
@@ -1298,7 +1364,15 @@ mod tests {
 
         model.set_setting(Track::Video, "preset", string("slow"));
         assert_eq!(model.selected, None);
-        assert_eq!(model.warnings, resolved.warnings);
+        assert_eq!(
+            model.warnings,
+            resolved
+                .warnings
+                .iter()
+                .cloned()
+                .map(PageWarning::Resolve)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1382,8 +1456,8 @@ mod tests {
     }
 
     /// Changes `model`'s container to `muxer` as the view does: resolves
-    /// what [`ExportDialogModel::container_choice`] asks and applies it.
-    fn change_container(registry: &MediaRegistry, model: &mut ExportDialogModel, muxer: &str) {
+    /// what [`ExportModel::container_choice`] asks and applies it.
+    fn change_container(registry: &MediaRegistry, model: &mut ExportModel, muxer: &str) {
         let muxer = reference(muxer);
         let output = format!("export.{}", model.extension_of(&muxer).unwrap());
         let choice = model.container_choice(&muxer);
@@ -1407,7 +1481,7 @@ mod tests {
             reference("b/prores")
         );
 
-        // An encoder chosen in the dialog stays, with its settings, where
+        // An encoder chosen in the page stays, with its settings, where
         // the new muxer takes it.
         change_container(&registry, &mut model, "b/mp4");
         model.choose_encoder(Track::Video, Some(reference("b/x264")));
@@ -1526,7 +1600,7 @@ mod tests {
         );
         model.described(b, description(&registry, b, &[("b/vp9", "no libvpx")]));
         assert_eq!(model.recheck_failed(), [p]);
-        let state = |model: &ExportDialogModel, component: &str| {
+        let state = |model: &ExportModel, component: &str| {
             model
                 .muxer_options()
                 .into_iter()
@@ -1611,7 +1685,7 @@ mod tests {
                 "last": { "muxer": "b/ivf" } })),
         );
         let base = |project: PresetFileState, user: PresetFileState| {
-            ExportDialogModel::new(&registry, project, user).initial_base()
+            ExportModel::new(&registry, project, user).initial_base()
         };
 
         assert_eq!(
@@ -1648,13 +1722,12 @@ mod tests {
             Some(json!({ "version": 1, "default": "gone" })),
         );
         assert_eq!(
-            ExportDialogModel::new(&registry, project, user.clone()).initial_base(),
+            ExportModel::new(&registry, project, user.clone()).initial_base(),
             (
                 InitialBase::Last(output("b/ivf")),
-                vec![
-                    "the default preset `gone` of /project/export-presets.json is in no presets file"
-                        .to_owned()
-                ]
+                vec![PageWarning::UnknownDefault {
+                    name: "gone".to_owned()
+                }]
             )
         );
 
@@ -1664,9 +1737,19 @@ mod tests {
             file: Err(message.to_owned()),
         };
         assert_eq!(
-            ExportDialogModel::new(&registry, broken, user).initial_base(),
-            (InitialBase::Last(output("b/ivf")), vec![message.to_owned()])
+            ExportModel::new(&registry, broken, user).initial_base(),
+            (
+                InitialBase::Last(output("b/ivf")),
+                vec![unreadable(PresetSource::Project, message)]
+            )
         );
+    }
+
+    fn unreadable(source: PresetSource, message: &str) -> PageWarning {
+        PageWarning::UnreadableFile {
+            source,
+            message: message.to_owned(),
+        }
     }
 
     #[test]
@@ -1679,8 +1762,11 @@ mod tests {
         };
         // With no project default, `last` is looked for in the user file.
         assert_eq!(
-            ExportDialogModel::new(&registry, no_files().0, broken.clone()).initial_base(),
-            (InitialBase::None, vec![message.to_owned()])
+            ExportModel::new(&registry, no_files().0, broken.clone()).initial_base(),
+            (
+                InitialBase::None,
+                vec![unreadable(PresetSource::User, message)]
+            )
         );
         // The project default found in the project file still says so.
         let project = file(
@@ -1689,10 +1775,10 @@ mod tests {
                 "presets": [ { "name": "web", "muxer": "b/mp4" } ] })),
         );
         assert_eq!(
-            ExportDialogModel::new(&registry, project, broken).initial_base(),
+            ExportModel::new(&registry, project, broken).initial_base(),
             (
                 InitialBase::Preset(PresetSource::Project, "web".into(), output("b/mp4")),
-                vec![message.to_owned()]
+                vec![unreadable(PresetSource::User, message)]
             )
         );
     }
@@ -1779,7 +1865,7 @@ mod tests {
             path: Some(PathBuf::from("/home/export-presets.json")),
             file: Err(message.to_owned()),
         };
-        let model = ExportDialogModel::new(&registry, project, user);
+        let model = ExportModel::new(&registry, project, user);
         assert_eq!(model.can_save(SaveTarget::User), Err(message.to_owned()));
         assert_eq!(model.can_save(SaveTarget::Project), Ok(()));
         assert!(model.presets().1.is_empty());
@@ -1789,7 +1875,7 @@ mod tests {
     fn an_untitled_project_cannot_take_a_preset() {
         let registry = registry();
         let (_, user) = no_files();
-        let model = ExportDialogModel::new(&registry, file(None, None), user);
+        let model = ExportModel::new(&registry, file(None, None), user);
         assert_eq!(
             model.can_save(SaveTarget::Project),
             Err("Save the project first".to_owned())
@@ -1804,7 +1890,7 @@ mod tests {
             Some("/home/export-presets.json"),
             Some(json!({ "version": 1, "presets": [ { "name": "web" } ] })),
         );
-        let model = ExportDialogModel::new(&registry, no_files().0, user);
+        let model = ExportModel::new(&registry, no_files().0, user);
         assert!(model.replaces(SaveTarget::User, " web "));
         assert!(!model.replaces(SaveTarget::User, "Web"));
         assert!(!model.replaces(SaveTarget::Project, "web"));

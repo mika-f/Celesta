@@ -78,7 +78,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 - Celesta links no codec: video and audio files are probed, decoded,
   encoded, and muxed by media plugins (`"roles": ["media"]` and
-  `"protocol": 2` in the manifest, with their components under `media`:
+  `"protocol": 2` in the manifest, an optional `name` for the display name the
+  export page shows beside a component (the `id` when absent), and their
+  components under `media`:
   `decoders` (`id`, `name`, `extensions`), `videoEncoders` and
   `audioEncoders` (`id`, `name`, `codecs`, and a video encoder's
   `inputFormats`), and `muxers` (`id`, `name`, `extensions`, `video`,

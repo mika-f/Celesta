@@ -36,6 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         media
             .into_iter()
             .map(|plugin| RegisteredPlugin {
+                name: plugin.name,
                 id: plugin.id,
                 version: plugin.version,
                 origin: plugin.origin,

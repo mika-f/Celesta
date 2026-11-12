@@ -453,7 +453,7 @@ impl EditorView {
     /// Saves `change` to the user's settings, then reopens the project so
     /// its plugins are found as the settings now say. Refused, before
     /// anything is saved, while the project cannot be reopened (it is
-    /// opening, or an export runs), so the tab never shows a choice that has
+    /// opening, an export runs, or the save panel is up), so the tab never shows a choice that has
     /// not taken effect.
     fn change_plugin_settings(
         &mut self,
@@ -517,6 +517,7 @@ mod tests {
         PluginEntry {
             manifest: Manifest {
                 id: id.into(),
+                name: None,
                 version: "1.0.0".into(),
                 protocol: 1,
                 celesta: Some("*".into()),

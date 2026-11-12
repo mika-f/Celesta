@@ -470,6 +470,7 @@ fn manifest_flag_prints_the_media_manifest() {
     assert_eq!(printed.lines().count(), 1, "{printed}");
     let manifest: serde_json::Value = serde_json::from_str(&printed).unwrap();
     assert_eq!(manifest["id"], "ffmpeg");
+    assert_eq!(manifest["name"], "FFmpeg");
     assert_eq!(manifest["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(manifest["roles"], serde_json::json!(["media"]));
     assert_eq!(manifest["media"]["decoders"][0]["id"], DECODER_ID);

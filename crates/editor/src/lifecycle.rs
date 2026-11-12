@@ -381,6 +381,11 @@ impl EditorView {
             };
             if let Some(path) = path {
                 view.update_in(cx, |this, window, cx| {
+                    // Checked again: the Open panel does not block the window, so an
+                    // export or a save panel may have started while it was up.
+                    if this.opening || !this.can_replace_contents(window, cx) {
+                        return;
+                    }
                     this.load_path(Some(path), window, cx)
                 })
                 .ok();
@@ -588,12 +593,17 @@ impl EditorView {
     }
 
     /// Replacing the contents drops the export worker, so a running export
-    /// must be cancelled first.
+    /// must be cancelled first, and the save panel closed: its answer is
+    /// for the project it was opened for.
     pub(crate) fn can_replace_contents(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.choosing_export_path {
+            window.push_notification("Close the save panel first.", cx);
+            return false;
+        }
         if self.export_cancellation.is_none() {
             return true;
         }
@@ -687,7 +697,15 @@ impl EditorView {
                 });
                 match result {
                     Ok(next) => {
+                        // An open export page goes with the old project
+                        // (and Reload Plugins' old registry); the editor
+                        // takes back the focus it held, or no shortcut
+                        // works until a click.
+                        let page_was_open = this.export_page.is_open();
                         this.replace_contents(next, cx);
+                        if page_was_open {
+                            this.focus_editor(window, cx);
+                        }
                         this.ask_about_pending_plugins(window, cx);
                     }
                     Err(error) => {
@@ -719,6 +737,7 @@ impl EditorView {
         next.master_volume_focus = self.master_volume_focus.take();
         next.inline_text_focus = self.inline_text_focus.take();
         next.dock_split = self.dock_split.take();
+        next.export_split = self.export_split.take();
         next.body_split = self.body_split.take();
         #[cfg(not(target_os = "macos"))]
         {

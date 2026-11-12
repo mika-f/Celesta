@@ -411,8 +411,6 @@ impl EditorView {
         self.problems.set(Source::Plugins, found.problem());
         self.plugins = found.installed.clone();
         self.found_plugins = found;
-        // The dialog lists the old registry's components.
-        self.export_dialog = None;
         // A new registry starts its own list.
         self.decoder_notice.reset();
     }
@@ -720,6 +718,7 @@ mod tests {
         let media = PluginEntry {
             manifest: celesta_plugin_host::Manifest {
                 id: "ffmpeg".into(),
+                name: None,
                 version: "1.0.0".into(),
                 protocol: 2,
                 celesta: Some("*".into()),
@@ -940,6 +939,7 @@ mod tests {
         PluginEntry {
             manifest: celesta_plugin_host::Manifest {
                 id: "ffmpeg".into(),
+                name: None,
                 version: "1.0.0".into(),
                 protocol: 2,
                 celesta: Some("*".into()),

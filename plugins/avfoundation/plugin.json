@@ -1,5 +1,6 @@
 {
   "id": "avfoundation",
+  "name": "AVFoundation",
   "version": "0.9.0",
   "cargoPackage": "celesta-codec-avfoundation",
   "roles": ["media"],

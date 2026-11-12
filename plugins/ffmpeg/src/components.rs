@@ -396,7 +396,7 @@ fn x264_settings() -> Vec<SettingField> {
         .collect();
     let mut preset = field(
         "preset",
-        "Preset",
+        "Speed preset",
         SettingValue::String("medium".to_owned()),
         SettingKind::Select { options },
     );
@@ -404,7 +404,7 @@ fn x264_settings() -> Vec<SettingField> {
     let rate_control = in_group(
         select(
             "rateControl",
-            "Rate control",
+            "Mode",
             &[
                 ("crf", "Constant quality (CRF)"),
                 ("vbr", "Average bitrate"),
@@ -495,5 +495,36 @@ mod tests {
         assert_eq!(options.len(), 9);
         assert_eq!(options[0].label, "Ultrafast");
         assert_eq!(options[8].value, "veryslow");
+    }
+
+    #[test]
+    fn x264_names_speed_preset_and_mode() {
+        let settings = x264_settings();
+        let preset = settings
+            .iter()
+            .find(|field| field.key == "preset")
+            .expect("x264 has a preset");
+        assert_eq!(preset.label, "Speed preset");
+        let rate_control = settings
+            .iter()
+            .find(|field| field.key == "rateControl")
+            .expect("x264 has a rate control");
+        assert_eq!(rate_control.label, "Mode");
+        assert_eq!(rate_control.group.as_deref(), Some("Rate control"));
+    }
+
+    #[test]
+    fn no_field_is_labelled_as_its_group() {
+        let codecs = VideoCodec::ALL
+            .into_iter()
+            .map(|codec| codec.settings())
+            .chain(AudioCodec::ALL.into_iter().map(|codec| codec.settings()));
+        for field in codecs.flatten() {
+            assert!(
+                field.group.as_ref() != Some(&field.label),
+                "{} is labelled as its group",
+                field.key
+            );
+        }
     }
 }

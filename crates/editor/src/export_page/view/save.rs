@@ -1,20 +1,22 @@
-//! The inline "Save as preset…" form: a name, the file to save to, and
-//! `Save` (or `Replace`).
+//! The inline "Save as preset…" form, in the panel's lanes: a name, the
+//! file to save to, then `Save` (or `Replace`) and the close button.
 
 use super::super::model::SaveTarget;
 use super::choice::Choice;
-use super::{ExportDialog, blocked_line, problem_line, section_label};
+use super::layout::row;
+use super::{ExportPage, blocked_line, problem_line};
+use crate::actions::ConfirmExport;
+use celesta_editor_theme::metrics;
 use celesta_exporter::{Preset, update_presets};
 use celesta_plugin_host::create_private_dir_all;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::dialog::Confirm;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, IndexPath, Sizable as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Context, Entity, Subscription, Window, div};
+use gpui_kit::{AnyElement, App, Context, Entity, Subscription, Window, div};
 
 /// The inline "Save as preset…" form.
 pub(super) struct SaveForm {
@@ -25,7 +27,7 @@ pub(super) struct SaveForm {
     _subscriptions: [Subscription; 2],
 }
 
-impl ExportDialog {
+impl ExportPage {
     pub(super) fn open_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.save.is_some() {
             return;
@@ -138,87 +140,84 @@ impl ExportDialog {
     }
 }
 
-/// The open form, drawn above the footer's buttons so it stays in view
-/// however far the dialog's body is scrolled; `None` while it is closed.
-pub(super) fn save_section(dialog: &Entity<ExportDialog>, cx: &App) -> Option<impl IntoElement> {
-    let this = dialog.read(cx);
-    let save = this.save.as_ref()?;
-    let request = this.save_request(cx);
-    // `Save` is disabled for what disables `Export…`, said here as the
-    // footer does not while the form is open.
-    let blocked = this.export_blocked();
-    let replaces = request
-        .as_ref()
-        .is_some_and(|(name, target)| this.model.replaces(*target, name));
-    let (cancel, confirm) = (dialog.downgrade(), dialog.downgrade());
-    Some(
-        v_flex()
+impl ExportPage {
+    /// The open form, drawn above the footer's buttons so it stays in view
+    /// however far the panel's body is scrolled; `None` while it is closed.
+    pub(super) fn render_save(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let save = self.save.as_ref()?;
+        let request = self.save_request(cx);
+        // `Save` is disabled for what disables `Export…`, said here as the
+        // footer does not while the form is open.
+        let blocked = self.export_blocked();
+        let replaces = request
+            .as_ref()
+            .is_some_and(|(name, target)| self.model.replaces(*target, name));
+        let name = div()
             .w_full()
-            .gap_3()
-            .pt_3()
-            .border_t_1()
-            .border_color(cx.theme().border)
+            // Enter in the name saves (its `PressEnter`); the input passes
+            // the key on as the panel's `ConfirmExport`, which would also
+            // export, so it stops here. `Export…` exports on its click.
+            .on_action(|_: &ConfirmExport, _, _| {})
+            .child(Input::new(&save.name).id("export-save-name").small());
+        let buttons = h_flex()
+            .pl(metrics::inspector_label_width())
+            .gap_2()
             .child(
-                h_flex()
-                    .justify_between()
-                    .child(section_label("Save as preset", cx))
-                    .child(
-                        Button::new("export-save-close")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Close)
-                            .accessibility_label("Close Save as preset")
-                            .on_click(move |_, _, cx| {
-                                cancel.update(cx, |this, cx| this.close_save(cx)).ok();
-                            }),
-                    ),
+                Button::new("export-save")
+                    .ghost()
+                    .small()
+                    .label(if replaces { "Replace" } else { "Save" })
+                    .disabled(request.is_none())
+                    .on_click(cx.listener(|this, _, window, cx| this.save_preset(window, cx))),
             )
             .child(
-                h_flex()
-                    .items_end()
-                    .gap_3()
-                    .child(
+                Button::new("export-save-close")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Close)
+                    .tooltip("Close Save as preset")
+                    .accessibility_label("Close Save as preset")
+                    .on_click(cx.listener(|this, _, _, cx| this.close_save(cx))),
+            );
+        let mut lines: Vec<AnyElement> = Vec::new();
+        lines.extend(blocked.map(|reason| blocked_line(reason, cx).into_any_element()));
+        lines.extend(
+            save.error
+                .clone()
+                .map(|error| problem_line(error, cx.theme().danger).into_any_element()),
+        );
+        Some(
+            v_flex()
+                .w_full()
+                .child(row(
+                    "save-name".into(),
+                    "Name".into(),
+                    name.into_any_element(),
+                    Vec::new(),
+                    cx,
+                ))
+                .child(row(
+                    "save-target".into(),
+                    "Save to".into(),
+                    Select::new(&save.target)
+                        .id("export-save-target")
+                        .small()
+                        .accessibility_label("Save to")
+                        .into_any_element(),
+                    Vec::new(),
+                    cx,
+                ))
+                .child(buttons)
+                .when(!lines.is_empty(), |form| {
+                    form.child(
                         v_flex()
-                            .flex_1()
-                            .min_w_0()
+                            .pt_1()
+                            .pl(metrics::inspector_label_width())
                             .gap_1()
-                            .child(div().text_sm().child("Name"))
-                            .child(
-                                div()
-                                    // Enter in the name saves (its
-                                    // `PressEnter`); the input passes the
-                                    // key on as the dialog's `Confirm`,
-                                    // which would also export, so it
-                                    // stops here. `Export…` dispatches
-                                    // its own `Confirm` from the footer.
-                                    .on_action(|_: &Confirm, _, _| {})
-                                    .child(Input::new(&save.name).id("export-save-name")),
-                            ),
+                            .children(lines),
                     )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_1()
-                            .child(div().text_sm().child("Save to"))
-                            .child(Select::new(&save.target).id("export-save-target")),
-                    )
-                    .child(
-                        Button::new("export-save")
-                            .label(if replaces { "Replace" } else { "Save" })
-                            .disabled(request.is_none())
-                            .on_click(move |_, window, cx| {
-                                confirm
-                                    .update(cx, |this, cx| this.save_preset(window, cx))
-                                    .ok();
-                            }),
-                    ),
-            )
-            .children(blocked.map(|reason| blocked_line(reason, cx)))
-            .children(
-                save.error
-                    .clone()
-                    .map(|error| problem_line(error, cx.theme().danger)),
-            ),
-    )
+                })
+                .into_any_element(),
+        )
+    }
 }

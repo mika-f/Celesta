@@ -3,14 +3,15 @@
 
 use super::super::model::{FieldRow, Track};
 use super::choice::Choice;
-use super::{ExportDialog, muted_line, problem_line, track_id};
+use super::layout::{group_line, row};
+use super::{ExportPage, muted_line, problem_line, track_id};
 use crate::property_controls::parse_number_input;
 use crate::widgets::format_component_number;
 use celesta_media::{ComponentRef, SettingKind, SettingValue};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Context, Entity, Focusable as _, SharedString, Subscription, Window, div,
@@ -31,7 +32,7 @@ pub(super) enum Widget {
 
 /// One encoder field's control, for the component it was built for.
 pub(super) struct FieldControl {
-    track: Track,
+    pub(super) track: Track,
     component: ComponentRef,
     pub(super) key: String,
     pub(super) label: String,
@@ -39,7 +40,7 @@ pub(super) struct FieldControl {
     _subscription: Option<Subscription>,
 }
 
-impl ExportDialog {
+impl ExportPage {
     /// Typing in a text field: a string is taken as typed, a number once
     /// it parses (until then the field says why not).
     fn typed(&mut self, track: Track, key: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -168,43 +169,52 @@ impl ExportDialog {
         }
     }
 
-    /// `track`'s shown fields whose `advanced` is `advanced`: ungrouped
-    /// ones, then each group under its label.
+    /// `track`'s shown fields whose `advanced` is `advanced`, a row each:
+    /// ungrouped ones, then each group after a line with its name.
     pub(super) fn render_groups(
         &self,
         track: Track,
         advanced: bool,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        self.model
-            .fields(track, advanced)
-            .into_iter()
-            .map(|group| {
-                v_flex()
-                    .gap_3()
-                    .when_some(group.group, |column, group| {
-                        column.child(div().pt_2().child(muted_line(group, cx)))
-                    })
-                    .children(
-                        group
-                            .rows
-                            .iter()
-                            .map(|row| self.render_field(track, row, cx)),
-                    )
-                    .into_any_element()
-            })
-            .collect()
+        let mut rows = Vec::new();
+        for group in self.model.fields(track, advanced) {
+            if let Some(name) = group.group {
+                let id = SharedString::from(format!("{}-{name}", track_id(track)));
+                rows.push(group_line(id, name.into(), cx));
+            }
+            rows.extend(
+                group
+                    .rows
+                    .iter()
+                    .map(|row| self.render_field(track, row, cx)),
+            );
+        }
+        rows
     }
 
-    fn render_field(&self, track: Track, row: &FieldRow, cx: &mut Context<Self>) -> AnyElement {
-        let field = &row.field;
-        let id = SharedString::from(format!("export-{}-{}", track_id(track), field.key));
+    fn render_field(
+        &self,
+        track: Track,
+        field_row: &FieldRow,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let field = &field_row.field;
+        let row_id = format!("{}-{}", track_id(track), field.key);
+        let id = SharedString::from(format!("export-{row_id}"));
         let control = self
             .fields
             .iter()
             .find(|control| control.track == track && control.key == field.key);
         let (control, typo) = match control.map(|control| &control.widget) {
-            Some(Widget::Select(select)) => (Select::new(select).id(id).into_any_element(), None),
+            Some(Widget::Select(select)) => (
+                Select::new(select)
+                    .id(id)
+                    .small()
+                    .accessibility_label(field.label.clone())
+                    .into_any_element(),
+                None,
+            ),
             Some(Widget::Text { input, typo, .. }) => {
                 let unit = match &field.kind {
                     SettingKind::Number { unit, .. } => unit.clone(),
@@ -214,6 +224,7 @@ impl ExportDialog {
                 (
                     Input::new(input)
                         .id(id)
+                        .small()
                         .when_some(unit, |input, unit| {
                             input.suffix(div().text_sm().text_color(muted).child(unit))
                         })
@@ -223,11 +234,12 @@ impl ExportDialog {
             }
             Some(Widget::Checkbox) => {
                 let key = field.key.clone();
-                let checked = matches!(row.value, SettingValue::Boolean(true));
+                let checked = matches!(field_row.value, SettingValue::Boolean(true));
                 (
                     Checkbox::new(id)
+                        .small()
                         .checked(checked)
-                        .label(field.label.clone())
+                        .accessibility_label(field.label.clone())
                         .on_click(cx.listener(move |this, checked: &bool, window, cx| {
                             this.set_setting(
                                 track,
@@ -244,30 +256,27 @@ impl ExportDialog {
             // Built on the next sync.
             None => (div().into_any_element(), None),
         };
-        let checkbox = matches!(field.kind, SettingKind::Boolean);
         let error = typo.or_else(|| {
-            row.error
+            field_row
+                .error
                 .as_ref()
                 .map(|message| format!("{} {message}", field.label))
         });
-        v_flex()
-            .gap_1()
-            .when(!checkbox, |row| {
-                row.child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().foreground)
-                        .child(field.label.clone()),
-                )
-            })
-            .child(control)
-            .when_some(error, |row, error| {
-                row.child(problem_line(error, cx.theme().danger))
-            })
-            .when_some(field.description.clone(), |row, description| {
-                row.child(muted_line(description, cx))
-            })
-            .into_any_element()
+        let mut lines = Vec::new();
+        lines.extend(error.map(|error| problem_line(error, cx.theme().danger).into_any_element()));
+        lines.extend(field.description.clone().map(|description| {
+            div()
+                .debug_selector(|| format!("export-description-{row_id}"))
+                .child(muted_line(description, cx))
+                .into_any_element()
+        }));
+        row(
+            row_id.clone().into(),
+            field.label.clone().into(),
+            control,
+            lines,
+            cx,
+        )
     }
 }
 

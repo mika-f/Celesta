@@ -291,7 +291,10 @@ impl StillOutput {
         .map_err(|error| cancellation.settle(error))?;
         let used = [resolved.muxer.plugin, resolved.video.plugin];
         providers.retain(|plugin, _| used.contains(plugin));
-        let warnings = std::mem::take(&mut resolved.warnings);
+        let warnings = std::mem::take(&mut resolved.warnings)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         let offered: &[PixelFormat] = if sheet {
             &[PixelFormat::Rgba8]
         } else {
@@ -1475,6 +1478,7 @@ mod tests {
     fn delayed_plugin_holding(hold_all: bool) -> celesta_media::RegisteredPlugin {
         celesta_media::RegisteredPlugin {
             id: "fake".to_owned(),
+            name: "fake".to_owned(),
             version: "1.0.0".to_owned(),
             origin: MediaOrigin::User,
             directory: PathBuf::new(),
@@ -1764,6 +1768,7 @@ mod tests {
         };
         celesta_media::RegisteredPlugin {
             id: "fake".to_owned(),
+            name: "fake".to_owned(),
             version: "1.0.0".to_owned(),
             origin: MediaOrigin::User,
             directory: PathBuf::new(),

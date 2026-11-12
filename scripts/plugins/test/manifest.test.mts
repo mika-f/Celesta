@@ -22,6 +22,26 @@ describe('pluginManifest', () => {
     expect(manifest.roles).toEqual(['media']);
   });
 
+  it('copies the display name', () => {
+    const named = pluginManifest(
+      { id: 'ffmpeg', name: 'FFmpeg', version: '0.9.0', cargoPackage: 'celesta-codec-ffmpeg', roles: ['media'], media },
+      { celestaVersion, cargoVersion: '0.9.0' },
+      sourcePath,
+    );
+    const unnamed = pluginManifest({ id: 'vrm', version: '0.1.0', module: 'js/index.ts' }, { celestaVersion }, sourcePath);
+    expect(named.name).toBe('FFmpeg');
+    expect(unnamed).not.toHaveProperty('name');
+  });
+
+  it('rejects a display name that is not a string with more than blanks in it', () => {
+    const source = (name: unknown) => ({ id: 'vrm', name, version: '0.1.0', module: 'js/index.ts' }) as PluginSource;
+    for (const name of ['', '   ', 7]) {
+      expect(() => checkPluginSource(source(name), sourcePath)).toThrow(
+        `${sourcePath}: name must be a string with more than blanks in it`,
+      );
+    }
+  });
+
   it('keeps protocol 1 for content', () => {
     const content = pluginManifest({ id: 'vrm', version: '0.1.0', roles: ['content'], module: 'js/index.ts' }, { celestaVersion }, sourcePath);
     const rolesless = pluginManifest({ id: 'vrm', version: '0.1.0', module: 'js/index.ts' }, { celestaVersion }, sourcePath);
@@ -207,6 +227,7 @@ describe('checkPluginSource', () => {
       checkPluginSource(
         {
           id: 'x',
+          name: 'X',
           version: '0.1.0',
           cargoPackage: 'p',
           module: 'js/index.ts',
@@ -222,7 +243,7 @@ describe('checkPluginSource', () => {
   it('refuses a key plugin.json may not have, listing the keys it may', () => {
     const source = { id: 'x', version: '0.1.0', module: 'js/index.ts', modules: 'js/index.ts', exe: 'x' };
     expect(() => checkPluginSource(source, sourcePath)).toThrow(
-      `${sourcePath}: unknown keys modules, exe; plugin.json may have id, version, cargoPackage, module, roles, licenses, components, media`,
+      `${sourcePath}: unknown keys modules, exe; plugin.json may have id, name, version, cargoPackage, module, roles, licenses, components, media`,
     );
   });
 });

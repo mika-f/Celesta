@@ -5,7 +5,7 @@ use crate::drag_session::DragSession;
 use crate::edit_history::EditHistory;
 use crate::element_edit::{ElementEdit, ScopeCache};
 use crate::element_rows::ElementRows;
-use crate::export_dialog::view::ExportDialog;
+use crate::export_control::ExportPageSlot;
 use crate::export_worker::{ExportWorker, spawn_export};
 use crate::helpers::ExportLoudness;
 use crate::inline_text_view::{EditEvent, InlineTextSession, KeptOverride};
@@ -43,7 +43,7 @@ use chrono::{DateTime, Local};
 #[cfg(not(target_os = "macos"))]
 use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::resizable::ResizableState;
-use gpui_kit::{Bounds, Entity, FocusHandle, Pixels, ScrollHandle, SharedString, Subscription};
+use gpui_kit::{Bounds, Entity, FocusHandle, Pixels, ScrollHandle, SharedString};
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -257,10 +257,10 @@ pub(crate) struct EditorView {
     pub(crate) export_in_frame: Option<i64>,
     pub(crate) export_out_frame: Option<i64>,
     pub(crate) choosing_export_path: bool,
-    /// The export dialog, kept with its state between openings until the
-    /// media plugins change (Reload Plugins, another project), and the
-    /// subscription to what it asks for.
-    pub(crate) export_dialog: Option<(Entity<ExportDialog>, Subscription)>,
+    /// The export page, kept with its state between openings until the
+    /// media plugins change (Reload Plugins, another project), and
+    /// whether it shows in place of Assets.
+    pub(crate) export_page: ExportPageSlot,
     /// The loudness Export… brings the mix to, for the rest of the session.
     pub(crate) export_loudness: ExportLoudness,
     pub(crate) gpu_name: SharedString,
@@ -270,10 +270,12 @@ pub(crate) struct EditorView {
     pub(crate) focus_handle: Option<FocusHandle>,
     pub(crate) master_volume_focus: Option<FocusHandle>,
     /// Split positions for the workspace shell: `dock_split` is the
-    /// asset-list / monitor / inspector row, `body_split` is the
-    /// work-area / timeline column. Held here so the drags persist across
-    /// redraws.
+    /// asset-list / monitor / inspector row, `export_split` the same row
+    /// with the export page in place of the asset list (its own width),
+    /// `body_split` is the work-area / timeline column. Held here so the
+    /// drags persist across redraws.
     pub(crate) dock_split: Option<Entity<ResizableState>>,
+    pub(crate) export_split: Option<Entity<ResizableState>>,
     pub(crate) body_split: Option<Entity<ResizableState>>,
     /// Timeline horizontal zoom (>= 1; 1 = whole composition fits) and the
     /// fraction of the composition at the left edge of the visible window.
@@ -572,13 +574,14 @@ impl EditorView {
             export_in_frame: None,
             export_out_frame: None,
             choosing_export_path: false,
-            export_dialog: None,
+            export_page: ExportPageSlot::default(),
             export_loudness: ExportLoudness::default(),
             gpu_name,
             driver,
             focus_handle: None,
             master_volume_focus: None,
             dock_split: None,
+            export_split: None,
             body_split: None,
             timeline_zoom: 1.0,
             timeline_view_start: 0.0,

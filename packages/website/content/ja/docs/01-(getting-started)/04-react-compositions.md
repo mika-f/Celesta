@@ -35,7 +35,7 @@ export default () => <>
 </>;
 ```
 
-アプリのタイトルバーにある **Composition: landscape** で、プレビューと **Export…** の書き出し対象を切り替えます。`Celesta film.tsx --composition portrait` で特定の ID を開くこともできます。
+アプリのタイトルバーにある **Composition: landscape** で、プレビューと書き出しページの書き出し対象を切り替えます。`Celesta film.tsx --composition portrait` で特定の ID を開くこともできます。
 
 ```sh
 Celesta-export --react film.tsx --composition portrait output.mp4 --json
