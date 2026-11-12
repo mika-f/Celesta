@@ -162,7 +162,7 @@ compositions: no package a composition imports depends on them, though
 | `celesta-mcp` | `Celesta-mcp`, the MCP server agents use to inspect, render, and export. |
 | `celesta-editor-core` | Read-only document, summaries, scene/audio evaluation, and timeline clock. |
 | `celesta-editor-theme` | Shared desktop theme. |
-| `celesta-editor` | GPUI app: preview, playback, panels, canvas and Properties editing, and export controls, including the export page (`export_page/`: its model over the registry and the presets files, `wording.rs` for the warnings in the page's words, and `view/` with its preset, container, encoder fields, range, loudness, and "Save as preset…" in `layout.rs` and `save.rs`), shown in place of Assets by `export_control.rs`. |
+| `celesta-editor` | GPUI app: preview, playback, panels, canvas and Properties editing, and export controls, including the export page (`export_page/`: its model over the registry and the presets files, `wording.rs` for the warnings in the page's words, and `view/`: the rows in `view.rs`, the encoder fields in `fields.rs`, the Select lists in `choice.rs`, the row layout in `layout.rs`, and "Save as preset…" in `save.rs`), shown in place of Assets by `export_control.rs`. |
 | `celesta-source-edit` | Locates JSX elements in user TSX source and applies byte-span edits for the editor's write-back. |
 | `celesta-remote` | Asset path resolution, remote download cache, and stylesheet font discovery. |
 | `celesta-react-bridge` | Long-lived Node process and frame/component requests over stdin/stdout. |

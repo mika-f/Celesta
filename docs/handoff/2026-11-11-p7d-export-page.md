@@ -60,10 +60,15 @@ save panel Export… opened is up, the editor tells the page
 "Choosing where to save…", and Enter does nothing. The editor also ignores
 an `Export` event while the save panel is up, an export runs or a project
 opens, so a double click cannot start two exports. The save panel does not
-block the window, so while it is up opening or reloading a project and
-Reload Plugins are refused ("Close the save panel
-first."), and its answer is dropped if the view's project changed all the
-same (a `session` check).
+block the window, so while it is up opening a project, reloading a JSON
+project and Reload Plugins are refused ("Close the save panel first."),
+as is the Open panel's answer if the save panel opened while it was up,
+and the save panel's answer is dropped if the view's project changed all
+the same (a `session` check). A React entry's File → Reload (and its
+reload on save) is not refused: it rebuilds the entry in place, without
+`replace_contents` or a new `session`, so the page and the save panel's
+answer survive it. That is safe because the export worker builds the
+entry from disk itself.
 
 **The page in the editor (`export_control.rs`, `render.rs`, `panels.rs`,
 `lifecycle.rs`, `main.rs`).** `ExportPageSlot` holds the page, kept between
@@ -77,7 +82,7 @@ editor's Escape chain) close it, keeping its state. The page cannot open
 while an export runs, while the save panel is up, while a project is
 opening or while a React entry reloads (`export_busy()`, which also
 disables the title bar's Export). Once a path is chosen the page closes and the export starts; a
-cancelled save panel leaves it open. Opening another project or Reload
+cancelled save panel leaves it open. Opening another project, reloading a JSON project or Reload
 Plugins drops the page and gives the editor the focus back. In and Out on
 the timeline update the Range row while the page is open.
 
@@ -113,8 +118,8 @@ Commands, all passing on the branch head:
   three times and in the next full run.
 - `cargo fmt`, `cargo clippy` and `cargo test --workspace` with
   `--manifest-path plugins/Cargo.toml`. Media Foundation's `registered()`
-  is Windows-only, so its new `name` line is not compiled on macOS; it is
-  the same line as FFmpeg's and AVFoundation's.
+  is Windows-only, so its `plugin_name()` and the test of it are not
+  compiled on macOS; they match AVFoundation's, and Windows CI runs them.
 - `pnpm test` in `scripts/plugins` (228 tests)
 - `pnpm --filter @celesta.studio/website check` (no issues)
 - `node scripts/plugins/build.mts plugins/ffmpeg` builds again. Before the
@@ -179,6 +184,10 @@ that checkout's FFmpeg build, with the old labels. The checks ran with
   side (Export… disabled, Enter ignored while waiting) is tested.
 - The Range row has no test of its own: Clear sending `ClearRange`, and
   "Whole composition" with and without its note on In and Out.
+- Only `split_last_export` is tested, not the order `warnings_under` renders
+  in, so putting "From your last export:" first again would pass. The
+  save-panel and opening exclusion (with its deliberate exception, a React
+  reload not stopping Export…) is not a pure, tested gate either.
 - The "Export finished" toast has no border or shadow, sits on the Volume
   control and keeps a title-only toast's text at the top. That is P7a's
   toast styling, not changed here; it is being fixed in its own change.
