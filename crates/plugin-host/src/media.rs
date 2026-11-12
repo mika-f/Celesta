@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 /// The ID of the FFmpeg media plugin that comes with Celesta, which ranks
@@ -38,6 +38,15 @@ pub const MANIFEST_FLAG: &str = "--manifest";
 /// How long [`MANIFEST_FLAG`] may take before the program is killed and
 /// left out.
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a program that failed [`MANIFEST_FLAG`] is given to have its
+/// first stderr line read, once it has exited: what it wrote before exiting
+/// is already in the pipe, and a process it left behind holding stderr must
+/// not keep discovery waiting.
+const STDERR_GRACE: Duration = Duration::from_millis(250);
+
+/// How much of a failed program's stderr is kept for its diagnostic.
+const STDERR_LIMIT: usize = 4096;
 
 /// The most of the program's output [`MANIFEST_FLAG`] reads.
 const MANIFEST_OUTPUT_LIMIT: u64 = 1 << 20;
@@ -444,21 +453,32 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
         .map_err(|error| format!("it could not be started: {error}"))?;
     let mut stdout = child.stdout.take().expect("stdout is piped");
     let mut stderr = child.stderr.take().expect("stderr is piped");
-    let (send_error, receive_error) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut output = Vec::new();
-        // Drain independently of stdout so a noisy failure cannot block the
-        // manifest. Retain only a bounded diagnostic, without keeping a
-        // descendant that holds the pipe open on discovery's critical path.
-        let mut buffer = [0; 4096];
-        while let Ok(count) = stderr.read(&mut buffer) {
-            if count == 0 {
-                break;
+    // Drained on a thread of its own, so a noisy program cannot fill the
+    // pipe and block before it prints its manifest. The first STDERR_LIMIT
+    // bytes are kept where the failure path can read them as they arrive,
+    // and `line_ready` says when a whole line (or the end) has been read,
+    // so a process the program left holding stderr open delays nothing.
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let (line_ready, first_line) = mpsc::channel();
+    std::thread::spawn({
+        let errors = errors.clone();
+        move || {
+            let mut buffer = [0; 4096];
+            let mut told = false;
+            while let Ok(count) = stderr.read(&mut buffer) {
+                if count == 0 {
+                    break;
+                }
+                let mut errors = errors.lock().unwrap_or_else(PoisonError::into_inner);
+                let retain = count.min(STDERR_LIMIT - errors.len());
+                errors.extend_from_slice(&buffer[..retain]);
+                if !told && (errors.contains(&b'\n') || errors.len() == STDERR_LIMIT) {
+                    told = true;
+                    let _ = line_ready.send(());
+                }
             }
-            let retain = count.min(4096 - output.len());
-            output.extend_from_slice(&buffer[..retain]);
+            let _ = line_ready.send(());
         }
-        let _ = send_error.send(output);
     });
     // Read on a thread of its own, so a program that never closes its
     // output (or leaves a process that holds it) cannot hold up discovery.
@@ -492,11 +512,15 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
     };
     if !status.success() {
         let mut reason = format!("{MANIFEST_FLAG} failed ({status})");
-        if let Ok(stderr) =
-            receive_error.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            && let Some(line) = String::from_utf8_lossy(&stderr)
-                .lines()
-                .find(|line| !line.trim().is_empty())
+        let _ = first_line
+            .recv_timeout(STDERR_GRACE.min(deadline.saturating_duration_since(Instant::now())));
+        let stderr = errors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(line) = String::from_utf8_lossy(&stderr)
+            .lines()
+            .find(|line| !line.trim().is_empty())
         {
             let line: String = line
                 .chars()
@@ -1426,6 +1450,28 @@ mod tests {
             );
             let reason = printed_manifest(&program).unwrap_err();
             assert!(reason.contains("--manifest failed"), "{reason}");
+            assert!(
+                reason.ends_with("ffmpeg-x264: this FFmpeg build has no libx264"),
+                "{reason}"
+            );
+        }
+
+        #[test]
+        fn a_process_left_holding_stderr_does_not_delay_the_diagnostic() {
+            let root = tempfile::tempdir().unwrap();
+            // The program exits at once, but leaves a process that holds its
+            // stderr (not its stdout) open for longer than the deadline.
+            let (program, _) = fake_sibling(
+                root.path(),
+                "echo 'ffmpeg-x264: this FFmpeg build has no libx264' >&2\nsleep 30 >/dev/null &\nexit 1",
+            );
+            let started = Instant::now();
+            let reason = printed_manifest(&program).unwrap_err();
+            assert!(
+                started.elapsed() < MANIFEST_TIMEOUT / 2,
+                "took {:?}",
+                started.elapsed()
+            );
             assert!(
                 reason.ends_with("ffmpeg-x264: this FFmpeg build has no libx264"),
                 "{reason}"
