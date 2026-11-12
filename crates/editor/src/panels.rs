@@ -154,11 +154,7 @@ impl EditorView {
                         .label("Export")
                         .selected(self.export_page.is_open())
                         .toggled(self.export_page.is_open())
-                        .disabled(
-                            self.choosing_export_path
-                                || self.opening
-                                || self.react_reloads.is_running(),
-                        )
+                        .disabled(self.export_busy())
                         .on_click(cx.listener(Self::export_page_click))
                 }),
         )

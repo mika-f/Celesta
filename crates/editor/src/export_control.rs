@@ -62,12 +62,6 @@ impl ExportPageSlot {
     pub(crate) fn export_started(&mut self) {
         self.hide();
     }
-
-    /// Drops the page and its state; an open page closes with it.
-    pub(crate) fn clear(&mut self) {
-        self.page = None;
-        self.open = false;
-    }
 }
 
 /// What the left panel of the dock row shows.
@@ -112,6 +106,17 @@ impl EditorView {
         self.toggle_export_page(window, cx);
     }
 
+    /// Whether the export page cannot open: the save panel is up, an
+    /// export runs, a project is opening, or a React entry is reloading.
+    /// The title bar's Export is disabled for the same, so File → Export…
+    /// and ⌘⇧E agree with it.
+    pub(crate) fn export_busy(&self) -> bool {
+        self.choosing_export_path
+            || self.export_cancellation.is_some()
+            || self.opening
+            || self.react_reloads.is_running()
+    }
+
     /// Opens the page when it is closed and closes it when it is open.
     pub(crate) fn toggle_export_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.export_page.is_open() {
@@ -125,11 +130,7 @@ impl EditorView {
     /// of Assets and gives it the focus; its `Export…` asks where to write
     /// the file. Playback goes on: the page is not modal.
     pub(crate) fn open_export_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.choosing_export_path
-            || self.export_cancellation.is_some()
-            || self.opening
-            || window.has_active_dialog(cx)
-        {
+        if self.export_busy() || window.has_active_dialog(cx) {
             return;
         }
         // Already open it stays as it is, the focus where it was.
@@ -251,8 +252,11 @@ impl EditorView {
             } => {
                 // A second Export… (a double click, another Enter) while the
                 // save panel is up, or once an export runs, would start a
-                // second export that Cancel export could not reach.
-                if self.choosing_export_path || self.export_cancellation.is_some() {
+                // second export that Cancel export could not reach; one
+                // while a project opens would export the project replacing
+                // this one. (A React reload does not stop it: the export
+                // takes the entry as the reload leaves it.)
+                if self.choosing_export_path || self.export_cancellation.is_some() || self.opening {
                     return;
                 }
                 remember_last(&mut self.problems, user_presets_path().as_deref(), last);
@@ -282,11 +286,19 @@ impl EditorView {
             export_suggested_name(self.document.path(), &self.project_name, extension);
         let extensions = self.muxer_extensions(&choice);
         let selection = cx.prompt_for_new_path(&directory, Some(&suggested_name));
+        // The panel does not block the window. Opening another project is
+        // refused while it is up (`can_replace_contents`), but should the
+        // view's project change all the same, its answer is dropped: the
+        // choice is the old project's.
+        let session = self.session;
         cx.spawn_in(window, async move |view, cx| {
             let selected_path = match selection.await {
                 Ok(Ok(path)) => path,
                 Ok(Err(error)) => {
                     view.update_in(cx, |this, _, cx| {
+                        if this.session != session {
+                            return;
+                        }
                         this.set_choosing_export_path(false, cx);
                         this.problems.report(
                             Source::Export,
@@ -300,6 +312,9 @@ impl EditorView {
                 }
                 Err(error) => {
                     view.update_in(cx, |this, _, cx| {
+                        if this.session != session {
+                            return;
+                        }
                         this.set_choosing_export_path(false, cx);
                         this.problems.report(
                             Source::Export,
@@ -313,6 +328,9 @@ impl EditorView {
                 }
             };
             view.update_in(cx, |this, window, cx| {
+                if this.session != session {
+                    return;
+                }
                 this.set_choosing_export_path(false, cx);
                 // A cancelled save panel leaves the page as it was.
                 let Some(selected_path) = selected_path else {
@@ -584,20 +602,6 @@ mod tests {
         assert_eq!(slot.page(), Some(&page));
         slot.show();
         assert!(slot.is_open());
-    }
-
-    #[gpui_kit::test]
-    fn clearing_the_slot_closes_the_page(cx: &mut TestAppContext) {
-        let mut slot = ExportPageSlot::default();
-        let (page, events) = a_page(cx);
-        slot.set(page, events);
-        slot.show();
-        slot.clear();
-        assert!(!slot.is_open());
-        assert!(slot.page().is_none());
-        // Nothing to show until a new page is set.
-        slot.show();
-        assert!(!slot.is_open());
     }
 
     #[gpui_kit::test]

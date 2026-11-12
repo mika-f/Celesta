@@ -588,12 +588,17 @@ impl EditorView {
     }
 
     /// Replacing the contents drops the export worker, so a running export
-    /// must be cancelled first.
+    /// must be cancelled first, and the save panel closed: its answer is
+    /// for the project it was opened for.
     pub(crate) fn can_replace_contents(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.choosing_export_path {
+            window.push_notification("Close the save panel before opening another file.", cx);
+            return false;
+        }
         if self.export_cancellation.is_none() {
             return true;
         }
