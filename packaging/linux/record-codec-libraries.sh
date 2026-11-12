@@ -6,7 +6,8 @@
 # in <licenses>/native/<package>/copyright. Every shared object `ldd` lists
 # is recorded except glibc's own (libc, libm, the dynamic loader, ...), the
 # platform runtime. Fails when the program needs a library that is not
-# installed, when one has no single owning package, or when it does not
+# installed, when one has no single owning package or no copyright file
+# (its own, or one of the same source package's), or when it does not
 # link one of the named libraries.
 #
 #   record-codec-libraries.sh PROGRAM LICENSES [EXPECTED-LIBRARY...]
@@ -35,6 +36,27 @@ for library in "$@"; do
     exit 1
   fi
 done
+# The copyright file of an installed package. Some packages' doc folder is
+# a symlink to another binary package of the same source (libgcc-s1 and
+# libstdc++6 to gcc-N-base); Ubuntu's container images drop
+# /usr/share/doc/* except copyright files, which removes such a symlink, so
+# fall back to an installed package built from the same source.
+copyright_of() {
+  name="$(dpkg-query --show --showformat='${Package}' "$1")"
+  if [ -f "/usr/share/doc/$name/copyright" ]; then
+    printf '%s\n' "/usr/share/doc/$name/copyright"
+    return
+  fi
+  source="$(dpkg-query --show --showformat='${source:Package}' "$1")"
+  for sibling in $(dpkg-query --show --showformat='${Package} ${source:Package} ${db:Status-Status}\n' | awk -v source="$source" '$2 == source && $3 == "installed" { print $1 }'); do
+    if [ -f "/usr/share/doc/$sibling/copyright" ]; then
+      printf '%s\n' "/usr/share/doc/$sibling/copyright"
+      return
+    fi
+  done
+  echo "no copyright file for $name (source package $source) under /usr/share/doc" >&2
+  exit 1
+}
 entries=''
 while read -r name path; do
   case "$name" in
@@ -52,7 +74,8 @@ while read -r name path; do
 }    { \"library\": \"$name\", $fields }"
   package="$(dpkg-query --show --showformat='${Package}' "$owner")"
   mkdir -p "$native/$package"
-  cp "/usr/share/doc/$package/copyright" "$native/$package/copyright"
+  copyright="$(copyright_of "$owner")"
+  cp "$copyright" "$native/$package/copyright"
 done <<LIBRARIES
 $(printf '%s\n' "$listing" | awk '$2 == "=>" && $3 ~ /^\// { print $1, $3 }')
 LIBRARIES
