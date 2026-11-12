@@ -255,7 +255,7 @@ impl EditorView {
                 // second export that Cancel export could not reach; one
                 // while a project opens would export the project replacing
                 // this one. (A React reload does not stop it: the export
-                // takes the entry as the reload leaves it.)
+                // worker builds the entry from disk itself.)
                 if self.choosing_export_path || self.export_cancellation.is_some() || self.opening {
                     return;
                 }

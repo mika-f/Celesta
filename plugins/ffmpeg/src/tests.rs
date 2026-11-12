@@ -532,3 +532,8 @@ fn decodes_aac_without_the_encoder_padding_after_its_last_sample() {
 
     fs::remove_dir_all(&directory).ok();
 }
+
+#[test]
+fn the_in_process_plugin_takes_its_name_from_plugin_json() {
+    assert_eq!(crate::registered().name, "FFmpeg");
+}

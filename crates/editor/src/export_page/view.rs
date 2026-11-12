@@ -615,8 +615,9 @@ fn blocked_line(reason: String, cx: &App) -> impl IntoElement {
 }
 
 /// `warnings` split into the ones listed as they are (an unreadable
-/// presets file, an unknown default, a resolve's about no base) and the
-/// resolve's about the last export, which go under one line naming it.
+/// presets file, an unknown default, a resolve's about no base or about
+/// another preset) and the resolve's about the last export, which go under
+/// one line naming it.
 fn split_last_export(warnings: &[PageWarning]) -> (Vec<&PageWarning>, Vec<&PageWarning>) {
     warnings
         .iter()
