@@ -247,9 +247,28 @@ Checked: `cargo test -p celesta-editor -p celesta-editor-theme` (828 +
 `main.rs`: main added `export_page::view::key_bindings()` next to the
 editor's list, which this branch had moved into `key_bindings()` (with
 `!InspectorHeader` on Space); both are bound. `metrics.rs`: P7d added the
-same `inspector_label_width()` (7rem) for the export page; the branch's
-copy stays, and P7d's `the_inspector_label_lane_is_7rem` is dropped, as
-`inspector_lanes_fit_their_contents` asserts the same.
+same `inspector_label_width()` (7rem) for the export page. The rebase did
+not resolve this: `ce06ebb0` ("inspector lane tokens") applied without a
+conflict, because the two definitions sit in different parts of the file,
+so every rebased commit from `ce06ebb0` through `7c2e9e22` defines the
+token twice and does not build (`E0428`). The fix is the later commit
+`3d90705d`: the branch's copy stays, and P7d's
+`the_inspector_label_lane_is_7rem` is dropped, as
+`inspector_lanes_fit_their_contents` asserts the same. Folding the fix
+into `ce06ebb0` would rewrite that commit, so it was not done; a
+squash-merge, or that edit with the owner's approval, keeps the broken
+commits out of `main`'s history for `git bisect`.
+
+After this lands, the export page and the Inspector sit side by side at
+different densities: the export page keeps `list_row_height` (1.75rem)
+and `panel_padding` (0.75rem) in `export_page/view/layout.rs`, the
+Inspector `inspector_row_height` (2rem) and `inspector_padding` (1rem).
+P7d's handoff already lists merging the rows as a follow-up.
+
+Known: `a_layer_row_rests_with_its_message_once_its_text_is_restored` and
+`a_refused_value_press_opens_typing_and_a_refused_label_drag_says_why` in
+`tests/element_rows.rs` restate the `match` of `element_row_open` and
+`refused_press` rather than driving a row.
 
 Checked: `cargo test -p celesta-editor -p celesta-editor-theme` (852 +
 11), clippy `-D warnings`, `cargo fmt --all --check`.

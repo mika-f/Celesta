@@ -75,9 +75,9 @@ pub(crate) struct RowTyping {
     /// focus the window sends again when it comes back to the front does
     /// not reopen it; Enter on the resting value ([`Self::request`]) does.
     /// Going to the back blurs the field too, so only a blur in the active
-    /// window clears it, or a frame that finds the window's focus
-    /// elsewhere ([`Self::settle`]); gpui keeps the window's focus while
-    /// it is at the back.
+    /// window clears it, a frame that finds the window's focus elsewhere
+    /// ([`Self::settle`]), or [`Self::request`]; gpui keeps the window's
+    /// focus while it is at the back.
     rests_focused: bool,
 }
 
