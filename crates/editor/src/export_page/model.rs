@@ -2064,6 +2064,43 @@ mod tests {
     }
 
     #[test]
+    fn a_third_party_mp4_muxer_without_h264_still_opens_on_a_resolvable_output() {
+        // Linux without ffmpeg-x264: the bundled MP4 muxer's H.264 default
+        // has no encoder, while a user plugin's own MP4 muxer has its HEVC
+        // default installed, so `.mp4` is offered first. Whichever MP4
+        // muxer `.mp4` resolves to, the dialog must not open on an error.
+        let mut standard = registry_with_mov().plugins()[1].clone();
+        standard
+            .media
+            .video_encoders
+            .retain(|encoder| encoder.id == "prores");
+        let mut hevc_mp4 = mp4();
+        hevc_mp4.video = vec!["hvc1".into()];
+        hevc_mp4.default_video = Some("hvc1".into());
+        let third = plugin(
+            "third",
+            MediaOrigin::User,
+            MediaManifest {
+                decoders: Vec::new(),
+                video_encoders: vec![video_encoder("hevc", "HEVC", "hvc1")],
+                audio_encoders: Vec::new(),
+                muxers: vec![hevc_mp4],
+            },
+        );
+        let registry = MediaRegistry::new(vec![standard, third]);
+        let outputs = model(&registry).first_outputs(None);
+        assert_eq!(outputs[0], PathBuf::from("export.mp4"));
+        let (resolved, output, warning) = first_available(&registry, &outputs, &[]).unwrap();
+        // `.mp4` resolves to the bundled muxer, ranked first, which has no
+        // H.264 encoder; the dialog moves on to MOV and says why.
+        assert_eq!(output, PathBuf::from("export.mov"));
+        assert_eq!(resolved.muxer.reference, reference("b/mov"));
+        assert_eq!(resolved.video.reference, reference("b/prores"));
+        let warning = warning.expect("the reason MP4 was passed over");
+        assert!(warning.contains("b/mp4 is unavailable"), "{warning}");
+    }
+
+    #[test]
     fn a_preset_or_last_export_naming_mp4_is_not_replaced() {
         let registry = registry_with_native_h264();
         let dialog = model(&registry);
