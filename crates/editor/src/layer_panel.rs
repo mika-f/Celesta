@@ -9,6 +9,7 @@ use crate::element_rows::row_label;
 use crate::impact::{
     ImpactFilter, ImpactView, counted_scenes, impact_line, impact_view, other_scenes_label,
 };
+use crate::inspector::fact;
 use crate::layer_select::{
     SourceLookup, display_path, launch_outcome_applies, parent_layer_id, source_position,
 };
@@ -18,7 +19,6 @@ use crate::scope::{
 };
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
-use crate::widgets::{inspector_row, inspector_section};
 use celesta_editor_theme::metrics;
 use celesta_react_bridge::{ElementKind, LayerSource, LayerSourceReport, SourcePos};
 use celesta_source_edit::EditTarget;
@@ -30,10 +30,6 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, ClickEvent, Context, Div, Hsla, SharedString, Window, div};
 use std::path::{Path, PathBuf};
-
-/// The label column of the header rows and the property rows, so the labels
-/// and the values share one edge; wide enough for "Corner radius".
-pub(crate) const LABEL_WIDTH: f32 = 84.0;
 
 /// The icon for a primitive element by its tag; any other shape (and an
 /// element that is not a primitive) gets the generic shapes icon.
@@ -241,7 +237,7 @@ fn labelled(label: &'static str, value: impl IntoElement, cx: &App) -> Div {
         .child(
             div()
                 .flex_none()
-                .w(metrics::scaled(LABEL_WIDTH))
+                .w(metrics::inspector_label_width())
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
@@ -254,7 +250,7 @@ fn scope_box(cx: &App) -> Div {
         .flex()
         .flex_col()
         .gap_1()
-        .px_3()
+        .px(metrics::inspector_padding())
         .py_2()
         .border_b_1()
         .border_color(cx.theme().border)
@@ -326,7 +322,7 @@ impl EditorView {
                 .child(
                     div()
                         .flex_none()
-                        .w(metrics::scaled(LABEL_WIDTH))
+                        .w(metrics::inspector_label_width())
                         .text_color(muted)
                         .child(label),
                 )
@@ -456,7 +452,7 @@ impl EditorView {
                 .flex()
                 .flex_col()
                 .gap_1()
-                .px_3()
+                .px(metrics::inspector_padding())
                 .py_2()
                 .border_b_1()
                 .border_color(cx.theme().border)
@@ -584,7 +580,7 @@ impl EditorView {
         };
         div()
             .id("selection-impact")
-            .px_3()
+            .px(metrics::inspector_padding())
             .py_2()
             .border_b_1()
             .border_color(cx.theme().border)
@@ -621,7 +617,7 @@ impl EditorView {
                     |section, error| {
                         section.child(
                             div()
-                                .px_3()
+                                .px(metrics::inspector_padding())
                                 .py_2()
                                 .text_sm()
                                 .text_color(cx.theme().danger)
@@ -641,13 +637,17 @@ impl EditorView {
         let entry_dir = self.entry_dir();
         let muted = cx.theme().muted_foreground;
         let note = |text: SharedString, color: Hsla| {
-            div().px_3().py_2().text_sm().text_color(color).child(text)
+            div()
+                .px(metrics::inspector_padding())
+                .py_2()
+                .text_sm()
+                .text_color(color)
+                .child(text)
         };
-        let section = div()
-            .flex()
-            .flex_col()
-            .child(inspector_section("Layer", cx))
-            .child(inspector_row("ID", layer, cx));
+        let mut called_from = None;
+        let section = self
+            .section("properties/layer", "Layer", cx)
+            .child(fact("layer-id", "ID", layer, true, cx));
         let section = match &self.source_lookup {
             Some(SourceLookup::Found(report)) => {
                 let (source, callers) = report.chain.split_first()?;
@@ -655,7 +655,7 @@ impl EditorView {
                 section
                     .child(
                         div()
-                            .px_3()
+                            .px(metrics::inspector_padding())
                             .py_2()
                             .border_b_1()
                             .border_color(cx.theme().border)
@@ -677,15 +677,15 @@ impl EditorView {
                             ),
                     )
                     .when(open, |section| {
-                        section
-                            .child(self.source_row("Source", 0, source, &entry_dir, cx))
-                            .when(!callers.is_empty(), |section| {
-                                section
-                                    .child(inspector_section("Called from", cx))
+                        if !callers.is_empty() {
+                            called_from = Some(
+                                self.section("properties/called-from", "Called from", cx)
                                     .children(callers.iter().enumerate().map(|(index, caller)| {
                                         self.source_row("", index + 1, caller, &entry_dir, cx)
-                                    }))
-                            })
+                                    })),
+                            );
+                        }
+                        section.child(self.source_row("Source", 0, source, &entry_dir, cx))
                     })
             }
             Some(SourceLookup::NotInFrame) => {
@@ -702,7 +702,14 @@ impl EditorView {
             }
         };
         // A failed open shows under the selection header's position.
-        Some(section.into_any_element())
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .child(section)
+                .children(called_from)
+                .into_any_element(),
+        )
     }
 
     /// One position in the chain: `<name>  <file>:<line>:<column>` as a
@@ -724,7 +731,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .gap_1()
-            .px_3()
+            .px(metrics::inspector_padding())
             .py_2()
             .border_b_1()
             .border_color(cx.theme().border)

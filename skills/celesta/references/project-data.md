@@ -36,7 +36,7 @@ it at module level.
 defineProjectProperties({
   title:  { type: 'string',  label: 'Title',  defaultValue: 'Celesta' },
   accent: { type: 'color',   label: 'Accent', defaultValue: '#ff8800' },
-  size:   { type: 'number',  label: 'Size',   defaultValue: 48, min: 8, max: 200, step: 2 },
+  size:   { type: 'number',  label: 'Size',   defaultValue: 48, min: 8, max: 200, step: 2, unit: 'px' },
   sub:    { type: 'boolean', label: 'Subtitle', defaultValue: false },
   weight: { type: 'select',  label: 'Weight', defaultValue: 'bold', options: ['bold', 'light'] },
   data:   { type: 'path',    label: 'Data',   defaultValue: './data/sample.json' },
@@ -69,8 +69,10 @@ export default function Card() {
 }
 ```
 
-`min`, `max`, and `step` are Inspector hints; they are not enforced. The
-app's Inspector is read-only.
+`min`, `max`, `step`, and `unit` guide the Inspector: it refuses a typed
+value outside `min`/`max` and stops a drag at them, a drag moves by `step`,
+and `unit` is shown after the value, never converted. The runtime checks
+none of them, so props passed in code or `--props` are not limited.
 
 ## Pass values from the command line
 

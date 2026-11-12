@@ -1535,6 +1535,7 @@ mod tests {
                 max: None,
                 step: None,
                 integer: None,
+                unit: None,
             },
             required: false,
         }

@@ -141,6 +141,7 @@ fn num_range(default: f64, min: f64, max: f64) -> PrimitivePropertyField {
         max: Some(max),
         step: None,
         integer: None,
+        unit: None,
     }
 }
 
@@ -408,6 +409,7 @@ fn a_component_schema_can_ask_for_whole_numbers() {
             max: None,
             step: None,
             integer: Some(true),
+            unit: None,
         });
     assert_eq!(
         parse_row_value(&ControlKind::Number, Some(&field), "2.5"),
@@ -464,6 +466,17 @@ fn none_on_an_absent_path_writes_nothing() {
 }
 
 #[test]
+fn a_scrub_lands_on_its_steps_places() {
+    let unit = num_range(1.0, 0.0, 1.0);
+    let anchor = stepped_field(0.0, 0.01);
+    // No float noise reaches the file or the row (0.5 + 7 * 0.01).
+    assert_eq!(scrub_value(0.5, 7.0, Some(&anchor), false), 0.57);
+    assert_eq!(scrub_value(0.5, 43.0, Some(&unit), false), 0.93);
+    // A start with more places than the step keeps them.
+    assert_eq!(scrub_value(0.123, 1.0, Some(&anchor), false), 0.133);
+}
+
+#[test]
 fn scrub_steps() {
     let free = number_field(None);
     let unit = num_range(1.0, 0.0, 1.0);
@@ -495,6 +508,7 @@ fn scrub_steps() {
         max: Some(1.0),
         step: Some(0.1),
         integer: None,
+        unit: None,
     };
     near(scrub_value(0.5, 2.0, Some(&coarse), false), 0.7);
 
@@ -511,6 +525,7 @@ fn scrub_steps() {
                 max: Some(100.0),
                 step: Some(5.0),
                 integer: None,
+                unit: None,
             }
             .into(),
         )]),
@@ -519,7 +534,7 @@ fn scrub_steps() {
     type_component_props(&mut targets, &schemas, read_from(&texts));
     let tone = (targets, props_tag_report());
     assert_eq!(
-        scrubbed_to(&tone, &PropKey::CallSite("tone".to_owned()), 102.0),
+        scrubbed_to(&tone, &PropKey::CallSite("tone".to_owned()), 105.0),
         12.0
     );
 
@@ -536,9 +551,9 @@ fn scrub_steps() {
         },
     );
     let table = (resolve_table(text, &report, &rect_table()), report.clone());
-    near(scrubbed_to(&table, &prop("scale"), 110.0), 2.1);
+    near(scrubbed_to(&table, &prop("scale"), 113.0), 2.1);
     let bare = (resolve_in(text, &report).unwrap(), report);
-    near(scrubbed_to(&bare, &prop("scale"), 110.0), 2.1);
+    near(scrubbed_to(&bare, &prop("scale"), 113.0), 2.1);
 }
 
 /// `<Rect x={10} {attributes} />` at line 2, column 3 of
@@ -589,10 +604,10 @@ fn a_scrub_starts_from_the_value_the_row_shows() {
         single_row(text, "cornerRadius", missing),
         other_prop_report("Rect", "cornerRadius", ReceivedValue::Number(2.125)),
     );
-    assert_eq!(scrubbed_to(&received, &prop("cornerRadius"), 104.0), 6.125);
+    assert_eq!(scrubbed_to(&received, &prop("cornerRadius"), 107.0), 6.125);
     // Else the table's default.
     let absent = drawn_rect("", &[]);
-    assert!((scrubbed_to(&absent, &prop("opacity"), 90.0) - 0.9).abs() < 1e-9);
+    assert!((scrubbed_to(&absent, &prop("opacity"), 87.0) - 0.9).abs() < 1e-9);
     // A parameter's default in the source, at the call that leaves it out.
     let texts = Texts::from([
         (
@@ -613,7 +628,7 @@ fn a_scrub_starts_from_the_value_the_row_shows() {
         ..price_tag_report()
     };
     let targets = resolve_targets(read_from(&texts), &report, None).unwrap();
-    assert_eq!(scrubbed_to(&(targets, report), &prop("x"), 104.0), 11.0);
+    assert_eq!(scrubbed_to(&(targets, report), &prop("x"), 107.0), 11.0);
 }
 
 #[test]
@@ -633,7 +648,7 @@ fn a_scrub_back_at_its_start_writes_nothing_outside_the_range() {
     // `opacity={1.5}` scrubs from 1, the nearest value inside its range.
     let (targets, report) = drawn_rect("opacity={1.5}", &[("opacity", 1.5)]);
     let mut scrub = Scrub::start(&targets, &report, &prop("opacity"), 100.0, (None, None)).unwrap();
-    assert!(scrub.follow(95.0, false));
+    assert!(scrub.follow(92.0, false));
     assert_eq!(
         scrub.overrides(false),
         [override_at("/project/scene.tsx", "opacity", 0.95)]
@@ -642,8 +657,8 @@ fn a_scrub_back_at_its_start_writes_nothing_outside_the_range() {
     assert!(!scrub.changed());
 }
 
-/// The overrides a scrub of `key` pressed at x 100 sends at x 104, 110 and
-/// 96; `None` when the row does not scrub.
+/// The overrides a scrub of `key` pressed at x 100 sends at x 107, 113 and
+/// 93 (4, 10 and -4 pixels past the drag threshold); `None` when the row does not scrub.
 fn scrub_frames(
     targets: &ElementTargets,
     report: &LayerSourceReport,
@@ -651,7 +666,7 @@ fn scrub_frames(
 ) -> Option<Vec<Vec<PropOverride>>> {
     let mut scrub = Scrub::start(targets, report, key, 100.0, (None, None))?;
     Some(
-        [104.0, 110.0, 96.0]
+        [107.0, 113.0, 93.0]
             .into_iter()
             .map(|x| {
                 scrub.follow(x, false);
@@ -763,7 +778,9 @@ fn a_scrub_overrides_nothing_before_it_moves_or_while_playing() {
     assert!(!scrub.follow(100.0, false));
     assert_eq!(scrub.overrides(false), []);
 
-    assert!(scrub.follow(103.0, false));
+    assert!(!scrub.follow(102.0, false), "inside the drag threshold");
+    assert_eq!(scrub.overrides(false), []);
+    assert!(scrub.follow(106.0, false));
     assert!(scrub.changed());
     assert_eq!(
         scrub.overrides(false),
@@ -1043,6 +1060,7 @@ fn whole_field(min: Option<f64>, max: Option<f64>) -> PrimitivePropertyField {
         max,
         step: None,
         integer: Some(true),
+        unit: None,
     }
 }
 
@@ -1288,4 +1306,175 @@ fn a_removed_row_shows_its_placeholder_until_the_reload_resolves() {
         ),
         ("#fff".to_owned(), String::new())
     );
+}
+
+#[test]
+fn a_value_press_without_a_drag_opens_typing() {
+    let (targets, report) = corner_radius_rect();
+    let key = prop("cornerRadius");
+    let mut scrub = Scrub::start(&targets, &report, &key, 100.0, (None, None))
+        .unwrap()
+        .with_origin(ScrubOrigin::Value);
+    assert_eq!(scrub.finish(), ScrubEnd::Type);
+    // Inside the threshold it is still a click.
+    scrub.follow(102.0, false);
+    assert_eq!(scrub.finish(), ScrubEnd::Type);
+}
+
+#[test]
+fn a_label_press_without_a_drag_writes_nothing() {
+    let (targets, report) = corner_radius_rect();
+    let scrub = Scrub::start(
+        &targets,
+        &report,
+        &prop("cornerRadius"),
+        100.0,
+        (None, None),
+    )
+    .unwrap();
+    assert_eq!(scrub.finish(), ScrubEnd::Nothing);
+}
+
+#[test]
+fn a_drag_moves_from_the_threshold_and_writes_once() {
+    let (targets, report) = corner_radius_rect();
+    let mut scrub = Scrub::start(
+        &targets,
+        &report,
+        &prop("cornerRadius"),
+        100.0,
+        (None, None),
+    )
+    .unwrap()
+    .with_origin(ScrubOrigin::Value);
+    assert!(!scrub.follow(102.0, false), "inside the threshold");
+    assert!(scrub.follow(110.0, false));
+    // 4 + (10 - 3) * 1
+    assert_eq!(scrub.finish(), ScrubEnd::Write(11.0));
+}
+
+#[test]
+fn a_drag_back_to_the_start_writes_nothing_and_does_not_type() {
+    let (targets, report) = corner_radius_rect();
+    let mut scrub = Scrub::start(
+        &targets,
+        &report,
+        &prop("cornerRadius"),
+        100.0,
+        (None, None),
+    )
+    .unwrap()
+    .with_origin(ScrubOrigin::Value);
+    scrub.follow(110.0, false);
+    scrub.follow(101.0, false);
+    assert_eq!(scrub.finish(), ScrubEnd::Nothing);
+}
+
+#[test]
+fn typing_follows_the_fields_focus() {
+    let mut typing = RowTyping::default();
+    assert!(!typing.open(false, false));
+    typing.on(&ControlEvent::Focused, true);
+    assert!(typing.open(false, false));
+    typing.on(&ControlEvent::Submit { blur: false }, true);
+    assert!(!typing.open(false, false));
+    typing.request();
+    typing.on(&ControlEvent::Escape, true);
+    assert!(!typing.open(false, false));
+    typing.request();
+    typing.on(&ControlEvent::Submit { blur: true }, true);
+    assert!(!typing.open(false, false));
+    // Typed text, or text that did not parse, keeps the field open.
+    assert!(typing.open(true, false));
+    assert!(typing.open(false, true));
+    // Other events leave it as it is.
+    typing.on(&ControlEvent::Focused, true);
+    typing.on(&ControlEvent::Edited, true);
+    assert!(typing.open(false, false));
+}
+
+#[test]
+fn a_resting_row_with_the_focus_opens_only_on_request() {
+    // Escape and Enter leave the focus on the resting value; the window
+    // coming back to the front sends that focus again, which must not
+    // open the row. Enter (a request) does.
+    for closing in [ControlEvent::Escape, ControlEvent::Submit { blur: false }] {
+        let mut typing = RowTyping::default();
+        typing.on(&ControlEvent::Focused, true);
+        typing.on(&closing, true);
+        typing.on(&ControlEvent::Focused, true);
+        assert!(!typing.open(false, false), "{closing:?}");
+        typing.request();
+        assert!(typing.open(false, false));
+    }
+    // Once the focus left, coming back opens it again (Tab).
+    let mut typing = RowTyping::default();
+    typing.on(&ControlEvent::Focused, true);
+    typing.on(&ControlEvent::Escape, true);
+    typing.on(&ControlEvent::Submit { blur: true }, true);
+    typing.on(&ControlEvent::Focused, true);
+    assert!(typing.open(false, false));
+    // The window going to the back blurs the field too: the focus it
+    // sends on coming back still leaves the row resting.
+    let mut typing = RowTyping::default();
+    typing.on(&ControlEvent::Focused, true);
+    typing.on(&ControlEvent::Escape, true);
+    typing.on(&ControlEvent::Submit { blur: true }, false);
+    typing.on(&ControlEvent::Focused, true);
+    assert!(!typing.open(false, false));
+}
+
+#[test]
+fn a_row_reopened_by_request_comes_back_to_the_window_open() {
+    // Reopened after resting (a click, or Enter on the resting value), it
+    // is typing again: as for a row opened by Tab, the focus the window
+    // sends on coming back opens it.
+    for closing in [ControlEvent::Escape, ControlEvent::Submit { blur: false }] {
+        let mut typing = RowTyping::default();
+        typing.on(&ControlEvent::Focused, true);
+        typing.on(&closing, true);
+        typing.request();
+        typing.on(&ControlEvent::Submit { blur: true }, false);
+        assert!(!typing.open(false, false), "{closing:?}");
+        typing.on(&ControlEvent::Focused, true);
+        assert!(typing.open(false, false), "{closing:?}");
+    }
+}
+
+#[test]
+fn a_row_left_at_the_back_rests_only_while_its_field_holds_the_focus() {
+    let left_at_the_back = || {
+        let mut typing = RowTyping::default();
+        typing.on(&ControlEvent::Focused, true);
+        typing.on(&ControlEvent::Escape, true);
+        typing.on(&ControlEvent::Submit { blur: true }, false);
+        typing
+    };
+    // Back in front with the focus still on the field: it rests.
+    let mut typing = left_at_the_back();
+    typing.settle(true);
+    typing.on(&ControlEvent::Focused, true);
+    assert!(!typing.open(false, false));
+    // The focus moved on before the first frame: the next focus opens it.
+    let mut typing = left_at_the_back();
+    typing.settle(false);
+    typing.on(&ControlEvent::Focused, true);
+    assert!(typing.open(false, false));
+}
+
+#[test]
+fn a_layer_row_rests_with_its_message_once_its_text_is_restored() {
+    // Text that did not parse was put back on blur; the message stays as a
+    // line under the resting value, which can be dragged again.
+    assert!(!element_row_open(RowTyping::default(), false));
+    assert!(element_row_open(RowTyping::default(), true));
+    let mut typing = RowTyping::default();
+    typing.on(&ControlEvent::Focused, true);
+    assert!(element_row_open(typing, false));
+}
+
+#[test]
+fn a_refused_value_press_opens_typing_and_a_refused_label_drag_says_why() {
+    assert_eq!(refused_press(ScrubOrigin::Value), RefusedPress::Type);
+    assert_eq!(refused_press(ScrubOrigin::Label), RefusedPress::Say);
 }

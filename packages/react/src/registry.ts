@@ -37,6 +37,9 @@ export type ComponentPropertyField =
       max?: number;
       step?: number;
       integer?: boolean;
+      // Shown after the value in the editor (`px`, `°`); never converted
+      // or checked.
+      unit?: string;
     }
   | { type: 'boolean'; label?: string; defaultValue: boolean }
   | { type: 'color'; label?: string; defaultValue: string }

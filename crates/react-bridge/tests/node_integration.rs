@@ -1471,6 +1471,7 @@ fn reports_a_declared_project_property_schema_when_node_is_available() {
             max: Some(200.0),
             step: Some(2.0),
             integer: None,
+            unit: None,
         })
     );
     assert_eq!(
@@ -1750,6 +1751,7 @@ fn reports_a_registered_components_property_schema_when_node_is_available() {
                 max: Some(999.0),
                 step: None,
                 integer: None,
+                unit: None,
             },
             required: true,
         })

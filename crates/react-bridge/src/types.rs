@@ -457,6 +457,9 @@ pub enum ComponentPropertyField {
         /// Only whole numbers (a count of items).
         #[serde(default)]
         integer: Option<bool>,
+        /// Shown after the value (`px`, `°`); never converted.
+        #[serde(default)]
+        unit: Option<String>,
     },
     Boolean {
         #[serde(default)]
@@ -551,6 +554,9 @@ pub enum PrimitivePropertyField {
         /// Only whole numbers (a polygon's `sides`).
         #[serde(default)]
         integer: Option<bool>,
+        /// Shown after the value (`px`, `°`); never converted.
+        #[serde(default)]
+        unit: Option<String>,
     },
     String {
         #[serde(default)]

@@ -5,20 +5,21 @@
 
 use crate::edit_history::{FileEdit, write_recorded};
 use crate::element_edit::schema_field;
-use crate::element_rows::{control_kind, parse_field_number};
+use crate::element_rows::{control_kind, parse_field_number, scrub_value};
 use crate::preview::{KeptSchema, ReactPreview};
 use crate::property_controls::{
     Control, ControlEvent, ControlKind, build_control, parse_color, parse_color_input,
     take_picked_color,
 };
+use crate::scrub_value::{RowTyping, ScrubEnd, drag_distance};
 use crate::source::{PropertyArgs, WatchStamp, watched_stamp};
 use crate::view::EditorView;
 use crate::widgets::{format_component_number, json_display};
 use celesta_react_bridge::{
-    ComponentPropertyField, ENTRY_PROPS_FILE, PropertyInputs, PropertyIssue, effective_values,
-    resolve_props_file, set_property_text,
+    ComponentPropertyField, ENTRY_PROPS_FILE, PrimitivePropertyField, PropertyInputs,
+    PropertyIssue, effective_values, resolve_props_file, set_property_text,
 };
-use gpui_kit::{App, Context, Subscription, Window};
+use gpui_kit::{App, Context, MouseMoveEvent, Subscription, Window};
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -218,6 +219,11 @@ pub(crate) struct RowState {
     /// The first reload number whose read of the props file clears
     /// `write_error`; `None` keeps it until the next successful write.
     error_released_by: Option<u64>,
+    /// A number row shows its field rather than its resting value.
+    pub(crate) typing: RowTyping,
+    /// The last commit came from typed text (`TextUpdate::Keep`), which a
+    /// failed write keeps for a retry; a drag, pick or reset has none.
+    typed_commit: bool,
 }
 
 impl RowState {
@@ -231,7 +237,15 @@ impl RowState {
             ignore_case: false,
             write_error: None,
             error_released_by: None,
+            typing: RowTyping::default(),
+            typed_commit: false,
         }
+    }
+
+    /// Whether a number row shows its field: while typing, with typed text,
+    /// or with text that was not committed (`invalid`).
+    pub(crate) fn typing_open(&self, invalid: bool) -> bool {
+        self.typing.open(self.edited, invalid)
     }
 
     /// A row for `field`: colors compare ignoring the case of their digits.
@@ -287,6 +301,7 @@ impl RowState {
     ) -> bool {
         // The text now holds (or is about to show) the committed value.
         self.edited = false;
+        self.typed_commit = text == TextUpdate::Keep;
         let shown = value.cloned().unwrap_or(default);
         if value.is_some() && values_match(&shown, &self.shown, self.ignore_case) {
             return false;
@@ -303,13 +318,19 @@ impl RowState {
         self.error_released_by = None;
     }
 
-    /// The write failed and the file still holds `file_value`. The typed
-    /// text stays and counts as an edit, so the next Enter or blur retries.
+    /// The write failed and the file still holds `file_value`. Typed text
+    /// stays and counts as an edit, so the next Enter or blur retries; after
+    /// a drag, pick or reset the controls show the file's value again.
     pub(crate) fn write_failed(&mut self, file_value: Option<Value>) {
-        self.edited = true;
+        let text = if self.typed_commit {
+            self.edited = true;
+            TextUpdate::Keep
+        } else {
+            TextUpdate::Always
+        };
         if let Some(value) = file_value {
             self.shown = value.clone();
-            self.update = Some((value, TextUpdate::Keep));
+            self.update = Some((value, text));
         }
     }
 
@@ -344,6 +365,71 @@ impl RowState {
     }
 }
 
+/// A drag on a props-file number row: the row shows the dragged value and
+/// the file is written once, on release. The preview follows after that
+/// write's reload (props reach the runtime only through the file).
+#[derive(Clone, Debug)]
+pub(crate) struct PropertyScrub {
+    key: String,
+    /// Where the value was pressed, in window pixels.
+    start_x: f32,
+    start_value: f64,
+    value: f64,
+    field: PrimitivePropertyField,
+    /// The pointer passed the drag threshold.
+    dragged: bool,
+}
+
+impl PropertyScrub {
+    pub(crate) fn start(
+        key: &str,
+        field: &ComponentPropertyField,
+        start_x: f32,
+        start_value: f64,
+    ) -> Self {
+        let field = schema_field(field);
+        // Inside the range, so a pointer back at the start writes nothing.
+        let start_value = scrub_value(start_value, 0.0, Some(&field), false);
+        Self {
+            key: key.to_owned(),
+            start_x,
+            start_value,
+            value: start_value,
+            field,
+            dragged: false,
+        }
+    }
+
+    /// Takes the pointer at `x`; true when the shown value changed.
+    pub(crate) fn follow(&mut self, x: f32, shift: bool) -> bool {
+        let dx = match drag_distance((x - self.start_x).round()) {
+            Some(dx) => dx,
+            None if self.dragged => 0.0,
+            None => return false,
+        };
+        self.dragged = true;
+        let value = scrub_value(self.start_value, dx, Some(&self.field), shift);
+        let changed = value != self.value;
+        self.value = value;
+        changed
+    }
+
+    /// The value the row `key` shows while this scrub drags it.
+    pub(crate) fn shown(&self, key: &str) -> Option<f64> {
+        (self.dragged && self.key == key).then_some(self.value)
+    }
+
+    pub(crate) fn finish(&self) -> ScrubEnd {
+        if !self.dragged {
+            ScrubEnd::Type
+        } else if self.value != self.start_value {
+            ScrubEnd::Write(self.value)
+        } else {
+            ScrubEnd::Nothing
+        }
+    }
+}
+
 /// How putting a value into a row's controls treats its text input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TextUpdate {
@@ -361,7 +447,7 @@ pub(crate) fn property_control_handler(
 ) -> impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + Clone + 'static
 {
     let key = key.to_owned();
-    move |this, event, _, cx| this.property_control_event(&key, event, cx)
+    move |this, event, window, cx| this.property_control_event(&key, event, window, cx)
 }
 
 /// One declared property's controls and what they show.
@@ -396,12 +482,26 @@ pub(crate) struct PropertyPanelState {
     writing: Option<String>,
     /// A write succeeded since the last reload; reload once the queue drains.
     reload_needed: bool,
+    /// A drag on a number row, with the button down.
+    pub(crate) scrub: Option<PropertyScrub>,
 }
 
 impl PropertyPanelState {
     /// A write is running or waiting.
     pub(crate) fn is_writing(&self) -> bool {
         self.writing.is_some() || !self.queue.is_empty()
+    }
+}
+
+/// Whether `update` replaces a row's text: `UnlessFocused` leaves it only
+/// while the person types in it (`focused` and `typing`); a resting number
+/// keeps its field's focus after Enter or Escape and still takes a loaded
+/// value.
+pub(crate) fn replaces_text(update: TextUpdate, focused: bool, typing: bool) -> bool {
+    match update {
+        TextUpdate::Keep => false,
+        TextUpdate::UnlessFocused => !(focused && typing),
+        TextUpdate::Always => true,
     }
 }
 
@@ -413,11 +513,11 @@ fn update_controls(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let replace = match text {
-        TextUpdate::Keep => false,
-        TextUpdate::UnlessFocused => !row.control.text_focused(window, cx),
-        TextUpdate::Always => true,
-    };
+    let replace = replaces_text(
+        text,
+        row.control.text_focused(window, cx),
+        row.state.typing_open(row.invalid.is_some()),
+    );
     if replace && row.control.set_text(value_text(&value), window, cx) {
         row.invalid = None;
         row.state.text_replaced();
@@ -530,7 +630,18 @@ impl EditorView {
     }
 
     /// What the person did in the controls of the row for `key`.
-    fn property_control_event(&mut self, key: &str, event: ControlEvent, cx: &mut Context<Self>) {
+    fn property_control_event(
+        &mut self,
+        key: &str,
+        event: ControlEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        // A number row opens for typing with its field's focus and rests
+        // again on Enter, a blur or Escape.
+        if let Some(row) = self.property_panel.rows.get_mut(key) {
+            row.state.typing.follow(&event, window);
+        }
         match event {
             ControlEvent::Edited => {
                 if let Some(row) = self.property_panel.rows.get_mut(key) {
@@ -539,6 +650,7 @@ impl EditorView {
             }
             ControlEvent::Submit { blur } => self.submit_property_text(key, blur, cx),
             ControlEvent::Escape => self.restore_property_text(key, cx),
+            ControlEvent::Focused => cx.notify(),
             ControlEvent::Toggled(checked) => {
                 let value = Some(Value::Bool(checked));
                 self.commit_property(key, value, TextUpdate::Keep, cx);
@@ -591,6 +703,135 @@ impl EditorView {
     pub(crate) fn restore_property_text(&mut self, key: &str, cx: &mut Context<Self>) {
         if let Some(row) = self.property_panel.rows.get_mut(key) {
             row.state.restore();
+            cx.notify();
+        }
+    }
+
+    /// A press on the value of the number row `key` at `x` (window pixels):
+    /// starts a drag of it, or, while playing, opens it for typing.
+    pub(crate) fn begin_property_scrub(
+        &mut self,
+        key: &str,
+        x: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.property_panel.scrub.is_some() {
+            return;
+        }
+        if self.playing {
+            self.focus_property_input(key, window, cx);
+            return;
+        }
+        let Some(row) = self.property_panel.rows.get(key) else {
+            return;
+        };
+        let start = row
+            .state
+            .shown
+            .as_f64()
+            .or_else(|| row.field.default_json().as_f64())
+            .unwrap_or(0.0);
+        self.property_panel.scrub = Some(PropertyScrub::start(key, &row.field, x, start));
+        cx.notify();
+    }
+
+    /// Follows the pointer: the row shows the dragged value. Writes only
+    /// when the button was released outside the window, as a release would.
+    pub(crate) fn continue_property_scrub(
+        &mut self,
+        event: &MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if self.property_panel.scrub.is_none() {
+            return;
+        }
+        // Released outside the window: end without opening typing.
+        if !event.dragging() {
+            if let Some(scrub) = self.property_panel.scrub.take()
+                && let ScrubEnd::Write(value) = scrub.finish()
+            {
+                self.commit_property(
+                    &scrub.key,
+                    Some(number_value(value)),
+                    TextUpdate::Always,
+                    cx,
+                );
+            }
+            cx.notify();
+            return;
+        }
+        if let Some(scrub) = self.property_panel.scrub.as_mut()
+            && scrub.follow(f32::from(event.position.x), event.modifiers.shift)
+        {
+            cx.notify();
+        }
+    }
+
+    /// Release: writes the dragged value once, opens the row for typing after
+    /// a press without a drag, or does nothing. True when a drag was running.
+    pub(crate) fn end_property_scrub(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(scrub) = self.property_panel.scrub.take() else {
+            return false;
+        };
+        match scrub.finish() {
+            ScrubEnd::Write(value) => {
+                self.commit_property(
+                    &scrub.key,
+                    Some(number_value(value)),
+                    TextUpdate::Always,
+                    cx,
+                );
+            }
+            ScrubEnd::Type => self.focus_property_input(&scrub.key, window, cx),
+            ScrubEnd::Nothing => {}
+        }
+        true
+    }
+
+    /// Escape during a drag: the row shows its value again; nothing is
+    /// written. True when a drag was dropped.
+    pub(crate) fn escape_property_scrub(&mut self) -> bool {
+        self.property_panel.scrub.take().is_some()
+    }
+
+    /// The value the row `key` shows while a drag changes it.
+    pub(crate) fn property_scrub_shown(&self, key: &str) -> Option<f64> {
+        self.property_panel
+            .scrub
+            .as_ref()
+            .and_then(|scrub| scrub.shown(key))
+    }
+
+    /// Opens the number row `key` for typing, its text selected.
+    pub(crate) fn focus_property_input(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.property_panel.rows.get_mut(key) else {
+            return;
+        };
+        let Control::Text(input) = &row.control else {
+            return;
+        };
+        row.state.typing.request();
+        input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            input.select_all(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Enter on a resting number row: opens it for typing.
+    pub(crate) fn type_property_row(&mut self, key: &str, cx: &mut Context<Self>) {
+        if let Some(row) = self.property_panel.rows.get_mut(key) {
+            row.state.typing.request();
             cx.notify();
         }
     }
@@ -759,6 +1000,7 @@ impl EditorView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scrub_value::ScrubEnd;
     use gpui_kit::{Hsla, Rgba};
     use serde_json::json;
 
@@ -839,6 +1081,7 @@ mod tests {
             max: None,
             step: None,
             integer: None,
+            unit: None,
         };
         assert!(!differs_from_default(&number, &json!(1)));
         assert!(!differs_from_default(&number, &json!(1.0)));
@@ -862,6 +1105,7 @@ mod tests {
             max: Some(10.0),
             step: None,
             integer: Some(true),
+            unit: None,
         };
         assert_eq!(parse_property_text(&count, "4"), Ok(json!(4)));
         let refused = Err("Enter a whole number from 1 to 10".to_owned());
@@ -979,6 +1223,25 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_drag_write_rests_the_row_on_the_file_value() {
+        let mut row = RowState::new();
+        row.offer_loaded(&json!(0.5), 0, false);
+        row.take_update();
+        // A drag commits the dragged value into the text.
+        row.commit(Some(&json!(0.7)), json!(0), TextUpdate::Always);
+        row.take_update();
+
+        row.write_failed(Some(json!(0.5)));
+        assert_eq!(row.shown, json!(0.5));
+        assert_eq!(
+            row.take_update(),
+            Some((json!(0.5), TextUpdate::Always)),
+            "the text shows the file's value again"
+        );
+        assert!(!row.typing_open(false), "the row rests, so it drags again");
+    }
+
+    #[test]
     fn a_typed_color_updates_the_picker() {
         let mut row = RowState::new();
         assert!(row.commit(Some(&json!("#AABBCC")), json!("#000000"), TextUpdate::Keep));
@@ -1051,5 +1314,73 @@ mod tests {
             default_value: "Hello".to_owned(),
         };
         assert!(differs_from_default(&text, &json!("hello")));
+    }
+
+    fn gap_field() -> ComponentPropertyField {
+        ComponentPropertyField::Number {
+            label: None,
+            default_value: 10.0,
+            min: Some(0.0),
+            max: None,
+            step: None,
+            integer: None,
+            unit: Some("px".into()),
+        }
+    }
+
+    #[test]
+    fn a_props_file_drag_writes_once_on_release() {
+        let mut scrub = PropertyScrub::start("gap", &gap_field(), 100.0, 10.0);
+        assert_eq!(
+            scrub.shown("gap"),
+            None,
+            "nothing shown before the threshold"
+        );
+        assert!(!scrub.follow(102.0, false));
+        assert_eq!(scrub.shown("gap"), None);
+        assert!(scrub.follow(90.0, false));
+        assert_eq!(scrub.shown("gap"), Some(3.0)); // 10 + (-10 + 3)
+        assert_eq!(scrub.shown("other"), None);
+        scrub.follow(50.0, false);
+        assert_eq!(scrub.shown("gap"), Some(0.0), "clamped to min");
+        assert_eq!(scrub.finish(), ScrubEnd::Write(0.0));
+    }
+
+    #[test]
+    fn a_props_file_press_without_a_drag_opens_typing() {
+        assert_eq!(
+            PropertyScrub::start("gap", &gap_field(), 100.0, 10.0).finish(),
+            ScrubEnd::Type
+        );
+        let mut back = PropertyScrub::start("gap", &gap_field(), 100.0, 10.0);
+        back.follow(120.0, false);
+        back.follow(100.0, false);
+        assert_eq!(back.finish(), ScrubEnd::Nothing);
+    }
+
+    #[test]
+    fn typing_survives_a_reload() {
+        let mut row = RowState::for_field(&gap_field());
+        row.offer_loaded(&json!(10), 1, false);
+        row.typing.on(&ControlEvent::Focused, true);
+        row.text_edited();
+        // A reload (an own write elsewhere, a file change) offers a value.
+        row.offer_loaded(&json!(12), 2, false);
+        assert!(row.typing_open(false), "the field stays open");
+        assert_eq!(
+            row.take_update(),
+            Some((json!(12), TextUpdate::UnlessFocused)),
+            "the typed text is replaced only if the field lost its focus"
+        );
+    }
+
+    #[test]
+    fn a_resting_row_takes_a_loaded_value_though_it_holds_the_focus() {
+        // After Enter or Escape the resting value keeps the field's focus.
+        assert!(replaces_text(TextUpdate::UnlessFocused, true, false));
+        assert!(!replaces_text(TextUpdate::UnlessFocused, true, true));
+        assert!(replaces_text(TextUpdate::UnlessFocused, false, true));
+        assert!(!replaces_text(TextUpdate::Keep, false, false));
+        assert!(replaces_text(TextUpdate::Always, true, true));
     }
 }

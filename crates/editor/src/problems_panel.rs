@@ -34,10 +34,10 @@ impl EditorView {
             .h(metrics::panel_header_height())
             .selected_index(offered.iter().position(|tab| *tab == shown).unwrap_or(0))
             .children(offered.iter().map(|tab| match tab {
-                RightTab::Details if react_preview => Tab::new().label("React Preview"),
-                RightTab::Details => Tab::new().label("Inspector"),
-                RightTab::Properties => Tab::new().label("Properties"),
-                RightTab::Plugins => Tab::new().label("Plugins").when(waiting > 0, |tab| {
+                RightTab::Details if react_preview => Tab::new().px_2().label("React Preview"),
+                RightTab::Details => Tab::new().px_2().label("Inspector"),
+                RightTab::Properties => Tab::new().px_2().label("Properties"),
+                RightTab::Plugins => Tab::new().px_2().label("Plugins").when(waiting > 0, |tab| {
                     tab.suffix(
                         div()
                             .font_family(mono.clone())
@@ -46,7 +46,7 @@ impl EditorView {
                             .child(waiting.to_string()),
                     )
                 }),
-                RightTab::Problems => Tab::new().label("Problems").when(count > 0, |tab| {
+                RightTab::Problems => Tab::new().px_2().label("Problems").when(count > 0, |tab| {
                     tab.suffix(
                         div()
                             .font_family(mono.clone())

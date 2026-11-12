@@ -1,57 +1,7 @@
 use celesta_react_bridge::ComponentPropertyField;
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::button::Button;
 use gpui_kit::prelude::*;
-use gpui_kit::{App, SharedString, div};
-
-pub(crate) fn inspector_row(
-    label: impl Into<SharedString>,
-    value: impl Into<SharedString>,
-    cx: &App,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .px_3()
-        .py_2()
-        .border_b_1()
-        .border_color(cx.theme().border)
-        .child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(label.into()),
-        )
-        .child(
-            div()
-                .text_base()
-                .text_color(cx.theme().foreground)
-                .child(value.into()),
-        )
-}
-
-pub(crate) fn inspector_section(title: impl Into<SharedString>, cx: &App) -> impl IntoElement {
-    div()
-        .mt_3()
-        .px_3()
-        .py_2()
-        .border_t_1()
-        .border_b_1()
-        .border_color(cx.theme().border)
-        .text_base()
-        .text_color(cx.theme().foreground)
-        .child(title.into())
-}
-
-pub(crate) fn inspector_note(text: &'static str, cx: &App) -> impl IntoElement {
-    div()
-        .px_3()
-        .py_2()
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-        .child(text)
-}
+use gpui_kit::{SharedString, div};
 
 /// The label and current value of one schema-described property, falling
 /// back to the field's declared default when the value is unset.

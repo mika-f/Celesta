@@ -13,9 +13,9 @@ use crate::element_edit::{
 };
 use crate::element_rows::{
     HeldCommit, HeldCommits, InteractiveToggle, Scrub, SelectionGate, TypedText, cleared_path,
-    commit_owns_row, component_row_label, control_kind, edited_rows, interactive_toggle,
-    moved_off_keyframe, parse_row_value, removable, row_field, row_kind, row_label, row_text,
-    scrub_takes_focus, scrub_value, set_at_text, typed_text, written_text,
+    commit_owns_row, component_row_label, control_kind, edited_rows, element_row_open,
+    interactive_toggle, moved_off_keyframe, parse_row_value, removable, row_field, row_kind,
+    row_label, row_text, scrub_takes_focus, scrub_value, set_at_text, typed_text, written_text,
 };
 use crate::export_control::remember_last;
 use crate::export_worker::{
@@ -33,9 +33,11 @@ use crate::layer_select::{
 };
 use crate::playback::in_text_field;
 use crate::problems::{Problems, Source};
+use crate::property_controls::ControlEvent;
 use crate::property_controls::ControlKind;
 use crate::react_audio::{react_audio_clip_id, react_tracks};
 use crate::refresh::{LookupFate, SelectionKeep};
+use crate::scrub_value::{RefusedPress, RowTyping, ScrubEnd, ScrubOrigin, refused_press};
 use crate::source::is_react_entry;
 use crate::transform_drag::{
     OverrideSite, TransformDrag, override_sites, presses_body, prop_overrides,
@@ -2297,6 +2299,7 @@ fn number_field(default_value: Option<f64>) -> PrimitivePropertyField {
         max: None,
         step: None,
         integer: None,
+        unit: None,
     }
 }
 
@@ -2309,6 +2312,7 @@ fn stepped_field(default_value: f64, step: f64) -> PrimitivePropertyField {
         max: None,
         step: Some(step),
         integer: None,
+        unit: None,
     }
 }
 
@@ -2351,6 +2355,7 @@ fn rect_table() -> PrimitivePropertyTable {
                         max: Some(1.0),
                         step: None,
                         integer: None,
+                        unit: None,
                     },
                 ),
             ],
@@ -2539,6 +2544,7 @@ fn schema_number(
         max,
         step: None,
         integer: None,
+        unit: None,
     }
 }
 

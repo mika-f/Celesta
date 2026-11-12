@@ -20,10 +20,14 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// A typed number: surrounding spaces are ignored, and only finite values
-/// count (`1e3` is fine, `NaN`, `inf`, and `1,5` are not).
-pub(crate) fn parse_number_input(text: &str) -> Result<f64, String> {
-    text.trim()
-        .parse::<f64>()
+/// count (`1e3` is fine, `NaN`, `inf`, and `1,5` are not). The field's own
+/// `unit` may follow, with or without a space (`120px`, `120 px`).
+pub(crate) fn parse_number_input(text: &str, unit: Option<&str>) -> Result<f64, String> {
+    let text = text.trim();
+    let text = unit
+        .and_then(|unit| text.strip_suffix(unit))
+        .map_or(text, str::trim_end);
+    text.parse::<f64>()
         .ok()
         .filter(|value| value.is_finite())
         .ok_or_else(|| "Enter a number".to_owned())
@@ -123,6 +127,9 @@ pub(crate) enum ControlEvent {
     ChoosePath,
     /// `None` on a path control.
     ClearPath,
+    /// The text gained the focus: a click on a resting number, Tab, or a
+    /// field of another kind clicked.
+    Focused,
 }
 
 /// The control a row edits its value with.
@@ -285,12 +292,12 @@ pub(crate) fn build_control(
 }
 
 /// Sends a text input's typing, Enter, and blur to `on`.
-fn subscribe_text<S: EventEmitter<InputEvent>>(
+pub(crate) fn subscribe_text<T: 'static, S: EventEmitter<InputEvent>>(
     input: &Entity<S>,
     multi_line: bool,
     window: &mut Window,
-    cx: &mut Context<EditorView>,
-    on: impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + 'static,
+    cx: &mut Context<T>,
+    on: impl Fn(&mut T, ControlEvent, &mut Window, &mut Context<T>) + 'static,
 ) -> Subscription {
     cx.subscribe_in(
         input,
@@ -301,7 +308,7 @@ fn subscribe_text<S: EventEmitter<InputEvent>>(
                 InputEvent::Change => ControlEvent::Edited,
                 InputEvent::PressEnter { shift, .. } => enter_event(multi_line, *shift),
                 InputEvent::Blur => ControlEvent::Submit { blur: true },
-                InputEvent::Focus => return,
+                InputEvent::Focus => ControlEvent::Focused,
             };
             on(this, event, window, cx);
         },
@@ -409,12 +416,12 @@ pub(crate) fn render_control(
 }
 
 /// A single-line text input with `hint` as its dimmed suffix.
-fn text_input(
+pub(crate) fn text_input<T: 'static>(
     input: Input,
     locked: bool,
     hint: Option<String>,
-    cx: &mut Context<EditorView>,
-    on: impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + 'static,
+    cx: &mut Context<T>,
+    on: impl Fn(&mut T, ControlEvent, &mut Window, &mut Context<T>) + 'static,
 ) -> AnyElement {
     let muted = cx.theme().muted_foreground;
     let input = input
@@ -436,10 +443,10 @@ pub(crate) fn field_keeps_key(keystroke: &Keystroke) -> bool {
 
 /// Wraps a text input so Escape in it reaches `on`, and the arrow keys it
 /// passes on stay with it ([`field_keeps_key`]).
-fn escapable(
+fn escapable<T: 'static>(
     input: impl IntoElement,
-    cx: &mut Context<EditorView>,
-    on: impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + 'static,
+    cx: &mut Context<T>,
+    on: impl Fn(&mut T, ControlEvent, &mut Window, &mut Context<T>) + 'static,
 ) -> AnyElement {
     div()
         .w_full()
@@ -503,11 +510,14 @@ mod tests {
 
     #[test]
     fn number_input_accepts_finite_numbers_only() {
-        assert_eq!(parse_number_input("1.5"), Ok(1.5));
-        assert_eq!(parse_number_input(" 2 "), Ok(2.0));
-        assert_eq!(parse_number_input("1e3"), Ok(1000.0));
+        assert_eq!(parse_number_input("1.5", None), Ok(1.5));
+        assert_eq!(parse_number_input(" 2 ", None), Ok(2.0));
+        assert_eq!(parse_number_input("1e3", None), Ok(1000.0));
         for text in ["1,5", "", "NaN", "inf"] {
-            assert!(parse_number_input(text).is_err(), "{text:?} was accepted");
+            assert!(
+                parse_number_input(text, None).is_err(),
+                "{text:?} was accepted"
+            );
         }
     }
 

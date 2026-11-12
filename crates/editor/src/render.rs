@@ -21,6 +21,7 @@ impl Render for EditorView {
         self.settle_added_selection(cx);
         self.watch_occurrence_sweep(cx);
         self.settle_row_requests(cx);
+        self.settle_resting_rows(window, cx);
         self.settle_interactive_mode();
         self.sync_element_targets(cx);
         self.sync_scene_calls(cx);
@@ -108,7 +109,8 @@ impl EditorView {
                 let escaped = this.escape_transform_drag()
                     || this.escape_timeline_drag::<BandDrag>()
                     || this.escape_timeline_drag::<SceneDrag>()
-                    || this.escape_row_scrub();
+                    || this.escape_row_scrub()
+                    || this.escape_property_scrub();
                 let added = !escaped && this.escape_add();
                 if added {
                     this.end_inline_text(EditEvent::Escape, cx);
