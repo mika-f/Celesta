@@ -193,11 +193,20 @@ def collect_licenses(resources, target, *, names=None, include_app=True, native_
             run("brew", "info", "--json=v2", *formulas, capture=True), encoding="utf-8")
     for formula in formulas:
         directory = Path(run("brew", "--prefix", formula, capture=True)).resolve()
-        destination = licenses / "native" / formula.replace("/", "-")
-        destination.mkdir(parents=True)
-        for path in directory.iterdir():
-            if path.is_file() and re.match(r"LICENSE|COPYING|NOTICE", path.name, re.I):
-                shutil.copy2(path, destination / path.name)
+        copy_formula_notices(formula, directory, licenses / "native" / formula.replace("/", "-"))
+
+
+def copy_formula_notices(formula, prefix, destination):
+    """Copy a Homebrew formula's licence files from its prefix into
+    `destination`, failing rather than leaving the folder empty: a bundled
+    library must ship with its notice, as on Linux."""
+    notices = [path for path in sorted(prefix.iterdir())
+               if path.is_file() and re.match(r"LICENSE|COPYING|NOTICE", path.name, re.I)]
+    if not notices:
+        raise RuntimeError(f"Homebrew formula {formula} has no licence file in {prefix}")
+    destination.mkdir(parents=True)
+    for path in notices:
+        shutil.copy2(path, destination / path.name)
 
 
 def notarize(path, profile):

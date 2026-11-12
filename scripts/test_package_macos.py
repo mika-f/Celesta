@@ -23,6 +23,22 @@ class MacPackageValidationTests(unittest.TestCase):
                 f"import sys; sys.stdout.buffer.write(bytes.fromhex('{payload.hex()}'))", capture=True)
         self.assertEqual(json.loads(captured), {"description": "あ / codec"})
 
+    def test_formula_notices_are_copied_and_a_formula_without_one_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix = root / "opus"
+            prefix.mkdir()
+            (prefix / "COPYING").write_text("BSD")
+            (prefix / "README").write_text("not a notice")
+            packaging.copy_formula_notices("opus", prefix, root / "licenses/native/opus")
+            self.assertEqual(sorted(path.name for path in (root / "licenses/native/opus").iterdir()), ["COPYING"])
+            bare = root / "bare"
+            bare.mkdir()
+            (bare / "README").write_text("no licence here")
+            with self.assertRaisesRegex(RuntimeError, "no licence file"):
+                packaging.copy_formula_notices("bare", bare, root / "licenses/native/bare")
+            self.assertFalse((root / "licenses/native/bare").exists())
+
     def test_reads_modern_and_legacy_minimum_os_versions(self):
         self.assertEqual(packaging.minimum_version(
             "Load command 1\n      cmd LC_BUILD_VERSION\n platform 1\n    minos 14.5\n      sdk 15.0\n"
