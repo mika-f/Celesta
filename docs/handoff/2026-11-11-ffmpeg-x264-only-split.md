@@ -239,3 +239,53 @@ against a libavcodec linking libopus and libvpx wrote
 `"distribution": "ubuntu 24.04"` and valid JSON; the changed workflows and
 `actions.lock` parse as YAML. The guides did not change in this round, so the
 website checks were not rerun.
+
+## Review on `fedeadf` (hinaloe, two P2 comments)
+
+### Examples that pass x264 settings
+
+On `main` an `.mp4` export defaulted to `ffmpeg/libx264`, so
+`--video-option crf=…`/`preset=…` worked without naming an encoder. Now the
+default MP4 encoder on macOS and Windows is the native H.264, whose settings
+have no `crf` or `preset` (an unknown setting fails before rendering), and
+Linux has no H.264 without the download. The examples that keep x264's
+settings now pass `--video-encoder ffmpeg-x264/libx264` and say once that the
+optional plugin is needed: `examples/afterimage` (README and `render.py`),
+`examples/greenscreen`, `examples/perfect-loop` (README and `package.json`),
+and `examples/prism`. A search of `examples/`, `packages/cli/examples/`,
+`templates/`, and `scripts/` for `--video-option`, `videoOption`, `crf`, and
+`preset=` found nothing else (`examples/versus/bench/fframes` is another
+tool's own settings). The exporter package's tests and fake exporter use
+`ffmpeg-x264/libx264` too. Examples that export a plain `.mp4` were left as
+they are: they work wherever an H.264 encoder is installed, which is the
+documented behaviour.
+
+### The dialog's first container
+
+`initial_output` chose MP4 from the manifests alone, so a declared but
+unavailable native H.264 (Windows N without the Media Feature Pack, no x264)
+opened the dialog on MP4's error although MOV would resolve.
+
+- `ExportDialogModel::default_outputs` lists the containers an export left to
+  the defaults tries, from the same manifest filter as before: `export.mp4`
+  first when it qualifies, then each other qualifying muxer's first
+  extension. `initial_output(None)` is its first entry.
+- `ExportDialogModel::first_outputs(base)` is that list with no base, and the
+  single output the base's muxer writes otherwise, so a preset, the project's
+  `default`, and the last export are never replaced.
+- `resolve_first_available` resolves the first of them that resolves. It runs
+  inside the view's existing background resolve, so `describe` is never
+  awaited on the UI thread. When it passed over the first output it returns a
+  warning, "MP4 cannot be exported here, so the export starts as MOV: …",
+  carrying the error and its recovery hint, which the view adds to the
+  dialog's existing warnings under **Preset**. When nothing resolves, the
+  first output's error (MP4's, with its hint) is shown, as before.
+- Choosing **None** in the preset list asks for the defaults too, so it takes
+  the same fallback; a container chosen in the dialog is resolved as chosen.
+- Tests: model tests for the fallback with its warning, an available native
+  H.264 keeping MP4, MP4's error when nothing resolves, and a preset or last
+  export naming MP4 not being replaced; view tests opening the dialog over a
+  `mediafoundation` plugin whose H.264 is unavailable (MOV, no error, the
+  warning) and available (MP4, no warning).
+- The en/ja export guide describe the fallback; the Skill does not describe
+  the dialog's first container.

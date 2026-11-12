@@ -291,13 +291,13 @@ impl ExportPage {
             ),
             InitialBase::None => (None, None, Asked::Defaults),
         };
-        let output = self
+        let outputs = self
             .model
-            .initial_output(base.as_ref().map(|(_, output)| output));
+            .first_outputs(base.as_ref().map(|(_, output)| output));
         self.resolve(
             OutputChoice::default(),
             base,
-            output,
+            outputs,
             (selected, asked),
             Section::Preset,
             warnings,
@@ -349,16 +349,17 @@ impl ExportPage {
     }
 
     /// Resolves `choice` over `base` (what its warnings call it, and the
-    /// preset) for `output` in the background, and applies the result as
-    /// `applied` says (the preset selected, and what was asked) with
-    /// `warnings` added; a failure is shown under `section` and keeps the
-    /// previous choice.
+    /// preset) for the first of `outputs` that resolves, in the
+    /// background, and applies the result as `applied` says (the preset
+    /// selected, and what was asked) with `warnings` added, and why an
+    /// earlier output was passed over; a failure (the first output's) is
+    /// shown under `section` and keeps the previous choice.
     #[allow(clippy::too_many_arguments)]
     fn resolve(
         &mut self,
         choice: OutputChoice,
         base: Option<(String, PresetOutput)>,
-        output: PathBuf,
+        outputs: Vec<PathBuf>,
         (selected, asked): (Option<(PresetSource, String)>, Asked),
         section: Section,
         warnings: Vec<PageWarning>,
@@ -368,8 +369,10 @@ impl ExportPage {
         let (registry, kill) = (self.registry.clone(), self.kill.clone());
         let resolved = cx.background_executor().spawn(async move {
             let base = base.as_ref().map(|(name, output)| (name.as_str(), output));
-            resolve_preset_output(&choice, base, &output, &registry, &mut |plugin| {
-                registry.describe(plugin, &kill)
+            super::model::resolve_first_available(&outputs, |output| {
+                resolve_preset_output(&choice, base, output, &registry, &mut |plugin| {
+                    registry.describe(plugin, &kill)
+                })
             })
         });
         self.resolving = Some(cx.spawn_in(window, async move |this, cx| {
@@ -377,9 +380,10 @@ impl ExportPage {
             this.update_in(cx, |this, window, cx| {
                 this.resolving = None;
                 match resolved {
-                    Ok(resolved) => {
+                    Ok((resolved, _, passed_over)) => {
                         this.model.apply(&resolved, selected, asked);
                         // `apply` replaces the warnings with the resolve's.
+                        this.model.warnings.extend(passed_over);
                         this.model.warnings.extend(warnings);
                         this.warned = section;
                         this.failure = None;
@@ -415,9 +419,9 @@ impl ExportPage {
             let preset = file.into_iter().find(|preset| preset.name == *name)?;
             Some((preset_label(name), preset.output.clone()))
         });
-        let output = self
+        let outputs = self
             .model
-            .initial_output(base.as_ref().map(|(_, output)| output));
+            .first_outputs(base.as_ref().map(|(_, output)| output));
         let selected = key.filter(|_| base.is_some());
         let asked = match &base {
             Some((_, output)) => Asked::Preset(Box::new(output.clone())),
@@ -426,7 +430,7 @@ impl ExportPage {
         self.resolve(
             OutputChoice::default(),
             base,
-            output,
+            outputs,
             (selected, asked),
             Section::Preset,
             Vec::new(),
@@ -454,7 +458,7 @@ impl ExportPage {
         self.resolve(
             choice,
             None,
-            output,
+            vec![output],
             (None, Asked::Container),
             Section::Container,
             Vec::new(),
@@ -1275,6 +1279,111 @@ mod tests {
             assert_eq!(video_input(dialog), None);
         });
         std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    /// A plugin named `mediafoundation`, made in this process, with MP4
+    /// (H.264) and MOV (ProRes) muxers and their encoders, whose
+    /// `describe` says the H.264 encoder is unavailable when `h264_reason`
+    /// is given, as on Windows N without the Media Feature Pack.
+    fn native_plugin(h264_reason: Option<&'static str>) -> celesta_media::RegisteredPlugin {
+        use celesta_media::{ComponentDescription, MediaError, MediaProvider};
+        struct Native(Option<&'static str>);
+        impl MediaProvider for Native {
+            fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+                let available = |kind, id: &str| {
+                    let mut component = ComponentDescription::unavailable(kind, id, "");
+                    component.available = true;
+                    component.reason = None;
+                    component
+                };
+                Ok(vec![
+                    match self.0 {
+                        Some(reason) => ComponentDescription::unavailable(
+                            ComponentKind::VideoEncoder,
+                            "h264",
+                            reason,
+                        ),
+                        None => available(ComponentKind::VideoEncoder, "h264"),
+                    },
+                    available(ComponentKind::VideoEncoder, "prores"),
+                    available(ComponentKind::Muxer, "mp4"),
+                    available(ComponentKind::Muxer, "mov"),
+                ])
+            }
+        }
+        let (media, problems) = celesta_plugin_host::MediaManifest::from_json(serde_json::json!({
+            "videoEncoders": [
+                { "id": "h264", "name": "H.264", "codecs": ["avc1"] },
+                { "id": "prores", "name": "ProRes", "codecs": ["ap4h"] },
+            ],
+            "muxers": [
+                { "id": "mp4", "name": "MP4", "extensions": ["mp4"], "video": ["avc1"],
+                  "defaultVideo": "avc1" },
+                { "id": "mov", "name": "QuickTime", "extensions": ["mov"],
+                  "video": ["avc1", "ap4h"], "defaultVideo": "ap4h" },
+            ],
+        }));
+        assert!(problems.is_empty(), "{problems:?}");
+        celesta_media::RegisteredPlugin {
+            id: "mediafoundation".to_owned(),
+            version: "1.0.0".to_owned(),
+            origin: celesta_plugin_host::MediaOrigin::Bundled,
+            directory: PathBuf::new(),
+            executable: None,
+            media,
+            factory: Arc::new(move |_, _| {
+                Ok(Box::new(Native(h264_reason)) as Box<dyn MediaProvider>)
+            }),
+        }
+    }
+
+    #[gpui_kit::test]
+    fn an_unavailable_native_h264_opens_on_mov_with_a_warning(cx: &mut TestAppContext) {
+        let (handle, dialog) = window_with_dialog(
+            cx,
+            vec![native_plugin(Some("Media Feature Pack is missing"))],
+        );
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(dialog.failure, None);
+            assert_eq!(dialog.model.error, None);
+            assert_eq!(dialog.export_blocked(), None);
+            assert_eq!(
+                dialog.model.choice().map(|choice| &choice.muxer),
+                Some(&reference("mediafoundation/mov"))
+            );
+            assert_eq!(dialog.warned, Section::Preset);
+            let [warning] = dialog.model.warnings.as_slice() else {
+                panic!("one warning: {:?}", dialog.model.warnings);
+            };
+            assert!(
+                warning.starts_with("MP4 cannot be exported here, so the export starts as MOV")
+                    && warning.contains("Media Feature Pack is missing")
+                    && warning.contains("ffmpeg-x264/libx264"),
+                "{warning}"
+            );
+        });
+    }
+
+    #[gpui_kit::test]
+    fn an_available_native_h264_opens_on_mp4(cx: &mut TestAppContext) {
+        let (handle, dialog) = window_with_dialog(cx, vec![native_plugin(None)]);
+        cx.run_until_parked();
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(
+                dialog.model.choice().map(|choice| &choice.muxer),
+                Some(&reference("mediafoundation/mp4"))
+            );
+            assert!(
+                dialog.model.warnings.is_empty(),
+                "{:?}",
+                dialog.model.warnings
+            );
+        });
     }
 
     #[gpui_kit::test]

@@ -13,7 +13,11 @@ it on any OS; see [Optional codec downloads](/en/docs/plugins/#optional-codec-do
 
 With no saved export settings, the dialog starts with a container whose default
 encoders are installed: MP4 when H.264 is installed, otherwise ProRes/MOV for a
-standard-only installation. Explicit paths and presets keep their chosen format.
+standard-only installation. When an installed H.264 encoder cannot run on this
+computer (such as Windows N without the Media Feature Pack), it starts with the
+next container that works, and a warning under **Preset** says why MP4 was not
+chosen and how to make it work. Explicit paths, presets, and your last export
+keep their chosen format, and show their error instead.
 
 Choose **Export** in the title bar, or **File → Export…** (`⌘ Shift E`, `Ctrl Shift E`), to open the export page. It replaces the Assets panel on the left. The viewer, the right dock, and the timeline stay where they are, so you can keep looking at the composition while you choose. To leave the page, choose **Export** again, press the panel's X, or press Escape. What you chose is kept. From top to bottom, the page has:
 
@@ -23,7 +27,7 @@ Choose **Export** in the title bar, or **File → Export…** (`⌘ Shift E`, `C
 - A **Video** section with the video encoder and its settings, grouped as the encoder groups them. Settings that only apply to another choice are hidden until you make it, and the rarely needed ones are under **Advanced**, closed at first.
 - An **Audio** section with the audio encoder, or **None** for a video without sound, and its settings, ending with **Loudness**: **Off**, **Streaming (-14 LUFS)**, or **Broadcast (-23 LUFS)**, to bring the soundtrack to a loudness target (see Loudness for streaming and broadcast below). The choice stays until you quit the app. When the export has no audio, because the audio encoder is **None** or the container takes no audio, **Loudness** is disabled, with a note that no audio is exported.
 
-Each component shows its name and its plugin, such as **H.264 (x264) · FFmpeg**, and one from a plugin that comes with the project is marked **(project)**. When the page opens, Celesta asks each media plugin which of its components work on this computer: until it answers, they show **Checking…**, and one that cannot run is listed but cannot be chosen, with its reason. A plugin that could not answer at all is asked again the next time you open the page. The page opens with the project's default preset when it has one, else the choice you last exported with, else the defaults for `.mp4`. A presets file that cannot be read is named under **Preset**, with what is wrong with it, and its presets are left out of the list.
+Each component shows its name and its plugin, such as **ProRes (prores_ks) · FFmpeg**, and one from a plugin that comes with the project is marked **(project)**. When the page opens, Celesta asks each media plugin which of its components work on this computer: until it answers, they show **Checking…**, and one that cannot run is listed but cannot be chosen, with its reason. A plugin that could not answer at all is asked again the next time you open the page. The page opens with the project's default preset when it has one, else the choice you last exported with, else the defaults for `.mp4` (or the next container that works, as above). A presets file that cannot be read is named under **Preset**, with what is wrong with it, and its presets are left out of the list.
 
 Changing **Container** keeps an encoder you chose on the page, or that the chosen preset names, with its settings, when the new container takes it. Any other encoder becomes the new container's default, so going from **MP4** to **QuickTime** gives ProRes 4444 with PCM audio, as an export to `.mov` does. Audio you set to **None** stays off. Audio left out only because a container takes none, such as IVF, comes back with the next container that takes audio.
 

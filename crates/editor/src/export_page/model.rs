@@ -23,7 +23,7 @@ use celesta_media::{
 };
 use celesta_plugin_host::{MediaMuxerEntry, MediaOrigin};
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// What a component shows while its plugin's `describe` runs.
@@ -41,6 +41,44 @@ pub(super) fn resolution_error(error: &ExportError) -> String {
         message.push_str(&hint);
     }
     message
+}
+
+/// Resolves the first of `outputs` that `resolve` can, for an export
+/// left to the defaults: the output it took, and when that is not the
+/// first, a warning saying why the first could not be used and how to
+/// make it usable. When none resolves, the first output's error, which
+/// is the one the user would act on.
+pub(super) fn resolve_first_available<R>(
+    outputs: &[PathBuf],
+    mut resolve: impl FnMut(&Path) -> Result<R, ExportError>,
+) -> Result<(R, PathBuf, Option<String>), ExportError> {
+    let mut first_error = None;
+    for output in outputs {
+        match resolve(output) {
+            Ok(resolved) => {
+                let warning = first_error.as_ref().map(|error| {
+                    format!(
+                        "{} cannot be exported here, so the export starts as {}: {}",
+                        format_name(&outputs[0]),
+                        format_name(output),
+                        resolution_error(error)
+                    )
+                });
+                return Ok((resolved, output.clone(), warning));
+            }
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    Err(first_error.expect("at least one output is tried"))
+}
+
+/// `export.mp4` as "MP4": the output's extension, in capitals.
+fn format_name(output: &Path) -> String {
+    output.extension().map_or_else(String::new, |extension| {
+        extension.to_string_lossy().to_uppercase()
+    })
 }
 
 /// The reason given for an unavailable component the plugin gave none for
@@ -278,18 +316,41 @@ impl ExportModel {
 
     /// The output the first resolve takes: `export.` and the first
     /// extension of `base`'s muxer when that muxer is installed, so it
-    /// does not warn of another extension; else of the default muxer for
-    /// `.mp4` with matching default encoders; else of the first ranked
-    /// muxer whose default encoders are installed (never a project's).
+    /// does not warn of another extension; else the first of
+    /// [`Self::default_outputs`].
     pub(crate) fn initial_output(&self, base: Option<&PresetOutput>) -> PathBuf {
         let named = base
             .and_then(|base| base.muxer.as_deref())
             .and_then(|muxer| muxer.parse().ok())
             .and_then(|muxer| self.extension_of(&muxer));
-        if let Some(extension) = named {
-            return PathBuf::from(format!("export.{extension}"));
+        match named {
+            Some(extension) => PathBuf::from(format!("export.{extension}")),
+            None => self.default_outputs().swap_remove(0),
         }
-        let mut muxers = self
+    }
+
+    /// The outputs the first resolve over `base` tries: the one `base`'s
+    /// muxer writes, as asked, since a preset or the last export is never
+    /// replaced; with no base (the defaults), [`Self::default_outputs`],
+    /// so a declared but unavailable default encoder (a native H.264 on
+    /// Windows N without the Media Feature Pack) does not open the dialog
+    /// on an error when another container works.
+    pub(crate) fn first_outputs(&self, base: Option<&PresetOutput>) -> Vec<PathBuf> {
+        match base {
+            Some(base) => vec![self.initial_output(Some(base))],
+            None => self.default_outputs(),
+        }
+    }
+
+    /// The outputs an export left to the defaults tries, in order, until
+    /// one resolves ([`resolve_first_available`]): `export.mp4` when a
+    /// muxer writing `.mp4` has matching default encoders, then the first
+    /// extension of each other ranked muxer whose default encoders are
+    /// installed (never a project's). This reads the manifests only, so a
+    /// declared encoder that `describe` finds unavailable still counts:
+    /// the resolve finds that out and moves on. Never empty.
+    pub(crate) fn default_outputs(&self) -> Vec<PathBuf> {
+        let muxers = self
             .components
             .iter()
             .filter(|info| info.origin != MediaOrigin::Project)
@@ -316,14 +377,25 @@ impl ExportModel {
                 .iter()
                 .any(|extension| extension.eq_ignore_ascii_case("mp4"))
         };
-        let extension = if muxers.clone().any(writes_mp4) {
-            "mp4"
-        } else {
-            muxers
-                .find_map(|entry| entry.extensions.first())
-                .map_or("mp4", String::as_str)
-        };
-        PathBuf::from(format!("export.{extension}"))
+        let mut extensions: Vec<&str> = Vec::new();
+        if muxers.clone().any(writes_mp4) {
+            extensions.push("mp4");
+        }
+        for extension in muxers.filter_map(|entry| entry.extensions.first()) {
+            if !extensions
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(extension))
+            {
+                extensions.push(extension);
+            }
+        }
+        if extensions.is_empty() {
+            extensions.push("mp4");
+        }
+        extensions
+            .into_iter()
+            .map(|extension| PathBuf::from(format!("export.{extension}")))
+            .collect()
     }
 
     /// The muxer and encoders chosen, once a resolve was applied.
@@ -1886,6 +1958,121 @@ mod tests {
         assert_eq!(
             model(&registry).initial_output(None),
             PathBuf::from("export.mp4")
+        );
+    }
+
+    /// The standard plugin `b` (ProRes and AAC, with MP4, IVF and MOV
+    /// muxers) and a native `mediafoundation` plugin whose only component
+    /// is an H.264 encoder, as on Windows.
+    fn registry_with_native_h264() -> MediaRegistry {
+        let mut standard = registry_with_mov().plugins()[1].clone();
+        standard
+            .media
+            .video_encoders
+            .retain(|encoder| encoder.id == "prores");
+        let native = plugin(
+            "mediafoundation",
+            MediaOrigin::Bundled,
+            MediaManifest {
+                decoders: Vec::new(),
+                video_encoders: vec![video_encoder("h264", "H.264 (Media Foundation)", "avc1")],
+                audio_encoders: Vec::new(),
+                muxers: Vec::new(),
+            },
+        );
+        MediaRegistry::new(vec![standard, native])
+    }
+
+    /// The first of `outputs` that resolves over `registry` with
+    /// `unavailable`'s components described as unavailable.
+    fn first_available(
+        registry: &MediaRegistry,
+        outputs: &[PathBuf],
+        unavailable: &[(&str, &str)],
+    ) -> Result<(ResolvedOutput, PathBuf, Option<String>), ExportError> {
+        resolve_first_available(outputs, |output| {
+            resolve_preset_output(
+                &OutputChoice::default(),
+                None,
+                output,
+                registry,
+                &mut |plugin| description(registry, plugin, unavailable),
+            )
+        })
+    }
+
+    const NO_FEATURE_PACK: (&str, &str) = ("mediafoundation/h264", "Media Feature Pack is missing");
+
+    #[test]
+    fn an_unavailable_native_h264_opens_on_mov_and_says_why() {
+        let registry = registry_with_native_h264();
+        let mut dialog = model(&registry);
+        let outputs = dialog.first_outputs(None);
+        assert_eq!(
+            outputs,
+            [PathBuf::from("export.mp4"), PathBuf::from("export.mov")]
+        );
+        let (resolved, output, warning) =
+            first_available(&registry, &outputs, &[NO_FEATURE_PACK]).unwrap();
+        assert_eq!(output, PathBuf::from("export.mov"));
+        assert_eq!(resolved.video.reference, reference("b/prores"));
+        // As the view applies it: no error, and the reason among the warnings.
+        dialog.apply(&resolved, None, Asked::Defaults);
+        dialog.warnings.extend(warning);
+        assert_eq!(dialog.error, None);
+        assert_eq!(dialog.choice().unwrap().muxer, reference("b/mov"));
+        let [warning] = dialog.warnings.as_slice() else {
+            panic!("one warning: {:?}", dialog.warnings);
+        };
+        assert!(
+            warning.starts_with("MP4 cannot be exported here, so the export starts as MOV"),
+            "{warning}"
+        );
+        assert!(
+            warning.contains("Media Feature Pack is missing"),
+            "{warning}"
+        );
+        assert!(warning.contains("ffmpeg-x264/libx264"), "{warning}");
+    }
+
+    #[test]
+    fn an_available_native_h264_still_opens_on_mp4() {
+        let registry = registry_with_native_h264();
+        let outputs = model(&registry).first_outputs(None);
+        let (resolved, output, warning) = first_available(&registry, &outputs, &[]).unwrap();
+        assert_eq!(output, PathBuf::from("export.mp4"));
+        assert_eq!(resolved.video.reference, reference("mediafoundation/h264"));
+        assert_eq!(warning, None);
+    }
+
+    #[test]
+    fn with_nothing_usable_the_mp4_error_is_shown() {
+        let registry = registry_with_native_h264();
+        let outputs = model(&registry).first_outputs(None);
+        let error = first_available(
+            &registry,
+            &outputs,
+            &[NO_FEATURE_PACK, ("b/prores", "no prores_ks")],
+        )
+        .unwrap_err();
+        let message = resolution_error(&error);
+        assert!(message.contains("mediafoundation/h264"), "{message}");
+        assert!(
+            message.contains("Media Feature Pack is missing"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_preset_or_last_export_naming_mp4_is_not_replaced() {
+        let registry = registry_with_native_h264();
+        let dialog = model(&registry);
+        let outputs = dialog.first_outputs(Some(&output("b/mp4")));
+        assert_eq!(outputs, [PathBuf::from("export.mp4")]);
+        let error = first_available(&registry, &outputs, &[NO_FEATURE_PACK]).unwrap_err();
+        assert!(
+            resolution_error(&error).contains("mediafoundation/h264"),
+            "{error}"
         );
     }
 
