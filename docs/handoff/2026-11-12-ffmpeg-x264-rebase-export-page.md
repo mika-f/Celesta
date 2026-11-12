@@ -41,10 +41,13 @@ AGENTS.md asks; the x264 split itself is described in
 
 ## Checks
 
-- **Root workspace:** `cargo check --workspace --tests --locked`, and
-  `cargo test` for plugin-host, exporter, MCP, editor, react-bridge,
-  codec-test and media. Also `cargo clippy --workspace --all-targets -D
-  warnings` and `cargo fmt --check` (results in the PR comment).
+- **Root workspace:** `cargo check --workspace --tests --locked` passes.
+  `cargo clippy --workspace --all-targets -- -D warnings` passes, and so does
+  `cargo fmt --all -- --check` after formatting.
+- **Root tests:** `cargo test` passed 831 editor tests. Plugin-host, exporter,
+  MCP, react-bridge, codec-test and media passed 855 more. The exporter
+  integration tests need a GPU adapter: lavapipe (`mesa-vulkan-drivers`), as
+  in CI. Without one, 18 of them fail at "could not select a GPU".
 - **Plugin scripts (Vitest):** 244 passed, 2 skipped.
 - **Website:** Vitest 52 passed; `makit check` reported no issues.
 - **Python packaging tests:** 19 passed.
