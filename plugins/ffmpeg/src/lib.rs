@@ -423,6 +423,14 @@ pub fn check_lgpl() -> Result<(), String> {
     check_license(PLUGIN_ID, false)
 }
 
+/// Whether a library reporting `license` may ship with the licence texts
+/// the plugins carry: `LICENSE-LGPL-2.1` in `ffmpeg`, and in `ffmpeg-x264`
+/// (`gpl`) `LICENSE-GPL-2.0` too. A `version3` build (LGPL or GPL 3) or a
+/// nonfree one is refused rather than shipped beside the wrong text.
+fn license_carried(license: &str, gpl: bool) -> bool {
+    license == "LGPL version 2.1 or later" || (gpl && license == "GPL version 2 or later")
+}
+
 /// Validates one profile's distribution license and names the loaded libraries.
 fn check_license(plugin: &str, gpl: bool) -> Result<(), String> {
     use std::ffi::CStr;
@@ -439,9 +447,10 @@ fn check_license(plugin: &str, gpl: bool) -> Result<(), String> {
         ]
         .map(|(name, license)| (name, CStr::from_ptr(license).to_string_lossy()))
     };
-    if licenses.iter().all(|(_, license)| {
-        license.starts_with("LGPL version") || (gpl && license.starts_with("GPL version"))
-    }) {
+    if licenses
+        .iter()
+        .all(|(_, license)| license_carried(license, gpl))
+    {
         Ok(())
     } else {
         let actual = licenses

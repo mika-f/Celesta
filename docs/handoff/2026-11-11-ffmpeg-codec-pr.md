@@ -1,5 +1,7 @@
 # FFmpeg codec download PR preparation
 
+> Superseded by [the x264-only split](2026-11-11-ffmpeg-x264-only-split.md): there is one optional download, `ffmpeg-x264`, and one standalone ZIP per system; Opus and VP9 are back in the standard `ffmpeg` plugin.
+
 ## Specification
 
 Commit the approved FFmpeg build/plugin split, scoped license placement and

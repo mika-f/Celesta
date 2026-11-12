@@ -5,8 +5,10 @@ Continues [PR #810](https://github.com/mika-f/Celesta/pull/810) on
 supersedes the four-way split described in
 [`2026-11-11-optional-codec-downloads.md`](2026-11-11-optional-codec-downloads.md),
 [`2026-11-10-ffmpeg-build-variants.md`](2026-11-10-ffmpeg-build-variants.md),
-[`2026-11-11-ffmpeg-review.md`](2026-11-11-ffmpeg-review.md), and
-[`2026-11-11-ffmpeg-ci-native-cache.md`](2026-11-11-ffmpeg-ci-native-cache.md).
+[`2026-11-11-ffmpeg-review.md`](2026-11-11-ffmpeg-review.md),
+[`2026-11-11-ffmpeg-ci-native-cache.md`](2026-11-11-ffmpeg-ci-native-cache.md),
+[`2026-11-11-ffmpeg-codec-pr.md`](2026-11-11-ffmpeg-codec-pr.md), and, in part,
+[`2026-11-10-plugin-license-placement.md`](2026-11-10-plugin-license-placement.md).
 
 ## Specification
 
