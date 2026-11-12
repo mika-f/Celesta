@@ -16,7 +16,7 @@ pub fn printed_manifest() -> String {
     manifest
         .as_object_mut()
         .expect("manifest object")
-        .retain(|key, _| matches!(key.as_str(), "id" | "version" | "roles" | "media"));
+        .retain(|key, _| matches!(key.as_str(), "id" | "name" | "version" | "roles" | "media"));
     manifest.to_string()
 }
 
@@ -28,6 +28,12 @@ pub fn registered() -> RegisteredPlugin {
     assert!(problems.is_empty(), "invalid manifest: {problems:?}");
     RegisteredPlugin {
         id: PLUGIN_ID.to_owned(),
+        // plugin.json's display name, else the id, as discovery labels it.
+        name: plugin["name"]
+            .as_str()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(PLUGIN_ID)
+            .to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         origin: MediaOrigin::Bundled,
         directory: Default::default(),

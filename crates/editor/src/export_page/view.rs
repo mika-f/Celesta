@@ -1326,6 +1326,7 @@ mod tests {
         assert!(problems.is_empty(), "{problems:?}");
         celesta_media::RegisteredPlugin {
             id: "mediafoundation".to_owned(),
+            name: "Media Foundation".to_owned(),
             version: "1.0.0".to_owned(),
             origin: celesta_plugin_host::MediaOrigin::Bundled,
             directory: PathBuf::new(),
@@ -1358,6 +1359,7 @@ mod tests {
             let [warning] = dialog.model.warnings.as_slice() else {
                 panic!("one warning: {:?}", dialog.model.warnings);
             };
+            let warning = dialog.model.warning_text(warning);
             assert!(
                 warning.starts_with("MP4 cannot be exported here, so the export starts as MOV")
                     && warning.contains("Media Feature Pack is missing")

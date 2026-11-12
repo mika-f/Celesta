@@ -9,9 +9,9 @@
 
 use super::wording::PageWarning;
 use celesta_exporter::{
-    AudioChoice, EncoderChoice, NoAudio, OutputChoice, Preset, PresetAudio, PresetEncoder,
-    PresetOutput, PresetSource, PresetsFile, ResolvedEncoder, ResolvedOutput, SettingInput,
-    serves_video, writes_any_codec,
+    AudioChoice, EncoderChoice, ExportError, NoAudio, OutputChoice, Preset, PresetAudio,
+    PresetEncoder, PresetOutput, PresetSource, PresetsFile, ResolvedEncoder, ResolvedOutput,
+    SettingInput, serves_video, writes_any_codec,
 };
 use celesta_media::settings::{
     differences, drop_hidden, effective, is_visible, sanitize, validate,
@@ -29,7 +29,7 @@ use std::sync::Arc;
 /// What a component shows while its plugin's `describe` runs.
 pub(crate) const CHECKING: &str = "Checking…";
 
-/// The resolution error and its recovery action for the dialog's existing
+/// The resolution error and its recovery action for the page's existing
 /// inline error message.
 pub(super) fn resolution_error(error: &ExportError) -> String {
     let mut message = error.to_string();
@@ -51,18 +51,15 @@ pub(super) fn resolution_error(error: &ExportError) -> String {
 pub(super) fn resolve_first_available<R>(
     outputs: &[PathBuf],
     mut resolve: impl FnMut(&Path) -> Result<R, ExportError>,
-) -> Result<(R, PathBuf, Option<String>), ExportError> {
+) -> Result<(R, PathBuf, Option<PageWarning>), ExportError> {
     let mut first_error = None;
     for output in outputs {
         match resolve(output) {
             Ok(resolved) => {
-                let warning = first_error.as_ref().map(|error| {
-                    format!(
-                        "{} cannot be exported here, so the export starts as {}: {}",
-                        format_name(&outputs[0]),
-                        format_name(output),
-                        resolution_error(error)
-                    )
+                let warning = first_error.as_ref().map(|error| PageWarning::PassedOver {
+                    first: format_name(&outputs[0]),
+                    used: format_name(output),
+                    reason: resolution_error(error),
                 });
                 return Ok((resolved, output.clone(), warning));
             }
@@ -1989,7 +1986,7 @@ mod tests {
         registry: &MediaRegistry,
         outputs: &[PathBuf],
         unavailable: &[(&str, &str)],
-    ) -> Result<(ResolvedOutput, PathBuf, Option<String>), ExportError> {
+    ) -> Result<(ResolvedOutput, PathBuf, Option<PageWarning>), ExportError> {
         resolve_first_available(outputs, |output| {
             resolve_preset_output(
                 &OutputChoice::default(),
@@ -2024,6 +2021,7 @@ mod tests {
         let [warning] = dialog.warnings.as_slice() else {
             panic!("one warning: {:?}", dialog.warnings);
         };
+        let warning = dialog.warning_text(warning);
         assert!(
             warning.starts_with("MP4 cannot be exported here, so the export starts as MOV"),
             "{warning}"
@@ -2088,7 +2086,8 @@ mod tests {
             },
         );
         let registry = MediaRegistry::new(vec![standard, third]);
-        let outputs = model(&registry).first_outputs(None);
+        let page = model(&registry);
+        let outputs = page.first_outputs(None);
         assert_eq!(outputs[0], PathBuf::from("export.mp4"));
         let (resolved, output, warning) = first_available(&registry, &outputs, &[]).unwrap();
         // `.mp4` resolves to the bundled muxer, ranked first, which has no
@@ -2096,7 +2095,7 @@ mod tests {
         assert_eq!(output, PathBuf::from("export.mov"));
         assert_eq!(resolved.muxer.reference, reference("b/mov"));
         assert_eq!(resolved.video.reference, reference("b/prores"));
-        let warning = warning.expect("the reason MP4 was passed over");
+        let warning = page.warning_text(&warning.expect("the reason MP4 was passed over"));
         assert!(warning.contains("b/mp4 is unavailable"), "{warning}");
     }
 

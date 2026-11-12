@@ -24,3 +24,8 @@ fn linked_build_opens_its_encoders() {
         .unwrap();
     assert!(output.status.success(), "{:?}", output);
 }
+
+#[test]
+fn the_in_process_plugin_without_a_display_name_is_its_id() {
+    assert_eq!(celesta_codec_ffmpeg_x264::registered().name, "ffmpeg-x264");
+}
