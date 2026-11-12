@@ -115,7 +115,9 @@ NuGet packages again.
   pkg-config crate links a library statically only when it is outside the
   system library directories. libopus and libvpx come from
   `/usr/lib/x86_64-linux-gnu`, so the program links `libopus.so.0` and
-  `libvpx.so.9` dynamically (checked with `ldd` here), as `main` did. The image
+  libvpx dynamically, as `main` did (checked with `ldd` in this task's
+  Ubuntu 24.04 container, where it is `libvpx.so.9`; the 26.04 image links
+  libvpx12's `libvpx.so.12`). The image
   keeps that: the build stage installs `libopus-dev libvpx-dev`, the runtime
   stage `libopus0 libvpx12` (Ubuntu 26.04's package names; the first manual run caught `libvpx9`, the 24.04 name, once the runners' apt mirrors recovered), and
   `packaging/linux/record-codec-libraries.sh` records each library's binary
@@ -175,8 +177,8 @@ Passed:
   `makit check` (no issues; warnings are the existing OGP/Japanese-anchor ones).
 - `python3 -B -m unittest scripts/test_package_macos.py scripts/test_package_media_plugins.py` (16 passed).
 - Probes: the standard program reports LGPL (`--check-license`) and opens
-  every encoder (`--check-build`); `ldd` shows `libopus.so.0` and
-  `libvpx.so.9` linked dynamically, and
+  every encoder (`--check-build`); `ldd` in this container (Ubuntu 24.04)
+  shows `libopus.so.0` and `libvpx.so.9` linked dynamically, and
   `packaging/linux/record-codec-libraries.sh` wrote a valid
   `debian-packages.json` for them. An x264 program built against the standard
   prefix fails `--manifest` and `--check-build` with "this FFmpeg build has no
@@ -239,8 +241,11 @@ Checks: `python3 -B -m unittest scripts/test_package_macos.py
 scripts/test_package_media_plugins.py` (18 passed); the record script run
 against a libavcodec linking libopus and libvpx wrote
 `"distribution": "ubuntu 24.04"` and valid JSON; the changed workflows and
-`actions.lock` parse as YAML. The guides did not change in this round, so the
-website checks were not rerun.
+`actions.lock` parse as YAML. The website checks were not rerun for this
+round's notes; the guides' Docker command itself changed in `d7e40ea`.
+
+PR CI run 43066005545 on `d7e40ea` passed, Windows and macOS jobs included,
+with the Windows jobs on the `8.1.2-2` NuGet packages.
 
 ## Review on `fedeadf` (hinaloe, two P2 comments)
 
@@ -291,3 +296,62 @@ opened the dialog on MP4's error although MOV would resolve.
   warning) and available (MP4, no warning).
 - The en/ja export guide describe the fallback; the Skill does not describe
   the dialog's first container.
+
+## Re-review on `fedeadf` (hinaloe)
+
+### Required
+
+- **x264 hints name the new id.** `report.rs` `classify()`: `unknown_preset`
+  suggests `--video-encoder ffmpeg-x264/libx264 --video-option preset=…`
+  (MCP: `videoEncoder: { id: "ffmpeg-x264/libx264", … }`) and says the plugin
+  is optional. An unavailable `ffmpeg/libx264` says it moved to the
+  `ffmpeg-x264` download with no alias; an unavailable
+  `ffmpeg-x264/libx264` says to install the download, leave the encoder out
+  for the native H.264 (macOS, Windows), or choose `.mov`. The presets
+  example, troubleshooting and export guides (en/ja), and the Skill's
+  `export.md`/`errors.md` follow.
+- **HANDOFF native rows** say the native H.264 is the default MP4 encoder
+  when available.
+- **Standard tests live in `plugins/ffmpeg/tests` again.** The tests that do
+  not need libx264 moved back from `plugins/ffmpeg-x264/tests`, so they link
+  the LGPL build that ships and `cargo test -p celesta-codec-ffmpeg` runs
+  them; mixed tests were split. Helpers are shared with `#[path]`. The
+  rendered WebM test now checks `alpha_mode=1`, the colour tags, Opus at
+  48 kHz and the whole transparent quadrant, and a `.mp4` hint test runs
+  against the real standard-only registry.
+- **Banners.** `2026-11-11-ffmpeg-codec-pr.md` is marked superseded, and it
+  and `2026-11-10-plugin-license-placement.md` are in this note's list.
+
+### Suggestions taken
+
+- `check_license` accepts exactly "LGPL version 2.1 or later" (and, for the
+  x264 program, "GPL version 2 or later"): the versions whose texts the
+  plugins carry. Test: `only_the_carried_licence_versions_pass_the_distribution_check`.
+- Plugin discovery reads a failed program's first stderr line without
+  waiting for EOF (250 ms grace, 4 KiB cap), so a child left holding stderr
+  no longer delays the diagnostic. Test:
+  `a_process_left_holding_stderr_does_not_delay_the_diagnostic`.
+- `ffmpeg-windows.yml` reads vcpkg's `status` before packing: every feature
+  in `FFMPEG_FEATURES` must be installed, `nonfree`/`version3` never, and
+  `gpl` only in the x264 package. `setup-ffmpeg`'s standard ports include
+  `zlib` (this file is in the Unix FFmpeg cache key, so that cache rebuilds
+  once). The workflow was not rerun.
+- `record-codec-libraries.sh` records every non-glibc library `ldd` lists
+  (zlib1g, libgcc-s1, ... not only libopus/libvpx), fails on a missing
+  expected library or an unowned one.
+- macOS packaging fails when a Homebrew formula has no licence file
+  (`copy_formula_notices`, tested).
+- Build-from-source guides (en/ja), the Skill and `build.mts` say every
+  native build runs `--check-build`, so a local standard FFmpeg needs libvpx
+  and libopus; only `--check-license` depends on `--distribution`.
+- Stale comments in `build-ffmpeg-linux.sh` (x264 pkg-config variable, the
+  misplaced "Absolute" comment, static vs macOS dylibs, zlib only in the
+  standard variant), the Skill's source-build paragraph, and the x264
+  crate's "encoders" wording.
+- Dialog test: a third-party MP4 muxer with its own default encoder makes
+  `.mp4` the first output; it resolves to the bundled MP4 muxer without
+  H.264, so the dialog opens on MOV with the warning.
+
+### Left out (as agreed)
+
+Tarball SHA-256 pinning and the Rust cache key.
