@@ -10,7 +10,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, ElementId, FontWeight, SharedString, div};
 
 /// A row: `label` in the label lane (muted, one line, ending in an
-/// ellipsis with the full text in a tooltip when it does not fit),
+/// ellipsis when it does not fit; the full text is always in a tooltip),
 /// `control` in the value lane, and `lines` (a description, a warning, an
 /// error) under the control, from the value lane's edge. The label is
 /// `export-label-{id}`, the value lane `export-control-{id}`, and an empty

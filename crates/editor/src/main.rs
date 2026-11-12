@@ -73,12 +73,12 @@ mod widgets;
 mod worker;
 
 use actions::{
-    ClearExportRange, CloseWindow, ConfirmExport, CreateNewProject, ExportProject, GoToEnd, GoToIn,
-    GoToOut, GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject,
-    PausePlayback, PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins,
-    ReloadProject, SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder,
-    ShowProblems, ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo,
-    ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit,
+    ClearExportRange, CloseWindow, CreateNewProject, ExportProject, GoToEnd, GoToIn, GoToOut,
+    GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject, PausePlayback,
+    PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins, ReloadProject,
+    SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder, ShowProblems,
+    ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo, ZoomTimelineIn,
+    ZoomTimelineOut, ZoomTimelineToFit,
 };
 use inline_text_view::EditEvent;
 use source::PropertyArgs;
@@ -203,8 +203,6 @@ fn run() -> anyhow::Result<()> {
             KeyBinding::new(secondary!("w"), CloseWindow, Some("CelestaEditor")),
             KeyBinding::new(secondary!("q"), Quit, None),
             KeyBinding::new(secondary!("shift-e"), ExportProject, Some("CelestaEditor")),
-            // Enter runs the export page's Export… from anywhere in it.
-            KeyBinding::new("enter", ConfirmExport, Some("ExportPage")),
             KeyBinding::new("i", SetExportIn, EDITOR_KEYS),
             KeyBinding::new("o", SetExportOut, EDITOR_KEYS),
             KeyBinding::new("shift-x", ClearExportRange, EDITOR_KEYS),
@@ -231,6 +229,7 @@ fn run() -> anyhow::Result<()> {
             KeyBinding::new(secondary!("z"), Undo, EDITOR_KEYS),
             KeyBinding::new(secondary!("shift-z"), Redo, EDITOR_KEYS),
         ]);
+        cx.bind_keys(export_page::view::key_bindings());
         // A text edited on the canvas is written first.
         cx.on_action(|_: &Quit, cx| lifecycle::quit_after_inline_commits(cx));
         // macOS shows these in the system menu bar; elsewhere the title bar's

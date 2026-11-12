@@ -29,8 +29,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, SharedString,
-    Subscription, Task, Window, div,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, KeyBinding,
+    SharedString, Subscription, Task, Window, div,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -614,6 +614,20 @@ fn blocked_line(reason: String, cx: &App) -> impl IntoElement {
     }
 }
 
+/// `warnings` split into the ones listed as they are (an unreadable
+/// presets file, an unknown default, a resolve's about no base) and the
+/// resolve's about the last export, which go under one line naming it.
+fn split_last_export(warnings: &[PageWarning]) -> (Vec<&PageWarning>, Vec<&PageWarning>) {
+    warnings
+        .iter()
+        .partition(|warning| warning.base() != Some(LAST_EXPORT))
+}
+
+/// The page's keys: Enter runs its `Export…` from anywhere in it.
+pub(crate) fn key_bindings() -> [KeyBinding; 1] {
+    [KeyBinding::new("enter", ConfirmExport, Some("ExportPage"))]
+}
+
 fn muted_line(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
     div()
         .text_sm()
@@ -629,28 +643,26 @@ impl ExportPage {
     }
 
     /// The warnings `section` asked for; those about the last export
-    /// under one line that says so, since no row names it.
+    /// after the rest, under one line that says so, since no row names it.
     fn warnings_under(&self, section: Section, cx: &App) -> Vec<AnyElement> {
         if self.warned != section {
             return Vec::new();
         }
-        let warnings = &self.model.warnings;
-        let from_last = warnings
-            .iter()
-            .any(|warning| warning.base() == Some(LAST_EXPORT));
-        from_last
-            .then(|| {
+        let (others, from_last) = split_last_export(&self.model.warnings);
+        let line = |warning: &PageWarning| {
+            problem_line(self.model.warning_text(warning), cx.theme().warning).into_any_element()
+        };
+        let mut lines: Vec<AnyElement> = others.into_iter().map(line).collect();
+        if !from_last.is_empty() {
+            lines.push(
                 div()
                     .debug_selector(|| "export-warnings-from-last".to_owned())
                     .child(muted_line("From your last export:", cx))
-                    .into_any_element()
-            })
-            .into_iter()
-            .chain(warnings.iter().map(|warning| {
-                problem_line(self.model.warning_text(warning), cx.theme().warning)
-                    .into_any_element()
-            }))
-            .collect()
+                    .into_any_element(),
+            );
+            lines.extend(from_last.into_iter().map(line));
+        }
+        lines
     }
 
     /// What is wrong with what `section` asked for, under its row.
@@ -937,12 +949,9 @@ impl Render for ExportPage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::ConfirmExport;
-    use celesta_exporter::SettingInput;
+    use celesta_exporter::{ResolveWarning, SettingInput};
     use gpui_kit::component::Root;
-    use gpui_kit::{
-        KeyBinding, Modifiers, Pixels, TestAppContext, VisualTestContext, WindowHandle, px, size,
-    };
+    use gpui_kit::{Modifiers, Pixels, TestAppContext, VisualTestContext, WindowHandle, px, size};
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -969,7 +978,7 @@ mod tests {
         cx.update(|cx| {
             gpui_kit::init(cx);
             celesta_editor_theme::init(cx);
-            cx.bind_keys([KeyBinding::new("enter", ConfirmExport, Some("ExportPage"))]);
+            cx.bind_keys(key_bindings());
         });
         let registry = Arc::new(MediaRegistry::new(plugins));
         let mut page = None;
@@ -1150,6 +1159,35 @@ mod tests {
             "no context line under a named preset"
         );
         std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn only_the_last_exports_warnings_go_under_its_line() {
+        let stale = PageWarning::Resolve(ResolveWarning::AudioOptionsIgnored {
+            base: LAST_EXPORT.to_owned(),
+        });
+        let preset = PageWarning::Resolve(ResolveWarning::AudioOptionsIgnored {
+            base: "preset `web`".to_owned(),
+        });
+        let unknown = PageWarning::UnknownDefault {
+            name: "web".to_owned(),
+        };
+        let unreadable = PageWarning::UnreadableFile {
+            source: PresetSource::User,
+            message: "broken".to_owned(),
+        };
+        let warnings = vec![
+            stale.clone(),
+            preset.clone(),
+            unknown.clone(),
+            unreadable.clone(),
+        ];
+        // The project's default is in no file, so the page opened with the
+        // last export: the opening's own warnings are not about it.
+        assert_eq!(
+            split_last_export(&warnings),
+            (vec![&preset, &unknown, &unreadable], vec![&stale])
+        );
     }
 
     /// The test codec's video `input` the page's choice has.
