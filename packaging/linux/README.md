@@ -17,7 +17,9 @@ The build compiles FFmpeg 8.1.x with
 [`scripts/build-ffmpeg-linux.sh`](../../scripts/build-ffmpeg-linux.sh), then
 the React runtime and the exporter. It takes a while the first time. To use
 another 8.1.x release or download FFmpeg's source from a mirror, pass
-`--build-arg FFMPEG_VERSION=8.1.x` or `--build-arg FFMPEG_URL=…`.
+`--build-arg FFMPEG_VERSION=8.1.x` or `--build-arg FFMPEG_URL=…`. The tarball
+must match the SHA-256 the script lists for its version; for a release it does
+not list, also pass `--build-arg FFMPEG_SHA256=…`.
 
 ## Export
 

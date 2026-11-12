@@ -18,10 +18,23 @@
 # prefix and FFMPEG_X264_PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" for the x264 one.
 #
 # FFMPEG_VERSION selects the 8.1.x release, and FFMPEG_URL overrides where the
-# source tarball is downloaded from.
+# source tarball is downloaded from. The tarball must match its SHA-256 before
+# it is unpacked: the one listed below for its version, or FFMPEG_SHA256 for a
+# version not listed. A version bump adds its line, with a hash taken from a
+# tarball whose signature the FFmpeg release signing key verifies
+# (FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8, ffmpeg.org/ffmpeg-devel.asc).
 set -euo pipefail
 
 version="${FFMPEG_VERSION:-8.1.3}"
+case "$version" in
+  8.1.3) known_sha256=7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3 ;;
+  *) known_sha256= ;;
+esac
+sha256="${FFMPEG_SHA256:-$known_sha256}"
+if [[ -z "$sha256" ]]; then
+  echo "FFmpeg $version has no known SHA-256: add it to this script or set FFMPEG_SHA256" >&2
+  exit 2
+fi
 variant="${FFMPEG_VARIANT:-standard}"
 case "$variant" in
   standard) codec_flags=(--disable-gpl --disable-nonfree --enable-zlib --enable-libopus --enable-libvpx) ;;
@@ -44,6 +57,15 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 curl -fsSL --retry 3 "$url" -o "$work/ffmpeg.tar"
+if command -v sha256sum >/dev/null; then
+  actual="$(sha256sum "$work/ffmpeg.tar" | awk '{print $1}')"
+else
+  actual="$(shasum -a 256 "$work/ffmpeg.tar" | awk '{print $1}')"
+fi
+if [[ "$actual" != "$sha256" ]]; then
+  echo "FFmpeg $version from $url has SHA-256 $actual, not $sha256" >&2
+  exit 1
+fi
 mkdir "$work/src"
 tar -xf "$work/ffmpeg.tar" -C "$work/src" --strip-components=1
 cd "$work/src"

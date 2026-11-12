@@ -23,6 +23,7 @@ RUN apt-get update \
 # Override with --build-arg to pick another 8.1.x release or source mirror.
 ARG FFMPEG_VERSION=8.1.3
 ARG FFMPEG_URL
+ARG FFMPEG_SHA256
 COPY scripts/build-ffmpeg-linux.sh /tmp/build-ffmpeg-linux.sh
 RUN /tmp/build-ffmpeg-linux.sh /opt/ffmpeg8-standard
 ENV PKG_CONFIG_PATH=/opt/ffmpeg8-standard/lib/pkgconfig
