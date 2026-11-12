@@ -10,7 +10,8 @@ Plan: `docs/superpowers/plans/2026-11-11-p7d-export-page.md`.
 
 **Plugin display names (`crates/plugin-host`, `plugins/*`, `scripts/plugins`).**
 `celesta-plugin.json` takes an optional top-level `name`, read by
-`Manifest::display_name()` (the `id` when absent). The registry carries it
+`Manifest::display_name()` (the `id` when absent or only blanks; a
+`--manifest`'s printed name goes through the same fallback). The registry carries it
 to `RegisteredPlugin.name` and `MediaComponentInfo.plugin_name`;
 `MediaPlugin.name` comes from the manifest, or from `PrintedManifest.name`
 for the bundled sibling's `--manifest`. The FFmpeg plugin's `plugin.json`
@@ -18,7 +19,8 @@ says `"name": "FFmpeg"`, AVFoundation's "AVFoundation", Media Foundation's
 "Media Foundation", the test codec "Test codec", and the built-in image
 decoder "Built-in". The plugin build (`scripts/plugins/manifest.mts`) accepts
 `name` in `plugin.json` (a non-empty string) and copies it into
-`celesta-plugin.json`. The CLI, MCP and the JSON report keep the references
+`celesta-plugin.json`; it refuses a name of only blanks. The in-process
+`registered()` of each plugin takes its name from its `plugin.json`. The CLI, MCP and the JSON report keep the references
 (`ffmpeg/libx264`), and the Plugins panel keeps showing the `id`.
 
 **x264 wording (`plugins/ffmpeg`).** The x264 `preset` field is labelled
@@ -38,9 +40,11 @@ CLI's stderr, the JSON report and MCP do not change.
 a resolve warning, an unreadable presets file, an unknown default) with no
 CLI text in it (an unreadable file's message has its backtick quoting made
 typographic too), and labels components `"{name} · {plugin_name}"`
-(`H.264 (x264) · FFmpeg`). Warnings about the user file's `last` show under
-one muted line, "From your last export:", since no row names it; the
-warnings themselves carry no prefix.
+(`H.264 (x264) · FFmpeg`). Warnings about the user file's `last` show after
+the others, under one muted line, "From your last export:", since no row
+names it; the warnings themselves carry no prefix. The opening's own
+warnings (an unreadable presets file, an unknown default) stay above that
+line.
 
 **The Export panel (`export_page/view.rs`, `view/layout.rs`, `view/save.rs`).**
 `PanelHeader` "Export" with an `X` ("Back to editing"). Rows have two lanes
@@ -54,8 +58,12 @@ Enter runs Export… (`ConfirmExport` in the "ExportPage" context). While the
 save panel Export… opened is up, the editor tells the page
 (`ExportPage::set_waiting`): Export… is disabled, with the muted line
 "Choosing where to save…", and Enter does nothing. The editor also ignores
-an `Export` event while the save panel is up or an export runs, so a double
-click cannot start two exports.
+an `Export` event while the save panel is up, an export runs or a project
+opens, so a double click cannot start two exports. The save panel does not
+block the window, so while it is up opening or reloading a project and
+Reload Plugins are refused ("Close the save panel before opening another
+file."), and its answer is dropped if the view's project changed all the
+same (a `session` check).
 
 **The page in the editor (`export_control.rs`, `render.rs`, `panels.rs`,
 `lifecycle.rs`, `main.rs`).** `ExportPageSlot` holds the page, kept between
@@ -66,8 +74,9 @@ its own `export_split` state and the panel at 26rem (22–34rem). The title bar'
 "Export" is a toggle (`selected`/`toggled`). File → Export… and ⌘⇧E open the
 page and do not pause playback. The toggle, the `X` and Escape (last in the
 editor's Escape chain) close it, keeping its state. The page cannot open
-while an export runs, while the save panel is up or while a project is
-opening. Once a path is chosen the page closes and the export starts; a
+while an export runs, while the save panel is up, while a project is
+opening or while a React entry reloads (`export_busy()`, which also
+disables the title bar's Export). Once a path is chosen the page closes and the export starts; a
 cancelled save panel leaves it open. Opening another project or Reload
 Plugins drops the page and gives the editor the focus back. In and Out on
 the timeline update the Range row while the page is open.
@@ -160,10 +169,16 @@ that checkout's FFmpeg build, with the old labels. The checks ran with
   no longer changes.)
 - The panel's 26rem is its starting width; a later change of the interface
   zoom moves only its range.
-- No test covers the refocus after opening another project or Reload
-  Plugins, nor the editor ignoring a second `Export` event while the save
-  panel is up, since no test in the crate builds an `EditorView`. The
-  page's side (Export… disabled, Enter ignored while waiting) is tested.
+- No test covers the editor's side of the page, since no test in the crate
+  builds an `EditorView`: refusing to open (`export_busy()`), the Escape
+  order, a chosen path closing the page and starting the export (Cancel
+  leaving it), dropping the page on reload and the refocus after it, the
+  editor ignoring a second `Export` event, and the save panel refusing a
+  reload or dropping its answer for another session. Pulling these into
+  pure functions beside `left_panel` would make them testable. The page's
+  side (Export… disabled, Enter ignored while waiting) is tested.
+- The Range row has no test of its own: Clear sending `ClearRange`, and
+  "Whole composition" with and without its note on In and Out.
 - The "Export finished" toast has no border or shadow, sits on the Volume
   control and keeps a title-only toast's text at the top. That is P7a's
   toast styling, not changed here; it is being fixed in its own change.
