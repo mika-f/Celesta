@@ -11,7 +11,7 @@ provide default MP4 video and outrank downloaded x264. Linux needs
 **ffmpeg-x264** for H.264/MP4. Explicitly name `ffmpeg-x264/libx264` to select
 it on any OS; see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads).
 
-With no saved export settings, the dialog starts with a container whose default
+With no saved export settings, the export page starts with a container whose default
 encoders are installed: MP4 when H.264 is installed, otherwise ProRes/MOV for a
 standard-only installation. When an installed H.264 encoder cannot run on this
 computer (such as Windows N without the Media Feature Pack), it starts with the
