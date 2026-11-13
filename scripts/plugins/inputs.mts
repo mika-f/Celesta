@@ -25,6 +25,7 @@ export const SHARED_INPUTS: string[] = [
   '.github/workflows/actions.lock',
   '.github/actions/setup-ffmpeg',
   'scripts/build-ffmpeg-linux.sh',
+  'scripts/check-ffmpeg-features.ps1',
   'scripts/plugins',
   'scripts/report-skipped-tests.mts',
   '.cargo/config.toml',
