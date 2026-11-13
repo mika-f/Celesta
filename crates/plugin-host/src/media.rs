@@ -30,6 +30,17 @@ pub const CODEC_PROGRAM: &str = "celesta-codec-ffmpeg";
 /// The optional x264 FFmpeg program name, recognized like [`CODEC_PROGRAM`].
 pub const X264_CODEC_PROGRAM: &str = "celesta-codec-ffmpeg-x264";
 
+/// The ID of the optional x264 FFmpeg media plugin, which
+/// [`X264_CODEC_PROGRAM`] serves.
+pub const X264_PLUGIN_ID: &str = "ffmpeg-x264";
+
+/// Each recognized program beside an installed Celesta, with the id of the
+/// plugin it serves: what a program that fails discovery would have been.
+const SIBLING_PROGRAMS: [(&str, &str); 2] = [
+    (CODEC_PROGRAM, FFMPEG_PLUGIN_ID),
+    (X264_CODEC_PROGRAM, X264_PLUGIN_ID),
+];
+
 /// The flag that has each recognized sibling media program print its manifest
 /// (`id`, `version`, `roles`, and `media`) as JSON and exit without the protocol:
 /// `cargo install` cannot put a manifest file beside it.
@@ -192,6 +203,42 @@ pub struct MediaPlugin {
     pub origin: MediaOrigin,
     /// What its manifest declares, each list in manifest order.
     pub media: MediaManifest,
+}
+
+/// A recognized FFmpeg program beside an installed Celesta that discovery
+/// left out ([`InstalledPlugins::media_discovery`]), such as an x264 program
+/// linked against an FFmpeg without libx264, which refuses `--manifest`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkippedMedia {
+    /// The id of the plugin the program serves when it runs:
+    /// [`FFMPEG_PLUGIN_ID`] or [`X264_PLUGIN_ID`].
+    pub id: String,
+    pub program: PathBuf,
+    /// Why it was left out, as `--manifest failed (exit status: 1): <its
+    /// first stderr line>`.
+    pub reason: String,
+}
+
+impl SkippedMedia {
+    /// Why a component of [`Self::id`] cannot be used, in place of "not
+    /// installed".
+    pub fn unavailable_reason(&self) -> String {
+        format!(
+            "skipped at discovery ({}): {}",
+            self.program.display(),
+            self.reason
+        )
+    }
+}
+
+/// The media plugins to read media with ([`InstalledPlugins::media`]), and
+/// the recognized programs beside Celesta that were left out, so that what
+/// names one of their components can say why rather than "not installed".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MediaDiscovery {
+    pub plugins: Vec<MediaPlugin>,
+    /// Only those whose id no listed plugin has.
+    pub skipped: Vec<SkippedMedia>,
 }
 
 /// A manifest's `media` as far as it can be read, and why each part that
@@ -398,17 +445,21 @@ struct PrintedManifest {
 
 /// A recognized FFmpeg build's `program_name` beside `executable` (Celesta's own,
 /// links resolved), as `cargo install` leaves it, made from what it prints
-/// for [`MANIFEST_FLAG`]. None when there is none, when it does not print a
-/// media plugin's manifest within [`MANIFEST_TIMEOUT`] and exit cleanly (said
-/// on stderr), or when `executable` sits in a Cargo build folder (it has
-/// `.fingerprint` or `.cargo-lock`; with `build.build-dir` set, only
-/// `.cargo-lock` stays beside the programs): a source build takes its media
-/// plugins from the plugin folders, so a program an older build left there is
-/// never picked up. The answer is kept for as long as the program's file
-/// stays the same.
-fn sibling_media(executable: &Path, program_name: &str) -> Option<MediaPlugin> {
+/// for [`MANIFEST_FLAG`], with the program's path. None when there is none,
+/// or when `executable` sits in a Cargo build folder (it has `.fingerprint`
+/// or `.cargo-lock`; with `build.build-dir` set, only `.cargo-lock` stays
+/// beside the programs): a source build takes its media plugins from the
+/// plugin folders, so a program an older build left there is never picked
+/// up. `Err` with why when it does not print a media plugin's manifest
+/// within [`MANIFEST_TIMEOUT`] and exit cleanly (also said on stderr, the
+/// first time). The answer is kept for as long as the program's file stays
+/// the same.
+fn sibling_media(
+    executable: &Path,
+    program_name: &str,
+) -> Option<(PathBuf, Result<MediaPlugin, String>)> {
     type Key = (PathBuf, u64, SystemTime);
-    static SIBLINGS: OnceLock<Mutex<HashMap<Key, Option<MediaPlugin>>>> = OnceLock::new();
+    static SIBLINGS: OnceLock<Mutex<HashMap<Key, Result<MediaPlugin, String>>>> = OnceLock::new();
 
     let directory = executable.parent()?;
     if directory.join(".fingerprint").is_dir() || directory.join(".cargo-lock").is_file() {
@@ -423,23 +474,30 @@ fn sibling_media(executable: &Path, program_name: &str) -> Option<MediaPlugin> {
         .unwrap_or_else(PoisonError::into_inner)
         .get(&key)
     {
-        return sibling.clone();
+        return Some((program, sibling.clone()));
     }
-    let sibling = match printed_manifest(&program) {
-        Ok(sibling) => Some(sibling),
-        Err(reason) => {
-            eprintln!(
-                "celesta: skipped the media plugin {}: {reason}",
-                program.display()
-            );
-            None
-        }
-    };
+    let sibling = printed_manifest(&program);
+    if let Err(reason) = &sibling {
+        eprintln!(
+            "celesta: skipped the media plugin {}: {reason}",
+            program.display()
+        );
+    }
     siblings
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .insert(key, sibling.clone());
-    sibling
+    Some((program, sibling))
+}
+
+/// Whether `stderr` holds a whole line that is not blank: what a failed
+/// program's diagnostic is taken from.
+fn has_diagnostic_line(stderr: &[u8]) -> bool {
+    let complete = stderr.iter().filter(|&&byte| byte == b'\n').count();
+    stderr
+        .split(|&byte| byte == b'\n')
+        .take(complete)
+        .any(|line| !String::from_utf8_lossy(line).trim().is_empty())
 }
 
 /// The media plugin `program` says it is when run with [`MANIFEST_FLAG`],
@@ -456,7 +514,8 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
     // Drained on a thread of its own, so a noisy program cannot fill the
     // pipe and block before it prints its manifest. The first STDERR_LIMIT
     // bytes are kept where the failure path can read them as they arrive,
-    // and `line_ready` says when a whole line (or the end) has been read,
+    // and `line_ready` says when a whole line that is not blank (or as much
+    // as is kept, or the end) has been read,
     // so a process the program left holding stderr open delays nothing.
     let errors = Arc::new(Mutex::new(Vec::new()));
     let (line_ready, first_line) = mpsc::channel();
@@ -472,7 +531,9 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
                 let mut errors = errors.lock().unwrap_or_else(PoisonError::into_inner);
                 let retain = count.min(STDERR_LIMIT - errors.len());
                 errors.extend_from_slice(&buffer[..retain]);
-                if !told && (errors.contains(&b'\n') || errors.len() == STDERR_LIMIT) {
+                // A blank line first (a "\n" written on its own) is not yet
+                // the diagnostic, which may follow in another write.
+                if !told && (errors.len() == STDERR_LIMIT || has_diagnostic_line(&errors)) {
                     told = true;
                     let _ = line_ready.send(());
                 }
@@ -510,27 +571,37 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
         let _ = child.wait();
         return Err(timed_out());
     };
-    if !status.success() {
-        let mut reason = format!("{MANIFEST_FLAG} failed ({status})");
-        let _ = first_line
-            .recv_timeout(STDERR_GRACE.min(deadline.saturating_duration_since(Instant::now())));
+    // The program has exited, so what it wrote is in the pipe: it is given
+    // the whole grace however close to the deadline it exited (a cold disk
+    // or a malware scan can take most of it), but no more, for a process it
+    // left holding stderr.
+    let diagnostic = || {
+        let _ = first_line.recv_timeout(STDERR_GRACE);
         let stderr = errors
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        if let Some(line) = String::from_utf8_lossy(&stderr)
+        String::from_utf8_lossy(&stderr)
             .lines()
             .find(|line| !line.trim().is_empty())
-        {
-            let line: String = line
-                .chars()
-                .filter(|character| !character.is_control())
-                .take(512)
-                .collect();
+            .map(|line| {
+                line.chars()
+                    .filter(|character| !character.is_control())
+                    .take(512)
+                    .collect::<String>()
+            })
+    };
+    let with_diagnostic = |mut reason: String| {
+        if let Some(line) = diagnostic() {
             reason.push_str(": ");
             reason.push_str(&line);
         }
-        return Err(reason);
+        reason
+    };
+    if !status.success() {
+        return Err(with_diagnostic(format!(
+            "{MANIFEST_FLAG} failed ({status})"
+        )));
     }
     let output = match output {
         Ok(Ok(output)) => output,
@@ -542,8 +613,11 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
         // It exited, but something it started still holds its output.
         Err(_) => return Err(timed_out()),
     };
-    let printed: PrintedManifest = serde_json::from_slice(&output)
-        .map_err(|error| format!("its {MANIFEST_FLAG} output is not a manifest: {error}"))?;
+    let printed: PrintedManifest = serde_json::from_slice(&output).map_err(|error| {
+        with_diagnostic(format!(
+            "its {MANIFEST_FLAG} output is not a manifest ({error})"
+        ))
+    })?;
     if !is_valid_id(&printed.id) || printed.id == RESERVED_PLUGIN_ID {
         return Err(format!("its id {:?} cannot name a plugin", printed.id));
     }
@@ -584,27 +658,53 @@ impl InstalledPlugins {
     /// bundled folder: the project's is left out (said on stderr). Ordering
     /// decoders by [`MediaOrigin`] is the caller's.
     pub fn media(&self) -> Vec<MediaPlugin> {
+        self.media_discovery().plugins
+    }
+
+    /// [`Self::media`], with the recognized programs beside the running one
+    /// that were left out for failing [`MANIFEST_FLAG`], each when no plugin
+    /// listed has the id it would have served.
+    pub fn media_discovery(&self) -> MediaDiscovery {
         let executable = std::env::current_exe()
             .ok()
             .map(|executable| std::fs::canonicalize(&executable).unwrap_or(executable));
-        self.media_with_sibling(executable.as_deref())
+        self.discovery_with_sibling(executable.as_deref())
     }
 
     /// [`Self::media`], looking for the sibling beside `executable`, and for
     /// none without one.
+    #[cfg(test)]
     pub(crate) fn media_with_sibling(&self, executable: Option<&Path>) -> Vec<MediaPlugin> {
+        self.discovery_with_sibling(executable).plugins
+    }
+
+    /// [`Self::media_discovery`], looking for the siblings beside
+    /// `executable`, and for none without one.
+    pub(crate) fn discovery_with_sibling(&self, executable: Option<&Path>) -> MediaDiscovery {
         let mut media: Vec<MediaPlugin> = self
             .plugins
             .iter()
             .filter(|entry| entry.has_role(PluginRole::Media))
             .filter_map(media_plugin)
             .collect();
-        for program in [CODEC_PROGRAM, X264_CODEC_PROGRAM] {
-            if let Some(sibling) =
-                executable.and_then(|executable| sibling_media(executable, program))
-                && !media
-                    .iter()
-                    .any(|plugin| plugin.id == sibling.id && plugin.origin != MediaOrigin::Project)
+        let mut skipped = Vec::new();
+        for (program, id) in SIBLING_PROGRAMS {
+            let sibling = match executable.and_then(|executable| sibling_media(executable, program))
+            {
+                Some((_, Ok(sibling))) => sibling,
+                Some((program, Err(reason))) => {
+                    skipped.push(SkippedMedia {
+                        id: id.to_owned(),
+                        program,
+                        reason,
+                    });
+                    continue;
+                }
+                None => continue,
+            };
+            if !media
+                .iter()
+                .any(|plugin| plugin.id == sibling.id && plugin.origin != MediaOrigin::Project)
             {
                 media.retain(|plugin| {
                     let replaces = plugin.id == sibling.id;
@@ -621,7 +721,12 @@ impl InstalledPlugins {
                 media.push(sibling);
             }
         }
-        media
+        skipped
+            .retain(|skipped: &SkippedMedia| !media.iter().any(|plugin| plugin.id == skipped.id));
+        MediaDiscovery {
+            plugins: media,
+            skipped,
+        }
     }
 }
 
@@ -1476,6 +1581,104 @@ mod tests {
                 reason.ends_with("ffmpeg-x264: this FFmpeg build has no libx264"),
                 "{reason}"
             );
+        }
+
+        #[test]
+        fn a_skipped_sibling_says_why() {
+            // An x264 program linked against an FFmpeg without libx264
+            // refuses `--manifest`; the reason is kept for what names its
+            // components, with the id it would have served.
+            let root = tempfile::tempdir().unwrap();
+            let (_, executable) = printing_its_manifest(root.path());
+            let scratch = tempfile::tempdir().unwrap();
+            let (program, _) = fake_sibling(
+                scratch.path(),
+                "echo 'ffmpeg-x264: this FFmpeg build has no libx264' >&2\nexit 1",
+            );
+            let x264 = root.path().join(X264_CODEC_PROGRAM);
+            std::fs::rename(program, &x264).unwrap();
+            let discovery = InstalledPlugins::default().discovery_with_sibling(Some(&executable));
+            assert_eq!(ids(&discovery.plugins), ["ffmpeg"]);
+            let [skipped] = &discovery.skipped[..] else {
+                panic!("{:?}", discovery.skipped);
+            };
+            assert_eq!(skipped.id, X264_PLUGIN_ID);
+            assert_eq!(skipped.program, x264);
+            assert!(
+                skipped.reason.starts_with("--manifest failed")
+                    && skipped
+                        .reason
+                        .ends_with(": ffmpeg-x264: this FFmpeg build has no libx264"),
+                "{}",
+                skipped.reason
+            );
+            assert!(
+                skipped
+                    .unavailable_reason()
+                    .starts_with("skipped at discovery ("),
+                "{}",
+                skipped.unavailable_reason()
+            );
+            // Asked again, the cached answer still says why.
+            assert_eq!(
+                InstalledPlugins::default()
+                    .discovery_with_sibling(Some(&executable))
+                    .skipped,
+                discovery.skipped
+            );
+
+            // A plugin folder that has the id serves it, so nothing is
+            // reported skipped.
+            let plugins = root.path().join("plugins");
+            write_manifest(
+                &plugins.join("ffmpeg-x264"),
+                media_manifest("ffmpeg-x264", serde_json::json!([])),
+            );
+            let (found, errors) = discover(std::slice::from_ref(&plugins));
+            assert!(errors.is_empty(), "{errors:?}");
+            let discovery = installed(found).discovery_with_sibling(Some(&executable));
+            assert_eq!(ids(&discovery.plugins), ["ffmpeg-x264", "ffmpeg"]);
+            assert!(discovery.skipped.is_empty(), "{:?}", discovery.skipped);
+        }
+
+        #[test]
+        fn a_blank_first_line_does_not_hide_the_diagnostic() {
+            let root = tempfile::tempdir().unwrap();
+            // The blank line and the reason arrive in separate writes.
+            let (program, _) = fake_sibling(
+                root.path(),
+                "printf '\\n' >&2\nsleep 0.1\necho 'ffmpeg-x264: this FFmpeg build has no libx264' >&2\nexit 1",
+            );
+            let reason = printed_manifest(&program).unwrap_err();
+            assert!(
+                reason.ends_with(": ffmpeg-x264: this FFmpeg build has no libx264"),
+                "{reason}"
+            );
+        }
+
+        #[test]
+        fn output_that_is_not_a_manifest_keeps_the_diagnostic() {
+            let root = tempfile::tempdir().unwrap();
+            let (program, _) = fake_sibling(
+                root.path(),
+                "echo 'usage: celesta-codec-ffmpeg' >&2\necho 'not a manifest'",
+            );
+            let reason = printed_manifest(&program).unwrap_err();
+            assert!(
+                reason.starts_with("its --manifest output is not a manifest (")
+                    && reason.ends_with("): usage: celesta-codec-ffmpeg"),
+                "{reason}"
+            );
+        }
+
+        #[test]
+        fn the_lines_a_diagnostic_is_taken_from() {
+            assert!(!has_diagnostic_line(b""));
+            assert!(!has_diagnostic_line(b"\n"));
+            assert!(!has_diagnostic_line(b" \n\t\n"));
+            assert!(!has_diagnostic_line(b"\npartial"));
+            assert!(has_diagnostic_line(b"\nwhole\n"));
+            assert!(has_diagnostic_line(b"whole\n"));
         }
 
         #[test]

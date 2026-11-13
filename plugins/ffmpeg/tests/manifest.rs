@@ -24,3 +24,24 @@ fn linked_build_opens_its_encoders() {
         .unwrap();
     assert!(output.status.success(), "{:?}", output);
 }
+
+#[test]
+fn an_unknown_argument_is_a_usage_error() {
+    // A misspelled gate, or one an older program lacks, must not pass by
+    // serving the empty stdin and exiting 0.
+    for arguments in [&["--check-licence"][..], &["--manifest", "--check-build"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_celesta-codec-ffmpeg"))
+            .args(arguments)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("unknown arguments")
+                && stderr.contains("--manifest | --check-build | --check-license"),
+            "{stderr}"
+        );
+    }
+}

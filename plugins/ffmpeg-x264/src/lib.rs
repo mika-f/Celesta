@@ -7,7 +7,7 @@ use celesta_plugin_host::{MediaManifest, MediaOrigin};
 use std::sync::Arc;
 
 /// The plugin's identity in manifests and the protocol handshake.
-pub const PLUGIN_ID: &str = "ffmpeg-x264";
+pub const PLUGIN_ID: &str = celesta_codec_ffmpeg::X264_PLUGIN_ID;
 
 /// Manifest for installed binaries and plugin registration.
 pub fn printed_manifest() -> String {

@@ -7,7 +7,7 @@ use crate::provider::{
 };
 use celesta_plugin_host::{
     FFMPEG_PLUGIN_ID, MediaAudioEncoderEntry, MediaDecoderEntry, MediaManifest, MediaMuxerEntry,
-    MediaOrigin, MediaVideoEncoderEntry, PluginKillSwitch,
+    MediaOrigin, MediaVideoEncoderEntry, PluginKillSwitch, SkippedMedia,
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -221,6 +221,9 @@ pub struct MediaRegistry {
     described: Mutex<HashMap<usize, (DescribeKey, Arc<PluginDescription>)>>,
     /// The plugins warned of describing components their manifest lacks.
     warned: Mutex<HashSet<usize>>,
+    /// The recognized programs discovery left out, with why
+    /// ([`MediaRegistry::with_skipped`]).
+    skipped: Vec<SkippedMedia>,
 }
 
 #[derive(Debug, Default)]
@@ -261,7 +264,31 @@ impl MediaRegistry {
             uses: Mutex::default(),
             described: Mutex::default(),
             warned: Mutex::default(),
+            skipped: Vec::new(),
         }
+    }
+
+    /// This registry, knowing the programs discovery left out
+    /// ([`celesta_plugin_host::MediaDiscovery::skipped`]), so that what names
+    /// a component of one says why ([`MediaRegistry::skipped`]) rather than
+    /// "not installed". One whose id a registered plugin has is ignored.
+    pub fn with_skipped(mut self, mut skipped: Vec<SkippedMedia>) -> Self {
+        skipped.retain(|skipped| self.plugin_index(&skipped.id).is_none());
+        self.skipped = skipped;
+        self
+    }
+
+    /// The program left out at discovery that would have served the plugin
+    /// `id`, which no registered plugin has.
+    pub fn skipped(&self, id: &str) -> Option<&SkippedMedia> {
+        self.skipped_programs()
+            .iter()
+            .find(|skipped| skipped.id == id)
+    }
+
+    /// Every program left out at discovery whose id no registered plugin has.
+    pub fn skipped_programs(&self) -> &[SkippedMedia] {
+        &self.skipped
     }
 
     /// The plugins, in search order.

@@ -6,10 +6,12 @@ use std::sync::Arc;
 
 /// A registry of `plugins`' media plugins ([`InstalledPlugins::media`]), in
 /// search order, each started as a [`MediaProcess`] when a backend first
-/// needs it.
+/// needs it, knowing the recognized programs discovery left out
+/// ([`MediaRegistry::with_skipped`]).
 pub fn media_registry(plugins: &InstalledPlugins) -> Arc<MediaRegistry> {
-    let registered: Vec<RegisteredPlugin> = plugins
-        .media()
+    let discovery = plugins.media_discovery();
+    let registered: Vec<RegisteredPlugin> = discovery
+        .plugins
         .into_iter()
         .map(|plugin| RegisteredPlugin {
             name: plugin.name,
@@ -22,18 +24,22 @@ pub fn media_registry(plugins: &InstalledPlugins) -> Arc<MediaRegistry> {
             factory: MediaProcess::factory(plugin.executable, plugin.directory),
         })
         .collect();
-    with_builtin(registered)
+    Arc::new(builtin_registry(registered).with_skipped(discovery.skipped))
 }
 
 /// `plugins` after the built-in components, unless one of them already has
 /// the reserved id.
 pub fn with_builtin(plugins: Vec<RegisteredPlugin>) -> Arc<MediaRegistry> {
+    Arc::new(builtin_registry(plugins))
+}
+
+fn builtin_registry(plugins: Vec<RegisteredPlugin>) -> MediaRegistry {
     let mut all = Vec::with_capacity(plugins.len() + 1);
     if !plugins.iter().any(|plugin| plugin.id == RESERVED_PLUGIN_ID) {
         all.push(celesta_media_image::registered());
     }
     all.extend(plugins);
-    Arc::new(MediaRegistry::new(all))
+    MediaRegistry::new(all)
 }
 
 /// Makes [`media_registry`] of `plugins` the registry every media backend

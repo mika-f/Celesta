@@ -7,18 +7,101 @@ use celesta_media::{
     PixelFormat, Settings, VideoEncoder, VideoEncoderRequest,
 };
 use celesta_plugin_host::MANIFEST_FLAG;
+use std::ffi::OsString;
+use std::path::Path;
+use std::process::ExitCode;
 
-/// Serves one build's components, prints its manifest, or validates a build.
-/// `--check-license` is an explicit distribution gate; local use may link a
-/// system FFmpeg of either license. `--check-build` actually opens encoders.
-pub fn run_plugin(
+/// The flag that has a program refuse a build that links a GPL library it
+/// may not ship with (the standard program) or misses one (x264).
+pub const CHECK_LICENSE_FLAG: &str = "--check-license";
+
+/// The flag that has a program open every encoder it describes.
+pub const CHECK_BUILD_FLAG: &str = "--check-build";
+
+/// What a program run with an argument it does not know exits with, as
+/// command-line tools do for a usage error.
+const USAGE_EXIT: u8 = 2;
+
+/// Serves one build's components, prints its manifest, or validates a build,
+/// and says what the program exits with. `--check-license` is an explicit
+/// distribution gate; local use may link a system FFmpeg of either license.
+/// `--check-build` actually opens encoders. Protocol mode takes no argument:
+/// any other argument, or a second one, is a usage error (the usage on
+/// stderr, exit 2), so a misspelled gate, or one an older program does not
+/// have, fails rather than serving an empty stdin and exiting 0.
+pub fn run_plugin(codec: FfmpegCodec, id: &str, version: &str, manifest: &str) -> ExitCode {
+    let mut arguments = std::env::args_os();
+    let program = arguments
+        .next()
+        .and_then(|program| {
+            Path::new(&program)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| id.to_owned());
+    let arguments: Vec<OsString> = arguments.collect();
+    let Some(command) = Command::parse(&arguments) else {
+        let given = arguments
+            .iter()
+            .map(|argument| argument.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        eprintln!("{program}: unknown arguments: {given}");
+        eprintln!("{}", usage(&program));
+        return ExitCode::from(USAGE_EXIT);
+    };
+    match run(codec, command, id, version, manifest) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// What a program was asked to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Command {
+    /// Serve the protocol on stdin and stdout: no argument.
+    Serve,
+    Manifest,
+    CheckBuild,
+    CheckLicense,
+}
+
+impl Command {
+    /// The command `arguments` (without the program) name, or `None` for
+    /// any that is not one alone.
+    fn parse(arguments: &[OsString]) -> Option<Self> {
+        match arguments {
+            [] => Some(Self::Serve),
+            [flag] => match flag.to_str()? {
+                MANIFEST_FLAG => Some(Self::Manifest),
+                CHECK_BUILD_FLAG => Some(Self::CheckBuild),
+                CHECK_LICENSE_FLAG => Some(Self::CheckLicense),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// How `program` is run.
+fn usage(program: &str) -> String {
+    format!(
+        "usage: {program} [{MANIFEST_FLAG} | {CHECK_BUILD_FLAG} | {CHECK_LICENSE_FLAG}]\n\
+         With no argument, it serves Celesta's media plugin protocol on stdin and stdout."
+    )
+}
+
+fn run(
     mut codec: FfmpegCodec,
+    command: Command,
     id: &str,
     version: &str,
     manifest: &str,
 ) -> Result<(), String> {
-    let argument = std::env::args().nth(1);
-    if argument.as_deref() == Some("--check-license") {
+    if command == Command::CheckLicense {
         return check_license(id, codec.profile == Profile::X264);
     }
     // A static manifest must never advertise an optional encoder absent from
@@ -28,15 +111,16 @@ pub fn run_plugin(
             .check_components()
             .map_err(|error| format!("{id}: {error}"))?;
     }
-    match argument.as_deref() {
-        Some(MANIFEST_FLAG) => {
+    match command {
+        Command::Manifest => {
             println!("{manifest}");
             Ok(())
         }
-        Some("--check-build") => codec
+        Command::CheckBuild => codec
             .check_build()
             .map_err(|error| format!("{id}: {error}")),
-        _ => celesta_media::protocol::serve(&mut codec, id, version)
+        Command::CheckLicense => unreachable!("checked first"),
+        Command::Serve => celesta_media::protocol::serve(&mut codec, id, version)
             .map_err(|error| format!("{id}: {error}")),
     }
 }
@@ -88,5 +172,32 @@ impl FfmpegCodec {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(arguments: &[&str]) -> Option<Command> {
+        let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
+        Command::parse(&arguments)
+    }
+
+    #[test]
+    fn only_known_flags_alone_are_commands() {
+        assert_eq!(parsed(&[]), Some(Command::Serve));
+        assert_eq!(parsed(&["--manifest"]), Some(Command::Manifest));
+        assert_eq!(parsed(&["--check-build"]), Some(Command::CheckBuild));
+        assert_eq!(parsed(&["--check-license"]), Some(Command::CheckLicense));
+        for unknown in [
+            &["--check-licence"][..],
+            &["--help"],
+            &[""],
+            &["--manifest", "--check-build"],
+            &["--manifest", "extra"],
+        ] {
+            assert_eq!(parsed(unknown), None, "{unknown:?}");
+        }
     }
 }

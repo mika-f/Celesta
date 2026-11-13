@@ -37,8 +37,9 @@ pub use manifest::{
 };
 pub use media::{
     CODEC_PROGRAM, FFMPEG_PLUGIN_ID, MANIFEST_FLAG, MediaAudioEncoderEntry, MediaDecoderEntry,
-    MediaManifest, MediaMuxerEntry, MediaOrigin, MediaPlugin, MediaVideoEncoderEntry,
-    RESERVED_PLUGIN_ID, X264_CODEC_PROGRAM, codec_family,
+    MediaDiscovery, MediaManifest, MediaMuxerEntry, MediaOrigin, MediaPlugin,
+    MediaVideoEncoderEntry, RESERVED_PLUGIN_ID, SkippedMedia, X264_CODEC_PROGRAM, X264_PLUGIN_ID,
+    codec_family,
 };
 pub use project::{
     PROJECT_CONFIG, ProjectConfigError, has_project_config, mark_project_root,

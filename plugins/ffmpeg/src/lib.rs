@@ -44,7 +44,10 @@ use std::sync::Arc;
 use video_encoder::VideoSession;
 
 /// The id the plugin's manifest and `hello` give.
-pub const PLUGIN_ID: &str = "ffmpeg";
+pub const PLUGIN_ID: &str = celesta_plugin_host::FFMPEG_PLUGIN_ID;
+
+/// The id the optional x264 program's manifest and `hello` give.
+pub const X264_PLUGIN_ID: &str = celesta_plugin_host::X264_PLUGIN_ID;
 
 /// The id of the plugin's one decoder, which reads whatever FFmpeg does.
 pub const DECODER_ID: &str = "ffmpeg";
@@ -70,6 +73,14 @@ impl Profile {
             Self::X264
         } else {
             Self::Standard
+        }
+    }
+
+    /// The id of the program that links this build, which its refusals name.
+    fn plugin_id(self) -> &'static str {
+        match self {
+            Self::Standard => PLUGIN_ID,
+            Self::X264 => X264_PLUGIN_ID,
         }
     }
 }
@@ -128,9 +139,12 @@ fn no_session(kind: &str, session: SessionId) -> MediaError {
     MediaError::Codec(format!("no open {kind} {}", session.0))
 }
 
-/// The error for a component the plugin has no `kind` of.
-fn no_component(kind: &str, component: &str) -> MediaError {
-    MediaError::Codec(format!("no {kind} {component:?} in {PLUGIN_ID}"))
+/// The error for a component the program linking `profile` has no `kind` of.
+fn no_component(profile: Profile, kind: &str, component: &str) -> MediaError {
+    MediaError::Codec(format!(
+        "no {kind} {component:?} in {}",
+        profile.plugin_id()
+    ))
 }
 
 /// `plugin.json`, parsed.
@@ -248,7 +262,7 @@ impl MediaProvider for FfmpegCodec {
 impl Decoder for FfmpegCodec {
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
         if !self.serves(ComponentKind::Decoder, decoder) {
-            return Err(no_component("decoder", decoder));
+            return Err(no_component(self.profile, "decoder", decoder));
         }
         check_decoder(decoder)?;
         self.decoder.probe(path).cloned()
@@ -260,7 +274,7 @@ impl Decoder for FfmpegCodec {
         request: &VideoRequest<'_>,
     ) -> Result<VideoFrame, MediaError> {
         if !self.serves(ComponentKind::Decoder, decoder) {
-            return Err(no_component("decoder", decoder));
+            return Err(no_component(self.profile, "decoder", decoder));
         }
         check_decoder(decoder)?;
         decoded(match request.sequential {
@@ -282,7 +296,7 @@ impl Decoder for FfmpegCodec {
         channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
         if !self.serves(ComponentKind::Decoder, decoder) {
-            return Err(no_component("decoder", decoder));
+            return Err(no_component(self.profile, "decoder", decoder));
         }
         check_decoder(decoder)?;
         decoded(self.decoder.decode_audio(path, sample_rate, channels))
@@ -296,7 +310,7 @@ impl VideoEncoder for FfmpegCodec {
     ) -> Result<VideoEncoderOpened, MediaError> {
         let codec = VideoCodec::from_id(request.component)
             .filter(|_| self.serves(ComponentKind::VideoEncoder, request.component))
-            .ok_or_else(|| no_component("video encoder", request.component))?;
+            .ok_or_else(|| no_component(self.profile, "video encoder", request.component))?;
         let opened = video_encoder::open(codec, request)?;
         let session = self.next_session();
         self.video.insert(session, opened.session);
@@ -336,7 +350,7 @@ impl AudioEncoder for FfmpegCodec {
     ) -> Result<AudioEncoderOpened, MediaError> {
         let codec = AudioCodec::from_id(request.component)
             .filter(|_| self.serves(ComponentKind::AudioEncoder, request.component))
-            .ok_or_else(|| no_component("audio encoder", request.component))?;
+            .ok_or_else(|| no_component(self.profile, "audio encoder", request.component))?;
         let opened = audio_encoder::open(codec, request)?;
         let session = self.next_session();
         self.audio.insert(session, opened.session);
@@ -376,7 +390,7 @@ impl Muxer for FfmpegCodec {
     fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
         let format = MuxerFormat::from_id(request.component)
             .filter(|_| self.serves(ComponentKind::Muxer, request.component))
-            .ok_or_else(|| no_component("muxer", request.component))?;
+            .ok_or_else(|| no_component(self.profile, "muxer", request.component))?;
         let opened = muxer::open(format, request)?;
         let session = self.next_session();
         self.muxers.insert(session, opened);

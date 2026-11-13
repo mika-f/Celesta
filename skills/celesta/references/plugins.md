@@ -130,7 +130,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   beside Celesta's executables
   (each answers `--manifest`) when no plugin folder other than a project's
   has a plugin with that id (`ffmpeg`, `ffmpeg-x264`); that lookup is skipped in a Cargo build folder such as
-  `target/release`.
+  `target/release`. One that fails `--manifest` is left out, and its
+  components then read as `skipped at discovery (<program>): <reason>`
+  rather than `not installed`.
 - A plugin with the older `"roles": ["codec"]` is ignored: rebuild
   `plugins/ffmpeg`, or have the user install a release for their Celesta.
 - They are not imported and have no content components. Every media plugin that
