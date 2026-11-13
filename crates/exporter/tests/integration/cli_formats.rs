@@ -175,16 +175,12 @@ fn describing_an_unknown_component_fails() {
 }
 
 #[test]
-fn an_x264_preset_fails_with_the_hint() {
+fn an_unknown_preset_fails_without_a_hint() {
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("out.mp4");
     let report = usage_error(&[output.to_str().unwrap(), "--preset", "ultrafast"]);
     assert_eq!(report["error"]["code"], "unknown_preset");
-    let hint = report["error"]["hint"].as_str().unwrap();
-    assert!(
-        hint.contains("--video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast"),
-        "{hint}"
-    );
+    assert!(report["error"]["hint"].is_null(), "{report}");
 }
 
 /// Runs the exporter without `--json` on the minimal example, with only
@@ -214,21 +210,25 @@ fn a_plain_error_prints_its_hint() {
     let plugin = TestCodecPlugin::new();
     let stderr = plain_failure(
         plugin.folder(),
-        &[output.to_str().unwrap(), "--preset", "fast"],
+        &[
+            output.to_str().unwrap(),
+            "--video-encoder",
+            "missing-plugin/encoder",
+        ],
     );
-    assert!(stderr.contains("unknown preset"), "{stderr}");
+    assert!(stderr.contains("not installed"), "{stderr}");
     assert!(
-        stderr.contains("hint: use --video-encoder ffmpeg-x264/libx264 --video-option preset=fast"),
+        stderr.contains(
+            "hint: --list-components shows the installed components; if the missing-plugin \
+             plugin is installed but not allowed, allow it with --allow-plugin missing-plugin"
+        ),
         "{stderr}"
     );
 
     // With no media plugin at all, how to install one.
     let empty = tempfile::tempdir().unwrap();
     let stderr = plain_failure(empty.path(), &[output.to_str().unwrap()]);
-    assert!(
-        stderr.contains("hint: install Celesta's media plugin"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("hint: install a media plugin"), "{stderr}");
     assert!(!output.exists());
 }
 

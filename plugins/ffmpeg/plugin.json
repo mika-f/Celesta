@@ -5,6 +5,7 @@
   "cargoPackage": "celesta-codec-ffmpeg",
   "roles": ["media"],
   "media": {
+    "priority": 1,
     "decoders": [
       {
         "id": "ffmpeg",

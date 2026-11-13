@@ -84,7 +84,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `decoders` (`id`, `name`, `extensions`), `videoEncoders` and
   `audioEncoders` (`id`, `name`, `codecs`, and a video encoder's
   `inputFormats`), and `muxers` (`id`, `name`, `extensions`, `video`,
-  `audio`, `defaultVideo`, `defaultAudio`, `trimsLeadingAudio`); a
+  `audio`, `defaultVideo`, `defaultAudio`, `trimsLeadingAudio`), and an
+  optional whole-number `priority` (0 when absent; the bundled `ffmpeg`
+  has 1) that ranks it among plugins of the same origin, higher first; a
   component is `<plugin>/<id>`, such as `ffmpeg-x264/libx264`). The app's packages
   bundle only `ffmpeg` among the FFmpeg variants (standard LGPL: decoder,
   ProRes, VP9, AAC, Opus, PCM, MP4/MOV/WebM muxers; linked with zlib and the
@@ -126,26 +128,27 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   license texts live at `plugins/ffmpeg/LICENSE-LGPL-2.1` and
   `plugins/ffmpeg-x264/LICENSE-GPL-2.0`; packages keep them and the source
   notices in each plugin's `licenses/`, not the package-wide license folder.
-  `cargo install` uses `celesta-codec-ffmpeg` and `celesta-codec-ffmpeg-x264`
-  beside Celesta's executables
-  (each answers `--manifest`) when no plugin folder other than a project's
-  has a plugin with that id (`ffmpeg`, `ffmpeg-x264`); that lookup is skipped in a Cargo build folder such as
-  `target/release`. One that fails `--manifest` is left out, and its
-  components then read as `skipped at discovery (<program>): <reason>`
-  rather than `not installed`.
+  `cargo install` uses every program named `celesta-codec-<name>` beside
+  Celesta's executables, in name order (such as `celesta-codec-ffmpeg` and
+  `celesta-codec-ffmpeg-x264`; each answers `--manifest`), when no plugin
+  folder other than a project's has a plugin with the id it prints; that lookup is skipped in a Cargo build folder such as
+  `target/release`. One that fails `--manifest` is left out, and the
+  components of the plugin `<name>` then read as
+  `skipped at discovery (<program>): <reason>` rather than `not installed`.
 - A plugin with the older `"roles": ["codec"]` is ignored: rebuild
   `plugins/ffmpeg`, or have the user install a release for their Celesta.
 - They are not imported and have no content components. Every media plugin that
   may run is used: a file goes to the decoders listing its extension (all
   decoders when none does), the user's plugins first (`--plugin-dir`,
   `CELESTA_PLUGIN_PATH`, the user plugin folder, added folders), then
-  bundled ones (`ffmpeg` first), then a project's own. A decoder that does not read the
+  bundled ones, then a project's own; within each, a higher `priority`
+  first (so `ffmpeg` first among bundled ones), then search order. A decoder that does not read the
   file, fails, or does not start passes it to the next; one that misses
   its deadline, or is stopped by a cancelled export, ends the search with
   that error. The first that reads it keeps it. An export takes its muxer from the output's
-  extension (bundled plugins first, then the user's) and its encoders from
-  the muxer's default codecs (the muxer's plugin first, then bundled, then
-  the user's); a project's components only when named. `--list-components`
+  extension (bundled plugins first, then the user's, each by `priority`)
+  and its encoders from the muxer's default codecs (the muxer's plugin
+  first, then bundled, then the user's, each by `priority`); a project's components only when named. `--list-components`
   and `--describe` show them ([export.md](export.md#encoders-and-settings)).
 - Between plugins with the same id, the earlier in search order wins, with
   one exception: a project's plugin cannot replace a media plugin bundled

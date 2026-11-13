@@ -12,14 +12,11 @@ use celesta_project::LoadError;
 use celesta_react_bridge::{PropsFileChoice, ReactBridgeError};
 use serde::Serialize;
 
-use crate::resolve::{NOT_INSTALLED, no_default_encoder};
+use crate::resolve::{NOT_INSTALLED, is_no_default_encoder};
 use crate::{
     AudioLoudness, CompositionInfo, EncoderPlan, ExportError, ExportProgress, ExportedFile,
-    OutputPlan, StillFormat, TrackInfo, X264_PRESETS,
+    OutputPlan, StillFormat, TrackInfo,
 };
-
-/// The optional x264 encoder, which hints name in full.
-const X264: &str = "ffmpeg-x264/libx264";
 
 /// Whose options an error's hint names: `Celesta-export`'s flags or the MCP
 /// server's tool arguments. Error codes are the same either way.
@@ -589,9 +586,9 @@ fn error_report(error: &ExportError, hints: HintStyle) -> ErrorReport {
     }
 }
 
-const NO_DECODER_HINT: &str = "install Celesta's media plugin (celesta-codec-ffmpeg) beside an \
-     installed Celesta or in a plugin folder; in a source checkout, build it with node scripts/plugins/build.mts \
-     plugins/ffmpeg and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH";
+const NO_DECODER_HINT: &str = "install a media plugin beside an installed Celesta or in a plugin \
+     folder; in a source checkout, build the media plugins under plugins/ with node \
+     scripts/plugins/build.mts and add the absolute path of plugins/dist to CELESTA_PLUGIN_PATH";
 
 /// The code and hint of `error`, collecting its issues into `issues`. A
 /// frame's failure has the code of what failed.
@@ -604,81 +601,42 @@ pub(crate) fn classify(
     match error {
         ExportError::Frame(failure) => classify(&failure.error, hints, issues),
         ExportError::InvalidPresets { .. } => ("invalid_presets", None),
-        ExportError::UnknownPreset {
-            name,
-            default_in: None,
-        } => (
-            "unknown_preset",
-            // x264's speed presets are a setting of `ffmpeg-x264/libx264`,
-            // the optional download, not of the default MP4 encoder (a
-            // native H.264 on macOS and Windows), so the hint names it.
-            X264_PRESETS.contains(&name.as_str()).then(|| {
-                Cow::Owned(if cli {
-                    format!(
-                        "use --video-encoder {X264} --video-option preset={name} (the optional ffmpeg-x264 plugin)"
-                    )
-                } else {
-                    format!(
-                        "set videoEncoder to {{ id: \"{X264}\", options: {{ preset: \"{name}\" }} }} (the optional ffmpeg-x264 plugin)"
-                    )
-                })
-            }),
-        ),
         ExportError::UnknownPreset { .. } => ("unknown_preset", None),
         ExportError::UnsupportedOutput { path, extensions } => (
             "unsupported_output",
             Some(unsupported_output_hint(path, extensions, cli)),
         ),
         ExportError::IncompatibleComponents { .. } => ("incompatible_components", None),
-        // libx264 named under the standard plugin, as before x264 became a
-        // download, or under ffmpeg-x264 before that download is installed
-        // (or while it is installed but not allowed, which is skipped and so
-        // reads as not installed), or installed but unable to encode here.
-        ExportError::ComponentUnavailable { component, reason }
-            if component.component == "libx264"
-                && matches!(component.plugin.as_str(), "ffmpeg" | "ffmpeg-x264") =>
-        {
-            let allow = if cli {
-                "allow it with --allow-plugin ffmpeg-x264"
+        // A component no installed plugin offers: its plugin is missing, has
+        // no such component, or is installed but not allowed, which is
+        // skipped and so reads as not installed.
+        ExportError::ComponentUnavailable { component, reason } if reason == NOT_INSTALLED => (
+            "component_unavailable",
+            Some(Cow::Owned(if cli {
+                format!(
+                    "--list-components shows the installed components; if the {plugin} \
+                     plugin is installed but not allowed, allow it with --allow-plugin {plugin}",
+                    plugin = component.plugin
+                )
             } else {
-                "allow it in Celesta's Plugins tab"
-            };
-            let other = "leave the encoder out to use the default H.264 encoder (macOS and Windows) or choose .mov for ProRes";
-            (
-                "component_unavailable",
-                Some(Cow::Owned(if component.plugin == "ffmpeg" {
-                    format!(
-                        "libx264 moved to the optional ffmpeg-x264 download: install it and name {X264}"
-                    )
-                } else if reason == NOT_INSTALLED {
-                    format!(
-                        "download and install the optional ffmpeg-x264 plugin from the release (if it is already installed, {allow}), or {other}"
-                    )
-                } else {
-                    format!("the installed ffmpeg-x264 plugin cannot encode here; {other}")
-                })),
-            )
-        }
-        // MP4's default H.264 encoder: none installed (the muxer's error, as
-        // `default_encoder` raises it), or a native one that cannot run.
-        // Other failures of `ffmpeg/mp4` (no AAC encoder, the muxer itself
-        // missing or failing) are not about H.264.
-        ExportError::ComponentUnavailable { component, reason }
-            if (component.plugin == "ffmpeg"
-                && component.component == "mp4"
-                && *reason == no_default_encoder("video encoder", "avc1"))
-                || (matches!(
-                    component.plugin.as_str(),
-                    "avfoundation" | "mediafoundation"
-                ) && component.component == "h264") =>
-        {
-            (
-                "component_unavailable",
-                fixed(
-                    "use an available H.264 encoder or download ffmpeg-x264 and select ffmpeg-x264/libx264 for MP4; choose .mov for ProRes with the standard ffmpeg plugin",
-                ),
-            )
-        }
+                format!(
+                    "list_components shows the installed components; if the {plugin} \
+                     plugin is installed but not allowed, allow it in Celesta's Plugins tab",
+                    plugin = component.plugin
+                )
+            })),
+        ),
+        // A muxer whose default codec no installed encoder writes.
+        ExportError::ComponentUnavailable { reason, .. } if is_no_default_encoder(reason) => (
+            "component_unavailable",
+            fixed(if cli {
+                "install a media plugin with an encoder for that codec, or write another format; \
+                 --list-components shows the installed components"
+            } else {
+                "install a media plugin with an encoder for that codec, or write another format; \
+                 list_components shows the installed components"
+            }),
+        ),
         ExportError::ComponentUnavailable { .. }
         | ExportError::Codec {
             source: MediaError::ComponentUnavailable { .. },
@@ -1252,8 +1210,7 @@ mod tests {
             // absolute path.
             for expected in [
                 "media plugin",
-                "celesta-codec-ffmpeg",
-                "node scripts/plugins/build.mts plugins/ffmpeg",
+                "node scripts/plugins/build.mts",
                 "absolute path of plugins/dist",
                 "CELESTA_PLUGIN_PATH",
             ] {
@@ -1374,61 +1331,51 @@ mod tests {
     }
 
     #[test]
-    fn libx264_by_its_old_or_new_id_names_the_download() {
-        for (component, wanted) in [
-            ("ffmpeg/libx264", "name ffmpeg-x264/libx264"),
-            (
-                "ffmpeg-x264/libx264",
-                "install the optional ffmpeg-x264 plugin",
-            ),
-        ] {
+    fn a_component_that_is_not_installed_names_its_plugin() {
+        let error = ExportError::ComponentUnavailable {
+            component: "some-plugin/encoder".parse().unwrap(),
+            reason: NOT_INSTALLED.into(),
+        };
+        let (code, cli) = classified(&error, HintStyle::Cli);
+        assert_eq!(code, "component_unavailable");
+        let cli = cli.unwrap();
+        assert!(cli.contains("--list-components"), "{cli}");
+        assert!(cli.contains("--allow-plugin some-plugin"), "{cli}");
+        let mcp = classified(&error, HintStyle::Mcp).1.unwrap();
+        assert!(mcp.contains("list_components"), "{mcp}");
+        assert!(mcp.contains("Plugins tab"), "{mcp}");
+    }
+
+    #[test]
+    fn a_muxer_without_a_default_encoder_hints_at_installing_one() {
+        use crate::resolve::no_default_encoder;
+        for kind in ["video encoder", "audio encoder"] {
             let error = ExportError::ComponentUnavailable {
-                component: component.parse().unwrap(),
-                reason: "not installed".into(),
+                component: "some-plugin/mp4".parse().unwrap(),
+                reason: no_default_encoder(kind, "avc1"),
             };
-            for style in [HintStyle::Cli, HintStyle::Mcp] {
+            for (style, listing) in [
+                (HintStyle::Cli, "--list-components"),
+                (HintStyle::Mcp, "list_components"),
+            ] {
                 let (code, hint) = classified(&error, style);
                 assert_eq!(code, "component_unavailable");
                 let hint = hint.unwrap();
-                assert!(hint.contains(wanted), "{component}: {hint}");
+                assert!(hint.contains("install a media plugin"), "{hint}");
+                assert!(hint.contains(listing), "{hint}");
             }
         }
-        // Another plugin's libx264 is not the download's.
-        let error = ExportError::ComponentUnavailable {
-            component: "other/libx264".parse().unwrap(),
-            reason: "not installed".into(),
-        };
-        assert_eq!(classified(&error, HintStyle::Cli).1, None);
     }
 
     #[test]
-    fn an_installed_but_unallowed_or_failing_x264_is_not_sent_to_download_again() {
-        let not_installed = ExportError::ComponentUnavailable {
-            component: X264.parse().unwrap(),
-            reason: NOT_INSTALLED.into(),
-        };
-        let cli = classified(&not_installed, HintStyle::Cli).1.unwrap();
-        assert!(cli.contains("--allow-plugin ffmpeg-x264"), "{cli}");
-        let mcp = classified(&not_installed, HintStyle::Mcp).1.unwrap();
-        assert!(mcp.contains("Plugins tab"), "{mcp}");
-        let failing = ExportError::ComponentUnavailable {
-            component: X264.parse().unwrap(),
-            reason: "this FFmpeg build has no libx264".into(),
-        };
-        let hint = classified(&failing, HintStyle::Cli).1.unwrap();
-        assert!(!hint.contains("download"), "{hint}");
-        assert!(hint.contains(".mov"), "{hint}");
-    }
-
-    #[test]
-    fn only_a_missing_h264_default_gets_the_h264_hint_for_mp4() {
+    fn other_unavailable_components_have_no_hint() {
         for reason in [
-            no_default_encoder("audio encoder", "mp4a"),
-            NOT_INSTALLED.to_owned(),
+            "no video encoder writes  by default".to_owned(),
             "the plugin did not describe it".to_owned(),
+            "VideoToolbox is unavailable".to_owned(),
         ] {
             let error = ExportError::ComponentUnavailable {
-                component: "ffmpeg/mp4".parse().unwrap(),
+                component: "some-plugin/mp4".parse().unwrap(),
                 reason: reason.clone(),
             };
             assert_eq!(
@@ -1436,33 +1383,6 @@ mod tests {
                 ("component_unavailable", None),
                 "{reason}"
             );
-        }
-    }
-
-    #[test]
-    fn missing_default_codecs_name_the_download_and_a_standard_format() {
-        for (component, reason) in [
-            ("ffmpeg/mp4", no_default_encoder("video encoder", "avc1")),
-            (
-                "avfoundation/h264",
-                "VideoToolbox is unavailable".to_owned(),
-            ),
-            (
-                "mediafoundation/h264",
-                "Media Feature Pack is missing".to_owned(),
-            ),
-        ] {
-            let error = ExportError::ComponentUnavailable {
-                component: component.parse().unwrap(),
-                reason,
-            };
-            for style in [HintStyle::Cli, HintStyle::Mcp] {
-                let (code, hint) = classified(&error, style);
-                assert_eq!(code, "component_unavailable");
-                let hint = hint.unwrap();
-                assert!(hint.contains(".mov"));
-                assert!(hint.contains("ffmpeg-x264"), "{hint}");
-            }
         }
     }
 

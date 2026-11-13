@@ -500,9 +500,9 @@ fn prores_and_webm_export_without_the_x264_plugin() {
 
 /// With the standard plugin alone (no x264 download, no native plugin), an
 /// MP4 has no H.264 encoder: the export fails as unavailable, and the hint
-/// names the download and `.mov`.
+/// says to install an encoder or write another format.
 #[test]
-fn an_mp4_without_the_x264_plugin_hints_at_the_download_and_mov() {
+fn an_mp4_without_the_x264_plugin_hints_at_installing_an_encoder() {
     let _gpu = gpu();
     let directory = tempfile::tempdir().unwrap();
     let project = transparent_project(directory.path());
@@ -528,8 +528,8 @@ fn an_mp4_without_the_x264_plugin_hints_at_the_download_and_mov() {
             "{style:?}: {failure}"
         );
         let hint = report::hint(&error, style).unwrap_or_else(|| panic!("{error} has a hint"));
-        assert!(hint.contains("ffmpeg-x264"), "{style:?}: {hint}");
-        assert!(hint.contains(".mov"), "{style:?}: {hint}");
+        assert!(hint.contains("install a media plugin"), "{style:?}: {hint}");
+        assert!(hint.contains("another format"), "{style:?}: {hint}");
         assert_eq!(failure["error"]["hint"], hint.as_ref(), "{style:?}");
     }
 }

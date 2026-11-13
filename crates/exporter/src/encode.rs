@@ -1786,6 +1786,7 @@ mod tests {
     fn all_in_one(trims: bool) -> (MediaManifest, Vec<ComponentDescription>) {
         (
             MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![video_entry(None)],
                 audio_encoders: vec![audio_entry()],

@@ -1,5 +1,5 @@
-//! Media plugins: the decoders a `media` plugin's manifest declares, and
-//! the recognized FFmpeg build programs beside an installed Celesta.
+//! Media plugins: the components a `media` plugin's manifest declares, and
+//! the media plugin programs beside an installed Celesta.
 
 use crate::console::without_console_window;
 use crate::locations::PluginSource;
@@ -14,34 +14,16 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
-/// The ID of the FFmpeg media plugin that comes with Celesta, which ranks
-/// first among the bundled plugins.
-pub const FFMPEG_PLUGIN_ID: &str = "ffmpeg";
-
 /// The plugin ID of the components Celesta has built in (`builtin/png`),
 /// which no plugin may take.
 pub const RESERVED_PLUGIN_ID: &str = "builtin";
 
-/// The standard FFmpeg program name. [`InstalledPlugins::media`] recognizes
-/// this and [`X264_CODEC_PROGRAM`] beside an installed Celesta, as
+/// How the name of a media plugin's program begins. [`InstalledPlugins::media`]
+/// recognizes every program named so beside an installed Celesta, as
 /// `cargo install` leaves them, never beside a source build in a Cargo folder.
-pub const CODEC_PROGRAM: &str = "celesta-codec-ffmpeg";
+pub const CODEC_PROGRAM_PREFIX: &str = "celesta-codec-";
 
-/// The optional x264 FFmpeg program name, recognized like [`CODEC_PROGRAM`].
-pub const X264_CODEC_PROGRAM: &str = "celesta-codec-ffmpeg-x264";
-
-/// The ID of the optional x264 FFmpeg media plugin, which
-/// [`X264_CODEC_PROGRAM`] serves.
-pub const X264_PLUGIN_ID: &str = "ffmpeg-x264";
-
-/// Each recognized program beside an installed Celesta, with the id of the
-/// plugin it serves: what a program that fails discovery would have been.
-const SIBLING_PROGRAMS: [(&str, &str); 2] = [
-    (CODEC_PROGRAM, FFMPEG_PLUGIN_ID),
-    (X264_CODEC_PROGRAM, X264_PLUGIN_ID),
-];
-
-/// The flag that has each recognized sibling media program print its manifest
+/// The flag that has each sibling media program print its manifest
 /// (`id`, `version`, `roles`, and `media`) as JSON and exit without the protocol:
 /// `cargo install` cannot put a manifest file beside it.
 pub const MANIFEST_FLAG: &str = "--manifest";
@@ -62,9 +44,14 @@ const STDERR_LIMIT: usize = 4096;
 /// The most of the program's output [`MANIFEST_FLAG`] reads.
 const MANIFEST_OUTPUT_LIMIT: u64 = 1 << 20;
 
-/// A manifest's `media`: the components a media plugin offers.
+/// A manifest's `media`: the components a media plugin offers, and where
+/// they rank among the plugins of the same origin.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MediaManifest {
+    /// `media.priority`: among plugins of the same [`MediaOrigin`], a higher
+    /// one's components are defaults first and its decoders are tried first.
+    /// 0 when the manifest gives none.
+    pub priority: i32,
     pub decoders: Vec<MediaDecoderEntry>,
     pub video_encoders: Vec<MediaVideoEncoderEntry>,
     pub audio_encoders: Vec<MediaAudioEncoderEntry>,
@@ -169,8 +156,8 @@ pub enum MediaOrigin {
     /// `--plugin-dir`, `CELESTA_PLUGIN_PATH`, the user's plugin folder, or a
     /// folder the user added.
     User,
-    /// The folder that comes with Celesta, or a recognized FFmpeg plugin
-    /// program beside an installed Celesta program.
+    /// The folder that comes with Celesta, or a media plugin program beside
+    /// an installed Celesta program ([`CODEC_PROGRAM_PREFIX`]).
     Bundled,
     /// A folder the open project lists.
     Project,
@@ -205,13 +192,14 @@ pub struct MediaPlugin {
     pub media: MediaManifest,
 }
 
-/// A recognized FFmpeg program beside an installed Celesta that discovery
+/// A media plugin program beside an installed Celesta that discovery
 /// left out ([`InstalledPlugins::media_discovery`]), such as an x264 program
 /// linked against an FFmpeg without libx264, which refuses `--manifest`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkippedMedia {
     /// The id of the plugin the program serves when it runs:
-    /// [`FFMPEG_PLUGIN_ID`] or [`X264_PLUGIN_ID`].
+    /// the program's name after [`CODEC_PROGRAM_PREFIX`], as it printed no
+    /// manifest to say.
     pub id: String,
     pub program: PathBuf,
     /// Why it was left out, as `--manifest failed (exit status: 1): <its
@@ -232,7 +220,7 @@ impl SkippedMedia {
 }
 
 /// The media plugins to read media with ([`InstalledPlugins::media`]), and
-/// the recognized programs beside Celesta that were left out, so that what
+/// the media plugin programs beside Celesta that were left out, so that what
 /// names one of their components can say why rather than "not installed".
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MediaDiscovery {
@@ -259,15 +247,31 @@ impl MediaManifest {
     /// entry that could not was skipped: an id that is not valid or repeats
     /// an earlier one of the same kind, an encoder with no `codecs`, a muxer
     /// with no `extensions` or `video`, or a default that is not among the
-    /// codecs it takes. Codecs are kept as families ([`codec_family`]),
-    /// extensions lowercase without the dot.
+    /// codecs it takes, and a `priority` that is not a whole number in
+    /// `i32`'s range (read as 0). Codecs are kept as families
+    /// ([`codec_family`]), extensions lowercase without the dot.
     pub fn from_json(value: Value) -> (Self, Vec<String>) {
         let mut problems = Vec::new();
         let Value::Object(mut media) = value else {
             problems.push("its \"media\" is not an object".into());
             return (Self::default(), problems);
         };
+        let priority = match media.remove("priority") {
+            None | Some(Value::Null) => 0,
+            Some(value) => value
+                .as_i64()
+                .and_then(|priority| i32::try_from(priority).ok())
+                .unwrap_or_else(|| {
+                    problems.push(format!(
+                        "its \"media.priority\" {value} is not a whole number from {} to {}",
+                        i32::MIN,
+                        i32::MAX
+                    ));
+                    0
+                }),
+        };
         let manifest = Self {
+            priority,
             decoders: read_entries(
                 &mut media,
                 "decoders",
@@ -443,40 +447,88 @@ struct PrintedManifest {
     media: Value,
 }
 
-/// A recognized FFmpeg build's `program_name` beside `executable` (Celesta's own,
-/// links resolved), as `cargo install` leaves it, made from what it prints
-/// for [`MANIFEST_FLAG`], with the program's path. None when there is none,
-/// or when `executable` sits in a Cargo build folder (it has `.fingerprint`
-/// or `.cargo-lock`; with `build.build-dir` set, only `.cargo-lock` stays
-/// beside the programs): a source build takes its media plugins from the
-/// plugin folders, so a program an older build left there is never picked
-/// up. `Err` with why when it does not print a media plugin's manifest
-/// within [`MANIFEST_TIMEOUT`] and exit cleanly (also said on stderr, the
-/// first time). The answer is kept for as long as the program's file stays
-/// the same.
-fn sibling_media(
-    executable: &Path,
-    program_name: &str,
-) -> Option<(PathBuf, Result<MediaPlugin, String>)> {
+/// The media plugin programs beside `executable` (Celesta's own, links
+/// resolved), as `cargo install` leaves them, in name order: each file named
+/// [`CODEC_PROGRAM_PREFIX`] followed by a name without a `.` (and
+/// [`std::env::consts::EXE_SUFFIX`]). None when `executable` sits in a Cargo
+/// build folder (it has `.fingerprint` or `.cargo-lock`; with
+/// `build.build-dir` set, only `.cargo-lock` stays beside the programs): a
+/// source build takes its media plugins from the plugin folders, so a program
+/// an older build left there is never picked up.
+fn sibling_programs(executable: &Path) -> Vec<PathBuf> {
+    let Some(directory) = executable.parent() else {
+        return Vec::new();
+    };
+    if directory.join(".fingerprint").is_dir() || directory.join(".cargo-lock").is_file() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut programs: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(is_codec_program_name)
+        })
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.as_path() != executable)
+        .collect();
+    programs.sort();
+    programs
+}
+
+/// Whether `file_name` names a media plugin program: [`CODEC_PROGRAM_PREFIX`],
+/// then a name without a `.` (a Cargo package's, as `cargo install` names
+/// its programs), then [`std::env::consts::EXE_SUFFIX`].
+fn is_codec_program_name(file_name: &str) -> bool {
+    file_name
+        .strip_prefix(CODEC_PROGRAM_PREFIX)
+        .and_then(|rest| rest.strip_suffix(std::env::consts::EXE_SUFFIX))
+        .is_some_and(|name| !name.is_empty() && !name.contains('.'))
+}
+
+/// The id of the plugin `program` (from [`sibling_programs`]) serves, by
+/// its name: what follows [`CODEC_PROGRAM_PREFIX`], as `celesta-codec-ffmpeg`
+/// serves `ffmpeg`. What a program that fails discovery would have been.
+fn sibling_plugin_id(program: &Path) -> String {
+    let name = program
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    name.strip_prefix(CODEC_PROGRAM_PREFIX)
+        .and_then(|rest| rest.strip_suffix(std::env::consts::EXE_SUFFIX))
+        .unwrap_or(name)
+        .to_owned()
+}
+
+/// The media plugin `program` (beside Celesta, from [`sibling_programs`])
+/// is, made from what it prints for [`MANIFEST_FLAG`]. None when it is no
+/// longer a file; `Err` with why when it does not print a media plugin's
+/// manifest within [`MANIFEST_TIMEOUT`] and exit cleanly (also said on
+/// stderr, the first time). The answer is kept for as long as the program's
+/// file stays the same.
+fn sibling_media(program: &Path) -> Option<Result<MediaPlugin, String>> {
     type Key = (PathBuf, u64, SystemTime);
     static SIBLINGS: OnceLock<Mutex<HashMap<Key, Result<MediaPlugin, String>>>> = OnceLock::new();
 
-    let directory = executable.parent()?;
-    if directory.join(".fingerprint").is_dir() || directory.join(".cargo-lock").is_file() {
-        return None;
-    }
-    let program = directory.join(format!("{program_name}{}", std::env::consts::EXE_SUFFIX));
-    let metadata = std::fs::metadata(&program).ok().filter(|m| m.is_file())?;
-    let key = (program.clone(), metadata.len(), metadata.modified().ok()?);
+    let metadata = std::fs::metadata(program).ok().filter(|m| m.is_file())?;
+    let key = (
+        program.to_path_buf(),
+        metadata.len(),
+        metadata.modified().ok()?,
+    );
     let siblings = SIBLINGS.get_or_init(Default::default);
     if let Some(sibling) = siblings
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .get(&key)
     {
-        return Some((program, sibling.clone()));
+        return Some(sibling.clone());
     }
-    let sibling = printed_manifest(&program);
+    let sibling = printed_manifest(program);
     if let Err(reason) = &sibling {
         eprintln!(
             "celesta: skipped the media plugin {}: {reason}",
@@ -487,7 +539,7 @@ fn sibling_media(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .insert(key, sibling.clone());
-    Some((program, sibling))
+    Some(sibling)
 }
 
 /// Whether `stderr` holds a whole line that is not blank: what a failed
@@ -649,19 +701,19 @@ impl InstalledPlugins {
     /// The media plugins to read media with, in search order: each of these
     /// plugins that is a media plugin with a program for this platform
     /// (discovery leaves out one this Celesta is outside the range of, so the
-    /// next one with its id is listed instead), then recognized FFmpeg plugin
-    /// programs beside the running one ([`CODEC_PROGRAM`] and
-    /// [`X264_CODEC_PROGRAM`]), each when that
-    /// is an installed program rather than a source build in a Cargo build
-    /// folder and none of these but a project's has the id it prints. A
-    /// project's plugin cannot replace it, as discovery keeps one in the
-    /// bundled folder: the project's is left out (said on stderr). Ordering
-    /// decoders by [`MediaOrigin`] is the caller's.
+    /// next one with its id is listed instead), then the media plugin
+    /// programs beside the running one (named [`CODEC_PROGRAM_PREFIX`]
+    /// followed by a name, in name order), each when that is an installed
+    /// program rather than a source build in a Cargo build folder and none
+    /// of these but a project's has the id it prints. A project's plugin
+    /// cannot replace it, as discovery keeps one in the bundled folder: the
+    /// project's is left out (said on stderr). Ordering decoders by
+    /// [`MediaOrigin`] is the caller's.
     pub fn media(&self) -> Vec<MediaPlugin> {
         self.media_discovery().plugins
     }
 
-    /// [`Self::media`], with the recognized programs beside the running one
+    /// [`Self::media`], with the media plugin programs beside the running one
     /// that were left out for failing [`MANIFEST_FLAG`], each when no plugin
     /// listed has the id it would have served.
     pub fn media_discovery(&self) -> MediaDiscovery {
@@ -671,7 +723,7 @@ impl InstalledPlugins {
         self.discovery_with_sibling(executable.as_deref())
     }
 
-    /// [`Self::media`], looking for the sibling beside `executable`, and for
+    /// [`Self::media`], looking for the siblings beside `executable`, and for
     /// none without one.
     #[cfg(test)]
     pub(crate) fn media_with_sibling(&self, executable: Option<&Path>) -> Vec<MediaPlugin> {
@@ -688,13 +740,13 @@ impl InstalledPlugins {
             .filter_map(media_plugin)
             .collect();
         let mut skipped = Vec::new();
-        for (program, id) in SIBLING_PROGRAMS {
-            let sibling = match executable.and_then(|executable| sibling_media(executable, program))
-            {
-                Some((_, Ok(sibling))) => sibling,
-                Some((program, Err(reason))) => {
+        let programs = executable.map(sibling_programs).unwrap_or_default();
+        for program in programs {
+            let sibling = match sibling_media(&program) {
+                Some(Ok(sibling)) => sibling,
+                Some(Err(reason)) => {
                     skipped.push(SkippedMedia {
-                        id: id.to_owned(),
+                        id: sibling_plugin_id(&program),
                         program,
                         reason,
                     });
@@ -702,24 +754,25 @@ impl InstalledPlugins {
                 }
                 None => continue,
             };
-            if !media
+            if media
                 .iter()
                 .any(|plugin| plugin.id == sibling.id && plugin.origin != MediaOrigin::Project)
             {
-                media.retain(|plugin| {
-                    let replaces = plugin.id == sibling.id;
-                    if replaces {
-                        eprintln!(
-                            "celesta: skipped the media plugin {}: a project plugin cannot replace \
-                         Celesta's bundled media plugin {}",
-                            plugin.directory.display(),
-                            plugin.id
-                        );
-                    }
-                    !replaces
-                });
-                media.push(sibling);
+                continue;
             }
+            media.retain(|plugin| {
+                let replaces = plugin.id == sibling.id;
+                if replaces {
+                    eprintln!(
+                        "celesta: skipped the media plugin {}: a project plugin cannot replace \
+                         Celesta's bundled media plugin {}",
+                        plugin.directory.display(),
+                        plugin.id
+                    );
+                }
+                !replaces
+            });
+            media.push(sibling);
         }
         skipped
             .retain(|skipped: &SkippedMedia| !media.iter().any(|plugin| plugin.id == skipped.id));
@@ -1353,6 +1406,29 @@ mod tests {
         assert_eq!(reasons.len(), 2, "{reasons:?}");
     }
 
+    #[test]
+    fn the_priority_is_read_or_left_at_zero() {
+        let priority = |media: serde_json::Value| {
+            let (media, problems) = MediaManifest::from_json(media);
+            (media.priority, problems.len())
+        };
+        assert_eq!(priority(serde_json::json!({})), (0, 0));
+        assert_eq!(priority(serde_json::json!({ "priority": null })), (0, 0));
+        assert_eq!(priority(serde_json::json!({ "priority": 2 })), (2, 0));
+        assert_eq!(priority(serde_json::json!({ "priority": -1 })), (-1, 0));
+        for bad in [
+            serde_json::json!("high"),
+            serde_json::json!(1.5),
+            serde_json::json!(1_i64 << 40),
+        ] {
+            assert_eq!(
+                priority(serde_json::json!({ "priority": bad })),
+                (0, 1),
+                "{bad}"
+            );
+        }
+    }
+
     #[cfg(unix)]
     mod sibling {
         use super::*;
@@ -1362,11 +1438,16 @@ mod tests {
         /// What the fake sibling prints for `--manifest`.
         const PRINTED: &str = r#"{"id":"ffmpeg","version":"0.10.0","roles":["media"],"media":{"decoders":[{"id":"ffmpeg","name":"FFmpeg","extensions":["mp4","MOV"]}]}}"#;
 
-        /// The FFmpeg plugin's program beside a Celesta program in
-        /// `directory`, made of a shell script, and that Celesta program's
-        /// path.
+        /// A media plugin's program, `celesta-codec-ffmpeg`, beside a
+        /// Celesta program in `directory`, made of a shell script, and that
+        /// Celesta program's path.
         fn fake_sibling(directory: &Path, body: &str) -> (PathBuf, PathBuf) {
-            let program = directory.join(CODEC_PROGRAM);
+            fake_named_sibling(directory, &format!("{CODEC_PROGRAM_PREFIX}ffmpeg"), body)
+        }
+
+        /// [`fake_sibling`] named `name`.
+        fn fake_named_sibling(directory: &Path, name: &str, body: &str) -> (PathBuf, PathBuf) {
+            let program = directory.join(name);
             std::fs::write(&program, format!("#!/bin/sh\n{body}\n")).unwrap();
             std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
             // A sibling test that forked while the file was open for writing
@@ -1404,17 +1485,52 @@ mod tests {
         }
 
         #[test]
-        fn the_x264_build_is_discovered_independently() {
+        fn every_codec_program_is_discovered_in_name_order() {
+            let root = tempfile::tempdir().unwrap();
+            let printing = |id: &str| {
+                let printed = serde_json::json!({
+                    "id": id, "version": "0.10.0", "roles": ["media"], "media": {},
+                });
+                format!("printf '%s\\n' '{printed}'")
+            };
+            let (_, executable) =
+                fake_named_sibling(root.path(), "celesta-codec-zeta", &printing("zeta"));
+            fake_named_sibling(root.path(), "celesta-codec-alpha", &printing("alpha"));
+            // Not a media plugin's program by its name.
+            fake_named_sibling(root.path(), "celesta-codec-", &printing("empty"));
+            fake_named_sibling(root.path(), "celesta-codec-dotted.sh", &printing("dotted"));
+            fake_named_sibling(root.path(), "other-program", &printing("other"));
+            let listed = InstalledPlugins::default().media_with_sibling(Some(&executable));
+            assert_eq!(ids(&listed), ["alpha", "zeta"]);
+        }
+
+        #[test]
+        fn a_second_sibling_with_a_taken_id_is_left_out() {
             let root = tempfile::tempdir().unwrap();
             let (_, executable) = printing_its_manifest(root.path());
-            let printed = serde_json::json!({
-                "id": "ffmpeg-x264", "version": "0.10.0", "roles": ["media"], "media": {},
-            });
-            let scratch = tempfile::tempdir().unwrap();
-            let (program, _) = fake_sibling(scratch.path(), &format!("printf '%s\\n' '{printed}'"));
-            std::fs::rename(program, root.path().join(X264_CODEC_PROGRAM)).unwrap();
+            fake_named_sibling(
+                root.path(),
+                "celesta-codec-other",
+                &format!("printf '%s\\n' '{PRINTED}'"),
+            );
             let listed = InstalledPlugins::default().media_with_sibling(Some(&executable));
-            assert_eq!(ids(&listed), ["ffmpeg", "ffmpeg-x264"]);
+            assert_eq!(ids(&listed), ["ffmpeg"]);
+            assert_eq!(
+                listed[0].executable,
+                root.path().join(format!("{CODEC_PROGRAM_PREFIX}ffmpeg"))
+            );
+        }
+
+        #[test]
+        fn a_sibling_declares_its_priority() {
+            let root = tempfile::tempdir().unwrap();
+            let printed = serde_json::json!({
+                "id": "ffmpeg", "version": "0.10.0", "roles": ["media"],
+                "media": { "priority": 3 },
+            });
+            let (_, executable) = fake_sibling(root.path(), &format!("printf '%s\\n' '{printed}'"));
+            let listed = InstalledPlugins::default().media_with_sibling(Some(&executable));
+            assert_eq!(listed[0].media.priority, 3);
         }
 
         #[test]
@@ -1595,14 +1711,15 @@ mod tests {
                 scratch.path(),
                 "echo 'ffmpeg-x264: this FFmpeg build has no libx264' >&2\nexit 1",
             );
-            let x264 = root.path().join(X264_CODEC_PROGRAM);
+            let x264 = root.path().join("celesta-codec-ffmpeg-x264");
             std::fs::rename(program, &x264).unwrap();
             let discovery = InstalledPlugins::default().discovery_with_sibling(Some(&executable));
             assert_eq!(ids(&discovery.plugins), ["ffmpeg"]);
             let [skipped] = &discovery.skipped[..] else {
                 panic!("{:?}", discovery.skipped);
             };
-            assert_eq!(skipped.id, X264_PLUGIN_ID);
+            // By its name, as it printed no manifest.
+            assert_eq!(skipped.id, "ffmpeg-x264");
             assert_eq!(skipped.program, x264);
             assert!(
                 skipped.reason.starts_with("--manifest failed")
