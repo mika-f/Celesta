@@ -13,12 +13,16 @@ and packaging dependencies:
 
 ```sh
 xcode-select --install
-brew install ffmpeg@8 pkg-config dylibbundler
-export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"
+brew install pkg-config nasm dylibbundler libvpx opus
+PKG_CONFIG_PATH="$(brew --prefix libvpx)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig" \
+  scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/standard"
+export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
 ```
 
-`ffmpeg@8` is keg-only, so `PKG_CONFIG_PATH` must point at it for the build.
-Homebrew's unversioned `ffmpeg` formula is FFmpeg 9, which is not supported yet.
+Run the commands from the repository root. The app bundles only the standard
+LGPL FFmpeg plugin (with libopus and libvpx). The x264 encoder is a separate
+download; see [plugin packaging](../plugins/README.md). The default
+distribution gate rejects a GPL FFmpeg build; local builds may use one.
 
 From the repository root:
 
@@ -131,7 +135,7 @@ Gatekeeper accepts the app. `--sign-identity` alone signs but does not notarize;
 
 Before creating the DMG, the script checks native architectures, dependency load
 paths, minimum OS versions, and signatures. It then runs the shared React hooks
-and MP4 export smoke test with Homebrew and Node.js removed from PATH and without
+and MOV/ProRes and WebM export smoke test with Homebrew and Node.js removed from PATH and without
 DYLD environment overrides.
 
 After dragging the app into Applications, run that test against the installed copy:
@@ -153,38 +157,22 @@ notarization still require validation on a Mac.
 
 ## Redistribution
 
-The bundle includes available Rust and Homebrew license notices and dependency
-inventories, plus the repository's root `LICENSE*` files (copied automatically)
-and `packaging/GPL-SOURCE-OFFER.md`.
+The bundle includes available Rust license notices and a dependency inventory. The package-wide license folder contains Celesta's `LICENSE-MIT`
+and `LICENSE-APACHE`; FFmpeg license texts and source notices stay in the
+corresponding plugin's `licenses/` folder.
 
-Celesta's own executables link no FFmpeg. The codec plugin goes in
-`Contents/Resources/PlugIns/ffmpeg`, laid out by the shared plugin build script
-(`scripts/plugins/build.mts`, which builds `plugins/ffmpeg` in the plugins
-workspace): its program in `bin/macos-<arch>/` (`macos-aarch64` on Apple
-Silicon), the Homebrew libraries it loads in `Frameworks/` (the packaging script
-bundles them there with dylibbundler, apart from the app's own
-`Contents/Frameworks`), and the GPL text and source offer in `licenses/`. The
-script fails if Celesta's own executables link FFmpeg.
-
-Plugins are not in `Contents/PlugIns`: `codesign` takes everything there for
-nested code, and a plugin folder also holds `celesta-plugin.json`,
-`licenses/`, and an optional `js/`, so signing the app fails with `code object
-is not signed at all`. In `Contents/Resources/PlugIns` those files are sealed
-as the app's resources, and the plugin's program and libraries are signed one
-by one with the app's other Mach-O files.
-
-Homebrew's `ffmpeg@8` formula enables the `x264` encoder by default, which is
-GPL-2.0-or-later licensed and makes the codec plugin's program, as
-distributed, GPL-licensed; Celesta's executables stay under MIT/Apache-2.0 (see
-[`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md) and the root
-[`README.md`](../../README.md#license)). That file's written offer, together
-with `LICENSE-GPL-2.0`, is how the package satisfies GPLv2 Section 3 without
-bundling full FFmpeg/x264 source in every download. This is the same release
-concern described in the Windows packaging guide.
-
-The formula also links libvpx and libopus (BSD-3-Clause), the WebM encoders, so
-`ffmpeg@8` already includes them; their notices are collected with the other
-Homebrew license files.
+Celesta's own executables link no FFmpeg. Only `ffmpeg` (standard LGPL) is
+staged under `Contents/Resources/PlugIns`, with its own `Frameworks/` and `licenses/`.
+The plugin's `Frameworks/` holds the FFmpeg dylibs built from source and the
+Homebrew libopus and libvpx (BSD licensed) they link; the app's
+`licenses/homebrew.json` and `licenses/native/` carry those two formulas'
+notices. The app's Rust/native inventory excludes the optional x264 crate.
+The package smoke test exports ProRes/MOV and WebM and rejects an accidentally
+bundled x264 plugin. The optional `ffmpeg-x264` ZIP is built separately by
+[`package-media-plugins.py`](../../scripts/package-media-plugins.py), signed
+and notarized in release builds, and attached to the same release; see
+[plugin packaging](../plugins/README.md). Its licenses remain in its own
+folder. The app stays MIT/Apache-2.0 with LGPL FFmpeg.
 
 `Contents/Resources/PlugIns/avfoundation` holds the AVFoundation plugin
 (`plugins/avfoundation`, built by the same script after FFmpeg). It is

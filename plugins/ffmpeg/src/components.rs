@@ -466,7 +466,7 @@ mod tests {
             availability("no_such_encoder"),
             Err("this FFmpeg build has no no_such_encoder".to_owned())
         );
-        assert_eq!(availability("libx264"), Ok(()));
+        assert_eq!(availability("prores_ks"), Ok(()));
     }
 
     #[test]

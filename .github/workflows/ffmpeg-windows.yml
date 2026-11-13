@@ -1,15 +1,22 @@
 name: FFmpeg for Windows
 
 # Builds the FFmpeg libraries Celesta links on Windows and publishes them to
-# GitHub Packages as the Celesta.FFmpeg.Windows NuGet package, which
-# .github/actions/setup-ffmpeg downloads. Built in every job, vcpkg rebuilt
-# FFmpeg, x264, libvpx, and libopus (about 35 minutes) whenever its cache was
-# gone or a runner image brought a newer MSVC, which changes vcpkg's package
-# hashes. A published package keeps working on newer images: MSVC links
-# static libraries that an older MSVC built.
+# GitHub Packages as two NuGet packages, which .github/actions/setup-ffmpeg
+# downloads:
+#
+# - Celesta.FFmpeg.Windows.Standard: LGPL FFmpeg with zlib, libopus, and
+#   libvpx (both BSD licensed), for the bundled ffmpeg plugin.
+# - Celesta.FFmpeg.Windows.X264: GPL FFmpeg with libx264, for the optional
+#   ffmpeg-x264 download.
+#
+# Built in every job, vcpkg rebuilt FFmpeg and its codec libraries (about 35
+# minutes for each build) whenever its cache was gone or a runner image
+# brought a newer MSVC, which changes vcpkg's package hashes. A published
+# package keeps working on newer images: MSVC links static libraries that an
+# older MSVC built.
 #
 # Run it after changing the vcpkg release or FFmpeg's features, then pin the
-# version it reports in .github/actions/setup-ffmpeg.
+# versions and hashes it reports in .github/actions/setup-ffmpeg.
 
 on:
   workflow_dispatch:
@@ -20,19 +27,42 @@ permissions:
 
 env:
   # A vcpkg release whose ffmpeg port is 8.1.x; vcpkg master ships FFmpeg 9,
-  # which Celesta does not support yet.
+  # which Celesta does not support yet. The only place the tag is given.
   VCPKG_TAG: '2026.07.29'
-  PACKAGE_ID: Celesta.FFmpeg.Windows
 
 jobs:
   build:
-    name: Build and publish
+    name: Build and publish (${{ matrix.variant }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: Standard
+            features: zlib,opus,vpx
+            license: LGPL-2.1-or-later
+            notice: FFMPEG-SOURCE.md
+            # vcpkg's ports whose copyright files the package must carry.
+            ports: ffmpeg,zlib,opus,libvpx
+          - variant: X264
+            features: x264
+            license: GPL-2.0-or-later
+            notice: GPL-SOURCE-OFFER.md
+            ports: ffmpeg,x264
+    env:
+      PACKAGE_ID: Celesta.FFmpeg.Windows.${{ matrix.variant }}
+      FFMPEG_FEATURES: ${{ matrix.features }}
+      FFMPEG_LICENSE: ${{ matrix.license }}
+      FFMPEG_NOTICE: ${{ matrix.notice }}
+      FFMPEG_PORTS: ${{ matrix.ports }}
     runs-on: windows-latest
     timeout-minutes: 150
     defaults:
       run:
         shell: pwsh
     steps:
+      # Only for the source notice that goes into the package.
+      - uses: actions/checkout@v7.0.1
+
       # Release-only triplets: the vcpkg crate links only lib/, never
       # debug/lib, so debug builds would double the build for nothing.
       # x64-windows-static-md-release is what Celesta links; the DLLs of
@@ -45,13 +75,15 @@ jobs:
           & "$root/bootstrap-vcpkg.bat" -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
           & "$root/vcpkg.exe" install --clean-after-build `
-            'ffmpeg[x264,vpx,opus]:x64-windows-static-md-release' `
-            'ffmpeg[x264,vpx,opus]:x64-windows-release'
+            "ffmpeg[$env:FFMPEG_FEATURES]:x64-windows-static-md-release" `
+            "ffmpeg[$env:FFMPEG_FEATURES]:x64-windows-release"
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg install failed' }
           "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
 
       # The package holds vcpkg's installed/ tree, which the vcpkg crate reads
-      # as it is (VCPKG_ROOT), along with the license files under share/.
+      # as it is (VCPKG_ROOT), with each port's licence under share/, and the
+      # source notice for what the package redistributes: FFMPEG-SOURCE.md for
+      # the LGPL build, GPL-SOURCE-OFFER.md for the GPL one.
       # Versions cannot be replaced, so each run publishes FFmpeg's version
       # with the run number as its prerelease part.
       - name: Pack
@@ -60,6 +92,7 @@ jobs:
           $match = $listing | Select-String '^ffmpeg:x64-windows-static-md-release\s+([0-9.]+)'
           if (-not $match) { throw "ffmpeg is not installed: $listing" }
           $version = "$($match.Matches[0].Groups[1].Value)-$env:GITHUB_RUN_NUMBER"
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "packaging/$env:FFMPEG_NOTICE") -Destination $env:VCPKG_ROOT
           $nuspec = Join-Path $env:RUNNER_TEMP "$env:PACKAGE_ID.nuspec"
           @"
           <?xml version="1.0" encoding="utf-8"?>
@@ -68,12 +101,13 @@ jobs:
               <id>$env:PACKAGE_ID</id>
               <version>$version</version>
               <authors>$env:GITHUB_REPOSITORY_OWNER</authors>
-              <description>FFmpeg with libx264, libvpx, and libopus, built by vcpkg $env:VCPKG_TAG for x64-windows-static-md-release and x64-windows-release.</description>
-              <license type="expression">GPL-2.0-or-later</license>
+              <description>FFmpeg[$env:FFMPEG_FEATURES] ($env:FFMPEG_LICENSE), built by vcpkg $env:VCPKG_TAG for x64-windows-static-md-release and x64-windows-release.</description>
+              <license type="expression">$env:FFMPEG_LICENSE</license>
               <repository type="git" url="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY" commit="$env:GITHUB_SHA" />
             </metadata>
             <files>
               <file src="installed\**\*" target="vcpkg\installed" />
+              <file src="$env:FFMPEG_NOTICE" target="vcpkg\$env:FFMPEG_NOTICE" />
             </files>
           </package>
           "@ | Set-Content -LiteralPath $nuspec -Encoding utf8
@@ -82,18 +116,53 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'nuget pack failed' }
           $nupkg = Join-Path $out "$env:PACKAGE_ID.$version.nupkg"
           # A published version cannot be replaced, so check that the package
-          # holds what setup-ffmpeg and the vcpkg crate read before publishing.
+          # holds what setup-ffmpeg, the vcpkg crate, and the licence notices
+          # need before publishing.
           $entries = tar -tf $nupkg
           if ($LASTEXITCODE -ne 0) { throw 'could not list the package' }
-          foreach ($expected in @(
-              'vcpkg/installed/vcpkg/status',
-              'vcpkg/installed/x64-windows-static-md-release/lib/avcodec.lib',
-              'vcpkg/installed/x64-windows-static-md-release/share/ffmpeg/copyright',
-              'vcpkg/installed/x64-windows-release/lib/avcodec.lib')) {
-            if ($entries -notcontains $expected) { throw "the package lacks $expected" }
+          $expected = @(
+            'vcpkg/installed/vcpkg/status',
+            'vcpkg/installed/x64-windows-static-md-release/lib/avcodec.lib',
+            'vcpkg/installed/x64-windows-release/lib/avcodec.lib',
+            "vcpkg/$env:FFMPEG_NOTICE")
+          foreach ($port in $env:FFMPEG_PORTS.Split(',')) {
+            $expected += "vcpkg/installed/x64-windows-static-md-release/share/$port/copyright"
+          }
+          foreach ($entry in $expected) {
+            if ($entries -notcontains $entry) { throw "the package lacks $entry" }
           }
           if (-not ($entries -like 'vcpkg/installed/x64-windows-release/bin/avcodec-*.dll')) {
             throw 'the package lacks the avcodec DLL'
+          }
+          # The standard package must never carry GPL code.
+          if ($env:FFMPEG_LICENSE -notlike 'GPL*' -and ($entries -like 'vcpkg/installed/*/share/x264/*')) {
+            throw 'the LGPL package contains x264'
+          }
+          # The licence the package is published under follows from the
+          # ffmpeg features vcpkg installed, which a dependency can add to:
+          # read them from vcpkg's status database before publishing, since a
+          # published version cannot be replaced. Neither package may be
+          # version3 (LGPL/GPL 3) or nonfree, and the LGPL one may not be gpl.
+          $installed = @()
+          foreach ($paragraph in ((Get-Content -Raw -LiteralPath "$env:VCPKG_ROOT/installed/vcpkg/status") -split '(?:\r?\n){2,}')) {
+            $fields = @{}
+            foreach ($line in ($paragraph -split '\r?\n')) {
+              if ($line -match '^([A-Za-z-]+): (.*)$') { $fields[$Matches[1]] = $Matches[2] }
+            }
+            if ($fields['Package'] -eq 'ffmpeg' -and $fields['Feature'] -and
+                $fields['Architecture'] -eq 'x64-windows-static-md-release' -and
+                $fields['Status'] -eq 'install ok installed') {
+              $installed += $fields['Feature']
+            }
+          }
+          Write-Host "ffmpeg features installed: $($installed -join ', ')"
+          foreach ($feature in $env:FFMPEG_FEATURES.Split(',')) {
+            if ($installed -notcontains $feature) { throw "ffmpeg[$feature] is not installed" }
+          }
+          $forbidden = @('nonfree', 'version3')
+          if ($env:FFMPEG_LICENSE -notlike 'GPL*') { $forbidden += 'gpl' }
+          foreach ($feature in $forbidden) {
+            if ($installed -contains $feature) { throw "the $env:FFMPEG_LICENSE package has ffmpeg[$feature]" }
           }
           "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
           "PACKAGE_PATH=$nupkg" >> $env:GITHUB_ENV
@@ -103,17 +172,22 @@ jobs:
       - name: Publish
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           dotnet nuget push $env:PACKAGE_PATH `
             --source "https://nuget.pkg.github.com/$env:GITHUB_REPOSITORY_OWNER/index.json" `
             --api-key $env:GITHUB_TOKEN
           if ($LASTEXITCODE -ne 0) { throw 'dotnet nuget push failed' }
           $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:PACKAGE_PATH).Hash.ToLowerInvariant()
+          $prefix = $env:VARIANT.ToUpperInvariant()
+          # Also in the log, where the API that reads job logs can find it.
+          Write-Host "${prefix}_PACKAGE_VERSION: '$env:PACKAGE_VERSION'"
+          Write-Host "${prefix}_PACKAGE_SHA256: '$sha256'"
           @(
             "Published ``$env:PACKAGE_ID`` ``$env:PACKAGE_VERSION``. Pin both values in ``.github/actions/setup-ffmpeg/action.yml``:"
             ''
             '```yaml'
-            "PACKAGE_VERSION: '$env:PACKAGE_VERSION'"
-            "PACKAGE_SHA256: '$sha256'"
+            "${prefix}_PACKAGE_VERSION: '$env:PACKAGE_VERSION'"
+            "${prefix}_PACKAGE_SHA256: '$sha256'"
             '```'
           ) -join "`n" >> $env:GITHUB_STEP_SUMMARY

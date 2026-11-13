@@ -18,13 +18,16 @@ import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
-# Homebrew's unversioned ffmpeg formula is FFmpeg 9, which Celesta does not support yet.
-FFMPEG_FORMULA = "ffmpeg@8"
 # The Cargo packages, in the plugins workspace, of the plugins the package
 # bundles into Contents/Resources/PlugIns, whose dependencies the license
 # inventory lists. The AVFoundation plugin links system frameworks only, so it
 # needs no dylibbundler.
 BUNDLED_PACKAGES = {"ffmpeg": "celesta-codec-ffmpeg", "avfoundation": "celesta-codec-avfoundation"}
+# The Homebrew formulas of the codec libraries the standard FFmpeg build links
+# (scripts/build-ffmpeg-linux.sh), which dylibbundler copies into the bundled
+# ffmpeg plugin: libopus and libvpx, both BSD licensed. FFmpeg itself is built
+# from source; packaging/FFMPEG-SOURCE.md covers it.
+STANDARD_NATIVE_FORMULAS = ("opus", "libvpx")
 MACHO_MAGIC = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
     b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -35,7 +38,7 @@ MACHO_MAGIC = {
 def run(*arguments, capture=False, env=None):
     result = subprocess.run(
         [str(argument) for argument in arguments], check=True, cwd=ROOT,
-        text=True, stdout=subprocess.PIPE if capture else None, env=env,
+        text=True, encoding="utf-8", stdout=subprocess.PIPE if capture else None, env=env,
     )
     return result.stdout.strip() if capture else None
 
@@ -108,7 +111,7 @@ def validate_dependencies(binary, contents, listing):
         if dependency.startswith("@executable_path/"):
             if binary.suffix != ".dylib":
                 executable_directory = binary.parent
-            elif binary.parent.parent.parent == contents / "Resources/PlugIns":
+            elif (binary.parent.parent / "celesta-plugin.json").is_file():
                 # A plugin's libraries, in <plugin>/Frameworks, load for the
                 # program its manifest names.
                 executable_directory = plugin_program(binary.parent.parent).parent
@@ -123,21 +126,19 @@ def validate_dependencies(binary, contents, listing):
             raise RuntimeError(f"Missing or external dependency in {binary}: {dependency}")
 
 
-def bundled_packages(metadata):
-    """The plugins workspace's packages the bundled plugins ship.
+def bundled_packages(metadata, names=None):
+    """The plugins workspace packages shipped by the requested plugins.
 
     That workspace also holds plugins the package does not bundle (VRM), so
     only the bundled plugins and what their normal and build dependencies
     reach in `cargo metadata`'s resolve graph are listed; a dependency a
     plugin has only for its tests is not shipped.
     """
+    names = set(BUNDLED_PACKAGES.values()) if names is None else set(names)
     packages = {package["id"]: package for package in metadata["packages"]}
-    roots = []
-    for name in BUNDLED_PACKAGES.values():
-        found = [member for member in metadata["workspace_members"] if packages[member]["name"] == name]
-        if len(found) != 1:
-            raise RuntimeError(f"The plugins workspace must have one {name} member, not {len(found)}")
-        roots += found
+    roots = [member for member in metadata["workspace_members"] if packages[member]["name"] in names]
+    if len(roots) != len(names):
+        raise RuntimeError(f"The plugins workspace must have {len(names)} requested codec members, not {len(roots)}")
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
     reached, pending = set(), roots
     while pending:
@@ -149,21 +150,18 @@ def bundled_packages(metadata):
     return [packages[package] for package in sorted(reached)]
 
 
-def collect_licenses(resources, target):
+def collect_licenses(resources, target, *, names=None, include_app=True, native_formulas=()):
     licenses = resources / "licenses"
-    licenses.mkdir()
-    for path in ROOT.glob("LICENSE*"):
-        shutil.copy2(path, licenses / path.name)
-    shutil.copy2(ROOT / "packaging" / "GPL-SOURCE-OFFER.md", licenses / "GPL-SOURCE-OFFER.md")
+    licenses.mkdir(exist_ok=True)
+    for name in ("LICENSE-MIT", "LICENSE-APACHE"):
+        shutil.copy2(ROOT / name, licenses / name)
     flags = ("--locked", "--format-version", "1", "--filter-platform", target)
-    # The release build downloads only the crates it compiles, so a crate the
-    # lockfile holds for tests alone (celesta-codec-test's lz4_flex) may not be
-    # downloaded yet: neither workspace is read --offline. The bundled plugins'
-    # crates are in the plugins workspace, and only theirs are listed.
-    root = json.loads(run("cargo", "metadata", *flags, capture=True))
+    # Release builds may not have fetched test-only lockfile dependencies;
+    # read both workspaces online, including when collecting just one plugin.
+    root = json.loads(run("cargo", "metadata", *flags, capture=True)) if include_app else {"packages": []}
     plugins = json.loads(run("cargo", "metadata", "--manifest-path", ROOT / "plugins/Cargo.toml", *flags, capture=True))
     packages = {}
-    for package in (*root["packages"], *bundled_packages(plugins)):
+    for package in (*root["packages"], *bundled_packages(plugins, names)):
         packages.setdefault(package["id"], package)
     inventory = []
     for package in packages.values():
@@ -187,17 +185,28 @@ def collect_licenses(resources, target):
             for name, path in texts.items():
                 shutil.copy2(path, destination / name)
     (licenses / "rust-packages.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
-    # Include the installed FFmpeg dependency closure's notices, including static dependencies.
-    formulas = [FFMPEG_FORMULA, *run("brew", "deps", "--installed", FFMPEG_FORMULA, capture=True).splitlines()]
-    (licenses / "homebrew.json").write_text(
-        run("brew", "info", "--json=v2", *formulas, capture=True), encoding="utf-8")
+    # The Homebrew codec libraries a plugin bundles, and what they depend on.
+    formulas = sorted({dependency for formula in native_formulas
+                       for dependency in [formula, *run("brew", "deps", "--installed", formula, capture=True).splitlines()]})
+    if formulas:
+        (licenses / "homebrew.json").write_text(
+            run("brew", "info", "--json=v2", *formulas, capture=True), encoding="utf-8")
     for formula in formulas:
         directory = Path(run("brew", "--prefix", formula, capture=True)).resolve()
-        destination = licenses / "native" / formula.replace("/", "-")
-        destination.mkdir(parents=True)
-        for path in directory.iterdir():
-            if path.is_file() and re.match(r"LICENSE|COPYING|NOTICE", path.name, re.I):
-                shutil.copy2(path, destination / path.name)
+        copy_formula_notices(formula, directory, licenses / "native" / formula.replace("/", "-"))
+
+
+def copy_formula_notices(formula, prefix, destination):
+    """Copy a Homebrew formula's licence files from its prefix into
+    `destination`, failing rather than leaving the folder empty: a bundled
+    library must ship with its notice, as on Linux."""
+    notices = [path for path in sorted(prefix.iterdir())
+               if path.is_file() and re.match(r"LICENSE|COPYING|NOTICE", path.name, re.I)]
+    if not notices:
+        raise RuntimeError(f"Homebrew formula {formula} has no licence file in {prefix}")
+    destination.mkdir(parents=True)
+    for path in notices:
+        shutil.copy2(path, destination / path.name)
 
 
 def notarize(path, profile):
@@ -299,24 +308,15 @@ def main():
     for source in (ROOT / "examples/minimal.celesta.json", ROOT / "examples/editor-demo.celesta.json",
                    ROOT / "packages/cli/examples/title.tsx"):
         shutil.copy2(source, examples / source.name)
-    collect_licenses(resources, target)
+    collect_licenses(resources, target, native_formulas=STANDARD_NATIVE_FORMULAS)
 
-    # FFmpeg, and the GPL libx264 with it, is linked by the codec plugin
-    # alone: Celesta's own executables link no FFmpeg, so the plugin folder
-    # holds the program and every Homebrew library it loads. The shared build
-    # script builds it in the plugins workspace (plugins/target, so not with
-    # CARGO_TARGET_DIR; with --skip-build Cargo finds it current) and lays the
-    # folder out; --target matches CARGO_BUILD_TARGET, where the script looks.
-    # Plugins go in Resources/PlugIns, not Contents/PlugIns: codesign takes
-    # everything in Contents/PlugIns for nested code, and a plugin folder also
-    # holds its manifest and licenses, so the app could not be signed there.
-    # In Resources they are sealed as resources, and their Mach-O files are
-    # signed one by one below like the app's other executables.
+    # Only the standard FFmpeg build is bundled; AVFoundation uses system frameworks.
+    # Seal manifests/licenses as resources rather than treating them as nested code.
     plugins = resources / "PlugIns"
     codec = plugins / "ffmpeg"
     codec_env = {name: value for name, value in build_env.items() if name != "CARGO_TARGET_DIR"}
     run(helpers / "node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins/ffmpeg",
-        "--out", plugins, "--target", target, env=codec_env)
+        "--distribution", "--out", plugins, "--target", target, env=codec_env)
     program = plugin_program(codec)
     frameworks_from_program = os.path.relpath(codec / "Frameworks", program.parent)
     run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", program,
@@ -328,7 +328,7 @@ def main():
     # AudioToolbox, AVFoundation), so its folder needs no Frameworks/ and no
     # dylibbundler; the Mach-O check below rejects any other dependency.
     run(helpers / "node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins/avfoundation",
-        "--out", plugins, "--target", target, env=codec_env)
+        "--distribution", "--out", plugins, "--target", target, env=codec_env)
     avfoundation_program = plugin_program(plugins / "avfoundation")
     frameworks = contents / "Frameworks"
     # Main executables and Node are both one directory below Contents.

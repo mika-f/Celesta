@@ -629,25 +629,23 @@ mod tests {
 
     #[test]
     fn ntsc_packets_are_timed_in_the_frame_rates_numerator() {
-        let settings: Settings = [("preset".to_owned(), SettingValue::String("medium".into()))]
-            .into_iter()
-            .collect();
+        let settings = Settings::new();
         let color = Color::bt709_limited();
         let mut opened = open(
-            VideoCodec::X264,
+            VideoCodec::ProRes,
             &VideoEncoderRequest {
-                component: "libx264",
+                component: "prores",
                 settings: &settings,
                 width: 32,
                 height: 16,
                 frame_rate: Rational::new(30_000, 1001),
                 timescale: 30_000,
-                offered: &[PixelFormat::Yuv420p],
+                offered: &[PixelFormat::Rgba16],
                 color: &color,
             },
         )
         .unwrap();
-        let frame = vec![128; 32 * 16 * 3 / 2];
+        let frame = vec![128; 32 * 16 * 8];
         let mut packets = Vec::new();
         for index in 0..10 {
             let encoded = opened.session.encode(index * 1001, &frame).unwrap();
@@ -662,8 +660,6 @@ mod tests {
             assert_eq!(packet.duration, 1001);
             assert_eq!(packet.dts % 1001, 0, "{packet:?}");
         }
-        // libx264 copies each frame in, so one frame serves them all.
-        assert_eq!(opened.session.frames.len(), 1);
     }
 
     #[test]
@@ -689,28 +685,6 @@ mod tests {
             assert_eq!(key, "tune");
             assert!(message.contains("film"), "{message}");
         }
-        let settings: Settings = [("tune".to_owned(), SettingValue::String("cinema".into()))]
-            .into_iter()
-            .collect();
-        let color = Color::bt709_limited();
-        let result = open(
-            VideoCodec::X264,
-            &VideoEncoderRequest {
-                component: "libx264",
-                settings: &settings,
-                width: 32,
-                height: 16,
-                frame_rate: Rational::new(30, 1),
-                timescale: 30,
-                offered: &[PixelFormat::Yuv420p],
-                color: &color,
-            },
-        );
-        assert!(
-            matches!(&result, Err(MediaError::InvalidSettings { key, .. }) if key == "tune"),
-            "{:?}",
-            result.err()
-        );
     }
 
     #[test]

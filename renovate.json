@@ -30,7 +30,7 @@
       "versioningTemplate": "node"
     },
     {
-      "description": "FFmpeg built from source for Linux, in CI and in the Dockerfile",
+      "description": "FFmpeg built from source for Linux, in CI and in the Dockerfile. A bump also needs the new tarball's SHA-256 in scripts/build-ffmpeg-linux.sh, whose build fails without it",
       "customType": "regex",
       "managerFilePatterns": [
         "/^packaging/linux/Dockerfile$/",

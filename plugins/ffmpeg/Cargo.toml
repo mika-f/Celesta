@@ -22,7 +22,7 @@ rayon = "1.12.0"
 # plugin.json, read for the decoders and printed for `--manifest`.
 serde_json = "1.0.154"
 
-# macOS packages bundle Homebrew dylibs; retain static linking elsewhere.
+# macOS packages bundle FFmpeg dylibs; retain static linking elsewhere.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 ez-ffmpeg = { version = "0.19", features = ["static"] }
 
@@ -32,7 +32,3 @@ celesta-gpu-renderer = { path = "../../crates/gpu-renderer", version = "=0.9.0" 
 celesta-project = { path = "../../crates/project", version = "=0.9.0" }
 png = "0.18.1"
 tempfile = "3.23.0"
-
-# The codec bench's CPU times (examples/codec-bench.rs).
-[target.'cfg(unix)'.dev-dependencies]
-libc = "0.2.191"

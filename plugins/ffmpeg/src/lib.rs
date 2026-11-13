@@ -3,14 +3,10 @@
 //! libavcodec and libavformat through `ffmpeg-sys-next` for encoding and
 //! muxing).
 //!
-//! The `celesta-codec-ffmpeg` program serves [`FfmpegCodec`] over the media
-//! role of the plugin protocol (`celesta_media::protocol`), so Celesta
-//! itself links no FFmpeg: an FFmpeg build with GPL components (such as
-//! libx264) makes only this program GPL licensed. Its one decoder,
-//! [`DECODER_ID`], reads whatever FFmpeg does; its video encoders are
-//! `libx264`, `prores`, and `vp9`, its audio encoders `aac`, `opus`, and
-//! `pcm`, and its muxers `mp4`, `mov`, and `webm`. Tests and tools may also
-//! use [`FfmpegCodec`] in their own process, through [`install`].
+//! The default provider serves decoding, ProRes, VP9, AAC, Opus, PCM, and
+//! muxing on LGPL FFmpeg (with libvpx and libopus, both BSD licensed).
+//! [`FfmpegCodec::x264`] shares the implementation with the separate
+//! `ffmpeg-x264` process, which alone exposes libx264 and links GPL FFmpeg.
 
 mod audio_encoder;
 mod color;
@@ -21,6 +17,7 @@ mod ffi;
 mod h264;
 mod muxer;
 mod probe;
+mod process;
 mod sequential;
 mod tags;
 #[cfg(test)]
@@ -28,13 +25,14 @@ mod tests;
 mod video_encoder;
 
 pub use decoder::FfmpegBackend;
+pub use process::run_plugin;
 
 use audio_encoder::AudioSession;
 use celesta_media::{
     AudioBuffer, AudioDecoder, AudioEncoder, AudioEncoderOpened, AudioEncoderRequest,
-    ComponentDescription, Decoder, Encoded, MediaError, MediaProbe, MediaProvider, MediaRegistry,
-    Muxer, MuxerRequest, ProviderFactory, RegisteredPlugin, SessionId, TrackPacket, VideoEncoder,
-    VideoEncoderOpened, VideoEncoderRequest, VideoFrame, VideoRequest,
+    ComponentDescription, ComponentKind, Decoder, Encoded, MediaError, MediaProbe, MediaProvider,
+    MediaRegistry, Muxer, MuxerRequest, ProviderFactory, RegisteredPlugin, SessionId, TrackPacket,
+    VideoEncoder, VideoEncoderOpened, VideoEncoderRequest, VideoFrame, VideoRequest,
 };
 use celesta_plugin_host::{MediaManifest, MediaOrigin};
 use components::{AudioCodec, MuxerFormat, VideoCodec};
@@ -54,9 +52,32 @@ pub const DECODER_ID: &str = "ffmpeg";
 /// The plugin's manifest source, which declares its components.
 const PLUGIN_JSON: &str = include_str!("../plugin.json");
 
+/// Which FFmpeg build a program links, and so which components it serves.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Profile {
+    /// LGPL FFmpeg: the decoder, the muxers, and every encoder but libx264.
+    #[default]
+    Standard,
+    /// GPL FFmpeg with libx264, serving that one encoder.
+    X264,
+}
+
+impl Profile {
+    /// The build that serves the component `id` of `kind`: the one place a
+    /// component is assigned to a program.
+    fn of(kind: ComponentKind, id: &str) -> Self {
+        if kind == ComponentKind::VideoEncoder && id == VideoCodec::X264.id() {
+            Self::X264
+        } else {
+            Self::Standard
+        }
+    }
+}
+
 /// A [`MediaProvider`] on the linked FFmpeg libraries.
 #[derive(Default)]
 pub struct FfmpegCodec {
+    profile: Profile,
     decoder: FfmpegBackend,
     video: HashMap<SessionId, VideoSession>,
     audio: HashMap<SessionId, AudioSession>,
@@ -70,10 +91,24 @@ impl FfmpegCodec {
         Self::default()
     }
 
+    /// The encoder-only provider used by the separate `ffmpeg-x264` program.
+    pub fn x264() -> Self {
+        Self {
+            profile: Profile::X264,
+            ..Self::default()
+        }
+    }
+
     /// A [`ProviderFactory`] making an [`FfmpegCodec`] in this process,
     /// whatever it is for.
     pub fn factory() -> ProviderFactory {
         Arc::new(|_kill, _use| Ok(Box::new(Self::new()) as Box<dyn MediaProvider>))
+    }
+
+    /// Whether this program serves the component `id` of `kind`, or must
+    /// answer that it has no such component.
+    fn serves(&self, kind: ComponentKind, id: &str) -> bool {
+        Profile::of(kind, id) == self.profile
     }
 
     fn next_session(&mut self) -> SessionId {
@@ -175,11 +210,18 @@ fn decoded<T>(result: Result<T, MediaError>) -> Result<T, MediaError> {
 
 impl MediaProvider for FfmpegCodec {
     fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
-        Ok(components::describe())
+        Ok(components::describe()
+            .into_iter()
+            .filter(|component| self.serves(component.kind, &component.id))
+            .collect())
     }
 
     fn decoder(&mut self) -> Option<&mut dyn Decoder> {
-        Some(self)
+        if self.profile == Profile::Standard {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
@@ -187,16 +229,27 @@ impl MediaProvider for FfmpegCodec {
     }
 
     fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
-        Some(self)
+        if self.profile == Profile::Standard {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn muxer(&mut self) -> Option<&mut dyn Muxer> {
-        Some(self)
+        if self.profile == Profile::Standard {
+            Some(self)
+        } else {
+            None
+        }
     }
 }
 
 impl Decoder for FfmpegCodec {
     fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
+        if !self.serves(ComponentKind::Decoder, decoder) {
+            return Err(no_component("decoder", decoder));
+        }
         check_decoder(decoder)?;
         self.decoder.probe(path).cloned()
     }
@@ -206,6 +259,9 @@ impl Decoder for FfmpegCodec {
         decoder: &str,
         request: &VideoRequest<'_>,
     ) -> Result<VideoFrame, MediaError> {
+        if !self.serves(ComponentKind::Decoder, decoder) {
+            return Err(no_component("decoder", decoder));
+        }
         check_decoder(decoder)?;
         decoded(match request.sequential {
             Some(sequential) => self.decoder.decode_sequential(
@@ -225,6 +281,9 @@ impl Decoder for FfmpegCodec {
         sample_rate: u32,
         channels: u16,
     ) -> Result<AudioBuffer, MediaError> {
+        if !self.serves(ComponentKind::Decoder, decoder) {
+            return Err(no_component("decoder", decoder));
+        }
         check_decoder(decoder)?;
         decoded(self.decoder.decode_audio(path, sample_rate, channels))
     }
@@ -236,6 +295,7 @@ impl VideoEncoder for FfmpegCodec {
         request: &VideoEncoderRequest<'_>,
     ) -> Result<VideoEncoderOpened, MediaError> {
         let codec = VideoCodec::from_id(request.component)
+            .filter(|_| self.serves(ComponentKind::VideoEncoder, request.component))
             .ok_or_else(|| no_component("video encoder", request.component))?;
         let opened = video_encoder::open(codec, request)?;
         let session = self.next_session();
@@ -275,6 +335,7 @@ impl AudioEncoder for FfmpegCodec {
         request: &AudioEncoderRequest<'_>,
     ) -> Result<AudioEncoderOpened, MediaError> {
         let codec = AudioCodec::from_id(request.component)
+            .filter(|_| self.serves(ComponentKind::AudioEncoder, request.component))
             .ok_or_else(|| no_component("audio encoder", request.component))?;
         let opened = audio_encoder::open(codec, request)?;
         let session = self.next_session();
@@ -314,6 +375,7 @@ impl AudioEncoder for FfmpegCodec {
 impl Muxer for FfmpegCodec {
     fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
         let format = MuxerFormat::from_id(request.component)
+            .filter(|_| self.serves(ComponentKind::Muxer, request.component))
             .ok_or_else(|| no_component("muxer", request.component))?;
         let opened = muxer::open(format, request)?;
         let session = self.next_session();
@@ -353,4 +415,52 @@ impl Muxer for FfmpegCodec {
 
 pub(crate) fn ffmpeg_error(error: ez_ffmpeg::error::Error) -> MediaError {
     MediaError::Codec(format!("FFmpeg operation failed: {error}"))
+}
+
+/// Checks the libraries loaded by a distribution-validation command.
+/// Local startup does not invoke this check.
+pub fn check_lgpl() -> Result<(), String> {
+    check_license(PLUGIN_ID, false)
+}
+
+/// Whether a library reporting `license` may ship with the licence texts
+/// the plugins carry: `LICENSE-LGPL-2.1` in `ffmpeg`, and in `ffmpeg-x264`
+/// (`gpl`) `LICENSE-GPL-2.0` too. A `version3` build (LGPL or GPL 3) or a
+/// nonfree one is refused rather than shipped beside the wrong text.
+fn license_carried(license: &str, gpl: bool) -> bool {
+    license == "LGPL version 2.1 or later" || (gpl && license == "GPL version 2 or later")
+}
+
+/// Validates one profile's distribution license and names the loaded libraries.
+fn check_license(plugin: &str, gpl: bool) -> Result<(), String> {
+    use std::ffi::CStr;
+    // SAFETY: FFmpeg returns static, NUL-terminated license strings.
+    let licenses = unsafe {
+        [
+            ("avcodec", ffmpeg_sys_next::avcodec_license()),
+            ("avformat", ffmpeg_sys_next::avformat_license()),
+            ("avfilter", ffmpeg_sys_next::avfilter_license()),
+            ("avdevice", ffmpeg_sys_next::avdevice_license()),
+            ("avutil", ffmpeg_sys_next::avutil_license()),
+            ("swscale", ffmpeg_sys_next::swscale_license()),
+            ("swresample", ffmpeg_sys_next::swresample_license()),
+        ]
+        .map(|(name, license)| (name, CStr::from_ptr(license).to_string_lossy()))
+    };
+    if licenses
+        .iter()
+        .all(|(_, license)| license_carried(license, gpl))
+    {
+        Ok(())
+    } else {
+        let actual = licenses
+            .iter()
+            .map(|(name, license)| format!("{name}: {license}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let expected = if gpl { "GPL/LGPL" } else { "LGPL-only" };
+        Err(format!(
+            "{plugin} distribution requires {expected} FFmpeg libraries; loaded {actual}"
+        ))
+    }
 }

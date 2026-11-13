@@ -6,12 +6,12 @@ macOS ではアプリ全体を Applications にコピーしてから起動しま
 :::
 :::toggle[ソースビルドで FFmpeg が見つからない]
 
-実行ファイルだけでなく、8.1.x の開発ライブラリが入っているか確認します。macOS ではメディアプラグインをビルドするシェルで `PKG_CONFIG_PATH` を設定します。Windows は `VCPKG_ROOT` と MSVC ビルドツールを確認し、Linux は `PKG_CONFIG_PATH` に `/opt/ffmpeg8/lib/pkgconfig` などのビルド済み FFmpeg を指定します。[ソースビルドの準備](/ja/docs/build-from-source/)をご覧ください。
+実行ファイルだけでなく、8.1.x の開発ライブラリが入っているか確認します。macOS ではメディアプラグインをビルドするシェルで `PKG_CONFIG_PATH` を設定します。Windows は `VCPKG_ROOT` と MSVC ビルドツールを確認し、Linux は `PKG_CONFIG_PATH` に `/opt/ffmpeg8-standard/lib/pkgconfig` などのビルド済み FFmpeg を指定します。[ソースビルドの準備](/ja/docs/build-from-source/)をご覧ください。
 
 :::
 :::toggle[動画や音声が表示されない、書き出しが unsupported_output や no_decoder で失敗する]
 
-Celesta は動画と音声をメディアプラグインで読み書きします。プラグインがないと、Problems タブに **No media decoder can run** と表示されます。パッケージでは、Celesta に同梱のプラグインフォルダー（`Celesta.exe` の隣の `plugins\ffmpeg`、macOS アプリでは `Contents/Resources/PlugIns/ffmpeg`）に `ffmpeg` プラグインが残っているか確認するか、パッケージを入れ直してください。ソースビルドでは、リポジトリのルートで `node scripts/plugins/build.mts plugins/ffmpeg` を実行し、Celesta を実行するシェルで `CELESTA_PLUGIN_PATH` に `plugins/dist` の絶対パスを設定します（`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`）。古いチェックアウトでビルドした `plugins/dist/ffmpeg` は、`celesta-plugin.json` に `"roles": ["codec"]` があることがあり、Celesta はそれを無視します。ビルドし直してください。メディアプラグインがないと、動画の書き出しはその拡張子を書けるマルチプレクサーがないので `unsupported_output` で失敗し、そのヒントがプラグインの入れ方を伝えます。静止画の書き出しは動画や音声のファイルを読むときに `no_decoder` で失敗します。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがないとき（libx264 のない LGPL ビルドなど）、書き出しは `component_unavailable` で理由とともに失敗します。`Celesta-export --list-components --check` で、どのコンポーネントが使えるかを確認できます。[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)をご覧ください。
+Celesta は動画と音声をメディアプラグインで読み書きします。プラグインがないと、Problems タブに **No media decoder can run** と表示されます。パッケージでは、Celesta に同梱のプラグインフォルダー（`Celesta.exe` の隣の `plugins\ffmpeg`、macOS アプリでは `Contents/Resources/PlugIns/ffmpeg`）に `ffmpeg` プラグインが残っているか確認するか、パッケージを入れ直してください。ソースビルドでは、リポジトリのルートで `node scripts/plugins/build.mts plugins/ffmpeg` を実行し、Celesta を実行するシェルで `CELESTA_PLUGIN_PATH` に `plugins/dist` の絶対パスを設定します（`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"`）。古いチェックアウトでビルドした `plugins/dist/ffmpeg` は、`celesta-plugin.json` に `"roles": ["codec"]` があることがあり、Celesta はそれを無視します。ビルドし直してください。メディアプラグインがないと、動画の書き出しはその拡張子を書けるマルチプレクサーがないので `unsupported_output` で失敗し、そのヒントがプラグインの入れ方を伝えます。静止画の書き出しは動画や音声のファイルを読むときに `no_decoder` で失敗します。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがないとき、または追加のエンコーダープラグインがない場合（H.264 は同梱のプラットフォームエンコーダーが利用できない場合に `ffmpeg-x264` が必要）、書き出しは `component_unavailable` で理由とともに失敗します。`Celesta-export --list-components --check` で、どのコンポーネントが使えるかを確認できます。入れてあっても許可していない `ffmpeg-x264` は読み飛ばされるので、そのエンコーダーはインストールされていない扱いになります。Plugins タブか `--allow-plugin ffmpeg-x264` で許可してください。プラットフォームの H.264 エンコーダーが見つかっても利用できない場合は、追加プラグインを入れて `ffmpeg-x264/libx264` を選ぶか、`.mov` にして標準プラグインの ProRes を使ってください。書き出しページにもこれらの復旧方法が表示されます。[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)をご覧ください。
 
 書き出しが `unsupported_media` で失敗したときは、デコーダーは見つかったものの、どれもそのファイルを読めませんでした。MP4 や WAV のような `ffmpeg` プラグインが読める形式に変換するか、そのファイルを読めるデコーダーを持つプラグインを入れてください。
 
@@ -50,7 +50,7 @@ Celesta は React コンポジションのランタイムと標準出力を通�
 :::
 :::toggle[書き出しが unknown_preset や invalid_presets で失敗する]
 
-`unknown_preset` は、`--preset`（MCP と TypeScript では `preset`）の名前のプリセットが、どのプリセットファイルにもないという意味です。Celesta は `--preset-file`、プロジェクトのルートにある `export-presets.json`、`settings.json` の隣にある自分のファイルの順に探します。名前の大文字と小文字は区別されます。メッセージが `the default preset … is in no presets file` のときは、プロジェクトのファイルの `"default"` が、どのファイルにもないプリセットを指しています。名前を直すか、`"default"` を消してください。`veryfast` のような名前は x264 のプリセットで、これは設定です。ヒントのとおり `--video-option preset=veryfast` を使います。
+`unknown_preset` は、`--preset`（MCP と TypeScript では `preset`）の名前のプリセットが、どのプリセットファイルにもないという意味です。Celesta は `--preset-file`、プロジェクトのルートにある `export-presets.json`、`settings.json` の隣にある自分のファイルの順に探します。名前の大文字と小文字は区別されます。メッセージが `the default preset … is in no presets file` のときは、プロジェクトのファイルの `"default"` が、どのファイルにもないプリセットを指しています。名前を直すか、`"default"` を消してください。`veryfast` のような名前は x264 のプリセットで、別配布の `ffmpeg-x264/libx264` エンコーダーの設定です。`ffmpeg-x264` をインストールしたうえで、ヒントのとおり `--video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast` を使います。
 
 `invalid_presets` は、書き出しが探す必要のあったプリセットファイルを読めないか、JSON として正しくないか、`version` が `1` でないという意味です。メッセージにファイルが表示されるので、直すか削除してください。プロジェクトのプリセットが先に見つかり、壊れているのが自分のファイルだけのときは、同じ名前のプリセットがあるか自分のファイルを確かめられなかったことを警告して、そのまま書き出します。`--preset-file` のファイルに同じ問題があるときは、ほかの引数と同じく引数の誤りとして拒否されます。[書き出しプリセット](/ja/docs/export/#書き出しプリセット)をご覧ください。
 

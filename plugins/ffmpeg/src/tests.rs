@@ -537,3 +537,21 @@ fn decodes_aac_without_the_encoder_padding_after_its_last_sample() {
 fn the_in_process_plugin_takes_its_name_from_plugin_json() {
     assert_eq!(crate::registered().name, "FFmpeg");
 }
+
+#[test]
+fn only_the_carried_licence_versions_pass_the_distribution_check() {
+    use crate::license_carried;
+    assert!(license_carried("LGPL version 2.1 or later", false));
+    assert!(license_carried("LGPL version 2.1 or later", true));
+    assert!(license_carried("GPL version 2 or later", true));
+    assert!(!license_carried("GPL version 2 or later", false));
+    // FFmpeg's --enable-version3 builds and nonfree ones.
+    for license in [
+        "LGPL version 3 or later",
+        "GPL version 3 or later",
+        "nonfree and unredistributable",
+    ] {
+        assert!(!license_carried(license, false), "{license}");
+        assert!(!license_carried(license, true), "{license}");
+    }
+}

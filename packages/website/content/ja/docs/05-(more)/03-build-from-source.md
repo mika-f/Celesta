@@ -6,44 +6,77 @@
 
 ## 1. OS の準備
 
-::::tabs[ソースをビルドする OS]{default="macOS"}
+メディアプラグインは FFmpeg 8.1.x を 2 つのビルドに分けます。`ffmpeg` は標準の
+LGPL ビルド（デコード、ProRes、VP9、AAC、Opus、PCM、muxer）で、zlib と、BSD
+ライセンスの libopus・libvpx をリンクします。追加の `ffmpeg-x264` は libx264 による
+H.264 を提供し、GPL を有効にするのはこのビルドだけです。2 つのビルド先の prefix は
+必ず別々にしてください。
+
+手順 2 でソースを取得した後、リポジトリのルートで OS に合うコマンドを実行します。
+プラグインをビルドするシェルで、設定した環境変数を保持してください。
+
+::::tabs[Source build platform]{default="macOS"}
 :::tab[macOS]
 
-Xcode Command Line Tools と Homebrew をインストールします。続いてライブラリを入れ、メディアプラグインをビルドするシェル（手順 4）で `pkg-config` に keg-only の FFmpeg パッケージを指定します。
+Xcode Command Line Tools と Homebrew を用意します。スクリプトは、それぞれ別の
+prefix に FFmpeg の dylib を構築します。
 
-```sh title="macOS の依存関係"
-xcode-select --install
-brew install ffmpeg@8 pkg-config
-export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"
+```sh title="ネイティブビルドの依存関係"
+brew install pkg-config nasm x264 libvpx opus
+export PKG_CONFIG_PATH="$(brew --prefix x264)/lib/pkgconfig:$(brew --prefix opus)/lib/pkgconfig:$(brew --prefix libvpx)/lib/pkgconfig"
+for variant in standard x264; do
+  FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
+done
+export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
+export FFMPEG_X264_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/x264/lib/pkgconfig"
 ```
+
+標準版は Homebrew の `opus` と `libvpx`、x264 版は `x264` をリンクします。スクリプトの
+実行中は、それらの `pkgconfig` フォルダーを `PKG_CONFIG_PATH` に含めてください。
+
+ローカル利用には Homebrew の `ffmpeg@8` も標準プラグインで使えます。
+`brew install ffmpeg@8 pkg-config` の後、
+`PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"` を設定します。
+GPL 構成も利用できますが、標準プラグインは libx264 のエンコーダーを公開しません。
 
 :::
 :::tab[Windows]
 
-MSVC の C++ ビルドツールと vcpkg をインストールします。`VCPKG_ROOT` に vcpkg のチェックアウト先を設定し、以下の FFmpeg パッケージをインストールします。MSVC ツールチェーンを設定したシェルで Cargo を実行してください。
-
-```sh title="Windows の依存関係"
-vcpkg install ffmpeg[x264,vpx,opus]:x64-windows-static-md
-```
-
-vcpkg は、FFmpeg 8.1.x を提供するリリース（例：2026.07.29）を使ってください。新しいポートでは、未対応の FFmpeg 9 が提供される場合があります。
+Windows では vcpkg 2026.07.29（FFmpeg 8.1.x）と MSVC のビルドツールを使います。
+`ffmpeg[zlib,opus,vpx]`（標準）と `ffmpeg[x264]` を `x64-windows-static-md` triplet で、
+それぞれ別の vcpkg インストール先に構築します。`VCPKG_ROOT` に標準版のルート、
+`FFMPEG_X264_VCPKG_ROOT` に x264 版のルートを指定します（triplet は必要に応じて
+`FFMPEG_X264_VCPKGRS_TRIPLET` で指定できます）。完全な設定例はリポジトリの
+setup-ffmpeg CI アクションにあります。ローカル利用には開発ライブラリ付きのシステム FFmpeg 8.1.x
+（GPL 構成を含む）も使えます。配布パッケージには上記の構成の分離が必要です。
 
 :::
 :::tab[Linux]
 
-Ubuntu 24.04 LTS を含む多くのディストリビューションでは FFmpeg 8.1.x が提供されないため、手順 2 でソースを取得した後、リポジトリの `scripts/build-ffmpeg-linux.sh` でビルドします。`libx264`、`libvpx`、`libopus` を含む静的ライブラリを `/opt/ffmpeg8` に構築し、4 コアで約 5 分かかります。Cargo は `libclang-dev` で FFmpeg のバインディングを生成します。Debian と Ubuntu では、リポジトリのルートで以下を実行します。
+スクリプトは FFmpeg の静的ライブラリを構築します。Debian と Ubuntu では、
+ネイティブビルドとエディターに必要なシステムライブラリを先にインストールします。
 
-```sh title="Linux の依存関係"
+```sh title="ネイティブビルドの依存関係"
 sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libvpx-dev libopus-dev libclang-dev
 sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev
-sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
-export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
+for variant in standard x264; do
+  FFMPEG_VARIANT="$variant" scripts/build-ffmpeg-linux.sh "$PWD/plugins/target/ffmpeg/$variant"
+done
+export PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/standard/lib/pkgconfig"
+export FFMPEG_X264_PKG_CONFIG_PATH="$PWD/plugins/target/ffmpeg/x264/lib/pkgconfig"
 ```
 
-メディアプラグインをビルドするシェル（手順 4 の `node scripts/plugins/build.mts plugins/ffmpeg`）で `PKG_CONFIG_PATH` を設定します。Celesta 本体のクレートは FFmpeg をリンクしません。FFmpeg はメディアプラグインのプログラムにリンクされるので `LD_LIBRARY_PATH` は不要です。ディストリビューションが FFmpeg 8.1.x を提供する場合は、スクリプトの代わりに `pkg-config` と `libavcodec`、`libavformat`、`libavfilter`、`libavdevice`、`libavutil`、`libswscale`、`libswresample` の開発パッケージをインストールしてください。GPU なしでの書き出しは、[動画の書き出し](/ja/docs/export/)をご覧ください。
+標準版には `libopus-dev` と `libvpx-dev`、x264 版には `libx264-dev` が必要です。
 
 :::
 ::::
+
+ローカルビルドではシステムの FFmpeg 8.1.x も利用できますが、標準版の FFmpeg には
+libvpx と libopus が含まれている必要があります。`scripts/plugins/build.mts` はネイティブ
+ビルドのたびに `--check-build` でエンコーダーを実際に開き、足りなければ停止します。
+`--distribution` を指定すると、配置の前に `--check-license` でライセンスも検査します。
+標準版の配布には LGPL のみの FFmpeg が必要です。配布用の検査は対象 OS・アーキテクチャ上で
+実行してください。クロスビルドで検査を省略することはできません。
 
 ## 2. ソースを取得
 
@@ -66,7 +99,7 @@ pnpm run build:runtime
 メディアプラグインを一度ビルドします（ソースを更新したらもう一度）。Celesta は動画と音声をこれらで読み書きし、`CELESTA_PLUGIN_PATH` から見つけます。`plugins/avfoundation`（VideoToolbox と AVFoundation）は macOS でだけ、`plugins/mediafoundation`（Media Foundation）は Windows でだけビルドされます。それ以外の OS ではスクリプトが `avfoundation: skipped, it is built for macos only` または `mediafoundation: skipped, it is built for windows only` と表示して残りをビルドするので、Linux では FFmpeg だけがビルドされます。この変数には絶対パスを指定し、Celesta を実行する各シェルで設定してください。
 
 ```sh title="メディアプラグインをビルド"
-node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation plugins/mediafoundation
+node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264 plugins/avfoundation plugins/mediafoundation
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 

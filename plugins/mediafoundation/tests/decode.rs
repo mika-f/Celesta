@@ -5,6 +5,9 @@
 //! and that it leaves no file held open.
 #![cfg(windows)]
 
+#[path = "../../ffmpeg/tests/support/program.rs"]
+mod program;
+
 use celesta_codec_ffmpeg::FfmpegCodec;
 use celesta_codec_mediafoundation::{DECODER_ID, MfCodec, gate};
 use celesta_composition::Rational;
@@ -264,9 +267,16 @@ fn grey(index: usize) -> u8 {
 /// [`click`] (its `elst` skips 1024 frames of priming).
 fn ffmpeg_mov(output: &Path) {
     let mut ffmpeg = FfmpegCodec::new();
+    let executable = program::executable("ffmpeg-x264");
+    let mut x264 = celesta_media::MediaProcess::start(
+        &executable,
+        executable.parent().unwrap(),
+        &Default::default(),
+    )
+    .unwrap();
     let frames = (0..10).map(|index| nv12_solid([grey(index), 128, 128]));
     let (video, video_track) = encode_video(
-        &mut ffmpeg,
+        &mut x264,
         "libx264",
         &Settings::new(),
         PixelFormat::Nv12,

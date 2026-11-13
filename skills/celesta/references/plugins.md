@@ -85,25 +85,51 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `audioEncoders` (`id`, `name`, `codecs`, and a video encoder's
   `inputFormats`), and `muxers` (`id`, `name`, `extensions`, `video`,
   `audio`, `defaultVideo`, `defaultAudio`, `trimsLeadingAudio`); a
-  component is `<plugin>/<id>`, such as `ffmpeg/libx264`). The app's packages
-  bundle `ffmpeg`; the macOS app also bundles `avfoundation` (VideoToolbox,
-  AudioToolbox, and AVFoundation; MIT/Apache-2.0, system frameworks only),
-  and the Windows app `mediafoundation` (Media Foundation's H.264, HEVC,
-  and AAC encoders and a decoder, no muxer; MIT/Apache-2.0, Windows'
-  libraries only), whose components are used only when named, since
-  `ffmpeg` ranks first among bundled plugins
-  ([export.md](export.md#avfoundation-components-macos),
-  [export.md](export.md#media-foundation-components-windows)).
-  A source build makes them with
-  `node scripts/plugins/build.mts plugins/ffmpeg plugins/avfoundation plugins/mediafoundation`
-  (each OS-native plugin is skipped on the other systems:
-  `avfoundation: skipped, it is built for macos only`,
-  `mediafoundation: skipped, it is built for windows only`) and points
-  `CELESTA_PLUGIN_PATH` at the absolute path of `plugins/dist`
-  (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root).
-  `cargo install` uses `celesta-codec-ffmpeg` beside Celesta's executables
-  (it answers `--manifest`) when no plugin folder other than a project's
-  has `ffmpeg`; that lookup is skipped in a Cargo build folder such as
+  component is `<plugin>/<id>`, such as `ffmpeg-x264/libx264`). The app's packages
+  bundle only `ffmpeg` among the FFmpeg variants (standard LGPL: decoder,
+  ProRes, VP9, AAC, Opus, PCM, MP4/MOV/WebM muxers; linked with zlib and the
+  BSD-licensed libopus and libvpx). `ffmpeg-x264` (GPL: H.264 with libx264) is
+  the one separate native ZIP download on the matching GitHub release:
+  `Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip`; extract
+  and copy the entire plugin folder into the user plugin folder, reload and
+  allow it in the app (or CLI `--allow-plugin ffmpeg-x264`, `--plugin-dir`).
+  Libraries and notices are included, so no separate FFmpeg install is needed.
+  The standard package exports ProRes/MOV and WebM (VP9 with alpha, Opus)
+  without addons. MP4 needs standard+x264 on Linux; bundled native H.264 is
+  the default on macOS/Windows when available. Explicitly name
+  `ffmpeg-x264/libx264` to select the download. Removing x264 keeps H.264
+  decoding. Only `ffmpeg/libx264` moved, to `ffmpeg-x264/libx264` (no alias);
+  `ffmpeg/opus` and `ffmpeg/vp9` keep their IDs.
+  A source build makes both with
+  `node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264`.
+  The macOS app also bundles `avfoundation`, and the Windows app
+  `mediafoundation`; both use system libraries under MIT/Apache-2.0.
+  Include `plugins/avfoundation plugins/mediafoundation` in source builds;
+  each is skipped on other systems.
+  Before building, make two separate native prefixes with
+  `FFMPEG_VARIANT=standard|x264 scripts/build-ffmpeg-linux.sh <prefix>`:
+  `PKG_CONFIG_PATH` selects standard (LGPL, libopus/libvpx) and
+  `FFMPEG_X264_PKG_CONFIG_PATH` the x264 build (GPL). Windows uses
+  `VCPKG_ROOT` (`ffmpeg[zlib,opus,vpx]`) and `FFMPEG_X264_VCPKG_ROOT`
+  (`ffmpeg[x264]`, optional `FFMPEG_X264_VCPKGRS_TRIPLET`) instead.
+  After building, set `CELESTA_PLUGIN_PATH` at the absolute path of
+  `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the
+  repository root).
+  Run tests per package:
+  `node scripts/plugins/run-cargo.mts plugins test -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-x264`.
+  Local builds may link a system GPL FFmpeg 8.1.x, but every native build
+  opens each encoder (`--check-build`), so the standard FFmpeg needs libvpx
+  and libopus. `--distribution` also validates licenses (`--check-license`):
+  standard requires LGPL-only libraries. It refuses cross-compiles it cannot
+  validate on the host.
+  The root `LICENSE-MIT`/`LICENSE-APACHE` cover Celesta's source. FFmpeg
+  license texts live at `plugins/ffmpeg/LICENSE-LGPL-2.1` and
+  `plugins/ffmpeg-x264/LICENSE-GPL-2.0`; packages keep them and the source
+  notices in each plugin's `licenses/`, not the package-wide license folder.
+  `cargo install` uses `celesta-codec-ffmpeg` and `celesta-codec-ffmpeg-x264`
+  beside Celesta's executables
+  (each answers `--manifest`) when no plugin folder other than a project's
+  has a plugin with that id (`ffmpeg`, `ffmpeg-x264`); that lookup is skipped in a Cargo build folder such as
   `target/release`.
 - A plugin with the older `"roles": ["codec"]` is ignored: rebuild
   `plugins/ffmpeg`, or have the user install a release for their Celesta.

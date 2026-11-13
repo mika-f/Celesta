@@ -41,12 +41,12 @@ test('a video export passes its component flags', () => {
     source: 'film.tsx',
     output: 'film.mp4',
     muxer: 'ffmpeg/mp4',
-    videoEncoder: { id: 'ffmpeg/libx264', options: { crf: 20, preset: 'slow' } },
+    videoEncoder: { id: 'ffmpeg-x264/libx264', options: { crf: 20, preset: 'slow' } },
     audioEncoder: 'none',
   }).filter((arg) => /^--(muxer|video-|audio-)/.test(arg));
   assert.deepEqual(flags, [
     '--muxer=ffmpeg/mp4',
-    '--video-encoder=ffmpeg/libx264',
+    '--video-encoder=ffmpeg-x264/libx264',
     '--video-option=crf=20',
     '--video-option=preset=slow',
     '--audio-encoder=none',
@@ -68,7 +68,7 @@ test('a video export passes its component flags', () => {
 test('listComponents and describeComponent build their commands', () => {
   assert.deepEqual(componentsArgs({ check: true }), ['--json', '--list-components', '--check']);
   assert.deepEqual(componentsArgs(), ['--json', '--list-components']);
-  assert.deepEqual(describeArgs('ffmpeg/libx264'), ['--json', '--describe', 'ffmpeg/libx264']);
+  assert.deepEqual(describeArgs('ffmpeg-x264/libx264'), ['--json', '--describe', 'ffmpeg-x264/libx264']);
 });
 
 test('a loudness target passes LUFS or a preset, with its peak options', () => {

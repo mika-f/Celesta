@@ -9,6 +9,12 @@
 > **Celesta の実行に必要なものを同梱**
 > macOS と Windows のパッケージには React ランタイム、Node.js、動画と音声を読み書きする FFmpeg メディアプラグインが含まれています。動画の作成と書き出しのために Rust、Node.js、pnpm、FFmpeg を別途インストールする必要はありません。
 
+FFmpeg の構成のうち、同梱するのは **標準の `ffmpeg` だけ**です。メディアの読み込みと
+ProRes／MOV、WebM（VP9 と Opus）の書き出しに使えます。macOS は AVFoundation、Windows は
+Media Foundation も同梱し、利用可能な H.264 エンコーダーで MP4 を書き出せます。
+Linux の H.264／MP4 には追加の **ffmpeg-x264** が必要です。
+[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)をご覧ください。
+
 ## 1. アプリをインストール
 
 ::::tabs[インストール先の OS]{default="macOS"}

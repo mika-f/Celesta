@@ -103,7 +103,7 @@ git clone https://github.com/mika-f/Celesta.git celesta
 cd celesta
 pnpm install
 pnpm run build:runtime
-node scripts/plugins/build.mts plugins/ffmpeg
+node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx
 ```
@@ -166,7 +166,9 @@ to share.
 
 ## License
 
-Celesta's own source code is declared under MIT OR Apache-2.0.
+Celesta's own source code is declared under MIT OR Apache-2.0. The root
+`LICENSE-MIT` and `LICENSE-APACHE` apply to that source. Third-party FFmpeg
+license texts live with the relevant plugins and describe their linked builds.
 
 Celesta's executables (the app, `celesta-exporter`, and `Celesta-mcp`) link
 no FFmpeg. Video and audio files are read and written by a separate program,
@@ -174,15 +176,27 @@ the media plugin `celesta-codec-ffmpeg`, which Celesta starts and talks to only
 over its documented plugin protocol on standard input and output. The
 executables are distributed under MIT OR Apache-2.0 alone.
 
-The official Windows and macOS packages, and the Linux container image, ship
-the media plugin built against an FFmpeg with the `x264` encoder enabled, which
-is GPL-2.0-or-later licensed. That makes the media plugin's program, as
-distributed, subject to GPL-2.0-or-later; it sits in its own plugin folder
-(`plugins/ffmpeg`, or `Contents/Resources/PlugIns/ffmpeg` in the macOS app)
-with
-[`LICENSE-GPL-2.0`](LICENSE-GPL-2.0) and the corresponding-source offer in
-[`packaging/GPL-SOURCE-OFFER.md`](packaging/GPL-SOURCE-OFFER.md). Its own
-source code is MIT OR Apache-2.0 like the rest of the repository. The same
-FFmpeg build also links `libvpx` and `libopus` (BSD-3-Clause), the WebM
-encoders. Building the media plugin against an LGPL-only FFmpeg configuration
-avoids the GPL, at the cost of MP4 (H.264) export.
+Of the FFmpeg builds, app packages and the Linux image ship only `ffmpeg`, a standard LGPL FFmpeg
+build for decoding, ProRes, VP9, AAC, Opus, PCM and muxing (libopus and libvpx
+are BSD licensed, so the build stays LGPL). The one optional encoder,
+`ffmpeg-x264`, is a separate ZIP download on the
+[release page](https://github.com/mika-f/Celesta/releases/latest), needed for
+H.264 on Linux. Copy the extracted plugin folder into the user plugin folder
+and allow it in Celesta; see the
+[plugin guide](https://celesta.natsuneko.cat/en/docs/plugins/#optional-codec-downloads).
+The standard package can read H.264 files and export ProRes/MOV and WebM
+without it.
+`ffmpeg-x264` alone links GPL FFmpeg with libx264 and provides H.264 encoding;
+its program is distributed under GPL-2.0-or-later, with
+[`LICENSE-GPL-2.0`](plugins/ffmpeg-x264/LICENSE-GPL-2.0) and the
+[corresponding-source offer](packaging/GPL-SOURCE-OFFER.md) in its own folder.
+The LGPL plugin includes [`LICENSE-LGPL-2.1`](plugins/ffmpeg/LICENSE-LGPL-2.1) and its
+[source and relinking notice](packaging/FFMPEG-SOURCE.md). Their Celesta source
+remains MIT OR Apache-2.0. Each plugin has its own native FFmpeg prefix and
+process. GPL H.264 encoding is provided by `ffmpeg-x264`;
+H.264 decoding, ProRes, and WebM need no optional plugin. See the
+[build guide](https://celesta.natsuneko.cat/en/docs/build-from-source/) for native
+library setup. A system FFmpeg 8.1.x, including a GPL build, works for local use.
+Distribution builds use `--distribution` to enforce the separate license profiles.
+macOS and Windows also bundle their system-codec plugins, whose H.264 encoders
+can write MP4 without x264; explicitly name `ffmpeg-x264/libx264` to select it.

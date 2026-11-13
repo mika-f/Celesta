@@ -16,8 +16,6 @@
       }
     ],
     "videoEncoders": [
-      { "id": "libx264", "name": "H.264 (x264)", "codecs": ["avc1"],
-        "inputFormats": ["yuv420p", "yuv420p10", "nv12", "p010", "rgba8", "rgba16"] },
       { "id": "prores", "name": "ProRes (prores_ks)", "codecs": ["ap4h", "apch"],
         "inputFormats": ["rgba16"] },
       { "id": "vp9", "name": "VP9 (libvpx)", "codecs": ["vp09"],
@@ -40,5 +38,5 @@
         "defaultVideo": "vp09", "defaultAudio": "opus" }
     ]
   },
-  "licenses": ["../../LICENSE-GPL-2.0", "../../LICENSE-MIT", "../../LICENSE-APACHE", "../../packaging/GPL-SOURCE-OFFER.md"]
+  "licenses": ["LICENSE-LGPL-2.1", "../../LICENSE-MIT", "../../LICENSE-APACHE", "../../packaging/FFMPEG-SOURCE.md"]
 }

@@ -318,6 +318,7 @@ version = "0.9.0"
 dependencies = [
  "block2",
  "celesta-codec-ffmpeg",
+ "celesta-codec-ffmpeg-x264",
  "celesta-composition",
  "celesta-exporter",
  "celesta-gpu-renderer",
@@ -351,9 +352,27 @@ dependencies = [
  "celesta-project",
  "ez-ffmpeg",
  "ffmpeg-sys-next",
- "libc",
  "png",
  "rayon",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "celesta-codec-ffmpeg-x264"
+version = "0.9.0"
+dependencies = [
+ "celesta-codec-ffmpeg",
+ "celesta-composition",
+ "celesta-exporter",
+ "celesta-gpu-renderer",
+ "celesta-media",
+ "celesta-plugin-host",
+ "celesta-project",
+ "ez-ffmpeg",
+ "ffmpeg-sys-next",
+ "libc",
+ "png",
  "serde_json",
  "tempfile",
 ]
@@ -363,6 +382,7 @@ name = "celesta-codec-mediafoundation"
 version = "0.9.0"
 dependencies = [
  "celesta-codec-ffmpeg",
+ "celesta-codec-ffmpeg-x264",
  "celesta-composition",
  "celesta-exporter",
  "celesta-gpu-renderer",

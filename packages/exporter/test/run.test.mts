@@ -52,7 +52,7 @@ test('component listings resolve without a status', { skip }, async () => {
   const builtIn = listed.find((component) => component.origin === 'built-in');
   assert.equal(builtIn?.id, 'builtin/png');
   assert.equal(builtIn?.plugin, 'builtin');
-  const described = await describeComponent('ffmpeg/libx264', run('components'));
+  const described = await describeComponent('ffmpeg-x264/libx264', run('components'));
   assert.equal(described.kind, 'videoEncoder');
   assert.deepEqual(described.settings, []);
 });
@@ -125,7 +125,7 @@ test('aborting a listing kills the exporter at once', { skip }, async () => {
   setTimeout(() => controller.abort(), 100);
   await assert.rejects(listing, { code: 'cancelled' });
   assert.ok(Date.now() - started < 5000);
-  const describing = describeComponent('ffmpeg/libx264', { ...run('hang'), signal: AbortSignal.timeout(100) });
+  const describing = describeComponent('ffmpeg-x264/libx264', { ...run('hang'), signal: AbortSignal.timeout(100) });
   await assert.rejects(describing, { code: 'cancelled' });
 });
 

@@ -1,5 +1,5 @@
 //! Media plugins: the decoders a `media` plugin's manifest declares, and
-//! the FFmpeg plugin's program beside Celesta's own.
+//! the recognized FFmpeg build programs beside an installed Celesta.
 
 use crate::console::without_console_window;
 use crate::locations::PluginSource;
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 /// The ID of the FFmpeg media plugin that comes with Celesta, which ranks
@@ -22,20 +22,31 @@ pub const FFMPEG_PLUGIN_ID: &str = "ffmpeg";
 /// which no plugin may take.
 pub const RESERVED_PLUGIN_ID: &str = "builtin";
 
-/// The name of the FFmpeg media plugin's program, which
-/// [`InstalledPlugins::media`] also looks for beside an installed Celesta
-/// program, as `cargo install` leaves it (never beside a source build in a
-/// Cargo build folder).
+/// The standard FFmpeg program name. [`InstalledPlugins::media`] recognizes
+/// this and [`X264_CODEC_PROGRAM`] beside an installed Celesta, as
+/// `cargo install` leaves them, never beside a source build in a Cargo folder.
 pub const CODEC_PROGRAM: &str = "celesta-codec-ffmpeg";
 
-/// The flag that has [`CODEC_PROGRAM`] print its manifest (`id`, `version`,
-/// `roles`, and `media`) as JSON and exit, without starting the protocol:
+/// The optional x264 FFmpeg program name, recognized like [`CODEC_PROGRAM`].
+pub const X264_CODEC_PROGRAM: &str = "celesta-codec-ffmpeg-x264";
+
+/// The flag that has each recognized sibling media program print its manifest
+/// (`id`, `version`, `roles`, and `media`) as JSON and exit without the protocol:
 /// `cargo install` cannot put a manifest file beside it.
 pub const MANIFEST_FLAG: &str = "--manifest";
 
 /// How long [`MANIFEST_FLAG`] may take before the program is killed and
 /// left out.
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a program that failed [`MANIFEST_FLAG`] is given to have its
+/// first stderr line read, once it has exited: what it wrote before exiting
+/// is already in the pipe, and a process it left behind holding stderr must
+/// not keep discovery waiting.
+const STDERR_GRACE: Duration = Duration::from_millis(250);
+
+/// How much of a failed program's stderr is kept for its diagnostic.
+const STDERR_LIMIT: usize = 4096;
 
 /// The most of the program's output [`MANIFEST_FLAG`] reads.
 const MANIFEST_OUTPUT_LIMIT: u64 = 1 << 20;
@@ -147,8 +158,8 @@ pub enum MediaOrigin {
     /// `--plugin-dir`, `CELESTA_PLUGIN_PATH`, the user's plugin folder, or a
     /// folder the user added.
     User,
-    /// The folder that comes with Celesta, or [`CODEC_PROGRAM`] beside
-    /// Celesta's program.
+    /// The folder that comes with Celesta, or a recognized FFmpeg plugin
+    /// program beside an installed Celesta program.
     Bundled,
     /// A folder the open project lists.
     Project,
@@ -385,7 +396,7 @@ struct PrintedManifest {
     media: Value,
 }
 
-/// The FFmpeg media plugin's program beside `executable` (Celesta's own,
+/// A recognized FFmpeg build's `program_name` beside `executable` (Celesta's own,
 /// links resolved), as `cargo install` leaves it, made from what it prints
 /// for [`MANIFEST_FLAG`]. None when there is none, when it does not print a
 /// media plugin's manifest within [`MANIFEST_TIMEOUT`] and exit cleanly (said
@@ -395,7 +406,7 @@ struct PrintedManifest {
 /// plugins from the plugin folders, so a program an older build left there is
 /// never picked up. The answer is kept for as long as the program's file
 /// stays the same.
-fn sibling_media(executable: &Path) -> Option<MediaPlugin> {
+fn sibling_media(executable: &Path, program_name: &str) -> Option<MediaPlugin> {
     type Key = (PathBuf, u64, SystemTime);
     static SIBLINGS: OnceLock<Mutex<HashMap<Key, Option<MediaPlugin>>>> = OnceLock::new();
 
@@ -403,7 +414,7 @@ fn sibling_media(executable: &Path) -> Option<MediaPlugin> {
     if directory.join(".fingerprint").is_dir() || directory.join(".cargo-lock").is_file() {
         return None;
     }
-    let program = directory.join(format!("{CODEC_PROGRAM}{}", std::env::consts::EXE_SUFFIX));
+    let program = directory.join(format!("{program_name}{}", std::env::consts::EXE_SUFFIX));
     let metadata = std::fs::metadata(&program).ok().filter(|m| m.is_file())?;
     let key = (program.clone(), metadata.len(), metadata.modified().ok()?);
     let siblings = SIBLINGS.get_or_init(Default::default);
@@ -437,10 +448,38 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
     let mut child = without_console_window(Command::new(program).arg(MANIFEST_FLAG))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("it could not be started: {error}"))?;
     let mut stdout = child.stdout.take().expect("stdout is piped");
+    let mut stderr = child.stderr.take().expect("stderr is piped");
+    // Drained on a thread of its own, so a noisy program cannot fill the
+    // pipe and block before it prints its manifest. The first STDERR_LIMIT
+    // bytes are kept where the failure path can read them as they arrive,
+    // and `line_ready` says when a whole line (or the end) has been read,
+    // so a process the program left holding stderr open delays nothing.
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let (line_ready, first_line) = mpsc::channel();
+    std::thread::spawn({
+        let errors = errors.clone();
+        move || {
+            let mut buffer = [0; 4096];
+            let mut told = false;
+            while let Ok(count) = stderr.read(&mut buffer) {
+                if count == 0 {
+                    break;
+                }
+                let mut errors = errors.lock().unwrap_or_else(PoisonError::into_inner);
+                let retain = count.min(STDERR_LIMIT - errors.len());
+                errors.extend_from_slice(&buffer[..retain]);
+                if !told && (errors.contains(&b'\n') || errors.len() == STDERR_LIMIT) {
+                    told = true;
+                    let _ = line_ready.send(());
+                }
+            }
+            let _ = line_ready.send(());
+        }
+    });
     // Read on a thread of its own, so a program that never closes its
     // output (or leaves a process that holds it) cannot hold up discovery.
     let (send, receive) = mpsc::channel();
@@ -472,7 +511,26 @@ fn printed_manifest(program: &Path) -> Result<MediaPlugin, String> {
         return Err(timed_out());
     };
     if !status.success() {
-        return Err(format!("{MANIFEST_FLAG} failed ({status})"));
+        let mut reason = format!("{MANIFEST_FLAG} failed ({status})");
+        let _ = first_line
+            .recv_timeout(STDERR_GRACE.min(deadline.saturating_duration_since(Instant::now())));
+        let stderr = errors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(line) = String::from_utf8_lossy(&stderr)
+            .lines()
+            .find(|line| !line.trim().is_empty())
+        {
+            let line: String = line
+                .chars()
+                .filter(|character| !character.is_control())
+                .take(512)
+                .collect();
+            reason.push_str(": ");
+            reason.push_str(&line);
+        }
+        return Err(reason);
     }
     let output = match output {
         Ok(Ok(output)) => output,
@@ -517,8 +575,9 @@ impl InstalledPlugins {
     /// The media plugins to read media with, in search order: each of these
     /// plugins that is a media plugin with a program for this platform
     /// (discovery leaves out one this Celesta is outside the range of, so the
-    /// next one with its id is listed instead), then the FFmpeg media
-    /// plugin's program beside the running one ([`CODEC_PROGRAM`]) when that
+    /// next one with its id is listed instead), then recognized FFmpeg plugin
+    /// programs beside the running one ([`CODEC_PROGRAM`] and
+    /// [`X264_CODEC_PROGRAM`]), each when that
     /// is an installed program rather than a source build in a Cargo build
     /// folder and none of these but a project's has the id it prints. A
     /// project's plugin cannot replace it, as discovery keeps one in the
@@ -540,24 +599,27 @@ impl InstalledPlugins {
             .filter(|entry| entry.has_role(PluginRole::Media))
             .filter_map(media_plugin)
             .collect();
-        if let Some(sibling) = executable.and_then(sibling_media)
-            && !media
-                .iter()
-                .any(|plugin| plugin.id == sibling.id && plugin.origin != MediaOrigin::Project)
-        {
-            media.retain(|plugin| {
-                let replaces = plugin.id == sibling.id;
-                if replaces {
-                    eprintln!(
-                        "celesta: skipped the media plugin {}: a project plugin cannot replace \
+        for program in [CODEC_PROGRAM, X264_CODEC_PROGRAM] {
+            if let Some(sibling) =
+                executable.and_then(|executable| sibling_media(executable, program))
+                && !media
+                    .iter()
+                    .any(|plugin| plugin.id == sibling.id && plugin.origin != MediaOrigin::Project)
+            {
+                media.retain(|plugin| {
+                    let replaces = plugin.id == sibling.id;
+                    if replaces {
+                        eprintln!(
+                            "celesta: skipped the media plugin {}: a project plugin cannot replace \
                          Celesta's bundled media plugin {}",
-                        plugin.directory.display(),
-                        plugin.id
-                    );
-                }
-                !replaces
-            });
-            media.push(sibling);
+                            plugin.directory.display(),
+                            plugin.id
+                        );
+                    }
+                    !replaces
+                });
+                media.push(sibling);
+            }
         }
         media
     }
@@ -1237,6 +1299,20 @@ mod tests {
         }
 
         #[test]
+        fn the_x264_build_is_discovered_independently() {
+            let root = tempfile::tempdir().unwrap();
+            let (_, executable) = printing_its_manifest(root.path());
+            let printed = serde_json::json!({
+                "id": "ffmpeg-x264", "version": "0.10.0", "roles": ["media"], "media": {},
+            });
+            let scratch = tempfile::tempdir().unwrap();
+            let (program, _) = fake_sibling(scratch.path(), &format!("printf '%s\\n' '{printed}'"));
+            std::fs::rename(program, root.path().join(X264_CODEC_PROGRAM)).unwrap();
+            let listed = InstalledPlugins::default().media_with_sibling(Some(&executable));
+            assert_eq!(ids(&listed), ["ffmpeg", "ffmpeg-x264"]);
+        }
+
+        #[test]
         fn the_sibling_prints_every_kind() {
             let root = tempfile::tempdir().unwrap();
             let printed = serde_json::json!({
@@ -1363,6 +1439,43 @@ mod tests {
                     "{body}"
                 );
             }
+        }
+
+        #[test]
+        fn failed_discovery_keeps_the_first_diagnostic_without_blocking_on_stderr() {
+            let root = tempfile::tempdir().unwrap();
+            let (program, _) = fake_sibling(
+                root.path(),
+                "echo 'ffmpeg-x264: this FFmpeg build has no libx264' >&2\nhead -c 100000 /dev/zero >&2\nexit 1",
+            );
+            let reason = printed_manifest(&program).unwrap_err();
+            assert!(reason.contains("--manifest failed"), "{reason}");
+            assert!(
+                reason.ends_with("ffmpeg-x264: this FFmpeg build has no libx264"),
+                "{reason}"
+            );
+        }
+
+        #[test]
+        fn a_process_left_holding_stderr_does_not_delay_the_diagnostic() {
+            let root = tempfile::tempdir().unwrap();
+            // The program exits at once, but leaves a process that holds its
+            // stderr (not its stdout) open for longer than the deadline.
+            let (program, _) = fake_sibling(
+                root.path(),
+                "echo 'ffmpeg-x264: this FFmpeg build has no libx264' >&2\nsleep 30 >/dev/null &\nexit 1",
+            );
+            let started = Instant::now();
+            let reason = printed_manifest(&program).unwrap_err();
+            assert!(
+                started.elapsed() < MANIFEST_TIMEOUT / 2,
+                "took {:?}",
+                started.elapsed()
+            );
+            assert!(
+                reason.ends_with("ffmpeg-x264: this FFmpeg build has no libx264"),
+                "{reason}"
+            );
         }
 
         #[test]

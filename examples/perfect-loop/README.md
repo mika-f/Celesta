@@ -24,9 +24,15 @@ From the repository root, for the installed macOS app:
 python3 examples/perfect-loop/make-score.py
 node skills/celesta/scripts/inspect.mjs examples/perfect-loop/film.tsx --frames 0,239,480,959
 npx --yes --package typescript@5.9.3 tsc --noEmit -p examples/perfect-loop
-/Applications/Celesta.app/Contents/MacOS/Celesta-export --json --react --video-option crf=16 \
+/Applications/Celesta.app/Contents/MacOS/Celesta-export --json --react \
+  --video-encoder ffmpeg-x264/libx264 --video-option crf=16 \
   examples/perfect-loop/film.tsx examples/perfect-loop/perfect-loop.mp4
 ```
+
+The export uses x264's `crf`, so it needs the optional `ffmpeg-x264` plugin:
+install the release download in your user plugin folder and allow it (in the
+app, or with `--allow-plugin ffmpeg-x264`). In a source checkout, build it with
+`node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264` instead.
 
 The initialization command refreshes the ignored `.celesta/` type
 declarations without replacing the composition. For a built source checkout,

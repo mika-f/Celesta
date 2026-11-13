@@ -4,6 +4,21 @@ Open the [web editor](/en/#playground), change or open a TSX composition, and ch
 
 ## From the app
 
+Of the FFmpeg builds, app packages bundle only standard `ffmpeg`. ProRes/MOV
+and WebM (VP9 and Opus) work without downloads. macOS also bundles
+`avfoundation/h264`, Windows `mediafoundation/h264`; when available, they
+provide default MP4 video and outrank downloaded x264. Linux needs
+**ffmpeg-x264** for H.264/MP4. Explicitly name `ffmpeg-x264/libx264` to select
+it on any OS; see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads).
+
+With no saved export settings, the export page starts with a container whose default
+encoders are installed: MP4 when H.264 is installed, otherwise ProRes/MOV for a
+standard-only installation. When an installed H.264 encoder cannot run on this
+computer (such as Windows N without the Media Feature Pack), it starts with the
+next container that works, and a warning under **Preset** says why MP4 was not
+chosen and how to make it work. Explicit paths, presets, and your last export
+keep their chosen format, and show their error instead.
+
 Choose **Export** in the title bar, or **File → Export…** (`⌘ Shift E`, `Ctrl Shift E`), to open the export page. It replaces the Assets panel on the left. The viewer, the right dock, and the timeline stay where they are, so you can keep looking at the composition while you choose. To leave the page, choose **Export** again, press the panel's X, or press Escape. What you chose is kept. From top to bottom, the page has:
 
 - **Preset**: **None** for Celesta's defaults, then the project's presets under **This project** and yours under **My presets** (see Export presets below).
@@ -12,7 +27,7 @@ Choose **Export** in the title bar, or **File → Export…** (`⌘ Shift E`, `C
 - A **Video** section with the video encoder and its settings, grouped as the encoder groups them. Settings that only apply to another choice are hidden until you make it, and the rarely needed ones are under **Advanced**, closed at first.
 - An **Audio** section with the audio encoder, or **None** for a video without sound, and its settings, ending with **Loudness**: **Off**, **Streaming (-14 LUFS)**, or **Broadcast (-23 LUFS)**, to bring the soundtrack to a loudness target (see Loudness for streaming and broadcast below). The choice stays until you quit the app. When the export has no audio, because the audio encoder is **None** or the container takes no audio, **Loudness** is disabled, with a note that no audio is exported.
 
-Each component shows its name and its plugin, such as **H.264 (x264) · FFmpeg**, and one from a plugin that comes with the project is marked **(project)**. When the page opens, Celesta asks each media plugin which of its components work on this computer: until it answers, they show **Checking…**, and one that cannot run is listed but cannot be chosen, with its reason. A plugin that could not answer at all is asked again the next time you open the page. The page opens with the project's default preset when it has one, else the choice you last exported with, else the defaults for `.mp4`. A presets file that cannot be read is named under **Preset**, with what is wrong with it, and its presets are left out of the list.
+Each component shows its name and its plugin, such as **ProRes (prores_ks) · FFmpeg**, and one from a plugin that comes with the project is marked **(project)**. When the page opens, Celesta asks each media plugin which of its components work on this computer: until it answers, they show **Checking…**, and one that cannot run is listed but cannot be chosen, with its reason. A plugin that could not answer at all is asked again the next time you open the page. The page opens with the project's default preset when it has one, else the choice you last exported with, else the defaults for `.mp4` (or the next container that works, as above). A presets file that cannot be read is named under **Preset**, with what is wrong with it, and its presets are left out of the list.
 
 Changing **Container** keeps an encoder you chose on the page, or that the chosen preset names, with its settings, when the new container takes it. Any other encoder becomes the new container's default, so going from **MP4** to **QuickTime** gives ProRes 4444 with PCM audio, as an export to `.mov` does. Audio you set to **None** stays off. Audio left out only because a container takes none, such as IVF, comes back with the next container that takes audio.
 
@@ -106,11 +121,11 @@ To write timed data of your own, use `formatSubtitles(cues, { fps, format: 'srt'
 
 ## Choosing encoders and settings
 
-Celesta writes a video with three media components: a muxer, which writes the file, a video encoder, and an audio encoder. Each is named `<plugin>/<component>`, such as `ffmpeg/libx264`. The output's extension picks the muxer, and the muxer's default codecs pick the encoders:
+Celesta writes a video with three media components: a muxer, which writes the file, a video encoder, and an audio encoder. Each is named `<plugin>/<component>`, such as `ffmpeg-x264/libx264`. The output's extension picks the muxer, and the muxer's default codecs pick the encoders:
 
 | Extension | Muxer | Video encoder | Audio encoder |
 | --- | --- | --- | --- |
-| `.mp4`, `.m4v` | `ffmpeg/mp4` | `ffmpeg/libx264` (H.264) | `ffmpeg/aac` (AAC) |
+| `.mp4`, `.m4v` | `ffmpeg/mp4` | `avfoundation/h264` (macOS), `mediafoundation/h264` (Windows), `ffmpeg-x264/libx264` (Linux) | `ffmpeg/aac` (AAC) |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores` (ProRes 4444) | `ffmpeg/pcm` (24-bit PCM) |
 | `.webm` | `ffmpeg/webm` | `ffmpeg/vp9` (VP9 with alpha) | `ffmpeg/opus` (Opus, 48 kHz) |
 
@@ -120,7 +135,7 @@ Celesta writes a video with three media components: a muxer, which writes the fi
 
 | Component | Key | Values (default) |
 | --- | --- | --- |
-| `ffmpeg/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, or `veryslow` (`medium`) |
+| `ffmpeg-x264/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, or `veryslow` (`medium`) |
 | | `rateControl` | `crf` for constant quality or `vbr` for an average bitrate (`crf`) |
 | | `crf` | 0–51, with `rateControl=crf`; lower is higher quality and larger (18) |
 | | `bitrate` | bits per second, with `rateControl=vbr` (8000000) |
@@ -142,7 +157,7 @@ Every video export is BT.709 with limited range. Celesta converts on the GPU, or
 :::tab[macOS]
 
 ```sh title="Export with a faster encoder preset"
-"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
 ```
 
 ```sh title="List the installed components"
@@ -153,7 +168,7 @@ Every video export is BT.709 with limited range. Celesta converts on the GPU, or
 :::tab[Windows]
 
 ```sh title="Export with a faster encoder preset"
-& "C:\path\to\Celesta\Celesta-export.exe" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+& "C:\path\to\Celesta\Celesta-export.exe" --react --video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
 ```
 
 ```sh title="List the installed components"
@@ -163,7 +178,7 @@ Every video export is BT.709 with limited range. Celesta converts on the GPU, or
 :::
 ::::
 
-The MCP `export_video` tool and `@celesta.studio/exporter` take the same choices as `muxer`, `videoEncoder` (`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`), and `audioEncoder` (the same shape, or `"none"`), and an export preset as `preset` and `presetFile` (see Export presets below). MCP checks each option's type, so `crf` must be a number there; the package passes its options to the exporter as `--video-option` and `--audio-option` text, which is read by each setting's type as on the command line, so `"18"` works there too. MCP's `list_components` and `describe_component` tools, and the package's `listComponents()` and `describeComponent()`, list and describe the components.
+The MCP `export_video` tool and `@celesta.studio/exporter` take the same choices as `muxer`, `videoEncoder` (`{ "id": "ffmpeg-x264/libx264", "options": { "preset": "veryfast", "crf": 18 } }`), and `audioEncoder` (the same shape, or `"none"`), and an export preset as `preset` and `presetFile` (see Export presets below). MCP checks each option's type, so `crf` must be a number there; the package passes its options to the exporter as `--video-option` and `--audio-option` text, which is read by each setting's type as on the command line, so `"18"` works there too. MCP's `list_components` and `describe_component` tools, and the package's `listComponents()` and `describeComponent()`, list and describe the components.
 
 ## Export presets
 
@@ -180,7 +195,7 @@ The app's **Save as preset…** writes both, and you can also write them by hand
   "presets": [
     { "name": "YouTube 1080p",
       "muxer": "ffmpeg/mp4",
-      "video": { "component": "ffmpeg/libx264", "options": { "crf": 18, "preset": "slow" } },
+      "video": { "component": "ffmpeg-x264/libx264", "options": { "crf": 18, "preset": "slow" } },
       "audio": { "component": "ffmpeg/aac", "options": { "bitrate": 192000 } } },
     { "name": "Silent", "muxer": "ffmpeg/mp4", "audio": "none" }
   ],
@@ -190,7 +205,7 @@ The app's **Save as preset…** writes both, and you can also write them by hand
 
 Components are named `<plugin>/<component>`, and `"audio": "none"` leaves the sound out. A part a preset leaves out takes its default: without `muxer`, the output's extension picks it, and without a `component`, the muxer's default encoder is used, with the preset's `options` if it has any (unless you name an encoder yourself, as below). `options` need only the settings that differ from their defaults; **Save as preset…** saves just those, so a preset follows a plugin's later defaults for everything you did not change. Only a project's file has `"default"`. Your file also keeps `"last"`, the choice you last exported with from the app. `version` is `1`.
 
-`--preset <name>` exports with a preset. The name is looked up in the file `--preset-file <path>` names, then in the project's file, then in yours, and the first match is used. When a project preset has the same name as one of yours, the export warns that it hides yours. A name in no file fails with the error code `unknown_preset`. x264's preset is the setting above, not an export preset: `--preset veryfast` fails, and its hint says to use `--video-option preset=veryfast`. Without `--json`, an error's hint is printed on a `hint:` line after its message. A `--preset-file` that is missing or is not a presets file is rejected with the arguments.
+`--preset <name>` exports with a preset. The name is looked up in the file `--preset-file <path>` names, then in the project's file, then in yours, and the first match is used. When a project preset has the same name as one of yours, the export warns that it hides yours. A name in no file fails with the error code `unknown_preset`. x264's preset is the setting above, not an export preset: `--preset veryfast` fails, and its hint says to use `--video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast`. Without `--json`, an error's hint is printed on a `hint:` line after its message. A `--preset-file` that is missing or is not a presets file is rejected with the arguments.
 
 The other flags go over the preset: `--muxer`, `--video-encoder`, and `--audio-encoder` replace its components, and `--video-option` and `--audio-option` replace its value for each key they give. The preset's options go only to the encoder they were saved for. When the preset names its encoder, `--video-encoder` (or `--audio-encoder`) naming that same encoder keeps them, and naming another drops them. When the preset names no encoder, its options go to the muxer's default encoder only while you name none: naming any encoder, even that default one, drops them. When the preset's muxer does not list the output's extension, it writes the file anyway, with the same warning as `--muxer`.
 
@@ -219,7 +234,7 @@ The MCP `export_video` tool and `@celesta.studio/exporter` take `preset` and `pr
 
 ## AVFoundation components on macOS
 
-The macOS app also comes with the `avfoundation` media plugin. It encodes with Apple's VideoToolbox and AudioToolbox, on the Mac's media engine where it has one, and writes MP4 and MOV files with AVFoundation. FFmpeg stays the default: an export uses these components only when you name them, with `--muxer`, `--video-encoder`, and `--audio-encoder` or in an export preset (`"muxer": "avfoundation/mp4"`, `"video": { "component": "avfoundation/hevc" }`). They mix with FFmpeg's, so `--video-encoder avfoundation/hevc` alone writes VideoToolbox's HEVC into `ffmpeg/mp4` with `ffmpeg/aac`. The plugin runs on macOS only; Windows and Linux do not have it.
+The macOS app also comes with the `avfoundation` media plugin. It encodes with Apple's VideoToolbox and AudioToolbox, on the Mac's media engine where it has one, and writes MP4 and MOV files with AVFoundation. Its H.264 encoder is the default for MP4 and outranks a user-installed x264 plugin. FFmpeg keeps the default muxer and AAC encoder. Select the other native components explicitly, with `--muxer`, `--video-encoder`, and `--audio-encoder` or in an export preset (`"muxer": "avfoundation/mp4"`, `"video": { "component": "avfoundation/hevc" }`). They mix with FFmpeg's, so `--video-encoder avfoundation/hevc` alone writes VideoToolbox's HEVC into `ffmpeg/mp4` with `ffmpeg/aac`. The plugin runs on macOS only; Windows and Linux do not have it.
 
 | Component | Kind | Writes |
 | --- | --- | --- |
@@ -261,7 +276,7 @@ The MCP `export_video` tool and `@celesta.studio/exporter` take the same names: 
 
 ## Media Foundation components on Windows
 
-The Windows app also comes with the `mediafoundation` media plugin. It encodes H.264, HEVC, and AAC with Windows' own Media Foundation, on the GPU's video encoder where Windows has one. It has no muxer of its own: its encoders write into another plugin's container, which the output's extension picks as usual (`ffmpeg/mp4` for `.mp4`, `ffmpeg/mov` for `.mov`) or `--muxer` names. FFmpeg stays the default: an export uses these components only when you name them, with `--video-encoder` and `--audio-encoder` or in an export preset (`"video": { "component": "mediafoundation/hevc" }`), so `--video-encoder mediafoundation/h264` alone writes Media Foundation's H.264 into `ffmpeg/mp4` with `ffmpeg/aac`. The app's export page lists them among the video and audio encoders. The plugin runs on Windows only; macOS and Linux do not have it.
+The Windows app also comes with the `mediafoundation` media plugin. It encodes H.264, HEVC, and AAC with Windows' own Media Foundation, on the GPU's video encoder where Windows has one. It has no muxer of its own: its encoders write into another plugin's container, which the output's extension picks as usual (`ffmpeg/mp4` for `.mp4`, `ffmpeg/mov` for `.mov`) or `--muxer` names. Its H.264 encoder is the default for MP4 and outranks a user-installed x264 plugin. FFmpeg keeps the default muxer and AAC encoder. Select the other native components explicitly, with `--video-encoder` and `--audio-encoder` or in an export preset (`"video": { "component": "mediafoundation/hevc" }`), so `--video-encoder mediafoundation/h264` alone writes Media Foundation's H.264 into `ffmpeg/mp4` with `ffmpeg/aac`. The app's export page lists them among the video and audio encoders. The plugin runs on Windows only; macOS and Linux do not have it.
 
 | Component | Kind | Writes |
 | --- | --- | --- |
@@ -350,7 +365,7 @@ The file extension picks the video format. A `.mp4` file is H.264 with AAC audio
 
 Only areas nothing draws on are transparent, so a layer that fills the whole frame, such as a full-frame background, makes the output opaque. The alpha is straight (unassociated), and colors are converted and tagged as BT.709 (limited range).
 
-Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, such as an LGPL build without libx264, the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
+Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, or an optional encoder plugin is missing (H.264 needs a native encoder or `ffmpeg-x264`), the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
 
 ## Still frames and contact sheets
 
@@ -484,7 +499,13 @@ docker build -f packaging/linux/Dockerfile -t celesta-exporter .
 ```
 
 ```sh title="Export in a container"
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mp4
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mov
+```
+
+The image bundles only the standard `ffmpeg` plugin, so it writes ProRes/MOV and WebM; its libopus and libvpx come from the image's Ubuntu packages `libopus0` and `libvpx12`. For MP4, extract the Linux `ffmpeg-x264` ZIP (see [Optional codec downloads](/en/docs/plugins/#optional-codec-downloads)) into a folder such as `codecs`, mount it, and pass it with `--plugin-dir`:
+
+```sh title="Export MP4 in a container"
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter --plugin-dir /plugins --react first-scene.tsx output.mp4
 ```
 
 > [!NOTE]

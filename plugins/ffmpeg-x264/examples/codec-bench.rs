@@ -6,13 +6,14 @@
 //! and its stdin or stdout otherwise. The difference is the transport.
 //!
 //! ```text
-//! node scripts/plugins/build.mts plugins/ffmpeg
-//! cargo run --release --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg \
+//! node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264
+//! cargo run --release --manifest-path plugins/Cargo.toml -p celesta-codec-ffmpeg-x264 \
 //!     --example codec-bench -- plugins/dist/ffmpeg/bin/macos-aarch64/celesta-codec-ffmpeg \
+//!     plugins/dist/ffmpeg-x264/bin/macos-aarch64/celesta-codec-ffmpeg-x264 \
 //!     <video.mp4> [frames]
 //! ```
 //!
-//! The first argument is the built plugin's program. Each line gives the
+//! The first two arguments are the standard and x264 programs. Each line gives the
 //! wall-clock time a frame took and, on Unix, the CPU time (user and
 //! system) it cost this process and the plugin's, which a busy machine
 //! changes less than the wall clock. The plugin's includes opening it and
@@ -22,7 +23,6 @@
 //! export ring and pipelined three deep; the same variable compares the
 //! pipe, pipelined.
 
-use celesta_codec_ffmpeg::DECODER_ID;
 use celesta_composition::Rational;
 use celesta_media::{
     Answered, Color, FrameTransport, MediaBackend, MediaProcess, MediaProvider, MediaRegistry,
@@ -35,7 +35,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn main() {
-    let usage = "usage: codec-bench <program> <video> [frames]";
+    let usage = "usage: codec-bench <ffmpeg program> <ffmpeg-x264 program> <video> [frames]";
     let mut args = env::args().skip(1);
     let program = PathBuf::from(args.next().expect(usage))
         .canonicalize()
@@ -44,6 +44,14 @@ fn main() {
         .ancestors()
         .nth(3)
         .expect("the program is in <plugin>/bin/<platform>/")
+        .to_owned();
+    let x264_program = PathBuf::from(args.next().expect(usage))
+        .canonicalize()
+        .expect("x264 program exists");
+    let x264_plugin = x264_program
+        .ancestors()
+        .nth(3)
+        .expect("plugin directory")
         .to_owned();
     let video = PathBuf::from(args.next().expect(usage))
         .canonicalize()
@@ -58,12 +66,19 @@ fn main() {
             MediaProcess::factory(program.clone(), plugin.clone()),
         ),
     ];
-    let plugin_program = (program, plugin);
+    let plugin_program = (x264_program.clone(), x264_plugin.clone());
     for (name, factory) in &codecs {
         let timing = decode(factory.clone(), &video, frames);
         timing.print("decode", name, frames);
     }
-    for (name, factory) in &codecs {
+    let encoders = [
+        (
+            "in process",
+            celesta_codec_ffmpeg_x264::registered().factory,
+        ),
+        ("plugin", MediaProcess::factory(x264_program, x264_plugin)),
+    ];
+    for (name, factory) in &encoders {
         let program = (*name == "plugin").then_some(&plugin_program);
         let timing = encode(factory.clone(), program, &video, frames);
         timing.print("encode", name, frames);
@@ -186,14 +201,9 @@ fn encode(
     // The size comes from a plugin that decodes, before the export's own
     // starts with a ring for it.
     let (width, height) = {
-        let mut probing =
-            factory(&Default::default(), ProviderUse::Decode).expect("the plugin starts");
-        let probe = probing
-            .decoder()
-            .expect("the plugin decodes")
-            .probe(DECODER_ID, video)
-            .expect("the video probe");
-        let stream = probe.video.expect("the file has a video stream");
+        let mut probing = celesta_codec_ffmpeg::FfmpegBackend::new();
+        let probe = probing.probe(video).expect("the video probe");
+        let stream = probe.video.as_ref().expect("the file has a video stream");
         (stream.width, stream.height)
     };
     // Taken once the probing plugin has exited, so that the plugin's CPU

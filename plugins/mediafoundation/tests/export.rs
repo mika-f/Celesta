@@ -3,6 +3,9 @@
 //! registered first: what each file holds, and what FFmpeg decodes of it.
 #![cfg(windows)]
 
+#[path = "../../ffmpeg/tests/support/program.rs"]
+mod program;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
 
@@ -49,18 +52,27 @@ fn gpu() -> MutexGuard<'static, ()> {
     GPU.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Makes both plugins, in this process, the media plugins of every export,
-/// both bundled. Celesta takes bundled plugins in their folders' order, in
-/// which "ffmpeg" sorts first; this plugin is registered first instead, the
-/// stronger case for FFmpeg's staying the default.
+/// Registers bundled native and standard FFmpeg providers plus optional
+/// codec processes with the priority of user-installed downloads.
 fn install() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
         celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(vec![
             celesta_codec_mediafoundation::registered(),
             celesta_codec_ffmpeg::registered(),
+            optional(celesta_codec_ffmpeg_x264::registered()),
         ]))));
     });
+}
+
+/// The optional x264 codec runs in its own native build and ranks as a user
+/// download.
+fn optional(mut plugin: celesta_media::RegisteredPlugin) -> celesta_media::RegisteredPlugin {
+    let executable = program::executable(&plugin.id);
+    let directory = executable.parent().unwrap().to_path_buf();
+    plugin.origin = celesta_plugin_host::MediaOrigin::User;
+    plugin.factory = celesta_media::MediaProcess::factory(executable, directory);
+    plugin
 }
 
 /// Reports a test skipped for want of a GPU adapter, or fails it when
@@ -603,7 +615,7 @@ fn ffmpeg_x264_with_mediafoundation_aac_in_ffmpeg_mp4() {
         ExportOptions {
             output: choice(
                 "ffmpeg/mp4",
-                Some("ffmpeg/libx264"),
+                Some("ffmpeg-x264/libx264"),
                 Some("mediafoundation/aac"),
             ),
             ..ExportOptions::default()
@@ -613,7 +625,7 @@ fn ffmpeg_x264_with_mediafoundation_aac_in_ffmpeg_mp4() {
     };
     assert_eq!(
         reported(&report),
-        ["ffmpeg/mp4", "ffmpeg/libx264", "mediafoundation/aac"]
+        ["ffmpeg/mp4", "ffmpeg-x264/libx264", "mediafoundation/aac"]
     );
     assert_eq!(sample_entries(&output), [*b"avc1", *b"mp4a"]);
     assert_halves(&output, LEFT, RIGHT);
@@ -735,14 +747,18 @@ fn a_looping_export_with_mediafoundation_aac_starts_from_its_end() {
             name,
             ExportOptions {
                 looping,
-                output: choice("ffmpeg/mp4", None, Some("mediafoundation/aac")),
+                output: choice(
+                    "ffmpeg/mp4",
+                    Some("ffmpeg-x264/libx264"),
+                    Some("mediafoundation/aac"),
+                ),
                 ..ExportOptions::default()
             },
         )
         .map(|(output, report)| {
             assert_eq!(
                 reported(&report),
-                ["ffmpeg/mp4", "ffmpeg/libx264", "mediafoundation/aac"]
+                ["ffmpeg/mp4", "ffmpeg-x264/libx264", "mediafoundation/aac"]
             );
             output
         })
@@ -814,7 +830,10 @@ fn a_looping_export_with_mediafoundation_aac_starts_from_its_end() {
 }
 
 #[test]
-fn ffmpeg_stays_the_default_beside_mediafoundation() {
+fn native_h264_is_the_default_beside_optional_x264() {
+    if !available(&["h264"], "native_h264_is_the_default_beside_optional_x264") {
+        return;
+    }
     let _gpu = gpu();
     install();
     let registry = celesta_media::registry().expect("a registry");
@@ -823,7 +842,7 @@ fn ffmpeg_stays_the_default_beside_mediafoundation() {
         .iter()
         .map(|plugin| plugin.id.as_str())
         .collect();
-    assert_eq!(ids, ["mediafoundation", "ffmpeg"]);
+    assert_eq!(ids, ["mediafoundation", "ffmpeg", "ffmpeg-x264"]);
 
     let directory = tempfile::tempdir().unwrap();
     let project = with_audio(
@@ -836,12 +855,21 @@ fn ffmpeg_stays_the_default_beside_mediafoundation() {
         &project,
         directory.path(),
         "film.mp4",
-        ExportOptions::default(),
+        ExportOptions {
+            output: OutputChoice {
+                video: EncoderChoice {
+                    options: [("hardware".into(), SettingInput::Text("false".into()))].into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        },
     ) else {
         return;
     };
     assert_eq!(
         reported(&report),
-        ["ffmpeg/mp4", "ffmpeg/libx264", "ffmpeg/aac"]
+        ["ffmpeg/mp4", "mediafoundation/h264", "ffmpeg/aac"]
     );
 }

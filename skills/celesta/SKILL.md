@@ -170,7 +170,9 @@ produces a video that differs between preview and export.
    - See the whole video at once with a contact sheet:
      `--every 150 --contact-sheet /tmp/celesta-sheet.png` (one tile every
      5 s at 30 fps).
-   - Export MP4 only for audio or the final file
+   - Export video only for audio or the final file. Use MOV/ProRes with the
+     standard plugin; MP4 needs an installed H.264 encoder (native on macOS/Windows
+     or the `ffmpeg-x264` download). Check `--list-components --check` first
      ([export.md](references/export.md)).
 4. **Report back.** Tell the user which file to open (File → Open…) or
    reload (JSON projects need File → Reload; React entries reload on save;

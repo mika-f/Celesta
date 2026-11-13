@@ -477,8 +477,8 @@ describe('repositoryPlugins in a scratch pnpm workspace', () => {
 describe("the repository's plugins", () => {
   it('are found with their inputs', () => {
     const plugins = repositoryPlugins(root);
-    expect(plugins.map(({ id }) => id)).toEqual(['avfoundation', 'ffmpeg', 'mediafoundation', 'vrm']);
-    const [avfoundation, ffmpeg, mediafoundation, vrm] = plugins;
+    expect(plugins.map(({ id }) => id)).toEqual(['avfoundation', 'ffmpeg', 'ffmpeg-x264', 'mediafoundation', 'vrm']);
+    const [avfoundation, ffmpeg, gpl, mediafoundation, vrm] = plugins;
 
     expect(vrm).toMatchObject({
       directory: 'plugins/vrm',
@@ -515,11 +515,11 @@ describe("the repository's plugins", () => {
       expect.arrayContaining([
         'plugins/ffmpeg',
         'crates/media',
-        'crates/exporter',
-        'LICENSE-GPL-2.0',
-        'packaging/GPL-SOURCE-OFFER.md',
+        'plugins/ffmpeg/LICENSE-LGPL-2.1',
+        'packaging/FFMPEG-SOURCE.md',
       ]),
     );
+    expect(gpl.inputs).toEqual(expect.arrayContaining(['plugins/ffmpeg', 'plugins/ffmpeg-x264', 'plugins/ffmpeg-x264/LICENSE-GPL-2.0', 'packaging/GPL-SOURCE-OFFER.md']));
     for (const input of ['packages/cli', 'crates/editor', 'templates']) expect(ffmpeg.inputs).not.toContain(input);
 
     expect(avfoundation).toMatchObject({

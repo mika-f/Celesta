@@ -4,6 +4,20 @@
 
 ## アプリから
 
+FFmpeg の構成のうち、アプリに同梱するのは標準の `ffmpeg` だけです。
+ProRes／MOV と WebM（VP9 と Opus）は追加ダウンロードなしで使えます。macOS の `avfoundation/h264`、Windows の
+`mediafoundation/h264` も同梱され、利用可能ならユーザーが追加した x264 より優先して
+MP4 の既定の映像エンコーダーになります。Linux の H.264／MP4 には **ffmpeg-x264** が必要です。
+どの OS でも x264 を選ぶには `ffmpeg-x264/libx264` を明示します。
+[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)をご覧ください。
+
+保存済みの設定がないとき、書き出しページは既定エンコーダーがインストールされている
+コンテナーを選びます。H.264 があれば MP4、標準版だけなら ProRes／MOV で始まります。
+インストールされている H.264 エンコーダーがこのコンピューターで動かないとき
+（Media Feature Pack のない Windows N など）は、使える次のコンテナーで始まり、
+MP4 を選ばなかった理由と使えるようにする方法が **Preset** の下に警告として表示されます。
+明示したパスやプリセット、前回の書き出しの形式は変えず、そのエラーを表示します。
+
 タイトルバーの **Export**、または **File → Export…**（`⌘ Shift E`、`Ctrl Shift E`）で書き出しページを開きます。ページは左側の Assets パネルと入れ替わり、ビューアー、右のドック、タイムラインはそのまま残るので、コンポジションを見ながら設定できます。ページを閉じるには、もう一度 **Export** を押すか、パネルの X を押すか、Escape を押します。選んだ内容は残ります。上から順に次の項目があります。
 
 - **Preset**：Celesta の既定の設定を使う **None** に続いて、プロジェクトのプリセットが **This project**、自分のプリセットが **My presets** の下に並びます（後述の「書き出しプリセット」）。
@@ -12,7 +26,7 @@
 - **Video** セクション：映像エンコーダーとその設定です。エンコーダーの分け方どおりにまとまって並びます。ほかの選択のときだけ効く設定は、その選択をするまで隠れています。使うことの少ない設定は **Advanced** の中にあり、最初は閉じています。
 - **Audio** セクション：音声エンコーダーとその設定です。音声のない動画にするには **None** を選びます。最後に **Loudness** があり、**Off**、**Streaming (-14 LUFS)**、**Broadcast (-23 LUFS)** のいずれかで、サウンドトラックをラウドネスの目標値に合わせます（後述の「配信・放送向けのラウドネス」）。選んだ値はアプリを終了するまで保たれます。音声エンコーダーが **None** のときや、コンテナーが音声を受け付けないときは、書き出しに音声が入らないので、**Loudness** は無効になり、音声を書き出さない旨の注記が表示されます。
 
-コンポーネントには **H.264 (x264) · FFmpeg** のように名前とプラグインが表示され、プロジェクトに付属するプラグインのものには **(project)** が付きます。ページを開くと、Celesta は各メディアプラグインに、どのコンポーネントがこのコンピューターで使えるかを尋ねます。答えが返るまでは **Checking…** と表示され、使えないものは一覧に残りますが選べず、理由が添えられます。まったく答えられなかったプラグインには、次にページを開いたときにもう一度尋ねます。ページは、プロジェクトに既定のプリセットがあればそれで、なければ前回書き出したときの選択で、それもなければ `.mp4` の既定の設定で開きます。読めないプリセットファイルがあると、**Preset** の下にそのファイルと問題点が表示され、そのプリセットは一覧に出ません。
+コンポーネントには **ProRes (prores_ks) · FFmpeg** のように名前とプラグインが表示され、プロジェクトに付属するプラグインのものには **(project)** が付きます。ページを開くと、Celesta は各メディアプラグインに、どのコンポーネントがこのコンピューターで使えるかを尋ねます。答えが返るまでは **Checking…** と表示され、使えないものは一覧に残りますが選べず、理由が添えられます。まったく答えられなかったプラグインには、次にページを開いたときにもう一度尋ねます。ページは、プロジェクトに既定のプリセットがあればそれで、なければ前回書き出したときの選択で、それもなければ `.mp4` の既定の設定（使えなければ上記のとおり次に使えるコンテナー）で開きます。読めないプリセットファイルがあると、**Preset** の下にそのファイルと問題点が表示され、そのプリセットは一覧に出ません。
 
 **Container** を変えると、ページで選んだエンコーダーや、選んだプリセットが指定しているエンコーダーは、新しいコンテナーが受け付ければ設定ごと残ります。それ以外のエンコーダーは新しいコンテナーの既定に替わるので、**MP4** から **QuickTime** に変えると、`.mov` に書き出すときと同じく ProRes 4444 と PCM 音声になります。**None** にした音声はオフのままです。IVF のように音声を受け付けないコンテナーのせいで外れただけの音声は、次に音声を受け付けるコンテナーを選ぶと戻ります。
 
@@ -106,21 +120,21 @@ const cues = parseSubtitles(captions, { fps: 30 });
 
 ## エンコーダーと設定を選ぶ
 
-Celesta は動画を 3 つのメディアコンポーネントで書き出します。ファイルを書くマルチプレクサー（muxer）、映像エンコーダー、音声エンコーダーです。どれも `ffmpeg/libx264` のように `<プラグイン>/<コンポーネント>` という名前を持ちます。出力の拡張子でマルチプレクサーが決まり、マルチプレクサーの既定のコーデックでエンコーダーが決まります。
+Celesta は動画を 3 つのメディアコンポーネントで書き出します。ファイルを書くマルチプレクサー（muxer）、映像エンコーダー、音声エンコーダーです。どれも `ffmpeg-x264/libx264` のように `<プラグイン>/<コンポーネント>` という名前を持ちます。出力の拡張子でマルチプレクサーが決まり、マルチプレクサーの既定のコーデックでエンコーダーが決まります。
 
 | 拡張子 | マルチプレクサー | 映像エンコーダー | 音声エンコーダー |
 | --- | --- | --- | --- |
-| `.mp4`、`.m4v` | `ffmpeg/mp4` | `ffmpeg/libx264`（H.264） | `ffmpeg/aac`（AAC） |
+| `.mp4`、`.m4v` | `ffmpeg/mp4` | `avfoundation/h264`（macOS）、`mediafoundation/h264`（Windows）、`ffmpeg-x264/libx264`（Linux） | `ffmpeg/aac`（AAC） |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores`（ProRes 4444） | `ffmpeg/pcm`（24 bit PCM） |
 | `.webm` | `ffmpeg/webm` | `ffmpeg/vp9`（アルファ付き VP9） | `ffmpeg/opus`（Opus、48 kHz） |
 
 `--list-components` は、入っているコンポーネントを種類とプラグインとともに一覧にします。Celesta に組み込みの画像コンポーネント（`builtin/png` など。`built-in` と表示されます）も含まれ、これらは静止画だけを書き出します（後述の「静止画とコンタクトシート」）。`--check` を加えると、各プラグインにそのコンポーネントがこのコンピューターで使えるかを尋ねます（プラグインを 1 回ずつ起動します）。`--describe <プラグイン/id>` は、ひとつのコンポーネントの設定を、キーごとに型、既定値、選択肢または範囲とともに表示します。どちらも `--json` で JSON を出力し、ソースも出力も取りません。
 
-`--video-encoder` と `--audio-encoder` はマルチプレクサーの既定とは別のエンコーダーを、`--muxer` は拡張子とは別のマルチプレクサーを選びます。そのマルチプレクサーが出力の拡張子を挙げていなくてもファイルは書き出され、`ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway` のような警告が出ます。`--audio-encoder none` は音声のない動画を書き出します。`--audio-option` とは一緒に指定できません。マルチプレクサーが音声を受け付けず、音声エンコーダーも指定していないときも、`--audio-option` は指定できません。`--video-option key=value` と `--audio-option key=value` は選んだエンコーダーの設定を指定し、値はその設定の型で読まれます。複数の設定は繰り返して指定します。エンコーダーにないキーや受け付けない値は、描画を始める前に失敗します。Celesta に同梱の FFmpeg プラグインには、このリリースでは次の設定があります。書き出しページではそれぞれラベルで表示され、たとえば x264 の `preset` は **Speed preset**、`rateControl` は **Mode** です（入っているコンポーネントの設定は `--describe` で確認できます）。
+`--video-encoder` と `--audio-encoder` はマルチプレクサーの既定とは別のエンコーダーを、`--muxer` は拡張子とは別のマルチプレクサーを選びます。そのマルチプレクサーが出力の拡張子を挙げていなくてもファイルは書き出され、`ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway` のような警告が出ます。`--audio-encoder none` は音声のない動画を書き出します。`--audio-option` とは一緒に指定できません。マルチプレクサーが音声を受け付けず、音声エンコーダーも指定していないときも、`--audio-option` は指定できません。`--video-option key=value` と `--audio-option key=value` は選んだエンコーダーの設定を指定し、値はその設定の型で読まれます。複数の設定は繰り返して指定します。エンコーダーにないキーや受け付けない値は、描画を始める前に失敗します。Celesta の標準・追加 FFmpeg プラグインには、このリリースでは次の設定があります。書き出しページではそれぞれラベルで表示され、たとえば x264 の `preset` は **Speed preset**、`rateControl` は **Mode** です（入っているコンポーネントの設定は `--describe` で確認できます）。
 
 | コンポーネント | キー | 値（既定値） |
 | --- | --- | --- |
-| `ffmpeg/libx264` | `preset` | `ultrafast`、`superfast`、`veryfast`、`faster`、`fast`、`medium`、`slow`、`slower`、`veryslow`（`medium`） |
+| `ffmpeg-x264/libx264` | `preset` | `ultrafast`、`superfast`、`veryfast`、`faster`、`fast`、`medium`、`slow`、`slower`、`veryslow`（`medium`） |
 | | `rateControl` | 品質一定の `crf`、平均ビットレートの `vbr`（`crf`） |
 | | `crf` | 0〜51、`rateControl=crf` のとき。小さいほど高画質・大容量（18） |
 | | `bitrate` | ビット毎秒、`rateControl=vbr` のとき（8000000） |
@@ -142,7 +156,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 :::tab[macOS]
 
 ```sh title="速いプリセットで書き出す"
-"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+"/Applications/Celesta.app/Contents/MacOS/Celesta-export" --react --video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
 ```
 
 ```sh title="入っているコンポーネントを一覧にする"
@@ -153,7 +167,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 :::tab[Windows]
 
 ```sh title="速いプリセットで書き出す"
-& "C:\path\to\Celesta\Celesta-export.exe" --react --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
+& "C:\path\to\Celesta\Celesta-export.exe" --react --video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast --video-option crf=18 first-scene.tsx draft.mp4
 ```
 
 ```sh title="入っているコンポーネントを一覧にする"
@@ -163,7 +177,7 @@ Celesta は動画を 3 つのメディアコンポーネントで書き出しま
 :::
 ::::
 
-MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選択を `muxer`、`videoEncoder`（`{ "id": "ffmpeg/libx264", "options": { "preset": "veryfast", "crf": 18 } }`）、`audioEncoder`（同じ形、または `"none"`）で受け取り、書き出しプリセットを `preset` と `presetFile` で受け取ります（後述の「書き出しプリセット」）。MCP は各オプションの型を確かめるので、`crf` は数値で渡します。パッケージはオプションを `--video-option` と `--audio-option` のテキストとして書き出しツールに渡し、コマンドラインと同じく各設定の型で読むので、`"18"` でも受け付けます。MCP の `list_components` と `describe_component` ツール、パッケージの `listComponents()` と `describeComponent()` で、コンポーネントを一覧にしたり、その設定を確認したりできます。
+MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選択を `muxer`、`videoEncoder`（`{ "id": "ffmpeg-x264/libx264", "options": { "preset": "veryfast", "crf": 18 } }`）、`audioEncoder`（同じ形、または `"none"`）で受け取り、書き出しプリセットを `preset` と `presetFile` で受け取ります（後述の「書き出しプリセット」）。MCP は各オプションの型を確かめるので、`crf` は数値で渡します。パッケージはオプションを `--video-option` と `--audio-option` のテキストとして書き出しツールに渡し、コマンドラインと同じく各設定の型で読むので、`"18"` でも受け付けます。MCP の `list_components` と `describe_component` ツール、パッケージの `listComponents()` と `describeComponent()` で、コンポーネントを一覧にしたり、その設定を確認したりできます。
 
 ## 書き出しプリセット
 
@@ -180,7 +194,7 @@ MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選�
   "presets": [
     { "name": "YouTube 1080p",
       "muxer": "ffmpeg/mp4",
-      "video": { "component": "ffmpeg/libx264", "options": { "crf": 18, "preset": "slow" } },
+      "video": { "component": "ffmpeg-x264/libx264", "options": { "crf": 18, "preset": "slow" } },
       "audio": { "component": "ffmpeg/aac", "options": { "bitrate": 192000 } } },
     { "name": "Silent", "muxer": "ffmpeg/mp4", "audio": "none" }
   ],
@@ -190,7 +204,7 @@ MCP の `export_video` ツールと `@celesta.studio/exporter` は、同じ選�
 
 コンポーネントは `<プラグイン>/<コンポーネント>` で指定し、`"audio": "none"` は音声を入れません。プリセットで省いた部分は既定のままです。`muxer` がなければ出力の拡張子で決まり、`component` がなければマルチプレクサーの既定のエンコーダーが、プリセットに `options` があればそれとともに使われます（下のように自分でエンコーダーを指定したときを除きます）。`options` には既定値と違う設定だけを書けば十分です。**Save as preset…** もそれだけを保存するので、変えていない設定はプラグインがのちに既定値を変えるとそれに従います。`"default"` を持てるのはプロジェクトのファイルだけです。自分のファイルには、アプリで前回書き出したときの選択も `"last"` として残ります。`version` は `1` です。
 
-`--preset <名前>` でプリセットを使って書き出します。名前は `--preset-file <パス>` で指定したファイル、プロジェクトのファイル、自分のファイルの順に探し、最初に見つかったものを使います。プロジェクトのプリセットが自分のプリセットと同じ名前のときは、自分のほうが隠れることを警告します。どのファイルにもない名前はエラーコード `unknown_preset` で失敗します。x264 のプリセットは書き出しプリセットではなく上の設定です。`--preset veryfast` は失敗し、そのヒントは `--video-option preset=veryfast` を使うよう伝えます。`--json` を付けないときは、エラーのヒントはメッセージのあとの `hint:` の行に表示されます。`--preset-file` のファイルがないか、プリセットファイルでないときは、引数の誤りとして拒否されます。
+`--preset <名前>` でプリセットを使って書き出します。名前は `--preset-file <パス>` で指定したファイル、プロジェクトのファイル、自分のファイルの順に探し、最初に見つかったものを使います。プロジェクトのプリセットが自分のプリセットと同じ名前のときは、自分のほうが隠れることを警告します。どのファイルにもない名前はエラーコード `unknown_preset` で失敗します。x264 のプリセットは書き出しプリセットではなく上の設定です。`--preset veryfast` は失敗し、そのヒントは `--video-encoder ffmpeg-x264/libx264 --video-option preset=veryfast` を使うよう伝えます。`--json` を付けないときは、エラーのヒントはメッセージのあとの `hint:` の行に表示されます。`--preset-file` のファイルがないか、プリセットファイルでないときは、引数の誤りとして拒否されます。
 
 ほかのフラグはプリセットより優先されます。`--muxer`、`--video-encoder`、`--audio-encoder` はプリセットのコンポーネントを置き換え、`--video-option` と `--audio-option` は指定したキーの値を置き換えます。プリセットの設定は、保存したときのエンコーダーにだけ使われます。プリセットがエンコーダーを指定しているときは、`--video-encoder`（または `--audio-encoder`）で同じエンコーダーを指定すれば設定は残り、別のエンコーダーを指定すれば使われません。プリセットがエンコーダーを指定していないときは、自分でもエンコーダーを指定しないあいだだけ、マルチプレクサーの既定のエンコーダーに設定が使われます。既定と同じエンコーダーであっても、指定すると使われません。プリセットのマルチプレクサーが出力の拡張子を挙げていないときも、`--muxer` と同じ警告を出してそのまま書き出します。
 
@@ -219,7 +233,7 @@ MCP の `export_video` ツールと `@celesta.studio/exporter` は `preset` と 
 
 ## macOS の AVFoundation コンポーネント
 
-macOS のアプリには `avfoundation` メディアプラグインも入っています。Apple の VideoToolbox と AudioToolbox で（Mac にメディアエンジンがあればそれを使って）エンコードし、AVFoundation で MP4 と MOV のファイルを書きます。既定は FFmpeg のままです。これらのコンポーネントは、`--muxer`、`--video-encoder`、`--audio-encoder` や書き出しプリセット（`"muxer": "avfoundation/mp4"`、`"video": { "component": "avfoundation/hevc" }`）で名前を指定したときだけ使われます。FFmpeg のコンポーネントと組み合わせることもでき、`--video-encoder avfoundation/hevc` だけを指定すると、VideoToolbox の HEVC を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。このプラグインは macOS 専用で、Windows と Linux にはありません。
+macOS のアプリには `avfoundation` メディアプラグインも入っています。Apple の VideoToolbox と AudioToolbox で（Mac にメディアエンジンがあればそれを使って）エンコードし、AVFoundation で MP4 と MOV のファイルを書きます。H.264 は MP4 の既定エンコーダーになり、ユーザーが追加した x264 より優先されます。muxer と AAC の既定は FFmpeg のままです。それ以外のコンポーネントは、`--muxer`、`--video-encoder`、`--audio-encoder` や書き出しプリセット（`"muxer": "avfoundation/mp4"`、`"video": { "component": "avfoundation/hevc" }`）で名前を指定したときだけ使われます。FFmpeg のコンポーネントと組み合わせることもでき、`--video-encoder avfoundation/hevc` だけを指定すると、VideoToolbox の HEVC を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。このプラグインは macOS 専用で、Windows と Linux にはありません。
 
 | コンポーネント | 種類 | 書き出すもの |
 | --- | --- | --- |
@@ -261,7 +275,7 @@ MCP の `export_video` ツールと `@celesta.studio/exporter` も同じ名前�
 
 ## Windows の Media Foundation コンポーネント
 
-Windows のアプリには `mediafoundation` メディアプラグインも入っています。Windows 自身の Media Foundation で（Windows が GPU の動画エンコーダーを使えるときはそれを使って）H.264、HEVC、AAC をエンコードします。マルチプレクサーは持たず、エンコーダーはほかのプラグインのコンテナーに書きます。コンテナーはいつもどおり出力の拡張子で決まり（`.mp4` なら `ffmpeg/mp4`、`.mov` なら `ffmpeg/mov`）、`--muxer` でも指定できます。既定は FFmpeg のままです。これらのコンポーネントは、`--video-encoder` と `--audio-encoder` や書き出しプリセット（`"video": { "component": "mediafoundation/hevc" }`）で名前を指定したときだけ使われます。`--video-encoder mediafoundation/h264` だけを指定すると、Media Foundation の H.264 を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。アプリの書き出しページでも、映像と音声のエンコーダーの中に表示されます。このプラグインは Windows 専用で、macOS と Linux にはありません。
+Windows のアプリには `mediafoundation` メディアプラグインも入っています。Windows 自身の Media Foundation で（Windows が GPU の動画エンコーダーを使えるときはそれを使って）H.264、HEVC、AAC をエンコードします。マルチプレクサーは持たず、エンコーダーはほかのプラグインのコンテナーに書きます。コンテナーはいつもどおり出力の拡張子で決まり（`.mp4` なら `ffmpeg/mp4`、`.mov` なら `ffmpeg/mov`）、`--muxer` でも指定できます。H.264 は MP4 の既定エンコーダーになり、ユーザーが追加した x264 より優先されます。muxer と AAC の既定は FFmpeg のままです。それ以外のコンポーネントは、`--video-encoder` と `--audio-encoder` や書き出しプリセット（`"video": { "component": "mediafoundation/hevc" }`）で名前を指定したときだけ使われます。`--video-encoder mediafoundation/h264` だけを指定すると、Media Foundation の H.264 を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。アプリの書き出しページでも、映像と音声のエンコーダーの中に表示されます。このプラグインは Windows 専用で、macOS と Linux にはありません。
 
 | コンポーネント | 種類 | 書き出すもの |
 | --- | --- | --- |
@@ -350,7 +364,7 @@ Shorts や TikTok は動画を繰り返し再生します。最後のフレー�
 
 何も描かれていない領域だけが透明になるため、フレーム全体を覆うレイヤー（全面の背景など）があると出力は不透明になります。アルファはストレート（非乗算済み）で、色は BT.709（リミテッドレンジ）に変換されてタグ付けされます。
 
-Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)でエンコードします。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがない場合（libx264 のない LGPL ビルドなど）、書き出しはエラーコード `component_unavailable` で、その理由とともに失敗します。メディアプラグインがない場合は、その拡張子を書けるマルチプレクサーがないため、プラグインの入れ方のヒント付きで `unsupported_output` で失敗します。
+Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)でエンコードします。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがない場合、または追加のエンコーダープラグインがない場合（H.264 はネイティブのエンコーダーか `ffmpeg-x264` が必要）、書き出しはエラーコード `component_unavailable` で、その理由とともに失敗します。メディアプラグインがない場合は、その拡張子を書けるマルチプレクサーがないため、プラグインの入れ方のヒント付きで `unsupported_output` で失敗します。
 
 ## 静止画とコンタクトシート
 
@@ -484,7 +498,13 @@ docker build -f packaging/linux/Dockerfile -t celesta-exporter .
 ```
 
 ```sh title="コンテナで書き出し"
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mp4
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mov
+```
+
+イメージに入っているのは標準の `ffmpeg` プラグインだけなので、書き出せるのは ProRes／MOV と WebM です。libopus と libvpx はイメージの Ubuntu パッケージ `libopus0` と `libvpx12` のものを使います。MP4 を書き出すには、Linux 用の `ffmpeg-x264` の ZIP（[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)）を `codecs` などのフォルダに展開してマウントし、`--plugin-dir` で指定します。
+
+```sh title="コンテナで MP4 を書き出し"
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter --plugin-dir /plugins --react first-scene.tsx output.mp4
 ```
 
 > [!NOTE]

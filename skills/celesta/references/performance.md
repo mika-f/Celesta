@@ -69,7 +69,8 @@ while Celesta renders the next ones, so the export runs at the speed of the
 slower of the two. With x264's default `medium` preset, encoding a large
 video (1080 × 1920, for example) can be the slower one; the speed then stays
 about the same when you add or remove effects.
-`--video-option preset=ultrafast` encodes fast enough to keep encoding out
+With the `ffmpeg-x264` download installed,
+`--video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast` encodes fast enough to keep encoding out
 of the measurement, so use it whenever you compare rendering speeds.
 
 To find which part of a video is slow, export spans of a few seconds and
@@ -78,7 +79,7 @@ this example is for one at least 44 s long:
 
 ```sh
 for t in 0 10 20 30 40; do
-  Celesta-export --json --overwrite --video-option preset=ultrafast --from $t --to $((t + 4)) \
+  Celesta-export --json --overwrite --video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast --from $t --to $((t + 4)) \
     --react scene.tsx /tmp/celesta-speed.mp4 | grep -o '"renderFps":[0-9.]*'
 done
 ```

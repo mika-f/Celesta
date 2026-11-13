@@ -3,8 +3,10 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("package_macos", Path(__file__).with_name("package-macos.py"))
 packaging = importlib.util.module_from_spec(spec)
@@ -12,6 +14,31 @@ spec.loader.exec_module(packaging)
 
 
 class MacPackageValidationTests(unittest.TestCase):
+    def test_captured_unicode_metadata_ignores_the_windows_ansi_code_page(self):
+        payload = json.dumps({"description": "あ / codec"}, ensure_ascii=False).encode("utf-8")
+        # Cargo emits UTF-8 even when Python's Windows default is cp1252.
+        # Exercise the real pipe/decoder rather than mocking a decoded result.
+        with patch("subprocess._text_encoding", return_value="cp1252"):
+            captured = packaging.run(sys.executable, "-c",
+                f"import sys; sys.stdout.buffer.write(bytes.fromhex('{payload.hex()}'))", capture=True)
+        self.assertEqual(json.loads(captured), {"description": "あ / codec"})
+
+    def test_formula_notices_are_copied_and_a_formula_without_one_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix = root / "opus"
+            prefix.mkdir()
+            (prefix / "COPYING").write_text("BSD")
+            (prefix / "README").write_text("not a notice")
+            packaging.copy_formula_notices("opus", prefix, root / "licenses/native/opus")
+            self.assertEqual(sorted(path.name for path in (root / "licenses/native/opus").iterdir()), ["COPYING"])
+            bare = root / "bare"
+            bare.mkdir()
+            (bare / "README").write_text("no licence here")
+            with self.assertRaisesRegex(RuntimeError, "no licence file"):
+                packaging.copy_formula_notices("bare", bare, root / "licenses/native/bare")
+            self.assertFalse((root / "licenses/native/bare").exists())
+
     def test_reads_modern_and_legacy_minimum_os_versions(self):
         self.assertEqual(packaging.minimum_version(
             "Load command 1\n      cmd LC_BUILD_VERSION\n platform 1\n    minos 14.5\n      sdk 15.0\n"
@@ -81,14 +108,15 @@ class MacPackageValidationTests(unittest.TestCase):
                                                                         for kind in kinds]}
                 for dependency, *kinds in deps]}
 
-        names = ["celesta-codec-ffmpeg", "ez-ffmpeg", "ffmpeg-sys-next", "bindgen", "tempfile",
+        names = ["celesta-codec-ffmpeg-x264", "celesta-codec-ffmpeg", "ez-ffmpeg", "ffmpeg-sys-next", "bindgen", "tempfile",
                  "celesta-codec-avfoundation", "objc2-video-toolbox", "objc2", "criterion",
                  "celesta-plugin-vrm", "gltf", "rayon"]
         metadata = {
             "packages": [package(name) for name in names],
             "workspace_members": [package(name)["id"] for name in
-                                  ("celesta-codec-ffmpeg", "celesta-codec-avfoundation", "celesta-plugin-vrm")],
+                                  ("celesta-codec-ffmpeg", "celesta-codec-ffmpeg-x264", "celesta-codec-avfoundation", "celesta-plugin-vrm")],
             "resolve": {"nodes": [
+                node("celesta-codec-ffmpeg-x264", ("celesta-codec-ffmpeg", None)),
                 node("celesta-codec-ffmpeg", ("ez-ffmpeg", None), ("ffmpeg-sys-next", None),
                      ("tempfile", "dev"), ("rayon", None, "dev")),
                 node("ez-ffmpeg", ("ffmpeg-sys-next", None)),

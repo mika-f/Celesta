@@ -39,15 +39,18 @@ file's) folder, not the current directory.
 A fast check of one second around the part you changed:
 
 ```sh
-Celesta-export --json --overwrite --video-option preset=ultrafast --from 2 --to 3 \
-  --react scene.tsx /tmp/celesta-check.mp4
+Celesta-export --json --overwrite --from 2 --to 3 \
+  --react scene.tsx /tmp/celesta-check.mov
 ```
 
 The final export the user asked for:
 
 ```sh
-Celesta-export --json --react scene.tsx out.mp4
+Celesta-export --json --react scene.tsx out.mov
 ```
+
+Use `.mp4` when an H.264 encoder is installed. x264-only options such as
+`preset=ultrafast` also need `--video-encoder ffmpeg-x264/libx264`.
 
 **Only overwrite a file the user asked for or one you created.** Without
 `--overwrite`, the exporter refuses an existing output file.
@@ -63,12 +66,12 @@ Celesta-export --json --react scene.tsx out.mp4
 | `--from <t>`, `--to <t>` | Export only this span (`--to` exclusive); the output starts at 00:00. Times are seconds, `MM:SS.mmm`, or `HH:MM:SS.mmm`. |
 | `--subtitles <file>` | Also write the video's subtitles (`<Subtitles>` cues, `<Dialogue>` lines, a project's dialogue items) as `.srt` or `.vtt`, timed like the video. Repeatable; `{lang}` in the path writes one file per language. Without an output video, writes only the subtitles, without rendering. See [subtitles.md](subtitles.md#write-the-subtitle-file-on-export). |
 | `--overwrite` | Replace an existing output file. |
-| `--video-option <key=value>` | A setting of the video encoder, read by its type; repeatable. For H.264: `preset=ultrafast` … `veryslow` (default `medium`; encoding speed against file size only, it does not change what is rendered), `crf=0`…`51` (default 18, lower is better quality), `bitDepth=10`. See [Encoders and settings](#encoders-and-settings). For stills, the image encoder's, such as `transparent=true`; see [Still images](#still-images). |
+| `--video-option <key=value>` | A setting of the video encoder, read by its type; repeatable. For `ffmpeg-x264/libx264`: `preset=ultrafast` … `veryslow` (default `medium`; encoding speed against file size only, it does not change what is rendered), `crf=0`…`51` (default 18, lower is better quality), `bitDepth=10`. See [Encoders and settings](#encoders-and-settings). For stills, the image encoder's, such as `transparent=true`; see [Still images](#still-images). |
 | `--audio-option <key=value>` | A setting of the audio encoder, such as `bitrate=128000`; repeatable. |
 | `--video-encoder <plugin/id>`, `--audio-encoder <plugin/id>` | An encoder other than the muxer's default; `--audio-encoder none` writes no audio and refuses `--audio-option`, as does a muxer that takes no audio. |
 | `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. One that does not list the output's extension still writes it, with a warning. Stills take it too, with `--video-encoder` and `--video-option` (see [Still images](#still-images)); a video refuses a still muxer (`builtin/…`, or a sequence muxer) with `component_unavailable`. |
 | `--list-components [--check]`, `--describe <plugin/id>` | List the installed media components, or show one's settings; take no source or output. See [Encoders and settings](#encoders-and-settings). |
-| `--preset <name>` | An export preset from `export-presets.json`: looked up in `--preset-file`, then the project's file, then the user's. The other component and option flags go over it. x264's preset is `--video-option preset=<name>`. See [Export presets](#export-presets). |
+| `--preset <name>` | An export preset from `export-presets.json`: looked up in `--preset-file`, then the project's file, then the user's. The other component and option flags go over it. x264's preset is a setting of the optional `ffmpeg-x264/libx264`: `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>`. See [Export presets](#export-presets). |
 | `--preset-file <file>` | An `export-presets.json` to look `--preset` up in first; a missing or invalid one is a `usage` error. |
 | `--loop` | The video plays in a loop (Shorts, TikTok): the AAC sound is encoded to run from its end into its start. Any video output; WebM ignores it. See [Looping video](#looping-video). |
 | `--loudness <l>` | Bring the whole mix to an integrated loudness: LUFS from -70 to -5, `streaming` (-14), or `broadcast` (-23). Video only. See [Loudness](#loudness). |
@@ -94,18 +97,24 @@ A video is written by three media components, each named
 encoder. The output's extension picks the muxer and the muxer's default
 codecs pick the encoders, so most exports need none of these flags:
 
+The standard `ffmpeg` supplies ProRes/MOV and WebM (VP9, Opus) immediately. macOS also bundles
+`avfoundation/h264`, Windows `mediafoundation/h264`; those bundled H.264
+encoders outrank user-installed x264, so MP4 needs no download when they are
+available. Linux needs the separate `ffmpeg-x264` download for H.264. See
+[plugins.md](plugins.md) for the ZIP name and installation.
+
 | Extension | Muxer | Video encoder | Audio encoder |
 | --- | --- | --- | --- |
-| `.mp4`, `.m4v` | `ffmpeg/mp4` | `ffmpeg/libx264` | `ffmpeg/aac` |
+| `.mp4`, `.m4v` | `ffmpeg/mp4` | `avfoundation/h264` (macOS), `mediafoundation/h264` (Windows), `ffmpeg-x264/libx264` (Linux) | `ffmpeg/aac` |
 | `.mov` | `ffmpeg/mov` | `ffmpeg/prores` | `ffmpeg/pcm` |
 | `.webm` | `ffmpeg/webm` | `ffmpeg/vp9` | `ffmpeg/opus` |
 
 There is no codec-neutral quality setting: a non-default export uses the
-chosen encoder's own keys. The bundled FFmpeg plugin's, as of this release:
+chosen encoder's own keys. The standard and optional FFmpeg plugins offer these settings:
 
 | Component | Key | Values (default) |
 | --- | --- | --- |
-| `ffmpeg/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow` (`medium`) |
+| `ffmpeg-x264/libx264` | `preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow` (`medium`) |
 | | `rateControl` | `crf` (constant quality) or `vbr` (average bitrate) (`crf`) |
 | | `crf` | 0–51, lower is better; only with `rateControl=crf` (18) |
 | | `bitrate` | bit/s, at least 100000; only with `rateControl=vbr` (8000000) |
@@ -122,8 +131,8 @@ component, or to confirm these, ask the exporter first:
 
 ```sh
 Celesta-export --list-components --check          # every component; --check starts each plugin to say whether it works
-Celesta-export --json --describe ffmpeg/libx264   # its settings: key, type, default, options or range, visibleWhen
-Celesta-export --json --overwrite --video-option preset=slow --video-option crf=20 \
+Celesta-export --json --describe ffmpeg-x264/libx264   # its settings: key, type, default, options or range, visibleWhen
+Celesta-export --json --overwrite --video-encoder ffmpeg-x264/libx264 --video-option preset=slow --video-option crf=20 \
   --audio-option bitrate=256000 --react scene.tsx out.mp4
 Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.mp4
 ```
@@ -137,7 +146,8 @@ Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.
   not x264's preset: `--preset ultrafast` fails with `unknown_preset`
   (unless a presets file has that name), and its hint (the `--json`
   report's `hint`, or a `hint:` line after the message without `--json`)
-  says `use --video-option preset=ultrafast`.
+  says `use --video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast`
+  (x264's presets belong to the optional `ffmpeg-x264` plugin).
 - A `--muxer` (or a preset's muxer) that does not list the output's
   extension still writes the file, and the export warns
   `ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway`.
@@ -146,7 +156,7 @@ Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.
   and the renderer is not a software one; otherwise the encoder converts.
   There is no flag for it.
 - The MCP `export_video` tool takes `muxer`, `videoEncoder`
-  (`{"id": "ffmpeg/libx264", "options": {"preset": "slow", "crf": 20}}`;
+  (`{"id": "ffmpeg-x264/libx264", "options": {"preset": "slow", "crf": 20}}`;
   `id` may be left out for the muxer's default), and `audioEncoder` (the
   same shape, or `"none"`), with typed option values, and `preset` and
   `presetFile` as `--preset` and `--preset-file`. MCP's
@@ -174,7 +184,7 @@ and remembers its last choice in the user file's `last`.
   "presets": [
     { "name": "YouTube 1080p",
       "muxer": "ffmpeg/mp4",
-      "video": { "component": "ffmpeg/libx264", "options": { "crf": 18, "preset": "slow" } },
+      "video": { "component": "ffmpeg-x264/libx264", "options": { "crf": 18, "preset": "slow" } },
       "audio": { "component": "ffmpeg/aac", "options": { "bitrate": 192000 } } },
     { "name": "Silent", "muxer": "ffmpeg/mp4", "audio": "none" }
   ],
@@ -208,7 +218,7 @@ and remembers its last choice in the user file's `last`.
   left out, a bad value reset to its default, a missing or unusable
   component replaced by the default (without its options). Each is a
   warning in the result's `warnings` (and a `warning:` line without
-  `--json`), such as `` preset `Web`: ffmpeg/libx264 has no setting `speed`; it is
+  `--json`), such as `` preset `Web`: ffmpeg-x264/libx264 has no setting `speed`; it is
   left out ``. A value given with `--video-option`/`--audio-option`
   (or MCP/TS `options`) is still strict: `invalid_option`. The exception:
   `--audio-option` with a preset that leaves the audio out (`"audio":
@@ -234,10 +244,10 @@ both use the project's `default` in the same cases.
 ### AVFoundation components (macOS)
 
 The macOS app also bundles the `avfoundation` media plugin (VideoToolbox,
-AudioToolbox, AVFoundation; macOS only). FFmpeg stays the default: its
-components are used only when named (`--muxer`, `--video-encoder`,
-`--audio-encoder`, MCP's and the package's `muxer` / `videoEncoder` /
-`audioEncoder`, or a preset), and they mix with FFmpeg's
+AudioToolbox, AVFoundation; macOS only). Its H.264 is the default for MP4
+when no higher-ranked installed encoder supplies it. Standard FFmpeg keeps
+muxing, AAC, and ProRes defaults; name other native components explicitly
+(`--muxer`, `--video-encoder`, `--audio-encoder`, or a preset). They mix with FFmpeg's
 (`--video-encoder avfoundation/hevc` alone gives `ffmpeg/mp4` +
 `avfoundation/hevc` + `ffmpeg/aac`).
 
@@ -284,9 +294,10 @@ The Windows app also bundles the `mediafoundation` media plugin (Media
 Foundation's encoder transforms and source reader; Windows only). It has
 encoders and a decoder but **no muxer**: its packets go into another
 plugin's, `ffmpeg/mp4` (`.mp4`) or `ffmpeg/mov` (`.mov`) by the output's
-extension or `--muxer`. FFmpeg stays the default: its components are used
-only when named (`--video-encoder`, `--audio-encoder`, MCP's and the
-package's `videoEncoder` / `audioEncoder`, or a preset)
+extension or `--muxer`. Its H.264 is the default for MP4 when available and
+outranks a user-installed x264 plugin. FFmpeg supplies the default muxer
+and AAC. Select the other native encoders by name (`--video-encoder`,
+`--audio-encoder`, MCP/TS encoder fields, or a preset)
 (`--video-encoder mediafoundation/h264` alone gives `ffmpeg/mp4` +
 `mediafoundation/h264` + `ffmpeg/aac`).
 
@@ -338,7 +349,7 @@ The output extension picks the video format:
 
 | Extension | Video | Audio |
 | --- | --- | --- |
-| `.mp4` | H.264 (`yuv420p`; `yuv420p10le` with `--video-option bitDepth=10`) | AAC |
+| `.mp4` | H.264 (`yuv420p`; select `ffmpeg-x264/libx264` and `bitDepth=10` for 10-bit) | AAC |
 | `.mov` | ProRes 4444 with alpha (`yuva444p10le`) | 24-bit PCM |
 | `.webm` | VP9 with alpha (`yuva420p`, CRF 20) | Opus, 48 kHz |
 
@@ -530,7 +541,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
   paths. Read these paths; do not work out file names yourself. Each entry
   has a `type`:
   - `video`: `firstFrame`, `frames`, `start`, `duration`, `muxer`
-    (`"ffmpeg/mp4"`), `video` (`{"component": "ffmpeg/libx264", "codec":
+    (`"ffmpeg/mp4"`), `video` (`{"component": "ffmpeg-x264/libx264", "codec":
     "avc1.64001F"}`), `audio` (the same shape, or `null` when the file has
     no audio stream), `alpha` (`true` when the encoder kept transparency:
     ProRes 4444 and VP9 by default), and `files` (every file the muxer
@@ -548,7 +559,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
   of whichever is slower. At large sizes x264's default `medium` preset can
   encode slower than Celesta renders, and `renderFps` then shows the encoding
   speed. To compare rendering speeds, export an `.mp4` with
-  `--video-option preset=ultrafast`
+  `--video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast`
   ([performance.md](performance.md#find-slow-parts)).
 - On failure, `status` is `"error"` and `error` has a stable `code`, the
   `message`, and sometimes a `hint`. `outputs` still lists the images written
@@ -581,10 +592,10 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `invalid_selection` | A frame is out of range or repeated, the selection or contact sheet is too large, or a still output is not `.png`, `.jpg`, `.jpeg`, or `.webp`. |
 | `empty_range` | `--from`/`--to` cover no frames of the composition. |
 | `unsupported_output` | No installed muxer writes the output's extension (normally `.mp4`, `.m4v`, `.mov`, `.webm`), and no frame selection (`--frame`, `--frames`, `--every`) makes it a still export; the hint lists the extensions there are. With no media plugin at all, the hint says how to install it (as for `no_decoder`). |
-| `component_unavailable` | A named component is not installed (check `--list-components`), or a chosen one does not work here; `message` has the reason, such as `this FFmpeg build has no libx264`. |
+| `component_unavailable` | A named component is not installed (check `--list-components`), or a chosen one does not work here; `message` has the reason, such as `this FFmpeg build has no libvpx-vp9`. |
 | `incompatible_components` | The named encoder writes no codec the muxer takes (H.264 in `.webm`, for example). |
 | `invalid_option` | A `--video-option`/`--audio-option` key the encoder does not have, a value of the wrong type or out of range, or a hidden field; or the plugin refused the combination. Check with `--describe`. |
-| `unknown_preset` | `--preset` names a preset in no presets file, or the project file's `default` does (`the default preset … is in no presets file`). For an x264 name, the hint says to use `--video-option preset=<name>`. See [Export presets](#export-presets). |
+| `unknown_preset` | `--preset` names a preset in no presets file, or the project file's `default` does (`the default preset … is in no presets file`). For an x264 name, the hint says to use `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>` (the optional `ffmpeg-x264` plugin). See [Export presets](#export-presets). |
 | `invalid_presets` | A presets file the lookup reached cannot be read, is not valid JSON, or has a `version` other than 1; `message` starts with its path. Fix the file; do not delete a user's file without asking. |
 | `no_decoder` | No media decoder can run (no media plugin was found, or those found declare no decoder or have no program for this computer), so the entry's video and audio files could not be read (still exports, and video exports whose media plugins have no decoder; a video export with no media plugin at all fails with `unsupported_output` first). Reinstall the app, or in a source build run `node scripts/plugins/build.mts plugins/ffmpeg` and `export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root, in the shell that runs Celesta. A `plugins/dist/ffmpeg` with `"roles": ["codec"]` is from an older checkout and is ignored: build it again. |
 | `unsupported_media` | Media plugins were found, but none of their decoders reads a file the entry uses (`message` names the file and the decoders tried). Convert it to a format the `ffmpeg` plugin reads, such as MP4 or WAV. |
@@ -613,12 +624,12 @@ none:
 ```json
 {"event":"compositions","compositionId":"default","compositions":[{"id":"default","width":1920,"height":1080,"frameRate":{"numerator":30,"denominator":1},"durationInFrames":150}]}
 {"event":"composition","composition":{"width":1920,"height":1080,"fps":30.0,"frames":150,"duration":5.0}}
-{"event":"output","muxer":"ffmpeg/mp4","muxerName":"MP4","video":{"component":"ffmpeg/libx264","name":"H.264 (x264)","settings":["Slow","CRF 20"]},"audio":{"component":"ffmpeg/aac","name":"AAC","settings":[]}}
+{"event":"output","muxer":"ffmpeg/mp4","muxerName":"MP4","video":{"component":"ffmpeg-x264/libx264","name":"H.264 (x264)","settings":["Slow","CRF 20"]},"audio":{"component":"ffmpeg/aac","name":"AAC","settings":[]}}
 {"event":"rendering","frame":1,"total":150}
 {"event":"warning","message":"…"}
 {"event":"mixingAudio"}
 {"event":"muxing"}
-{"event":"wrote","output":{"type":"video","path":"/work/out.mp4","firstFrame":0,"frames":150,"start":0.0,"duration":5.0,"muxer":"ffmpeg/mp4","video":{"component":"ffmpeg/libx264","codec":"avc1.640028"},"audio":{"component":"ffmpeg/aac","codec":"mp4a.40.2"},"loudness":{"integratedLufs":-16.1,"truePeakDbtp":-1.67},"alpha":false,"files":["/work/out.mp4"]}}
+{"event":"wrote","output":{"type":"video","path":"/work/out.mp4","firstFrame":0,"frames":150,"start":0.0,"duration":5.0,"muxer":"ffmpeg/mp4","video":{"component":"ffmpeg-x264/libx264","codec":"avc1.640028"},"audio":{"component":"ffmpeg/aac","codec":"mp4a.40.2"},"loudness":{"integratedLufs":-16.1,"truePeakDbtp":-1.67},"alpha":false,"files":["/work/out.mp4"]}}
 ```
 
 `output` names the muxer and encoders, with the settings that differ from
@@ -670,7 +681,7 @@ Every video export is BT.709 with limited range, converted on the GPU or by
 the encoder when it takes RGB, and tagged in the file (H.264's VUI, MP4 and
 MOV `colr`, WebM `Colour`), so players show the colors as rendered. Earlier
 releases wrote untagged MP4s with BT.601 coefficients, which players that
-assume BT.709 for HD showed slightly off. `--describe ffmpeg/libx264` shows
+assume BT.709 for HD showed slightly off. `--describe ffmpeg-x264/libx264` shows
 no color option: there is nothing to choose.
 
 For speed problems, see [performance.md](performance.md).
@@ -687,5 +698,5 @@ load font files with `<Font>`.
 The Linux container image does all of this:
 
 ```sh
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx film.mp4
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx film.mov
 ```

@@ -17,6 +17,14 @@ pub(crate) enum PageWarning {
     },
     /// The project's `default` names a preset found in no file.
     UnknownDefault { name: String },
+    /// An export left to the defaults could not use its `first` container
+    /// (`MP4`), so the page starts with `used`: why, with how to make the
+    /// first one work.
+    PassedOver {
+        first: String,
+        used: String,
+        reason: String,
+    },
 }
 
 impl PageWarning {
@@ -74,6 +82,14 @@ impl ExportModel {
             PageWarning::UnknownDefault { name } => {
                 format!("The project’s default preset “{name}” isn’t in any presets file.")
             }
+            PageWarning::PassedOver {
+                first,
+                used,
+                reason,
+            } => format!(
+                "{first} cannot be exported here, so the export starts as {used}: {}",
+                plain(reason)
+            ),
         }
     }
 

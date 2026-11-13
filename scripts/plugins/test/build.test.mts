@@ -36,13 +36,13 @@ let out: string;
 const LINUX = 'x86_64-unknown-linux-gnu';
 const MACOS = 'aarch64-apple-darwin';
 
-function metadata(version: string) {
+function metadata(version: string, name = 'demo-plugin') {
   writeFileSync(
     join(plugin, 'metadata'),
     `console.log(JSON.stringify(${JSON.stringify({
       workspace_root: tree,
       target_directory: join(tree, 'target'),
-      packages: [{ name: 'demo-plugin', version, manifest_path: join(plugin, 'Cargo.toml'), dependencies: [] }],
+      packages: [{ name, version, manifest_path: join(plugin, 'Cargo.toml'), dependencies: [] }],
     })}));\n`,
   );
 }
@@ -90,8 +90,8 @@ afterEach(() => {
   rmSync(tree, { recursive: true, force: true });
 });
 
-function build(target: string) {
-  return spawnSync(process.execPath, [script, 'demo', '--out', 'dist', '--skip-js', '--target', target], {
+function build(target: string, extra: string[] = []) {
+  return spawnSync(process.execPath, [script, 'demo', '--out', 'dist', '--skip-js', '--target', target, ...extra], {
     cwd: tree,
     encoding: 'utf8',
     env: { ...process.env, CARGO: process.execPath },
@@ -101,6 +101,24 @@ function build(target: string) {
 const manifest = () => JSON.parse(readFileSync(join(out, 'celesta-plugin.json'), 'utf8'));
 
 describe('build.mts', () => {
+  it.each([false, true])('refuses cross-compiled distributions before building (target from environment: %s)', (fromEnvironment) => {
+    const source = JSON.parse(readFileSync(join(plugin, 'plugin.json'), 'utf8'));
+    source.cargoPackage = 'celesta-codec-ffmpeg';
+    delete source.module;
+    writeFileSync(join(plugin, 'plugin.json'), JSON.stringify(source));
+    metadata('0.1.0', 'celesta-codec-ffmpeg');
+    const target = process.platform === 'darwin' ? LINUX : MACOS;
+    const result = fromEnvironment
+      ? spawnSync(process.execPath, [script, 'demo', '--out', 'dist', '--distribution'], {
+          cwd: tree, encoding: 'utf8',
+          env: { ...process.env, CARGO: process.execPath, CARGO_BUILD_TARGET: target },
+        })
+      : build(target, ['--distribution']);
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain('distribution validation must run on the target OS and architecture');
+    expect(existsSync(join(tree, 'ran-build'))).toBe(false);
+  });
+
   it('writes the manifest, the executable and the license files', () => {
     const result = build(LINUX);
     expect(result.status, result.stderr).toBe(0);

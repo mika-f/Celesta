@@ -140,7 +140,7 @@ jobs:
       # They mock no Apple tool, so they run anywhere; Linux runs them once.
       - name: Test the macOS packaging checks
         if: runner.os == 'Linux'
-        run: python3 scripts/test_package_macos.py
+        run: python3 -B -m unittest scripts/test_package_macos.py scripts/test_package_media_plugins.py
 
       # Type checks have no timeouts, so they run beside the Rust build and
       # use the cores it leaves idle while it links.
@@ -284,8 +284,9 @@ jobs:
       # affected: rust-cache keys on FFMPEG_VERSION and FFMPEG_FEATURES, and
       # only main saves, where every plugin runs with FFmpeg; a job without
       # it would hash empty values, miss main's cache, and build cold.
-      # Installing it takes about two minutes on macOS (Homebrew), so the JS
-      # packages install meanwhile.
+      # The two native FFmpeg builds (standard and x264) are cached
+      # independently of Rust. A cold setup compiles them, so JS packages
+      # install meanwhile.
       # rust-cache waits for it: a background step's environment reaches
       # later steps only after a wait. It starts after the Linux packages, as
       # both use apt.
@@ -294,10 +295,10 @@ jobs:
         uses: $/.github/actions/setup-ffmpeg
         background: true
 
-      # Windows only downloads the pre-built package (about 10 seconds), and
-      # there a background composite action fails now and then: the runner
-      # rewrites event.json as each step starts, and two steps starting at
-      # once collide on the file lock (actions/runner#4641).
+      # Windows only downloads the two pre-built packages (about 10 seconds
+      # each), and there a background composite action fails now and then: the
+      # runner rewrites event.json as each step starts, and two steps starting
+      # at once collide on the file lock (actions/runner#4641).
       - if: steps.affected.outputs.any == 'true' && runner.os == 'Windows'
         uses: $/.github/actions/setup-ffmpeg
 
@@ -320,7 +321,7 @@ jobs:
         if: steps.affected.outputs.any == 'true'
         with:
           workspaces: plugins -> target
-          env-vars: FFMPEG_VERSION FFMPEG_FEATURES
+          env-vars: FFMPEG_VERSION FFMPEG_FEATURES FFMPEG_IMAGE_OS FFMPEG_IMAGE_VERSION FFMPEG_DEPS_HASH
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # <Vrm> imports @celesta.studio/react and @celesta.studio/character, and the build
@@ -371,7 +372,7 @@ jobs:
         run: |
           while read -r workspace packages; do
             [ -n "$workspace" ] || continue
-            (cd "$workspace" && cargo clippy $packages --all-targets --locked -- -D warnings) < /dev/null
+            node scripts/plugins/run-cargo.mts "$workspace" clippy $packages --all-targets --locked -- -D warnings < /dev/null
           done <<< "$CARGO_WORKSPACES"
 
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
@@ -387,7 +388,7 @@ jobs:
         run: |
           while read -r workspace packages; do
             [ -n "$workspace" ] || continue
-            (cd "$workspace" && cargo test $packages --locked --no-fail-fast -- --show-output) < /dev/null 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log"
+            node scripts/plugins/run-cargo.mts "$workspace" test $packages --locked --no-fail-fast -- --show-output < /dev/null 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log"
           done <<< "$CARGO_WORKSPACES"
 
       # A test that cannot run here (on macOS or Windows, or without
@@ -414,3 +415,73 @@ jobs:
     name: Package
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/package-build.yml
+
+  # Dispatch checks the final headless image as well as the unsigned desktop
+  # packages. This only builds and tests locally on the runner; nothing is pushed.
+  # It waits for the packages for the Linux ffmpeg-x264 ZIP, and runs even when
+  # another system's package failed; a missing ZIP fails the MP4 step.
+  docker:
+    name: Linux exporter image
+    needs: package
+    if: github.event_name == 'workflow_dispatch' && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Build exporter image
+        run: docker build --progress=plain -f packaging/linux/Dockerfile -t celesta-exporter:check .
+      - name: Check standard distribution and export
+        run: |
+          docker run --rm --entrypoint /opt/celesta/runtime/node celesta-exporter:check -e '
+            const { join } = require("node:path");
+            const { execFileSync } = require("node:child_process");
+            const directory = "/opt/celesta/plugins/ffmpeg";
+            const manifest = require(join(directory, "celesta-plugin.json"));
+            const programs = Object.values(manifest.executable);
+            if (programs.length !== 1) throw new Error("Expected one standard FFmpeg program");
+            for (const flag of ["--check-license", "--check-build"]) {
+              execFileSync(join(directory, programs[0]), [flag], { stdio: "inherit" });
+            }
+          '
+          docker run --rm celesta-exporter:check --list-components --check --json
+          cat > "$RUNNER_TEMP/check.tsx" <<'EOF'
+          import { Composition, Text } from '@celesta.studio/react';
+          export default function Check() {
+            return <Composition width={64} height={64} fps={1} durationInFrames={1}><Text>Celesta</Text></Composition>;
+          }
+          EOF
+          docker run --rm -v "$RUNNER_TEMP:/work" celesta-exporter:check --react check.tsx check.mov
+          test -s "$RUNNER_TEMP/check.mov"
+          # WebM (VP9 and Opus) needs only the bundled LGPL plugin.
+          docker run --rm -v "$RUNNER_TEMP:/work" celesta-exporter:check --react check.tsx check.webm
+          test -s "$RUNNER_TEMP/check.webm"
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: celesta-codecs-linux-x64
+          path: ${{ runner.temp }}/codec-zip
+      # The export guide's "Export MP4 in a container" example, run as written
+      # (packages/website/content/{en,ja}/docs/02-(guides)/09-export.md): the
+      # extracted ffmpeg-x264 ZIP mounted read-only and passed with --plugin-dir.
+      - name: Export MP4 with the downloaded ffmpeg-x264
+        run: |
+          work="$RUNNER_TEMP/mp4-check"
+          mkdir -p "$work/codecs"
+          unzip -q "$RUNNER_TEMP"/codec-zip/Celesta-plugin-ffmpeg-x264-*-linux-x64.zip -d "$work/codecs"
+          test -f "$work/codecs/ffmpeg-x264/celesta-plugin.json"
+          cp "$RUNNER_TEMP/check.tsx" "$work/first-scene.tsx"
+          cd "$work"
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter:check --plugin-dir /plugins --react first-scene.tsx output.mp4
+          node -e '
+            const mp4 = require("node:fs").readFileSync("output.mp4");
+            if (mp4.toString("ascii", 4, 8) !== "ftyp") throw new Error("output.mp4 is not an MP4");
+            if (!mp4.includes(Buffer.from("avc1"))) throw new Error("output.mp4 has no H.264 track");
+          '
+          # The same command with --json names the encoder that wrote it.
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter:check --plugin-dir /plugins --react first-scene.tsx output.mp4 --overwrite --json > report.json
+          node -e '
+            const report = JSON.parse(require("node:fs").readFileSync("report.json", "utf8"));
+            const video = report.outputs?.[0]?.video;
+            if (video?.component !== "ffmpeg-x264/libx264" || !String(video?.codec).startsWith("avc1")) {
+              throw new Error(`expected ffmpeg-x264/libx264 H.264, got ${JSON.stringify(video)}`);
+            }
+          '

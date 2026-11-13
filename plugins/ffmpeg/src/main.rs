@@ -1,21 +1,15 @@
-//! The FFmpeg media plugin's process: serves the media role of the plugin
-//! protocol on stdin and stdout until stdin closes, or, given
-//! `--manifest`, prints its manifest and exits.
-
-use celesta_codec_ffmpeg::{FfmpegCodec, PLUGIN_ID, printed_manifest};
-use celesta_plugin_host::MANIFEST_FLAG;
+//! Serves this FFmpeg build or runs its explicit validation commands.
+use celesta_codec_ffmpeg::{FfmpegCodec, run_plugin};
+use celesta_codec_ffmpeg::{PLUGIN_ID, printed_manifest};
 
 fn main() {
-    if std::env::args().nth(1).as_deref() == Some(MANIFEST_FLAG) {
-        println!("{}", printed_manifest());
-        return;
-    }
-    if let Err(error) = celesta_media::protocol::serve(
-        &mut FfmpegCodec::new(),
+    if let Err(error) = run_plugin(
+        FfmpegCodec::new(),
         PLUGIN_ID,
         env!("CARGO_PKG_VERSION"),
+        &printed_manifest(),
     ) {
-        eprintln!("{PLUGIN_ID}: {error}");
+        eprintln!("{error}");
         std::process::exit(1);
     }
 }

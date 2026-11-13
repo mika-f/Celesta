@@ -4,6 +4,9 @@
 //! FFmpeg decodes of it.
 #![cfg(target_os = "macos")]
 
+#[path = "../../ffmpeg/tests/support/program.rs"]
+mod program;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
 
@@ -50,16 +53,27 @@ fn gpu() -> MutexGuard<'static, ()> {
     GPU.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Makes both plugins, in this process, the media plugins of every export:
-/// AVFoundation first, as its folder sorts before FFmpeg's, both bundled.
+/// Registers bundled native and standard FFmpeg providers plus optional
+/// codec processes with the priority of user-installed downloads.
 fn install() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
         celesta_media::set_registry(Some(Arc::new(MediaRegistry::new(vec![
             celesta_codec_avfoundation::registered(),
             celesta_codec_ffmpeg::registered(),
+            optional(celesta_codec_ffmpeg_x264::registered()),
         ]))));
     });
+}
+
+/// The optional x264 codec runs in its own native build and ranks as a user
+/// download.
+fn optional(mut plugin: celesta_media::RegisteredPlugin) -> celesta_media::RegisteredPlugin {
+    let executable = program::executable(&plugin.id);
+    let directory = executable.parent().unwrap().to_path_buf();
+    plugin.origin = celesta_plugin_host::MediaOrigin::User;
+    plugin.factory = celesta_media::MediaProcess::factory(executable, directory);
+    plugin
 }
 
 /// Reports a test skipped for want of a GPU adapter, or fails it when
@@ -568,7 +582,7 @@ fn ffmpeg_x264_with_avfoundation_aac_in_avfoundation_mp4() {
         ExportOptions {
             output: choice(
                 "avfoundation/mp4",
-                Some("ffmpeg/libx264"),
+                Some("ffmpeg-x264/libx264"),
                 Some("avfoundation/aac"),
             ),
             ..ExportOptions::default()
@@ -578,7 +592,11 @@ fn ffmpeg_x264_with_avfoundation_aac_in_avfoundation_mp4() {
     };
     assert_eq!(
         reported(&report),
-        ["avfoundation/mp4", "ffmpeg/libx264", "avfoundation/aac"]
+        [
+            "avfoundation/mp4",
+            "ffmpeg-x264/libx264",
+            "avfoundation/aac"
+        ]
     );
     assert_eq!(sample_entries(&output), [*b"avc1", *b"mp4a"]);
     assert_halves(&output, LEFT, RIGHT);
@@ -751,7 +769,7 @@ fn a_looping_avfoundation_mp4_starts_its_sound_from_its_end() {
 }
 
 #[test]
-fn ffmpeg_stays_the_default_beside_avfoundation() {
+fn native_h264_is_the_default_beside_optional_x264() {
     let _gpu = gpu();
     install();
     let registry = celesta_media::registry().expect("a registry");
@@ -760,7 +778,7 @@ fn ffmpeg_stays_the_default_beside_avfoundation() {
         .iter()
         .map(|plugin| plugin.id.as_str())
         .collect();
-    assert_eq!(ids, ["avfoundation", "ffmpeg"]);
+    assert_eq!(ids, ["avfoundation", "ffmpeg", "ffmpeg-x264"]);
 
     let directory = tempfile::tempdir().unwrap();
     let project = with_audio(
@@ -779,6 +797,6 @@ fn ffmpeg_stays_the_default_beside_avfoundation() {
     };
     assert_eq!(
         reported(&report),
-        ["ffmpeg/mp4", "ffmpeg/libx264", "ffmpeg/aac"]
+        ["ffmpeg/mp4", "avfoundation/h264", "ffmpeg/aac"]
     );
 }

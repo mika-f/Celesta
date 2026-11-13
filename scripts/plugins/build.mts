@@ -15,7 +15,7 @@
 // with and whose runtime its module is checked against.
 //
 //   node scripts/plugins/build.mts <plugin directory>...
-//                                  [--out <dir>] [--target <triple>] [--skip-js]
+//                                  [--out <dir>] [--target <triple>] [--skip-js] [--distribution]
 //
 // Each plugin directory resolves against the current directory, as does
 // --out. When a plugin has a module and --skip-js is not given, run
@@ -44,6 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { cargoMetadata } from './cargo.mts';
+import { ffmpegEnvironment, isFfmpegPackage } from './ffmpeg.mts';
 import { licenseFiles } from './licenses.mts';
 import { buildsOn, celestaRange, checkPluginSource, pluginManifest, pluginVersion } from './manifest.mts';
 import type { Built, PluginManifest, PluginSource } from './manifest.mts';
@@ -58,12 +59,15 @@ const { values, positionals } = parseArgs({
     out: { type: 'string' },
     target: { type: 'string' },
     'skip-js': { type: 'boolean', default: false },
+    distribution: { type: 'boolean', default: false },
   },
 });
+// Cargo accepts this without --target; use it for validation and output paths too.
+values.target ??= process.env.CARGO_BUILD_TARGET;
 
 if (positionals.length === 0) {
   console.error(
-    'usage: node scripts/plugins/build.mts <plugin directory>... [--out <dir>] [--target <triple>] [--skip-js]',
+    'usage: node scripts/plugins/build.mts <plugin directory>... [--out <dir>] [--target <triple>] [--skip-js] [--distribution]',
   );
   process.exit(2);
 }
@@ -158,14 +162,27 @@ const fromRuntime = createRequire(join(runtime, 'package.json'));
  */
 function buildExecutable(source: string, out: string, cargoPackage: string, targetDirectory: string): Record<string, string> {
   const { os, arch } = orFail(() => rustPlatform({ target: values.target, cwd: source }));
+  const ffmpeg = isFfmpegPackage(cargoPackage);
+  const host = ffmpeg ? orFail(() => rustPlatform({ cwd: source })) : undefined;
+  const native = host?.os === os && host?.arch === arch;
+  if (ffmpeg && values.distribution && !native) {
+    fail('FFmpeg distribution validation must run on the target OS and architecture; cross-compiled distributions cannot be staged');
+  }
   const binary = os === 'windows' ? `${cargoPackage}.exe` : cargoPackage;
   const cargo = process.env.CARGO ?? 'cargo';
   const manifest = join(source, 'Cargo.toml');
   const args = ['build', '--release', '--locked', '--manifest-path', manifest, '--bin', cargoPackage];
   if (values.target) args.push('--target', values.target);
-  run(cargo, args, { cwd: source });
+  run(cargo, args, { cwd: source, env: ffmpegEnvironment(cargoPackage) });
   const built = join(targetDirectory, ...(values.target ? [values.target] : []), 'release', binary);
   if (!existsSync(built)) fail(`${built} was not built`);
+  if (ffmpeg && native) {
+    // Every native build opens its encoders (--check-build), so a build whose
+    // FFmpeg lacks one fails here. Only a distribution also checks the
+    // licence (--check-license): local builds may use a system GPL FFmpeg.
+    run(built, ['--check-build']);
+    if (values.distribution) run(built, ['--check-license']);
+  }
   mkdirSync(join(out, 'bin', `${os}-${arch}`), { recursive: true });
   copyFileSync(built, join(out, 'bin', `${os}-${arch}`, binary));
   return { [`${os}-${arch}`]: `bin/${os}-${arch}/${binary}` };

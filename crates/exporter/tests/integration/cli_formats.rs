@@ -181,7 +181,10 @@ fn an_x264_preset_fails_with_the_hint() {
     let report = usage_error(&[output.to_str().unwrap(), "--preset", "ultrafast"]);
     assert_eq!(report["error"]["code"], "unknown_preset");
     let hint = report["error"]["hint"].as_str().unwrap();
-    assert!(hint.contains("--video-option preset=ultrafast"), "{hint}");
+    assert!(
+        hint.contains("--video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast"),
+        "{hint}"
+    );
 }
 
 /// Runs the exporter without `--json` on the minimal example, with only
@@ -215,7 +218,7 @@ fn a_plain_error_prints_its_hint() {
     );
     assert!(stderr.contains("unknown preset"), "{stderr}");
     assert!(
-        stderr.contains("hint: use --video-option preset=fast"),
+        stderr.contains("hint: use --video-encoder ffmpeg-x264/libx264 --video-option preset=fast"),
         "{stderr}"
     );
 

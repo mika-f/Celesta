@@ -1,6 +1,6 @@
 # Export in a Linux container
 
-[`Dockerfile`](Dockerfile) builds an Ubuntu 24.04 image that contains only the
+[`Dockerfile`](Dockerfile) builds an Ubuntu 26.04 image that contains only the
 command-line exporter (`celesta-exporter`), Node.js, and the React runtime. It
 renders with Mesa's software Vulkan driver (lavapipe), so it runs on machines
 without a GPU, such as CI runners and cloud containers.
@@ -17,7 +17,9 @@ The build compiles FFmpeg 8.1.x with
 [`scripts/build-ffmpeg-linux.sh`](../../scripts/build-ffmpeg-linux.sh), then
 the React runtime and the exporter. It takes a while the first time. To use
 another 8.1.x release or download FFmpeg's source from a mirror, pass
-`--build-arg FFMPEG_VERSION=8.1.x` or `--build-arg FFMPEG_URL=…`.
+`--build-arg FFMPEG_VERSION=8.1.x` or `--build-arg FFMPEG_URL=…`. The tarball
+must match the SHA-256 the script lists for its version; for a release it does
+not list, also pass `--build-arg FFMPEG_SHA256=…`.
 
 ## Export
 
@@ -27,7 +29,7 @@ image's entry point is `celesta-exporter`, so the arguments are the same as in
 `--user` makes the output files belong to you instead of root:
 
 ```sh
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx film.mp4
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx film.mov
 ```
 
 Check a single frame first; it is much faster than a full export:
@@ -60,15 +62,25 @@ Software rendering is much slower than a GPU; see
 
 ## License
 
-`celesta-exporter` and `celesta-mcp` link no FFmpeg. The image's codec plugin,
-the `ffmpeg` folder in the bundled plugin folder `/opt/celesta/plugins` (which
-the build sets with `CELESTA_SYSTEM_PLUGIN_DIR`), links an FFmpeg build with `libx264` enabled,
-which is GPL-2.0-or-later licensed, and the image installs `libx264` itself.
-Distributing the image (for example, pushing it to a public registry)
-therefore distributes GPL-licensed software, whose terms apply to those parts;
-see [License](../../README.md#license).
+`celesta-exporter` and `celesta-mcp` link no FFmpeg. The image bundles only the
+standard LGPL `ffmpeg` process under `/opt/celesta/plugins`, for decoding,
+ProRes/MOV, VP9/Opus WebM, AAC/PCM and muxing. FFmpeg is linked into that
+program statically; libopus and libvpx (both BSD licensed) come from the
+image's `libopus0` and `libvpx12` packages. The exact binary and
+source-package versions of every shared object the program loads but glibc's
+own (these two, zlib, and the GCC runtime) are recorded in
+`/opt/celesta/plugins/ffmpeg/licenses/native/debian-packages.json` beside
+their copyright files. The standard plugin carries the
+[LGPL source notice](../FFMPEG-SOURCE.md). The image installs no x264.
 
-The same FFmpeg build links `libvpx` and `libopus` (BSD-3-Clause), the WebM
-encoders, as shared libraries from the Debian packages `libvpx9` and
-`libopus0`. Their copyright files ship in the image under
-`/usr/share/doc/libvpx9` and `/usr/share/doc/libopus0`.
+MP4 needs the separate Linux `ffmpeg-x264` ZIP. Extract the matching release
+download into a host folder and mount it separately, preserving the image's
+standard plugin:
+
+```sh
+docker run --rm -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter \
+  --plugin-dir /plugins --react film.tsx film.mp4
+```
+
+The separate ZIP includes its native codec library. See [plugin packaging](../plugins/README.md)
+and the root [license](../../README.md#license).
