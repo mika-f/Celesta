@@ -1846,8 +1846,7 @@ fn assert_exit_shows(error: &ReactBridgeError, lines: &[&str]) {
 
 #[test]
 fn a_runtime_that_dies_before_the_handshake_shows_its_last_output() {
-    let Some(node) = find_executable("CELESTA_NODE", "node") else {
-        eprintln!("skipping live Node.js test: node was not found");
+    let Some(node) = node() else {
         return;
     };
     let (dir, runtime) = fake_runtime(
@@ -1863,8 +1862,7 @@ fn a_runtime_that_dies_before_the_handshake_shows_its_last_output() {
 
 #[test]
 fn a_runtime_that_dies_on_a_request_shows_its_last_output() {
-    let Some(node) = find_executable("CELESTA_NODE", "node") else {
-        eprintln!("skipping live Node.js test: node was not found");
+    let Some(node) = node() else {
         return;
     };
     // Sends a valid handshake, then dies on the first request.
@@ -1893,8 +1891,7 @@ process.stdin.once('data', () => {{
 
 #[test]
 fn a_runtime_that_dies_while_measuring_text_shows_its_last_output() {
-    let Some(node) = find_executable("CELESTA_NODE", "node") else {
-        eprintln!("skipping live Node.js test: node was not found");
+    let Some(node) = node() else {
         return;
     };
     // Asks for a text measurement and exits without waiting for the answer,
@@ -1931,23 +1928,42 @@ send({
   config: { width: 16, height: 9, frameRate: { numerator: 30, denominator: 1 }, durationInFrames: 30 },
 });";
 
+/// Reports a live Node.js test skipped, or fails it when
+/// `CELESTA_REQUIRE_RUNTIME=1` says `node` and the built runtime are there.
+fn skip_without_runtime(reason: &str) {
+    assert!(
+        std::env::var("CELESTA_REQUIRE_RUNTIME").as_deref() != Ok("1"),
+        "live Node.js tests require Node.js and the built runtime: {reason}"
+    );
+    eprintln!("skipping live Node.js test: {reason}");
+}
+
+fn node() -> Option<PathBuf> {
+    let node = find_executable("CELESTA_NODE", "node");
+    if node.is_none() {
+        skip_without_runtime("node was not found");
+    }
+    node
+}
+
 fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
-    let Some(node) = find_executable("CELESTA_NODE", "node") else {
-        eprintln!("skipping live Node.js test: node was not found");
-        return None;
-    };
+    let node = node()?;
 
     let package_root = cli_package_root();
     let cli_script = package_root.join("dist/cli.js");
-    if !package_root.join("node_modules").is_dir() || !cli_script.is_file() {
-        eprintln!(
-            "skipping live Node.js test: run `pnpm install && pnpm run build:runtime` first ({} is missing)",
-            cli_script.display()
-        );
-        return None;
-    }
-
-    Some((node, cli_script, package_root))
+    let node_modules = package_root.join("node_modules");
+    let missing = if !node_modules.is_dir() {
+        node_modules
+    } else if !cli_script.is_file() {
+        cli_script.clone()
+    } else {
+        return Some((node, cli_script, package_root));
+    };
+    skip_without_runtime(&format!(
+        "run `pnpm install && pnpm run build:runtime` first ({} is missing)",
+        missing.display()
+    ));
+    None
 }
 
 fn cli_package_root() -> PathBuf {

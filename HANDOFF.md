@@ -549,7 +549,10 @@ pnpm --dir packages/react test
 ```
 
 Live bridge tests require Node and built React runtime dependencies/output;
-check for skipped integration tests. GPU tests need an available backend, and
+without them the react-bridge, exporter, and MCP integration tests that spawn
+`packages/cli/dist/cli.js` skip, and `CELESTA_REQUIRE_RUNTIME=1` makes that a
+failure (CI sets it on every system, which builds the runtime first). Check
+for skipped integration tests. GPU tests need an available backend, and
 native UI checks need a display and suitable platform permissions. The Media
 Foundation plugin's tests skip, through one gate (`src/mf/gate.rs`), when
 Windows lacks Media Foundation or a component;

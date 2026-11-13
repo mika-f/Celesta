@@ -1138,8 +1138,7 @@ fn a_loudness_target_without_an_audio_track_is_a_warning() {
 #[test]
 fn exports_a_silent_react_entry_to_webm() {
     let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
-    if !runtime_path.exists() {
-        eprintln!("skipping React WebM test: build packages/cli first");
+    if !crate::runtime_built(&runtime_path, "React WebM test") {
         return;
     }
     let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
@@ -1206,8 +1205,7 @@ export default function Root() {
 /// `packages/cli` is built.
 fn silent_react_entry() -> Option<(tempfile::TempDir, PathBuf, PathBuf)> {
     let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
-    if !runtime_path.exists() {
-        eprintln!("skipping React export test: build packages/cli first");
+    if !crate::runtime_built(&runtime_path, "React export test") {
         return None;
     }
     let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
@@ -1267,8 +1265,7 @@ fn a_silent_react_entry_with_loop_has_no_audio_track() {
 #[test]
 fn writes_a_react_entrys_subtitles_shifted_to_the_exported_range() {
     let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
-    if !runtime_path.exists() {
-        eprintln!("skipping React subtitle test: build packages/cli first");
+    if !crate::runtime_built(&runtime_path, "React subtitle test") {
         return;
     }
     let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
@@ -1347,8 +1344,7 @@ export default function Root() {
 #[test]
 fn writes_only_a_react_entrys_subtitles_per_language_and_format() {
     let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
-    if !runtime_path.exists() {
-        eprintln!("skipping React subtitle test: build packages/cli first");
+    if !crate::runtime_built(&runtime_path, "React subtitle test") {
         return;
     }
     let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
@@ -1550,8 +1546,7 @@ fn cancel_ends_a_frame_waiting_on_a_plugin_that_hangs() {
     use std::time::{Duration, Instant};
 
     let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
-    if !runtime_path.exists() {
-        eprintln!("skipping the hanging plugin test: build packages/cli first");
+    if !crate::runtime_built(&runtime_path, "the hanging plugin test") {
         return;
     }
     let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
@@ -1861,8 +1856,7 @@ fn an_export_through_the_programs_ring_is_byte_identical_to_the_pipe() {
     use std::process::Command;
 
     let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
-    if !runtime_path.exists() {
-        eprintln!("skipping the ring export test: build packages/cli first");
+    if !crate::runtime_built(&runtime_path, "the ring export test") {
         return;
     }
     let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
