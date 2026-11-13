@@ -1,7 +1,7 @@
 //! Turning an [`OutputChoice`] into the components that write an export:
 //! the spec's "Resolving an output".
 
-use crate::error::ExportError;
+use crate::error::{ExportError, encoder_kind};
 use crate::options::{AudioChoice, EncoderChoice, OutputChoice, SettingInput};
 use crate::presets::{FoundPreset, PresetAudio, PresetEncoder, PresetLookup, PresetOutput};
 use crate::resolve_warning::ResolveWarning;
@@ -495,9 +495,10 @@ fn preset_component<'a>(
     descriptions: &mut Descriptions<'_>,
 ) -> Result<&'a MediaComponentInfo, String> {
     let reason = |error: ExportError| match error {
-        ExportError::ComponentUnavailable { reason, .. }
-        | ExportError::IncompatibleComponents { reason, .. } => reason,
-        other => other.to_string(),
+        ExportError::IncompatibleComponents { reason, .. } => reason,
+        other => other
+            .unavailable_reason()
+            .unwrap_or_else(|| other.to_string()),
     };
     let reference: ComponentRef = text
         .parse()
@@ -604,36 +605,19 @@ impl Descriptions<'_> {
     }
 }
 
-/// Why a named component is unavailable when no installed (and allowed)
-/// plugin has it.
-pub(crate) const NOT_INSTALLED: &str = "not installed";
-
-/// Why a component of the plugin `plugin` is unavailable when no registered
-/// plugin has it: why discovery left out the program that would have
-/// served it, or [`NOT_INSTALLED`].
-pub(crate) fn not_installed(registry: &MediaRegistry, plugin: &str) -> String {
-    registry.skipped(plugin).map_or_else(
-        || NOT_INSTALLED.to_owned(),
-        |skipped| skipped.unavailable_reason(),
-    )
-}
-
-/// Why `muxer`'s default codec has no encoder: `kind` is "video encoder"
-/// or "audio encoder", `codec` the muxer's default for it.
-pub(crate) fn no_default_encoder(kind: &str, codec: &str) -> String {
-    format!("no {kind} writes {codec} by default")
-}
-
-/// Whether `reason` is a [`no_default_encoder`] one.
-pub(crate) fn is_no_default_encoder(reason: &str) -> bool {
-    ["video encoder", "audio encoder"].iter().any(|kind| {
-        reason
-            .strip_prefix("no ")
-            .and_then(|rest| rest.strip_prefix(kind))
-            .and_then(|rest| rest.strip_prefix(" writes "))
-            .and_then(|rest| rest.strip_suffix(" by default"))
-            .is_some_and(|codec| !codec.is_empty())
-    })
+/// The refusal of `reference` when no registered plugin has it: why
+/// discovery left out the program that would have served it, or
+/// [`ExportError::ComponentNotInstalled`].
+pub(crate) fn not_installed(registry: &MediaRegistry, reference: &ComponentRef) -> ExportError {
+    match registry.skipped(&reference.plugin) {
+        Some(skipped) => ExportError::ComponentUnavailable {
+            component: reference.clone(),
+            reason: skipped.unavailable_reason(),
+        },
+        None => ExportError::ComponentNotInstalled {
+            component: reference.clone(),
+        },
+    }
 }
 
 /// The `kind` component `reference` names: [`ExportError::ComponentUnavailable`]
@@ -653,20 +637,18 @@ fn named<'a>(
     if let Some(info) = referenced.find(|info| info.kind == kind) {
         return Ok(info);
     }
-    let reason = if !installed {
-        not_installed(registry, &reference.plugin)
-    } else {
-        match kind {
-            ComponentKind::Decoder => "not a decoder",
-            ComponentKind::VideoEncoder => "not a video encoder",
-            ComponentKind::AudioEncoder => "not an audio encoder",
-            ComponentKind::Muxer => "not a muxer",
-        }
-        .to_owned()
+    if !installed {
+        return Err(not_installed(registry, reference));
+    }
+    let reason = match kind {
+        ComponentKind::Decoder => "not a decoder",
+        ComponentKind::VideoEncoder => "not a video encoder",
+        ComponentKind::AudioEncoder => "not an audio encoder",
+        ComponentKind::Muxer => "not a muxer",
     };
     Err(ExportError::ComponentUnavailable {
         component: reference.clone(),
-        reason,
+        reason: reason.to_owned(),
     })
 }
 
@@ -809,19 +791,17 @@ fn default_encoder<'a>(
             }
         }
     }
-    let kind = match kind {
-        ComponentKind::AudioEncoder => "audio encoder",
-        _ => "video encoder",
-    };
-    Err(
-        first_reason.unwrap_or_else(|| ExportError::ComponentUnavailable {
+    Err(first_reason.unwrap_or_else(|| match codec {
+        Some(codec) => ExportError::NoDefaultEncoder {
+            muxer: muxer.reference.clone(),
+            kind,
+            codec: codec.clone(),
+        },
+        None => ExportError::ComponentUnavailable {
             component: muxer.reference.clone(),
-            reason: match codec {
-                Some(codec) => no_default_encoder(kind, codec),
-                None => format!("it names no default {kind} codec"),
-            },
-        }),
-    )
+            reason: format!("it names no default {} codec", encoder_kind(kind)),
+        },
+    }))
 }
 
 fn resolved_encoder(
@@ -1305,6 +1285,34 @@ mod tests {
         assert_eq!(resolved.muxer.reference, reference("first/mp4"));
     }
 
+    #[test]
+    fn a_muxer_whose_default_codec_no_encoder_writes_says_which_codec() {
+        let muxer_only = RegisteredPlugin {
+            media: MediaManifest {
+                video_encoders: Vec::new(),
+                ..writer("m", MediaOrigin::Bundled, "mp4", "mp4", "avc1").media
+            },
+            ..writer("m", MediaOrigin::Bundled, "mp4", "mp4", "avc1")
+        };
+        let error = resolve(
+            &registry(vec![muxer_only]),
+            &OutputChoice::default(),
+            "film.mp4",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&error, ExportError::NoDefaultEncoder { muxer, kind, codec }
+                if *muxer == reference("m/mp4")
+                    && *kind == ComponentKind::VideoEncoder
+                    && codec == "avc1"),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "m/mp4 is unavailable: no video encoder writes avc1 by default"
+        );
+    }
+
     fn registry_of_writers(ids: &[&str]) -> MediaRegistry {
         registry(
             ids.iter()
@@ -1440,8 +1448,8 @@ mod tests {
         for missing in ["x/x264", "b/nothing"] {
             let error = resolve(&registry, &with_video(missing), "film.mp4").unwrap_err();
             assert!(
-                matches!(&error, ExportError::ComponentUnavailable { component, reason }
-                    if *component == reference(missing) && reason == "not installed"),
+                matches!(&error, ExportError::ComponentNotInstalled { component }
+                    if *component == reference(missing)),
                 "{error:?}"
             );
         }
@@ -1466,8 +1474,7 @@ mod tests {
         );
         let error = resolve(&registry, &with_video("b/nothing"), "film.mp4").unwrap_err();
         assert!(
-            matches!(&error, ExportError::ComponentUnavailable { reason, .. }
-                if reason == NOT_INSTALLED),
+            matches!(&error, ExportError::ComponentNotInstalled { .. }),
             "{error:?}"
         );
     }

@@ -1,6 +1,6 @@
 //! Shared command handling for the two independently linked programs.
 
-use crate::{FfmpegCodec, Profile, check_license};
+use crate::{FfmpegCodec, check_license};
 use celesta_composition::Rational;
 use celesta_media::{
     AudioEncoder, AudioEncoderRequest, Color, ComponentKind, MediaError, MediaProvider,
@@ -102,11 +102,11 @@ fn run(
     manifest: &str,
 ) -> Result<(), String> {
     if command == Command::CheckLicense {
-        return check_license(id, codec.profile == Profile::X264);
+        return check_license(id, codec.profile.gpl());
     }
     // A static manifest must never advertise an optional encoder absent from
     // the linked build, including when discovery runs `--manifest`.
-    if codec.profile != Profile::Standard {
+    if codec.profile.optional() {
         codec
             .check_components()
             .map_err(|error| format!("{id}: {error}"))?;

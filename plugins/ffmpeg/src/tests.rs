@@ -555,3 +555,39 @@ fn only_the_carried_licence_versions_pass_the_distribution_check() {
         assert!(!license_carried(license, true), "{license}");
     }
 }
+
+#[test]
+fn each_program_serves_what_its_manifest_declares() {
+    use crate::Profile;
+    use celesta_media::ComponentKind;
+    let manifests = [
+        (Profile::Standard, include_str!("../plugin.json")),
+        (Profile::X264, include_str!("../../ffmpeg-x264/plugin.json")),
+    ];
+    for (profile, manifest) in manifests {
+        let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
+        for (kind, key) in [
+            (ComponentKind::Decoder, "decoders"),
+            (ComponentKind::VideoEncoder, "videoEncoders"),
+            (ComponentKind::AudioEncoder, "audioEncoders"),
+            (ComponentKind::Muxer, "muxers"),
+        ] {
+            let declared: Vec<&str> = manifest["media"][key]
+                .as_array()
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .map(|entry| entry["id"].as_str().unwrap())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let served: Vec<&str> = Profile::table(kind)
+                .into_iter()
+                .filter(|&(_, served_by)| served_by == profile)
+                .map(|(id, _)| id)
+                .collect();
+            assert_eq!(declared, served, "{} {key}", profile.plugin_id());
+            assert_eq!(profile.serves_kind(kind), !served.is_empty());
+        }
+    }
+}

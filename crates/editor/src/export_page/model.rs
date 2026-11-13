@@ -34,9 +34,13 @@ pub(crate) const CHECKING: &str = "Checking…";
 /// inline error message.
 pub(super) fn resolution_error(error: &ExportError) -> String {
     let mut message = error.to_string();
-    if matches!(error, ExportError::ComponentUnavailable { .. })
-        && let Some(hint) =
-            celesta_exporter::report::hint(error, celesta_exporter::report::HintStyle::Mcp)
+    if matches!(
+        error,
+        ExportError::ComponentUnavailable { .. }
+            | ExportError::ComponentNotInstalled { .. }
+            | ExportError::NoDefaultEncoder { .. }
+    ) && let Some(hint) =
+        celesta_exporter::report::hint(error, celesta_exporter::report::HintStyle::Mcp)
     {
         message.push_str(". ");
         message.push_str(&hint);
@@ -1034,13 +1038,20 @@ mod tests {
             reason: "Media Feature Pack is missing".into(),
         };
         assert_eq!(resolution_error(&failing), failing.to_string());
-        let missing = ExportError::ComponentUnavailable {
+        let missing = ExportError::ComponentNotInstalled {
             component: "some-plugin/h264".parse().unwrap(),
-            reason: "not installed".into(),
         };
         let message = resolution_error(&missing);
         assert!(message.starts_with(&missing.to_string()), "{message}");
         assert!(message.contains("Plugins tab"), "{message}");
+        let no_encoder = ExportError::NoDefaultEncoder {
+            muxer: "some-plugin/mp4".parse().unwrap(),
+            kind: celesta_media::ComponentKind::VideoEncoder,
+            codec: "avc1".into(),
+        };
+        let message = resolution_error(&no_encoder);
+        assert!(message.starts_with(&no_encoder.to_string()), "{message}");
+        assert!(message.contains("install a media plugin"), "{message}");
     }
 
     fn reference(text: &str) -> ComponentRef {

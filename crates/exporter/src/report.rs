@@ -12,7 +12,6 @@ use celesta_project::LoadError;
 use celesta_react_bridge::{PropsFileChoice, ReactBridgeError};
 use serde::Serialize;
 
-use crate::resolve::{NOT_INSTALLED, is_no_default_encoder};
 use crate::{
     AudioLoudness, CompositionInfo, EncoderPlan, ExportError, ExportProgress, ExportedFile,
     OutputPlan, StillFormat, TrackInfo,
@@ -610,7 +609,7 @@ pub(crate) fn classify(
         // A component no installed plugin offers: its plugin is missing, has
         // no such component, or is installed but not allowed, which is
         // skipped and so reads as not installed.
-        ExportError::ComponentUnavailable { component, reason } if reason == NOT_INSTALLED => (
+        ExportError::ComponentNotInstalled { component } => (
             "component_unavailable",
             Some(Cow::Owned(if cli {
                 format!(
@@ -627,7 +626,7 @@ pub(crate) fn classify(
             })),
         ),
         // A muxer whose default codec no installed encoder writes.
-        ExportError::ComponentUnavailable { reason, .. } if is_no_default_encoder(reason) => (
+        ExportError::NoDefaultEncoder { .. } => (
             "component_unavailable",
             fixed(if cli {
                 "install a media plugin with an encoder for that codec, or write another format; \
@@ -1332,10 +1331,13 @@ mod tests {
 
     #[test]
     fn a_component_that_is_not_installed_names_its_plugin() {
-        let error = ExportError::ComponentUnavailable {
+        let error = ExportError::ComponentNotInstalled {
             component: "some-plugin/encoder".parse().unwrap(),
-            reason: NOT_INSTALLED.into(),
         };
+        assert_eq!(
+            error.to_string(),
+            "some-plugin/encoder is unavailable: not installed"
+        );
         let (code, cli) = classified(&error, HintStyle::Cli);
         assert_eq!(code, "component_unavailable");
         let cli = cli.unwrap();
@@ -1348,12 +1350,20 @@ mod tests {
 
     #[test]
     fn a_muxer_without_a_default_encoder_hints_at_installing_one() {
-        use crate::resolve::no_default_encoder;
-        for kind in ["video encoder", "audio encoder"] {
-            let error = ExportError::ComponentUnavailable {
-                component: "some-plugin/mp4".parse().unwrap(),
-                reason: no_default_encoder(kind, "avc1"),
+        use celesta_media::ComponentKind;
+        for (kind, named) in [
+            (ComponentKind::VideoEncoder, "video encoder"),
+            (ComponentKind::AudioEncoder, "audio encoder"),
+        ] {
+            let error = ExportError::NoDefaultEncoder {
+                muxer: "some-plugin/mp4".parse().unwrap(),
+                kind,
+                codec: "avc1".into(),
             };
+            assert_eq!(
+                error.to_string(),
+                format!("some-plugin/mp4 is unavailable: no {named} writes avc1 by default")
+            );
             for (style, listing) in [
                 (HintStyle::Cli, "--list-components"),
                 (HintStyle::Mcp, "list_components"),
@@ -1369,8 +1379,10 @@ mod tests {
 
     #[test]
     fn other_unavailable_components_have_no_hint() {
+        // A reason worded like a typed refusal is still only a reason.
         for reason in [
-            "no video encoder writes  by default".to_owned(),
+            "not installed".to_owned(),
+            "no video encoder writes avc1 by default".to_owned(),
             "the plugin did not describe it".to_owned(),
             "VideoToolbox is unavailable".to_owned(),
         ] {
@@ -1394,7 +1406,7 @@ mod tests {
             (
                 ExportError::IncompatibleComponents {
                     component: component.clone(),
-                    muxer,
+                    muxer: muxer.clone(),
                     reason: "it writes vp09".into(),
                 },
                 "incompatible_components",
@@ -1402,7 +1414,21 @@ mod tests {
             (
                 ExportError::ComponentUnavailable {
                     component: component.clone(),
-                    reason: "not installed".into(),
+                    reason: "not a muxer".into(),
+                },
+                "component_unavailable",
+            ),
+            (
+                ExportError::ComponentNotInstalled {
+                    component: component.clone(),
+                },
+                "component_unavailable",
+            ),
+            (
+                ExportError::NoDefaultEncoder {
+                    muxer: muxer.clone(),
+                    kind: celesta_media::ComponentKind::VideoEncoder,
+                    codec: "avc1".into(),
                 },
                 "component_unavailable",
             ),

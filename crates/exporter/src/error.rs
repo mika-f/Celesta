@@ -1,7 +1,7 @@
 use celesta_composition::TimeError;
 use celesta_evaluator::EvaluationError;
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{AudioMixError, ComponentRef, MediaError};
+use celesta_media::{AudioMixError, ComponentKind, ComponentRef, MediaError};
 use celesta_project::LoadError;
 use celesta_react_bridge::{PropertyInputError, ReactBridgeError};
 use std::io;
@@ -70,12 +70,26 @@ pub enum ExportError {
         muxer: ComponentRef,
         reason: String,
     },
-    /// A component that is not installed, is not of the kind it was chosen
-    /// as, or that its plugin describes as unavailable.
+    /// A component that is not of the kind it was chosen as, whose program
+    /// discovery skipped, or that its plugin describes as unavailable.
     #[error("{component} is unavailable: {reason}")]
     ComponentUnavailable {
         component: ComponentRef,
         reason: String,
+    },
+    /// A component no installed plugin offers: its plugin is missing, has
+    /// no such component, or is installed but not allowed, which is
+    /// skipped and so reads as not installed.
+    #[error("{component} is unavailable: {NOT_INSTALLED}")]
+    ComponentNotInstalled { component: ComponentRef },
+    /// A muxer whose default `kind` codec (`codec`) no installed encoder
+    /// of that kind writes. `kind` is [`ComponentKind::VideoEncoder`] or
+    /// [`ComponentKind::AudioEncoder`].
+    #[error("{muxer} is unavailable: {}", no_default_encoder(*.kind, .codec))]
+    NoDefaultEncoder {
+        muxer: ComponentRef,
+        kind: ComponentKind,
+        codec: String,
     },
     /// An option that is not one of the component's settings, or not a
     /// value it takes.
@@ -169,7 +183,37 @@ fn failure_lines(failures: &[FrameFailure]) -> String {
         .collect()
 }
 
+/// Why a component is unavailable when no installed (and allowed) plugin
+/// has it.
+pub(crate) const NOT_INSTALLED: &str = "not installed";
+
+/// How messages name an encoder of `kind`: "audio encoder", else "video
+/// encoder".
+pub(crate) fn encoder_kind(kind: ComponentKind) -> &'static str {
+    match kind {
+        ComponentKind::AudioEncoder => "audio encoder",
+        _ => "video encoder",
+    }
+}
+
+/// Why a muxer whose default `kind` codec is `codec` is unavailable.
+fn no_default_encoder(kind: ComponentKind, codec: &str) -> String {
+    format!("no {} writes {codec} by default", encoder_kind(kind))
+}
+
 impl ExportError {
+    /// Why a component is unavailable, as [`Self::ComponentUnavailable`],
+    /// [`Self::ComponentNotInstalled`], and [`Self::NoDefaultEncoder`] say
+    /// after the component: `None` for any other error.
+    pub(crate) fn unavailable_reason(&self) -> Option<String> {
+        match self {
+            Self::ComponentUnavailable { reason, .. } => Some(reason.clone()),
+            Self::ComponentNotInstalled { .. } => Some(NOT_INSTALLED.to_owned()),
+            Self::NoDefaultEncoder { kind, codec, .. } => Some(no_default_encoder(*kind, codec)),
+            _ => None,
+        }
+    }
+
     /// `self` as the failure of composition frame `frame`.
     pub(crate) fn at_frame(self, frame: u64) -> Self {
         match self {

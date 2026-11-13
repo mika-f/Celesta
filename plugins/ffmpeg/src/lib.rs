@@ -66,13 +66,54 @@ enum Profile {
 }
 
 impl Profile {
-    /// The build that serves the component `id` of `kind`: the one place a
-    /// component is assigned to a program.
-    fn of(kind: ComponentKind, id: &str) -> Self {
-        if kind == ComponentKind::VideoEncoder && id == VideoCodec::X264.id() {
-            Self::X264
-        } else {
-            Self::Standard
+    /// Every component of `kind` and the build that serves it: the one
+    /// table assigning components to programs. Each component type says
+    /// its build in an exhaustive `match`, so a component added without
+    /// deciding its build does not compile.
+    fn table(kind: ComponentKind) -> Vec<(&'static str, Self)> {
+        match kind {
+            ComponentKind::Decoder => vec![(DECODER_ID, Self::Standard)],
+            ComponentKind::VideoEncoder => VideoCodec::ALL
+                .map(|codec| (codec.id(), codec.profile()))
+                .to_vec(),
+            ComponentKind::AudioEncoder => AudioCodec::ALL
+                .map(|codec| (codec.id(), codec.profile()))
+                .to_vec(),
+            ComponentKind::Muxer => MuxerFormat::ALL
+                .map(|format| (format.id(), format.profile()))
+                .to_vec(),
+        }
+    }
+
+    /// Whether this build serves the component `id` of `kind`.
+    fn serves(self, kind: ComponentKind, id: &str) -> bool {
+        Self::table(kind).contains(&(id, self))
+    }
+
+    /// Whether this build serves any component of `kind`, and so answers
+    /// requests of that kind at all.
+    fn serves_kind(self, kind: ComponentKind) -> bool {
+        Self::table(kind)
+            .into_iter()
+            .any(|(_, profile)| profile == self)
+    }
+
+    /// Whether this build links GPL FFmpeg, which `--check-license`
+    /// requires of it rather than refuses.
+    const fn gpl(self) -> bool {
+        match self {
+            Self::Standard => false,
+            Self::X264 => true,
+        }
+    }
+
+    /// Whether this build is an optional program whose manifest may list an
+    /// encoder a given FFmpeg lacks, so it checks its components before it
+    /// prints its manifest or serves.
+    const fn optional(self) -> bool {
+        match self {
+            Self::Standard => false,
+            Self::X264 => true,
         }
     }
 
@@ -119,7 +160,7 @@ impl FfmpegCodec {
     /// Whether this program serves the component `id` of `kind`, or must
     /// answer that it has no such component.
     fn serves(&self, kind: ComponentKind, id: &str) -> bool {
-        Profile::of(kind, id) == self.profile
+        self.profile.serves(kind, id)
     }
 
     fn next_session(&mut self) -> SessionId {
@@ -231,7 +272,7 @@ impl MediaProvider for FfmpegCodec {
     }
 
     fn decoder(&mut self) -> Option<&mut dyn Decoder> {
-        if self.profile == Profile::Standard {
+        if self.profile.serves_kind(ComponentKind::Decoder) {
             Some(self)
         } else {
             None
@@ -239,11 +280,15 @@ impl MediaProvider for FfmpegCodec {
     }
 
     fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
-        Some(self)
+        if self.profile.serves_kind(ComponentKind::VideoEncoder) {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
-        if self.profile == Profile::Standard {
+        if self.profile.serves_kind(ComponentKind::AudioEncoder) {
             Some(self)
         } else {
             None
@@ -251,7 +296,7 @@ impl MediaProvider for FfmpegCodec {
     }
 
     fn muxer(&mut self) -> Option<&mut dyn Muxer> {
-        if self.profile == Profile::Standard {
+        if self.profile.serves_kind(ComponentKind::Muxer) {
             Some(self)
         } else {
             None

@@ -64,10 +64,7 @@ pub fn describe_component(
     ]
     .into_iter()
     .find_map(|kind| registry.component(reference, kind))
-    .ok_or_else(|| ExportError::ComponentUnavailable {
-        component: reference.clone(),
-        reason: crate::resolve::not_installed(registry, &reference.plugin),
-    })?;
+    .ok_or_else(|| crate::resolve::not_installed(registry, reference))?;
     let description = description_in(&registry.describe(info.plugin, kill), &info);
     Ok((info, description))
 }
