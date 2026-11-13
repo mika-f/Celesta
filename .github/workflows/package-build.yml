@@ -63,7 +63,7 @@ jobs:
       # Node.js and pnpm as mise.lock pins them.
       - uses: jdx/mise-action@v5.2.7
         with:
-          version: 2026.11.4
+          version: 2026.11.8
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Cache bundled Node.js runtime
@@ -146,7 +146,7 @@ jobs:
 
       - uses: jdx/mise-action@v5.2.7
         with:
-          version: 2026.11.4
+          version: 2026.11.8
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
       # A throwaway keychain, made the default so codesign finds the Developer
@@ -237,7 +237,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: jdx/mise-action@v5.2.7
         with:
-          version: 2026.11.4
+          version: 2026.11.8
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the optional x264 archive
         env:
