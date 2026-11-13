@@ -76,19 +76,20 @@ fn manifest_and_describe_exclude_x264() {
     let declared = registered();
     assert_eq!(declared.media.video_encoders.len(), 2);
     assert_eq!(declared.media.audio_encoders.len(), 3);
+    let refused = codec.open_video(&VideoEncoderRequest {
+        component: "libx264",
+        settings: &Settings::new(),
+        width: 2,
+        height: 2,
+        frame_rate: Rational::new(1, 1),
+        timescale: 1,
+        offered: &[PixelFormat::Rgba8],
+        color: &Color::bt709_limited(),
+    });
     assert!(
-        codec
-            .open_video(&VideoEncoderRequest {
-                component: "libx264",
-                settings: &Settings::new(),
-                width: 2,
-                height: 2,
-                frame_rate: Rational::new(1, 1),
-                timescale: 1,
-                offered: &[PixelFormat::Rgba8],
-                color: &Color::bt709_limited(),
-            })
-            .is_err()
+        matches!(&refused, Err(MediaError::Codec(message))
+            if message == "no video encoder \"libx264\" in ffmpeg"),
+        "{refused:?}"
     );
 }
 
@@ -102,21 +103,25 @@ fn the_x264_provider_exposes_only_its_encoder() {
     assert!(provider.audio_encoder().is_none());
     assert!(provider.muxer().is_none());
     for component in ["vp9", "prores"] {
-        assert!(
-            provider
-                .open_video(&VideoEncoderRequest {
-                    component,
-                    settings: &Settings::new(),
-                    width: 2,
-                    height: 2,
-                    frame_rate: Rational::new(1, 1),
-                    timescale: 1,
-                    offered: &[PixelFormat::Rgba16],
-                    color: &Color::bt709_limited(),
-                })
-                .is_err(),
-            "{component} is not the x264 build's"
-        );
+        let refused = provider.open_video(&VideoEncoderRequest {
+            component,
+            settings: &Settings::new(),
+            width: 2,
+            height: 2,
+            frame_rate: Rational::new(1, 1),
+            timescale: 1,
+            offered: &[PixelFormat::Rgba16],
+            color: &Color::bt709_limited(),
+        });
+        // The refusal names the program that refused, not the standard one.
+        match refused {
+            Err(MediaError::Codec(message)) => assert_eq!(
+                message,
+                format!("no video encoder {component:?} in ffmpeg-x264"),
+                "{component} is not the x264 build's"
+            ),
+            other => panic!("{component} is not the x264 build's: {other:?}"),
+        }
     }
 }
 

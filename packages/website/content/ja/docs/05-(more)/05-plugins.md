@@ -215,7 +215,7 @@ Celesta は、最初のひとつだけでなく、実行してよいメディア
 
 見つかったプラグインに（プロジェクトのものを除いて）`ffmpeg` がないときは、`cargo install` で置かれる、自分の実行ファイルと同じフォルダーの `celesta-codec-ffmpeg` も、Celesta に同梱のプラグインとして使います。そのため、プロジェクトの `ffmpeg` はこれも置き換えられません。このプログラムには `celesta-codec-ffmpeg --manifest` でマニフェストを尋ねます。ただし、実行ファイルが `target/release` のような Cargo のビルドフォルダーにあるときは使いません。ソースビルドでは、自分でビルドしたメディアプラグインを使います（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。`cargo install` で Celesta を入れる場合は、メディアプラグインも入れてアプリと同じフォルダーに置いてください。`celesta-editor` や `celesta-exporter` だけを入れてもメディアプラグインは入りません。`celesta-codec-ffmpeg` が crates.io に公開されるまでは、`cargo install --git https://github.com/mika-f/Celesta celesta-codec-ffmpeg` でリポジトリから入れます（[ソースからのビルド](/ja/docs/build-from-source/)と同じく FFmpeg 8.1.x の開発ライブラリが必要です）。
 
-`cargo install` では、追加エンコーダーも対応するライブラリの環境で個別にインストールします。Celesta は実行ファイルの隣にある `celesta-codec-ffmpeg-x264` も、その `--manifest` で検出します。標準プラグインだけでは libx264 による H.264 のエンコードは追加されません。
+`cargo install` では、追加エンコーダーも対応するライブラリの環境で個別にインストールします。Celesta は実行ファイルの隣にある `celesta-codec-ffmpeg-x264` も、その `--manifest` で検出します。標準プラグインだけでは libx264 による H.264 のエンコードは追加されません。libx264 のない FFmpeg（たとえば Fedora の `ffmpeg-free`）に対してビルドした `celesta-codec-ffmpeg-x264` は `--manifest` を拒否するので、Celesta はこれを使いません。このとき `ffmpeg-x264/libx264` を指定すると、`not installed` ではなく `skipped at discovery (<プログラム>): --manifest failed (…): <プログラムの出力>` という理由で `component_unavailable` になります。libx264 のある FFmpeg に対して入れ直してください。各メディアプログラムが受け付けるのは `--manifest`、`--check-build`、`--check-license` のいずれか一つか、Celesta が起動するときの引数なしだけです。それ以外の引数では使い方を表示して終了ステータス 2 で終わるので、検査の綴りを間違えても通ってしまうことはありません。
 
 ### デコーダーがないとき
 

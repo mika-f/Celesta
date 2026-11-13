@@ -66,7 +66,7 @@ pub fn describe_component(
     .find_map(|kind| registry.component(reference, kind))
     .ok_or_else(|| ExportError::ComponentUnavailable {
         component: reference.clone(),
-        reason: "not installed".to_owned(),
+        reason: crate::resolve::not_installed(registry, &reference.plugin),
     })?;
     let description = description_in(&registry.describe(info.plugin, kill), &info);
     Ok((info, description))
@@ -322,6 +322,22 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "plug/missing is unavailable: not installed"
+        );
+    }
+
+    #[test]
+    fn a_component_of_a_skipped_program_says_why() {
+        let registry = registry().with_skipped(vec![celesta_plugin_host::SkippedMedia {
+            id: "gone".into(),
+            program: "/bin/gone".into(),
+            reason: "it could not be started".into(),
+        }]);
+        let reference = "gone/video".parse().unwrap();
+        let error = describe_component(&registry, &reference, &PluginKillSwitch::new())
+            .expect_err("its program was skipped");
+        assert_eq!(
+            error.to_string(),
+            "gone/video is unavailable: skipped at discovery (/bin/gone): it could not be started"
         );
     }
 }

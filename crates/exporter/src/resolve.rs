@@ -272,13 +272,19 @@ pub fn resolve_preset_output(
     let mut warnings = Vec::new();
 
     let muxer = match (&choice.muxer, base.and_then(|base| base.muxer.as_deref())) {
-        (Some(reference), _) => Some(named(&components, reference, ComponentKind::Muxer)?),
+        (Some(reference), _) => Some(named(
+            registry,
+            &components,
+            reference,
+            ComponentKind::Muxer,
+        )?),
         (None, Some(text)) => fallback(
             &mut warnings,
             name,
             ComponentKind::Muxer,
             text,
             preset_component(
+                registry,
                 &components,
                 text,
                 ComponentKind::Muxer,
@@ -306,7 +312,12 @@ pub fn resolve_preset_output(
         base_video.and_then(|video| video.component.as_deref()),
     ) {
         (Some(reference), _) => {
-            let video = named(&components, reference, ComponentKind::VideoEncoder)?;
+            let video = named(
+                registry,
+                &components,
+                reference,
+                ComponentKind::VideoEncoder,
+            )?;
             check_writes(video, muxer, &entry.video)?;
             Some(video)
         }
@@ -316,6 +327,7 @@ pub fn resolve_preset_output(
             ComponentKind::VideoEncoder,
             text,
             preset_component(
+                registry,
                 &components,
                 text,
                 ComponentKind::VideoEncoder,
@@ -361,7 +373,12 @@ pub fn resolve_preset_output(
             };
             let chosen = match (&encoder.component, preset_text) {
                 (Some(reference), _) => {
-                    let audio = named(&components, reference, ComponentKind::AudioEncoder)?;
+                    let audio = named(
+                        registry,
+                        &components,
+                        reference,
+                        ComponentKind::AudioEncoder,
+                    )?;
                     let Some(accepted) = accepted_audio else {
                         return Err(ExportError::IncompatibleComponents {
                             component: audio.reference.clone(),
@@ -383,6 +400,7 @@ pub fn resolve_preset_output(
                     }
                     Some(accepted) => {
                         let found = preset_component(
+                            registry,
                             &components,
                             text,
                             ComponentKind::AudioEncoder,
@@ -484,6 +502,7 @@ pub fn resolve_preset_output(
 /// used: not a reference, not installed, not of that kind, not writing a
 /// codec `accepted`'s muxer takes, or described unavailable.
 fn preset_component<'a>(
+    registry: &MediaRegistry,
     components: &'a [MediaComponentInfo],
     text: &str,
     kind: ComponentKind,
@@ -498,7 +517,7 @@ fn preset_component<'a>(
     let reference: ComponentRef = text
         .parse()
         .map_err(|_| "not a component reference".to_owned())?;
-    let component = named(components, &reference, kind).map_err(reason)?;
+    let component = named(registry, components, &reference, kind).map_err(reason)?;
     if let Some((muxer, accepted)) = accepted {
         check_writes(component, muxer, accepted).map_err(reason)?;
     }
@@ -604,6 +623,16 @@ impl Descriptions<'_> {
 /// plugin has it.
 pub(crate) const NOT_INSTALLED: &str = "not installed";
 
+/// Why a component of the plugin `plugin` is unavailable when no registered
+/// plugin has it: why discovery left out the program that would have
+/// served it, or [`NOT_INSTALLED`].
+pub(crate) fn not_installed(registry: &MediaRegistry, plugin: &str) -> String {
+    registry.skipped(plugin).map_or_else(
+        || NOT_INSTALLED.to_owned(),
+        |skipped| skipped.unavailable_reason(),
+    )
+}
+
 /// Why `muxer`'s default codec has no encoder: `kind` is "video encoder"
 /// or "audio encoder", `codec` the muxer's default for it.
 pub(crate) fn no_default_encoder(kind: &str, codec: &str) -> String {
@@ -614,6 +643,7 @@ pub(crate) fn no_default_encoder(kind: &str, codec: &str) -> String {
 /// when there is none, "not installed" or, when `reference` names another
 /// kind of component, "not a video encoder" and so on.
 fn named<'a>(
+    registry: &MediaRegistry,
     components: &'a [MediaComponentInfo],
     reference: &ComponentRef,
     kind: ComponentKind,
@@ -627,7 +657,7 @@ fn named<'a>(
         return Ok(info);
     }
     let reason = if !installed {
-        NOT_INSTALLED
+        not_installed(registry, &reference.plugin)
     } else {
         match kind {
             ComponentKind::Decoder => "not a decoder",
@@ -635,10 +665,11 @@ fn named<'a>(
             ComponentKind::AudioEncoder => "not an audio encoder",
             ComponentKind::Muxer => "not a muxer",
         }
+        .to_owned()
     };
     Err(ExportError::ComponentUnavailable {
         component: reference.clone(),
-        reason: reason.to_owned(),
+        reason,
     })
 }
 
@@ -1393,6 +1424,31 @@ mod tests {
                 "{error:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_component_of_a_program_skipped_at_discovery_says_why() {
+        let skipped = |id: &str| celesta_plugin_host::SkippedMedia {
+            id: id.to_owned(),
+            program: "/bin/celesta-codec-ffmpeg-x264".into(),
+            reason: "--manifest failed (exit status: 1): no libx264".to_owned(),
+        };
+        // "b" is registered, so a program skipped for it is ignored.
+        let registry = all().with_skipped(vec![skipped("x"), skipped("b")]);
+        let error = resolve(&registry, &with_video("x/x264"), "film.mp4").unwrap_err();
+        assert!(
+            matches!(&error, ExportError::ComponentUnavailable { component, reason }
+                if *component == reference("x/x264")
+                    && reason == "skipped at discovery (/bin/celesta-codec-ffmpeg-x264): \
+                                  --manifest failed (exit status: 1): no libx264"),
+            "{error:?}"
+        );
+        let error = resolve(&registry, &with_video("b/nothing"), "film.mp4").unwrap_err();
+        assert!(
+            matches!(&error, ExportError::ComponentUnavailable { reason, .. }
+                if reason == NOT_INSTALLED),
+            "{error:?}"
+        );
     }
 
     #[test]

@@ -304,6 +304,26 @@ fn manifest_and_describe_expose_only_libx264() {
     assert_eq!(components.len(), 1);
     assert_eq!(components[0].id, "libx264");
     assert!(process.decoder().is_some()); // MediaProcess exposes protocol interfaces; provider rejects requests.
+    // A standard component is refused by name, naming this program rather
+    // than the standard one.
+    let refused = process
+        .video_encoder()
+        .expect("the program has video encoders")
+        .open_video(&VideoEncoderRequest {
+            component: "vp9",
+            settings: &Settings::new(),
+            width: 2,
+            height: 2,
+            frame_rate: Rational::new(10, 1),
+            timescale: 10,
+            offered: &[PixelFormat::Rgba8],
+            color: &Color::bt709_limited(),
+        });
+    assert!(
+        matches!(&refused, Err(MediaError::Codec(message))
+            if message == "no video encoder \"vp9\" in ffmpeg-x264"),
+        "{refused:?}"
+    );
 }
 
 /// Encodes `frames` (ten of them at 10 fps) through `program`'s pipeline,
