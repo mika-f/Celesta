@@ -56,19 +56,20 @@ made the crates packageable and published them by hand.
 ## One-time setup (crates.io owner)
 
 crates.io lets a configuration be added only to a crate that exists, and a
-Trusted Publishing token cannot create a crate. The 18 crates published as
-`0.0.0` placeholders on 2026-11-05 exist; these four do not yet:
+Trusted Publishing token cannot create a crate. 18 crates were published as
+`0.0.0` placeholders on 2026-11-05. The other four were published as `0.0.0`
+placeholders on 2026-11-14, the same way: `celesta-media-image` (the
+exporter depends on it), `celesta-codec-ffmpeg-x264`,
+`celesta-codec-avfoundation`, and `celesta-codec-mediafoundation`. A
+placeholder is a crate of its own, outside the repository, holding only a
+`Cargo.toml` (an empty `[workspace]`; description "Placeholder for the
+Celesta project. The real crate is not published yet.",
+`MIT OR Apache-2.0`, the repository URL, `readme = "README.md"`), a
+`README.md` saying it reserves the name, and a `src/lib.rs` with only a doc
+comment. It is published with `cargo publish` and the owner's API token.
+A crate added later needs a placeholder like this before its first release.
 
-- `celesta-media-image` (the exporter depends on it, so the `crates` job
-  fails without it),
-- `celesta-codec-ffmpeg-x264`, `celesta-codec-avfoundation`,
-  `celesta-codec-mediafoundation`.
-
-1. Publish a `0.0.0` placeholder of each of the four with an API token, as
-   for the others (description "Placeholder for the Celesta project. The
-   real crate is not published yet.", `MIT OR Apache-2.0`, the repository
-   URL).
-2. Create an API token with the `trusted-publishing` endpoint scope and run:
+1. Create an API token with the `trusted-publishing` endpoint scope and run:
 
    ```bash
    CRATES_IO_TOKEN=... scripts/crates-trusted-publishing.sh
@@ -76,11 +77,11 @@ Trusted Publishing token cannot create a crate. The 18 crates published as
 
    Owners need a verified email address and a linked GitHub account.
    Revoke the token afterwards.
-3. In the repository's Settings > Environments, protect `crates-io`
+2. In the repository's Settings > Environments, protect `crates-io`
    (GitHub creates it on the first run otherwise, without protection):
    limit deployments to tags matching `v*.*.*`, plus the branch a manual
    Release run uses, and optionally require a reviewer.
-4. After the first release has published everything, optionally run the
+3. After the first release has published everything, optionally run the
    script again with `--trustpub-only`.
 
 ## Checks
