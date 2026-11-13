@@ -455,9 +455,9 @@ cargo run -p celesta-exporter -- --react packages/cli/examples/title.tsx output.
 The editor and exporter find the media plugin through `CELESTA_PLUGIN_PATH`,
 which must be an absolute path and is set by hand in each shell; rebuild the
 plugin after changing `plugins/ffmpeg` or `celesta-media`'s media protocol.
-The standard `celesta-codec-ffmpeg` and optional `celesta-codec-ffmpeg-x264`
-programs beside Celesta's executables serve only installed programs, such as
-`cargo install`'s; a source build never uses a
+Media plugin programs named `celesta-codec-<name>` (such as
+`celesta-codec-ffmpeg`) beside Celesta's executables serve only installed
+programs, such as `cargo install`'s; a source build never uses a
 media plugin beside an executable in a Cargo build folder such as
 `target/<profile>`. Tests whose `celesta-exporter` or `celesta-mcp` child
 exports video give it the test codec's program instead, so they need

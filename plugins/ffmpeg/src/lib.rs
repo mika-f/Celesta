@@ -44,10 +44,10 @@ use std::sync::Arc;
 use video_encoder::VideoSession;
 
 /// The id the plugin's manifest and `hello` give.
-pub const PLUGIN_ID: &str = celesta_plugin_host::FFMPEG_PLUGIN_ID;
+pub const PLUGIN_ID: &str = "ffmpeg";
 
 /// The id the optional x264 program's manifest and `hello` give.
-pub const X264_PLUGIN_ID: &str = celesta_plugin_host::X264_PLUGIN_ID;
+pub const X264_PLUGIN_ID: &str = "ffmpeg-x264";
 
 /// The id of the plugin's one decoder, which reads whatever FFmpeg does.
 pub const DECODER_ID: &str = "ffmpeg";

@@ -6,9 +6,10 @@ use crate::provider::{
     ComponentDescription, ComponentKind, MediaProvider, ProviderFactory, ProviderUse,
 };
 use celesta_plugin_host::{
-    FFMPEG_PLUGIN_ID, MediaAudioEncoderEntry, MediaDecoderEntry, MediaManifest, MediaMuxerEntry,
-    MediaOrigin, MediaVideoEncoderEntry, PluginKillSwitch, SkippedMedia,
+    MediaAudioEncoderEntry, MediaDecoderEntry, MediaManifest, MediaMuxerEntry, MediaOrigin,
+    MediaVideoEncoderEntry, PluginKillSwitch, SkippedMedia,
 };
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -57,29 +58,30 @@ impl FromStr for ComponentRef {
     }
 }
 
-/// Where `plugin`'s components rank among defaults, lowest first: built-in
-/// 0, the bundled FFmpeg 1, other bundled 2, user 3; `None` for a project's,
-/// which is never a default.
-pub fn default_rank(plugin: &RegisteredPlugin) -> Option<u8> {
-    match plugin.origin {
-        MediaOrigin::BuiltIn => Some(0),
-        MediaOrigin::Bundled if plugin.id == FFMPEG_PLUGIN_ID => Some(1),
-        MediaOrigin::Bundled => Some(2),
-        MediaOrigin::User => Some(3),
-        MediaOrigin::Project => None,
-    }
+/// Where `plugin`'s components rank among defaults, lowest first: by origin
+/// (built-in, bundled, then user), then by its manifest's `media.priority`,
+/// highest first; `None` for a project's, which is never a default.
+pub fn default_rank(plugin: &RegisteredPlugin) -> Option<(u8, Reverse<i32>)> {
+    let origin = match plugin.origin {
+        MediaOrigin::BuiltIn => 0,
+        MediaOrigin::Bundled => 1,
+        MediaOrigin::User => 2,
+        MediaOrigin::Project => return None,
+    };
+    Some((origin, Reverse(plugin.media.priority)))
 }
 
-/// Where `plugin`'s decoders are tried: the user's, the bundled FFmpeg's,
-/// other bundled, then a project's.
-fn decoder_order(plugin: &RegisteredPlugin) -> u8 {
-    match plugin.origin {
+/// Where `plugin`'s decoders are tried: by origin (the user's, bundled, a
+/// project's, then built-in), then by its manifest's `media.priority`,
+/// highest first.
+fn decoder_order(plugin: &RegisteredPlugin) -> (u8, Reverse<i32>) {
+    let origin = match plugin.origin {
         MediaOrigin::User => 0,
-        MediaOrigin::Bundled if plugin.id == FFMPEG_PLUGIN_ID => 1,
-        MediaOrigin::Bundled => 2,
-        MediaOrigin::Project => 3,
-        MediaOrigin::BuiltIn => 4,
-    }
+        MediaOrigin::Bundled => 1,
+        MediaOrigin::Project => 2,
+        MediaOrigin::BuiltIn => 3,
+    };
+    (origin, Reverse(plugin.media.priority))
 }
 
 /// A media plugin, as a [`MediaRegistry`] holds it: where it comes from,
@@ -730,6 +732,7 @@ mod tests {
     /// encoder `a`, and muxer `m`.
     fn one_of_each() -> MediaManifest {
         MediaManifest {
+            priority: 0,
             decoders: vec![decoder("d")],
             video_encoders: vec![video_encoder("v")],
             audio_encoders: vec![audio_encoder("a")],
@@ -773,6 +776,7 @@ mod tests {
             name: id.into(),
             origin,
             media: MediaManifest {
+                priority: 0,
                 decoders,
                 video_encoders: Vec::new(),
                 audio_encoders: Vec::new(),
@@ -783,16 +787,31 @@ mod tests {
     }
 
     #[test]
-    fn ffmpeg_ranks_first_among_bundled() {
+    fn priority_ranks_plugins_within_their_origin() {
+        let prioritized = |id: &str, origin, priority| {
+            let mut plugin = ranked(id, origin, true);
+            plugin.media.priority = priority;
+            plugin
+        };
         let plugins = vec![
-            ranked("avfoundation", MediaOrigin::Bundled, true),
-            ranked("ffmpeg", MediaOrigin::Bundled, true),
-            ranked("u", MediaOrigin::User, true),
-            ranked("p", MediaOrigin::Project, true),
+            ranked("first-bundled", MediaOrigin::Bundled, true),
+            prioritized("preferred", MediaOrigin::Bundled, 1),
+            prioritized("u", MediaOrigin::User, -1),
+            prioritized("p", MediaOrigin::Project, 5),
             ranked("builtin", MediaOrigin::BuiltIn, false),
         ];
-        let ranks: Vec<Option<u8>> = plugins.iter().map(default_rank).collect();
-        assert_eq!(ranks, [Some(2), Some(1), Some(3), None, Some(0)]);
+        let ranks: Vec<_> = plugins.iter().map(default_rank).collect();
+        assert_eq!(
+            ranks,
+            [
+                Some((1, Reverse(0))),
+                Some((1, Reverse(1))),
+                Some((2, Reverse(-1))),
+                None,
+                Some((0, Reverse(0))),
+            ]
+        );
+        assert!(ranks[1] < ranks[0], "a higher priority ranks first");
 
         let registry = MediaRegistry::new(plugins);
         let order: Vec<String> = registry
@@ -800,7 +819,7 @@ mod tests {
             .iter()
             .map(|(_, reference)| reference.plugin.clone())
             .collect();
-        assert_eq!(order, ["u", "ffmpeg", "avfoundation", "p"]);
+        assert_eq!(order, ["u", "preferred", "first-bundled", "p"]);
     }
 
     #[test]

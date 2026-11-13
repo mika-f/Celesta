@@ -76,6 +76,7 @@ pub fn manifest() -> MediaManifest {
         sequence,
     };
     MediaManifest {
+        priority: 0,
         decoders: Vec::new(),
         video_encoders: vec![
             encoder(PNG, "PNG"),

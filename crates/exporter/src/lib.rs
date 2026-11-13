@@ -41,8 +41,8 @@ pub use presets::{
 pub use range::ExportRange;
 pub use react::{CompanionProject, ReactRuntimeOptions};
 pub use resolve::{
-    EncoderPlan, OutputPlan, ResolvedEncoder, ResolvedMuxer, ResolvedOutput, X264_PRESETS,
-    encoding_label, resolve_output, resolve_preset_output, serves_video, writes_any_codec,
+    EncoderPlan, OutputPlan, ResolvedEncoder, ResolvedMuxer, ResolvedOutput, encoding_label,
+    resolve_output, resolve_preset_output, serves_video, writes_any_codec,
 };
 pub use resolve_warning::ResolveWarning;
 pub use subtitles::SubtitleFormat;

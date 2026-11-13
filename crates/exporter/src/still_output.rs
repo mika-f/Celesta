@@ -1484,6 +1484,7 @@ mod tests {
             directory: PathBuf::new(),
             executable: None,
             media: celesta_plugin_host::MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![celesta_plugin_host::MediaVideoEncoderEntry {
                     id: "delayed".to_owned(),
@@ -1774,6 +1775,7 @@ mod tests {
             directory: PathBuf::new(),
             executable: None,
             media: celesta_plugin_host::MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![celesta_plugin_host::MediaVideoEncoderEntry {
                     id: "raw".to_owned(),

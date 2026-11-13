@@ -1362,8 +1362,7 @@ mod tests {
             let warning = dialog.model.warning_text(warning);
             assert!(
                 warning.starts_with("MP4 cannot be exported here, so the export starts as MOV")
-                    && warning.contains("Media Feature Pack is missing")
-                    && warning.contains("ffmpeg-x264/libx264"),
+                    && warning.contains("Media Feature Pack is missing"),
                 "{warning}"
             );
         });

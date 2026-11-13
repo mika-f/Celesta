@@ -22,6 +22,7 @@ use celesta_media::{
     default_rank,
 };
 use celesta_plugin_host::{MediaMuxerEntry, MediaOrigin};
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -929,10 +930,11 @@ fn source(target: SaveTarget) -> PresetSource {
     }
 }
 
-/// Components by [`default_rank`] (built-in, the bundled FFmpeg, other
-/// bundled, then the user's), a project's last.
-fn rank(plugin: &RegisteredPlugin) -> u8 {
-    default_rank(plugin).unwrap_or(4)
+/// Components by [`default_rank`] (built-in, bundled, then the user's,
+/// each by `media.priority`), a project's last.
+fn rank(plugin: &RegisteredPlugin) -> (bool, Option<(u8, Reverse<i32>)>) {
+    let rank = default_rank(plugin);
+    (rank.is_none(), rank)
 }
 
 fn kind(track: Track) -> ComponentKind {
@@ -1026,18 +1028,19 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn unavailable_native_h264_explains_recovery_in_the_dialog() {
-        let error = ExportError::ComponentUnavailable {
+    fn an_unavailable_component_gives_its_reason_and_any_hint_in_the_dialog() {
+        let failing = ExportError::ComponentUnavailable {
             component: "mediafoundation/h264".parse().unwrap(),
             reason: "Media Feature Pack is missing".into(),
         };
-        let message = resolution_error(&error);
-        assert!(
-            message.contains("Media Feature Pack is missing"),
-            "{message}"
-        );
-        assert!(message.contains("ffmpeg-x264/libx264"), "{message}");
-        assert!(message.contains(".mov"), "{message}");
+        assert_eq!(resolution_error(&failing), failing.to_string());
+        let missing = ExportError::ComponentUnavailable {
+            component: "some-plugin/h264".parse().unwrap(),
+            reason: "not installed".into(),
+        };
+        let message = resolution_error(&missing);
+        assert!(message.starts_with(&missing.to_string()), "{message}");
+        assert!(message.contains("Plugins tab"), "{message}");
     }
 
     fn reference(text: &str) -> ComponentRef {
@@ -1105,6 +1108,7 @@ mod tests {
             "b",
             MediaOrigin::Bundled,
             MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![
                     video_encoder("x264", "H.264 (x264)", "avc1"),
@@ -1126,6 +1130,7 @@ mod tests {
             "p",
             MediaOrigin::Project,
             MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![video_encoder("h264", "H.264 (project)", "avc1.640028")],
                 audio_encoders: Vec::new(),
@@ -1971,6 +1976,7 @@ mod tests {
             "mediafoundation",
             MediaOrigin::Bundled,
             MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![video_encoder("h264", "H.264 (Media Foundation)", "avc1")],
                 audio_encoders: Vec::new(),
@@ -2030,7 +2036,6 @@ mod tests {
             warning.contains("Media Feature Pack is missing"),
             "{warning}"
         );
-        assert!(warning.contains("ffmpeg-x264/libx264"), "{warning}");
     }
 
     #[test]
@@ -2079,6 +2084,7 @@ mod tests {
             "third",
             MediaOrigin::User,
             MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![video_encoder("hevc", "HEVC", "hvc1")],
                 audio_encoders: Vec::new(),

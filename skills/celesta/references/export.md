@@ -144,10 +144,9 @@ Celesta-export --json --overwrite --audio-encoder none --react scene.tsx silent.
   anything renders.
 - `--preset` names an export preset ([Export presets](#export-presets)),
   not x264's preset: `--preset ultrafast` fails with `unknown_preset`
-  (unless a presets file has that name), and its hint (the `--json`
-  report's `hint`, or a `hint:` line after the message without `--json`)
-  says `use --video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast`
-  (x264's presets belong to the optional `ffmpeg-x264` plugin).
+  (unless a presets file has that name), with no hint: x264's presets
+  belong to the optional `ffmpeg-x264` plugin, so use
+  `--video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast`.
 - A `--muxer` (or a preset's muxer) that does not list the output's
   extension still writes the file, and the export warns
   `ffmpeg/webm does not write .mp4 files; the file is written as WebM anyway`.

@@ -170,11 +170,10 @@ impl FoundPlugins {
             )
         } else {
             format!(
-                "No media plugin was found, {consequence}. Install Celesta's {} plugin, or \
-                 reinstall Celesta. In a source checkout, build it with node \
-                 scripts/plugins/build.mts plugins/ffmpeg and add the absolute path of \
-                 plugins/dist to CELESTA_PLUGIN_PATH before starting Celesta.",
-                celesta_plugin_host::CODEC_PROGRAM
+                "No media plugin was found, {consequence}. Install a media plugin, or \
+                 reinstall Celesta. In a source checkout, build the media plugins under \
+                 plugins/ with node scripts/plugins/build.mts and add the absolute path of \
+                 plugins/dist to CELESTA_PLUGIN_PATH before starting Celesta."
             )
         }
     }
@@ -689,8 +688,8 @@ mod tests {
         let problem = missing.problem().unwrap();
         assert_eq!(problem.title, "No media decoder can run");
         for expected in [
-            "celesta-codec-ffmpeg",
-            "node scripts/plugins/build.mts plugins/ffmpeg",
+            "Install a media plugin",
+            "node scripts/plugins/build.mts",
             "absolute path of plugins/dist",
             "CELESTA_PLUGIN_PATH",
             "reinstall Celesta",

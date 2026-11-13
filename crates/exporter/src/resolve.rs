@@ -16,21 +16,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// The x264 preset names the FFmpeg plugin's `preset` offers, fastest
-/// first: `--preset` once named these, and an
-/// [`ExportError::UnknownPreset`] of one hints at the encoder option.
-pub const X264_PRESETS: [&str; 9] = [
-    "ultrafast",
-    "superfast",
-    "veryfast",
-    "faster",
-    "fast",
-    "medium",
-    "slow",
-    "slower",
-    "veryslow",
-];
-
 /// A chosen video or audio encoder: its plugin's index in the registry,
 /// the codec families it writes, its validated settings (defaults filled
 /// in, hidden fields left out), the schema they were checked against, and
@@ -639,6 +624,18 @@ pub(crate) fn no_default_encoder(kind: &str, codec: &str) -> String {
     format!("no {kind} writes {codec} by default")
 }
 
+/// Whether `reason` is a [`no_default_encoder`] one.
+pub(crate) fn is_no_default_encoder(reason: &str) -> bool {
+    ["video encoder", "audio encoder"].iter().any(|kind| {
+        reason
+            .strip_prefix("no ")
+            .and_then(|rest| rest.strip_prefix(kind))
+            .and_then(|rest| rest.strip_prefix(" writes "))
+            .and_then(|rest| rest.strip_suffix(" by default"))
+            .is_some_and(|codec| !codec.is_empty())
+    })
+}
+
 /// The `kind` component `reference` names: [`ExportError::ComponentUnavailable`]
 /// when there is none, "not installed" or, when `reference` names another
 /// kind of component, "not a video encoder" and so on.
@@ -791,9 +788,9 @@ fn default_encoder<'a>(
 ) -> Result<&'a MediaComponentInfo, ExportError> {
     let rank = |info: &MediaComponentInfo| {
         if info.plugin == muxer.plugin {
-            return Some(0);
+            return Some((false, None));
         }
-        default_rank(registry.plugin(info.plugin)).map(|rank| rank + 1)
+        default_rank(registry.plugin(info.plugin)).map(|rank| (true, Some(rank)))
     };
     let accepted: Vec<String> = codec.into_iter().cloned().collect();
     let mut candidates: Vec<&MediaComponentInfo> = components
@@ -982,6 +979,7 @@ mod tests {
             "b",
             MediaOrigin::Bundled,
             MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![
                     video_encoder("x264", "H.264 (x264)", "avc1"),
@@ -999,6 +997,7 @@ mod tests {
             "u",
             MediaOrigin::User,
             MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![video_encoder("h264", "H.264 (user)", "avc1")],
                 audio_encoders: Vec::new(),
@@ -1013,6 +1012,7 @@ mod tests {
             "p",
             MediaOrigin::Project,
             MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![video_encoder("h264", "H.264 (project)", "avc1")],
                 audio_encoders: vec![audio_encoder("aac", "AAC (project)", "mp4a")],
@@ -1255,6 +1255,7 @@ mod tests {
             id,
             origin,
             MediaManifest {
+                priority: 0,
                 decoders: Vec::new(),
                 video_encoders: vec![video_encoder("enc", "Encoder", codec)],
                 audio_encoders: Vec::new(),
@@ -1274,22 +1275,42 @@ mod tests {
     }
 
     #[test]
-    fn ffmpeg_is_the_bundled_default() {
+    fn the_bundled_plugin_with_the_highest_priority_is_the_default() {
+        let preferred = RegisteredPlugin {
+            media: MediaManifest {
+                priority: 1,
+                ..writer("second", MediaOrigin::Bundled, "mp4", "mp4", "avc1").media
+            },
+            ..writer("second", MediaOrigin::Bundled, "mp4", "mp4", "avc1")
+        };
         let registry = registry(vec![
-            writer("avfoundation", MediaOrigin::Bundled, "mp4", "mp4", "avc1"),
-            writer("ffmpeg", MediaOrigin::Bundled, "mp4", "mp4", "avc1"),
+            writer("first", MediaOrigin::Bundled, "mp4", "mp4", "avc1"),
+            preferred,
         ]);
         let resolved = resolve(&registry, &OutputChoice::default(), "film.mp4").unwrap();
-        assert_eq!(resolved.muxer.reference, reference("ffmpeg/mp4"));
-        assert_eq!(resolved.video.reference, reference("ffmpeg/enc"));
+        assert_eq!(resolved.muxer.reference, reference("second/mp4"));
+        assert_eq!(resolved.video.reference, reference("second/enc"));
 
         let choice = OutputChoice {
-            muxer: Some(reference("avfoundation/mp4")),
+            muxer: Some(reference("first/mp4")),
             ..OutputChoice::default()
         };
         let resolved = resolve(&registry, &choice, "film.mp4").unwrap();
-        assert_eq!(resolved.muxer.reference, reference("avfoundation/mp4"));
-        assert_eq!(resolved.video.reference, reference("avfoundation/enc"));
+        assert_eq!(resolved.muxer.reference, reference("first/mp4"));
+        assert_eq!(resolved.video.reference, reference("first/enc"));
+
+        // Without priorities, search order decides.
+        let registry = registry_of_writers(&["first", "second"]);
+        let resolved = resolve(&registry, &OutputChoice::default(), "film.mp4").unwrap();
+        assert_eq!(resolved.muxer.reference, reference("first/mp4"));
+    }
+
+    fn registry_of_writers(ids: &[&str]) -> MediaRegistry {
+        registry(
+            ids.iter()
+                .map(|id| writer(id, MediaOrigin::Bundled, "mp4", "mp4", "avc1"))
+                .collect(),
+        )
     }
 
     #[test]
@@ -1614,49 +1635,27 @@ mod tests {
     }
 
     #[test]
-    fn an_x264_preset_name_gets_the_video_option_hint() {
+    fn an_unknown_preset_has_no_hint() {
         let registry = all();
-        let preset = |name: &str| OutputChoice {
-            preset: Some(name.into()),
-            ..OutputChoice::default()
-        };
-        let error = resolve(&registry, &preset("ultrafast"), "film.mp4").unwrap_err();
-        assert!(
-            matches!(&error, ExportError::UnknownPreset { name, default_in: None } if name == "ultrafast"),
-            "{error:?}"
-        );
-        assert_eq!(error.to_string(), "unknown preset `ultrafast`");
         let mut issues = Vec::new();
-        assert_eq!(
-            report::classify(&error, HintStyle::Cli, &mut issues),
-            (
-                "unknown_preset",
-                Some(
-                    "use --video-encoder ffmpeg-x264/libx264 --video-option preset=ultrafast (the optional ffmpeg-x264 plugin)"
-                        .into()
-                )
-            )
-        );
-        assert_eq!(
-            report::classify(&error, HintStyle::Mcp, &mut issues),
-            (
-                "unknown_preset",
-                Some(
-                    "set videoEncoder to { id: \"ffmpeg-x264/libx264\", options: { preset: \"ultrafast\" } } (the optional ffmpeg-x264 plugin)"
-                        .into()
-                )
-            )
-        );
-
-        // Not `placebo`, which the FFmpeg plugin's `preset` does not offer,
-        // so the hint would only lead to an `invalid_option`.
-        for name in ["YouTube", "placebo"] {
-            let error = resolve(&registry, &preset(name), "film.mp4").unwrap_err();
-            assert_eq!(
-                report::classify(&error, HintStyle::Cli, &mut issues),
-                ("unknown_preset", None),
-                "{name}"
+        for name in ["ultrafast", "YouTube"] {
+            let choice = OutputChoice {
+                preset: Some(name.into()),
+                ..OutputChoice::default()
+            };
+            let error = resolve(&registry, &choice, "film.mp4").unwrap_err();
+            assert!(
+                matches!(&error, ExportError::UnknownPreset { name: unknown, default_in: None } if unknown == name),
+                "{error:?}"
             );
+            assert_eq!(error.to_string(), format!("unknown preset `{name}`"));
+            for style in [HintStyle::Cli, HintStyle::Mcp] {
+                assert_eq!(
+                    report::classify(&error, style, &mut issues),
+                    ("unknown_preset", None),
+                    "{name}"
+                );
+            }
         }
     }
 
