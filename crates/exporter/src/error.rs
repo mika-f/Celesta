@@ -1,11 +1,57 @@
 use celesta_composition::TimeError;
 use celesta_evaluator::EvaluationError;
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{AudioMixError, ComponentRef, MediaError};
+use celesta_media::{AudioMixError, ComponentKind, ComponentRef, MediaError};
 use celesta_project::LoadError;
 use celesta_react_bridge::{PropertyInputError, ReactBridgeError};
 use std::io;
 use std::path::{Path, PathBuf};
+
+/// Why [`ExportError::ComponentUnavailable`]'s component cannot be used.
+/// The cases a hint is given for are variants, so choosing a hint is a
+/// match on the type rather than on the reason's words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnavailableReason {
+    /// No installed (and allowed) plugin has it: its plugin is missing, has
+    /// no such component, or waits for approval.
+    NotInstalled,
+    /// A muxer whose default `kind` codec no encoder writes by default.
+    /// `kind` is [`ComponentKind::VideoEncoder`] or
+    /// [`ComponentKind::AudioEncoder`].
+    NoDefaultEncoder { kind: ComponentKind, codec: String },
+    /// Any other reason, in its own words: the plugin's, why discovery
+    /// skipped the program serving it, or that it is another kind of
+    /// component.
+    Other(String),
+}
+
+impl std::fmt::Display for UnavailableReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotInstalled => f.write_str("not installed"),
+            Self::NoDefaultEncoder { kind, codec } => {
+                let kind = match kind {
+                    ComponentKind::AudioEncoder => "audio encoder",
+                    _ => "video encoder",
+                };
+                write!(f, "no {kind} writes {codec} by default")
+            }
+            Self::Other(reason) => f.write_str(reason),
+        }
+    }
+}
+
+impl From<String> for UnavailableReason {
+    fn from(reason: String) -> Self {
+        Self::Other(reason)
+    }
+}
+
+impl From<&str> for UnavailableReason {
+    fn from(reason: &str) -> Self {
+        Self::Other(reason.to_owned())
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
@@ -75,7 +121,7 @@ pub enum ExportError {
     #[error("{component} is unavailable: {reason}")]
     ComponentUnavailable {
         component: ComponentRef,
-        reason: String,
+        reason: UnavailableReason,
     },
     /// An option that is not one of the component's settings, or not a
     /// value it takes.

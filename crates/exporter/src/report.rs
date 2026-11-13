@@ -12,10 +12,9 @@ use celesta_project::LoadError;
 use celesta_react_bridge::{PropsFileChoice, ReactBridgeError};
 use serde::Serialize;
 
-use crate::resolve::{NOT_INSTALLED, is_no_default_encoder};
 use crate::{
     AudioLoudness, CompositionInfo, EncoderPlan, ExportError, ExportProgress, ExportedFile,
-    OutputPlan, StillFormat, TrackInfo,
+    OutputPlan, StillFormat, TrackInfo, UnavailableReason,
 };
 
 /// Whose options an error's hint names: `Celesta-export`'s flags or the MCP
@@ -610,7 +609,10 @@ pub(crate) fn classify(
         // A component no installed plugin offers: its plugin is missing, has
         // no such component, or is installed but not allowed, which is
         // skipped and so reads as not installed.
-        ExportError::ComponentUnavailable { component, reason } if reason == NOT_INSTALLED => (
+        ExportError::ComponentUnavailable {
+            component,
+            reason: UnavailableReason::NotInstalled,
+        } => (
             "component_unavailable",
             Some(Cow::Owned(if cli {
                 format!(
@@ -627,7 +629,10 @@ pub(crate) fn classify(
             })),
         ),
         // A muxer whose default codec no installed encoder writes.
-        ExportError::ComponentUnavailable { reason, .. } if is_no_default_encoder(reason) => (
+        ExportError::ComponentUnavailable {
+            reason: UnavailableReason::NoDefaultEncoder { .. },
+            ..
+        } => (
             "component_unavailable",
             fixed(if cli {
                 "install a media plugin with an encoder for that codec, or write another format; \
@@ -1334,7 +1339,7 @@ mod tests {
     fn a_component_that_is_not_installed_names_its_plugin() {
         let error = ExportError::ComponentUnavailable {
             component: "some-plugin/encoder".parse().unwrap(),
-            reason: NOT_INSTALLED.into(),
+            reason: UnavailableReason::NotInstalled,
         };
         let (code, cli) = classified(&error, HintStyle::Cli);
         assert_eq!(code, "component_unavailable");
@@ -1348,11 +1353,14 @@ mod tests {
 
     #[test]
     fn a_muxer_without_a_default_encoder_hints_at_installing_one() {
-        use crate::resolve::no_default_encoder;
-        for kind in ["video encoder", "audio encoder"] {
+        use celesta_media::ComponentKind;
+        for kind in [ComponentKind::VideoEncoder, ComponentKind::AudioEncoder] {
             let error = ExportError::ComponentUnavailable {
                 component: "some-plugin/mp4".parse().unwrap(),
-                reason: no_default_encoder(kind, "avc1"),
+                reason: UnavailableReason::NoDefaultEncoder {
+                    kind,
+                    codec: "avc1".to_owned(),
+                },
             };
             for (style, listing) in [
                 (HintStyle::Cli, "--list-components"),
@@ -1369,14 +1377,17 @@ mod tests {
 
     #[test]
     fn other_unavailable_components_have_no_hint() {
+        // Reasons are matched by type: one that reads like a hinted one
+        // but is a plugin's own words gets no hint.
         for reason in [
-            "no video encoder writes  by default".to_owned(),
-            "the plugin did not describe it".to_owned(),
-            "VideoToolbox is unavailable".to_owned(),
+            "not installed",
+            "no video encoder writes avc1 by default",
+            "the plugin did not describe it",
+            "VideoToolbox is unavailable",
         ] {
             let error = ExportError::ComponentUnavailable {
                 component: "some-plugin/mp4".parse().unwrap(),
-                reason: reason.clone(),
+                reason: reason.into(),
             };
             assert_eq!(
                 classified(&error, HintStyle::Cli),
@@ -1402,7 +1413,7 @@ mod tests {
             (
                 ExportError::ComponentUnavailable {
                     component: component.clone(),
-                    reason: "not installed".into(),
+                    reason: UnavailableReason::NotInstalled,
                 },
                 "component_unavailable",
             ),

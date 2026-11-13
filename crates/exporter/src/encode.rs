@@ -602,7 +602,7 @@ fn not_ready(what: &str) -> MediaError {
 fn still_muxer(reference: &ComponentRef) -> ExportError {
     ExportError::ComponentUnavailable {
         component: reference.clone(),
-        reason: STILL_MUXER_REASON.to_owned(),
+        reason: STILL_MUXER_REASON.into(),
     }
 }
 
@@ -2348,7 +2348,7 @@ mod tests {
         assert!(
             matches!(&error, ExportError::ComponentUnavailable { component, reason }
                 if component.to_string() == "builtin/image"
-                    && reason == "it writes still images; select frames to export stills"),
+                    && reason.to_string() == "it writes still images; select frames to export stills"),
             "{error:?}"
         );
         assert!(uses.lock().unwrap().is_empty());

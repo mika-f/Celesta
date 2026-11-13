@@ -56,7 +56,7 @@ pub const DECODER_ID: &str = "ffmpeg";
 const PLUGIN_JSON: &str = include_str!("../plugin.json");
 
 /// Which FFmpeg build a program links, and so which components it serves.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Profile {
     /// LGPL FFmpeg: the decoder, the muxers, and every encoder but libx264.
     #[default]
@@ -66,14 +66,38 @@ enum Profile {
 }
 
 impl Profile {
-    /// The build that serves the component `id` of `kind`: the one place a
-    /// component is assigned to a program.
+    /// Every component and the build that serves it: the one place a
+    /// component is assigned to a program. Encoders say theirs through an
+    /// exhaustive `profile()`, so a new codec cannot land in a program
+    /// without someone deciding which.
+    fn components() -> impl Iterator<Item = (ComponentKind, &'static str, Self)> {
+        let decoder = std::iter::once((ComponentKind::Decoder, DECODER_ID, Self::Standard));
+        let video = VideoCodec::ALL
+            .into_iter()
+            .map(|codec| (ComponentKind::VideoEncoder, codec.id(), codec.profile()));
+        let audio = AudioCodec::ALL
+            .into_iter()
+            .map(|codec| (ComponentKind::AudioEncoder, codec.id(), codec.profile()));
+        // libavformat's muxers are LGPL.
+        let muxers = MuxerFormat::ALL
+            .into_iter()
+            .map(|format| (ComponentKind::Muxer, format.id(), Self::Standard));
+        decoder.chain(video).chain(audio).chain(muxers)
+    }
+
+    /// The build that serves the component `id` of `kind`. An id no
+    /// component has goes to the standard build, which refuses it as an
+    /// unknown component.
     fn of(kind: ComponentKind, id: &str) -> Self {
-        if kind == ComponentKind::VideoEncoder && id == VideoCodec::X264.id() {
-            Self::X264
-        } else {
-            Self::Standard
-        }
+        Self::components()
+            .find(|&(other, other_id, _)| other == kind && other_id == id)
+            .map_or(Self::Standard, |(_, _, profile)| profile)
+    }
+
+    /// Whether this build serves any component of `kind`, and so offers
+    /// that kind's protocol at all.
+    fn serves_kind(self, kind: ComponentKind) -> bool {
+        Self::components().any(|(other, _, profile)| other == kind && profile == self)
     }
 
     /// The id of the program that links this build, which its refusals name.
@@ -120,6 +144,11 @@ impl FfmpegCodec {
     /// answer that it has no such component.
     fn serves(&self, kind: ComponentKind, id: &str) -> bool {
         Profile::of(kind, id) == self.profile
+    }
+
+    /// Whether this program serves any component of `kind`.
+    fn serves_kind(&self, kind: ComponentKind) -> bool {
+        self.profile.serves_kind(kind)
     }
 
     fn next_session(&mut self) -> SessionId {
@@ -231,31 +260,22 @@ impl MediaProvider for FfmpegCodec {
     }
 
     fn decoder(&mut self) -> Option<&mut dyn Decoder> {
-        if self.profile == Profile::Standard {
-            Some(self)
-        } else {
-            None
-        }
+        self.serves_kind(ComponentKind::Decoder)
+            .then_some(self as _)
     }
 
     fn video_encoder(&mut self) -> Option<&mut dyn VideoEncoder> {
-        Some(self)
+        self.serves_kind(ComponentKind::VideoEncoder)
+            .then_some(self as _)
     }
 
     fn audio_encoder(&mut self) -> Option<&mut dyn AudioEncoder> {
-        if self.profile == Profile::Standard {
-            Some(self)
-        } else {
-            None
-        }
+        self.serves_kind(ComponentKind::AudioEncoder)
+            .then_some(self as _)
     }
 
     fn muxer(&mut self) -> Option<&mut dyn Muxer> {
-        if self.profile == Profile::Standard {
-            Some(self)
-        } else {
-            None
-        }
+        self.serves_kind(ComponentKind::Muxer).then_some(self as _)
     }
 }
 

@@ -1036,7 +1036,7 @@ mod tests {
         assert_eq!(resolution_error(&failing), failing.to_string());
         let missing = ExportError::ComponentUnavailable {
             component: "some-plugin/h264".parse().unwrap(),
-            reason: "not installed".into(),
+            reason: celesta_exporter::UnavailableReason::NotInstalled,
         };
         let message = resolution_error(&missing);
         assert!(message.starts_with(&missing.to_string()), "{message}");

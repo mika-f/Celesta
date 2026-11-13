@@ -555,3 +555,42 @@ fn only_the_carried_licence_versions_pass_the_distribution_check() {
         assert!(!license_carried(license, true), "{license}");
     }
 }
+
+#[test]
+fn each_program_describes_and_offers_exactly_the_components_its_build_serves() {
+    use crate::{FfmpegCodec, Profile};
+    use celesta_media::{ComponentKind, MediaProvider};
+    assert_eq!(
+        Profile::of(ComponentKind::VideoEncoder, "libx264"),
+        Profile::X264
+    );
+    for (mut codec, profile) in [
+        (FfmpegCodec::new(), Profile::Standard),
+        (FfmpegCodec::x264(), Profile::X264),
+    ] {
+        let mut described: Vec<_> = codec
+            .describe()
+            .unwrap()
+            .into_iter()
+            .map(|component| (component.kind, component.id))
+            .collect();
+        let mut assigned: Vec<_> = Profile::components()
+            .filter(|&(_, _, served_by)| served_by == profile)
+            .map(|(kind, id, _)| (kind, id.to_owned()))
+            .collect();
+        described.sort_by_key(|(kind, id)| (format!("{kind:?}"), id.clone()));
+        assigned.sort_by_key(|(kind, id)| (format!("{kind:?}"), id.clone()));
+        assert_eq!(described, assigned, "{profile:?}");
+        let has = |kind| described.iter().any(|(other, _)| *other == kind);
+        assert_eq!(codec.decoder().is_some(), has(ComponentKind::Decoder));
+        assert_eq!(
+            codec.video_encoder().is_some(),
+            has(ComponentKind::VideoEncoder)
+        );
+        assert_eq!(
+            codec.audio_encoder().is_some(),
+            has(ComponentKind::AudioEncoder)
+        );
+        assert_eq!(codec.muxer().is_some(), has(ComponentKind::Muxer));
+    }
+}

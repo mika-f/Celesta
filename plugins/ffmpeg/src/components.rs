@@ -2,7 +2,7 @@
 //! `describe` says of each, which depends on the encoders the linked
 //! FFmpeg build has.
 
-use crate::DECODER_ID;
+use crate::{DECODER_ID, Profile};
 use celesta_media::{
     ComponentDescription, ComponentKind, PixelFormat, SampleRates, SelectOption, SettingField,
     SettingKind, SettingValue,
@@ -51,6 +51,15 @@ impl VideoCodec {
 
     pub(crate) fn from_id(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|codec| codec.id() == id)
+    }
+
+    /// The FFmpeg build that serves it: a GPL encoder must not land in the
+    /// LGPL program, so every codec says which it is.
+    pub(crate) const fn profile(self) -> Profile {
+        match self {
+            Self::X264 => Profile::X264,
+            Self::ProRes | Self::Vp9 => Profile::Standard,
+        }
     }
 
     /// The libavcodec encoder it runs.
@@ -126,6 +135,13 @@ impl AudioCodec {
 
     pub(crate) fn from_id(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|codec| codec.id() == id)
+    }
+
+    /// The FFmpeg build that serves it, as [`VideoCodec::profile`] says.
+    pub(crate) const fn profile(self) -> Profile {
+        match self {
+            Self::Aac | Self::Opus | Self::Pcm => Profile::Standard,
+        }
     }
 
     /// The libavcodec encoder it runs; none for PCM.
