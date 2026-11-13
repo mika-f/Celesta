@@ -50,9 +50,16 @@ plugin-relative RPATH; glibc and the platform runtime remain system provided.
 `licenses/native/debian-packages.json` records exact binary and source-package
 versions and architecture, including downstream revisions, and the
 distribution as os-release's `ID VERSION_ID` (such as `ubuntu 26.04`), the same
-format the Linux image records for the standard plugin.
-Linux release archives are built on the workflow's Ubuntu runner and require a
-compatible glibc. The supported release targets are macOS arm64, Windows x64,
+format the Linux image records for the standard plugin. Each entry's
+copyright file is that package's own `/usr/share/doc/<package>/copyright`, or
+a same-source sibling's named by `copyright_from`; packaging fails when there
+is neither. On macOS, `licenses/homebrew.json` and `licenses/native/<formula>`
+cover each Homebrew formula whose library is bundled into `Frameworks/`, traced
+from the program's `otool -L` (x264 must be one), and packaging fails on a
+bundled library that is neither a formula's nor FFmpeg's own.
+Linux release archives are built on `ubuntu-24.04`, named rather than
+`ubuntu-latest` so the glibc they require, the bundled `libx264.so.N` and the
+recorded `distribution` change only with the workflow. The supported release targets are macOS arm64, Windows x64,
 and Linux x64.
 
 `package-build.yml` builds the archive separately from the app, validates

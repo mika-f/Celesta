@@ -70,7 +70,9 @@ image's `libopus0` and `libvpx12` packages. The exact binary and
 source-package versions of every shared object the program loads but glibc's
 own (these two, zlib, and the GCC runtime) are recorded in
 `/opt/celesta/plugins/ffmpeg/licenses/native/debian-packages.json` beside
-their copyright files. The standard plugin carries the
+their copyright files; each entry's `copyright_from` names the package the
+file comes from, a same-source sibling when the package has no doc folder of
+its own (`libgcc-s1` uses `gcc-N-base`'s). The standard plugin carries the
 [LGPL source notice](../FFMPEG-SOURCE.md). The image installs no x264.
 
 MP4 needs the separate Linux `ffmpeg-x264` ZIP. Extract the matching release

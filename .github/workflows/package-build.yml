@@ -218,7 +218,13 @@ jobs:
 
   linux-plugins:
     name: Linux x64 x264 download
-    runs-on: ubuntu-latest
+    # The ZIP's glibc requirement, its bundled libx264.so.N and the
+    # `distribution` in its debian-packages.json all come from this image, so
+    # name a release rather than ubuntu-latest: moving that label would change
+    # the released ZIP with no change here. 24.04 is the image ubuntu-latest
+    # gave until now, so the ZIP keeps loading on the hosts it did; ci.yml's
+    # docker job loads it on ubuntu:26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7.0.1

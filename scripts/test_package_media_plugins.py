@@ -29,6 +29,26 @@ class PluginArchives(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Incomplete native source provenance"):
                 packaging.debian_package("libx264.so.164", "/codec")
 
+    def test_a_package_notice_is_its_own_or_a_same_source_siblings(self):
+        installed = "libgcc-s1\tgcc-16\tinstalled\ngcc-15-base\tgcc-15\tinstalled\ngcc-16-base\tgcc-16\tinstalled\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            doc = Path(temporary)
+            for package in ("libx264-164", "libx264-165", "gcc-15-base", "gcc-16-base"):
+                (doc / package).mkdir()
+                (doc / package / "copyright").write_text(package)
+            # A leftover libx264-164 folder is not the bundled libx264-165's notice.
+            with patch.object(packaging, "run") as run:
+                self.assertEqual(packaging.debian_copyright("libx264-165", "x264", doc),
+                                 (doc / "libx264-165/copyright", "libx264-165"))
+            run.assert_not_called()
+            with patch.object(packaging, "run", return_value=installed):
+                self.assertEqual(packaging.debian_copyright("libgcc-s1", "gcc-16", doc),
+                                 (doc / "gcc-16-base/copyright", "gcc-16-base"))
+            (doc / "libx264-165/copyright").unlink()
+            with patch.object(packaging, "run", return_value="libx264-164\tx264\tconfig-files\n"):
+                with self.assertRaisesRegex(RuntimeError, "Native copyright notice not found for libx264-165"):
+                    packaging.debian_copyright("libx264-165", "x264", doc)
+
     def test_distribution_is_the_os_release_id_and_version(self):
         self.assertEqual(packaging.distribution_release(
             'PRETTY_NAME="Ubuntu 26.04 LTS"\nNAME="Ubuntu"\nVERSION_ID="26.04"\nID=ubuntu\nID_LIKE=debian\n'),

@@ -39,6 +39,78 @@ class MacPackageValidationTests(unittest.TestCase):
                 packaging.copy_formula_notices("bare", bare, root / "licenses/native/bare")
             self.assertFalse((root / "licenses/native/bare").exists())
 
+    def test_bundled_libraries_are_traced_through_each_other_to_their_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            keg = root / "Cellar/opus/1.5.2/lib"
+            keg.mkdir(parents=True)
+            (keg / "libopus.0.dylib").touch()
+            (root / "opt").mkdir()
+            (root / "opt/opus").symlink_to(root / "Cellar/opus/1.5.2")
+            ffmpeg = root / "ffmpeg/lib"
+            ffmpeg.mkdir(parents=True)
+            (ffmpeg / "libavcodec.62.28.100.dylib").touch()
+            (ffmpeg / "libavcodec.62.dylib").symlink_to("libavcodec.62.28.100.dylib")
+            (ffmpeg / "libavutil.60.dylib").touch()
+            program = root / "codec"
+            entry = " (compatibility version 1.0.0, current version 1.0.0)"
+            listings = {
+                program: [ffmpeg / "libavcodec.62.dylib", "/usr/lib/libSystem.B.dylib"],
+                # Each dylib lists its own install name first.
+                ffmpeg / "libavcodec.62.28.100.dylib": [ffmpeg / "libavcodec.62.dylib", ffmpeg / "libavutil.60.dylib",
+                                                        root / "opt/opus/lib/libopus.0.dylib",
+                                                        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"],
+                ffmpeg / "libavutil.60.dylib": [ffmpeg / "libavutil.60.dylib"],
+                keg / "libopus.0.dylib": [root / "opt/opus/lib/libopus.0.dylib"],
+            }
+
+            def otool(*arguments, capture=False, env=None):
+                self.assertEqual(arguments[0], "otool")
+                return f"{arguments[-1]}:\n" + "".join(f"\t{line}{entry}\n" for line in listings[Path(arguments[-1])])
+
+            with patch.object(packaging, "run", side_effect=otool):
+                libraries = packaging.linked_libraries([program])
+            self.assertEqual(libraries, {"libavcodec.62.28.100.dylib": ffmpeg / "libavcodec.62.28.100.dylib",
+                                         "libavutil.60.dylib": ffmpeg / "libavutil.60.dylib",
+                                         "libopus.0.dylib": keg / "libopus.0.dylib"})
+            self.assertEqual(packaging.library_formulas(libraries, root / "Cellar"), {"opus"})
+
+            listings[program] = ["@rpath/libavcodec.62.dylib"]
+            with patch.object(packaging, "run", side_effect=otool), self.assertRaisesRegex(RuntimeError, "cannot be traced"):
+                packaging.linked_libraries([program])
+
+    def test_a_bundled_library_no_notice_covers_fails(self):
+        cellar = Path("/opt/homebrew/Cellar")
+        self.assertEqual(packaging.library_formulas({
+            "libavformat.62.dylib": Path("/prefix/lib/libavformat.62.3.100.dylib"),
+            "libvpx.12.dylib": cellar / "libvpx/1.16.0/lib/libvpx.12.dylib",
+            "libx264.165.dylib": cellar / "x264/r3222/lib/libx264.165.dylib",
+        }, cellar), {"libvpx", "x264"})
+        with self.assertRaisesRegex(RuntimeError, "no notice covers it"):
+            packaging.library_formulas({"libfoo.1.dylib": Path("/usr/local/lib/libfoo.1.dylib")}, cellar)
+
+    def test_frameworks_must_hold_exactly_the_traced_libraries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            frameworks = Path(temporary) / "Frameworks"
+            traced = {"libopus.0.dylib": Path("/opus")}
+            with self.assertRaises(RuntimeError):
+                packaging.check_bundled(frameworks, traced)
+            packaging.check_bundled(frameworks, {})
+            frameworks.mkdir()
+            (frameworks / "libopus.0.dylib").touch()
+            packaging.check_bundled(frameworks, traced)
+            (frameworks / "libextra.dylib").touch()
+            with self.assertRaisesRegex(RuntimeError, "libextra.dylib"):
+                packaging.check_bundled(frameworks, traced)
+
+    def test_a_required_formula_that_is_not_bundled_fails(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(packaging, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "libvpx"):
+                packaging.collect_formula_notices(Path(temporary), {"opus"}, required=("opus", "libvpx"))
+            packaging.collect_formula_notices(Path(temporary), set())
+            run.assert_not_called()
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+
     def test_reads_modern_and_legacy_minimum_os_versions(self):
         self.assertEqual(packaging.minimum_version(
             "Load command 1\n      cmd LC_BUILD_VERSION\n platform 1\n    minos 14.5\n      sdk 15.0\n"

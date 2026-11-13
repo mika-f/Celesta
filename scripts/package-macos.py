@@ -23,11 +23,17 @@ ROOT = Path(__file__).resolve().parent.parent
 # inventory lists. The AVFoundation plugin links system frameworks only, so it
 # needs no dylibbundler.
 BUNDLED_PACKAGES = {"ffmpeg": "celesta-codec-ffmpeg", "avfoundation": "celesta-codec-avfoundation"}
-# The Homebrew formulas of the codec libraries the standard FFmpeg build links
-# (scripts/build-ffmpeg-linux.sh), which dylibbundler copies into the bundled
-# ffmpeg plugin: libopus and libvpx, both BSD licensed. FFmpeg itself is built
-# from source; packaging/FFMPEG-SOURCE.md covers it.
+# The Homebrew formulas the standard FFmpeg build (scripts/build-ffmpeg-linux.sh)
+# must link, libopus and libvpx, both BSD licensed. Which formulas' notices are
+# copied comes from the libraries dylibbundler actually bundles
+# (`library_formulas`); this only fails a build that lost one of them.
 STANDARD_NATIVE_FORMULAS = ("opus", "libvpx")
+# The libraries FFmpeg installs. The packages build them from source, and
+# packaging/FFMPEG-SOURCE.md and GPL-SOURCE-OFFER.md cover them.
+FFMPEG_LIBRARY = re.compile(r"lib(?:avcodec|avdevice|avfilter|avformat|avutil|postproc|swresample|swscale)\.")
+# What dylibbundler leaves to the system: /usr/lib by default, and
+# /System/Library through `-i`.
+SYSTEM_LIBRARIES = ("/usr/lib/", "/System/Library/")
 MACHO_MAGIC = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
     b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -150,7 +156,7 @@ def bundled_packages(metadata, names=None):
     return [packages[package] for package in sorted(reached)]
 
 
-def collect_licenses(resources, target, *, names=None, include_app=True, native_formulas=()):
+def collect_licenses(resources, target, *, names=None, include_app=True):
     licenses = resources / "licenses"
     licenses.mkdir(exist_ok=True)
     for name in ("LICENSE-MIT", "LICENSE-APACHE"):
@@ -185,15 +191,81 @@ def collect_licenses(resources, target, *, names=None, include_app=True, native_
             for name, path in texts.items():
                 shutil.copy2(path, destination / name)
     (licenses / "rust-packages.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
-    # The Homebrew codec libraries a plugin bundles, and what they depend on.
-    formulas = sorted({dependency for formula in native_formulas
-                       for dependency in [formula, *run("brew", "deps", "--installed", formula, capture=True).splitlines()]})
-    if formulas:
-        (licenses / "homebrew.json").write_text(
-            run("brew", "info", "--json=v2", *formulas, capture=True), encoding="utf-8")
+
+
+def linked_libraries(binaries):
+    """The libraries dylibbundler copies for `binaries`: each dylib they load,
+    directly or through one another, outside the system's folders, by the
+    file name it is bundled under, with the file it comes from."""
+    libraries, pending = {}, [(Path(binary), False) for binary in binaries]
+    while pending:
+        binary, is_library = pending.pop()
+        entries = run("otool", "-arch", platform.machine(), "-L", binary, capture=True).splitlines()[1:]
+        # A dylib's first entry is its own install name.
+        for line in entries[1:] if is_library else entries:
+            dependency = line.strip().split(" (compatibility version", 1)[0]
+            if not dependency or dependency.startswith(SYSTEM_LIBRARIES):
+                continue
+            if not dependency.startswith("/"):
+                raise RuntimeError(f"{binary} links {dependency}, which cannot be traced to the file it bundles")
+            # dylibbundler names each copy after the file a symlink resolves
+            # to (libavcodec.62.dylib is copied as libavcodec.62.28.100.dylib).
+            source = Path(dependency).resolve()
+            name = source.name
+            if name in libraries:
+                if libraries[name] != source:
+                    raise RuntimeError(f"Both {libraries[name]} and {source} would be bundled as {name}")
+                continue
+            libraries[name] = source
+            pending.append((source, True))
+    return libraries
+
+
+def library_formulas(libraries, cellar):
+    """The Homebrew formulas the traced libraries come from. Fails on a
+    library that is neither a formula's nor an FFmpeg library built from
+    source, which would otherwise ship without a notice."""
+    formulas = set()
+    for name, source in sorted(libraries.items()):
+        if source.is_relative_to(cellar):
+            formulas.add(source.relative_to(cellar).parts[0])
+        elif not FFMPEG_LIBRARY.match(name):
+            raise RuntimeError(f"{name} ({source}) is neither an FFmpeg library built from source "
+                               "nor a Homebrew formula's, so no notice covers it")
+    return formulas
+
+
+def bundle_libraries(binaries, frameworks, install_path):
+    """Run dylibbundler for `binaries` and return what it bundled, failing
+    unless `frameworks` holds exactly the libraries `linked_libraries` traced."""
+    libraries = linked_libraries(binaries)
+    run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/",
+        *[argument for binary in binaries for argument in ("-x", binary)],
+        "-d", frameworks, "-p", install_path)
+    check_bundled(frameworks, libraries)
+    return libraries
+
+
+def check_bundled(frameworks, libraries):
+    bundled = {path.name for path in frameworks.iterdir()} if frameworks.is_dir() else set()
+    if bundled != set(libraries):
+        raise RuntimeError(f"{frameworks} holds {sorted(bundled)}, not the traced {sorted(libraries)}")
+
+
+def collect_formula_notices(licenses, formulas, required=()):
+    """Copy each formula's notices into `licenses/native/<formula>` and its
+    `brew info` into `licenses/homebrew.json`."""
+    missing = sorted(set(required) - set(formulas))
+    if missing:
+        raise RuntimeError(f"Expected bundled libraries from the Homebrew formulas {missing}")
+    formulas = sorted(formulas)
+    if not formulas:
+        return
+    (licenses / "homebrew.json").write_text(
+        run("brew", "info", "--json=v2", *formulas, capture=True), encoding="utf-8")
     for formula in formulas:
         directory = Path(run("brew", "--prefix", formula, capture=True)).resolve()
-        copy_formula_notices(formula, directory, licenses / "native" / formula.replace("/", "-"))
+        copy_formula_notices(formula, directory, licenses / "native" / formula)
 
 
 def copy_formula_notices(formula, prefix, destination):
@@ -308,7 +380,7 @@ def main():
     for source in (ROOT / "examples/minimal.celesta.json", ROOT / "examples/editor-demo.celesta.json",
                    ROOT / "packages/cli/examples/title.tsx"):
         shutil.copy2(source, examples / source.name)
-    collect_licenses(resources, target, native_formulas=STANDARD_NATIVE_FORMULAS)
+    collect_licenses(resources, target)
 
     # Only the standard FFmpeg build is bundled; AVFoundation uses system frameworks.
     # Seal manifests/licenses as resources rather than treating them as nested code.
@@ -319,8 +391,7 @@ def main():
         "--distribution", "--out", plugins, "--target", target, env=codec_env)
     program = plugin_program(codec)
     frameworks_from_program = os.path.relpath(codec / "Frameworks", program.parent)
-    run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", program,
-        "-d", codec / "Frameworks", "-p", f"@executable_path/{frameworks_from_program}/")
+    codec_libraries = bundle_libraries([program], codec / "Frameworks", f"@executable_path/{frameworks_from_program}/")
     for binary in (executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp"):
         if re.search(r"\blibav|\blibx264|\bffmpeg", run("otool", "-L", binary, capture=True), re.I):
             raise RuntimeError(f"{binary} links FFmpeg, which only the codec plugin may")
@@ -332,9 +403,13 @@ def main():
     avfoundation_program = plugin_program(plugins / "avfoundation")
     frameworks = contents / "Frameworks"
     # Main executables and Node are both one directory below Contents.
-    run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", executables / "Celesta",
-        "-x", executables / "Celesta-export", "-x", executables / "Celesta-mcp", "-x", helpers / "node", "-x", helpers / "esbuild",
-        "-d", frameworks, "-p", "@executable_path/../Frameworks/")
+    app_libraries = bundle_libraries([executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp",
+                                      helpers / "node", helpers / "esbuild"], frameworks, "@executable_path/../Frameworks/")
+    # The notices of every Homebrew library either folder bundles.
+    cellar = Path(run("brew", "--cellar", capture=True)).resolve()
+    collect_formula_notices(resources / "licenses",
+                            library_formulas(codec_libraries, cellar) | library_formulas(app_libraries, cellar),
+                            required=STANDARD_NATIVE_FORMULAS)
     native = macho_files(app)
     required = {executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp",
                 helpers / "node", helpers / "esbuild", program, avfoundation_program}
