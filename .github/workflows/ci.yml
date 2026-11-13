@@ -142,6 +142,15 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 -B -m unittest scripts/test_package_macos.py scripts/test_package_media_plugins.py
 
+      # ffmpeg-windows.yml's licence check, which runs only before a publish,
+      # on status databases shaped like vcpkg's. The runner images carry
+      # PowerShell and Pester 5; setup-ffmpeg runs the check on the pinned
+      # packages on Windows.
+      - name: Test the FFmpeg licence check
+        if: runner.os == 'Linux'
+        shell: pwsh
+        run: Invoke-Pester -Path scripts/check-ffmpeg-features.Tests.ps1 -CI
+
       # Type checks have no timeouts, so they run beside the Rust build and
       # use the cores it leaves idle while it links.
       - id: typecheck

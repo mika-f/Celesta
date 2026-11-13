@@ -60,7 +60,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      # Only for the source notice that goes into the package.
+      # For the source notice that goes into the package and the licence check.
       - uses: actions/checkout@v7.0.1
 
       # Release-only triplets: the vcpkg crate links only lib/, never
@@ -139,31 +139,12 @@ jobs:
             throw 'the LGPL package contains x264'
           }
           # The licence the package is published under follows from the
-          # ffmpeg features vcpkg installed, which a dependency can add to:
-          # read them from vcpkg's status database before publishing, since a
-          # published version cannot be replaced. Neither package may be
-          # version3 (LGPL/GPL 3) or nonfree, and the LGPL one may not be gpl.
-          $installed = @()
-          foreach ($paragraph in ((Get-Content -Raw -LiteralPath "$env:VCPKG_ROOT/installed/vcpkg/status") -split '(?:\r?\n){2,}')) {
-            $fields = @{}
-            foreach ($line in ($paragraph -split '\r?\n')) {
-              if ($line -match '^([A-Za-z-]+): (.*)$') { $fields[$Matches[1]] = $Matches[2] }
-            }
-            if ($fields['Package'] -eq 'ffmpeg' -and $fields['Feature'] -and
-                $fields['Architecture'] -eq 'x64-windows-static-md-release' -and
-                $fields['Status'] -eq 'install ok installed') {
-              $installed += $fields['Feature']
-            }
-          }
-          Write-Host "ffmpeg features installed: $($installed -join ', ')"
-          foreach ($feature in $env:FFMPEG_FEATURES.Split(',')) {
-            if ($installed -notcontains $feature) { throw "ffmpeg[$feature] is not installed" }
-          }
-          $forbidden = @('nonfree', 'version3')
-          if ($env:FFMPEG_LICENSE -notlike 'GPL*') { $forbidden += 'gpl' }
-          foreach ($feature in $forbidden) {
-            if ($installed -contains $feature) { throw "the $env:FFMPEG_LICENSE package has ffmpeg[$feature]" }
-          }
+          # ffmpeg features vcpkg installed on each triplet, which a
+          # dependency can add to. setup-ffmpeg runs the same check on the
+          # pinned packages, and scripts/check-ffmpeg-features.Tests.ps1 tests it.
+          & (Join-Path $env:GITHUB_WORKSPACE 'scripts/check-ffmpeg-features.ps1') `
+            -InstalledPath (Join-Path $env:VCPKG_ROOT 'installed') `
+            -Features $env:FFMPEG_FEATURES -License $env:FFMPEG_LICENSE
           "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
           "PACKAGE_PATH=$nupkg" >> $env:GITHUB_ENV
 

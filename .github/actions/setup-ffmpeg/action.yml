@@ -55,8 +55,8 @@ runs:
         $roots = @{}
         $versions = @()
         foreach ($package in @(
-            @{ Variant = 'Standard'; Version = $env:STANDARD_PACKAGE_VERSION; Sha256 = $env:STANDARD_PACKAGE_SHA256; Notice = 'FFMPEG-SOURCE.md'; Ports = @('ffmpeg', 'zlib', 'opus', 'libvpx') },
-            @{ Variant = 'X264'; Version = $env:X264_PACKAGE_VERSION; Sha256 = $env:X264_PACKAGE_SHA256; Notice = 'GPL-SOURCE-OFFER.md'; Ports = @('ffmpeg', 'x264') })) {
+            @{ Variant = 'Standard'; Version = $env:STANDARD_PACKAGE_VERSION; Sha256 = $env:STANDARD_PACKAGE_SHA256; Notice = 'FFMPEG-SOURCE.md'; Ports = @('ffmpeg', 'zlib', 'opus', 'libvpx'); Features = 'zlib,opus,vpx'; License = 'LGPL-2.1-or-later' },
+            @{ Variant = 'X264'; Version = $env:X264_PACKAGE_VERSION; Sha256 = $env:X264_PACKAGE_SHA256; Notice = 'GPL-SOURCE-OFFER.md'; Ports = @('ffmpeg', 'x264'); Features = 'x264'; License = 'GPL-2.0-or-later' })) {
           $id = "celesta.ffmpeg.windows.$($package.Variant.ToLowerInvariant())"
           if (-not $package.Version -or -not $package.Sha256) {
             throw "Pin the $id version and SHA-256 that ffmpeg-windows.yml reports."
@@ -80,6 +80,10 @@ runs:
             if (-not (Test-Path -LiteralPath (Join-Path $installed $file))) { throw "$id lacks $file" }
           }
           if (-not (Test-Path -LiteralPath (Join-Path $vcpkg $package.Notice))) { throw "$id lacks $($package.Notice)" }
+          # ffmpeg-windows.yml's licence check before publishing, run here on
+          # real packages so a pull request that changes it tests it too.
+          & (Join-Path $env:GITHUB_WORKSPACE 'scripts/check-ffmpeg-features.ps1') `
+            -InstalledPath (Join-Path $vcpkg 'installed') -Features $package.Features -License $package.License
           # NuGet leaves out dotfiles and empty directories, and the vcpkg crate
           # needs the .vcpkg-root marker and the status updates directory.
           New-Item -ItemType File -Force (Join-Path $vcpkg '.vcpkg-root') | Out-Null
