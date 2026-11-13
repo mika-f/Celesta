@@ -104,4 +104,8 @@ A crate added later needs a placeholder like this before its first release.
   `$/.github/actions/setup-ffmpeg` form, which it does not know and also
   reports for `package-build.yml`; `package.yml` and `actions.lock` parse as
   YAML.
-- Not run: the jobs themselves, which need a release and the setup above.
+- `scripts/crates-trusted-publishing.sh` ran on 2026-11-14 and configured
+  all 22 crates; the API lists `mika-f/Celesta`, `package.yml`,
+  `crates-io` for each one checked, and a second run reports every crate as
+  already configured. `--trustpub-only` has not been set.
+- Not run: the jobs themselves, which need a release.
