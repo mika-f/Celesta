@@ -80,7 +80,9 @@ find target/debug/deps -maxdepth 1 -name '*celesta_*' -delete
 ```
 
 Trusted Publishing (GitHub Actions OIDC) can be set up per crate on
-crates.io only after the crate's first version exists.
+crates.io only after the crate's first version exists. The Release workflow
+now publishes this way; see
+[`2026-11-14-crates-io-trusted-publishing.md`](2026-11-14-crates-io-trusted-publishing.md).
 
 ## Checks
 
