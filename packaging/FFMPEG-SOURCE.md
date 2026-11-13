@@ -38,13 +38,16 @@ Their notices and versions come with each distribution:
 
 - Windows: vcpkg's share tree (`share/<port>/copyright`) from the
   `Celesta.FFmpeg.Windows.Standard` package, in the app's `licenses/native`.
-- macOS: `licenses/homebrew.json` and `licenses/native/<formula>` for the
-  Homebrew `opus` and `libvpx` libraries bundled in the plugin's `Frameworks`.
+- macOS: `licenses/homebrew.json` and `licenses/native/<formula>` for each
+  Homebrew formula whose library is bundled in the plugin's `Frameworks`
+  (`opus` and `libvpx`), found from the libraries the program actually loads.
 - Linux image: the Ubuntu packages `libopus0` and `libvpx12`, and the base
   image's `zlib1g` and `libgcc-s1`. Every shared object the program loads but
   glibc's own is recorded, with its binary and source-package versions, in
   `/opt/celesta/plugins/ffmpeg/licenses/native/debian-packages.json`, with
-  each package's copyright file beside it.
+  each package's copyright file beside it. A package whose own doc folder is
+  absent carries the copyright file of a package built from the same source,
+  which its entry names as `copyright_from` (`libgcc-s1`'s is `gcc-N-base`'s).
 
 Source requests include the distribution's patches for the exact recorded
 source-package version.

@@ -24,7 +24,8 @@ packaging = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packaging)
 ROOT = packaging.ROOT
 run = packaging.run
-# Each optional variant and the Homebrew formula of its codec library.
+# Each optional variant, and the Homebrew formula its macOS build must bundle
+# a library from; the notices copied come from what it actually bundles.
 VARIANTS = {"x264": "x264"}
 
 
@@ -74,6 +75,22 @@ def debian_package(library, source):
                 source_package=source_package, source_version=source_version)
 
 
+def debian_copyright(package, source_package, doc=Path("/usr/share/doc")):
+    """The copyright file of an installed package, and the package it belongs
+    to: its own, or else that of an installed package built from the same
+    source, as packaging/linux/record-codec-libraries.sh finds it. Some doc
+    folders are symlinks to a sibling's, which Ubuntu's container images drop."""
+    own = doc / package / "copyright"
+    if own.is_file():
+        return own, package
+    listing = run("dpkg-query", "--show", "--showformat=${Package}\t${source:Package}\t${db:Status-Status}\n", capture=True)
+    for line in listing.splitlines():
+        sibling, source, status = line.split("\t")
+        if source == source_package and status == "installed" and (doc / sibling / "copyright").is_file():
+            return doc / sibling / "copyright", sibling
+    raise RuntimeError(f"Native copyright notice not found for {package} (source package {source_package}) under {doc}")
+
+
 def distribution_release(os_release):
     """`ID VERSION_ID` from os-release text, such as `ubuntu 26.04`: the same
     `distribution` the Linux image's record-codec-libraries.sh writes."""
@@ -96,6 +113,7 @@ def linux_dependencies(plugin, program, variant):
         raise RuntimeError(f"Unresolved plugin dependencies: {listing}")
     dependencies = re.findall(r"^\s*(\S+)\s+=>\s+(/\S+)\s+\(", listing, re.M)
     provenance = []
+    native = plugin / "licenses/native"
     for name, source in dependencies:
         if name.startswith(prefix):
             directory = plugin / "lib"
@@ -103,11 +121,16 @@ def linux_dependencies(plugin, program, variant):
             shutil.copy2(Path(source).resolve(), directory / name)
             # Record the exact binary and distribution source package, not
             # only its upstream version: Ubuntu/Debian may patch the source.
-            provenance.append(debian_package(name, source))
+            entry = debian_package(name, source)
+            # The notice of this entry's own package, not of whichever
+            # package's doc folder happens to match a pattern.
+            package = entry["package"].partition(":")[0]
+            notice, entry["copyright_from"] = debian_copyright(package, entry["source_package"])
+            (native / package).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(notice, native / package / "copyright")
+            provenance.append(entry)
     if not provenance:
         raise RuntimeError(f"Expected a package-owned {prefix} dependency in {program}")
-    native = plugin / "licenses/native"
-    native.mkdir(parents=True, exist_ok=True)
     (native / "debian-packages.json").write_text(json.dumps({
         "distribution": distribution_release(Path("/etc/os-release").read_text()), "packages": provenance,
         "source_instructions": "Retrieve the exact source_package=source_version from this distribution's source archive, including its Debian/Ubuntu patch set; request the matching materials through the bundled source notice.",
@@ -120,14 +143,6 @@ def linux_dependencies(plugin, program, variant):
     for name, source in re.findall(r"^\s*(\S+)\s+=>\s+(/\S+)\s+\(", resolved, re.M):
         if name.startswith(prefix) and not Path(source).resolve().is_relative_to(plugin.resolve()):
             raise RuntimeError(f"Codec dependency was not bundled: {source}")
-    doc = {"x264": "libx264-*"}[variant]
-    notices = list(Path("/usr/share/doc").glob(f"{doc}/copyright"))
-    if not notices:
-        raise RuntimeError(f"Native codec copyright notice not found: {doc}")
-    for notice in notices:
-        directory = plugin / "licenses/native" / notice.parent.name
-        directory.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(notice, directory / "copyright")
 
 
 def package_plugin(variant, output, target, system, arch, args):
@@ -147,12 +162,13 @@ def package_plugin(variant, output, target, system, arch, args):
         run("node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins" / plugin_id, "--distribution", "--out", stage, env=env)
         plugin = stage / plugin_id
         program = packaging.plugin_program(plugin)
-        packaging.collect_licenses(plugin, target, names={source["cargoPackage"]}, include_app=False,
-                                   native_formulas=(VARIANTS[variant],) if system == "macos" else ())
+        packaging.collect_licenses(plugin, target, names={source["cargoPackage"]}, include_app=False)
         if system == "macos":
             relative = os.path.relpath(plugin / "Frameworks", program.parent)
-            run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", program,
-                "-d", plugin / "Frameworks", "-p", f"@executable_path/{relative}/")
+            libraries = packaging.bundle_libraries([program], plugin / "Frameworks", f"@executable_path/{relative}/")
+            cellar = Path(run("brew", "--cellar", capture=True)).resolve()
+            packaging.collect_formula_notices(plugin / "licenses", packaging.library_formulas(libraries, cellar),
+                                              required=(VARIANTS[variant],))
             run("xattr", "-cr", plugin)
             signing = ["--force", "--sign", args.sign_identity or "-"]
             if args.sign_identity:

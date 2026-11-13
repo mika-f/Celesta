@@ -165,8 +165,12 @@ Celesta's own executables link no FFmpeg. Only `ffmpeg` (standard LGPL) is
 staged under `Contents/Resources/PlugIns`, with its own `Frameworks/` and `licenses/`.
 The plugin's `Frameworks/` holds the FFmpeg dylibs built from source and the
 Homebrew libopus and libvpx (BSD licensed) they link; the app's
-`licenses/homebrew.json` and `licenses/native/` carry those two formulas'
-notices. The app's Rust/native inventory excludes the optional x264 crate.
+`licenses/homebrew.json` and `licenses/native/` carry those formulas'
+notices. The formulas come from the libraries dylibbundler bundles into either
+`Frameworks/`: `package-macos.py` follows `otool -L` from each program before
+bundling, fails if a library is neither a Homebrew formula's nor an FFmpeg
+library built from source, or if `Frameworks/` ends up holding anything else,
+and fails if `opus` or `libvpx` is missing. The app's Rust/native inventory excludes the optional x264 crate.
 The package smoke test exports ProRes/MOV and WebM and rejects an accidentally
 bundled x264 plugin. The optional `ffmpeg-x264` ZIP is built separately by
 [`package-media-plugins.py`](../../scripts/package-media-plugins.py), signed

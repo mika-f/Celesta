@@ -3,7 +3,8 @@
 # ffmpeg-x264 ZIP records its own (scripts/package-media-plugins.py): each
 # shared object's binary and source package with their exact versions, in
 # <licenses>/native/debian-packages.json, and each package's copyright file
-# in <licenses>/native/<package>/copyright. Every shared object `ldd` lists
+# in <licenses>/native/<package>/copyright, with the package whose file it is
+# as the entry's `copyright_from`. Every shared object `ldd` lists
 # is recorded except glibc's own (libc, libm, the dynamic loader, ...), the
 # platform runtime. Fails when the program needs a library that is not
 # installed, when one has no single owning package or no copyright file
@@ -70,12 +71,15 @@ while read -r name path; do
     '' | *,*) echo "no single owner of $path: $owner" >&2; exit 1 ;;
   esac
   fields="$(dpkg-query --show --showformat='"package": "${binary:Package}", "version": "${Version}", "architecture": "${Architecture}", "source_package": "${source:Package}", "source_version": "${source:Version}"' "$owner")"
-  entries="$entries${entries:+,
-}    { \"library\": \"$name\", $fields }"
   package="$(dpkg-query --show --showformat='${Package}' "$owner")"
   mkdir -p "$native/$package"
   copyright="$(copyright_of "$owner")"
   cp "$copyright" "$native/$package/copyright"
+  # The package whose copyright file this is: $package's own, or a sibling's
+  # from the same source (libgcc-s1's is gcc-N-base's).
+  from="$(basename "$(dirname "$copyright")")"
+  entries="$entries${entries:+,
+}    { \"library\": \"$name\", $fields, \"copyright_from\": \"$from\" }"
 done <<LIBRARIES
 $(printf '%s\n' "$listing" | awk '$2 == "=>" && $3 ~ /^\// { print $1, $3 }')
 LIBRARIES
