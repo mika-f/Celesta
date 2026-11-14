@@ -138,3 +138,9 @@ fn prerelease_comparators_use_total_ordering() {
     assert!(!blocks(&l, "0.2.3-rc.1"));
     assert!(!blocks(&l, "0.2.3-alpha"));
 }
+
+#[test]
+fn boundary_cases() {
+    assert!(!blocks(&one(">=0.2.3").unwrap(), "0.2.3-rc.1"));
+    assert!(blocks(&one("=0.2.2").unwrap(), "0.2.2+build.1"));
+}

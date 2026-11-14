@@ -26,16 +26,16 @@ fn holds(c: &Comparator, version: &Version) -> bool {
         Op::LessEq => ord != Ordering::Greater,
         Op::Greater => ord == Ordering::Greater,
         Op::GreaterEq => ord != Ordering::Less,
-        // `parse` refuses every other operator; failing closed here is never reached.
-        _ => false,
+        // `parse` refuses every other operator, but a list built without it can
+        // carry one. Treat an unsupported operator as matching, so it blocks.
+        _ => true,
     }
 }
 
+// An empty comparator list (`*`) matches every version through `all`.
 impl Advisory {
     fn blocks(&self, plugin: &str, version: &Version) -> bool {
-        self.plugin == plugin
-            && !self.versions.comparators.is_empty()
-            && self.versions.comparators.iter().all(|c| holds(c, version))
+        self.plugin == plugin && self.versions.comparators.iter().all(|c| holds(c, version))
     }
 }
 
@@ -50,6 +50,37 @@ impl AdvisoryList {
         match cached {
             Some(c) if self.generated < c.generated => Err(FormatError::Rollback),
             _ => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use semver::VersionReq;
+    use time::OffsetDateTime;
+
+    use super::*;
+
+    fn advisory(range: &str) -> Advisory {
+        Advisory {
+            id: "X".into(),
+            plugin: "vrm".into(),
+            versions: VersionReq::parse(range).unwrap(),
+            title: "t".into(),
+            description: "d".into(),
+            fixed: None,
+            published: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn unvalidated_ranges_fail_closed() {
+        for range in ["^0.2.2", "*", "~0.2.2", "0.2.*"] {
+            let a = advisory(range);
+            for v in ["0.2.2", "9.9.9"] {
+                assert!(a.blocks("vrm", &Version::parse(v).unwrap()), "{range} {v}");
+            }
+            assert!(!a.blocks("other", &Version::new(0, 2, 2)));
         }
     }
 }
