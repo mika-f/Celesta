@@ -9,6 +9,8 @@ mod project;
 mod registry;
 mod resolve;
 mod store;
+#[cfg(feature = "testing")]
+pub mod testing;
 mod transport;
 
 pub use error::ClientError;
