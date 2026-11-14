@@ -2,8 +2,10 @@
 //! without losing anything else in the file.
 
 use indexmap::IndexMap;
+use serde::de::{DeserializeSeed, Deserializer, MapAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_json::value::RawValue;
+use std::cell::RefCell;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -25,6 +27,8 @@ pub enum ConfigError {
     },
     #[error("{path} is not a project settings file: it is not a JSON object")]
     NotAnObject { path: PathBuf },
+    #[error("{path}: the key {key:?} appears twice; remove one before celesta edits this file")]
+    DuplicateKey { path: PathBuf, key: String },
     #[error("could not write {path}: {source}")]
     Write {
         path: PathBuf,
@@ -42,6 +46,78 @@ pub struct ProjectConfig {
     file: Raw,
     plugins: Raw,
     dependencies: IndexMap<String, String>,
+}
+
+/// Reads an object into an ordered map, refusing a repeated key: the first
+/// one found is left in `duplicate`.
+struct Unique<'a, T> {
+    duplicate: &'a RefCell<Option<String>>,
+    value: std::marker::PhantomData<T>,
+}
+
+impl<'de, T: serde::Deserialize<'de>> DeserializeSeed<'de> for Unique<'_, T> {
+    type Value = IndexMap<String, T>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        struct Collect<'a, T>(&'a RefCell<Option<String>>, std::marker::PhantomData<T>);
+        impl<'de, T: serde::Deserialize<'de>> Visitor<'de> for Collect<'_, T> {
+            type Value = IndexMap<String, T>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
+                let mut map = IndexMap::new();
+                while let Some((key, value)) = access.next_entry::<String, T>()? {
+                    if map.contains_key(&key) {
+                        *self.0.borrow_mut() = Some(key.clone());
+                        return Err(serde::de::Error::custom(format!("duplicate key {key:?}")));
+                    }
+                    map.insert(key, value);
+                }
+                Ok(map)
+            }
+        }
+        deserializer.deserialize_map(Collect(self.duplicate, std::marker::PhantomData))
+    }
+}
+
+fn parse_unique<T: serde::de::DeserializeOwned>(
+    text: &str,
+    path: &Path,
+) -> Result<IndexMap<String, T>, ConfigError> {
+    let duplicate = RefCell::new(None);
+    let seed = Unique {
+        duplicate: &duplicate,
+        value: std::marker::PhantomData,
+    };
+    seed.deserialize(&mut serde_json::Deserializer::from_str(text))
+        .map_err(|source| match duplicate.take() {
+            Some(key) => ConfigError::DuplicateKey {
+                path: path.to_path_buf(),
+                key,
+            },
+            None => ConfigError::Parse {
+                path: path.to_path_buf(),
+                source,
+            },
+        })
+}
+
+/// Writes `bytes` over `path` through a temporary file and a rename, keeping
+/// the permissions of the file it replaces.
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let folder = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut temporary = tempfile::NamedTempFile::new_in(folder)?;
+    temporary.write_all(bytes)?;
+    if let Ok(metadata) = std::fs::metadata(path) {
+        temporary
+            .as_file()
+            .set_permissions(metadata.permissions())?;
+    }
+    temporary.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 fn empty_object() -> Box<RawValue> {
@@ -75,13 +151,13 @@ impl ProjectConfig {
         if !whole.get().starts_with('{') {
             return Err(ConfigError::NotAnObject { path });
         }
-        let file: Raw = serde_json::from_str(whole.get()).map_err(parse)?;
+        let file: Raw = parse_unique(whole.get(), &path)?;
         let plugins: Raw = match file.get("plugins") {
-            Some(value) => serde_json::from_str(value.get()).map_err(parse)?,
+            Some(value) => parse_unique(value.get(), &path)?,
             None => Raw::new(),
         };
         let dependencies = match plugins.get("dependencies") {
-            Some(value) => serde_json::from_str(value.get()).map_err(parse)?,
+            Some(value) => parse_unique(value.get(), &path)?,
             None => IndexMap::new(),
         };
         Ok(Some((
@@ -142,12 +218,7 @@ impl ProjectConfig {
         .serialize(&mut serializer)
         .map_err(|error| write(error.into()))?;
         text.push(b'\n');
-        let mut temporary = tempfile::NamedTempFile::new_in(root).map_err(write)?;
-        temporary.write_all(&text).map_err(write)?;
-        temporary
-            .persist(&path)
-            .map_err(|error| write(error.error))?;
-        Ok(())
+        write_atomic(&path, &text).map_err(write)
     }
 }
 
@@ -202,7 +273,7 @@ impl Serialize for Edited<'_> {
 pub fn restore(root: &Path, previous: Option<&[u8]>) -> io::Result<()> {
     let path = root.join(PROJECT_CONFIG);
     match previous {
-        Some(bytes) => std::fs::write(path, bytes),
+        Some(bytes) => write_atomic(&path, bytes),
         None => match std::fs::remove_file(path) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
@@ -323,6 +394,50 @@ mod tests {
         write(dir.path(), r#"{"plugins":{"dependencies":{"a":1}}}"#);
         let error = ProjectConfig::load(dir.path()).unwrap_err();
         assert!(matches!(error, ConfigError::Parse { .. }), "{error}");
+    }
+
+    #[test]
+    fn duplicate_keys_are_refused() {
+        for text in [
+            r#"{"a":1,"a":2}"#,
+            r#"{"plugins":{"dependencies":{"a":"1","a":"2"}}}"#,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            write(dir.path(), text);
+            let error = ProjectConfig::load(dir.path()).unwrap_err();
+            assert!(
+                matches!(&error, ConfigError::DuplicateKey { key, .. } if key == "a"),
+                "{error}"
+            );
+            assert_eq!(read(dir.path()), text);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_keeps_the_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "{}");
+        let path = dir.path().join("celesta.config.json");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let (mut config, _) = ProjectConfig::load(dir.path()).unwrap().unwrap();
+        config.set_dependency("a.b", "1");
+        config.save(dir.path()).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o644);
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("celesta.config.json")).unwrap();
+        let mut config = ProjectConfig::new();
+        config.set_dependency("a.b", "1");
+        let error = config.save(dir.path()).unwrap_err();
+        assert!(matches!(error, ConfigError::Write { .. }), "{error}");
+        let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(entries.len(), 1);
     }
 
     #[test]
