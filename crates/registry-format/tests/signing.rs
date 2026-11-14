@@ -111,30 +111,43 @@ fn different_root_is_rejected() {
 }
 
 #[test]
-fn non_canonical_expires_does_not_verify() {
-    // The same instant, written with a non-UTC offset or fractional seconds,
-    // rebuilds a different message than the one the root signed.
+fn non_canonical_expires_is_refused_at_parse() {
+    // Only `YYYY-MM-DDTHH:MM:SSZ` parses, so no other spelling of the
+    // certified instant can reach certification.
     let text = String::from_utf8(signed("config.json")).unwrap();
-    for spelled in ["2099-01-01T01:00:00+01:00", "2099-01-01T00:00:00.5Z"] {
+    for spelled in [
+        "2099-01-01T01:00:00+01:00",
+        "2099-01-01T00:00:00+00:00",
+        "2099-01-01T00:00:00.5Z",
+        "2099-01-01T00:00:00.000Z",
+    ] {
         let changed = text.replace("2099-01-01T00:00:00Z", spelled);
         assert_ne!(text, changed);
-        let config = Config::parse(changed.as_bytes()).unwrap();
-        let err = Keyring::from_config(&config, &root(), now()).unwrap_err();
+        let err = Config::parse(changed.as_bytes()).unwrap_err();
         assert!(
-            matches!(err, FormatError::Signature(_)),
+            matches!(err, FormatError::InvalidTimestamp(_)),
             "{spelled}: {err:?}"
         );
     }
 }
 
 #[test]
-fn utc_offset_spelling_normalizes_to_z() {
-    // `+00:00` parses to the same UTC instant and is rebuilt as `Z`, which is
-    // what the root signed, so it still verifies.
-    let text = String::from_utf8(signed("config.json")).unwrap();
-    let changed = text.replace("2099-01-01T00:00:00Z", "2099-01-01T00:00:00+00:00");
-    let config = Config::parse(changed.as_bytes()).unwrap();
+fn certification_covers_the_raw_strings() {
+    // The root certified the text of `public` and `expires`; the parsed
+    // values are not re-encoded to rebuild the message.
+    let mut config = Config::parse(&signed("config.json")).unwrap();
+    config.keys[0].expires += time::Duration::days(1);
     Keyring::from_config(&config, &root(), now()).unwrap();
+
+    let mut config = Config::parse(&signed("config.json")).unwrap();
+    config.keys[0].expires_text = "2099-01-02T00:00:00Z".into();
+    let err = Keyring::from_config(&config, &root(), now()).unwrap_err();
+    assert!(matches!(err, FormatError::Signature(_)), "{err:?}");
+
+    let mut config = Config::parse(&signed("config.json")).unwrap();
+    config.keys[0].public_b64.push(' ');
+    let err = Keyring::from_config(&config, &root(), now()).unwrap_err();
+    assert!(matches!(err, FormatError::Signature(_)), "{err:?}");
 }
 
 #[test]

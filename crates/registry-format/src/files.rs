@@ -123,38 +123,120 @@ impl<'de> Deserialize<'de> for Target {
     }
 }
 
-mod b64 {
+/// Decodes standard base64 with padding into exactly `N` bytes.
+fn decode_b64<const N: usize>(s: &str) -> Result<[u8; N], String> {
+    let bytes = STANDARD
+        .decode(s)
+        .map_err(|e| format!("invalid base64 {s:?}: {e}"))?;
+    bytes
+        .try_into()
+        .map_err(|_| format!("invalid base64 {s:?}: expected {N} bytes"))
+}
+
+/// Timestamps: RFC 3339 in UTC with whole seconds, spelled exactly
+/// `YYYY-MM-DDTHH:MM:SSZ`. No offset other than `Z`, and no fraction.
+pub(crate) mod timestamp {
+    use time::format_description::well_known::Rfc3339;
+    use time::{OffsetDateTime, UtcOffset};
+
     use super::*;
 
-    pub fn serialize<const N: usize, S: Serializer>(v: &[u8; N], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&STANDARD.encode(v))
+    fn shape_ok(s: &str) -> bool {
+        let b = s.as_bytes();
+        b.len() == 20
+            && b.iter().enumerate().all(|(i, &c)| match i {
+                4 | 7 => c == b'-',
+                10 => c == b'T',
+                13 | 16 => c == b':',
+                19 => c == b'Z',
+                _ => c.is_ascii_digit(),
+            })
     }
 
-    pub fn deserialize<'de, const N: usize, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<[u8; N], D::Error> {
+    pub fn parse(s: &str) -> Result<OffsetDateTime, FormatError> {
+        let bad = || FormatError::InvalidTimestamp(s.to_owned());
+        if !shape_ok(s) {
+            return Err(bad());
+        }
+        // `time` reads a leap second (`:60`) as `:59.999999999`; refuse it.
+        let t = OffsetDateTime::parse(s, &Rfc3339).map_err(|_| bad())?;
+        if t.nanosecond() != 0 {
+            return Err(bad());
+        }
+        Ok(t)
+    }
+
+    pub fn format(t: OffsetDateTime) -> Result<String, String> {
+        let t = t.to_offset(UtcOffset::UTC);
+        if t.nanosecond() != 0 {
+            return Err(format!("timestamp {t} has fractional seconds"));
+        }
+        t.format(&Rfc3339).map_err(|e| e.to_string())
+    }
+
+    pub fn serialize<S: Serializer>(t: &OffsetDateTime, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&format(*t).map_err(serde::ser::Error::custom)?)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<OffsetDateTime, D::Error> {
         let s = String::deserialize(d)?;
-        let bytes = STANDARD.decode(&s).map_err(de::Error::custom)?;
-        bytes
-            .try_into()
-            .map_err(|_| de::Error::custom(format!("expected {N} bytes")))
+        parse(&s).map_err(de::Error::custom)
     }
 }
 
-mod rfc3339 {
-    pub use time::serde::rfc3339::*;
-}
-
+/// An online signing key from `config.json`.
+///
+/// `public_b64` and `expires_text` keep the exact strings the file holds: the
+/// root certifies that text, so the certified message is built from it, not
+/// from the decoded values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(try_from = "RawOnlineKey", into = "RawOnlineKey")]
 pub struct OnlineKey {
     pub keyid: String,
-    #[serde(with = "b64")]
+    /// The decoded `public`.
     pub public: [u8; 32],
-    #[serde(with = "rfc3339")]
+    /// `public` exactly as written in `config.json`.
+    pub public_b64: String,
+    /// The parsed `expires`.
     pub expires: OffsetDateTime,
-    #[serde(with = "b64")]
+    /// `expires` exactly as written in `config.json`.
+    pub expires_text: String,
     pub signature: [u8; 64],
+}
+
+#[derive(Serialize, Deserialize)]
+struct RawOnlineKey {
+    keyid: String,
+    public: String,
+    expires: String,
+    signature: String,
+}
+
+impl TryFrom<RawOnlineKey> for OnlineKey {
+    type Error = String;
+
+    fn try_from(raw: RawOnlineKey) -> Result<Self, String> {
+        let expires = timestamp::parse(&raw.expires).map_err(|e| e.to_string())?;
+        Ok(Self {
+            keyid: raw.keyid,
+            public: decode_b64(&raw.public)?,
+            public_b64: raw.public,
+            expires,
+            expires_text: raw.expires,
+            signature: decode_b64(&raw.signature)?,
+        })
+    }
+}
+
+impl From<OnlineKey> for RawOnlineKey {
+    fn from(key: OnlineKey) -> Self {
+        Self {
+            keyid: key.keyid,
+            public: key.public_b64,
+            expires: key.expires_text,
+            signature: STANDARD.encode(key.signature),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,7 +285,7 @@ pub struct VersionEntry {
     pub version: Version,
     pub celesta: VersionReq,
     pub protocol: u32,
-    #[serde(with = "rfc3339")]
+    #[serde(with = "timestamp")]
     pub published: OffsetDateTime,
     pub yanked: bool,
     pub withdrawn: bool,
@@ -246,7 +328,7 @@ pub struct SearchEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchList {
-    #[serde(with = "rfc3339")]
+    #[serde(with = "timestamp")]
     pub generated: OffsetDateTime,
     pub plugins: Vec<SearchEntry>,
 }
@@ -261,14 +343,14 @@ pub struct Advisory {
     pub description: String,
     #[serde(default)]
     pub fixed: Option<Version>,
-    #[serde(with = "rfc3339")]
+    #[serde(with = "timestamp")]
     pub published: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdvisoryList {
-    #[serde(with = "rfc3339")]
+    #[serde(with = "timestamp")]
     pub generated: OffsetDateTime,
     pub advisories: Vec<Advisory>,
 }
@@ -282,6 +364,7 @@ fn lift(e: serde_json::Error) -> FormatError {
             FormatError::InvalidHash as fn(String) -> FormatError,
         ),
         ("invalid target: ", FormatError::InvalidTarget),
+        ("invalid timestamp: ", FormatError::InvalidTimestamp),
     ] {
         if let Some(rest) = msg.strip_prefix(prefix) {
             let value = rest.split(" at line ").next().unwrap_or(rest);

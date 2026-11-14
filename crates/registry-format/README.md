@@ -20,7 +20,12 @@ The crate depends on no other Celesta crate. It has `publish = false` for now.
 - Every JSON file has `"format": 1`. Any other value is refused (`Format`); a missing
   `format` is a JSON error.
 - Clients ignore unknown fields. The schemas and the Rust types accept them.
-- Timestamps are RFC 3339 strings in UTC.
+- A timestamp is RFC 3339 in UTC with whole seconds, spelled exactly
+  `YYYY-MM-DDTHH:MM:SSZ` (such as `2026-11-20T00:00:00Z`). The schemas and the parsers refuse
+  every other spelling, including `+00:00`, other offsets, and fractional seconds such as
+  `.000Z` (`InvalidTimestamp`). Write timestamps without the milliseconds JavaScript's
+  `toISOString()` adds. The schema pattern checks each field's range but not the length of
+  the month, so it accepts `2026-02-30T00:00:00Z`, which the parser refuses.
 - A hash is written `sha256:` followed by 64 lowercase hex digits.
 - Ed25519 public keys and signatures are standard base64 with padding.
 - A plugin id is a dotless first-party name, or `<publisher>.<name>`. Each part uses
@@ -41,6 +46,8 @@ The crate depends on no other Celesta crate. It has `publish = false` for now.
 
 An online key has `keyid` (a non-empty string), `public` (32 bytes, base64), `expires`
 (timestamp), and `signature` (64 bytes, base64): the root key's certification of the key.
+`OnlineKey` keeps the decoded values (`public`, `expires`) and the exact strings the file
+holds (`public_b64`, `expires_text`).
 
 ### `index/<id>.json`
 
@@ -100,18 +107,10 @@ Verification uses `verify_strict`.
 
 There is no trailing newline. The root key signs this message with Ed25519.
 
-The message is built from the parsed key, not from the config's own spelling:
-
-- `public_b64` is the 32-byte key in standard base64 with padding.
-- `expires` is the parsed value formatted by `time`'s RFC 3339 formatter. A zero offset
-  (`Z` or `+00:00`) becomes `Z`. Any other offset is kept as written (`+09:00` stays
-  `+09:00`), and fractional seconds are kept. Nothing is converted to UTC.
-
-So a config that writes `2099-01-01T00:00:00+00:00` verifies against a certification of the
-`Z` form. A config whose `expires` has another offset or fractional seconds verifies only if
-the certification covers that exact formatted text. The registry must therefore publish and
-certify `expires` in the `Z` whole-second form, such as `2099-01-01T00:00:00Z`, which the
-config schema already requires.
+The message is built from the exact `keyid`, `public`, and `expires` string values in
+`config.json`, as they appear in the file, with nothing decoded and re-encoded. The parsers
+accept only one spelling of each (canonical standard base64 with padding, and the
+`YYYY-MM-DDTHH:MM:SSZ` timestamp), so the certified text is also the canonical text.
 
 ### `Keyring`
 

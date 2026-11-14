@@ -13,6 +13,8 @@ pub enum FormatError {
     InvalidId(String),
     #[error("invalid target: {0}")]
     InvalidTarget(String),
+    #[error("invalid timestamp: {0}")]
+    InvalidTimestamp(String),
     #[error("invalid hash: {0}")]
     InvalidHash(String),
     #[error("invalid advisory range: {0}")]

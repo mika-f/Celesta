@@ -147,3 +147,77 @@ fn hash_and_target_round_trip() {
     assert_eq!(serde_json::from_str::<Hash>(&s).unwrap(), h);
     assert_eq!(serde_json::to_string(&Target::ANY).unwrap(), "\"any\"");
 }
+
+#[test]
+fn timestamps_must_be_whole_second_utc() {
+    let bad = [
+        "2027-11-14T00:00:00.000Z",
+        "2027-11-14T00:00:00.5Z",
+        "2027-11-14T00:00:00+00:00",
+        "2027-11-14T09:00:00+09:00",
+        "2027-11-14T00:00:00-00:00",
+        "2027-11-14t00:00:00z",
+        "2027-11-14 00:00:00Z",
+        "2027-11-14T00:00Z",
+        "2027-02-30T00:00:00Z",
+        "2027-11-14T23:59:60Z",
+    ];
+    for spelled in bad {
+        let checks: [(&str, Vec<u8>); 4] = [
+            (
+                "config expires",
+                tweak("config.json", |v| v["keys"][0]["expires"] = spelled.into()),
+            ),
+            (
+                "index published",
+                tweak("index-vrm.json", |v| {
+                    v["versions"][0]["published"] = spelled.into()
+                }),
+            ),
+            (
+                "search generated",
+                tweak("search.json", |v| v["generated"] = spelled.into()),
+            ),
+            (
+                "advisory published",
+                tweak("advisories.json", |v| {
+                    v["advisories"][0]["published"] = spelled.into()
+                }),
+            ),
+        ];
+        for (what, bytes) in checks {
+            let err = match what {
+                "config expires" => Config::parse(&bytes).map(drop),
+                "index published" => Index::parse(&bytes, "vrm").map(drop),
+                "search generated" => SearchList::parse(&bytes).map(drop),
+                _ => AdvisoryList::parse(&bytes).map(drop),
+            }
+            .unwrap_err();
+            assert!(
+                matches!(err, FormatError::InvalidTimestamp(ref t) if t == spelled),
+                "{what} {spelled}: {err:?}"
+            );
+        }
+    }
+    let bytes = tweak("advisories.json", |v| {
+        v["generated"] = "2026-11-20T00:00:00.000Z".into()
+    });
+    assert!(matches!(
+        AdvisoryList::parse(&bytes).unwrap_err(),
+        FormatError::InvalidTimestamp(_)
+    ));
+}
+
+#[test]
+fn online_key_keeps_the_raw_strings() {
+    let config = Config::parse(&fixture("config.json")).unwrap();
+    let key = &config.keys[0];
+    assert_eq!(
+        key.public_b64,
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+    );
+    assert_eq!(key.expires_text, "2027-11-14T00:00:00Z");
+    let round: Value = serde_json::to_value(key).unwrap();
+    assert_eq!(round["public"], key.public_b64.as_str());
+    assert_eq!(round["expires"], "2027-11-14T00:00:00Z");
+}

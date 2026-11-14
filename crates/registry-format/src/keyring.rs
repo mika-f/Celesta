@@ -6,7 +6,6 @@ use base64::engine::general_purpose::STANDARD;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
 use crate::error::FormatError;
 use crate::files::Config;
@@ -45,12 +44,9 @@ impl Keyring {
     /// Keeps the online keys whose root signature verifies and that have not
     /// expired at `now` (`expires <= now` is expired).
     ///
-    /// The certified message is rebuilt from the parsed key, with `public` in
-    /// standard base64 and `expires` as `time`'s RFC 3339 formatter writes it:
-    /// a zero offset (`Z` or `+00:00`) becomes `Z`, any other offset and any
-    /// fractional seconds are kept, and nothing is converted to UTC. The
-    /// registry must certify `expires` in the `Z` whole-second form, which the
-    /// config schema requires.
+    /// The certified message is built from the exact `public` and `expires`
+    /// strings in `config.json` (`OnlineKey::public_b64` and
+    /// `OnlineKey::expires_text`), never re-encoded from the parsed values.
     ///
     /// Fails with `Signature` when no key remains.
     pub fn from_config(
@@ -65,10 +61,7 @@ impl Keyring {
             if key.expires <= now {
                 continue;
             }
-            let Ok(expires) = key.expires.format(&Rfc3339) else {
-                continue;
-            };
-            let message = key_message(&key.keyid, &STANDARD.encode(key.public), &expires);
+            let message = key_message(&key.keyid, &key.public_b64, &key.expires_text);
             let certified = root
                 .verify_strict(&message, &Signature::from_bytes(&key.signature))
                 .is_ok();
