@@ -658,3 +658,43 @@ fn a_blocked_lock_entry_warns() {
         "a 1.1.0 is locked but blocked by advisory ADV-1; it was resolved again"
     );
 }
+
+#[test]
+fn a_yanked_entry_dropped_for_a_new_target_does_not_warn_yanked() {
+    let mut case = Case::new(
+        &[("a", "*")],
+        vec![build(
+            "a",
+            &[],
+            vec![
+                with(version("1.0.0", "*", &[LINUX]), "yanked", json!(true)),
+                version("1.1.0", "*", &[LINUX, WIN]),
+            ],
+        )],
+    );
+    case.host = t(LINUX);
+    case.targets = vec![t(LINUX), t(WIN)];
+    case.previous = Some(lock_for(&[LINUX], &[LINUX]));
+    let resolution = case.run().unwrap();
+    assert_eq!(resolution.lock.plugins["a"].version, v("1.1.0"));
+    assert!(resolution.warnings.is_empty(), "{:?}", resolution.warnings);
+}
+
+#[test]
+fn an_any_entry_is_kept_for_a_new_target() {
+    let mut case = Case::new(
+        &[("a", "*")],
+        vec![build(
+            "a",
+            &[],
+            vec![
+                version("1.0.0", "*", &["any"]),
+                version("1.1.0", "*", &["any"]),
+            ],
+        )],
+    );
+    case.host = t(LINUX);
+    case.targets = vec![t(LINUX), t(WIN)];
+    case.previous = Some(lock_for(&[LINUX], &["any"]));
+    assert_eq!(locked_version(&case, "a"), v("1.0.0"));
+}

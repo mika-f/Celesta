@@ -194,12 +194,6 @@ fn keep<'a>(
             });
             return None;
         }
-        if entry.yanked {
-            warnings.push(ResolveWarning::LockedYanked {
-                id: id.to_owned(),
-                version: entry.version.clone(),
-            });
-        }
     }
     // A target the lock did not know yet may have a build by now. Media
     // plugins ignore the targets, so they are kept.
@@ -212,6 +206,12 @@ fn keep<'a>(
             .any(|t| !previous.targets.contains(t) && !locked.targets.contains_key(t));
     if new_target {
         return None;
+    }
+    if let Some(entry) = entry.filter(|entry| entry.yanked) {
+        warnings.push(ResolveWarning::LockedYanked {
+            id: id.to_owned(),
+            version: entry.version.clone(),
+        });
     }
     Some((locked.clone(), entry))
 }
