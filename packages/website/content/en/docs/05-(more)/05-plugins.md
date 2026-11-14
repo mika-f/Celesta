@@ -61,7 +61,7 @@ A project can bring plugins in its own folders, listed in `celesta.config.json` 
 }
 ```
 
-Each path is relative to the project root and must stay inside it. The desktop app searches these folders after `CELESTA_PLUGIN_PATH` and before your user plugin folder, once you trust the project. The folder holding `celesta.config.json` is also the project root the trust question names; without the file, the root is the entry's own folder. `celesta-exporter` does not read the file: pass the folders with `--plugin-dir`.
+Each path is relative to the project root and must stay inside it. The desktop app searches these folders after `CELESTA_PLUGIN_PATH` and before your user plugin folder, once you trust the project. The folder holding `celesta.config.json` is also the project root the trust question names; without the file, the root is the entry's own folder. `celesta-exporter` does not search these folders: pass them with `--plugin-dir`.
 
 ## The Plugins tab
 
@@ -108,6 +108,142 @@ A plugin can tell you something about what a layer draws, such as a model's term
 Project TypeScript support copies each plugin's declarations into `.celesta/plugins/`, so your code editor completes its props. When the desktop app opens a project, that includes the project's own plugins and plugins still waiting for your approval: declarations run nothing.
 
 In the desktop app, a plugin can also offer its components in the **Add** menu, after Celesta's own elements. Choosing one adds it like an Image or a Rect: a component that takes a file asks for it first, and you drag where it goes. A component that takes a model file, such as a VRM avatar, accepts only the file types it lists (`Choose a .vrm file`) and draws its box at its layer's shape. The app writes the element with the plugin's import, such as `import { Flag } from '@celesta-plugin/flag'`.
+
+## Registry plugins
+
+A project can also name plugins from Celesta's plugin registry. The `celesta` command finds them, chooses their versions, records those in the project's `celesta.lock`, and downloads them into a folder Celesta manages, so you do not place their folders by hand, and the project gets the same plugin versions on another computer.
+
+The registry is new. This build of Celesta does not have the official registry's key yet, so the commands that reach the registry fail until a release ships it, with `celesta: error: this build of Celesta has no registry key yet, so it cannot reach the plugin registry; …`. `remove`, `list`, `gc`, and `install` of a lock whose plugins are already downloaded work without it. The plugin names on this page, such as `acme.charts`, are examples.
+
+The desktop app does not read `celesta.lock` yet: its preview and its exports use the plugins installed for every project (see [Media plugins from the registry](#media-plugins-from-the-registry)), not a project's locked ones. `celesta-exporter` and the MCP server read the lock.
+
+### The `celesta` command
+
+The desktop packages put the command beside `Celesta-export` as `Celesta-cli` (`Celesta-cli.exe` on Windows, `Celesta.app/Contents/MacOS/Celesta-cli` on macOS), because `celesta` and `Celesta` would be the same name on a file system that ignores case. A source build and the Linux image name it `celesta`. This page and the command's own messages write it as `celesta`.
+
+```sh
+celesta plugin --help
+```
+
+Each command works on the project of the current folder: the nearest folder, going up, that holds `celesta.config.json`, or the current folder when none does. `--project <folder>` names another folder. Results go to standard output; warnings and errors go to standard error as `celesta: warning: …` and `celesta: error: …`. The command exits with status 0 when it succeeds, 1 when it fails, and 2 when its arguments are wrong.
+
+### Declare a project's plugins
+
+`plugins.dependencies` in `celesta.config.json` maps each plugin id to a version requirement, with Cargo's meaning: `"1.2"` allows 1.2.0 and any later 1.x (`^1.2`), `"0.2"` allows 0.2.x, and `"=1.2.3"` allows 1.2.3 alone. `plugins.targets` lists the systems the project has to work on, from `macos-aarch64`, `windows-x86_64`, `linux-x86_64`, and `any`; without it, the first three.
+
+```json
+{
+  "plugins": {
+    "dependencies": {
+      "acme.charts": "1.2"
+    },
+    "targets": ["macos-aarch64", "windows-x86_64", "linux-x86_64"]
+  }
+}
+```
+
+`celesta plugin add` and `remove` write `plugins.dependencies` for you, and keep every other key of the file, in its order. For each requirement, Celesta chooses the newest version that matches it, works with the running Celesta, is neither yanked nor under a security advisory, and has a build for every target (or one for `any`). When no version has a build for every target, it chooses the newest one with a build for this computer and warns which targets it lacks.
+
+An entry without `celesta.config.json` has no registry dependencies: it uses only the plugins installed for every project.
+
+### `celesta.lock`
+
+The commands write `celesta.lock` beside `celesta.config.json`. It records each plugin's exact version, the registry it came from, the hashes of its build for every target, and the Celesta version it was resolved with. Commit it with the project and do not edit it: the same lock gives the same plugins on every computer that runs the same Celesta minor version (0.9.x, say).
+
+Celesta looks for a locked version in its download folder right after the folders of `--plugin-dir` and `CELESTA_PLUGIN_PATH`, before every other folder in the [search order](#install-a-plugin), including the one that comes with Celesta. A downloaded plugin runs without the approval question, but only while its files are the ones that were installed. `celesta`, `celesta-exporter`, and the MCP server read a project's lock whether or not you trusted the project in the app.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `celesta plugin search <text>` | Lists the registry plugins whose id or description contains the text, each with its newest version and description. |
+| `celesta plugin info <id>` | Shows a plugin's publisher and roles, then each version with the Celesta versions it works with, its targets, and its state (`published`, `deprecated`, `yanked`, `withdrawn`, or `blocked (<advisory>)`), then whether this project locks it and whether it is installed for every project. |
+| `celesta plugin add <id>[@<req>]` | Adds the plugin to `plugins.dependencies`, locks it, and downloads it. Without a requirement, it writes the version it chose, such as `"1.2.3"` (1.2.3 or any later 1.x). When something fails, `celesta.config.json` and `celesta.lock` are left as they were. |
+| `celesta plugin remove <id>` | Removes the plugin from `plugins.dependencies` and `celesta.lock`, without the network. Its download stays until `gc`. |
+| `celesta plugin install` | Downloads what `celesta.lock` names. When the lock does not match `celesta.config.json` (there is none yet, or a requirement changed), it locks the project again first, keeping each locked version that still fits, and says `wrote celesta.lock`. |
+| `celesta plugin install --locked` | Downloads exactly what the lock names, and fails rather than change the lock. |
+| `celesta plugin install --offline` | Uses only what is already downloaded, and fails naming the first plugin that is not. |
+| `celesta plugin install --global <id>[@<req>]` | Installs a media plugin for every project (see [Media plugins from the registry](#media-plugins-from-the-registry)). |
+| `celesta plugin update [<id>]` | Chooses the newest versions the requirements allow, for every plugin or the one named, rewrites the lock, and prints each change, such as `acme.charts 1.2.3 -> 1.3.0`. |
+| `celesta plugin list` | Lists the plugins this project locks and those installed for every project, each `installed`, `not installed`, `no build for <target>`, or `blocked (<advisory>)`, and marked `yanked` or `deprecated` when it is. |
+| `celesta plugin audit` | Checks the locked plugins and those installed for every project against the security advisories and the registry, and prints what it finds. It fails when a plugin is blocked or no longer distributed. |
+| `celesta plugin gc` | Removes the downloaded versions no project uses (see [Clean up downloads](#clean-up-downloads)). `--dry-run` says what it would remove. |
+
+```sh
+celesta plugin search chart
+celesta plugin info acme.charts
+celesta plugin add acme.charts@1.2
+celesta plugin remove acme.charts
+celesta plugin install
+celesta plugin install --locked
+celesta plugin install --offline
+celesta plugin install --global acme.codec
+celesta plugin update acme.charts
+celesta plugin list
+celesta plugin audit
+celesta plugin gc --dry-run
+```
+
+`add` prints what it wrote and downloaded:
+
+```text
+added acme.charts 1.2, locked 1.2.3
+installed acme.charts 1.2.3
+```
+
+In continuous integration, run `celesta plugin install --locked`. It installs the lock you committed and fails when the lock does not match `celesta.config.json` or names versions the running Celesta cannot load, so a build never runs other versions than yours.
+
+### Media plugins from the registry
+
+A media plugin (decoders, encoders, and muxers) serves every project, so you install it once with `--global`. Celesta records it in your `settings.json` and looks for it right after your user plugin folder:
+
+```sh
+celesta plugin install --global acme.codec
+```
+
+`add` refuses a media plugin and says to use `--global`. To lock a media plugin's version into one project instead, add it with `--pin`:
+
+```sh
+celesta plugin add acme.codec --pin
+```
+
+A pinned plugin chooses only which version of that id the project runs; which encoder or muxer is the default still follows [Which components write a video](#which-components-write-a-video). A pinned version without a build for this computer is skipped, as `install` says (`skipped acme.codec 1.0.0: no build for linux-x86_64`), and the one installed for every project is used.
+
+### Security advisories, deprecations, and yanked versions
+
+The registry publishes a signed list of security advisories. A plugin version the list names does not run, wherever it was found: not in the desktop app, `celesta-exporter`, or the MCP server. `search`, `info`, `add`, `install` (except with `--offline`), `update`, `list`, and `audit` fetch the list once per run, wait for it at most 3 seconds, and otherwise use the list fetched before, which stays in force offline. They warn when no list has been fetched yet, and when the newest one is more than 7 days old:
+
+```text
+celesta: warning: the security advisory list is 9 days old; plugins under newer advisories may run
+```
+
+Run one of these commands while online to fetch a newer list.
+
+A publisher can deprecate a version, which still installs with a warning that names the replacement when there is one (`acme.charts 1.2.3 is deprecated: … (use acme.graphs instead)`), or yank it: a yanked version is never chosen again, but a lock that names it keeps it and still downloads it, with the warning `acme.charts 1.2.3 is locked and has been yanked`. A version withdrawn from the registry, or blocked by an advisory, cannot be installed: `install` fails with the reason, and `celesta plugin update <id>` chooses another version.
+
+### When an export cannot use the lock
+
+`celesta-exporter` and the MCP server read the `celesta.lock` of the entry's project, but never change it and never download anything. When the lock does not give the plugins the project declares, the export fails before it starts, with the error code `plugins_unsatisfied` under `--json`, and the message says what to run:
+
+| Message | Fix |
+| --- | --- |
+| `` the project declares registry plugins but has no celesta.lock; run `celesta plugin install` `` | Run `celesta plugin install`, and commit the lock it writes. |
+| `` celesta.lock does not match celesta.config.json for acme.charts; run `celesta plugin install` `` | A requirement changed, or the lock names a plugin the project no longer declares. Run `celesta plugin install`. |
+| `` the project's locked plugins are not installed: acme.charts 1.2.3 (it is not installed); run `celesta plugin install` `` | The locked version is not downloaded on this computer, or its files changed (`its installed files differ from the lock`). Run `celesta plugin install`. |
+| `` celesta.lock was resolved with Celesta 0.9.0, and this is Celesta 0.10.0; acme.charts cannot load with it. Run `celesta plugin update` to resolve them again `` | The lock was made with another Celesta minor version. `celesta plugin update` chooses versions for this Celesta and rewrites the lock; commit it. |
+
+A plugin with a locked id in a folder of `--plugin-dir` or `CELESTA_PLUGIN_PATH` is used instead of the locked version, and the export goes on with a warning. This is how to try a build of a plugin you are making in a project that locks it.
+
+### Clean up downloads
+
+Downloaded versions stay in Celesta's download folder, `registry` beside your user plugin folder (`%APPDATA%\Celesta\registry`, `~/Library/Application Support/Celesta/registry`, or `$XDG_DATA_HOME/celesta/registry`), until `celesta plugin gc` removes them. Celesta remembers each project it locked or installed plugins for. `gc` keeps every version that a remembered project's lock names, that the current project's lock names, or that is installed for every project; it forgets a remembered project whose `celesta.lock` is gone, and removes downloads left unfinished more than an hour ago.
+
+```text
+removed acme.charts 1.0.0
+removed 2 unfinished downloads
+```
+
+When a remembered project's lock cannot be read, `gc` removes nothing and names it. Fix or delete that lock, or remove the project from the list the error names (`.projects.json` in the download folder).
 
 ## Media plugins
 
