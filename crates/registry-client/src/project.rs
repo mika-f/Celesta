@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use celesta_plugin_host::{
-    LockError, LockedArtifact, Lockfile, PluginEntry, PluginSource, ProjectConfigError,
-    RegistryPlugin, SearchPath, SettingsError, UserSettings, discover_in, is_build,
-    project_dependencies,
+    LockError, LockProblem, LockedArtifact, Lockfile, PluginEntry, PluginSource,
+    ProjectConfigError, RegistryPlugin, SearchPath, SettingsError, UserSettings, check_lock,
+    discover_in, is_build, project_dependencies,
 };
 use celesta_registry_format::{AdvisoryList, Artifact, Index, Target};
 use semver::{Version, VersionReq};
@@ -72,22 +72,8 @@ pub enum ProjectError {
         /// Boxed, as it would make every `ProjectError` large.
         source: Box<InstallError>,
     },
-    #[error("the project has no celesta.lock; run `celesta plugin update` to write one")]
-    NoLock,
-    #[error(
-        "celesta.lock does not match celesta.config.json for {}; run `celesta plugin update`",
-        ids.join(", ")
-    )]
-    OutOfDate { ids: Vec<String> },
-    #[error(
-        "celesta.lock was resolved with Celesta {locked}, and this is Celesta {running}; {} cannot load with it. Run `celesta plugin update` to resolve them again",
-        ids.join(", ")
-    )]
-    OtherCelesta {
-        locked: Version,
-        running: Version,
-        ids: Vec<String>,
-    },
+    #[error("{0}")]
+    LockCheck(#[from] LockProblem),
     #[error("{id} {version} is not installed, and this run is offline")]
     Missing { id: String, version: Version },
     #[error("{id} {version} is no longer distributed")]
@@ -177,29 +163,9 @@ pub fn install_locked(
     root: &Path,
     offline: bool,
 ) -> Result<InstallOutcome, ProjectError> {
-    let lock = Lockfile::load(root)?.ok_or(ProjectError::NoLock)?;
-    let unloadable = lock.unloadable(env.celesta);
-    if !unloadable.is_empty() {
-        return Err(ProjectError::OtherCelesta {
-            locked: lock.celesta.clone(),
-            running: env.celesta.clone(),
-            ids: unloadable,
-        });
-    }
+    let lock = Lockfile::load(root)?.ok_or(LockProblem::NoLock)?;
     let project = project_dependencies(root)?;
-    let stale: Vec<String> = project
-        .dependencies
-        .iter()
-        .filter(|(id, requirement)| {
-            lock.plugins
-                .get(*id)
-                .is_none_or(|locked| !requirement.matches(&locked.version))
-        })
-        .map(|(id, _)| id.clone())
-        .collect();
-    if !stale.is_empty() {
-        return Err(ProjectError::OutOfDate { ids: stale });
-    }
+    check_lock(Some(&lock), &project, env.celesta)?;
 
     let advisories = env.registry.cached_advisories()?;
     let bundled = Bundled::new(env.bundled);

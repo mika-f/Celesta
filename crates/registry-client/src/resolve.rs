@@ -75,6 +75,14 @@ pub enum ResolveWarning {
     },
     #[error("{id} {version} is locked and has been yanked")]
     LockedYanked { id: String, version: Version },
+    #[error("{id} {version} is locked but is no longer distributed; it was resolved again")]
+    LockedWithdrawn { id: String, version: Version },
+    #[error("{id} {version} is locked but blocked by advisory {advisory}; it was resolved again")]
+    LockedBlocked {
+        id: String,
+        version: Version,
+        advisory: String,
+    },
 }
 
 fn join_targets(targets: &[Target]) -> String {
@@ -164,16 +172,26 @@ fn keep<'a>(
     if input.update.names(id) {
         return None;
     }
-    let locked = input.previous?.plugins.get(id)?;
-    if !requirement.matches(&locked.version)
-        || !locked.celesta.matches(input.celesta)
-        || blocked(input, id, &locked.version)
-    {
+    let previous = input.previous?;
+    let locked = previous.plugins.get(id)?;
+    if !requirement.matches(&locked.version) || !locked.celesta.matches(input.celesta) {
+        return None;
+    }
+    if let Some(advisory) = blocking(input, id, &locked.version) {
+        warnings.push(ResolveWarning::LockedBlocked {
+            id: id.to_owned(),
+            version: locked.version.clone(),
+            advisory,
+        });
         return None;
     }
     let entry = index.versions.iter().find(|v| v.version == locked.version);
     if let Some(entry) = entry {
         if entry.withdrawn {
+            warnings.push(ResolveWarning::LockedWithdrawn {
+                id: id.to_owned(),
+                version: entry.version.clone(),
+            });
             return None;
         }
         if entry.yanked {
@@ -183,14 +201,31 @@ fn keep<'a>(
             });
         }
     }
+    // A target the lock did not know yet may have a build by now. Media
+    // plugins ignore the targets, so they are kept.
+    let media = index.kind.roles.iter().any(|role| role == "media");
+    let new_target = !media
+        && !locked.targets.contains_key(&Target::ANY)
+        && input
+            .targets
+            .iter()
+            .any(|t| !previous.targets.contains(t) && !locked.targets.contains_key(t));
+    if new_target {
+        return None;
+    }
     Some((locked.clone(), entry))
 }
 
-fn blocked(input: &ResolveInput, id: &str, version: &Version) -> bool {
+/// The id of the advisory that blocks `version`, if any.
+fn blocking(input: &ResolveInput, id: &str, version: &Version) -> Option<String> {
     input
         .advisories
         .and_then(|list| list.blocking(id, version))
-        .is_some()
+        .map(|advisory| advisory.id.clone())
+}
+
+fn blocked(input: &ResolveInput, id: &str, version: &Version) -> bool {
+    blocking(input, id, version).is_some()
 }
 
 /// Picks the best version from the index.

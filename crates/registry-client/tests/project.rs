@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use celesta_plugin_host::{LOCK_FILE, Lockfile, PROJECT_CONFIG, UserSettings};
+use celesta_plugin_host::{LOCK_FILE, LockProblem, Lockfile, PROJECT_CONFIG, UserSettings};
 use celesta_registry_client::{
     ClientError, Environment, ProjectError, Registry, Store, Transport, TransportError, Update,
     install_global, install_locked, lock_project,
@@ -336,7 +336,7 @@ fn install_locked_refuses_another_celesta_minor() {
     machine.celesta = v("0.10.0");
     let error = install_locked(&machine.env(), root.path(), false).unwrap_err();
     assert!(
-        matches!(&error, ProjectError::OtherCelesta { ids, .. } if ids == &[ID.to_owned()]),
+        matches!(&error, ProjectError::LockCheck(LockProblem::OtherCelesta { ids, .. }) if ids == &[ID.to_owned()]),
         "{error:?}"
     );
     assert_eq!(
@@ -353,13 +353,29 @@ fn install_locked_refuses_a_stale_lock() {
     let machine = Machine::new(&registry);
     let error = install_locked(&machine.env(), root.path(), false).unwrap_err();
     assert!(
-        matches!(&error, ProjectError::OutOfDate { ids } if ids == &["acme.other", ID]),
+        matches!(&error, ProjectError::LockCheck(LockProblem::OutOfDate { ids }) if ids == &["acme.other", ID]),
         "{error:?}"
     );
     assert_eq!(
         error.to_string(),
         "celesta.lock does not match celesta.config.json for acme.other, acme.tool; \
-         run `celesta plugin update`"
+         run `celesta plugin install`"
+    );
+}
+
+#[test]
+fn install_locked_refuses_orphan_entries() {
+    let (registry, root) = locked();
+    registry.publish("acme.b", "1.0.0", &["any"]);
+    let machine = Machine::new(&registry);
+    // Add `b` to the lock, then drop it from the config.
+    write_config(root.path(), &[(ID, "1"), ("acme.b", "1")]);
+    lock_project(&machine.env(), root.path(), &Update::Keep).unwrap();
+    write_config(root.path(), &[(ID, "1")]);
+    let error = install_locked(&machine.env(), root.path(), false).unwrap_err();
+    assert!(
+        matches!(&error, ProjectError::LockCheck(LockProblem::OutOfDate { ids }) if ids == &["acme.b"]),
+        "{error:?}"
     );
 }
 
@@ -369,7 +385,10 @@ fn install_locked_without_a_lock_fails() {
     let root = project(&[(ID, "1")]);
     let machine = Machine::offline(&registry);
     let error = install_locked(&machine.env(), root.path(), false).unwrap_err();
-    assert!(matches!(error, ProjectError::NoLock), "{error:?}");
+    assert!(
+        matches!(error, ProjectError::LockCheck(LockProblem::NoLock)),
+        "{error:?}"
+    );
 }
 
 #[test]
