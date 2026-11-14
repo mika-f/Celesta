@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.celesta.studio/schema/v1/index.schema.json",
+  "title": "Plugin index",
+  "type": "object",
+  "required": [
+    "format",
+    "id",
+    "publisher",
+    "kind",
+    "description",
+    "versions"
+  ],
+  "properties": {
+    "format": {
+      "const": 1
+    },
+    "id": {
+      "$ref": "#/$defs/id"
+    },
+    "publisher": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "$ref": "#/$defs/kind"
+    },
+    "description": {
+      "type": "string"
+    },
+    "homepage": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uri"
+    },
+    "repository": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uri"
+    },
+    "deprecated": {
+      "$ref": "#/$defs/deprecated"
+    },
+    "versions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "version",
+          "celesta",
+          "protocol",
+          "published",
+          "yanked",
+          "withdrawn",
+          "deprecated",
+          "source",
+          "targets"
+        ],
+        "properties": {
+          "version": {
+            "$ref": "#/$defs/version"
+          },
+          "celesta": {
+            "type": "string",
+            "minLength": 1
+          },
+          "protocol": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "published": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "yanked": {
+            "type": "boolean"
+          },
+          "withdrawn": {
+            "type": "boolean"
+          },
+          "deprecated": {
+            "$ref": "#/$defs/deprecated"
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "repository",
+              "commit",
+              "workflow"
+            ],
+            "properties": {
+              "repository": {
+                "type": "string",
+                "format": "uri"
+              },
+              "commit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "workflow": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "targets": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+              "$ref": "#/$defs/target"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "url",
+                "size",
+                "sha256",
+                "treeHash"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "size": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "sha256": {
+                  "$ref": "#/$defs/hash"
+                },
+                "treeHash": {
+                  "$ref": "#/$defs/hash"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)?$",
+      "description": "A dotless first-party name, or <publisher>.<name>. Lowercase ASCII letters, digits, '-' and '_', each part starting with a letter or digit; at most one '.'."
+    },
+    "target": {
+      "type": "string",
+      "pattern": "^((windows|linux|macos)-[a-z0-9_]+|any)$",
+      "description": "<os>-<arch> with os in windows|linux|macos and Rust's arch names, or 'any'."
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "RFC 3339, UTC."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+    },
+    "kind": {
+      "type": "object",
+      "required": [
+        "roles",
+        "program",
+        "module"
+      ],
+      "properties": {
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "program": {
+          "type": "boolean"
+        },
+        "module": {
+          "type": "boolean"
+        }
+      }
+    },
+    "deprecated": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "message",
+            "replacement"
+          ],
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "replacement": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "celesta-registry-format"
+description = "The plugin registry's client-facing file formats: JSON Schemas, fixtures, and their Rust types."
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dev-dependencies]
+jsonschema = "0.61.2"
+serde_json.workspace = true
