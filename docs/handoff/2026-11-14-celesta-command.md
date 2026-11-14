@@ -113,7 +113,13 @@ Celesta, naming both versions and `celesta plugin update`).
 `find_for_project` then turns each `DiscoveryError::LockUnsatisfied` into
 `LockProblem::Unsatisfied`, except when an explicit plugin (`--plugin-dir`,
 `CELESTA_PLUGIN_PATH`) supplies that id: then the explicit copy runs and the
-problem stays a warning, so plugin developers can test a build. The exporter
+problem stays a warning, so plugin developers can test a build. A locked version
+with no build for the host (neither its target nor `any`) is not a lock failure:
+discovery reports it as its own `DiscoveryError::LockNoBuild { id, version, host }`
+(`the project locks {id} {version}, which has no build for {host}; another copy of
+{id} is used if one is installed`), which `find_for_project` keeps as a warning, and
+the other sources supply that id (a global, bundled, or explicit copy), as the
+design says for a pinned plugin and as `install_locked` skips it. The exporter
 reports any of these as `plugins_unsatisfied` under `--json`; exports, `--inspect`,
 and `--list-components`/`--describe` with a source check it, and so do the MCP
 server's export jobs and its `inspect` tool.
@@ -123,7 +129,7 @@ server's export jobs and its `inspect` tool.
 | Path | Responsibility |
 | --- | --- |
 | `crates/plugin-host/src/lock_check.rs` | `LockProblem` and `check_lock`. |
-| `crates/plugin-host/src/registry.rs`, `manifest.rs` | `is_build` (the one "same build" check), `RegistryContext::for_project`, `InstalledPlugins::find_for_project` and `find_for_project_reporting`. |
+| `crates/plugin-host/src/registry.rs`, `manifest.rs` | `is_build` (the one "same build" check), `RegistryContext::for_project`, `InstalledPlugins::find_for_project` and `find_for_project_reporting`, and `DiscoveryError::LockNoBuild` for a locked version without a build for the host (`a_locked_version_without_a_host_build_is_a_warning`). |
 | `crates/registry-client/src/testing.rs` | The signed test registry behind the `testing` feature (`with_base`, `file`, `served_dir`, `root_key_base64`). |
 | `crates/registry-client/src/resolve.rs`, `project.rs` | Re-resolving a kept entry for a new target, `LockedWithdrawn`/`LockedBlocked` warnings, `ProjectError::LockCheck`, orphan lock entries refused by `install_locked`, `record_error` on outcomes. |
 | `crates/registry-client/src/refresh.rs`, `cache.rs` | `refresh_advisories_within`, `AdvisoryRefresh`, and the cache lock. |
@@ -135,7 +141,8 @@ server's export jobs and its `inspect` tool.
 | `crates/cli/src/commands/{project,registry,store}.rs` | `add`, `remove`, `install`, `update`; `search`, `info`, `audit`; `list`, `install --global`, `gc`. |
 | `crates/cli/tests/{session,project,registry}.rs` | End-to-end tests against a `file://` test registry. |
 | `crates/exporter/src/{exporter,job,main,error,report}.rs` | `project_plugins`, `ExportError::Plugins`, the `plugins_unsatisfied` code; each export gets its own media registry. |
-| `crates/mcp/src/{server,export,inspect}.rs` | The MCP tools discover for the job's project. |
+| `crates/exporter/tests/integration/plugins_lock.rs` | The lock failures under `--json`, the lock never written, and a locked plugin without a build here not failing the export (`exporter_skips_a_locked_plugin_without_a_build_here`). |
+| `crates/mcp/src/{server,export,inspect}.rs`, `docs.rs` | The MCP tools discover for the job's project; the `plugins` docs topic names registry plugins. |
 | `scripts/package-macos.py`, `scripts/package-windows.ps1`, `packaging/linux/Dockerfile`, `scripts/test-package.mjs`, `packaging/*/README*` | Shipping `Celesta-cli` (and `celesta` in the image), and a `plugin --help` smoke step in the package check. |
 | `packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md`, `01-(getting-started)/02-create-project.md` | The user guide's "Registry plugins" section; the executable names. |
 | `skills/celesta/references/{plugins,errors,export}.md`, `SKILL.md` | The Agent Skill: registry plugins, `plugins_unsatisfied`, the index row. `crates/mcp/src/docs.rs` serves the skill's `plugins.md` itself, so it needed no change. |
@@ -156,11 +163,13 @@ Run in this worktree, after `pnpm install` and `pnpm run build:runtime`, with
 | `pnpm --dir packages/website run build` | Passed: 56 pages in 2 locales. The built `en` and `ja` plugins pages have every heading id the new section links to. |
 | `pnpm --dir packages/website run check` | No issues, 82 warnings. The anchor warnings name every Japanese anchor, the new ones and the ones already there alike, although the built pages have those ids; the English anchors pass. The rest are missing OGP images. |
 | `celesta plugin --help` and each subcommand's `--help` | Every command and flag the user guide and the Agent Skill name is listed. |
+| After `DiscoveryError::LockNoBuild`: `cargo build -p celesta-codec-test --locked`, then `cargo test -p celesta-plugin-host -p celesta-exporter -p celesta-mcp -p celesta-editor --locked --no-fail-fast` | 1441 passed, 1 failed, 0 ignored. The failure was the timing check `a_process_left_holding_stderr_does_not_delay_the_diagnostic` (`took 2.86s`, with the other binaries running alongside); it failed the same way in a first run of the same command. Run alone it passed twice, and `cargo test -p celesta-plugin-host --lib` then passed, 177 of 177. The new tests `a_locked_version_without_a_host_build_is_a_warning` and `exporter_skips_a_locked_plugin_without_a_build_here` pass; the first failed before the change (`Unsatisfied { … "it has no build for macos-aarch64" }`). |
+| After the change: `cargo clippy -p celesta-plugin-host -p celesta-exporter -p celesta-mcp -p celesta-editor --all-targets --locked -- -D warnings`, `cargo check --workspace --all-targets --locked`, `cargo fmt --all -- --check`, `git diff --check` | Passed. |
 | `celesta plugin …` without a registry key, in a temporary home | `search` and `add` fail with the no-key message (exit 1); `list`, `audit`, and `gc --dry-run` run (exit 0); `install` without dependencies prints `this project has no registry plugins`; with a dependency and no lock, `install` fails with the no-key message and `install --locked`/`--offline` with the `NoLock` message. |
 
 Not run: the first-party plugins' separate workspace (`plugins/`), the `pnpm`
 tests, the package scripts (they need a full package build), and the registry
-service's own tests (a separate repository).
+service's tests.
 
 ## Later plans
 

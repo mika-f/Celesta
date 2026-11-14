@@ -86,7 +86,7 @@ pub static TOPICS: &[Topic] = &[
     reference!("performance", "What is slow to render and how to find it"),
     reference!(
         "plugins",
-        "Content plugins: @celesta-plugin imports, where plugins are found, their errors"
+        "Content plugins: @celesta-plugin imports, where plugins are found, registry plugins (celesta.lock, the celesta plugin command), their errors"
     ),
     reference!(
         "errors",

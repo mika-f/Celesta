@@ -110,13 +110,20 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   download; an unsatisfied lock fails the export with
   `plugins_unsatisfied` (see [Errors](#errors)). A `--plugin-dir` or
   `CELESTA_PLUGIN_PATH` copy of a locked id runs instead of the locked
-  version, with a warning. The desktop app does not read the lock yet: its
-  preview uses only plugins installed with `--global`.
+  version; when the locked version could not have run, the export goes on
+  with that copy and a warning instead of failing. A locked version with no
+  build for this computer is not a failure either: it is skipped with a
+  warning (`the project locks <id> <version>, which has no build for
+  <host>; another copy of <id> is used if one is installed`), and another
+  copy of the id, such as a global one, runs. The desktop app does not read
+  the lock yet: of registry plugins, the app uses only those installed with
+  `--global`.
 - This build has no official registry key yet: `search`, `info`, `add`,
   `update`, `install --global`, and an `install` that must resolve or download fail
   with `this build of Celesta has no registry key yet, …`. Tell the user;
-  do not try to work around it. `remove`, `list`, `gc`, and `install` of
-  a lock whose plugins are already downloaded still work.
+  do not try to work around it. `remove`, `list`, `audit` (against what
+  was fetched before), `gc`, and `install` of a lock whose plugins are
+  already downloaded still work.
 - Warnings to relay, not silence: the advisory list is missing or `… days
   old` (more than 7; a run online fetches a new one, waiting at most
   3 seconds), a version is deprecated (with its replacement) or yanked.
@@ -369,6 +376,9 @@ import { Vrm } from '@celesta-plugin/vrm';
 | `celesta.lock does not match celesta.config.json for <ids>; run \`celesta plugin install\`` (`plugins_unsatisfied`) | A requirement changed, a dependency is not locked yet, or the lock names a plugin the config no longer has. Run `celesta plugin install` (not `--locked`, which fails the same way). |
 | `the project's locked plugins are not installed: <id> <version> (<reason>); …; run \`celesta plugin install\`` (`plugins_unsatisfied`) | The locked version is not downloaded here (`it is not installed`), its files changed (`its installed files differ from the lock`), or it does not load with this Celesta. Run `celesta plugin install`; for the last, `celesta plugin update`. |
 | `celesta.lock was resolved with Celesta <old>, and this is Celesta <new>; <ids> cannot load with it. Run \`celesta plugin update\` to resolve them again` (`plugins_unsatisfied`) | The lock comes from another Celesta minor version. With the user's agreement, run `celesta plugin update`, which rewrites the lock for this Celesta, and have them commit it. |
+| `<path>/celesta.config.json: plugins.dependencies entry "<id>": …`, `could not read <path>/celesta.config.json: …`, or `<path> is not a project settings file: …` (`plugins_unsatisfied`) | The project's `celesta.config.json` is not valid JSON, or a requirement or target in `plugins` is not valid. Fix what the message names. |
+| `the project's celesta.lock could not be read: …` (`plugins_unsatisfied`) | The lock is not valid JSON, or a newer Celesta wrote it (`… was written in lock format <n>, which this Celesta <version> does not read; update Celesta`). Do not edit or delete it: tell the user to restore it from version control, or to update Celesta when the message says so. |
+| `skipped a plugin: the project locks <id> <version>, which has no build for <host>; another copy of <id> is used if one is installed` | A warning, not an error: the locked version has no build for this computer (often a media plugin pinned for another OS). Another copy of the id runs if one is installed (a global one, `--plugin-dir`); if none is, an entry importing it fails as for any missing plugin. |
 | `this build of Celesta has no registry key yet, so it cannot reach the plugin registry; …` | From `celesta plugin …`: this release cannot reach the registry. Tell the user; nothing in the project fixes it. |
 | `no plugin "<id>" is installed (looked in CELESTA_PLUGIN_PATH)` | In the app, the plugin may be waiting for the user's approval (Problems says so): ask the user to allow it, and do not work around the question. Otherwise the entry imports a plugin no folder provides: put it in the user plugin folder, pass `--plugin-dir`, or set `CELESTA_PLUGIN_PATH` (absolute paths). |
 | `plugin "<id>" waits for your approval in the Celesta app, and does not run until you allow it (<folder>): …` | `Celesta-export` or MCP found the plugin, but the user has not allowed it in the app, or it changed since. Ask the user to allow it in the app's Plugins tab. Only when the user asks you to run it without approval: with `Celesta-export`, pass `--allow-plugin <id>` or `--plugin-dir <folder>`; for MCP, which takes neither, the user puts the folder in the server's `CELESTA_PLUGIN_PATH`. |

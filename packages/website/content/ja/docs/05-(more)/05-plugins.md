@@ -113,7 +113,7 @@ export default function Root() {
 
 プロジェクトは、Celesta のプラグインレジストリにあるプラグインも指定できます。`celesta` コマンドがそれを探してバージョンを選び、プロジェクトの `celesta.lock` に記録して、Celesta が管理するフォルダーにダウンロードします。プラグインのフォルダーを手で置く必要はなく、別のコンピューターでも同じバージョンのプラグインが使われます。
 
-レジストリは新しい機能です。この Celesta のビルドにはまだ公式レジストリの鍵が入っていないため、レジストリにアクセスするコマンドは、鍵を入れたリリースが出るまで `celesta: error: this build of Celesta has no registry key yet, so it cannot reach the plugin registry; …` で失敗します。`remove`、`list`、`gc` と、プラグインをダウンロード済みのロックに対する `install` は鍵がなくても動きます。このページの `acme.charts` などのプラグイン名は例です。
+レジストリは新しい機能です。この Celesta のビルドにはまだ公式レジストリの鍵が入っていないため、レジストリにアクセスするコマンドは、鍵を入れたリリースが出るまで `celesta: error: this build of Celesta has no registry key yet, so it cannot reach the plugin registry; …` で失敗します。`remove`、`list`、`audit`、`gc` と、プラグインをダウンロード済みのロックに対する `install` は鍵がなくても動きます（そのとき `audit` は、前に取得したアドバイザリーの一覧とプラグインの情報で確認します）。このページの `acme.charts` などのプラグイン名は例です。
 
 デスクトップアプリはまだ `celesta.lock` を読みません。アプリのプレビューと書き出しでは、すべてのプロジェクト用に入れたプラグイン（[レジストリのメディアプラグイン](#レジストリのメディアプラグイン)を参照）を使い、プロジェクトがロックしたプラグインは使いません。`celesta-exporter` と MCP サーバーはロックを読みます。
 
@@ -207,7 +207,7 @@ celesta plugin install --global acme.codec
 celesta plugin add acme.codec --pin
 ```
 
-ピン留めで決まるのは、プロジェクトでその id のどのバージョンを使うかだけです。どのエンコーダーやマルチプレクサーが既定になるかは、引き続き[動画を書き出すコンポーネント](#動画を書き出すコンポーネント)のとおりです。このコンピューター向けのビルドがないピン留めのバージョンは読み飛ばされ（`install` が `skipped acme.codec 1.0.0: no build for linux-x86_64` と表示します）、すべてのプロジェクト用に入れたものが使われます。
+ピン留めで決まるのは、プロジェクトでその id のどのバージョンを使うかだけです。どのエンコーダーやマルチプレクサーが既定になるかは、引き続き[動画を書き出すコンポーネント](#動画を書き出すコンポーネント)のとおりです。ある 1 つのシステム向けのプラグインをピン留めしたときなど、このコンピューター向けのビルドがないロック済みのバージョンは、ロックの問題になりません。`install` はそれを読み飛ばし（`skipped acme.codec 1.0.0: no build for linux-x86_64`）、`celesta-exporter` と MCP サーバーは `celesta: skipped a plugin: the project locks acme.codec 1.0.0, which has no build for linux-x86_64; another copy of acme.codec is used if one is installed` と警告して、すべてのプロジェクト用に入れたものか、その id の別のコピーを使います。
 
 ### セキュリティアドバイザリー・非推奨・取り下げ
 
@@ -230,9 +230,11 @@ celesta: warning: the security advisory list is 9 days old; plugins under newer 
 | `` the project declares registry plugins but has no celesta.lock; run `celesta plugin install` `` | `celesta plugin install` を実行し、書き込まれたロックをコミットします。 |
 | `` celesta.lock does not match celesta.config.json for acme.charts; run `celesta plugin install` `` | 要件が変わったか、プロジェクトが宣言しなくなったプラグインがロックにあります。`celesta plugin install` を実行します。 |
 | `` the project's locked plugins are not installed: acme.charts 1.2.3 (it is not installed); run `celesta plugin install` `` | ロックしたバージョンがこのコンピューターにダウンロードされていないか、そのファイルが変わっています（`its installed files differ from the lock`）。`celesta plugin install` を実行します。 |
+| `` <project>/celesta.config.json: plugins.dependencies entry "acme.charts": … ``（または `celesta.config.json` を示すほかのメッセージ） | ファイルが正しい JSON でないか、`plugins` の要件やターゲットが正しくありません。メッセージが示すところを直します。 |
+| `` the project's celesta.lock could not be read: … `` | ロックが正しい JSON でないか、新しい Celesta がこの Celesta の読めないロック形式で書いています（`… does not read; update Celesta`）。手で編集せず、バージョン管理から元に戻すか、メッセージのとおり Celesta を更新します。 |
 | `` celesta.lock was resolved with Celesta 0.9.0, and this is Celesta 0.10.0; acme.charts cannot load with it. Run `celesta plugin update` to resolve them again `` | 別のマイナーバージョンの Celesta で作ったロックです。`celesta plugin update` でこの Celesta 向けのバージョンを選んでロックを書き直し、コミットします。 |
 
-ロックした id のプラグインが `--plugin-dir` や `CELESTA_PLUGIN_PATH` のフォルダーにあれば、ロックしたバージョンの代わりにそちらが使われ、書き出しは警告を出して続きます。作っているプラグインのビルドを、それをロックしたプロジェクトで試すときは、この方法を使います。
+ロックした id のプラグインが `--plugin-dir` や `CELESTA_PLUGIN_PATH` のフォルダーにあれば、ロックしたバージョンの代わりにそちらが使われます。ロックしたバージョンが動けなかったとき（ダウンロードされていないなど）も書き出しは失敗せず、そのコピーで続けて、ロックしたバージョンを使わなかった理由を警告します。作っているプラグインのビルドを、それをロックしたプロジェクトで試すときは、この方法を使います。
 
 ### ダウンロードを片付ける
 

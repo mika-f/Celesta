@@ -113,7 +113,7 @@ In the desktop app, a plugin can also offer its components in the **Add** menu, 
 
 A project can also name plugins from Celesta's plugin registry. The `celesta` command finds them, chooses their versions, records those in the project's `celesta.lock`, and downloads them into a folder Celesta manages, so you do not place their folders by hand, and the project gets the same plugin versions on another computer.
 
-The registry is new. This build of Celesta does not have the official registry's key yet, so the commands that reach the registry fail until a release ships it, with `celesta: error: this build of Celesta has no registry key yet, so it cannot reach the plugin registry; …`. `remove`, `list`, `gc`, and `install` of a lock whose plugins are already downloaded work without it. The plugin names on this page, such as `acme.charts`, are examples.
+The registry is new. This build of Celesta does not have the official registry's key yet, so the commands that reach the registry fail until a release ships it, with `celesta: error: this build of Celesta has no registry key yet, so it cannot reach the plugin registry; …`. `remove`, `list`, `audit`, `gc`, and `install` of a lock whose plugins are already downloaded work without it (`audit` then checks against the advisory list and the plugin listings fetched before). The plugin names on this page, such as `acme.charts`, are examples.
 
 The desktop app does not read `celesta.lock` yet: its preview and its exports use the plugins installed for every project (see [Media plugins from the registry](#media-plugins-from-the-registry)), not a project's locked ones. `celesta-exporter` and the MCP server read the lock.
 
@@ -207,7 +207,7 @@ celesta plugin install --global acme.codec
 celesta plugin add acme.codec --pin
 ```
 
-A pinned plugin chooses only which version of that id the project runs; which encoder or muxer is the default still follows [Which components write a video](#which-components-write-a-video). A pinned version without a build for this computer is skipped, as `install` says (`skipped acme.codec 1.0.0: no build for linux-x86_64`), and the one installed for every project is used.
+A pinned plugin chooses only which version of that id the project runs; which encoder or muxer is the default still follows [Which components write a video](#which-components-write-a-video). A locked version without a build for this computer, such as a pinned plugin made for one system, is not a lock problem: `install` skips it (`skipped acme.codec 1.0.0: no build for linux-x86_64`), `celesta-exporter` and the MCP server warn `celesta: skipped a plugin: the project locks acme.codec 1.0.0, which has no build for linux-x86_64; another copy of acme.codec is used if one is installed`, and the copy installed for every project, or another copy of that id, is used.
 
 ### Security advisories, deprecations, and yanked versions
 
@@ -230,9 +230,11 @@ A publisher can deprecate a version, which still installs with a warning that na
 | `` the project declares registry plugins but has no celesta.lock; run `celesta plugin install` `` | Run `celesta plugin install`, and commit the lock it writes. |
 | `` celesta.lock does not match celesta.config.json for acme.charts; run `celesta plugin install` `` | A requirement changed, or the lock names a plugin the project no longer declares. Run `celesta plugin install`. |
 | `` the project's locked plugins are not installed: acme.charts 1.2.3 (it is not installed); run `celesta plugin install` `` | The locked version is not downloaded on this computer, or its files changed (`its installed files differ from the lock`). Run `celesta plugin install`. |
+| `` <project>/celesta.config.json: plugins.dependencies entry "acme.charts": … `` (or another message naming `celesta.config.json`) | The file is not valid JSON, or a requirement or target in `plugins` is not valid. Fix what the message names. |
+| `` the project's celesta.lock could not be read: … `` | The lock is not valid JSON, or a newer Celesta wrote it in a lock format this one does not read (`… does not read; update Celesta`). Do not edit it: restore it from your version control, or update Celesta when the message says so. |
 | `` celesta.lock was resolved with Celesta 0.9.0, and this is Celesta 0.10.0; acme.charts cannot load with it. Run `celesta plugin update` to resolve them again `` | The lock was made with another Celesta minor version. `celesta plugin update` chooses versions for this Celesta and rewrites the lock; commit it. |
 
-A plugin with a locked id in a folder of `--plugin-dir` or `CELESTA_PLUGIN_PATH` is used instead of the locked version, and the export goes on with a warning. This is how to try a build of a plugin you are making in a project that locks it.
+A plugin with a locked id in a folder of `--plugin-dir` or `CELESTA_PLUGIN_PATH` is used instead of the locked version. When the locked version could not have run (it is not downloaded, say), the export does not fail: it goes on with the explicit copy and warns why the locked version was not used. This is how to try a build of a plugin you are making in a project that locks it.
 
 ### Clean up downloads
 
