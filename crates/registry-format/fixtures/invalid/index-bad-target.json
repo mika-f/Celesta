@@ -1,0 +1,74 @@
+{
+  "format": 1,
+  "id": "vrm",
+  "publisher": "celesta",
+  "kind": {
+    "roles": [
+      "content"
+    ],
+    "program": true,
+    "module": true
+  },
+  "description": "Loads VRM avatars into compositions.",
+  "homepage": null,
+  "repository": "https://github.com/mika-f/Celesta",
+  "deprecated": null,
+  "versions": [
+    {
+      "version": "0.2.2",
+      "celesta": ">=0.9.0, <0.10.0",
+      "protocol": 1,
+      "published": "2026-11-20T00:00:00Z",
+      "yanked": true,
+      "withdrawn": false,
+      "deprecated": null,
+      "source": {
+        "repository": "https://github.com/mika-f/Celesta",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "workflow": ".github/workflows/package.yml"
+      },
+      "targets": {
+        "macos-aarch64": {
+          "url": "https://registry.celesta.studio/archives/vrm/0.2.2/macos-aarch64.zip",
+          "size": 1048576,
+          "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "treeHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      }
+    },
+    {
+      "version": "0.2.3",
+      "celesta": ">=0.9.0, <0.10.0",
+      "protocol": 1,
+      "published": "2026-11-20T00:00:00Z",
+      "yanked": false,
+      "withdrawn": false,
+      "deprecated": null,
+      "source": {
+        "repository": "https://github.com/mika-f/Celesta",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "workflow": ".github/workflows/package.yml"
+      },
+      "targets": {
+        "windows-x86_64": {
+          "url": "https://registry.celesta.studio/archives/vrm/0.2.3/windows-x86_64.zip",
+          "size": 1062001,
+          "sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "treeHash": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "linux-x86_64": {
+          "url": "https://registry.celesta.studio/archives/vrm/0.2.3/linux-x86_64.zip",
+          "size": 1049876,
+          "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "treeHash": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "macos": {
+          "url": "https://registry.celesta.studio/archives/vrm/0.2.3/macos-aarch64.zip",
+          "size": 1051234,
+          "sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "treeHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      }
+    }
+  ]
+}

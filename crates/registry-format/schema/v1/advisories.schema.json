@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.celesta.studio/schema/v1/advisories.schema.json",
+  "title": "Advisories",
+  "type": "object",
+  "required": [
+    "format",
+    "generated",
+    "advisories"
+  ],
+  "properties": {
+    "format": {
+      "const": 1
+    },
+    "generated": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "advisories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "plugin",
+          "versions",
+          "title",
+          "description",
+          "fixed",
+          "published"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^CELESTA-[0-9]{4}-[0-9]{4,}$"
+          },
+          "plugin": {
+            "$ref": "#/$defs/pluginId"
+          },
+          "versions": {
+            "type": "string",
+            "pattern": "^[ ]*(=|<=|>=|<|>)[ ]*(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?[ ]*(,[ ]*(=|<=|>=|<|>)[ ]*(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?[ ]*){0,31}$",
+            "description": "Plain comparators (=, <, <=, >, >=), each with a full major.minor.patch and an optional pre-release in semver's grammar, joined by ','; at most 32. No ^, ~, *, bare or partial versions, or build metadata."
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "fixed": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/version"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "published": {
+            "$ref": "#/$defs/timestamp"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "pluginId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "description": "The host's plugin id rule, so an advisory can name a plugin from any source: lowercase ASCII letters, digits, '-', '_' and '.', starting with a letter or digit. Several dots are allowed."
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$",
+      "description": "RFC 3339 in UTC with whole seconds, exactly YYYY-MM-DDTHH:MM:SSZ: no other offset and no fractional seconds."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+      "description": "A semantic version: major.minor.patch, an optional pre-release, and optional build metadata, in semver's grammar (no leading zeros in numeric identifiers, no empty identifiers). Numbers have at most 19 digits, so they fit in 64 bits."
+    }
+  }
+}
