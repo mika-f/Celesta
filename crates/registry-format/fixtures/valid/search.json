@@ -32,6 +32,23 @@
         "message": "Superseded by acme.titles.",
         "replacement": "acme.titles"
       }
+    },
+    {
+      "id": "old-thing",
+      "publisher": "celesta",
+      "kind": {
+        "roles": [
+          "content"
+        ],
+        "program": true,
+        "module": true
+      },
+      "description": "Old.",
+      "latest": "0.1.0",
+      "deprecated": {
+        "message": "Retired.",
+        "replacement": null
+      }
     }
   ]
 }
