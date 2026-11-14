@@ -6,6 +6,7 @@
 mod error;
 mod files;
 mod ids;
+mod signing;
 
 pub use error::FormatError;
 pub use files::{
@@ -13,3 +14,4 @@ pub use files::{
     SearchEntry, SearchList, Source, Target, VersionEntry,
 };
 pub use ids::{is_registry_id, publisher_of};
+pub use signing::{key_message, signed_message};
