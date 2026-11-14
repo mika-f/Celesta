@@ -410,9 +410,9 @@ Errors are `{ "error": <code>, "message": <text> }`:
 | Status | `error` | When |
 | --- | --- | --- |
 | 400 | `bad_request` | a malformed body, a `Content-Length` that does not match, or one that is not a number |
-| 401 | `unauthorized` | |
+| 401 | `unauthorized` | no bearer token, or a token that is invalid, expired, issued for another audience, or already used |
 | 403 | `forbidden` | the token is not allowed to publish |
-| 403 | `not_owner` | |
+| 403 | `not_owner` | the plugin id is registered to another repository |
 | 409 | `version_exists` | a version of equal precedence exists |
 | 411 | `length_required` | no `Content-Length` |
 | 413 | `too_large` | a limit above is exceeded |
