@@ -138,6 +138,37 @@ fn user_plugin_dir_from(os: &str, var: impl Fn(&str) -> Option<OsString>) -> Opt
     }
 }
 
+/// Where the registry client keeps the plugins it installed: `registry`
+/// beside [`user_plugin_dir`], so the user's own folder of plugins is never
+/// mixed with what the client manages. `None` when there is no user folder.
+pub fn registry_store_dir() -> Option<PathBuf> {
+    registry_dir_from(
+        std::env::consts::OS,
+        |name| std::env::var_os(name),
+        "registry",
+    )
+}
+
+/// What the registry client downloaded and verified, beside
+/// [`user_plugin_dir`] as `registry-cache`: the advisory list and the index
+/// files it uses offline. `None` when there is no user folder.
+pub fn registry_cache_dir() -> Option<PathBuf> {
+    registry_dir_from(
+        std::env::consts::OS,
+        |name| std::env::var_os(name),
+        "registry-cache",
+    )
+}
+
+/// The folder `name` beside the user's plugin folder.
+fn registry_dir_from(
+    os: &str,
+    var: impl Fn(&str) -> Option<OsString>,
+    name: &str,
+) -> Option<PathBuf> {
+    Some(user_plugin_dir_from(os, var)?.parent()?.join(name))
+}
+
 /// The plugin folder that comes with Celesta. A package build may fix it
 /// with `CELESTA_SYSTEM_PLUGIN_DIR` at build time (such as
 /// `/usr/lib/celesta/plugins`); otherwise it is found from the running
@@ -272,6 +303,48 @@ mod tests {
                 None,
                 "{os}"
             );
+        }
+    }
+
+    #[test]
+    fn the_store_and_cache_sit_beside_the_user_folder() {
+        type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
+        let cases: Vec<Case> = if cfg!(windows) {
+            vec![(
+                "windows",
+                &[("APPDATA", r"C:\Users\u\AppData\Roaming")],
+                r"C:\Users\u\AppData\Roaming\Celesta",
+            )]
+        } else {
+            vec![
+                (
+                    "linux",
+                    &[("HOME", "/home/u")],
+                    "/home/u/.local/share/celesta",
+                ),
+                (
+                    "linux",
+                    &[("HOME", "/home/u"), ("XDG_DATA_HOME", "/data")],
+                    "/data/celesta",
+                ),
+                (
+                    "macos",
+                    &[("HOME", "/Users/u")],
+                    "/Users/u/Library/Application Support/Celesta",
+                ),
+            ]
+        };
+        for (os, pairs, base) in cases {
+            for name in ["registry", "registry-cache"] {
+                assert_eq!(
+                    registry_dir_from(os, vars(pairs), name),
+                    Some(PathBuf::from(base).join(name)),
+                    "{os} {name}"
+                );
+            }
+        }
+        for os in ["windows", "macos", "linux"] {
+            assert_eq!(registry_dir_from(os, vars(&[]), "registry"), None, "{os}");
         }
     }
 

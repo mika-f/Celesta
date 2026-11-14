@@ -1,9 +1,11 @@
 //! Plugin directories: a `celesta-plugin.json` and what it names.
 
+use crate::advisories::{blocking_advisory, cached_advisories};
 use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
 use crate::media::{MediaManifest, RESERVED_PLUGIN_ID, deserialize_media, media_problems};
 use crate::settings::UserSettings;
 use celesta_plugin::protocol_for_roles;
+use celesta_registry_format::AdvisoryList;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -426,6 +428,23 @@ pub enum DiscoveryError {
     Unreadable(String),
     #[error("the user's settings were not used: {0}")]
     Settings(String),
+    /// A plugin a cached security advisory stops (see
+    /// [`crate::blocking_advisory`]): like a turned-off one it takes no id
+    /// and is never listed, whichever folder it is in.
+    #[error(
+        "{path} was stopped: the plugin {id} {version} has a security advisory ({advisory}: {title}){}",
+        fixed.as_ref().map(|fixed| format!("; {fixed} fixes it")).unwrap_or_default()
+    )]
+    Blocked {
+        path: PathBuf,
+        id: String,
+        version: String,
+        /// The advisory's id.
+        advisory: String,
+        title: String,
+        /// The version that fixes it, if there is one.
+        fixed: Option<String>,
+    },
     /// A component the plugin's manifest declares that cannot be read: it
     /// is left out, and the plugin's other components are kept.
     #[error("{path}: a media component was skipped: {reason}")]
@@ -612,6 +631,10 @@ fn unsafe_plugin(directory: &Path, source: PluginSource) -> Option<String> {
 
 /// The plugin in `directory`, if it has a manifest, with the components of
 /// it that were skipped ([`DiscoveryError::BadComponent`]).
+#[expect(
+    clippy::result_large_err,
+    reason = "a discovery error is reported once and never moved in a hot path"
+)]
 fn read_manifest(
     directory: &Path,
     source: PluginSource,
@@ -721,13 +744,15 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
 /// later one with the same id is found in its place; so does a plugin with
 /// no role this Celesta knows, such as `codec`, which is listed.
 pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
-    discover_in_with(paths, |_| false)
+    discover_in_with(paths, |_| false, None)
 }
 
 /// [`discover_in`], where a plugin `turned_off` names is listed but, like a
 /// skipped one, takes no id: a later plugin with its id is found too, to be
 /// used in its place. One found after a plugin that took its id is not. A
-/// plugin with no role this Celesta knows takes no id either.
+/// plugin with no role this Celesta knows takes no id either. A plugin that
+/// `advisories` stops is not listed and takes no id, whichever folder it
+/// is in, and is reported as [`DiscoveryError::Blocked`].
 ///
 /// One exception to search order: a project's plugin with the id of a media
 /// plugin Celesta bundles is skipped and reported, so a project cannot
@@ -736,6 +761,7 @@ pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryErro
 pub(crate) fn discover_in_with(
     paths: &[SearchPath],
     turned_off: impl Fn(&PluginEntry) -> bool,
+    advisories: Option<&AdvisoryList>,
 ) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
     // Every plugin read and every error, in search order; which plugin
     // takes an id is settled once the bundled ones are known.
@@ -833,6 +859,18 @@ pub(crate) fn discover_in_with(
                 });
             }
             Ok((entry, skipped)) if !taken.contains(&entry.manifest.id) => {
+                if let Some(advisory) = advisories.and_then(|list| blocking_advisory(list, &entry))
+                {
+                    errors.push(DiscoveryError::Blocked {
+                        path: entry.directory.join(MANIFEST),
+                        id: entry.manifest.id.clone(),
+                        version: entry.manifest.version.clone(),
+                        advisory: advisory.id.clone(),
+                        title: advisory.title.clone(),
+                        fixed: advisory.fixed.as_ref().map(ToString::to_string),
+                    });
+                    continue;
+                }
                 // A plugin with no role this Celesta knows (such as an old
                 // `codec` plugin) runs nowhere, so it does not hide a later
                 // one with its id either.
@@ -992,9 +1030,13 @@ impl InstalledPlugins {
         settings: &UserSettings,
     ) -> (Self, Vec<DiscoveryError>) {
         let paths = search_paths(explicit, project, &settings.plugin_folders);
-        let (plugins, errors) = discover_in_with(&paths, |entry| {
-            settings.is_disabled(&entry.manifest.id, &entry.directory)
-        });
+        let (advisories, advisories_error) = cached_advisories();
+        let (plugins, mut errors) = discover_in_with(
+            &paths,
+            |entry| settings.is_disabled(&entry.manifest.id, &entry.directory),
+            advisories.as_ref(),
+        );
+        errors.extend(advisories_error.map(DiscoveryError::Settings));
         (
             Self {
                 plugins,

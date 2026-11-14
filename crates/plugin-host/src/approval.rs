@@ -407,9 +407,11 @@ mod tests {
                 source: *source,
             })
             .collect();
-        let (plugins, errors) = crate::manifest::discover_in_with(&paths, |entry| {
-            settings.is_disabled(&entry.manifest.id, &entry.directory)
-        });
+        let (plugins, errors) = crate::manifest::discover_in_with(
+            &paths,
+            |entry| settings.is_disabled(&entry.manifest.id, &entry.directory),
+            None,
+        );
         assert!(errors.is_empty(), "{errors:?}");
         InstalledPlugins {
             plugins,

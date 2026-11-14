@@ -1278,6 +1278,7 @@ dependencies = [
  "strip-ansi-escapes",
  "tempfile",
  "thiserror 2.0.21",
+ "time",
 ]
 
 [[package]]
