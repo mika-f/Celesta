@@ -140,8 +140,17 @@ fn exporter_skips_a_locked_plugin_without_a_build_here() {
         &format!("={CELESTA_VERSION}"),
         "plan9-mips",
     );
-    let (_, report) = project.export();
+    let (output, report) = project.export();
     // The entry renders nothing, so the export may still fail, but not
     // because of the lock.
     assert_ne!(report["error"]["code"], "plugins_unsatisfied", "{report}");
+    // The warning names this computer's target.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.lines().any(|line| {
+            line.strip_prefix("celesta: skipped a plugin: the project locks acme.charts 1.0.0, which has no build for ")
+                .is_some_and(|rest| rest.ends_with("; another copy of acme.charts is used if one is installed"))
+        }),
+        "{stderr}"
+    );
 }
