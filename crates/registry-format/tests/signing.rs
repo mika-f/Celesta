@@ -1,8 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use celesta_registry_format::{Config, FormatError, Keyring, RootKey};
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -83,7 +85,7 @@ fn unknown_keyid_is_unknown_key() {
 fn expired_key_is_dropped() {
     let err = keyring()
         .verify(
-            "/expired/advisories.json",
+            "/advisories.json",
             &signed("expired/advisories.json"),
             &signed("expired/advisories.json.sig"),
         )
@@ -92,6 +94,51 @@ fn expired_key_is_dropped() {
         matches!(err, FormatError::UnknownKey(ref k) if k == "expired"),
         "{err:?}"
     );
+}
+
+#[test]
+fn expired_key_verified_before_it_expired() {
+    // The same signature verifies while the key is still valid, so the
+    // refusal above is the expiry, not a bad signature.
+    let config = Config::parse(&signed("config.json")).unwrap();
+    let before = OffsetDateTime::parse("1999-12-31T00:00:00Z", &Rfc3339).unwrap();
+    Keyring::from_config(&config, &root(), before)
+        .unwrap()
+        .verify(
+            "/advisories.json",
+            &signed("expired/advisories.json"),
+            &signed("expired/advisories.json.sig"),
+        )
+        .unwrap();
+}
+
+#[test]
+fn malformed_served_path_is_refused() {
+    // Signed with the real online test key over the malformed path, so only
+    // the path check can refuse it.
+    let online = SigningKey::from_bytes(&[0x02; 32]);
+    let ring = keyring();
+    let bytes = signed("index/vrm.json");
+    for path in [
+        "index/vrm.json",
+        "",
+        "/index\n/vrm.json",
+        "/index/vrm.json\n",
+    ] {
+        // Built by hand: `signed_message` asserts a served path in debug builds.
+        let mut message = format!("celesta-registry-file-v1\n{path}\n").into_bytes();
+        message.extend_from_slice(&bytes);
+        let signature = online.sign(&message);
+        let sig = format!(
+            r#"{{"keyid":"2026-11","signature":"{}"}}"#,
+            STANDARD.encode(signature.to_bytes())
+        );
+        let err = ring.verify(path, &bytes, sig.as_bytes()).unwrap_err();
+        assert!(
+            matches!(err, FormatError::Signature(ref m) if m.contains("not a served path")),
+            "{path:?}: {err:?}"
+        );
+    }
 }
 
 #[test]

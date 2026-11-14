@@ -37,6 +37,11 @@ fn write_json(path: &Path, value: &serde_json::Value) {
 
 /// Copies `source` to `out/rel`, then writes `out/rel.sig` over `served`.
 fn sign_file(out: &Path, rel: &str, source: &Path, served: &str, keyid: &str, key: &SigningKey) {
+    // `Keyring::verify` refuses any other path, so never sign one.
+    assert!(
+        served.starts_with('/') && !served.contains('\n'),
+        "not a served path: {served:?}"
+    );
     let bytes = fs::read(source).unwrap();
     write(&out.join(rel), &bytes);
     let signature = key.sign(&signed_message(served, &bytes));

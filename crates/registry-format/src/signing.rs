@@ -3,10 +3,19 @@
 //! These layouts are part of the wire format: the registry service builds the
 //! same bytes, so they must not change.
 
+/// Whether `path` can be a served path: it starts with `/` and holds no
+/// `\n`, so the message below has one unambiguous layout.
+pub(crate) fn is_served_path(path: &str) -> bool {
+    path.starts_with('/') && !path.contains('\n')
+}
+
 /// The message signed for a served file: `celesta-registry-file-v1\n{path}\n`
 /// followed by the file's bytes. `path` is the served path, such as
-/// `/index/vrm.json`.
+/// `/index/vrm.json`: it starts with `/` and holds no `\n`. This function
+/// does not check that (`Keyring::verify` refuses any other path), but debug
+/// builds assert it.
 pub fn signed_message(path: &str, bytes: &[u8]) -> Vec<u8> {
+    debug_assert!(is_served_path(path), "not a served path: {path:?}");
     let mut out = format!("celesta-registry-file-v1\n{path}\n").into_bytes();
     out.extend_from_slice(bytes);
     out

@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 
 use crate::error::FormatError;
 use crate::files::Config;
-use crate::signing::{key_message, signed_message};
+use crate::signing::{is_served_path, key_message, signed_message};
 
 /// The pinned Ed25519 root public key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +97,15 @@ impl Keyring {
     }
 
     /// Verifies `bytes`, served at `path`, against its `.sig` file contents.
+    ///
+    /// `path` must start with `/` and hold no `\n`; any other path is a
+    /// `Signature` error.
     pub fn verify(&self, path: &str, bytes: &[u8], sig_json: &[u8]) -> Result<(), FormatError> {
+        if !is_served_path(path) {
+            return Err(FormatError::Signature(format!(
+                "{path:?}: not a served path"
+            )));
+        }
         let bad = |why: &str| FormatError::Signature(format!("{path}: {why}"));
         let sig: SigFile = serde_json::from_slice(sig_json).map_err(|_| bad("malformed .sig"))?;
         let (_, key) = self

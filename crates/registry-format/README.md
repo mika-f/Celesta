@@ -117,8 +117,9 @@ Both messages are byte strings. `\n` is one byte, 0x0A.
 "celesta-registry-file-v1\n" || path || "\n" || file bytes
 ```
 
-`path` is the served path, such as `/index/vrm.json`. The file bytes are exactly the bytes
-served, with no parsing or re-encoding. The online key signs this message with Ed25519.
+`path` is the served path, such as `/index/vrm.json`. It starts with `/` and holds no `\n`;
+`Keyring::verify` refuses any other path with `Signature`, and the signer never signs one.
+The file bytes are exactly the bytes served, with no parsing or re-encoding. The online key signs this message with Ed25519.
 Verification uses `verify_strict`.
 
 ### Key certification message
