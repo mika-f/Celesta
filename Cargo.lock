@@ -1327,6 +1327,7 @@ version = "0.9.0"
 dependencies = [
  "celesta-plugin-host",
  "celesta-registry-format",
+ "semver",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

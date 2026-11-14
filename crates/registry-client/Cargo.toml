@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 celesta-plugin-host.workspace = true
 celesta-registry-format.workspace = true
+semver = { version = "1.0.28", features = ["serde"] }
 serde_json.workspace = true
 tempfile = "3.23.0"
 thiserror.workspace = true
