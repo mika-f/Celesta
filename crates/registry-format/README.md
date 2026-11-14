@@ -53,13 +53,16 @@ The crate depends on no other Celesta crate. It has `publish = false` for now.
 | Field | Meaning |
 | --- | --- |
 | `format` | `1` |
+| `generated` | When the registry generated the file (timestamp). |
 | `api` | Base URL of the registry API (a URI). |
 | `keys` | At least one online key (below). |
 
 An online key has `keyid` (a non-empty string), `public` (32 bytes, base64), `expires`
 (timestamp), and `signature` (64 bytes, base64): the root key's certification of the key.
 `OnlineKey` keeps the decoded values (`public`, `expires`) and the exact strings the file
-holds (`public_b64`, `expires_text`).
+holds (`public_b64`, `expires_text`). The keyring decodes and parses the exact strings
+itself and ignores the decoded values, so a `Config` changed in code cannot change which
+keys are trusted.
 
 ### `index/<id>.json`
 
@@ -68,6 +71,7 @@ One file per plugin.
 | Field | Meaning |
 | --- | --- |
 | `format`, `id`, `publisher` | `id` must be a valid id and equal the id the client asked for. |
+| `generated` | When the registry generated the file (timestamp). |
 | `kind` | `roles` (strings), `program` (bool), `module` (bool). |
 | `description` | Text. |
 | `homepage`, `repository` | Optional strings. |
@@ -265,6 +269,14 @@ Freshness is part of the contract, so a client can tell a frozen list from a qui
   on every content change and at least every 24 hours even when nothing changed.
 - A client warns when the newest list it has verified has a `generated` older than 7 days.
   The client (plan 3) enforces this; this crate only states it.
+
+### Rollback stamps
+
+`config.json`, `index/<id>.json`, `search.json`, and `advisories.json` carry a `generated` timestamp. A
+client refuses a served file whose `generated` is older than the newest one it has verified
+at that path, and one dated more than 10 minutes ahead of its clock; `check_fresh(generated,
+cached, now)` applies both rules (`AdvisoryList::check_newer` delegates to it). The registry
+sets `generated` on every regeneration of these files.
 
 ## Sync contract
 

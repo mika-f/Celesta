@@ -249,6 +249,11 @@ impl From<OnlineKey> for RawOnlineKey {
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub api: String,
+    /// When the registry generated this file. A client refuses a served copy
+    /// older than the newest one it verified at the same path (see
+    /// [`check_fresh`](crate::check_fresh)).
+    #[serde(with = "timestamp")]
+    pub generated: OffsetDateTime,
     pub keys: Vec<OnlineKey>,
 }
 
@@ -306,6 +311,9 @@ pub struct VersionEntry {
 #[serde(rename_all = "camelCase")]
 pub struct Index {
     pub id: String,
+    /// When the registry generated this file; see [`Config::generated`].
+    #[serde(with = "timestamp")]
+    pub generated: OffsetDateTime,
     pub publisher: String,
     pub kind: Kind,
     pub description: String,

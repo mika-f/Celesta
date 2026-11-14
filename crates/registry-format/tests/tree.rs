@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use celesta_registry_format::{FormatError, Hash, tree_hash};
+use celesta_registry_format::{FormatError, Hash, is_os_junk_name, tree_hash};
 
 fn basic() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/trees/basic")
@@ -191,4 +191,14 @@ fn names_near_junk_names_are_hashed() {
     fs::create_dir(t.path().join(".DS_Store")).unwrap();
     fs::write(t.path().join(".DS_Store/x"), "1").unwrap();
     assert_ne!(tree_hash(t.path()).unwrap(), want);
+}
+
+#[test]
+fn junk_names_are_recognised() {
+    for name in [".DS_Store", "THUMBS.DB", "Desktop.ini"] {
+        assert!(is_os_junk_name(name), "{name}");
+    }
+    for name in ["desktop.ini.txt", "DS_Store", ""] {
+        assert!(!is_os_junk_name(name), "{name}");
+    }
 }
