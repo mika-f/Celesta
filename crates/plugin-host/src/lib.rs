@@ -41,8 +41,8 @@ pub use media::{
     RESERVED_PLUGIN_ID, SkippedMedia, codec_family,
 };
 pub use project::{
-    PROJECT_CONFIG, ProjectConfigError, has_project_config, mark_project_root,
-    project_plugin_paths, project_root,
+    PROJECT_CONFIG, ProjectConfigError, ProjectDependencies, RELEASE_TARGETS, has_project_config,
+    mark_project_root, project_dependencies, project_plugin_paths, project_root,
 };
 pub use settings::{
     Allowance, AllowedPlugin, SETTINGS_FILE, SettingsError, UserSettings, create_private_dir_all,
