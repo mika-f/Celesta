@@ -249,6 +249,42 @@ fn install_locked_fails_on_an_orphan_entry() {
 }
 
 #[test]
+fn install_locked_refuses_a_blocked_held_version() {
+    let home = Home::new();
+    let registry = registry();
+    registry.publish("acme.charts", "1.2.3", &["any"]);
+    let project = home.project("{}\n");
+    assert_exit(&run(&home, &registry, &project, &["add", "acme.charts"]), 0);
+    registry.advisories(json!([{
+        "id": "CELESTA-2026-0009",
+        "plugin": "acme.charts",
+        "versions": "<1.2.4",
+        "title": "Bad",
+        "description": "Does bad things.",
+        "fixed": "1.2.4",
+        "published": "2026-11-01T00:00:00Z",
+    }]));
+
+    // The store holds the locked version, which the advisory now blocks.
+    for args in [&["install", "--locked"][..], &["install"]] {
+        let output = run(&home, &registry, &project, args);
+        assert_exit(&output, 1);
+        assert!(
+            stderr(&output).contains(
+                "celesta: error: acme.charts 1.2.3 is blocked by advisory CELESTA-2026-0009; run `celesta plugin update acme.charts`"
+            ),
+            "{}",
+            stderr(&output)
+        );
+        assert!(
+            !stdout(&output).contains("is satisfied"),
+            "{}",
+            stdout(&output)
+        );
+    }
+}
+
+#[test]
 fn install_offline_fails_for_a_missing_version() {
     let home = Home::new();
     let registry = registry();

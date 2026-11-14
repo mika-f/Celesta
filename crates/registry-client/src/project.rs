@@ -85,7 +85,7 @@ pub enum ProjectError {
     Missing { id: String, version: Version },
     #[error("{id} {version} is no longer distributed")]
     Withdrawn { id: String, version: Version },
-    #[error("{id} {version} is blocked by advisory {advisory}")]
+    #[error("{id} {version} is blocked by advisory {advisory}; run `celesta plugin update {id}`")]
     Blocked {
         id: String,
         version: Version,
@@ -167,13 +167,14 @@ pub fn lock_project(
 /// Installs what `celesta.lock` names, never changing it.
 ///
 /// Fails when there is no lock, when it names versions the running
-/// Celesta cannot load, and when it does not cover `celesta.config.json`.
-/// Then each locked version's build for the host (else its `any` build) is
+/// Celesta cannot load, when it does not cover `celesta.config.json`, and
+/// when the cached advisories block a locked version, held or not. Then
+/// each locked version's build for the host (else its `any` build) is
 /// installed unless the store or a bundled copy already holds it; one with
-/// no such build is skipped. A version the registry no longer lists,
-/// withdrew, or blocks fails, as does one whose hashes the registry
-/// contradicts. `offline` fails on the first version not already held
-/// rather than fetch anything.
+/// no such build is skipped. A version the registry no longer lists or
+/// withdrew fails, as does one whose hashes the registry contradicts.
+/// `offline` fails on the first version not already held rather than
+/// fetch anything.
 pub fn install_locked(
     env: &Environment,
     root: &Path,
@@ -192,6 +193,16 @@ pub fn install_locked(
     };
     for (id, locked) in &lock.plugins {
         let version = &locked.version;
+        if let Some(advisory) = advisories
+            .as_ref()
+            .and_then(|list| list.blocking(id, version))
+        {
+            return Err(ProjectError::Blocked {
+                id: id.clone(),
+                version: version.clone(),
+                advisory: advisory.id.clone(),
+            });
+        }
         let Some((target, artifact)) = locked_artifact(&lock, id, env.host) else {
             outcome.skipped.push((
                 id.clone(),
