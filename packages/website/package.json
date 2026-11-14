@@ -23,7 +23,7 @@
   "dependencies": {
     "@celesta.studio/web": "workspace:*",
     "@monaco-editor/react": "^4.7.0",
-    "lucide-react": "1.68.0",
+    "lucide-react": "1.72.0",
     "monaco-editor": "^0.57.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
