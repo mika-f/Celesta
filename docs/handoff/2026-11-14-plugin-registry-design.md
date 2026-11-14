@@ -1,9 +1,11 @@
 # Plugin registry (registry.celesta.studio): design
 
 Status: design, agreed with the maintainer on 2026-11-14. Plan 1 (the file
-format) and plan 3 (the client core, with its decisions decided in plan 3) are
-built: see [`2026-11-14-registry-client.md`](2026-11-14-registry-client.md). The
-rest is not built yet. Items marked **(proposal)** are the designer's calls, not the
+format), plan 3 (the client core, with its decisions decided in plan 3; see
+[`2026-11-14-registry-client.md`](2026-11-14-registry-client.md)), and plan 4
+(the `celesta` command, and the exporter and MCP server reading a project's
+lock; see [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md)) are
+built. The rest, the desktop app (plan 5), is not built yet. Items marked **(proposal)** are the designer's calls, not the
 maintainer's, and may be corrected.
 
 ## Intent

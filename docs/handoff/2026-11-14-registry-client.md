@@ -186,21 +186,29 @@ the registry service's own tests (a separate repository).
 ## Known gaps
 
 - `locked.registry` is ignored; one registry is assumed.
-- The "same build" check exists three times (`plugin-host` `StoreFolder::holds`,
+- ~~The "same build" check exists three times (`plugin-host` `StoreFolder::holds`,
   `registry-client` `Store::contains` and `Bundled::holds`) and should become one
-  `plugin-host` helper in plan 4.
-- `CLI_ADVISORY_TIMEOUT` applies per phase of each request, so plan 4 must bound the
-  whole refresh.
+  `plugin-host` helper in plan 4.~~ Fixed in plan 4 (`is_build`); see
+  [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md).
+- ~~`CLI_ADVISORY_TIMEOUT` applies per phase of each request, so plan 4 must bound the
+  whole refresh.~~ Fixed in plan 4 (`refresh_advisories_within`); see
+  [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md).
 - `tree_hash` reads each file whole, and every discovery re-hashes every store
   plugin; consider streaming or caching.
 - `config.json` is re-fetched on each index, search, and advisories call.
-- A withdrawn or blocked locked version is re-resolved without a warning, and a
-  locked version absent from the index is kept.
+- ~~A withdrawn or blocked locked version is re-resolved without a warning~~ (fixed
+  in plan 4: `ResolveWarning::LockedWithdrawn` and `LockedBlocked`; see
+  [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md)). A locked version absent from the index is still kept by the
+  resolver (`celesta plugin audit` reports it as no longer distributed).
 - Windows-hazard names (a trailing `.` or space, device names) are refused only
   through the tree hash.
-- `.tmp-*` folders are never cleaned (`gc`, plan 4).
-- A kept lock entry is not checked against newly added project targets.
-- Callers (exporter, MCP, editor, `celesta`) do not yet pass a project lock
+- ~~`.tmp-*` folders are never cleaned (`gc`, plan 4).~~ Fixed in plan 4: `celesta
+  plugin gc` removes those more than an hour old; see [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md).
+- ~~A kept lock entry is not checked against newly added project targets.~~ Fixed in
+  plan 4; see [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md).
+- ~~Callers (exporter, MCP, editor, `celesta`) do not yet pass a project lock
   (`find_in` with `RegistryContext::current(Some(root), ...)`) or refresh advisories;
-  that is plans 4 and 5.
+  that is plans 4 and 5.~~ The exporter, the MCP server, and `celesta` do since plan
+  4 (`InstalledPlugins::find_for_project`; `celesta` refreshes advisories); see
+  [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md). The editor does not yet (plan 5).
 - The root public key is not compiled in (`official_root_key()` is `None`).

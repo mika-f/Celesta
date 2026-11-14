@@ -1,0 +1,220 @@
+# The `celesta` command (2026-11-14)
+
+Plan 4 of the plugin registry. The design is
+`docs/handoff/2026-11-14-plugin-registry-design.md` ("Project files", "Store and
+discovery", "Resolution", "Command line"); plan 3, the client core this builds on,
+is `docs/handoff/2026-11-14-registry-client.md`. This plan adds a `celesta` binary
+whose `celesta plugin …` subcommands declare, lock, install, update, audit, and
+clean registry plugins, and makes `celesta-exporter` and the MCP server honour a
+project's `celesta.lock` without ever downloading or changing it. The user guide
+is the "Registry plugins" section of `packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md`;
+the Agent Skill covers it in `skills/celesta/references/plugins.md`.
+
+## Specification
+
+Decisions the maintainer made for this plan:
+
+1. **Packaged name `Celesta-cli`.** The crate `celesta-cli` (`publish = false`,
+   since it depends on `celesta-registry-client`) builds the binary `celesta`. The
+   macOS app and the Windows package ship it as `Celesta-cli` (`Celesta-cli.exe`)
+   beside `Celesta-export` and `Celesta-mcp`, because `celesta` and the editor's
+   `Celesta` are the same name on a case-insensitive file system. Source builds
+   and the Linux image (`/opt/celesta/celesta`) keep `celesta`. Every message the
+   tools print says `celesta plugin …`.
+2. **Registry override through the environment.** `official_root_key()` stays
+   `None`: no root key is compiled in yet. With neither variable set, the commands
+   that need the registry fail with exactly `this build of Celesta has no registry
+   key yet, so it cannot reach the plugin registry; set CELESTA_REGISTRY and
+   CELESTA_REGISTRY_ROOT_KEY to use another registry`. `CELESTA_REGISTRY` is a base
+   URL, `https://…`, `http://…`, or `file://<absolute folder>` (`file:///C:/x` on
+   Windows); `CELESTA_REGISTRY_ROOT_KEY` is the root public key in standard base64
+   (`RootKey::from_base64`). They are set together: one alone is a usage error
+   (exit 2). `file://localhost/…` and percent-escapes are not supported. The user
+   guide does not mention these variables; this note is their documentation.
+3. **Command-line tools read the lock regardless of trust.** `celesta`,
+   `celesta-exporter`, and `celesta-mcp` read the `celesta.lock` of the project
+   they act on whether or not `settings.json` trusts that project
+   (`RegistryContext::for_project`, `InstalledPlugins::find_for_project`). The
+   desktop app keeps plan 3's trust gate, and trust still gates a project's own
+   `plugins.paths` folders everywhere.
+
+Rulings made while building it:
+
+- **No key, no registry commands.** `run()` checks for a key before it dispatches
+  `search`, `info`, `add`, `update`, and `install --global`, and fails with the
+  no-key message. `install` without a key installs from the store alone when the
+  lock checks out, and turns a version missing from the store into the no-key
+  message. `remove`, `list`, `audit`, and `gc` run without one.
+- **A project with no registry plugins.** `install` in a project with no
+  dependencies and no lock prints `this project has no registry plugins` and
+  exits 0, with or without a key.
+- **The store's project record.** `.projects.json` in the store root holds
+  `{"projects": ["<absolute root>", …]}`, sorted and deduplicated, each root made
+  absolute with links resolved; it is written through a temporary file renamed over
+  it, 0600 on Unix, and keys this build does not know are kept. `lock_project`
+  records the project right after it saves the lock, before any install, so a
+  partial install never leaves versions `gc` would collect; `install_locked`
+  records it after it succeeds. A record that fails is not a failure of the
+  operation: `celesta` warns `could not record this project for celesta plugin gc:
+  …`.
+- **What `gc` keeps.** Every `<id>/<version>` that `registryPlugins` in
+  `settings.json` names, that the current project's lock names (when the folder
+  holds `celesta.config.json` or `celesta.lock`), or that the lock of a recorded
+  project names. A recorded project whose `celesta.lock` is gone is forgotten and
+  its versions are collected. A recorded or current project whose lock exists but
+  does not load makes `gc` fail, naming that lock and the store's
+  `.projects.json`, because the unreadable lock may still name versions. `.tmp-*`
+  folders whose modification time is more than one hour old are removed; an id
+  folder left empty goes with its last version. `--dry-run` never removes.
+- **The advisory budget.** `search`, `info`, `add`, `install` (not `--offline`,
+  and `--global` too), `update`, `list`, and `audit` refresh the advisory list once
+  per run through `refresh_advisories_within`, which runs the refresh on its own
+  thread and waits at most `CLI_ADVISORY_TIMEOUT` (3 seconds) in total, then uses
+  the cached list. A refresh thread that outlives the budget is left to finish; the
+  cache's check-then-write and stamp update happen under one process-wide lock
+  (`cache::lock`), so it cannot lose or lower a stamp. The command warns when the
+  refresh failed or timed out, when no list was ever fetched, and when the newest
+  verified list is more than 7 days old (`advisories_stale`).
+- **Override caches.** An override registry caches in
+  `registry_cache_dir()/override-<first 16 hex digits of the SHA-256 of the base
+  URL without a trailing />`, so its rollback stamps and advisories are kept apart
+  from the official registry's. The exporter and the app read only the official
+  cache, so an override's advisories never reach them (acceptable for a development
+  path).
+- **`audit` and dropped plugins.** `audit` treats a plugin the registry no longer
+  lists, and a locked version missing from its index, as no longer distributed and
+  fails, as `install_locked` does.
+- **The exporter's prefix.** `celesta-exporter` keeps its own error prefix
+  (`Celesta export: …`); `celesta: error: …` is the `celesta` command's.
+- **Tests and real folders.** Tests never write the real user folders: child
+  processes get `HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, and `APPDATA` under a
+  temporary folder. Read-only discovery of the real user and bundled folders in
+  `celesta-plugin-host` tests is accepted, as before; their assertions only look at
+  test ids.
+- **A file test registry dates its files from the real clock.**
+  `TestRegistry::file()` (a test registry served from its own folder through a
+  `file://` base) stamps `generated` from now minus one day, in whole seconds,
+  because the binary checks freshness against the real clock.
+
+Output and exit status. Results go to stdout; warnings are `celesta: warning:
+<text>` and errors `celesta: error: <text>` on stderr. Exit 0 on success, 1 on
+failure, 2 on a usage error. Deprecated and yanked plugins are warned about on
+stderr, with the replacement when the registry names one. `celesta.config.json`
+is rewritten keeping every other key, their order, and the text of every value the
+command did not change; duplicate keys and invalid JSON are refused without
+writing. A failed `add` puts `celesta.config.json` and `celesta.lock` back to their
+exact previous bytes, or removes a config it created.
+
+Lock checks for the exporter and MCP. `check_lock` fails with
+`LockProblem::NoLock` (dependencies but no lock), `OutOfDate` (a dependency
+missing from the lock or locked outside its requirement, and every lock entry that
+is no dependency), or `OtherCelesta` (a locked range that excludes the running
+Celesta, naming both versions and `celesta plugin update`).
+`find_for_project` then turns each `DiscoveryError::LockUnsatisfied` into
+`LockProblem::Unsatisfied`, except when an explicit plugin (`--plugin-dir`,
+`CELESTA_PLUGIN_PATH`) supplies that id: then the explicit copy runs and the
+problem stays a warning, so plugin developers can test a build. The exporter
+reports any of these as `plugins_unsatisfied` under `--json`; exports, `--inspect`,
+and `--list-components`/`--describe` with a source check it, and so do the MCP
+server's export jobs and its `inspect` tool.
+
+## Implementation
+
+| Path | Responsibility |
+| --- | --- |
+| `crates/plugin-host/src/lock_check.rs` | `LockProblem` and `check_lock`. |
+| `crates/plugin-host/src/registry.rs`, `manifest.rs` | `is_build` (the one "same build" check), `RegistryContext::for_project`, `InstalledPlugins::find_for_project` and `find_for_project_reporting`. |
+| `crates/registry-client/src/testing.rs` | The signed test registry behind the `testing` feature (`with_base`, `file`, `served_dir`, `root_key_base64`). |
+| `crates/registry-client/src/resolve.rs`, `project.rs` | Re-resolving a kept entry for a new target, `LockedWithdrawn`/`LockedBlocked` warnings, `ProjectError::LockCheck`, orphan lock entries refused by `install_locked`, `record_error` on outcomes. |
+| `crates/registry-client/src/refresh.rs`, `cache.rs` | `refresh_advisories_within`, `AdvisoryRefresh`, and the cache lock. |
+| `crates/registry-client/src/store.rs`, `gc.rs` | `Store::record_project`, `PROJECTS_FILE`, `plan_gc`, `run_gc`, `GcPlan`, `GcInput`. |
+| `crates/cli/src/config.rs` | `ProjectConfig`: editing `plugins.dependencies` without touching other keys; `restore`. |
+| `crates/cli/src/args.rs`, `main.rs`, `lib.rs` | The arguments, `parse_spec`, `run`, and exit statuses. |
+| `crates/cli/src/session.rs` | `Session`: registry selection, the no-key transport, store, caches, settings path. |
+| `crates/cli/src/advisories.rs`, `report.rs` | The bounded refresh and its warnings; stderr output. |
+| `crates/cli/src/commands/{project,registry,store}.rs` | `add`, `remove`, `install`, `update`; `search`, `info`, `audit`; `list`, `install --global`, `gc`. |
+| `crates/cli/tests/{session,project,registry}.rs` | End-to-end tests against a `file://` test registry. |
+| `crates/exporter/src/{exporter,job,main,error,report}.rs` | `project_plugins`, `ExportError::Plugins`, the `plugins_unsatisfied` code; each export gets its own media registry. |
+| `crates/mcp/src/{server,export,inspect}.rs` | The MCP tools discover for the job's project. |
+| `scripts/package-macos.py`, `scripts/package-windows.ps1`, `packaging/linux/Dockerfile`, `scripts/test-package.mjs`, `packaging/*/README*` | Shipping `Celesta-cli` (and `celesta` in the image), and a `plugin --help` smoke step in the package check. |
+| `packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md`, `01-(getting-started)/02-create-project.md` | The user guide's "Registry plugins" section; the executable names. |
+| `skills/celesta/references/{plugins,errors,export}.md`, `SKILL.md` | The Agent Skill: registry plugins, `plugins_unsatisfied`, the index row. `crates/mcp/src/docs.rs` serves the skill's `plugins.md` itself, so it needed no change. |
+| `HANDOFF.md`, the design note, the plan 3 note | The workspace map row, the executable names, the status line, and the plan 3 gaps this plan fixed. |
+
+## Checks
+
+Run in this worktree, after `pnpm install` and `pnpm run build:runtime`, with
+`PKG_CONFIG_PATH` pointing at Homebrew's `ffmpeg@8`.
+
+| Command | Result |
+| --- | --- |
+| `cargo build -p celesta-codec-test --locked` | Passed. |
+| `cargo test --workspace --locked --no-fail-fast` | Passed: 3224 tests passed, 0 failed, 1 ignored (summed over the 91 test binaries and doc-test runs). The timing check `a_process_left_holding_stderr_does_not_delay_the_diagnostic` passed in this run, so no rerun was needed. |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed, no warnings (Cargo's future-incompatibility note about the `block` 0.1.6 dependency only). |
+| `cargo fmt --all -- --check` | Passed. |
+| `git diff --check` | Passed. |
+| `pnpm --dir packages/website run build` | Passed: 56 pages in 2 locales. The built `en` and `ja` plugins pages have every heading id the new section links to. |
+| `pnpm --dir packages/website run check` | No issues, 82 warnings. The anchor warnings name every Japanese anchor, the new ones and the ones already there alike, although the built pages have those ids; the English anchors pass. The rest are missing OGP images. |
+| `celesta plugin --help` and each subcommand's `--help` | Every command and flag the user guide and the Agent Skill name is listed. |
+| `celesta plugin …` without a registry key, in a temporary home | `search` and `add` fail with the no-key message (exit 1); `list`, `audit`, and `gc --dry-run` run (exit 0); `install` without dependencies prints `this project has no registry plugins`; with a dependency and no lock, `install` fails with the no-key message and `install --locked`/`--offline` with the `NoLock` message. |
+
+Not run: the first-party plugins' separate workspace (`plugins/`), the `pnpm`
+tests, the package scripts (they need a full package build), and the registry
+service's own tests (a separate repository).
+
+## Later plans
+
+- Plan 5 (the desktop app): the editor depends on `celesta-registry-client` (which
+  then needs the crates.io setup of plan 3's decision 1), refreshes advisories with
+  `refresh_advisories_within` and a budget of its own, checks a project with
+  `check_lock`, and records projects through `lock_project`/`install_locked`
+  (`Store::record_project`). Until then the app does not read a project's
+  `celesta.lock`: its preview and its exports, which go through `Exporter::new`
+  without `project_plugins`, do not check the lock, and they use only global
+  registry plugins.
+- The user asked to fold export into the `celesta` command, in a later, separate
+  session.
+- The maintainer supplies the root public key, so `official_root_key()` returns it
+  and the no-key message goes away.
+
+## Known gaps
+
+- `locked.registry` is ignored; one registry is assumed.
+- `tree_hash` reads each file whole, and every discovery re-hashes every store
+  plugin; consider streaming or caching.
+- `config.json` is re-fetched on each index, search, and advisories call, and `add`
+  fetches the plugin's index twice.
+- `celesta` has no `--json` output.
+- A locked version absent from its index is kept by the resolver (only `audit`
+  reports it).
+- `.projects.json` has no lock across processes: two `celesta` runs recording at
+  once can lose one entry (that project is recorded again on its next lock or
+  install). A recorded project whose lock became unreadable blocks `gc` until the
+  user fixes the lock or edits `.projects.json`; there is no command to forget one
+  entry.
+- `gc` checks a `.tmp-*` folder's modification time, which may not advance during
+  a download longer than an hour; `gc` then removes an unfinished download that is
+  still running. Removal also follows `plan_gc` without re-checking, so a lock
+  written between the two is not seen.
+- `gc` run from a subfolder of a project that has a `celesta.lock` but no
+  `celesta.config.json` does not treat it as the current project, because the root
+  is found by `celesta.config.json` alone.
+- `celesta.config.json` rewrites keep a raw value's text as it was, including CRLF
+  line endings and its own indentation inside multi-line values; keys at the edited
+  levels are re-escaped.
+- If spawning the refresh thread fails, `refresh_advisories_within` panics. Its
+  test's "under one second" bound may be tight on a loaded CI machine.
+- In the MCP server, the `describe` cache is reset when a job switches projects.
+  `list_components`/`describe` without a source publish a project-blind global
+  registry, and `Exporter::new` given `project_plugins` still prefers a global
+  media registry chosen before it.
+- Not tested: `add` failing after the lock was saved (a download or hash failure),
+  a successful `install --locked` compared byte for byte, the exporter's
+  `--plugin-dir` override of a locked id, `--inspect` and `--list-components
+  <source>` failing on the lock, a stray lock without `celesta.config.json`, and
+  the `Config`/`Unreadable` lock problems.
+- `LockProblem::NoLock` says to run `celesta plugin install` also when it comes
+  from `install --locked`; that is the right command, though not the one the user
+  ran.
+- Windows-hazard names (a trailing `.` or space, device names) are refused only
+  through the tree hash.
