@@ -57,22 +57,32 @@ pre-release matches only when the requirement names one) and `plugins.targets`
 Lock format. `celesta.lock` sits beside `celesta.config.json`, is committed, and is
 written whole and replaced atomically. It carries `format: 1`; a lock with another
 `format` fails naming it, and keys this build does not know are kept on rewrite.
+It is written with `format` first, then the other keys in alphabetical order,
+two-space indentation, and one trailing newline (`the_bytes_are_stable` in
+`crates/plugin-host/src/lock.rs` pins the bytes):
 
 ```json
 {
   "format": 1,
   "celesta": "0.9.0",
-  "targets": ["linux-x86_64", "macos-aarch64", "windows-x86_64"],
   "plugins": {
     "acme.charts": {
-      "version": "1.2.3",
-      "celesta": ">=0.9.0",
+      "celesta": ">=0.9.0, <0.10.0",
       "registry": "https://registry.celesta.studio",
       "targets": {
-        "any": { "sha256": "sha256:<64 hex>", "treeHash": "sha256:<64 hex>" }
-      }
+        "any": {
+          "sha256": "sha256:<64 hex digits>",
+          "treeHash": "sha256:<64 hex digits>"
+        }
+      },
+      "version": "1.2.3"
     }
-  }
+  },
+  "targets": [
+    "linux-x86_64",
+    "macos-aarch64",
+    "windows-x86_64"
+  ]
 }
 ```
 
