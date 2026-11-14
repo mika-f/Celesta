@@ -14,9 +14,11 @@ ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 semver = { version = "1.0.28", features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.11"
 thiserror.workspace = true
 time = { version = "0.3.55", features = ["serde-well-known", "parsing", "formatting"] }
 
 [dev-dependencies]
 jsonschema = { version = "0.61.2", default-features = false }
+tempfile = "3"
 serde_json.workspace = true
