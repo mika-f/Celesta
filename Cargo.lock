@@ -1325,8 +1325,10 @@ dependencies = [
 name = "celesta-registry-client"
 version = "0.9.0"
 dependencies = [
+ "base64 0.22.1",
  "celesta-plugin-host",
  "celesta-registry-format",
+ "ed25519-dalek",
  "libc",
  "semver",
  "serde",

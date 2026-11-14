@@ -20,5 +20,9 @@ thiserror.workspace = true
 time = { version = "0.3.55", features = ["formatting", "parsing"] }
 zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
 
+[dev-dependencies]
+base64 = "0.22.1"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"

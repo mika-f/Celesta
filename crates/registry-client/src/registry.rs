@@ -43,6 +43,12 @@ impl Registry {
         &self.base
     }
 
+    /// The transport the registry's files, and the archives they list, are
+    /// fetched through.
+    pub(crate) fn transport(&self) -> &dyn Transport {
+        self.transport.as_ref()
+    }
+
     /// Fetches `config.json` and builds the keyring from it. The keyring is
     /// valid at `now` only, so each fetch builds a fresh one.
     pub fn keyring(&self, now: OffsetDateTime) -> Result<Keyring, ClientError> {
