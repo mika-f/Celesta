@@ -71,7 +71,8 @@
     },
     "version": {
       "type": "string",
-      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+      "pattern": "^(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+      "description": "A semantic version: major.minor.patch, an optional pre-release, and optional build metadata, in semver's grammar (no leading zeros in numeric identifiers, no empty identifiers). Numbers have at most 19 digits, so they fit in 64 bits."
     },
     "kind": {
       "type": "object",

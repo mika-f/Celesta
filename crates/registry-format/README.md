@@ -27,7 +27,14 @@ The crate depends on no other Celesta crate. It has `publish = false` for now.
   `toISOString()` adds. The schema pattern checks each field's range but not the length of
   the month, so it accepts `2026-02-30T00:00:00Z`, which the parser refuses.
 - A hash is written `sha256:` followed by 64 lowercase hex digits.
-- Ed25519 public keys and signatures are standard base64 with padding.
+- Ed25519 public keys and signatures are canonical standard base64 with padding: a 32-byte
+  key is 44 characters ending in one `=`, a 64-byte signature 88 characters ending in `==`.
+  The decoder refuses a last character whose unused bits are not zero, and the schema
+  patterns check the same.
+- A version is a semantic version in semver's grammar: `major.minor.patch`, an optional
+  pre-release, and optional build metadata. Numeric identifiers have no leading zeros and no
+  identifier is empty, so `1.0.0-01` and `1.0.0-a..b` are refused. The schema patterns allow
+  at most 19 digits per number, which always fits the parser's 64 bits.
 - A plugin id is a dotless first-party name, or `<publisher>.<name>`. Each part uses
   lowercase ASCII letters, digits, `-`, and `_`, and starts with a letter or digit. There is
   at most one `.`. The publisher of a dotless id is `celesta`.
@@ -62,11 +69,19 @@ One file per plugin.
 | `deprecated` | Optional: `message`, and an optional `replacement` id. |
 | `versions` | The version entries (below). |
 
-A version entry has `version` (semver), `celesta` (a semver requirement on the Celesta
-version), `protocol` (unsigned integer), `published` (timestamp), `yanked`, `withdrawn`
+A version entry has `version` (a version), `celesta` (a requirement on the Celesta version,
+below), `protocol` (unsigned integer), `published` (timestamp), `yanked`, `withdrawn`
 (bools), optional `deprecated` and `source` (`repository`, `commit`, `workflow`), and
 `targets`, an object from target to an artifact: `url`, `size` (bytes), `sha256` (hash of
 the downloaded archive), and `treeHash` (the tree hash of the unpacked directory, below).
+
+`celesta` is a Cargo version requirement, as Rust's `semver::VersionReq` parses it:
+comparators joined by `,`, each with an optional `=`, `<`, `<=`, `>`, `>=`, `~`, or `^`
+(none means `^`), partial versions (`0.9`) and `*`, `x`, `X` wildcards allowed, or a lone
+wildcard; at most 32 comparators, with spaces allowed around operators and commas. It is not
+npm syntax: `>=0.9.0 <0.10.0` (comparators separated by a space), `||`, and hyphen ranges are
+refused. The schema pattern accepts a subset of what the parser accepts: it also refuses
+build metadata in a comparator, which the parser would drop.
 
 ### `search.json`
 

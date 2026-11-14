@@ -66,7 +66,8 @@
           },
           "celesta": {
             "type": "string",
-            "minLength": 1
+            "pattern": "^([ ]*[*xX][ ]*|[ ]*((=|<=|>=|<|>|~|\\^)[ ]*)?(0|[1-9][0-9]{0,18})(\\.(0|[1-9][0-9]{0,18})(\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?|\\.[*xX])?|\\.[*xX](\\.[*xX])?)?[ ]*(,[ ]*((=|<=|>=|<|>|~|\\^)[ ]*)?(0|[1-9][0-9]{0,18})(\\.(0|[1-9][0-9]{0,18})(\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?|\\.[*xX])?|\\.[*xX](\\.[*xX])?)?[ ]*){0,31})$",
+            "description": "A Cargo version requirement (Rust semver's VersionReq): comma-separated comparators with an optional =, <, <=, >, >=, ~ or ^, partial versions and *, x, X wildcards allowed, or a lone wildcard; at most 32. Not npm syntax: comparators are never separated by spaces alone, and || and hyphen ranges are refused. Build metadata is refused."
           },
           "protocol": {
             "type": "integer",
@@ -164,7 +165,8 @@
     },
     "version": {
       "type": "string",
-      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+      "pattern": "^(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+      "description": "A semantic version: major.minor.patch, an optional pre-release, and optional build metadata, in semver's grammar (no leading zeros in numeric identifiers, no empty identifiers). Numbers have at most 19 digits, so they fit in 64 bits."
     },
     "kind": {
       "type": "object",

@@ -38,8 +38,8 @@
           },
           "versions": {
             "type": "string",
-            "pattern": "^[ ]*(=|<=|>=|<|>)[ ]*[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?([ ]*,[ ]*(=|<=|>=|<|>)[ ]*[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?)*[ ]*$",
-            "description": "Plain comparators (=, <, <=, >, >=) with a full major.minor.patch, joined by ','. No ^, ~, * or bare versions."
+            "pattern": "^[ ]*(=|<=|>=|<|>)[ ]*(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?[ ]*(,[ ]*(=|<=|>=|<|>)[ ]*(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?[ ]*){0,31}$",
+            "description": "Plain comparators (=, <, <=, >, >=), each with a full major.minor.patch and an optional pre-release in semver's grammar, joined by ','; at most 32. No ^, ~, *, bare or partial versions, or build metadata."
           },
           "title": {
             "type": "string"
@@ -77,7 +77,8 @@
     },
     "version": {
       "type": "string",
-      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+      "pattern": "^(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+      "description": "A semantic version: major.minor.patch, an optional pre-release, and optional build metadata, in semver's grammar (no leading zeros in numeric identifiers, no empty identifiers). Numbers have at most 19 digits, so they fit in 64 bits."
     }
   }
 }
