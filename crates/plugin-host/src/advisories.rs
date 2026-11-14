@@ -136,6 +136,7 @@ mod tests {
             &search(root.path(), PluginSource::User),
             |_| false,
             Some(&advisories),
+            &crate::registry::StoreSearch::default(),
         );
         assert_eq!(versions(&found), ["1.1.0"]);
         let [
@@ -163,8 +164,12 @@ mod tests {
         for source in [PluginSource::Bundled, PluginSource::Explicit] {
             let root = tempfile::tempdir().unwrap();
             write_plugin(&root.path().join("p"), "p", "1.0.0");
-            let (found, errors) =
-                discover_in_with(&search(root.path(), source), |_| false, Some(&advisories));
+            let (found, errors) = discover_in_with(
+                &search(root.path(), source),
+                |_| false,
+                Some(&advisories),
+                &crate::registry::StoreSearch::default(),
+            );
             assert!(found.is_empty(), "{source:?}");
             assert!(
                 matches!(errors[..], [DiscoveryError::Blocked { .. }]),
@@ -183,6 +188,7 @@ mod tests {
             &search(root.path(), PluginSource::User),
             |_| false,
             Some(&advisories),
+            &crate::registry::StoreSearch::default(),
         );
         // `q` has no advisory, so it stays.
         assert_eq!(found.len(), 1);

@@ -1,7 +1,9 @@
 //! Where Celesta looks for plugins, in order: the folders it is told about
-//! (`--plugin-dir`, then `CELESTA_PLUGIN_PATH`), the open project's own
-//! folders (in the editor, once trusted), the user's plugin folder, the
-//! folders the user added, and the folder that comes with Celesta. Every
+//! (`--plugin-dir`, then `CELESTA_PLUGIN_PATH`), the versions a trusted
+//! project locks, the open project's own folders (in the editor, once
+//! trusted), the user's plugin folder, the versions the user installed from
+//! the registry, the folders the user added, and the folder that comes with
+//! Celesta. Every
 //! editor, exporter, and MCP server finds plugins through [`search_paths`],
 //! so they agree on what is installed.
 //!
@@ -18,11 +20,18 @@ use std::path::{Path, PathBuf};
 pub enum PluginSource {
     /// `--plugin-dir` or `CELESTA_PLUGIN_PATH`.
     Explicit,
+    /// The version a trusted project's `celesta.lock` names, from the
+    /// registry client's store ([`registry_store_dir`]), or a bundled copy
+    /// that matches the lock (see [`crate::RegistryContext`]).
+    Locked,
     /// A folder the open project's `celesta.config.json` lists
     /// ([`crate::project_plugin_paths`]).
     Project,
     /// The user's plugin folder ([`user_plugin_dir`]).
     User,
+    /// A version the user installed from the registry without a project
+    /// ([`crate::UserSettings::registry_plugins`]), from the store.
+    Registry,
     /// A folder the user added in the app's settings
     /// ([`crate::UserSettings::plugin_folders`]).
     Folder,
@@ -46,15 +55,22 @@ impl PluginSource {
     pub fn reports_missing(self) -> bool {
         match self {
             Self::Folder => true,
-            Self::Explicit | Self::Project | Self::User | Self::Bundled => false,
+            Self::Explicit
+            | Self::Locked
+            | Self::Project
+            | Self::User
+            | Self::Registry
+            | Self::Bundled => false,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Explicit => "plugin path",
+            Self::Locked => "locked by project",
             Self::Project => "project plugins",
             Self::User => "user plugins",
+            Self::Registry => "installed from the registry",
             Self::Folder => "added folder",
             Self::Bundled => "bundled plugins",
         }
@@ -73,7 +89,9 @@ pub struct SearchPath {
 /// absolute against the current directory, as given on a command line),
 /// `CELESTA_PLUGIN_PATH`, `project` (the open project's own folders, once
 /// the user trusts it), the user's plugin folder, `folders` the user added,
-/// and the bundled one.
+/// and the bundled one. The registry client's store folders take their
+/// places among these in discovery ([`crate::RegistryContext`]): a locked
+/// version after `explicit`, a global one after the user's plugin folder.
 pub fn search_paths(
     explicit: &[PathBuf],
     project: &[PathBuf],
@@ -411,6 +429,19 @@ mod tests {
         }));
         let sources: Vec<_> = paths.iter().map(|path| path.source).collect();
         assert!(sources.is_sorted(), "{sources:?}");
+        // The derived order is the search order, store sources included.
+        assert!(
+            [
+                PluginSource::Explicit,
+                PluginSource::Locked,
+                PluginSource::Project,
+                PluginSource::User,
+                PluginSource::Registry,
+                PluginSource::Folder,
+                PluginSource::Bundled,
+            ]
+            .is_sorted()
+        );
         // CELESTA_PLUGIN_PATH is the environment's, and a relative entry in
         // it is reported by discovery; the locations Celesta works out
         // itself are always absolute.

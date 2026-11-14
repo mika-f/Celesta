@@ -1,13 +1,14 @@
 //! Plugin directories: a `celesta-plugin.json` and what it names.
 
-use crate::advisories::{blocking_advisory, cached_advisories};
+use crate::advisories::blocking_advisory;
 use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
 use crate::media::{MediaManifest, RESERVED_PLUGIN_ID, deserialize_media, media_problems};
+use crate::registry::{RegistryContext, StoreSearch};
 use crate::settings::UserSettings;
 use celesta_plugin::protocol_for_roles;
 use celesta_registry_format::AdvisoryList;
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// The file that makes a directory a plugin.
@@ -344,6 +345,10 @@ pub struct PluginEntry {
     pub directory: PathBuf,
     /// Which search path it was found under.
     pub source: PluginSource,
+    /// The source of the first later plugin with its id that it kept from
+    /// running, if it took its id from one. A locked version ranks among
+    /// media plugins as what it replaced ([`PluginEntry::media_origin`]).
+    pub replaces: Option<PluginSource>,
 }
 
 impl PluginEntry {
@@ -445,6 +450,20 @@ pub enum DiscoveryError {
         /// The version that fixes it, if there is one.
         fixed: Option<String>,
     },
+    /// A version a trusted project's lock names that cannot run, with why:
+    /// the plugin with its id is found from the other sources instead.
+    #[error("the project locks {id} {version}, which was not used: {reason}")]
+    LockUnsatisfied {
+        id: String,
+        version: String,
+        reason: String,
+    },
+    /// A store folder whose files, manifest id, or version are not what was
+    /// installed: like a skipped plugin it takes no id.
+    #[error(
+        "{path} was skipped: its files changed since it was installed from the registry; install {id} again"
+    )]
+    TreeHashMismatch { path: PathBuf, id: String },
     /// A component the plugin's manifest declares that cannot be read: it
     /// is left out, and the plugin's other components are kept.
     #[error("{path}: a media component was skipped: {reason}")]
@@ -635,7 +654,7 @@ fn unsafe_plugin(directory: &Path, source: PluginSource) -> Option<String> {
     clippy::result_large_err,
     reason = "a discovery error is reported once and never moved in a hot path"
 )]
-fn read_manifest(
+pub(crate) fn read_manifest(
     directory: &Path,
     source: PluginSource,
 ) -> Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError> {
@@ -711,6 +730,7 @@ fn read_manifest(
             manifest,
             directory: directory.to_path_buf(),
             source,
+            replaces: None,
         },
         skipped,
     )))
@@ -744,7 +764,7 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
 /// later one with the same id is found in its place; so does a plugin with
 /// no role this Celesta knows, such as `codec`, which is listed.
 pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
-    discover_in_with(paths, |_| false, None)
+    discover_in_with(paths, |_| false, None, &StoreSearch::default())
 }
 
 /// [`discover_in`], where a plugin `turned_off` names is listed but, like a
@@ -757,15 +777,24 @@ pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryErro
 /// One exception to search order: a project's plugin with the id of a media
 /// plugin Celesta bundles is skipped and reported, so a project cannot
 /// replace the plugin that reads and writes media, although project folders
-/// are searched before the bundled one.
+/// are searched before the bundled one. A version a project locks may.
+///
+/// A path from the store ([`PluginSource::is_store`]) is one plugin folder,
+/// read and checked by `store`: one whose files are not what was installed
+/// takes no id, and a locked version the store lacks may be found in the
+/// bundled folder instead (see `StoreSearch::settle`). Each plugin that
+/// took its id from a later one says so ([`PluginEntry::replaces`]).
 pub(crate) fn discover_in_with(
     paths: &[SearchPath],
     turned_off: impl Fn(&PluginEntry) -> bool,
     advisories: Option<&AdvisoryList>,
+    store: &StoreSearch,
 ) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
     // Every plugin read and every error, in search order; which plugin
     // takes an id is settled once the bundled ones are known.
     let mut read: Vec<PluginRead> = Vec::new();
+    // The store folders that hold nothing.
+    let mut missing: Vec<PathBuf> = Vec::new();
     let add = |entry: Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError>,
                read: &mut Vec<PluginRead>| match entry {
         Ok(Some(entry)) => read.push(Ok(entry)),
@@ -778,6 +807,16 @@ pub(crate) fn discover_in_with(
                 Err(DiscoveryError::RelativePath { path: path.clone() }),
                 &mut read,
             );
+            continue;
+        }
+        if source.is_store() {
+            match store.read(&SearchPath {
+                path: path.clone(),
+                source: *source,
+            }) {
+                Some(entry) => read.push(entry),
+                None => missing.push(path.clone()),
+            }
             continue;
         }
         if !path.exists() {
@@ -841,8 +880,12 @@ pub(crate) fn discover_in_with(
         })
         .map(|(entry, _)| entry.manifest.id.clone())
         .collect();
+    // After the bundled media are known, so a bundled copy that a lock
+    // claims still keeps a project's plugin from replacing it.
+    store.settle(&missing, &mut read);
     let mut found: Vec<PluginEntry> = Vec::new();
-    let mut taken: HashSet<String> = HashSet::new();
+    // Each id taken, with where in `found` the plugin that took it is.
+    let mut taken: HashMap<String, usize> = HashMap::new();
     let mut errors = Vec::new();
     for read in read {
         match read {
@@ -858,7 +901,7 @@ pub(crate) fn discover_in_with(
                     ),
                 });
             }
-            Ok((entry, skipped)) if !taken.contains(&entry.manifest.id) => {
+            Ok((entry, skipped)) if !taken.contains_key(&entry.manifest.id) => {
                 if let Some(advisory) = advisories.and_then(|list| blocking_advisory(list, &entry))
                 {
                     errors.push(DiscoveryError::Blocked {
@@ -880,12 +923,17 @@ pub(crate) fn discover_in_with(
                     .iter()
                     .any(|role| role.name().is_some());
                 if runs && !turned_off(&entry) {
-                    taken.insert(entry.manifest.id.clone());
+                    taken.insert(entry.manifest.id.clone(), found.len());
                 }
                 found.push(entry);
                 errors.extend(skipped);
             }
-            Ok(_) => {}
+            Ok((entry, _)) => {
+                // Kept from running by the plugin that took its id, which
+                // says it replaces the first such.
+                let taker = &mut found[taken[&entry.manifest.id]];
+                taker.replaces.get_or_insert(entry.source);
+            }
             Err(error) => errors.push(error),
         }
     }
@@ -894,7 +942,7 @@ pub(crate) fn discover_in_with(
 
 /// A plugin discovery read, with the problems of its components it left
 /// out, or why it skipped one.
-type PluginRead = Result<(PluginEntry, Vec<DiscoveryError>), DiscoveryError>;
+pub(crate) type PluginRead = Result<(PluginEntry, Vec<DiscoveryError>), DiscoveryError>;
 
 /// The plugins found in every location Celesta searches ([`search_paths`]
 /// with `explicit` first), as one set every part of Celesta shares: the
@@ -1021,22 +1069,35 @@ impl InstalledPlugins {
     }
 
     /// Discovers them with a trusted project's own plugin folders (see
-    /// [`crate::project_plugin_paths`]) and the folders `settings` adds,
-    /// leaving nothing out: a plugin `settings` turns off is listed, and so
-    /// is the next one with its id, which is used in its place.
+    /// [`crate::project_plugin_paths`]), the folders `settings` adds, and
+    /// the plugins installed globally from the registry, leaving nothing
+    /// out: a plugin `settings` turns off is listed, and so is the next one
+    /// with its id, which is used in its place. No project's lock is read
+    /// ([`InstalledPlugins::find_in`] takes one).
     pub fn find_with(
         explicit: &[PathBuf],
         project: &[PathBuf],
         settings: &UserSettings,
     ) -> (Self, Vec<DiscoveryError>) {
+        let (registry, registry_errors) = RegistryContext::current(None, settings);
+        let (found, mut errors) = Self::find_in(explicit, project, settings, &registry);
+        errors.extend(registry_errors);
+        (found, errors)
+    }
+
+    /// [`InstalledPlugins::find_with`], with the store, the advisories, and
+    /// the project's lock `registry` gives: a version the lock names runs
+    /// from the store ahead of every source but the explicit ones, and one
+    /// installed globally ranks after the user's plugin folder (see
+    /// [`RegistryContext`]).
+    pub fn find_in(
+        explicit: &[PathBuf],
+        project: &[PathBuf],
+        settings: &UserSettings,
+        registry: &RegistryContext,
+    ) -> (Self, Vec<DiscoveryError>) {
         let paths = search_paths(explicit, project, &settings.plugin_folders);
-        let (advisories, advisories_error) = cached_advisories();
-        let (plugins, mut errors) = discover_in_with(
-            &paths,
-            |entry| settings.is_disabled(&entry.manifest.id, &entry.directory),
-            advisories.as_ref(),
-        );
-        errors.extend(advisories_error.map(DiscoveryError::Settings));
+        let (plugins, errors) = registry.discover(paths, settings);
         (
             Self {
                 plugins,
@@ -1165,6 +1226,7 @@ pub(crate) mod tests {
             },
             directory: PathBuf::from("plugin"),
             source: PluginSource::Explicit,
+            replaces: None,
         };
         let any = entry(&[(os.to_owned(), "any")]);
         assert_eq!(any.executable(), Some(PathBuf::from("plugin/any")));
