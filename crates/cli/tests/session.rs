@@ -75,10 +75,13 @@ fn help_lists_every_plugin_command() {
     for command in [
         "search", "info", "add", "remove", "install", "update", "list", "audit", "gc",
     ] {
+        let listed = |line: &str| {
+            line.trim_start()
+                .strip_prefix(command)
+                .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+        };
         assert!(
-            stdout
-                .lines()
-                .any(|line| line.trim_start().starts_with(command)),
+            stdout.lines().any(listed),
             "{command} missing from:\n{stdout}"
         );
     }
@@ -94,6 +97,12 @@ fn global_conflicts_with_locked_and_offline() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+        let stderr = stderr(&output);
+        assert!(stderr.starts_with("celesta: error: "), "{stderr}");
+        assert!(
+            stderr.contains(flag) && stderr.contains("--global"),
+            "{stderr}"
+        );
     }
 }
 
@@ -112,4 +121,16 @@ fn a_file_registry_is_reachable() {
         "{stderr}"
     );
     assert!(!stderr.contains("future"), "{stderr}");
+}
+
+#[test]
+fn a_missing_subcommand_shows_help_as_a_usage_error() {
+    let output = Command::new(env!("CARGO_BIN_EXE_celesta"))
+        .env_clear()
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    let stderr = stderr(&output);
+    assert!(stderr.contains("Usage: celesta"), "{stderr}");
+    assert!(!stderr.contains("celesta: error: Manages"), "{stderr}");
 }

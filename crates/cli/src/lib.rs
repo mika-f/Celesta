@@ -13,7 +13,7 @@ use args::{Cli, Command, PluginCommand};
 use session::{NO_KEY_MESSAGE, Session};
 
 /// Exit status for a mistake in how `celesta` was invoked.
-const USAGE: u8 = 2;
+pub const USAGE: u8 = 2;
 
 /// Runs `cli` and returns its exit status: 0 on success, 1 on failure, 2
 /// for a usage error.

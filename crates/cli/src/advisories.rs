@@ -17,19 +17,24 @@ pub fn refresh(session: &Session) -> Option<AdvisoryList> {
     let outcome = session
         .registry_within(CLI_ADVISORY_TIMEOUT)
         .map(|registry| refresh_advisories_within(registry, session.now, CLI_ADVISORY_TIMEOUT));
-    let list = match &outcome {
-        Some(AdvisoryRefresh::Fresh(list)) => Some(list.clone()),
+    let (list, notes) = match &outcome {
+        Some(AdvisoryRefresh::Fresh(list)) => {
+            let list = list.clone();
+            let notes = notes(outcome.as_ref(), Some(&list), session.now);
+            (Some(list), notes)
+        }
         _ => match session.registry.cached_advisories() {
-            Ok(list) => list,
-            Err(error) => {
-                report::warn(format_args!(
-                    "could not read the cached security advisories ({error}); plugins under an advisory may run"
-                ));
-                return None;
+            Ok(list) => {
+                let notes = notes(outcome.as_ref(), list.as_ref(), session.now);
+                (list, notes)
             }
+            Err(error) => (
+                None,
+                unreadable_cache_notes(outcome.as_ref(), &error.to_string()),
+            ),
         },
     };
-    for note in notes(outcome.as_ref(), list.as_ref(), session.now) {
+    for note in notes {
         report::warn(note);
     }
     list
@@ -42,32 +47,46 @@ pub fn notes(
     cached: Option<&AdvisoryList>,
     now: OffsetDateTime,
 ) -> Vec<String> {
-    let mut notes = Vec::new();
-    match refresh {
-        Some(AdvisoryRefresh::Failed(reason)) => notes.push(format!(
-            "could not refresh the security advisories ({reason}); using the cached list"
-        )),
-        Some(AdvisoryRefresh::TimedOut) => notes.push(format!(
-            "the security advisories did not arrive within {} seconds; using the cached list",
-            CLI_ADVISORY_TIMEOUT.as_secs()
-        )),
-        Some(AdvisoryRefresh::Fresh(_)) | None => {}
-    }
-    match cached {
-        None => notes.push(
+    let list_note = match cached {
+        None => Some(
             "no security advisory list has been fetched yet; plugins under an advisory may run"
                 .to_owned(),
         ),
-        Some(list) => {
-            if let Some(age) = advisories_stale(list, now) {
-                notes.push(format!(
-                    "the security advisory list is {} days old; plugins under newer advisories may run",
-                    age.whole_days()
-                ));
-            }
-        }
+        Some(list) => advisories_stale(list, now).map(|age| {
+            format!(
+                "the security advisory list is {} days old; plugins under newer advisories may run",
+                age.whole_days()
+            )
+        }),
+    };
+    refresh_note(refresh).into_iter().chain(list_note).collect()
+}
+
+/// The warnings when the refresh ended with `refresh` and the cached list
+/// could not be read, for `error`.
+fn unreadable_cache_notes(refresh: Option<&AdvisoryRefresh>, error: &str) -> Vec<String> {
+    let cache_note = format!(
+        "could not read the cached security advisories ({error}); plugins under an advisory may run"
+    );
+    refresh_note(refresh)
+        .into_iter()
+        .chain([cache_note])
+        .collect()
+}
+
+/// What to say about a refresh that ended with `refresh`, when it did not
+/// bring a fresh list.
+fn refresh_note(refresh: Option<&AdvisoryRefresh>) -> Option<String> {
+    match refresh? {
+        AdvisoryRefresh::Failed(reason) => Some(format!(
+            "could not refresh the security advisories ({reason}); using the cached list"
+        )),
+        AdvisoryRefresh::TimedOut => Some(format!(
+            "the security advisories did not arrive within {} seconds; using the cached list",
+            CLI_ADVISORY_TIMEOUT.as_secs()
+        )),
+        AdvisoryRefresh::Fresh(_) => None,
     }
-    notes
 }
 
 #[cfg(test)]
@@ -112,6 +131,15 @@ mod tests {
         let notes = notes(Some(&AdvisoryRefresh::TimedOut), Some(&list_from(1)), now());
         assert_eq!(notes.len(), 1, "{notes:?}");
         assert!(notes[0].contains("3 seconds"), "{notes:?}");
+    }
+
+    #[test]
+    fn an_unreadable_cache_keeps_the_refresh_note() {
+        let notes = unreadable_cache_notes(Some(&AdvisoryRefresh::TimedOut), "cache is broken");
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(notes[0].contains("3 seconds"), "{notes:?}");
+        assert!(notes[1].contains("cache is broken"), "{notes:?}");
+        assert_eq!(unreadable_cache_notes(None, "cache is broken").len(), 1);
     }
 
     #[test]
