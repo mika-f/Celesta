@@ -537,6 +537,7 @@ mod tests {
             },
             directory: PathBuf::from("plugins").join(id),
             source,
+            replaces: None,
         }
     }
 

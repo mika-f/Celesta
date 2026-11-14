@@ -799,6 +799,7 @@ mod failure_tests {
             },
             directory: directory.to_owned(),
             source: PluginSource::Explicit,
+            replaces: None,
         }
     }
 
@@ -999,6 +1000,7 @@ mod out_of_step {
             },
             directory: directory.to_path_buf(),
             source: PluginSource::Explicit,
+            replaces: None,
         }
     }
 

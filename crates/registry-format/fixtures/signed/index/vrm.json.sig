@@ -1,4 +1,4 @@
 {
   "keyid": "2026-11",
-  "signature": "yHzdvKpk5X86Wly/rtZ7ye13pEYJkQbkFXTXfTFmZjnDlD948IXXRff5X+NoRCPzwbIKOtbN38sSic+CLKuQCw=="
+  "signature": "Ts+3jGN6xy8OelozC0DsXDBslkaMoZeDzkUZirgtlO0uoUb4DpQj/wEf3kAIYV7I1TTkIq7caDY7nGnAZVrRCg=="
 }

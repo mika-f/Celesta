@@ -5,11 +5,17 @@
 //! project brings.
 
 use crate::manifest::is_contained_path;
+use celesta_registry_format::{Target, is_registry_id};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The project settings file at a project root.
 pub const PROJECT_CONFIG: &str = "celesta.config.json";
+
+/// The targets a project builds for when `plugins.targets` is absent: the
+/// platforms Celesta is released for.
+pub const RELEASE_TARGETS: [&str; 3] = ["macos-aarch64", "windows-x86_64", "linux-x86_64"];
 
 #[derive(Debug, Default, Deserialize)]
 struct ProjectConfig {
@@ -21,6 +27,11 @@ struct ProjectConfig {
 struct ProjectPlugins {
     #[serde(default)]
     paths: Vec<String>,
+    /// Plugin id to a version requirement, as written.
+    #[serde(default)]
+    dependencies: BTreeMap<String, String>,
+    /// Build targets, as written.
+    targets: Option<Vec<String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +52,45 @@ pub enum ProjectConfigError {
     Outside { path: PathBuf, entry: String },
     #[error("{path}: plugins.paths entry {entry:?} is not a folder that exists")]
     Missing { path: PathBuf, entry: String },
+    #[error("{path}: plugins.dependencies entry {id:?}: {reason}")]
+    BadDependency {
+        path: PathBuf,
+        id: String,
+        reason: String,
+    },
+    #[error(
+        "{path}: plugins.targets entry {target:?} is not a target such as \"linux-x86_64\" or \"any\""
+    )]
+    BadTarget { path: PathBuf, target: String },
+    #[error("{path}: plugins.targets lists no target")]
+    NoTargets { path: PathBuf },
+}
+
+/// The registry plugins a project depends on and the targets it builds for,
+/// from `celesta.config.json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectDependencies {
+    /// Plugin id to the versions the project accepts, with Cargo's meaning
+    /// (`"0.2"` is `^0.2`).
+    pub dependencies: BTreeMap<String, semver::VersionReq>,
+    /// `plugins.targets` as written, or `None` when absent.
+    pub targets: Option<Vec<Target>>,
+}
+
+impl ProjectDependencies {
+    /// The targets the project builds for: `targets`, else
+    /// [`RELEASE_TARGETS`]; sorted and without repeats.
+    pub fn project_targets(&self) -> Vec<Target> {
+        let mut targets = self.targets.clone().unwrap_or_else(|| {
+            RELEASE_TARGETS
+                .iter()
+                .map(|target| Target::parse(target).expect("release targets are valid"))
+                .collect()
+        });
+        targets.sort();
+        targets.dedup();
+        targets
+    }
 }
 
 /// The project folder `entry` belongs to: the nearest folder from the
@@ -88,22 +138,88 @@ pub fn mark_project_root(root: &Path) -> std::io::Result<()> {
     }
 }
 
+/// `path`'s settings, or `None` when there is no such file.
+fn read_config(path: &Path) -> Result<Option<ProjectConfig>, ProjectConfigError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ProjectConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|source| ProjectConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+/// The registry plugins `root`'s `celesta.config.json` depends on
+/// (`plugins.dependencies`) and the targets it builds for
+/// (`plugins.targets`); no dependencies and no targets without the file.
+/// Every id must be a registry id and every requirement a Cargo version
+/// requirement, and `targets`, when given, must name at least one target:
+/// the project wrote them, so a mistake is reported rather than skipped.
+pub fn project_dependencies(root: &Path) -> Result<ProjectDependencies, ProjectConfigError> {
+    let path = root.join(PROJECT_CONFIG);
+    let Some(config) = read_config(&path)? else {
+        return Ok(ProjectDependencies::default());
+    };
+    let dependencies = config
+        .plugins
+        .dependencies
+        .into_iter()
+        .map(|(id, text)| {
+            let bad = |reason: String| ProjectConfigError::BadDependency {
+                path: path.clone(),
+                id: id.clone(),
+                reason,
+            };
+            if !is_registry_id(&id) {
+                return Err(bad("is not a registry id".into()));
+            }
+            let requirement = semver::VersionReq::parse(&text)
+                .map_err(|error| bad(format!("{text:?} is not a version requirement: {error}")))?;
+            Ok((id, requirement))
+        })
+        .collect::<Result<_, _>>()?;
+    let targets = config
+        .plugins
+        .targets
+        .map(|targets| {
+            if targets.is_empty() {
+                return Err(ProjectConfigError::NoTargets { path: path.clone() });
+            }
+            targets
+                .into_iter()
+                .map(|target| {
+                    Target::parse(&target).map_err(|_| ProjectConfigError::BadTarget {
+                        path: path.clone(),
+                        target,
+                    })
+                })
+                .collect()
+        })
+        .transpose()?;
+    Ok(ProjectDependencies {
+        dependencies,
+        targets,
+    })
+}
+
 /// The plugin folders `root`'s `celesta.config.json` lists, absolute, in
 /// order; none without the file. Every entry must stay inside the project,
 /// by its text and with links resolved, and must exist: the project named
 /// it, so a mistyped folder is reported rather than skipped.
 pub fn project_plugin_paths(root: &Path) -> Result<Vec<PathBuf>, ProjectConfigError> {
     let path = root.join(PROJECT_CONFIG);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(source) => return Err(ProjectConfigError::Read { path, source }),
+    let Some(config) = read_config(&path)? else {
+        return Ok(Vec::new());
     };
-    let config: ProjectConfig =
-        serde_json::from_str(&text).map_err(|source| ProjectConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?;
     // Without the root's own resolved path, links out of it could not be
     // told apart, so the folders are refused rather than trusted.
     let canonical_root =
@@ -241,6 +357,109 @@ mod tests {
         assert!(matches!(
             project_plugin_paths(&project),
             Err(ProjectConfigError::Outside { .. })
+        ));
+    }
+
+    fn write_config(project: &Path, config: serde_json::Value) {
+        std::fs::write(project.join(PROJECT_CONFIG), config.to_string()).unwrap();
+    }
+
+    #[test]
+    fn dependencies_are_read() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        let none = project_dependencies(project).unwrap();
+        assert!(none.dependencies.is_empty());
+        assert_eq!(none.targets, None);
+        write_config(
+            project,
+            serde_json::json!({ "plugins": { "dependencies": {
+                "vrm": "0.2", "voicevox": "0.9", "ffmpeg-x264": "=0.9.0",
+            } } }),
+        );
+        let read = project_dependencies(project).unwrap();
+        let requirement = |text: &str| semver::VersionReq::parse(text).unwrap();
+        assert_eq!(
+            read.dependencies,
+            std::collections::BTreeMap::from([
+                ("ffmpeg-x264".to_owned(), requirement("=0.9.0")),
+                ("vrm".to_owned(), requirement("^0.2")),
+                ("voicevox".to_owned(), requirement("^0.9")),
+            ])
+        );
+    }
+
+    #[test]
+    fn targets_default_to_the_release_targets() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        let defaults: Vec<Target> = RELEASE_TARGETS
+            .iter()
+            .map(|target| Target::parse(target).unwrap())
+            .collect();
+        let mut sorted = defaults.clone();
+        sorted.sort();
+        assert_eq!(
+            project_dependencies(project).unwrap().project_targets(),
+            sorted
+        );
+        write_config(project, serde_json::json!({ "plugins": { "paths": [] } }));
+        let read = project_dependencies(project).unwrap();
+        assert_eq!(read.targets, None);
+        assert_eq!(read.project_targets(), sorted);
+    }
+
+    #[test]
+    fn given_targets_are_used() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        write_config(
+            project,
+            serde_json::json!({ "plugins": { "targets": ["linux-x86_64", "any", "linux-x86_64"] } }),
+        );
+        let read = project_dependencies(project).unwrap();
+        assert_eq!(
+            read.targets,
+            Some(vec![
+                Target::parse("linux-x86_64").unwrap(),
+                Target::ANY,
+                Target::parse("linux-x86_64").unwrap(),
+            ])
+        );
+        let mut expected = vec![Target::parse("linux-x86_64").unwrap(), Target::ANY];
+        expected.sort();
+        assert_eq!(read.project_targets(), expected);
+    }
+
+    #[test]
+    fn bad_entries_are_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        for (id, requirement) in [("VRM", "0.2"), ("a.b.c", "0.2"), ("vrm", "0.2 || 0.3")] {
+            write_config(
+                project,
+                serde_json::json!({ "plugins": { "dependencies": { id: requirement } } }),
+            );
+            assert!(
+                matches!(
+                    project_dependencies(project),
+                    Err(ProjectConfigError::BadDependency { id: ref got, .. }) if got == id
+                ),
+                "{id} {requirement}"
+            );
+        }
+        write_config(project, serde_json::json!({ "plugins": { "targets": [] } }));
+        assert!(matches!(
+            project_dependencies(project),
+            Err(ProjectConfigError::NoTargets { .. })
+        ));
+        write_config(
+            project,
+            serde_json::json!({ "plugins": { "targets": ["Linux"] } }),
+        );
+        assert!(matches!(
+            project_dependencies(project),
+            Err(ProjectConfigError::BadTarget { ref target, .. }) if target == "Linux"
         ));
     }
 }

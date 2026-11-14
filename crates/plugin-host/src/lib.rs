@@ -7,18 +7,25 @@
 //! `GpuRenderer::with_content_provider`. Media plugins
 //! ([`InstalledPlugins::media`]) are started by `celesta_media` instead.
 
+mod advisories;
 mod approval;
 mod child;
 mod console;
 mod host;
 mod kill;
 mod locations;
+mod lock;
 mod manifest;
 mod media;
 mod project;
+mod registry;
 mod settings;
 pub mod stderr;
 
+pub use advisories::{
+    ADVISORIES_CACHE, advisories_stale, blocking_advisory, cached_advisories,
+    load_cached_advisories,
+};
 pub use approval::{
     Allowed, PendingPlugin, fingerprint, from_the_internet, zone_is_internet, zone_text,
 };
@@ -27,8 +34,10 @@ pub use console::without_console_window;
 pub use host::PluginHost;
 pub use kill::{PluginKillHandle, PluginKillSwitch, kill_every_plugin};
 pub use locations::{
-    PluginSource, SearchPath, bundled_plugin_dir, search_paths, unsafe_reason, user_plugin_dir,
+    PluginSource, SearchPath, bundled_plugin_dir, registry_cache_dir, registry_store_dir,
+    search_paths, unsafe_reason, user_plugin_dir,
 };
+pub use lock::{LOCK_FILE, LOCK_FORMAT, LockError, LockedArtifact, LockedPlugin, Lockfile};
 pub use manifest::{
     CELESTA_VERSION, ComponentInfo, ComponentSource, DiscoveryError, InstalledPlugins, MANIFEST,
     Manifest, PLUGIN_PATH_ENV, PluginEntry, PluginRole, RuntimePlugins, WAITING_PLUGIN_PATH_ENV,
@@ -41,10 +50,11 @@ pub use media::{
     RESERVED_PLUGIN_ID, SkippedMedia, codec_family,
 };
 pub use project::{
-    PROJECT_CONFIG, ProjectConfigError, has_project_config, mark_project_root,
-    project_plugin_paths, project_root,
+    PROJECT_CONFIG, ProjectConfigError, ProjectDependencies, RELEASE_TARGETS, has_project_config,
+    mark_project_root, project_dependencies, project_plugin_paths, project_root,
 };
+pub use registry::{ProjectLock, RegistryContext};
 pub use settings::{
-    Allowance, AllowedPlugin, SETTINGS_FILE, SettingsError, UserSettings, create_private_dir_all,
-    user_settings_dir, user_settings_path,
+    Allowance, AllowedPlugin, RegistryPlugin, SETTINGS_FILE, SettingsError, UserSettings,
+    create_private_dir_all, user_settings_dir, user_settings_path,
 };

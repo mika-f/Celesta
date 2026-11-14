@@ -29,7 +29,9 @@ const PREFIX: &[u8] = b"celesta-tree-v1\n";
 /// File names the tree hash skips, compared ASCII case-insensitively.
 const JUNK: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
 
-fn is_junk(name: &str) -> bool {
+/// Whether the tree hash skips a file with this name: `.DS_Store`,
+/// `Thumbs.db`, or `desktop.ini`, compared ASCII case-insensitively.
+pub fn is_os_junk_name(name: &str) -> bool {
     JUNK.iter().any(|j| j.eq_ignore_ascii_case(name))
 }
 
@@ -74,7 +76,7 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -> Result<()
             .map_err(|_| fail(&path, "not UTF-8"))?;
         let meta = fs::symlink_metadata(&path).map_err(|e| fail(&path, e.to_string()))?;
         let ty = meta.file_type();
-        let junk = is_junk(&name);
+        let junk = is_os_junk_name(&name);
         let key = if prefix.is_empty() {
             name
         } else {

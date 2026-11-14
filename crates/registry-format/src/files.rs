@@ -192,7 +192,9 @@ pub(crate) mod timestamp {
 ///
 /// `public_b64` and `expires_text` keep the exact strings the file holds: the
 /// root certifies that text, so the certified message is built from it, not
-/// from the decoded values.
+/// from the decoded values. `public` and `expires` are derived conveniences:
+/// trust decisions use the raw strings, and the keyring ignores the derived
+/// values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawOnlineKey", into = "RawOnlineKey")]
 pub struct OnlineKey {
@@ -247,6 +249,11 @@ impl From<OnlineKey> for RawOnlineKey {
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub api: String,
+    /// When the registry generated this file. A client refuses a served copy
+    /// older than the newest one it verified at the same path (see
+    /// [`check_fresh`](crate::check_fresh)).
+    #[serde(with = "timestamp")]
+    pub generated: OffsetDateTime,
     pub keys: Vec<OnlineKey>,
 }
 
@@ -304,6 +311,9 @@ pub struct VersionEntry {
 #[serde(rename_all = "camelCase")]
 pub struct Index {
     pub id: String,
+    /// When the registry generated this file; see [`Config::generated`].
+    #[serde(with = "timestamp")]
+    pub generated: OffsetDateTime,
     pub publisher: String,
     pub kind: Kind,
     pub description: String,

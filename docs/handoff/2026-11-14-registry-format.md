@@ -125,6 +125,6 @@ Found in the final review and left open on purpose:
   that names such a path (say `"module": "desktop.ini"`) would hide that file
   from the hash. The publish contract (plan 2) and the host (plan 3) should
   refuse manifest-named paths whose last component is one of those names.
-- `config.json`, `index/<id>.json`, and `search.json` carry no rollback stamp,
-  so an older signed copy can be replayed while its key is valid. Only
-  `advisories.json` has one (`generated`). Add stamps in plans 2 and 3.
+- `config.json` and `index/<id>.json` now carry a `generated` rollback stamp, and
+  `check_fresh` applies the rule; plan 3 (`2026-11-14-registry-client`) enforces it
+  per served path. `search.json` already had one.

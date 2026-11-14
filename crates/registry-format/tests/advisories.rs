@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use celesta_registry_format::{Advisory, AdvisoryList, FormatError};
+use celesta_registry_format::{Advisory, AdvisoryList, FormatError, check_fresh};
 use semver::Version;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -227,4 +227,22 @@ fn prerelease_comparators_use_total_ordering() {
 fn boundary_cases() {
     assert!(!blocks(&one(">=0.2.3").unwrap(), "0.2.3-rc.1"));
     assert!(blocks(&one("=0.2.2").unwrap(), "0.2.2+build.1"));
+}
+
+#[test]
+fn check_fresh_matches_check_newer() {
+    let at = |s: &str| OffsetDateTime::parse(s, &Rfc3339).unwrap();
+    let now = at("2026-11-20T00:00:00Z");
+    // Equal to the cached stamp, and exactly 10 minutes ahead, are accepted.
+    assert!(check_fresh(now, Some(now), now).is_ok());
+    assert!(check_fresh(at("2026-11-20T00:10:00Z"), None, now).is_ok());
+    assert!(matches!(
+        check_fresh(at("2026-11-20T00:10:01Z"), None, now),
+        Err(FormatError::FutureDated)
+    ));
+    assert!(matches!(
+        check_fresh(at("2026-11-19T00:00:00Z"), Some(now), now),
+        Err(FormatError::Rollback)
+    ));
+    assert!(check_fresh(at("2026-11-19T00:00:00Z"), None, now).is_ok());
 }

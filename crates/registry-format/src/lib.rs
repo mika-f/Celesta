@@ -17,6 +17,7 @@ mod keyring;
 mod signing;
 mod tree;
 
+pub use advisories::check_fresh;
 pub use error::FormatError;
 pub use files::{
     Advisory, AdvisoryList, Artifact, Config, Deprecation, Hash, Index, Kind, OnlineKey,
@@ -25,4 +26,4 @@ pub use files::{
 pub use ids::{is_plugin_id, is_registry_id, publisher_of};
 pub use keyring::{Keyring, RootKey};
 pub use signing::{key_message, signed_message};
-pub use tree::tree_hash;
+pub use tree::{is_os_junk_name, tree_hash};

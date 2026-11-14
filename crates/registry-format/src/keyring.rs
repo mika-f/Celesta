@@ -8,7 +8,7 @@ use serde::Deserialize;
 use time::OffsetDateTime;
 
 use crate::error::FormatError;
-use crate::files::Config;
+use crate::files::{Config, timestamp};
 use crate::signing::{is_served_path, key_message, signed_message};
 
 /// The pinned Ed25519 root public key.
@@ -47,6 +47,9 @@ impl Keyring {
     /// The certified message is built from the exact `public` and `expires`
     /// strings in `config.json` (`OnlineKey::public_b64` and
     /// `OnlineKey::expires_text`), never re-encoded from the parsed values.
+    /// The key and its expiry are decoded from those same strings; the
+    /// derived `OnlineKey::public` and `OnlineKey::expires` are ignored, and
+    /// a key whose strings do not decode or parse is skipped.
     ///
     /// Fails with `Signature` when no key remains. This does not check
     /// `config.json`'s own signature; [`Keyring::from_signed_config`] does.
@@ -59,7 +62,11 @@ impl Keyring {
         let root = VerifyingKey::from_bytes(&root.0).map_err(|_| no_key())?;
         let mut keys = Vec::new();
         for key in &config.keys {
-            if key.expires <= now {
+            // Trust follows the raw strings; `public` and `expires` are not read.
+            let Ok(expires) = timestamp::parse(&key.expires_text) else {
+                continue;
+            };
+            if expires <= now {
                 continue;
             }
             let message = key_message(&key.keyid, &key.public_b64, &key.expires_text);
@@ -69,7 +76,12 @@ impl Keyring {
             if !certified {
                 continue;
             }
-            let Ok(public) = VerifyingKey::from_bytes(&key.public) else {
+            let Ok(public) = STANDARD
+                .decode(&key.public_b64)
+                .map_err(drop)
+                .and_then(|b| <[u8; 32]>::try_from(b).map_err(drop))
+                .and_then(|b| VerifyingKey::from_bytes(&b).map_err(drop))
+            else {
                 continue;
             };
             keys.push((key.keyid.clone(), public));

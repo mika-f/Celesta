@@ -5,12 +5,16 @@
   "type": "object",
   "required": [
     "format",
+    "generated",
     "api",
     "keys"
   ],
   "properties": {
     "format": {
       "const": 1
+    },
+    "generated": {
+      "$ref": "#/$defs/timestamp"
     },
     "api": {
       "type": "string",
