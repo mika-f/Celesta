@@ -12,7 +12,7 @@ use celesta_plugin_host::{
     ProjectConfigError, RegistryPlugin, SearchPath, SettingsError, UserSettings, check_lock,
     discover_in, is_build, project_dependencies,
 };
-use celesta_registry_format::{AdvisoryList, Artifact, Index, Target};
+use celesta_registry_format::{AdvisoryList, Artifact, Hash, Index, Target};
 use semver::{Version, VersionReq};
 use time::OffsetDateTime;
 
@@ -131,13 +131,19 @@ pub fn lock_project(
     // Before the installs, so a failed one still leaves the project known.
     let record_error = record_error(env, root);
 
-    let bundled = Bundled::new(env.bundled);
+    let bundled = BundledPlugins::new(env.bundled);
     let mut installed = Vec::new();
     for (id, locked) in &lock.plugins {
         let Some((target, artifact)) = locked_artifact(&lock, id, env.host) else {
             continue;
         };
-        if satisfied(env, &bundled, id, &locked.version, artifact) {
+        if holds_locked_build(
+            env.store,
+            &bundled,
+            id,
+            &locked.version,
+            &artifact.tree_hash,
+        ) {
             continue;
         }
         install_as_locked(
@@ -178,7 +184,7 @@ pub fn install_locked(
     check_lock(Some(&lock), &project, env.celesta)?;
 
     let advisories = env.registry.cached_advisories()?;
-    let bundled = Bundled::new(env.bundled);
+    let bundled = BundledPlugins::new(env.bundled);
     let mut outcome = InstallOutcome {
         installed: Vec::new(),
         skipped: Vec::new(),
@@ -194,7 +200,7 @@ pub fn install_locked(
             ));
             continue;
         };
-        if satisfied(env, &bundled, id, version, artifact) {
+        if holds_locked_build(env.store, &bundled, id, version, &artifact.tree_hash) {
             continue;
         }
         if offline {
@@ -292,15 +298,16 @@ pub fn install_global(
     Ok(installed)
 }
 
-/// Whether the store or a bundled copy already holds the locked build.
-fn satisfied(
-    env: &Environment,
-    bundled: &Bundled,
+/// Whether `store` or a bundled copy already holds the build of `version`
+/// of `id` with `tree_hash`.
+pub fn holds_locked_build(
+    store: &Store,
+    bundled: &BundledPlugins,
     id: &str,
     version: &Version,
-    artifact: &LockedArtifact,
+    tree_hash: &Hash,
 ) -> bool {
-    env.store.contains(id, version, &artifact.tree_hash) || bundled.holds(id, version, artifact)
+    store.contains(id, version, tree_hash) || bundled.holds(id, version, tree_hash)
 }
 
 /// The locked plugin's artifact for `host`, else the one for `any`, with
@@ -374,22 +381,22 @@ fn install_as_locked(
 }
 
 /// The bundled plugins, discovered the first time one is asked for.
-struct Bundled<'a> {
+pub struct BundledPlugins<'a> {
     folder: Option<&'a Path>,
     entries: OnceCell<Vec<PluginEntry>>,
 }
 
-impl<'a> Bundled<'a> {
-    fn new(folder: Option<&'a Path>) -> Self {
+impl<'a> BundledPlugins<'a> {
+    /// The plugins in `folder`, the bundled plugin folder; none without one.
+    pub fn new(folder: Option<&'a Path>) -> Self {
         Self {
             folder,
             entries: OnceCell::new(),
         }
     }
 
-    /// Whether a bundled plugin has this id, version, and the locked tree
-    /// hash.
-    fn holds(&self, id: &str, version: &Version, artifact: &LockedArtifact) -> bool {
+    /// Whether a bundled plugin has this id, version, and tree hash.
+    pub fn holds(&self, id: &str, version: &Version, tree_hash: &Hash) -> bool {
         let Some(folder) = self.folder else {
             return false;
         };
@@ -402,6 +409,6 @@ impl<'a> Bundled<'a> {
         });
         entries
             .iter()
-            .any(|entry| is_build(&entry.directory, id, version, &artifact.tree_hash))
+            .any(|entry| is_build(&entry.directory, id, version, tree_hash))
     }
 }

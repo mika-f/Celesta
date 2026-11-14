@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use celesta_plugin_host::{Lockfile, UserSettings};
-use celesta_registry_client::ResolveWarning;
+use celesta_registry_client::{ClientError, ResolveWarning};
 use celesta_registry_format::{AdvisoryList, Index, SearchEntry, VersionEntry};
 use semver::Version;
 
@@ -134,7 +134,7 @@ fn state(index: &Index, entry: &VersionEntry, advisories: Option<&AdvisoryList>)
         "withdrawn"
     } else if entry.yanked {
         "yanked"
-    } else if entry.deprecated.is_some() || index.deprecated.is_some() {
+    } else if index.deprecation(entry).is_some() {
         "deprecated"
     } else {
         "published"
@@ -178,11 +178,10 @@ fn audit_plugins(
         if !seen.insert((id, version)) {
             continue;
         }
-        let index = indexes
+        let listing = indexes
             .entry(id)
-            .or_insert_with(|| audit_index(session, id))
-            .as_ref();
-        let found = audit_findings(id, version, index, advisories);
+            .or_insert_with(|| audit_listing(session, id));
+        let found = audit_findings(id, version, listing, advisories);
         passes &= found.iter().all(|finding| !finding.fails);
         findings.extend(found);
     }
@@ -195,23 +194,34 @@ fn audit_plugins(
     Ok(passes)
 }
 
-/// `id`'s index fetched now, else the cached one with a warning; `None`
-/// when there is neither.
-fn audit_index(session: &Session, id: &str) -> Option<Index> {
+/// What the registry says about a plugin `audit` checks.
+enum Listing {
+    Index(Box<Index>),
+    /// The registry no longer lists the plugin.
+    Dropped,
+    /// Neither the registry nor the cache could say.
+    Unknown,
+}
+
+/// `id`'s index fetched now; `Dropped` when the registry has no such
+/// plugin, as `install_locked` takes it; else the cached index with a
+/// warning.
+fn audit_listing(session: &Session, id: &str) -> Listing {
     let error = match session.registry.index(id, session.now) {
-        Ok(index) => return Some(index),
+        Ok(index) => return Listing::Index(Box::new(index)),
+        Err(ClientError::NoSuchPlugin(_)) => return Listing::Dropped,
         Err(error) => error,
     };
     match session.registry.cached_index(id) {
         Some(index) => {
             report::warn(format_args!("using the cached index of {id}: {error}"));
-            Some(index)
+            Listing::Index(Box::new(index))
         }
         None => {
             report::warn(format_args!(
                 "could not check {id} for yanked, withdrawn, or deprecated versions: {error}"
             ));
-            None
+            Listing::Unknown
         }
     }
 }
@@ -224,11 +234,11 @@ struct Finding {
     fails: bool,
 }
 
-/// What is wrong with `version` of `id` by `advisories` and `index`.
+/// What is wrong with `version` of `id` by `advisories` and `listing`.
 fn audit_findings(
     id: &str,
     version: &Version,
-    index: Option<&Index>,
+    listing: &Listing,
     advisories: Option<&AdvisoryList>,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -246,13 +256,17 @@ fn audit_findings(
             fails: true,
         });
     }
-    let Some(index) = index else {
-        return findings;
+    let index = match listing {
+        Listing::Index(index) => Some(index.as_ref()),
+        Listing::Dropped => None,
+        Listing::Unknown => return findings,
     };
-    let entry = index
-        .versions
-        .iter()
-        .find(|entry| entry.version == *version);
+    let entry = index.and_then(|index| {
+        index
+            .versions
+            .iter()
+            .find(|entry| entry.version == *version)
+    });
     let Some(entry) = entry.filter(|entry| !entry.withdrawn) else {
         findings.push(Finding {
             text: format!("{id} {version} is no longer distributed"),
@@ -266,7 +280,7 @@ fn audit_findings(
             fails: false,
         });
     }
-    if let Some(deprecation) = entry.deprecated.as_ref().or(index.deprecated.as_ref()) {
+    if let Some(deprecation) = index.and_then(|index| index.deprecation(entry)) {
         let warning = ResolveWarning::Deprecated {
             id: id.to_owned(),
             version: version.clone(),
@@ -321,20 +335,19 @@ mod tests {
 
     #[test]
     fn a_version_missing_from_its_index_is_no_longer_distributed() {
-        let index = index(&["1.0.0"]);
-        let findings = audit_findings("acme.charts", &Version::new(2, 0, 0), Some(&index), None);
-        assert_eq!(
-            findings,
-            [Finding {
-                text: "acme.charts 2.0.0 is no longer distributed".to_owned(),
-                fails: true,
-            }]
-        );
-        assert!(
-            audit_findings("acme.charts", &Version::new(1, 0, 0), Some(&index), None).is_empty()
-        );
+        let gone = |listing: &Listing| {
+            audit_findings("acme.charts", &Version::new(2, 0, 0), listing, None)
+        };
+        let expected = [Finding {
+            text: "acme.charts 2.0.0 is no longer distributed".to_owned(),
+            fails: true,
+        }];
+        let listing = Listing::Index(Box::new(index(&["1.0.0"])));
+        assert_eq!(gone(&listing), expected);
+        assert_eq!(gone(&Listing::Dropped), expected);
+        assert!(audit_findings("acme.charts", &Version::new(1, 0, 0), &listing, None).is_empty());
         // Without an index, only the advisories are checked.
-        assert!(audit_findings("acme.charts", &Version::new(2, 0, 0), None, None).is_empty());
+        assert!(gone(&Listing::Unknown).is_empty());
     }
 
     #[test]

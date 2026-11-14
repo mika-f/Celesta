@@ -19,8 +19,8 @@ pub use error::ClientError;
 pub use gc::{GcInput, GcPlan, plan_gc, run_gc};
 pub use http::{CLI_ADVISORY_TIMEOUT, HttpTransport};
 pub use project::{
-    Environment, InstallOutcome, LockOutcome, ProjectError, install_global, install_locked,
-    lock_project,
+    BundledPlugins, Environment, InstallOutcome, LockOutcome, ProjectError, holds_locked_build,
+    install_global, install_locked, lock_project,
 };
 pub use refresh::{AdvisoryRefresh, refresh_advisories_within};
 pub use registry::{OFFICIAL_REGISTRY, Registry, official_root_key};

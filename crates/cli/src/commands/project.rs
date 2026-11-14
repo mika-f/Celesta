@@ -284,7 +284,7 @@ fn warn_about_locked_states(session: &Session, lock: &Lockfile) {
                 version: entry.version.clone(),
             });
         }
-        if let Some(deprecation) = entry.deprecated.as_ref().or(index.deprecated.as_ref()) {
+        if let Some(deprecation) = index.deprecation(entry) {
             report::warn(ResolveWarning::Deprecated {
                 id: id.clone(),
                 version: entry.version.clone(),

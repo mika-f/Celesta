@@ -464,6 +464,12 @@ impl Index {
         }
         Ok(index)
     }
+
+    /// What deprecates `entry`, one of this index's versions: its own
+    /// deprecation, else the plugin's.
+    pub fn deprecation<'a>(&'a self, entry: &'a VersionEntry) -> Option<&'a Deprecation> {
+        entry.deprecated.as_ref().or(self.deprecated.as_ref())
+    }
 }
 
 impl SearchList {

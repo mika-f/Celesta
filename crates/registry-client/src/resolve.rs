@@ -130,16 +130,15 @@ pub fn resolve(input: &ResolveInput) -> Result<Resolution, ResolveError> {
             Some(kept) => kept,
             None => choose(input, id, requirement, index, &targets, &mut warnings)?,
         };
-        if let Some(entry) = version {
-            let deprecation = entry.deprecated.as_ref().or(index.deprecated.as_ref());
-            if let Some(d) = deprecation {
-                warnings.push(ResolveWarning::Deprecated {
-                    id: id.clone(),
-                    version: entry.version.clone(),
-                    message: d.message.clone(),
-                    replacement: d.replacement.clone(),
-                });
-            }
+        if let Some(entry) = version
+            && let Some(d) = index.deprecation(entry)
+        {
+            warnings.push(ResolveWarning::Deprecated {
+                id: id.clone(),
+                version: entry.version.clone(),
+                message: d.message.clone(),
+                replacement: d.replacement.clone(),
+            });
         }
         plugins.insert(id.clone(), locked);
     }

@@ -1,16 +1,15 @@
 //! The commands about what is installed: `list`, `install --global`, and
 //! `gc`.
 
-use std::cell::OnceCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::SystemTime;
 
-use celesta_plugin_host::{
-    LOCK_FILE, Lockfile, PluginSource, SearchPath, UserSettings, discover_in, has_project_config,
-    is_build,
+use celesta_plugin_host::{LOCK_FILE, Lockfile, UserSettings, has_project_config};
+use celesta_registry_client::{
+    BundledPlugins, GcInput, GcPlan, PROJECTS_FILE, holds_locked_build, install_global, plan_gc,
+    run_gc,
 };
-use celesta_registry_client::{GcInput, GcPlan, PROJECTS_FILE, install_global, plan_gc, run_gc};
 use celesta_registry_format::{AdvisoryList, Hash};
 use semver::{Version, VersionReq};
 
@@ -71,8 +70,7 @@ fn list_plugins(
 struct Lines<'a> {
     session: &'a Session,
     advisories: Option<&'a AdvisoryList>,
-    /// The bundled plugins' folders, found on first use.
-    bundled: OnceCell<Vec<PathBuf>>,
+    bundled: BundledPlugins<'a>,
 }
 
 impl<'a> Lines<'a> {
@@ -80,7 +78,7 @@ impl<'a> Lines<'a> {
         Self {
             session,
             advisories,
-            bundled: OnceCell::new(),
+            bundled: BundledPlugins::new(session.bundled.as_deref()),
         }
     }
 
@@ -90,11 +88,15 @@ impl<'a> Lines<'a> {
     /// ` yanked` and ` deprecated` when the cached index says so.
     fn line(&self, id: &str, version: &Version, tree_hash: Option<&Hash>) -> String {
         let blocking = self.advisories.and_then(|list| list.blocking(id, version));
+        let session = self.session;
         let state = match (blocking, tree_hash) {
             (Some(advisory), _) => format!("blocked ({})", advisory.id),
-            (None, None) => format!("no build for {}", self.session.host.as_str()),
-            (None, Some(tree_hash)) if self.holds(id, version, tree_hash) => "installed".to_owned(),
-            (None, Some(_)) => "not installed".to_owned(),
+            (None, None) => format!("no build for {}", session.host.as_str()),
+            (None, Some(tree_hash)) => {
+                let held =
+                    holds_locked_build(&session.store, &self.bundled, id, version, tree_hash);
+                if held { "installed" } else { "not installed" }.to_owned()
+            }
         };
         let mut line = format!("{id} {version}  {state}");
         if let Some(index) = self.session.registry.cached_index(id)
@@ -106,34 +108,11 @@ impl<'a> Lines<'a> {
             if entry.yanked {
                 line.push_str(" yanked");
             }
-            if entry.deprecated.is_some() || index.deprecated.is_some() {
+            if index.deprecation(entry).is_some() {
                 line.push_str(" deprecated");
             }
         }
         line
-    }
-
-    /// Whether the store or a bundled copy holds the build of `version` of
-    /// `id` with `tree_hash`.
-    fn holds(&self, id: &str, version: &Version, tree_hash: &Hash) -> bool {
-        self.session.store.contains(id, version, tree_hash)
-            || self
-                .bundled()
-                .iter()
-                .any(|folder| is_build(folder, id, version, tree_hash))
-    }
-
-    fn bundled(&self) -> &[PathBuf] {
-        self.bundled.get_or_init(|| {
-            let Some(folder) = &self.session.bundled else {
-                return Vec::new();
-            };
-            let (entries, _) = discover_in(&[SearchPath {
-                path: folder.clone(),
-                source: PluginSource::Bundled,
-            }]);
-            entries.into_iter().map(|entry| entry.directory).collect()
-        })
     }
 }
 
@@ -222,6 +201,8 @@ fn gc_lines(plan: &GcPlan, dry_run: bool) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     #[test]

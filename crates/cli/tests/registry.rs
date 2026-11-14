@@ -1,6 +1,7 @@
 mod common;
 
 use std::fs;
+use std::path::Path;
 
 use celesta_registry_client::testing::{CELESTA_RANGE, TestRegistry};
 use common::{Home, assert_exit, registry, run, stderr, stdout};
@@ -17,6 +18,20 @@ fn advisory(id: &str, plugin: &str, versions: &str, fixed: Option<&str>) -> Valu
         "fixed": fixed,
         "published": "2026-11-01T00:00:00Z",
     })
+}
+
+/// Copies the files under `from` into `to`, keeping their permissions.
+fn copy_dir(from: &Path, to: &Path) {
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            fs::create_dir_all(&target).unwrap();
+            copy_dir(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
 }
 
 fn lines(output: &std::process::Output) -> Vec<String> {
@@ -207,6 +222,11 @@ fn list_works_without_a_key() {
             "  none"
         ]
     );
+    assert!(
+        !stderr(&output).contains("celesta: error"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -273,14 +293,81 @@ fn audit_names_withdrawn_yanked_and_deprecated_versions() {
         ]
     );
 
-    // Without the registry, the cached indexes say the same.
-    let served = registry.served_dir().join("index");
-    fs::remove_dir_all(&served).unwrap();
+    // When the served indexes cannot be read, the cached ones say the same.
+    for entry in fs::read_dir(registry.served_dir().join("index")).unwrap() {
+        fs::write(entry.unwrap().path(), "not an index").unwrap();
+    }
     let output = run(&home, &registry, &project, &["audit"]);
     assert_exit(&output, 1);
     assert_eq!(lines(&output).len(), 3, "{}", stdout(&output));
     assert!(
         stderr(&output).contains("celesta: warning: using the cached index of acme.charts: "),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn audit_fails_when_the_registry_dropped_the_plugin() {
+    let home = Home::new();
+    let registry = registry();
+    registry.publish("acme.charts", "1.2.3", &["any"]);
+    let project = home.project("{}\n");
+    assert_exit(&run(&home, &registry, &project, &["add", "acme.charts"]), 0);
+    let index = registry.served_dir().join("index");
+    fs::remove_file(index.join("acme.charts.json")).unwrap();
+    fs::remove_file(index.join("acme.charts.json.sig")).unwrap();
+
+    // The cached index still lists it, but the registry no longer does.
+    let output = run(&home, &registry, &project, &["audit"]);
+    assert_exit(&output, 1);
+    assert_eq!(
+        lines(&output),
+        ["acme.charts 1.2.3 is no longer distributed"]
+    );
+    assert!(
+        !stderr(&output).contains("using the cached index"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn audit_works_without_a_key() {
+    let home = Home::new();
+    let registry = registry();
+    registry.publish("acme.charts", "1.2.3", &["any"]);
+    let project = home.project("{}\n");
+    assert_exit(&run(&home, &registry, &project, &["add", "acme.charts"]), 0);
+    // That run cached for its own registry; a build with the official key
+    // would have cached the same files for the official one.
+    let cache = home.store().with_file_name("registry-cache");
+    let overridden = fs::read_dir(&cache)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("override-"))
+        })
+        .unwrap();
+    copy_dir(&overridden, &cache);
+
+    let output = home
+        .command()
+        .current_dir(&project)
+        .args(["plugin", "audit"])
+        .output()
+        .unwrap();
+    assert_exit(&output, 0);
+    assert_eq!(lines(&output), ["no problems found"]);
+    assert!(
+        stderr(&output).contains("celesta: warning: using the cached index of acme.charts: "),
+        "{}",
+        stderr(&output)
+    );
+    assert!(
+        !stderr(&output).contains("celesta: error"),
         "{}",
         stderr(&output)
     );
