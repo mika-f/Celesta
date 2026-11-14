@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
-use celesta_plugin_host::{MANIFEST, create_private_dir_all, registry_store_dir};
+use celesta_plugin_host::{MANIFEST, create_private_dir_all, is_build, registry_store_dir};
 use celesta_registry_format::{FormatError, Hash, is_plugin_id, tree_hash};
 use semver::Version;
 use sha2::{Digest, Sha256};
@@ -124,7 +124,7 @@ impl Store {
 
     /// Whether the version is there with this tree hash.
     pub fn contains(&self, id: &str, version: &Version, tree_hash: &Hash) -> bool {
-        is_plugin_id(id) && holds(&self.path(id, version), tree_hash)
+        is_plugin_id(id) && is_build(&self.path(id, version), id, version, tree_hash)
     }
 
     /// Downloads, checks, extracts, hashes, and renames into place; returns the directory.
@@ -143,7 +143,7 @@ impl Store {
             return Err(FormatError::InvalidId(request.id.to_owned()).into());
         }
         let destination = self.path(request.id, request.version);
-        if holds(&destination, request.tree_hash) {
+        if is_build(&destination, request.id, request.version, request.tree_hash) {
             return Ok(destination);
         }
         create_private_dir_all(&self.root).map_err(io_error(&self.root))?;
@@ -172,7 +172,7 @@ impl Store {
         create_private_dir_all(&folder).map_err(io_error(&folder))?;
         if fs::symlink_metadata(&destination).is_ok() {
             // Another install finished first.
-            if holds(&destination, request.tree_hash) {
+            if is_build(&destination, request.id, request.version, request.tree_hash) {
                 return Ok(destination);
             }
             // Out of the way first, as Windows cannot rename onto a
@@ -181,7 +181,9 @@ impl Store {
         }
         match fs::rename(&plugin, &destination) {
             Ok(()) => Ok(destination),
-            Err(_) if holds(&destination, request.tree_hash) => Ok(destination),
+            Err(_) if is_build(&destination, request.id, request.version, request.tree_hash) => {
+                Ok(destination)
+            }
             Err(source) => Err(InstallError::Io {
                 path: destination,
                 source,
@@ -264,11 +266,6 @@ impl Store {
         }
         Ok(())
     }
-}
-
-/// Whether `folder` is there with this tree hash.
-fn holds(folder: &Path, expected: &Hash) -> bool {
-    tree_hash(folder).is_ok_and(|found| found == *expected)
 }
 
 /// Downloads the request's archive to `archive`, reading at most one byte

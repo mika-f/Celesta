@@ -9,9 +9,10 @@ use std::path::Path;
 
 use celesta_plugin_host::{
     LockError, LockedArtifact, Lockfile, PluginEntry, PluginSource, ProjectConfigError,
-    RegistryPlugin, SearchPath, SettingsError, UserSettings, discover_in, project_dependencies,
+    RegistryPlugin, SearchPath, SettingsError, UserSettings, discover_in, is_build,
+    project_dependencies,
 };
-use celesta_registry_format::{AdvisoryList, Artifact, Index, Target, tree_hash};
+use celesta_registry_format::{AdvisoryList, Artifact, Index, Target};
 use semver::{Version, VersionReq};
 use time::OffsetDateTime;
 
@@ -412,10 +413,8 @@ impl<'a> Bundled<'a> {
             }])
             .0
         });
-        entries.iter().any(|entry| {
-            entry.manifest.id == id
-                && Version::parse(&entry.manifest.version).is_ok_and(|found| found == *version)
-                && tree_hash(&entry.directory).is_ok_and(|found| found == artifact.tree_hash)
-        })
+        entries
+            .iter()
+            .any(|entry| is_build(&entry.directory, id, version, &artifact.tree_hash))
     }
 }

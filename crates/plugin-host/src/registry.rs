@@ -10,8 +10,8 @@ use crate::advisories::cached_advisories;
 use crate::locations::{PluginSource, SearchPath, registry_store_dir};
 use crate::lock::Lockfile;
 use crate::manifest::{
-    CELESTA_VERSION, DiscoveryError, PluginEntry, PluginRead, discover_in_with, is_valid_id,
-    read_manifest,
+    CELESTA_VERSION, DiscoveryError, MANIFEST, PluginEntry, PluginRead, discover_in_with,
+    is_valid_id, read_manifest,
 };
 use crate::settings::UserSettings;
 use celesta_registry_format::{AdvisoryList, Hash, Target, tree_hash};
@@ -107,6 +107,27 @@ impl LockedFailure {
     }
 }
 
+/// Whether `directory` is this build of a plugin: its manifest names `id`
+/// and `version`, and its files hash to `tree_hash`. A missing or
+/// unparsable manifest is no build. It does not check the manifest's
+/// `celesta` range or the advisories.
+pub fn is_build(directory: &Path, id: &str, version: &semver::Version, tree_hash: &Hash) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Named {
+        id: String,
+        version: String,
+    }
+    let Ok(text) = std::fs::read(directory.join(MANIFEST)) else {
+        return false;
+    };
+    let Ok(named) = serde_json::from_slice::<Named>(&text) else {
+        return false;
+    };
+    named.id == id
+        && semver::Version::parse(&named.version).is_ok_and(|found| found == *version)
+        && celesta_registry_format::tree_hash(directory).is_ok_and(|found| found == *tree_hash)
+}
+
 /// A version in the store, and what its folder must hold to run.
 #[derive(Debug)]
 struct StoreFolder {
@@ -123,10 +144,9 @@ impl StoreFolder {
     /// Whether `entry` is what was installed: the same id and version, and
     /// the same files.
     fn holds(&self, entry: &PluginEntry) -> bool {
-        self.is(entry)
-            && self.tree_hash.is_some_and(|expected| {
-                tree_hash(&entry.directory).is_ok_and(|hash| hash == expected)
-            })
+        self.tree_hash
+            .as_ref()
+            .is_some_and(|expected| is_build(&entry.directory, &self.id, &self.version, expected))
     }
 
     /// Whether `entry` has this id and version.
@@ -372,6 +392,28 @@ mod tests {
         write_manifest(directory, manifest);
         std::fs::write(directory.join("lib.txt"), "the plugin's code").unwrap();
         tree_hash(directory).unwrap()
+    }
+
+    #[test]
+    fn is_build_needs_id_version_and_tree_hash() {
+        let folder = tempfile::tempdir().unwrap();
+        let dir = folder.path();
+        let hash = write(dir, content("acme.charts", "1.2.3"));
+        let v = |text: &str| semver::Version::parse(text).unwrap();
+        assert!(is_build(dir, "acme.charts", &v("1.2.3"), &hash));
+        assert!(!is_build(dir, "acme.other", &v("1.2.3"), &hash));
+        assert!(!is_build(dir, "acme.charts", &v("1.2.4"), &hash));
+        std::fs::write(dir.join("lib.txt"), "changed").unwrap();
+        assert!(!is_build(dir, "acme.charts", &v("1.2.3"), &hash));
+        let bare = tempfile::tempdir().unwrap();
+        std::fs::write(bare.path().join("lib.txt"), "x").unwrap();
+        let bare_hash = tree_hash(bare.path()).unwrap();
+        assert!(!is_build(
+            bare.path(),
+            "acme.charts",
+            &v("1.2.3"),
+            &bare_hash
+        ));
     }
 
     /// A test's folders: the store, and an explicit, a user, and a bundled
