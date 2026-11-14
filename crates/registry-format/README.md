@@ -14,7 +14,7 @@ This folder is the format's source of truth. This README describes what the code
 - `src/` holds typed parsing, signature verification, the tree hash, and advisory matching.
 - `cargo test -p celesta-registry-format` checks all of it.
 
-The crate depends on no other Celesta crate. It has `publish = false` for now.
+The crate depends on no other Celesta crate. It is publishable; the maintainer sets up crates.io before the next release (see `docs/handoff/2026-11-14-registry-client.md`).
 
 ## Conventions
 
