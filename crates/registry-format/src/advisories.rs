@@ -1,9 +1,13 @@
 use std::cmp::Ordering;
 
 use semver::{Comparator, Op, Version};
+use time::{Duration, OffsetDateTime};
 
 use crate::error::FormatError;
 use crate::files::{Advisory, AdvisoryList};
+
+/// How far ahead of the client's clock a list's `generated` may be.
+const CLOCK_SKEW: Duration = Duration::minutes(10);
 
 /// The version a comparator names, with build metadata dropped.
 fn bound(c: &Comparator) -> Version {
@@ -50,8 +54,20 @@ impl AdvisoryList {
         self.advisories.iter().find(|a| a.blocks(plugin, version))
     }
 
-    /// Refuses a list older than the cached one; an equal timestamp is accepted.
-    pub fn check_newer(&self, cached: Option<&AdvisoryList>) -> Result<(), FormatError> {
+    /// Checks a freshly verified list before it replaces `cached`.
+    ///
+    /// Refuses a list whose `generated` is more than 10 minutes after `now`
+    /// (`FutureDated`), so a list dated in the future cannot be cached and
+    /// then refuse every later list as a rollback. Then refuses a list older
+    /// than the cached one (`Rollback`); an equal timestamp is accepted.
+    pub fn check_newer(
+        &self,
+        cached: Option<&AdvisoryList>,
+        now: OffsetDateTime,
+    ) -> Result<(), FormatError> {
+        if self.generated > now + CLOCK_SKEW {
+            return Err(FormatError::FutureDated);
+        }
         match cached {
             Some(c) if self.generated < c.generated => Err(FormatError::Rollback),
             _ => Ok(()),
@@ -62,7 +78,6 @@ impl AdvisoryList {
 #[cfg(test)]
 mod tests {
     use semver::VersionReq;
-    use time::OffsetDateTime;
 
     use super::*;
 

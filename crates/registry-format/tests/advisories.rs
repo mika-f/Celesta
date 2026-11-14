@@ -2,6 +2,8 @@ use std::path::Path;
 
 use celesta_registry_format::{Advisory, AdvisoryList, FormatError};
 use semver::Version;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 fn v(s: &str) -> Version {
     Version::parse(s).unwrap()
@@ -67,16 +69,44 @@ fn first_advisory_in_file_order_wins() {
     assert_eq!(l.blocking("vrm", &v("1.5.0")).unwrap().id, "SECOND");
 }
 
+fn at(s: &str) -> OffsetDateTime {
+    OffsetDateTime::parse(s, &Rfc3339).unwrap()
+}
+
 #[test]
 fn check_newer_rules() {
+    let now = at("2026-11-21T00:00:00Z");
     let new = list("2026-11-20T00:00:00Z", &[]).unwrap();
     let old = list("2026-11-19T00:00:00Z", &[]).unwrap();
-    assert!(new.check_newer(Some(&old)).is_ok());
-    assert!(new.check_newer(Some(&new)).is_ok());
-    assert!(new.check_newer(None).is_ok());
+    assert!(new.check_newer(Some(&old), now).is_ok());
+    assert!(new.check_newer(Some(&new), now).is_ok());
+    assert!(new.check_newer(None, now).is_ok());
     assert!(matches!(
-        old.check_newer(Some(&new)),
+        old.check_newer(Some(&new), now),
         Err(FormatError::Rollback)
+    ));
+}
+
+#[test]
+fn future_dated_list_is_refused() {
+    // A list may be dated up to 10 minutes ahead of the client's clock.
+    let list = list("2026-11-20T00:10:00Z", &[]).unwrap();
+    assert!(list.check_newer(None, at("2026-11-20T00:00:00Z")).is_ok());
+    for now in ["2026-11-19T23:59:59Z", "2026-11-19T00:00:00Z"] {
+        assert!(
+            matches!(
+                list.check_newer(None, at(now)),
+                Err(FormatError::FutureDated)
+            ),
+            "{now}"
+        );
+    }
+    // A future-dated list is refused even when it is newer than the cache,
+    // so it cannot be cached and then block every later list.
+    let cached = self::list("2026-11-01T00:00:00Z", &[]).unwrap();
+    assert!(matches!(
+        list.check_newer(Some(&cached), at("2026-11-19T00:00:00Z")),
+        Err(FormatError::FutureDated)
     ));
 }
 

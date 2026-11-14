@@ -27,6 +27,8 @@ pub enum FormatError {
     UnknownKey(String),
     #[error("rollback detected")]
     Rollback,
+    #[error("advisory list is dated in the future")]
+    FutureDated,
     #[error("tree hash error at {}: {}", .0.display(), .1)]
     TreeHash(PathBuf, String),
 }

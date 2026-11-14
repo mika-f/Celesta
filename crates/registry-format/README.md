@@ -197,11 +197,23 @@ refuse. Matching fails closed for it: a comparator with an unsupported operator 
 wildcard), or without a minor or patch number, holds for every version, so it never narrows
 the range. A range with no comparators (`*`) holds for every version of its plugin.
 
-### Rollback rule
+### Rollback and freeze rule
 
-`AdvisoryList::check_newer(cached)` fails with `Rollback` when the list's `generated` is
-earlier than the cached list's. An equal timestamp is accepted. With no cached list, it
-passes.
+`AdvisoryList::check_newer(cached, now)` checks a verified list before it replaces the
+cached one:
+
+1. It fails with `FutureDated` when the list's `generated` is more than 10 minutes after
+   `now` (`generated > now + 10 min`; exactly 10 minutes ahead passes). Otherwise a list
+   dated in the future, once cached, would refuse every later list as a rollback.
+2. It fails with `Rollback` when the list's `generated` is earlier than the cached list's.
+   An equal timestamp is accepted. With no cached list, this step passes.
+
+Freshness is part of the contract, so a client can tell a frozen list from a quiet one:
+
+- The registry regenerates and re-signs `advisories.json` at least every 24 hours, and sets
+  a new, later `generated` on every content change.
+- A client warns when the newest list it has verified has a `generated` older than 7 days.
+  The client (plan 3) enforces this; this crate only states it.
 
 ## Sync contract
 

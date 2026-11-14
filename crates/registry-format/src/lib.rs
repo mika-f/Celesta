@@ -4,7 +4,7 @@
 //! crate holds their typed parsing (`Config`, `Index`, `SearchList`,
 //! `AdvisoryList`), the signing message layouts and signature verification
 //! (`key_message`, `signed_message`, `Keyring`), the tree hash of a plugin
-//! directory (`tree_hash`), and advisory matching with rollback refusal
+//! directory (`tree_hash`), and advisory matching with rollback and freeze refusal
 //! (`AdvisoryList::blocking`, `AdvisoryList::check_newer`).
 //!
 //! The README holds the format in prose.
