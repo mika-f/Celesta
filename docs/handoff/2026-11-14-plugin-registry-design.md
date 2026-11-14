@@ -188,8 +188,9 @@ plugin.
   fifth state.
 - **Blocked** is for malware and vulnerabilities only. It is published as an
   **advisory**: plugin id, an affected version range (`<0.2.3`), a
-  description, an optional "fixed in" version, and the directory
-  fingerprints of the affected builds. It stops the plugin without asking,
+  description, and an optional "fixed in" version. It matches any plugin, from
+  any source, by its manifest `id` and `version` against the range
+  **(designer's call, planning)**. It stops the plugin without asking,
   shows the user what was stopped and why, and offers the fixed version when
   there is one. There is no "run anyway"; a false positive is undone by the
   registry withdrawing the advisory **(proposal)**.
@@ -206,7 +207,7 @@ grows.
 | Path | Contents | Caching |
 | --- | --- | --- |
 | `/config.json` | format version, API base URL, the current signing keys (each signed by the root key) | short |
-| `/index/<id>.json` | one plugin: publisher, kind, description, homepage, source repository, deprecation, and every version: `version`, `celesta` range, `protocol`, `published`, `yanked`, `withdrawn`, `deprecated`, source commit and workflow, and per target `{ url, size, sha256, fingerprint }` | short, revalidated |
+| `/index/<id>.json` | one plugin: publisher, kind, description, homepage, source repository, deprecation, and every version: `version`, `celesta` range, `protocol`, `published`, `yanked`, `withdrawn`, `deprecated`, source commit and workflow, and per target `{ url, size, sha256, treeHash }` | short, revalidated |
 | `/search.json` | every plugin's summary (id, publisher, kind, description, latest version, deprecation), for search and browsing in phase 1 and offline | short |
 | `/advisories.json` | every Blocked advisory, with `generated` timestamp | short |
 | `/archives/<id>/<version>/<target>.zip` | the plugin directory | immutable |
@@ -219,20 +220,29 @@ grows.
   native libraries (a media plugin's `Frameworks/` dylibs or bundled DLLs),
   licenses, notices. Archives keep file modes, as
   `scripts/package-media-plugins.py`'s ZIPs already do.
-- **`fingerprint`** is a **tree hash** over every file in the extracted
-  directory (relative path, mode, length, contents), not today's approval
-  fingerprint, which covers only the manifest and the files it names and so
-  leaves bundled native libraries unchecked **(designer's call)**. The
-  registry computes it after extracting each archive. It lets the client
-  recognize a registry build anywhere: in the store, in a hand-placed
-  folder, or bundled in the app. Today's approval fingerprint for
-  hand-placed plugins is unchanged, so no saved allowance is asked about
-  again; the client computes the tree hash of a hand-placed folder only to
-  match advisories.
+- **`treeHash`** is a **tree hash** over every file in the extracted
+  directory, not today's approval fingerprint, which covers only the
+  manifest and the files it names and so leaves bundled native libraries
+  unchecked **(designer's call)**. It is named `treeHash`, not `fingerprint`,
+  so it is not confused with the approval fingerprint **(designer's call,
+  planning)**. The hash covers each regular file's relative path (with `/`
+  separators) and its contents **(designer's call, planning)**. File modes
+  are left out, because Windows cannot observe them. Registry archives may
+  contain no symlinks: publishing refuses them, and the tree hash fails on
+  them. The registry computes it after extracting each archive. It lets the
+  client recognize a registry build in the store or bundled in the app, so a
+  bundled copy can satisfy a lock. Today's approval fingerprint for
+  hand-placed plugins is a different thing and is unchanged, so no saved
+  allowance is asked about again. Tree hashes are not used to match
+  advisories: junk files in a hand-placed folder (such as `.DS_Store`) would
+  defeat that **(designer's call, planning)**.
 - **Signing**: each JSON file has a detached Ed25519 signature
   (`<file>.sig`) by an online key; online keys are listed in `/config.json`
   and signed by an offline root key whose public half is compiled into
-  Celesta. Clients refuse a file whose signature fails and refuse an
+  Celesta. A signature covers `celesta-registry-file-v1\n<path>\n` followed
+  by the file's bytes, where `<path>` is the served path (such as
+  `/index/vrm.json`) **(designer's call, planning)**. Clients refuse a file
+  whose signature fails and refuse an
   `advisories.json` older than the one they have (rollback/freeze
   protection). The exact envelope is left to the builder; it must allow key
   rotation without an app update.
@@ -282,8 +292,8 @@ grows.
   paths, `celesta` range, the id matching the registered name) and each
   archive's shape (the plugin directory at the root, the target's
   executable present, no other target's executable, no links leaving the
-  directory), enforces size limits, computes tree hashes, and regenerates
-  the plugin's index, `search.json`, and their signatures. Versions are
+  directory), enforces size limits, computes tree hashes (and refuses
+  symlinks), and regenerates the plugin's index, `search.json`, and their signatures. Versions are
   immutable: republishing a version is refused.
 - From phase 2 every archive must carry a GitHub artifact attestation
   (Sigstore) from the registered repository and workflow, which in turn
@@ -306,8 +316,9 @@ grows.
   archives' Mach-O files are already signed with the Developer ID and
   notarized (as the optional codec ZIPs are today), so the app's signing
   must leave them as they are (no `--force` over nested plugin code). This
-  way a bundled copy's tree hash equals the registry's: advisories reach it,
-  and a lock on `ffmpeg 0.9.0` is satisfied by the bundled copy offline.
+  way a bundled copy's tree hash equals the registry's, so a lock on
+  `ffmpeg 0.9.0` is satisfied by the bundled copy offline. Advisories reach
+  it by its manifest `id` and `version`.
   This changes the order of the release pipelines (`package-build.yml`,
   `package-macos.py`, `package-windows.ps1`).
 
@@ -346,7 +357,7 @@ grows.
   plugins appear here only when the project chooses to pin one (`add
   --pin`); otherwise they are global tools (below).
 - `celesta.lock` beside it records, for each dependency, the exact version,
-  the registry, and every target's `sha256` and `fingerprint`, so one
+  the registry, and every target's `sha256` and `treeHash`, so one
   lockfile works on every OS **(proposal for the name)**. It is written by
   the tools, committed by the user, and never edited by hand.
 - **The lock records the Celesta version it was resolved with**
@@ -379,7 +390,7 @@ grows.
   created 0700 on Unix so `unsafe_reason` accepts it. Downloads go to a
   temporary directory, are checked against the lock's or index's `sha256`,
   extracted with the host's containment rules (no `..`, absolute paths,
-  links leaving the folder), fingerprinted, and renamed into place.
+  links), tree-hashed, and renamed into place.
 - Discovery gains a source for the store. For an id the project locks, the
   locked version from the store ranks before every other source, including
   the bundled folder (so a pinned `ffmpeg 0.9.0` replaces a bundled
@@ -395,16 +406,16 @@ grows.
   and rank where the user plugin folder does today, before bundled ones
   **(proposal)**.
 - **Approval.** A store plugin runs without the approval prompt when its
-  directory's fingerprint equals the one recorded at install, and either the
+  directory's tree hash equals the one recorded at install, and either the
   user installed it globally or a trusted project locks it with that
-  fingerprint. Opening an untrusted project asks for trust first, then
+  tree hash. Opening an untrusted project asks for trust first, then
   offers to download. Hand-placed plugins keep today's approval flow.
 - **Advisories.** The client fetches `/advisories.json` at app start, every
   24 hours while running, and once per CLI invocation (a 3-second timeout),
   verifies it, and caches it. Offline, the cached file still applies. A
-  plugin matching an advisory, by id and version for store plugins and by
-  fingerprint for any folder (hand-placed copies and the bundled ones
-  included), does not run anywhere: the editor, exporter, MCP server, and
+  plugin matching an advisory, by its manifest `id` and `version`, whatever
+  its source (store, hand-placed, or bundled), does not run anywhere: the
+  editor, exporter, MCP server, and
   React runtime treat it as turned off. The app shows a notification naming
   the plugin and the advisory, and offers the fixed version; a bundled one
   says to update Celesta.
@@ -506,13 +517,13 @@ proposal):
 ## Security summary
 
 - Integrity: archives checked by `sha256` from a signed index or the lock;
-  the directory fingerprint checked at load.
+  the directory's tree hash checked at load.
 - Authenticity: Ed25519 signatures with a compiled-in root key and rotating
   online keys.
 - Provenance: GitHub artifact attestations required for every archive in
   phase 2 (and produced for first-party archives from phase 1).
 - Malware: static checks, then ClamAV and YARA (phase 2); Blocked
-  advisories, enforced by fingerprint, even offline.
+  advisories, enforced by id and version, even offline.
 - Privacy: whole-file downloads only; no per-user requests.
 - Extraction: the host's existing containment rules; Unix permission checks
   on the store.
@@ -551,7 +562,7 @@ proposal):
 - The folder in this repository that holds the schema and fixtures.
 - Cache lifetimes and retry behavior.
 - Everything inside the service, designed in the registry repository.
-- How the store records install metadata (fingerprint at install, source).
+- How the store records install metadata (tree hash at install, source).
 
 ## Checks this work needs
 
@@ -563,8 +574,8 @@ proposal):
   executable, modes kept), tested locally without the service.
 - The client: resolution (yanked skipped but locked ones kept, `celesta`
   range, targets), lock round trips, store extraction safety (zip-slip,
-  links, modes), signature and rollback refusal, advisories by version and
-  by fingerprint (hand-placed and bundled), offline behavior with a cached
+  links, modes), signature and rollback refusal, advisories by id and
+  version (store, hand-placed, and bundled), offline behavior with a cached
   advisory file, approval of locked plugins in trusted and untrusted
   projects, pinned media plugins replacing bundled ones without changing
   defaults.
