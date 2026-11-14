@@ -128,6 +128,8 @@ pub fn lock_project(
     })?;
     let lock = resolution.lock;
     lock.save(root)?;
+    // Before the installs, so a failed one still leaves the project known.
+    let record_error = record_error(env, root);
 
     let bundled = Bundled::new(env.bundled);
     let mut installed = Vec::new();
@@ -152,7 +154,7 @@ pub fn lock_project(
         lock,
         warnings: resolution.warnings,
         installed,
-        record_error: record_error(env, root),
+        record_error,
     })
 }
 
