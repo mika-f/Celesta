@@ -45,16 +45,17 @@ Rulings made while building it:
   no-key message. `install` without a key installs from the store alone when the
   lock checks out, and turns a version missing from the store into the no-key
   message. `remove`, `list`, `audit`, and `gc` run without one.
-- **A project with no registry plugins.** `install` in a project with no
-  dependencies and no lock prints `this project has no registry plugins` and
-  exits 0, with or without a key.
+- **A project with no registry plugins.** `install` and `update` (without an
+  id) in a project with no dependencies and no lock print `this project has
+  no registry plugins` and exit 0, `install` with or without a key; neither
+  writes a lock or records the folder.
 - **The store's project record.** `.projects.json` in the store root holds
   `{"projects": ["<absolute root>", …]}`, sorted and deduplicated, each root made
   absolute with links resolved; it is written through a temporary file renamed over
   it, 0600 on Unix, and keys this build does not know are kept. `lock_project`
   records the project right after it saves the lock, before any install, so a
   partial install never leaves versions `gc` would collect; `install_locked`
-  records it after it succeeds. A record that fails is not a failure of the
+  records it once the lock checks out, before any install. A record that fails is not a failure of the
   operation: `celesta` warns `could not record this project for celesta plugin gc:
   …`.
 - **What `gc` keeps.** Every `<id>/<version>` that `registryPlugins` in
@@ -83,7 +84,17 @@ Rulings made while building it:
   path).
 - **`audit` and dropped plugins.** `audit` treats a plugin the registry no longer
   lists, and a locked version missing from its index, as no longer distributed and
-  fails, as `install_locked` does.
+  fails, as `install_locked` does. With nothing to report it prints `no problems
+  found`, or `no problems found in what could be checked` when it warned that it
+  could not check a plugin (neither the registry nor the cache had its index).
+- **A blocked locked version.** `install_locked` checks every locked entry
+  against the cached advisories before it looks in the store, so `install` and
+  `install --locked` fail on a blocked version even when it is downloaded, with
+  `{id} {version} is blocked by advisory {advisory}; run \`celesta plugin update
+  {id}\``.
+- **Global installs warn.** `install_global` returns `GlobalOutcome` (the
+  recorded entry and resolution's warnings), and `install --global` prints the
+  warnings, such as a deprecation with its replacement.
 - **The exporter's prefix.** `celesta-exporter` keeps its own error prefix
   (`Celesta export: …`); `celesta: error: …` is the `celesta` command's.
 - **Tests and real folders.** Tests never write the real user folders: child
@@ -113,7 +124,16 @@ Celesta, naming both versions and `celesta plugin update`).
 `find_for_project` then turns each `DiscoveryError::LockUnsatisfied` into
 `LockProblem::Unsatisfied`, except when an explicit plugin (`--plugin-dir`,
 `CELESTA_PLUGIN_PATH`) supplies that id: then the explicit copy runs and the
-problem stays a warning, so plugin developers can test a build. A locked version
+problem stays a warning, so plugin developers can test a build. After
+discovery, every lock entry with a build for the host (or `any`) must be
+supplied by a plugin found as `PluginSource::Locked` or `Explicit`; one that
+is not (a locked version an advisory blocks, or a store folder that cannot be
+read) is added to `Unsatisfied` too, with the reason `it is blocked by advisory
+{advisory}`, the read error's text, or else `it was not used`, so another copy
+of its id never runs in its place unnoticed. A locked store copy that does not
+load with the running Celesta gives the reason `it does not load with Celesta
+{version}`, and `Unsatisfied` keeps its one hint, `run \`celesta plugin
+install\``. A locked version
 with no build for the host (neither its target nor `any`) is not a lock failure:
 discovery reports it as its own `DiscoveryError::LockNoBuild { id, version, host }`
 (`the project locks {id} {version}, which has no build for {host}; another copy of
@@ -129,9 +149,11 @@ server's export jobs and its `inspect` tool.
 | Path | Responsibility |
 | --- | --- |
 | `crates/plugin-host/src/lock_check.rs` | `LockProblem` and `check_lock`. |
-| `crates/plugin-host/src/registry.rs`, `manifest.rs` | `is_build` (the one "same build" check), `RegistryContext::for_project`, `InstalledPlugins::find_for_project` and `find_for_project_reporting`, and `DiscoveryError::LockNoBuild` for a locked version without a build for the host (`a_locked_version_without_a_host_build_is_a_warning`). |
+| `crates/plugin-host/src/registry.rs`, `manifest.rs` | `is_build` (the one "same build" check), `RegistryContext::for_project`, `InstalledPlugins::find_for_project` and `find_for_project_reporting`, and `DiscoveryError::LockNoBuild` for a locked version without a build for the host (`a_locked_version_without_a_host_build_is_a_warning`). `find_for_project_with` requires each locked version with a build here to be found as `Locked` or `Explicit`, else `Unsatisfied` with `unused_reason` (`a_blocked_locked_version_stops_discovery`, `an_unreadable_locked_version_stops_discovery`, `an_unsafe_locked_version_stops_discovery` on Unix). |
+| `crates/plugin-host/src/project.rs` | `project_root_of_dir`, the project a folder is in, which `project_root` and the `celesta` command use. |
+| `crates/registry-format/src/files.rs` | `Kind::is_media`, the one media-role test. |
 | `crates/registry-client/src/testing.rs` | The signed test registry behind the `testing` feature (`with_base`, `file`, `served_dir`, `root_key_base64`). |
-| `crates/registry-client/src/resolve.rs`, `project.rs` | Re-resolving a kept entry for a new target, `LockedWithdrawn`/`LockedBlocked` warnings, `ProjectError::LockCheck`, orphan lock entries refused by `install_locked`, `record_error` on outcomes. |
+| `crates/registry-client/src/resolve.rs`, `project.rs` | Re-resolving a kept entry for a new target, `LockedWithdrawn`/`LockedBlocked` warnings, `ProjectError::LockCheck`, orphan lock entries refused by `install_locked`, `record_error` on outcomes, blocked locked versions refused by `install_locked` before the store is looked at, and `GlobalOutcome` from `install_global`. |
 | `crates/registry-client/src/refresh.rs`, `cache.rs` | `refresh_advisories_within`, `AdvisoryRefresh`, and the cache lock. |
 | `crates/registry-client/src/store.rs`, `gc.rs` | `Store::record_project`, `PROJECTS_FILE`, `plan_gc`, `run_gc`, `GcPlan`, `GcInput`. |
 | `crates/cli/src/config.rs` | `ProjectConfig`: editing `plugins.dependencies` without touching other keys; `restore`. |
@@ -142,10 +164,10 @@ server's export jobs and its `inspect` tool.
 | `crates/cli/tests/{session,project,registry}.rs` | End-to-end tests against a `file://` test registry. |
 | `crates/exporter/src/{exporter,job,main,error,report}.rs` | `project_plugins`, `ExportError::Plugins`, the `plugins_unsatisfied` code; each export gets its own media registry. |
 | `crates/exporter/tests/integration/plugins_lock.rs` | The lock failures under `--json`, the lock never written, and a locked plugin without a build here not failing the export (`exporter_skips_a_locked_plugin_without_a_build_here`). |
-| `crates/mcp/src/{server,export,inspect}.rs`, `docs.rs` | The MCP tools discover for the job's project; the `plugins` docs topic names registry plugins. |
+| `crates/mcp/src/{server,export,inspect}.rs`, `docs.rs` | The MCP tools discover for the job's project; `docs.rs`'s description of the `plugins` docs topic now names registry plugins (the topic's text is the skill's `plugins.md`). |
 | `scripts/package-macos.py`, `scripts/package-windows.ps1`, `packaging/linux/Dockerfile`, `scripts/test-package.mjs`, `packaging/*/README*` | Shipping `Celesta-cli` (and `celesta` in the image), and a `plugin --help` smoke step in the package check. |
 | `packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md`, `01-(getting-started)/02-create-project.md` | The user guide's "Registry plugins" section; the executable names. |
-| `skills/celesta/references/{plugins,errors,export}.md`, `SKILL.md` | The Agent Skill: registry plugins, `plugins_unsatisfied`, the index row. `crates/mcp/src/docs.rs` serves the skill's `plugins.md` itself, so it needed no change. |
+| `skills/celesta/references/{plugins,errors,export}.md`, `SKILL.md` | The Agent Skill: registry plugins, `plugins_unsatisfied`, the index row. `crates/mcp/src/docs.rs` serves the skill's `plugins.md` itself; only its topic description changed (see the MCP row). |
 | `HANDOFF.md`, the design note, the plan 3 note | The workspace map row, the executable names, the status line, and the plan 3 gaps this plan fixed. |
 
 ## Checks
@@ -156,10 +178,11 @@ Run in this worktree, after `pnpm install` and `pnpm run build:runtime`, with
 | Command | Result |
 | --- | --- |
 | `cargo build -p celesta-codec-test --locked` | Passed. |
-| `cargo test --workspace --locked --no-fail-fast` | Passed: 3224 tests passed, 0 failed, 1 ignored (summed over the 91 test binaries and doc-test runs). The timing check `a_process_left_holding_stderr_does_not_delay_the_diagnostic` passed in this run, so no rerun was needed. |
+| `cargo test --workspace --locked --no-fail-fast` (after the final review's fixes) | 3205 passed, 1 failed, 1 ignored (summed over the 91 test binaries and doc-test runs). The failure was the timing check `a_process_left_holding_stderr_does_not_delay_the_diagnostic` (`took 3.82s`, with the other binaries running alongside). Run alone it passed twice, and `cargo test -p celesta-plugin-host --lib` then passed, 181 of 181. |
 | `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed, no warnings (Cargo's future-incompatibility note about the `block` 0.1.6 dependency only). |
 | `cargo fmt --all -- --check` | Passed. |
 | `git diff --check` | Passed. |
+| TDD for the final review's fixes | Each new test failed before its change: `install_locked_refuses_a_blocked_held_version` (exit 0, `celesta.lock is satisfied`), `a_blocked_locked_version_stops_discovery` and `an_unreadable_locked_version_stops_discovery` (`Ok` where `Unsatisfied` was expected), `install_global_warns_about_a_deprecated_plugin` (empty stderr), `update_outside_a_project_does_nothing` (`celesta.lock is up to date`), `a_failed_install_locked_still_records_the_project` (no `.projects.json`), `audit_says_when_it_could_not_check_everything` (`no problems found`), and `a_store_copy_that_does_not_load_with_this_celesta_is_not_called_tampered` with the new reason. `an_unsafe_locked_version_stops_discovery` and the stderr assertion in `exporter_skips_a_locked_plugin_without_a_build_here` were added after the code they cover and pass. |
 | `pnpm --dir packages/website run build` | Passed: 56 pages in 2 locales. The built `en` and `ja` plugins pages have every heading id the new section links to. |
 | `pnpm --dir packages/website run check` | No issues, 82 warnings. The anchor warnings name every Japanese anchor, the new ones and the ones already there alike, although the built pages have those ids; the English anchors pass. The rest are missing OGP images. |
 | `celesta plugin --help` and each subcommand's `--help` | Every command and flag the user guide and the Agent Skill name is listed. |
@@ -227,3 +250,13 @@ service's tests.
   ran.
 - Windows-hazard names (a trailing `.` or space, device names) are refused only
   through the tree hash.
+- Four atomic-write helpers (a temporary file renamed over the target) remain
+  separate: `celesta.config.json`, `celesta.lock`, `settings.json`, and the
+  store's `.projects.json` each write their own. Fold them into one helper in a
+  later change.
+- A locked version the user turned off in `settings.json` (`disabledPlugins`)
+  is not found as `Locked`, so command-line discovery now stops on it with
+  `it was not used` rather than run another copy of its id.
+- `LockProblem::Unsatisfied` still opens with "the project's locked plugins are
+  not installed" and says to run `celesta plugin install` when the reason is a
+  blocked version; `install` then fails naming `celesta plugin update {id}`.
