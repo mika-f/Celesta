@@ -12,6 +12,8 @@ To export the example:
 To let a coding agent (Claude Code, Cursor, ...) check and render videos,
 register Celesta-mcp.exe in this directory as an MCP server.
 
+To manage a project's plugins from a terminal, run Celesta-cli.exe plugin --help.
+
 Choose File > Open... in Celesta to preview a project or React composition.
 Keep your projects and media in your own documents directory. The examples
 are starting points; copy them before editing them in a text editor.

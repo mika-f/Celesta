@@ -44,6 +44,15 @@ font files in the mounted folder and load them with `<Font>`.
 Without a terminal attached, the exporter prints text progress. Add `-t` to
 `docker run` for the interactive dashboard.
 
+## Plugin command
+
+The image also contains `celesta`, the command that adds, removes, installs, and
+updates a project's plugins. Run it as `celesta plugin ...`:
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" --entrypoint /opt/celesta/celesta celesta-exporter plugin --help
+```
+
 ## MCP server
 
 The image also contains `celesta-mcp`, the MCP server that lets coding agents
