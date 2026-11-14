@@ -61,6 +61,22 @@ impl Home {
         command
     }
 
+    /// The store `celesta` installs registry plugins into under this home:
+    /// `registry` beside the user plugin folder.
+    pub fn store(&self) -> PathBuf {
+        let home = self.path();
+        if cfg!(windows) {
+            home.join("appdata").join("Celesta").join("registry")
+        } else if cfg!(target_os = "macos") {
+            home.join("Library")
+                .join("Application Support")
+                .join("Celesta")
+                .join("registry")
+        } else {
+            home.join("data").join("celesta").join("registry")
+        }
+    }
+
     /// A new project folder under this home whose `celesta.config.json`
     /// holds `config`.
     pub fn project(&self, config: &str) -> PathBuf {

@@ -269,11 +269,17 @@ impl Serialize for Edited<'_> {
     }
 }
 
-/// Puts `previous` back exactly, or removes the file when there was none.
+/// Puts `previous` back as `root`'s `celesta.config.json` exactly, or
+/// removes the file when there was none.
 pub fn restore(root: &Path, previous: Option<&[u8]>) -> io::Result<()> {
-    let path = root.join(PROJECT_CONFIG);
+    restore_file(&root.join(PROJECT_CONFIG), previous)
+}
+
+/// Puts `previous` back at `path` exactly, or removes the file when there
+/// was none.
+pub fn restore_file(path: &Path, previous: Option<&[u8]>) -> io::Result<()> {
     match previous {
-        Some(bytes) => write_atomic(&path, bytes),
+        Some(bytes) => write_atomic(path, bytes),
         None => match std::fs::remove_file(path) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),

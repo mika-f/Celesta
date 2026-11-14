@@ -3,14 +3,17 @@
 
 pub mod advisories;
 pub mod args;
+pub mod commands;
 pub mod config;
 pub mod report;
 pub mod session;
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use args::{Cli, Command, PluginCommand};
-use session::{NO_KEY_MESSAGE, Session};
+use args::{Cli, Command, PluginArgs, PluginCommand};
+use commands::project;
+use session::{NO_KEY_MESSAGE, Session, project_dir_root};
 
 /// Exit status for a mistake in how `celesta` was invoked.
 pub const USAGE: u8 = 2;
@@ -18,7 +21,10 @@ pub const USAGE: u8 = 2;
 /// Runs `cli` and returns its exit status: 0 on success, 1 on failure, 2
 /// for a usage error.
 pub fn run(cli: Cli) -> ExitCode {
-    let Command::Plugin(args) = cli.command;
+    let Command::Plugin(PluginArgs {
+        project: folder,
+        command,
+    }) = cli.command;
     let session = match Session::from_env() {
         Ok(session) => session,
         Err(error) => {
@@ -30,17 +36,30 @@ pub fn run(cli: Cli) -> ExitCode {
             };
         }
     };
-    if needs_registry(&args.command) && !session.has_key {
+    if needs_registry(&command) && !session.has_key {
         report::error(NO_KEY_MESSAGE);
         return ExitCode::FAILURE;
     }
-    match args.command {
+    match command {
+        PluginCommand::Add { spec, pin } => {
+            in_project(folder, |root| project::add(&session, root, &spec, pin))
+        }
+        PluginCommand::Remove { id } => in_project(folder, |root| project::remove(root, &id)),
+        PluginCommand::Install {
+            locked,
+            offline,
+            global: None,
+        } => in_project(folder, |root| {
+            project::install(&session, root, locked, offline)
+        }),
+        PluginCommand::Update { id } => in_project(folder, |root| {
+            project::update(&session, root, id.as_deref())
+        }),
         PluginCommand::Search { .. }
         | PluginCommand::Info { .. }
-        | PluginCommand::Add { .. }
-        | PluginCommand::Remove { .. }
-        | PluginCommand::Install { .. }
-        | PluginCommand::Update { .. }
+        | PluginCommand::Install {
+            global: Some(_), ..
+        }
         | PluginCommand::List
         | PluginCommand::Audit
         | PluginCommand::Gc { .. } => {
@@ -48,6 +67,22 @@ pub fn run(cli: Cli) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Runs `command` in the project `folder` (the current folder by default)
+/// is in.
+fn in_project(folder: Option<PathBuf>, command: impl FnOnce(&Path) -> ExitCode) -> ExitCode {
+    let folder = match folder {
+        Some(folder) => folder,
+        None => match std::env::current_dir() {
+            Ok(folder) => folder,
+            Err(error) => {
+                report::error(format_args!("could not find the current folder: {error}"));
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+    command(&project_dir_root(&folder))
 }
 
 /// Whether `command` cannot run without reaching the registry.
