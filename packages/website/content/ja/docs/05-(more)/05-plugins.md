@@ -166,7 +166,7 @@ Celesta は、ロックしたバージョンを、`--plugin-dir` と `CELESTA_PL
 | `celesta plugin install --global <id>[@<req>]` | メディアプラグインを、すべてのプロジェクト用に入れます（[レジストリのメディアプラグイン](#レジストリのメディアプラグイン)を参照）。 |
 | `celesta plugin update [<id>]` | すべてのプラグイン、または指定したプラグインについて、要件が許すいちばん新しいバージョンを選んでロックを書き直し、`acme.charts 1.2.3 -> 1.3.0` のように変更を表示します。 |
 | `celesta plugin list` | このプロジェクトがロックしているプラグインと、すべてのプロジェクト用に入れたプラグインを、`installed`、`not installed`、`no build for <target>`、`blocked (<advisory>)` のどれかと、該当すれば `yanked` や `deprecated` の印を付けて一覧表示します。 |
-| `celesta plugin audit` | ロックしているプラグインとすべてのプロジェクト用のプラグインを、セキュリティアドバイザリーとレジストリに照らして確認し、見つかったことを表示します。ブロックされたプラグインや配布されなくなったプラグインがあれば失敗します。 |
+| `celesta plugin audit` | ロックしているプラグインとすべてのプロジェクト用のプラグインを、セキュリティアドバイザリーとレジストリに照らして確認し、見つかったことを表示します。何もなければ `no problems found` と表示します（プラグインの情報を取得できなかったときは警告し、`no problems found in what could be checked` と表示します）。ブロックされたプラグインや配布されなくなったプラグインがあれば失敗します。 |
 | `celesta plugin gc` | どのプロジェクトも使っていないダウンロード済みのバージョンを削除します（[ダウンロードを片付ける](#ダウンロードを片付ける)を参照）。`--dry-run` を付けると、削除するものを表示するだけです。 |
 
 ```sh
@@ -219,7 +219,7 @@ celesta: warning: the security advisory list is 9 days old; plugins under newer 
 
 オンラインでこれらのコマンドのどれかを実行すると、新しい一覧を取得します。
 
-公開者はバージョンを非推奨（deprecate）にすることがあります。非推奨のバージョンも入りますが、警告が出て、代わりがあればその名前も示されます（`acme.charts 1.2.3 is deprecated: … (use acme.graphs instead)`）。取り下げられた（yank された）バージョンは二度と選ばれませんが、それを指すロックではそのまま残り、ダウンロードもされます。そのときは `acme.charts 1.2.3 is locked and has been yanked` と警告します。レジストリから撤回されたバージョンや、アドバイザリーでブロックされたバージョンは入れられません。`install` は理由を示して失敗するので、`celesta plugin update <id>` で別のバージョンを選んでください。
+公開者はバージョンを非推奨（deprecate）にすることがあります。非推奨のバージョンも入りますが、警告が出て、代わりがあればその名前も示されます（`acme.charts 1.2.3 is deprecated: … (use acme.graphs instead)`）。取り下げられた（yank された）バージョンは二度と選ばれませんが、それを指すロックではそのまま残り、ダウンロードもされます。そのときは `acme.charts 1.2.3 is locked and has been yanked` と警告します。レジストリから撤回されたバージョンは入れられません。アドバイザリーでブロックされたバージョンは、ダウンロード済みでも入れることも使うこともできません。`install` は理由を示して失敗するので（`` acme.charts 1.2.3 is blocked by advisory CELESTA-2026-0009; run `celesta plugin update acme.charts` ``）、`celesta plugin update <id>` で別のバージョンを選んでください。
 
 ### 書き出しでロックを使えないとき
 
@@ -229,7 +229,7 @@ celesta: warning: the security advisory list is 9 days old; plugins under newer 
 | --- | --- |
 | `` the project declares registry plugins but has no celesta.lock; run `celesta plugin install` `` | `celesta plugin install` を実行し、書き込まれたロックをコミットします。 |
 | `` celesta.lock does not match celesta.config.json for acme.charts; run `celesta plugin install` `` | 要件が変わったか、プロジェクトが宣言しなくなったプラグインがロックにあります。`celesta plugin install` を実行します。 |
-| `` the project's locked plugins are not installed: acme.charts 1.2.3 (it is not installed); run `celesta plugin install` `` | ロックしたバージョンがこのコンピューターにダウンロードされていないか、そのファイルが変わっています（`its installed files differ from the lock`）。`celesta plugin install` を実行します。 |
+| `` the project's locked plugins are not installed: acme.charts 1.2.3 (it is not installed); run `celesta plugin install` `` | ロックしたバージョンがこのコンピューターにダウンロードされていないか、そのファイルが変わっています（`its installed files differ from the lock`）。`celesta plugin install` を実行します。理由が `it is blocked by advisory …` のときは代わりに `celesta plugin update <id>` を、`it does not load with Celesta …` のときは `celesta plugin update` を実行します。 |
 | `` <project>/celesta.config.json: plugins.dependencies entry "acme.charts": … ``（または `celesta.config.json` を示すほかのメッセージ） | ファイルが正しい JSON でないか、`plugins` の要件やターゲットが正しくありません。メッセージが示すところを直します。 |
 | `` the project's celesta.lock could not be read: … `` | ロックが正しい JSON でないか、新しい Celesta がこの Celesta の読めないロック形式で書いています（`… does not read; update Celesta`）。手で編集せず、バージョン管理から元に戻すか、メッセージのとおり Celesta を更新します。 |
 | `` celesta.lock was resolved with Celesta 0.9.0, and this is Celesta 0.10.0; acme.charts cannot load with it. Run `celesta plugin update` to resolve them again `` | 別のマイナーバージョンの Celesta で作ったロックです。`celesta plugin update` でこの Celesta 向けのバージョンを選んでロックを書き直し、コミットします。 |

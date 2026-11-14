@@ -166,7 +166,7 @@ Celesta looks for a locked version in its download folder right after the folder
 | `celesta plugin install --global <id>[@<req>]` | Installs a media plugin for every project (see [Media plugins from the registry](#media-plugins-from-the-registry)). |
 | `celesta plugin update [<id>]` | Chooses the newest versions the requirements allow, for every plugin or the one named, rewrites the lock, and prints each change, such as `acme.charts 1.2.3 -> 1.3.0`. |
 | `celesta plugin list` | Lists the plugins this project locks and those installed for every project, each `installed`, `not installed`, `no build for <target>`, or `blocked (<advisory>)`, and marked `yanked` or `deprecated` when it is. |
-| `celesta plugin audit` | Checks the locked plugins and those installed for every project against the security advisories and the registry, and prints what it finds. It fails when a plugin is blocked or no longer distributed. |
+| `celesta plugin audit` | Checks the locked plugins and those installed for every project against the security advisories and the registry, and prints what it finds, or `no problems found` (`no problems found in what could be checked` when it could not reach a plugin's listing, as it warns). It fails when a plugin is blocked or no longer distributed. |
 | `celesta plugin gc` | Removes the downloaded versions no project uses (see [Clean up downloads](#clean-up-downloads)). `--dry-run` says what it would remove. |
 
 ```sh
@@ -219,7 +219,7 @@ celesta: warning: the security advisory list is 9 days old; plugins under newer 
 
 Run one of these commands while online to fetch a newer list.
 
-A publisher can deprecate a version, which still installs with a warning that names the replacement when there is one (`acme.charts 1.2.3 is deprecated: … (use acme.graphs instead)`), or yank it: a yanked version is never chosen again, but a lock that names it keeps it and still downloads it, with the warning `acme.charts 1.2.3 is locked and has been yanked`. A version withdrawn from the registry, or blocked by an advisory, cannot be installed: `install` fails with the reason, and `celesta plugin update <id>` chooses another version.
+A publisher can deprecate a version, which still installs with a warning that names the replacement when there is one (`acme.charts 1.2.3 is deprecated: … (use acme.graphs instead)`), or yank it: a yanked version is never chosen again, but a lock that names it keeps it and still downloads it, with the warning `acme.charts 1.2.3 is locked and has been yanked`. A version withdrawn from the registry cannot be installed, and one blocked by an advisory can be neither installed nor used, even when it is already downloaded: `install` fails with the reason (`` acme.charts 1.2.3 is blocked by advisory CELESTA-2026-0009; run `celesta plugin update acme.charts` ``), and `celesta plugin update <id>` chooses another version.
 
 ### When an export cannot use the lock
 
@@ -229,7 +229,7 @@ A publisher can deprecate a version, which still installs with a warning that na
 | --- | --- |
 | `` the project declares registry plugins but has no celesta.lock; run `celesta plugin install` `` | Run `celesta plugin install`, and commit the lock it writes. |
 | `` celesta.lock does not match celesta.config.json for acme.charts; run `celesta plugin install` `` | A requirement changed, or the lock names a plugin the project no longer declares. Run `celesta plugin install`. |
-| `` the project's locked plugins are not installed: acme.charts 1.2.3 (it is not installed); run `celesta plugin install` `` | The locked version is not downloaded on this computer, or its files changed (`its installed files differ from the lock`). Run `celesta plugin install`. |
+| `` the project's locked plugins are not installed: acme.charts 1.2.3 (it is not installed); run `celesta plugin install` `` | The locked version is not downloaded on this computer, or its files changed (`its installed files differ from the lock`). Run `celesta plugin install`. When the reason is `it is blocked by advisory …`, run `celesta plugin update <id>` instead; when it is `it does not load with Celesta …`, run `celesta plugin update`. |
 | `` <project>/celesta.config.json: plugins.dependencies entry "acme.charts": … `` (or another message naming `celesta.config.json`) | The file is not valid JSON, or a requirement or target in `plugins` is not valid. Fix what the message names. |
 | `` the project's celesta.lock could not be read: … `` | The lock is not valid JSON, or a newer Celesta wrote it in a lock format this one does not read (`… does not read; update Celesta`). Do not edit it: restore it from your version control, or update Celesta when the message says so. |
 | `` celesta.lock was resolved with Celesta 0.9.0, and this is Celesta 0.10.0; acme.charts cannot load with it. Run `celesta plugin update` to resolve them again `` | The lock was made with another Celesta minor version. `celesta plugin update` chooses versions for this Celesta and rewrites the lock; commit it. |

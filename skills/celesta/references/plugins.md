@@ -127,9 +127,13 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 - Warnings to relay, not silence: the advisory list is missing or `… days
   old` (more than 7; a run online fetches a new one, waiting at most
   3 seconds), a version is deprecated (with its replacement) or yanked.
-  A plugin version under a security advisory does not run anywhere;
-  `celesta plugin audit` lists them and exits 1 when one is blocked or no
-  longer distributed.
+  A plugin version under a security advisory does not run anywhere; a
+  project that locks one fails `install` (`` <id> <version> is blocked by
+  advisory <advisory>; run `celesta plugin update <id>` ``) and the export,
+  even when it is downloaded. `celesta plugin audit` lists them and exits 1
+  when one is blocked or no longer distributed; it prints `no problems
+  found in what could be checked` when it could not reach a plugin's
+  listing.
 
 ## Media plugins
 
@@ -374,7 +378,7 @@ import { Vrm } from '@celesta-plugin/vrm';
 | --- | --- |
 | `the project declares registry plugins but has no celesta.lock; run \`celesta plugin install\`` (`plugins_unsatisfied`) | The project has `plugins.dependencies` but no lock. Run `celesta plugin install`, which writes and installs it; the user commits `celesta.lock`. |
 | `celesta.lock does not match celesta.config.json for <ids>; run \`celesta plugin install\`` (`plugins_unsatisfied`) | A requirement changed, a dependency is not locked yet, or the lock names a plugin the config no longer has. Run `celesta plugin install` (not `--locked`, which fails the same way). |
-| `the project's locked plugins are not installed: <id> <version> (<reason>); …; run \`celesta plugin install\`` (`plugins_unsatisfied`) | The locked version is not downloaded here (`it is not installed`), its files changed (`its installed files differ from the lock`), or it does not load with this Celesta. Run `celesta plugin install`; for the last, `celesta plugin update`. |
+| `the project's locked plugins are not installed: <id> <version> (<reason>); …; run \`celesta plugin install\`` (`plugins_unsatisfied`) | The locked version is not downloaded here (`it is not installed`), its files changed (`its installed files differ from the lock`), it is under a security advisory (`it is blocked by advisory <advisory>`), its folder cannot be read (the read error), or it does not load with this Celesta (`it does not load with Celesta <version>`). Run `celesta plugin install`; for a blocked version, `celesta plugin update <id>` with the user's agreement; for the last, `celesta plugin update`. |
 | `celesta.lock was resolved with Celesta <old>, and this is Celesta <new>; <ids> cannot load with it. Run \`celesta plugin update\` to resolve them again` (`plugins_unsatisfied`) | The lock comes from another Celesta minor version. With the user's agreement, run `celesta plugin update`, which rewrites the lock for this Celesta, and have them commit it. |
 | `<path>/celesta.config.json: plugins.dependencies entry "<id>": …`, `could not read <path>/celesta.config.json: …`, or `<path> is not a project settings file: …` (`plugins_unsatisfied`) | The project's `celesta.config.json` is not valid JSON, or a requirement or target in `plugins` is not valid. Fix what the message names. |
 | `the project's celesta.lock could not be read: …` (`plugins_unsatisfied`) | The lock is not valid JSON, or a newer Celesta wrote it (`… was written in lock format <n>, which this Celesta <version> does not read; update Celesta`). Do not edit or delete it: tell the user to restore it from version control, or to update Celesta when the message says so. |
