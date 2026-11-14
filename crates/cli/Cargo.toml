@@ -1,0 +1,20 @@
+[package]
+name = "celesta-cli"
+description = "The celesta command: manages a project's registry plugins."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+indexmap = { version = "2", features = ["serde"] }
+serde_json = { workspace = true, features = ["raw_value"] }
+tempfile = "3.23.0"
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+celesta-plugin-host.workspace = true
+semver = "1.0.28"

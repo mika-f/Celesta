@@ -1037,6 +1037,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-cli"
+version = "0.9.0"
+dependencies = [
+ "celesta-plugin-host",
+ "indexmap",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "celesta-codec-test"
 version = "0.9.0"
 dependencies = [
