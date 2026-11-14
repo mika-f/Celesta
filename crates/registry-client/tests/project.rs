@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use celesta_plugin_host::{LOCK_FILE, Lockfile, PROJECT_CONFIG, UserSettings};
 use celesta_registry_client::{
-    Environment, ProjectError, Registry, Store, Transport, TransportError, Update, install_global,
-    install_locked, lock_project,
+    ClientError, Environment, ProjectError, Registry, Store, Transport, TransportError, Update,
+    install_global, install_locked, lock_project,
 };
 use celesta_registry_format::{Hash, Target, tree_hash};
 use common::{BASE, TestRegistry, at, plugin_files, tree_of, write_files};
@@ -283,6 +283,40 @@ fn a_lock_the_index_contradicts_is_refused() {
         "{error:?}"
     );
     assert_eq!(machine.installed(ID, "1.0.0"), None);
+}
+
+#[test]
+fn an_unusable_advisory_cache_stops_install_locked() {
+    let (registry, root) = locked();
+    let machine = Machine::new(&registry);
+    let cache = machine.home.path().join("registry-cache");
+    fs::create_dir_all(&cache).unwrap();
+    let file = cache.join("advisories.json");
+    fs::write(&file, "not an advisory list").unwrap();
+    let error = install_locked(&machine.env(), root.path(), false).unwrap_err();
+    assert!(
+        matches!(&error, ProjectError::Client(ClientError::Cache { path, .. }) if path == &file),
+        "{error:?}"
+    );
+    assert_eq!(machine.installed(ID, "1.0.0"), None);
+}
+
+#[test]
+fn a_version_that_gains_a_host_build_is_not_a_lock_mismatch() {
+    let registry = TestRegistry::new();
+    registry.publish(ID, "1.0.0", &["any"]);
+    let root = project(&[(ID, "1")]);
+    lock_project(&Machine::new(&registry).env(), root.path(), &Update::Keep).unwrap();
+    // Later the version gains a build for the host, with other files.
+    registry.edit(ID, "1.0.0", |entry| {
+        let any = entry["targets"]["any"].clone();
+        let mut host = any;
+        host["treeHash"] = json!(Hash([0x09; 32]).to_string());
+        entry["targets"][MAC] = host;
+    });
+    let machine = Machine::new(&registry);
+    let outcome = install_locked(&machine.env(), root.path(), false).unwrap();
+    assert_eq!(outcome.installed, vec![(ID.to_owned(), v("1.0.0"))]);
 }
 
 #[test]

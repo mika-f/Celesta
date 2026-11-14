@@ -158,7 +158,7 @@ fn a_failed_refresh_keeps_the_cached_list() {
     assert!(registry.refresh_advisories(at(NOW)).is_err());
     assert_eq!(fs::read(&cached).unwrap(), before);
     assert!(load_cached_advisories(&cached).unwrap().is_some());
-    assert!(registry.cached_advisories().is_some());
+    assert!(registry.cached_advisories().unwrap().is_some());
 }
 
 #[test]

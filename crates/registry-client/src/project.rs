@@ -120,7 +120,7 @@ pub fn lock_project(
         .keys()
         .map(|id| Ok((id.clone(), env.registry.index(id, env.now)?)))
         .collect::<Result<BTreeMap<_, _>, ClientError>>()?;
-    let advisories = env.registry.cached_advisories();
+    let advisories = env.registry.cached_advisories()?;
     let resolution = resolve(&ResolveInput {
         dependencies: &project.dependencies,
         indexes: &indexes,
@@ -138,7 +138,7 @@ pub fn lock_project(
     let bundled = Bundled::new(env.bundled);
     let mut installed = Vec::new();
     for (id, locked) in &lock.plugins {
-        let Some(artifact) = lock.artifact(id, env.host) else {
+        let Some((target, artifact)) = locked_artifact(&lock, id, env.host) else {
             continue;
         };
         if satisfied(env, &bundled, id, &locked.version, artifact) {
@@ -150,7 +150,7 @@ pub fn lock_project(
             advisories.as_ref(),
             id,
             &locked.version,
-            artifact,
+            (target, artifact),
         )?;
         installed.push((id.clone(), locked.version.clone()));
     }
@@ -200,7 +200,7 @@ pub fn install_locked(
         return Err(ProjectError::OutOfDate { ids: stale });
     }
 
-    let advisories = env.registry.cached_advisories();
+    let advisories = env.registry.cached_advisories()?;
     let bundled = Bundled::new(env.bundled);
     let mut outcome = InstallOutcome {
         installed: Vec::new(),
@@ -208,7 +208,7 @@ pub fn install_locked(
     };
     for (id, locked) in &lock.plugins {
         let version = &locked.version;
-        let Some(artifact) = lock.artifact(id, env.host) else {
+        let Some((target, artifact)) = locked_artifact(&lock, id, env.host) else {
             outcome.skipped.push((
                 id.clone(),
                 version.clone(),
@@ -234,7 +234,14 @@ pub fn install_locked(
             }
             other => other?,
         };
-        install_as_locked(env, &index, advisories.as_ref(), id, version, artifact)?;
+        install_as_locked(
+            env,
+            &index,
+            advisories.as_ref(),
+            id,
+            version,
+            (target, artifact),
+        )?;
         outcome.installed.push((id.clone(), version.clone()));
     }
     Ok(outcome)
@@ -254,7 +261,7 @@ pub fn install_global(
     // Resolution lets a project pin a media plugin without a build for
     // every target; installed for this host alone, it needs one here.
     index.kind.roles.retain(|role| role != "media");
-    let advisories = env.registry.cached_advisories();
+    let advisories = env.registry.cached_advisories()?;
     let dependencies = BTreeMap::from([(id.to_owned(), requirement.clone())]);
     let indexes = BTreeMap::from([(id.to_owned(), index)]);
     let resolution = resolve(&ResolveInput {
@@ -269,10 +276,8 @@ pub fn install_global(
         update: &Update::All,
     })?;
     let version = resolution.lock.plugins[id].version.clone();
-    let artifact = resolution
-        .lock
-        .artifact(id, env.host)
-        .copied()
+    let (target, artifact) = locked_artifact(&resolution.lock, id, env.host)
+        .map(|(target, artifact)| (target.clone(), *artifact))
         .ok_or_else(|| ResolveError::NoVersion {
             id: id.to_owned(),
             requirement: requirement.clone(),
@@ -284,7 +289,7 @@ pub fn install_global(
         advisories.as_ref(),
         id,
         &version,
-        &artifact,
+        (&target, &artifact),
     )?;
 
     let installed = RegistryPlugin {
@@ -310,6 +315,19 @@ fn satisfied(
     env.store.contains(id, version, &artifact.tree_hash) || bundled.holds(id, version, artifact)
 }
 
+/// The locked plugin's artifact for `host`, else the one for `any`, with
+/// the target it is locked under.
+fn locked_artifact<'a>(
+    lock: &'a Lockfile,
+    id: &str,
+    host: &'a Target,
+) -> Option<(&'a Target, &'a LockedArtifact)> {
+    let targets = &lock.plugins.get(id)?.targets;
+    targets
+        .get_key_value(host)
+        .or_else(|| targets.get_key_value(&Target::ANY))
+}
+
 /// Installs `version` of `id` from `index`, which must list it as
 /// distributed, unblocked, and with the locked hashes for the host's build.
 fn install_as_locked(
@@ -318,7 +336,7 @@ fn install_as_locked(
     advisories: Option<&AdvisoryList>,
     id: &str,
     version: &Version,
-    locked: &LockedArtifact,
+    (target, locked): (&Target, &LockedArtifact),
 ) -> Result<(), ProjectError> {
     let entry = index
         .versions
@@ -335,10 +353,11 @@ fn install_as_locked(
             advisory: advisory.id.clone(),
         });
     }
+    // The build the lock chose, under the same target key: a version that
+    // gained a host build since is not a mismatch.
     let artifact: &Artifact = entry
         .targets
-        .get(env.host)
-        .or_else(|| entry.targets.get(&Target::ANY))
+        .get(target)
         .filter(|artifact| {
             artifact.sha256 == locked.sha256 && artifact.tree_hash == locked.tree_hash
         })

@@ -113,12 +113,12 @@ impl Registry {
         Ok(list)
     }
 
-    /// The advisory list cached by `refresh_advisories`; an unreadable
-    /// cache reads as no list.
-    pub fn cached_advisories(&self) -> Option<AdvisoryList> {
-        load_cached_advisories(&self.cache.join(ADVISORIES_CACHE))
-            .ok()
-            .flatten()
+    /// The advisory list cached by `refresh_advisories`; `None` when there
+    /// is none. An unreadable or unsafe cache is an error, so nothing is
+    /// installed without knowing what the list blocks.
+    pub fn cached_advisories(&self) -> Result<Option<AdvisoryList>, ClientError> {
+        let path = self.cache.join(ADVISORIES_CACHE);
+        load_cached_advisories(&path).map_err(|message| ClientError::Cache { path, message })
     }
 
     fn verify(
