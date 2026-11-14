@@ -117,7 +117,8 @@ impl<'a> Lines<'a> {
 }
 
 /// Installs `spec` (`id[@req]`, any version by default) for every project,
-/// recording it in the user settings.
+/// recording it in the user settings, and warns about what resolution
+/// found, such as a deprecated version.
 pub fn install_global_plugin(session: &Session, spec: &str) -> ExitCode {
     let (id, requirement) = match parse_spec(spec) {
         Ok(parsed) => parsed,
@@ -135,7 +136,9 @@ pub fn install_global_plugin(session: &Session, spec: &str) -> ExitCode {
             &id,
             &requirement,
         )
-        .map(|installed| {
+        .map(|outcome| {
+            report::resolve_warnings(&outcome.warnings);
+            let installed = outcome.plugin;
             println!(
                 "installed {} {} for every project",
                 installed.id, installed.version

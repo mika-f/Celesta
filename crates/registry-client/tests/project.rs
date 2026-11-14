@@ -426,7 +426,8 @@ fn install_global_records_the_tree_hash() {
         ID,
         &VersionReq::parse("1").unwrap(),
     )
-    .unwrap();
+    .unwrap()
+    .plugin;
     assert_eq!(first.id, ID);
     assert_eq!(first.version, v("1.0.0"));
     assert_eq!(first.tree_hash, host_tree("1.0.0"));
@@ -444,7 +445,8 @@ fn install_global_records_the_tree_hash() {
         ID,
         &VersionReq::parse("1").unwrap(),
     )
-    .unwrap();
+    .unwrap()
+    .plugin;
     assert_eq!(second.version, v("1.1.0"));
     assert_eq!(second.tree_hash, tree_of(&plugin_files(ID, "1.1.0", "any")));
     assert_eq!(

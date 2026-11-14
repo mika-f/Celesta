@@ -437,6 +437,32 @@ fn install_global_records_registry_plugins() {
     assert_exit(&output, 2);
 }
 
+#[test]
+fn install_global_warns_about_a_deprecated_plugin() {
+    let home = Home::new();
+    let registry = registry();
+    registry.publish_with_roles("acme.codec", "1.0.0", &["any"], &["media"]);
+    registry.edit("acme.codec", "1.0.0", |entry| {
+        entry["deprecated"] = json!({ "message": "no longer kept", "replacement": "acme.media" });
+    });
+
+    let output = run(
+        &home,
+        &registry,
+        home.path(),
+        &["install", "--global", "acme.codec"],
+    );
+    assert_exit(&output, 0);
+    assert_eq!(
+        lines(&output),
+        ["installed acme.codec 1.0.0 for every project"]
+    );
+    assert_eq!(
+        stderr(&output),
+        "celesta: warning: acme.codec 1.0.0 is deprecated: no longer kept (use acme.media instead)\n"
+    );
+}
+
 /// Two projects locking 1.0.0 and 2.0.0 of `acme.charts`; the first one's
 /// folder is deleted.
 fn two_projects_one_gone(home: &Home, registry: &TestRegistry) {

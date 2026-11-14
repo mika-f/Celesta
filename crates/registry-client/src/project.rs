@@ -60,6 +60,16 @@ pub struct InstallOutcome {
     pub record_error: Option<String>,
 }
 
+/// What [`install_global`] installed and recorded.
+#[derive(Debug)]
+pub struct GlobalOutcome {
+    /// The entry recorded in `registryPlugins`.
+    pub plugin: RegistryPlugin,
+    /// What resolution said about the version chosen, such as a
+    /// deprecation.
+    pub warnings: Vec<ResolveWarning>,
+}
+
 /// Why a project's plugins, or a global one, could not be locked or
 /// installed.
 #[derive(Debug, thiserror::Error)]
@@ -254,14 +264,14 @@ fn record_error(env: &Environment, root: &Path) -> Option<String> {
 
 /// Resolves `id` against `requirement` for the host alone, installs it,
 /// and records it in `settings_path`'s `registryPlugins`, replacing that
-/// id's entry. The version chosen must have a build for the host or
+/// id's entry, with what resolution warned about. The version chosen must have a build for the host or
 /// `any`, a media plugin's too.
 pub fn install_global(
     env: &Environment,
     settings_path: &Path,
     id: &str,
     requirement: &VersionReq,
-) -> Result<RegistryPlugin, ProjectError> {
+) -> Result<GlobalOutcome, ProjectError> {
     let mut index = env.registry.index(id, env.now)?;
     // Resolution lets a project pin a media plugin without a build for
     // every target; installed for this host alone, it needs one here.
@@ -306,7 +316,10 @@ pub fn install_global(
     settings.registry_plugins.retain(|plugin| plugin.id != id);
     settings.registry_plugins.push(installed.clone());
     settings.save(settings_path)?;
-    Ok(installed)
+    Ok(GlobalOutcome {
+        plugin: installed,
+        warnings: resolution.warnings,
+    })
 }
 
 /// Whether `store` or a bundled copy already holds the build of `version`
