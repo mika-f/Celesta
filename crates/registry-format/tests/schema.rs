@@ -357,7 +357,15 @@ fn target_pattern_agrees_with_the_parser() {
         "target",
         &pattern("index", "/$defs/target"),
         |s| Target::parse(s).is_ok(),
-        &["any", "macos-aarch64", "windows-x86_64", "linux-x86_64"],
+        &[
+            "any",
+            "macos-aarch64",
+            "windows-x86_64",
+            "linux-x86_64",
+            "freebsd-x86_64",
+            "beos-x86",
+            "linux-riscv64",
+        ],
         &[
             "",
             "macos",

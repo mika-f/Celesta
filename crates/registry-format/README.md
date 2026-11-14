@@ -38,8 +38,11 @@ The crate depends on no other Celesta crate. It has `publish = false` for now.
 - A plugin id is a dotless first-party name, or `<publisher>.<name>`. Each part uses
   lowercase ASCII letters, digits, `-`, and `_`, and starts with a letter or digit. There is
   at most one `.`. The publisher of a dotless id is `celesta`.
-- A target is `<os>-<arch>` with `os` one of `windows`, `linux`, `macos` and `arch` made of
-  lowercase ASCII letters, digits, and `_` (Rust's architecture names), or `any`.
+- A target is `any`, or `<os>-<arch>` with `os` made of lowercase ASCII letters and digits
+  and `arch` made of lowercase ASCII letters, digits, and `_`: Rust's `std::env::consts`
+  names, such as `macos-aarch64`, `windows-x86_64`, `linux-x86_64`. Any `os` is accepted, so
+  an index that adds a target for a new OS still parses on older clients, which simply find
+  no build for that target. `Target::host()` is the running process's target.
 
 ## Files
 

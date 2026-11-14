@@ -151,8 +151,8 @@
     },
     "target": {
       "type": "string",
-      "pattern": "^((windows|linux|macos)-[a-z0-9_]+|any)$",
-      "description": "<os>-<arch> with os in windows|linux|macos and Rust's arch names, or 'any'."
+      "pattern": "^([a-z0-9]+-[a-z0-9_]+|any)$",
+      "description": "<os>-<arch> or 'any'. os is lowercase ASCII letters and digits, arch the same plus '_' (Rust's std::env::consts names, such as macos-aarch64). Any os is accepted, so a new OS does not make old clients refuse the index."
     },
     "hash": {
       "type": "string",

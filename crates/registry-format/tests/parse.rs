@@ -85,10 +85,55 @@ fn ids() {
 
 #[test]
 fn host_target_is_known() {
-    let bytes = fixture("index-vrm.json");
-    let index = Index::parse(&bytes, "vrm").unwrap();
+    let host = Target::host();
+    assert_eq!(Target::parse(host.as_str()).unwrap(), host);
+}
+
+// The fixture's 0.2.3 builds for exactly these three targets.
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "windows", target_arch = "x86_64"),
+    all(target_os = "linux", target_arch = "x86_64"),
+))]
+#[test]
+fn fixture_builds_for_the_host() {
+    let index = Index::parse(&fixture("index-vrm.json"), "vrm").unwrap();
     let host = Target::host();
     assert!(index.versions[1].targets.contains_key(&host), "{host:?}");
+}
+
+#[test]
+fn any_os_arch_target_is_accepted() {
+    // A new OS must not make old clients refuse the whole index.
+    for t in [
+        "freebsd-x86_64",
+        "beos-x86",
+        "android-aarch64",
+        "linux-riscv64",
+        "any",
+    ] {
+        assert_eq!(Target::parse(t).unwrap().as_str(), t);
+    }
+    let bytes = tweak("index-vrm.json", |v| {
+        v["versions"][1]["targets"]["freebsd-x86_64"] =
+            v["versions"][1]["targets"]["linux-x86_64"].clone();
+    });
+    let index = Index::parse(&bytes, "vrm").unwrap();
+    assert_eq!(index.versions[1].targets.len(), 4);
+    for t in [
+        "",
+        "linux",
+        "Linux-x86_64",
+        "linux-x86-64",
+        "linux-",
+        "-x86_64",
+        "linux_x86_64",
+    ] {
+        assert!(
+            matches!(Target::parse(t), Err(FormatError::InvalidTarget(_))),
+            "{t}"
+        );
+    }
 }
 
 #[test]
@@ -111,7 +156,7 @@ fn rejects_invalid_values() {
         FormatError::InvalidId(_)
     ));
     let bytes = tweak("index-vrm.json", |v| {
-        v["versions"][1]["targets"]["beos-x86_64"] =
+        v["versions"][1]["targets"]["BeOS-x86_64"] =
             v["versions"][1]["targets"]["linux-x86_64"].clone();
     });
     assert!(matches!(

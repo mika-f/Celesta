@@ -12,8 +12,6 @@ use time::OffsetDateTime;
 use crate::error::FormatError;
 use crate::ids::{is_plugin_id, is_registry_id};
 
-const OSES: [&str; 3] = ["windows", "linux", "macos"];
-
 /// A SHA-256 digest, written `sha256:<64 lowercase hex>`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Hash(pub [u8; 32]);
@@ -59,7 +57,10 @@ impl<'de> Deserialize<'de> for Hash {
     }
 }
 
-/// A build target: `<os>-<arch>` or `any`.
+/// A build target: `<os>-<arch>` or `any`. `os` is lowercase ASCII letters and
+/// digits, `arch` the same plus `_` (Rust's `std::env::consts` names, such as
+/// `macos-aarch64`). Any such OS is accepted, so a target for an OS this client
+/// does not know does not make it refuse the index; it just never matches.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Target(Cow<'static, str>);
 
@@ -77,7 +78,10 @@ impl Target {
             return Ok(Self::ANY);
         }
         let ok = s.split_once('-').is_some_and(|(os, arch)| {
-            OSES.contains(&os)
+            !os.is_empty()
+                && os
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
                 && !arch.is_empty()
                 && arch
                     .bytes()
