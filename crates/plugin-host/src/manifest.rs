@@ -2615,6 +2615,31 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_unsafe_locked_version_stops_discovery() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = tempfile::tempdir().unwrap();
+        let installed = folder.path().join("store").join(LOCKED_ID).join("1.0.0");
+        let tree_hash = crate::registry::tests::write(
+            &installed,
+            crate::registry::tests::content(LOCKED_ID, "1.0.0"),
+        );
+        let settings = with_a_global_copy(folder.path());
+        let registry = locked_project(folder.path(), tree_hash);
+        // Another user could change the locked copy.
+        std::fs::set_permissions(&installed, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let Err(LockProblem::Unsatisfied { plugins }) = find_locked_with(registry, &[], &settings)
+        else {
+            panic!("expected Unsatisfied");
+        };
+        let [(id, _, reason)] = &plugins[..] else {
+            panic!("{plugins:?}");
+        };
+        assert_eq!(id, LOCKED_ID);
+        assert!(reason.contains("was skipped"), "{reason}");
+    }
+
     #[test]
     fn find_for_project_stops_on_a_lock_problem() {
         let folder = tempfile::tempdir().unwrap();
