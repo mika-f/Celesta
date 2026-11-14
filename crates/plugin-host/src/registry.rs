@@ -229,13 +229,20 @@ impl StoreSearch {
     }
 
     /// Settles each version the lock names that cannot run from the store:
-    /// one with no build for this host, or whose folder held nothing
-    /// (`missing`), is reported as [`DiscoveryError::LockUnsatisfied`],
-    /// unless a bundled copy in `read` has its id, version, and tree hash.
-    /// That copy runs as the locked version ([`PluginSource::Locked`],
-    /// replacing [`PluginSource::Bundled`]), ranked first for its id after
-    /// the explicit folders.
-    pub(crate) fn settle(&self, missing: &[PathBuf], read: &mut Vec<PluginRead>) {
+    /// one with no build for this host, whose folder held nothing
+    /// (`missing`), or whose folder held something that cannot run
+    /// (`failed`, already reported) is reported as
+    /// [`DiscoveryError::LockUnsatisfied`], unless a bundled copy in `read`
+    /// has its id, version, and tree hash. That copy runs as the locked
+    /// version ([`PluginSource::Locked`], replacing
+    /// [`PluginSource::Bundled`]), ranked first for its id after the
+    /// explicit folders.
+    pub(crate) fn settle(
+        &self,
+        missing: &[PathBuf],
+        failed: &[PathBuf],
+        read: &mut Vec<PluginRead>,
+    ) {
         for locked in &self.locked {
             let Some(expected) = locked.tree_hash else {
                 read.push(Err(
@@ -243,26 +250,37 @@ impl StoreSearch {
                 ));
                 continue;
             };
-            if locked
+            let failed = locked
                 .path
                 .as_ref()
-                .is_some_and(|path| !missing.contains(path))
+                .is_some_and(|path| failed.contains(path));
+            if !failed
+                && locked
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| !missing.contains(path))
             {
-                // Read from the store, whether it runs or not.
+                // Runs from the store (unless a later stage stops it).
                 continue;
             }
+            // A store folder that failed its check holds the locked version
+            // in some form, so the pin is said to be broken rather than absent.
+            let differs = "its installed files differ from the lock";
             let bundled = read.iter().enumerate().find_map(|(at, read)| {
                 let (entry, _) = read.as_ref().ok()?;
                 (entry.source == PluginSource::Bundled && locked.is(entry)).then_some((at, entry))
             });
             let Some((at, entry)) = bundled else {
-                read.push(Err(locked.unsatisfied("it is not installed")));
+                let reason = if failed {
+                    differs
+                } else {
+                    "it is not installed"
+                };
+                read.push(Err(locked.unsatisfied(reason)));
                 continue;
             };
             if !tree_hash(&entry.directory).is_ok_and(|hash| hash == expected) {
-                read.push(Err(
-                    locked.unsatisfied("its installed files differ from the lock")
-                ));
+                read.push(Err(locked.unsatisfied(differs)));
                 continue;
             }
             let mut copy = read.remove(at);
@@ -579,10 +597,16 @@ mod tests {
         std::io::Write::write_all(&mut file, b"!").unwrap();
         let context = folders.context(Some(lock(&[("p", "0.9.0", &[(&host(), hash)])])));
         let (found, errors) = folders.discover(&context, &UserSettings::default());
-        let [DiscoveryError::TreeHashMismatch { path, id }] = &errors[..] else {
+        // The bundled copy is another version, so the pin is not in effect.
+        let [
+            DiscoveryError::TreeHashMismatch { path, id },
+            DiscoveryError::LockUnsatisfied { reason, .. },
+        ] = &errors[..]
+        else {
             panic!("{errors:?}");
         };
         assert_eq!((path, id.as_str()), (&installed, "p"));
+        assert_eq!(reason, "its installed files differ from the lock");
         assert_eq!(
             errors[0].to_string(),
             format!(
@@ -605,9 +629,35 @@ mod tests {
         let (found, errors) = folders.discover(&context, &UserSettings::default());
         assert!(found.is_empty(), "{found:?}");
         assert!(
-            matches!(&errors[..], [DiscoveryError::TreeHashMismatch { path, .. }] if path == &directory),
+            matches!(&errors[..], [
+                DiscoveryError::TreeHashMismatch { path, .. },
+                DiscoveryError::LockUnsatisfied { reason, .. },
+            ] if path == &directory && reason == "its installed files differ from the lock"),
             "{errors:?}"
         );
+    }
+
+    #[test]
+    fn a_bundled_copy_satisfies_the_lock_in_place_of_a_tampered_one() {
+        let folders = Folders::new();
+        write(&folders.user.join("p"), content("p", "1.0.0"));
+        let hash = write(&folders.bundled.join("p"), content("p", "0.9.0"));
+        assert_eq!(folders.install(content("p", "0.9.0")), hash);
+        let installed = folders.installed("p", "0.9.0");
+        std::fs::write(installed.join("lib.txt"), "changed").unwrap();
+        let context = folders.context(Some(lock(&[("p", "0.9.0", &[(&host(), hash)])])));
+        let (found, errors) = folders.discover(&context, &UserSettings::default());
+        assert!(
+            matches!(&errors[..], [DiscoveryError::TreeHashMismatch { path, .. }] if path == &installed),
+            "{errors:?}"
+        );
+        // The pin is in effect, from the bundled copy, ahead of the user's.
+        assert_eq!(found.len(), 1, "{found:?}");
+        let p = running(&found, "p");
+        assert_eq!(p.manifest.version, "0.9.0");
+        assert_eq!(p.source, PluginSource::Locked);
+        assert_eq!(p.directory, folders.bundled.join("p"));
+        assert_eq!(p.replaces, Some(PluginSource::Bundled));
     }
 
     #[test]

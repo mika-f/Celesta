@@ -793,8 +793,10 @@ pub(crate) fn discover_in_with(
     // Every plugin read and every error, in search order; which plugin
     // takes an id is settled once the bundled ones are known.
     let mut read: Vec<PluginRead> = Vec::new();
-    // The store folders that hold nothing.
+    // The store folders that hold nothing, and the locked ones that hold
+    // something that cannot run.
     let mut missing: Vec<PathBuf> = Vec::new();
+    let mut failed: Vec<PathBuf> = Vec::new();
     let add = |entry: Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError>,
                read: &mut Vec<PluginRead>| match entry {
         Ok(Some(entry)) => read.push(Ok(entry)),
@@ -814,7 +816,12 @@ pub(crate) fn discover_in_with(
                 path: path.clone(),
                 source: *source,
             }) {
-                Some(entry) => read.push(entry),
+                Some(entry) => {
+                    if entry.is_err() && *source == PluginSource::Locked {
+                        failed.push(path.clone());
+                    }
+                    read.push(entry);
+                }
                 None => missing.push(path.clone()),
             }
             continue;
@@ -882,7 +889,7 @@ pub(crate) fn discover_in_with(
         .collect();
     // After the bundled media are known, so a bundled copy that a lock
     // claims still keeps a project's plugin from replacing it.
-    store.settle(&missing, &mut read);
+    store.settle(&missing, &failed, &mut read);
     let mut found: Vec<PluginEntry> = Vec::new();
     // Each id taken, with where in `found` the plugin that took it is.
     let mut taken: HashMap<String, usize> = HashMap::new();
