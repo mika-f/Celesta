@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use celesta_plugin_host::{
-    CELESTA_VERSION, bundled_plugin_dir, has_project_config, registry_cache_dir,
-    registry_store_dir, user_settings_path,
+    CELESTA_VERSION, bundled_plugin_dir, create_private_dir_all, has_project_config,
+    registry_cache_dir, registry_store_dir, user_settings_path,
 };
 use celesta_registry_client::{
     DirTransport, Environment, HttpTransport, OFFICIAL_REGISTRY, Registry, Store, Transport,
@@ -16,6 +16,7 @@ use celesta_registry_client::{
 };
 use celesta_registry_format::{FormatError, RootKey, Target};
 use semver::Version;
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 
 /// The registry's base URL, overriding the official registry.
@@ -43,12 +44,18 @@ pub enum SessionError {
         "there is no user folder to keep plugins in; set HOME (APPDATA on Windows) to an absolute folder"
     )]
     NoUserFolder,
+    #[error("could not create the registry cache folder {}: {source}", path.display())]
+    CacheFolder {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 impl SessionError {
     /// Whether the error is in how `celesta` was invoked (exit 2).
     pub fn is_usage(&self) -> bool {
-        !matches!(self, Self::NoUserFolder)
+        !matches!(self, Self::NoUserFolder | Self::CacheFolder { .. })
     }
 }
 
@@ -97,6 +104,15 @@ fn is_drive(path: &str) -> bool {
     matches!(path.as_bytes(), [letter, b':', ..] if letter.is_ascii_alphabetic())
 }
 
+/// The registry a run uses.
+struct Selection {
+    base: String,
+    /// `None` when there is no key for it.
+    access: Option<Access>,
+    /// Whether the environment named it instead of the official registry.
+    overridden: bool,
+}
+
 /// A registry the session can reach: its key and how it is fetched.
 struct Access {
     root: RootKey,
@@ -120,7 +136,15 @@ pub struct Session {
     /// Whether the registry can be reached: there is a key for it.
     pub has_key: bool,
     pub store: Store,
-    /// The registry cache folder.
+    /// The folder this registry's verified files are cached in:
+    /// [`registry_cache_dir`] for the official registry, and
+    /// `override-<16 hex digits>` in it for a registry
+    /// `CELESTA_REGISTRY` names, the digits the start of the SHA-256 of
+    /// the base URL without a trailing `/`. Rollback stamps and the
+    /// advisory list are kept per file path, so registries sharing a folder
+    /// would be checked against each other's files, and the desktop app
+    /// and the exporter would read another registry's advisories. No
+    /// served path is named `override-…`.
     pub cache: PathBuf,
     pub settings_path: PathBuf,
     pub celesta: Version,
@@ -135,10 +159,41 @@ impl Session {
     /// the official one, and the user's folders.
     pub fn from_env() -> Result<Self, SessionError> {
         let var = |name| std::env::var_os(name).filter(|value| !value.is_empty());
-        let (base, access) = select_registry(var(REGISTRY_VAR), var(ROOT_KEY_VAR))?;
+        let selection = select_registry(var(REGISTRY_VAR), var(ROOT_KEY_VAR))?;
         let store = registry_store_dir().ok_or(SessionError::NoUserFolder)?;
         let cache = registry_cache_dir().ok_or(SessionError::NoUserFolder)?;
         let settings_path = user_settings_path().ok_or(SessionError::NoUserFolder)?;
+        Self::new(selection, store, cache, settings_path)
+    }
+
+    /// The session for `selection` with the user's folders: the store, the
+    /// registry cache folder ([`registry_cache_dir`]), and the settings.
+    fn new(
+        selection: Selection,
+        store: PathBuf,
+        cache_root: PathBuf,
+        settings_path: PathBuf,
+    ) -> Result<Self, SessionError> {
+        let Selection {
+            base,
+            access,
+            overridden,
+        } = selection;
+        let cache = if overridden {
+            let digest = Sha256::digest(base.trim_end_matches('/').as_bytes());
+            let digits: String = digest[..8]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            let cache = cache_root.join(format!("override-{digits}"));
+            create_private_dir_all(&cache).map_err(|source| SessionError::CacheFolder {
+                path: cache.clone(),
+                source,
+            })?;
+            cache
+        } else {
+            cache_root
+        };
         let registry = match &access {
             Some(access) => Registry::new(
                 &base,
@@ -194,7 +249,7 @@ impl Session {
 fn select_registry(
     registry: Option<OsString>,
     key: Option<OsString>,
-) -> Result<(String, Option<Access>), SessionError> {
+) -> Result<Selection, SessionError> {
     let (registry, key) = match (registry, key) {
         (Some(registry), Some(key)) => (registry, key),
         (Some(_), None) => {
@@ -214,7 +269,11 @@ fn select_registry(
                 root,
                 remote: Remote::Http,
             });
-            return Ok((OFFICIAL_REGISTRY.to_owned(), access));
+            return Ok(Selection {
+                base: OFFICIAL_REGISTRY.to_owned(),
+                access,
+                overridden: false,
+            });
         }
     };
     let base = registry
@@ -227,7 +286,11 @@ fn select_registry(
             SessionError::BadRootKey(FormatError::Signature("root key: not UTF-8".to_owned()))
         })
         .and_then(|key| RootKey::from_base64(key).map_err(SessionError::BadRootKey))?;
-    Ok((base, Some(Access { root, remote })))
+    Ok(Selection {
+        base,
+        access: Some(Access { root, remote }),
+        overridden: true,
+    })
 }
 
 /// The project `dir` is in: the nearest folder from `dir` (made absolute)
@@ -272,7 +335,7 @@ mod tests {
         assert_eq!(Remote::of("ftp://registry.test"), None);
 
         // A client through that transport reads the served files.
-        let (base, access) = select_registry(
+        let Selection { base, access, .. } = select_registry(
             Some(served.base().into()),
             Some(served.root_key_base64().into()),
         )
@@ -289,6 +352,42 @@ mod tests {
     }
 
     #[test]
+    fn an_override_registry_has_its_own_cache() {
+        let user = TempDir::new().unwrap();
+        let cache_root = user.path().join("registry-cache");
+        let build = |selection| {
+            Session::new(
+                selection,
+                user.path().join("registry"),
+                cache_root.clone(),
+                user.path().join("settings.json"),
+            )
+            .unwrap()
+        };
+        let key = TestRegistry::new().root_key_base64();
+        let overridden = |base: &str| {
+            build(select_registry(Some(base.into()), Some(key.clone().into())).unwrap())
+        };
+        let first = overridden("https://registry.test/");
+        let again = overridden("https://registry.test");
+        let other = overridden("https://other.test");
+        assert_ne!(first.cache, cache_root);
+        assert_eq!(first.cache.parent(), Some(cache_root.as_path()));
+        assert!(first.cache.is_dir());
+        assert_eq!(first.cache, again.cache);
+        assert_ne!(first.cache, other.cache);
+        let name = first.cache.file_name().unwrap().to_str().unwrap();
+        let digits = name.strip_prefix("override-").unwrap();
+        assert!(
+            digits.len() == 16 && digits.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{name}"
+        );
+
+        let official = build(select_registry(None, None).unwrap());
+        assert_eq!(official.cache, cache_root);
+    }
+
+    #[test]
     fn the_registry_variables_go_together() {
         let half = select_registry(Some("https://registry.test".into()), None);
         assert!(
@@ -298,8 +397,12 @@ mod tests {
         assert!(
             matches!(half, Err(SessionError::HalfRegistry { missing, .. }) if missing == REGISTRY_VAR)
         );
-        let (base, access) = select_registry(None, None).unwrap();
-        assert_eq!(base, OFFICIAL_REGISTRY);
-        assert!(access.is_none(), "this build has no official key yet");
+        let official = select_registry(None, None).unwrap();
+        assert_eq!(official.base, OFFICIAL_REGISTRY);
+        assert!(!official.overridden);
+        assert!(
+            official.access.is_none(),
+            "this build has no official key yet"
+        );
     }
 }
