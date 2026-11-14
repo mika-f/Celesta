@@ -4,6 +4,7 @@
 
 mod cache;
 mod error;
+mod http;
 mod project;
 mod registry;
 mod resolve;
@@ -11,6 +12,7 @@ mod store;
 mod transport;
 
 pub use error::ClientError;
+pub use http::{CLI_ADVISORY_TIMEOUT, HttpTransport};
 pub use project::{
     Environment, InstallOutcome, LockOutcome, ProjectError, install_global, install_locked,
     lock_project,

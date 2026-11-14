@@ -1328,6 +1328,7 @@ dependencies = [
  "base64 0.22.1",
  "celesta-plugin-host",
  "celesta-registry-format",
+ "celesta-remote",
  "ed25519-dalek",
  "libc",
  "semver",
@@ -1337,6 +1338,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "time",
+ "ureq",
  "zip",
 ]
 
