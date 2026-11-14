@@ -296,10 +296,19 @@ fn warn_about_locked_states(session: &Session, lock: &Lockfile) {
 }
 
 /// Resolves the project's dependencies again, `id` alone when given, to the
-/// newest versions their requirements allow, and installs them.
+/// newest versions their requirements allow, and installs them. A project
+/// with no dependencies and no lock has nothing to update, and no lock is
+/// written for it.
 pub fn update(session: &Session, root: &Path, id: Option<&str>) -> ExitCode {
     let update = match id {
-        None => Update::All,
+        None => match has_registry_plugins(root) {
+            Ok(true) => Update::All,
+            Ok(false) => {
+                println!("this project has no registry plugins");
+                return ExitCode::SUCCESS;
+            }
+            Err(failure) => return finish(Err(failure)),
+        },
         Some(id) => match project_dependencies(root) {
             Ok(project) if project.dependencies.contains_key(id) => {
                 Update::Only(BTreeSet::from([id.to_owned()]))

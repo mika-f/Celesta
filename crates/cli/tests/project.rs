@@ -423,6 +423,24 @@ fn update_moves_to_the_newest_match() {
 }
 
 #[test]
+fn update_outside_a_project_does_nothing() {
+    let home = Home::new();
+    let registry = registry();
+    let folder = home.path().join("loose");
+    fs::create_dir_all(&folder).unwrap();
+
+    let output = run(&home, &registry, &folder, &["update"]);
+    assert_exit(&output, 0);
+    assert_eq!(
+        trimmed_stdout(&output),
+        "this project has no registry plugins"
+    );
+    assert_eq!(stderr(&output), "");
+    assert!(!folder.join("celesta.lock").exists());
+    assert!(!home.store().join(".projects.json").exists());
+}
+
+#[test]
 fn yanked_locked_version_is_warned_about() {
     let home = Home::new();
     let registry = registry();
