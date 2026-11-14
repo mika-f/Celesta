@@ -1,0 +1,17 @@
+[package]
+name = "celesta-registry-client"
+description = "Fetches, verifies, and caches the plugin registry's signed files."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+celesta-plugin-host.workspace = true
+celesta-registry-format.workspace = true
+serde_json.workspace = true
+tempfile = "3.23.0"
+thiserror.workspace = true
+time = { version = "0.3.55", features = ["formatting", "parsing"] }

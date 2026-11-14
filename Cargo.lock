@@ -1322,6 +1322,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-registry-client"
+version = "0.9.0"
+dependencies = [
+ "celesta-plugin-host",
+ "celesta-registry-format",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+]
+
+[[package]]
 name = "celesta-registry-format"
 version = "0.9.0"
 dependencies = [

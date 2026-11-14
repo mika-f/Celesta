@@ -18,6 +18,7 @@ members = [
   "crates/plugin-host",
   "crates/project",
   "crates/react-bridge",
+  "crates/registry-client",
   "crates/registry-format",
   "crates/remote",
   "crates/renderer",
@@ -56,6 +57,8 @@ celesta-plugin = { path = "crates/plugin", version = "=0.9.0" }
 celesta-plugin-host = { path = "crates/plugin-host", version = "=0.9.0" }
 celesta-project = { path = "crates/project", version = "=0.9.0" }
 celesta-react-bridge = { path = "crates/react-bridge", version = "=0.9.0" }
+# Path only: unpublished, like `celesta-codec-test`.
+celesta-registry-client = { path = "crates/registry-client" }
 celesta-registry-format = { path = "crates/registry-format", version = "=0.9.0" }
 celesta-remote = { path = "crates/remote", version = "=0.9.0" }
 celesta-renderer = { path = "crates/renderer", version = "=0.9.0" }
