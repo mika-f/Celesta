@@ -266,3 +266,13 @@ fn online_key_keeps_the_raw_strings() {
     assert_eq!(round["public"], key.public_b64.as_str());
     assert_eq!(round["expires"], "2027-11-14T00:00:00Z");
 }
+
+#[test]
+fn valid_fixture_carries_unknown_fields() {
+    // The fixture itself holds fields no schema names, at the top level and
+    // nested, so every implementation proves it ignores them.
+    let raw: Value = serde_json::from_slice(&fixture("index-vrm.json")).unwrap();
+    assert_eq!(raw["futureField"], 1);
+    assert!(raw["versions"][1]["futureField"]["nested"].is_array());
+    Index::parse(&fixture("index-vrm.json"), "vrm").unwrap();
+}
