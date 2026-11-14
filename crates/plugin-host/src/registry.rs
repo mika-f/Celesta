@@ -336,10 +336,11 @@ impl StoreSearch {
                 let reason = match failure {
                     None => "it is not installed".to_owned(),
                     Some(LockedFailure::Differs) => differs.to_owned(),
-                    Some(LockedFailure::Incompatible) => format!(
-                        "it does not load with Celesta {}; run `celesta plugin update`",
-                        CELESTA_VERSION
-                    ),
+                    // No command of its own: `LockProblem::Unsatisfied`
+                    // names the one to run.
+                    Some(LockedFailure::Incompatible) => {
+                        format!("it does not load with Celesta {CELESTA_VERSION}")
+                    }
                     Some(LockedFailure::Other) => continue,
                 };
                 read.push(Err(locked.unsatisfied(reason)));
@@ -723,11 +724,10 @@ pub(crate) mod tests {
         else {
             panic!("{errors:?}");
         };
+        // LockProblem::Unsatisfied adds the one command to run.
         assert_eq!(
             reason,
-            &format!(
-                "it does not load with Celesta {CELESTA_VERSION}; run `celesta plugin update`"
-            )
+            &format!("it does not load with Celesta {CELESTA_VERSION}")
         );
         assert!(
             errors
