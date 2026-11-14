@@ -186,14 +186,12 @@ fn keep<'a>(
         return None;
     }
     let entry = index.versions.iter().find(|v| v.version == locked.version);
-    if let Some(entry) = entry {
-        if entry.withdrawn {
-            warnings.push(ResolveWarning::LockedWithdrawn {
-                id: id.to_owned(),
-                version: entry.version.clone(),
-            });
-            return None;
-        }
+    if let Some(entry) = entry.filter(|entry| entry.withdrawn) {
+        warnings.push(ResolveWarning::LockedWithdrawn {
+            id: id.to_owned(),
+            version: entry.version.clone(),
+        });
+        return None;
     }
     // A target the lock did not know yet may have a build by now. Media
     // plugins ignore the targets, so they are kept.
