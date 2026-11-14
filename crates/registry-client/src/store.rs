@@ -88,6 +88,19 @@ fn unsafe_entry(entry: &str, reason: &str) -> InstallError {
     }
 }
 
+/// The file in the store root that lists the projects that use the store.
+pub const PROJECTS_FILE: &str = ".projects.json";
+
+/// `.projects.json`: the project roots, sorted, and any keys a newer build
+/// wrote, kept as they were.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ProjectsRecord {
+    #[serde(default)]
+    pub projects: Vec<PathBuf>,
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, serde_json::Value>,
+}
+
 /// The per-user folder of plugins installed from the registry.
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -115,6 +128,58 @@ impl Store {
     /// when there is no user folder.
     pub fn standard() -> Option<Self> {
         registry_store_dir().map(Self::new)
+    }
+
+    /// The store's folder.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Records `root` (made absolute, links resolved) as a project that
+    /// uses the store, so that garbage collection keeps what its lock names.
+    pub fn record_project(&self, root: &Path) -> io::Result<()> {
+        let root = fs::canonicalize(root)?;
+        let mut record = self.read_projects()?;
+        if let Err(at) = record.projects.binary_search(&root) {
+            record.projects.insert(at, root);
+            self.write_projects(&record)?;
+        }
+        Ok(())
+    }
+
+    /// The recorded projects; none when there is no record yet.
+    pub(crate) fn read_projects(&self) -> io::Result<ProjectsRecord> {
+        let file = self.root.join(PROJECTS_FILE);
+        match fs::read(&file) {
+            Ok(bytes) => {
+                let mut record: ProjectsRecord = serde_json::from_slice(&bytes).map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{}: {e}", file.display()),
+                    )
+                })?;
+                record.projects.sort();
+                record.projects.dedup();
+                Ok(record)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(ProjectsRecord::default()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Writes the record through a temporary file renamed over it, 0600 on
+    /// Unix.
+    pub(crate) fn write_projects(&self, record: &ProjectsRecord) -> io::Result<()> {
+        create_private_dir_all(&self.root)?;
+        let mut bytes = serde_json::to_vec_pretty(record).map_err(io::Error::other)?;
+        bytes.push(b'\n');
+        // A temp file is created 0600 on Unix.
+        let mut temp = tempfile::NamedTempFile::new_in(&self.root)?;
+        temp.write_all(&bytes)?;
+        temp.as_file().sync_all()?;
+        temp.persist(self.root.join(PROJECTS_FILE))
+            .map_err(|e| e.error)?;
+        Ok(())
     }
 
     /// The folder of one version.

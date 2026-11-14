@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use celesta_plugin_host::{LOCK_FILE, LockProblem, Lockfile, PROJECT_CONFIG, UserSettings};
 use celesta_registry_client::{
-    ClientError, Environment, ProjectError, Registry, Store, Transport, TransportError, Update,
-    install_global, install_locked, lock_project,
+    ClientError, Environment, PROJECTS_FILE, ProjectError, Registry, Store, Transport,
+    TransportError, Update, install_global, install_locked, lock_project,
 };
 use celesta_registry_format::{Hash, Target, tree_hash};
 use common::{BASE, TestRegistry, at, plugin_files, tree_of, write_files};
@@ -472,4 +472,32 @@ fn install_global_needs_a_host_build() {
         "{error}"
     );
     assert!(!settings.exists());
+}
+
+#[test]
+fn lock_project_records_the_project() {
+    let registry = TestRegistry::new();
+    registry.publish(ID, "1.0.0", &RELEASE);
+    let root = project(&[(ID, "1")]);
+    let machine = Machine::new(&registry);
+
+    let outcome = lock_project(&machine.env(), root.path(), &Update::Keep).unwrap();
+    assert_eq!(outcome.record_error, None);
+    let record = fs::read_to_string(machine.store.root().join(PROJECTS_FILE)).unwrap();
+    let record: serde_json::Value = serde_json::from_str(&record).unwrap();
+    let canonical = fs::canonicalize(root.path()).unwrap();
+    assert_eq!(record["projects"], json!([canonical]));
+
+    // Installing from the lock records it once, and a failed record is
+    // reported without failing the install.
+    let again = install_locked(&machine.env(), root.path(), false).unwrap();
+    assert_eq!(again.record_error, None);
+    let record = fs::read_to_string(machine.store.root().join(PROJECTS_FILE)).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&record).unwrap()["projects"],
+        json!([canonical])
+    );
+    fs::write(machine.store.root().join(PROJECTS_FILE), "not json").unwrap();
+    let broken = install_locked(&machine.env(), root.path(), false).unwrap();
+    assert!(broken.record_error.is_some());
 }

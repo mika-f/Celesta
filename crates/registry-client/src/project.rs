@@ -42,6 +42,10 @@ pub struct LockOutcome {
     pub warnings: Vec<ResolveWarning>,
     /// The versions downloaded into the store, in id order.
     pub installed: Vec<(String, Version)>,
+    /// Why the project could not be recorded as a user of the store, so
+    /// that `celesta plugin gc` may not know of it; the lock and the
+    /// installs are done.
+    pub record_error: Option<String>,
 }
 
 /// What [`install_locked`] installed and passed over.
@@ -51,6 +55,9 @@ pub struct InstallOutcome {
     pub installed: Vec<(String, Version)>,
     /// The locked versions with no build for this host, with why.
     pub skipped: Vec<(String, Version, String)>,
+    /// Why the project could not be recorded as a user of the store; see
+    /// [`LockOutcome::record_error`].
+    pub record_error: Option<String>,
 }
 
 /// Why a project's plugins, or a global one, could not be locked or
@@ -145,6 +152,7 @@ pub fn lock_project(
         lock,
         warnings: resolution.warnings,
         installed,
+        record_error: record_error(env, root),
     })
 }
 
@@ -172,6 +180,7 @@ pub fn install_locked(
     let mut outcome = InstallOutcome {
         installed: Vec::new(),
         skipped: Vec::new(),
+        record_error: None,
     };
     for (id, locked) in &lock.plugins {
         let version = &locked.version;
@@ -211,7 +220,17 @@ pub fn install_locked(
         )?;
         outcome.installed.push((id.clone(), version.clone()));
     }
+    outcome.record_error = record_error(env, root);
     Ok(outcome)
+}
+
+/// Records `root` in the store; a failure is returned as text, as it does
+/// not undo the operation it follows.
+fn record_error(env: &Environment, root: &Path) -> Option<String> {
+    env.store
+        .record_project(root)
+        .err()
+        .map(|error| format!("could not record {} as a project: {error}", root.display()))
 }
 
 /// Resolves `id` against `requirement` for the host alone, installs it,
