@@ -10,6 +10,7 @@ const runtime = mac ? join(packageDirectory, 'Contents/Resources') : join(packag
 const node = mac ? join(packageDirectory, 'Contents/Helpers/node') : join(runtime, 'node.exe');
 const exporter = join(packageDirectory, mac ? 'Contents/MacOS/Celesta-export' : 'Celesta-export.exe');
 const mcp = join(packageDirectory, mac ? 'Contents/MacOS/Celesta-mcp' : 'Celesta-mcp.exe');
+const cli = join(packageDirectory, mac ? 'Contents/MacOS/Celesta-cli' : 'Celesta-cli.exe');
 const directory = mkdtempSync(join(tmpdir(), 'Celesta package 日本語 '));
 const entry = join(directory, 'test.tsx');
 const env = { ...process.env, PATH: mac ? '/usr/bin:/bin' : join(process.env.SystemRoot, 'System32') };
@@ -240,7 +241,9 @@ export default function Root() {
     'contact_sheet', 'describe_component', 'export_video', 'init_project', 'inspect',
     'list_components', 'list_templates', 'read_docs', 'render_frames',
   ]);
-  console.log('Package smoke test passed: bundled React hooks, Celesta packages, Code, VOICEVOX, AivisSpeech, TypeScript support, export, and the MCP server, without Node.js on PATH.');
+  const cliHelp = run(cli, ['plugin', '--help']);
+  assert.ok(cliHelp.includes('plugin') && cliHelp.includes('install'), cliHelp);
+  console.log('Package smoke test passed: bundled React hooks, Celesta packages, Code, VOICEVOX, AivisSpeech, TypeScript support, export, the MCP server, and the plugin command, without Node.js on PATH.');
 } finally {
   assert.ok(directory.startsWith(join(tmpdir(), 'Celesta package 日本語 ')));
   rmSync(directory, { recursive: true, force: true });
