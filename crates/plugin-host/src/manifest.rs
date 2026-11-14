@@ -467,6 +467,18 @@ pub enum DiscoveryError {
         version: String,
         reason: String,
     },
+    /// A version the project's lock names that has no build for this host
+    /// (neither one for it nor one for `any`): the lock is still kept, as
+    /// installing it skips that version, and the plugin with its id is
+    /// found from the other sources instead.
+    #[error(
+        "the project locks {id} {version}, which has no build for {host}; another copy of {id} is used if one is installed"
+    )]
+    LockNoBuild {
+        id: String,
+        version: String,
+        host: String,
+    },
     /// A store folder whose files, manifest id, or version are not what was
     /// installed: like a skipped plugin it takes no id.
     #[error(
@@ -2309,6 +2321,15 @@ pub(crate) mod tests {
     /// [`LOCKED_ID`] 1 and locking 1.0.0 with `tree_hash` for any target,
     /// and the context that reads it with the store in `folder`'s `store`.
     fn locked_project(folder: &Path, tree_hash: celesta_registry_format::Hash) -> RegistryContext {
+        locked_project_for(folder, "any", tree_hash)
+    }
+
+    /// [`locked_project`] with the locked version built for `target` alone.
+    fn locked_project_for(
+        folder: &Path,
+        target: &str,
+        tree_hash: celesta_registry_format::Hash,
+    ) -> RegistryContext {
         let root = folder.join("project");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -2316,7 +2337,7 @@ pub(crate) mod tests {
             serde_json::json!({ "plugins": { "dependencies": { LOCKED_ID: "1" } } }).to_string(),
         )
         .unwrap();
-        let lock = crate::registry::tests::lock(&[(LOCKED_ID, "1.0.0", &[("any", tree_hash)])]);
+        let lock = crate::registry::tests::lock(&[(LOCKED_ID, "1.0.0", &[(target, tree_hash)])]);
         lock.save(&root).unwrap();
         let store = folder.join("store");
         std::fs::create_dir_all(&store).unwrap();
@@ -2415,6 +2436,45 @@ pub(crate) mod tests {
                 DiscoveryError::LockUnsatisfied { id, .. } if id == LOCKED_ID)),
             "{errors:?}"
         );
+    }
+
+    #[test]
+    fn a_locked_version_without_a_host_build_is_a_warning() {
+        let no_build = |errors: &[DiscoveryError]| {
+            errors.iter().any(|error| {
+                matches!(error, DiscoveryError::LockNoBuild { id, version, host }
+                    if id == LOCKED_ID && version == "1.0.0" && *host == celesta_registry_format::Target::host().as_str())
+            })
+        };
+        // The target is one Celesta never runs on, so never the host.
+        let hash = celesta_registry_format::Hash([1; 32]);
+
+        let folder = tempfile::tempdir().unwrap();
+        let registry = locked_project_for(folder.path(), "plan9-mips", hash);
+        let (found, errors) = find_locked(registry, &[]).unwrap();
+        assert!(no_build(&errors), "{errors:?}");
+        assert!(
+            !found
+                .plugins
+                .iter()
+                .any(|entry| entry.manifest.id == LOCKED_ID)
+        );
+
+        let folder = tempfile::tempdir().unwrap();
+        let registry = locked_project_for(folder.path(), "plan9-mips", hash);
+        let explicit = folder.path().join("explicit");
+        crate::registry::tests::write(
+            &explicit,
+            crate::registry::tests::content(LOCKED_ID, "1.1.0"),
+        );
+        let (found, errors) = find_locked(registry, std::slice::from_ref(&explicit)).unwrap();
+        let entry = found
+            .plugins
+            .iter()
+            .find(|entry| entry.manifest.id == LOCKED_ID)
+            .unwrap_or_else(|| panic!("{errors:?}"));
+        assert_eq!(entry.source, PluginSource::Explicit);
+        assert!(no_build(&errors), "{errors:?}");
     }
 
     #[test]

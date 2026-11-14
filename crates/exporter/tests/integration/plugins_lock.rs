@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 const HASH: &str = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
 /// A React project declaring `acme.charts`, locked by Celesta `celesta` at
-/// 1.0.0 for the Celesta versions `range`, beside an empty user home.
+/// 1.0.0 for the Celesta versions `range` with an `any` build, beside an
+/// empty user home.
 struct Project {
     home: tempfile::TempDir,
     root: tempfile::TempDir,
@@ -18,6 +19,11 @@ struct Project {
 
 impl Project {
     fn new(celesta: &str, range: &str) -> Self {
+        Self::built_for(celesta, range, "any")
+    }
+
+    /// [`Project::new`] with the locked version built for `target` alone.
+    fn built_for(celesta: &str, range: &str, target: &str) -> Self {
         let home = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
         let config = json!({ "plugins": { "dependencies": { "acme.charts": "1" } } });
@@ -29,7 +35,7 @@ impl Project {
                 "acme.charts": {
                     "celesta": range,
                     "registry": "https://registry.example.test",
-                    "targets": { "any": { "sha256": HASH, "treeHash": HASH } },
+                    "targets": { target: { "sha256": HASH, "treeHash": HASH } },
                     "version": "1.0.0",
                 },
             },
@@ -124,4 +130,18 @@ fn exporter_never_writes_the_lock() {
     unsatisfied(&output, &report);
     let after = (tree(project.root.path()), tree(project.home.path()));
     assert_eq!(before, after);
+}
+
+#[test]
+fn exporter_skips_a_locked_plugin_without_a_build_here() {
+    // A target Celesta never runs on, so never this computer.
+    let project = Project::built_for(
+        CELESTA_VERSION,
+        &format!("={CELESTA_VERSION}"),
+        "plan9-mips",
+    );
+    let (_, report) = project.export();
+    // The entry renders nothing, so the export may still fail, but not
+    // because of the lock.
+    assert_ne!(report["error"]["code"], "plugins_unsatisfied", "{report}");
 }

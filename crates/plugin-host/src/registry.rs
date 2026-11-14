@@ -285,10 +285,11 @@ impl StoreSearch {
         }))
     }
 
-    /// Settles each version the lock names that cannot run from the store:
-    /// one with no build for this host, whose folder held nothing
+    /// Settles each version the lock names that cannot run from the store.
+    /// One with no build for this host is reported as
+    /// [`DiscoveryError::LockNoBuild`]. One whose folder held nothing
     /// (`missing`), or whose folder held something that cannot run
-    /// (`failed`, already reported) is reported as
+    /// (`failed`, already reported), is reported as
     /// [`DiscoveryError::LockUnsatisfied`], unless a bundled copy in `read`
     /// has its id, version, and tree hash. That copy runs as the locked
     /// version ([`PluginSource::Locked`], replacing
@@ -302,9 +303,11 @@ impl StoreSearch {
     ) {
         for locked in &self.locked {
             let Some(expected) = locked.tree_hash else {
-                read.push(Err(
-                    locked.unsatisfied(format!("it has no build for {}", Target::host()))
-                ));
+                read.push(Err(DiscoveryError::LockNoBuild {
+                    id: locked.id.clone(),
+                    version: locked.version.to_string(),
+                    host: Target::host().as_str().to_owned(),
+                }));
                 continue;
             };
             let failure = locked.path.as_ref().and_then(|path| {
@@ -843,10 +846,18 @@ pub(crate) mod tests {
         let hash = folders.install(content("p", "0.9.0"));
         let context = folders.context(Some(lock(&[("p", "0.9.0", &[("plan9-mips", hash)])])));
         let (found, errors) = folders.discover(&context, &UserSettings::default());
-        let [DiscoveryError::LockUnsatisfied { reason, .. }] = &errors[..] else {
+        let [
+            DiscoveryError::LockNoBuild {
+                id,
+                version,
+                host: on,
+            },
+        ] = &errors[..]
+        else {
             panic!("{errors:?}");
         };
-        assert_eq!(reason, &format!("it has no build for {}", host()));
+        assert_eq!((id.as_str(), version.as_str()), ("p", "0.9.0"));
+        assert_eq!(on, &host());
         assert_eq!(running(&found, "p").source, PluginSource::User);
     }
 
