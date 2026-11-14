@@ -100,16 +100,18 @@ Verification uses `verify_strict`.
 
 There is no trailing newline. The root key signs this message with Ed25519.
 
-The message is built from the canonical form of the key, not from the config's own spelling:
+The message is built from the parsed key, not from the config's own spelling:
 
 - `public_b64` is the 32-byte key in standard base64 with padding.
-- `expires` is RFC 3339 in UTC with a `Z` suffix and no fractional seconds, such as
-  `2099-01-01T00:00:00Z`.
+- `expires` is the parsed value formatted by `time`'s RFC 3339 formatter. A zero offset
+  (`Z` or `+00:00`) becomes `Z`. Any other offset is kept as written (`+09:00` stays
+  `+09:00`), and fractional seconds are kept. Nothing is converted to UTC.
 
-A config that writes the same instant as `2099-01-01T00:00:00+00:00` parses, and the
-verifier rebuilds the message with `Z`, so the registry must certify the `Z` form. The
-offset is normalized, not preserved. A key whose `expires` has fractional seconds is
-formatted with them and so does not verify against a certification of the whole-second form.
+So a config that writes `2099-01-01T00:00:00+00:00` verifies against a certification of the
+`Z` form. A config whose `expires` has another offset or fractional seconds verifies only if
+the certification covers that exact formatted text. The registry must therefore publish and
+certify `expires` in the `Z` whole-second form, such as `2099-01-01T00:00:00Z`, which the
+config schema already requires.
 
 ### `Keyring`
 

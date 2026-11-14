@@ -20,9 +20,10 @@ format in prose.
 - Signing: a pinned root key certifies short-lived online keys listed in
   `config.json`; an online key signs `celesta-registry-file-v1\n{path}\n` plus
   the file bytes. The root signs
-  `celesta-registry-key-v1\n{keyid}\n{public_b64}\n{expires}` over the
-  canonical form (base64 with padding; `expires` as UTC `Z` without fractional
-  seconds, so `+00:00` is normalized).
+  `celesta-registry-key-v1\n{keyid}\n{public_b64}\n{expires}`, rebuilt from
+  the parsed key (base64 with padding; `expires` as `time` formats it: a zero
+  offset becomes `Z`, other offsets and fractional seconds are kept). The
+  registry must certify `expires` in the `Z` whole-second form.
 - A `Keyring` is a snapshot valid at the `now` it was built with. Callers
   rebuild it from a fresh `config.json` and the current time.
 - Tree hash: `sha256("celesta-tree-v1\n" || for each regular file sorted by

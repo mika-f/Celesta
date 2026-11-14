@@ -46,9 +46,11 @@ impl Keyring {
     /// expired at `now` (`expires <= now` is expired).
     ///
     /// The certified message is rebuilt from the parsed key, with `public` in
-    /// standard base64 and `expires` in RFC 3339 as `time` formats it (UTC `Z`
-    /// without fractional seconds for whole-second UTC values). A config that
-    /// spells the same instant differently does not verify.
+    /// standard base64 and `expires` as `time`'s RFC 3339 formatter writes it:
+    /// a zero offset (`Z` or `+00:00`) becomes `Z`, any other offset and any
+    /// fractional seconds are kept, and nothing is converted to UTC. The
+    /// registry must certify `expires` in the `Z` whole-second form, which the
+    /// config schema requires.
     ///
     /// Fails with `Signature` when no key remains.
     pub fn from_config(
