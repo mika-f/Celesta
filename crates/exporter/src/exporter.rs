@@ -33,6 +33,23 @@ pub struct Exporter {
     pub(crate) options: ExportOptions,
 }
 
+/// The plugins an export of `source` uses, as
+/// [`InstalledPlugins::find_for_project_reporting`] finds them for its
+/// project ([`celesta_plugin_host::project_root`]): the project's
+/// `celesta.lock` is read, never written, and nothing is downloaded. A lock
+/// that does not pin what the project declares, or whose plugins cannot
+/// run, is an [`ExportError::Plugins`]. `explicit` and `allow` are the
+/// exporter's `--plugin-dir` and `--allow-plugin`.
+pub fn project_plugins(
+    source: &Path,
+    explicit: &[PathBuf],
+    allow: &[String],
+) -> Result<InstalledPlugins, ExportError> {
+    let root = celesta_plugin_host::project_root(source);
+    InstalledPlugins::find_for_project_reporting(&root, explicit, allow)
+        .map_err(ExportError::Plugins)
+}
+
 impl Exporter {
     /// An exporter with `options`. Without `options.plugins`, the plugins
     /// are discovered here, once, in every location Celesta searches. When

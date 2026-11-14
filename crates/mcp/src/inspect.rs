@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::args::reject_unknown;
-use crate::server::{error_result, usage_error};
+use crate::server::{SharedMedia, error_result, usage_error};
 use crate::summary::{FileCheck, describe_frame, diff_scenes, fmt, format_value};
 
 /// At most this many differences are printed per compared pair.
@@ -146,7 +146,7 @@ fn too_many(count: u64, fix: &str) -> String {
     format!("{count} frames selected; inspect evaluates at most {MAX_INSPECT_FRAMES} ({fix})")
 }
 
-pub fn inspect(args: InspectArgs, stop: &Stop) -> CallToolResult {
+pub fn inspect(args: InspectArgs, stop: &Stop, media: &SharedMedia) -> CallToolResult {
     if let Err(message) = reject_unknown(&args.unknown) {
         return usage_error(&message);
     }
@@ -177,6 +177,10 @@ pub fn inspect(args: InspectArgs, stop: &Stop) -> CallToolResult {
         let (report, _) = report::build(&entry, choice, HintStyle::Mcp, |_| Err(error));
         CallToolResult::structured_error(serde_json::to_value(report).expect("reports serialize"))
     };
+    let plugins = match media.for_project(&entry) {
+        Ok(plugins) => plugins,
+        Err(error) => return failed(error),
+    };
     let runtime = match ReactRuntimeOptions::for_entry(
         &entry,
         args.props_file.as_deref(),
@@ -198,6 +202,7 @@ pub fn inspect(args: InspectArgs, stop: &Stop) -> CallToolResult {
         SpawnOptions {
             composition_id: args.composition,
             stop: Some(stop.runtime.clone()),
+            plugins: Some(plugins.runtime()),
             ..SpawnOptions::default()
         },
     );
@@ -602,7 +607,9 @@ fn message(error: &ReactBridgeError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_TIMEOUT, Halt, InspectArgs, MAX_INSPECT_FRAMES, Stop, inspect, select};
+    use super::{
+        DEFAULT_TIMEOUT, Halt, InspectArgs, MAX_INSPECT_FRAMES, SharedMedia, Stop, inspect, select,
+    };
     use rmcp::model::CallToolResult;
     use serde_json::{Value, json};
     use std::time::Duration;
@@ -611,8 +618,14 @@ mod tests {
         serde_json::from_value(value).expect("inspect arguments")
     }
 
+    /// A registry of the built-in components alone; these tests stop
+    /// before plugins are discovered.
+    fn media() -> SharedMedia {
+        SharedMedia::new(celesta_exporter::with_builtin(Vec::new()))
+    }
+
     fn run(value: Value) -> CallToolResult {
-        inspect(args(value), &Stop::new(DEFAULT_TIMEOUT))
+        inspect(args(value), &Stop::new(DEFAULT_TIMEOUT), &media())
     }
 
     fn code(result: &CallToolResult) -> &str {
@@ -710,7 +723,7 @@ mod tests {
         let stop = Stop::new(DEFAULT_TIMEOUT);
         stop.halt(Halt::Cancelled);
         // The entry does not exist: loading it would fail differently.
-        let result = inspect(args(json!({ "entry": "missing.tsx" })), &stop);
+        let result = inspect(args(json!({ "entry": "missing.tsx" })), &stop, &media());
         assert_eq!(code(&result), "cancelled");
         assert_eq!(message(&result), "inspect was cancelled");
     }
@@ -720,7 +733,7 @@ mod tests {
         let stop = Stop::new(Duration::from_secs(2));
         stop.halt(Halt::TimedOut);
         stop.halt(Halt::Cancelled);
-        let result = inspect(args(json!({ "entry": "missing.tsx" })), &stop);
+        let result = inspect(args(json!({ "entry": "missing.tsx" })), &stop, &media());
         assert_eq!(code(&result), "timeout");
         assert_eq!(
             message(&result),

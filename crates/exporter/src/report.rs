@@ -706,6 +706,8 @@ pub(crate) fn classify(
         ExportError::React(_) => ("react", None),
         ExportError::Properties(_) => ("invalid_properties", None),
         ExportError::Time(_) => ("time", None),
+        // The message names the command that installs or updates them.
+        ExportError::Plugins(_) => ("plugins_unsatisfied", None),
         ExportError::Io { .. } => ("io", None),
         ExportError::Codec { .. } => ("codec", None),
         ExportError::OutputExists(_) => (

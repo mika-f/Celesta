@@ -1,6 +1,6 @@
 use crate::control::{ExportCancellation, ExportProgress};
 use crate::error::ExportError;
-use crate::exporter::Exporter;
+use crate::exporter::{Exporter, project_plugins};
 use crate::options::ExportOptions;
 use crate::react::{CompanionProject, ReactRuntimeOptions};
 use crate::stills::StillExport;
@@ -32,13 +32,16 @@ pub struct ExportJob {
 }
 
 impl ExportJob {
-    /// Runs the export, checking `cancellation` between frames.
+    /// Runs the export, checking `cancellation` between frames. Without
+    /// `options.plugins`, the plugins are those [`project_plugins`] finds
+    /// for `source`, so a project whose lock is not satisfied fails here,
+    /// before anything starts.
     pub fn run(
         &self,
         cancellation: &ExportCancellation,
         progress: &mut dyn FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
-        let exporter = Exporter::new(self.options.clone());
+        let exporter = self.exporter()?;
         let load = |path: &Path| Project::load(path).map_err(ExportError::Project);
         let companion = self
             .companion
@@ -118,9 +121,10 @@ impl ExportJob {
 
     /// Reports the composition — its size, rate, and length, and a React
     /// entry's roots — as [`Self::run`] does before it renders, then stops.
-    /// `output`, `stills`, and `options` are not used.
+    /// `output`, `stills`, and `options` other than `plugins` (as in
+    /// [`Self::run`]) are not used.
     pub fn describe(&self, progress: &mut dyn FnMut(ExportProgress)) -> Result<(), ExportError> {
-        let exporter = Exporter::new(self.options.clone());
+        let exporter = self.exporter()?;
         if !self.react {
             let project = Project::load(&self.source).map_err(ExportError::Project)?;
             return exporter.describe_project(&project, progress);
@@ -140,6 +144,16 @@ impl ExportJob {
             }),
             progress,
         )
+    }
+
+    /// An exporter with `options`, and `plugins` found for `source`'s
+    /// project when it gives none.
+    fn exporter(&self) -> Result<Exporter, ExportError> {
+        let mut options = self.options.clone();
+        if options.plugins.is_none() {
+            options.plugins = Some(project_plugins(&self.source, &[], &[])?);
+        }
+        Ok(Exporter::new(options))
     }
 
     fn runtime(&self) -> Result<ReactRuntimeOptions, ExportError> {

@@ -317,3 +317,39 @@ fn sigterm_removes_the_temporary_outputs() {
     assert!(!root.exists(), "{} was left behind", root.display());
     drop(stdin);
 }
+
+/// A project declaring a registry plugin it has no `celesta.lock` for
+/// fails before the React runtime starts, so this needs no Node build.
+#[tokio::test]
+async fn export_tool_reports_an_unsatisfied_lock() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("celesta.config.json"),
+        r#"{"plugins":{"dependencies":{"acme.charts":"1"}}}"#,
+    )
+    .unwrap();
+    let source = project.path().join("scene.tsx");
+    std::fs::write(&source, "export default function Root() { return null; }\n").unwrap();
+    let output = project.path().join("out.mp4");
+    let home = tempfile::tempdir().unwrap();
+    // Bound before the client, so it drops after it.
+    let plugin = TestCodecPlugin::new();
+    let (client, _) = client_with_test_codec_in(&plugin, home.path()).await;
+    for (tool, args) in [
+        (
+            "export_video",
+            json!({ "source": source, "output": output }),
+        ),
+        ("inspect", json!({ "entry": source })),
+    ] {
+        let result = call(&client, tool, args).await;
+        assert!(is_error(&result), "{tool}: {}", text(&result));
+        let error = &structured(&result)["error"];
+        assert_eq!(error["code"], "plugins_unsatisfied", "{tool}: {error}");
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains("celesta plugin install"), "{message}");
+    }
+    assert!(!output.exists());
+    assert!(!project.path().join("celesta.lock").exists());
+    client.cancel().await.unwrap();
+}
