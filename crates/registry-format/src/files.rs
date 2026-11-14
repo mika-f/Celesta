@@ -4,7 +4,7 @@ use std::fmt;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use semver::{Version, VersionReq};
+use semver::{Op, Version, VersionReq};
 use serde::de::{self, DeserializeOwned};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use time::OffsetDateTime;
@@ -333,9 +333,29 @@ impl SearchList {
     }
 }
 
+/// Advisory ranges allow only `=`, `<`, `<=`, `>`, and `>=`, each with a full
+/// `major.minor.patch`, so that precedence ordering decides every match.
+fn is_plain_range(req: &VersionReq) -> bool {
+    !req.comparators.is_empty()
+        && req.comparators.iter().all(|c| {
+            matches!(
+                c.op,
+                Op::Exact | Op::Less | Op::LessEq | Op::Greater | Op::GreaterEq
+            ) && c.minor.is_some()
+                && c.patch.is_some()
+        })
+}
+
 impl AdvisoryList {
     pub fn parse(bytes: &[u8]) -> Result<Self, FormatError> {
         let list: Self = decode(bytes)?;
+        if let Some(a) = list
+            .advisories
+            .iter()
+            .find(|a| !is_plain_range(&a.versions))
+        {
+            return Err(FormatError::InvalidRange(a.versions.to_string()));
+        }
         match list.advisories.iter().find(|a| !is_registry_id(&a.plugin)) {
             Some(a) => Err(FormatError::InvalidId(a.plugin.clone())),
             None => Ok(list),

@@ -3,6 +3,7 @@
 //! The JSON Schemas live in `schema/` and the fixtures in `fixtures/`; this
 //! crate holds their typed parsing. Signature verification and the tree hash live here.
 
+mod advisories;
 mod error;
 mod files;
 mod ids;

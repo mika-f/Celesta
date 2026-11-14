@@ -14,3 +14,7 @@ This folder is the format's source of truth.
 The registry service syncs `schema/` and `fixtures/` from a pinned commit of this repository
 rather than keeping its own copies. Fixture bytes are exact (`-text` in `.gitattributes`),
 since later checks sign and hash them.
+
+## Advisory ranges
+
+An advisory's `versions` uses only the operators `=`, `<`, `<=`, `>`, and `>=`, each with a full `major.minor.patch`; comma-separated comparators must all hold. `AdvisoryList::parse` refuses `^`, `~`, `*`, bare versions, and partial versions with `InvalidRange`. Matching compares versions by semver precedence (build metadata ignored) and does not use `VersionReq::matches`, so `<0.2.3` blocks `0.2.3-rc.1`.

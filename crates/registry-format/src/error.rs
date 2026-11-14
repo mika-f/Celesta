@@ -15,6 +15,8 @@ pub enum FormatError {
     InvalidTarget(String),
     #[error("invalid hash: {0}")]
     InvalidHash(String),
+    #[error("invalid advisory range: {0}")]
+    InvalidRange(String),
     #[error("signature error: {0}")]
     Signature(String),
     #[error("key expired: {0}")]
