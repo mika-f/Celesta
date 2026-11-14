@@ -170,7 +170,7 @@ Celesta's own source code is declared under MIT OR Apache-2.0. The root
 `LICENSE-MIT` and `LICENSE-APACHE` apply to that source. Third-party FFmpeg
 license texts live with the relevant plugins and describe their linked builds.
 
-Celesta's executables (the app, `celesta-exporter`, and `Celesta-mcp`) link
+Celesta's executables (the app, `celesta-exporter`, `Celesta-mcp`, and `Celesta-cli`) link
 no FFmpeg. Video and audio files are read and written by a separate program,
 the media plugin `celesta-codec-ffmpeg`, which Celesta starts and talks to only
 over its documented plugin protocol on standard input and output. The

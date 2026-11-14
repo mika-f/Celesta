@@ -71,7 +71,7 @@ Software rendering is much slower than a GPU; see
 
 ## License
 
-`celesta-exporter` and `celesta-mcp` link no FFmpeg. The image bundles only the
+`celesta-exporter`, `celesta-mcp`, and `celesta` link no FFmpeg. The image bundles only the
 standard LGPL `ffmpeg` process under `/opt/celesta/plugins`, for decoding,
 ProRes/MOV, VP9/Opus WebM, AAC/PCM and muxing. FFmpeg is linked into that
 program statically; libopus and libvpx (both BSD licensed) come from the
