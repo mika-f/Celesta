@@ -6,8 +6,9 @@ This folder is the format's source of truth. This README describes what the code
 
 - `schema/v1/*.schema.json` are JSON Schema (draft 2020-12) definitions. Objects allow
   additional properties, because clients ignore unknown fields.
-- `fixtures/valid/` holds files every schema must accept. `fixtures/invalid/<schema>-<rule>.json`
-  holds files a schema must refuse; the file-name prefix picks the schema.
+- `fixtures/valid/` holds files every schema and parser must accept.
+  `fixtures/invalid/<schema>-<rule>.json` holds files the schema and the matching parser must
+  refuse; the file-name prefix picks both.
 - `fixtures/signed/` holds a deterministic signed tree (test keys only, see
   `fixtures/keys/README.md`). `fixtures/trees/` holds a plugin directory and its tree hash.
 - `src/` holds typed parsing, signature verification, the tree hash, and advisory matching.
@@ -17,8 +18,9 @@ The crate depends on no other Celesta crate. It has `publish = false` for now.
 
 ## Conventions
 
-- Every JSON file has `"format": 1`. Any other value is refused (`Format`); a missing
-  `format` is a JSON error.
+- Every JSON file except a `.sig` file has `"format": 1`. Any other value is refused
+  (`Format`); a missing `format` is a JSON error. A later format is served under new paths
+  (such as `/v2/index/vrm.json`), while the v1 files stay where they are for older clients.
 - Clients ignore unknown fields. The schemas and the Rust types accept them.
 - A timestamp is RFC 3339 in UTC with whole seconds, spelled exactly
   `YYYY-MM-DDTHH:MM:SSZ` (such as `2026-11-20T00:00:00Z`). The schemas and the parsers refuse
@@ -122,8 +124,8 @@ Both messages are byte strings. `\n` is one byte, 0x0A.
 
 `path` is the served path, such as `/index/vrm.json`. It starts with `/` and holds no `\n`;
 `Keyring::verify` refuses any other path with `Signature`, and the signer never signs one.
-The file bytes are exactly the bytes served, with no parsing or re-encoding. The online key signs this message with Ed25519.
-Verification uses `verify_strict`.
+The file bytes are exactly the bytes served, with no parsing or re-encoding. The online key
+signs this message with Ed25519. Verification uses `verify_strict`.
 
 ### Key certification message
 
@@ -158,6 +160,12 @@ need to verify, and do not keep one.
 (`UnknownKey` if it is not in the keyring), and verifies the file message. A malformed `.sig`
 or signature, or a failed check, is a `Signature` error.
 
+A file is verified when it is fetched. A cached `advisories.json` that verified when it was
+fetched stays in force after its signing key expires or leaves `config.json`: it is replaced
+only by a newer list that verifies, and never discarded because its key expired. So a client
+that is offline, or that cannot fetch a list it can verify, keeps blocking what the cached
+list blocks.
+
 ### Online keys: lifetime and rotation
 
 An online key is certified for at most one year: its `expires` is no more than one year
@@ -174,8 +182,8 @@ still verifies them. A client needs no update for a rotation; only a new root ke
 
 ## Tree hash
 
-`tree_hash(dir)` hashes a plugin directory so that the same files give the same hash on
-every platform.
+`tree_hash(dir)` hashes a plugin directory so that the same files, with portable names, give
+the same hash on every platform.
 
 ```text
 entries = every regular file under dir, walked without following links,
@@ -201,6 +209,16 @@ sha256( "celesta-tree-v1\n"
 - The result is written `sha256:<hex>`.
 
 `fixtures/trees/basic.hash` holds the hash of `fixtures/trees/basic`.
+
+"The same hash on every platform" holds for portable names only. A file system that folds
+case or normalizes Unicode can merge or rename entries, and `\` is a separator on Windows.
+So the publish contract refuses an archive that contains:
+
+- an OS junk name (`.DS_Store`, `Thumbs.db`, `desktop.ini`, in any ASCII case);
+- two names in one directory that differ only by case or by Unicode normalization;
+- a name containing `\`;
+- a Windows-reserved name: `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, or `LPT1` to
+  `LPT9`, in any case and with or without an extension.
 
 ## Advisories
 
@@ -242,8 +260,9 @@ cached one:
 
 Freshness is part of the contract, so a client can tell a frozen list from a quiet one:
 
-- The registry regenerates and re-signs `advisories.json` at least every 24 hours, and sets
-  a new, later `generated` on every content change.
+- The registry regenerates and re-signs `advisories.json` at least every 24 hours. Each
+  regeneration sets `generated` to the time it was generated, so `generated` moves forward
+  on every content change and at least every 24 hours even when nothing changed.
 - A client warns when the newest list it has verified has a `generated` older than 7 days.
   The client (plan 3) enforces this; this crate only states it.
 
@@ -251,10 +270,19 @@ Freshness is part of the contract, so a client can tell a frozen list from a qui
 
 The registry service does not keep its own copy of the schemas or fixtures. It syncs
 `schema/` and `fixtures/` from a pinned commit of this repository, and runs its own
-implementation against them: it must accept every file in `fixtures/valid/`, refuse every
-file in `fixtures/invalid/`, produce and verify `fixtures/signed/` byte for byte, and
-reproduce `fixtures/trees/basic.hash`. A change to the format here bumps the pinned commit
-there.
+implementation against them. It must:
+
+- accept every file in `fixtures/valid/` and refuse every file in `fixtures/invalid/`;
+- verify every signature in `fixtures/signed/`, `config.json.sig` included;
+- reproduce every signature value in `fixtures/signed/` exactly, since Ed25519 is
+  deterministic: each key's `signature` in `config.json`, and the `signature` in each `.sig`
+  file when signing the committed file's bytes (`config.json` as committed, too);
+- reproduce `fixtures/trees/basic.hash`.
+
+The signed JSON files other than `config.json` are byte copies of `fixtures/valid/`. The
+signer builds `config.json` (with `serde_json`, keys in alphabetical order) and the `.sig`
+files itself, so their bytes are not compared: a port parses them and checks the values. A
+change to the format here bumps the pinned commit there.
 
 Fixture bytes are exact (`-text` in `.gitattributes`), since the signatures and the tree hash
 cover them. Regenerate `fixtures/signed/` with

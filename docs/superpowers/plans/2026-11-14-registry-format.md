@@ -26,12 +26,12 @@
 - The crate depends on no Celesta crate, so `celesta-plugin-host` can depend on it later.
 - `publish = false` in this plan. The crate becomes publishable in plan 3, when `celesta-plugin-host` first depends on it; that needs the maintainer's crates.io placeholder and Trusted Publishing configuration (see `2026-11-14-crates-io-trusted-publishing.md`).
 - The format version is the integer `1` (`"format": 1`) in every JSON file.
-- Clients ignore unknown fields. Schemas set `additionalProperties: true` at every object level, and the Rust types do not use `deny_unknown_fields`.
-- Timestamps are RFC 3339 UTC strings.
+- Clients ignore unknown fields. Schemas rely on the default (additional properties allowed) at every object level, and the Rust types do not use `deny_unknown_fields`.
+- Timestamps are RFC 3339 UTC strings with whole seconds, spelled exactly `YYYY-MM-DDTHH:MM:SSZ`.
 - Hashes are written `sha256:<64 lowercase hex>`.
 - Ed25519 public keys and signatures are standard base64 with padding.
 - Ids: either a dotless first-party name, or `<publisher>.<name>`. Every part uses lowercase ASCII letters, digits, `-`, and `_`, starting with a letter or digit. At most one `.`.
-- Targets are `<os>-<arch>`, with `os` in `windows | linux | macos` and Rust's arch names, or `any`.
+- Targets are `<os>-<arch>` matching `^[a-z0-9]+-[a-z0-9_]+$` (any `os`, so a new OS does not break old clients' whole index; Rust's names, such as `macos-aarch64`), or `any`.
 - Tests are Rust (`cargo test`). Fixture files are JSON and plain files.
 
 ## Review Focus

@@ -188,12 +188,14 @@ plugin.
   fifth state.
 - **Blocked** is for malware and vulnerabilities only. It is published as an
   **advisory**: plugin id, an affected version range (`<0.2.3`), a
-  description, and an optional "fixed in" version. It matches any plugin, from
-  any source, by its manifest `id` and `version` against the range
-  **(designer's call, planning)**. It stops the plugin without asking,
-  shows the user what was stopped and why, and offers the fixed version when
-  there is one. There is no "run anyway"; a false positive is undone by the
-  registry withdrawing the advisory **(proposal)**.
+  description, and an optional "fixed in" version. It matches any plugin,
+  from any source, by its manifest `id` and `version` against the range
+  **(designer's call, planning)**, so an advisory names a plugin by the
+  host's id rule, which allows several dots, not only by registry ids. It
+  stops the plugin without asking, shows the user what was stopped and why,
+  and offers the fixed version when there is one. There is no "run anyway";
+  a false positive is undone by the registry withdrawing the advisory
+  **(proposal)**.
 - Before Published, a version is **Scanning** (full B only): invisible in the
   index until the automated checks pass. This is not a user-facing state.
 
@@ -214,12 +216,15 @@ grows.
 
 - **Targets** are the manifest's `<os>-<arch>` keys (`macos-aarch64`,
   `windows-x86_64`, `linux-x86_64`, ...); a plugin without a program has the
-  one target `any`. A target archive contains the plugin directory at its
-  root with that target's executable and no other target's, so `executable`
-  still resolves through the existing host rules. Other files are allowed:
-  native libraries (a media plugin's `Frameworks/` dylibs or bundled DLLs),
-  licenses, notices. Archives keep file modes, as
-  `scripts/package-media-plugins.py`'s ZIPs already do.
+  one target `any`. Clients accept any lowercase `<os>-<arch>`, not only the
+  operating systems they know, so a build for a new OS does not make older
+  clients refuse the whole index; they find no build for it. A target
+  archive contains the plugin directory at its root with that target's
+  executable and no other target's, so `executable` still resolves through
+  the existing host rules. Other files are allowed: native libraries (a
+  media plugin's `Frameworks/` dylibs or bundled DLLs), licenses, notices.
+  Archives keep file modes, as `scripts/package-media-plugins.py`'s ZIPs
+  already do.
 - **`treeHash`** is a **tree hash** over every file in the extracted
   directory, not today's approval fingerprint, which covers only the
   manifest and the files it names and so leaves bundled native libraries
@@ -233,18 +238,25 @@ grows.
   client recognize a registry build in the store or bundled in the app, so a
   bundled copy can satisfy a lock. Today's approval fingerprint for
   hand-placed plugins is a different thing and is unchanged, so no saved
-  allowance is asked about again. Tree hashes are not used to match
-  advisories: junk files in a hand-placed folder (such as `.DS_Store`) would
-  defeat that **(designer's call, planning)**.
-- **Signing**: each JSON file has a detached Ed25519 signature
-  (`<file>.sig`) by an online key; online keys are listed in `/config.json`
-  and signed by an offline root key whose public half is compiled into
-  Celesta. A signature covers `celesta-registry-file-v1\n<path>\n` followed
-  by the file's bytes, where `<path>` is the served path (such as
-  `/index/vrm.json`) **(designer's call, planning)**. Clients refuse a file
-  whose signature fails and refuse an
-  `advisories.json` older than the one they have (rollback/freeze
-  protection). The exact envelope is left to the builder; it must allow key
+  allowance is asked about again. The tree hash skips files named
+  `.DS_Store`, `Thumbs.db`, and `desktop.ini` (in any ASCII case, at any
+  depth), which operating systems add to folders on their own; publishing
+  refuses archives that contain those names, so skipping them hides nothing
+  the registry serves. Tree hashes are not used to match advisories: other
+  junk files in a hand-placed folder would defeat that **(designer's call,
+  planning)**.
+- **Signing**: each JSON file, `/config.json` included, has a detached
+  Ed25519 signature (`<file>.sig`) by an online key; online keys are listed
+  in `/config.json` and signed by an offline root key whose public half is
+  compiled into Celesta. A signature covers
+  `celesta-registry-file-v1\n<path>\n` followed by the file's bytes, where
+  `<path>` is the served path (such as `/index/vrm.json`) **(designer's
+  call, planning)**. Clients refuse a file whose signature fails and refuse
+  an `advisories.json` older than the one they have, or dated more than 10
+  minutes ahead of their clock (rollback/freeze protection). The registry
+  re-signs `advisories.json` with a fresh `generated` at least every 24
+  hours, and clients warn when the newest list they have verified is older
+  than 7 days. The exact envelope is left to the builder; it must allow key
   rotation without an app update.
 - **Schema**: the files are specified once as JSON Schema with shared test
   fixtures, kept in this public repository. The Rust client here and the
@@ -288,13 +300,16 @@ grows.
   only `mika-f/Celesta` may publish; in phase 2, the repository and
   workflow a plugin's owners registered (Trusted Publishing). There are no
   long-lived API tokens.
-- The registry validates the manifest as the host does (id, contained
-  paths, `celesta` range, the id matching the registered name) and each
-  archive's shape (the plugin directory at the root, the target's
-  executable present, no other target's executable, no links leaving the
-  directory), enforces size limits, computes tree hashes (and refuses
-  symlinks), and regenerates the plugin's index, `search.json`, and their signatures. Versions are
-  immutable: republishing a version is refused.
+- The registry validates the manifest as the host does (id, contained paths,
+  `celesta` range, the id matching the registered name) and each archive's
+  shape (the plugin directory at the root, the target's executable present,
+  no other target's executable, no links leaving the directory), enforces
+  size limits, computes tree hashes (and refuses symlinks; OS junk names
+  such as `.DS_Store`; two names in one directory that differ only by case
+  or Unicode normalization; names containing `\`; and Windows-reserved names
+  such as `CON` or `NUL`), and regenerates the plugin's index,
+  `search.json`, and their signatures. Versions are immutable: republishing
+  a version is refused.
 - From phase 2 every archive must carry a GitHub artifact attestation
   (Sigstore) from the registered repository and workflow, which in turn
   requires a public source repository. A version stays invisible until the
@@ -412,13 +427,14 @@ grows.
   offers to download. Hand-placed plugins keep today's approval flow.
 - **Advisories.** The client fetches `/advisories.json` at app start, every
   24 hours while running, and once per CLI invocation (a 3-second timeout),
-  verifies it, and caches it. Offline, the cached file still applies. A
-  plugin matching an advisory, by its manifest `id` and `version`, whatever
-  its source (store, hand-placed, or bundled), does not run anywhere: the
-  editor, exporter, MCP server, and
-  React runtime treat it as turned off. The app shows a notification naming
-  the plugin and the advisory, and offers the fixed version; a bundled one
-  says to update Celesta.
+  verifies it, and caches it. Offline, the cached file still applies, even
+  after the key that signed it expires; only a newer verified list replaces
+  it. A plugin matching an advisory, by its manifest `id` and `version`,
+  whatever its source (store, hand-placed, or bundled), does not run
+  anywhere: the editor, exporter, MCP server, and React runtime treat it as
+  turned off. The app shows a notification naming the plugin and the
+  advisory, and offers the fixed version; a bundled one says to update
+  Celesta.
 - **Deprecated and Yanked** show in Problems and on the CLI's stderr; a
   replacement is offered when given.
 
