@@ -9,7 +9,8 @@ rust-version.workspace = true
 
 [dependencies]
 celesta-plugin.workspace = true
-semver = "1.0.28"
+celesta-registry-format.workspace = true
+semver = { version = "1.0.28", features = ["serde"] }
 serde.workspace = true
 sha2 = "0.11"
 strip-ansi-escapes = "0.2.1"

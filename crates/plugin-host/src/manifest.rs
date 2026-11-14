@@ -486,8 +486,8 @@ pub fn plugin_paths(extra: &[PathBuf]) -> Vec<PathBuf> {
 /// reserved id, both the content and media roles, no `celesta` range or one
 /// that cannot be read, a component that cannot be offered (or components
 /// without a module), or a path that leads outside the directory, by its
-/// text or through a link. Files that do not exist yet are left to fail
-/// where they are used.
+/// text or through a link, or a path ending in a name the tree hash skips.
+/// Files that do not exist yet are left to fail where they are used.
 fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
     if !is_valid_id(&manifest.id) {
         return Some(format!(
@@ -536,6 +536,15 @@ fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
         if !is_contained_path(path) {
             return Some(format!(
                 "{path:?} is not a relative path inside the plugin directory"
+            ));
+        }
+        if path
+            .rsplit(['/', '\\'])
+            .next()
+            .is_some_and(celesta_registry_format::is_os_junk_name)
+        {
+            return Some(format!(
+                "{path:?} names a file the tree hash leaves out (.DS_Store, Thumbs.db, desktop.ini)"
             ));
         }
         if let Ok(resolved) = std::fs::canonicalize(manifest_path(directory, path))
@@ -1573,6 +1582,42 @@ pub(crate) mod tests {
                 .all(|error| matches!(error, DiscoveryError::Invalid { .. })),
             "{errors:?}"
         );
+    }
+
+    #[test]
+    fn manifest_paths_ending_in_a_junk_name_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = |id: &str, field: &str, value: serde_json::Value| {
+            let mut manifest = serde_json::json!({
+                "id": id, "version": "1", "protocol": 1, "celesta": COMPATIBLE,
+            });
+            manifest[field] = value;
+            write_manifest(&root.path().join(id), manifest);
+        };
+        manifest("a", "module", "desktop.ini".into());
+        manifest("b", "module", "js/Thumbs.db".into());
+        manifest(
+            "c",
+            "executable",
+            serde_json::json!({ "linux": "bin\\.DS_Store" }),
+        );
+        manifest("d", "types", "types/.DS_Store".into());
+        manifest("e", "module", "js/desktop.ini.js".into());
+
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        let ids: Vec<_> = found
+            .iter()
+            .map(|entry| entry.manifest.id.as_str())
+            .collect();
+        assert_eq!(ids, ["e"]);
+        assert_eq!(errors.len(), 4, "{errors:?}");
+        for error in &errors {
+            assert!(
+                matches!(error, DiscoveryError::Invalid { reason, .. }
+                    if reason.contains("names a file the tree hash leaves out (.DS_Store, Thumbs.db, desktop.ini)")),
+                "{error:?}"
+            );
+        }
     }
 
     #[test]
