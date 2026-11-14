@@ -3,7 +3,6 @@
 //! root, the nearest folder holding `celesta.config.json`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Display;
 use std::io;
 use std::path::Path;
 use std::process::ExitCode;
@@ -15,31 +14,11 @@ use celesta_registry_client::{
 use celesta_registry_format::{AdvisoryList, Index};
 use semver::{Version, VersionReq};
 
+use super::{Failure, finish};
 use crate::args::parse_spec;
 use crate::config::{self, ProjectConfig};
 use crate::session::{NO_KEY_MESSAGE, Session};
 use crate::{USAGE, advisories, report};
-
-/// Why a command failed, said as `celesta: error: …`.
-struct Failure(String);
-
-impl<E: Display> From<E> for Failure {
-    fn from(error: E) -> Self {
-        Self(error.to_string())
-    }
-}
-
-/// The exit status of a command that ended with `result`, saying why it
-/// failed.
-fn finish(result: Result<(), Failure>) -> ExitCode {
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(Failure(message)) => {
-            report::error(message);
-            ExitCode::FAILURE
-        }
-    }
-}
 
 fn not_a_dependency(id: &str) -> Failure {
     Failure(format!("{id} is not a dependency of this project"))
@@ -215,11 +194,25 @@ fn remove_dependency(root: &Path, id: &str) -> Result<(), Failure> {
 /// for, or when the lock covers `celesta.config.json`; otherwise locks the
 /// project again, keeping every entry that still holds, and installs that.
 /// Without a registry key, only what the store already holds can be used.
+/// A project with no dependencies and no lock has nothing to install.
 pub fn install(session: &Session, root: &Path, locked: bool, offline: bool) -> ExitCode {
+    match has_registry_plugins(root) {
+        Ok(true) => {}
+        Ok(false) => {
+            println!("this project has no registry plugins");
+            return ExitCode::SUCCESS;
+        }
+        Err(failure) => return finish(Err(failure)),
+    }
     if !offline {
         advisories::refresh(session);
     }
     finish(install_project(session, root, locked, offline))
+}
+
+/// Whether the project has dependencies or a `celesta.lock`.
+fn has_registry_plugins(root: &Path) -> Result<bool, Failure> {
+    Ok(root.join(LOCK_FILE).exists() || !project_dependencies(root)?.dependencies.is_empty())
 }
 
 fn install_project(

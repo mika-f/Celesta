@@ -7,9 +7,10 @@
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use celesta_registry_client::testing::TestRegistry;
+use serde_json::json;
 use tempfile::TempDir;
 
 pub struct Home {
@@ -77,6 +78,21 @@ impl Home {
         }
     }
 
+    /// The user settings file `celesta` reads and writes under this home.
+    pub fn settings(&self) -> PathBuf {
+        let home = self.path();
+        let folder = if cfg!(windows) {
+            home.join("appdata").join("Celesta")
+        } else if cfg!(target_os = "macos") {
+            home.join("Library")
+                .join("Application Support")
+                .join("Celesta")
+        } else {
+            home.join("config").join("celesta")
+        };
+        folder.join("settings.json")
+    }
+
     /// A new project folder under this home whose `celesta.config.json`
     /// holds `config`.
     pub fn project(&self, config: &str) -> PathBuf {
@@ -87,4 +103,41 @@ impl Home {
         fs::write(dir.join("celesta.config.json"), config).unwrap();
         dir
     }
+}
+
+pub fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+pub fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// A file registry with an empty advisory list, so runs do not warn about
+/// a missing one.
+pub fn registry() -> TestRegistry {
+    let registry = TestRegistry::file();
+    registry.advisories(json!([]));
+    registry
+}
+
+/// Runs `celesta plugin <args>` in `project` with `registry`.
+pub fn run(home: &Home, registry: &TestRegistry, project: &Path, args: &[&str]) -> Output {
+    home.with_registry(registry)
+        .current_dir(project)
+        .arg("plugin")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+/// Asserts the run exited with `code`, showing its output otherwise.
+pub fn assert_exit(output: &Output, code: i32) {
+    assert_eq!(
+        output.status.code(),
+        Some(code),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(output),
+        stderr(output)
+    );
 }

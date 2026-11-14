@@ -312,6 +312,16 @@ impl TestRegistry {
         self.write_signed(&format!("/index/{id}.json"), &index);
     }
 
+    /// Serves `plugins` as the entries of `search.json`.
+    pub fn search(&self, plugins: Value) {
+        let list = json!({
+            "format": 1,
+            "generated": self.stamp(),
+            "plugins": plugins,
+        });
+        self.write_signed("/search.json", &list);
+    }
+
     /// Serves `advisories` as `advisories.json`.
     pub fn advisories(&self, advisories: Value) {
         let list = json!({

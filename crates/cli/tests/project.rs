@@ -4,46 +4,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Output;
 
-use celesta_registry_client::testing::TestRegistry;
-use common::Home;
+use common::{Home, assert_exit, registry, run, stderr, stdout};
 use serde_json::{Value, json};
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
-}
-
-/// A file registry with an empty advisory list, so runs do not warn about
-/// a missing one.
-fn registry() -> TestRegistry {
-    let registry = TestRegistry::file();
-    registry.advisories(json!([]));
-    registry
-}
-
-/// Runs `celesta plugin <args>` in `project` with `registry`.
-fn run(home: &Home, registry: &TestRegistry, project: &Path, args: &[&str]) -> Output {
-    home.with_registry(registry)
-        .current_dir(project)
-        .arg("plugin")
-        .args(args)
-        .output()
-        .unwrap()
-}
-
-/// Asserts the run exited with `code`, showing its output otherwise.
-fn assert_exit(output: &Output, code: i32) {
-    assert_eq!(
-        output.status.code(),
-        Some(code),
-        "stdout:\n{}\nstderr:\n{}",
-        stdout(output),
-        stderr(output)
-    );
-}
 
 fn config(project: &Path) -> Value {
     serde_json::from_slice(&fs::read(project.join("celesta.config.json")).unwrap()).unwrap()
@@ -467,4 +429,29 @@ fn deprecation_names_the_replacement() {
     let output = run(&other, &registry, &project, &["install"]);
     assert_exit(&output, 0);
     assert!(stderr(&output).contains(expected), "{}", stderr(&output));
+}
+
+#[test]
+fn install_without_any_plugins_does_nothing() {
+    let home = Home::new();
+    let registry = registry();
+    let project = home.project("{ \"name\": \"demo\" }\n");
+
+    // With a key and without one.
+    let with_key = run(&home, &registry, &project, &["install"]);
+    let without_key = home
+        .command()
+        .current_dir(&project)
+        .args(["plugin", "install"])
+        .output()
+        .unwrap();
+    for output in [with_key, without_key] {
+        assert_exit(&output, 0);
+        assert_eq!(
+            trimmed_stdout(&output),
+            "this project has no registry plugins"
+        );
+        assert_eq!(stderr(&output), "");
+    }
+    assert!(!project.join("celesta.lock").exists());
 }

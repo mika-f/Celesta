@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use args::{Cli, Command, PluginArgs, PluginCommand};
-use commands::project;
+use commands::{project, registry, store};
 use session::{NO_KEY_MESSAGE, Session, project_dir_root};
 
 /// Exit status for a mistake in how `celesta` was invoked.
@@ -55,16 +55,17 @@ pub fn run(cli: Cli) -> ExitCode {
         PluginCommand::Update { id } => in_project(folder, |root| {
             project::update(&session, root, id.as_deref())
         }),
-        PluginCommand::Search { .. }
-        | PluginCommand::Info { .. }
-        | PluginCommand::Install {
-            global: Some(_), ..
+        PluginCommand::Install {
+            global: Some(spec), ..
+        } => store::install_global_plugin(&session, &spec),
+        PluginCommand::Search { text } => registry::search(&session, &text),
+        PluginCommand::Info { id } => {
+            in_project(folder, |root| registry::info(&session, root, &id))
         }
-        | PluginCommand::List
-        | PluginCommand::Audit
-        | PluginCommand::Gc { .. } => {
-            report::error("not implemented");
-            ExitCode::FAILURE
+        PluginCommand::List => in_project(folder, |root| store::list(&session, root)),
+        PluginCommand::Audit => in_project(folder, |root| registry::audit(&session, root)),
+        PluginCommand::Gc { dry_run } => {
+            in_project(folder, |root| store::gc(&session, root, dry_run))
         }
     }
 }

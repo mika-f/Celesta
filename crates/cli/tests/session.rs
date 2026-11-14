@@ -110,16 +110,14 @@ fn global_conflicts_with_locked_and_offline() {
 fn a_file_registry_is_reachable() {
     let home = Home::new();
     let registry = TestRegistry::file();
+    registry.search(serde_json::json!([]));
     let output = home
         .with_registry(&registry)
         .args(["plugin", "search", "x"])
         .output()
         .unwrap();
     let stderr = stderr(&output);
-    assert!(
-        output.status.success() || stderr.contains("not implemented"),
-        "{stderr}"
-    );
+    assert!(output.status.success(), "{stderr}");
     assert!(!stderr.contains("future"), "{stderr}");
 }
 
