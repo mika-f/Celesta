@@ -1,7 +1,13 @@
 //! The plugin registry's client-facing file formats.
 //!
 //! The JSON Schemas live in `schema/` and the fixtures in `fixtures/`; this
-//! crate holds their typed parsing. Signature verification and the tree hash live here.
+//! crate holds their typed parsing (`Config`, `Index`, `SearchList`,
+//! `AdvisoryList`), the signing message layouts and signature verification
+//! (`key_message`, `signed_message`, `Keyring`), the tree hash of a plugin
+//! directory (`tree_hash`), and advisory matching with rollback refusal
+//! (`AdvisoryList::blocking`, `AdvisoryList::check_newer`).
+//!
+//! The README holds the format in prose.
 
 mod advisories;
 mod error;
