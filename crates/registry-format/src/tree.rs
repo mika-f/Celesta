@@ -1,12 +1,18 @@
 //! The tree hash of a plugin directory.
 //!
 //! ```text
-//! entries = every regular file under dir, walked without following links
+//! entries = every regular file under dir, walked without following links,
+//!           except OS junk files (below)
 //! key     = relative path, components joined with "/"
 //! sort entries by key, byte order
 //! sha256( "celesta-tree-v1\n"
 //!         || for each: u64le(len(key)) || key || u64le(len(contents)) || contents )
 //! ```
+//!
+//! A regular file named `.DS_Store`, `Thumbs.db`, or `desktop.ini`, compared
+//! ASCII case-insensitively, is skipped at any depth: operating systems create
+//! them in folders on their own. Publishing refuses archives that contain those
+//! names, so skipping them cannot hide registry content.
 //!
 //! Empty directories and file modes are not hashed. The registry service
 //! implements the same algorithm byte for byte.
@@ -19,6 +25,13 @@ use sha2::{Digest, Sha256};
 use crate::{FormatError, Hash};
 
 const PREFIX: &[u8] = b"celesta-tree-v1\n";
+
+/// File names the tree hash skips, compared ASCII case-insensitively.
+const JUNK: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
+
+fn is_junk(name: &str) -> bool {
+    JUNK.iter().any(|j| j.eq_ignore_ascii_case(name))
+}
 
 fn fail(path: &Path, why: impl Into<String>) -> FormatError {
     FormatError::TreeHash(path.to_path_buf(), why.into())
@@ -61,6 +74,7 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -> Result<()
             .map_err(|_| fail(&path, "not UTF-8"))?;
         let meta = fs::symlink_metadata(&path).map_err(|e| fail(&path, e.to_string()))?;
         let ty = meta.file_type();
+        let junk = is_junk(&name);
         let key = if prefix.is_empty() {
             name
         } else {
@@ -71,7 +85,9 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -> Result<()
         } else if ty.is_dir() {
             walk(&path, &key, out)?;
         } else if ty.is_file() {
-            out.push((key, path));
+            if !junk {
+                out.push((key, path));
+            }
         } else {
             return Err(fail(&path, "not a regular file"));
         }

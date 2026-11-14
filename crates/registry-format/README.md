@@ -175,7 +175,8 @@ still verifies them. A client needs no update for a rotation; only a new root ke
 every platform.
 
 ```text
-entries = every regular file under dir, walked without following links
+entries = every regular file under dir, walked without following links,
+          except OS junk files (below)
 key     = the relative path, components joined with "/"
 sort entries by key, byte order of the UTF-8 bytes
 sha256( "celesta-tree-v1\n"
@@ -187,6 +188,11 @@ sha256( "celesta-tree-v1\n"
 - A name is hashed as its raw UTF-8 bytes. There is no Unicode normalization, so NFC and NFD
   spellings of one name are different keys. A name that is not valid UTF-8 is an error.
 - File modes are ignored. Empty directories are not hashed.
+- A regular file named `.DS_Store`, `Thumbs.db`, or `desktop.ini`, compared ASCII
+  case-insensitively (`THUMBS.DB` too), is skipped at any depth, since operating systems
+  create these in folders on their own. A directory with one of these names is walked as
+  usual. Publishing refuses an archive that contains any of these names, so skipping them
+  cannot hide registry content.
 - A symbolic link, anywhere in the tree or as `dir` itself, is refused. So is any entry that
   is not a regular file or a directory.
 - The result is written `sha256:<hex>`.

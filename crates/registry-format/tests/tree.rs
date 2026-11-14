@@ -150,3 +150,45 @@ fn symlinked_root_is_rejected() {
         Err(FormatError::TreeHash(_, w)) if w == "symbolic link"
     ));
 }
+
+#[test]
+fn os_junk_files_are_skipped_at_any_depth() {
+    let want = tree_hash(&basic()).unwrap();
+    for name in [
+        ".DS_Store",
+        ".ds_store",
+        "Thumbs.db",
+        "THUMBS.DB",
+        "desktop.ini",
+        "Desktop.INI",
+    ] {
+        for dir in ["", "bin", "licenses", "new/deep"] {
+            let t = copy_of_basic();
+            let at = t.path().join(dir);
+            fs::create_dir_all(&at).unwrap();
+            fs::write(at.join(name), "junk").unwrap();
+            assert_eq!(tree_hash(t.path()).unwrap(), want, "{dir}/{name}");
+        }
+    }
+}
+
+#[test]
+fn names_near_junk_names_are_hashed() {
+    let want = tree_hash(&basic()).unwrap();
+    for name in [
+        ".DS_Store.bak",
+        "Thumbs.db~",
+        "x.DS_Store",
+        "desktop.ini.txt",
+        "Thumbs",
+    ] {
+        let t = copy_of_basic();
+        fs::write(t.path().join(name), "junk").unwrap();
+        assert_ne!(tree_hash(t.path()).unwrap(), want, "{name}");
+    }
+    // Only regular files are skipped: a directory with a junk name is walked.
+    let t = copy_of_basic();
+    fs::create_dir(t.path().join(".DS_Store")).unwrap();
+    fs::write(t.path().join(".DS_Store/x"), "1").unwrap();
+    assert_ne!(tree_hash(t.path()).unwrap(), want);
+}
