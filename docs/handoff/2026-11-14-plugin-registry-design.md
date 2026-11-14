@@ -339,6 +339,91 @@ grows.
   This changes the order of the release pipelines (`package-build.yml`,
   `package-macos.py`, `package-windows.ps1`).
 
+### Publish request (phase 1)
+
+What a publishing workflow (and later `celesta plugin publish`) sends, and
+what it gets back. The served files do not change: each `.sig` is still
+`{"keyid", "signature"}` as pretty JSON with one trailing newline.
+
+**Request:** `POST https://registry.celesta.studio/api/v1/publish`.
+
+- `Authorization: Bearer <GitHub Actions OIDC token>`, issued for the
+  audience `https://registry.celesta.studio`. A token is accepted once, so
+  a retry needs a fresh token. Phase 1 accepts tokens from `mika-f/Celesta`
+  only, from an allowed workflow, and never from a `pull_request` or
+  `pull_request_target` event.
+- `Content-Length` is required; the whole request is at most 90 MiB.
+- `Content-Type: multipart/form-data` (RFC 7578) with these parts and no
+  others:
+  - exactly one part named `manifest`, a file or a field, holding the exact
+    bytes of `celesta-plugin.json`;
+  - one part per target named `archive:<target>`, each with a filename,
+    holding the ZIP bytes. Each archive's root `celesta-plugin.json` must be
+    byte-identical to the `manifest` part.
+- Limits: each archive at most 64 MiB, at most 512 MiB unpacked and 10 000
+  entries per archive, at most 16 targets, and a manifest of at most
+  64 KiB.
+
+**Targets.** A plugin with `executable` publishes one or more
+`<os>-<arch>` targets; each resolves its executable as
+`executable["<os>-<arch>"]`, falling back to `executable["<os>"]`. A plugin
+without `executable` publishes exactly one target, `any`. Each archive holds
+its own executable and no other target's, and the files `module` and `types`
+name must be present.
+
+**Archives.** An archive is stored and served byte for byte as uploaded.
+
+- Compression is stored or deflate; encryption is refused.
+- ZIP64 is refused, as are the `0x0001` and `0x7075` extra fields.
+- Names are UTF-8.
+- Only regular files and directories are allowed. Entries made on Unix must
+  carry file-type bits, and symlinks are refused.
+- A name must not start with `/`, contain `\`, `:`, or NUL, have an empty,
+  `.`, or `..` component, or have a component ending in `.` or a space.
+- Also refused, as `crates/registry-format/README.md` lists: OS junk names,
+  Windows-reserved names, and two names in one directory that differ only by
+  case or Unicode normalization.
+
+**Manifest**, on top of the host's own rules:
+
+- The JSON is parsed strictly: duplicate keys are refused, `protocol` must
+  be an integer literal, and `null` is refused where the host's field is not
+  optional.
+- Phase 1 ids have no dot (first-party plugins).
+- `celesta` is required.
+- The optional `description` and `homepage` are read from the manifest (the
+  host ignores them); `homepage` must start with `https://`.
+- `executable`, `module`, and `types` must not end in a junk name.
+- A version is immutable: one with the same semver precedence as an
+  existing version is refused, so builds that differ only in `+build`
+  metadata clash.
+
+**Index `source`:** `repository` is `https://github.com/<the token's
+repository>`, `commit` is the token's `sha`, and `workflow` is the workflow
+path from the token's `workflow_ref`, such as
+`.github/workflows/plugin-release.yml`.
+
+**Response.** `201` with
+`{ "id", "version", "targets": { "<target>": { "url", "size", "sha256", "treeHash" } } }`.
+Errors are `{ "error": <code>, "message": <text> }`:
+
+| Status | `error` | When |
+| --- | --- | --- |
+| 400 | `bad_request` | a malformed body, a `Content-Length` that does not match, or one that is not a number |
+| 401 | `unauthorized` | |
+| 403 | `forbidden` | the token is not allowed to publish |
+| 403 | `not_owner` | |
+| 409 | `version_exists` | a version of equal precedence exists |
+| 411 | `length_required` | no `Content-Length` |
+| 413 | `too_large` | a limit above is exceeded |
+| 415 | `unsupported_media_type` | not `multipart/form-data` |
+| 422 | `invalid_manifest`, `invalid_archive`, `invalid_target` | a rule above is broken |
+| 500 | `internal` | the registry failed |
+
+A version left half-published by an interrupted request is cleaned up
+automatically within a few hours; until then, publishing it again gives
+`409`.
+
 ## The service, as clients see it
 
 - Phase 1 (minimal): first-party publishing only, the client-facing files,
