@@ -110,3 +110,21 @@ separate repository).
   `publish = false`.
 - The registry service must pin a commit of this repository and run its own
   implementation against `schema/` and `fixtures/`.
+
+## Known gaps for later plans
+
+Found in the final review and left open on purpose:
+
+- `Config` and `OnlineKey` keep both the raw strings (`public_b64`,
+  `expires_text`) and the parsed values. Parsing keeps them consistent, but a
+  value built or changed in code can disagree: certification checks the raw
+  strings, while expiry and trust use the parsed ones. Plan 3 should make
+  `Keyring::from_config` re-derive both from the raw strings (or make the
+  fields private) before any code builds a `Config` by hand.
+- The tree hash skips `.DS_Store`, `Thumbs.db`, and `desktop.ini`. A manifest
+  that names such a path (say `"module": "desktop.ini"`) would hide that file
+  from the hash. The publish contract (plan 2) and the host (plan 3) should
+  refuse manifest-named paths whose last component is one of those names.
+- `config.json`, `index/<id>.json`, and `search.json` carry no rollback stamp,
+  so an older signed copy can be replayed while its key is valid. Only
+  `advisories.json` has one (`generated`). Add stamps in plans 2 and 3.
