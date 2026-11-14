@@ -103,7 +103,9 @@ allowed). Anything else is refused with `InvalidId`.
 ### `<file>.sig`
 
 A detached signature for a served file: JSON with `keyid` and `signature` (64 bytes, base64).
-It has no `format` field. The signature covers the message below, not the bare file.
+It has no `format` field. The signature covers the message below, not the bare file. Every
+served JSON file has one, `config.json` included: `config.json.sig` is made by one of the
+online keys that `config.json` itself lists.
 
 ## Signing
 
@@ -138,13 +140,33 @@ accept only one spelling of each (canonical standard base64 with padding, and th
 now)` keeps each online key that has not expired at `now` (`expires <= now` is expired) and
 whose root certification verifies. It fails with `Signature` when no key remains.
 
+`Keyring::from_signed_config(config_bytes, sig_json, root, now)` is what clients call. It
+parses `config.json`, builds the keyring as `from_config` does, and then verifies
+`config.json.sig` with that keyring at the served path `/config.json`, returning the config
+and the keyring. A signature by a key that is not in the keyring is `UnknownKey`; a bad one
+is `Signature`.
+
 A `Keyring` is a snapshot, valid at the `now` it was built with. It never re-checks expiry.
-Callers rebuild it from a fresh `config.json` and the current time each time they need to
-verify, and do not keep one.
+Callers rebuild it from a fresh, verified `config.json` and the current time each time they
+need to verify, and do not keep one.
 
 `Keyring::verify(path, bytes, sig_json)` parses the `.sig` file, finds the key by `keyid`
 (`UnknownKey` if it is not in the keyring), and verifies the file message. A malformed `.sig`
 or signature, or a failed check, is a `Signature` error.
+
+### Online keys: lifetime and rotation
+
+An online key is certified for at most one year: its `expires` is no more than one year
+after the registry starts using it. The test keys in `fixtures/signed/` do not follow this.
+
+To rotate, the registry:
+
+1. Has the root certify a new online key and adds it to `config.json`, next to the old one.
+2. Re-signs every served file with the new key, `config.json` included.
+3. Removes the old key from `config.json`, and re-signs it, before the old key expires.
+
+Between steps 1 and 3 both keys verify, so a client holding files signed by either key
+still verifies them. A client needs no update for a rotation; only a new root key needs one.
 
 ## Tree hash
 

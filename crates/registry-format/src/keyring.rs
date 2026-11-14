@@ -48,7 +48,8 @@ impl Keyring {
     /// strings in `config.json` (`OnlineKey::public_b64` and
     /// `OnlineKey::expires_text`), never re-encoded from the parsed values.
     ///
-    /// Fails with `Signature` when no key remains.
+    /// Fails with `Signature` when no key remains. This does not check
+    /// `config.json`'s own signature; [`Keyring::from_signed_config`] does.
     pub fn from_config(
         config: &Config,
         root: &RootKey,
@@ -77,6 +78,22 @@ impl Keyring {
             return Err(no_key());
         }
         Ok(Self { keys })
+    }
+
+    /// Reads `config.json` and its `config.json.sig`: builds the keyring from
+    /// the root-certified keys (see [`Keyring::from_config`]), then verifies
+    /// the config's own signature, which one of those keys made over the
+    /// served path `/config.json`. Clients use this, not `from_config`.
+    pub fn from_signed_config(
+        config_bytes: &[u8],
+        sig_json: &[u8],
+        root: &RootKey,
+        now: OffsetDateTime,
+    ) -> Result<(Config, Self), FormatError> {
+        let config = Config::parse(config_bytes)?;
+        let ring = Self::from_config(&config, root, now)?;
+        ring.verify("/config.json", config_bytes, sig_json)?;
+        Ok((config, ring))
     }
 
     /// Verifies `bytes`, served at `path`, against its `.sig` file contents.

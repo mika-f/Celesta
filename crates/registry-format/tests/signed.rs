@@ -41,6 +41,7 @@ fn signed_copies_match_valid_fixtures() {
 #[test]
 fn every_sig_file_has_keyid_and_signature() {
     for rel in [
+        "config.json.sig",
         "index/vrm.json.sig",
         "search.json.sig",
         "advisories.json.sig",

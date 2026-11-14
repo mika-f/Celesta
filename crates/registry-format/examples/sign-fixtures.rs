@@ -75,6 +75,16 @@ fn main() {
         &out.join("config.json"),
         &json!({ "format": 1, "api": API, "keys": keys }),
     );
+    // config.json is signed like every other served file, by an online key it
+    // certifies.
+    sign_file(
+        &out,
+        "config.json",
+        &out.join("config.json"),
+        "/config.json",
+        ONLINE_KEYID,
+        &online,
+    );
     write(
         &out.join("root.pub"),
         format!("{}\n", b64(root.verifying_key().as_bytes())).as_bytes(),

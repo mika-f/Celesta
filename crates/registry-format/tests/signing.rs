@@ -151,6 +151,67 @@ fn certification_covers_the_raw_strings() {
 }
 
 #[test]
+fn signed_config_verifies() {
+    let (config, ring) = Keyring::from_signed_config(
+        &signed("config.json"),
+        &signed("config.json.sig"),
+        &root(),
+        now(),
+    )
+    .unwrap();
+    assert_eq!(config.keys.len(), 2);
+    ring.verify(
+        "/search.json",
+        &signed("search.json"),
+        &signed("search.json.sig"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn tampered_config_is_refused() {
+    let changed = String::from_utf8(signed("config.json"))
+        .unwrap()
+        .replace("registry.celesta.studio", "registry.example.com");
+    Config::parse(changed.as_bytes()).unwrap();
+    let err = Keyring::from_signed_config(
+        changed.as_bytes(),
+        &signed("config.json.sig"),
+        &root(),
+        now(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, FormatError::Signature(_)), "{err:?}");
+}
+
+#[test]
+fn config_signature_must_come_from_a_trusted_key() {
+    let sig = String::from_utf8(signed("config.json.sig"))
+        .unwrap()
+        .replace("2026-11", "expired");
+    let err = Keyring::from_signed_config(&signed("config.json"), sig.as_bytes(), &root(), now())
+        .unwrap_err();
+    assert!(
+        matches!(err, FormatError::UnknownKey(ref k) if k == "expired"),
+        "{err:?}"
+    );
+    for sig in [&b""[..], b"{}", b"not json"] {
+        let err =
+            Keyring::from_signed_config(&signed("config.json"), sig, &root(), now()).unwrap_err();
+        assert!(matches!(err, FormatError::Signature(_)), "{err:?}");
+    }
+    // A valid signature by a trusted key, but over another file.
+    let err = Keyring::from_signed_config(
+        &signed("config.json"),
+        &signed("search.json.sig"),
+        &root(),
+        now(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, FormatError::Signature(_)), "{err:?}");
+}
+
+#[test]
 fn malformed_sig_json_is_signature_error() {
     let ring = keyring();
     let bytes = signed("index/vrm.json");
