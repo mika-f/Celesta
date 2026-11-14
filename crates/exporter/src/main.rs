@@ -984,7 +984,19 @@ fn subtitles_only_choice(explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind, 
 /// The export `cli` describes, with its project's plugins
 /// ([`project_plugins`]).
 fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> Result<ExportJob, ExportError> {
-    Ok(ExportJob {
+    let mut job = described_job(cli, kind, range);
+    job.options.plugins = Some(project_plugins(
+        cli.source(),
+        &cli.plugin_dir,
+        &cli.allow_plugin,
+    )?);
+    Ok(job)
+}
+
+/// [`job`] without its plugins, which are discovered from the user's and
+/// the project's folders.
+fn described_job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
+    ExportJob {
         source: cli.source().to_owned(),
         react: cli.react,
         composition_id: cli.composition.clone(),
@@ -1019,11 +1031,7 @@ fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> Result<Expor
             subtitles: cli.subtitles.clone(),
             looping: cli.looping,
             loudness: cli.loudness(),
-            plugins: Some(project_plugins(
-                cli.source(),
-                &cli.plugin_dir,
-                &cli.allow_plugin,
-            )?),
+            plugins: None,
             presets: match kind {
                 OutputKind::Video(_) => {
                     PresetLookup::for_source(cli.source(), cli.preset_file.clone())
@@ -1031,7 +1039,8 @@ fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> Result<Expor
                 OutputKind::Stills | OutputKind::SubtitlesOnly => PresetLookup::default(),
             },
         },
-    })
+        media: None,
+    }
 }
 
 /// A `--allow-plugin` value: a plugin id
@@ -1175,7 +1184,7 @@ mod tests {
             "out.png",
         ];
         assert_eq!(choice(&args), Ok(OutputKind::Stills));
-        let job = job(&cli(&args), &OutputKind::Stills, None).unwrap();
+        let job = described_job(&cli(&args), &OutputKind::Stills, None);
         assert_eq!(
             job.options.output.video.options["transparent"],
             SettingInput::Text("true".into())

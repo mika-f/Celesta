@@ -56,9 +56,10 @@ pub async fn run(
     let media = media.clone();
     let joined = tokio::task::spawn_blocking(move || {
         let mut job = job;
-        let found = media
-            .for_project(&job.source)
-            .map(|plugins| job.options.plugins = Some(plugins));
+        let found = media.for_project(&job.source).map(|(plugins, media)| {
+            job.options.plugins = Some(plugins);
+            job.media = Some(media);
+        });
         let props_file = job
             .react
             .then(|| resolve_props_file(&job.source, job.props_file.as_deref()))

@@ -26,7 +26,7 @@ async fn main() {
 }
 
 async fn run() -> anyhow::Result<()> {
-    // Inspection, renders, and exports read and write media through it.
+    // The registry the tools share until one discovers other plugins.
     let media = celesta_exporter::use_installed_media();
     let service = server::CelestaServer::new(media)?
         .serve(rmcp::transport::stdio())

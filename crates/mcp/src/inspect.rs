@@ -177,9 +177,14 @@ pub fn inspect(args: InspectArgs, stop: &Stop, media: &SharedMedia) -> CallToolR
         let (report, _) = report::build(&entry, choice, HintStyle::Mcp, |_| Err(error));
         CallToolResult::structured_error(serde_json::to_value(report).expect("reports serialize"))
     };
-    let plugins = match media.for_project(&entry) {
-        Ok(plugins) => plugins,
-        Err(error) => return failed(error),
+    let (plugins, media) = match media.for_project(&entry) {
+        Ok(found) => found,
+        Err(error) => {
+            return match stop.halted() {
+                Some(halt) => stop.result(halt, LOADING),
+                None => failed(error),
+            };
+        }
     };
     let runtime = match ReactRuntimeOptions::for_entry(
         &entry,
@@ -203,6 +208,7 @@ pub fn inspect(args: InspectArgs, stop: &Stop, media: &SharedMedia) -> CallToolR
             composition_id: args.composition,
             stop: Some(stop.runtime.clone()),
             plugins: Some(plugins.runtime()),
+            media: Some(media),
             ..SpawnOptions::default()
         },
     );

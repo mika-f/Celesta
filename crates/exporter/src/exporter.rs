@@ -14,12 +14,13 @@ use crate::subtitles;
 use celesta_composition::Time;
 use celesta_evaluator::Evaluator;
 use celesta_media::{
-    AudioBuffer, AudioMixError, MediaBackend, mix_audio_graph_unclipped_cancellable,
+    AudioBuffer, AudioMixError, MediaBackend, MediaRegistry, mix_audio_graph_unclipped_cancellable,
 };
 use celesta_plugin_host::InstalledPlugins;
 use celesta_project::Project;
 use celesta_remote::StagedFile;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
@@ -31,6 +32,9 @@ type Mixed = Result<(AudioBuffer, AudioLoudness, Vec<String>), AudioMixError>;
 
 pub struct Exporter {
     pub(crate) options: ExportOptions,
+    /// The registry every media backend of this export reads and writes
+    /// through, chosen once when the exporter is made.
+    media: Arc<MediaRegistry>,
 }
 
 /// The plugins an export of `source` uses, as
@@ -52,14 +56,33 @@ pub fn project_plugins(
 
 impl Exporter {
     /// An exporter with `options`. Without `options.plugins`, the plugins
-    /// are discovered here, once, in every location Celesta searches. When
-    /// no media registry has been chosen yet ([`crate::use_media`]), theirs is.
+    /// are discovered here, once, in every location Celesta searches,
+    /// without reading a project's `celesta.lock`: to export a project with
+    /// a lock, pass the plugins [`project_plugins`] finds for it, or run an
+    /// [`ExportJob`](crate::ExportJob). The export reads and writes media
+    /// through the registry chosen when it is made ([`crate::use_media`]),
+    /// or, when none has been, the plugins' registry, which becomes the
+    /// chosen one.
     pub fn new(mut options: ExportOptions) -> Self {
         let plugins = options
             .plugins
             .get_or_insert_with(|| InstalledPlugins::find_reporting(&[], &[]));
-        crate::media::ensure_media(plugins);
-        Self { options }
+        let media = crate::media::ensure_media(plugins);
+        Self { options, media }
+    }
+
+    /// [`Exporter::new`], reading and writing media through `media`
+    /// whatever registry is chosen, before or during the export.
+    pub fn with_media(mut options: ExportOptions, media: Arc<MediaRegistry>) -> Self {
+        options
+            .plugins
+            .get_or_insert_with(|| InstalledPlugins::find_reporting(&[], &[]));
+        Self { options, media }
+    }
+
+    /// The registry this export's media backends use.
+    pub(crate) fn media(&self) -> Arc<MediaRegistry> {
+        self.media.clone()
     }
 
     /// The plugins this export's renderer and React runtime share.
@@ -127,7 +150,7 @@ impl Exporter {
         let output_path = output_path.as_ref();
         ensure_not_cancelled(cancellation)?;
         validate_output(output_path, self.options.overwrite)?;
-        let mut session = ExportSession::start(crate::media::current(), cancellation);
+        let mut session = ExportSession::start(self.media(), cancellation);
         let mut staged = None;
         let (window, loudness, timing) = match self.encode_project(
             project,
@@ -273,8 +296,8 @@ impl Exporter {
                 let started = Instant::now();
                 let abandoned =
                     || cancellation.is_cancelled() || abandon_audio.load(Ordering::Acquire);
-                let mut audio_decoder =
-                    MediaBackend::new().with_kill_switch(cancellation.plugins());
+                let mut audio_decoder = MediaBackend::with_registry(self.media())
+                    .with_kill_switch(cancellation.plugins());
                 let result = mix_audio_graph_unclipped_cancellable(
                     graph,
                     asset_root,

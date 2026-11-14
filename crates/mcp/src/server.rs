@@ -53,7 +53,10 @@ impl CelestaServer {
 }
 
 /// The one media registry the tools share, so a plugin's `describe` answer
-/// is cached across calls.
+/// is cached across calls. It is also the chosen registry
+/// ([`celesta_media::set_registry`]), which any call may replace while
+/// another runs: an export or an inspection never reads that one, but takes
+/// the registry [`SharedMedia::for_project`] gives it for its own project.
 pub(crate) struct SharedMedia(std::sync::Mutex<Arc<MediaRegistry>>);
 
 impl SharedMedia {
@@ -68,13 +71,18 @@ impl SharedMedia {
     }
 
     /// The plugins a job on `source` uses, found for its project
-    /// ([`project_plugins`]), whose media plugins become the registry as in
-    /// [`Self::current`]. A lock that is not satisfied is an
+    /// ([`project_plugins`]), and the registry of their media plugins, which
+    /// becomes the registry as in [`Self::current`]. The job reads and
+    /// writes media through the registry returned, whatever later calls
+    /// make the registry. A lock that is not satisfied is an
     /// [`ExportError::Plugins`].
-    pub(crate) fn for_project(&self, source: &Path) -> Result<InstalledPlugins, ExportError> {
+    pub(crate) fn for_project(
+        &self,
+        source: &Path,
+    ) -> Result<(InstalledPlugins, Arc<MediaRegistry>), ExportError> {
         let plugins = project_plugins(source, &[], &[])?;
-        self.publish(&plugins);
-        Ok(plugins)
+        let media = self.publish(&plugins);
+        Ok((plugins, media))
     }
 
     /// [`Self::update`] to `plugins`' media plugins, published to every

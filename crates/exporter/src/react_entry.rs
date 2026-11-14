@@ -138,7 +138,7 @@ impl Exporter {
         let output_path = output_path.as_ref();
         ensure_not_cancelled(cancellation)?;
         validate_output(output_path, self.options.overwrite)?;
-        let mut session = ExportSession::start(crate::media::current(), cancellation);
+        let mut session = ExportSession::start(self.media(), cancellation);
         let mut staged = None;
         let encoded = match self.encode_react_entry(
             entry,
@@ -215,7 +215,7 @@ impl Exporter {
             project
                 .as_ref()
                 .map(|(project, root)| (*project, root.as_path())),
-            self.plugins(),
+            self,
         )?;
         let metadata = bridge.metadata().clone();
         report_composition(&metadata, progress);
@@ -307,7 +307,8 @@ impl Exporter {
             progress(ExportProgress::MixingAudio);
             let mix_started = Instant::now();
             let graph = shifted_audio_graph(&graph, window_start).map_err(ExportError::Time)?;
-            let mut audio_decoder = MediaBackend::new().with_kill_switch(cancellation.plugins());
+            let mut audio_decoder =
+                MediaBackend::with_registry(self.media()).with_kill_switch(cancellation.plugins());
             let audio_error = |error| match error {
                 AudioMixError::Cancelled => ExportError::Cancelled,
                 error => cancellation.settle(ExportError::Audio(error)),
@@ -371,7 +372,7 @@ impl Exporter {
             project
                 .as_ref()
                 .map(|(project, root)| (*project, root.as_path())),
-            self.plugins(),
+            self,
         )?;
         let metadata = bridge.metadata().clone();
         report_composition(&metadata, &mut progress);
@@ -432,7 +433,7 @@ impl Exporter {
             project
                 .as_ref()
                 .map(|(project, root)| (*project, root.as_path())),
-            self.plugins(),
+            self,
         )?;
         report_composition(bridge.metadata(), &mut progress);
         Ok(())

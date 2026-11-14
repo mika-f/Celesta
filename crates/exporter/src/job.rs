@@ -4,8 +4,10 @@ use crate::exporter::{Exporter, project_plugins};
 use crate::options::ExportOptions;
 use crate::react::{CompanionProject, ReactRuntimeOptions};
 use crate::stills::StillExport;
+use celesta_media::MediaRegistry;
 use celesta_project::Project;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// One export as `Celesta-export` and the MCP server describe it: a JSON
 /// project or a React entry, written as still images (PNG, JPEG or WebP), a
@@ -29,6 +31,10 @@ pub struct ExportJob {
     /// `Some` writes still images (PNG, JPEG or WebP) instead of a video.
     pub stills: Option<StillExport>,
     pub options: ExportOptions,
+    /// The registry the export reads and writes media through, whatever
+    /// registry is chosen meanwhile ([`Exporter::with_media`]); `None`
+    /// takes the one [`Exporter::new`] does.
+    pub media: Option<Arc<MediaRegistry>>,
 }
 
 impl ExportJob {
@@ -153,7 +159,10 @@ impl ExportJob {
         if options.plugins.is_none() {
             options.plugins = Some(project_plugins(&self.source, &[], &[])?);
         }
-        Ok(Exporter::new(options))
+        Ok(match &self.media {
+            Some(media) => Exporter::with_media(options, media.clone()),
+            None => Exporter::new(options),
+        })
     }
 
     fn runtime(&self) -> Result<ReactRuntimeOptions, ExportError> {
@@ -169,4 +178,68 @@ impl ExportJob {
 /// Where a project's relative asset paths resolve from.
 fn asset_root(project_path: &Path) -> &Path {
     project_path.parent().unwrap_or_else(|| Path::new("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ExportCancellation, with_builtin};
+
+    /// What `job` reports the muxers of its registry write, exporting to an
+    /// extension none writes: output resolution goes through the export's
+    /// registry before anything renders, so this needs no GPU.
+    fn written_extensions(job: &ExportJob) -> Vec<String> {
+        let error = job
+            .run(&ExportCancellation::default(), &mut |_| {})
+            .expect_err("no muxer writes .unwritten");
+        match error {
+            ExportError::UnsupportedOutput { extensions, .. } => extensions,
+            error => panic!("{error}"),
+        }
+    }
+
+    /// Another project's plugins becoming the chosen registry, as each MCP
+    /// tool call makes its project's, does not change the registry an
+    /// export reads and writes through: its job's own. No other unit test
+    /// reads the chosen registry.
+    #[test]
+    fn two_projects_get_their_own_media_registry() {
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/minimal.celesta.json");
+        let output = tempfile::tempdir().unwrap();
+        // Project A has only the built-in components; project B also the
+        // test codec, whose muxer alone writes `.ctst`.
+        let a = with_builtin(Vec::new());
+        let b = with_builtin(vec![celesta_codec_test::registered()]);
+        let job = |media: &Arc<MediaRegistry>| ExportJob {
+            source: source.clone(),
+            react: false,
+            composition_id: None,
+            companion: None,
+            props_file: None,
+            props: None,
+            output: Some(output.path().join("film.unwritten")),
+            stills: None,
+            options: ExportOptions {
+                plugins: Some(celesta_plugin_host::InstalledPlugins::default()),
+                ..ExportOptions::default()
+            },
+            media: Some(media.clone()),
+        };
+
+        celesta_media::set_registry(Some(a.clone()));
+        let extensions = written_extensions(&job(&b));
+        assert!(
+            extensions.iter().any(|extension| extension == "ctst"),
+            "{extensions:?}"
+        );
+
+        celesta_media::set_registry(Some(b));
+        let extensions = written_extensions(&job(&a));
+        assert!(
+            !extensions.iter().any(|extension| extension == "ctst"),
+            "{extensions:?}"
+        );
+        celesta_media::set_registry(None);
+    }
 }

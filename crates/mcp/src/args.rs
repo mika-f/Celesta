@@ -471,6 +471,7 @@ fn job(
         output,
         stills,
         options,
+        media: None,
     }
 }
 

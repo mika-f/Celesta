@@ -2,10 +2,12 @@ use crate::stop::RuntimeStop;
 use celesta_composition::{
     Animatable, DuckGroups, DuckLevel, Layer, Rational, Scene, ShaderSource,
 };
+use celesta_media::MediaRegistry;
 use celesta_plugin_host::RuntimePlugins;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// A companion project's layers for one exact frame, evaluated up front by
 /// the caller (see [`ReactBridge::scene_at_with_project`]).
@@ -36,6 +38,10 @@ pub struct SpawnOptions {
     /// runtime never reads `CELESTA_PLUGIN_PATH` from Celesta's own
     /// environment as it is.
     pub plugins: Option<RuntimePlugins>,
+    /// The registry the runtime's media probes go through. `None` takes the
+    /// one [`celesta_media::set_registry`] has chosen when a probe first
+    /// needs it.
+    pub media: Option<Arc<MediaRegistry>>,
     /// Lets another thread kill the runtime (see [`RuntimeStop`]), also while
     /// the spawn waits on `prepare()`.
     pub stop: Option<RuntimeStop>,

@@ -1385,6 +1385,7 @@ export default function Root() {
             subtitles: vec![per_language("srt"), per_language("vtt")],
             ..ExportOptions::default()
         },
+        media: None,
     };
     let runtime = ReactRuntimeOptions::new("node", &runtime_path);
     crate::exporter(job.options.clone())
