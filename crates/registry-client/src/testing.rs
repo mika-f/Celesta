@@ -120,12 +120,18 @@ impl TestRegistry {
 
     /// Like `new`, with the archive and `api` URLs under `base`.
     pub fn with_base(base: &str) -> Self {
-        Self::serving(base.to_owned(), TempDir::new().unwrap())
+        Self::serving(
+            base.to_owned(),
+            TempDir::new().unwrap(),
+            at(FIRST_GENERATED),
+        )
     }
 
     /// Like `new`, with the `file://` URL of the served folder as the base,
     /// so a client fetching from that URL reads the served files:
-    /// `file:///tmp/…`, or `file:///C:/…` on Windows.
+    /// `file:///tmp/…`, or `file:///C:/…` on Windows. Its `generated`
+    /// stamps start a day before now, so a client on the real clock (the
+    /// `celesta` binary) accepts them.
     pub fn file() -> Self {
         let served = TempDir::new().unwrap();
         let path = served.path().to_str().unwrap().replace('\\', "/");
@@ -134,16 +140,19 @@ impl TestRegistry {
         } else {
             format!("file:///{path}")
         };
-        Self::serving(base, served)
+        let first = OffsetDateTime::now_utc().replace_nanosecond(0).unwrap() - Duration::days(1);
+        Self::serving(base, served, first)
     }
 
-    fn serving(base: String, served: TempDir) -> Self {
+    /// A registry at `base` served from `served`, its first `generated`
+    /// stamp `first`.
+    fn serving(base: String, served: TempDir, first: OffsetDateTime) -> Self {
         let registry = Self {
             base,
             served,
             online: SigningKey::from_bytes(&[0x02; 32]),
             root: SigningKey::from_bytes(&[0x01; 32]),
-            generated: Cell::new(at(FIRST_GENERATED)),
+            generated: Cell::new(first),
             indexes: RefCell::default(),
         };
         let public = b64(registry.online.verifying_key().as_bytes());
@@ -355,5 +364,16 @@ mod tests {
                 .join("archives/acme.one/1.0.0/any.zip")
         );
         assert!(Path::new(path).is_file(), "{path}");
+    }
+
+    #[test]
+    fn a_file_registry_is_fresh_now() {
+        let registry = TestRegistry::file();
+        registry.publish("acme.one", "1.0.0", &["any"]);
+        let cache = TempDir::new().unwrap();
+        let client = registry.client(cache.path());
+        let now = OffsetDateTime::now_utc();
+        client.keyring(now).unwrap();
+        client.index("acme.one", now).unwrap();
     }
 }

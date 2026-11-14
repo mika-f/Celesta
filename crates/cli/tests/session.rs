@@ -2,6 +2,7 @@ mod common;
 
 use std::process::Command;
 
+use celesta_registry_client::testing::TestRegistry;
 use common::Home;
 
 const NO_KEY: &str = "this build of Celesta has no registry key yet, so it cannot reach the plugin registry; set CELESTA_REGISTRY and CELESTA_REGISTRY_ROOT_KEY to use another registry";
@@ -94,4 +95,21 @@ fn global_conflicts_with_locked_and_offline() {
             .unwrap();
         assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
     }
+}
+
+#[test]
+fn a_file_registry_is_reachable() {
+    let home = Home::new();
+    let registry = TestRegistry::file();
+    let output = home
+        .with_registry(&registry)
+        .args(["plugin", "search", "x"])
+        .output()
+        .unwrap();
+    let stderr = stderr(&output);
+    assert!(
+        output.status.success() || stderr.contains("not implemented"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("future"), "{stderr}");
 }
