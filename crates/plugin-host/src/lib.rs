@@ -13,6 +13,7 @@ mod console;
 mod host;
 mod kill;
 mod locations;
+mod lock;
 mod manifest;
 mod media;
 mod project;
@@ -29,6 +30,7 @@ pub use kill::{PluginKillHandle, PluginKillSwitch, kill_every_plugin};
 pub use locations::{
     PluginSource, SearchPath, bundled_plugin_dir, search_paths, unsafe_reason, user_plugin_dir,
 };
+pub use lock::{LOCK_FILE, LOCK_FORMAT, LockError, LockedArtifact, LockedPlugin, Lockfile};
 pub use manifest::{
     CELESTA_VERSION, ComponentInfo, ComponentSource, DiscoveryError, InstalledPlugins, MANIFEST,
     Manifest, PLUGIN_PATH_ENV, PluginEntry, PluginRole, RuntimePlugins, WAITING_PLUGIN_PATH_ENV,
