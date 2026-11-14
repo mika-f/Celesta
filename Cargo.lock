@@ -1041,12 +1041,16 @@ name = "celesta-cli"
 version = "0.9.0"
 dependencies = [
  "celesta-plugin-host",
+ "celesta-registry-client",
+ "celesta-registry-format",
+ "clap",
  "indexmap",
  "semver",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "time",
 ]
 
 [[package]]

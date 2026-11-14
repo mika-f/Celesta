@@ -120,9 +120,27 @@ impl TestRegistry {
 
     /// Like `new`, with the archive and `api` URLs under `base`.
     pub fn with_base(base: &str) -> Self {
+        Self::serving(base.to_owned(), TempDir::new().unwrap())
+    }
+
+    /// Like `new`, with the `file://` URL of the served folder as the base,
+    /// so a client fetching from that URL reads the served files:
+    /// `file:///tmp/…`, or `file:///C:/…` on Windows.
+    pub fn file() -> Self {
+        let served = TempDir::new().unwrap();
+        let path = served.path().to_str().unwrap().replace('\\', "/");
+        let base = if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        };
+        Self::serving(base, served)
+    }
+
+    fn serving(base: String, served: TempDir) -> Self {
         let registry = Self {
-            base: base.to_owned(),
-            served: TempDir::new().unwrap(),
+            base,
+            served,
             online: SigningKey::from_bytes(&[0x02; 32]),
             root: SigningKey::from_bytes(&[0x01; 32]),
             generated: Cell::new(at(FIRST_GENERATED)),
@@ -135,7 +153,7 @@ impl TestRegistry {
         let config = json!({
             "format": 1,
             "generated": registry.stamp(),
-            "api": format!("{base}/api/v1"),
+            "api": format!("{}/api/v1", registry.base),
             "keys": [{
                 "keyid": ONLINE_KEYID,
                 "public": public,
@@ -145,6 +163,11 @@ impl TestRegistry {
         });
         registry.write_signed("/config.json", &config);
         registry
+    }
+
+    /// The base URL the archive and `api` URLs are under.
+    pub fn base(&self) -> &str {
+        &self.base
     }
 
     pub fn root_key(&self) -> RootKey {
@@ -306,5 +329,31 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(url.starts_with("file:///x/"), "{url}");
+    }
+
+    #[test]
+    fn file_registry_serves_under_its_own_dir() {
+        let registry = TestRegistry::file();
+        registry.publish("acme.one", "1.0.0", &["any"]);
+
+        let index = fs::read(registry.served_dir().join("index/acme.one.json")).unwrap();
+        let index: Value = serde_json::from_slice(&index).unwrap();
+        let url = index["versions"][0]["targets"]["any"]["url"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            url,
+            format!("{}/archives/acme.one/1.0.0/any.zip", registry.base())
+        );
+        let path = url.strip_prefix("file://").unwrap();
+        // `file:///C:/…` on Windows: the path starts after the third slash.
+        let path = if cfg!(windows) { &path[1..] } else { path };
+        assert_eq!(
+            Path::new(path),
+            registry
+                .served_dir()
+                .join("archives/acme.one/1.0.0/any.zip")
+        );
+        assert!(Path::new(path).is_file(), "{path}");
     }
 }
