@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 pub enum PluginSource {
     /// `--plugin-dir` or `CELESTA_PLUGIN_PATH`.
     Explicit,
-    /// The version a trusted project's `celesta.lock` names, from the
+    /// The version the project's `celesta.lock` names, from the
     /// registry client's store ([`registry_store_dir`]), or a bundled copy
     /// that matches the lock (see [`crate::RegistryContext`]).
     Locked,

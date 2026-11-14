@@ -2,7 +2,10 @@
 
 use crate::advisories::blocking_advisory;
 use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
+use crate::lock::Lockfile;
+use crate::lock_check::{LockProblem, check_lock};
 use crate::media::{MediaManifest, RESERVED_PLUGIN_ID, deserialize_media, media_problems};
+use crate::project::project_dependencies;
 use crate::registry::{LockedFailure, RegistryContext, StoreSearch};
 use crate::settings::UserSettings;
 use celesta_plugin::protocol_for_roles;
@@ -57,7 +60,7 @@ impl WaitingImports {
 pub const CELESTA_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// [`CELESTA_VERSION`], parsed.
-fn celesta_version() -> semver::Version {
+pub(crate) fn celesta_version() -> semver::Version {
     semver::Version::parse(CELESTA_VERSION).expect("Cargo package versions are semver")
 }
 
@@ -456,7 +459,7 @@ pub enum DiscoveryError {
         /// The version that fixes it, if there is one.
         fixed: Option<String>,
     },
-    /// A version a trusted project's lock names that cannot run, with why:
+    /// A version the project's lock names that cannot run, with why:
     /// the plugin with its id is found from the other sources instead.
     #[error("the project locks {id} {version}, which was not used: {reason}")]
     LockUnsatisfied {
@@ -1005,6 +1008,16 @@ impl RuntimePlugins {
     }
 }
 
+/// Reports what discovery skipped on stderr.
+fn report(errors: Vec<DiscoveryError>) {
+    for error in errors {
+        match error {
+            DiscoveryError::UnknownAllowance { .. } => eprintln!("celesta: {error}"),
+            _ => eprintln!("celesta: skipped a plugin: {error}"),
+        }
+    }
+}
+
 /// `entries`' directories as a path list, in order. Discovery skips
 /// directories that would break the list (see `read_manifest`); a set made
 /// by hand leaves them out here, so joining what remains cannot fail.
@@ -1044,7 +1057,22 @@ impl InstalledPlugins {
         allow: &[String],
         settings: &UserSettings,
     ) -> (Self, Vec<DiscoveryError>) {
-        let (found, mut errors) = Self::find_with(explicit, &[], settings);
+        let (registry, mut errors) = RegistryContext::current(None, settings);
+        let (found, found_errors) = Self::find_allowing_in(explicit, allow, settings, &registry);
+        errors.extend(found_errors);
+        (found, errors)
+    }
+
+    /// [`InstalledPlugins::find_allowing`], with the store, the advisories,
+    /// and the project's lock `registry` gives (see
+    /// [`InstalledPlugins::find_in`]).
+    pub fn find_allowing_in(
+        explicit: &[PathBuf],
+        allow: &[String],
+        settings: &UserSettings,
+        registry: &RegistryContext,
+    ) -> (Self, Vec<DiscoveryError>) {
+        let (found, mut errors) = Self::find_in(explicit, &[], settings, registry);
         let allowed = found.allowed_allowing(settings, allow);
         errors.extend(
             allowed
@@ -1126,13 +1154,89 @@ impl InstalledPlugins {
     /// without a better place to show them.
     pub fn find_reporting(explicit: &[PathBuf], allow: &[String]) -> Self {
         let (plugins, errors) = Self::find(explicit, allow);
+        report(errors);
+        plugins
+    }
+
+    /// [`InstalledPlugins::find`] for a command-line tool working on the
+    /// project in `root`: the project's `celesta.lock` is read whether or
+    /// not the user trusts the project ([`RegistryContext::for_project`]),
+    /// and it must pin what `celesta.config.json` declares, for this
+    /// Celesta ([`crate::check_lock`]). A locked version that cannot run
+    /// stops discovery ([`LockProblem::Unsatisfied`]) unless an explicit
+    /// folder supplies its id: that copy runs, and the locked version is
+    /// reported with the other errors. A project with neither dependencies
+    /// nor a lock finds what [`InstalledPlugins::find`] does.
+    pub fn find_for_project(
+        root: &Path,
+        explicit: &[PathBuf],
+        allow: &[String],
+    ) -> Result<(Self, Vec<DiscoveryError>), LockProblem> {
+        let (settings, settings_error) = UserSettings::current();
+        let (registry, registry_errors) = RegistryContext::for_project(root);
+        let (found, found_errors) =
+            Self::find_for_project_with(root, explicit, allow, &settings, registry)?;
+        let settings_error =
+            settings_error.map(|error| DiscoveryError::Settings(error.to_string()));
+        let errors = settings_error
+            .into_iter()
+            .chain(registry_errors)
+            .chain(found_errors)
+            .collect();
+        Ok((found, errors))
+    }
+
+    /// [`InstalledPlugins::find_for_project`] with these settings and
+    /// `registry` in place of the user's.
+    fn find_for_project_with(
+        root: &Path,
+        explicit: &[PathBuf],
+        allow: &[String],
+        settings: &UserSettings,
+        registry: RegistryContext,
+    ) -> Result<(Self, Vec<DiscoveryError>), LockProblem> {
+        let project =
+            project_dependencies(root).map_err(|error| LockProblem::Config(error.to_string()))?;
+        let lock =
+            Lockfile::load(root).map_err(|error| LockProblem::Unreadable(error.to_string()))?;
+        check_lock(lock.as_ref(), &project, &celesta_version())?;
+        let (found, errors) = Self::find_allowing_in(explicit, allow, settings, &registry);
+        let explicit_has = |id: &str| {
+            found
+                .plugins
+                .iter()
+                .any(|entry| entry.source == PluginSource::Explicit && entry.manifest.id == id)
+        };
+        let mut unsatisfied = Vec::new();
+        let mut kept = Vec::new();
         for error in errors {
             match error {
-                DiscoveryError::UnknownAllowance { .. } => eprintln!("celesta: {error}"),
-                _ => eprintln!("celesta: skipped a plugin: {error}"),
+                DiscoveryError::LockUnsatisfied {
+                    id,
+                    version,
+                    reason,
+                } if !explicit_has(&id) => unsatisfied.push((id, version, reason)),
+                error => kept.push(error),
             }
         }
-        plugins
+        if !unsatisfied.is_empty() {
+            return Err(LockProblem::Unsatisfied {
+                plugins: unsatisfied,
+            });
+        }
+        Ok((found, kept))
+    }
+
+    /// [`InstalledPlugins::find_for_project`], reporting skipped plugins on
+    /// stderr as [`InstalledPlugins::find_reporting`] does.
+    pub fn find_for_project_reporting(
+        root: &Path,
+        explicit: &[PathBuf],
+        allow: &[String],
+    ) -> Result<Self, LockProblem> {
+        let (plugins, errors) = Self::find_for_project(root, explicit, allow)?;
+        report(errors);
+        Ok(plugins)
     }
 
     /// The value of `CELESTA_PLUGIN_PATH` for the React runtime: each plugin
@@ -2195,6 +2299,135 @@ pub(crate) mod tests {
         assert_eq!(
             media[0].directory,
             root.path().join("second").join("ffmpeg")
+        );
+    }
+
+    /// The id the project tests lock: one no real user folder has.
+    const LOCKED_ID: &str = "lockchecktest.p";
+
+    /// An untrusted project in `folder`'s `project`, depending on
+    /// [`LOCKED_ID`] 1 and locking 1.0.0 with `tree_hash` for any target,
+    /// and the context that reads it with the store in `folder`'s `store`.
+    fn locked_project(folder: &Path, tree_hash: celesta_registry_format::Hash) -> RegistryContext {
+        let root = folder.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join(crate::PROJECT_CONFIG),
+            serde_json::json!({ "plugins": { "dependencies": { LOCKED_ID: "1" } } }).to_string(),
+        )
+        .unwrap();
+        let lock = crate::registry::tests::lock(&[(LOCKED_ID, "1.0.0", &[("any", tree_hash)])]);
+        lock.save(&root).unwrap();
+        let store = folder.join("store");
+        std::fs::create_dir_all(&store).unwrap();
+        RegistryContext {
+            store: Some(store),
+            advisories: None,
+            project: Some(crate::ProjectLock { root, lock }),
+        }
+    }
+
+    /// What [`InstalledPlugins::find_for_project_with`] finds for the
+    /// project `registry` reads, with no settings.
+    fn find_locked(
+        registry: RegistryContext,
+        explicit: &[PathBuf],
+    ) -> Result<(InstalledPlugins, Vec<DiscoveryError>), LockProblem> {
+        let root = registry.project.as_ref().unwrap().root.clone();
+        InstalledPlugins::find_for_project_with(
+            &root,
+            explicit,
+            &[],
+            &UserSettings::default(),
+            registry,
+        )
+    }
+
+    #[test]
+    fn for_project_reads_the_lock_of_an_untrusted_root() {
+        let root = tempfile::tempdir().unwrap();
+        let lock = crate::registry::tests::lock(&[(
+            LOCKED_ID,
+            "1.0.0",
+            &[("any", celesta_registry_format::Hash([1; 32]))],
+        )]);
+        lock.save(root.path()).unwrap();
+        assert!(!UserSettings::default().is_trusted(root.path()));
+        let (context, _) = RegistryContext::for_project(root.path());
+        assert!(context.project.is_some());
+        assert_eq!(context.project.map(|project| project.lock), Some(lock));
+        assert_eq!(context.store, crate::registry_store_dir());
+    }
+
+    #[test]
+    fn find_for_project_reads_an_untrusted_lock() {
+        let folder = tempfile::tempdir().unwrap();
+        let installed = folder.path().join("store").join(LOCKED_ID).join("1.0.0");
+        let tree_hash = crate::registry::tests::write(
+            &installed,
+            crate::registry::tests::content(LOCKED_ID, "1.0.0"),
+        );
+        let (found, errors) = find_locked(locked_project(folder.path(), tree_hash), &[]).unwrap();
+        let entry = found
+            .plugins
+            .iter()
+            .find(|entry| entry.manifest.id == LOCKED_ID)
+            .unwrap_or_else(|| panic!("{errors:?}"));
+        assert_eq!(entry.source, PluginSource::Locked);
+        assert_eq!(entry.directory, installed);
+    }
+
+    #[test]
+    fn missing_store_version_is_unsatisfied() {
+        let folder = tempfile::tempdir().unwrap();
+        let registry = locked_project(folder.path(), celesta_registry_format::Hash([1; 32]));
+        assert_eq!(
+            find_locked(registry, &[]).err(),
+            Some(LockProblem::Unsatisfied {
+                plugins: vec![(
+                    LOCKED_ID.to_owned(),
+                    "1.0.0".to_owned(),
+                    "it is not installed".to_owned()
+                )]
+            })
+        );
+    }
+
+    #[test]
+    fn explicit_copy_excuses_an_unsatisfied_lock() {
+        let folder = tempfile::tempdir().unwrap();
+        let registry = locked_project(folder.path(), celesta_registry_format::Hash([1; 32]));
+        let explicit = folder.path().join("explicit");
+        crate::registry::tests::write(
+            &explicit,
+            crate::registry::tests::content(LOCKED_ID, "1.1.0"),
+        );
+        let (found, errors) = find_locked(registry, std::slice::from_ref(&explicit)).unwrap();
+        let entry = found
+            .plugins
+            .iter()
+            .find(|entry| entry.manifest.id == LOCKED_ID)
+            .unwrap_or_else(|| panic!("{errors:?}"));
+        assert_eq!(entry.source, PluginSource::Explicit);
+        assert_eq!(entry.directory, explicit);
+        assert!(
+            errors.iter().any(|error| matches!(error,
+                DiscoveryError::LockUnsatisfied { id, .. } if id == LOCKED_ID)),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn find_for_project_stops_on_a_lock_problem() {
+        let folder = tempfile::tempdir().unwrap();
+        let registry = locked_project(folder.path(), celesta_registry_format::Hash([1; 32]));
+        let root = registry.project.as_ref().unwrap().root.clone();
+        std::fs::write(root.join(crate::PROJECT_CONFIG), "{}").unwrap();
+        assert_eq!(
+            find_locked(registry, &[]).err(),
+            Some(LockProblem::OutOfDate {
+                ids: vec![LOCKED_ID.to_owned()]
+            })
         );
     }
 }
