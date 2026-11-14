@@ -22,7 +22,7 @@ pub use files::{
     Advisory, AdvisoryList, Artifact, Config, Deprecation, Hash, Index, Kind, OnlineKey,
     SearchEntry, SearchList, Source, Target, VersionEntry,
 };
-pub use ids::{is_registry_id, publisher_of};
+pub use ids::{is_plugin_id, is_registry_id, publisher_of};
 pub use keyring::{Keyring, RootKey};
 pub use signing::{key_message, signed_message};
 pub use tree::tree_hash;

@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use time::OffsetDateTime;
 
 use crate::error::FormatError;
-use crate::ids::is_registry_id;
+use crate::ids::{is_plugin_id, is_registry_id};
 
 const OSES: [&str; 3] = ["windows", "linux", "macos"];
 
@@ -333,8 +333,10 @@ pub struct SearchList {
     pub plugins: Vec<SearchEntry>,
 }
 
+/// One advisory. Deserializing it checks the range rule and the plugin id, so
+/// every serde path into an `Advisory` (or an `AdvisoryList`) is validated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", try_from = "RawAdvisory")]
 pub struct Advisory {
     pub id: String,
     pub plugin: String,
@@ -345,6 +347,48 @@ pub struct Advisory {
     pub fixed: Option<Version>,
     #[serde(with = "timestamp")]
     pub published: OffsetDateTime,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawAdvisory {
+    id: String,
+    plugin: String,
+    versions: String,
+    title: String,
+    description: String,
+    #[serde(default)]
+    fixed: Option<Version>,
+    #[serde(with = "timestamp")]
+    published: OffsetDateTime,
+}
+
+impl TryFrom<RawAdvisory> for Advisory {
+    type Error = FormatError;
+
+    fn try_from(raw: RawAdvisory) -> Result<Self, FormatError> {
+        let bad_range = || FormatError::InvalidRange(raw.versions.clone());
+        // `VersionReq` parses build metadata in a comparator and drops it.
+        if raw.versions.contains('+') {
+            return Err(bad_range());
+        }
+        let versions = VersionReq::parse(&raw.versions).map_err(|_| bad_range())?;
+        if !is_plain_range(&versions) {
+            return Err(bad_range());
+        }
+        if !is_plugin_id(&raw.plugin) {
+            return Err(FormatError::InvalidId(raw.plugin));
+        }
+        Ok(Self {
+            id: raw.id,
+            plugin: raw.plugin,
+            versions,
+            title: raw.title,
+            description: raw.description,
+            fixed: raw.fixed,
+            published: raw.published,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -365,6 +409,8 @@ fn lift(e: serde_json::Error) -> FormatError {
         ),
         ("invalid target: ", FormatError::InvalidTarget),
         ("invalid timestamp: ", FormatError::InvalidTimestamp),
+        ("invalid advisory range: ", FormatError::InvalidRange),
+        ("invalid plugin id: ", FormatError::InvalidId),
     ] {
         if let Some(rest) = msg.strip_prefix(prefix) {
             let value = rest.split(" at line ").next().unwrap_or(rest);
@@ -430,18 +476,9 @@ fn is_plain_range(req: &VersionReq) -> bool {
 }
 
 impl AdvisoryList {
+    /// Parses `advisories.json`. Each advisory's range and plugin id are
+    /// checked while deserializing (see [`Advisory`]).
     pub fn parse(bytes: &[u8]) -> Result<Self, FormatError> {
-        let list: Self = decode(bytes)?;
-        if let Some(a) = list
-            .advisories
-            .iter()
-            .find(|a| !is_plain_range(&a.versions))
-        {
-            return Err(FormatError::InvalidRange(a.versions.to_string()));
-        }
-        match list.advisories.iter().find(|a| !is_registry_id(&a.plugin)) {
-            Some(a) => Err(FormatError::InvalidId(a.plugin.clone())),
-            None => Ok(list),
-        }
+        decode(bytes)
     }
 }

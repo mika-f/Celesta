@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use celesta_registry_format::{AdvisoryList, Config, SearchList, Target};
+use celesta_registry_format::{
+    AdvisoryList, Config, SearchList, Target, is_plugin_id, is_registry_id,
+};
 use semver::{Version, VersionReq};
 use serde_json::{Value, json};
 
@@ -239,6 +241,7 @@ fn range_pattern_agrees_with_the_advisory_parser() {
         ">=0.1.0,",
         "<0.2.3-01",
         "<1.0.0-a..b",
+        "<0.2.3+b",
         "<01.2.3",
     ];
     agree(
@@ -364,6 +367,39 @@ fn target_pattern_agrees_with_the_parser() {
             "-x86_64",
             "any-",
         ],
+        &[],
+    );
+}
+
+#[test]
+fn id_patterns_agree_with_the_parsers() {
+    let both = ["vrm", "natsuneko.toon-shader", "a_b", "0a", "a-"];
+    let neither = ["", "Vrm", ".a", "-a", "_a", "a b", "a/b", "a@b", "é"];
+    for (schema, pointer) in [("index", "/$defs/id"), ("search", "/$defs/id")] {
+        agree(
+            schema,
+            &pattern(schema, pointer),
+            is_registry_id,
+            &both,
+            &neither,
+            &[],
+        );
+        for s in ["a.", "a.b.c", "a..b"] {
+            assert!(
+                !pattern(schema, pointer).is_valid(&json!(s)),
+                "{schema} {s}"
+            );
+            assert!(!is_registry_id(s), "{s}");
+        }
+    }
+    // An advisory's `plugin` names any plugin, hand-placed ones included, so
+    // it follows the host's id rule: several dots are allowed.
+    agree(
+        "plugin",
+        &pattern("advisories", "/$defs/pluginId"),
+        is_plugin_id,
+        &["vrm", "acme.fancy-title", "a.b.c", "a.", "a..b", "0.x"],
+        &neither,
         &[],
     );
 }

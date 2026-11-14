@@ -19,6 +19,11 @@ fn bound(c: &Comparator) -> Version {
 /// Evaluates one comparator with `Version`'s total ordering. Unlike
 /// `VersionReq::matches`, pre-releases are not excluded, so `<0.2.3` matches `0.2.3-rc.1`.
 fn holds(c: &Comparator, version: &Version) -> bool {
+    // Deserializing refuses partial versions, but an `Advisory` built in code
+    // can carry one. Treat it as matching, so it blocks.
+    if c.minor.is_none() || c.patch.is_none() {
+        return true;
+    }
     let ord = version.cmp_precedence(&bound(c));
     match c.op {
         Op::Exact => ord == Ordering::Equal,
@@ -26,8 +31,8 @@ fn holds(c: &Comparator, version: &Version) -> bool {
         Op::LessEq => ord != Ordering::Greater,
         Op::Greater => ord == Ordering::Greater,
         Op::GreaterEq => ord != Ordering::Less,
-        // `parse` refuses every other operator, but a list built without it can
-        // carry one. Treat an unsupported operator as matching, so it blocks.
+        // Deserializing refuses every other operator, but an `Advisory` built
+        // in code can carry one. Treat it as matching, so it blocks.
         _ => true,
     }
 }
@@ -75,7 +80,15 @@ mod tests {
 
     #[test]
     fn unvalidated_ranges_fail_closed() {
-        for range in ["^0.2.2", "*", "~0.2.2", "0.2.*"] {
+        for range in [
+            "^0.2.2",
+            "*",
+            "~0.2.2",
+            "0.2.*",
+            "=0.2",
+            "<=0.2",
+            ">=1, <0.2",
+        ] {
             let a = advisory(range);
             for v in ["0.2.2", "9.9.9"] {
                 assert!(a.blocks("vrm", &Version::parse(v).unwrap()), "{range} {v}");

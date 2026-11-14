@@ -91,9 +91,14 @@ a valid id.
 
 ### `advisories.json`
 
-`generated` (timestamp) and `advisories`: entries with `id`, `plugin` (a valid id),
-`versions` (the range, below), `title`, `description`, an optional `fixed` version, and
-`published` (timestamp).
+`generated` (timestamp) and `advisories`: entries with `id`, `plugin`, `versions` (the
+range, below), `title`, `description`, an optional `fixed` version, and `published`
+(timestamp).
+
+`plugin` follows the host's plugin id rule, not the registry id rule, because an advisory
+matches a plugin from any source, hand-placed ones included: lowercase ASCII letters, digits,
+`-`, `_`, and `.`, starting with a letter or digit, with any number of dots (`a.b.c` is
+allowed). Anything else is refused with `InvalidId`.
 
 ### `<file>.sig`
 
@@ -170,19 +175,27 @@ sha256( "celesta-tree-v1\n"
 ### Range rule
 
 An advisory's `versions` uses only `=`, `<`, `<=`, `>`, and `>=`, each with a full
-`major.minor.patch` (a pre-release tag is allowed). Comparators are comma-separated and all
-must hold. `AdvisoryList::parse` refuses anything else (`^`, `~`, `*`, bare or partial
-versions, an empty range) with `InvalidRange`.
+`major.minor.patch` (a pre-release is allowed, build metadata is not). Comparators are
+comma-separated and all must hold. Anything else (`^`, `~`, `*`, bare or partial versions,
+build metadata, an empty range, a version semver refuses) is refused with `InvalidRange`,
+which carries the range as written.
+
+These checks, and the `plugin` check, run while an `Advisory` is deserialized, so they apply
+to every serde path into an `Advisory` or an `AdvisoryList`, not only to `AdvisoryList::parse`.
 
 `AdvisoryList::blocking(plugin, version)` returns the first advisory, in file order, whose
 `plugin` equals `plugin` and whose comparators all hold. Each comparator is evaluated by
 semver precedence, not by `VersionReq::matches`, which skips pre-releases. So `<0.2.3` blocks
 `0.2.3-rc.1`: a pre-release of the fixed version is below it, and is blocked. Build metadata
-is ignored.
+of the checked version is ignored.
 
-A list that was built without `parse` can hold a range `parse` would refuse. Such a range
-fails closed: an unsupported operator matches every version, and a range with no comparators
-(`*`) matches every version of its plugin, so the plugin is blocked.
+To block every version of a plugin, use `>=0.0.0-0`: `0.0.0-0` is the lowest version by
+precedence, so every version, pre-releases included, is at or above it.
+
+An `Advisory` built in code, without deserializing, can hold a range the checks would
+refuse. Matching fails closed for it: a comparator with an unsupported operator (`^`, `~`, a
+wildcard), or without a minor or patch number, holds for every version, so it never narrows
+the range. A range with no comparators (`*`) holds for every version of its plugin.
 
 ### Rollback rule
 

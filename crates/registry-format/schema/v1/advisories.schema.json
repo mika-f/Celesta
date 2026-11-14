@@ -34,7 +34,7 @@
             "pattern": "^CELESTA-[0-9]{4}-[0-9]{4,}$"
           },
           "plugin": {
-            "$ref": "#/$defs/id"
+            "$ref": "#/$defs/pluginId"
           },
           "versions": {
             "type": "string",
@@ -65,10 +65,10 @@
     }
   },
   "$defs": {
-    "id": {
+    "pluginId": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)?$",
-      "description": "A dotless first-party name, or <publisher>.<name>. Lowercase ASCII letters, digits, '-' and '_', each part starting with a letter or digit; at most one '.'."
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "description": "The host's plugin id rule, so an advisory can name a plugin from any source: lowercase ASCII letters, digits, '-', '_' and '.', starting with a letter or digit. Several dots are allowed."
     },
     "timestamp": {
       "type": "string",
