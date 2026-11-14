@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use celesta_plugin_host::{create_private_dir_all, unsafe_reason};
 use time::OffsetDateTime;
@@ -11,6 +12,10 @@ use crate::error::ClientError;
 /// The file in the cache that records, per served path, the newest
 /// `generated` timestamp verified there.
 const STAMPS: &str = "stamps.json";
+
+/// Held across `record_stamp`'s read-modify-write, so a refresh thread that
+/// outlives its budget cannot lose a stamp another thread records.
+static STAMP_LOCK: Mutex<()> = Mutex::new(());
 
 fn cache_error(path: &Path, message: impl std::fmt::Display) -> ClientError {
     ClientError::Cache {
@@ -77,6 +82,7 @@ pub(crate) fn record_stamp(
     path: &str,
     generated: OffsetDateTime,
 ) -> Result<(), ClientError> {
+    let _guard = STAMP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut stamps = read_stamps(cache)?;
     let text = generated
         .format(&Rfc3339)
@@ -84,4 +90,30 @@ pub(crate) fn record_stamp(
     stamps.insert(path.to_owned(), text);
     let json = serde_json::to_vec_pretty(&stamps).map_err(|e| cache_error(cache, e))?;
     write_private(&cache.join(STAMPS), &json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_stamps_are_all_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+        let record = |path: &'static str| {
+            let cache = dir.path();
+            move || {
+                for i in 0..100 {
+                    record_stamp(cache, path, base + time::Duration::seconds(i)).unwrap();
+                }
+            }
+        };
+        std::thread::scope(|scope| {
+            scope.spawn(record("/a.json"));
+            scope.spawn(record("/b.json"));
+        });
+        let last = base + time::Duration::seconds(99);
+        assert_eq!(stamp(dir.path(), "/a.json").unwrap(), Some(last));
+        assert_eq!(stamp(dir.path(), "/b.json").unwrap(), Some(last));
+    }
 }
