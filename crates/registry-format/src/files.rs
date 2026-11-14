@@ -192,7 +192,9 @@ pub(crate) mod timestamp {
 ///
 /// `public_b64` and `expires_text` keep the exact strings the file holds: the
 /// root certifies that text, so the certified message is built from it, not
-/// from the decoded values.
+/// from the decoded values. `public` and `expires` are derived conveniences:
+/// trust decisions use the raw strings, and the keyring ignores the derived
+/// values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawOnlineKey", into = "RawOnlineKey")]
 pub struct OnlineKey {

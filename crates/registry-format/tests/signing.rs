@@ -283,3 +283,42 @@ fn root_key_from_base64() {
     assert!(RootKey::from_base64("AAAA").is_err());
     assert!(RootKey::from_base64("!!!").is_err());
 }
+
+#[test]
+fn from_config_ignores_a_changed_public() {
+    // `public` is a derived convenience; trust follows `public_b64`.
+    let mut config = Config::parse(&signed("config.json")).unwrap();
+    config.keys[0].public = [0; 32];
+    Keyring::from_config(&config, &root(), now())
+        .unwrap()
+        .verify(
+            "/index/vrm.json",
+            &signed("index/vrm.json"),
+            &signed("index/vrm.json.sig"),
+        )
+        .unwrap();
+}
+
+#[test]
+fn from_config_ignores_a_changed_expiry() {
+    // `expires` is a derived convenience; expiry follows `expires_text`.
+    let mut config = Config::parse(&signed("config.json")).unwrap();
+    let expired = config
+        .keys
+        .iter_mut()
+        .find(|k| k.keyid == "expired")
+        .unwrap();
+    expired.expires = now() + time::Duration::days(365);
+    let err = Keyring::from_config(&config, &root(), now())
+        .unwrap()
+        .verify(
+            "/advisories.json",
+            &signed("expired/advisories.json"),
+            &signed("expired/advisories.json.sig"),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, FormatError::UnknownKey(ref k) if k == "expired"),
+        "{err:?}"
+    );
+}
