@@ -477,6 +477,19 @@ fn install_global_needs_a_host_build() {
 }
 
 #[test]
+fn a_failed_install_locked_still_records_the_project() {
+    let (registry, root) = locked();
+    let machine = Machine::offline(&registry);
+    let error = install_locked(&machine.env(), root.path(), true).unwrap_err();
+    assert!(matches!(error, ProjectError::Missing { .. }), "{error:?}");
+    let record = fs::read_to_string(machine.store.root().join(PROJECTS_FILE)).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&record).unwrap()["projects"],
+        json!([fs::canonicalize(root.path()).unwrap()])
+    );
+}
+
+#[test]
 fn lock_project_records_the_project() {
     let registry = TestRegistry::new();
     registry.publish(ID, "1.0.0", &RELEASE);

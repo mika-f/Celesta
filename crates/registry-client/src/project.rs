@@ -193,13 +193,15 @@ pub fn install_locked(
     let lock = Lockfile::load(root)?.ok_or(LockProblem::NoLock)?;
     let project = project_dependencies(root)?;
     check_lock(Some(&lock), &project, env.celesta)?;
+    // Before the installs, as in `lock_project`.
+    let record_error = record_error(env, root);
 
     let advisories = env.registry.cached_advisories()?;
     let bundled = BundledPlugins::new(env.bundled);
     let mut outcome = InstallOutcome {
         installed: Vec::new(),
         skipped: Vec::new(),
-        record_error: None,
+        record_error,
     };
     for (id, locked) in &lock.plugins {
         let version = &locked.version;
@@ -249,7 +251,6 @@ pub fn install_locked(
         )?;
         outcome.installed.push((id.clone(), version.clone()));
     }
-    outcome.record_error = record_error(env, root);
     Ok(outcome)
 }
 
