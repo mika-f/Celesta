@@ -68,7 +68,7 @@ Run in this worktree, in this order.
 | `cargo test -p celesta-registry-format --locked` | Passed: 49 tests (3 unit, 11 advisories, 8 parse, 2 schema, 4 signed, 11 signing, 10 tree). |
 | `cargo clippy -p celesta-registry-format --all-targets --locked -- -D warnings` | Passed, no warnings. |
 | `cargo fmt --all -- --check` | Passed. |
-| `cargo test --workspace --locked` | WORKSPACE_RESULT |
+| `cargo test --workspace --locked` | Passed: 2977 tests passed, 0 failed, 1 ignored (summed over all test binaries). |
 
 Not run: the first-party plugins' separate workspace (`plugins/`), which this
 crate does not touch; `pnpm` tests; the registry service's own tests (a
