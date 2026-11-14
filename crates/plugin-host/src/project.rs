@@ -84,7 +84,7 @@ impl ProjectDependencies {
         let mut targets = self.targets.clone().unwrap_or_else(|| {
             RELEASE_TARGETS
                 .iter()
-                .filter_map(|target| Target::parse(target).ok())
+                .map(|target| Target::parse(target).expect("release targets are valid"))
                 .collect()
         });
         targets.sort();

@@ -3,7 +3,7 @@
 use crate::advisories::blocking_advisory;
 use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
 use crate::media::{MediaManifest, RESERVED_PLUGIN_ID, deserialize_media, media_problems};
-use crate::registry::{RegistryContext, StoreSearch};
+use crate::registry::{LockedFailure, RegistryContext, StoreSearch};
 use crate::settings::UserSettings;
 use celesta_plugin::protocol_for_roles;
 use celesta_registry_format::AdvisoryList;
@@ -433,6 +433,12 @@ pub enum DiscoveryError {
     Unreadable(String),
     #[error("the user's settings were not used: {0}")]
     Settings(String),
+    #[error("the cached security advisories were not used: {0}; plugins under an advisory may run")]
+    Advisories(String),
+    #[error(
+        "the project's celesta.lock was not used: {0}; its pinned plugin versions are not in effect"
+    )]
+    Lock(String),
     /// A plugin a cached security advisory stops (see
     /// [`crate::blocking_advisory`]): like a turned-off one it takes no id
     /// and is never listed, whichever folder it is in.
@@ -796,7 +802,7 @@ pub(crate) fn discover_in_with(
     // The store folders that hold nothing, and the locked ones that hold
     // something that cannot run.
     let mut missing: Vec<PathBuf> = Vec::new();
-    let mut failed: Vec<PathBuf> = Vec::new();
+    let mut failed: Vec<(PathBuf, LockedFailure)> = Vec::new();
     let add = |entry: Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError>,
                read: &mut Vec<PluginRead>| match entry {
         Ok(Some(entry)) => read.push(Ok(entry)),
@@ -817,8 +823,10 @@ pub(crate) fn discover_in_with(
                 source: *source,
             }) {
                 Some(entry) => {
-                    if entry.is_err() && *source == PluginSource::Locked {
-                        failed.push(path.clone());
+                    if let Err(error) = &entry
+                        && *source == PluginSource::Locked
+                    {
+                        failed.push((path.clone(), LockedFailure::of(error)));
                     }
                     read.push(entry);
                 }

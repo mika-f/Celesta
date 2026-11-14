@@ -10,7 +10,8 @@ use crate::advisories::cached_advisories;
 use crate::locations::{PluginSource, SearchPath, registry_store_dir};
 use crate::lock::Lockfile;
 use crate::manifest::{
-    DiscoveryError, PluginEntry, PluginRead, discover_in_with, is_valid_id, read_manifest,
+    CELESTA_VERSION, DiscoveryError, PluginEntry, PluginRead, discover_in_with, is_valid_id,
+    read_manifest,
 };
 use crate::settings::UserSettings;
 use celesta_registry_format::{AdvisoryList, Hash, Target, tree_hash};
@@ -39,11 +40,12 @@ pub struct RegistryContext {
 impl RegistryContext {
     /// Store, cached advisories, and `project`'s lock when `settings` trusts it.
     /// A list or lock that cannot be read is reported
-    /// ([`DiscoveryError::Settings`]) and not used.
+    /// ([`DiscoveryError::Advisories`], [`DiscoveryError::Lock`]) and not
+    /// used.
     pub fn current(project: Option<&Path>, settings: &UserSettings) -> (Self, Vec<DiscoveryError>) {
         let mut errors = Vec::new();
         let (advisories, advisories_error) = cached_advisories();
-        errors.extend(advisories_error.map(DiscoveryError::Settings));
+        errors.extend(advisories_error.map(DiscoveryError::Advisories));
         let project = project
             .filter(|root| settings.is_trusted(root))
             .and_then(|root| match Lockfile::load(root) {
@@ -52,7 +54,7 @@ impl RegistryContext {
                     lock,
                 }),
                 Err(error) => {
-                    errors.push(DiscoveryError::Settings(error.to_string()));
+                    errors.push(DiscoveryError::Lock(error.to_string()));
                     None
                 }
             });
@@ -79,6 +81,29 @@ impl RegistryContext {
             self.advisories.as_ref(),
             &store,
         )
+    }
+}
+
+/// Why a locked version's store folder could not run, which decides what is
+/// said about the lock besides the read error.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum LockedFailure {
+    /// Its files, id, or version are not what was installed.
+    Differs,
+    /// It does not load with the running Celesta.
+    Incompatible,
+    /// It could not be read; that error already says why.
+    Other,
+}
+
+impl LockedFailure {
+    /// How `error`, from reading a locked store folder, failed it.
+    pub(crate) fn of(error: &DiscoveryError) -> Self {
+        match error {
+            DiscoveryError::TreeHashMismatch { .. } => Self::Differs,
+            DiscoveryError::Incompatible { .. } => Self::Incompatible,
+            _ => Self::Other,
+        }
     }
 }
 
@@ -240,7 +265,7 @@ impl StoreSearch {
     pub(crate) fn settle(
         &self,
         missing: &[PathBuf],
-        failed: &[PathBuf],
+        failed: &[(PathBuf, LockedFailure)],
         read: &mut Vec<PluginRead>,
     ) {
         for locked in &self.locked {
@@ -250,11 +275,12 @@ impl StoreSearch {
                 ));
                 continue;
             };
-            let failed = locked
-                .path
-                .as_ref()
-                .is_some_and(|path| failed.contains(path));
-            if !failed
+            let failure = locked.path.as_ref().and_then(|path| {
+                failed
+                    .iter()
+                    .find_map(|(failed, failure)| (failed == path).then_some(*failure))
+            });
+            if failure.is_none()
                 && locked
                     .path
                     .as_ref()
@@ -263,18 +289,23 @@ impl StoreSearch {
                 // Runs from the store (unless a later stage stops it).
                 continue;
             }
-            // A store folder that failed its check holds the locked version
-            // in some form, so the pin is said to be broken rather than absent.
             let differs = "its installed files differ from the lock";
             let bundled = read.iter().enumerate().find_map(|(at, read)| {
                 let (entry, _) = read.as_ref().ok()?;
                 (entry.source == PluginSource::Bundled && locked.is(entry)).then_some((at, entry))
             });
             let Some((at, entry)) = bundled else {
-                let reason = if failed {
-                    differs
-                } else {
-                    "it is not installed"
+                // A store folder that failed holds the locked version in
+                // some form, so the pin is said to be broken rather than
+                // absent, and why when the read error does not say.
+                let reason = match failure {
+                    None => "it is not installed".to_owned(),
+                    Some(LockedFailure::Differs) => differs.to_owned(),
+                    Some(LockedFailure::Incompatible) => format!(
+                        "it does not load with Celesta {}; run `celesta plugin update`",
+                        CELESTA_VERSION
+                    ),
+                    Some(LockedFailure::Other) => continue,
                 };
                 read.push(Err(locked.unsatisfied(reason)));
                 continue;
@@ -620,6 +651,36 @@ mod tests {
     }
 
     #[test]
+    fn a_store_copy_that_does_not_load_with_this_celesta_is_not_called_tampered() {
+        let folders = Folders::new();
+        let mut manifest = content("p", "0.9.0");
+        manifest["celesta"] = json!(">=999.0.0");
+        let hash = folders.install(manifest);
+        let context = folders.context(Some(lock(&[("p", "0.9.0", &[(&host(), hash)])])));
+        let (found, errors) = folders.discover(&context, &UserSettings::default());
+        assert!(found.is_empty(), "{found:?}");
+        let [
+            DiscoveryError::Incompatible { .. },
+            DiscoveryError::LockUnsatisfied { reason, .. },
+        ] = &errors[..]
+        else {
+            panic!("{errors:?}");
+        };
+        assert_eq!(
+            reason,
+            &format!(
+                "it does not load with Celesta {CELESTA_VERSION}; run `celesta plugin update`"
+            )
+        );
+        assert!(
+            errors
+                .iter()
+                .all(|error| !error.to_string().contains("differ")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
     fn a_store_copy_of_another_version_is_skipped() {
         let folders = Folders::new();
         // The folder for 0.9.0 holds 0.9.1, hashed as it is.
@@ -688,7 +749,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|error| matches!(error, DiscoveryError::Settings(text)
+                .any(|error| matches!(error, DiscoveryError::Lock(text)
                 if text.contains(&lock.display().to_string()))),
             "{errors:?}"
         );
