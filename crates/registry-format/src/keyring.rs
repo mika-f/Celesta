@@ -1,0 +1,103 @@
+//! Trust in registry files: a pinned root key certifies short-lived online
+//! keys, and the online keys sign every served file.
+
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use ed25519_dalek::{Signature, VerifyingKey};
+use serde::Deserialize;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+
+use crate::error::FormatError;
+use crate::files::Config;
+use crate::signing::{key_message, signed_message};
+
+/// The pinned Ed25519 root public key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RootKey(pub [u8; 32]);
+
+impl RootKey {
+    /// Parses a standard-base64 public key; surrounding whitespace is ignored.
+    pub fn from_base64(s: &str) -> Result<Self, FormatError> {
+        let bytes = STANDARD
+            .decode(s.trim())
+            .map_err(|e| FormatError::Signature(format!("root key: {e}")))?;
+        let key: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| FormatError::Signature("root key: expected 32 bytes".to_owned()))?;
+        Ok(Self(key))
+    }
+}
+
+/// The online keys that are currently trusted, in config order.
+#[derive(Debug, Clone)]
+pub struct Keyring {
+    keys: Vec<(String, VerifyingKey)>,
+}
+
+#[derive(Deserialize)]
+struct SigFile {
+    keyid: String,
+    signature: String,
+}
+
+impl Keyring {
+    /// Keeps the online keys whose root signature verifies and that have not
+    /// expired at `now` (`expires <= now` is expired).
+    ///
+    /// The certified message is rebuilt from the parsed key, with `public` in
+    /// standard base64 and `expires` in RFC 3339 as `time` formats it (UTC `Z`
+    /// without fractional seconds for whole-second UTC values). A config that
+    /// spells the same instant differently does not verify.
+    ///
+    /// Fails with `Signature` when no key remains.
+    pub fn from_config(
+        config: &Config,
+        root: &RootKey,
+        now: OffsetDateTime,
+    ) -> Result<Self, FormatError> {
+        let no_key = || FormatError::Signature("no valid signing key".to_owned());
+        let root = VerifyingKey::from_bytes(&root.0).map_err(|_| no_key())?;
+        let mut keys = Vec::new();
+        for key in &config.keys {
+            if key.expires <= now {
+                continue;
+            }
+            let Ok(expires) = key.expires.format(&Rfc3339) else {
+                continue;
+            };
+            let message = key_message(&key.keyid, &STANDARD.encode(key.public), &expires);
+            let certified = root
+                .verify_strict(&message, &Signature::from_bytes(&key.signature))
+                .is_ok();
+            if !certified {
+                continue;
+            }
+            let Ok(public) = VerifyingKey::from_bytes(&key.public) else {
+                continue;
+            };
+            keys.push((key.keyid.clone(), public));
+        }
+        if keys.is_empty() {
+            return Err(no_key());
+        }
+        Ok(Self { keys })
+    }
+
+    /// Verifies `bytes`, served at `path`, against its `.sig` file contents.
+    pub fn verify(&self, path: &str, bytes: &[u8], sig_json: &[u8]) -> Result<(), FormatError> {
+        let bad = |why: &str| FormatError::Signature(format!("{path}: {why}"));
+        let sig: SigFile = serde_json::from_slice(sig_json).map_err(|_| bad("malformed .sig"))?;
+        let (_, key) = self
+            .keys
+            .iter()
+            .find(|(id, _)| *id == sig.keyid)
+            .ok_or_else(|| FormatError::UnknownKey(sig.keyid.clone()))?;
+        let raw = STANDARD
+            .decode(&sig.signature)
+            .map_err(|_| bad("malformed signature"))?;
+        let raw: [u8; 64] = raw.try_into().map_err(|_| bad("malformed signature"))?;
+        key.verify_strict(&signed_message(path, bytes), &Signature::from_bytes(&raw))
+            .map_err(|_| FormatError::Signature(path.to_owned()))
+    }
+}
