@@ -36,7 +36,10 @@ pub fn refresh_advisories_within(
     match receiver.recv_timeout(budget) {
         Ok(Ok(list)) => AdvisoryRefresh::Fresh(list),
         Ok(Err(error)) => AdvisoryRefresh::Failed(error.to_string()),
-        Err(_) => AdvisoryRefresh::TimedOut,
+        Err(mpsc::RecvTimeoutError::Timeout) => AdvisoryRefresh::TimedOut,
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            AdvisoryRefresh::Failed("the advisory refresh stopped unexpectedly".to_owned())
+        }
     }
 }
 

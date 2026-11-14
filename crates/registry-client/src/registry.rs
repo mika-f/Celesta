@@ -142,15 +142,13 @@ impl Registry {
         generated: OffsetDateTime,
         now: OffsetDateTime,
     ) -> Result<(), ClientError> {
+        // Hold the lock over the whole check-then-write, so a stalled thread
+        // cannot overwrite what a later one accepted.
+        let held = cache::lock();
         let newest = cache::stamp(&self.cache, path)?;
         check_fresh(generated, newest, now).map_err(|source| format_error(path, source))?;
         cache::write_private(&cache::file_path(&self.cache, path), bytes)?;
-        // An older stamp would let a rollback through, so never lower one.
-        cache::record_stamp(
-            &self.cache,
-            path,
-            generated.max(newest.unwrap_or(generated)),
-        )
+        cache::record_stamp(&held, &self.cache, path, generated)
     }
 
     /// The file at `path` and its `.sig`.
@@ -182,5 +180,39 @@ fn format_error(path: &str, source: FormatError) -> ClientError {
     ClientError::Format {
         path: path.to_owned(),
         source,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use celesta_registry_format::FormatError;
+
+    use super::*;
+    use crate::testing::{TestRegistry, at};
+
+    #[test]
+    fn a_late_older_file_cannot_replace_a_newer_one() {
+        let cache = tempfile::tempdir().unwrap();
+        let registry = TestRegistry::new().client(cache.path());
+        let now = at("2026-11-21T00:00:00Z");
+        let newer = at("2026-11-20T00:00:10Z");
+        let older = at("2026-11-20T00:00:00Z");
+        registry.accept("/x.json", b"newer", newer, now).unwrap();
+        let error = registry
+            .accept("/x.json", b"older", older, now)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ClientError::Format {
+                    source: FormatError::Rollback,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        let file = cache::file_path(cache.path(), "/x.json");
+        assert_eq!(std::fs::read(file).unwrap(), b"newer");
+        assert_eq!(cache::stamp(cache.path(), "/x.json").unwrap(), Some(newer));
     }
 }
