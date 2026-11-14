@@ -19,7 +19,9 @@ use crate::session::Session;
 use crate::{USAGE, advisories, report};
 
 /// Lists the plugins the project in `root` locks and those installed for
-/// every project, with their states. Needs no network.
+/// every project, with their states. Works offline and without a registry
+/// key: it refreshes the advisory list within the run's budget, then uses
+/// the cached list and indexes.
 pub fn list(session: &Session, root: &Path) -> ExitCode {
     let advisories = advisories::refresh(session);
     finish(list_plugins(session, root, advisories.as_ref()))
