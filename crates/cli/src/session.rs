@@ -3,12 +3,12 @@
 
 use std::ffi::OsString;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use celesta_plugin_host::{
-    CELESTA_VERSION, bundled_plugin_dir, create_private_dir_all, has_project_config,
-    registry_cache_dir, registry_store_dir, user_settings_path,
+    CELESTA_VERSION, bundled_plugin_dir, create_private_dir_all, registry_cache_dir,
+    registry_store_dir, user_settings_path,
 };
 use celesta_registry_client::{
     DirTransport, Environment, HttpTransport, OFFICIAL_REGISTRY, Registry, Store, Transport,
@@ -293,36 +293,12 @@ fn select_registry(
     })
 }
 
-/// The project `dir` is in: the nearest folder from `dir` (made absolute)
-/// up that holds `celesta.config.json`, else `dir` itself.
-pub fn project_dir_root(dir: &Path) -> PathBuf {
-    let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
-    dir.ancestors()
-        .find(|folder| has_project_config(folder))
-        .unwrap_or(&dir)
-        .to_path_buf()
-}
-
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use celesta_registry_client::testing::{TestRegistry, at};
     use tempfile::TempDir;
 
     use super::*;
-
-    #[test]
-    fn project_is_found_from_a_subfolder() {
-        let root = TempDir::new().unwrap();
-        let inner = root.path().join("a").join("b");
-        fs::create_dir_all(&inner).unwrap();
-        assert_eq!(project_dir_root(&inner), inner);
-
-        fs::write(root.path().join("celesta.config.json"), "{}").unwrap();
-        assert_eq!(project_dir_root(&inner), root.path());
-        assert_eq!(project_dir_root(root.path()), root.path());
-    }
 
     #[test]
     fn file_urls_become_dir_transports() {

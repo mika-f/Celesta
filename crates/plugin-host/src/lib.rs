@@ -54,6 +54,7 @@ pub use media::{
 pub use project::{
     PROJECT_CONFIG, ProjectConfigError, ProjectDependencies, RELEASE_TARGETS, has_project_config,
     mark_project_root, project_dependencies, project_plugin_paths, project_root,
+    project_root_of_dir,
 };
 pub use registry::{ProjectLock, RegistryContext, is_build};
 pub use settings::{

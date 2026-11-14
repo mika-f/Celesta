@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use args::{Cli, Command, PluginArgs, PluginCommand};
+use celesta_plugin_host::project_root_of_dir;
 use commands::{project, registry, store};
-use session::{NO_KEY_MESSAGE, Session, project_dir_root};
+use session::{NO_KEY_MESSAGE, Session};
 
 /// Exit status for a mistake in how `celesta` was invoked.
 pub const USAGE: u8 = 2;
@@ -83,7 +84,7 @@ fn in_project(folder: Option<PathBuf>, command: impl FnOnce(&Path) -> ExitCode) 
             }
         },
     };
-    command(&project_dir_root(&folder))
+    command(&project_root_of_dir(&folder))
 }
 
 /// Whether `command` cannot run without reaching the registry.

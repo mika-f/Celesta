@@ -105,10 +105,17 @@ pub fn project_root(entry: &Path) -> PathBuf {
     let folder = entry
         .parent()
         .map_or_else(|| entry.clone(), Path::to_path_buf);
-    folder
-        .ancestors()
-        .find(|dir| has_project_config(dir))
-        .unwrap_or(&folder)
+    project_root_of_dir(&folder)
+}
+
+/// [`project_root`] for a folder rather than an entry: the nearest folder
+/// from `dir` (made absolute) up that holds `celesta.config.json`, else
+/// `dir` itself. It is the project a command run in `dir` acts on.
+pub fn project_root_of_dir(dir: &Path) -> PathBuf {
+    let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
+    dir.ancestors()
+        .find(|folder| has_project_config(folder))
+        .unwrap_or(&dir)
         .to_path_buf()
 }
 
@@ -273,6 +280,18 @@ mod tests {
         assert!(has_project_config(&project));
         assert_eq!(project_root(&project.join("scenes").join("a.tsx")), project);
         assert_eq!(project_root(&project.join("film.tsx")), project);
+    }
+
+    #[test]
+    fn a_folders_root_is_found_from_a_subfolder() {
+        let root = tempfile::tempdir().unwrap();
+        let inner = root.path().join("a").join("b");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert_eq!(project_root_of_dir(&inner), inner);
+
+        std::fs::write(root.path().join(PROJECT_CONFIG), "{}").unwrap();
+        assert_eq!(project_root_of_dir(&inner), root.path());
+        assert_eq!(project_root_of_dir(root.path()), root.path());
     }
 
     #[test]

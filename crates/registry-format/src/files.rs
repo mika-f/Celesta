@@ -265,6 +265,13 @@ pub struct Kind {
     pub module: bool,
 }
 
+impl Kind {
+    /// Whether the plugin has the `media` role.
+    pub fn is_media(&self) -> bool {
+        self.roles.iter().any(|role| role == "media")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Deprecation {

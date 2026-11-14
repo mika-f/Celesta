@@ -1,6 +1,7 @@
 //! Editing `plugins.dependencies` in a project's `celesta.config.json`
 //! without losing anything else in the file.
 
+use celesta_plugin_host::PROJECT_CONFIG;
 use indexmap::IndexMap;
 use serde::de::{DeserializeSeed, Deserializer, MapAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
@@ -8,8 +9,6 @@ use serde_json::value::RawValue;
 use std::cell::RefCell;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-
-const PROJECT_CONFIG: &str = "celesta.config.json";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {

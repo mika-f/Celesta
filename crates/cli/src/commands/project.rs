@@ -59,7 +59,7 @@ fn add_dependency(
     advisories: Option<&AdvisoryList>,
 ) -> Result<(), Failure> {
     let index = session.registry.index(id, session.now)?;
-    let media = index.kind.roles.iter().any(|role| role == "media");
+    let media = index.kind.is_media();
     if media && !pin {
         return Err(Failure(format!(
             "{id} is a media plugin; install it for every project with `celesta plugin install --global {id}`, or pin it to this project with --pin"

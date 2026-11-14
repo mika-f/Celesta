@@ -194,7 +194,7 @@ fn keep<'a>(
     }
     // A target the lock did not know yet may have a build by now. Media
     // plugins ignore the targets, so they are kept.
-    let media = index.kind.roles.iter().any(|role| role == "media");
+    let media = index.kind.is_media();
     let new_target = !media
         && !locked.targets.contains_key(&Target::ANY)
         && input
@@ -250,7 +250,7 @@ fn choose<'a>(
     let covers = |v: &VersionEntry, target: &Target| {
         v.targets.contains_key(target) || v.targets.contains_key(&Target::ANY)
     };
-    let media = index.kind.roles.iter().any(|role| role == "media");
+    let media = index.kind.is_media();
 
     let mut missing = Vec::new();
     let picked = if media {
