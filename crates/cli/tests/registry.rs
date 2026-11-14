@@ -374,6 +374,33 @@ fn audit_works_without_a_key() {
 }
 
 #[test]
+fn audit_says_when_it_could_not_check_everything() {
+    let home = Home::new();
+    let registry = registry();
+    registry.publish("acme.charts", "1.2.3", &["any"]);
+    let project = home.project("{}\n");
+    assert_exit(&run(&home, &registry, &project, &["add", "acme.charts"]), 0);
+
+    // Another user, with no key and nothing cached.
+    let output = Home::new()
+        .command()
+        .current_dir(&project)
+        .args(["plugin", "audit"])
+        .output()
+        .unwrap();
+    assert_exit(&output, 0);
+    assert_eq!(
+        lines(&output),
+        ["no problems found in what could be checked"]
+    );
+    assert!(
+        stderr(&output).contains("celesta: warning: could not check acme.charts for yanked, withdrawn, or deprecated versions: "),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn audit_passes_a_clean_project() {
     let home = Home::new();
     let registry = registry();

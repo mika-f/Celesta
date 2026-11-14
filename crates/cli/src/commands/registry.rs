@@ -186,7 +186,14 @@ fn audit_plugins(
         findings.extend(found);
     }
     if findings.is_empty() {
-        println!("no problems found");
+        let unchecked = indexes
+            .values()
+            .any(|listing| matches!(listing, Listing::Unknown));
+        if unchecked {
+            println!("no problems found in what could be checked");
+        } else {
+            println!("no problems found");
+        }
     }
     for finding in findings {
         println!("{}", finding.text);
