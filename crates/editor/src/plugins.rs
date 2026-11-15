@@ -34,6 +34,22 @@ use std::sync::{Arc, Mutex, PoisonError};
 /// Designed against a 16px `rem`; see [`metrics::scaled`].
 const PLUGIN_DIALOG_WIDTH: f32 = 560.;
 
+/// The Problems title for a lock that does not let the project's plugins run.
+fn lock_problem_title(problem: &LockProblem) -> &'static str {
+    match problem {
+        LockProblem::NoLock | LockProblem::OutOfDate { .. } => {
+            "The project's plugins are not locked"
+        }
+        LockProblem::OtherCelesta { .. } => {
+            "The project's plugins were locked with another Celesta"
+        }
+        LockProblem::Unreadable(_) | LockProblem::Config(_) => {
+            "The project's celesta.lock can't be read"
+        }
+        LockProblem::Unsatisfied { .. } => "The project's locked plugins are not installed",
+    }
+}
+
 /// A plugin a security advisory stops, which is never run.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BlockedPlugin {
@@ -225,7 +241,12 @@ impl FoundPlugins {
             )
         });
         let decoder = self.missing_decoder.then(|| self.missing_decoder_detail());
-        let lock = self.lock_problem.as_ref().map(ToString::to_string);
+        // An unreadable lock's reason is already in `skipped`.
+        let lock = self
+            .lock_problem
+            .as_ref()
+            .filter(|problem| !matches!(problem, LockProblem::Unreadable(_)))
+            .map(ToString::to_string);
         let detail: Vec<String> = decoder
             .into_iter()
             .chain(waiting)
@@ -235,7 +256,7 @@ impl FoundPlugins {
         let title = match (self.pending.len(), self.skipped.len()) {
             (0, 0) if self.missing_decoder => "No media decoder can run".to_owned(),
             (0, 0) if self.lock_problem.is_some() => {
-                "The project's plugins are not locked".to_owned()
+                lock_problem_title(self.lock_problem.as_ref()?).to_owned()
             }
             (0, 0) => return None,
             (0, 1) => "A plugin was skipped".to_owned(),
@@ -1407,14 +1428,76 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_trusted_for_now_reads_no_lock() {
-        let locked = Locked::new("for-now");
+    fn a_trusted_folder_without_a_config_reads_no_lock() {
+        let locked = Locked::new("no-config");
         std::fs::remove_file(locked.project().join(celesta_plugin_host::PROJECT_CONFIG)).unwrap();
         let mut settings = UserSettings::default();
         settings.trust(&locked.project());
         assert_eq!(
             FoundPlugins::lock_root(Some(&locked.project()), &settings),
             None
+        );
+    }
+
+    #[test]
+    fn only_saved_trust_in_a_project_with_a_config_reads_its_lock() {
+        let locked = Locked::new("gate");
+        let project = locked.project();
+        // (a) A project the settings do not trust.
+        let untrusted = UserSettings::default();
+        assert_eq!(FoundPlugins::lock_root(Some(&project), &untrusted), None);
+        // (b) Trusted for now only: the folder is the trusted root, so its own
+        // plugin folders are searched, but the settings do not trust it.
+        let for_now = [resolved(&project)];
+        let entry = project.join("film.tsx");
+        assert_eq!(
+            trusted_root_with(&untrusted, &for_now, Some(&entry)),
+            Some(project.clone())
+        );
+        assert_eq!(FoundPlugins::lock_root(Some(&project), &untrusted), None);
+        // (c) Saved trust, with a config.
+        let mut saved = UserSettings::default();
+        saved.trust(&project);
+        assert_eq!(
+            FoundPlugins::lock_root(Some(&project), &saved),
+            Some(project)
+        );
+    }
+
+    #[test]
+    fn each_kind_of_lock_problem_has_its_own_title() {
+        let titled = |problem| {
+            FoundPlugins {
+                lock_problem: Some(problem),
+                ..FoundPlugins::default()
+            }
+            .problem()
+            .unwrap()
+            .title
+        };
+        assert_eq!(
+            titled(LockProblem::NoLock),
+            "The project's plugins are not locked"
+        );
+        assert_eq!(
+            titled(LockProblem::Config("bad".into())),
+            "The project's celesta.lock can't be read"
+        );
+        assert_eq!(
+            titled(LockProblem::Unsatisfied {
+                plugins: Vec::new()
+            }),
+            "The project's locked plugins are not installed"
+        );
+        // An unreadable lock's reason comes through `skipped` once.
+        let found = FoundPlugins {
+            lock_problem: Some(LockProblem::Unreadable("denied".into())),
+            skipped: vec!["the lock was not used: denied".into()],
+            ..FoundPlugins::default()
+        };
+        assert_eq!(
+            found.problem().unwrap().detail,
+            "the lock was not used: denied"
         );
     }
 }
