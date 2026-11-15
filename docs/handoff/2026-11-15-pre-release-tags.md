@@ -48,6 +48,12 @@ Two test fixtures assumed the running Celesta was a 0.9 release:
 - `celesta_plugin_host::registry::tests::lock` locked each plugin with
   `celesta: *`; it now uses `COMPATIBLE` (`=<CARGO_PKG_VERSION>`), as the
   manifests in those tests do.
+- `celesta-registry-client`'s `tests/project.rs` ran as Celesta 0.9.0; it
+  now runs as `CELESTA_VERSION`, and `install_locked_refuses_another_celesta_minor`
+  runs the next major release against the lock, naming both versions in the
+  message it expects.
+- `celesta-editor`'s project plugin fixture (`plugins.rs`) gave `celesta: *`;
+  it now gives `=<CARGO_PKG_VERSION>`.
 
 ## Checks
 
