@@ -540,9 +540,11 @@ package's workspace dependencies with the `$TURBO_ROOT$/` paths `turbo.json`
 gives their tasks, and its `licenses` files, so a module's `js/package.json`
 must declare every workspace package its build uses.
 
-For a release, run `node scripts/plugins/bump-version.mts X.Y.Z`, then set
-the version in each `packages/*/package.json` and in `templates/package.json`
-by hand.
+For a release, run `node scripts/plugins/bump-version.mts X.Y.Z` (or
+`X.Y.Z-PRERELEASE`, such as `0.10.0-alpha.1`), then set the version in each
+`packages/*/package.json` and in `templates/package.json` by hand. A
+pre-release tag makes a GitHub pre-release and leaves the website as it is;
+see `docs/handoff/2026-11-15-pre-release-tags.md`.
 
 When composition/project types change, also run:
 

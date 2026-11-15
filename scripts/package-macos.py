@@ -299,9 +299,11 @@ def main():
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("Run on macOS; the Apple SDK, signing tools, and hdiutil are required.")
-    for version in (args.version, args.node_version):
-        if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-            parser.error("Versions must have the form 1.2.3")
+    # Celesta's version may carry a pre-release (0.10.0-alpha.1), as release tags do.
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", args.version):
+        parser.error("--version must have the form 1.2.3 or 1.2.3-prerelease")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", args.node_version):
+        parser.error("--node-version must have the form 1.2.3")
     if not re.fullmatch(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", args.bundle_id):
         parser.error("Invalid bundle identifier")
     if args.notary_profile and not args.sign_identity:

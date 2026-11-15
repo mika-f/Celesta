@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.0.0',
+    [ValidatePattern('^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$')][string]$Version = '0.0.0',
     [ValidatePattern('^\d+\.\d+\.\d+$')][string]$NodeVersion = '26.13.0',
     [string]$IsccPath,
     [string]$VcRedistDirectory,

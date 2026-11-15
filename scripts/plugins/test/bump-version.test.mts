@@ -221,6 +221,25 @@ describe('bump-version.mts', () => {
     expect(read('plugins/ffmpeg/plugin.json')).toBe(files['plugins/ffmpeg/plugin.json'].replace('0.9.0', '0.9.1'));
   });
 
+  it('bumps to a pre-release version', () => {
+    const result = bump('', { to: '0.10.0-alpha.1' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(read('Cargo.toml')).toContain('version = "0.10.0-alpha.1"');
+    expect(read('Cargo.toml')).toContain('version = "=0.10.0-alpha.1"');
+    expect(read('plugins/ffmpeg/plugin.json')).toContain('"version": "0.10.0-alpha.1"');
+  });
+
+  it.each(['0.10', 'v0.10.0', '0.010.0', '0.10.0-', '0.10.0-alpha..1', '0.10.0-01', '0.10.0+build.1', '0.10.0-rc.1+b'])(
+    'refuses %j, which is not a release version, before writing anything',
+    (to) => {
+      const result = bump("require('node:fs').writeFileSync('ran-update', '');\n", { to });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`${to} is not a version X.Y.Z or X.Y.Z-PRERELEASE`);
+      expect(existsSync(join(root, 'ran-update'))).toBe(false);
+      expectUnchanged();
+    },
+  );
+
   it("refuses a pin on Celesta's version the bump leaves, before writing anything", () => {
     // bumpCargoToml rewrites only the line with the path.
     writeFileSync(
