@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/transitions",
-  "version": "0.10.0-alpha.1",
+  "version": "0.10.0-alpha.2",
   "private": true,
   "description": "Enter/exit transitions and TransitionSeries for Celesta compositions.",
   "license": "MIT OR Apache-2.0",
