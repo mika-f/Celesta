@@ -83,7 +83,8 @@ show it, or split it on spaces and parentheses, without a parser:
 - No deprecated identifier (`GPL-2.0`; write `GPL-2.0-only` or
   `GPL-2.0-or-later`).
 - No `DocumentRef-`: there is no SPDX document to refer to.
-- No leading or trailing blank, single spaces only, at most 512 characters.
+- No leading or trailing blank, single spaces only and none just inside a
+  parenthesis, at most 512 characters.
 - The `LicenseRef-*` identifiers in it are exactly the keys of `licenseRefs`.
   `licenseRefs` without `license` is refused.
 - A `licenseRefs` entry has a `name` of 1 to 200 characters that is not all
