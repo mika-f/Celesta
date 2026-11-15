@@ -54,7 +54,11 @@ jobs:
   # actions' included, lack a pin in its list in actions.lock, and checks
   # only when the workflow starts: for plugin-release.yml and package.yml, on
   # a release tag. This reads every workflow, so a gap fails a pull request.
-  # The script's own tests run with the other scripts' in the test job.
+  # It also reads each locked action's action.yml from GitHub at its commit,
+  # for the actions it uses in turn (actions/attest-build-provenance uses
+  # actions/attest), which the lock lists under that action's `uses:`.
+  # The script's own tests run with the other scripts' in the test job,
+  # with `--offline`.
   actions-lock:
     name: Actions lock
     runs-on: ubuntu-latest
@@ -70,6 +74,37 @@ jobs:
 
       - name: Check actions.lock
         run: node scripts/check-actions-lock.mts
+
+  # A Trusted Publishing token cannot create a crate, so the release's
+  # crates.io jobs fail on a publishable crate whose name crates.io does not
+  # have yet, as celesta-registry-format did on v0.10.0-alpha.2. This fails
+  # the pull request that adds one instead, until its owner publishes a
+  # placeholder (docs/handoff/2026-11-14-crates-io-trusted-publishing.md).
+  crate-names:
+    name: Crate names
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # `cargo metadata --no-deps` reads the manifests only.
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.99.1
+
+      - name: Check crates.io has every publishable crate
+        run: |
+          failed=false
+          for manifest in Cargo.toml plugins/Cargo.toml; do
+            # Assigned first, so a crates.io error fails the step.
+            missing="$(scripts/unpublished-crates.sh --names "$manifest")"
+            for name in $missing; do
+              echo "::error file=$manifest::$name is not on crates.io. Publish a 0.0.0 placeholder and add its Trusted Publishing configuration before a release (docs/handoff/2026-11-14-crates-io-trusted-publishing.md)."
+              failed=true
+            done
+          done
+          if "$failed"; then exit 1; fi
+          echo "crates.io has every publishable crate."
 
   test:
     name: Test (${{ matrix.name }})
