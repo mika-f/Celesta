@@ -38,7 +38,7 @@ run = packaging.run
 # prefix of the variables naming the vcpkg installation whose notices its
 # Windows build copies (None: it links system libraries alone), the
 # distribution libraries its Linux build bundles, and whether its program has
-# FFmpeg's --check-license and --check-build. AVFoundation and Media
+# FFmpeg's --check-license, --check-build and --manifest. AVFoundation and Media
 # Foundation link system frameworks only.
 PLUGINS = {
     "ffmpeg": dict(formulas=packaging.STANDARD_NATIVE_FORMULAS, vcpkg="", linux=("libopus.so", "libvpx.so"), ffmpeg=True),
@@ -257,12 +257,14 @@ def package_plugin(plugin_id, output, target, system, arch, args):
         # resolve its own native libraries, rather than those on the build host.
         clean_env = {key: value for key, value in os.environ.items()
                      if not key.startswith("DYLD_") and key != "LD_LIBRARY_PATH"}
+        # Only the FFmpeg programs have these flags; AVFoundation's and Media
+        # Foundation's serve the plugin protocol alone.
         if spec["ffmpeg"]:
             run(program, "--check-license", env=clean_env)
             run(program, "--check-build", env=clean_env)
-        printed = json.loads(run(program, "--manifest", capture=True, env=clean_env))
-        if printed["id"] != plugin_id or printed["media"] != source["media"]:
-            raise RuntimeError(f"Packaged manifest differs from {plugin_id}")
+            printed = json.loads(run(program, "--manifest", capture=True, env=clean_env))
+            if printed["id"] != plugin_id or printed["media"] != source["media"]:
+                raise RuntimeError(f"Packaged manifest differs from {plugin_id}")
         if args.registry:
             # Named after the target build.mts gave this system's program.
             manifest = plugin / "celesta-plugin.json"
