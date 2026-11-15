@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-plugin-vrm"
-version = "0.1.0"
+version = "0.10.0-alpha.3"
 dependencies = [
  "base64 0.23.1",
  "celesta-composition",

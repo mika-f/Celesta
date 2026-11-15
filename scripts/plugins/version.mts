@@ -3,8 +3,23 @@
 // plugin.json carry Celesta's version, and bump-version.mts bumps them all
 // together. The rewrites are line by line, so every other byte stays.
 
-/** The plugin folders, relative to the repository root, that give Celesta's version. */
-export const FOLLOWS_CELESTA = ['plugins/avfoundation', 'plugins/ffmpeg', 'plugins/ffmpeg-x264', 'plugins/mediafoundation'];
+/**
+ * The plugin folders, relative to the repository root, that give Celesta's
+ * version: every first-party plugin the registry publishes. Those with a
+ * process give it in their Cargo.toml too; the component-only ones
+ * (aivis-speech, code, lottie, voicevox) have no Cargo.toml.
+ */
+export const FOLLOWS_CELESTA = [
+  'plugins/aivis-speech',
+  'plugins/avfoundation',
+  'plugins/code',
+  'plugins/ffmpeg',
+  'plugins/ffmpeg-x264',
+  'plugins/lottie',
+  'plugins/mediafoundation',
+  'plugins/voicevox',
+  'plugins/vrm',
+];
 
 const HEADER = /^\s*\[\[?\s*([^\]]*?)\s*\]\]?\s*(?:#.*)?$/;
 const VERSION = /^(\s*version\s*=\s*")([^"]*)(".*)$/s;

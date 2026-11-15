@@ -1,0 +1,7 @@
+{
+  "id": "code",
+  "name": "Code",
+  "version": "0.10.0-alpha.3",
+  "module": "../../packages/code/src/index.ts",
+  "licenses": ["../../LICENSE-MIT", "../../LICENSE-APACHE", "LICENSE-twinkleplop"]
+}

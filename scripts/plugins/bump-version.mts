@@ -1,7 +1,8 @@
 // Bumps Celesta's version: the root Cargo.toml's [workspace.package] version
 // and its crates' pins (`path` plus `version = "=X.Y.Z"`), and for each plugin that follows
 // Celesta's version (FOLLOWS_CELESTA in version.mts) its Cargo package's
-// version, its pins, and its plugin.json's version. Every file is checked
+// version and its pins, when it has a Cargo package, and its plugin.json's
+// version. Every file is checked
 // before any is written, so a file that gives another version than Celesta's,
 // or a Cargo.toml that would keep a pin on it (one the line-by-line rewrite
 // cannot reach), fails the run with nothing changed. Then both lockfiles are
@@ -25,7 +26,7 @@
 // them by hand.
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -101,8 +102,9 @@ function bumped(from: string, to: string): [string, string][] {
     ...FOLLOWS_CELESTA.flatMap((folder): [string, string][] => {
       const cargoToml = `${folder}/Cargo.toml`;
       const pluginJson = `${folder}/plugin.json`;
+      // A component-only plugin has no Cargo package.
       return [
-        [cargoToml, bumpedCargoToml(cargoToml, from, to)],
+        ...(existsSync(join(root, cargoToml)) ? [[cargoToml, bumpedCargoToml(cargoToml, from, to)] as [string, string]] : []),
         [pluginJson, bumpPluginJson(read(pluginJson), from, to, pluginJson)],
       ];
     }),

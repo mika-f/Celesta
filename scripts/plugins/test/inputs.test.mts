@@ -313,11 +313,11 @@ describe('repositoryPlugins in a scratch tree', () => {
     ]);
   }, 60_000);
 
-  it('a module without a js/package.json is an error', () => {
+  it('a module without a package.json above it is an error', () => {
     excludedPluginTree();
     plugin('a', { module: 'js/index.ts' });
     expect(() => repositoryPlugins(tree)).toThrow(
-      'plugins/a/plugin.json: its module needs a js/package.json that declares what the module uses',
+      'plugins/a/plugin.json: its module needs a package.json above it (js/package.json, say) that declares what the module uses',
     );
   }, 60_000);
 
@@ -461,6 +461,20 @@ describe('repositoryPlugins in a scratch pnpm workspace', () => {
     ]);
   }, 60_000);
 
+  it('takes the workspace package a module is in as the plugin\'s package', () => {
+    file('plugins/b/plugin.json', JSON.stringify({ id: 'b', version: '0.1.0', module: '../../packages/lib/src/index.ts' }));
+    file('packages/lib/src/index.ts', '');
+    file('packages/lib/package.json', JSON.stringify({ name: 'lib', scripts: { test: 'x', codegen: 'x', build: 'y' } }));
+    expect(repositoryPlugins(tree)[1]).toEqual({
+      id: 'b',
+      directory: 'plugins/b',
+      workspace: null,
+      cargoPackage: null,
+      jsPackage: 'lib',
+      inputs: ['Cargo.lock', 'crates/project', 'gen', 'packages/lib', 'plugins/b'],
+    });
+  }, 60_000);
+
   it("refuses a package's own turbo.json, whose inputs it does not read", () => {
     file('packages/lib/turbo.json', JSON.stringify({ extends: ['//'], tasks: {} }));
     expect(() => repositoryPlugins(tree)).toThrow(
@@ -477,8 +491,32 @@ describe('repositoryPlugins in a scratch pnpm workspace', () => {
 describe("the repository's plugins", () => {
   it('are found with their inputs', () => {
     const plugins = repositoryPlugins(root);
-    expect(plugins.map(({ id }) => id)).toEqual(['avfoundation', 'ffmpeg', 'ffmpeg-x264', 'mediafoundation', 'vrm']);
-    const [avfoundation, ffmpeg, gpl, mediafoundation, vrm] = plugins;
+    expect(plugins.map(({ id }) => id)).toEqual([
+      'aivis-speech',
+      'avfoundation',
+      'code',
+      'ffmpeg',
+      'ffmpeg-x264',
+      'lottie',
+      'mediafoundation',
+      'voicevox',
+      'vrm',
+    ]);
+    const [aivis, avfoundation, code, ffmpeg, gpl, lottie, mediafoundation, voicevox, vrm] = plugins;
+
+    // The component-only plugins are made from the workspace packages their
+    // modules are in.
+    expect(code).toMatchObject({ directory: 'plugins/code', workspace: null, cargoPackage: null, jsPackage: '@celesta.studio/code' });
+    expect(code.inputs).toEqual(
+      expect.arrayContaining(['plugins/code', 'packages/code', 'packages/react', 'plugins/code/LICENSE-twinkleplop']),
+    );
+    expect(lottie).toMatchObject({ jsPackage: '@celesta.studio/lottie' });
+    expect(lottie.inputs).toEqual(expect.arrayContaining(['plugins/lottie', 'packages/lottie', 'packages/shapes']));
+    for (const [plugin, name] of [[aivis, 'aivis-speech'], [voicevox, 'voicevox']] as const) {
+      expect(plugin).toMatchObject({ jsPackage: `@celesta.studio/${name}` });
+      expect(plugin.inputs).toEqual(expect.arrayContaining([`plugins/${name}`, `packages/${name}`, 'packages/character']));
+    }
+    for (const input of ['crates/media', 'plugins/ffmpeg']) expect(code.inputs).not.toContain(input);
 
     expect(vrm).toMatchObject({
       directory: 'plugins/vrm',

@@ -35,6 +35,13 @@ const files: Record<string, string> = {
   'plugins/mediafoundation/Cargo.toml':
     '[package]\nversion = "0.9.0"\n\n[dependencies]\nfoo = { path = "../../x", version = "=0.9.0" }\n',
   'plugins/mediafoundation/plugin.json': '{\n  "id": "mediafoundation",\n  "version": "0.9.0"\n}\n',
+  'plugins/vrm/Cargo.toml': '[package]\nversion = "0.9.0"\n',
+  'plugins/vrm/plugin.json': '{\n  "id": "vrm",\n  "version": "0.9.0"\n}\n',
+  // Component-only plugins: a plugin.json and no Cargo.toml.
+  'plugins/aivis-speech/plugin.json': '{\n  "id": "aivis-speech",\n  "version": "0.9.0"\n}\n',
+  'plugins/code/plugin.json': '{\n  "id": "code",\n  "version": "0.9.0"\n}\n',
+  'plugins/lottie/plugin.json': '{\n  "id": "lottie",\n  "version": "0.9.0"\n}\n',
+  'plugins/voicevox/plugin.json': '{\n  "id": "voicevox",\n  "version": "0.9.0"\n}\n',
 };
 
 let root: string;
@@ -97,6 +104,9 @@ describe('bump-version.mts', () => {
     expect(read('plugins/mediafoundation/plugin.json')).toBe(
       files['plugins/mediafoundation/plugin.json'].replace('0.9.0', '0.9.1'),
     );
+    expect(read('plugins/vrm/Cargo.toml')).toBe(files['plugins/vrm/Cargo.toml'].replace('0.9.0', '0.9.1'));
+    expect(read('plugins/code/plugin.json')).toBe(files['plugins/code/plugin.json'].replace('0.9.0', '0.9.1'));
+    expect(existsSync(join(root, 'plugins/code/Cargo.toml'))).toBe(false);
     expect(result.stdout).toContain('Bump packages/*/package.json and templates/package.json by hand.');
   });
 
@@ -182,9 +192,12 @@ describe('bump-version.mts', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('could not write plugins/ffmpeg/plugin.json');
     expect(result.stderr).toContain(
-      'written: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml; ' +
+      'written: Cargo.toml, plugins/aivis-speech/plugin.json, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, ' +
+        'plugins/code/plugin.json, plugins/ffmpeg/Cargo.toml; ' +
         'failed: plugins/ffmpeg/plugin.json; ' +
-        'not written: plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json',
+        'not written: plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/lottie/plugin.json, ' +
+        'plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, plugins/voicevox/plugin.json, ' +
+        'plugins/vrm/Cargo.toml, plugins/vrm/plugin.json',
     );
     expect(result.stderr).toContain('the bump was undone, every file is as it was');
     expect(existsSync(join(root, 'ran-update'))).toBe(false);
@@ -215,7 +228,10 @@ describe('bump-version.mts', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('the bump was undone only in part');
     expect(result.stderr).toContain(
-      'restored: Cargo.toml, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, plugins/ffmpeg/Cargo.toml, plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, Cargo.lock, plugins/Cargo.lock',
+      'restored: Cargo.toml, plugins/aivis-speech/plugin.json, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, ' +
+        'plugins/code/plugin.json, plugins/ffmpeg/Cargo.toml, plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, ' +
+        'plugins/lottie/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, ' +
+        'plugins/voicevox/plugin.json, plugins/vrm/Cargo.toml, plugins/vrm/plugin.json, Cargo.lock, plugins/Cargo.lock',
     );
     expect(result.stderr).toMatch(/not restored: plugins\/ffmpeg\/plugin\.json \(.+\)/);
     expect(read('plugins/ffmpeg/plugin.json')).toBe(files['plugins/ffmpeg/plugin.json'].replace('0.9.0', '0.9.1'));

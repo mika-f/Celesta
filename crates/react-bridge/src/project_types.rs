@@ -130,7 +130,9 @@ fn installed_plugins() -> Vec<PluginEntry> {
 
 /// Copies each plugin's declarations to `target/plugins/<id>/index.d.ts`,
 /// where the support tsconfig maps `@celesta-plugin/<id>`, replacing what
-/// earlier plugins left.
+/// earlier plugins left. The other `.d.ts` files beside the manifest's
+/// `types` and in folders below it come along in the same layout, since the
+/// declarations of a module of several files import from one another.
 pub fn install_plugin_types(target: &Path, plugins: &[PluginEntry]) -> io::Result<()> {
     let directory = target.join("plugins");
     if directory.exists() {
@@ -146,7 +148,28 @@ pub fn install_plugin_types(target: &Path, plugins: &[PluginEntry]) -> io::Resul
         }
         let destination = directory.join(&plugin.manifest.id);
         fs::create_dir_all(&destination)?;
+        if let Some(folder) = types.parent() {
+            copy_declarations(folder, &destination)?;
+        }
         fs::copy(&types, destination.join("index.d.ts"))?;
+    }
+    Ok(())
+}
+
+/// Copies the `.d.ts` files in `from`, and in the folders below it, to the
+/// same places under `to`. Symbolic links are skipped, so nothing outside
+/// the plugin's folder is copied.
+fn copy_declarations(from: &Path, to: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let name = entry.file_name();
+        if kind.is_dir() {
+            copy_declarations(&entry.path(), &to.join(&name))?;
+        } else if kind.is_file() && name.to_string_lossy().ends_with(".d.ts") {
+            fs::create_dir_all(to)?;
+            fs::copy(entry.path(), to.join(&name))?;
+        }
     }
     Ok(())
 }
@@ -256,6 +279,10 @@ pub(crate) mod tests {
         let scratch = Scratch::new("plugins");
         let plugin = scratch.0.join("installed/example");
         write(&plugin.join("js/index.d.ts"), "export declare const x: 1;");
+        // A module of several files: index.d.ts re-exports from the others.
+        write(&plugin.join("js/lipsync.d.ts"), "export declare const y: 2;");
+        write(&plugin.join("js/parts/shape.d.ts"), "export declare const z: 3;");
+        write(&plugin.join("js/index.js"), "export const x = 1;");
         let entry = PluginEntry {
             manifest: celesta_plugin_host::Manifest {
                 id: "example".into(),
@@ -283,6 +310,16 @@ pub(crate) mod tests {
             fs::read_to_string(target.join("plugins/example/index.d.ts")).unwrap(),
             "export declare const x: 1;"
         );
+        assert_eq!(
+            fs::read_to_string(target.join("plugins/example/lipsync.d.ts")).unwrap(),
+            "export declare const y: 2;"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("plugins/example/parts/shape.d.ts")).unwrap(),
+            "export declare const z: 3;"
+        );
+        // Declarations only: the module itself is not copied.
+        assert!(!target.join("plugins/example/index.js").exists());
         // A plugin no longer installed loses its declarations.
         assert!(!target.join("plugins/old").exists());
     }
