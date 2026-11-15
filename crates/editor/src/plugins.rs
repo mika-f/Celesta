@@ -975,7 +975,12 @@ mod tests {
             .unwrap();
             std::fs::write(
                 plugin.join(celesta_plugin_host::MANIFEST),
-                r#"{ "id": "p", "version": "1", "protocol": 1, "celesta": "*", "module": "js/index.js" }"#,
+                // Not `*`, which matches no pre-release Celesta.
+                concat!(
+                    r#"{ "id": "p", "version": "1", "protocol": 1, "celesta": "="#,
+                    env!("CARGO_PKG_VERSION"),
+                    r#"", "module": "js/index.js" }"#
+                ),
             )
             .unwrap();
             std::fs::write(plugin.join("js/index.js"), "export {};").unwrap();

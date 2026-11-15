@@ -11,7 +11,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: Package version (x.y.z)
+        description: Package version (x.y.z or x.y.z-prerelease)
         type: string
         default: 0.0.0
       release:

@@ -4,7 +4,9 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use celesta_plugin_host::{LOCK_FILE, LockProblem, Lockfile, PROJECT_CONFIG, UserSettings};
+use celesta_plugin_host::{
+    CELESTA_VERSION, LOCK_FILE, LockProblem, Lockfile, PROJECT_CONFIG, UserSettings,
+};
 use celesta_registry_client::{
     ClientError, Environment, PROJECTS_FILE, ProjectError, Registry, Store, Transport,
     TransportError, Update, install_global, install_locked, lock_project,
@@ -78,7 +80,7 @@ impl Machine {
             home,
             registry,
             store,
-            celesta: v("0.9.0"),
+            celesta: v(CELESTA_VERSION),
             host: host(),
             bundled: None,
         }
@@ -147,7 +149,7 @@ fn lock_then_install_on_another_machine() {
     assert!(outcome.warnings.is_empty(), "{:?}", outcome.warnings);
     let lock = Lockfile::load(root.path()).unwrap().unwrap();
     assert_eq!(lock, outcome.lock);
-    assert_eq!(lock.celesta, v("0.9.0"));
+    assert_eq!(lock.celesta, v(CELESTA_VERSION));
     let locked = &lock.plugins[ID];
     assert_eq!(locked.version, v("1.0.0"));
     assert_eq!(locked.registry, BASE);
@@ -333,7 +335,10 @@ fn a_locked_yanked_version_still_installs() {
 fn install_locked_refuses_another_celesta_minor() {
     let (registry, root) = locked();
     let mut machine = Machine::new(&registry);
-    machine.celesta = v("0.10.0");
+    // The next major release, which the published range leaves out.
+    let running = v(CELESTA_VERSION);
+    let next = Version::new(running.major + 1, 0, 0);
+    machine.celesta = next.clone();
     let error = install_locked(&machine.env(), root.path(), false).unwrap_err();
     assert!(
         matches!(&error, ProjectError::LockCheck(LockProblem::OtherCelesta { ids, .. }) if ids == &[ID.to_owned()]),
@@ -341,8 +346,10 @@ fn install_locked_refuses_another_celesta_minor() {
     );
     assert_eq!(
         error.to_string(),
-        "celesta.lock was resolved with Celesta 0.9.0, and this is Celesta 0.10.0; \
-         acme.tool cannot load with it. Run `celesta plugin update` to resolve them again"
+        format!(
+            "celesta.lock was resolved with Celesta {running}, and this is Celesta {next}; \
+             acme.tool cannot load with it. Run `celesta plugin update` to resolve them again"
+        )
     );
 }
 

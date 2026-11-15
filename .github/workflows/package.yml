@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version (x.y.z)
+        description: Release version (x.y.z or x.y.z-prerelease)
         required: true
 
 permissions:
@@ -26,11 +26,16 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
+      # vMAJOR.MINOR.PATCH with an optional pre-release (v0.10.0-alpha.1), as
+      # plugin-release.yml checks them: the two run on the same tags.
       - name: Check release tag format
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid release version: $RELEASE_TAG (expected vMAJOR.MINOR.PATCH)" >&2
+          number='(0|[1-9][0-9]*)'
+          identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          if [[ ! "$RELEASE_TAG" =~ ^v$number\.$number\.$number(-$identifier(\.$identifier)*)?$ ]]; then
+            echo "Invalid release version: $RELEASE_TAG (expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-PRERELEASE)" >&2
             exit 1
           fi
 
@@ -52,6 +57,11 @@ jobs:
             fi
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
 
   package:
     name: Package
@@ -62,9 +72,11 @@ jobs:
       release: true
     secrets: inherit
 
+  # A pre-release version becomes a GitHub pre-release, which is never the
+  # latest release.
   release:
     name: Create release
-    needs: [package]
+    needs: [validate, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -77,16 +89,16 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
+          options=(--repo "$GITHUB_REPOSITORY" --generate-notes --title "Celesta ${RELEASE_TAG#v}")
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            gh release create "$RELEASE_TAG" dist/* \
-              --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
-              --title "Celesta ${RELEASE_TAG#v}"
+            options+=(--verify-tag)
           else
-            gh release create "$RELEASE_TAG" dist/* \
-              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --generate-notes \
-              --title "Celesta ${RELEASE_TAG#v}"
+            options+=(--target "$GITHUB_SHA")
           fi
+          if [[ "$PRERELEASE" == "true" ]]; then options+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" dist/* "${options[@]}"
 
   # crates.io trusts this workflow (package.yml) in the crates-io environment
   # for each crate (Trusted Publishing), so no API token is stored: the auth
@@ -225,9 +237,12 @@ jobs:
           for crate in $CRATES; do args+=(-p "$crate"); done
           cargo publish --manifest-path plugins/Cargo.toml --locked --no-verify "${args[@]}"
 
+  # The website's download buttons point at the release it deploys for, so a
+  # pre-release leaves the website on the latest full release.
   deploy-website:
     name: Deploy website
-    needs: [release]
+    needs: [validate, release]
+    if: needs.validate.outputs.prerelease != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

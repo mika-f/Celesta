@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use celesta_plugin_host::{CELESTA_VERSION, celesta_range_for};
 use celesta_registry_format::{Hash, RootKey, key_message, signed_message, tree_hash};
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
@@ -24,8 +25,12 @@ use crate::{DirTransport, Registry};
 
 pub const BASE: &str = "https://registry.test";
 
-/// The Celesta range every published version gives.
-pub const CELESTA_RANGE: &str = ">=0.9.0, <0.10.0";
+/// The Celesta range every published version gives: the one a plugin built
+/// against this Celesta gets, so the tests' host accepts it at any version.
+pub fn celesta_range() -> String {
+    let version = semver::Version::parse(CELESTA_VERSION).expect("Celesta's version is semver");
+    celesta_range_for(&version)
+}
 
 const ONLINE_KEYID: &str = "2026-11";
 const ONLINE_EXPIRES: &str = "2099-01-01T00:00:00Z";
@@ -54,7 +59,7 @@ pub fn plugin_files(id: &str, version: &str, target: &str) -> Vec<(String, Vec<u
         "version": version,
         "name": "Tool",
         "protocol": 1,
-        "celesta": CELESTA_RANGE,
+        "celesta": celesta_range(),
     });
     vec![
         (
@@ -260,7 +265,7 @@ impl TestRegistry {
         }
         let entry = json!({
             "version": version,
-            "celesta": CELESTA_RANGE,
+            "celesta": celesta_range(),
             "protocol": 1,
             "published": FIRST_GENERATED,
             "yanked": false,

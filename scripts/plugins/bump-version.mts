@@ -15,7 +15,11 @@
 // the first time. A Cargo stopped by SIGINT sent to it alone counts as an
 // interruption too. An interrupted run exits with 130.
 //
-//   node scripts/plugins/bump-version.mts <X.Y.Z>
+//   node scripts/plugins/bump-version.mts <X.Y.Z[-PRERELEASE]>
+//
+// The version is semver's MAJOR.MINOR.PATCH with an optional pre-release
+// (0.10.0-alpha.1), as release tags allow (package.yml, plugin-release.yml);
+// build metadata is refused, since the registry refuses it.
 //
 // packages/*/package.json and templates/package.json are not bumped; edit
 // them by hand.
@@ -73,10 +77,14 @@ function run(command: string, args: string[]): Promise<'interrupted' | string | 
 
 const [to, ...rest] = process.argv.slice(2);
 if (to === undefined || rest.length > 0) {
-  console.error('usage: node scripts/plugins/bump-version.mts <X.Y.Z>');
+  console.error('usage: node scripts/plugins/bump-version.mts <X.Y.Z[-PRERELEASE]>');
   process.exit(2);
 }
-if (!/^\d+\.\d+\.\d+$/.test(to)) fail(`${to} is not a version X.Y.Z`);
+/** MAJOR.MINOR.PATCH with an optional pre-release, as semver allows them, and no build metadata. */
+const NUMBER = '(?:0|[1-9]\\d*)';
+const IDENTIFIER = '(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)';
+const RELEASE = new RegExp(`^${NUMBER}\\.${NUMBER}\\.${NUMBER}(?:-${IDENTIFIER}(?:\\.${IDENTIFIER})*)?$`);
+if (!RELEASE.test(to)) fail(`${to} is not a version X.Y.Z or X.Y.Z-PRERELEASE`);
 
 /** The file at `path`, relative to the root. */
 function read(path: string): string {
