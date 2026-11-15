@@ -356,6 +356,12 @@ jobs:
           env-vars: FFMPEG_VERSION FFMPEG_FEATURES FFMPEG_IMAGE_OS FFMPEG_IMAGE_VERSION FFMPEG_DEPS_HASH
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # After rust-cache, which restores ~/.cargo/bin, where it installs.
+      - uses: taiki-e/install-action@v2.90.5
+        if: steps.affected.outputs.cargo != ''
+        with:
+          tool: nextest@0.9.146
+
       # <Vrm> imports @celesta.studio/react and @celesta.studio/character, and the build
       # checks a module's declarations against the runtime's project types,
       # so only a plugin with a JS package needs them. As in the test job,
@@ -408,9 +414,11 @@ jobs:
           done <<< "$CARGO_WORKSPACES"
 
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
-      # cargo test rather than nextest: the VRM plugin's process target sets
-      # harness = false, which nextest cannot list. --show-output keeps
-      # passing tests' output in the log, where the next step finds
+      # nextest, as in the test job; the VRM plugin's harness = false process
+      # target takes libtest's command line through libtest-mimic, so nextest
+      # lists it too. The ci profile (plugins/.config/nextest.toml) writes a
+      # JUnit report that keeps passing tests' output, which run-cargo.mts
+      # renames to junit-<package>.xml, where the next step finds
       # self-skipped tests.
       - name: Test
         if: steps.affected.outputs.cargo != ''
@@ -420,16 +428,26 @@ jobs:
         run: |
           while read -r workspace packages; do
             [ -n "$workspace" ] || continue
-            node scripts/plugins/run-cargo.mts "$workspace" test $packages --locked --no-fail-fast -- --show-output < /dev/null 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log"
+            node scripts/plugins/run-cargo.mts "$workspace" nextest $packages --locked --no-fail-fast --profile ci < /dev/null
           done <<< "$CARGO_WORKSPACES"
 
       # A test that cannot run here (on macOS or Windows, or without
       # CELESTA_VRM_SAMPLES_DIR) passes after printing "skipping ..." or
       # "skipped: ...", so list those as warnings and in the job summary
-      # rather than leave them hidden among the passes.
+      # rather than leave them hidden among the passes. A workspace whose
+      # tests wrote no report passes its unexpanded glob, which the script
+      # names as missing.
       - name: Report skipped tests
         if: ${{ !cancelled() && steps.affected.outputs.cargo != '' }}
-        run: node scripts/report-skipped-tests.mts "$RUNNER_TEMP/cargo-test.log"
+        env:
+          CARGO_WORKSPACES: ${{ steps.affected.outputs.cargo }}
+        run: |
+          reports=()
+          while read -r workspace packages; do
+            [ -n "$workspace" ] || continue
+            reports+=("$workspace"/target/nextest/ci/junit-*.xml)
+          done <<< "$CARGO_WORKSPACES"
+          node scripts/report-skipped-tests.mts "${reports[@]}"
 
       # DIRECTORIES holds one folder per plugin, so it stays unquoted.
       - name: Build the plugin directories

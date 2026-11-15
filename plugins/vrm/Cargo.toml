@@ -13,7 +13,7 @@ name = "celesta-plugin-vrm"
 path = "src/main.rs"
 
 # Its own `main`: it sets an environment variable before any thread
-# exists (see the file).
+# exists, then runs libtest-mimic, which nextest can list (see the file).
 [[test]]
 name = "process"
 path = "tests/process.rs"
@@ -58,4 +58,5 @@ libc = "0.2.191"
 celesta-gpu-renderer = { path = "../../crates/gpu-renderer" }
 celesta-plugin-host = { path = "../../crates/plugin-host" }
 celesta-plugin-vrm = { path = ".", features = ["synthetic"] }
+libtest-mimic = "0.8.2"
 tempfile = "3.27.0"

@@ -33,6 +33,7 @@ export const SHARED_INPUTS: string[] = [
   'Cargo.lock',
   'plugins/Cargo.toml',
   'plugins/Cargo.lock',
+  'plugins/.config/nextest.toml',
   'package.json',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',

@@ -7,7 +7,9 @@
 //! its own. `set_var` is sound only while no other thread reads the
 //! environment, so this file has no test harness (`harness = false` in
 //! `Cargo.toml`): `main` sets the variable before any thread exists, then
-//! runs the check. A failed check panics, which fails the test.
+//! hands the checks to libtest-mimic, which takes libtest's command line, so
+//! `cargo test` and nextest list and run them as any other test. A failed
+//! check panics, which fails the test.
 
 use celesta_plugin::{
     ContentFrame, ContentModel, ContentProvider, PROTOCOL_VERSION, TextureSource,
@@ -16,6 +18,7 @@ use celesta_plugin_host::PluginHost;
 use celesta_plugin_vrm::synthetic::{SyntheticVrm, SyntheticVrma, node};
 use celesta_plugin_vrm::{PLUGIN, VrmProvider};
 use glam::{Mat4, Quat};
+use libtest_mimic::{Arguments, Trial};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -49,13 +52,27 @@ fn main() {
     // process by the variable it inherits, the provider by being told.
     // The scenes name the files, so they must be in the same place.
     let cache = tempfile::tempdir().unwrap();
-    // SAFETY: without a test harness, `main` is the only thread, so
-    // nothing reads the environment while it is set.
+    // SAFETY: `main` is the only thread until libtest-mimic starts the
+    // tests, so nothing reads the environment while it is set.
     unsafe { std::env::set_var("CELESTA_VRM_TEXTURE_CACHE", cache.path()) };
-    the_process_answers_as_the_provider_does(cache.path());
-    println!("test the_process_answers_as_the_provider_does ... ok");
-    motions_cross_the_process(cache.path());
-    println!("test motions_cross_the_process ... ok");
+    let trial = |name: &'static str, check: fn(&Path)| {
+        let cache = cache.path().to_path_buf();
+        Trial::test(name, move || {
+            check(&cache);
+            Ok(())
+        })
+    };
+    let trials = vec![
+        trial(
+            "the_process_answers_as_the_provider_does",
+            the_process_answers_as_the_provider_does,
+        ),
+        trial("motions_cross_the_process", motions_cross_the_process),
+    ];
+    let conclusion = libtest_mimic::run(&Arguments::from_args(), trials);
+    // `exit` skips destructors; remove the cache first.
+    drop(cache);
+    conclusion.exit();
 }
 
 fn the_process_answers_as_the_provider_does(cache: &Path) {

@@ -183,7 +183,8 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `plugins/dist` (`export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the
   repository root).
   Run tests per package:
-  `node scripts/plugins/run-cargo.mts plugins test -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-x264`.
+  `node scripts/plugins/run-cargo.mts plugins nextest -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-x264`
+  (cargo-nextest; `test` instead runs `cargo test`).
   Local builds may link a system GPL FFmpeg 8.1.x, but every native build
   opens each encoder (`--check-build`), so the standard FFmpeg needs libvpx
   and libopus. `--distribution` also validates licenses (`--check-license`):

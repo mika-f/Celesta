@@ -19,14 +19,17 @@ describe('report-skipped-tests.mts on a nextest JUnit report', () => {
     rmSync(folder, { recursive: true, force: true });
   });
 
-  function report(xml: string) {
-    const path = join(folder, 'junit.xml');
-    writeFileSync(path, xml);
+  function report(...xmls: string[]) {
+    const paths = xmls.map((xml, index) => {
+      const path = join(folder, `junit-${index}.xml`);
+      writeFileSync(path, xml);
+      return path;
+    });
     // Plain lines, as outside GitHub Actions, where the tests also run.
     const env = { ...process.env };
     delete env.GITHUB_ACTIONS;
     delete env.GITHUB_STEP_SUMMARY;
-    const result = spawnSync(process.execPath, [script, path], { encoding: 'utf8', env });
+    const result = spawnSync(process.execPath, [script, ...paths], { encoding: 'utf8', env });
     expect(result.status).toBe(0);
     return result.stdout;
   }
@@ -43,6 +46,12 @@ describe('report-skipped-tests.mts on a nextest JUnit report', () => {
     expect(report(xml)).toBe(
       ['1 test: skipping GPU test because none', '1 test: skipped: CELESTA_VRM_SAMPLES_DIR is not set', ''].join('\n'),
     );
+  });
+
+  it('counts a reason across reports, one per package', () => {
+    const suite = (crate: string) =>
+      `<testsuites><testsuite name="${crate}"><testcase classname="${crate}::gpu" name="draws"><system-out>skipping GPU test because none\n</system-out></testcase></testsuite></testsuites>`;
+    expect(report(suite('a'), suite('b'))).toBe('2 tests: skipping GPU test because none\n');
   });
 
   it('says so when no test skipped itself', () => {

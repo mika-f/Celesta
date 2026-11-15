@@ -1,6 +1,10 @@
 // Run one package at a time so each codec links its own native FFmpeg build.
-// Usage: run-cargo.mts <workspace> <test|clippy|build> -p <package>... [Cargo args...]
+// Usage: run-cargo.mts <workspace> <nextest|test|clippy|build> -p <package>... [Cargo args...]
+// `nextest` runs `cargo nextest run`. Each run writes its nextest profile's
+// JUnit report (when the profile has one) to the same junit.xml, so this
+// renames it to junit-<package>.xml beside it before the next package runs.
 import { spawnSync } from 'node:child_process';
+import { existsSync, renameSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { FFMPEG_PACKAGES, FFMPEG_X264_PACKAGE, ffmpegEnvironment } from './ffmpeg.mts';
 const [workspace, command, ...args] = process.argv.slice(2);
@@ -15,22 +19,37 @@ for (let index = 0; index < args.length; index++) {
   } else rest.push(args[index]);
 }
 if (packages.length === 0) throw new Error('expected at least one -p package');
+const nextest = command === 'nextest';
 // Cross-plugin tests need independently linked sibling programs.
 packages.sort((a, b) => Number(a === FFMPEG_X264_PACKAGE) - Number(b === FFMPEG_X264_PACKAGE));
 // Only build flags belong on prerequisite builds, not test filters or libtest args.
+// Under nextest, --profile (-P) is nextest's and --cargo-profile is Cargo's.
 const buildFlags: string[] = [];
+let nextestProfile = process.env.NEXTEST_PROFILE ?? 'default';
+let targetDir = process.env.CARGO_TARGET_DIR ?? 'target';
 for (let index = 0; index < rest.length && rest[index] !== '--'; index++) {
-  const flag = rest[index];
-  if (['--release', '--locked', '--offline', '--frozen'].includes(flag)) buildFlags.push(flag);
-  else if (['--target', '--profile', '--target-dir', '--config', '--jobs', '-j'].includes(flag)) {
-    const value = rest[++index];
-    if (value === undefined) throw new Error(`${flag} needs a value`);
+  const [flag, inline] = rest[index].startsWith('--') ? rest[index].split(/=(.*)/s, 2) : [rest[index], undefined];
+  const takesValue = ['--target', '--profile', '--cargo-profile', '-P', '--target-dir', '--config', '--jobs', '-j'];
+  if (['--release', '--locked', '--offline', '--frozen'].includes(flag)) {
+    buildFlags.push(flag);
+    continue;
+  }
+  if (!takesValue.includes(flag)) continue;
+  const value = inline ?? rest[++index];
+  if (value === undefined) throw new Error(`${flag} needs a value`);
+  if (nextest && (flag === '--profile' || flag === '-P')) nextestProfile = value;
+  else if (flag === '--cargo-profile') buildFlags.push('--profile', value);
+  else {
+    if (flag === '--target-dir') targetDir = value;
     buildFlags.push(flag, value);
-  } else if (/^--(target|profile|target-dir|config|jobs)=/.test(flag)) buildFlags.push(flag);
+  }
 }
+// .config/nextest.toml names the report junit.xml.
+const junit = resolve(workspace, targetDir, 'nextest', nextestProfile, 'junit.xml');
 const failures = new Set<string>();
 function run(name: string, action: string, flags: string[]): boolean {
-  const result = spawnSync(process.env.CARGO ?? 'cargo', [action, '-p', name, ...flags], {
+  const subcommand = action === 'nextest' ? ['nextest', 'run'] : [action];
+  const result = spawnSync(process.env.CARGO ?? 'cargo', [...subcommand, '-p', name, ...flags], {
     cwd: resolve(workspace), env: ffmpegEnvironment(name), stdio: 'inherit',
   });
   if (result.error) console.error(`${name}: ${result.error.message}`);
@@ -46,7 +65,7 @@ for (const name of packages) {
   const crossPluginTests = name === FFMPEG_X264_PACKAGE
     || (name === 'celesta-codec-avfoundation' && process.platform === 'darwin')
     || (name === 'celesta-codec-mediafoundation' && process.platform === 'win32');
-  if (crossPluginTests && command === 'test') {
+  if (crossPluginTests && (command === 'test' || nextest)) {
     let ready = true;
     for (const dependency of FFMPEG_PACKAGES) {
       if (!run(dependency, 'build', buildFlags.includes('--locked') ? buildFlags : ['--locked', ...buildFlags])) ready = false;
@@ -57,7 +76,11 @@ for (const name of packages) {
       continue;
     }
   }
+  const report = junit.replace(/junit\.xml$/, `junit-${name}.xml`);
+  // A report left from an earlier run must not stand for this one.
+  if (nextest) for (const path of [junit, report]) rmSync(path, { force: true });
   run(name, command, rest);
+  if (nextest && existsSync(junit)) renameSync(junit, report);
 }
 if (failures.size > 0) {
   console.error(`Cargo failed for: ${[...failures].join(', ')}`);
