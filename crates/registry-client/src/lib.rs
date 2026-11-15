@@ -7,6 +7,7 @@ mod config;
 mod error;
 mod gc;
 mod http;
+mod offer;
 mod project;
 mod refresh;
 mod registry;
@@ -21,6 +22,9 @@ pub use config::{ConfigError, ProjectConfig, restore_config, restore_file};
 pub use error::ClientError;
 pub use gc::{GcInput, GcPlan, plan_gc, run_gc};
 pub use http::{CLI_ADVISORY_TIMEOUT, HttpTransport};
+pub use offer::{
+    NoOffer, OfferInput, OfferScope, offered_requirement, offered_version, prereleases_by_default,
+};
 pub use project::{
     BundledPlugins, Environment, GlobalOutcome, InstallOutcome, LockOutcome, ProjectError,
     holds_locked_build, install_global, install_locked, lock_project,
