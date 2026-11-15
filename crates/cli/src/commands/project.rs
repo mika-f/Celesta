@@ -3,14 +3,13 @@
 //! root, the nearest folder holding `celesta.config.json`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io;
 use std::path::Path;
 use std::process::ExitCode;
 
 use celesta_plugin_host::{LOCK_FILE, Lockfile, check_lock, project_dependencies};
 use celesta_registry_client::{
-    ProjectConfig, ResolveInput, ResolveWarning, Update, install_locked, lock_project, resolve,
-    restore_config, restore_file,
+    EditError, ResolveInput, ResolveWarning, Update, add_dependency as add_to_project, check_pin,
+    install_locked, lock_project, remove_dependency as remove_from_project, resolve,
 };
 use celesta_registry_format::{AdvisoryList, Index};
 use semver::{Version, VersionReq};
@@ -58,38 +57,18 @@ fn add_dependency(
     pin: bool,
     advisories: Option<&AdvisoryList>,
 ) -> Result<(), Failure> {
-    let index = session.registry.index(id, session.now)?;
-    let media = index.kind.is_media();
-    if media && !pin {
-        return Err(Failure(format!(
-            "{id} is a media plugin; install it for every project with `celesta plugin install --global {id}`, or pin it to this project with --pin"
-        )));
-    }
-    if pin && !media {
-        return Err(Failure("--pin is for media plugins".to_owned()));
-    }
     let requirement = match written {
         Some(text) => text.to_owned(),
-        None => newest(session, root, id, index, advisories)?.to_string(),
-    };
-
-    let (mut project, config_bytes) = match ProjectConfig::load(root)? {
-        Some((project, bytes)) => (project, Some(bytes)),
-        None => (ProjectConfig::new(), None),
-    };
-    let lock_bytes = read_if_present(&root.join(LOCK_FILE))?;
-    project.set_dependency(id, &requirement);
-    let outcome = project.save(root).map_err(Failure::from).and_then(|()| {
-        let only = Update::Only(BTreeSet::from([id.to_owned()]));
-        lock_project(&session.environment(), root, &only).map_err(Failure::from)
-    });
-    let outcome = match outcome {
-        Ok(outcome) => outcome,
-        Err(failure) => {
-            put_back(root, config_bytes.as_deref(), lock_bytes.as_deref());
-            return Err(failure);
+        None => {
+            // Checked before choosing a version, as a media plugin may have
+            // none that suits the project.
+            let index = session.registry.index(id, session.now)?;
+            check_pin(&index, id, pin).map_err(edit_failure)?;
+            newest(session, root, id, index, advisories)?.to_string()
         }
     };
+    let outcome = add_to_project(&session.environment(), root, id, &requirement, pin)
+        .map_err(edit_failure)?;
 
     report::resolve_warnings(&outcome.warnings);
     println!(
@@ -99,6 +78,17 @@ fn add_dependency(
     print_installed(&outcome.installed);
     warn_record_error(outcome.record_error.as_deref());
     Ok(())
+}
+
+/// The failure for `error`, warning first about each file that could not
+/// be put back as it was.
+fn edit_failure(error: EditError) -> Failure {
+    if let EditError::NotPutBack { failed, .. } = &error {
+        for (name, error) in failed {
+            report::warn(format_args!("could not put {name} back as it was: {error}"));
+        }
+    }
+    Failure::from(error)
 }
 
 /// The version of `id` that resolution chooses for the project with any
@@ -128,33 +118,6 @@ fn newest(
     Ok(resolution.lock.plugins[id].version.clone())
 }
 
-/// The bytes of `path`, or `None` when there is no such file.
-fn read_if_present(path: &Path) -> Result<Option<Vec<u8>>, Failure> {
-    match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Failure(format!(
-            "could not read {}: {error}",
-            path.display()
-        ))),
-    }
-}
-
-/// Puts `celesta.config.json` and `celesta.lock` back as `config` and
-/// `lock` (`None`: there was no such file), warning about one that could
-/// not be.
-fn put_back(root: &Path, config: Option<&[u8]>, lock: Option<&[u8]>) {
-    let results = [
-        ("celesta.config.json", restore_config(root, config)),
-        (LOCK_FILE, restore_file(&root.join(LOCK_FILE), lock)),
-    ];
-    for (name, result) in results {
-        if let Err(error) = result {
-            report::warn(format_args!("could not put {name} back as it was: {error}"));
-        }
-    }
-}
-
 /// Removes `id` from the project's dependencies and from `celesta.lock`,
 /// without the registry.
 pub fn remove(root: &Path, id: &str) -> ExitCode {
@@ -162,30 +125,7 @@ pub fn remove(root: &Path, id: &str) -> ExitCode {
 }
 
 fn remove_dependency(root: &Path, id: &str) -> Result<(), Failure> {
-    let Some((mut project, config_bytes)) = ProjectConfig::load(root)? else {
-        return Err(not_a_dependency(id));
-    };
-    if !project.remove_dependency(id) {
-        return Err(not_a_dependency(id));
-    }
-    let mut lock = Lockfile::load(root)?;
-    let lock_changed = lock
-        .as_mut()
-        .is_some_and(|lock| lock.plugins.remove(id).is_some());
-
-    project.save(root)?;
-    if let Some(lock) = lock.filter(|_| lock_changed)
-        && let Err(error) = lock.save(root)
-    {
-        // The lock was replaced whole or not at all, so only the settings
-        // changed.
-        if let Err(error) = restore_config(root, Some(&config_bytes)) {
-            report::warn(format_args!(
-                "could not put celesta.config.json back as it was: {error}"
-            ));
-        }
-        return Err(error.into());
-    }
+    remove_from_project(root, id).map_err(edit_failure)?;
     println!("removed {id}");
     Ok(())
 }

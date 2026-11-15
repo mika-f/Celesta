@@ -34,20 +34,24 @@ pub struct OfferInput<'a> {
 }
 
 /// Why no version is offered.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NoOffer {
     /// No candidate has a build for the host (`Global`) or the project's
     /// targets (`Project`, `Pin`).
+    #[error("no version has a build for {}", host.as_str())]
     NoBuild { host: Target },
     /// The newest otherwise eligible version's range excludes the running
     /// Celesta.
+    #[error("the newest version, {newest}, needs Celesta {celesta}")]
     NeedsCelesta {
         newest: Version,
         celesta: VersionReq,
     },
     /// Only pre-releases are eligible, and they are not included.
+    #[error("only pre-releases are published, and the newest is {newest}")]
     OnlyPrereleases { newest: Version },
     /// Every version is yanked, withdrawn, or blocked.
+    #[error("every version is yanked, withdrawn, or blocked")]
     NothingPublished,
 }
 

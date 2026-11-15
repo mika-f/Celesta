@@ -4,6 +4,7 @@
 
 mod cache;
 mod config;
+mod edit;
 mod error;
 mod gc;
 mod http;
@@ -19,6 +20,10 @@ pub mod testing;
 mod transport;
 
 pub use config::{ConfigError, ProjectConfig, restore_config, restore_file};
+pub use edit::{
+    EditError, Rewrite, add_dependency, check_pin, plan_update, remove_dependency,
+    update_dependencies,
+};
 pub use error::ClientError;
 pub use gc::{GcInput, GcPlan, plan_gc, run_gc};
 pub use http::{CLI_ADVISORY_TIMEOUT, HttpTransport};
