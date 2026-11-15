@@ -5,14 +5,12 @@ use std::process::Command;
 use celesta_registry_client::testing::TestRegistry;
 use common::Home;
 
-const NO_KEY: &str = "this build of Celesta has no registry key yet, so it cannot reach the plugin registry; set CELESTA_REGISTRY and CELESTA_REGISTRY_ROOT_KEY to use another registry";
-
 fn stderr(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
 #[test]
-fn no_key_fails_with_the_exact_message() {
+fn an_unreachable_registry_is_a_failure() {
     let home = Home::new();
     let output = home
         .command()
@@ -20,10 +18,10 @@ fn no_key_fails_with_the_exact_message() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let stderr = stderr(&output);
     assert!(
-        stderr(&output).contains(&format!("celesta: error: {NO_KEY}")),
-        "{}",
-        stderr(&output)
+        stderr.contains("celesta: error: could not fetch ") && stderr.contains("/config.json"),
+        "{stderr}"
     );
 }
 
@@ -33,6 +31,7 @@ fn half_a_registry_is_a_usage_error() {
     let output = home
         .command()
         .env("CELESTA_REGISTRY", "https://registry.test")
+        .env_remove("CELESTA_REGISTRY_ROOT_KEY")
         .args(["plugin", "search", "x"])
         .output()
         .unwrap();

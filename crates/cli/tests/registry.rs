@@ -1,7 +1,6 @@
 mod common;
 
 use std::fs;
-use std::path::Path;
 
 use celesta_registry_client::testing::{CELESTA_RANGE, TestRegistry};
 use common::{Home, assert_exit, registry, run, stderr, stdout};
@@ -18,20 +17,6 @@ fn advisory(id: &str, plugin: &str, versions: &str, fixed: Option<&str>) -> Valu
         "fixed": fixed,
         "published": "2026-11-01T00:00:00Z",
     })
-}
-
-/// Copies the files under `from` into `to`, keeping their permissions.
-fn copy_dir(from: &Path, to: &Path) {
-    for entry in fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            fs::create_dir_all(&target).unwrap();
-            copy_dir(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), target).unwrap();
-        }
-    }
 }
 
 fn lines(output: &std::process::Output) -> Vec<String> {
@@ -197,7 +182,7 @@ fn list_shows_project_and_global() {
 }
 
 #[test]
-fn list_works_without_a_key() {
+fn list_works_without_the_registry() {
     let home = Home::new();
     let registry = registry();
     registry.publish("acme.charts", "1.2.3", &["any"]);
@@ -333,28 +318,17 @@ fn audit_fails_when_the_registry_dropped_the_plugin() {
 }
 
 #[test]
-fn audit_works_without_a_key() {
+fn audit_works_without_the_registry() {
     let home = Home::new();
     let registry = registry();
     registry.publish("acme.charts", "1.2.3", &["any"]);
     let project = home.project("{}\n");
     assert_exit(&run(&home, &registry, &project, &["add", "acme.charts"]), 0);
-    // That run cached for its own registry; a build with the official key
-    // would have cached the same files for the official one.
-    let cache = home.store().with_file_name("registry-cache");
-    let overridden = fs::read_dir(&cache)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("override-"))
-        })
-        .unwrap();
-    copy_dir(&overridden, &cache);
+    // The registry goes away; that run cached its files.
+    fs::remove_dir_all(registry.served_dir()).unwrap();
 
     let output = home
-        .command()
+        .with_registry(&registry)
         .current_dir(&project)
         .args(["plugin", "audit"])
         .output()
@@ -381,7 +355,7 @@ fn audit_says_when_it_could_not_check_everything() {
     let project = home.project("{}\n");
     assert_exit(&run(&home, &registry, &project, &["add", "acme.charts"]), 0);
 
-    // Another user, with no key and nothing cached.
+    // Another user, with no registry to reach and nothing cached.
     let output = Home::new()
         .command()
         .current_dir(&project)
@@ -529,7 +503,7 @@ fn gc_removes_an_unused_version() {
     let registry = registry();
     two_projects_one_gone(&home, &registry);
 
-    // Without a key: gc needs no network.
+    // Without a registry to reach: gc needs no network.
     let output = home.command().args(["plugin", "gc"]).output().unwrap();
     assert_exit(&output, 0);
     assert_eq!(lines(&output), ["removed acme.charts 1.0.0"]);

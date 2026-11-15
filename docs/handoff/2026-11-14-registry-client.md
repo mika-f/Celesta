@@ -41,8 +41,10 @@ Decisions this plan made (the maintainer confirms them):
 5. Install metadata lives in what chose the plugin: the lock records each target's
    `treeHash`, and `registryPlugins` in `settings.json` records the global one's.
    The store holds only plugin directories.
-6. No root key is compiled in yet. `official_root_key()` returns `None` until the
-   maintainer supplies the root public key; every client API takes a `RootKey`, and
+6. ~~No root key is compiled in yet. `official_root_key()` returns `None` until the
+   maintainer supplies the root public key;~~ `official_root_key()` returns the
+   official registry's pinned root key since 2026-11-15 (see
+   [`2026-11-15-official-root-key.md`](2026-11-15-official-root-key.md)); every client API takes a `RootKey`, and
    tests use the fixture root.
 7. The cache lives at `<user data>/Celesta/registry-cache/`, the store's sibling,
    not in an OS cache folder, because purging a cache would drop the advisory list.
@@ -211,4 +213,5 @@ the registry service's own tests (a separate repository).
   that is plans 4 and 5.~~ The exporter, the MCP server, and `celesta` do since plan
   4 (`InstalledPlugins::find_for_project`; `celesta` refreshes advisories); see
   [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md). The editor does not yet (plan 5).
-- The root public key is not compiled in (`official_root_key()` is `None`).
+- ~~The root public key is not compiled in (`official_root_key()` is `None`).~~
+  Pinned since 2026-11-15; see [`2026-11-15-official-root-key.md`](2026-11-15-official-root-key.md).

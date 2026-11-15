@@ -9,28 +9,30 @@ use time::OffsetDateTime;
 use crate::report;
 use crate::session::Session;
 
-/// Refreshes the advisory list when the session has a key, then returns
+/// Refreshes the advisory list, then returns
 /// the newest verified list, warning when it could not be refreshed, is
 /// missing, or is old. `search`, `info`, `add`, `install` (not
 /// `--offline`), `update`, `list`, and `audit` call it once per run.
 pub fn refresh(session: &Session) -> Option<AdvisoryList> {
-    let outcome = session
-        .registry_within(CLI_ADVISORY_TIMEOUT)
-        .map(|registry| refresh_advisories_within(registry, session.now, CLI_ADVISORY_TIMEOUT));
+    let outcome = refresh_advisories_within(
+        session.registry_within(CLI_ADVISORY_TIMEOUT),
+        session.now,
+        CLI_ADVISORY_TIMEOUT,
+    );
     let (list, notes) = match &outcome {
-        Some(AdvisoryRefresh::Fresh(list)) => {
+        AdvisoryRefresh::Fresh(list) => {
             let list = list.clone();
-            let notes = notes(outcome.as_ref(), Some(&list), session.now);
+            let notes = notes(Some(&outcome), Some(&list), session.now);
             (Some(list), notes)
         }
         _ => match session.registry.cached_advisories() {
             Ok(list) => {
-                let notes = notes(outcome.as_ref(), list.as_ref(), session.now);
+                let notes = notes(Some(&outcome), list.as_ref(), session.now);
                 (list, notes)
             }
             Err(error) => (
                 None,
-                unreadable_cache_notes(outcome.as_ref(), &error.to_string()),
+                unreadable_cache_notes(Some(&outcome), &error.to_string()),
             ),
         },
     };

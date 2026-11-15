@@ -14,7 +14,7 @@ use std::process::ExitCode;
 use args::{Cli, Command, PluginArgs, PluginCommand};
 use celesta_plugin_host::project_root_of_dir;
 use commands::{project, registry, store};
-use session::{NO_KEY_MESSAGE, Session};
+use session::Session;
 
 /// Exit status for a mistake in how `celesta` was invoked.
 pub const USAGE: u8 = 2;
@@ -37,10 +37,6 @@ pub fn run(cli: Cli) -> ExitCode {
             };
         }
     };
-    if needs_registry(&command) && !session.has_key {
-        report::error(NO_KEY_MESSAGE);
-        return ExitCode::FAILURE;
-    }
     match command {
         PluginCommand::Add { spec, pin } => {
             in_project(folder, |root| project::add(&session, root, &spec, pin))
@@ -85,19 +81,4 @@ fn in_project(folder: Option<PathBuf>, command: impl FnOnce(&Path) -> ExitCode) 
         },
     };
     command(&project_root_of_dir(&folder))
-}
-
-/// Whether `command` cannot run without reaching the registry.
-fn needs_registry(command: &PluginCommand) -> bool {
-    match command {
-        PluginCommand::Search { .. }
-        | PluginCommand::Info { .. }
-        | PluginCommand::Add { .. }
-        | PluginCommand::Update { .. } => true,
-        PluginCommand::Install { global, .. } => global.is_some(),
-        PluginCommand::Remove { .. }
-        | PluginCommand::List
-        | PluginCommand::Audit
-        | PluginCommand::Gc { .. } => false,
-    }
 }

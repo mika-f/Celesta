@@ -2,7 +2,6 @@
 //! caches under the user's folder, and the running Celesta.
 
 use std::ffi::OsString;
-use std::io::Read;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -12,7 +11,7 @@ use celesta_plugin_host::{
 };
 use celesta_registry_client::{
     DirTransport, Environment, HttpTransport, OFFICIAL_REGISTRY, Registry, Store, Transport,
-    TransportError, official_root_key,
+    official_root_key,
 };
 use celesta_registry_format::{FormatError, RootKey, Target};
 use semver::Version;
@@ -23,9 +22,6 @@ use time::OffsetDateTime;
 pub const REGISTRY_VAR: &str = "CELESTA_REGISTRY";
 /// The root public key of the registry [`REGISTRY_VAR`] names.
 pub const ROOT_KEY_VAR: &str = "CELESTA_REGISTRY_ROOT_KEY";
-
-/// Why a registry command cannot run in a build without the official key.
-pub const NO_KEY_MESSAGE: &str = "this build of Celesta has no registry key yet, so it cannot reach the plugin registry; set CELESTA_REGISTRY and CELESTA_REGISTRY_ROOT_KEY to use another registry";
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
@@ -107,8 +103,7 @@ fn is_drive(path: &str) -> bool {
 /// The registry a run uses.
 struct Selection {
     base: String,
-    /// `None` when there is no key for it.
-    access: Option<Access>,
+    access: Access,
     /// Whether the environment named it instead of the official registry.
     overridden: bool,
 }
@@ -119,22 +114,8 @@ struct Access {
     remote: Remote,
 }
 
-/// Fails every fetch: the registry of a build without a key.
-struct NoKey;
-
-impl Transport for NoKey {
-    fn open(&self, url: &str) -> Result<Box<dyn Read + Send + '_>, TransportError> {
-        Err(TransportError::Failed {
-            url: url.to_owned(),
-            message: NO_KEY_MESSAGE.to_owned(),
-        })
-    }
-}
-
 pub struct Session {
     pub registry: Registry,
-    /// Whether the registry can be reached: there is a key for it.
-    pub has_key: bool,
     pub store: Store,
     /// The folder this registry's verified files are cached in:
     /// [`registry_cache_dir`] for the official registry, and
@@ -151,7 +132,7 @@ pub struct Session {
     pub host: Target,
     pub bundled: Option<PathBuf>,
     pub now: OffsetDateTime,
-    access: Option<Access>,
+    access: Access,
 }
 
 impl Session {
@@ -194,19 +175,14 @@ impl Session {
         } else {
             cache_root
         };
-        let registry = match &access {
-            Some(access) => Registry::new(
-                &base,
-                access.root,
-                access.remote.transport(&base, None),
-                cache.clone(),
-            ),
-            // Nothing is fetched, so nothing is verified with this key.
-            None => Registry::new(&base, RootKey([0; 32]), Box::new(NoKey), cache.clone()),
-        };
+        let registry = Registry::new(
+            &base,
+            access.root,
+            access.remote.transport(&base, None),
+            cache.clone(),
+        );
         Ok(Self {
             registry,
-            has_key: access.is_some(),
             store: Store::new(store),
             cache,
             settings_path,
@@ -231,21 +207,20 @@ impl Session {
     }
 
     /// Another client of the session's registry whose HTTP fetches are each
-    /// limited to `timeout`; `None` without a key.
-    pub fn registry_within(&self, timeout: Duration) -> Option<Registry> {
-        let access = self.access.as_ref()?;
+    /// limited to `timeout`.
+    pub fn registry_within(&self, timeout: Duration) -> Registry {
         let base = self.registry.base();
-        Some(Registry::new(
+        Registry::new(
             base,
-            access.root,
-            access.remote.transport(base, Some(timeout)),
+            self.access.root,
+            self.access.remote.transport(base, Some(timeout)),
             self.cache.clone(),
-        ))
+        )
     }
 }
 
-/// The registry base and, when there is a key, how to reach it: both
-/// variables, else the official registry with its key if this build has one.
+/// The registry base, its key, and how to reach it: both variables, else
+/// the official registry with its pinned key.
 fn select_registry(
     registry: Option<OsString>,
     key: Option<OsString>,
@@ -265,13 +240,12 @@ fn select_registry(
             });
         }
         (None, None) => {
-            let access = official_root_key().map(|root| Access {
-                root,
-                remote: Remote::Http,
-            });
             return Ok(Selection {
                 base: OFFICIAL_REGISTRY.to_owned(),
-                access,
+                access: Access {
+                    root: official_root_key(),
+                    remote: Remote::Http,
+                },
                 overridden: false,
             });
         }
@@ -288,7 +262,7 @@ fn select_registry(
         .and_then(|key| RootKey::from_base64(key).map_err(SessionError::BadRootKey))?;
     Ok(Selection {
         base,
-        access: Some(Access { root, remote }),
+        access: Access { root, remote },
         overridden: true,
     })
 }
@@ -316,7 +290,6 @@ mod tests {
             Some(served.root_key_base64().into()),
         )
         .unwrap();
-        let access = access.unwrap();
         let cache = TempDir::new().unwrap();
         let registry = Registry::new(
             &base,
@@ -376,9 +349,7 @@ mod tests {
         let official = select_registry(None, None).unwrap();
         assert_eq!(official.base, OFFICIAL_REGISTRY);
         assert!(!official.overridden);
-        assert!(
-            official.access.is_none(),
-            "this build has no official key yet"
-        );
+        assert_eq!(official.access.root, official_root_key());
+        assert_eq!(official.access.remote, Remote::Http);
     }
 }

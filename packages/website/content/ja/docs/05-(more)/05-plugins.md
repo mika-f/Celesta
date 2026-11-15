@@ -113,7 +113,7 @@ export default function Root() {
 
 プロジェクトは、Celesta のプラグインレジストリにあるプラグインも指定できます。`celesta` コマンドがそれを探してバージョンを選び、プロジェクトの `celesta.lock` に記録して、Celesta が管理するフォルダーにダウンロードします。プラグインのフォルダーを手で置く必要はなく、別のコンピューターでも同じバージョンのプラグインが使われます。
 
-レジストリは新しい機能です。この Celesta のビルドにはまだ公式レジストリの鍵が入っていないため、レジストリにアクセスするコマンドは、鍵を入れたリリースが出るまで `celesta: error: this build of Celesta has no registry key yet, so it cannot reach the plugin registry; …` で失敗します。`remove`、`list`、`audit`、`gc` と、プラグインをダウンロード済みのロックに対する `install` は鍵がなくても動きます（そのとき `audit` は、前に取得したアドバイザリーの一覧とプラグインの情報で確認します）。このページの `acme.charts` などのプラグイン名は例です。
+レジストリは新しい機能です。公式レジストリは `https://registry.celesta.studio` で、Celesta はレジストリの署名付きファイルを Celesta に組み込まれた鍵で確認します。レジストリにつながらないときは、レジストリが必要なコマンドが `celesta: error: could not fetch …` で失敗します。`remove`、`list`、`audit`、`gc` と、プラグインをダウンロード済みのロックに対する `install` はそのときも動きます（そのとき `audit` は、前に取得したアドバイザリーの一覧とプラグインの情報で確認します）。このページの `acme.charts` などのプラグイン名は例です。
 
 デスクトップアプリはまだ `celesta.lock` を読みません。アプリのプレビューと書き出しでは、すべてのプロジェクト用に入れたプラグイン（[レジストリのメディアプラグイン](#レジストリのメディアプラグイン)を参照）を使い、プロジェクトがロックしたプラグインは使いません。`celesta-exporter` と MCP サーバーはロックを読みます。
 
