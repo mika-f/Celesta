@@ -1,0 +1,7 @@
+# As the root workspace's .config/nextest.toml: CI lists skipped tests from
+# their "skipping …" lines in this report, which keeps a passing test's output
+# only when asked to. scripts/plugins/run-cargo.mts renames each package's
+# report to junit-<package>.xml.
+[profile.ci.junit]
+path = "junit.xml"
+store-success-output = true

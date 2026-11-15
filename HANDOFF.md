@@ -215,7 +215,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts (`exportVideo` with `preset`, `presetFile`, `muxer`, `videoEncoder`, `audioEncoder`; `exportStills` with `muxer` and `videoEncoder`; `listComponents`, `describeComponent`); not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
-| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mts`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mts`, `cargo.mts`, `manifest.mts`, and `licenses.mts`; `bump-version.mts`, with its helper `version.mts`, which bumps Celesta's version and the plugins that follow it; `affected.mts`, with its helpers `inputs.mts` and `lockfile.mts`, which lists the first-party plugins a change affects, from `plugins/Cargo.lock` or a plugin's own lockfile, the pnpm graph, and `turbo.json`, for CI's `Plugins (<OS>)` jobs; `libtest.mts`, which finds the skipped tests in a `cargo test -- --show-output` log for `scripts/report-skipped-tests.mts`; and `actions-lock.mts`, which checks for `scripts/check-actions-lock.mts` that `.github/workflows/actions.lock` pins every action each workflow uses. They are TypeScript, which Node runs as it is, stripping the types; not published. |
+| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mts`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mts`, `cargo.mts`, `manifest.mts`, and `licenses.mts`; `bump-version.mts`, with its helper `version.mts`, which bumps Celesta's version and the plugins that follow it; `affected.mts`, with its helpers `inputs.mts` and `lockfile.mts`, which lists the first-party plugins a change affects, from `plugins/Cargo.lock` or a plugin's own lockfile, the pnpm graph, and `turbo.json`, for CI's `Plugins (<OS>)` jobs; `run-cargo.mts`, which runs Cargo or nextest one plugin package at a time, each against its own FFmpeg build; and `actions-lock.mts`, which checks for `scripts/check-actions-lock.mts` that `.github/workflows/actions.lock` pins every action each workflow uses. They are TypeScript, which Node runs as it is, stripping the types; not published. |
 
 Useful entry points:
 
@@ -513,10 +513,11 @@ git diff --check
 
 The root `cargo test --workspace` leaves out the first-party plugins'
 workspace; after changing it, a plugin, or the plugin build script, run
-the per-package runner with independent native builds:
+the per-package runner with independent native builds (`nextest` runs
+`cargo nextest run`, as CI does; `test` still runs `cargo test`):
 
 ```sh
-node scripts/plugins/run-cargo.mts plugins test -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-x264 -p celesta-codec-avfoundation -p celesta-codec-mediafoundation -p celesta-plugin-vrm --locked --no-fail-fast
+node scripts/plugins/run-cargo.mts plugins nextest -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-x264 -p celesta-codec-avfoundation -p celesta-codec-mediafoundation -p celesta-plugin-vrm --locked --no-fail-fast
 node scripts/plugins/run-cargo.mts plugins clippy -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-x264 -p celesta-codec-avfoundation -p celesta-codec-mediafoundation -p celesta-plugin-vrm --all-targets --locked -- -D warnings
 cargo fmt --manifest-path plugins/Cargo.toml --all -- --check
 pnpm --dir scripts/plugins test
