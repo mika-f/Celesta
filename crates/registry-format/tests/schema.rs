@@ -411,3 +411,81 @@ fn id_patterns_agree_with_the_parsers() {
         &[],
     );
 }
+
+/// Whether the Rust parser accepts the valid index with `edit` applied to its
+/// second version.
+fn index_parses_with(edit: impl FnOnce(&mut Value)) -> bool {
+    let mut index = read(&root().join("fixtures/valid/index-vrm.json"));
+    edit(&mut index["versions"][1]);
+    celesta_registry_format::Index::parse(&serde_json::to_vec(&index).unwrap(), "vrm").is_ok()
+}
+
+#[test]
+fn license_patterns_agree_with_the_parsers() {
+    let accepted = [
+        "MIT",
+        "MIT OR Apache-2.0",
+        "(MIT OR Apache-2.0) AND LGPL-2.1-or-later",
+        "GPL-2.0-or-later WITH Classpath-exception-2.0",
+        "Apache-2.0+",
+        "LicenseRef-Acme.Commercial-1",
+        "DocumentRef-a:LicenseRef-b",
+        // Shape only: whether it is an expression is the registry's check.
+        "not an expression (",
+    ];
+    let refused = [
+        "",
+        "MIT/Apache-2.0",
+        "MIT, ISC",
+        "MIT\tOR ISC",
+        "MIT\nOR ISC",
+        "MIT_OR_ISC",
+        "\u{201c}MIT\u{201d}",
+    ];
+    for schema in ["index", "search"] {
+        agree(
+            &format!("{schema} license"),
+            &pattern(schema, "/$defs/license"),
+            |s| index_parses_with(|version| version["license"] = json!(s)),
+            &accepted,
+            &refused,
+            &[],
+        );
+    }
+    let in_search = |s: &str| {
+        let mut search = read(&root().join("fixtures/valid/search.json"));
+        search["plugins"][0]["license"] = json!(s);
+        SearchList::parse(&serde_json::to_vec(&search).unwrap()).is_ok()
+    };
+    for s in accepted {
+        assert!(in_search(s), "search parser refuses {s:?}");
+    }
+    for s in refused {
+        assert!(!in_search(s), "search parser accepts {s:?}");
+    }
+
+    agree(
+        "licenseRefs key",
+        &pattern(
+            "index",
+            "/properties/versions/items/properties/licenseRefs/propertyNames",
+        ),
+        |s| index_parses_with(|version| version["licenseRefs"] = json!({ s: { "name": "x" } })),
+        &[
+            "LicenseRef-a",
+            "LicenseRef-Acme.Commercial-1",
+            "LicenseRef--",
+        ],
+        &[
+            "",
+            "LicenseRef-",
+            "Acme",
+            "licenseref-a",
+            "LicenseRef-a b",
+            "LicenseRef-a_b",
+            "DocumentRef-a:LicenseRef-b",
+            " LicenseRef-a",
+        ],
+        &[],
+    );
+}

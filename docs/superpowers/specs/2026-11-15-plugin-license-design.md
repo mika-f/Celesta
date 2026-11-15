@@ -79,7 +79,7 @@ show it, or split it on spaces and parentheses, without a parser:
 
 - It parses as an SPDX license expression with identifiers from the SPDX
   license list, spelled in the list's case.
-- `AND`, `OR`, and `WITH` are upper case.
+- `AND`, `OR`, and `WITH` are upper case, with a space on each side.
 - No deprecated identifier (`GPL-2.0`; write `GPL-2.0-only` or
   `GPL-2.0-or-later`).
 - No `DocumentRef-`: there is no SPDX document to refer to.
@@ -87,7 +87,8 @@ show it, or split it on spaces and parentheses, without a parser:
 - The `LicenseRef-*` identifiers in it are exactly the keys of `licenseRefs`.
   `licenseRefs` without `license` is refused.
 - A `licenseRefs` entry has a `name` of 1 to 200 characters that is not all
-  blanks, and an optional `url` that starts with `https://`.
+  blanks and has no control or format character, and an optional `url` that
+  starts with `https://`. No two `LicenseRef-*` differ only in case.
 
 ## Where each part lives
 

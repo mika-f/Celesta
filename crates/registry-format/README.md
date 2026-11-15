@@ -107,12 +107,13 @@ can show `license` as it is or split it on spaces and parentheses:
 
 - it is an SPDX license expression whose identifiers are on the SPDX license list, in the
   list's spelling, and none is deprecated (`GPL-2.0-only`, not `GPL-2.0`);
-- `AND`, `OR`, and `WITH` are upper case;
+- `AND`, `OR`, and `WITH` are upper case, with a space on each side;
 - parts are separated by single spaces, with none at either end, and it is at most 512
   characters;
 - it has no `DocumentRef-`;
-- its `LicenseRef-*` identifiers are exactly the keys of `licenseRefs`, whose `name`s are 1
-  to 200 characters and whose `url`s, when given, start with `https://`.
+- its `LicenseRef-*` identifiers are exactly the keys of `licenseRefs`, and no two differ
+  only in case; each `name` is 1 to 200 characters without control or format characters, and
+  each `url`, when given, starts with `https://`.
 
 ### `search.json`
 

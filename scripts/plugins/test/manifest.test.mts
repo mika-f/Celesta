@@ -356,7 +356,13 @@ describe('license', () => {
   // packages), so this is where this repository's own are parsed: the
   // registry would refuse an invalid one only when the plugin is published.
   it("parses every plugin's license as an SPDX license expression", () => {
-    const parse = createRequire(import.meta.url)('spdx-expression-parse') as (expression: string) => unknown;
+    const require = createRequire(import.meta.url);
+    type Node = { license: string; exception?: string } | { left: Node; right: Node };
+    const parse = require('spdx-expression-parse') as (expression: string) => Node;
+    const identifiers = (node: Node): string[] =>
+      'license' in node ? [node.license, ...(node.exception === undefined ? [] : [node.exception])] : [...identifiers(node.left), ...identifiers(node.right)];
+    // The parser takes deprecated identifiers (GPL-2.0), which the registry refuses.
+    const deprecated = require('spdx-license-ids/deprecated.json') as string[];
     const plugins = join(import.meta.dirname, '../../../plugins');
     const sources = readdirSync(plugins, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
@@ -374,8 +380,14 @@ describe('license', () => {
       expect(() => checkLicense(source, path)).not.toThrow();
       expect(() => parse(source.license!), `${path}: ${source.license}`).not.toThrow();
       // The registry wants upper-case operators, which the parser does not check.
-      for (const part of source.license!.split(/[ ()]+/).filter((part) => /^(and|or|with)$/i.test(part))) {
-        expect(part, path).toBe(part.toUpperCase());
+      // The registry's form: each part between spaces, without its parentheses, is
+      // AND, OR, or WITH, or an identifier the parser read (it reads an operator
+      // in any case, with or without a space after it), and none is deprecated.
+      const read = identifiers(parse(source.license!));
+      for (const part of source.license!.split(' ')) {
+        const bare = part.replace(/^\(+/, '').replace(/\)+$/, '').replace(/\+$/, '');
+        if (!['AND', 'OR', 'WITH'].includes(bare)) expect(read, `${path}: ${part}`).toContain(bare);
+        expect(deprecated, `${path}: ${part} is deprecated`).not.toContain(bare);
       }
     }
   });

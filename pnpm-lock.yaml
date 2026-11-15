@@ -1420,6 +1420,9 @@ importers:
       spdx-expression-parse:
         specifier: ^5.0.0
         version: 5.0.0
+      spdx-license-ids:
+        specifier: ^3.0.24
+        version: 3.0.24
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
