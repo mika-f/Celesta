@@ -54,7 +54,11 @@ jobs:
   # actions' included, lack a pin in its list in actions.lock, and checks
   # only when the workflow starts: for plugin-release.yml and package.yml, on
   # a release tag. This reads every workflow, so a gap fails a pull request.
-  # The script's own tests run with the other scripts' in the test job.
+  # It also reads each locked action's action.yml from GitHub at its commit,
+  # for the actions it uses in turn (actions/attest-build-provenance uses
+  # actions/attest), which the lock lists under that action's `uses:`.
+  # The script's own tests run with the other scripts' in the test job,
+  # with `--offline`.
   actions-lock:
     name: Actions lock
     runs-on: ubuntu-latest

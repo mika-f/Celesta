@@ -6,7 +6,15 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LOCK_PATH, checkActionsLock, classifyUses, parseActionsLock, usesValues } from '../actions-lock.mts';
+import {
+  type FetchAction,
+  LOCK_PATH,
+  checkActionsLock,
+  checkNestedActions,
+  classifyUses,
+  parseActionsLock,
+  usesValues,
+} from '../actions-lock.mts';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const script = join(repository, 'scripts', 'check-actions-lock.mts');
@@ -81,6 +89,31 @@ describe('parseActionsLock', () => {
       ]),
     );
     expect(lock.dependencies).toEqual(new Set(['actions/checkout@v7.0.1']));
+    expect(lock.commits).toEqual(new Map([['actions/checkout@v7.0.1', '3d3c42e5aac5ba805825da76410c181273ba90b1']]));
+    expect(lock.uses).toEqual(new Map());
+  });
+
+  it("reads a dependency's uses list, and not the next dependency's fields into it", () => {
+    const lock = parseActionsLock(
+      [
+        'dependencies:',
+        "    'actions/attest-build-provenance@v4.2.2':",
+        "        ref: 'v4.2.2'",
+        "        commit: 'sha1-4d101475d8b20a2381f78447822ac1eab6504dd8'",
+        '        uses:',
+        "            - 'Actions/Attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d'",
+        '        owner_id: 44036562',
+        "    'actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d':",
+        "        ref: 'v4.2.1'",
+        "        commit: 'sha1-508db95dd578ae2727ebd6217d5ba78e4fbda05d'",
+      ].join('\n'),
+    );
+    expect(lock.uses).toEqual(
+      new Map([['actions/attest-build-provenance@v4.2.2', new Set(['actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d'])]]),
+    );
+    expect(lock.commits.get('actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d')).toBe(
+      '508db95dd578ae2727ebd6217d5ba78e4fbda05d',
+    );
   });
 });
 
@@ -101,12 +134,17 @@ describe('checkActionsLock', () => {
     writeFileSync(join(root, path), lines.join('\n') + '\n');
   };
 
-  const lock = (workflows: Record<string, string[]>, dependencies: string[]) =>
+  const lock = (workflows: Record<string, string[]>, dependencies: string[], nested: Record<string, string[]> = {}) =>
     write(LOCK_PATH, [
       'workflows:',
       ...Object.entries(workflows).flatMap(([path, pins]) => [`    '${path}':`, ...pins.map((pin) => `        - '${pin}'`)]),
       'dependencies:',
-      ...dependencies.flatMap((pin) => [`    '${pin}':`, `        ref: '${pin.split('@')[1]}'`]),
+      ...dependencies.flatMap((pin) => [
+        `    '${pin}':`,
+        `        ref: '${pin.split('@')[1]}'`,
+        `        commit: 'sha1-${commitOf(pin)}'`,
+        ...(nested[pin] ? ['        uses:', ...nested[pin].map((uses) => `            - '${uses}'`)] : []),
+      ]),
     ]);
 
   it("counts a composite action's actions, follows nested ones, and not reusable workflows", () => {
@@ -158,10 +196,122 @@ describe('checkActionsLock', () => {
     ]);
   });
 
+  it("reports a pin under a dependency's uses without a dependencies entry", () => {
+    write('.github/workflows/a.yml', ['jobs:', '  a:', '    steps:', '      - uses: actions/attest-build-provenance@v4.2.2']);
+    lock({ '.github/workflows/a.yml': ['actions/attest-build-provenance@v4.2.2'] }, ['actions/attest-build-provenance@v4.2.2'], {
+      'actions/attest-build-provenance@v4.2.2': ['actions/attest@v4.2.1'],
+    });
+    expect(checkActionsLock(root).problems.map(({ message }) => message)).toEqual([
+      ".github/workflows/actions.lock lists actions/attest@v4.2.1 under actions/attest-build-provenance@v4.2.2's uses but has no dependencies entry for it",
+    ]);
+  });
+
+  it('collects the remote actions it reaches, subfolders kept', () => {
+    write('.github/workflows/a.yml', ['jobs:', '  a:', '    steps:', '      - uses: $/.github/actions/cache', '      - uses: actions/checkout@v7.0.1']);
+    write('.github/actions/cache/action.yml', ['runs:', '  steps:', '    - uses: actions/cache/restore@v6.1.0']);
+    lock({ '.github/workflows/a.yml': ['actions/cache@v6.1.0', 'actions/checkout@v7.0.1'] }, [
+      'actions/cache@v6.1.0',
+      'actions/checkout@v7.0.1',
+    ]);
+    const actions = new Set<string>();
+    expect(checkActionsLock(root, { actions }).problems).toEqual([]);
+    expect(actions).toEqual(new Set(['actions/cache/restore@v6.1.0', 'actions/checkout@v7.0.1']));
+  });
+
   it('refuses a local action without an action.yml', () => {
     write('.github/workflows/a.yml', ['jobs:', '  a:', '    steps:', '      - uses: ./.github/actions/gone']);
     lock({}, []);
     expect(() => checkActionsLock(root)).toThrow(/\.github\/workflows\/a\.yml: .*\.github\/actions\/gone\/action\.yml/);
+  });
+});
+
+/** A made-up commit for a pin, as the lock helper and the fake GitHub give it. */
+function commitOf(pin: string): string {
+  let hash = 0;
+  for (const char of pin) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash.toString(16).padStart(8, '0').repeat(5);
+}
+
+describe('checkNestedActions', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'celesta-actions-lock-'));
+    mkdirSync(join(root, '.github/workflows'), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const lock = (dependencies: string[], nested: Record<string, string[]> = {}) =>
+    writeFileSync(
+      join(root, LOCK_PATH),
+      [
+        'workflows:',
+        'dependencies:',
+        ...dependencies.flatMap((pin) => [
+          `    '${pin}':`,
+          `        commit: 'sha1-${commitOf(pin)}'`,
+          ...(nested[pin] ? ['        uses:', ...nested[pin].map((uses) => `            - '${uses}'`)] : []),
+        ]),
+      ].join('\n') + '\n',
+    );
+
+  /** GitHub with these action.yml files, keyed `owner/repo[/path]@ref`; records each fetch. */
+  const github = (files: Record<string, string[]>) => {
+    const fetched: string[] = [];
+    const fetchAction: FetchAction = async (repo, commit, path) => {
+      const key = Object.keys(files).find((name) => {
+        const [action, ref] = name.split('@');
+        return action === `${repo}${path ? `/${path}` : ''}` && commitOf(`${repo}@${ref}`) === commit;
+      });
+      fetched.push(`${repo}${path ? `/${path}` : ''}@${commit.slice(0, 7)}`);
+      return key === undefined ? undefined : files[key].join('\n');
+    };
+    return { fetchAction, fetched };
+  };
+
+  it("reports an action's action that the lock does not list under its uses", async () => {
+    lock(['actions/attest-build-provenance@v4.2.2']);
+    const { fetchAction } = github({
+      'actions/attest-build-provenance@v4.2.2': ['runs:', '  using: composite', '  steps:', '    - uses: actions/attest@508db95 # v4.2.1'],
+    });
+    const problems = await checkNestedActions(root, ['actions/attest-build-provenance@v4.2.2'], fetchAction);
+    expect(problems.map(({ message }) => message)).toEqual([
+      `actions/attest-build-provenance@v4.2.2 uses actions/attest@508db95 (in actions/attest-build-provenance@${commitOf('actions/attest-build-provenance@v4.2.2').slice(0, 7)}), which .github/workflows/actions.lock does not list under its uses`,
+    ]);
+  });
+
+  it('follows listed actions in turn and reads subfolders once', async () => {
+    lock(['octo/outer@v1', 'octo/inner@v2', 'octo/leaf@v3'], {
+      'octo/outer@v1': ['octo/inner@v2'],
+      'octo/inner@v2': ['octo/leaf@v3'],
+    });
+    const { fetchAction, fetched } = github({
+      'octo/outer/sub@v1': ['runs:', '  steps:', '    - uses: Octo/Inner@v2', '    - uses: octo/inner@v2'],
+      'octo/inner@v2': ['runs:', '  steps:', '    - uses: octo/leaf@v3', '    - uses: docker://alpine:3'],
+      'octo/leaf@v3': ['runs:', '  using: node24'],
+    });
+    const problems = await checkNestedActions(root, ['octo/outer/sub@v1', 'octo/outer/sub@v1'], fetchAction);
+    expect(problems).toEqual([]);
+    expect(fetched).toEqual([
+      `octo/outer/sub@${commitOf('octo/outer@v1').slice(0, 7)}`,
+      `octo/inner@${commitOf('octo/inner@v2').slice(0, 7)}`,
+      `octo/leaf@${commitOf('octo/leaf@v3').slice(0, 7)}`,
+    ]);
+  });
+
+  it('skips remote reusable workflows and pins without a commit, and reports a missing action.yml', async () => {
+    lock(['octo/gone@v1', 'octo/workflows@v1']);
+    const { fetchAction, fetched } = github({});
+    const problems = await checkNestedActions(
+      root,
+      ['octo/workflows/.github/workflows/build.yml@v1', 'octo/unlocked@v1', 'octo/gone@v1'],
+      fetchAction,
+    );
+    expect(fetched).toEqual([`octo/gone@${commitOf('octo/gone@v1').slice(0, 7)}`]);
+    expect(problems.map(({ message }) => message)).toEqual([`octo/gone@${commitOf('octo/gone@v1').slice(0, 7)} has no action.yml`]);
   });
 });
 
@@ -184,7 +334,7 @@ describe('check-actions-lock.mts', () => {
   };
 
   it("passes on this repository's workflows", () => {
-    const result = run();
+    const result = run('--offline');
     expect(result.stderr).toBe('');
     expect(result.status).toBe(0);
   });
@@ -197,7 +347,7 @@ describe('check-actions-lock.mts', () => {
     expect(list?.[0]).toContain("        - 'actions/cache@v6.1.0'\n");
     writeFileSync(path, text.replace(list![0], list![0].replace("        - 'actions/cache@v6.1.0'\n", '')));
 
-    const result = run(root);
+    const result = run('--offline', root);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
       '.github/workflows/plugin-release.yml uses actions/cache@v6.1.0 (through .github/actions/setup-ffmpeg/action.yml)',
