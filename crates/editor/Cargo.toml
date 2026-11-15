@@ -26,6 +26,7 @@ celesta-exporter.workspace = true
 celesta-gpu-renderer = { workspace = true, features = ["clap"] }
 celesta-plugin-host.workspace = true
 celesta-media.workspace = true
+celesta-registry-client.workspace = true
 celesta-remote.workspace = true
 celesta-project.workspace = true
 celesta-react-bridge.workspace = true
@@ -35,14 +36,18 @@ clap.workspace = true
 dunce = "1.0.5"
 fnv = "1.0.7"
 rodio = { version = "0.23.0", default-features = false, features = ["playback"] }
+semver = "1.0.28"
 serde_json.workspace = true
 shlex = "2"
 unicode-segmentation = "1.13.3"
 anyhow.workspace = true
 thiserror.workspace = true
+time = "0.3.55"
 
 [dev-dependencies]
 # GPUI's test context, for the export page's tests in a headless window.
 gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
 # The export page's tests list the lossless test codec's components.
 celesta-codec-test.workspace = true
+# A signed registry served from a temporary folder.
+celesta-registry-client = { workspace = true, features = ["testing"] }

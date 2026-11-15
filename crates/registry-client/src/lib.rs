@@ -31,8 +31,8 @@ pub use offer::{
     NoOffer, OfferInput, OfferScope, offered_requirement, offered_version, prereleases_by_default,
 };
 pub use project::{
-    BundledPlugins, Environment, GlobalOutcome, InstallOutcome, LockOutcome, ProjectError,
-    holds_locked_build, install_global, install_locked, lock_project,
+    BundledPlugins, Environment, GlobalOutcome, InstallOutcome, LockOutcome, Progress,
+    ProjectError, holds_locked_build, install_global, install_locked, lock_project,
 };
 pub use refresh::{AdvisoryRefresh, refresh_advisories_within};
 pub use registry::{OFFICIAL_REGISTRY, Registry, official_root_key};

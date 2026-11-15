@@ -1092,6 +1092,7 @@ dependencies = [
  "celesta-plugin-host",
  "celesta-project",
  "celesta-react-bridge",
+ "celesta-registry-client",
  "celesta-remote",
  "celesta-source-edit",
  "chrono",
@@ -1102,9 +1103,11 @@ dependencies = [
  "gpui-pre",
  "image",
  "rodio",
+ "semver",
  "serde_json",
  "shlex 2.0.1",
  "thiserror 2.0.21",
+ "time",
  "unicode-segmentation",
 ]
 

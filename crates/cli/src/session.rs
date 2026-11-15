@@ -109,6 +109,7 @@ impl Session {
             host: &self.host,
             bundled: self.bundled.as_deref(),
             now: self.now,
+            progress: None,
         }
     }
 

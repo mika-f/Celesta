@@ -313,6 +313,7 @@ mod tests {
                 host: &self.host,
                 bundled: None,
                 now: now(),
+                progress: None,
             }
         }
     }
