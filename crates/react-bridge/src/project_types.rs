@@ -280,8 +280,14 @@ pub(crate) mod tests {
         let plugin = scratch.0.join("installed/example");
         write(&plugin.join("js/index.d.ts"), "export declare const x: 1;");
         // A module of several files: index.d.ts re-exports from the others.
-        write(&plugin.join("js/lipsync.d.ts"), "export declare const y: 2;");
-        write(&plugin.join("js/parts/shape.d.ts"), "export declare const z: 3;");
+        write(
+            &plugin.join("js/lipsync.d.ts"),
+            "export declare const y: 2;",
+        );
+        write(
+            &plugin.join("js/parts/shape.d.ts"),
+            "export declare const z: 3;",
+        );
         write(&plugin.join("js/index.js"), "export const x = 1;");
         let entry = PluginEntry {
             manifest: celesta_plugin_host::Manifest {
