@@ -1,4 +1,4 @@
-Celesta is split into packages, like Remotion. The core APIs come from `@celesta.studio/react`, and the Package column names the package for the rest. Random numbers, noise, and other math helpers come from `@celesta.studio/math` (see [its guide](/en/docs/math/)), and syntax-highlighted code from `@celesta.studio/code` (see [its guide](/en/docs/code/)). Celesta’s TypeScript declarations provide the complete prop types and editor completions.
+Celesta is split into packages, like Remotion. The core APIs come from `@celesta.studio/react`, and the Package column names the package for the rest. Random numbers, noise, and other math helpers come from `@celesta.studio/math` (see [its guide](/en/docs/math/)), and syntax-highlighted code from `@celesta-plugin/code` (see [its guide](/en/docs/code/)). Celesta’s TypeScript declarations provide the complete prop types and editor completions.
 
 **Layers**
 
@@ -14,6 +14,7 @@ Celesta is split into packages, like Remotion. The core APIs come from `@celesta
 | `brightness`, `contrast`, `saturation`, `hue`, `grayscale`, `invert`, `tint`, `vignette` | `@celesta.studio/shader` | Color filters to place in a `shader` array among custom shaders. Every layer also takes them as props of the same names; see [Shapes & layout](/en/docs/layout/). |
 | `pixelate`, `halftone`, `chromaticAberration`, `wave`, `noise`, `scanlines`, `zoomBlur`, `chromaKey` | `@celesta.studio/shader` | Stylize effects and a chroma key to place in a `shader` array. Every layer also takes them as props of the same names; see [Shapes & layout](/en/docs/layout/). |
 | `Font` | `@celesta.studio/react` | Loads a font file or web-font stylesheet through `src` so `Text` can use the family. See [Text & fonts](/en/docs/text-fonts/). |
+| `PluginLayer` | `@celesta.studio/react` | A layer a content plugin's program draws: `plugin` (its id), `assets` (files by name), `data` (JSON for the frame), and `time` (the enclosing sequence's by default). For plugin modules; see [Plugins](/en/docs/plugins/#write-a-plugin). |
 
 **Time and motion**
 

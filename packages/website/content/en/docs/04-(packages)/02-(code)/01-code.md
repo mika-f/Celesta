@@ -1,14 +1,22 @@
-`@celesta.studio/code` draws syntax-highlighted source code in a composition. It tokenizes with [twinkleplop](https://twinkleplop.pngwn.at) and draws each line as one of Celesta’s own `Text` layers with color runs, and line highlights as `Rect`s, so code scales, fades, blurs, and exports like any other layer. It is optional: `@celesta.studio/react` does not depend on it.
+`@celesta-plugin/code` draws syntax-highlighted source code in a composition. It tokenizes with [twinkleplop](https://twinkleplop.pngwn.at) and draws each line as one of Celesta’s own `Text` layers with color runs, and line highlights as `Rect`s, so code scales, fades, blurs, and exports like any other layer. It is optional: `@celesta.studio/react` does not depend on it.
 
 > [!NOTE]
-> **Availability**
-> The desktop app and CLI include `@celesta.studio/code`, and **File → Set Up TypeScript** adds its declarations alongside `@celesta.studio/react` and `@celesta.studio/math`. You do not install anything from npm; the package is not published there. The [web editor](/en/#playground) does not support it yet, so use the desktop app or CLI for compositions that import it.
+> **Add the plugin**
+> `@celesta-plugin/code` is a first-party plugin from Celesta's [plugin registry](/en/docs/plugins/#registry-plugins). Add it to the project with the `celesta` command, which declares it in `celesta.config.json`, locks it in `celesta.lock`, and downloads it:
+>
+> ```sh
+> celesta plugin add code
+> ```
+>
+> The plugin's versions follow Celesta's. On a pre-release of Celesta, name that version, as in `celesta plugin add code@0.10.0-alpha.4`: a requirement without a pre-release matches none. The desktop app does not read `celesta.lock` yet, so for its preview and exports also install the plugin for every project with `celesta plugin install --global code` (with the same version on a pre-release).
+>
+> A composition that imports `@celesta.studio/code` keeps working: Celesta still includes that package, and warns with the import to use and the `celesta plugin add` command to run.
 
 ## Your first code block
 
 ```tsx title="code-block.tsx"
 import { Assets, Composition, Font, Rect } from '@celesta.studio/react';
-import { Code, codeThemes } from '@celesta.studio/code';
+import { Code, codeThemes } from '@celesta-plugin/code';
 
 const source = `const message: string = 'Hello, Celesta.';
 console.log(message);`;

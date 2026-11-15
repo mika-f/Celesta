@@ -1,8 +1,20 @@
-`@celesta.studio/aivis-speech` は、AivisSpeech の音声合成に使った AudioQuery と、合成された WAV から、各モーラ・音素・間が WAV のどこにあるかを求め、その時刻から LipSyncTrack を作ります。会話のコンポーネントと LipSyncTrack は `@celesta.studio/character` にあります。VOICEVOX の音声には [@celesta.studio/voicevox](/ja/docs/voicevox/) を使います。
+`@celesta-plugin/aivis-speech` は、AivisSpeech の音声合成に使った AudioQuery と、合成された WAV から、各モーラ・音素・間が WAV のどこにあるかを求め、その時刻から LipSyncTrack を作ります。会話のコンポーネントと LipSyncTrack は `@celesta.studio/character` にあります。VOICEVOX の音声には [@celesta-plugin/voicevox](/ja/docs/voicevox/) を使います。
 
 AivisSpeech は VOICEVOX と同じ API を提供しますが、各音素の長さはモデルが決めるため、AudioQuery の長さはすべてダミーの 0 です。モーラの並び（ん・っ・句読点を含む）は AudioQuery から、その位置は WAV から求めます。声の開始と終了は正確で、その間の時刻は WAV の音量から推定するため、間はモデルが実際に作った無音に合わせて置かれます。
 
-デスクトップアプリと CLI に同梱されています。ランタイムのビルド時にこのパッケージもビルドされ、File → Set Up TypeScript で型定義と読み込み設定が追加されます。非公開パッケージのため npm では配布していません。ブラウザのプレイグラウンドには対応していません。
+> [!NOTE]
+> **プラグインを追加する**
+> `@celesta-plugin/aivis-speech` は Celesta の[プラグインレジストリ](/ja/docs/plugins/#レジストリのプラグイン)にある公式プラグインです。`celesta` コマンドでプロジェクトに追加すると、`celesta.config.json` に宣言し、`celesta.lock` にバージョンを記録して、ダウンロードします。
+>
+> ```sh
+> celesta plugin add aivis-speech
+> ```
+>
+> プラグインのバージョンは Celesta と同じです。Celesta のプレリリースでは、`celesta plugin add aivis-speech@0.10.0-alpha.4` のようにそのバージョンを指定してください。プレリリースを含まない指定はプレリリースに一致しません。デスクトップアプリはまだ `celesta.lock` を読まないため、アプリのプレビューと書き出しには `celesta plugin install --global aivis-speech` でも全プロジェクト向けにインストールしてください（プレリリースでは同じくバージョンを指定します）。
+>
+> `@celesta.studio/aivis-speech` をインポートするコンポジションもそのまま動きます。Celesta はそのパッケージを引き続き同梱し、使うべきインポートと実行する `celesta plugin add` コマンドを警告で示します。
+
+ブラウザのプレイグラウンドには対応していません。
 
 ## AudioQuery と WAV に合わせて口を動かす
 
@@ -11,7 +23,7 @@ WAV の生成に使った AudioQuery をそのまま使ってください。spee
 ```tsx file=examples/aivis-speech.tsx title="aivis-speech.tsx"
 ```
 
-**@celesta.studio/aivis-speech**
+**@celesta-plugin/aivis-speech**
 
 | API | 用途 |
 | --- | --- |

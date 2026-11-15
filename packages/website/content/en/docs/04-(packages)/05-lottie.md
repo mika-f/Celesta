@@ -1,6 +1,18 @@
-`@celesta.studio/lottie` draws a Lottie JSON file, exported from After Effects with Bodymovin, in step with the composition's frames. Each frame is drawn as paths, groups, and masks that depend only on its time, so preview, export, and `@celesta.studio/web` draw the same picture, and scrubbing to any frame gives the same result as playing up to it.
+`@celesta-plugin/lottie` draws a Lottie JSON file, exported from After Effects with Bodymovin, in step with the composition's frames. Each frame is drawn as paths, groups, and masks that depend only on its time, so preview, export, and `@celesta.studio/web` draw the same picture, and scrubbing to any frame gives the same result as playing up to it.
 
-The desktop app, the CLI, and `@celesta.studio/web` include it. It is private and is not published to npm.
+> [!NOTE]
+> **Add the plugin**
+> `@celesta-plugin/lottie` is a first-party plugin from Celesta's [plugin registry](/en/docs/plugins/#registry-plugins). Add it to the project with the `celesta` command, which declares it in `celesta.config.json`, locks it in `celesta.lock`, and downloads it:
+>
+> ```sh
+> celesta plugin add lottie
+> ```
+>
+> The plugin's versions follow Celesta's. On a pre-release of Celesta, name that version, as in `celesta plugin add lottie@0.10.0-alpha.4`: a requirement without a pre-release matches none. The desktop app does not read `celesta.lock` yet, so for its preview and exports also install the plugin for every project with `celesta plugin install --global lottie` (with the same version on a pre-release).
+>
+> A composition that imports `@celesta.studio/lottie` keeps working: Celesta still includes that package, and warns with the import to use and the `celesta plugin add` command to run.
+
+The browser playground (`@celesta.studio/web`) needs no plugin: it serves `@celesta-plugin/lottie` itself.
 
 ## Place an animation
 
@@ -8,7 +20,7 @@ Import the JSON file and pass its contents as `data`.
 
 ```tsx
 import { Composition, Sequence } from '@celesta.studio/react';
-import { Lottie } from '@celesta.studio/lottie';
+import { Lottie } from '@celesta-plugin/lottie';
 
 import confetti from './confetti.json';
 

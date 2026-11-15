@@ -12,7 +12,7 @@
     "dev:site": "makit dev",
     "build": "pnpm --filter @celesta.studio/web build && wrangler types && tsc --noEmit && tsc --noEmit -p tsconfig.worker.json && pnpm playground:build && makit build --clean && node --experimental-strip-types scripts/postbuild.mjs",
     "check": "makit check",
-    "check:examples": "tsc -p tsconfig.examples.json",
+    "check:examples": "node scripts/check-examples.mjs",
     "playground:build": "vite build -c playground/vite.config.ts",
     "preview": "makit preview",
     "preview:cloudflare": "pnpm build && wrangler dev",

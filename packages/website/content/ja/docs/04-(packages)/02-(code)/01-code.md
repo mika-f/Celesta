@@ -1,14 +1,22 @@
-`@celesta.studio/code` はコンポジション内に構文色付きのソースコードを描きます。[twinkleplop](https://twinkleplop.pngwn.at) でトークン化し、各行を色の区間を持つ Celesta の `Text` 1 つで、行の強調を `Rect` で描くので、ほかのレイヤーと同じく拡縮・フェード・ぼかし・書き出しができます。任意のパッケージで、`@celesta.studio/react` は依存しません。
+`@celesta-plugin/code` はコンポジション内に構文色付きのソースコードを描きます。[twinkleplop](https://twinkleplop.pngwn.at) でトークン化し、各行を色の区間を持つ Celesta の `Text` 1 つで、行の強調を `Rect` で描くので、ほかのレイヤーと同じく拡縮・フェード・ぼかし・書き出しができます。任意のパッケージで、`@celesta.studio/react` は依存しません。
 
 > [!NOTE]
-> **利用できる環境**
-> アプリと CLI は `@celesta.studio/code` を同梱し、**File → Set Up TypeScript** で `@celesta.studio/react` と `@celesta.studio/math` と一緒に型宣言を追加できます。npm に公開されていないのでインストール不要です。[ウェブエディタ](/ja/#playground)はまだ対応しないため、インポートする場合はアプリか CLI を使ってください。
+> **プラグインを追加する**
+> `@celesta-plugin/code` は Celesta の[プラグインレジストリ](/ja/docs/plugins/#レジストリのプラグイン)にある公式プラグインです。`celesta` コマンドでプロジェクトに追加すると、`celesta.config.json` に宣言し、`celesta.lock` にバージョンを記録して、ダウンロードします。
+>
+> ```sh
+> celesta plugin add code
+> ```
+>
+> プラグインのバージョンは Celesta と同じです。Celesta のプレリリースでは、`celesta plugin add code@0.10.0-alpha.4` のようにそのバージョンを指定してください。プレリリースを含まない指定はプレリリースに一致しません。デスクトップアプリはまだ `celesta.lock` を読まないため、アプリのプレビューと書き出しには `celesta plugin install --global code` でも全プロジェクト向けにインストールしてください（プレリリースでは同じくバージョンを指定します）。
+>
+> `@celesta.studio/code` をインポートするコンポジションもそのまま動きます。Celesta はそのパッケージを引き続き同梱し、使うべきインポートと実行する `celesta plugin add` コマンドを警告で示します。
 
 ## 最初のコードブロック
 
 ```tsx title="code-block.tsx"
 import { Assets, Composition, Font, Rect } from '@celesta.studio/react';
-import { Code, codeThemes } from '@celesta.studio/code';
+import { Code, codeThemes } from '@celesta-plugin/code';
 
 const source = `const message: string = 'Hello, Celesta.';
 console.log(message);`;
