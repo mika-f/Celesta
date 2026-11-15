@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.celesta.studio/schema/v1/index.schema.json",
+  "title": "Plugin index",
+  "type": "object",
+  "required": [
+    "format",
+    "id",
+    "publisher",
+    "kind",
+    "description",
+    "versions"
+  ],
+  "properties": {
+    "format": {
+      "const": 1
+    },
+    "id": {
+      "$ref": "#/$defs/id"
+    },
+    "publisher": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "$ref": "#/$defs/kind"
+    },
+    "description": {
+      "type": "string"
+    },
+    "homepage": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uri"
+    },
+    "repository": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uri"
+    },
+    "deprecated": {
+      "$ref": "#/$defs/deprecated"
+    },
+    "versions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "version",
+          "celesta",
+          "protocol",
+          "published",
+          "yanked",
+          "withdrawn",
+          "deprecated",
+          "source",
+          "targets"
+        ],
+        "properties": {
+          "version": {
+            "$ref": "#/$defs/version"
+          },
+          "celesta": {
+            "type": "string",
+            "pattern": "^([ ]*[*xX][ ]*|[ ]*((=|<=|>=|<|>|~|\\^)[ ]*)?(0|[1-9][0-9]{0,18})(\\.(0|[1-9][0-9]{0,18})(\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?|\\.[*xX])?|\\.[*xX](\\.[*xX])?)?[ ]*(,[ ]*((=|<=|>=|<|>|~|\\^)[ ]*)?(0|[1-9][0-9]{0,18})(\\.(0|[1-9][0-9]{0,18})(\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?|\\.[*xX])?|\\.[*xX](\\.[*xX])?)?[ ]*){0,31})$",
+            "description": "A Cargo version requirement (Rust semver's VersionReq): comma-separated comparators with an optional =, <, <=, >, >=, ~ or ^, partial versions and *, x, X wildcards allowed, or a lone wildcard; at most 32. Not npm syntax: comparators are never separated by spaces alone, and || and hyphen ranges are refused. Build metadata is refused."
+          },
+          "protocol": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "published": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "yanked": {
+            "type": "boolean"
+          },
+          "withdrawn": {
+            "type": "boolean"
+          },
+          "deprecated": {
+            "$ref": "#/$defs/deprecated"
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "repository",
+              "commit",
+              "workflow"
+            ],
+            "properties": {
+              "repository": {
+                "type": "string",
+                "format": "uri"
+              },
+              "commit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "workflow": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "targets": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+              "$ref": "#/$defs/target"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "url",
+                "size",
+                "sha256",
+                "treeHash"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "size": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "sha256": {
+                  "$ref": "#/$defs/hash"
+                },
+                "treeHash": {
+                  "$ref": "#/$defs/hash"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)?$",
+      "description": "A dotless first-party name, or <publisher>.<name>. Lowercase ASCII letters, digits, '-' and '_', each part starting with a letter or digit; at most one '.'."
+    },
+    "target": {
+      "type": "string",
+      "pattern": "^([a-z0-9]+-[a-z0-9_]+|any)$",
+      "description": "<os>-<arch> or 'any'. os is lowercase ASCII letters and digits, arch the same plus '_' (Rust's std::env::consts names, such as macos-aarch64). Any os is accepted, so a new OS does not make old clients refuse the index."
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$",
+      "description": "RFC 3339 in UTC with whole seconds, exactly YYYY-MM-DDTHH:MM:SSZ: no other offset and no fractional seconds."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})\\.(0|[1-9][0-9]{0,18})(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+      "description": "A semantic version: major.minor.patch, an optional pre-release, and optional build metadata, in semver's grammar (no leading zeros in numeric identifiers, no empty identifiers). Numbers have at most 19 digits, so they fit in 64 bits."
+    },
+    "kind": {
+      "type": "object",
+      "required": [
+        "roles",
+        "program",
+        "module"
+      ],
+      "properties": {
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "program": {
+          "type": "boolean"
+        },
+        "module": {
+          "type": "boolean"
+        }
+      }
+    },
+    "deprecated": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "message",
+            "replacement"
+          ],
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "replacement": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

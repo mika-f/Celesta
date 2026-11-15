@@ -1,0 +1,68 @@
+{
+  "format": 1,
+  "id": "acme.fancy-title",
+  "publisher": "acme",
+  "kind": {
+    "roles": [
+      "effect"
+    ],
+    "program": false,
+    "module": true
+  },
+  "description": "Animated title cards.",
+  "homepage": "https://example.com/fancy-title",
+  "repository": null,
+  "deprecated": {
+    "message": "Superseded by acme.titles.",
+    "replacement": "acme.titles"
+  },
+  "versions": [
+    {
+      "version": "1.0.0",
+      "celesta": ">=0.9.0, <0.10.0",
+      "protocol": 1,
+      "published": "2026-11-20T00:00:00Z",
+      "yanked": false,
+      "withdrawn": false,
+      "deprecated": null,
+      "source": {
+        "repository": "https://github.com/acme/fancy-title",
+        "commit": "fedcba9876543210fedcba9876543210fedcba98",
+        "workflow": ".github/workflows/release.yml"
+      },
+      "targets": {
+        "any": {
+          "url": "https://registry.celesta.studio/archives/acme.fancy-title/1.0.0/any.zip",
+          "size": 20480,
+          "sha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+          "treeHash": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      }
+    },
+    {
+      "version": "1.1.0",
+      "celesta": ">=0.9.0, <0.10.0",
+      "protocol": 1,
+      "published": "2026-11-20T00:00:00Z",
+      "yanked": false,
+      "withdrawn": false,
+      "deprecated": {
+        "message": "Do not use; broken on Windows.",
+        "replacement": null
+      },
+      "source": {
+        "repository": "https://github.com/acme/fancy-title",
+        "commit": "fedcba9876543210fedcba9876543210fedcba98",
+        "workflow": ".github/workflows/release.yml"
+      },
+      "targets": {
+        "any": {
+          "url": "https://registry.celesta.studio/archives/acme.fancy-title/1.0.0/any.zip",
+          "size": 20480,
+          "sha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+          "treeHash": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      }
+    }
+  ]
+}

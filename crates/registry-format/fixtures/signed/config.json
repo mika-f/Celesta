@@ -1,0 +1,18 @@
+{
+  "api": "https://registry.celesta.studio/api/v1",
+  "format": 1,
+  "keys": [
+    {
+      "expires": "2099-01-01T00:00:00Z",
+      "keyid": "2026-11",
+      "public": "gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q=",
+      "signature": "mGb8G7jgBeOKdHkR1RYmpsK2MjLr5ySmQKE/XlbfaHpuqZzPBM915/zoKfH34SoCXusi9Z/hgcQcnvRbSLcvBg=="
+    },
+    {
+      "expires": "2000-01-01T00:00:00Z",
+      "keyid": "expired",
+      "public": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9E=",
+      "signature": "gJEiDIFX3jiVuxnjq2NqeAacLAF8IRaNwP44/r2Q3XpCibQJsGF2VCFHI0FPB2gD/xA7lDdp5OL8gk2dtuMZDg=="
+    }
+  ]
+}

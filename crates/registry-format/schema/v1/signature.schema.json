@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.celesta.studio/schema/v1/signature.schema.json",
+  "title": "Detached signature",
+  "type": "object",
+  "required": [
+    "keyid",
+    "signature"
+  ],
+  "properties": {
+    "keyid": {
+      "type": "string",
+      "minLength": 1
+    },
+    "signature": {
+      "$ref": "#/$defs/signature"
+    }
+  },
+  "$defs": {
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{85}[AQgw]==$",
+      "description": "64 bytes in canonical standard base64 with padding (88 characters)."
+    }
+  }
+}

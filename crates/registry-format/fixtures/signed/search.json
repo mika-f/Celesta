@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "generated": "2026-11-20T00:00:00Z",
+  "plugins": [
+    {
+      "id": "vrm",
+      "publisher": "celesta",
+      "kind": {
+        "roles": [
+          "content"
+        ],
+        "program": true,
+        "module": true
+      },
+      "description": "Loads VRM avatars into compositions.",
+      "latest": "0.2.3",
+      "deprecated": null
+    },
+    {
+      "id": "acme.fancy-title",
+      "publisher": "acme",
+      "kind": {
+        "roles": [
+          "effect"
+        ],
+        "program": false,
+        "module": true
+      },
+      "description": "Animated title cards.",
+      "latest": null,
+      "deprecated": {
+        "message": "Superseded by acme.titles.",
+        "replacement": "acme.titles"
+      }
+    },
+    {
+      "id": "old-thing",
+      "publisher": "celesta",
+      "kind": {
+        "roles": [
+          "content"
+        ],
+        "program": true,
+        "module": true
+      },
+      "description": "Old.",
+      "latest": "0.1.0",
+      "deprecated": {
+        "message": "Retired.",
+        "replacement": null
+      }
+    }
+  ]
+}
