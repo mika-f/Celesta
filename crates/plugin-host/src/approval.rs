@@ -23,7 +23,10 @@ impl PluginSource {
     pub fn needs_allowance(self) -> bool {
         match self {
             Self::Project | Self::User | Self::Folder => true,
-            Self::Explicit | Self::Bundled => false,
+            // A store plugin's check is its tree hash, which discovery
+            // compares with the one recorded at install (see
+            // `crate::RegistryContext`).
+            Self::Explicit | Self::Locked | Self::Registry | Self::Bundled => false,
         }
     }
 }
@@ -407,9 +410,12 @@ mod tests {
                 source: *source,
             })
             .collect();
-        let (plugins, errors) = crate::manifest::discover_in_with(&paths, |entry| {
-            settings.is_disabled(&entry.manifest.id, &entry.directory)
-        });
+        let (plugins, errors) = crate::manifest::discover_in_with(
+            &paths,
+            |entry| settings.is_disabled(&entry.manifest.id, &entry.directory),
+            None,
+            &crate::registry::StoreSearch::default(),
+        );
         assert!(errors.is_empty(), "{errors:?}");
         InstalledPlugins {
             plugins,

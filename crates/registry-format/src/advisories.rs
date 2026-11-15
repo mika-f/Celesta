@@ -65,13 +65,27 @@ impl AdvisoryList {
         cached: Option<&AdvisoryList>,
         now: OffsetDateTime,
     ) -> Result<(), FormatError> {
-        if self.generated > now + CLOCK_SKEW {
-            return Err(FormatError::FutureDated);
-        }
-        match cached {
-            Some(c) if self.generated < c.generated => Err(FormatError::Rollback),
-            _ => Ok(()),
-        }
+        check_fresh(self.generated, cached.map(|c| c.generated), now)
+    }
+}
+
+/// Checks the `generated` stamp of a freshly verified file against the newest
+/// stamp already verified at the same served path (`cached`).
+///
+/// Fails with `FutureDated` when `generated` is more than 10 minutes after
+/// `now`, then with `Rollback` when it is earlier than `cached`. An equal
+/// stamp is accepted, and with no `cached` stamp only the first check applies.
+pub fn check_fresh(
+    generated: OffsetDateTime,
+    cached: Option<OffsetDateTime>,
+    now: OffsetDateTime,
+) -> Result<(), FormatError> {
+    if generated > now + CLOCK_SKEW {
+        return Err(FormatError::FutureDated);
+    }
+    match cached {
+        Some(c) if generated < c => Err(FormatError::Rollback),
+        _ => Ok(()),
     }
 }
 

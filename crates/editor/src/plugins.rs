@@ -730,6 +730,7 @@ mod tests {
             },
             directory: PathBuf::from("plugins/ffmpeg"),
             source: celesta_plugin_host::PluginSource::User,
+            replaces: None,
         };
         let disabled = FoundPlugins {
             disabled: vec![media.clone()],
@@ -823,6 +824,7 @@ mod tests {
             manifest,
             directory: PathBuf::from("plugins/old"),
             source: celesta_plugin_host::PluginSource::User,
+            replaces: None,
         };
         let found = FoundPlugins {
             missing_decoder: true,
@@ -951,6 +953,7 @@ mod tests {
             },
             directory: PathBuf::from("plugins/ffmpeg"),
             source: celesta_plugin_host::PluginSource::User,
+            replaces: None,
         }
     }
 

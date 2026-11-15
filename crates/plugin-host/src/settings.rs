@@ -6,6 +6,7 @@
 //! keys this build does not know so that another build's settings survive.
 
 use crate::locations::unsafe_reason;
+use celesta_registry_format::Hash;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::io;
@@ -75,6 +76,17 @@ impl PluginKey {
     }
 }
 
+/// A plugin the registry client installed for the user: which version, and
+/// the hash of the installed folder (see `celesta_registry_format::tree_hash`)
+/// it was verified as, so a changed folder is noticed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryPlugin {
+    pub id: String,
+    pub version: semver::Version,
+    pub tree_hash: Hash,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserSettings {
@@ -94,6 +106,9 @@ pub struct UserSettings {
     /// folder (see [`crate::search_paths`]).
     #[serde(default)]
     pub plugin_folders: Vec<PathBuf>,
+    /// The plugins the registry client installed for the user.
+    #[serde(default)]
+    pub registry_plugins: Vec<RegistryPlugin>,
     /// Keys a newer build wrote, kept as they were.
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
@@ -471,6 +486,33 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(files, [SETTINGS_FILE]);
+    }
+
+    #[test]
+    fn registry_plugins_round_trip_in_settings() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(SETTINGS_FILE);
+        // Settings from before the key existed load with none.
+        std::fs::write(&path, r#"{ "trustedProjects": [] }"#).unwrap();
+        assert!(
+            UserSettings::load(&path)
+                .unwrap()
+                .registry_plugins
+                .is_empty()
+        );
+        let settings = UserSettings {
+            registry_plugins: vec![RegistryPlugin {
+                id: "acme/charts".to_owned(),
+                version: "1.2.3".parse().unwrap(),
+                tree_hash: Hash([7; 32]),
+            }],
+            ..UserSettings::default()
+        };
+        settings.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"registryPlugins\""), "{text}");
+        assert!(text.contains("\"treeHash\""), "{text}");
+        assert_eq!(UserSettings::load(&path).unwrap(), settings);
     }
 
     #[test]

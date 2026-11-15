@@ -701,6 +701,7 @@ fn a_plugin_that_cannot_open_is_not_started_for_every_frame() {
             },
             directory: dir.path().to_owned(),
             source: PluginSource::Explicit,
+            replaces: None,
         };
         renderer.renderer = renderer
             .renderer

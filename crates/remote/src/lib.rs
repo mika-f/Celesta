@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::hash::Hasher;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
@@ -356,18 +356,46 @@ fn request_message(url: &str, error: &ureq::Error) -> String {
 
 fn shared_agent() -> &'static Agent {
     static AGENT: OnceLock<Agent> = OnceLock::new();
-    AGENT.get_or_init(|| {
-        agent_config(STANDARD_LIMITS)
-            // The OS trust store, so TLS-intercepting corporate proxies work.
-            .tls_config(
-                TlsConfig::builder()
-                    .root_certs(RootCerts::PlatformVerifier)
-                    .build(),
-            )
-            .user_agent(concat!("celesta/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .into()
-    })
+    AGENT.get_or_init(|| client_config(STANDARD_LIMITS).build().into())
+}
+
+/// `agent_config` with Celesta's TLS and user agent.
+fn client_config(limits: Limits) -> ConfigBuilder<AgentScope> {
+    agent_config(limits)
+        // The OS trust store, so TLS-intercepting corporate proxies work.
+        .tls_config(
+            TlsConfig::builder()
+                .root_certs(RootCerts::PlatformVerifier)
+                .build(),
+        )
+        .user_agent(concat!("celesta/", env!("CARGO_PKG_VERSION")))
+}
+
+/// GETs `url` with the shared agent's TLS and user agent and returns the
+/// body, uncached. `timeout` replaces both the phase and the stall limit
+/// when given. A non-success status is a `Request` error carrying it, so a
+/// 404 is `ureq::Error::StatusCode(404)`.
+///
+/// This is for files that change, such as the plugin registry's signed
+/// lists. The asset cache never revalidates and keys files by URL, which
+/// suits immutable assets but not those; this reuses the agent configuration
+/// rather than adding a second HTTP stack.
+pub fn open_url(
+    url: &str,
+    timeout: Option<Duration>,
+) -> Result<Box<dyn Read + Send>, RemoteAssetError> {
+    let agent: Agent = match timeout {
+        None => shared_agent().clone(),
+        Some(timeout) => client_config(Limits {
+            phase: timeout,
+            stall: timeout,
+            retry_after: STANDARD_LIMITS.retry_after,
+        })
+        .build()
+        .into(),
+    };
+    let response = agent.get(url).call().map_err(|e| request_error(url, e))?;
+    Ok(Box::new(response.into_body().into_reader()))
 }
 
 /// An agent configuration with the time limits in `limits`. A total limit
@@ -518,6 +546,38 @@ mod tests {
             }
         });
         format!("http://{address}")
+    }
+
+    #[test]
+    fn open_url_reads_a_body() {
+        let (url, _) = serve("200 OK", b"hello");
+        let mut body = String::new();
+        open_url(&url, None)
+            .unwrap()
+            .read_to_string(&mut body)
+            .unwrap();
+        assert_eq!(body, "hello");
+    }
+
+    #[test]
+    fn open_url_reports_a_404_status() {
+        let (url, _) = serve("404 Not Found", b"");
+        let error = open_url(&url, None).err().unwrap();
+        assert!(
+            matches!(&error, RemoteAssetError::Request { source, .. } if matches!(**source, ureq::Error::StatusCode(404))),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn open_url_times_out() {
+        let url = serve_with(|_| {});
+        let started = Instant::now();
+        let error = open_url(&url, Some(Duration::from_millis(200)))
+            .err()
+            .unwrap();
+        assert!(is_timeout(&error), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     fn is_timeout(error: &RemoteAssetError) -> bool {

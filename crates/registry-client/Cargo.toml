@@ -1,0 +1,30 @@
+[package]
+name = "celesta-registry-client"
+description = "Fetches, verifies, and caches the plugin registry's signed files, and installs the plugin archives they list."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+celesta-plugin-host.workspace = true
+celesta-registry-format.workspace = true
+celesta-remote.workspace = true
+semver = { version = "1.0.28", features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+tempfile = "3.23.0"
+thiserror.workspace = true
+time = { version = "0.3.55", features = ["formatting", "parsing"] }
+ureq = { version = "3.4.2", default-features = false }
+zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+base64 = "0.22.1"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"

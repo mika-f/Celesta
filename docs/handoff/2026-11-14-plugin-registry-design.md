@@ -1,7 +1,9 @@
 # Plugin registry (registry.celesta.studio): design
 
-Status: design, agreed with the maintainer on 2026-11-14. Nothing here is
-built yet. Items marked **(proposal)** are the designer's calls, not the
+Status: design, agreed with the maintainer on 2026-11-14. Plan 1 (the file
+format) and plan 3 (the client core, with its decisions decided in plan 3) are
+built: see [`2026-11-14-registry-client.md`](2026-11-14-registry-client.md). The
+rest is not built yet. Items marked **(proposal)** are the designer's calls, not the
 maintainer's, and may be corrected.
 
 ## Intent

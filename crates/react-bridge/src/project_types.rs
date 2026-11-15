@@ -272,6 +272,7 @@ pub(crate) mod tests {
             },
             directory: plugin,
             source: celesta_plugin_host::PluginSource::Explicit,
+            replaces: None,
         };
         let target = scratch.0.join("project/.celesta");
         write(&target.join("plugins/old/index.d.ts"), "");

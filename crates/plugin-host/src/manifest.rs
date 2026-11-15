@@ -1,11 +1,14 @@
 //! Plugin directories: a `celesta-plugin.json` and what it names.
 
+use crate::advisories::blocking_advisory;
 use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
 use crate::media::{MediaManifest, RESERVED_PLUGIN_ID, deserialize_media, media_problems};
+use crate::registry::{LockedFailure, RegistryContext, StoreSearch};
 use crate::settings::UserSettings;
 use celesta_plugin::protocol_for_roles;
+use celesta_registry_format::AdvisoryList;
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// The file that makes a directory a plugin.
@@ -342,6 +345,10 @@ pub struct PluginEntry {
     pub directory: PathBuf,
     /// Which search path it was found under.
     pub source: PluginSource,
+    /// The source of the first later plugin with its id that it kept from
+    /// running, if it took its id from one. A locked version ranks among
+    /// media plugins as what it replaced ([`PluginEntry::media_origin`]).
+    pub replaces: Option<PluginSource>,
 }
 
 impl PluginEntry {
@@ -426,6 +433,43 @@ pub enum DiscoveryError {
     Unreadable(String),
     #[error("the user's settings were not used: {0}")]
     Settings(String),
+    #[error("the cached security advisories were not used: {0}; plugins under an advisory may run")]
+    Advisories(String),
+    #[error(
+        "the project's celesta.lock was not used: {0}; its pinned plugin versions are not in effect"
+    )]
+    Lock(String),
+    /// A plugin a cached security advisory stops (see
+    /// [`crate::blocking_advisory`]): like a turned-off one it takes no id
+    /// and is never listed, whichever folder it is in.
+    #[error(
+        "{path} was stopped: the plugin {id} {version} has a security advisory ({advisory}: {title}){}",
+        fixed.as_ref().map(|fixed| format!("; {fixed} fixes it")).unwrap_or_default()
+    )]
+    Blocked {
+        path: PathBuf,
+        id: String,
+        version: String,
+        /// The advisory's id.
+        advisory: String,
+        title: String,
+        /// The version that fixes it, if there is one.
+        fixed: Option<String>,
+    },
+    /// A version a trusted project's lock names that cannot run, with why:
+    /// the plugin with its id is found from the other sources instead.
+    #[error("the project locks {id} {version}, which was not used: {reason}")]
+    LockUnsatisfied {
+        id: String,
+        version: String,
+        reason: String,
+    },
+    /// A store folder whose files, manifest id, or version are not what was
+    /// installed: like a skipped plugin it takes no id.
+    #[error(
+        "{path} was skipped: its files changed since it was installed from the registry; install {id} again"
+    )]
+    TreeHashMismatch { path: PathBuf, id: String },
     /// A component the plugin's manifest declares that cannot be read: it
     /// is left out, and the plugin's other components are kept.
     #[error("{path}: a media component was skipped: {reason}")]
@@ -486,8 +530,8 @@ pub fn plugin_paths(extra: &[PathBuf]) -> Vec<PathBuf> {
 /// reserved id, both the content and media roles, no `celesta` range or one
 /// that cannot be read, a component that cannot be offered (or components
 /// without a module), or a path that leads outside the directory, by its
-/// text or through a link. Files that do not exist yet are left to fail
-/// where they are used.
+/// text or through a link, or a path ending in a name the tree hash skips.
+/// Files that do not exist yet are left to fail where they are used.
 fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
     if !is_valid_id(&manifest.id) {
         return Some(format!(
@@ -536,6 +580,15 @@ fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
         if !is_contained_path(path) {
             return Some(format!(
                 "{path:?} is not a relative path inside the plugin directory"
+            ));
+        }
+        if path
+            .rsplit(['/', '\\'])
+            .next()
+            .is_some_and(celesta_registry_format::is_os_junk_name)
+        {
+            return Some(format!(
+                "{path:?} names a file the tree hash leaves out (.DS_Store, Thumbs.db, desktop.ini)"
             ));
         }
         if let Ok(resolved) = std::fs::canonicalize(manifest_path(directory, path))
@@ -603,7 +656,11 @@ fn unsafe_plugin(directory: &Path, source: PluginSource) -> Option<String> {
 
 /// The plugin in `directory`, if it has a manifest, with the components of
 /// it that were skipped ([`DiscoveryError::BadComponent`]).
-fn read_manifest(
+#[expect(
+    clippy::result_large_err,
+    reason = "a discovery error is reported once and never moved in a hot path"
+)]
+pub(crate) fn read_manifest(
     directory: &Path,
     source: PluginSource,
 ) -> Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError> {
@@ -679,6 +736,7 @@ fn read_manifest(
             manifest,
             directory: directory.to_path_buf(),
             source,
+            replaces: None,
         },
         skipped,
     )))
@@ -712,25 +770,39 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
 /// later one with the same id is found in its place; so does a plugin with
 /// no role this Celesta knows, such as `codec`, which is listed.
 pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
-    discover_in_with(paths, |_| false)
+    discover_in_with(paths, |_| false, None, &StoreSearch::default())
 }
 
 /// [`discover_in`], where a plugin `turned_off` names is listed but, like a
 /// skipped one, takes no id: a later plugin with its id is found too, to be
 /// used in its place. One found after a plugin that took its id is not. A
-/// plugin with no role this Celesta knows takes no id either.
+/// plugin with no role this Celesta knows takes no id either. A plugin that
+/// `advisories` stops is not listed and takes no id, whichever folder it
+/// is in, and is reported as [`DiscoveryError::Blocked`].
 ///
 /// One exception to search order: a project's plugin with the id of a media
 /// plugin Celesta bundles is skipped and reported, so a project cannot
 /// replace the plugin that reads and writes media, although project folders
-/// are searched before the bundled one.
+/// are searched before the bundled one. A version a project locks may.
+///
+/// A path from the store ([`PluginSource::is_store`]) is one plugin folder,
+/// read and checked by `store`: one whose files are not what was installed
+/// takes no id, and a locked version the store lacks may be found in the
+/// bundled folder instead (see `StoreSearch::settle`). Each plugin that
+/// took its id from a later one says so ([`PluginEntry::replaces`]).
 pub(crate) fn discover_in_with(
     paths: &[SearchPath],
     turned_off: impl Fn(&PluginEntry) -> bool,
+    advisories: Option<&AdvisoryList>,
+    store: &StoreSearch,
 ) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
     // Every plugin read and every error, in search order; which plugin
     // takes an id is settled once the bundled ones are known.
     let mut read: Vec<PluginRead> = Vec::new();
+    // The store folders that hold nothing, and the locked ones that hold
+    // something that cannot run.
+    let mut missing: Vec<PathBuf> = Vec::new();
+    let mut failed: Vec<(PathBuf, LockedFailure)> = Vec::new();
     let add = |entry: Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError>,
                read: &mut Vec<PluginRead>| match entry {
         Ok(Some(entry)) => read.push(Ok(entry)),
@@ -743,6 +815,23 @@ pub(crate) fn discover_in_with(
                 Err(DiscoveryError::RelativePath { path: path.clone() }),
                 &mut read,
             );
+            continue;
+        }
+        if source.is_store() {
+            match store.read(&SearchPath {
+                path: path.clone(),
+                source: *source,
+            }) {
+                Some(entry) => {
+                    if let Err(error) = &entry
+                        && *source == PluginSource::Locked
+                    {
+                        failed.push((path.clone(), LockedFailure::of(error)));
+                    }
+                    read.push(entry);
+                }
+                None => missing.push(path.clone()),
+            }
             continue;
         }
         if !path.exists() {
@@ -806,8 +895,12 @@ pub(crate) fn discover_in_with(
         })
         .map(|(entry, _)| entry.manifest.id.clone())
         .collect();
+    // After the bundled media are known, so a bundled copy that a lock
+    // claims still keeps a project's plugin from replacing it.
+    store.settle(&missing, &failed, &mut read);
     let mut found: Vec<PluginEntry> = Vec::new();
-    let mut taken: HashSet<String> = HashSet::new();
+    // Each id taken, with where in `found` the plugin that took it is.
+    let mut taken: HashMap<String, usize> = HashMap::new();
     let mut errors = Vec::new();
     for read in read {
         match read {
@@ -823,7 +916,19 @@ pub(crate) fn discover_in_with(
                     ),
                 });
             }
-            Ok((entry, skipped)) if !taken.contains(&entry.manifest.id) => {
+            Ok((entry, skipped)) if !taken.contains_key(&entry.manifest.id) => {
+                if let Some(advisory) = advisories.and_then(|list| blocking_advisory(list, &entry))
+                {
+                    errors.push(DiscoveryError::Blocked {
+                        path: entry.directory.join(MANIFEST),
+                        id: entry.manifest.id.clone(),
+                        version: entry.manifest.version.clone(),
+                        advisory: advisory.id.clone(),
+                        title: advisory.title.clone(),
+                        fixed: advisory.fixed.as_ref().map(ToString::to_string),
+                    });
+                    continue;
+                }
                 // A plugin with no role this Celesta knows (such as an old
                 // `codec` plugin) runs nowhere, so it does not hide a later
                 // one with its id either.
@@ -833,12 +938,17 @@ pub(crate) fn discover_in_with(
                     .iter()
                     .any(|role| role.name().is_some());
                 if runs && !turned_off(&entry) {
-                    taken.insert(entry.manifest.id.clone());
+                    taken.insert(entry.manifest.id.clone(), found.len());
                 }
                 found.push(entry);
                 errors.extend(skipped);
             }
-            Ok(_) => {}
+            Ok((entry, _)) => {
+                // Kept from running by the plugin that took its id, which
+                // says it replaces the first such.
+                let taker = &mut found[taken[&entry.manifest.id]];
+                taker.replaces.get_or_insert(entry.source);
+            }
             Err(error) => errors.push(error),
         }
     }
@@ -847,7 +957,7 @@ pub(crate) fn discover_in_with(
 
 /// A plugin discovery read, with the problems of its components it left
 /// out, or why it skipped one.
-type PluginRead = Result<(PluginEntry, Vec<DiscoveryError>), DiscoveryError>;
+pub(crate) type PluginRead = Result<(PluginEntry, Vec<DiscoveryError>), DiscoveryError>;
 
 /// The plugins found in every location Celesta searches ([`search_paths`]
 /// with `explicit` first), as one set every part of Celesta shares: the
@@ -974,18 +1084,35 @@ impl InstalledPlugins {
     }
 
     /// Discovers them with a trusted project's own plugin folders (see
-    /// [`crate::project_plugin_paths`]) and the folders `settings` adds,
-    /// leaving nothing out: a plugin `settings` turns off is listed, and so
-    /// is the next one with its id, which is used in its place.
+    /// [`crate::project_plugin_paths`]), the folders `settings` adds, and
+    /// the plugins installed globally from the registry, leaving nothing
+    /// out: a plugin `settings` turns off is listed, and so is the next one
+    /// with its id, which is used in its place. No project's lock is read
+    /// ([`InstalledPlugins::find_in`] takes one).
     pub fn find_with(
         explicit: &[PathBuf],
         project: &[PathBuf],
         settings: &UserSettings,
     ) -> (Self, Vec<DiscoveryError>) {
+        let (registry, registry_errors) = RegistryContext::current(None, settings);
+        let (found, mut errors) = Self::find_in(explicit, project, settings, &registry);
+        errors.extend(registry_errors);
+        (found, errors)
+    }
+
+    /// [`InstalledPlugins::find_with`], with the store, the advisories, and
+    /// the project's lock `registry` gives: a version the lock names runs
+    /// from the store ahead of every source but the explicit ones, and one
+    /// installed globally ranks after the user's plugin folder (see
+    /// [`RegistryContext`]).
+    pub fn find_in(
+        explicit: &[PathBuf],
+        project: &[PathBuf],
+        settings: &UserSettings,
+        registry: &RegistryContext,
+    ) -> (Self, Vec<DiscoveryError>) {
         let paths = search_paths(explicit, project, &settings.plugin_folders);
-        let (plugins, errors) = discover_in_with(&paths, |entry| {
-            settings.is_disabled(&entry.manifest.id, &entry.directory)
-        });
+        let (plugins, errors) = registry.discover(paths, settings);
         (
             Self {
                 plugins,
@@ -1114,6 +1241,7 @@ pub(crate) mod tests {
             },
             directory: PathBuf::from("plugin"),
             source: PluginSource::Explicit,
+            replaces: None,
         };
         let any = entry(&[(os.to_owned(), "any")]);
         assert_eq!(any.executable(), Some(PathBuf::from("plugin/any")));
@@ -1573,6 +1701,42 @@ pub(crate) mod tests {
                 .all(|error| matches!(error, DiscoveryError::Invalid { .. })),
             "{errors:?}"
         );
+    }
+
+    #[test]
+    fn manifest_paths_ending_in_a_junk_name_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = |id: &str, field: &str, value: serde_json::Value| {
+            let mut manifest = serde_json::json!({
+                "id": id, "version": "1", "protocol": 1, "celesta": COMPATIBLE,
+            });
+            manifest[field] = value;
+            write_manifest(&root.path().join(id), manifest);
+        };
+        manifest("a", "module", "desktop.ini".into());
+        manifest("b", "module", "js/Thumbs.db".into());
+        manifest(
+            "c",
+            "executable",
+            serde_json::json!({ "linux": "bin\\.DS_Store" }),
+        );
+        manifest("d", "types", "types/.DS_Store".into());
+        manifest("e", "module", "js/desktop.ini.js".into());
+
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        let ids: Vec<_> = found
+            .iter()
+            .map(|entry| entry.manifest.id.as_str())
+            .collect();
+        assert_eq!(ids, ["e"]);
+        assert_eq!(errors.len(), 4, "{errors:?}");
+        for error in &errors {
+            assert!(
+                matches!(error, DiscoveryError::Invalid { reason, .. }
+                    if reason.contains("names a file the tree hash leaves out (.DS_Store, Thumbs.db, desktop.ini)")),
+                "{error:?}"
+            );
+        }
     }
 
     #[test]

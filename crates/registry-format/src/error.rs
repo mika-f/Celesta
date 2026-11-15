@@ -25,9 +25,9 @@ pub enum FormatError {
     KeyExpired(String),
     #[error("unknown key: {0}")]
     UnknownKey(String),
-    #[error("rollback detected")]
+    #[error("is older than the copy already verified (possible rollback)")]
     Rollback,
-    #[error("advisory list is dated in the future")]
+    #[error("is dated more than 10 minutes ahead of this computer's clock")]
     FutureDated,
     #[error("tree hash error at {}: {}", .0.display(), .1)]
     TreeHash(PathBuf, String),

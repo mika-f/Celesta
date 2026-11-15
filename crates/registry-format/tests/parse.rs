@@ -276,3 +276,18 @@ fn valid_fixture_carries_unknown_fields() {
     assert!(raw["versions"][1]["futureField"]["nested"].is_array());
     Index::parse(&fixture("index-vrm.json"), "vrm").unwrap();
 }
+
+#[test]
+fn config_and_index_need_generated() {
+    for (name, id) in [("config.json", None), ("index-vrm.json", Some("vrm"))] {
+        let bytes = tweak(name, |v| {
+            v.as_object_mut().unwrap().remove("generated");
+        });
+        let err = match id {
+            None => Config::parse(&bytes).map(drop),
+            Some(id) => Index::parse(&bytes, id).map(drop),
+        }
+        .unwrap_err();
+        assert!(matches!(err, FormatError::Json(_)), "{name}: {err:?}");
+    }
+}

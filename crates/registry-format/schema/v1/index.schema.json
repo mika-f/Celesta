@@ -5,6 +5,7 @@
   "type": "object",
   "required": [
     "format",
+    "generated",
     "id",
     "publisher",
     "kind",
@@ -14,6 +15,9 @@
   "properties": {
     "format": {
       "const": 1
+    },
+    "generated": {
+      "$ref": "#/$defs/timestamp"
     },
     "id": {
       "$ref": "#/$defs/id"

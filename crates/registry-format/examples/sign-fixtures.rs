@@ -14,6 +14,7 @@ use celesta_registry_format::{key_message, signed_message};
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::json;
 
+const GENERATED: &str = "2026-11-20T00:00:00Z";
 const API: &str = "https://registry.celesta.studio/api/v1";
 const ONLINE_KEYID: &str = "2026-11";
 const ONLINE_EXPIRES: &str = "2099-01-01T00:00:00Z";
@@ -78,7 +79,7 @@ fn main() {
     .collect();
     write_json(
         &out.join("config.json"),
-        &json!({ "format": 1, "api": API, "keys": keys }),
+        &json!({ "format": 1, "generated": GENERATED, "api": API, "keys": keys }),
     );
     // config.json is signed like every other served file, by an online key it
     // certifies.

@@ -169,9 +169,28 @@ pub enum MediaOrigin {
 impl From<PluginSource> for MediaOrigin {
     fn from(source: PluginSource) -> Self {
         match source {
-            PluginSource::Explicit | PluginSource::User | PluginSource::Folder => Self::User,
+            // A locked entry ranks as the entry it replaced
+            // (`PluginEntry::media_origin`); as the user's without one.
+            PluginSource::Explicit
+            | PluginSource::Locked
+            | PluginSource::User
+            | PluginSource::Registry
+            | PluginSource::Folder => Self::User,
             PluginSource::Bundled => Self::Bundled,
             PluginSource::Project => Self::Project,
+        }
+    }
+}
+
+impl PluginEntry {
+    /// Where this plugin ranks among media plugins. A locked version only
+    /// decides which version of its id runs, so it ranks as the entry it
+    /// replaced ([`PluginEntry::replaces`]); one the user installed from the
+    /// registry ranks as the user's own.
+    pub fn media_origin(&self) -> MediaOrigin {
+        match self.source {
+            PluginSource::Locked => self.replaces.map_or(MediaOrigin::User, MediaOrigin::from),
+            source => source.into(),
         }
     }
 }
@@ -791,7 +810,7 @@ fn media_plugin(entry: &PluginEntry) -> Option<MediaPlugin> {
         version: entry.manifest.version.clone(),
         executable: entry.executable()?,
         directory: entry.directory.clone(),
-        origin: entry.source.into(),
+        origin: entry.media_origin(),
         media: entry.manifest.media.clone().unwrap_or_default(),
     })
 }
