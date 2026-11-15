@@ -118,11 +118,40 @@ class PluginArchives(unittest.TestCase):
     def test_only_x264_is_a_separate_download(self):
         self.assertEqual(packaging.DOWNLOADS, ("ffmpeg-x264",))
 
-    def test_every_first_party_media_plugin_is_packaged(self):
+    def test_every_first_party_plugin_is_packaged(self):
         source = Path(__file__).resolve().parent.parent / "plugins"
-        media = sorted(path.parent.name for path in source.glob("*/plugin.json")
-                       if "media" in json.loads(path.read_text(encoding="utf-8")).get("roles", []))
-        self.assertEqual(sorted(packaging.PLUGINS), media)
+        manifests = {path.parent.name: json.loads(path.read_text(encoding="utf-8")) for path in source.glob("*/plugin.json")}
+        # Those with a process per target, the others as one archive.
+        self.assertEqual(sorted(packaging.PLUGINS), sorted(name for name, plugin in manifests.items() if "cargoPackage" in plugin))
+        self.assertEqual(sorted(packaging.COMPONENTS), sorted(name for name, plugin in manifests.items() if "cargoPackage" not in plugin))
+        self.assertEqual(sorted(packaging.COMPONENTS), ["aivis-speech", "code", "lottie", "voicevox"])
+
+    def test_a_component_plugin_is_one_archive_for_any_target(self):
+        built = {"id": "code", "version": "0.10.0", "protocol": 1, "celesta": ">=0.10.0, <0.11.0",
+                 "module": "js/index.js", "types": "js/index.d.ts"}
+
+        def build(node, script, plugin, flag, stage):
+            out = Path(stage) / "code"
+            (out / "js").mkdir(parents=True)
+            (out / "js/index.js").write_text("export {};\n")
+            (out / "js/index.d.ts").write_text("export {};\n")
+            (out / "celesta-plugin.json").write_text(json.dumps(built, indent=2) + "\n")
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(packaging, "run", build):
+            args = type("Args", (), {"version": None})()
+            archive = packaging.package_component("code", Path(temporary), args)
+            self.assertEqual(archive, Path(temporary) / "code/any.zip")
+            with zipfile.ZipFile(archive) as zipped:
+                self.assertEqual(sorted(zipped.namelist()), ["celesta-plugin.json", "js/index.d.ts", "js/index.js"])
+            # Another run would overwrite it; the archives of one release are written once.
+            with self.assertRaisesRegex(RuntimeError, "Output already exists"):
+                packaging.package_component("code", Path(temporary), args)
+
+    def test_a_component_plugin_refuses_another_version(self):
+        args = type("Args", (), {"version": "9.9.9"})()
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "differs from code"):
+                packaging.package_component("code", Path(temporary), args)
 
     def test_registry_archive_has_the_plugin_directory_at_its_root(self):
         with tempfile.TemporaryDirectory() as temporary:

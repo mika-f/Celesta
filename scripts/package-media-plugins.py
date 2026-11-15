@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Build first-party media plugins as native ZIP archives.
+"""Build first-party plugins as ZIP archives.
 
 By default, the optional ffmpeg-x264 plugin as an installable download for
 the GitHub release, its plugin folder at the ZIP root. The standard ffmpeg
 plugin (decoding, muxing, ProRes, VP9, AAC, Opus, PCM) comes with Celesta;
 only the GPL libx264 build is a separate download.
 
-With --registry, every first-party media plugin built on this system, as the
-archives registry.celesta.studio takes: the plugin directory's contents at
-the ZIP root, one ZIP per target at <out>/<id>/<target>.zip, each with the
-same celesta-plugin.json, whose `executable` names the program of every
-target in --targets the plugin is built for (.github/workflows/plugin-release.yml).
+With --registry, every first-party plugin with a process built on this
+system (the media plugins and vrm), as the archives registry.celesta.studio
+takes: the plugin directory's contents at the ZIP root, one ZIP per target at
+<out>/<id>/<target>.zip, each with the same celesta-plugin.json, whose
+`executable` names the program of every target in --targets the plugin is
+built for (.github/workflows/plugin-release.yml). With --registry and
+--plugins naming component-only plugins (aivis-speech, code, lottie,
+voicevox), each of those as its one archive, <out>/<id>/any.zip: they have
+no program, so one archive serves every system, and any system can build it.
 """
 
 import argparse
@@ -32,20 +36,24 @@ packaging = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packaging)
 ROOT = packaging.ROOT
 run = packaging.run
-# The first-party media plugins, and what each needs beyond the folder
+# The first-party plugins with a process, and what each needs beyond the folder
 # build.mts lays out: the Homebrew formulas its macOS build must bundle a
 # library from (the notices copied come from what it actually bundles), the
 # prefix of the variables naming the vcpkg installation whose notices its
 # Windows build copies (None: it links system libraries alone), the
 # distribution libraries its Linux build bundles, and whether its program has
-# FFmpeg's --check-license, --check-build and --manifest. AVFoundation and Media
-# Foundation link system frameworks only.
+# FFmpeg's --check-license, --check-build and --manifest. AVFoundation, Media
+# Foundation, and VRM link system frameworks and libraries only.
 PLUGINS = {
     "ffmpeg": dict(formulas=packaging.STANDARD_NATIVE_FORMULAS, vcpkg="", linux=("libopus.so", "libvpx.so"), ffmpeg=True),
     "ffmpeg-x264": dict(formulas=("x264",), vcpkg="FFMPEG_X264_", linux=("libx264.so",), ffmpeg=True),
     "avfoundation": dict(formulas=(), vcpkg=None, linux=(), ffmpeg=False),
     "mediafoundation": dict(formulas=(), vcpkg=None, linux=(), ffmpeg=False),
+    "vrm": dict(formulas=(), vcpkg=None, linux=(), ffmpeg=False),
 }
+# The first-party plugins without a process: a module alone, built from the
+# workspace package of the same name, for the registry's target `any`.
+COMPONENTS = ("aivis-speech", "code", "lottie", "voicevox")
 # The plugins that are a separate download on the GitHub release; the others
 # come with Celesta.
 DOWNLOADS = ("ffmpeg-x264",)
@@ -298,11 +306,39 @@ def package_plugin(plugin_id, output, target, system, arch, args):
     return destination
 
 
+def package_component(plugin_id, output, args):
+    """Build one component-only plugin and write its registry archive,
+    <output>/<id>/any.zip."""
+    source = json.loads((ROOT / "plugins" / plugin_id / "plugin.json").read_text(encoding="utf-8"))
+    version = source["version"]
+    if args.version is not None and args.version != version:
+        raise RuntimeError(f"Requested version {args.version} differs from {plugin_id} {version}")
+    if "cargoPackage" in source:
+        raise RuntimeError(f"{plugin_id} has a process; it is packaged per target")
+    destination = output / plugin_id / "any.zip"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        raise RuntimeError(f"Output already exists: {destination}")
+    with tempfile.TemporaryDirectory(prefix="component-plugin-", dir=output) as directory:
+        stage = Path(directory)
+        run("node", ROOT / "scripts/plugins/build.mts", ROOT / "plugins" / plugin_id, "--out", stage)
+        plugin = stage / plugin_id
+        manifest = json.loads((plugin / "celesta-plugin.json").read_text(encoding="utf-8"))
+        if "executable" in manifest or "module" not in manifest:
+            raise RuntimeError(f"build.mts gave {plugin_id} a manifest that is not a module alone: {manifest}")
+        archive = stage / destination.name
+        write_archive(plugin, archive, contents_at_root=True)
+        os.link(archive, destination)
+    print(f"Plugin ZIP: {destination}")
+    return destination
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--plugins", nargs="+", choices=PLUGINS,
+    parser.add_argument("--plugins", nargs="+", choices=(*PLUGINS, *COMPONENTS),
                         help=f"The plugins to package (default: {', '.join(DOWNLOADS)}; with --registry, "
-                             "every first-party media plugin built on this system)")
+                             "every first-party plugin with a process built on this system). "
+                             f"The component-only ones ({', '.join(COMPONENTS)}) need --registry")
     parser.add_argument("--version", help="Require the plugin manifests to match this release")
     parser.add_argument("--registry", action="store_true",
                         help="Write the registry's archives, <out>/<id>/<target>.zip, instead of the downloads")
@@ -316,6 +352,8 @@ def main():
         parser.error("--notary-profile requires --sign-identity")
     if args.registry != bool(args.targets):
         parser.error("--registry and --targets go together")
+    if not args.registry and any(plugin_id in COMPONENTS for plugin_id in args.plugins or ()):
+        parser.error("component-only plugins are packaged for the registry alone; pass --registry")
     system = {"darwin": "macos", "win32": "windows", "linux": "linux"}.get(sys.platform)
     if system is None:
         parser.error("Unsupported platform")
@@ -332,7 +370,10 @@ def main():
     args.out = (args.out or ROOT / ("target/registry" if args.registry else "target/packages")).resolve()
     args.out.mkdir(parents=True, exist_ok=True)
     for plugin_id in args.plugins:
-        package_plugin(plugin_id, args.out, target, system, arch, args)
+        if plugin_id in COMPONENTS:
+            package_component(plugin_id, args.out, args)
+        else:
+            package_plugin(plugin_id, args.out, target, system, arch, args)
 
 
 if __name__ == "__main__":
