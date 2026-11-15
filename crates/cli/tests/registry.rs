@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 
-use celesta_registry_client::testing::{CELESTA_RANGE, TestRegistry};
+use celesta_registry_client::testing::{TestRegistry, celesta_range};
 use common::{Home, assert_exit, registry, run, stderr, stdout};
 use serde_json::{Value, json};
 
@@ -92,7 +92,7 @@ fn info_shows_states_and_source() {
 
     let output = run(&home, &registry, &project, &["info", "acme.charts"]);
     assert_exit(&output, 0);
-    let range = CELESTA_RANGE;
+    let range = celesta_range();
     assert_eq!(
         lines(&output),
         [

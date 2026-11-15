@@ -35,6 +35,20 @@ and failed `package.yml`'s validate job.
   already handled pre-releases), so the alpha host and the later 0.10.x
   releases accept it.
 
+## Tests that pinned Celesta's version
+
+A pre-release is in a range only when a bound names a pre-release of the
+same version, so `*` and `>=0.9.0, <0.10.0` both refuse `0.10.0-alpha.1`.
+Two test fixtures assumed the running Celesta was a 0.9 release:
+
+- `celesta_registry_client::testing::CELESTA_RANGE` (`>=0.9.0, <0.10.0`) is
+  now `celesta_range()`, `celesta_range_for` of the running
+  `CELESTA_VERSION`, so the CLI's registry tests resolve at any version (the
+  bump to 0.10.0 would have broken them too).
+- `celesta_plugin_host::registry::tests::lock` locked each plugin with
+  `celesta: *`; it now uses `COMPATIBLE` (`=<CARGO_PKG_VERSION>`), as the
+  manifests in those tests do.
+
 ## Checks
 
 - `pnpm --dir scripts/plugins exec vitest run test/bump-version.test.mts`:

@@ -516,7 +516,8 @@ pub(crate) mod tests {
                 .iter()
                 .map(|&(id, version, targets)| {
                     let locked = LockedPlugin {
-                        celesta: semver::VersionReq::STAR,
+                        // Not `*`, which matches no pre-release Celesta.
+                        celesta: semver::VersionReq::parse(COMPATIBLE).unwrap(),
                         registry: "https://registry.celesta.studio".to_owned(),
                         targets: targets
                             .iter()
