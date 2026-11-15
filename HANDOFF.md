@@ -158,9 +158,15 @@ Ready-made, high-level components that compose the primitives (such as
 `<FrameChrome>`) go in `@celesta.studio/components` rather than the core, and use
 only the public APIs of the core and the other `@celesta.studio/*` packages, never
 `@celesta.studio/react/internal`.
-`@celesta.studio/code`, `@celesta.studio/voicevox`, and `@celesta.studio/aivis-speech` stay optional imports for
-compositions: no package a composition imports depends on them, though
-`@celesta.studio/cli` includes them in the runtime.
+`@celesta.studio/code`, `@celesta.studio/lottie`, `@celesta.studio/voicevox`, and
+`@celesta.studio/aivis-speech` are also the first-party registry plugins `code`,
+`lottie`, `voicevox`, and `aivis-speech` (`plugins/<id>/plugin.json` points at
+each package's `src/index.ts`), imported as `@celesta-plugin/<id>`. No package a
+composition imports depends on them; `@celesta.studio/cli` still includes them
+so the old imports keep working, with a warning
+([`docs/handoff/2026-11-16-package-plugins.md`](docs/handoff/2026-11-16-package-plugins.md)).
+A plugin module draws a layer for its program with the public `<PluginLayer>`,
+not `registerHostElement()`.
 
 ## Workspace map
 
@@ -198,7 +204,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/math` (`@celesta.studio/math`) | Pure, React-free math utilities for compositions. |
 | `packages/react` (`@celesta.studio/react`) | Core components, hooks, animation helpers, reconciler, and scene walker. |
 | `packages/shapes` (`@celesta.studio/shapes`) | Lines, polylines, paths, circles, ellipses, arrows, triangles, polygons, stars, pies, and hearts, plus generators for their path commands. |
-| `packages/lottie` (`@celesta.studio/lottie`) | `<Lottie>`: Lottie JSON animations drawn as paths, groups, and masks; see [`docs/handoff/2026-10-19-lottie.md`](docs/handoff/2026-10-19-lottie.md). |
+| `packages/lottie` (`@celesta.studio/lottie`) | `<Lottie>`: Lottie JSON animations drawn as paths, groups, and masks; see [`docs/handoff/2026-10-19-lottie.md`](docs/handoff/2026-10-19-lottie.md). The `lottie` plugin's module. |
 | `packages/shader` (`@celesta.studio/shader`) | `defineShader`: custom WGSL filters for a layer's `shader` prop. |
 | `packages/layout` (`@celesta.studio/layout`) | Layout containers and `Camera`. |
 | `packages/components` (`@celesta.studio/components`) | High-level components built on the core's public API, such as `FrameChrome`, `PatternBackground`, `Panel`, `Badge`, `Counter`, `StatCard`, `BarChart`, `Callout`, `MediaFrame`, and `CaptionTrack`. |
@@ -208,9 +214,9 @@ compositions: no package a composition imports depends on them, though
 | `packages/media-utils` (`@celesta.studio/media-utils`) | Media metadata helpers. |
 | `packages/project` (`@celesta.studio/project`) | Companion project data, properties, and timeline layers. |
 | `packages/debug` (`@celesta.studio/debug`) | Debug overlays. |
-| `packages/code` (`@celesta.studio/code`) | Syntax-highlighted code components. |
-| `packages/voicevox` (`@celesta.studio/voicevox`) | VOICEVOX AudioQuery lip sync. |
-| `packages/aivis-speech` (`@celesta.studio/aivis-speech`) | AivisSpeech AudioQuery and WAV lip sync. |
+| `packages/code` (`@celesta.studio/code`) | Syntax-highlighted code components; the `code` plugin's module. |
+| `packages/voicevox` (`@celesta.studio/voicevox`) | VOICEVOX AudioQuery lip sync; the `voicevox` plugin's module. |
+| `packages/aivis-speech` (`@celesta.studio/aivis-speech`) | AivisSpeech AudioQuery and WAV lip sync; the `aivis-speech` plugin's module. |
 | `packages/cli` (`@celesta.studio/cli`) | Entry CLI the bridge spawns; depends on every package it serves. |
 | `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts (`exportVideo` with `preset`, `presetFile`, `muxer`, `videoEncoder`, `audioEncoder`; `exportStills` with `muxer` and `videoEncoder`; `listComponents`, `describeComponent`); not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |

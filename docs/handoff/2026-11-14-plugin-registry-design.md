@@ -684,6 +684,9 @@ proposal):
 
 ## Migrating four packages to plugins
 
+Done, with `vrm` and its public `<PluginLayer>`, in
+[`2026-11-16-package-plugins.md`](2026-11-16-package-plugins.md).
+
 - `@celesta.studio/aivis-speech`, `@celesta.studio/code`,
   `@celesta.studio/lottie`, and `@celesta.studio/voicevox` become
   component-only first-party plugins `aivis-speech`, `code`, `lottie`, and
