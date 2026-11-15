@@ -30,3 +30,16 @@ const MOVED_TO_PLUGINS: ReadonlyMap<string, string> = new Map([
 export function movedToPlugin(specifier: string): string | undefined {
   return MOVED_TO_PLUGINS.get(specifier);
 }
+
+/**
+ * @internal The package the first-party plugin import `specifier`
+ * (`@celesta-plugin/code`) was made from (`@celesta.studio/code`), for a
+ * runtime that serves the packages in place of installed plugins (the web
+ * editor); undefined for any other specifier.
+ */
+export function packageOfPlugin(specifier: string): string | undefined {
+  for (const [name, id] of MOVED_TO_PLUGINS) {
+    if (specifier === `@celesta-plugin/${id}`) return name;
+  }
+  return undefined;
+}

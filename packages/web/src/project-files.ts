@@ -1,5 +1,5 @@
 import type { Plugin } from 'esbuild-wasm';
-import { currentPackageName } from '../../react/src/package-scope';
+import { currentPackageName, packageOfPlugin } from '../../react/src/package-scope';
 
 /** The packages the web editor provides to compositions. */
 export const runtimeModules = [
@@ -19,6 +19,16 @@ export const runtimeModules = [
   '@celesta.studio/shader',
 ] as const;
 
+/**
+ * The runtime package an import stands for here: the current name of a
+ * package imported by its old scope, and for a first-party plugin made from
+ * a package this editor serves (`@celesta-plugin/code`), that package.
+ */
+export function servedModuleName(specifier: string): string {
+  const current = currentPackageName(specifier);
+  return packageOfPlugin(current) ?? current;
+}
+
 /** Virtual project files; no filesystem or network module resolution. */
 export function projectFiles(files: Record<string, string>, entry: string): Plugin {
   const normalize = (path: string) => {
@@ -33,7 +43,7 @@ export function projectFiles(files: Record<string, string>, entry: string): Plug
     name: 'composition-files',
     setup(build) {
       build.onResolve({ filter: /.*/ }, args => {
-        if ((runtimeModules as readonly string[]).includes(currentPackageName(args.path))) return { path: args.path, external: true };
+        if ((runtimeModules as readonly string[]).includes(servedModuleName(args.path))) return { path: args.path, external: true };
         if (args.kind !== 'entry-point' && !args.path.startsWith('.')) return { errors: [{ text: `Import ${JSON.stringify(args.path)} is unavailable in the web editor.` }] };
         const path = normalize(args.kind === 'entry-point' ? entry : `${args.importer.slice(0, args.importer.lastIndexOf('/') + 1)}${args.path}`);
         const extensions = ['tsx', 'ts', 'jsx', 'js', 'json'];

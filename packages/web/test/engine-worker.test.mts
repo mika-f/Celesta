@@ -229,6 +229,15 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   const lottieFrame = await send({ id: 31, type: 'frame', frame: 45 });
   const paths = JSON.stringify(lottieFrame.value!.scene).match(/"type":"path"/g) ?? [];
   assert.ok(paths.length > 5, `${paths.length} paths`);
+  // The plugin's import draws the same: this editor serves the package it is made from.
+  const plugin = await send({ id: 32, type: 'compile', source: `import { Composition } from '@celesta.studio/react';
+    import { Lottie } from '@celesta-plugin/lottie';
+    const demo = ${demo};
+    export default function Scene() {
+      return <Composition width={480} height={270} fps={30} durationInFrames={90}><Lottie data={demo} /></Composition>;
+    }` });
+  assert.equal(plugin.error, undefined);
+  assert.deepEqual((await send({ id: 33, type: 'frame', frame: 45 })).value!.scene, lottieFrame.value!.scene);
 
   // prepare() decodes an uploaded file with mediabunny, to the same samples
   // as the WAV parser reads from the same bytes.
