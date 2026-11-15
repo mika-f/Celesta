@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "dependencies": {
+      "code": "0.10.0-alpha.3"
+    }
+  }
+}

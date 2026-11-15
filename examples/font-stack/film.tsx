@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Assets, Composition, Font, Rect, Sequence, Span, Text } from '@celesta.studio/react';
-import { Code } from '@celesta.studio/code';
+import { Code } from '@celesta-plugin/code';
 import { useTypewriter } from '@celesta.studio/text';
 import type { TextStyle } from '@celesta.studio/react';
 
