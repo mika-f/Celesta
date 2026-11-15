@@ -236,6 +236,8 @@ A publisher can deprecate a version, which still installs with a warning that na
 
 A plugin with a locked id in a folder of `--plugin-dir` or `CELESTA_PLUGIN_PATH` is used instead of the locked version. When the locked version could not have run (it is not downloaded, say), the export does not fail: it goes on with the explicit copy and warns why the locked version was not used. This is how to try a build of a plugin you are making in a project that locks it.
 
+A locked version you turned off in the [Plugins tab](#the-plugins-tab) gives way like any plugin you turned off: the export does not fail, it warns `celesta: skipped a plugin: the project locks acme.charts 1.2.3, which is turned off in your settings; another copy of acme.charts is used if one is installed`, and the next copy of that id in the search order is used. Turn it back on to use the locked version again.
+
 ### Clean up downloads
 
 Downloaded versions stay in Celesta's download folder, `registry` beside your user plugin folder (`%APPDATA%\Celesta\registry`, `~/Library/Application Support/Celesta/registry`, or `$XDG_DATA_HOME/celesta/registry`), until `celesta plugin gc` removes them. Celesta remembers each project it locked or installed plugins for. `gc` keeps every version that a remembered project's lock names, that the current project's lock names, or that is installed for every project; it forgets a remembered project whose `celesta.lock` is gone, and removes downloads left unfinished more than an hour ago.

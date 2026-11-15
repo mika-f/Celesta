@@ -236,6 +236,8 @@ celesta: warning: the security advisory list is 9 days old; plugins under newer 
 
 ロックした id のプラグインが `--plugin-dir` や `CELESTA_PLUGIN_PATH` のフォルダーにあれば、ロックしたバージョンの代わりにそちらが使われます。ロックしたバージョンが動けなかったとき（ダウンロードされていないなど）も書き出しは失敗せず、そのコピーで続けて、ロックしたバージョンを使わなかった理由を警告します。作っているプラグインのビルドを、それをロックしたプロジェクトで試すときは、この方法を使います。
 
+ロックしたバージョンを [Plugins タブ](#plugins-タブ)でオフにしたときは、ほかのオフにしたプラグインと同じく次のコピーに譲ります。書き出しは失敗せず、`celesta: skipped a plugin: the project locks acme.charts 1.2.3, which is turned off in your settings; another copy of acme.charts is used if one is installed` と警告して、探す順で次にある同じ id のコピーを使います。ロックしたバージョンをまた使うには、オンに戻してください。
+
 ### ダウンロードを片付ける
 
 ダウンロードしたバージョンは、`celesta plugin gc` で削除するまで、Celesta のダウンロード用のフォルダーに残ります。ユーザーのプラグインフォルダーの隣の `registry` です（`%APPDATA%\Celesta\registry`、`~/Library/Application Support/Celesta/registry`、`$XDG_DATA_HOME/celesta/registry`）。Celesta は、プラグインをロックしたり入れたりしたプロジェクトを覚えています。`gc` は、覚えているプロジェクトのロックにあるバージョン、現在のプロジェクトのロックにあるバージョン、すべてのプロジェクト用に入れたバージョンを残します。`celesta.lock` がなくなったプロジェクトは忘れ、1 時間以上前に途中で終わったダウンロードは削除します。

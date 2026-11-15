@@ -139,7 +139,15 @@ discovery reports it as its own `DiscoveryError::LockNoBuild { id, version, host
 (`the project locks {id} {version}, which has no build for {host}; another copy of
 {id} is used if one is installed`), which `find_for_project` keeps as a warning, and
 the other sources supply that id (a global, bundled, or explicit copy), as the
-design says for a pinned plugin and as `install_locked` skips it. The exporter
+design says for a pinned plugin and as `install_locked` skips it. A locked
+version the user turned off (`disabledPlugins` in `settings.json`) gives way
+as any turned-off plugin does, so the guide's "a turned-off plugin gives way to
+the next one" holds for the lock too: `find_for_project_with` reads the
+turned-off copies (`find_allowed_in`), and for a turned-off `Locked` copy keeps
+the warning `DiscoveryError::LockTurnedOff { id, version }` (`the project locks
+{id} {version}, which is turned off in your settings; another copy of {id} is
+used if one is installed`) instead of `Unsatisfied`, whose
+`celesta plugin install` hint could not fix it. The exporter
 reports any of these as `plugins_unsatisfied` under `--json`; exports, `--inspect`,
 and `--list-components`/`--describe` with a source check it, and so do the MCP
 server's export jobs and its `inspect` tool.
@@ -149,7 +157,7 @@ server's export jobs and its `inspect` tool.
 | Path | Responsibility |
 | --- | --- |
 | `crates/plugin-host/src/lock_check.rs` | `LockProblem` and `check_lock`. |
-| `crates/plugin-host/src/registry.rs`, `manifest.rs` | `is_build` (the one "same build" check), `RegistryContext::for_project`, `InstalledPlugins::find_for_project` and `find_for_project_reporting`, and `DiscoveryError::LockNoBuild` for a locked version without a build for the host (`a_locked_version_without_a_host_build_is_a_warning`). `find_for_project_with` requires each locked version with a build here to be found as `Locked` or `Explicit`, else `Unsatisfied` with `unused_reason` (`a_blocked_locked_version_stops_discovery`, `an_unreadable_locked_version_stops_discovery`, `an_unsafe_locked_version_stops_discovery` on Unix). |
+| `crates/plugin-host/src/registry.rs`, `manifest.rs` | `is_build` (the one "same build" check), `RegistryContext::for_project`, `InstalledPlugins::find_for_project` and `find_for_project_reporting`, and `DiscoveryError::LockNoBuild` for a locked version without a build for the host (`a_locked_version_without_a_host_build_is_a_warning`). `find_for_project_with` requires each locked version with a build here to be found as `Locked` or `Explicit`, else `Unsatisfied` with `unused_reason` (`a_blocked_locked_version_stops_discovery`, `an_unreadable_locked_version_stops_discovery`, `an_unsafe_locked_version_stops_discovery` on Unix). A turned-off locked version gives way with `DiscoveryError::LockTurnedOff` (`a_turned_off_locked_version_gives_way`, `a_turned_off_locked_version_with_no_other_copy_is_a_warning`). |
 | `crates/plugin-host/src/project.rs` | `project_root_of_dir`, the project a folder is in, which `project_root` and the `celesta` command use. |
 | `crates/registry-format/src/files.rs` | `Kind::is_media`, the one media-role test. |
 | `crates/registry-client/src/testing.rs` | The signed test registry behind the `testing` feature (`with_base`, `file`, `served_dir`, `root_key_base64`). |
@@ -190,6 +198,7 @@ Run in this worktree, after `pnpm install` and `pnpm run build:runtime`, with
 | After the change: `cargo clippy -p celesta-plugin-host -p celesta-exporter -p celesta-mcp -p celesta-editor --all-targets --locked -- -D warnings`, `cargo check --workspace --all-targets --locked`, `cargo fmt --all -- --check`, `git diff --check` | Passed. |
 | `celesta plugin …` without a registry key, in a temporary home | `search` and `add` fail with the no-key message (exit 1); `list`, `audit`, and `gc --dry-run` run (exit 0); `install` without dependencies prints `this project has no registry plugins`; with a dependency and no lock, `install` fails with the no-key message and `install --locked`/`--offline` with the `NoLock` message. |
 
+| After `DiscoveryError::LockTurnedOff`: `cargo build -p celesta-codec-test --locked`, then `cargo test --workspace --locked --no-fail-fast`; `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all -- --check`, `git diff --check`, `pnpm --dir packages/website run build` | 3236 passed, 0 failed, 1 ignored; the rest passed (56 pages in 2 locales). `a_turned_off_locked_version_gives_way` and `a_turned_off_locked_version_with_no_other_copy_is_a_warning` failed to build before the change (no `LockTurnedOff`), and before it a turned-off locked copy stopped discovery with `Unsatisfied` (`it was not used`). |
 Not run: the first-party plugins' separate workspace (`plugins/`), the `pnpm`
 tests, the package scripts (they need a full package build), and the registry
 service's tests.
@@ -254,9 +263,6 @@ service's tests.
   separate: `celesta.config.json`, `celesta.lock`, `settings.json`, and the
   store's `.projects.json` each write their own. Fold them into one helper in a
   later change.
-- A locked version the user turned off in `settings.json` (`disabledPlugins`)
-  is not found as `Locked`, so command-line discovery now stops on it with
-  `it was not used` rather than run another copy of its id.
 - `LockProblem::Unsatisfied` still opens with "the project's locked plugins are
   not installed" and says to run `celesta plugin install` when the reason is a
   blocked version; `install` then fails naming `celesta plugin update {id}`.

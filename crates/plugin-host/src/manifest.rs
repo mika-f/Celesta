@@ -479,6 +479,13 @@ pub enum DiscoveryError {
         version: String,
         host: String,
     },
+    /// A version the project's lock names that the user turned off in the
+    /// app: like any turned-off plugin it gives way, and the plugin with
+    /// its id is found from the other sources instead.
+    #[error(
+        "the project locks {id} {version}, which is turned off in your settings; another copy of {id} is used if one is installed"
+    )]
+    LockTurnedOff { id: String, version: String },
     /// A store folder whose files, manifest id, or version are not what was
     /// installed: like a skipped plugin it takes no id.
     #[error(
@@ -1122,6 +1129,18 @@ impl InstalledPlugins {
         settings: &UserSettings,
         registry: &RegistryContext,
     ) -> (Self, Vec<DiscoveryError>) {
+        let (plugins, _, errors) = Self::find_allowed_in(explicit, allow, settings, registry);
+        (plugins, errors)
+    }
+
+    /// [`InstalledPlugins::find_allowing_in`], with the plugins `settings`
+    /// turns off.
+    fn find_allowed_in(
+        explicit: &[PathBuf],
+        allow: &[String],
+        settings: &UserSettings,
+        registry: &RegistryContext,
+    ) -> (Self, Vec<PluginEntry>, Vec<DiscoveryError>) {
         let (found, mut errors) = Self::find_in(explicit, &[], settings, registry);
         let allowed = found.allowed_allowing(settings, allow);
         errors.extend(
@@ -1158,7 +1177,7 @@ impl InstalledPlugins {
         );
         let mut plugins = allowed.plugins;
         plugins.waiting_imports = WaitingImports::Fail;
-        (plugins, errors)
+        (plugins, allowed.disabled, errors)
     }
 
     /// Discovers them with a trusted project's own plugin folders (see
@@ -1216,7 +1235,9 @@ impl InstalledPlugins {
     /// that cannot run (missing, changed, blocked by an advisory, or
     /// unreadable) stops discovery ([`LockProblem::Unsatisfied`]) unless an
     /// explicit folder supplies its id: that copy runs, and the locked
-    /// version is reported with the other errors. A project with neither dependencies
+    /// version is reported with the other errors. One the user turned off
+    /// gives way to the next copy of its id
+    /// ([`DiscoveryError::LockTurnedOff`]). A project with neither dependencies
     /// nor a lock finds what [`InstalledPlugins::find`] does.
     pub fn find_for_project(
         root: &Path,
@@ -1251,7 +1272,7 @@ impl InstalledPlugins {
         let lock =
             Lockfile::load(root).map_err(|error| LockProblem::Unreadable(error.to_string()))?;
         check_lock(lock.as_ref(), &project, &celesta_version())?;
-        let (found, errors) = Self::find_allowing_in(explicit, allow, settings, &registry);
+        let (found, disabled, errors) = Self::find_allowed_in(explicit, allow, settings, &registry);
         let has = |id: &str, sources: &[PluginSource]| {
             found
                 .plugins
@@ -1286,6 +1307,18 @@ impl InstalledPlugins {
             if has(id, &[PluginSource::Locked, PluginSource::Explicit])
                 || unsatisfied.iter().any(|(named, ..)| named == id)
             {
+                continue;
+            }
+            // Turned off in the app, so it gives way as any turned-off
+            // plugin does.
+            let turned_off = disabled
+                .iter()
+                .any(|entry| entry.manifest.id == *id && entry.source == PluginSource::Locked);
+            if turned_off {
+                kept.push(DiscoveryError::LockTurnedOff {
+                    id: id.clone(),
+                    version: locked.version.to_string(),
+                });
                 continue;
             }
             let folder = registry
@@ -2638,6 +2671,71 @@ pub(crate) mod tests {
         };
         assert_eq!(id, LOCKED_ID);
         assert!(reason.contains("was skipped"), "{reason}");
+    }
+
+    /// Whether `errors` says the locked [`LOCKED_ID`] 1.0.0 is turned off.
+    fn says_turned_off(errors: &[DiscoveryError]) -> bool {
+        errors.iter().any(|error| {
+            matches!(error, DiscoveryError::LockTurnedOff { id, version }
+                if id == LOCKED_ID && version == "1.0.0")
+        })
+    }
+
+    #[test]
+    fn a_turned_off_locked_version_gives_way() {
+        let folder = tempfile::tempdir().unwrap();
+        let installed = folder.path().join("store").join(LOCKED_ID).join("1.0.0");
+        let tree_hash = crate::registry::tests::write(
+            &installed,
+            crate::registry::tests::content(LOCKED_ID, "1.0.0"),
+        );
+        let mut settings = with_a_global_copy(folder.path());
+        settings.set_enabled(LOCKED_ID, &installed, false);
+        let registry = locked_project(folder.path(), tree_hash);
+        let (found, errors) = find_locked_with(registry, &[], &settings).unwrap();
+        let entry = found
+            .plugins
+            .iter()
+            .find(|entry| entry.manifest.id == LOCKED_ID)
+            .unwrap_or_else(|| panic!("{errors:?}"));
+        assert_eq!(entry.source, PluginSource::Registry);
+        assert_eq!(
+            entry.directory,
+            folder.path().join("store").join(LOCKED_ID).join("0.9.0")
+        );
+        let turned_off = errors
+            .iter()
+            .find(|error| matches!(error, DiscoveryError::LockTurnedOff { .. }))
+            .unwrap_or_else(|| panic!("{errors:?}"));
+        assert!(says_turned_off(&errors), "{errors:?}");
+        assert_eq!(
+            turned_off.to_string(),
+            format!(
+                "the project locks {LOCKED_ID} 1.0.0, which is turned off in your settings; another copy of {LOCKED_ID} is used if one is installed"
+            )
+        );
+    }
+
+    #[test]
+    fn a_turned_off_locked_version_with_no_other_copy_is_a_warning() {
+        let folder = tempfile::tempdir().unwrap();
+        let installed = folder.path().join("store").join(LOCKED_ID).join("1.0.0");
+        let tree_hash = crate::registry::tests::write(
+            &installed,
+            crate::registry::tests::content(LOCKED_ID, "1.0.0"),
+        );
+        let mut settings = UserSettings::default();
+        settings.set_enabled(LOCKED_ID, &installed, false);
+        let registry = locked_project(folder.path(), tree_hash);
+        let (found, errors) = find_locked_with(registry, &[], &settings).unwrap();
+        assert!(
+            !found
+                .plugins
+                .iter()
+                .any(|entry| entry.manifest.id == LOCKED_ID),
+            "{errors:?}"
+        );
+        assert!(says_turned_off(&errors), "{errors:?}");
     }
 
     #[test]
