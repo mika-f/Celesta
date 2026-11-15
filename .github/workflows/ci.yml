@@ -136,11 +136,13 @@ jobs:
           # request on every system.
           pnpm --dir scripts/plugins test
 
-      # The macOS packaging script's own checks, beside the scripts' tests.
-      # They mock no Apple tool, so they run anywhere; Linux runs them once.
+      # The macOS packaging script's own checks, beside the scripts' tests,
+      # and those of the registry publish client plugin-release.yml runs.
+      # They mock no Apple tool and no network, so they run anywhere; Linux
+      # runs them once.
       - name: Test the macOS packaging checks
         if: runner.os == 'Linux'
-        run: python3 -B -m unittest scripts/test_package_macos.py scripts/test_package_media_plugins.py
+        run: python3 -B -m unittest scripts/test_package_macos.py scripts/test_package_media_plugins.py scripts/test_publish_plugins.py
 
       # ffmpeg-windows.yml's licence check, which runs only before a publish,
       # on status databases shaped like vcpkg's. The runner images carry

@@ -1,4 +1,4 @@
-"""Portable checks for the separately downloadable ffmpeg-x264 package."""
+"""Portable checks for the media plugin archives: the ffmpeg-x264 download and the registry's."""
 import importlib.util
 import json
 import os
@@ -116,7 +116,77 @@ class PluginArchives(unittest.TestCase):
                          ["celesta-codec-ffmpeg", "celesta-codec-ffmpeg-x264", "shared"])
 
     def test_only_x264_is_a_separate_download(self):
-        self.assertEqual(packaging.VARIANTS, {"x264": "x264"})
+        self.assertEqual(packaging.DOWNLOADS, ("ffmpeg-x264",))
+
+    def test_every_first_party_media_plugin_is_packaged(self):
+        source = Path(__file__).resolve().parent.parent / "plugins"
+        media = sorted(path.parent.name for path in source.glob("*/plugin.json")
+                       if "media" in json.loads(path.read_text(encoding="utf-8")).get("roles", []))
+        self.assertEqual(sorted(packaging.PLUGINS), media)
+
+    def test_registry_archive_has_the_plugin_directory_at_its_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plugin = root / "ffmpeg"
+            program = plugin / "bin/linux-x86_64/celesta-codec-ffmpeg"
+            program.parent.mkdir(parents=True)
+            program.write_text("#!/bin/sh\nexit 0\n")
+            program.chmod(0o755)
+            (plugin / "celesta-plugin.json").write_text("{}")
+            archive = root / "linux-x86_64.zip"
+            packaging.write_archive(plugin, archive, contents_at_root=True)
+            with zipfile.ZipFile(archive) as zipped:
+                self.assertEqual(sorted(zipped.namelist()),
+                                 ["bin/linux-x86_64/celesta-codec-ffmpeg", "celesta-plugin.json"])
+                self.assertEqual(zipped.getinfo("bin/linux-x86_64/celesta-codec-ffmpeg").external_attr >> 16, 0o100755)
+
+    def test_plugin_targets_follow_the_os_list(self):
+        targets = ["linux-x86_64", "macos-aarch64", "windows-x86_64"]
+        self.assertEqual(packaging.plugin_targets({}, targets), targets)
+        self.assertEqual(packaging.plugin_targets({"os": ["macos"]}, targets), ["macos-aarch64"])
+        self.assertTrue(packaging.builds_on({"os": ["windows"]}, "windows"))
+        self.assertFalse(packaging.builds_on({"os": ["windows"]}, "linux"))
+
+    def test_registry_manifest_names_every_targets_program(self):
+        source = {"cargoPackage": "celesta-codec-ffmpeg"}
+        built = '{\n  "id": "ffmpeg",\n  "executable": {\n    "macos-aarch64": "bin/macos-aarch64/celesta-codec-ffmpeg"\n  },\n  "media": {"priority": 1}\n}\n'
+        targets = ["windows-x86_64", "linux-x86_64", "macos-aarch64"]
+        text = packaging.registry_manifest(built, source, targets)
+        self.assertEqual(json.loads(text), {"id": "ffmpeg", "executable": {
+            "linux-x86_64": "bin/linux-x86_64/celesta-codec-ffmpeg",
+            "macos-aarch64": "bin/macos-aarch64/celesta-codec-ffmpeg",
+            "windows-x86_64": "bin/windows-x86_64/celesta-codec-ffmpeg.exe"}, "media": {"priority": 1}})
+        self.assertTrue(text.startswith('{\n  "id": "ffmpeg",\n  "executable": {\n    "linux-x86_64"'))
+        self.assertTrue(text.endswith("}\n"))
+        # Built on Windows, the same manifest, byte for byte.
+        windows = built.replace('"macos-aarch64": "bin/macos-aarch64/celesta-codec-ffmpeg"',
+                                '"windows-x86_64": "bin/windows-x86_64/celesta-codec-ffmpeg.exe"')
+        self.assertEqual(packaging.registry_manifest(windows, source, targets), text)
+
+    def test_registry_manifest_refuses_an_unexpected_build(self):
+        source = {"cargoPackage": "celesta-codec-ffmpeg"}
+        for executable in ({}, {"freebsd-x86_64": "bin/freebsd-x86_64/celesta-codec-ffmpeg"},
+                           {"linux-x86_64": "bin/celesta-codec-ffmpeg"},
+                           {"linux-x86_64": "bin/linux-x86_64/celesta-codec-ffmpeg",
+                            "macos-aarch64": "bin/macos-aarch64/celesta-codec-ffmpeg"}):
+            with self.assertRaisesRegex(RuntimeError, "build.mts gave the executables"):
+                packaging.registry_manifest(json.dumps({"executable": executable}), source, ["linux-x86_64", "macos-aarch64"])
+
+    def test_linux_bundles_every_named_codec_library(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            plugin = Path(temporary) / "ffmpeg"
+            program = plugin / "bin/linux-x86_64/celesta-codec-ffmpeg"
+            program.parent.mkdir(parents=True)
+            program.touch()
+            (plugin / "licenses").mkdir()
+            listing = "\tlibopus.so.0 => /usr/lib/libopus.so.0 (0x1)\n\tlibz.so.1 => /usr/lib/libz.so.1 (0x2)\n"
+            with patch.object(packaging, "run", return_value=listing):
+                with self.assertRaisesRegex(RuntimeError, "Expected a package-owned libvpx.so dependency"):
+                    with patch.object(packaging, "debian_package", side_effect=lambda name, source: dict(
+                            library=name, package="libopus0:amd64", source_package="opus")), \
+                         patch.object(packaging, "debian_copyright", return_value=(Path(__file__), "libopus0")), \
+                         patch.object(packaging.shutil, "copy2"):
+                        packaging.linux_dependencies(plugin, program, ("libopus.so", "libvpx.so"))
 
 
 if __name__ == "__main__":

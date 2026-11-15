@@ -325,12 +325,42 @@ grows.
 - Yank, unyank, and deprecate are available to a plugin's owners (phase 2:
   through the registry website, signed in with GitHub). Withdrawal and
   advisories are the Celesta team's alone.
-- First-party publishing: a release workflow in this repository builds each
+- First-party publishing: `.github/workflows/plugin-release.yml` builds each
   plugin per target (reusing `scripts/plugins/build.mts` and the codec
   packaging, macOS signing and notarization included), attests each archive
   (`actions/attest-build-provenance`), and publishes. The bundled `ffmpeg`,
   `avfoundation`, and `mediafoundation` are published too, so projects can
   pin them; they stay bundled in the app so a fresh install exports offline.
+  - It runs on a push of a release tag (`v*.*.*`), alongside `package.yml`,
+    and accepts a semver tag with an optional pre-release
+    (`v0.10.0-rc.1`) and no build metadata, which must equal `v` plus the
+    workspace version. It has no `workflow_dispatch`. The registry allows it
+    with the `PUBLISH_WORKFLOW_REFS` entry
+    `mika-f/Celesta/.github/workflows/plugin-release.yml@refs/tags/v*`, so
+    the file keeps that name; anyone who can push a `v*` tag can then
+    publish from any commit, so a tag ruleset on `v*` limits who can.
+  - One runner per target (`linux-x86_64`, `macos-aarch64`,
+    `windows-x86_64`) runs `scripts/package-media-plugins.py --registry`,
+    which writes `target/registry/<id>/<target>.zip` for each media plugin
+    built there (`avfoundation` on macOS only, `mediafoundation` on Windows
+    only). Each archive holds the plugin directory's contents at its root,
+    its own program and no other target's, and the same
+    `celesta-plugin.json` as the plugin's other archives, whose `executable`
+    names every target's program. The Linux archives bundle the
+    distribution's codec libraries (`libopus`, `libvpx`; `libx264`), as the
+    `ffmpeg-x264` download does.
+  - One job then attests every archive in a single provenance attestation
+    (the registry takes a bundle for an archive when exactly one subject has
+    its SHA-256) and sends each plugin with `scripts/publish-plugins.py`:
+    one request per plugin, each with a new OIDC token, every target with
+    an `attestation:<target>` part. `409 version_exists` is skipped, so a
+    re-run after a partial failure publishes only what is left, and a
+    plugin whose version a release did not change is left as it is. Any
+    other refusal fails the job, with the registry's answer in the log and
+    the job summary.
+  - `vrm` is not published yet (see
+    [Migrating four packages to plugins](#migrating-four-packages-to-plugins)).
+    The app packaging does not use the published archives yet (below).
 - **Bundled copies are the published archives, byte for byte**
   **(designer's call)**. A release publishes the plugins first; the app
   packaging then extracts the published archives into the bundled folder
@@ -480,7 +510,9 @@ the contract above:
   the `id-token: write` and `attestations: write` permissions) and sends
   each bundle as `attestation:<target>`.
 - The first-party release workflow that publishes plugins does the same for
-  every target, after which first-party ids require attestations.
+  every target (done: `plugin-release.yml`); once it has published, the
+  registry can require attestations for first-party ids
+  (`FIRST_PARTY_ATTESTATION` `"1"`).
 - `celesta plugin publish`, if it builds the request itself: it takes one
   bundle file per target and sends it as `attestation:<target>`.
 
