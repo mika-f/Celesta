@@ -50,6 +50,27 @@ jobs:
           cargo fmt --all --check
           cargo fmt --manifest-path examples/versus/bench/fframes/Cargo.toml --check
 
+  # GitHub refuses to start a workflow whose actions, its local composite
+  # actions' included, lack a pin in its list in actions.lock, and checks
+  # only when the workflow starts: for plugin-release.yml and package.yml, on
+  # a release tag. This reads every workflow, so a gap fails a pull request.
+  # The script's own tests run with the other scripts' in the test job.
+  actions-lock:
+    name: Actions lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Node.js as mise.lock pins it, which runs TypeScript as it is.
+      - uses: jdx/mise-action@v5.2.7
+        with:
+          version: 2026.11.8
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check actions.lock
+        run: node scripts/check-actions-lock.mts
+
   test:
     name: Test (${{ matrix.name }})
     strategy:

@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["./*.test.mts", "../*.mts", "../../report-skipped-tests.mts"]
+  "include": ["./*.test.mts", "../*.mts", "../../report-skipped-tests.mts", "../../check-actions-lock.mts"]
 }

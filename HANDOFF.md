@@ -215,7 +215,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts (`exportVideo` with `preset`, `presetFile`, `muxer`, `videoEncoder`, `audioEncoder`; `exportStills` with `muxer` and `videoEncoder`; `listComponents`, `describeComponent`); not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |
 | `packages/website` (`@celesta.studio/website`) | Official website, English and Japanese user guide, and playground. |
-| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mts`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mts`, `cargo.mts`, `manifest.mts`, and `licenses.mts`; `bump-version.mts`, with its helper `version.mts`, which bumps Celesta's version and the plugins that follow it; `affected.mts`, with its helpers `inputs.mts` and `lockfile.mts`, which lists the first-party plugins a change affects, from `plugins/Cargo.lock` or a plugin's own lockfile, the pnpm graph, and `turbo.json`, for CI's `Plugins (<OS>)` jobs; and `libtest.mts`, which finds the skipped tests in a `cargo test -- --show-output` log for `scripts/report-skipped-tests.mts`. They are TypeScript, which Node runs as it is, stripping the types; not published. |
+| `scripts/plugins` (`celesta-plugin-scripts`) | The plugin build script, `build.mts`, which makes the plugin directory Celesta loads from a plugin's folder, and its helpers `platform.mts`, `cargo.mts`, `manifest.mts`, and `licenses.mts`; `bump-version.mts`, with its helper `version.mts`, which bumps Celesta's version and the plugins that follow it; `affected.mts`, with its helpers `inputs.mts` and `lockfile.mts`, which lists the first-party plugins a change affects, from `plugins/Cargo.lock` or a plugin's own lockfile, the pnpm graph, and `turbo.json`, for CI's `Plugins (<OS>)` jobs; `libtest.mts`, which finds the skipped tests in a `cargo test -- --show-output` log for `scripts/report-skipped-tests.mts`; and `actions-lock.mts`, which checks for `scripts/check-actions-lock.mts` that `.github/workflows/actions.lock` pins every action each workflow uses. They are TypeScript, which Node runs as it is, stripping the types; not published. |
 
 Useful entry points:
 
@@ -539,6 +539,11 @@ A plugin's inputs are its folder, its lockfile's local packages, its `js/`
 package's workspace dependencies with the `$TURBO_ROOT$/` paths `turbo.json`
 gives their tasks, and its `licenses` files, so a module's `js/package.json`
 must declare every workspace package its build uses.
+
+After changing a workflow's or a composite action's `uses:`, run
+`gh actions-lock`, then `node scripts/check-actions-lock.mts`, which CI's
+`Actions lock` job runs on every pull request; see
+`docs/handoff/2026-11-15-actions-lock-check.md`.
 
 For a release, run `node scripts/plugins/bump-version.mts X.Y.Z` (or
 `X.Y.Z-PRERELEASE`, such as `0.10.0-alpha.1`), then set the version in each
