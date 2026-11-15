@@ -534,6 +534,45 @@ fn no_version_says_why() {
 }
 
 #[test]
+fn no_version_names_the_pre_release_to_ask_for() {
+    // `*` matches no pre-release, so a plugin published only as
+    // pre-releases would otherwise just say "no version matches".
+    let any = Case::new(
+        &[("a", "*")],
+        vec![build(
+            "a",
+            &[],
+            vec![
+                version("0.9.0-alpha.1", "*", &all()),
+                version("0.10.0-alpha.3", "*", &all()),
+                version("0.10.0-alpha.2", "*", &all()),
+            ],
+        )],
+    );
+    assert_eq!(
+        reason(&any),
+        "only pre-releases match; ask for a@0.10.0-alpha.3"
+    );
+
+    // A pre-release outside the requirement is not offered.
+    let caret = Case::new(
+        &[("a", "^2")],
+        vec![build(
+            "a",
+            &[],
+            vec![
+                version("2.0.0-rc.1", "*", &all()),
+                version("3.0.0-alpha.1", "*", &all()),
+            ],
+        )],
+    );
+    assert_eq!(
+        reason(&caret),
+        "only pre-releases match; ask for a@2.0.0-rc.1"
+    );
+}
+
+#[test]
 fn deprecations_are_reported() {
     let case = Case::new(
         &[("a", "*")],

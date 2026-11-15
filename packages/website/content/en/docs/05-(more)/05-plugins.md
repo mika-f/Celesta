@@ -144,6 +144,12 @@ Each command works on the project of the current folder: the nearest folder, goi
 
 `celesta plugin add` and `remove` write `plugins.dependencies` for you, and keep every other key of the file, in its order. For each requirement, Celesta chooses the newest version that matches it, works with the running Celesta, is neither yanked nor under a security advisory, and has a build for every target (or one for `any`). When no version has a build for every target, it chooses the newest one with a build for this computer and warns which targets it lacks.
 
+A requirement matches a pre-release, such as `0.10.0-alpha.3`, only when it names a pre-release of the same version, as `@0.10.0-alpha.3` does. So `add` and `install --global` without a requirement skip pre-releases, and when a plugin has only pre-releases that the requirement would otherwise allow, the error names the one to ask for:
+
+```text
+celesta: error: no version of acme.codec satisfies *: only pre-releases match; ask for acme.codec@0.10.0-alpha.3
+```
+
 An entry without `celesta.config.json` has no registry dependencies: it uses only the plugins installed for every project.
 
 ### `celesta.lock`

@@ -307,6 +307,20 @@ fn choose<'a>(
     Ok((locked, Some(entry)))
 }
 
+/// The newest pre-release that `requirement` would match if it named a
+/// pre-release: with Cargo's semantics `*` or `^2` match none, so a plugin
+/// published only as pre-releases needs its version asked for.
+fn newest_pre_release<'a>(requirement: &VersionReq, index: &'a Index) -> Option<&'a Version> {
+    index
+        .versions
+        .iter()
+        .map(|v| &v.version)
+        .filter(|v| {
+            !v.pre.is_empty() && requirement.matches(&Version::new(v.major, v.minor, v.patch))
+        })
+        .max()
+}
+
 /// Why the newest version matching the requirement was refused.
 fn refusal(input: &ResolveInput, id: &str, requirement: &VersionReq, index: &Index) -> String {
     let newest = index
@@ -315,7 +329,10 @@ fn refusal(input: &ResolveInput, id: &str, requirement: &VersionReq, index: &Ind
         .filter(|v| requirement.matches(&v.version))
         .max_by(|a, b| a.version.cmp(&b.version));
     let Some(v) = newest else {
-        return "no version matches".to_owned();
+        return match newest_pre_release(requirement, index) {
+            Some(pre) => format!("only pre-releases match; ask for {id}@{pre}"),
+            None => "no version matches".to_owned(),
+        };
     };
     if v.yanked {
         "yanked".to_owned()
