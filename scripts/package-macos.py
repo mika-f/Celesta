@@ -342,10 +342,10 @@ def main():
         run("pnpm", "--dir", "packages/react", "run", "codegen")
         run("pnpm", "run", "build:runtime")
         run("cargo", "build", "--release", "--locked", "-p", "celesta-editor", "-p", "celesta-exporter",
-            "-p", "celesta-mcp", env=build_env)
+            "-p", "celesta-mcp", "-p", "celesta-cli", env=build_env)
     binaries = ROOT / "target" / target / "release"
     for source, name in (("celesta-editor", "Celesta"), ("celesta-exporter", "Celesta-export"),
-                         ("celesta-mcp", "Celesta-mcp")):
+                         ("celesta-mcp", "Celesta-mcp"), ("celesta", "Celesta-cli")):
         shutil.copy2(binaries / source, executables / name)
 
     downloads = ROOT / "target/package-downloads"
@@ -392,7 +392,8 @@ def main():
     program = plugin_program(codec)
     frameworks_from_program = os.path.relpath(codec / "Frameworks", program.parent)
     codec_libraries = bundle_libraries([program], codec / "Frameworks", f"@executable_path/{frameworks_from_program}/")
-    for binary in (executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp"):
+    for binary in (executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp",
+                   executables / "Celesta-cli"):
         if re.search(r"\blibav|\blibx264|\bffmpeg", run("otool", "-L", binary, capture=True), re.I):
             raise RuntimeError(f"{binary} links FFmpeg, which only the codec plugin may")
     # The AVFoundation plugin links system frameworks alone (VideoToolbox,
@@ -404,6 +405,7 @@ def main():
     frameworks = contents / "Frameworks"
     # Main executables and Node are both one directory below Contents.
     app_libraries = bundle_libraries([executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp",
+                                      executables / "Celesta-cli",
                                       helpers / "node", helpers / "esbuild"], frameworks, "@executable_path/../Frameworks/")
     # The notices of every Homebrew library either folder bundles.
     cellar = Path(run("brew", "--cellar", capture=True)).resolve()
@@ -411,10 +413,10 @@ def main():
                             library_formulas(codec_libraries, cellar) | library_formulas(app_libraries, cellar),
                             required=STANDARD_NATIVE_FORMULAS)
     native = macho_files(app)
-    required = {executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp",
+    required = {executables / "Celesta", executables / "Celesta-export", executables / "Celesta-mcp", executables / "Celesta-cli",
                 helpers / "node", helpers / "esbuild", program, avfoundation_program}
     if not required.issubset(native):
-        raise RuntimeError("The app, exporter, MCP server, Node.js, esbuild, and the media plugins must all be Mach-O executables")
+        raise RuntimeError("The app, exporter, MCP server, CLI, Node.js, esbuild, and the media plugins must all be Mach-O executables")
     minimum = (0, 0)
     for binary in native:
         run("lipo", binary, "-verify_arch", platform.machine())

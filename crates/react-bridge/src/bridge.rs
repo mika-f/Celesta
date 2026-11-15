@@ -164,7 +164,9 @@ impl ReactBridge {
             let _ = writeln!(stdin, "{payload}").and_then(|()| stdin.flush());
         }
 
-        let mut media = MediaBackend::new();
+        let mut media = options
+            .media
+            .map_or_else(MediaBackend::new, MediaBackend::with_registry);
         // Created on the first `measureText`: it scans the system fonts.
         let mut text_measurer: Option<TextRasterizer> = None;
         let mut decoded_audio = DecodedAudioFiles::default();

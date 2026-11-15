@@ -15,6 +15,7 @@ mod host;
 mod kill;
 mod locations;
 mod lock;
+mod lock_check;
 mod manifest;
 mod media;
 mod project;
@@ -38,6 +39,7 @@ pub use locations::{
     search_paths, unsafe_reason, user_plugin_dir,
 };
 pub use lock::{LOCK_FILE, LOCK_FORMAT, LockError, LockedArtifact, LockedPlugin, Lockfile};
+pub use lock_check::{LockProblem, check_lock};
 pub use manifest::{
     CELESTA_VERSION, ComponentInfo, ComponentSource, DiscoveryError, InstalledPlugins, MANIFEST,
     Manifest, PLUGIN_PATH_ENV, PluginEntry, PluginRole, RuntimePlugins, WAITING_PLUGIN_PATH_ENV,
@@ -52,8 +54,9 @@ pub use media::{
 pub use project::{
     PROJECT_CONFIG, ProjectConfigError, ProjectDependencies, RELEASE_TARGETS, has_project_config,
     mark_project_root, project_dependencies, project_plugin_paths, project_root,
+    project_root_of_dir,
 };
-pub use registry::{ProjectLock, RegistryContext};
+pub use registry::{ProjectLock, RegistryContext, is_build};
 pub use settings::{
     Allowance, AllowedPlugin, RegistryPlugin, SETTINGS_FILE, SettingsError, UserSettings,
     create_private_dir_all, user_settings_dir, user_settings_path,

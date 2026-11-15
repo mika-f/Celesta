@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use celesta_plugin_host::{create_private_dir_all, unsafe_reason};
 use time::OffsetDateTime;
@@ -11,6 +12,17 @@ use crate::error::ClientError;
 /// The file in the cache that records, per served path, the newest
 /// `generated` timestamp verified there.
 const STAMPS: &str = "stamps.json";
+
+/// Held across a fetched file's check-then-write and its stamp update, so a
+/// refresh thread that outlives its budget cannot lose or lower a stamp
+/// another thread records. It serializes threads of this process only.
+static CACHE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Takes the cache lock. Poison is safe to ignore: the guard holds `()` and
+/// every write is an atomic rename.
+pub(crate) fn lock() -> MutexGuard<'static, ()> {
+    CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn cache_error(path: &Path, message: impl std::fmt::Display) -> ClientError {
     ClientError::Cache {
@@ -72,16 +84,59 @@ pub(crate) fn stamp(cache: &Path, path: &str) -> Result<Option<OffsetDateTime>, 
         .map_err(|e| cache_error(&cache.join(STAMPS), format!("{path}: {e}")))
 }
 
+/// Records `generated` at `path`, keeping the newer of it and any stamp
+/// there. The caller holds the cache lock, which `_held` proves.
 pub(crate) fn record_stamp(
+    _held: &MutexGuard<'static, ()>,
     cache: &Path,
     path: &str,
     generated: OffsetDateTime,
 ) -> Result<(), ClientError> {
     let mut stamps = read_stamps(cache)?;
+    let generated = match stamp(cache, path)? {
+        Some(newest) => generated.max(newest),
+        None => generated,
+    };
     let text = generated
         .format(&Rfc3339)
         .map_err(|e| cache_error(&cache.join(STAMPS), e))?;
     stamps.insert(path.to_owned(), text);
     let json = serde_json::to_vec_pretty(&stamps).map_err(|e| cache_error(cache, e))?;
     write_private(&cache.join(STAMPS), &json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_older_stamp_never_replaces_a_newer_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let newer = OffsetDateTime::from_unix_timestamp(1_800_000_100).unwrap();
+        let older = OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+        record_stamp(&lock(), dir.path(), "/a.json", newer).unwrap();
+        record_stamp(&lock(), dir.path(), "/a.json", older).unwrap();
+        assert_eq!(stamp(dir.path(), "/a.json").unwrap(), Some(newer));
+    }
+
+    #[test]
+    fn concurrent_stamps_are_all_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+        let record = |path: &'static str| {
+            let cache = dir.path();
+            move || {
+                for i in 0..100 {
+                    record_stamp(&lock(), cache, path, base + time::Duration::seconds(i)).unwrap();
+                }
+            }
+        };
+        std::thread::scope(|scope| {
+            scope.spawn(record("/a.json"));
+            scope.spawn(record("/b.json"));
+        });
+        let last = base + time::Duration::seconds(99);
+        assert_eq!(stamp(dir.path(), "/a.json").unwrap(), Some(last));
+        assert_eq!(stamp(dir.path(), "/b.json").unwrap(), Some(last));
+    }
 }

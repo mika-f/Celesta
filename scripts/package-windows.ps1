@@ -66,12 +66,13 @@ try {
         Invoke-Checked pnpm @('install', '--frozen-lockfile')
         Invoke-Checked pnpm @('--dir', 'packages/react', 'run', 'codegen')
         Invoke-Checked pnpm @('run', 'build:runtime')
-        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter', '-p', 'celesta-mcp')
+        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter', '-p', 'celesta-mcp', '-p', 'celesta-cli')
     }
     $binaries = Join-Path $root 'target/release'
     Copy-Item -LiteralPath "$binaries/celesta-editor.exe" -Destination "$package/Celesta.exe"
     Copy-Item -LiteralPath "$binaries/celesta-exporter.exe" -Destination "$package/Celesta-export.exe"
     Copy-Item -LiteralPath "$binaries/celesta-mcp.exe" -Destination "$package/Celesta-mcp.exe"
+    Copy-Item -LiteralPath "$binaries/celesta.exe" -Destination "$package/Celesta-cli.exe"
     Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination $package
 
     $archiveName = "node-v$NodeVersion-win-x64.zip"

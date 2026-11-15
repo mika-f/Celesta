@@ -1037,6 +1037,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-cli"
+version = "0.9.0"
+dependencies = [
+ "celesta-plugin-host",
+ "celesta-registry-client",
+ "celesta-registry-format",
+ "clap",
+ "indexmap",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+]
+
+[[package]]
 name = "celesta-codec-test"
 version = "0.9.0"
 dependencies = [
@@ -1327,6 +1345,7 @@ version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "celesta-plugin-host",
+ "celesta-registry-client",
  "celesta-registry-format",
  "celesta-remote",
  "ed25519-dalek",

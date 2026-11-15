@@ -2,6 +2,7 @@ use celesta_composition::TimeError;
 use celesta_evaluator::EvaluationError;
 use celesta_gpu_renderer::GpuRenderError;
 use celesta_media::{AudioMixError, ComponentKind, ComponentRef, MediaError};
+use celesta_plugin_host::LockProblem;
 use celesta_project::LoadError;
 use celesta_react_bridge::{PropertyInputError, ReactBridgeError};
 use std::io;
@@ -70,6 +71,10 @@ pub enum ExportError {
     Properties(#[source] PropertyInputError),
     #[error("could not calculate export time: {0}")]
     Time(#[source] TimeError),
+    /// The project's registry plugins cannot run as its `celesta.lock`
+    /// pins them; the message names the `celesta plugin` command to run.
+    #[error("{0}")]
+    Plugins(LockProblem),
     #[error("could not {operation}: {source}")]
     Io {
         operation: &'static str,

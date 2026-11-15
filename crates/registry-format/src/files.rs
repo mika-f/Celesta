@@ -265,6 +265,13 @@ pub struct Kind {
     pub module: bool,
 }
 
+impl Kind {
+    /// Whether the plugin has the `media` role.
+    pub fn is_media(&self) -> bool {
+        self.roles.iter().any(|role| role == "media")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Deprecation {
@@ -463,6 +470,12 @@ impl Index {
             });
         }
         Ok(index)
+    }
+
+    /// What deprecates `entry`, one of this index's versions: its own
+    /// deprecation, else the plugin's.
+    pub fn deprecation<'a>(&'a self, entry: &'a VersionEntry) -> Option<&'a Deprecation> {
+        entry.deprecated.as_ref().or(self.deprecated.as_ref())
     }
 }
 

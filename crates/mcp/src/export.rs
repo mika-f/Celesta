@@ -1,6 +1,7 @@
 //! Runs an export job off the async runtime, one at a time, and reports it
 //! as `Celesta-export --json` does, with MCP progress and cancellation.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use celesta_exporter::report::{self, HintStyle};
@@ -11,6 +12,8 @@ use rmcp::service::RequestContext;
 use rmcp::{Peer, RoleServer};
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
+
+use crate::server::SharedMedia;
 
 /// Rendering progress is sent at most this often, plus the last frame.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
@@ -24,11 +27,14 @@ pub struct Run {
 }
 
 /// Runs `job` while holding `render_lock`, so exports never compete for
-/// the GPU. Progress goes to the client when the request asked for it, and
-/// cancelling the request stops the export; the lock is held until it has.
+/// the GPU, with the plugins `media` finds for its project
+/// ([`SharedMedia::for_project`]). Progress goes to the client when the
+/// request asked for it, and cancelling the request stops the export; the
+/// lock is held until it has.
 pub async fn run(
     job: ExportJob,
     render_lock: &Mutex<()>,
+    media: &Arc<SharedMedia>,
     context: &RequestContext<RoleServer>,
 ) -> Run {
     let _guard = render_lock.lock().await;
@@ -47,13 +53,20 @@ pub async fn run(
         .get_progress_token()
         .map(|token| tokio::spawn(forward_progress(context.peer.clone(), token, received)));
 
+    let media = media.clone();
     let joined = tokio::task::spawn_blocking(move || {
+        let mut job = job;
+        let found = media.for_project(&job.source).map(|(plugins, media)| {
+            job.options.plugins = Some(plugins);
+            job.media = Some(media);
+        });
         let props_file = job
             .react
             .then(|| resolve_props_file(&job.source, job.props_file.as_deref()))
             .flatten();
         let mut files = Vec::new();
         let (report, ok) = report::build(&job.source, props_file, HintStyle::Mcp, |collect| {
+            found?;
             job.run(&cancellation, &mut |event: ExportProgress| {
                 if let ExportProgress::Wrote(file) = &event {
                     files.push(file.clone());

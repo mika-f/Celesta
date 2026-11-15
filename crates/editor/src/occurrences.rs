@@ -94,6 +94,7 @@ pub(crate) fn spawn_occurrences() -> anyhow::Result<OccurrenceWorker> {
                     source_locations: true,
                     plugins: Some(request.plugins),
                     stop: None,
+                    media: None,
                 },
             ) {
                 Ok(mut bridge) => {

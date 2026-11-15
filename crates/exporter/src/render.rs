@@ -268,7 +268,7 @@ impl Exporter {
         .with_render_quality(self.options.render_quality)
         .with_asset_root(asset_root)
         .with_video_decoder(
-            MediaBackend::new()
+            MediaBackend::with_registry(self.media())
                 .with_sequential_video(frame_rate)
                 .with_kill_switch(cancellation.plugins()),
         )

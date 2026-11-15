@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use celesta_registry_format::{
-    AdvisoryList, Config, FormatError, Hash, Index, SearchList, Target, is_registry_id,
-    publisher_of,
+    AdvisoryList, Config, Deprecation, FormatError, Hash, Index, SearchList, Target,
+    is_registry_id, publisher_of,
 };
 use serde_json::Value;
 
@@ -290,4 +290,28 @@ fn config_and_index_need_generated() {
         .unwrap_err();
         assert!(matches!(err, FormatError::Json(_)), "{name}: {err:?}");
     }
+}
+
+#[test]
+fn a_version_is_deprecated_by_itself_else_by_its_plugin() {
+    let deprecation = |message: &str| Deprecation {
+        message: message.to_owned(),
+        replacement: None,
+    };
+    let mut index = Index::parse(&fixture("index-vrm.json"), "vrm").unwrap();
+    index.deprecated = None;
+    index.versions[0].deprecated = None;
+    assert_eq!(index.deprecation(&index.versions[0]), None);
+
+    index.deprecated = Some(deprecation("plugin"));
+    assert_eq!(
+        index.deprecation(&index.versions[0]),
+        Some(&deprecation("plugin"))
+    );
+
+    index.versions[0].deprecated = Some(deprecation("version"));
+    assert_eq!(
+        index.deprecation(&index.versions[0]),
+        Some(&deprecation("version"))
+    );
 }

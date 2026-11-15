@@ -557,3 +557,144 @@ fn deprecations_are_reported() {
         }]
     );
 }
+
+/// A lock written for `targets`, holding `1.0.0` of `a` with `entry_targets`.
+fn lock_for(targets: &[&str], entry_targets: &[&str]) -> Lockfile {
+    let mut entry = locked("1.0.0", "*");
+    entry.targets = entry_targets
+        .iter()
+        .map(|target| (t(target), entry.targets[&t(MAC)]))
+        .collect();
+    let mut lock = lock("0.10.0", vec![("a", entry)]);
+    lock.targets = targets.iter().map(|target| t(target)).collect();
+    lock
+}
+
+fn two_versions(roles: &[&str]) -> Vec<Index> {
+    vec![build(
+        "a",
+        roles,
+        vec![
+            version("1.0.0", "*", &[LINUX]),
+            version("1.1.0", "*", &[LINUX, WIN]),
+        ],
+    )]
+}
+
+#[test]
+fn a_kept_entry_is_resolved_again_for_a_new_target() {
+    let mut case = Case::new(&[("a", "*")], two_versions(&[]));
+    case.host = t(LINUX);
+    case.targets = vec![t(LINUX), t(WIN)];
+    case.previous = Some(lock_for(&[LINUX], &[LINUX]));
+    assert_eq!(locked_version(&case, "a"), v("1.1.0"));
+}
+
+#[test]
+fn a_partial_entry_is_kept_while_targets_stay() {
+    let mut case = Case::new(&[("a", "*")], two_versions(&[]));
+    case.host = t(LINUX);
+    case.targets = vec![t(LINUX)];
+    case.previous = Some(lock_for(&[LINUX], &[LINUX]));
+    assert_eq!(locked_version(&case, "a"), v("1.0.0"));
+}
+
+#[test]
+fn a_media_entry_is_kept_for_a_new_target() {
+    let mut case = Case::new(&[("a", "*")], two_versions(&["media"]));
+    case.host = t(LINUX);
+    case.targets = vec![t(LINUX), t(WIN)];
+    case.previous = Some(lock_for(&[LINUX], &[LINUX]));
+    assert_eq!(locked_version(&case, "a"), v("1.0.0"));
+}
+
+#[test]
+fn a_withdrawn_lock_entry_warns() {
+    let mut case = Case::new(
+        &[("a", "*")],
+        vec![build(
+            "a",
+            &[],
+            vec![
+                version("1.0.0", "*", &all()),
+                with(version("1.1.0", "*", &all()), "withdrawn", json!(true)),
+            ],
+        )],
+    );
+    case.previous = Some(lock("0.10.0", vec![("a", locked("1.1.0", "*"))]));
+    let resolution = case.run().unwrap();
+    assert_eq!(
+        resolution.warnings,
+        vec![ResolveWarning::LockedWithdrawn {
+            id: "a".into(),
+            version: v("1.1.0")
+        }]
+    );
+}
+
+#[test]
+fn a_blocked_lock_entry_warns() {
+    let mut case = Case::new(
+        &[("a", "*")],
+        vec![build(
+            "a",
+            &[],
+            vec![version("1.0.0", "*", &all()), version("1.1.0", "*", &all())],
+        )],
+    );
+    case.advisories = Some(advisory("ADV-1", "a", "=1.1.0"));
+    case.previous = Some(lock("0.10.0", vec![("a", locked("1.1.0", "*"))]));
+    let resolution = case.run().unwrap();
+    assert_eq!(
+        resolution.warnings,
+        vec![ResolveWarning::LockedBlocked {
+            id: "a".into(),
+            version: v("1.1.0"),
+            advisory: "ADV-1".into()
+        }]
+    );
+    assert_eq!(
+        resolution.warnings[0].to_string(),
+        "a 1.1.0 is locked but blocked by advisory ADV-1; it was resolved again"
+    );
+}
+
+#[test]
+fn a_yanked_entry_dropped_for_a_new_target_does_not_warn_yanked() {
+    let mut case = Case::new(
+        &[("a", "*")],
+        vec![build(
+            "a",
+            &[],
+            vec![
+                with(version("1.0.0", "*", &[LINUX]), "yanked", json!(true)),
+                version("1.1.0", "*", &[LINUX, WIN]),
+            ],
+        )],
+    );
+    case.host = t(LINUX);
+    case.targets = vec![t(LINUX), t(WIN)];
+    case.previous = Some(lock_for(&[LINUX], &[LINUX]));
+    let resolution = case.run().unwrap();
+    assert_eq!(resolution.lock.plugins["a"].version, v("1.1.0"));
+    assert!(resolution.warnings.is_empty(), "{:?}", resolution.warnings);
+}
+
+#[test]
+fn an_any_entry_is_kept_for_a_new_target() {
+    let mut case = Case::new(
+        &[("a", "*")],
+        vec![build(
+            "a",
+            &[],
+            vec![
+                version("1.0.0", "*", &["any"]),
+                version("1.1.0", "*", &["any"]),
+            ],
+        )],
+    );
+    case.host = t(LINUX);
+    case.targets = vec![t(LINUX), t(WIN)];
+    case.previous = Some(lock_for(&[LINUX], &["any"]));
+    assert_eq!(locked_version(&case, "a"), v("1.0.0"));
+}

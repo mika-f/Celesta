@@ -53,6 +53,7 @@ Celesta.app/
       Celesta
       Celesta-export
       Celesta-mcp
+      Celesta-cli
     Helpers/
       node
       esbuild

@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
-use celesta_plugin_host::{MANIFEST, create_private_dir_all, registry_store_dir};
+use celesta_plugin_host::{MANIFEST, create_private_dir_all, is_build, registry_store_dir};
 use celesta_registry_format::{FormatError, Hash, is_plugin_id, tree_hash};
 use semver::Version;
 use sha2::{Digest, Sha256};
@@ -88,6 +88,19 @@ fn unsafe_entry(entry: &str, reason: &str) -> InstallError {
     }
 }
 
+/// The file in the store root that lists the projects that use the store.
+pub const PROJECTS_FILE: &str = ".projects.json";
+
+/// `.projects.json`: the project roots, sorted, and any keys a newer build
+/// wrote, kept as they were.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ProjectsRecord {
+    #[serde(default)]
+    pub projects: Vec<PathBuf>,
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, serde_json::Value>,
+}
+
 /// The per-user folder of plugins installed from the registry.
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -117,6 +130,58 @@ impl Store {
         registry_store_dir().map(Self::new)
     }
 
+    /// The store's folder.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Records `root` (made absolute, links resolved) as a project that
+    /// uses the store, so that garbage collection keeps what its lock names.
+    pub fn record_project(&self, root: &Path) -> io::Result<()> {
+        let root = fs::canonicalize(root)?;
+        let mut record = self.read_projects()?;
+        if let Err(at) = record.projects.binary_search(&root) {
+            record.projects.insert(at, root);
+            self.write_projects(&record)?;
+        }
+        Ok(())
+    }
+
+    /// The recorded projects; none when there is no record yet.
+    pub(crate) fn read_projects(&self) -> io::Result<ProjectsRecord> {
+        let file = self.root.join(PROJECTS_FILE);
+        match fs::read(&file) {
+            Ok(bytes) => {
+                let mut record: ProjectsRecord = serde_json::from_slice(&bytes).map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{}: {e}", file.display()),
+                    )
+                })?;
+                record.projects.sort();
+                record.projects.dedup();
+                Ok(record)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(ProjectsRecord::default()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Writes the record through a temporary file renamed over it, 0600 on
+    /// Unix.
+    pub(crate) fn write_projects(&self, record: &ProjectsRecord) -> io::Result<()> {
+        create_private_dir_all(&self.root)?;
+        let mut bytes = serde_json::to_vec_pretty(record).map_err(io::Error::other)?;
+        bytes.push(b'\n');
+        // A temp file is created 0600 on Unix.
+        let mut temp = tempfile::NamedTempFile::new_in(&self.root)?;
+        temp.write_all(&bytes)?;
+        temp.as_file().sync_all()?;
+        temp.persist(self.root.join(PROJECTS_FILE))
+            .map_err(|e| e.error)?;
+        Ok(())
+    }
+
     /// The folder of one version.
     pub fn path(&self, id: &str, version: &Version) -> PathBuf {
         self.root.join(id).join(version.to_string())
@@ -124,7 +189,7 @@ impl Store {
 
     /// Whether the version is there with this tree hash.
     pub fn contains(&self, id: &str, version: &Version, tree_hash: &Hash) -> bool {
-        is_plugin_id(id) && holds(&self.path(id, version), tree_hash)
+        is_plugin_id(id) && is_build(&self.path(id, version), id, version, tree_hash)
     }
 
     /// Downloads, checks, extracts, hashes, and renames into place; returns the directory.
@@ -143,7 +208,7 @@ impl Store {
             return Err(FormatError::InvalidId(request.id.to_owned()).into());
         }
         let destination = self.path(request.id, request.version);
-        if holds(&destination, request.tree_hash) {
+        if is_build(&destination, request.id, request.version, request.tree_hash) {
             return Ok(destination);
         }
         create_private_dir_all(&self.root).map_err(io_error(&self.root))?;
@@ -172,7 +237,7 @@ impl Store {
         create_private_dir_all(&folder).map_err(io_error(&folder))?;
         if fs::symlink_metadata(&destination).is_ok() {
             // Another install finished first.
-            if holds(&destination, request.tree_hash) {
+            if is_build(&destination, request.id, request.version, request.tree_hash) {
                 return Ok(destination);
             }
             // Out of the way first, as Windows cannot rename onto a
@@ -181,7 +246,9 @@ impl Store {
         }
         match fs::rename(&plugin, &destination) {
             Ok(()) => Ok(destination),
-            Err(_) if holds(&destination, request.tree_hash) => Ok(destination),
+            Err(_) if is_build(&destination, request.id, request.version, request.tree_hash) => {
+                Ok(destination)
+            }
             Err(source) => Err(InstallError::Io {
                 path: destination,
                 source,
@@ -264,11 +331,6 @@ impl Store {
         }
         Ok(())
     }
-}
-
-/// Whether `folder` is there with this tree hash.
-fn holds(folder: &Path, expected: &Hash) -> bool {
-    tree_hash(folder).is_ok_and(|found| found == *expected)
 }
 
 /// Downloads the request's archive to `archive`, reading at most one byte

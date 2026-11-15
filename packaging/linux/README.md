@@ -44,6 +44,15 @@ font files in the mounted folder and load them with `<Font>`.
 Without a terminal attached, the exporter prints text progress. Add `-t` to
 `docker run` for the interactive dashboard.
 
+## Plugin command
+
+The image also contains `celesta`, the command that adds, removes, installs, and
+updates a project's plugins. Run it as `celesta plugin ...`:
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" --entrypoint /opt/celesta/celesta celesta-exporter plugin --help
+```
+
 ## MCP server
 
 The image also contains `celesta-mcp`, the MCP server that lets coding agents
@@ -62,7 +71,7 @@ Software rendering is much slower than a GPU; see
 
 ## License
 
-`celesta-exporter` and `celesta-mcp` link no FFmpeg. The image bundles only the
+`celesta-exporter`, `celesta-mcp`, and `celesta` link no FFmpeg. The image bundles only the
 standard LGPL `ffmpeg` process under `/opt/celesta/plugins`, for decoding,
 ProRes/MOV, VP9/Opus WebM, AAC/PCM and muxing. FFmpeg is linked into that
 program statically; libopus and libvpx (both BSD licensed) come from the

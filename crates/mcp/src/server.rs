@@ -1,13 +1,13 @@
 //! The MCP tool router: argument types, validation, and dispatch.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError};
 
 use celesta_exporter::components::{
     describe_component, description_json, list_components, listing_json,
 };
-use celesta_exporter::media_registry;
 use celesta_exporter::report::{self, HintStyle};
+use celesta_exporter::{ExportError, media_registry, project_plugins};
 use celesta_media::{MediaRegistry, RegisteredPlugin};
 use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
 use celesta_react_bridge::{
@@ -53,19 +53,42 @@ impl CelestaServer {
 }
 
 /// The one media registry the tools share, so a plugin's `describe` answer
-/// is cached across calls.
-struct SharedMedia(std::sync::Mutex<Arc<MediaRegistry>>);
+/// is cached across calls. It is also the chosen registry
+/// ([`celesta_media::set_registry`]), which any call may replace while
+/// another runs: an export or an inspection never reads that one, but takes
+/// the registry [`SharedMedia::for_project`] gives it for its own project.
+pub(crate) struct SharedMedia(std::sync::Mutex<Arc<MediaRegistry>>);
 
 impl SharedMedia {
-    fn new(registry: Arc<MediaRegistry>) -> Self {
+    pub(crate) fn new(registry: Arc<MediaRegistry>) -> Self {
         Self(std::sync::Mutex::new(registry))
     }
 
     /// The registry, after discovering the plugins again: the one held while
     /// they are the same plugins, else a new one, which exports then use too.
     fn current(&self) -> Arc<MediaRegistry> {
-        let found = media_registry(&InstalledPlugins::find_reporting(&[], &[]));
-        let (registry, _) = self.update(found, |registry| {
+        self.publish(&InstalledPlugins::find_reporting(&[], &[]))
+    }
+
+    /// The plugins a job on `source` uses, found for its project
+    /// ([`project_plugins`]), and the registry of their media plugins, which
+    /// becomes the registry as in [`Self::current`]. The job reads and
+    /// writes media through the registry returned, whatever later calls
+    /// make the registry. A lock that is not satisfied is an
+    /// [`ExportError::Plugins`].
+    pub(crate) fn for_project(
+        &self,
+        source: &Path,
+    ) -> Result<(InstalledPlugins, Arc<MediaRegistry>), ExportError> {
+        let plugins = project_plugins(source, &[], &[])?;
+        let media = self.publish(&plugins);
+        Ok((plugins, media))
+    }
+
+    /// [`Self::update`] to `plugins`' media plugins, published to every
+    /// media backend made from then on.
+    fn publish(&self, plugins: &InstalledPlugins) -> Arc<MediaRegistry> {
+        let (registry, _) = self.update(media_registry(plugins), |registry| {
             celesta_media::set_registry(Some(registry.clone()));
         });
         registry
@@ -271,7 +294,8 @@ impl CelestaServer {
                 }
             })
         };
-        let result = blocking(move || inspect::inspect(args, &stop)).await;
+        let media = self.media.clone();
+        let result = blocking(move || inspect::inspect(args, &stop, &media)).await;
         watcher.abort();
         result
     }
@@ -285,7 +309,7 @@ impl CelestaServer {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         match args.job(&self.outputs) {
-            Ok(job) => rendered(export::run(job, &self.render_lock, &context).await),
+            Ok(job) => rendered(export::run(job, &self.render_lock, &self.media, &context).await),
             Err(message) => usage_error(&message),
         }
     }
@@ -299,7 +323,7 @@ impl CelestaServer {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         match args.job(&self.outputs) {
-            Ok(job) => rendered(export::run(job, &self.render_lock, &context).await),
+            Ok(job) => rendered(export::run(job, &self.render_lock, &self.media, &context).await),
             Err(message) => usage_error(&message),
         }
     }
@@ -313,7 +337,7 @@ impl CelestaServer {
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         match args.job() {
-            Ok(job) => rendered(export::run(job, &self.render_lock, &context).await),
+            Ok(job) => rendered(export::run(job, &self.render_lock, &self.media, &context).await),
             Err(message) => usage_error(&message),
         }
     }

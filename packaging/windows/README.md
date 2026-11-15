@@ -1,7 +1,7 @@
 # Build a Windows package
 
 Run from a Windows x64 checkout using PowerShell 7. The package contains
-`Celesta.exe`, `Celesta-export.exe`, Node.js, the React runtime and its
+`Celesta.exe`, `Celesta-export.exe`, `Celesta-cli.exe`, Node.js, the React runtime and its
 dependencies (including native esbuild), and the MSVC runtime DLLs.
 Users do not need Node.js, pnpm, Rust, or FFmpeg installed.
 

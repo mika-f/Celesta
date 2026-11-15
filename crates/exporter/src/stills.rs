@@ -597,8 +597,7 @@ impl Exporter {
     /// The registry stills write through: the export's, with the built-in
     /// components added when it has none (a test's own registry).
     fn still_registry(&self) -> Arc<MediaRegistry> {
-        crate::media::ensure_media(self.plugins());
-        let registry = crate::media::current();
+        let registry = self.media();
         if registry.plugin_index(RESERVED_PLUGIN_ID).is_some() {
             registry
         } else {
@@ -799,7 +798,7 @@ impl Exporter {
             )
         });
         let project = project_owned.as_ref().map(|(p, root)| (*p, root.as_path()));
-        let mut bridge = runtime.spawn(entry, project, self.plugins())?;
+        let mut bridge = runtime.spawn(entry, project, self)?;
         bridge.set_debug_guides(request.debug_guides);
         let metadata = bridge.metadata().clone();
         progress(ExportProgress::ReactCompositions {

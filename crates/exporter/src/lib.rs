@@ -30,7 +30,7 @@ pub use control::{
     AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile, TrackInfo,
 };
 pub use error::{ExportError, FrameFailure, UnavailableReason};
-pub use exporter::Exporter;
+pub use exporter::{Exporter, project_plugins};
 pub use job::ExportJob;
 pub use media::{media_registry, use_installed_media, use_media, with_builtin};
 pub use options::{AudioChoice, EncoderChoice, ExportOptions, OutputChoice, SettingInput};

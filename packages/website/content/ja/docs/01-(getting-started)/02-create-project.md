@@ -19,7 +19,7 @@ celesta-exporter --react film.tsx output.mov
 celesta-editor --init
 ```
 
-デスクトップ版の実行ファイル名は `Celesta` と `Celesta-export` です（Windows では `.exe` 付き）。`celesta-editor` と `celesta-exporter` の代わりにインストール先のパスを使ってください。必要に応じて生成されたスクリプト内も変更します。
+デスクトップ版の実行ファイル名は `Celesta`、`Celesta-export`、`Celesta-cli` です（Windows では `.exe` 付き）。`celesta-editor`、`celesta-exporter`、`celesta`（[プラグインのコマンド](/ja/docs/plugins/#レジストリのプラグイン)）の代わりにインストール先のパスを使ってください。必要に応じて生成されたスクリプト内も変更します。
 
 ::::tabs[プロジェクトを初期化する OS]{default="macOS"}
 :::tab[macOS]

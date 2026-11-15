@@ -1,7 +1,8 @@
 //! The plugins the registry client installed into its store
 //! ([`registry_store_dir`], one folder per version at `<id>/<version>`), as
-//! discovery finds them: the versions a trusted project's `celesta.lock`
-//! names ([`PluginSource::Locked`]), and the ones the user installed without
+//! discovery finds them: the versions the project's `celesta.lock` names
+//! ([`PluginSource::Locked`]; in the app only once the user trusts the
+//! project), and the ones the user installed without
 //! a project ([`PluginSource::Registry`]). A store folder runs without the
 //! approval prompt, and only while its tree hash is the one recorded at
 //! install: the lock's for this host, or the one in the user's settings.
@@ -10,14 +11,14 @@ use crate::advisories::cached_advisories;
 use crate::locations::{PluginSource, SearchPath, registry_store_dir};
 use crate::lock::Lockfile;
 use crate::manifest::{
-    CELESTA_VERSION, DiscoveryError, PluginEntry, PluginRead, discover_in_with, is_valid_id,
-    read_manifest,
+    CELESTA_VERSION, DiscoveryError, MANIFEST, PluginEntry, PluginRead, discover_in_with,
+    is_valid_id, read_manifest,
 };
 use crate::settings::UserSettings;
 use celesta_registry_format::{AdvisoryList, Hash, Target, tree_hash};
 use std::path::{Path, PathBuf};
 
-/// A trusted project's lock, with the project's root folder.
+/// A project's lock, with the project's root folder.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectLock {
     pub root: PathBuf,
@@ -33,7 +34,8 @@ pub struct RegistryContext {
     /// The cached advisory list ([`crate::cached_advisories`]): a plugin it
     /// stops runs from no source.
     pub advisories: Option<AdvisoryList>,
-    /// A trusted project's lock; None for an untrusted project or no lock.
+    /// The project's lock: a trusted project's in the app, any project's
+    /// for command-line tools; None for no lock.
     pub project: Option<ProjectLock>,
 }
 
@@ -43,21 +45,31 @@ impl RegistryContext {
     /// ([`DiscoveryError::Advisories`], [`DiscoveryError::Lock`]) and not
     /// used.
     pub fn current(project: Option<&Path>, settings: &UserSettings) -> (Self, Vec<DiscoveryError>) {
+        Self::reading(project.filter(|root| settings.is_trusted(root)))
+    }
+
+    /// [`RegistryContext::current`] with `root`'s lock whether or not the
+    /// user trusts it: what command-line tools read
+    /// ([`crate::InstalledPlugins::find_for_project`]).
+    pub fn for_project(root: &Path) -> (Self, Vec<DiscoveryError>) {
+        Self::reading(Some(root))
+    }
+
+    /// Store, cached advisories, and `project`'s lock.
+    fn reading(project: Option<&Path>) -> (Self, Vec<DiscoveryError>) {
         let mut errors = Vec::new();
         let (advisories, advisories_error) = cached_advisories();
         errors.extend(advisories_error.map(DiscoveryError::Advisories));
-        let project = project
-            .filter(|root| settings.is_trusted(root))
-            .and_then(|root| match Lockfile::load(root) {
-                Ok(lock) => lock.map(|lock| ProjectLock {
-                    root: root.to_path_buf(),
-                    lock,
-                }),
-                Err(error) => {
-                    errors.push(DiscoveryError::Lock(error.to_string()));
-                    None
-                }
-            });
+        let project = project.and_then(|root| match Lockfile::load(root) {
+            Ok(lock) => lock.map(|lock| ProjectLock {
+                root: root.to_path_buf(),
+                lock,
+            }),
+            Err(error) => {
+                errors.push(DiscoveryError::Lock(error.to_string()));
+                None
+            }
+        });
         let context = Self {
             store: registry_store_dir(),
             advisories,
@@ -107,6 +119,27 @@ impl LockedFailure {
     }
 }
 
+/// Whether `directory` is this build of a plugin: its manifest names `id`
+/// and `version`, and its files hash to `tree_hash`. A missing or
+/// unparsable manifest is no build. It does not check the manifest's
+/// `celesta` range or the advisories.
+pub fn is_build(directory: &Path, id: &str, version: &semver::Version, tree_hash: &Hash) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Named {
+        id: String,
+        version: String,
+    }
+    let Ok(text) = std::fs::read(directory.join(MANIFEST)) else {
+        return false;
+    };
+    let Ok(named) = serde_json::from_slice::<Named>(&text) else {
+        return false;
+    };
+    named.id == id
+        && semver::Version::parse(&named.version).is_ok_and(|found| found == *version)
+        && celesta_registry_format::tree_hash(directory).is_ok_and(|found| found == *tree_hash)
+}
+
 /// A version in the store, and what its folder must hold to run.
 #[derive(Debug)]
 struct StoreFolder {
@@ -123,10 +156,9 @@ impl StoreFolder {
     /// Whether `entry` is what was installed: the same id and version, and
     /// the same files.
     fn holds(&self, entry: &PluginEntry) -> bool {
-        self.is(entry)
-            && self.tree_hash.is_some_and(|expected| {
-                tree_hash(&entry.directory).is_ok_and(|hash| hash == expected)
-            })
+        self.tree_hash
+            .as_ref()
+            .is_some_and(|expected| is_build(&entry.directory, &self.id, &self.version, expected))
     }
 
     /// Whether `entry` has this id and version.
@@ -253,10 +285,11 @@ impl StoreSearch {
         }))
     }
 
-    /// Settles each version the lock names that cannot run from the store:
-    /// one with no build for this host, whose folder held nothing
+    /// Settles each version the lock names that cannot run from the store.
+    /// One with no build for this host is reported as
+    /// [`DiscoveryError::LockNoBuild`]. One whose folder held nothing
     /// (`missing`), or whose folder held something that cannot run
-    /// (`failed`, already reported) is reported as
+    /// (`failed`, already reported), is reported as
     /// [`DiscoveryError::LockUnsatisfied`], unless a bundled copy in `read`
     /// has its id, version, and tree hash. That copy runs as the locked
     /// version ([`PluginSource::Locked`], replacing
@@ -270,9 +303,11 @@ impl StoreSearch {
     ) {
         for locked in &self.locked {
             let Some(expected) = locked.tree_hash else {
-                read.push(Err(
-                    locked.unsatisfied(format!("it has no build for {}", Target::host()))
-                ));
+                read.push(Err(DiscoveryError::LockNoBuild {
+                    id: locked.id.clone(),
+                    version: locked.version.to_string(),
+                    host: Target::host().as_str().to_owned(),
+                }));
                 continue;
             };
             let failure = locked.path.as_ref().and_then(|path| {
@@ -301,10 +336,11 @@ impl StoreSearch {
                 let reason = match failure {
                     None => "it is not installed".to_owned(),
                     Some(LockedFailure::Differs) => differs.to_owned(),
-                    Some(LockedFailure::Incompatible) => format!(
-                        "it does not load with Celesta {}; run `celesta plugin update`",
-                        CELESTA_VERSION
-                    ),
+                    // No command of its own: `LockProblem::Unsatisfied`
+                    // names the one to run.
+                    Some(LockedFailure::Incompatible) => {
+                        format!("it does not load with Celesta {CELESTA_VERSION}")
+                    }
                     Some(LockedFailure::Other) => continue,
                 };
                 read.push(Err(locked.unsatisfied(reason)));
@@ -338,7 +374,7 @@ impl PluginSource {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::lock::{LockedArtifact, LockedPlugin};
     use crate::manifest::tests::{COMPATIBLE, write_manifest};
@@ -350,7 +386,7 @@ mod tests {
     use serde_json::{Map, Value, json};
 
     /// A content plugin's manifest.
-    fn content(id: &str, version: &str) -> Value {
+    pub(crate) fn content(id: &str, version: &str) -> Value {
         json!({
             "id": id, "version": version, "protocol": protocol_for_roles(&["content"]),
             "celesta": COMPATIBLE, "roles": ["content"],
@@ -368,10 +404,32 @@ mod tests {
 
     /// Writes a plugin to `directory`, with a file besides its manifest, and
     /// gives its tree hash.
-    fn write(directory: &Path, manifest: Value) -> Hash {
+    pub(crate) fn write(directory: &Path, manifest: Value) -> Hash {
         write_manifest(directory, manifest);
         std::fs::write(directory.join("lib.txt"), "the plugin's code").unwrap();
         tree_hash(directory).unwrap()
+    }
+
+    #[test]
+    fn is_build_needs_id_version_and_tree_hash() {
+        let folder = tempfile::tempdir().unwrap();
+        let dir = folder.path();
+        let hash = write(dir, content("acme.charts", "1.2.3"));
+        let v = |text: &str| semver::Version::parse(text).unwrap();
+        assert!(is_build(dir, "acme.charts", &v("1.2.3"), &hash));
+        assert!(!is_build(dir, "acme.other", &v("1.2.3"), &hash));
+        assert!(!is_build(dir, "acme.charts", &v("1.2.4"), &hash));
+        std::fs::write(dir.join("lib.txt"), "changed").unwrap();
+        assert!(!is_build(dir, "acme.charts", &v("1.2.3"), &hash));
+        let bare = tempfile::tempdir().unwrap();
+        std::fs::write(bare.path().join("lib.txt"), "x").unwrap();
+        let bare_hash = tree_hash(bare.path()).unwrap();
+        assert!(!is_build(
+            bare.path(),
+            "acme.charts",
+            &v("1.2.3"),
+            &bare_hash
+        ));
     }
 
     /// A test's folders: the store, and an explicit, a user, and a bundled
@@ -448,9 +506,9 @@ mod tests {
 
     /// A locked plugin as a test gives it: id, version, and each target's
     /// tree hash.
-    type Locked<'a> = (&'a str, &'a str, &'a [(&'a str, Hash)]);
+    pub(crate) type Locked<'a> = (&'a str, &'a str, &'a [(&'a str, Hash)]);
 
-    fn lock(plugins: &[Locked]) -> Lockfile {
+    pub(crate) fn lock(plugins: &[Locked]) -> Lockfile {
         Lockfile {
             celesta: semver::Version::new(0, 1, 0),
             targets: Vec::new(),
@@ -666,11 +724,10 @@ mod tests {
         else {
             panic!("{errors:?}");
         };
+        // LockProblem::Unsatisfied adds the one command to run.
         assert_eq!(
             reason,
-            &format!(
-                "it does not load with Celesta {CELESTA_VERSION}; run `celesta plugin update`"
-            )
+            &format!("it does not load with Celesta {CELESTA_VERSION}")
         );
         assert!(
             errors
@@ -789,10 +846,18 @@ mod tests {
         let hash = folders.install(content("p", "0.9.0"));
         let context = folders.context(Some(lock(&[("p", "0.9.0", &[("plan9-mips", hash)])])));
         let (found, errors) = folders.discover(&context, &UserSettings::default());
-        let [DiscoveryError::LockUnsatisfied { reason, .. }] = &errors[..] else {
+        let [
+            DiscoveryError::LockNoBuild {
+                id,
+                version,
+                host: on,
+            },
+        ] = &errors[..]
+        else {
             panic!("{errors:?}");
         };
-        assert_eq!(reason, &format!("it has no build for {}", host()));
+        assert_eq!((id.as_str(), version.as_str()), ("p", "0.9.0"));
+        assert_eq!(on, &host());
         assert_eq!(running(&found, "p").source, PluginSource::User);
     }
 

@@ -1,9 +1,11 @@
 # Plugin registry (registry.celesta.studio): design
 
 Status: design, agreed with the maintainer on 2026-11-14. Plan 1 (the file
-format) and plan 3 (the client core, with its decisions decided in plan 3) are
-built: see [`2026-11-14-registry-client.md`](2026-11-14-registry-client.md). The
-rest is not built yet. Items marked **(proposal)** are the designer's calls, not the
+format), plan 3 (the client core, with its decisions decided in plan 3; see
+[`2026-11-14-registry-client.md`](2026-11-14-registry-client.md)), and plan 4
+(the `celesta` command, and the exporter and MCP server reading a project's
+lock; see [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md)) are
+built. The rest, the desktop app (plan 5), is not built yet. Items marked **(proposal)** are the designer's calls, not the
 maintainer's, and may be corrected.
 
 ## Intent
@@ -300,7 +302,8 @@ grows.
 - `POST /api/v1/publish` accepts one version: the manifest and its target
   archives. It is authenticated by a GitHub Actions OIDC token. In phase 1
   only `mika-f/Celesta` may publish; in phase 2, the repository and
-  workflow a plugin's owners registered (Trusted Publishing). There are no
+  workflow a plugin's owners registered (Trusted Publishing; see
+  [Trusted Publishing (phase 2)](#trusted-publishing-phase-2)). There are no
   long-lived API tokens.
 - The registry validates the manifest as the host does (id, contained paths,
   `celesta` range, the id matching the registered name) and each archive's
@@ -312,9 +315,11 @@ grows.
   such as `CON` or `NUL`), and regenerates the plugin's index,
   `search.json`, and their signatures. Versions are immutable: republishing
   a version is refused.
-- From phase 2 every archive must carry a GitHub artifact attestation
-  (Sigstore) from the registered repository and workflow, which in turn
-  requires a public source repository. A version stays invisible until the
+- From phase 2 every archive of a third-party (dotted) id must carry a
+  GitHub artifact attestation (Sigstore) from the same workflow run that
+  publishes it, which in turn requires a public source repository (see
+  [Attestations (phase 2)](#attestations-phase-2)). First-party (dotless)
+  ids will require one once Celesta's release workflow sends them. A version stays invisible until the
   automated checks (static checks, then ClamAV and YARA) pass; there is no
   human review.
 - Yank, unyank, and deprecate are available to a plugin's owners (phase 2:
@@ -338,6 +343,146 @@ grows.
   it by its manifest `id` and `version`.
   This changes the order of the release pipelines (`package-build.yml`,
   `package-macos.py`, `package-windows.ps1`).
+
+### Publish request (phase 1)
+
+What a publishing workflow (and later `celesta plugin publish`) sends, and
+what it gets back. The served files do not change: each `.sig` is still
+`{"keyid", "signature"}` as pretty JSON with one trailing newline.
+
+**Request:** `POST https://registry.celesta.studio/api/v1/publish`.
+
+- `Authorization: Bearer <GitHub Actions OIDC token>`, issued for the
+  audience `https://registry.celesta.studio`. A token is accepted once, so
+  a retry needs a fresh token. Phase 1 accepts tokens from `mika-f/Celesta`
+  only, from an allowed workflow, and never from a `pull_request` or
+  `pull_request_target` event.
+- `Content-Length` is required; the whole request is at most 90 MiB.
+- `Content-Type: multipart/form-data` (RFC 7578) with these parts and no
+  others:
+  - exactly one part named `manifest`, a file or a field, holding the exact
+    bytes of `celesta-plugin.json`;
+  - one part per target named `archive:<target>`, each with a filename,
+    holding the ZIP bytes. Each archive's root `celesta-plugin.json` must be
+    byte-identical to the `manifest` part;
+  - from phase 2, at most one part per archive named
+    `attestation:<target>`, holding that archive's attestation bundle (see
+    [Attestations (phase 2)](#attestations-phase-2)).
+- Limits: each archive at most 64 MiB, at most 512 MiB unpacked and 10 000
+  entries per archive, at most 16 targets, and a manifest of at most
+  64 KiB.
+
+**Targets.** A plugin with `executable` publishes one or more
+`<os>-<arch>` targets; each resolves its executable as
+`executable["<os>-<arch>"]`, falling back to `executable["<os>"]`. A plugin
+without `executable` publishes exactly one target, `any`. Each archive holds
+its own executable and no other target's, and the files `module` and `types`
+name must be present.
+
+**Archives.** An archive is stored and served byte for byte as uploaded.
+
+- Compression is stored or deflate; encryption is refused.
+- ZIP64 is refused, as are the `0x0001` and `0x7075` extra fields.
+- Names are UTF-8.
+- Only regular files and directories are allowed. Entries made on Unix must
+  carry file-type bits, and symlinks are refused.
+- A name must not start with `/`, contain `\`, `:`, or NUL, have an empty,
+  `.`, or `..` component, or have a component ending in `.` or a space.
+- Also refused, as `crates/registry-format/README.md` lists: OS junk names,
+  Windows-reserved names, and two names in one directory that differ only by
+  case or Unicode normalization.
+
+**Manifest**, on top of the host's own rules:
+
+- The JSON is parsed strictly: duplicate keys are refused, `protocol` must
+  be an integer literal, and `null` is refused where the host's field is not
+  optional.
+- Phase 1 ids have no dot (first-party plugins).
+- `celesta` is required.
+- The optional `description` and `homepage` are read from the manifest (the
+  host ignores them); `homepage` must start with `https://`.
+- `executable`, `module`, and `types` must not end in a junk name.
+- A version is immutable: one with the same semver precedence as an
+  existing version is refused, so builds that differ only in `+build`
+  metadata clash.
+
+**Index `source`:** `repository` is `https://github.com/<the token's
+repository>`, `commit` is the token's `sha`, and `workflow` is the workflow
+path from the token's `workflow_ref`, such as
+`.github/workflows/plugin-release.yml`.
+
+**Response.** `201` with
+`{ "id", "version", "targets": { "<target>": { "url", "size", "sha256", "treeHash" } } }`.
+Errors are `{ "error": <code>, "message": <text> }`:
+
+| Status | `error` | When |
+| --- | --- | --- |
+| 400 | `bad_request` | a malformed body, a `Content-Length` that does not match, or one that is not a number |
+| 401 | `unauthorized` | no bearer token, or a token that is invalid, expired, issued for another audience, or already used |
+| 403 | `forbidden` | the token is refused outright, for example one from a `pull_request` or `pull_request_target` event |
+| 403 | `not_owner` | for a third-party (dotted) id, the token's repository and workflow are not registered for this plugin id; this includes a repository with no registrations at all. For a first-party (dotless) id, the id is registered to another repository |
+| 409 | `version_exists` | a version of equal precedence exists |
+| 411 | `length_required` | no `Content-Length` |
+| 413 | `too_large` | a limit above is exceeded |
+| 415 | `unsupported_media_type` | not `multipart/form-data` |
+| 422 | `invalid_manifest`, `invalid_archive`, `invalid_target` | a rule above is broken |
+| 422 | `invalid_attestation` | from phase 2: an attestation is missing, extra, duplicated, or fails verification (see [Attestations (phase 2)](#attestations-phase-2)) |
+| 500 | `internal` | the registry failed |
+
+A version left half-published by an interrupted request is cleaned up
+automatically within a few hours; until then, publishing it again gives
+`409`.
+
+### Trusted Publishing (phase 2)
+
+Phase 2 opens publishing to third-party (dotted) ids. The request above
+stays as it is, except that tokens from registered repositories are accepted
+and the `attestation:<target>` parts below are added.
+
+- A plugin's owners register, on the registry website, the GitHub
+  repository, the workflow file, and optionally a GitHub environment allowed
+  to publish it. A token is accepted for that id only when its repository
+  and workflow match a registration (and its environment, when one is
+  registered); otherwise the answer is `403 not_owner`.
+- The workflow to register is the author's own top-level workflow file, such
+  as `.github/workflows/release.yml`, even when it calls Celesta's reusable
+  publishing workflow.
+- Tokens from `pull_request` and `pull_request_target` events never publish
+  (`403 forbidden`). Any branch or tag may.
+
+### Attestations (phase 2)
+
+- Each `attestation:<target>` part is a file of at most 1 MiB holding the
+  Sigstore bundle JSON that `actions/attest-build-provenance` wrote for that
+  target's archive (its `bundle-path` output). Bundle media types
+  `application/vnd.dev.sigstore.bundle.v0.3+json` and
+  `application/vnd.dev.sigstore.bundle+json;version=0.2` are accepted.
+- At most one per `archive:<target>`, and none for a target without an
+  archive.
+- The attestation must come from the same workflow run that publishes: the
+  same repository, workflow file, commit, and run.
+- Only public-good Sigstore is accepted, which matches the requirement for a
+  public source repository.
+- Third-party (dotted) ids must send one for every archive. First-party
+  (dotless) ids will have to once Celesta's release workflow sends bundles;
+  until then a first-party publish sends attestations for all of its targets
+  or for none.
+- A missing, extra, duplicate, or failing attestation gives
+  `422 invalid_attestation`.
+
+### Publishing tools (to do)
+
+None of these exist in this repository yet; when they are built, they follow
+the contract above:
+
+- A reusable GitHub Actions publishing workflow. In the calling run it
+  attests each archive with `actions/attest-build-provenance` (which needs
+  the `id-token: write` and `attestations: write` permissions) and sends
+  each bundle as `attestation:<target>`.
+- The first-party release workflow that publishes plugins does the same for
+  every target, after which first-party ids require attestations.
+- `celesta plugin publish`, if it builds the request itself: it takes one
+  bundle file per target and sends it as `attestation:<target>`.
 
 ## The service, as clients see it
 
@@ -538,8 +683,9 @@ proposal):
   the directory's tree hash checked at load.
 - Authenticity: Ed25519 signatures with a compiled-in root key and rotating
   online keys.
-- Provenance: GitHub artifact attestations required for every archive in
-  phase 2 (and produced for first-party archives from phase 1).
+- Provenance: GitHub artifact attestations from the publishing run,
+  required for every archive of a third-party id in phase 2, and for
+  first-party archives once Celesta's release workflow sends them.
 - Malware: static checks, then ClamAV and YARA (phase 2); Blocked
   advisories, enforced by id and version, even offline.
 - Privacy: whole-file downloads only; no per-user requests.

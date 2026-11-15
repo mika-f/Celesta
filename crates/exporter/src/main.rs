@@ -20,7 +20,7 @@ use celesta_exporter::{
     AudioChoice, AudioLoudness, ContactSheet, EncoderChoice, ExportCancellation, ExportError,
     ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
     LoudnessTarget, OutputChoice, PeakHandling, PresetLookup, PresetsFile, ReactRuntimeOptions,
-    RenderQuality, SettingInput, StillExport, StillFormat, parse_timecode,
+    RenderQuality, SettingInput, StillExport, StillFormat, parse_timecode, project_plugins,
 };
 use celesta_media::{ComponentRef, SettingKind, SettingValue};
 use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
@@ -493,7 +493,7 @@ fn main() -> ExitCode {
     let range = export_range(cli.from, cli.to)
         .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ValueValidation, &error));
     let export = |on_progress: &mut dyn FnMut(ExportProgress)| {
-        job(&cli, &kind, range).run(&cancellation, on_progress)
+        job(&cli, &kind, range)?.run(&cancellation, on_progress)
     };
     if cli.json {
         return if json::run(cli.source(), props_file, cli.json_progress, export) {
@@ -561,8 +561,22 @@ fn read_preset_file(path: &Path) -> Result<(), String> {
 
 /// `--list-components` and `--describe`: what is installed, from the
 /// manifests (and with `--check` from each plugin), as JSON with `--json`.
+/// Given a source, the plugins are its project's ([`project_plugins`]).
 fn components(cli: &Cli) -> ExitCode {
-    let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir, &cli.allow_plugin);
+    let plugins = match &cli.source {
+        Some(source) => match project_plugins(source, &cli.plugin_dir, &cli.allow_plugin) {
+            Ok(plugins) => plugins,
+            Err(error) => {
+                if cli.json {
+                    json::failure(&error);
+                } else {
+                    print_error("Celesta export", &error);
+                }
+                return ExitCode::FAILURE;
+            }
+        },
+        None => InstalledPlugins::find_reporting(&cli.plugin_dir, &cli.allow_plugin),
+    };
     let registry = celesta_exporter::media_registry(&plugins);
     let kill = PluginKillSwitch::new();
     if let Some(reference) = &cli.describe {
@@ -708,7 +722,7 @@ fn info(cli: &Cli, props_file: Option<PropsFileChoice>) -> ExitCode {
     let job = job(cli, &OutputKind::SubtitlesOnly, None);
     if cli.json {
         let ok = json::run(cli.source(), props_file, cli.json_progress, |on_progress| {
-            job.describe(on_progress)
+            job?.describe(on_progress)
         });
         return if ok {
             ExitCode::SUCCESS
@@ -716,37 +730,39 @@ fn info(cli: &Cli, props_file: Option<PropsFileChoice>) -> ExitCode {
             ExitCode::FAILURE
         };
     }
-    let result = job.describe(&mut |event| match event {
-        ExportProgress::Composition(info) => {
-            let rate = info.frame_rate;
-            let fps = f64::from(rate.numerator) / f64::from(rate.denominator);
-            let seconds = info.frames as f64 / fps;
-            println!("size: {}x{}", info.width, info.height);
-            if rate.denominator == 1 {
-                println!("fps: {}", rate.numerator);
-            } else {
-                println!("fps: {}/{} ({fps:.3})", rate.numerator, rate.denominator);
+    let result = job.and_then(|job| {
+        job.describe(&mut |event| match event {
+            ExportProgress::Composition(info) => {
+                let rate = info.frame_rate;
+                let fps = f64::from(rate.numerator) / f64::from(rate.denominator);
+                let seconds = info.frames as f64 / fps;
+                println!("size: {}x{}", info.width, info.height);
+                if rate.denominator == 1 {
+                    println!("fps: {}", rate.numerator);
+                } else {
+                    println!("fps: {}/{} ({fps:.3})", rate.numerator, rate.denominator);
+                }
+                println!("frames: {}", info.frames);
+                println!("duration: {seconds:.3}s");
             }
-            println!("frames: {}", info.frames);
-            println!("duration: {seconds:.3}s");
-        }
-        ExportProgress::ReactCompositions {
-            selected,
-            compositions,
-        } => {
-            let ids: Vec<_> = compositions
-                .iter()
-                .map(|root| {
-                    if root.id == selected {
-                        format!("{} (selected)", root.id)
-                    } else {
-                        root.id.clone()
-                    }
-                })
-                .collect();
-            println!("compositions: {}", ids.join(", "));
-        }
-        _ => {}
+            ExportProgress::ReactCompositions {
+                selected,
+                compositions,
+            } => {
+                let ids: Vec<_> = compositions
+                    .iter()
+                    .map(|root| {
+                        if root.id == selected {
+                            format!("{} (selected)", root.id)
+                        } else {
+                            root.id.clone()
+                        }
+                    })
+                    .collect();
+                println!("compositions: {}", ids.join(", "));
+            }
+            _ => {}
+        })
     });
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -772,7 +788,10 @@ fn cancel_on_stdin(cancellation: ExportCancellation) {
 }
 
 fn inspect(cli: &Cli) -> ExitCode {
-    let plugins = InstalledPlugins::find_reporting(&cli.plugin_dir, &cli.allow_plugin);
+    let plugins = match project_plugins(cli.source(), &cli.plugin_dir, &cli.allow_plugin) {
+        Ok(plugins) => plugins,
+        Err(error) => return inspect_exit(inspect::startup_failed(&error.to_string())),
+    };
     // The React runtime's media probes go through the media plugins.
     celesta_exporter::use_media(&plugins);
     let result = match ReactRuntimeOptions::for_entry(
@@ -792,6 +811,11 @@ fn inspect(cli: &Cli) -> ExitCode {
         ),
         Err(error) => inspect::startup_failed(&error.to_string()),
     };
+    inspect_exit(result)
+}
+
+/// How `--inspect` exits after `result`.
+fn inspect_exit(result: std::io::Result<bool>) -> ExitCode {
     match result {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
@@ -957,8 +981,21 @@ fn subtitles_only_choice(explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind, 
     Ok(OutputKind::SubtitlesOnly)
 }
 
-/// The export `cli` describes.
-fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
+/// The export `cli` describes, with its project's plugins
+/// ([`project_plugins`]).
+fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> Result<ExportJob, ExportError> {
+    let mut job = described_job(cli, kind, range);
+    job.options.plugins = Some(project_plugins(
+        cli.source(),
+        &cli.plugin_dir,
+        &cli.allow_plugin,
+    )?);
+    Ok(job)
+}
+
+/// [`job`] without its plugins, which are discovered from the user's and
+/// the project's folders.
+fn described_job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
     ExportJob {
         source: cli.source().to_owned(),
         react: cli.react,
@@ -994,10 +1031,7 @@ fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
             subtitles: cli.subtitles.clone(),
             looping: cli.looping,
             loudness: cli.loudness(),
-            plugins: Some(InstalledPlugins::find_reporting(
-                &cli.plugin_dir,
-                &cli.allow_plugin,
-            )),
+            plugins: None,
             presets: match kind {
                 OutputKind::Video(_) => {
                     PresetLookup::for_source(cli.source(), cli.preset_file.clone())
@@ -1005,6 +1039,7 @@ fn job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> ExportJob {
                 OutputKind::Stills | OutputKind::SubtitlesOnly => PresetLookup::default(),
             },
         },
+        media: None,
     }
 }
 
@@ -1149,7 +1184,7 @@ mod tests {
             "out.png",
         ];
         assert_eq!(choice(&args), Ok(OutputKind::Stills));
-        let job = job(&cli(&args), &OutputKind::Stills, None);
+        let job = described_job(&cli(&args), &OutputKind::Stills, None);
         assert_eq!(
             job.options.output.video.options["transparent"],
             SettingInput::Text("true".into())

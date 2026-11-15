@@ -19,7 +19,7 @@ celesta-exporter --react film.tsx output.mov
 celesta-editor --init
 ```
 
-Desktop packages name the executables `Celesta` and `Celesta-export` (`.exe` on Windows). Use their installed paths in place of `celesta-editor` and `celesta-exporter`, including in generated scripts when needed:
+Desktop packages name the executables `Celesta`, `Celesta-export`, and `Celesta-cli` (`.exe` on Windows). Use their installed paths in place of `celesta-editor`, `celesta-exporter`, and `celesta` (the [plugin command](/en/docs/plugins/#registry-plugins)), including in generated scripts when needed:
 
 ::::tabs[Project initialization platform]{default="macOS"}
 :::tab[macOS]
