@@ -448,7 +448,7 @@ audio, and rewriting WAV files.
 
 ## Synthesizing a script with VOICEVOX
 
-`prepareNarration(lines, options)` from `@celesta.studio/voicevox` makes the voices
+`prepareNarration(lines, options)` from `@celesta-plugin/voicevox` makes the voices
 for a script with a local VOICEVOX Engine in `prepare()`, so no WAV paths or
 query files are written by hand. It returns the lines with `audio`,
 `lipSync`, and `narration` set, in order, ready for `planDialogue()`. The
@@ -458,8 +458,8 @@ engine is never installed or started for you; start it first, e.g.
 ```tsx
 import { planDialogue } from '@celesta.studio/character';
 import type { DialoguePlan } from '@celesta.studio/character';
-import { prepareNarration } from '@celesta.studio/voicevox';
-import type { NarratedLine, NarrationLine } from '@celesta.studio/voicevox';
+import { prepareNarration } from '@celesta-plugin/voicevox';
+import type { NarratedLine, NarrationLine } from '@celesta-plugin/voicevox';
 
 const SCRIPT: NarrationLine[] = [
   { id: 'intro', speaker: 'zunda', text: 'HPが1です。', spokenText: 'エイチピーがいちです。' },
@@ -854,9 +854,9 @@ export async function prepare() {
 
 ### Lip sync from VOICEVOX timing
 
-VOICEVOX-specific helpers and types live in `@celesta.studio/voicevox`. The desktop
-runtime includes the package; **File > Set Up TypeScript** installs its
-declarations. Shared WAV lip sync and dialogue components stay in `@celesta.studio/character`.
+VOICEVOX-specific helpers and types live in the `voicevox` plugin,
+`@celesta-plugin/voicevox` (`celesta plugin add voicevox`; the old
+`@celesta.studio/voicevox` import still works and warns). Shared WAV lip sync and dialogue components stay in `@celesta.studio/character`.
 
 When the voice comes from VOICEVOX Engine, build the track from the
 `audio_query` JSON instead (engines that take the same query but choose their
@@ -875,7 +875,7 @@ curl -s -X POST "http://127.0.0.1:50021/synthesis?speaker=3" \
 ```
 
 ```tsx
-import { lipSyncFromVoicevox } from '@celesta.studio/voicevox';
+import { lipSyncFromVoicevox } from '@celesta-plugin/voicevox';
 import helloQuery from './voices/hello.json';
 
 const hello = lipSyncFromVoicevox(helloQuery);
@@ -916,7 +916,7 @@ moras as they are spoken, time an effect to a mora, or change a face at a
 pause, and build the mouth from the same timing so they agree:
 
 ```ts
-import { lipSyncFromVoicevox, timingFromVoicevox } from '@celesta.studio/voicevox';
+import { lipSyncFromVoicevox, timingFromVoicevox } from '@celesta-plugin/voicevox';
 
 const timing = timingFromVoicevox(query);
 const line = {
@@ -949,7 +949,7 @@ in-line face changes ([expression cues](#changing-the-face-within-a-line)).
 
 AivisSpeech Engine serves VOICEVOX's API (default port 10101), but its model
 chooses every phoneme length itself: the `audio_query` lengths are dummy
-zeros, so `@celesta.studio/voicevox` cannot time it. Use `@celesta.studio/aivis-speech`,
+zeros, so `@celesta-plugin/voicevox` cannot time it. Use `@celesta-plugin/aivis-speech`,
 which reads the query **and the WAV synthesized from it**: the query gives
 the moras in order (punctuation included), the WAV where they fall. The
 voice's start and end are exact; times inside it are estimated from the
@@ -962,7 +962,7 @@ the package; **File > Set Up TypeScript** installs its declarations.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { LipSyncTrack } from '@celesta.studio/character';
-import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '@celesta.studio/aivis-speech';
+import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '@celesta-plugin/aivis-speech';
 import helloQuery from './voices/hello.json';
 
 let hello: LipSyncTrack;

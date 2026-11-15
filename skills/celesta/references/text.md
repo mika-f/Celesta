@@ -460,7 +460,7 @@ so Latin can come from one font and Japanese from the next:
 - Weights match within each family on its own: with `fontWeight: 400` and
   Noto Sans JP loaded only at 500, the Japanese is drawn at 500.
 - Measuring (`useTextMetrics`, `measureText()`, `useFitText`, `TextBox`),
-  wrapping, and drawing use the same choice, and so does `@celesta.studio/code`:
+  wrapping, and drawing use the same choice, and so does `@celesta-plugin/code`:
   `<Code style={{ fontFamily: ['JetBrains Mono', 'Noto Sans JP'] }}>` draws
   Japanese comments and strings in Noto Sans JP, and its line highlight
   covers them. Mixing a proportional font into code breaks column
@@ -893,7 +893,7 @@ vertical composition).
 
 `scripts/inspect.mjs` shows each text layer's string, position, font, and
 color. **An entry that uses `useTextMetrics`, `measureText`, `TextBox`,
-`useFitText`, `fitText`, or `@celesta.studio/code` is inspected through the
+`useFitText`, `fitText`, or `@celesta-plugin/code` is inspected through the
 exporter**, which shapes text like an export; `inspect.mjs` finds it or
 takes `--native <Celesta-export>`. Without one, those frames report
 `UNSUPPORTED inspection` (unless `prepare()` catches the error and falls

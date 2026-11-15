@@ -10,7 +10,7 @@ another package: shapes from `@celesta.studio/shapes`, layout helpers from
 `@celesta.studio/layout`, media info from `@celesta.studio/media-utils`, and debug guides
 from `@celesta.studio/debug`. Components only mentioned here come from their own
 packages too: `CharacterView` and `Dialogue` from `@celesta.studio/character`,
-`Transition` from `@celesta.studio/transitions`, and `Code` from `@celesta.studio/code`
+`Transition` from `@celesta.studio/transitions`, and `Code` from `@celesta-plugin/code`
 (see [SKILL.md](../SKILL.md#packages)). The runtime bundled with Celesta
 provides `react` (18.x) and those packages; never install them from npm.
 
@@ -475,11 +475,11 @@ for 30 seconds.
 
 ## Lottie animations
 
-`<Lottie>` from `@celesta.studio/lottie` plays a Lottie (Bodymovin) JSON export in
+`<Lottie>` from `@celesta-plugin/lottie` plays a Lottie (Bodymovin) JSON export in
 step with the composition. Import the file and pass its contents as `data`:
 
 ```tsx
-import { Lottie } from '@celesta.studio/lottie';
+import { Lottie } from '@celesta-plugin/lottie';
 import confetti from './confetti.json';
 
 <Lottie data={confetti} x={960} y={540} anchorX={0.5} anchorY={0.5} width={800} />
