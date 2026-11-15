@@ -744,6 +744,7 @@ fn reports_imports_of_the_legacy_scope_when_node_is_available() {
             file: "scenes/Title.tsx".to_owned(),
             specifier: "@celesta/react".to_owned(),
             current: "@celesta.studio/react".to_owned(),
+            plugin: None,
         }]
     );
 }
