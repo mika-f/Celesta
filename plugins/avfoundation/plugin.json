@@ -2,6 +2,7 @@
   "id": "avfoundation",
   "name": "AVFoundation",
   "version": "0.10.0-alpha.3",
+  "license": "MIT OR Apache-2.0",
   "cargoPackage": "celesta-codec-avfoundation",
   "roles": ["media"],
   "os": ["macos"],

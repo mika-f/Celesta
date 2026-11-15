@@ -97,7 +97,8 @@ fn show_info(
     Ok(())
 }
 
-/// The header, roles, and one line per version of `index`, newest first:
+/// The header, roles, the highest version's license, and one line per
+/// version of `index`, newest first:
 /// `{version}  celesta {range}  {targets}  {state}`.
 fn info_lines(index: &Index, advisories: Option<&AdvisoryList>) -> Vec<String> {
     let roles = if index.kind.roles.is_empty() {
@@ -111,6 +112,9 @@ fn info_lines(index: &Index, advisories: Option<&AdvisoryList>) -> Vec<String> {
     ];
     let mut versions: Vec<&VersionEntry> = index.versions.iter().collect();
     versions.sort_by(|a, b| b.version.cmp(&a.version));
+    if let Some(highest) = versions.first() {
+        lines.extend(license_lines(highest));
+    }
     for entry in versions {
         let targets: Vec<&str> = entry.targets.keys().map(|target| target.as_str()).collect();
         lines.push(format!(
@@ -120,6 +124,24 @@ fn info_lines(index: &Index, advisories: Option<&AdvisoryList>) -> Vec<String> {
             targets.join(", "),
             state(index, entry, advisories)
         ));
+    }
+    lines
+}
+
+/// `license: {expression}` for `entry`, then one indented line for each
+/// license outside the SPDX list the expression names:
+/// `{LicenseRef-*}: {name} ({url})`. `license: not declared` without one.
+fn license_lines(entry: &VersionEntry) -> Vec<String> {
+    let Some(license) = &entry.license else {
+        return vec!["license: not declared".to_owned()];
+    };
+    let mut lines = vec![format!("license: {license}")];
+    for (id, named) in &entry.license_refs {
+        let url = named
+            .url
+            .as_ref()
+            .map_or_else(String::new, |url| format!(" ({url})"));
+        lines.push(format!("  {id}: {}{url}", named.name));
     }
     lines
 }
@@ -334,6 +356,8 @@ mod tests {
                     withdrawn: false,
                     deprecated: None,
                     source: None,
+                    license: None,
+                    license_refs: BTreeMap::new(),
                     targets: BTreeMap::new(),
                 })
                 .collect(),
@@ -361,5 +385,40 @@ mod tests {
     fn a_plugin_without_roles_shows_a_dash() {
         let lines = info_lines(&index(&[]), None);
         assert_eq!(lines, ["acme.charts by acme: Charts.", "roles: -"]);
+    }
+
+    #[test]
+    fn info_shows_the_highest_versions_license() {
+        let mut index = index(&["1.0.0", "2.0.0"]);
+        index.versions[0].license = Some("MIT".to_owned());
+        let undeclared = info_lines(&index, None);
+        assert_eq!(undeclared[2], "license: not declared");
+
+        let highest = &mut index.versions[1];
+        highest.license = Some("GPL-3.0-only OR LicenseRef-Acme-Commercial".to_owned());
+        highest.license_refs = BTreeMap::from([
+            (
+                "LicenseRef-Acme-Commercial".to_owned(),
+                celesta_registry_format::LicenseRef {
+                    name: "Acme Commercial License".to_owned(),
+                    url: Some("https://acme.example/license".to_owned()),
+                },
+            ),
+            (
+                "LicenseRef-Other".to_owned(),
+                celesta_registry_format::LicenseRef {
+                    name: "Other".to_owned(),
+                    url: None,
+                },
+            ),
+        ]);
+        assert_eq!(
+            info_lines(&index, None)[2..5],
+            [
+                "license: GPL-3.0-only OR LicenseRef-Acme-Commercial",
+                "  LicenseRef-Acme-Commercial: Acme Commercial License (https://acme.example/license)",
+                "  LicenseRef-Other: Other",
+            ]
+        );
     }
 }

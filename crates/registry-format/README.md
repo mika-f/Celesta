@@ -80,8 +80,8 @@ One file per plugin.
 
 A version entry has `version` (a version), `celesta` (a requirement on the Celesta version,
 below), `protocol` (unsigned integer), `published` (timestamp), `yanked`, `withdrawn`
-(bools), optional `deprecated` and `source` (`repository`, `commit`, `workflow`), and
-`targets`, an object from target to an artifact: `url`, `size` (bytes), `sha256` (hash of
+(bools), optional `deprecated` and `source` (`repository`, `commit`, `workflow`), optional
+`license` and `licenseRefs` (below), and `targets`, an object from target to an artifact: `url`, `size` (bytes), `sha256` (hash of
 the downloaded archive), and `treeHash` (the tree hash of the unpacked directory, below).
 
 `celesta` is a Cargo version requirement, as Rust's `semver::VersionReq` parses it:
@@ -92,11 +92,34 @@ npm syntax: `>=0.9.0 <0.10.0` (comparators separated by a space), `||`, and hyph
 refused. The schema pattern accepts a subset of what the parser accepts: it also refuses
 build metadata in a comparator, which the parser would drop.
 
+`license` is the license the version is distributed under, as an
+[SPDX license expression](https://spdx.github.io/spdx-spec/v3.0.1/annexes/spdx-license-expressions/)
+such as `(MIT OR Apache-2.0) AND LGPL-2.1-or-later`; absent or `null` when the publisher
+declared none. `licenseRefs` says what each `LicenseRef-*` identifier in it names, a license
+outside the SPDX license list: an object from the identifier to a `name` (non-empty) and an
+optional `url`. The schema and the parsers check shape only: `license` is a non-empty string
+of letters, digits, spaces, and `.+:()-`, and each `licenseRefs` key is `LicenseRef-` followed
+by letters, digits, `.`, or `-` (`InvalidLicense` otherwise, carrying the expression or the
+key). They do not parse the expression.
+
+The registry does, when a version is published, and accepts it only in one form, so a client
+can show `license` as it is or split it on spaces and parentheses:
+
+- it is an SPDX license expression whose identifiers are on the SPDX license list, in the
+  list's spelling, and none is deprecated (`GPL-2.0-only`, not `GPL-2.0`);
+- `AND`, `OR`, and `WITH` are upper case;
+- parts are separated by single spaces, with none at either end, and it is at most 512
+  characters;
+- it has no `DocumentRef-`;
+- its `LicenseRef-*` identifiers are exactly the keys of `licenseRefs`, whose `name`s are 1
+  to 200 characters and whose `url`s, when given, start with `https://`.
+
 ### `search.json`
 
 `generated` (timestamp) and `plugins`: entries with `id`, `publisher`, `kind`,
-`description`, an optional `latest` version, and an optional `deprecated`. Every `id` must be
-a valid id.
+`description`, an optional `latest` version, an optional `deprecated`, and an optional
+`license`: the `license` of the plugin's highest published version. Every `id` must be a
+valid id.
 
 ### `advisories.json`
 

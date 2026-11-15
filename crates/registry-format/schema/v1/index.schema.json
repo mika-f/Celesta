@@ -111,6 +111,35 @@
               }
             }
           },
+          "license": {
+            "$ref": "#/$defs/license"
+          },
+          "licenseRefs": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^LicenseRef-[A-Za-z0-9.-]+$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uri"
+                }
+              }
+            },
+            "description": "What each LicenseRef-* identifier in license names: a license outside the SPDX license list."
+          },
           "targets": {
             "type": "object",
             "minProperties": 1,
@@ -222,6 +251,15 @@
           }
         }
       ]
+    },
+    "license": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9.+:() -]+$",
+      "description": "An SPDX license expression for the version as distributed, such as (MIT OR Apache-2.0) AND LGPL-2.1-or-later, or null when none is declared. The pattern checks only its characters; the registry checks the expression when the version is published."
     }
   }
 }

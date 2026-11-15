@@ -311,7 +311,74 @@ pub struct VersionEntry {
     pub deprecated: Option<Deprecation>,
     #[serde(default)]
     pub source: Option<Source>,
+    /// The license the version is distributed under, as an SPDX license
+    /// expression such as `(MIT OR Apache-2.0) AND LGPL-2.1-or-later`; `None`
+    /// when its publisher declared none. The registry publishes it in the
+    /// canonical form the README gives, so it can be shown as it is.
+    #[serde(default, deserialize_with = "license::expression")]
+    pub license: Option<String>,
+    /// What each `LicenseRef-*` identifier in `license` names.
+    #[serde(default, deserialize_with = "license::refs")]
+    pub license_refs: BTreeMap<String, LicenseRef>,
     pub targets: BTreeMap<Target, Artifact>,
+}
+
+/// A license outside the SPDX license list, which a `LicenseRef-*` identifier
+/// in a version's `license` stands for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LicenseRef {
+    /// The license's name, for display.
+    pub name: String,
+    /// Where its text or terms are.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// The shape checks on `license` and `licenseRefs`. Whether an expression is
+/// valid SPDX is the registry's check at publish, not a client's.
+mod license {
+    use std::collections::BTreeMap;
+
+    use serde::de::{self, Deserialize, Deserializer};
+
+    use super::LicenseRef;
+    use crate::error::FormatError;
+
+    /// Whether `s` is non-empty and has only the characters an SPDX license
+    /// expression is written with.
+    fn is_expression(s: &str) -> bool {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b" .+-:()".contains(&b))
+    }
+
+    /// Whether `s` is `LicenseRef-` and an SPDX idstring.
+    fn is_ref(s: &str) -> bool {
+        s.strip_prefix("LicenseRef-").is_some_and(|id| {
+            !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        })
+    }
+
+    pub fn expression<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+        match Option::<String>::deserialize(d)? {
+            Some(s) if !is_expression(&s) => Err(de::Error::custom(FormatError::InvalidLicense(s))),
+            other => Ok(other),
+        }
+    }
+
+    pub fn refs<'de, D: Deserializer<'de>>(d: D) -> Result<BTreeMap<String, LicenseRef>, D::Error> {
+        let refs = BTreeMap::<String, LicenseRef>::deserialize(d)?;
+        for (id, license) in &refs {
+            if !is_ref(id) || license.name.is_empty() {
+                return Err(de::Error::custom(FormatError::InvalidLicense(id.clone())));
+            }
+        }
+        Ok(refs)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,6 +409,9 @@ pub struct SearchEntry {
     pub description: String,
     #[serde(default)]
     pub latest: Option<Version>,
+    /// The `license` of the plugin's highest published version.
+    #[serde(default, deserialize_with = "license::expression")]
+    pub license: Option<String>,
     #[serde(default)]
     pub deprecated: Option<Deprecation>,
 }
@@ -432,6 +502,7 @@ fn lift(e: serde_json::Error) -> FormatError {
         ("invalid timestamp: ", FormatError::InvalidTimestamp),
         ("invalid advisory range: ", FormatError::InvalidRange),
         ("invalid plugin id: ", FormatError::InvalidId),
+        ("invalid license: ", FormatError::InvalidLicense),
     ] {
         if let Some(rest) = msg.strip_prefix(prefix) {
             let value = rest.split(" at line ").next().unwrap_or(rest);

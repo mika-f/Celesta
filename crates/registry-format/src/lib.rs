@@ -20,8 +20,8 @@ mod tree;
 pub use advisories::check_fresh;
 pub use error::FormatError;
 pub use files::{
-    Advisory, AdvisoryList, Artifact, Config, Deprecation, Hash, Index, Kind, OnlineKey,
-    SearchEntry, SearchList, Source, Target, VersionEntry,
+    Advisory, AdvisoryList, Artifact, Config, Deprecation, Hash, Index, Kind, LicenseRef,
+    OnlineKey, SearchEntry, SearchList, Source, Target, VersionEntry,
 };
 pub use ids::{is_plugin_id, is_registry_id, publisher_of};
 pub use keyring::{Keyring, RootKey};
