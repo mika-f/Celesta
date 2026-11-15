@@ -46,15 +46,12 @@ release tag. #841 added the pin; this adds a check that would have caught it.
 - `ci.yml`'s `Actions lock` job (ubuntu, checkout and mise's Node.js, about
   a minute) runs it on every pull request and push to `main`. It uses only
   actions `ci.yml`'s list already pins.
-- The branch also carries #841's `actions.lock` line, so this pull request's
-  check passes before #841 merges; a rebase onto `main` drops that commit
-  once #841 is in.
 
 ## Checks
 
 - `node scripts/check-actions-lock.mts` on `main` before #841: exit 1, one
   problem, `plugin-release.yml uses actions/cache@v6.1.0 (through
-  .github/actions/setup-ffmpeg/action.yml)`. With #841's line: exit 0, 7
+  .github/actions/setup-ffmpeg/action.yml)`. On `main` with #841: exit 0, 7
   workflows.
 - A copy of `.github` with `actions/cache@v6.1.0` deleted from
   `plugin-release.yml`'s list: exit 1 with the same error annotation
