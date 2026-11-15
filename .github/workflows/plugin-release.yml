@@ -1,0 +1,245 @@
+name: Plugin release
+
+# Builds the first-party media plugins (ffmpeg, ffmpeg-x264, avfoundation,
+# mediafoundation) for each target and publishes them to
+# registry.celesta.studio, on the same release tags as package.yml. The
+# registry allows this workflow's tag runs through the PUBLISH_WORKFLOW_REFS
+# entry `mika-f/Celesta/.github/workflows/plugin-release.yml@refs/tags/v*`,
+# so keep this file's name. There is no workflow_dispatch: a run from a
+# branch would need an exact `@refs/heads/<branch>` entry of its own there.
+# vrm is not published until it no longer needs @celesta.studio/react/internal
+# (docs/handoff/2026-11-14-plugin-registry-design.md).
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+  # setup-ffmpeg downloads Windows' FFmpeg from GitHub Packages.
+  packages: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # mise installs only Node.js and pnpm; see ci.yml.
+  MISE_DISABLE_TOOLS: rust,mr-boxington
+  # Every target a first-party plugin is published for, as manifests name
+  # them: the build job's matrix, one runner each. A plugin whose plugin.json
+  # lists `os` is published for those systems' targets alone.
+  PLUGIN_TARGETS: linux-x86_64 macos-aarch64 windows-x86_64
+  REGISTRY_URL: https://registry.celesta.studio
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # vMAJOR.MINOR.PATCH with an optional pre-release (v0.10.0-rc.1), as
+      # semver allows them, and no build metadata: the registry refuses
+      # `+build` tags, and versions that differ only in it are one version.
+      - name: Check release tag format
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          number='(0|[1-9][0-9]*)'
+          identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          if [[ ! "$RELEASE_TAG" =~ ^v$number\.$number\.$number(-$identifier(\.$identifier)*)?$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG (expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-PRERELEASE)" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7.0.1
+
+      # The plugins' manifests take their `celesta` range from the workspace
+      # version, and the media plugins give that version as their own.
+      - name: Check release tag matches the workspace version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)"
+          if [[ "$RELEASE_TAG" != "v$version" ]]; then
+            echo "Release $RELEASE_TAG does not match the workspace version $version in Cargo.toml" >&2
+            exit 1
+          fi
+          for plugin in ffmpeg ffmpeg-x264 avfoundation mediafoundation; do
+            plugin_version="$(node -p "require('./plugins/$plugin/plugin.json').version")"
+            if [[ "$plugin_version" != "$version" ]]; then
+              echo "plugins/$plugin/plugin.json gives $plugin_version, not the workspace version $version; run node scripts/plugins/bump-version.mts" >&2
+              exit 1
+            fi
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # Each runner builds the plugins that run on its system and writes one
+  # registry archive per plugin, target/registry/<id>/<target>.zip (the
+  # plugin directory's contents at the root), with package-media-plugins.py:
+  # the same build, licence collection, library bundling and macOS signing
+  # and notarization as the release's ffmpeg-x264 download.
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            # As package-build.yml's linux-plugins job: the bundled
+            # distribution libraries and debian-packages.json come from this
+            # image, so name a release rather than ubuntu-latest.
+            os: ubuntu-24.04
+            timeout: 150
+          - target: macos-aarch64
+            os: macos-latest
+            timeout: 120
+          - target: windows-x86_64
+            os: windows-latest
+            timeout: 180
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: $/.github/actions/setup-ffmpeg
+
+      - name: Install ELF packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends patchelf
+
+      - name: Install dylibbundler
+        if: runner.os == 'macOS'
+        run: brew install dylibbundler
+
+      - name: Isolate Rust toolchain
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          # The compiler CI tests with.
+          toolchain: 1.99.1
+
+      # No rust-cache: a tag's run can restore only caches its own job saved
+      # on main, and no run on main has this job's key, so it would only save
+      # entries no later tag could restore.
+
+      # Node.js and pnpm as mise.lock pins them; build.mts runs on Node.js.
+      - uses: jdx/mise-action@v5.2.7
+        with:
+          version: 2026.11.4
+          cache_save: false
+
+      # As package-build.yml: a throwaway keychain, made the default so
+      # codesign finds the Developer ID identity and notarytool finds the
+      # profile stored in it.
+      - name: Set up signing and notarization
+        if: runner.os == 'macOS'
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -base64 32)"
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -d user -s "$keychain"
+
+          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -f pkcs12 \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+
+          printf '%s' "$API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          xcrun notarytool store-credentials celesta-notary \
+            --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$API_KEY_ID" --issuer "$API_ISSUER_ID" \
+            --keychain "$keychain"
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+      # On macOS each Mach-O file is signed with the Developer ID (hardened
+      # runtime) and each archive notarized. The archive's manifest names the
+      # program of every target in PLUGIN_TARGETS the plugin is built for, so
+      # all of a plugin's archives carry the same celesta-plugin.json.
+      - name: Build registry archives
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          signing=()
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            signing=(--sign-identity "$SIGN_IDENTITY" --notary-profile celesta-notary)
+          fi
+          python=python3
+          if [[ "$RUNNER_OS" == Windows ]]; then python=python; fi
+          # PLUGIN_TARGETS is split into one argument per target on purpose.
+          # shellcheck disable=SC2086
+          "$python" scripts/package-media-plugins.py --registry --targets $PLUGIN_TARGETS \
+            --version "$VERSION" "${signing[@]}"
+
+      - name: Remove signing keychain
+        if: always() && env.SIGNING_KEYCHAIN != ''
+        run: security delete-keychain "$SIGNING_KEYCHAIN" || true
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: registry-plugins-${{ matrix.target }}
+          path: target/registry/
+          if-no-files-found: error
+
+  # Attests every archive and publishes each plugin in this one job, so the
+  # attestation comes from the run that publishes (the registry checks the
+  # bundle's workflow, commit and run against the publish token's). Every
+  # target carries an attestation, as the registry requires of all of them
+  # once one is sent, and of first-party plugins once FIRST_PARTY_ATTESTATION
+  # is "1".
+  publish:
+    name: Publish to the registry
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The registry's OIDC tokens, and the attestation's Sigstore signing.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # dist/<id>/<target>.zip, every target's together.
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: registry-plugins-*
+          path: dist
+          merge-multiple: true
+
+      # One SLSA provenance attestation naming every archive as a subject.
+      # The registry takes a bundle for an archive when exactly one of its
+      # subjects has that archive's SHA-256, so each target sends this one.
+      - name: Attest archives
+        id: attest
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: dist/*/*.zip
+
+      # One request per plugin, each with a new OIDC token (the registry
+      # accepts a token once). 409 version_exists is skipped, so a re-run
+      # after a partial failure publishes only what is left; any other
+      # refusal fails the job, with the registry's answer in the log and the
+      # job summary.
+      - name: Publish
+        env:
+          ATTESTATION: ${{ steps.attest.outputs.bundle-path }}
+        run: >-
+          python3 scripts/publish-plugins.py dist
+          --attestation "$ATTESTATION"
+          --registry "$REGISTRY_URL"
+          --audience "$REGISTRY_URL"

@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""Build the optional ffmpeg-x264 media plugin as an installable native ZIP archive.
+"""Build first-party media plugins as native ZIP archives.
 
-The standard ffmpeg plugin (decoding, muxing, ProRes, VP9, AAC, Opus, PCM)
-comes with Celesta; only the GPL libx264 build is a separate download.
+By default, the optional ffmpeg-x264 plugin as an installable download for
+the GitHub release, its plugin folder at the ZIP root. The standard ffmpeg
+plugin (decoding, muxing, ProRes, VP9, AAC, Opus, PCM) comes with Celesta;
+only the GPL libx264 build is a separate download.
+
+With --registry, every first-party media plugin built on this system, as the
+archives registry.celesta.studio takes: the plugin directory's contents at
+the ZIP root, one ZIP per target at <out>/<id>/<target>.zip, each with the
+same celesta-plugin.json, whose `executable` names the program of every
+target in --targets the plugin is built for (.github/workflows/plugin-release.yml).
 """
 
 import argparse
@@ -24,19 +32,67 @@ packaging = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packaging)
 ROOT = packaging.ROOT
 run = packaging.run
-# Each optional variant, and the Homebrew formula its macOS build must bundle
-# a library from; the notices copied come from what it actually bundles.
-VARIANTS = {"x264": "x264"}
+# The first-party media plugins, and what each needs beyond the folder
+# build.mts lays out: the Homebrew formulas its macOS build must bundle a
+# library from (the notices copied come from what it actually bundles), the
+# prefix of the variables naming the vcpkg installation whose notices its
+# Windows build copies (None: it links system libraries alone), the
+# distribution libraries its Linux build bundles, and whether its program has
+# FFmpeg's --check-license and --check-build. AVFoundation and Media
+# Foundation link system frameworks only.
+PLUGINS = {
+    "ffmpeg": dict(formulas=packaging.STANDARD_NATIVE_FORMULAS, vcpkg="", linux=("libopus.so", "libvpx.so"), ffmpeg=True),
+    "ffmpeg-x264": dict(formulas=("x264",), vcpkg="FFMPEG_X264_", linux=("libx264.so",), ffmpeg=True),
+    "avfoundation": dict(formulas=(), vcpkg=None, linux=(), ffmpeg=False),
+    "mediafoundation": dict(formulas=(), vcpkg=None, linux=(), ffmpeg=False),
+}
+# The plugins that are a separate download on the GitHub release; the others
+# come with Celesta.
+DOWNLOADS = ("ffmpeg-x264",)
 
 
-def write_archive(plugin, destination):
-    """Keep one installable plugin folder at the ZIP root, including Unix modes."""
+def write_archive(plugin, destination, *, contents_at_root=False):
+    """Keep one installable plugin folder at the ZIP root, or with
+    `contents_at_root` the folder's contents (the registry's layout),
+    including Unix modes."""
+    base = plugin if contents_at_root else plugin.parent
     with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
         for path in sorted(plugin.rglob("*")):
             if path.is_symlink():
                 raise RuntimeError(f"Plugin archive must not depend on symlinks: {path}")
             if path.is_file():
-                archive.write(path, path.relative_to(plugin.parent).as_posix())
+                archive.write(path, path.relative_to(base).as_posix())
+
+
+def builds_on(source, system):
+    """Whether the plugin is built for `system` (`macos`, `windows`, `linux`):
+    for every system, or for those its plugin.json `os` names."""
+    return source.get("os") is None or system in source["os"]
+
+
+def plugin_targets(source, targets):
+    """The targets in `targets` (`<os>-<arch>`, as manifests name them) the
+    plugin is built for."""
+    return [target for target in targets if builds_on(source, target.split("-", 1)[0])]
+
+
+def registry_manifest(text, source, targets):
+    """The celesta-plugin.json every registry archive of the plugin carries:
+    `text`, the one build.mts wrote for this system's target, with
+    `executable` naming the program of each of `targets`, by the path
+    build.mts gives it (bin/<target>/<program>). The registry wants one
+    manifest for all of a version's targets, byte for byte the archives'."""
+    manifest = json.loads(text)
+
+    def program(target):
+        return f"bin/{target}/{source['cargoPackage']}{'.exe' if target.startswith('windows-') else ''}"
+
+    built = manifest.get("executable", {})
+    own = next(iter(built), None)
+    if len(built) != 1 or own not in targets or built[own] != program(own):
+        raise RuntimeError(f"build.mts gave the executables {built}, not one of {sorted(targets)} at bin/<target>/")
+    manifest["executable"] = {target: program(target) for target in sorted(targets)}
+    return json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
 
 
 def windows_runtime():
@@ -51,12 +107,15 @@ def windows_runtime():
     raise RuntimeError("MSVC x64 CRT redistributables were not found")
 
 
-def windows_notices(plugin, variant):
-    variable = f"FFMPEG_{variant.upper()}_VCPKG_ROOT"
+def windows_notices(plugin, prefix):
+    """Copy the notices of the vcpkg installation the plugin was built with:
+    the one <prefix>VCPKG_ROOT names, as setup-ffmpeg exports it (VCPKG_ROOT
+    for the standard build, FFMPEG_X264_VCPKG_ROOT for x264)."""
+    variable = f"{prefix}VCPKG_ROOT"
     if not os.environ.get(variable):
-        raise RuntimeError(f"Set {variable} to the native installation used to build this download")
+        raise RuntimeError(f"Set {variable} to the native installation used to build this plugin")
     root = Path(os.environ[variable])
-    triplet = os.environ.get(f"FFMPEG_{variant.upper()}_VCPKGRS_TRIPLET",
+    triplet = os.environ.get(f"{prefix}VCPKGRS_TRIPLET",
                              os.environ.get("VCPKGRS_TRIPLET", "x64-windows-static-md"))
     shutil.copytree(root / "installed" / triplet / "share", plugin / "licenses/native")
 
@@ -104,10 +163,10 @@ def distribution_release(os_release):
     return f"{fields['ID']} {fields['VERSION_ID']}"
 
 
-def linux_dependencies(plugin, program, variant):
-    # FFmpeg itself is static on Linux; only the external codec library may
-    # need a shared library. glibc and the platform runtime stay system-provided.
-    prefix = {"x264": "libx264.so"}[variant]
+def linux_dependencies(plugin, program, prefixes):
+    # FFmpeg itself is static on Linux; only the external codec libraries
+    # (`prefixes`, such as libx264.so) are shared, and each must be linked and
+    # is bundled. glibc, zlib and the platform runtime stay system-provided.
     listing = run("ldd", program, capture=True)
     if "not found" in listing:
         raise RuntimeError(f"Unresolved plugin dependencies: {listing}")
@@ -115,7 +174,7 @@ def linux_dependencies(plugin, program, variant):
     provenance = []
     native = plugin / "licenses/native"
     for name, source in dependencies:
-        if name.startswith(prefix):
+        if name.startswith(prefixes):
             directory = plugin / "lib"
             directory.mkdir(exist_ok=True)
             shutil.copy2(Path(source).resolve(), directory / name)
@@ -129,8 +188,9 @@ def linux_dependencies(plugin, program, variant):
             (native / package).mkdir(parents=True, exist_ok=True)
             shutil.copy2(notice, native / package / "copyright")
             provenance.append(entry)
-    if not provenance:
-        raise RuntimeError(f"Expected a package-owned {prefix} dependency in {program}")
+    for prefix in prefixes:
+        if not any(entry["library"].startswith(prefix) for entry in provenance):
+            raise RuntimeError(f"Expected a package-owned {prefix} dependency in {program}")
     (native / "debian-packages.json").write_text(json.dumps({
         "distribution": distribution_release(Path("/etc/os-release").read_text()), "packages": provenance,
         "source_instructions": "Retrieve the exact source_package=source_version from this distribution's source archive, including its Debian/Ubuntu patch set; request the matching materials through the bundled source notice.",
@@ -141,19 +201,25 @@ def linux_dependencies(plugin, program, variant):
     if "not found" in resolved:
         raise RuntimeError(f"Bundled plugin dependencies do not resolve: {resolved}")
     for name, source in re.findall(r"^\s*(\S+)\s+=>\s+(/\S+)\s+\(", resolved, re.M):
-        if name.startswith(prefix) and not Path(source).resolve().is_relative_to(plugin.resolve()):
+        if name.startswith(prefixes) and not Path(source).resolve().is_relative_to(plugin.resolve()):
             raise RuntimeError(f"Codec dependency was not bundled: {source}")
 
 
-def package_plugin(variant, output, target, system, arch, args):
-    plugin_id = f"ffmpeg-{variant}"
+def package_plugin(plugin_id, output, target, system, arch, args):
+    """Build, check and (with a signing identity) sign one plugin, and write
+    its ZIP: the download's, or with args.registry the registry's."""
+    spec = PLUGINS[plugin_id]
     source = json.loads((ROOT / "plugins" / plugin_id / "plugin.json").read_text(encoding="utf-8"))
     version = source["version"]
     if args.version is not None and args.version != version:
         raise RuntimeError(f"Requested version {args.version} differs from {plugin_id} {version}")
-    destination = output / f"Celesta-plugin-{plugin_id}-{version}-{system}-{arch}.zip"
-    if destination.exists():
-        raise RuntimeError(f"Output already exists: {destination}")
+    if not builds_on(source, system):
+        raise RuntimeError(f"{plugin_id} is not built on {system}")
+    destination = None
+    if not args.registry:
+        destination = output / f"Celesta-plugin-{plugin_id}-{version}-{system}-{arch}.zip"
+        if destination.exists():
+            raise RuntimeError(f"Output already exists: {destination}")
     with tempfile.TemporaryDirectory(prefix="media-plugin-", dir=output) as directory:
         stage = Path(directory)
         env = dict(os.environ)
@@ -164,11 +230,14 @@ def package_plugin(variant, output, target, system, arch, args):
         program = packaging.plugin_program(plugin)
         packaging.collect_licenses(plugin, target, names={source["cargoPackage"]}, include_app=False)
         if system == "macos":
-            relative = os.path.relpath(plugin / "Frameworks", program.parent)
-            libraries = packaging.bundle_libraries([program], plugin / "Frameworks", f"@executable_path/{relative}/")
+            # AVFoundation links system frameworks alone, so it gets no Frameworks/.
+            libraries = {}
+            if packaging.linked_libraries([program]):
+                relative = os.path.relpath(plugin / "Frameworks", program.parent)
+                libraries = packaging.bundle_libraries([program], plugin / "Frameworks", f"@executable_path/{relative}/")
             cellar = Path(run("brew", "--cellar", capture=True)).resolve()
             packaging.collect_formula_notices(plugin / "licenses", packaging.library_formulas(libraries, cellar),
-                                              required=(VARIANTS[variant],))
+                                              required=spec["formulas"])
             run("xattr", "-cr", plugin)
             signing = ["--force", "--sign", args.sign_identity or "-"]
             if args.sign_identity:
@@ -180,32 +249,46 @@ def package_plugin(variant, output, target, system, arch, args):
         elif system == "windows":
             for dll in windows_runtime().glob("*.dll"):
                 shutil.copy2(dll, program.parent / dll.name)
-            windows_notices(plugin, variant)
-        else:
-            linux_dependencies(plugin, program, variant)
+            if spec["vcpkg"] is not None:
+                windows_notices(plugin, spec["vcpkg"])
+        elif spec["linux"]:
+            linux_dependencies(plugin, program, spec["linux"])
         # Run without codec search-path overrides so the staged package has to
         # resolve its own native libraries, rather than those on the build host.
         clean_env = {key: value for key, value in os.environ.items()
                      if not key.startswith("DYLD_") and key != "LD_LIBRARY_PATH"}
-        run(program, "--check-license", env=clean_env)
-        run(program, "--check-build", env=clean_env)
+        if spec["ffmpeg"]:
+            run(program, "--check-license", env=clean_env)
+            run(program, "--check-build", env=clean_env)
         printed = json.loads(run(program, "--manifest", capture=True, env=clean_env))
         if printed["id"] != plugin_id or printed["media"] != source["media"]:
             raise RuntimeError(f"Packaged manifest differs from {plugin_id}")
-        (plugin / "INSTALL.txt").write_text(
-            f"{plugin_id} {version} for Celesta\n\n"
-            f"Copy the entire {plugin_id} folder into your Celesta user plugin folder:\n"
-            "Windows: %APPDATA%\\Celesta\\plugins\n"
-            "macOS: ~/Library/Application Support/Celesta/plugins\n"
-            "Linux: $XDG_DATA_HOME/celesta/plugins (default ~/.local/share/celesta/plugins)\n\n"
-            "Keep celesta-plugin.json, bin, native libraries and licenses together.\n"
-            "Open Celesta, reload plugins and allow this plugin when prompted.\n"
-            "For CLI use, pass --plugin-dir <parent folder> or --allow-plugin " + plugin_id + ".\n"
-            "Linux H.264/MP4 needs ffmpeg-x264; macOS/Windows also have system H.264 encoders.\n"
-            "The standard ffmpeg plugin comes with Celesta and covers everything else,\n"
-            "WebM (VP9 and Opus) included. Use matching releases.\n", encoding="utf-8")
+        if args.registry:
+            # Named after the target build.mts gave this system's program.
+            manifest = plugin / "celesta-plugin.json"
+            text = manifest.read_text(encoding="utf-8")
+            target_name = next(iter(json.loads(text).get("executable", {})), None)
+            # Bytes, so Windows writes the same `\n` line ends as the others.
+            manifest.write_bytes(registry_manifest(text, source, plugin_targets(source, args.targets)).encode("utf-8"))
+            destination = output / plugin_id / f"{target_name}.zip"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                raise RuntimeError(f"Output already exists: {destination}")
+        else:
+            (plugin / "INSTALL.txt").write_text(
+                f"{plugin_id} {version} for Celesta\n\n"
+                f"Copy the entire {plugin_id} folder into your Celesta user plugin folder:\n"
+                "Windows: %APPDATA%\\Celesta\\plugins\n"
+                "macOS: ~/Library/Application Support/Celesta/plugins\n"
+                "Linux: $XDG_DATA_HOME/celesta/plugins (default ~/.local/share/celesta/plugins)\n\n"
+                "Keep celesta-plugin.json, bin, native libraries and licenses together.\n"
+                "Open Celesta, reload plugins and allow this plugin when prompted.\n"
+                "For CLI use, pass --plugin-dir <parent folder> or --allow-plugin " + plugin_id + ".\n"
+                "Linux H.264/MP4 needs ffmpeg-x264; macOS/Windows also have system H.264 encoders.\n"
+                "The standard ffmpeg plugin comes with Celesta and covers everything else,\n"
+                "WebM (VP9 and Opus) included. Use matching releases.\n", encoding="utf-8")
         archive = stage / destination.name
-        write_archive(plugin, archive)
+        write_archive(plugin, archive, contents_at_root=args.registry)
         if args.notary_profile:
             packaging.notarize(archive, args.notary_profile)
         os.link(archive, destination)
@@ -215,26 +298,39 @@ def package_plugin(variant, output, target, system, arch, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--plugins", nargs="+", choices=VARIANTS, default=list(VARIANTS))
+    parser.add_argument("--plugins", nargs="+", choices=PLUGINS,
+                        help=f"The plugins to package (default: {', '.join(DOWNLOADS)}; with --registry, "
+                             "every first-party media plugin built on this system)")
     parser.add_argument("--version", help="Require the plugin manifests to match this release")
-    parser.add_argument("--out", type=Path, default=ROOT / "target/packages")
+    parser.add_argument("--registry", action="store_true",
+                        help="Write the registry's archives, <out>/<id>/<target>.zip, instead of the downloads")
+    parser.add_argument("--targets", nargs="+", default=[],
+                        help="With --registry, every <os>-<arch> the plugins are published for in this release")
+    parser.add_argument("--out", type=Path)
     parser.add_argument("--sign-identity")
     parser.add_argument("--notary-profile")
     args = parser.parse_args()
     if args.notary_profile and not args.sign_identity:
         parser.error("--notary-profile requires --sign-identity")
+    if args.registry != bool(args.targets):
+        parser.error("--registry and --targets go together")
     system = {"darwin": "macos", "win32": "windows", "linux": "linux"}.get(sys.platform)
     if system is None:
         parser.error("Unsupported platform")
     arch = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64", "AMD64": "x64"}.get(platform.machine())
     if arch is None:
         parser.error("Unsupported architecture")
+    if args.plugins is None:
+        args.plugins = list(DOWNLOADS)
+        if args.registry:
+            args.plugins = [plugin_id for plugin_id in PLUGINS if builds_on(
+                json.loads((ROOT / "plugins" / plugin_id / "plugin.json").read_text(encoding="utf-8")), system)]
     compiler = run("rustc", "-vV", capture=True)
     target = next(line.removeprefix("host: ") for line in compiler.splitlines() if line.startswith("host: "))
-    args.out = args.out.resolve()
+    args.out = (args.out or ROOT / ("target/registry" if args.registry else "target/packages")).resolve()
     args.out.mkdir(parents=True, exist_ok=True)
-    for variant in args.plugins:
-        package_plugin(variant, args.out, target, system, arch, args)
+    for plugin_id in args.plugins:
+        package_plugin(plugin_id, args.out, target, system, arch, args)
 
 
 if __name__ == "__main__":
