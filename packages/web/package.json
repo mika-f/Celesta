@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/web",
-  "version": "0.10.0-alpha.2",
+  "version": "0.10.0-alpha.3",
   "description": "Browser runtime, Canvas preview, and MP4 export for Celesta React compositions",
   "license": "MIT OR Apache-2.0",
   "type": "module",

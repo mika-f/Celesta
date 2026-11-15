@@ -328,14 +328,14 @@ dependencies = [
 
 [[package]]
 name = "celesta-budoux"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "celesta-codec-avfoundation"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "block2",
  "celesta-codec-ffmpeg",
@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-codec-ffmpeg"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "celesta-exporter",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-codec-ffmpeg-x264"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-codec-ffmpeg",
  "celesta-composition",
@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-codec-mediafoundation"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-codec-ffmpeg",
  "celesta-codec-ffmpeg-x264",
@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-composition"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "base64 0.23.1",
  "serde",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-evaluator"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "celesta-project",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-exporter"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "celesta-evaluator",
@@ -461,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-gpu-renderer"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "bytemuck",
  "celesta-composition",
@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-media"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "base64 0.23.1",
  "celesta-composition",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-media-image"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-media",
  "celesta-plugin-host",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-plugin"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "libc",
  "serde",
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-plugin-host"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-plugin",
  "celesta-registry-format",
@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-project"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "serde",
@@ -585,7 +585,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-react-bridge"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "celesta-media",
@@ -600,7 +600,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-registry-format"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -614,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-remote"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "data-url",
@@ -628,7 +628,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-renderer"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-budoux",
  "celesta-composition",

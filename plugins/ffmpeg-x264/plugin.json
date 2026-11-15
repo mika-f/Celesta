@@ -1,6 +1,6 @@
 {
   "id": "ffmpeg-x264",
-  "version": "0.10.0-alpha.2",
+  "version": "0.10.0-alpha.3",
   "cargoPackage": "celesta-codec-ffmpeg-x264",
   "roles": [
     "media"
