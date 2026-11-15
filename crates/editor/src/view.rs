@@ -428,7 +428,7 @@ impl EditorView {
         property_args: PropertyArgs,
         driver: GpuDriver,
     ) -> anyhow::Result<Self> {
-        let plugins = FoundPlugins::find(trusted_root(path).as_deref());
+        let plugins = FoundPlugins::find(trusted_root(path).as_deref(), None);
         let (document, react_preview) =
             load_source(path, property_args, &plugins).map_err(anyhow::Error::msg)?;
         Self::from_document(

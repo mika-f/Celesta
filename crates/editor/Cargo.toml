@@ -27,6 +27,7 @@ celesta-gpu-renderer = { workspace = true, features = ["clap"] }
 celesta-plugin-host.workspace = true
 celesta-media.workspace = true
 celesta-registry-client.workspace = true
+celesta-registry-format.workspace = true
 celesta-remote.workspace = true
 celesta-project.workspace = true
 celesta-react-bridge.workspace = true

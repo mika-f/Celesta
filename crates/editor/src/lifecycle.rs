@@ -670,7 +670,8 @@ impl EditorView {
                     }
                     // Every open looks for plugins again, so ones installed
                     // since are found.
-                    let plugins = FoundPlugins::find(trusted_root(load_path.as_deref()).as_deref());
+                    let plugins =
+                        FoundPlugins::find(trusted_root(load_path.as_deref()).as_deref(), None);
                     Ok((
                         load_source(load_path.as_deref(), property_args, &plugins),
                         plugins,

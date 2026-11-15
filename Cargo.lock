@@ -1093,6 +1093,7 @@ dependencies = [
  "celesta-project",
  "celesta-react-bridge",
  "celesta-registry-client",
+ "celesta-registry-format",
  "celesta-remote",
  "celesta-source-edit",
  "chrono",
