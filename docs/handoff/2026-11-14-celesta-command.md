@@ -21,11 +21,14 @@ Decisions the maintainer made for this plan:
    `Celesta` are the same name on a case-insensitive file system. Source builds
    and the Linux image (`/opt/celesta/celesta`) keep `celesta`. Every message the
    tools print says `celesta plugin …`.
-2. **Registry override through the environment.** `official_root_key()` stays
+2. **Registry override through the environment.** ~~`official_root_key()` stays
    `None`: no root key is compiled in yet. With neither variable set, the commands
    that need the registry fail with exactly `this build of Celesta has no registry
    key yet, so it cannot reach the plugin registry; set CELESTA_REGISTRY and
-   CELESTA_REGISTRY_ROOT_KEY to use another registry`. `CELESTA_REGISTRY` is a base
+   CELESTA_REGISTRY_ROOT_KEY to use another registry`.~~ Since 2026-11-15
+   `official_root_key()` returns the official registry's pinned root key, so with
+   neither variable set the commands use `https://registry.celesta.studio`, and the
+   no-key message is gone; see [`2026-11-15-official-root-key.md`](2026-11-15-official-root-key.md). `CELESTA_REGISTRY` is a base
    URL, `https://…`, `http://…`, or `file://<absolute folder>` (`file:///C:/x` on
    Windows); `CELESTA_REGISTRY_ROOT_KEY` is the root public key in standard base64
    (`RootKey::from_base64`). They are set together: one alone is a usage error
@@ -40,11 +43,12 @@ Decisions the maintainer made for this plan:
 
 Rulings made while building it:
 
-- **No key, no registry commands.** `run()` checks for a key before it dispatches
+- ~~**No key, no registry commands.** `run()` checks for a key before it dispatches
   `search`, `info`, `add`, `update`, and `install --global`, and fails with the
   no-key message. `install` without a key installs from the store alone when the
   lock checks out, and turns a version missing from the store into the no-key
-  message. `remove`, `list`, `audit`, and `gc` run without one.
+  message. `remove`, `list`, `audit`, and `gc` run without one.~~ Every build has
+  a key since 2026-11-15; see [`2026-11-15-official-root-key.md`](2026-11-15-official-root-key.md).
 - **A project with no registry plugins.** `install` and `update` (without an
   id) in a project with no dependencies and no lock print `this project has
   no registry plugins` and exit 0, `install` with or without a key; neither
@@ -166,7 +170,7 @@ server's export jobs and its `inspect` tool.
 | `crates/registry-client/src/store.rs`, `gc.rs` | `Store::record_project`, `PROJECTS_FILE`, `plan_gc`, `run_gc`, `GcPlan`, `GcInput`. |
 | `crates/cli/src/config.rs` | `ProjectConfig`: editing `plugins.dependencies` without touching other keys; `restore`. |
 | `crates/cli/src/args.rs`, `main.rs`, `lib.rs` | The arguments, `parse_spec`, `run`, and exit statuses. |
-| `crates/cli/src/session.rs` | `Session`: registry selection, the no-key transport, store, caches, settings path. |
+| `crates/cli/src/session.rs` | `Session`: registry selection (the official registry and its pinned key, or the `CELESTA_REGISTRY` override), store, caches, settings path. |
 | `crates/cli/src/advisories.rs`, `report.rs` | The bounded refresh and its warnings; stderr output. |
 | `crates/cli/src/commands/{project,registry,store}.rs` | `add`, `remove`, `install`, `update`; `search`, `info`, `audit`; `list`, `install --global`, `gc`. |
 | `crates/cli/tests/{session,project,registry}.rs` | End-to-end tests against a `file://` test registry. |
@@ -215,8 +219,8 @@ service's tests.
   registry plugins.
 - The user asked to fold export into the `celesta` command, in a later, separate
   session.
-- The maintainer supplies the root public key, so `official_root_key()` returns it
-  and the no-key message goes away.
+- ~~The maintainer supplies the root public key, so `official_root_key()` returns it
+  and the no-key message goes away.~~ Done; see [`2026-11-15-official-root-key.md`](2026-11-15-official-root-key.md).
 
 ## Known gaps
 

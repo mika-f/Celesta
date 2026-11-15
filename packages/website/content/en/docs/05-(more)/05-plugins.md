@@ -113,7 +113,7 @@ In the desktop app, a plugin can also offer its components in the **Add** menu, 
 
 A project can also name plugins from Celesta's plugin registry. The `celesta` command finds them, chooses their versions, records those in the project's `celesta.lock`, and downloads them into a folder Celesta manages, so you do not place their folders by hand, and the project gets the same plugin versions on another computer.
 
-The registry is new. This build of Celesta does not have the official registry's key yet, so the commands that reach the registry fail until a release ships it, with `celesta: error: this build of Celesta has no registry key yet, so it cannot reach the plugin registry; …`. `remove`, `list`, `audit`, `gc`, and `install` of a lock whose plugins are already downloaded work without it (`audit` then checks against the advisory list and the plugin listings fetched before). The plugin names on this page, such as `acme.charts`, are examples.
+The registry is new. The official registry is `https://registry.celesta.studio`, and Celesta checks the registry's signed files against a key built into Celesta. When the registry cannot be reached, the commands that need it fail with `celesta: error: could not fetch …`; `remove`, `list`, `audit`, `gc`, and `install` of a lock whose plugins are already downloaded still work (`audit` then checks against the advisory list and the plugin listings fetched before). The plugin names on this page, such as `acme.charts`, are examples.
 
 The desktop app does not read `celesta.lock` yet: its preview and its exports use the plugins installed for every project (see [Media plugins from the registry](#media-plugins-from-the-registry)), not a project's locked ones. `celesta-exporter` and the MCP server read the lock.
 

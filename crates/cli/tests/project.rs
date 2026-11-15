@@ -305,7 +305,7 @@ fn install_offline_fails_for_a_missing_version() {
 }
 
 #[test]
-fn install_without_a_key_uses_the_store() {
+fn install_without_the_registry_uses_the_store() {
     let home = Home::new();
     let registry = registry();
     registry.publish("acme.charts", "1.2.3", &["any"]);
@@ -331,7 +331,7 @@ fn install_without_a_key_uses_the_store() {
     let output = install(&Home::new());
     assert_exit(&output, 1);
     assert!(
-        stderr(&output).contains("this build of Celesta has no registry key yet"),
+        stderr(&output).contains("celesta: error: could not fetch "),
         "{}",
         stderr(&output)
     );
@@ -491,15 +491,15 @@ fn install_without_any_plugins_does_nothing() {
     let registry = registry();
     let project = home.project("{ \"name\": \"demo\" }\n");
 
-    // With a key and without one.
-    let with_key = run(&home, &registry, &project, &["install"]);
-    let without_key = home
+    // With a registry and without one to reach.
+    let with_registry = run(&home, &registry, &project, &["install"]);
+    let without_registry = home
         .command()
         .current_dir(&project)
         .args(["plugin", "install"])
         .output()
         .unwrap();
-    for output in [with_key, without_key] {
+    for output in [with_registry, without_registry] {
         assert_exit(&output, 0);
         assert_eq!(
             trimmed_stdout(&output),

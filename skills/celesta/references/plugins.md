@@ -121,12 +121,13 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   The desktop app does not read
   the lock yet: of registry plugins, the app uses only those installed with
   `--global`.
-- This build has no official registry key yet: `search`, `info`, `add`,
-  `update`, `install --global`, and an `install` that must resolve or download fail
-  with `this build of Celesta has no registry key yet, …`. Tell the user;
-  do not try to work around it. `remove`, `list`, `audit` (against what
-  was fetched before), `gc`, and `install` of a lock whose plugins are
-  already downloaded still work.
+- The official registry is `https://registry.celesta.studio`; Celesta
+  verifies its signed files with a key built into Celesta. When it cannot be
+  reached, `search`, `info`, `add`, `update`, `install --global`, and an
+  `install` that must resolve or download fail with `could not fetch …`.
+  Tell the user; do not try to work around it. `remove`, `list`, `audit`
+  (against what was fetched before), `gc`, and `install` of a lock whose
+  plugins are already downloaded still work.
 - Warnings to relay, not silence: the advisory list is missing or `… days
   old` (more than 7; a run online fetches a new one, waiting at most
   3 seconds), a version is deprecated (with its replacement) or yanked.
@@ -387,7 +388,8 @@ import { Vrm } from '@celesta-plugin/vrm';
 | `the project's celesta.lock could not be read: …` (`plugins_unsatisfied`) | The lock is not valid JSON, or a newer Celesta wrote it (`… was written in lock format <n>, which this Celesta <version> does not read; update Celesta`). Do not edit or delete it: tell the user to restore it from version control, or to update Celesta when the message says so. |
 | `skipped a plugin: the project locks <id> <version>, which has no build for <host>; another copy of <id> is used if one is installed` | A warning, not an error: the locked version has no build for this computer (often a media plugin pinned for another OS). Another copy of the id runs if one is installed (a global one, `--plugin-dir`); if none is, an entry importing it fails as for any missing plugin. |
 | `skipped a plugin: the project locks <id> <version>, which is turned off in your settings; another copy of <id> is used if one is installed` | A warning, not an error: the user turned the locked version off in the app's Plugins tab, so it gives way to the next copy of the id, as any turned-off plugin does. To use the locked version, the user turns it back on; do not change their settings for them. |
-| `this build of Celesta has no registry key yet, so it cannot reach the plugin registry; …` | From `celesta plugin …`: this release cannot reach the registry. Tell the user; nothing in the project fixes it. |
+| `could not fetch <url>: …` | From `celesta plugin …`: the registry could not be reached (offline, or the network refused it). Tell the user; nothing in the project fixes it. Commands that work from what is already downloaded still run. |
+| `/<file>.json: signature error: …` | From `celesta plugin …`: a registry file did not verify against the key built into Celesta. Do not retry with another registry or key; tell the user. |
 | `no plugin "<id>" is installed (looked in CELESTA_PLUGIN_PATH)` | In the app, the plugin may be waiting for the user's approval (Problems says so): ask the user to allow it, and do not work around the question. Otherwise the entry imports a plugin no folder provides: put it in the user plugin folder, pass `--plugin-dir`, or set `CELESTA_PLUGIN_PATH` (absolute paths). |
 | `plugin "<id>" waits for your approval in the Celesta app, and does not run until you allow it (<folder>): …` | `Celesta-export` or MCP found the plugin, but the user has not allowed it in the app, or it changed since. Ask the user to allow it in the app's Plugins tab. Only when the user asks you to run it without approval: with `Celesta-export`, pass `--allow-plugin <id>` or `--plugin-dir <folder>`; for MCP, which takes neither, the user puts the folder in the server's `CELESTA_PLUGIN_PATH`. |
 | `--allow-plugin <id> names no plugin that can run: …` | No usable plugin has that id. Read the skipped-plugin lines printed before it (an incompatible `celesta` range, a bad manifest, a folder others can write): a plugin skipped there must be fixed or replaced. If none names the id, check it against the plugin's manifest. |

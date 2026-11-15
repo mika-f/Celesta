@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 use celesta_plugin_host::{LOCK_FILE, Lockfile, check_lock, project_dependencies};
 use celesta_registry_client::{
-    ProjectError, ResolveInput, ResolveWarning, Update, install_locked, lock_project, resolve,
+    ResolveInput, ResolveWarning, Update, install_locked, lock_project, resolve,
 };
 use celesta_registry_format::{AdvisoryList, Index};
 use semver::{Version, VersionReq};
@@ -17,7 +17,7 @@ use semver::{Version, VersionReq};
 use super::{Failure, finish};
 use crate::args::parse_spec;
 use crate::config::{self, ProjectConfig};
-use crate::session::{NO_KEY_MESSAGE, Session};
+use crate::session::Session;
 use crate::{USAGE, advisories, report};
 
 fn not_a_dependency(id: &str) -> Failure {
@@ -231,9 +231,6 @@ fn install_project(
     };
     let env = session.environment();
     if !(locked || offline || checks_out) {
-        if !session.has_key {
-            return Err(Failure(NO_KEY_MESSAGE.to_owned()));
-        }
         let outcome = lock_project(&env, root, &Update::Keep)?;
         report::resolve_warnings(&outcome.warnings);
         print_installed(&outcome.installed);
@@ -242,15 +239,7 @@ fn install_project(
         return Ok(());
     }
 
-    let outcome = install_locked(&env, root, offline || !session.has_key).map_err(|error| {
-        match error {
-            // Offline only for want of a key, not by choice.
-            ProjectError::Missing { .. } if !offline && !session.has_key => {
-                Failure(NO_KEY_MESSAGE.to_owned())
-            }
-            error => error.into(),
-        }
-    })?;
+    let outcome = install_locked(&env, root, offline)?;
     print_installed(&outcome.installed);
     for (id, version, reason) in &outcome.skipped {
         println!("skipped {id} {version}: {reason}");

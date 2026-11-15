@@ -14,10 +14,14 @@ use crate::transport::{MAX_JSON_BYTES, Transport, TransportError};
 /// The base URL of the official registry.
 pub const OFFICIAL_REGISTRY: &str = "https://registry.celesta.studio";
 
-/// The official registry's pinned root public key; `None` until the
-/// maintainer supplies it.
-pub fn official_root_key() -> Option<RootKey> {
-    None
+/// The official registry's root public key (Ed25519), in standard base64.
+/// It certifies the online signing keys `config.json` lists; replacing it
+/// takes a Celesta release.
+const OFFICIAL_ROOT_KEY: &str = "eqOBn7d6SvlrSXx+f3oWpJPhxxAn209/9F8QqhIBSs0=";
+
+/// The official registry's pinned root public key.
+pub fn official_root_key() -> RootKey {
+    RootKey::from_base64(OFFICIAL_ROOT_KEY).expect("the official root key is 32 bytes of base64")
 }
 
 /// A registry's signed files, fetched and verified through a transport and
@@ -189,6 +193,18 @@ mod tests {
 
     use super::*;
     use crate::testing::{TestRegistry, at};
+
+    #[test]
+    fn the_official_root_key_is_pinned() {
+        let parsed = RootKey::from_base64(OFFICIAL_ROOT_KEY).unwrap();
+        assert_eq!(official_root_key(), parsed);
+        // The bytes round-trip to the same canonical base64.
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(official_root_key().0);
+        assert_eq!(encoded, "eqOBn7d6SvlrSXx+f3oWpJPhxxAn209/9F8QqhIBSs0=");
+        // An Ed25519 public key, not just 32 bytes.
+        assert!(ed25519_dalek::VerifyingKey::from_bytes(&official_root_key().0).is_ok());
+    }
 
     #[test]
     fn a_late_older_file_cannot_replace_a_newer_one() {

@@ -6,6 +6,7 @@
 
 use std::cell::Cell;
 use std::fs;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -16,6 +17,9 @@ use tempfile::TempDir;
 pub struct Home {
     dir: TempDir,
     projects: Cell<usize>,
+    /// A registry nothing answers at, which `command` uses.
+    unreachable: String,
+    unreachable_key: String,
 }
 
 impl Default for Home {
@@ -26,9 +30,17 @@ impl Default for Home {
 
 impl Home {
     pub fn new() -> Self {
+        // A port that was free a moment ago: connecting to it is refused.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
         Self {
             dir: TempDir::new().unwrap(),
             projects: Cell::new(0),
+            unreachable: format!("http://127.0.0.1:{port}"),
+            unreachable_key: TestRegistry::new().root_key_base64(),
         }
     }
 
@@ -36,8 +48,9 @@ impl Home {
         self.dir.path()
     }
 
-    /// `celesta` with every user folder under this home, no registry
-    /// variables, and this home as the current folder.
+    /// `celesta` with every user folder under this home, a registry that
+    /// cannot be reached (connections to it are refused, so a test never
+    /// reaches the official registry), and this home as the current folder.
     pub fn command(&self) -> Command {
         let home = self.path();
         let mut command = Command::new(env!("CARGO_BIN_EXE_celesta"));
@@ -47,8 +60,8 @@ impl Home {
             .env("XDG_DATA_HOME", home.join("data"))
             .env("XDG_CONFIG_HOME", home.join("config"))
             .env("APPDATA", home.join("appdata"))
-            .env_remove("CELESTA_REGISTRY")
-            .env_remove("CELESTA_REGISTRY_ROOT_KEY");
+            .env("CELESTA_REGISTRY", &self.unreachable)
+            .env("CELESTA_REGISTRY_ROOT_KEY", &self.unreachable_key);
         command
     }
 
