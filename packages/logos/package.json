@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/logos",
-  "version": "0.10.0-alpha.2",
+  "version": "0.10.0-alpha.3",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.17.0",

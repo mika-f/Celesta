@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/lottie",
-  "version": "0.10.0-alpha.2",
+  "version": "0.10.0-alpha.3",
   "private": true,
   "description": "Lottie animations (After Effects exports) drawn in step with Celesta compositions.",
   "license": "MIT OR Apache-2.0",

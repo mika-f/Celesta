@@ -1019,7 +1019,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-bench"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "celesta-gpu-renderer",
@@ -1031,14 +1031,14 @@ dependencies = [
 
 [[package]]
 name = "celesta-budoux"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "celesta-cli"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-plugin-host",
  "celesta-registry-client",
@@ -1056,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-codec-test"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "celesta-media",
@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-composition"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "base64 0.23.1",
  "serde",
@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-editor"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "anyhow",
  "celesta-codec-test",
@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-editor-core"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "celesta-evaluator",
@@ -1125,7 +1125,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-editor-theme"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-project",
  "gpui-kit",
@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-evaluator"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "celesta-project",
@@ -1143,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-exporter"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-codec-test",
  "celesta-composition",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-gpu-renderer"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "bytemuck",
  "celesta-composition",
@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-mcp"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -1227,7 +1227,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-media"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "base64 0.23.1",
  "celesta-composition",
@@ -1248,7 +1248,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-media-image"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "celesta-media",
@@ -1261,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-plugin"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "libc",
  "serde",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-plugin-host"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-plugin",
  "celesta-registry-format",
@@ -1313,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-project"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "serde",
@@ -1325,7 +1325,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-react-bridge"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-codec-test",
  "celesta-composition",
@@ -1341,7 +1341,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-registry-client"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "celesta-plugin-host",
@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-registry-format"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-remote"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-composition",
  "data-url",
@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-renderer"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "celesta-budoux",
  "celesta-composition",
@@ -1419,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-source-edit"
-version = "0.10.0-alpha.2"
+version = "0.10.0-alpha.3"
 dependencies = [
  "line-index",
  "oxc_allocator",

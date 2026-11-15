@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/media-utils",
-  "version": "0.10.0-alpha.2",
+  "version": "0.10.0-alpha.3",
   "private": true,
   "description": "Media metadata helpers (preloadMedia, mediaDurationInFrames) and audio spectrum analysis (loadAudioSpectrum, useAudioSpectrum) for Celesta compositions.",
   "license": "MIT OR Apache-2.0",

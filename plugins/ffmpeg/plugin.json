@@ -1,7 +1,7 @@
 {
   "id": "ffmpeg",
   "name": "FFmpeg",
-  "version": "0.10.0-alpha.2",
+  "version": "0.10.0-alpha.3",
   "cargoPackage": "celesta-codec-ffmpeg",
   "roles": ["media"],
   "media": {
