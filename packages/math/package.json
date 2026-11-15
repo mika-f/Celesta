@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/math",
-  "version": "0.10.0-alpha.1",
+  "version": "0.10.0-alpha.2",
   "private": true,
   "description": "Deterministic random numbers, noise, and math helpers for Celesta compositions.",
   "license": "MIT OR Apache-2.0",

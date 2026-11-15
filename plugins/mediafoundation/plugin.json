@@ -1,7 +1,7 @@
 {
   "id": "mediafoundation",
   "name": "Media Foundation",
-  "version": "0.10.0-alpha.1",
+  "version": "0.10.0-alpha.2",
   "cargoPackage": "celesta-codec-mediafoundation",
   "roles": ["media"],
   "os": ["windows"],
