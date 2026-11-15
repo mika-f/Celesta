@@ -169,6 +169,11 @@ impl ProjectConfig {
         )))
     }
 
+    /// `id`'s requirement as written in the file.
+    pub fn dependency(&self, id: &str) -> Option<&str> {
+        self.dependencies.get(id).map(String::as_str)
+    }
+
     /// Replaces `id`'s requirement in place, else appends it.
     pub fn set_dependency(&mut self, id: &str, requirement: &str) {
         self.dependencies

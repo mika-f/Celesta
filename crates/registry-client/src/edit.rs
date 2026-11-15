@@ -183,6 +183,7 @@ pub fn plan_update(
     let project = project_dependencies(root).map_err(ProjectError::from)?;
     let targets = project.project_targets();
     let advisories = env.registry.cached_advisories()?;
+    let written = ProjectConfig::load(root)?.map(|(config, _)| config);
     let mut rewrites = Vec::new();
     for id in ids {
         let requirement = project
@@ -229,7 +230,10 @@ pub fn plan_update(
         })?;
         rewrites.push(Rewrite {
             id: id.clone(),
-            from: requirement.to_string(),
+            from: written
+                .as_ref()
+                .and_then(|config| config.dependency(id))
+                .map_or_else(|| requirement.to_string(), str::to_owned),
             to: offered_requirement(&offered).to_string(),
         });
     }
@@ -565,5 +569,56 @@ mod tests {
             config
         );
         assert_eq!(std::fs::read(root.path().join(LOCK_FILE)).unwrap(), lock);
+    }
+
+    #[test]
+    fn the_rewrite_names_the_requirement_as_written() {
+        let (_registry, root, machine) = moved_on();
+        write_config(root.path(), &[("acme.vrm", "0.10.0-alpha.3")]);
+
+        let plan = plan_update(&machine.env(), root.path(), &ids(&["acme.vrm"]), false).unwrap();
+
+        assert_eq!(plan[0].from, "0.10.0-alpha.3");
+        assert_eq!(plan[0].to, "^0.11.0");
+    }
+
+    #[test]
+    fn plan_update_pins_a_media_plugin() {
+        let registry = TestRegistry::new();
+        registry.publish_with_roles("acme.vrm", "0.10.0-alpha.3", &["any"], &["media"]);
+        let root = TempDir::new().unwrap();
+        write_config(root.path(), &[("acme.vrm", "^0.10.0-alpha.3")]);
+        registry.publish_with_roles("acme.vrm", "0.11.0", &["macos-aarch64"], &["media"]);
+        registry.edit("acme.vrm", "0.11.0", |entry| {
+            entry["celesta"] = json!(">=0.11.0, <0.12.0");
+        });
+        let machine = Machine::new(&registry, "0.11.0");
+
+        let plan = plan_update(&machine.env(), root.path(), &ids(&["acme.vrm"]), false).unwrap();
+
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].to, "^0.11.0");
+    }
+
+    #[test]
+    fn update_without_rewrites_leaves_the_config_alone() {
+        let (_registry, root, _) = moved_on();
+        let registry = TestRegistry::new();
+        registry.publish("acme.code", "1.0.0", &["any"]);
+        write_config(root.path(), &[("acme.code", "^1.0")]);
+        let machine = Machine::new(&registry, CELESTA_VERSION);
+        std::fs::remove_file(root.path().join(LOCK_FILE)).unwrap();
+        let config = std::fs::read(root.path().join(PROJECT_CONFIG)).unwrap();
+
+        update_dependencies(&machine.env(), root.path(), &ids(&["acme.code"]), &[]).unwrap();
+
+        assert_eq!(
+            std::fs::read(root.path().join(PROJECT_CONFIG)).unwrap(),
+            config
+        );
+        assert_eq!(
+            lock_of(root.path()).plugins["acme.code"].version,
+            Version::new(1, 0, 0)
+        );
     }
 }
