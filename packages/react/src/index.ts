@@ -43,6 +43,8 @@ export type {
 } from './components';
 export { MotionBlur, Trail } from './motion-blur';
 export type { MomentChildren, MotionBlurProps, TrailProps } from './motion-blur';
+export { PluginLayer } from './plugin-layer';
+export type { PluginLayerProps } from './plugin-layer';
 export { googleFont } from './google-font';
 export type { GoogleFontOptions } from './google-font';
 export type {

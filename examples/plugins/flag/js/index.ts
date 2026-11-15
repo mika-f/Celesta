@@ -8,10 +8,8 @@
 
 import * as React from 'react';
 
-import { useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
-import type { AssetInput, CommonProps, LayerContent } from '@celesta.studio/react';
-import { registerHostElement } from '@celesta.studio/react/internal';
-import type { HostNode, HostWalk } from '@celesta.studio/react/internal';
+import { PluginLayer } from '@celesta.studio/react';
+import type { AssetInput, CommonProps } from '@celesta.studio/react';
 
 export interface FlagProps extends CommonProps {
   /** A PNG or JPEG. Its left edge is the pole. */
@@ -26,28 +24,16 @@ export interface FlagProps extends CommonProps {
   shading?: number;
 }
 
-const ELEMENT = 'celesta-plugin-flag';
-
-export function Flag(props: FlagProps): React.ReactElement {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  return React.createElement(ELEMENT, { ...props, time: frame / fps });
-}
-
 /** The layer the plugin draws: the image as asset `image`, the wave as data. */
-function flagContent(node: HostNode, walk: HostWalk): LayerContent {
-  const props = node.props as unknown as FlagProps & { time: number };
+export function Flag({ src, amplitude, waves, speed, shading, ...common }: FlagProps): React.ReactElement {
   const data: Record<string, number> = {};
-  for (const key of ['amplitude', 'waves', 'speed', 'shading'] as const) {
-    if (props[key] !== undefined) data[key] = props[key];
+  for (const [key, value] of Object.entries({ amplitude, waves, speed, shading })) {
+    if (value !== undefined) data[key] = value;
   }
-  return {
-    type: 'plugin',
+  return React.createElement(PluginLayer, {
+    ...common,
     plugin: 'flag',
-    assets: { image: walk.resolveAsset(props.src) },
-    time: props.time,
+    assets: { image: src },
     ...(Object.keys(data).length ? { data } : {}),
-  };
+  });
 }
-
-registerHostElement(ELEMENT, { content: flagContent });

@@ -21,7 +21,7 @@ work as on any layer.
 ## How it works
 
 - [`js/index.ts`](js/index.ts) is the module entries import. `<Turntable>`
-  renders a host element, and the function registered for it turns its
+  renders a `<PluginLayer>` from `@celesta.studio/react`, which turns its
   props into plugin content: plugin `turntable`, no assets, the sequence's
   time, and the speed as `data`.
 - [`src/lib.rs`](src/lib.rs) is the plugin's `ContentProvider`. `open`
