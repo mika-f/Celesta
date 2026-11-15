@@ -9,14 +9,14 @@ use std::process::ExitCode;
 
 use celesta_plugin_host::{LOCK_FILE, Lockfile, check_lock, project_dependencies};
 use celesta_registry_client::{
-    ResolveInput, ResolveWarning, Update, install_locked, lock_project, resolve,
+    ProjectConfig, ResolveInput, ResolveWarning, Update, install_locked, lock_project, resolve,
+    restore_config, restore_file,
 };
 use celesta_registry_format::{AdvisoryList, Index};
 use semver::{Version, VersionReq};
 
 use super::{Failure, finish};
 use crate::args::parse_spec;
-use crate::config::{self, ProjectConfig};
 use crate::session::Session;
 use crate::{USAGE, advisories, report};
 
@@ -145,8 +145,8 @@ fn read_if_present(path: &Path) -> Result<Option<Vec<u8>>, Failure> {
 /// not be.
 fn put_back(root: &Path, config: Option<&[u8]>, lock: Option<&[u8]>) {
     let results = [
-        ("celesta.config.json", config::restore(root, config)),
-        (LOCK_FILE, config::restore_file(&root.join(LOCK_FILE), lock)),
+        ("celesta.config.json", restore_config(root, config)),
+        (LOCK_FILE, restore_file(&root.join(LOCK_FILE), lock)),
     ];
     for (name, result) in results {
         if let Err(error) = result {
@@ -179,7 +179,7 @@ fn remove_dependency(root: &Path, id: &str) -> Result<(), Failure> {
     {
         // The lock was replaced whole or not at all, so only the settings
         // changed.
-        if let Err(error) = config::restore(root, Some(&config_bytes)) {
+        if let Err(error) = restore_config(root, Some(&config_bytes)) {
             report::warn(format_args!(
                 "could not put celesta.config.json back as it was: {error}"
             ));

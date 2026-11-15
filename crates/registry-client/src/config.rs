@@ -134,7 +134,7 @@ impl ProjectConfig {
     }
 
     /// `root`'s settings and the exact bytes they were read from (for
-    /// [`restore`]), or `None` when there is no such file.
+    /// [`restore_config`]), or `None` when there is no such file.
     pub fn load(root: &Path) -> Result<Option<(Self, Vec<u8>)>, ConfigError> {
         let path = root.join(PROJECT_CONFIG);
         let bytes = match std::fs::read(&path) {
@@ -270,7 +270,7 @@ impl Serialize for Edited<'_> {
 
 /// Puts `previous` back as `root`'s `celesta.config.json` exactly, or
 /// removes the file when there was none.
-pub fn restore(root: &Path, previous: Option<&[u8]>) -> io::Result<()> {
+pub fn restore_config(root: &Path, previous: Option<&[u8]>) -> io::Result<()> {
     restore_file(&root.join(PROJECT_CONFIG), previous)
 }
 
@@ -474,7 +474,7 @@ mod tests {
         let (mut config, bytes) = ProjectConfig::load(dir.path()).unwrap().unwrap();
         config.set_dependency("a.b", "1");
         config.save(dir.path()).unwrap();
-        restore(dir.path(), Some(&bytes)).unwrap();
+        restore_config(dir.path(), Some(&bytes)).unwrap();
         assert_eq!(read(dir.path()), "{ \"a\" :1 }\n");
     }
 
@@ -484,9 +484,9 @@ mod tests {
         let mut config = ProjectConfig::new();
         config.set_dependency("a.b", "1");
         config.save(dir.path()).unwrap();
-        restore(dir.path(), None).unwrap();
+        restore_config(dir.path(), None).unwrap();
         assert!(!dir.path().join("celesta.config.json").exists());
-        restore(dir.path(), None).unwrap();
+        restore_config(dir.path(), None).unwrap();
     }
 
     #[test]
