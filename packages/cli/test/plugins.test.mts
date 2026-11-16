@@ -18,6 +18,7 @@ import {
   isContainedPath,
   isValidPluginId,
   manifestPath,
+  readProjectPlugins,
   resolvePluginImport,
   resolvePluginModule,
   standInSource,
@@ -303,6 +304,65 @@ test('an entry that imports a plugin no directory provides fails naming it', () 
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /no plugin \\?"flag\\?" is installed/);
+});
+
+test('an entry whose project declares a missing plugin without a lock says to install it', () => {
+  const root = mkdtempSync(join(tmpdir(), 'celesta-plugin-project-'));
+  scratch.push(root);
+  writeFileSync(join(root, 'celesta.config.json'), JSON.stringify({ plugins: { dependencies: { flag: '0.1' } } }));
+  // An entry below the root belongs to the project, as celesta-plugin-host's project_root reads it.
+  mkdirSync(join(root, 'scenes'));
+  const entry = join(root, 'scenes', 'entry.tsx');
+  writeFileSync(entry, `import { Flag } from '@celesta-plugin/flag'; export default function Root() { return <Flag src="a.png" />; }`);
+  const result = spawnSync(process.execPath, [cli, entry], {
+    input: '',
+    encoding: 'utf8',
+    env: { ...process.env, CELESTA_PLUGIN_PATH: pluginPath([]) },
+  });
+  assert.notEqual(result.status, 0);
+  const output = result.stdout + result.stderr;
+  assert.match(output, /no plugin \\?"flag\\?" is installed: celesta.config.json declares it, but the project has no celesta.lock/);
+  assert.match(output, /celesta plugin install/);
+});
+
+/** A project folder with `config` as its celesta.config.json text and `lock`, when given, as its celesta.lock text. */
+function project(config: string, lock?: string): string {
+  const root = mkdtempSync(join(tmpdir(), 'celesta-plugin-project-'));
+  scratch.push(root);
+  writeFileSync(join(root, 'celesta.config.json'), config);
+  if (lock !== undefined) writeFileSync(join(root, 'celesta.lock'), lock);
+  return root;
+}
+
+test('reads the declared and locked plugins of the nearest project', async () => {
+  const declares = JSON.stringify({ plugins: { dependencies: { code: '0.10', lottie: '0.10' } } });
+  const root = project(declares, JSON.stringify({ format: 1, plugins: { code: { version: '0.10.0' } } }));
+  mkdirSync(join(root, 'a', 'b'), { recursive: true });
+  assert.deepEqual(await readProjectPlugins(join(root, 'a', 'b')), { root, declared: ['code', 'lottie'], locked: ['code'] });
+
+  const unlocked = project(declares);
+  assert.deepEqual(await readProjectPlugins(unlocked), { root: unlocked, declared: ['code', 'lottie'], locked: 'none' });
+  const broken = project(declares, '{');
+  assert.equal((await readProjectPlugins(broken))?.locked, 'unreadable');
+  // Celesta reports a config that is not JSON; nothing is said from it here.
+  assert.equal(await readProjectPlugins(project('{')), undefined);
+  assert.deepEqual((await readProjectPlugins(project('{}')))?.declared, []);
+});
+
+test('a missing plugin the project declares says what would install it', async () => {
+  const none = await findPlugins('');
+  const error = (id: string, locked: string[] | 'none' | 'unreadable') =>
+    (resolvePluginModule(`@celesta-plugin/${id}`, none, { root: '/work/film', declared: ['code', 'lottie'], locked }) as { error: string }).error;
+  assert.equal(
+    error('code', 'none'),
+    'no plugin "code" is installed: celesta.config.json declares it, but the project has no celesta.lock; ' +
+      "choose Update Plugins… in the This project section of the Celesta app's Plugins tab, or run `celesta plugin install` in /work/film",
+  );
+  assert.match(error('lottie', ['code']), /celesta.lock does not lock it yet; choose Update Plugins…/);
+  assert.match(error('code', ['code']), /celesta.lock names it, but no copy that can run is on this computer; .*choose Download/);
+  assert.match(error('code', 'unreadable'), /celesta.lock could not be read; restore it from version control$/);
+  // A plugin the project does not declare keeps the plugin-path message.
+  assert.equal(error('flag', 'none'), 'no plugin "flag" is installed (looked in CELESTA_PLUGIN_PATH)');
 });
 
 // planDialogue() measures the WAVs through the host, which this CLI alone

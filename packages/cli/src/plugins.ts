@@ -155,11 +155,84 @@ export async function findPlugins(pluginPath = process.env[PLUGIN_PATH_ENV] ?? '
   return { found, skipped };
 }
 
+const PROJECT_CONFIG = 'celesta.config.json';
+const PROJECT_LOCK = 'celesta.lock';
+
+/**
+ * What the project an entry belongs to says about its registry plugins,
+ * read only to say what to do when an import finds no plugin: Celesta
+ * itself (crates/plugin-host) decides which plugins run.
+ */
+export interface ProjectPlugins {
+  /** The project folder. */
+  root: string;
+  /** The ids `plugins.dependencies` in its `celesta.config.json` declares. */
+  declared: string[];
+  /** The ids its `celesta.lock` names, `'none'` without one, `'unreadable'` when it is not a lock. */
+  locked: string[] | 'none' | 'unreadable';
+}
+
+/** The keys of `value`'s object `key`, or none when it is not an object. */
+function keysOf(value: unknown, key: string): string[] {
+  const inner = typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+  return typeof inner === 'object' && inner !== null && !Array.isArray(inner) ? Object.keys(inner) : [];
+}
+
+/**
+ * The registry plugins of the project `directory` (an entry's folder)
+ * belongs to: the nearest folder from `directory` up that holds
+ * `celesta.config.json` (celesta-plugin-host's `project_root`). `undefined`
+ * when no folder does, or when the file is not JSON (Celesta reports that).
+ */
+export async function readProjectPlugins(directory: string): Promise<ProjectPlugins | undefined> {
+  let root = path.resolve(directory);
+  while (!(await isFile(path.join(root, PROJECT_CONFIG)))) {
+    const parent = path.dirname(root);
+    if (parent === root) return undefined;
+    root = parent;
+  }
+  let config: unknown;
+  try {
+    config = JSON.parse(await readFile(path.join(root, PROJECT_CONFIG), 'utf8'));
+  } catch {
+    return undefined;
+  }
+  const plugins = typeof config === 'object' && config !== null ? (config as Record<string, unknown>).plugins : undefined;
+  const declared = keysOf(plugins, 'dependencies');
+  let locked: ProjectPlugins['locked'];
+  try {
+    locked = keysOf(JSON.parse(await readFile(path.join(root, PROJECT_LOCK), 'utf8')), 'plugins');
+  } catch (error) {
+    locked = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'none' : 'unreadable';
+  }
+  return { root, declared, locked };
+}
+
+/**
+ * Why plugin `id`, which `project` declares, is not installed, and what to
+ * do; `undefined` when `project` does not declare it.
+ */
+function projectHint(id: string, project: ProjectPlugins): string | undefined {
+  if (!project.declared.includes(id)) return undefined;
+  const install = `run \`celesta plugin install\` in ${project.root}`;
+  if (project.locked === 'none') {
+    return `${PROJECT_CONFIG} declares it, but the project has no ${PROJECT_LOCK}; choose Update Plugins… in the This project section of the Celesta app's Plugins tab, or ${install}`;
+  }
+  if (project.locked === 'unreadable') {
+    return `${PROJECT_CONFIG} declares it, but the project's ${PROJECT_LOCK} could not be read; restore it from version control`;
+  }
+  if (!project.locked.includes(id)) {
+    return `${PROJECT_CONFIG} declares it, but ${PROJECT_LOCK} does not lock it yet; choose Update Plugins… in the This project section of the Celesta app's Plugins tab, or ${install}`;
+  }
+  return `${PROJECT_LOCK} names it, but no copy that can run is on this computer; in the Celesta app, trust the project and choose Download (Problems says why when a copy cannot run), or ${install}`;
+}
+
 /**
  * The module file `@celesta-plugin/<id>` stands for among `plugins`, or an
- * error message saying why there is none.
+ * error message saying why there is none. With the importing entry's
+ * `project`, a plugin it declares says what would install it.
  */
-export function resolvePluginModule(specifier: string, plugins: Plugins): { path: string } | { error: string } {
+export function resolvePluginModule(specifier: string, plugins: Plugins, project?: ProjectPlugins): { path: string } | { error: string } {
   const id = PLUGIN_SPECIFIER.exec(specifier)?.[1];
   if (!id) return { error: `${specifier} is not a plugin module` };
   if (!isValidPluginId(id)) return { error: `${specifier} does not name a valid plugin id` };
@@ -169,6 +242,8 @@ export function resolvePluginModule(specifier: string, plugins: Plugins): { path
       .filter((candidate) => candidate.id === id)
       .map((candidate) => `; ${candidate.directory} was skipped: ${candidate.reason}`)
       .join('');
+    const hint = project && projectHint(id, project);
+    if (hint) return { error: `no plugin "${id}" is installed: ${hint}${skipped}` };
     return { error: `no plugin "${id}" is installed (looked in ${PLUGIN_PATH_ENV})${skipped}` };
   }
   if (!plugin.module) return { error: `plugin "${id}" has no JavaScript module` };
@@ -187,15 +262,17 @@ export interface StandIn {
  * `plugins`; else, for a plugin in `waiting` (the user has not allowed it
  * yet) with a module, a stand-in when `standIns` (the app) or an error saying
  * it waits and how to allow it; else an error message saying why there is
- * neither (a waiting plugin without a module says so, as an allowed one does).
+ * neither (a waiting plugin without a module says so, as an allowed one does;
+ * one the importing entry's `project` declares says what would install it).
  */
 export function resolvePluginImport(
   specifier: string,
   plugins: Plugins,
   waiting: Plugins,
   standIns: boolean,
+  project?: ProjectPlugins,
 ): { path: string } | { standIn: StandIn } | { error: string } {
-  const resolved = resolvePluginModule(specifier, plugins);
+  const resolved = resolvePluginModule(specifier, plugins, project);
   if (!('error' in resolved)) return resolved;
   const id = PLUGIN_SPECIFIER.exec(specifier)?.[1];
   // A plugin that may run but cannot be imported is its own error.
