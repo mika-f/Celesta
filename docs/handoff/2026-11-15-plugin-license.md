@@ -32,10 +32,11 @@ half (the publish check, the database, the API, the site) is in
   `test/manifest.test.mts` parses the `license` of every `plugins/*/plugin.json`
   and requires each to declare one.
 - `plugins/*/plugin.json`: `MIT OR Apache-2.0` for `vrm`, `avfoundation`,
-  `mediafoundation`, `aivis-speech`, `lottie`, and `voicevox`;
-  `(MIT OR Apache-2.0) AND MIT` for `code`, which bundles twinkleplop (MIT); `(MIT OR Apache-2.0) AND LGPL-2.1-or-later` for `ffmpeg`;
+  `mediafoundation`, `aivis-speech`, `code`, `lottie`, and `voicevox`; `(MIT OR Apache-2.0) AND LGPL-2.1-or-later` for `ffmpeg`;
   `(MIT OR Apache-2.0) AND GPL-2.0-or-later` for `ffmpeg-x264`. These name the
-  plugin's code and the FFmpeg build it links, not every bundled library.
+  plugin's code and the FFmpeg build it links, whose copyleft terms change
+  what a user may do. A permissively licensed dependency is not named
+  (`code` bundles twinkleplop, MIT): its text is in the plugin's `licenses/`.
 - `crates/registry-format`: `VersionEntry::license`, `VersionEntry::license_refs`
   (`LicenseRef`), `SearchEntry::license`, and `FormatError::InvalidLicense` for
   a value of the wrong shape. The schemas gain the same fields. Fixtures:
