@@ -420,7 +420,7 @@ pub(crate) fn footer(
     // What the primary button would change, which another job may hold.
     let mut changes = Changes::Nothing;
     let primary = match offer(scope) {
-        Ok(offered) => match held(id, &offered, found) {
+        Ok(offered) => match held(id, &offered, found, !media) {
             Held::Offered => FooterButton::disabled("Installed"),
             Held::Older { locked } => {
                 changes = if locked {
@@ -480,10 +480,9 @@ pub(crate) fn footer(
                 .is_some_and(|locked| locked.version == *version)
         };
         match offer(OfferScope::Pin) {
-            Ok(pinned) if !locked_at(&pinned) => {
-                FooterButton::new("Pin to this project", PageCommand::Pin(pinned))
-            }
-            _ => FooterButton::disabled("Pin to this project"),
+            Ok(pinned) if locked_at(&pinned) => FooterButton::disabled("Pinned"),
+            Ok(pinned) => FooterButton::new("Pin to this project", PageCommand::Pin(pinned)),
+            Err(_) => FooterButton::disabled("Pin to this project"),
         }
     });
 
@@ -523,7 +522,9 @@ enum Held {
     No,
 }
 
-fn held(id: &str, offered: &Version, found: &FoundPlugins) -> Held {
+/// A media plugin's primary button is about the store alone (`use_lock`
+/// false); the project's pin is the secondary button's.
+fn held(id: &str, offered: &Version, found: &FoundPlugins, use_lock: bool) -> Held {
     let installed = found
         .registry_plugins
         .iter()
@@ -532,6 +533,7 @@ fn held(id: &str, offered: &Version, found: &FoundPlugins) -> Held {
     let locked = found
         .lock
         .iter()
+        .filter(|_| use_lock)
         .filter_map(|lock| lock.plugins.get(id))
         .map(|locked| &locked.version);
     // An older one in the lock is what an update rewrites, if both exist.
@@ -957,6 +959,48 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_media_plugin_keeps_install_about_the_store_alone() {
+        let index = index(
+            "celesta.avf",
+            true,
+            vec![entry("1.0.0", 10), entry("1.1.0", 10)],
+        );
+        let pinned = project(vec![("celesta.avf", locked("1.0.0", &[host()]))]);
+
+        let mut settings = Registry::new(false);
+        settings.state.set_settings_busy(true);
+        let footer_of = |registry: &Registry, found: &FoundPlugins| {
+            footer(&index, found, &registry.state, None, &host())
+        };
+        let by_settings = footer_of(&settings, &pinned);
+        assert_eq!(by_settings.primary.label, "Install");
+        assert!(!by_settings.primary.enabled);
+        assert_eq!(
+            by_settings.reason.as_deref(),
+            Some("Another plugin change is running")
+        );
+
+        let mut project_busy = Registry::new(false);
+        project_busy
+            .state
+            .set_project_busy(PathBuf::from("/projects/demo"));
+        let by_project = footer_of(&project_busy, &pinned);
+        assert!(by_project.primary.enabled);
+        let pin = by_project.secondary.unwrap();
+        assert_eq!(pin.label, "Pin to this project");
+        assert!(!pin.enabled);
+
+        // The lock holds the offered version: nothing left to pin.
+        let current = project(vec![("celesta.avf", locked("1.1.0", &[host()]))]);
+        let done = footer_of(&Registry::new(false), &current);
+        assert_eq!(done.primary.label, "Install");
+        assert!(done.primary.enabled);
+        let pin = done.secondary.unwrap();
+        assert_eq!(pin.label, "Pinned");
+        assert!(!pin.enabled);
+    }
+
+    #[test]
     fn busy_settings_disable_the_global_buttons() {
         let mut registry = Registry::new(false);
         registry.state.set_settings_busy(true);
@@ -974,13 +1018,32 @@ mod tests {
 
     #[test]
     fn the_header_follows_the_checkbox() {
-        let both = index(
-            "celesta.avf",
-            true,
-            vec![entry("1.0.0", 10), entry("1.1.0-beta.1", 10)],
-        );
+        let from = |commit: &str| celesta_registry_format::Source {
+            repository: "github.com/acme/a".into(),
+            commit: commit.into(),
+            workflow: "r.yml".into(),
+        };
+        let mut stable = entry("1.0.0", 10);
+        stable.source = Some(from("1111111aaaa"));
+        let mut beta = entry("1.1.0-beta.1", 10);
+        beta.source = Some(from("2222222bbbb"));
+        beta.targets
+            .insert(Target::parse("linux-x86_64").unwrap(), artifact(10));
+        let both = index("celesta.avf", true, vec![stable, beta]);
         let found = FoundPlugins::default();
-        assert_eq!(details(&both, &found, None, &host(), false).latest, "1.0.0");
+        let on = details(&both, &found, None, &host(), true);
+        assert_eq!(on.builds, ["linux-x86_64", "macos-aarch64"]);
+        assert_eq!(
+            on.source.as_deref(),
+            Some("github.com/acme/a · r.yml · 2222222")
+        );
+        let off = details(&both, &found, None, &host(), false);
+        assert_eq!(off.latest, "1.0.0");
+        assert_eq!(off.builds, ["macos-aarch64"]);
+        assert_eq!(
+            off.source.as_deref(),
+            Some("github.com/acme/a · r.yml · 1111111")
+        );
         assert_eq!(
             details(&both, &found, None, &host(), true).latest,
             "1.1.0-beta.1"
